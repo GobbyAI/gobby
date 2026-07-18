@@ -296,13 +296,15 @@ class TestSessionLifecycleManager:
         manager.session_manager.update_stats.side_effect = update_stats
 
         with (
-            patch("gobby.sessions.lifecycle.ClaudeTranscriptParser") as mock_parser,
+            patch("gobby.sessions.transcript_processing.ClaudeTranscriptParser") as mock_parser,
             patch.object(
                 manager, "_generate_artifacts_if_needed", new_callable=AsyncMock
             ) as mock_generate,
-            patch("gobby.sessions.lifecycle.rebuild_and_persist_index"),
-            patch("gobby.sessions.lifecycle.backup_transcript", return_value=None),
-            patch("gobby.sessions.lifecycle.is_summary_markdown_valid", return_value=True),
+            patch("gobby.sessions.transcript_processing.rebuild_and_persist_index"),
+            patch("gobby.sessions.transcript_processing.backup_transcript", return_value=None),
+            patch(
+                "gobby.sessions.transcript_processing.is_summary_markdown_valid", return_value=True
+            ),
         ):
             mock_parser.return_value.parse_lines.return_value = messages
 
@@ -385,7 +387,7 @@ class TestSessionLifecycleManager:
         message_mock = MagicMock()
         message_mock.index = 5
 
-        with patch("gobby.sessions.lifecycle.ClaudeTranscriptParser") as MockParser:
+        with patch("gobby.sessions.transcript_processing.ClaudeTranscriptParser") as MockParser:
             parser_instance = MockParser.return_value
             parser_instance.parse_lines.return_value = [message_mock]
 
@@ -428,7 +430,7 @@ class TestSessionLifecycleManager:
             _mk("assistant", "text", "Done"),
         ]
 
-        with patch("gobby.sessions.lifecycle.ClaudeTranscriptParser") as MockParser:
+        with patch("gobby.sessions.transcript_processing.ClaudeTranscriptParser") as MockParser:
             MockParser.return_value.parse_lines.return_value = messages
             await manager._process_session_transcript("s1", str(transcript_path))
 
@@ -481,7 +483,7 @@ class TestSessionLifecycleManager:
         with open(transcript_path, "w") as f:
             f.write('{"type": "unknown"}\n')
 
-        with patch("gobby.sessions.lifecycle.ClaudeTranscriptParser") as MockParser:
+        with patch("gobby.sessions.transcript_processing.ClaudeTranscriptParser") as MockParser:
             MockParser.return_value.parse_lines.return_value = []
 
             await manager._process_session_transcript("s1", str(transcript_path))
@@ -538,7 +540,9 @@ class TestSessionLifecycleManager:
                 manager, "_process_session_transcript", new_callable=AsyncMock
             ) as mock_proc,
             patch.object(manager, "_generate_artifacts_if_needed", new_callable=AsyncMock),
-            patch("gobby.sessions.lifecycle.session_wiki_path_is_fresh", return_value=True),
+            patch(
+                "gobby.sessions.transcript_processing.session_wiki_path_is_fresh", return_value=True
+            ),
         ):
             mock_proc.side_effect = [Exception("Fail"), None]
 
@@ -578,8 +582,12 @@ class TestSessionLifecycleManager:
             patch.object(
                 manager, "_generate_artifacts_if_needed", new_callable=AsyncMock
             ) as mock_gen,
-            patch("gobby.sessions.lifecycle.is_summary_markdown_valid", return_value=True),
-            patch("gobby.sessions.lifecycle.session_wiki_path_is_fresh", return_value=True),
+            patch(
+                "gobby.sessions.transcript_processing.is_summary_markdown_valid", return_value=True
+            ),
+            patch(
+                "gobby.sessions.transcript_processing.session_wiki_path_is_fresh", return_value=True
+            ),
         ):
             processed = await manager._process_pending_transcripts()
 
@@ -616,8 +624,13 @@ class TestSessionLifecycleManager:
             patch.object(
                 manager, "_generate_artifacts_if_needed", new_callable=AsyncMock
             ) as mock_gen,
-            patch("gobby.sessions.lifecycle.is_summary_markdown_valid", return_value=True),
-            patch("gobby.sessions.lifecycle.session_wiki_path_is_fresh", return_value=False),
+            patch(
+                "gobby.sessions.transcript_processing.is_summary_markdown_valid", return_value=True
+            ),
+            patch(
+                "gobby.sessions.transcript_processing.session_wiki_path_is_fresh",
+                return_value=False,
+            ),
         ):
             processed = await manager._process_pending_transcripts()
 
@@ -655,7 +668,9 @@ class TestSessionLifecycleManager:
             patch.object(
                 manager, "_generate_artifacts_if_needed", new_callable=AsyncMock
             ) as mock_gen,
-            patch("gobby.sessions.lifecycle.is_summary_markdown_valid", return_value=False),
+            patch(
+                "gobby.sessions.transcript_processing.is_summary_markdown_valid", return_value=False
+            ),
         ):
             processed = await manager._process_pending_transcripts()
 
@@ -996,8 +1011,12 @@ class TestGenerateArtifactsIfNeeded:
         manager.session_manager.get.return_value = session
 
         with (
-            patch("gobby.sessions.lifecycle.is_summary_markdown_valid", return_value=True),
-            patch("gobby.sessions.lifecycle.session_wiki_path_is_fresh", return_value=True),
+            patch(
+                "gobby.sessions.transcript_processing.is_summary_markdown_valid", return_value=True
+            ),
+            patch(
+                "gobby.sessions.transcript_processing.session_wiki_path_is_fresh", return_value=True
+            ),
             patch(
                 "gobby.sessions.summarize.generate_session_summaries",
                 new_callable=AsyncMock,
@@ -1092,8 +1111,13 @@ class TestGenerateArtifactsIfNeeded:
         manager.session_manager.get.return_value = session
 
         with (
-            patch("gobby.sessions.lifecycle.is_summary_markdown_valid", return_value=True),
-            patch("gobby.sessions.lifecycle.session_wiki_path_is_fresh", return_value=False),
+            patch(
+                "gobby.sessions.transcript_processing.is_summary_markdown_valid", return_value=True
+            ),
+            patch(
+                "gobby.sessions.transcript_processing.session_wiki_path_is_fresh",
+                return_value=False,
+            ),
             patch(
                 "gobby.sessions.summarize.generate_session_summaries",
                 new_callable=AsyncMock,
@@ -1238,7 +1262,7 @@ class TestProcessSessionTranscriptParsers:
         session.source = "qwen"
         manager.session_manager.get.return_value = session
 
-        with patch("gobby.sessions.lifecycle.QwenTranscriptParser") as MockParser:
+        with patch("gobby.sessions.transcript_processing.QwenTranscriptParser") as MockParser:
             MockParser.return_value.parse_lines.return_value = []
             await manager._process_session_transcript("s1", str(transcript_path))
             MockParser.assert_called_once()
@@ -1254,7 +1278,7 @@ class TestProcessSessionTranscriptParsers:
         session.source = "codex"
         manager.session_manager.get.return_value = session
 
-        with patch("gobby.sessions.lifecycle.CodexTranscriptParser") as MockParser:
+        with patch("gobby.sessions.transcript_processing.CodexTranscriptParser") as MockParser:
             MockParser.return_value.parse_lines.return_value = []
             await manager._process_session_transcript("s1", str(transcript_path))
             MockParser.assert_called_once()
@@ -1271,7 +1295,7 @@ class TestProcessSessionTranscriptParsers:
         session.transcript_path = str(transcript_path)
         manager.session_manager.get.return_value = session
 
-        with patch("gobby.sessions.lifecycle.DroidTranscriptParser") as MockParser:
+        with patch("gobby.sessions.transcript_processing.DroidTranscriptParser") as MockParser:
             MockParser.return_value.parse_lines.return_value = []
             await manager._process_session_transcript("s1", str(transcript_path))
             MockParser.assert_called_once_with(
@@ -1445,7 +1469,7 @@ class TestProcessSessionTranscriptJsonDispatch:
         session.source = "qwen"
         manager.session_manager.get.return_value = session
 
-        with patch("gobby.sessions.lifecycle.QwenTranscriptParser") as MockParser:
+        with patch("gobby.sessions.transcript_processing.QwenTranscriptParser") as MockParser:
             del MockParser.return_value.parse_session_json
             MockParser.return_value.parse_lines.return_value = []
             await manager._process_session_transcript("s1", str(transcript_path))
@@ -1462,7 +1486,7 @@ class TestProcessSessionTranscriptJsonDispatch:
         session.source = "qwen"
         manager.session_manager.get.return_value = session
 
-        with patch("gobby.sessions.lifecycle.QwenTranscriptParser") as MockParser:
+        with patch("gobby.sessions.transcript_processing.QwenTranscriptParser") as MockParser:
             MockParser.return_value.parse_lines.return_value = []
             await manager._process_session_transcript("s1", str(transcript_path))
             MockParser.return_value.parse_lines.assert_called_once()
@@ -1501,7 +1525,7 @@ class TestProcessSessionTranscriptTokenPreservation:
         # First get() returns session for parser selection, second for preservation check
         manager.session_manager.get.return_value = session
 
-        with patch("gobby.sessions.lifecycle.ClaudeTranscriptParser") as MockParser:
+        with patch("gobby.sessions.transcript_processing.ClaudeTranscriptParser") as MockParser:
             # Parser returns messages with no usage
             msg = MagicMock()
             msg.model = None
@@ -1528,7 +1552,7 @@ class TestProcessSessionTranscriptTokenPreservation:
 
         manager.session_manager.get.return_value = session
 
-        with patch("gobby.sessions.lifecycle.ClaudeTranscriptParser") as MockParser:
+        with patch("gobby.sessions.transcript_processing.ClaudeTranscriptParser") as MockParser:
             # spec=ParsedMessage so the lifecycle path's ParsedToolEvent filter
             # doesn't drop the mock.
             msg = MagicMock(spec=ParsedMessage)
@@ -1561,7 +1585,7 @@ class TestProcessSessionTranscriptTokenPreservation:
         msg.model = "claude-sonnet-4-6"
         msg.usage = TokenUsage(input_tokens=8000, output_tokens=3000)
 
-        with patch("gobby.sessions.lifecycle.ClaudeTranscriptParser") as MockParser:
+        with patch("gobby.sessions.transcript_processing.ClaudeTranscriptParser") as MockParser:
             MockParser.return_value.parse_lines.return_value = [msg]
             await manager._process_session_transcript("s1", str(transcript_path))
 
@@ -1609,7 +1633,7 @@ class TestProcessSessionTranscriptTokenPreservation:
         message.raw_json = {}
         message.usage = TokenUsage(input_tokens=125_071, output_tokens=1)
 
-        with patch("gobby.sessions.lifecycle.ClaudeTranscriptParser") as parser:
+        with patch("gobby.sessions.transcript_processing.ClaudeTranscriptParser") as parser:
             parser.return_value.parse_lines.return_value = [message]
             await manager._process_session_transcript("s1", str(transcript_path))
 
@@ -1641,7 +1665,7 @@ class TestProcessPendingTranscriptsArchive:
         with (
             patch.object(manager, "_process_session_transcript", new_callable=AsyncMock),
             patch(
-                "gobby.sessions.lifecycle.backup_transcript",
+                "gobby.sessions.transcript_processing.backup_transcript",
                 return_value="/archive/path.gz",
             ),
         ):
@@ -1663,7 +1687,7 @@ class TestProcessPendingTranscriptsArchive:
         with (
             patch.object(manager, "_process_session_transcript", new_callable=AsyncMock),
             patch(
-                "gobby.sessions.lifecycle.backup_transcript",
+                "gobby.sessions.transcript_processing.backup_transcript",
                 return_value=None,
             ),
         ):
@@ -1685,7 +1709,7 @@ class TestProcessPendingTranscriptsArchive:
         with (
             patch.object(manager, "_process_session_transcript", new_callable=AsyncMock),
             patch(
-                "gobby.sessions.lifecycle.backup_transcript",
+                "gobby.sessions.transcript_processing.backup_transcript",
                 side_effect=Exception("Backup failed"),
             ),
         ):
