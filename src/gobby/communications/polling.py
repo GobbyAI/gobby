@@ -112,11 +112,10 @@ class PollingManager:
             except Exception as e:
                 consecutive_failures += 1
                 sleep_duration = min(base_backoff * (2 ** (consecutive_failures - 1)), max_backoff)
-                logger.error(
+                logger.exception(
                     "Error polling channel %r: %s (backing off %ss)",
                     channel_name,
                     e,
                     sleep_duration,
-                    exc_info=True,
                 )
                 await asyncio.sleep(sleep_duration)

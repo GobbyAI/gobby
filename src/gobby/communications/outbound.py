@@ -99,12 +99,12 @@ class OutboundCommunications:
         except Exception as e:
             message.status = "failed"
             message.error = str(e)
-            logger.error("Failed to send message to %r: %s", channel_name, e, exc_info=True)
+            logger.exception("Failed to send message to %r: %s", channel_name, e)
 
         try:
             await asyncio.to_thread(manager._store.create_message, message)
         except Exception as e:
-            logger.error("Failed to store outbound message: %s", e, exc_info=True)
+            logger.exception("Failed to store outbound message: %s", e)
 
         if manager.event_callback is not None:
             try:
@@ -183,13 +183,13 @@ class OutboundCommunications:
         except Exception as e:
             message.status = "failed"
             message.error = str(e)
-            logger.error("Failed to send attachment to %r: %s", channel_name, e, exc_info=True)
+            logger.exception("Failed to send attachment to %r: %s", channel_name, e)
 
         try:
             await asyncio.to_thread(manager._store.create_message, message)
             await asyncio.to_thread(manager._store.create_attachment, attachment)
         except Exception as e:
-            logger.error("Failed to store outbound attachment: %s", e, exc_info=True)
+            logger.exception("Failed to store outbound attachment: %s", e)
 
         if manager.event_callback is not None:
             try:
@@ -265,14 +265,12 @@ class OutboundCommunications:
         except Exception as exc:
             message.status = "failed"
             message.error = str(exc)
-            logger.error(
-                "Failed to send proactive message to %r: %s", channel_name, exc, exc_info=True
-            )
+            logger.exception("Failed to send proactive message to %r: %s", channel_name, exc)
 
         try:
             await asyncio.to_thread(manager._store.create_message, message)
         except Exception as exc:
-            logger.error("Failed to store proactive outbound message: %s", exc, exc_info=True)
+            logger.exception("Failed to store proactive outbound message: %s", exc)
 
         if manager.event_callback is not None:
             try:

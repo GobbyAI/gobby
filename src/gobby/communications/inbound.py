@@ -53,7 +53,7 @@ class InboundCommunications:
                                 message.identity_id,
                             )
                         except Exception as e:
-                            logger.error("Failed to handle reaction: %s", e, exc_info=True)
+                            logger.exception("Failed to handle reaction: %s", e)
                     continue
 
                 if message.identity_id:
@@ -81,7 +81,7 @@ class InboundCommunications:
 
                 stored.append(await asyncio.to_thread(manager._store.create_message, message))
             except Exception as e:
-                logger.error("Failed to process inbound message: %s", e, exc_info=True)
+                logger.exception("Failed to process inbound message: %s", e)
 
         if manager.event_callback is not None:
             for msg in stored:

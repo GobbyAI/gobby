@@ -59,7 +59,7 @@ class AdapterLifecycleOperations:
                     channel.channel_type,
                 )
             except Exception as e:
-                logger.error("Failed to initialize channel %r: %s", channel.name, e, exc_info=True)
+                logger.exception("Failed to initialize channel %r: %s", channel.name, e)
         logger.info("CommunicationsManager started (%s channels active)", len(manager._adapters))
 
     async def _migrate_plaintext_webhook_secrets(self) -> None:
@@ -98,7 +98,7 @@ class AdapterLifecycleOperations:
             try:
                 await adapter.shutdown()
             except Exception as e:
-                logger.error("Error shutting down channel %r: %s", name, e, exc_info=True)
+                logger.exception("Error shutting down channel %r: %s", name, e)
         manager._adapters.clear()
         manager._channel_by_name.clear()
         manager._channel_init_errors.clear()
@@ -181,7 +181,7 @@ class AdapterLifecycleOperations:
         try:
             await adapter.shutdown()
         except Exception as e:
-            logger.error("Error shutting down channel %r: %s", name, e, exc_info=True)
+            logger.exception("Error shutting down channel %r: %s", name, e)
 
     async def add_channel(
         self,
@@ -278,7 +278,7 @@ class AdapterLifecycleOperations:
             await asyncio.to_thread(manager._store.create_channel, channel)
             logger.info("Auto-created gobby_chat channel for unified routing")
         except Exception as e:
-            logger.error("Failed to auto-create gobby_chat channel: %s", e, exc_info=True)
+            logger.exception("Failed to auto-create gobby_chat channel: %s", e)
 
     def set_websocket_broadcast(self, broadcast: Any) -> None:
         """Wire the WebSocket broadcast callable into the gobby_chat adapter."""
