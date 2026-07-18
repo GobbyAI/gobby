@@ -66,7 +66,7 @@ def test_build_smoke_agent_runtime_mappings() -> None:
         "plan-adversary-taskless": ("codex", "gpt-5.6-sol", "xhigh"),
         "plan-enhancer": ("codex", "gpt-5.6-sol", "xhigh"),
         "plan-enhancer-taskless": ("codex", "gpt-5.6-sol", "xhigh"),
-        "planner": ("claude", "fable", "high"),
+        "planner": ("claude", "fable", "xhigh"),
         "product-manager": ("codex", "gpt-5.6-sol", "xhigh"),
         "researcher": ("codex", "gpt-5.6-sol", "xhigh"),
         "merge-orchestrator": ("codex", "gpt-5.6-sol", "xhigh"),

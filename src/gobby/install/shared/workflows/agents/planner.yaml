@@ -9,7 +9,7 @@ priority: 20
 surfaces: [spawn, persona]
 provider: claude
 model: fable
-reasoning_effort: high
+reasoning_effort: xhigh
 isolation: none
 blocked_mcp_tools:
   - "gobby-agents:kill_agent"
