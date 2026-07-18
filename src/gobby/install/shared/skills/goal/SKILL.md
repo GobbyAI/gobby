@@ -1,7 +1,7 @@
 ---
 name: goal
 description: "Author and execute durable goal loops: intake -> draft .gobby/goals/<slug>.md -> confirm -> execute in solo or swarm mode against an anchor task. Use for /gobby goal, goal run/resume/status, autonomous epic burn-down, and compact-and-continue loops."
-version: "1.1.0"
+version: "1.1.1"
 category: core
 triggers: goal, goal loop, autonomous loop, burn down epic, run until done
 metadata:
@@ -136,8 +136,9 @@ On approval, set `status: active` and ask where it runs:
 3. **Spawned agent** — `gobby-agents:spawn_agent` with a prompt naming the
    goal file and anchor; the spawned session runs `goal run` itself. The
    prompt must end by instructing the agent to call
-   `gobby-agents:end_agent_run` after Completion, or its run never reaches
-   terminal status.
+   `gobby-agents:end_agent_run` after Completion — without it the run sits
+   `running` until the daemon's idle watchdog reprompts it and eventually
+   fails it, many minutes later and with the wrong terminal status.
 4. **Taskmaster** (`--taskmaster`) — for swarm goals:
    `gobby-agents:spawn_agent` with `agent="goal-taskmaster"` and a prompt
    naming the goal file and anchor. The taskmaster template loads this
@@ -188,8 +189,11 @@ leaves.
    assigned agent or category defaults; override the model only when the goal
    doc names one. Every worker prompt must end by instructing the worker to
    call `gobby-agents:end_agent_run` once its leaf is closed — spawned
-   interactive CLI sessions idle at their prompt afterward and never reach
-   terminal run status on their own.
+   interactive CLI sessions idle at their prompt afterward, holding their
+   slot until the idle watchdog reprompts and then fails the run minutes
+   later. Explicit end_agent_run frees the slot immediately, records
+   `completed` instead of a watchdog failure, and avoids reprompting a
+   finished worker into unwanted extra work.
 5. **Harvest** — verify by task state; run status is advisory. For each
    dispatched leaf, `get_task` must show it closed and the work landed;
    use `get_agent_result` on runs that reached terminal status. A worker
