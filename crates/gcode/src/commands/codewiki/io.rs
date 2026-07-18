@@ -1,6 +1,7 @@
 use super::*;
 use gobby_core::codewiki_contract::{AI_FALLBACK_KEY, AI_GENERATION_STATUS_KEY, AI_ROUTE_KEY};
 use gobby_core::config::AiRouting;
+use std::io::Write;
 
 pub fn write_doc_set(out_dir: &Path, docs: &[(String, String)]) -> anyhow::Result<()> {
     std::fs::create_dir_all(out_dir)?;
@@ -747,11 +748,24 @@ pub(crate) fn scoped_module_doc(doc_path: &str) -> Option<&str> {
 }
 
 pub(crate) fn write_doc(out_dir: &Path, relative_path: &str, content: &str) -> anyhow::Result<()> {
+    write_doc_before_persist(out_dir, relative_path, content, |_, _| Ok(()))
+}
+
+pub(super) fn write_doc_before_persist<F>(
+    out_dir: &Path,
+    relative_path: &str,
+    content: &str,
+    before_persist: F,
+) -> anyhow::Result<()>
+where
+    F: FnOnce(&Path, &Path) -> anyhow::Result<()>,
+{
     let target = safe_doc_path(out_dir, relative_path)?;
     reject_symlinked_doc_path(out_dir, &target)?;
-    if let Some(parent) = target.parent() {
-        std::fs::create_dir_all(parent)?;
-    }
+    let parent = target.parent().ok_or_else(|| {
+        anyhow::anyhow!("codewiki document path has no parent: {}", target.display())
+    })?;
+    std::fs::create_dir_all(parent)?;
     let content = if Path::new(relative_path)
         .extension()
         .and_then(|extension| extension.to_str())
@@ -761,7 +775,13 @@ pub(crate) fn write_doc(out_dir: &Path, relative_path: &str, content: &str) -> a
     } else {
         content.to_string()
     };
-    std::fs::write(target, content)?;
+
+    let mut temporary = tempfile::NamedTempFile::new_in(parent)?;
+    temporary.write_all(content.as_bytes())?;
+    temporary.as_file_mut().flush()?;
+    before_persist(temporary.path(), &target)?;
+    reject_symlinked_doc_path(out_dir, &target)?;
+    temporary.persist(&target).map_err(|error| error.error)?;
     Ok(())
 }
 

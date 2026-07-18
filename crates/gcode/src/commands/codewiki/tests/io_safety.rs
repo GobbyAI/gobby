@@ -77,3 +77,58 @@ fn write_doc_normalizes_markdown_only() {
     assert_eq!(markdown, "# Page\n\nBody\n");
     assert_eq!(json, "{\n\n\n  \"ok\": true\n}\n");
 }
+
+#[test]
+fn interrupted_atomic_write_preserves_valid_checkpoint_and_cleans_temporary_file() {
+    let project = tempfile::tempdir().expect("project tempdir");
+    let out_dir = project.path().join("codewiki");
+    let relative_path = "_meta/codewiki.json";
+    let old_checkpoint = "{\"generation\":\"old\"}\n";
+    let new_checkpoint = "{\"generation\":\"new\"}\n";
+
+    write_doc(&out_dir, relative_path, old_checkpoint).expect("write old checkpoint");
+
+    let error = write_doc_before_persist(
+        &out_dir,
+        relative_path,
+        new_checkpoint,
+        |temporary_path, target| {
+            let visible = std::fs::read_to_string(target).expect("read visible checkpoint");
+            let staged = std::fs::read_to_string(temporary_path).expect("read staged checkpoint");
+            serde_json::from_str::<serde_json::Value>(&visible).expect("visible checkpoint JSON");
+            serde_json::from_str::<serde_json::Value>(&staged).expect("staged checkpoint JSON");
+            assert_eq!(visible, old_checkpoint);
+            assert_eq!(staged, new_checkpoint);
+            anyhow::bail!("injected interruption before persist")
+        },
+    )
+    .expect_err("injected interruption should abort replacement");
+
+    assert!(
+        error
+            .to_string()
+            .contains("injected interruption before persist")
+    );
+    let visible = std::fs::read_to_string(out_dir.join(relative_path))
+        .expect("read checkpoint after interruption");
+    serde_json::from_str::<serde_json::Value>(&visible).expect("checkpoint remains valid JSON");
+    assert_eq!(visible, old_checkpoint);
+
+    let remaining_files = std::fs::read_dir(out_dir.join("_meta"))
+        .expect("read metadata directory")
+        .map(|entry| {
+            entry
+                .expect("read metadata entry")
+                .file_name()
+                .to_string_lossy()
+                .into_owned()
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(remaining_files, vec!["codewiki.json"]);
+
+    write_doc(&out_dir, relative_path, new_checkpoint).expect("replace checkpoint");
+    let visible =
+        std::fs::read_to_string(out_dir.join(relative_path)).expect("read replaced checkpoint");
+    serde_json::from_str::<serde_json::Value>(&visible).expect("replacement is valid JSON");
+    assert_eq!(visible, new_checkpoint);
+}
