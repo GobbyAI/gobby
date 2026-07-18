@@ -158,7 +158,7 @@ async def _execute_pipeline_background(
         # Expected — pipeline paused for approval, not an error
         pass
     except Exception as e:
-        logger.error("Background pipeline '%s' failed: %s", pipeline_name, e, exc_info=True)
+        logger.exception("Background pipeline '%s' failed: %s", pipeline_name, e)
         # Ensure execution is marked failed even if executor.execute didn't catch it
         try:
             from gobby.workflows.pipeline_state import ExecutionStatus, StepStatus
@@ -174,7 +174,7 @@ async def _execute_pipeline_background(
                             error=str(e),
                         )
             except Exception:
-                logger.error("Failed to clean up stuck steps", exc_info=True)
+                logger.exception("Failed to clean up stuck steps")
 
             executor.execution_manager.update_execution_status(
                 execution_id=execution_id,
@@ -182,7 +182,7 @@ async def _execute_pipeline_background(
                 outputs_json=json.dumps({"error": str(e)}),
             )
         except Exception:
-            logger.error("Failed to mark execution as failed", exc_info=True)
+            logger.exception("Failed to mark execution as failed")
 
 
 async def cancel_pipeline(

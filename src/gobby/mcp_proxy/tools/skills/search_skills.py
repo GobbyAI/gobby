@@ -189,5 +189,5 @@ def register(ctx: SkillsContext, registry: InternalToolRegistry) -> None:
                 "results": result_list,
             }
         except Exception as e:
-            logger.error("search_skills failed for query=%r: %s", query, e, exc_info=True)
+            logger.exception("search_skills failed for query=%r: %s", query, e)
             return {"success": False, "error": str(e)}

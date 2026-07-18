@@ -160,7 +160,7 @@ def create_clone_creation_registry(ctx: CloneRegistryContext) -> InternalToolReg
                         clone_path,
                         exc_info=True,
                     )
-            logger.error("Error creating clone: %s", e, exc_info=True)
+            logger.exception("Error creating clone: %s", e)
             return {"success": False, "error": str(e)}
 
     async def create_clone(

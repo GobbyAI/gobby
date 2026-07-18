@@ -476,7 +476,7 @@ async def spawn_agent_impl(
         try:
             isolation_ctx = await handler.prepare_environment(spawn_config)
         except Exception as e:
-            logger.error("Failed to prepare environment: %s", e, exc_info=True)
+            logger.exception("Failed to prepare environment: %s", e)
             try:
                 await handler.cleanup_environment(spawn_config)
             except Exception as cleanup_err:
@@ -881,7 +881,7 @@ async def spawn_agent_impl(
                     agent_body.steps[0].name,
                 )
             except Exception as e:
-                logger.error("Failed to create step workflow instance: %s", e, exc_info=True)
+                logger.exception("Failed to create step workflow instance: %s", e)
 
         # Post-spawn health check: verify tmux session is still alive.
         if spawn_result.terminal_type == "tmux" and tmux_session_name:

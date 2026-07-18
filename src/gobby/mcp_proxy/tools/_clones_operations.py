@@ -76,7 +76,7 @@ def create_clone_operations_registry(ctx: CloneRegistryContext) -> InternalToolR
         try:
             ctx.clone_storage.update(clone_id, status=CloneStatus.DELETING.value)
         except Exception as e:
-            logger.error("Failed to mark clone %s as deleting: %s", clone_id, e, exc_info=True)
+            logger.exception("Failed to mark clone %s as deleting: %s", clone_id, e)
             return {"success": False, "error": f"Failed to mark clone deleting: {e}"}
 
         delete_error: str | None
