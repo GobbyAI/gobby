@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { render, screen, waitFor } from "@testing-library/react";
+import { render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { ProviderPicker } from "../ProviderPicker";
 import { clearProviderModelCache } from "../../../lib/providerModels";
@@ -40,6 +40,58 @@ function buildCatalog(qwenModels: { value: string; label: string }[] = []) {
       },
     ],
   };
+}
+
+function buildLocalCatalog() {
+  return {
+    providers: [
+      ...buildCatalog().providers,
+      {
+        provider: "local:lm-studio",
+        execution_provider: "codex",
+        available: true,
+        models: [
+          {
+            value: "local:lm-studio/qwen3-coder",
+            label: "Qwen3 Coder",
+          },
+        ],
+        source: "live",
+        display_name: "LM Studio",
+        supports_web_chat: true,
+      },
+      {
+        provider: "local:ollama",
+        execution_provider: "codex",
+        available: true,
+        models: [
+          {
+            value: "local:ollama/llama3.2",
+            label: "Llama 3.2",
+          },
+        ],
+        source: "live",
+        display_name: "Ollama",
+        supports_web_chat: true,
+      },
+      {
+        provider: "local:offline",
+        execution_provider: "codex",
+        available: false,
+        models: [],
+        source: "failed",
+        display_name: "Offline Local",
+        supports_web_chat: false,
+        unavailable_reason: "Local endpoint is unreachable",
+      },
+    ],
+  };
+}
+
+function getProviderHeader(displayName: string) {
+  const header = screen.getByText(displayName).parentElement;
+  if (!header) throw new Error(`Missing provider header for ${displayName}`);
+  return within(header);
 }
 
 describe("ProviderPicker", () => {
@@ -187,43 +239,147 @@ describe("ProviderPicker", () => {
     expect(onSwitchProvider).toHaveBeenCalledWith("codex");
   });
 
-  it("sends Codex provider with local selector when picking a mirrored local model", async () => {
+  it("renders local catalog groups and routes selections through their execution provider", async () => {
+    const onSelect = vi.fn();
+    global.fetch = vi.fn().mockResolvedValue({
+      ok: true,
+      json: async () => buildLocalCatalog(),
+    }) as typeof fetch;
+
+    render(
+      <ProviderPicker
+        open={true}
+        onClose={vi.fn()}
+        currentProvider="claude"
+        currentModel="opus"
+        availableProviders={["claude", "codex"]}
+        onModelChange={vi.fn()}
+        onProviderChange={vi.fn()}
+        onSelect={onSelect}
+        hasMessages={false}
+      />,
+    );
+
+    expect(await screen.findByText("LM Studio")).toBeTruthy();
+    expect(screen.getByText("Ollama")).toBeTruthy();
+    expect(screen.getByText("Offline Local")).toBeTruthy();
+    expect(screen.getByText("Local endpoint is unreachable")).toBeTruthy();
+
+    const disabledDefaults = screen
+      .getAllByRole("button", { name: "Default" })
+      .filter((button) => button.hasAttribute("disabled"));
+    expect(disabledDefaults).toHaveLength(1);
+    await userEvent.click(disabledDefaults[0]);
+    expect(onSelect).not.toHaveBeenCalled();
+
+    await userEvent.click(screen.getByRole("button", { name: "Qwen3 Coder" }));
+
+    expect(onSelect).toHaveBeenCalledWith(
+      "codex",
+      "local:lm-studio/qwen3-coder",
+    );
+  });
+
+  it("maps an exact Codex local selector only to its owning catalog group", async () => {
+    global.fetch = vi.fn().mockResolvedValue({
+      ok: true,
+      json: async () => buildLocalCatalog(),
+    }) as typeof fetch;
+
+    render(
+      <ProviderPicker
+        open={true}
+        onClose={vi.fn()}
+        currentProvider="codex"
+        currentModel="local:lm-studio/qwen3-coder"
+        availableProviders={["claude", "codex"]}
+        onModelChange={vi.fn()}
+        onProviderChange={vi.fn()}
+        hasMessages={false}
+      />,
+    );
+
+    await screen.findByText("LM Studio");
+
+    expect(getProviderHeader("LM Studio").getByText("active")).toBeTruthy();
+    expect(getProviderHeader("Codex").queryByText("active")).toBeNull();
+    expect(getProviderHeader("Ollama").queryByText("active")).toBeNull();
+    expect(
+      screen.getByRole("button", { name: "Qwen3 Coder●" }),
+    ).toBeTruthy();
+    expect(screen.getByRole("button", { name: "Llama 3.2" })).toBeTruthy();
+    expect(screen.getByRole("button", { name: "GPT 5.4" })).toBeTruthy();
+  });
+
+  it("switches local models directly when the execution provider is unchanged", async () => {
     const onModelChange = vi.fn();
     const onProviderChange = vi.fn();
     const onSwitchProvider = vi.fn();
     global.fetch = vi.fn().mockResolvedValue({
       ok: true,
-      json: async () => ({
-        providers: [
-          ...buildCatalog().providers.filter(
-            (entry) => entry.provider !== "codex",
-          ),
-          {
-            provider: "codex",
-            available: true,
-            models: [
-              {
-                value: "local:ollama-cloud/ollama/qwen3-coder",
-                label: "Ollama: Qwen3 Coder",
-              },
-            ],
-            source: "live",
-          },
-          {
-            provider: "local:ollama-cloud",
-            available: true,
-            models: [
-              {
-                value: "local:ollama-cloud/ollama/qwen3-coder",
-                label: "Qwen3 Coder",
-              },
-            ],
-            source: "live",
-            display_name: "Local: Ollama",
-            supports_web_chat: false,
-          },
-        ],
-      }),
+      json: async () => buildLocalCatalog(),
+    }) as typeof fetch;
+
+    render(
+      <ProviderPicker
+        open={true}
+        onClose={vi.fn()}
+        currentProvider="codex"
+        currentModel="gpt-5.4"
+        availableProviders={["claude", "codex"]}
+        onModelChange={onModelChange}
+        onProviderChange={onProviderChange}
+        onSwitchProvider={onSwitchProvider}
+        hasMessages={true}
+      />,
+    );
+
+    await userEvent.click(
+      await screen.findByRole("button", { name: "Qwen3 Coder" }),
+    );
+
+    expect(screen.queryByText("Switch provider?")).toBeNull();
+    expect(onModelChange).toHaveBeenCalledWith("local:lm-studio/qwen3-coder");
+    expect(onProviderChange).not.toHaveBeenCalled();
+    expect(onSwitchProvider).not.toHaveBeenCalled();
+  });
+
+  it("keeps native same-provider model changes in the current conversation", async () => {
+    const onModelChange = vi.fn();
+    const onProviderChange = vi.fn();
+    const onSwitchProvider = vi.fn();
+
+    render(
+      <ProviderPicker
+        open={true}
+        onClose={vi.fn()}
+        currentProvider="codex"
+        currentModel="gpt-5.4"
+        availableProviders={["claude", "codex"]}
+        onModelChange={onModelChange}
+        onProviderChange={onProviderChange}
+        onSwitchProvider={onSwitchProvider}
+        hasMessages={true}
+      />,
+    );
+
+    await userEvent.click(
+      await screen.findByRole("button", { name: "GPT 5.3 Codex" }),
+    );
+
+    expect(screen.queryByText("Switch provider?")).toBeNull();
+    expect(onModelChange).toHaveBeenCalledWith("gpt-5.3-codex");
+    expect(onProviderChange).not.toHaveBeenCalled();
+    expect(onSwitchProvider).not.toHaveBeenCalled();
+  });
+
+  it("confirms a real execution-provider change before selecting a local model", async () => {
+    const onModelChange = vi.fn();
+    const onProviderChange = vi.fn();
+    const onSwitchProvider = vi.fn();
+    global.fetch = vi.fn().mockResolvedValue({
+      ok: true,
+      json: async () => buildLocalCatalog(),
     }) as typeof fetch;
 
     render(
@@ -236,19 +392,22 @@ describe("ProviderPicker", () => {
         onModelChange={onModelChange}
         onProviderChange={onProviderChange}
         onSwitchProvider={onSwitchProvider}
-        hasMessages={false}
+        hasMessages={true}
       />,
     );
 
-    await userEvent.click(await screen.findByText("Ollama: Qwen3 Coder"));
+    await userEvent.click(
+      await screen.findByRole("button", { name: "Qwen3 Coder" }),
+    );
+    expect(screen.getByText("Switch provider?")).toBeTruthy();
+
+    await userEvent.click(screen.getByRole("button", { name: "Switch" }));
 
     expect(onProviderChange).toHaveBeenCalledWith("codex");
     expect(onModelChange).toHaveBeenCalledWith(
-      "local:ollama-cloud/ollama/qwen3-coder",
+      "local:lm-studio/qwen3-coder",
     );
     expect(onSwitchProvider).toHaveBeenCalledWith("codex");
-    expect(screen.getByText("Local: Ollama")).toBeTruthy();
-    expect(screen.getByText("unavailable")).toBeTruthy();
   });
 
   it("falls back to a default model entry for Qwen when the catalog is empty", async () => {

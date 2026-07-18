@@ -28,6 +28,28 @@ function getVisibleModelsForProvider(
   return [{ value: currentModel || "default", label: currentModel || "Default" }];
 }
 
+function getExecutionProvider(
+  entry: ProviderModelEntry | undefined,
+  catalogProvider: string,
+): string {
+  return entry?.execution_provider?.trim() || catalogProvider;
+}
+
+function getActiveCatalogProvider(
+  catalog: ProviderModelEntry[],
+  executionProvider: string,
+  currentModel: string,
+): string {
+  const normalizedExecutionProvider = executionProvider.trim().toLowerCase();
+  const owner = catalog.find(
+    (entry) =>
+      getExecutionProvider(entry, entry.provider).toLowerCase() ===
+        normalizedExecutionProvider &&
+      entry.models.some((model) => model.value === currentModel),
+  );
+  return (owner?.provider ?? executionProvider).trim().toLowerCase();
+}
+
 interface ProviderPickerProps {
   open: boolean;
   onClose: () => void;
@@ -76,6 +98,11 @@ export function ProviderPicker({
   }, [open]);
 
   const effectiveProvider = currentProvider || "claude";
+  const activeCatalogProvider = getActiveCatalogProvider(
+    catalog,
+    effectiveProvider,
+    currentModel,
+  );
   const catalogByProvider = new Map(
     catalog.map((entry) => [entry.provider.toLowerCase(), entry]),
   );
@@ -216,8 +243,8 @@ export function ProviderPicker({
                     : null;
                 const isDisabled = Boolean(unavailableReason);
                 const isActive =
-                  provider === effectiveProvider ||
-                  (!currentProvider && provider === "claude");
+                  provider.toLowerCase() === activeCatalogProvider;
+                const executionProvider = getExecutionProvider(entry, provider);
                 const displayName = getProviderDisplayNameFromEntry(
                   entry,
                   provider,
@@ -268,7 +295,7 @@ export function ProviderPicker({
                           )}
                           style={{ width: "calc(100% - 8px)" }}
                           disabled={isDisabled}
-                          onClick={() => handleSelect(provider, model.value)}
+                          onClick={() => handleSelect(executionProvider, model.value)}
                         >
                           {model.label}
                           {isSelected && (
