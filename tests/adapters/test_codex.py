@@ -444,6 +444,49 @@ class TestCodexAppServerClientStart:
 
         assert client.state == CodexConnectionState.DISCONNECTED
 
+    @pytest.mark.asyncio
+    async def test_start_failure_includes_bounded_stderr_without_error_log(
+        self,
+        caplog: pytest.LogCaptureFixture,
+    ) -> None:
+        """The backend receives child diagnostics without duplicate lower-layer errors."""
+        client = CodexAppServerClient()
+        process = MagicMock()
+        process.stdin = MagicMock()
+        process.stdout = MagicMock()
+        process.stderr = MagicMock()
+        process.wait.return_value = 1
+
+        with (
+            patch(
+                "gobby.adapters.codex_impl.client.subprocess.Popen",
+                return_value=process,
+            ),
+            patch.object(client, "_read_loop", new=AsyncMock()),
+            patch.object(
+                client,
+                "_send_request",
+                new=AsyncMock(side_effect=RuntimeError("initialize failed")),
+            ),
+            patch.object(client._stderr_drain, "start_text"),
+            patch.object(
+                client._stderr_drain,
+                "wait_finished",
+                new=AsyncMock(),
+            ) as wait_finished,
+            patch.object(
+                client._stderr_drain,
+                "compact_text",
+                return_value="fatal startup detail",
+            ),
+            caplog.at_level(logging.DEBUG, logger="gobby.adapters.codex_impl.client_lifecycle"),
+        ):
+            with pytest.raises(RuntimeError, match="stderr: fatal startup detail"):
+                await client.start()
+
+        wait_finished.assert_awaited_once_with()
+        assert not [record for record in caplog.records if record.levelno >= logging.ERROR]
+
 
 class TestCodexAppServerClientStop:
     """Tests for CodexAppServerClient.stop()."""

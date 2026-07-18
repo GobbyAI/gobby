@@ -285,6 +285,29 @@ def test_bearer_and_alias_accepted(temp_db: HubDatabase, tmp_path: Path) -> None
 class TestLifespan:
     """Tests for FastAPI lifespan management."""
 
+    def test_lifespan_does_not_start_web_chat_runtime(
+        self,
+        session_storage: SessionManager,
+    ) -> None:
+        """Subprocess startup is owned by the runner after the HTTP bind."""
+        runtime_manager = SimpleNamespace(start=AsyncMock(), stop=AsyncMock())
+        services = ServiceContainer(
+            config=None,
+            database=session_storage.db,
+            session_manager=session_storage,
+            task_manager=MagicMock(),
+            web_chat_runtime_manager=runtime_manager,
+        )
+        server = HTTPServer(services=services, port=60887, test_mode=True)
+
+        assert server._running is False
+        with TestClient(server.app):
+            assert server._running is True
+            runtime_manager.start.assert_not_awaited()
+
+        assert server._running is False
+        runtime_manager.stop.assert_awaited_once_with()
+
     def test_lifespan_sets_running_flag(self, session_storage: SessionManager) -> None:
         """Test that lifespan sets _running flag."""
         services = ServiceContainer(

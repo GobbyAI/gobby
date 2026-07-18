@@ -235,12 +235,6 @@ def create_lifespan(
         start_vision_temp_cleanup_task(app)
 
         runtime_manager = getattr(server.services, "web_chat_runtime_manager", None)
-        if runtime_manager is not None:
-            try:
-                await runtime_manager.start(background=True)
-                logger.debug("Web chat runtime manager startup scheduled")
-            except Exception as e:
-                logger.warning("Failed to start web chat runtime manager: %s", e)
 
         async def _sync_existing_codex_sessions() -> None:
             if not getattr(app.state, "codex_adapter", None):

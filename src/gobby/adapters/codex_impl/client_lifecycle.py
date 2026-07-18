@@ -80,9 +80,16 @@ async def start(client: CodexAppServerClient, subprocess_module: Any) -> None:
 
     except Exception as e:
         client._state = CodexConnectionState.ERROR
-        logger.exception("Failed to start Codex app-server: %s", e)
+        await client._stderr_drain.wait_finished()
+        stderr = client._stderr_drain.compact_text()
+        failure_detail = f"{e}; stderr: {stderr}" if stderr else str(e)
+        logger.debug(
+            "Failed to start Codex app-server: %s",
+            failure_detail,
+            exc_info=True,
+        )
         await stop(client)
-        raise RuntimeError(f"Failed to start Codex app-server: {e}") from e
+        raise RuntimeError(f"Failed to start Codex app-server: {failure_detail}") from e
 
 
 async def stop(client: CodexAppServerClient) -> None:

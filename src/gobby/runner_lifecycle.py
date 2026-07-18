@@ -87,6 +87,18 @@ def _start_periodic_tasks(runner: GobbyRunner, **loops: Any) -> None:
     start_periodic_tasks(runner, tracker=_startup_tracker, **loops)
 
 
+async def _start_web_chat_runtime(runner: GobbyRunner) -> None:
+    """Start daemon-owned chat subprocesses after the HTTP socket is ready."""
+    runtime_manager = getattr(runner.http_server.services, "web_chat_runtime_manager", None)
+    if runtime_manager is None:
+        return
+    try:
+        await runtime_manager.start(background=True)
+        logger.debug("Web chat runtime manager startup scheduled")
+    except Exception as e:
+        logger.warning("Failed to start web chat runtime manager: %s", e)
+
+
 async def _serve_http(server: uvicorn.Server) -> BaseException | None:
     """Run uvicorn and return failures so its task cannot terminate the event loop."""
     try:
@@ -210,6 +222,7 @@ async def run_daemon(runner: GobbyRunner, pid_claim: PidFileClaim | None = None)
 
             if server.started and not runner._shutdown_requested:
                 clear_active_shutdown_intent()
+                await _start_web_chat_runtime(runner)
                 runner._subsystem_init_task = asyncio.create_task(
                     _init_subsystems(runner, rebuild_vector_store),
                     name="subsystem-init",

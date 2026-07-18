@@ -2893,6 +2893,53 @@ class TestShutdownLoop:
         )
 
     @pytest.mark.asyncio
+    async def test_web_chat_runtime_starts_after_http_bind(self, mock_config) -> None:
+        """Daemon-owned chat subprocesses start only after HTTP accepts connections."""
+        patches = create_base_patches(mock_config=mock_config)
+
+        with ExitStack() as stack:
+            [stack.enter_context(p) for p in patches]
+            runner = self._minimal_runner(mock_config)
+            runtime_started = asyncio.Event()
+
+            server = MagicMock()
+            server.started = False
+
+            async def serve() -> None:
+                assert runner.http_server.services.web_chat_runtime_manager.start.await_count == 0
+                server.started = True
+                await runtime_started.wait()
+                runner._shutdown_requested = True
+
+            async def start_runtime(*, background: bool) -> None:
+                assert background is True
+                assert server.started is True
+                runtime_started.set()
+
+            runtime_manager = SimpleNamespace(
+                start=AsyncMock(side_effect=start_runtime),
+                stop=AsyncMock(),
+            )
+            runner.http_server.services.web_chat_runtime_manager = runtime_manager
+            server.serve = AsyncMock(side_effect=serve)
+
+            stack.enter_context(patch("uvicorn.Config"))
+            stack.enter_context(patch("uvicorn.Server", return_value=server))
+            stack.enter_context(patch("gobby.runner_maintenance.setup_signal_handlers"))
+            stack.enter_context(patch("gobby.runner_lifecycle._init_subsystems", new=AsyncMock()))
+            stack.enter_context(patch("gobby.runner_lifecycle._start_periodic_tasks"))
+            stack.enter_context(
+                patch("gobby.runner_lifecycle.shutdown_daemon_services", new=AsyncMock())
+            )
+
+            await asyncio.wait_for(
+                runner_lifecycle.run_daemon(runner, pid_claim=MagicMock()),
+                timeout=1.0,
+            )
+
+            runtime_manager.start.assert_awaited_once_with(background=True)
+
+    @pytest.mark.asyncio
     async def test_run_waits_for_shutdown_signal(self, mock_config):
         """Test that run waits for shutdown signal in the main loop."""
         mock_mcp_manager = AsyncMock()
