@@ -617,6 +617,7 @@ class ValidationResult:
     evidence_refs: tuple[str, ...] = ()
     evidence_complete: bool = True
     trace_summary: tuple[dict[str, object], ...] = ()
+    evidence_error: dict[str, object] | None = None
 
 
 def _coerce_blocking_reasons(value: Any) -> list[str]:
@@ -716,6 +717,7 @@ class TaskValidator:
         linked_commits: Sequence[str] = (),
         first_commits_page: Mapping[str, object] | None = None,
         manifest_count: int = 0,
+        diff_total_bytes: int = 0,
         static_evidence_loader: Callable[[], tuple[str, str | None]] | None = None,
     ) -> ValidationResult:
         """Validate through the grounded tool loop when linked diff metadata is available."""
@@ -747,6 +749,7 @@ class TaskValidator:
                     canonical_commits=linked_commits,
                     first_commits_page=first_commits_page,
                     manifest_count=manifest_count,
+                    diff_total_bytes=diff_total_bytes,
                 )
             except CapabilityUnavailableError as exc:
                 logger.info(
@@ -778,6 +781,7 @@ class TaskValidator:
                     evidence_refs=verdict.evidence_refs,
                     evidence_complete=verdict.evidence_complete,
                     trace_summary=verdict.trace_summary,
+                    evidence_error=verdict.evidence_error,
                 )
 
         if static_evidence_loader is not None:

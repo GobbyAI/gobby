@@ -870,6 +870,7 @@ async def test_pending_llm_result_with_success_feedback_is_not_promoted() -> Non
                     "Validation failed: could not parse response. "
                     "Verified all validation criteria are satisfied."
                 ),
+                evidence_error={"code": "verdict_protocol_error"},
             )
         )
     )
@@ -886,5 +887,9 @@ async def test_pending_llm_result_with_success_feedback_is_not_promoted() -> Non
     )
 
     assert result.can_close is False
-    assert result.extra == {"validation_status": "pending", "validation_fail_count": 1}
+    assert result.extra == {
+        "validation_status": "pending",
+        "validation_fail_count": 1,
+        "evidence_error": {"code": "verdict_protocol_error"},
+    }
     update_task.assert_not_called()

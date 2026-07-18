@@ -413,6 +413,7 @@ async def validate_leaf_task_with_llm(
     linked_commits: Sequence[str] = (),
     first_commits_page: Mapping[str, object] | None = None,
     manifest_count: int = 0,
+    diff_total_bytes: int = 0,
     static_evidence_loader: Callable[[], tuple[str, str | None]] | None = None,
 ) -> ValidationResult:
     """Run LLM validation on a leaf task.
@@ -489,6 +490,7 @@ async def validate_leaf_task_with_llm(
         linked_commits=linked_commits,
         first_commits_page=first_commits_page,
         manifest_count=manifest_count,
+        diff_total_bytes=diff_total_bytes,
         static_evidence_loader=static_evidence_loader,
     )
 
@@ -643,6 +645,8 @@ async def validate_leaf_task_with_llm(
             "validation_status": validation_status,
             "validation_fail_count": fail_count,
         }
+        if result.evidence_error is not None:
+            extra["evidence_error"] = result.evidence_error
         if escalated_now:
             from gobby.utils.session_context import get_current_session_id
 

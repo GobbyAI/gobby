@@ -7,6 +7,7 @@ from pathlib import Path
 
 import pytest
 
+from gobby.ai import BuiltinExecutionContext, BuiltinToolResult, BuiltinToolSpec
 from gobby.ai import _tool_chat_tools as tools
 from gobby.ai._tool_chat_contracts import ToolLoopLimits, ToolPolicy
 from gobby.ai._tool_chat_tools import (
@@ -36,6 +37,29 @@ def test_validate_policy_rejects_unknown_cli() -> None:
 def test_validate_policy_rejects_empty_tools() -> None:
     with pytest.raises(ToolPolicyError):
         validate_policy(ToolPolicy(cli="gcode", tools=()))
+
+
+def test_runtime_allows_builtin_only_policy() -> None:
+    async def handler(
+        arguments: dict[str, object], context: BuiltinExecutionContext
+    ) -> BuiltinToolResult:
+        del arguments, context
+        return BuiltinToolResult(payload={"ok": True})
+
+    runtime = ToolRuntime(
+        ToolPolicy(cli="gcode", tools=()),
+        project_path="/repo",
+        builtins=(
+            BuiltinToolSpec(
+                name="evidence",
+                description="Read validation evidence.",
+                input_schema={"type": "object"},
+                handler=handler,
+            ),
+        ),
+    )
+
+    assert [schema["function"]["name"] for schema in runtime.openai_schemas()] == ["evidence"]
 
 
 def test_validate_policy_rejects_mutator_without_allow_mutation() -> None:

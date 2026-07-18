@@ -165,19 +165,19 @@ def tool_name_for(cli: str, subcommand: str) -> str:
     return f"{cli}_{subcommand.replace('-', '_')}"
 
 
-def validate_policy(policy: ToolPolicy) -> None:
+def validate_policy(policy: ToolPolicy, *, allow_empty: bool = False) -> None:
     """Validate ``policy`` against the registry whitelist.
 
-    Raises :class:`ToolPolicyError` for an unknown CLI, an empty tool set, a
-    malformed subcommand token, any subcommand outside the CLI allowlist, or
-    — when ``allow_mutation`` is False — any subcommand that is not on the read
-    whitelist.
+    Raises :class:`ToolPolicyError` for an unknown CLI, an empty tool set unless
+    ``allow_empty`` is true, a malformed subcommand token, any subcommand outside
+    the CLI allowlist, or — when ``allow_mutation`` is False — any subcommand
+    that is not on the read whitelist.
     """
     if policy.cli not in _READONLY_BY_CLI:
         raise ToolPolicyError(
             f"Unknown tool CLI {policy.cli!r}; expected one of {sorted(_READONLY_BY_CLI)}."
         )
-    if not policy.tools:
+    if not policy.tools and not allow_empty:
         raise ToolPolicyError("Tool policy must expose at least one subcommand.")
     for subcommand in policy.tools:
         if not subcommand or any(ch in subcommand for ch in _SHELL_METACHARACTERS):
@@ -282,7 +282,7 @@ class ToolRuntime:
         limits: ToolLoopLimits | None = None,
         builtins: tuple[BuiltinToolSpec, ...] = (),
     ) -> None:
-        validate_policy(policy)
+        validate_policy(policy, allow_empty=bool(builtins))
         self._policy = policy
         self._project_path = project_path
         self._limits = limits or ToolLoopLimits()

@@ -25,7 +25,6 @@ from gobby.ai import (
 from gobby.config.tasks import TaskValidationConfig
 from gobby.tasks.commits import DOC_EXTENSIONS
 from gobby.tasks.diff_paging import (
-    MAX_COMMITS_LIMIT,
     MAX_CURSOR_OFFSET,
     MAX_LIMIT_BYTES,
     MAX_MANIFEST_LIMIT,
@@ -39,8 +38,8 @@ from gobby.tasks.diff_paging import (
     get_task_diff_page,
     read_file_at_commit,
 )
+from gobby.tasks.validation_coverage import analyze_evidence_coverage, plan_tool_calls
 
-TOOL_LOOP_MAX_TURNS = 16
 TOOL_LOOP_MAX_CALLS = 32
 TOOL_LOOP_TOOL_TIMEOUT_SECONDS = 30.0
 FIRST_COMMITS_PAGE_LIMIT = 20
@@ -60,6 +59,7 @@ class PreparedValidationDiff:
     first_commits_page: CommitCursorPage
     manifest_items: tuple[ManifestItem, ...]
     manifest_count: int
+    diff_total_bytes: int
     snapshot_hash: str
     view_hash: str
 
@@ -74,6 +74,27 @@ class ToolLoopVerdict:
     evidence_refs: tuple[str, ...]
     evidence_complete: bool
     trace_summary: tuple[dict[str, object], ...]
+    evidence_error: dict[str, object] | None = None
+
+
+@dataclass
+class ValidationVerdictSink:
+    """Single-assignment sink for the model's schema-validated terminal verdict."""
+
+    payload: dict[str, object] | None = None
+
+    def submit(self, arguments: Mapping[str, object]) -> BuiltinToolResult:
+        if self.payload is not None:
+            return BuiltinToolResult(
+                error_code="verdict_already_submitted",
+                error="validation verdict was already submitted",
+            )
+        self.payload = dict(arguments)
+        return BuiltinToolResult(
+            payload={"accepted": True},
+            selector={"kind": "validation_verdict"},
+            complete=True,
+        )
 
 
 @dataclass(frozen=True)
@@ -162,6 +183,7 @@ def prepare_validation_diff(
         first_commits_page=first_commits_page,
         manifest_items=tuple(manifest_items),
         manifest_count=manifest_total,
+        diff_total_bytes=page["total_bytes"],
         snapshot_hash=page["snapshot_hash"],
         view_hash=page["view_hash"],
     )
@@ -254,11 +276,13 @@ def build_validation_builtins(
     repo_path: str,
     canonical_commits: Sequence[str],
     preview_bytes: int,
+    verdict_sink: ValidationVerdictSink | None = None,
 ) -> tuple[BuiltinToolSpec, ...]:
     """Create bounded diff builtins closed over one canonical linked-commit set."""
     commits = tuple(canonical_commits)
     canonical_set = frozenset(commits)
     manager = _LinkedCommitManager(task_id, commits)
+    aggregate_diff_complete = False
 
     async def list_changed_files_handler(
         arguments: dict[str, Any], context: BuiltinExecutionContext
@@ -295,44 +319,10 @@ def build_validation_builtins(
             content_hash=page["snapshot_hash"],
         )
 
-    async def list_linked_commits_handler(
-        arguments: dict[str, Any], context: BuiltinExecutionContext
-    ) -> BuiltinToolResult:
-        snapshot_hash, view_hash = _page_tokens(arguments)
-        page = await asyncio.to_thread(
-            get_task_diff_page,
-            task_id,
-            manager,
-            cwd=repo_path,
-            limit_bytes=MIN_LIMIT_BYTES,
-            commits_offset=_int_argument(arguments, "offset", 0),
-            commits_limit=_int_argument(arguments, "limit", FIRST_COMMITS_PAGE_LIMIT),
-            manifest_limit=0,
-            snapshot_hash=snapshot_hash,
-            view_hash=view_hash,
-            max_payload_bytes=context.max_payload_bytes,
-            subprocess_deadline=context.subprocess_deadline,
-        )
-        commit_page = page["commits"]
-        return BuiltinToolResult(
-            payload={
-                "commits": commit_page,
-                "snapshot_hash": page["snapshot_hash"],
-                "view_hash": page["view_hash"],
-            },
-            selector={"kind": "linked_commits", "task_id": task_id},
-            range={
-                "cursor_offset": commit_page["cursor_offset"],
-                "cursor_end": commit_page["cursor_end"],
-                "total": commit_page["total"],
-            },
-            complete=commit_page["complete"],
-            content_hash=page["snapshot_hash"],
-        )
-
     async def read_task_diff_handler(
         arguments: dict[str, Any], context: BuiltinExecutionContext
     ) -> BuiltinToolResult:
+        nonlocal aggregate_diff_complete
         snapshot_hash, view_hash = _page_tokens(arguments)
         commit = _linked_commit(_optional_str(arguments, "commit"), canonical_set)
         path_selector = _optional_str(arguments, "path_selector")
@@ -357,11 +347,19 @@ def build_validation_builtins(
             selector["commit"] = commit
         if path_selector is not None:
             selector["path_selector"] = path_selector
-        return _diff_result(page, selector)
+        result = _diff_result(page, selector)
+        if commit is None and path_selector is None and result.complete:
+            aggregate_diff_complete = True
+        return result
 
     async def read_file_handler(
         arguments: dict[str, Any], context: BuiltinExecutionContext
     ) -> BuiltinToolResult:
+        if aggregate_diff_complete:
+            return BuiltinToolResult(
+                error_code="aggregate_diff_complete",
+                error="complete aggregate task diff already covers the committed changes",
+            )
         snapshot_hash, view_hash = _page_tokens(arguments)
         commit = cast(str, _linked_commit(_required_str(arguments, "commit"), canonical_set))
         path_selector = _required_str(arguments, "path_selector")
@@ -391,18 +389,23 @@ def build_validation_builtins(
             },
         )
 
-    cursor_properties = {
+    async def submit_verdict_handler(
+        arguments: dict[str, Any], context: BuiltinExecutionContext
+    ) -> BuiltinToolResult:
+        del context
+        if verdict_sink is None:
+            return BuiltinToolResult(
+                error_code="verdict_sink_unavailable",
+                error="validation verdict sink is unavailable",
+            )
+        return verdict_sink.submit(arguments)
+
+    manifest_properties = {
         "offset": _integer_property(default=0, minimum=0, maximum=MAX_CURSOR_OFFSET),
         "limit": _integer_property(
-            default=FIRST_COMMITS_PAGE_LIMIT, minimum=0, maximum=MAX_COMMITS_LIMIT
+            default=MAX_MANIFEST_LIMIT, minimum=1, maximum=MAX_MANIFEST_LIMIT
         ),
         **_token_properties(),
-    }
-    manifest_properties = {
-        **cursor_properties,
-        "limit": _integer_property(
-            default=MAX_MANIFEST_LIMIT, minimum=0, maximum=MAX_MANIFEST_LIMIT
-        ),
     }
     diff_properties = {
         "offset_bytes": _integer_property(default=0, minimum=0, maximum=MAX_CURSOR_OFFSET),
@@ -413,7 +416,7 @@ def build_validation_builtins(
         "path_selector": _string_property("Opaque selector from list_changed_files."),
         **_token_properties(),
     }
-    return (
+    builtins = (
         BuiltinToolSpec(
             name="list_changed_files",
             description="Return one cursor-bounded page of the complete name-status manifest.",
@@ -423,16 +426,6 @@ def build_validation_builtins(
                 "additionalProperties": False,
             },
             handler=list_changed_files_handler,
-        ),
-        BuiltinToolSpec(
-            name="list_linked_commits",
-            description="Return one cursor-bounded page of canonical linked commit SHAs.",
-            input_schema={
-                "type": "object",
-                "properties": cursor_properties,
-                "additionalProperties": False,
-            },
-            handler=list_linked_commits_handler,
         ),
         BuiltinToolSpec(
             name="read_task_diff",
@@ -456,6 +449,35 @@ def build_validation_builtins(
             handler=read_file_handler,
         ),
     )
+    if verdict_sink is None:
+        return builtins
+    verdict_schema = {
+        "type": "object",
+        "properties": {
+            "status": {"type": "string", "enum": ["valid", "invalid", "pending"]},
+            "feedback": {"type": "string"},
+            "blocking_reasons": {"type": "array", "items": {"type": "string"}},
+            "evidence_refs": {"type": "array", "items": {"type": "string"}},
+            "evidence_complete": {"type": "boolean"},
+        },
+        "required": [
+            "status",
+            "feedback",
+            "blocking_reasons",
+            "evidence_refs",
+            "evidence_complete",
+        ],
+        "additionalProperties": False,
+    }
+    return (
+        *builtins,
+        BuiltinToolSpec(
+            name="submit_validation_verdict",
+            description="Submit the one terminal typed validation verdict after evidence completion.",
+            input_schema=verdict_schema,
+            handler=submit_verdict_handler,
+        ),
+    )
 
 
 def _compact_json(value: object) -> str:
@@ -472,6 +494,7 @@ def _build_prompt(
     commit_count: int,
     first_commits_page: Mapping[str, object],
     manifest_count: int,
+    diff_total_bytes: int,
 ) -> str:
     criteria_label = "Validation criteria" if validation_criteria else "Task description"
     criteria = validation_criteria or description or ""
@@ -479,18 +502,24 @@ def _build_prompt(
     category_line = f"Task category: {category}\n" if category else ""
     return (
         "Validate completion using only runtime-issued evidence from the paged tools.\n"
-        "Investigate enough pages to judge every criterion. Use list_linked_commits for later "
-        "commit pages and list_changed_files for manifest pages. Read relevant diff and file "
-        "pages. Cite only evidence_ref values returned by successful tool invocations.\n"
-        "Return one JSON object with status, feedback, blocking_reasons, evidence_refs, and "
-        "evidence_complete. status must be valid, invalid, or pending. evidence_refs must be "
-        "a JSON string array and evidence_complete must be a JSON boolean.\n\n"
+        "Follow this acquisition order exactly: list the changed-file manifest in maximum-sized "
+        "pages, then read the aggregate task diff without commit or path_selector from byte zero "
+        "forward. Continue at each returned byte_end until total_bytes is covered. Treat byte "
+        "coverage as the union of half-open ranges; overlap never advances coverage. Retry the "
+        "same range after snapshot_required or view_changed. Once the aggregate task diff is "
+        "complete, do not search the repository or acquire whole files. Cite only evidence_ref "
+        "values returned by successful tool invocations.\n"
+        "Finish by calling submit_validation_verdict exactly once with status, feedback, "
+        "blocking_reasons, evidence_refs, and evidence_complete. status must be valid, invalid, "
+        "or pending. Cite every completed evidence page used. After the submission is accepted, "
+        "emit no narrative or additional JSON.\n\n"
         f"Task title: {title}\n"
         f"{category_line}"
         f"{criteria_label}:\n{criteria}\n\n"
         f"Linked commit count: {commit_count}\n"
         f"First linked-commits page: {_compact_json(dict(first_commits_page))}\n"
         f"Changed-file manifest count: {manifest_count}\n\n"
+        f"Aggregate task-diff bytes: {diff_total_bytes}\n\n"
         f"Existing verification/test evidence:\n{evidence}"
     )
 
@@ -541,6 +570,7 @@ def _pending_verdict(
     evidence_refs: Sequence[str] = (),
     evidence_complete: bool = False,
     trace_summary: Sequence[Mapping[str, object]] = (),
+    evidence_error: dict[str, object] | None = None,
 ) -> ToolLoopVerdict:
     return ToolLoopVerdict(
         status="pending",
@@ -554,78 +584,93 @@ def _pending_verdict(
         evidence_refs=tuple(evidence_refs),
         evidence_complete=evidence_complete,
         trace_summary=tuple(dict(item) for item in trace_summary),
+        evidence_error=evidence_error,
     )
 
 
-def normalize_tool_loop_result(result: ToolChatResult) -> ToolLoopVerdict:
+def normalize_tool_loop_result(
+    result: ToolChatResult,
+    *,
+    submitted_verdict: Mapping[str, object] | None = None,
+    require_submission: bool = False,
+) -> ToolLoopVerdict:
     """Accept only mode-explicit, runtime-issued evidence from successful invocations."""
     trace_summary = _trace_summary(result.trace)
-    if result.budget_exhausted:
-        return _pending_verdict(
-            "Tool-loop validation exhausted its tool-call budget.", trace_summary=trace_summary
-        )
     if not result.trace_available:
+        error: dict[str, object] = {"code": "trace_unavailable", "artifacts": []}
         return _pending_verdict(
             "Tool-loop validation trace is unavailable; evidence cannot be verified.",
             trace_summary=trace_summary,
+            evidence_error=error,
         )
-    try:
-        payload = json.loads(result.text)
-    except (json.JSONDecodeError, TypeError):
+
+    coverage = analyze_evidence_coverage(result.trace, require_manifest=require_submission)
+    coverage_error = coverage.error_payload()
+    if coverage_error is not None:
         return _pending_verdict(
-            "Malformed tool-loop validation result: expected one JSON object.",
+            f"Evidence acquisition failed: {_compact_json(coverage_error)}",
+            evidence_refs=coverage.evidence_refs,
             trace_summary=trace_summary,
+            evidence_error=coverage_error,
         )
+
+    def protocol_error(message: str) -> ToolLoopVerdict:
+        error: dict[str, object] = {"code": "verdict_protocol_error", "message": message}
+        return _pending_verdict(
+            f"Validator protocol failed: {_compact_json(error)}",
+            evidence_refs=coverage.evidence_refs,
+            evidence_complete=True,
+            trace_summary=trace_summary,
+            evidence_error=error,
+        )
+
+    if submitted_verdict is not None:
+        payload: object = dict(submitted_verdict)
+    elif require_submission:
+        return protocol_error("submit_validation_verdict was not called")
+    else:
+        try:
+            payload = json.loads(result.text)
+        except (json.JSONDecodeError, TypeError):
+            return protocol_error("validator must return exactly one typed verdict object")
     if not isinstance(payload, dict):
-        return _pending_verdict(
-            "Malformed tool-loop validation result: expected one JSON object.",
-            trace_summary=trace_summary,
-        )
+        return protocol_error("validator must return exactly one typed verdict object")
     if "evidence_refs" not in payload or "evidence_complete" not in payload:
-        return _pending_verdict(
-            "Malformed tool-loop validation result: evidence_refs and evidence_complete are required.",
-            trace_summary=trace_summary,
-        )
+        return protocol_error("evidence_refs and evidence_complete are required")
     raw_refs = payload["evidence_refs"]
-    evidence_complete = payload["evidence_complete"]
     if (
         not isinstance(raw_refs, list)
         or any(not isinstance(ref, str) for ref in raw_refs)
-        or not isinstance(evidence_complete, bool)
+        or not isinstance(payload["evidence_complete"], bool)
     ):
-        return _pending_verdict(
-            "Malformed tool-loop validation result: invalid evidence field types.",
-            trace_summary=trace_summary,
-        )
-    issued_refs = {
-        record["evidence_ref"]
-        for record in result.trace
-        if record["ok"] and record["error_code"] is None and record["evidence_ref"] is not None
-    }
+        return protocol_error("evidence_refs or evidence_complete has an invalid type")
+    issued_refs = set(coverage.evidence_refs)
     verified_refs = tuple(dict.fromkeys(ref for ref in raw_refs if ref in issued_refs))
     fabricated_refs = tuple(dict.fromkeys(ref for ref in raw_refs if ref not in issued_refs))
     if fabricated_refs:
+        invalid_ref_error: dict[str, object] = {
+            "code": "invalid_evidence_reference",
+            "evidence_refs": list(fabricated_refs),
+        }
         return _pending_verdict(
             "Tool-loop verdict cited non-runtime-issued evidence refs: "
             f"{', '.join(fabricated_refs)}.",
             evidence_refs=verified_refs,
-            evidence_complete=evidence_complete,
+            evidence_complete=True,
             trace_summary=trace_summary,
+            evidence_error=invalid_ref_error,
         )
     raw_status = payload.get("status")
     if not isinstance(raw_status, str) or raw_status not in _VERDICT_STATUSES:
-        return _pending_verdict(
-            "Malformed tool-loop validation result: invalid status.",
-            evidence_refs=verified_refs,
-            evidence_complete=evidence_complete,
-            trace_summary=trace_summary,
-        )
+        return protocol_error("status must be valid, invalid, or pending")
     status = cast(Literal["valid", "invalid", "pending"], raw_status)
-    if status != "pending" and (not evidence_complete or not verified_refs):
+    if status != "pending" and not any(
+        ref in coverage.content_evidence_refs for ref in verified_refs
+    ):
         return _pending_verdict(
             "Tool-loop validation evidence is incomplete for a terminal verdict.",
             evidence_refs=verified_refs,
-            evidence_complete=evidence_complete,
+            evidence_complete=True,
             trace_summary=trace_summary,
         )
     feedback = payload.get("feedback")
@@ -642,7 +687,7 @@ def normalize_tool_loop_result(result: ToolChatResult) -> ToolLoopVerdict:
         return _pending_verdict(
             "Tool-loop invalid verdict did not name unmet criteria or failing gates.",
             evidence_refs=verified_refs,
-            evidence_complete=evidence_complete,
+            evidence_complete=True,
             trace_summary=trace_summary,
         )
     return ToolLoopVerdict(
@@ -650,12 +695,12 @@ def normalize_tool_loop_result(result: ToolChatResult) -> ToolLoopVerdict:
         feedback=_feedback_with_provenance(
             feedback_text,
             evidence_refs=verified_refs,
-            evidence_complete=evidence_complete,
+            evidence_complete=True,
             trace_summary=trace_summary,
         ),
         blocking_reasons=blocking_reasons,
         evidence_refs=verified_refs,
-        evidence_complete=evidence_complete,
+        evidence_complete=True,
         trace_summary=trace_summary,
     )
 
@@ -674,9 +719,34 @@ async def validate_with_tool_loop(
     canonical_commits: Sequence[str],
     first_commits_page: Mapping[str, object],
     manifest_count: int,
+    diff_total_bytes: int,
 ) -> ToolLoopVerdict:
     """Run one bounded validation investigation and verify its cited evidence."""
     commits = tuple(canonical_commits)
+    call_plan = plan_tool_calls(
+        diff_total_bytes=diff_total_bytes,
+        manifest_count=manifest_count,
+        preview_bytes=config.tool_loop_preview_bytes,
+        manifest_page_limit=MAX_MANIFEST_LIMIT,
+        configured_max_calls=TOOL_LOOP_MAX_CALLS,
+    )
+    if not call_plan.within_bound:
+        error = {
+            "code": "evidence_budget_exceeded",
+            "required_tool_calls": call_plan.required_tool_calls,
+            "configured_max_calls": TOOL_LOOP_MAX_CALLS,
+            "artifacts": [
+                {
+                    "selector": {"kind": "task_diff", "task_id": task_id},
+                    "total_bytes": diff_total_bytes,
+                    "unconsumed_ranges": [[0, diff_total_bytes]],
+                }
+            ],
+        }
+        return _pending_verdict(
+            f"Evidence acquisition failed: {_compact_json(error)}", evidence_error=error
+        )
+    verdict_sink = ValidationVerdictSink()
     request = ToolChatRequest(
         prompt=_build_prompt(
             title=title,
@@ -687,16 +757,17 @@ async def validate_with_tool_loop(
             commit_count=len(commits),
             first_commits_page=first_commits_page,
             manifest_count=manifest_count,
+            diff_total_bytes=diff_total_bytes,
         ),
         system_prompt=config.system_prompt,
-        tool_policy=ToolPolicy(cli="gcode", tools=("search",)),
+        tool_policy=ToolPolicy(cli="gcode", tools=()),
         project_path=repo_path,
         profile=config.profile.value,
         candidates=tuple(config.candidates),
-        max_turns=TOOL_LOOP_MAX_TURNS,
+        max_turns=call_plan.max_tool_calls,
         limits=ToolLoopLimits(
-            max_turns=TOOL_LOOP_MAX_TURNS,
-            max_tool_calls=TOOL_LOOP_MAX_CALLS,
+            max_turns=call_plan.max_tool_calls,
+            max_tool_calls=call_plan.max_tool_calls,
             tool_timeout_seconds=TOOL_LOOP_TOOL_TIMEOUT_SECONDS,
         ),
         builtins=build_validation_builtins(
@@ -704,8 +775,14 @@ async def validate_with_tool_loop(
             repo_path=repo_path,
             canonical_commits=commits,
             preview_bytes=config.tool_loop_preview_bytes,
+            verdict_sink=verdict_sink,
         ),
         allowed_adapter_styles=_RUNTIME_ADAPTER_STYLES,
         caller="tasks.validation.tool_loop",
     )
-    return normalize_tool_loop_result(await tool_chat_service.chat_result(request))
+    result = await tool_chat_service.chat_result(request)
+    return normalize_tool_loop_result(
+        result,
+        submitted_verdict=verdict_sink.payload,
+        require_submission=True,
+    )

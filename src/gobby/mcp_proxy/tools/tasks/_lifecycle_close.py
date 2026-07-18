@@ -389,6 +389,9 @@ def register_close_task(registry: InternalToolRegistry, ctx: RegistryContext) ->
                     manifest_count=(
                         prepared_diff.manifest_count if prepared_diff is not None else 0
                     ),
+                    diff_total_bytes=(
+                        prepared_diff.diff_total_bytes if prepared_diff is not None else 0
+                    ),
                     static_evidence_loader=load_static_evidence,
                 )
                 if not llm_result.can_close:

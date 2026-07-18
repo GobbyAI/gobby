@@ -27,12 +27,15 @@ def _diff_result(
     }
 
 
-def _prepared_diff(*, commits: list[str], manifest_count: int) -> MagicMock:
+def _prepared_diff(
+    *, commits: list[str], manifest_count: int, diff_total_bytes: int = 1_024
+) -> MagicMock:
     prepared = MagicMock()
     prepared.canonical_commits = tuple(commits)
     prepared.first_commits_page = {"items": []}
     prepared.manifest_items = ()
     prepared.manifest_count = manifest_count
+    prepared.diff_total_bytes = diff_total_bytes
     return prepared
 
 

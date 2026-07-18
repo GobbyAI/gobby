@@ -11,6 +11,7 @@ from gobby.ai import (
     AICapability,
     BuiltinExecutionContext,
     CapabilityUnavailableError,
+    ToolChatRequest,
     ToolChatResult,
 )
 from gobby.config.tasks import TaskValidationConfig
@@ -43,6 +44,18 @@ def _commit_page(*items: str, total: int | None = None) -> dict[str, object]:
 def _trace(evidence_ref: str) -> tuple[dict[str, object], ...]:
     return (
         {
+            "tool_name": "list_changed_files",
+            "arguments": {"offset": 0},
+            "result_size_bytes": 64,
+            "ok": True,
+            "error_code": None,
+            "evidence_ref": "ev_manifest",
+            "selector": {"kind": "changed_files"},
+            "range": {"cursor_offset": 0, "cursor_end": 1, "total": 1},
+            "complete": True,
+            "content_hash": "snapshot-hash",
+        },
+        {
             "tool_name": "read_task_diff",
             "arguments": {"offset_bytes": 0},
             "result_size_bytes": 512,
@@ -66,7 +79,7 @@ def _tool_result(
     return ToolChatResult(
         text=json.dumps(payload),
         trace=_trace(evidence_ref),
-        calls_used=1,
+        calls_used=len(_trace(evidence_ref)),
         budget_exhausted=budget_exhausted,
         trace_available=True,
     )
@@ -82,7 +95,24 @@ def _validator(
     if isinstance(tool_result, Exception):
         tool_chat_service.chat_result.side_effect = tool_result
     else:
-        tool_chat_service.chat_result.return_value = tool_result
+
+        async def submit_verdict(request: ToolChatRequest) -> ToolChatResult:
+            submit = next(
+                spec for spec in request.builtins if spec.name == "submit_validation_verdict"
+            )
+            payload = json.loads(tool_result.text)
+            if isinstance(payload, dict):
+                await submit.handler(
+                    payload,
+                    BuiltinExecutionContext(
+                        max_payload_bytes=16_000,
+                        evidence_ref="ev_submit",
+                        subprocess_deadline=None,
+                    ),
+                )
+            return tool_result
+
+        tool_chat_service.chat_result.side_effect = submit_verdict
     validator = TaskValidator(
         config or TaskValidationConfig(),
         llm_service,
@@ -110,6 +140,7 @@ async def _validate_linked(
         linked_commits=linked_commits,
         first_commits_page=first_commits_page or _commit_page(COMMIT_A, total=2),
         manifest_count=3,
+        diff_total_bytes=1_566,
         static_evidence_loader=static_evidence_loader,
     )
 
@@ -200,7 +231,10 @@ async def test_tool_loop_missing_evidence_fields_is_pending() -> None:
 
     assert result.status == "pending"
     assert result.mode == "tool_loop"
-    assert "malformed" in (result.feedback or "").lower()
+    assert result.evidence_error == {
+        "code": "verdict_protocol_error",
+        "message": "evidence_refs and evidence_complete are required",
+    }
 
 
 @pytest.mark.asyncio
@@ -249,7 +283,7 @@ async def test_verified_refs_and_trace_are_in_feedback() -> None:
 
 
 @pytest.mark.asyncio
-async def test_budget_exhaustion_is_pending() -> None:
+async def test_complete_evidence_verdict_survives_adapter_budget_flag() -> None:
     validator, _, _ = _validator(
         _tool_result(
             payload={
@@ -265,8 +299,8 @@ async def test_budget_exhaustion_is_pending() -> None:
 
     result = await _validate_linked(validator)
 
-    assert result.status == "pending"
-    assert "budget" in (result.feedback or "").lower()
+    assert result.status == "valid"
+    assert result.evidence_complete is True
 
 
 @pytest.mark.asyncio
@@ -298,14 +332,18 @@ async def test_prompt_uses_commit_count_first_page_and_cursor_metadata() -> None
     assert COMMIT_D not in request.prompt
     assert '"cursor_end":2' in request.prompt
     assert '"total":4' in request.prompt
-    assert "list_linked_commits" in request.prompt
+    assert "list_linked_commits" not in request.prompt
     assert "Changed-file manifest count: 3" in request.prompt
+    assert "Aggregate task-diff bytes: 1566" in request.prompt
+    assert "without commit or path_selector" in request.prompt
     assert "pytest: 12 passed" in request.prompt
     assert "Implemented the requested validator." not in request.prompt
     assert "diff --git" not in request.prompt
-    assert request.max_turns == 16
-    assert request.limits.max_turns == 16
-    assert request.limits.max_tool_calls == 32
+    assert request.max_turns == 7
+    assert request.limits.max_turns == 7
+    assert request.tool_policy.tools == ()
+    assert request.builtins[-1].name == "submit_validation_verdict"
+    assert request.limits.max_tool_calls == 7
     assert request.limits.tool_timeout_seconds == 30.0
 
 
@@ -405,6 +443,7 @@ def test_prepare_validation_diff_pages_manifest_without_raw_diff() -> None:
     assert prepared.canonical_commits == (COMMIT_A, COMMIT_B)
     assert len(prepared.manifest_items) == 2
     assert prepared.manifest_count == 2
+    assert prepared.diff_total_bytes == 100
     assert is_doc_only_manifest(prepared.manifest_items) is True
     assert get_page.call_count == 2
     assert all(call.kwargs["limit_bytes"] == 4 for call in get_page.call_args_list)
