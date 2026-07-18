@@ -157,6 +157,25 @@ def test_selector_narrowed_validation_requires_execution_confirmation(command: s
 
 
 @pytest.mark.parametrize(
+    "command,requires_confirmation",
+    [
+        ("python -m pytest tests/config", False),
+        ("python3 -m pytest tests/config", False),
+        ("python -m pytest -m slow tests/config", True),
+        ("pytest -m slow tests/config", True),
+    ],
+)
+def test_python_module_flag_is_not_mistaken_for_pytest_marker_selection(
+    command: str,
+    requires_confirmation: bool,
+) -> None:
+    match = classify_validation_command(command)
+
+    assert match is not None
+    assert match.evidence_requires_confirmation is requires_confirmation
+
+
+@pytest.mark.parametrize(
     "command,normalized_argv,wrapper_chain",
     [
         (

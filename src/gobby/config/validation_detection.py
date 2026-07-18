@@ -880,7 +880,13 @@ def _matcher_requires_execution_confirmation(
     matcher: ValidationCommandMatcher,
     tokens: list[str],
 ) -> bool:
-    if any(_tokens_include_arg(tokens, arg) for arg in matcher.evidence_weakening_args_any):
+    prefix_lengths = [
+        len(prefix_tokens)
+        for prefix in matcher.prefixes
+        if (prefix_tokens := _safe_split(prefix)) and _starts_with(tokens, prefix_tokens)
+    ]
+    arguments = tokens[max(prefix_lengths, default=0) :]
+    if any(_tokens_include_arg(arguments, arg) for arg in matcher.evidence_weakening_args_any):
         return True
     for prefix in matcher.evidence_weakening_bare_args_after:
         prefix_tokens = _safe_split(prefix)

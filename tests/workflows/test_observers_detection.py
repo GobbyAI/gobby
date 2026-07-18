@@ -1984,6 +1984,184 @@ class TestDetectVerificationEvidence:
         assert variables["verification_evidence"][-1]["success"] is None
 
     @pytest.mark.parametrize(
+        "command,output,expected_success,provenance",
+        [
+            (
+                "pytest tests/workflows 2>&1 | tail -5",
+                "progress\n\x1b[32m===== 2 passed in 0.12s =====\x1b[0m",
+                True,
+                "validation_summary.pytest",
+            ),
+            (
+                "pytest tests/workflows | head -5",
+                "===== 1 skipped in 0.03s =====",
+                True,
+                "validation_summary.pytest",
+            ),
+            (
+                "python -m pytest tests/workflows | tail -5",
+                "===== 1 passed in 0.02s =====",
+                True,
+                "validation_summary.pytest",
+            ),
+            (
+                "pytest tests/workflows | tee pytest.log | tail -5",
+                "===== 2 xfailed, 1 xpassed in 0.08s =====",
+                True,
+                "validation_summary.pytest",
+            ),
+            (
+                "pytest tests/workflows | cat",
+                "===== 1 passed in 0.02s =====",
+                True,
+                "validation_summary.pytest",
+            ),
+            (
+                "pytest tests/workflows | tail -5",
+                "===== 1 failed, 2 passed in 0.14s =====",
+                False,
+                "validation_summary.pytest",
+            ),
+            (
+                "pytest tests/workflows | tail -5",
+                "===== no tests ran in 0.01s =====",
+                False,
+                "validation_summary.pytest",
+            ),
+            (
+                "ruff check src | tail -1",
+                "All checks passed!",
+                True,
+                "validation_summary.ruff",
+            ),
+            (
+                "ruff check src | tail -1",
+                "Found 2 errors.",
+                False,
+                "validation_summary.ruff",
+            ),
+            (
+                "ruff format --check src | tail -1",
+                "12 files already formatted",
+                True,
+                "validation_summary.ruff",
+            ),
+            (
+                "ruff format --check src | tail -1",
+                "2 files would be reformatted, 10 files already formatted",
+                False,
+                "validation_summary.ruff",
+            ),
+            (
+                "mypy src | tail -1",
+                "Success: no issues found in 4 source files",
+                True,
+                "validation_summary.mypy",
+            ),
+            (
+                "mypy src | tail -1",
+                "Found 2 errors in 1 file (checked 4 source files)",
+                False,
+                "validation_summary.mypy",
+            ),
+        ],
+    )
+    def test_safe_pipeline_uses_validator_terminal_summary(
+        self,
+        variables,
+        command: str,
+        output: str,
+        expected_success: bool,
+        provenance: str,
+    ) -> None:
+        event = _make_bash_event(output, command=command)
+
+        detect_verification_evidence(event, variables, SESSION_ID)
+
+        evidence = variables["verification_evidence"][-1]
+        assert evidence["success"] is expected_success
+        assert evidence["outcome_provenance"] == provenance
+        assert variables["verification_evidence_recorded"] is expected_success
+
+    @pytest.mark.parametrize(
+        "command,output",
+        [
+            ("pytest tests/workflows | tail -5", "truncated provider output"),
+            (
+                "pytest tests/workflows | tail -5",
+                "===== no tests ran, 1 passed in 0.02s =====",
+            ),
+            (
+                "pytest tests/workflows | tail -5 && true",
+                "===== 1 passed in 0.02s =====",
+            ),
+            (
+                "bash -lc 'pytest tests/workflows | tail -5'",
+                "===== 1 passed in 0.02s =====",
+            ),
+            (
+                "bash -lc 'pytest tests/workflows' | tail -5",
+                "===== 1 passed in 0.02s =====",
+            ),
+            (
+                "pytest tests/workflows | tail -5 pyproject.toml",
+                "===== 1 passed in 0.02s =====",
+            ),
+            (
+                "pytest tests/workflows | head -5 pyproject.toml",
+                "===== 1 passed in 0.02s =====",
+            ),
+            (
+                "pytest tests/workflows | cat pyproject.toml",
+                "===== 1 passed in 0.02s =====",
+            ),
+            ("pytest tests/workflows | wc -l", "1 passed in 0.02s"),
+            (
+                "pytest tests/workflows | sed 's/.*/1 passed in 0.02s/'",
+                "1 passed in 0.02s",
+            ),
+            (
+                "pytest -m slow tests/workflows | tail -5",
+                "===== 1 passed in 0.02s =====",
+            ),
+            ("black --check ruff | tail -1", "All checks passed!"),
+            (
+                "coverage run script.py | tail -1",
+                "===== 1 passed in 0.02s =====",
+            ),
+        ],
+    )
+    def test_ambiguous_pipeline_summary_preserves_readiness(
+        self,
+        variables,
+        command: str,
+        output: str,
+    ) -> None:
+        variables["verification_evidence_recorded"] = True
+        event = _make_bash_event(output, command=command)
+
+        detect_verification_evidence(event, variables, SESSION_ID)
+
+        assert variables["verification_evidence_recorded"] is True
+        assert variables["verification_evidence"][-1]["success"] is None
+
+    def test_summary_provenance_keeps_aggregate_pipeline_exit_code(self, variables) -> None:
+        event = _make_bash_event_dict(
+            {
+                "output": "===== 1 failed, 2 passed in 0.14s =====",
+                "exitCode": 0,
+            },
+            command="pytest tests/workflows | tail -5",
+        )
+
+        detect_verification_evidence(event, variables, SESSION_ID)
+
+        evidence = variables["verification_evidence"][-1]
+        assert evidence["success"] is False
+        assert evidence["exit_code"] == 0
+        assert evidence["outcome_provenance"] == "validation_summary.pytest"
+
+    @pytest.mark.parametrize(
         "command",
         [
             "pytest || echo ok",
