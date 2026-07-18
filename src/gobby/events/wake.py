@@ -522,10 +522,9 @@ class WakeDispatcher:
             )
             return True
         except Exception:
-            logger.error(
+            logger.exception(
                 "Failed to send ISM to session %s",
                 session_id,
-                exc_info=True,
             )
             return False
 

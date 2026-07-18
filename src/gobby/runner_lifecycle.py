@@ -268,7 +268,7 @@ async def run_daemon(runner: GobbyRunner, pid_claim: PidFileClaim | None = None)
             remove_uvicorn_shutdown_filter(shutdown_log_filter)
 
     except Exception as e:
-        logger.error("Fatal error: %s", e, exc_info=True)
+        logger.exception("Fatal error: %s", e)
         cleanup_owned_pid_file()
         sys.exit(1)
     finally:

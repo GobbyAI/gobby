@@ -316,7 +316,7 @@ def main(config_path: Path | None = None, verbose: bool = False) -> None:
     except KeyboardInterrupt:
         sys.exit(0)
     except Exception as e:
-        logger.error("Fatal error: %s", e, exc_info=True)
+        logger.exception("Fatal error: %s", e)
         sys.exit(1)
     finally:
         # run_daemon releases the claim during shutdown; release() is

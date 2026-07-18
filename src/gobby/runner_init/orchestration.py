@@ -376,9 +376,7 @@ def init_orchestration(runner: GobbyRunner) -> None:
             except Exception as e:
                 runner.code_index_pruner = None
                 mark_service_degraded(runner, "code_index_pruner")
-                logger.error(
-                    "Failed to register code index prune cron handler: %s", e, exc_info=True
-                )
+                logger.exception("Failed to register code index prune cron handler: %s", e)
 
             try:
                 from gobby.code_index.nightly_reindex import (
@@ -400,10 +398,9 @@ def init_orchestration(runner: GobbyRunner) -> None:
             except Exception as e:
                 runner.code_index_nightly_reindexer = None
                 mark_service_degraded(runner, "code_index_nightly_reindexer")
-                logger.error(
+                logger.exception(
                     "Failed to register code index nightly full reindex cron handler: %s",
                     e,
-                    exc_info=True,
                 )
 
             try:
@@ -472,9 +469,7 @@ def init_orchestration(runner: GobbyRunner) -> None:
                     )
             except Exception as e:
                 mark_service_degraded(runner, "codewiki_nightly_cron")
-                logger.error(
-                    "Failed to register codewiki nightly cron handler: %s", e, exc_info=True
-                )
+                logger.exception("Failed to register codewiki nightly cron handler: %s", e)
         elif getattr(runner.config.code_index, "enabled", False):
             mark_service_degraded(runner, "code_index_maintenance")
             logger.warning(

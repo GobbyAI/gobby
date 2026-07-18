@@ -571,10 +571,9 @@ async def expire_approval_timeouts_loop(
                         step.execution_id,
                     )
                 except Exception:
-                    logger.error(
+                    logger.exception(
                         "Failed to expire approval for step %s",
                         step.id,
-                        exc_info=True,
                     )
         except asyncio.CancelledError:
             break
@@ -751,10 +750,9 @@ async def cleanup_expired_isolation_loop(
                         path,
                     )
                 except Exception:
-                    logger.error(
+                    logger.exception(
                         "Failed to clean up expired worktree %s",
                         wt.id,
-                        exc_info=True,
                     )
 
             # Reap expired clones
@@ -772,10 +770,9 @@ async def cleanup_expired_isolation_loop(
                         path,
                     )
                 except Exception:
-                    logger.error(
+                    logger.exception(
                         "Failed to clean up expired clone %s",
                         clone.id,
-                        exc_info=True,
                     )
 
             await _cleanup_missing_isolation_records_async(

@@ -331,7 +331,7 @@ async def _start_tracked_service(
     try:
         await service.start()
     except Exception as e:
-        logger.error("%s start failed: %s", subsystem, e, exc_info=True)
+        logger.exception("%s start failed: %s", subsystem, e)
         if tracker:
             tracker.error(subsystem, str(e))
         return
@@ -347,7 +347,7 @@ def _run_tracked_start(
     try:
         operation()
     except Exception as e:
-        logger.error("%s start failed: %s", subsystem, e, exc_info=True)
+        logger.exception("%s start failed: %s", subsystem, e)
         if tracker:
             tracker.error(subsystem, str(e))
 
@@ -485,7 +485,7 @@ async def _register_wiki_cron_handlers(
         if tracker:
             tracker.complete("Wiki cron handlers")
     except Exception as e:
-        logger.error("Failed to register wiki cron handlers: %s", e, exc_info=True)
+        logger.exception("Failed to register wiki cron handlers: %s", e)
         if tracker:
             tracker.error("Wiki cron handlers", str(e))
 
