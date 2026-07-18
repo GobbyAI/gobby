@@ -235,6 +235,7 @@ select = [
     "G004",   # logging f-string
     "G010",   # deprecated logger.warn
     "G101",   # reserved LogRecord keys in extra
+    "G201",   # prefer logger.exception in exception handlers
 ]
 ignore = [
     "E501",  # line too long (handled by formatter)
