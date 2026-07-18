@@ -147,7 +147,7 @@ def register_secret_routes(router: APIRouter, context: ConfigurationRouteContext
         except HTTPException:
             raise
         except Exception as e:
-            logger.error("Failed to list secrets: %s", e, exc_info=True)
+            logger.exception("Failed to list secrets: %s", e)
             raise HTTPException(status_code=500, detail="Internal server error") from e
 
     @router.post("/secrets", dependencies=[Depends(require_mutation_auth)])
@@ -167,7 +167,7 @@ def register_secret_routes(router: APIRouter, context: ConfigurationRouteContext
         except HTTPException:
             raise
         except Exception as e:
-            logger.error("Failed to save secret: %s", e, exc_info=True)
+            logger.exception("Failed to save secret: %s", e)
             raise HTTPException(status_code=500, detail="Internal server error") from e
 
     @router.delete("/secrets/{name}", dependencies=[Depends(require_mutation_auth)])
@@ -181,5 +181,5 @@ def register_secret_routes(router: APIRouter, context: ConfigurationRouteContext
         except HTTPException:
             raise
         except Exception as e:
-            logger.error("Failed to delete secret: %s", e, exc_info=True)
+            logger.exception("Failed to delete secret: %s", e)
             raise HTTPException(status_code=500, detail="Internal server error") from e

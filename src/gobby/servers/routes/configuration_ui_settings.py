@@ -48,7 +48,7 @@ def register_ui_setting_routes(router: APIRouter, context: ConfigurationRouteCon
         except HTTPException:
             raise
         except _UI_SETTING_STORAGE_ERRORS as e:
-            logger.error("Failed to get UI settings: %s", e, exc_info=True)
+            logger.exception("Failed to get UI settings: %s", e)
             raise HTTPException(status_code=500, detail="Internal server error") from e
 
     @router.put("/ui-settings")
@@ -67,7 +67,7 @@ def register_ui_setting_routes(router: APIRouter, context: ConfigurationRouteCon
         except HTTPException:
             raise
         except _UI_SETTING_STORAGE_ERRORS as e:
-            logger.error("Failed to save UI settings: %s", e, exc_info=True)
+            logger.exception("Failed to save UI settings: %s", e)
             raise HTTPException(status_code=500, detail="Internal server error") from e
 
     @router.delete("/ui-settings/{key}")
@@ -86,5 +86,5 @@ def register_ui_setting_routes(router: APIRouter, context: ConfigurationRouteCon
         except HTTPException:
             raise
         except _UI_SETTING_STORAGE_ERRORS as e:
-            logger.error("Failed to delete UI setting '%s': %s", key, e, exc_info=True)
+            logger.exception("Failed to delete UI setting '%s': %s", key, e)
             raise HTTPException(status_code=500, detail="Failed to delete UI setting") from e

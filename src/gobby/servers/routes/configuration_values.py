@@ -219,7 +219,7 @@ def register_value_routes(router: APIRouter, context: ConfigurationRouteContext)
         except ValueError as e:
             raise HTTPException(status_code=400, detail=str(e)) from e
         except Exception as e:
-            logger.error("Config save failed", exc_info=True)
+            logger.exception("Config save failed")
             raise HTTPException(status_code=500, detail="Failed to save configuration") from e
 
     @router.post("/values/validate")
@@ -252,7 +252,7 @@ def register_value_routes(router: APIRouter, context: ConfigurationRouteContext)
         except (TypeError, ValueError, ValidationError) as e:
             return JSONResponse(content={"valid": False, "errors": [str(e)]})
         except Exception as e:
-            logger.error("Unexpected config validation failure: %s", e, exc_info=True)
+            logger.exception("Unexpected config validation failure: %s", e)
             raise HTTPException(status_code=500, detail="Failed to validate configuration") from e
 
     @router.post("/values/reset")
@@ -265,5 +265,5 @@ def register_value_routes(router: APIRouter, context: ConfigurationRouteContext)
             context.set_runtime_config(DaemonConfig())
             return JSONResponse(content={"ok": True, "requires_restart": True})
         except Exception as e:
-            logger.error("Config reset failed: %s", e, exc_info=True)
+            logger.exception("Config reset failed: %s", e)
             raise HTTPException(status_code=500, detail="Failed to reset configuration") from e

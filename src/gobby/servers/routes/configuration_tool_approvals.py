@@ -42,10 +42,10 @@ def register_tool_approval_routes(router: APIRouter, context: ConfigurationRoute
                 }
             )
         except _APPROVAL_STORAGE_ERRORS as e:
-            logger.error("Failed to get global tool approval rules: %s", e, exc_info=True)
+            logger.exception("Failed to get global tool approval rules: %s", e)
             raise HTTPException(status_code=500, detail="Failed to load approval rules") from e
         except Exception as e:
-            logger.error("Unexpected approval rules load failure: %s", e, exc_info=True)
+            logger.exception("Unexpected approval rules load failure: %s", e)
             raise HTTPException(status_code=500, detail="Internal server error") from e
 
     @router.put("/tool-approvals/global")
@@ -69,8 +69,8 @@ def register_tool_approval_routes(router: APIRouter, context: ConfigurationRoute
             logger.warning("Invalid global tool approval rules: %s", e, exc_info=True)
             raise HTTPException(status_code=400, detail="Invalid approval rules") from e
         except _APPROVAL_STORAGE_ERRORS as e:
-            logger.error("Failed to save global tool approval rules: %s", e, exc_info=True)
+            logger.exception("Failed to save global tool approval rules: %s", e)
             raise HTTPException(status_code=500, detail="Failed to save approval rules") from e
         except Exception as e:
-            logger.error("Unexpected approval rules save failure: %s", e, exc_info=True)
+            logger.exception("Unexpected approval rules save failure: %s", e)
             raise HTTPException(status_code=500, detail="Internal server error") from e

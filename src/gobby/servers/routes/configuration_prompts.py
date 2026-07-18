@@ -92,7 +92,7 @@ def register_prompt_routes(router: APIRouter, context: ConfigurationRouteContext
                 }
             )
         except Exception as e:
-            logger.error("Failed to list prompts: %s", e, exc_info=True)
+            logger.exception("Failed to list prompts: %s", e)
             raise HTTPException(status_code=500, detail="Internal server error") from e
 
     @router.get("/prompts/{path:path}")
@@ -132,7 +132,7 @@ def register_prompt_routes(router: APIRouter, context: ConfigurationRouteContext
         except HTTPException:
             raise
         except Exception as e:
-            logger.error("Failed to get prompt: %s", e, exc_info=True)
+            logger.exception("Failed to get prompt: %s", e)
             raise HTTPException(status_code=500, detail="Internal server error") from e
 
     @router.put("/prompts/{path:path}")
@@ -181,7 +181,7 @@ def register_prompt_routes(router: APIRouter, context: ConfigurationRouteContext
         except HTTPException:
             raise
         except Exception as e:
-            logger.error("Failed to save prompt override: %s", e, exc_info=True)
+            logger.exception("Failed to save prompt override: %s", e)
             raise HTTPException(status_code=500, detail="Internal server error") from e
 
     @router.delete("/prompts/{path:path}")
@@ -200,5 +200,5 @@ def register_prompt_routes(router: APIRouter, context: ConfigurationRouteContext
         except HTTPException:
             raise
         except Exception as e:
-            logger.error("Failed to delete prompt override: %s", e, exc_info=True)
+            logger.exception("Failed to delete prompt override: %s", e)
             raise HTTPException(status_code=500, detail="Internal server error") from e

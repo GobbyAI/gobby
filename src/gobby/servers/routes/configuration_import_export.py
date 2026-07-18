@@ -348,7 +348,7 @@ def register_import_export_routes(
         except HTTPException:
             raise
         except _CONFIG_EXPORT_ERRORS as e:
-            logger.error("Config export failed: %s", e, exc_info=True)
+            logger.exception("Config export failed: %s", e)
             raise HTTPException(status_code=500, detail="Internal server error") from e
 
     @router.post("/export")
@@ -464,10 +464,10 @@ def register_import_export_routes(
         except HTTPException:
             raise
         except _CONFIG_IMPORT_ERRORS as e:
-            logger.error("Config import failed", exc_info=True)
+            logger.exception("Config import failed")
             raise HTTPException(status_code=400, detail=_config_import_error_detail(e)) from e
         except Exception as e:
-            logger.error("Unexpected config import failure", exc_info=True)
+            logger.exception("Unexpected config import failure")
             raise HTTPException(status_code=500, detail="Failed to import configuration") from e
 
     @router.post("/import")
