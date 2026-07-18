@@ -153,7 +153,7 @@ async def execute_exec_step(command: str, context: dict[str, Any]) -> dict[str, 
             "exit_code": proc.returncode,
         }
     except (OSError, ValueError) as e:
-        logger.error("Command execution failed: %s", e, exc_info=True)
+        logger.exception("Command execution failed: %s", e)
         return {
             "stdout": "",
             "stderr": str(e),
@@ -176,7 +176,7 @@ async def execute_prompt_step(
         )
         return {"response": response}
     except (OSError, RuntimeError, ValueError) as e:
-        logger.error("LLM prompt execution failed: %s", e, exc_info=True)
+        logger.exception("LLM prompt execution failed: %s", e)
         return {
             "response": "",
             "error": str(e),

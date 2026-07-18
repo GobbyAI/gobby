@@ -228,7 +228,7 @@ class PipelineExecutorStepMixin:
         except Exception as e:
             if pipeline is None or not pipeline.enabled:
                 raise
-            logger.error("Failed to resume execution after approval: %s", e, exc_info=True)
+            logger.exception("Failed to resume execution after approval: %s", e)
             refreshed = await cast(Any, self)._run_db(
                 self.execution_manager.get_execution, execution.id
             )
@@ -327,7 +327,7 @@ class PipelineExecutorStepMixin:
         except ApprovalRequired:
             raise
         except Exception as e:
-            logger.error("Nested pipeline execution failed: %s", e, exc_info=True)
+            logger.exception("Nested pipeline execution failed: %s", e)
             return {
                 "pipeline": pipeline_name,
                 "error": str(e),

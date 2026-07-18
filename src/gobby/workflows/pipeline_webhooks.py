@@ -166,4 +166,4 @@ class WebhookNotifier:
                     result.body or result.error,
                 )
         except Exception as exc:
-            logger.error("Failed to send webhook to %s: %s", url, exc, exc_info=True)
+            logger.exception("Failed to send webhook to %s: %s", url, exc)

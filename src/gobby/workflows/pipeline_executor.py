@@ -751,7 +751,7 @@ class PipelineExecutor(
                     span.set_status(Status(StatusCode.ERROR, str(e)))
 
                 if execution:
-                    logger.error("Pipeline execution failed: %s", e, exc_info=True)
+                    logger.exception("Pipeline execution failed: %s", e)
 
                     # Mark the currently-running step as FAILED
                     if (
@@ -766,10 +766,9 @@ class PipelineExecutor(
                                 error=str(e),
                             )
                         except Exception:
-                            logger.error(
+                            logger.exception(
                                 "Failed to mark step %s as failed",
                                 current_step_execution.id,
-                                exc_info=True,
                             )
 
                     try:
@@ -782,10 +781,9 @@ class PipelineExecutor(
                         if failed:
                             execution = failed
                     except Exception:
-                        logger.error(
+                        logger.exception(
                             "Failed to mark execution %s as failed",
                             execution.id,
-                            exc_info=True,
                         )
 
                     if self.webhook_notifier:

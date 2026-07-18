@@ -164,7 +164,7 @@ class PipelineHeartbeat:
             try:
                 handled += await self._handle_stalled_execution(execution)
             except Exception:
-                logger.error("Heartbeat error handling execution %s", execution.id, exc_info=True)
+                logger.exception("Heartbeat error handling execution %s", execution.id)
         return handled
 
     async def _handle_stalled_execution(self, execution: PipelineExecution) -> int:

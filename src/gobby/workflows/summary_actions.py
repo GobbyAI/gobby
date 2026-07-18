@@ -296,10 +296,9 @@ async def _write_summary_file(
         )
         return str(summary_file)
     except Exception as e:
-        logger.error(
+        logger.exception(
             "Failed to write summary file: %s",
             e,
-            exc_info=True,
             extra={
                 "session_id": session_id,
                 "ref": ref,

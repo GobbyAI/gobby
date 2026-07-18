@@ -101,7 +101,7 @@ class TemplateEngine:
             template = self.env.from_string(template_str)
             return str(template.render(**context))
         except Exception as e:
-            logger.error("Error rendering template: %s", e, exc_info=True)
+            logger.exception("Error rendering template: %s", e)
             # Fallback to original string or raise?
             # For workflows, it might be better to fail typically, but let's return error message in string for visibility if strict validation isn't on.
             # actually, better to raise so the action fails and handles it.
@@ -115,5 +115,5 @@ class TemplateEngine:
             template = self.file_env.get_template(template_name)
             return str(template.render(**context))
         except Exception as e:
-            logger.error("Error rendering template file '%s': %s", template_name, e, exc_info=True)
+            logger.exception("Error rendering template file '%s': %s", template_name, e)
             raise

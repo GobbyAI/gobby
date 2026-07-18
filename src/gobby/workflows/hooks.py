@@ -900,7 +900,7 @@ class WorkflowHookHandler:
                         cleanup=event.event_type == HookEventType.SESSION_END,
                     )
         except Exception as e:
-            logger.error("RuleEngine evaluation failed: %s", e, exc_info=True)
+            logger.exception("RuleEngine evaluation failed: %s", e)
             raise
 
     async def evaluate_async(self, event: HookEvent) -> HookResponse:
@@ -945,7 +945,7 @@ class WorkflowHookHandler:
         except WorkflowEvaluationTimeout:
             raise
         except Exception as e:
-            logger.error("Error evaluating rules: %s: %s", type(e).__name__, e, exc_info=True)
+            logger.exception("Error evaluating rules: %s: %s", type(e).__name__, e)
             raise
 
     def handle(self, event: HookEvent) -> HookResponse:
