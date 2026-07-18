@@ -1,0 +1,425 @@
+"""Tests for durable query-relevance shadow judging."""
+
+from __future__ import annotations
+
+import hashlib
+import re
+from types import SimpleNamespace
+from typing import Any
+
+import pytest
+
+from gobby.memory.shadow_relevance import (
+    SHADOW_PROTOCOL_VERSION,
+    SHADOW_RELEVANCE_RUBRIC,
+    _build_shadow_prompt,
+    judge_shadow_candidate_relevance,
+)
+from gobby.storage.hub.protocol import HubDatabase
+
+
+def _content_hash(content: str) -> str:
+    return hashlib.sha256(content.encode("utf-8")).hexdigest()
+
+
+class FakeMemoryManager:
+    def __init__(self, contents: dict[str, str], *, enabled: bool = True) -> None:
+        self.config = SimpleNamespace(digest_memory_usefulness=enabled)
+        self.contents = contents
+
+    async def aget_memory(
+        self,
+        memory_id: str,
+        project_id: str | None = None,
+        **_: Any,
+    ) -> Any:
+        del project_id
+        content = self.contents.get(memory_id)
+        return SimpleNamespace(content=content) if content is not None else None
+
+
+class FakeShadowStore:
+    def __init__(self, requests: list[dict[str, Any]], events: list[tuple[str, str]]) -> None:
+        self.requests = requests
+        self.events = events
+        self.fetch_calls = 0
+        self.label_batches: list[tuple[list[dict[str, Any]], dict[str, Any], str]] = []
+        self.retryable: list[tuple[str, str]] = []
+        self.terminal: list[tuple[str, str]] = []
+
+    def fetch_unshadowed_requests(self, *_: Any, **kwargs: Any) -> list[dict[str, Any]]:
+        self.fetch_calls += 1
+        return self.requests[: int(kwargs["limit"])]
+
+    def claim_shadow_request(
+        self,
+        session_id: str,
+        recall_request_id: str,
+        **_: Any,
+    ) -> str:
+        del session_id
+        self.events.append(("claim", recall_request_id))
+        return f"token-{recall_request_id}"
+
+    def insert_usefulness_labels_atomic(
+        self,
+        rows: list[dict[str, Any]],
+        snapshot: dict[str, Any],
+        claim_token: str,
+    ) -> bool:
+        request_id = str(snapshot["recall_request_id"])
+        self.events.append(("insert", request_id))
+        self.label_batches.append((rows, snapshot, claim_token))
+        return True
+
+    def mark_shadow_claim_retryable(
+        self,
+        recall_request_id: str,
+        *,
+        error: str,
+        **_: Any,
+    ) -> bool:
+        self.events.append(("retryable", recall_request_id))
+        self.retryable.append((recall_request_id, error))
+        return True
+
+    def mark_shadow_claim_terminal(
+        self,
+        recall_request_id: str,
+        *,
+        error: str,
+        **_: Any,
+    ) -> bool:
+        self.events.append(("terminal", recall_request_id))
+        self.terminal.append((recall_request_id, error))
+        return True
+
+
+class FakeJudgeLLM:
+    def __init__(
+        self,
+        events: list[tuple[str, str]],
+        responses: list[dict[str, Any]] | None = None,
+    ) -> None:
+        self.events = events
+        self.responses = list(responses or [])
+        self.calls: list[dict[str, Any]] = []
+
+    async def call_json_feature(
+        self,
+        feature_config: Any,
+        prompt: str,
+        system_prompt: str | None = None,
+        *,
+        caller: str | None = None,
+        **_: Any,
+    ) -> dict[str, Any]:
+        query = prompt.splitlines()[1]
+        self.events.append(("llm", query))
+        self.calls.append(
+            {
+                "feature_config": feature_config,
+                "prompt": prompt,
+                "system_prompt": system_prompt,
+                "caller": caller,
+            }
+        )
+        if self.responses:
+            return self.responses.pop(0)
+        keys = re.findall(r"^(M\d+):$", prompt, flags=re.MULTILINE)
+        return {
+            "verdicts": [
+                {
+                    "key": key,
+                    "relevant": index % 2 == 0,
+                    "confidence": 0.75,
+                    "rationale": f"reason-{key}",
+                }
+                for index, key in enumerate(keys)
+            ]
+        }
+
+
+def _request(request_id: str, memory_ids: list[str], contents: dict[str, str]) -> dict[str, Any]:
+    return {
+        "session_id": "session-1",
+        "recall_request_id": request_id,
+        "project_id": "project-1",
+        "query": f"query {request_id}",
+        "hits": [
+            {
+                "memory_id": memory_id,
+                "rank": index + 1,
+                "content_hash": _content_hash(contents[memory_id]),
+            }
+            for index, memory_id in enumerate(memory_ids)
+        ],
+    }
+
+
+def _config() -> Any:
+    return SimpleNamespace(
+        memory_usefulness=SimpleNamespace(
+            profile="low",
+            candidates=["codex/gpt-5.5-mini", "claude/haiku"],
+            timeout=30,
+        )
+    )
+
+
+def test_build_shadow_prompt_is_deterministic_and_masks_memory_ids() -> None:
+    hits: list[dict[str, Any]] = [
+        {"memory_id": "memory-alpha", "content_hash": "hash-alpha"},
+        {"memory_id": "memory-beta", "content_hash": "hash-beta"},
+        {"memory_id": "memory-gamma", "content_hash": "hash-gamma"},
+    ]
+    contents = {
+        "memory-alpha": "Alpha content",
+        "memory-beta": "Beta content",
+        "memory-gamma": "Gamma content",
+    }
+
+    prompt, presentation = _build_shadow_prompt(
+        recall_request_id="request-42",
+        query_text="How should recall ranking work?",
+        hits=hits,
+        contents_by_id=contents,
+        judge_model="codex/gpt-5.5-mini",
+        judge_config_fingerprint="judge-fingerprint",
+    )
+    repeated = _build_shadow_prompt(
+        recall_request_id="request-42",
+        query_text="How should recall ranking work?",
+        hits=list(reversed(hits)),
+        contents_by_id=contents,
+        judge_model="codex/gpt-5.5-mini",
+        judge_config_fingerprint="judge-fingerprint",
+    )
+
+    assert (prompt, presentation) == repeated
+    assert presentation["system_prompt"] == SHADOW_RELEVANCE_RUBRIC
+    assert presentation["query_text"] == "How should recall ranking work?"
+    assert presentation["presentation_order"] == ["M1", "M2", "M3"]
+    assert [item["neutral_key"] for item in presentation["presented"]] == [
+        "M1",
+        "M2",
+        "M3",
+    ]
+    assert [item["order_index"] for item in presentation["presented"]] == [0, 1, 2]
+    assert presentation["judge_model"] == "codex/gpt-5.5-mini"
+    assert presentation["judge_config_fingerprint"] == "judge-fingerprint"
+    assert presentation["prompt_hash"] == hashlib.sha256(prompt.encode("utf-8")).hexdigest()
+    assert all(hit["memory_id"] not in prompt for hit in hits)
+
+
+@pytest.mark.asyncio
+async def test_shadow_poll_claims_each_request_immediately_before_its_call() -> None:
+    contents = {"memory-a": "Alpha", "memory-b": "Beta", "memory-c": "Gamma"}
+    events: list[tuple[str, str]] = []
+    store = FakeShadowStore(
+        [
+            _request("request-1", ["memory-a", "memory-b"], contents),
+            _request("request-2", ["memory-c"], contents),
+        ],
+        events,
+    )
+    llm = FakeJudgeLLM(events)
+
+    completed = await judge_shadow_candidate_relevance(
+        memory_manager=FakeMemoryManager(contents),
+        llm_service=llm,
+        config=_config(),
+        session_id="session-1",
+        store=store,
+    )
+
+    assert completed == 2
+    assert [event[0] for event in events] == ["claim", "llm", "insert"] * 2
+    assert [event[1] for event in events if event[0] == "claim"] == [
+        "request-1",
+        "request-2",
+    ]
+    assert len(store.label_batches) == 2
+    assert len(store.label_batches[0][0]) == 2
+    assert store.label_batches[0][1]["judge_protocol_version"] == SHADOW_PROTOCOL_VERSION
+    assert store.label_batches[0][1]["created_at"] is not None
+    assert all(row["label_source"] == "digest_shadow" for row in store.label_batches[0][0])
+    assert all(len(call["feature_config"].candidates) == 1 for call in llm.calls)
+    assert all(call["system_prompt"] == SHADOW_RELEVANCE_RUBRIC for call in llm.calls)
+    assert all(call["caller"] == "memory.shadow_relevance" for call in llm.calls)
+
+
+@pytest.mark.asyncio
+async def test_shadow_poll_marks_content_drift_terminal_without_calling_judge() -> None:
+    contents = {"memory-a": "Current content"}
+    events: list[tuple[str, str]] = []
+    request = _request("request-drift", ["memory-a"], contents)
+    request["hits"][0]["content_hash"] = _content_hash("Old content")
+    store = FakeShadowStore([request], events)
+    llm = FakeJudgeLLM(events)
+
+    completed = await judge_shadow_candidate_relevance(
+        memory_manager=FakeMemoryManager(contents),
+        llm_service=llm,
+        config=_config(),
+        session_id="session-1",
+        store=store,
+    )
+
+    assert completed == 0
+    assert store.terminal == [("request-drift", "content_drift")]
+    assert llm.calls == []
+
+
+@pytest.mark.asyncio
+async def test_invalid_response_becomes_retryable_and_does_not_stop_pass() -> None:
+    contents = {"memory-a": "Alpha", "memory-b": "Beta"}
+    events: list[tuple[str, str]] = []
+    store = FakeShadowStore(
+        [
+            _request("request-invalid", ["memory-a"], contents),
+            _request("request-valid", ["memory-b"], contents),
+        ],
+        events,
+    )
+    llm = FakeJudgeLLM(events, responses=[{"verdicts": [{"key": "M1"}]}])
+
+    completed = await judge_shadow_candidate_relevance(
+        memory_manager=FakeMemoryManager(contents),
+        llm_service=llm,
+        config=_config(),
+        session_id="session-1",
+        store=store,
+    )
+
+    assert completed == 1
+    assert store.retryable == [("request-invalid", "invalid_response")]
+    assert len(llm.calls) == 2
+    assert store.label_batches[0][1]["recall_request_id"] == "request-valid"
+
+
+@pytest.mark.asyncio
+async def test_shadow_poll_is_disabled_without_consuming_durable_rows() -> None:
+    events: list[tuple[str, str]] = []
+    store = FakeShadowStore([], events)
+
+    completed = await judge_shadow_candidate_relevance(
+        memory_manager=FakeMemoryManager({}, enabled=False),
+        llm_service=FakeJudgeLLM(events),
+        config=_config(),
+        session_id="session-1",
+        store=store,
+    )
+
+    assert completed == 0
+    assert store.fetch_calls == 0
+
+
+@pytest.mark.asyncio
+async def test_shadow_poll_caps_each_pass_at_eight_calls() -> None:
+    contents = {f"memory-{index}": f"content-{index}" for index in range(9)}
+    events: list[tuple[str, str]] = []
+    store = FakeShadowStore(
+        [_request(f"request-{index}", [f"memory-{index}"], contents) for index in range(9)],
+        events,
+    )
+    llm = FakeJudgeLLM(events)
+
+    completed = await judge_shadow_candidate_relevance(
+        memory_manager=FakeMemoryManager(contents),
+        llm_service=llm,
+        config=_config(),
+        session_id="session-1",
+        store=store,
+    )
+
+    assert completed == 8
+    assert len(llm.calls) == 8
+    assert len(store.label_batches) == 8
+
+
+class _FakeDigestSession:
+    transcript_path = None
+    digest_markdown = ""
+    last_digest_input_hash = None
+    title = "Existing Title"
+    title_source = "llm"
+    source = "claude"
+
+
+class _FakeDigestSessionManager:
+    def __init__(self) -> None:
+        self.session = _FakeDigestSession()
+        self.persist_calls: list[dict[str, Any]] = []
+
+    def get(self, session_id: str) -> Any:
+        del session_id
+        return self.session
+
+    def persist_digest_state(self, session_id: str, **kwargs: Any) -> Any:
+        del session_id
+        self.persist_calls.append(kwargs)
+        return self.session
+
+
+class _FakeDigestLLM:
+    async def call_json_feature(
+        self,
+        feature_config: Any,
+        prompt: str,
+        **kwargs: Any,
+    ) -> dict[str, Any]:
+        del feature_config, prompt, kwargs
+        return {
+            "turn_markdown": "User asked; agent answered.",
+            "title_candidate": "Real Work Title",
+        }
+
+
+@pytest.mark.asyncio
+async def test_digest_drives_shadow_poll_without_legacy_result_payload(
+    temp_db: HubDatabase,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from gobby.config.sessions import DigestConfig
+    from gobby.memory import digest as digest_mod
+
+    seen: dict[str, Any] = {}
+
+    async def fake_judge(**kwargs: Any) -> int:
+        seen.update(kwargs)
+        return 2
+
+    monkeypatch.setattr(digest_mod, "judge_shadow_candidate_relevance", fake_judge)
+    memory_manager = SimpleNamespace(
+        config=SimpleNamespace(enabled=True, digest_memory_usefulness=True),
+        db=temp_db,
+    )
+    session_manager = _FakeDigestSessionManager()
+    config = SimpleNamespace(
+        digest=DigestConfig(),
+        memory_usefulness=_config().memory_usefulness,
+    )
+    llm_service = _FakeDigestLLM()
+
+    result = await digest_mod.build_turn_and_digest(
+        memory_manager=memory_manager,
+        session_manager=session_manager,
+        session_id="session-shadow-digest",
+        prompt_text="please investigate the failing recall pipeline in this repo",
+        llm_service=llm_service,
+        db=temp_db,
+        config=config,
+    )
+
+    assert result is not None
+    assert result["turn_num"] == 1
+    assert "memory_usefulness" not in result
+    assert len(session_manager.persist_calls) == 1
+    assert "Turn 1" in session_manager.persist_calls[0]["digest_markdown"]
+    assert seen == {
+        "memory_manager": memory_manager,
+        "llm_service": llm_service,
+        "config": config,
+        "session_id": "session-shadow-digest",
+    }

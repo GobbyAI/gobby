@@ -17,6 +17,7 @@ from pathlib import Path
 from typing import Any, NoReturn, Protocol
 
 from gobby.llm.base import LLMProviderCancellation
+from gobby.memory.shadow_relevance import judge_shadow_candidate_relevance
 from gobby.memory.title_heuristics import (
     LIFECYCLE_CMDS,
     build_heuristic_title,
@@ -24,7 +25,6 @@ from gobby.memory.title_heuristics import (
     is_template_placeholder,
     normalize_title_candidate,
 )
-from gobby.memory.usefulness import judge_pending_memory_usefulness
 from gobby.sync.export_context import in_jsonl_export_context
 from gobby.utils.injected_context import strip_injected_context
 
@@ -881,18 +881,14 @@ async def build_turn_and_digest(
         if digest_title and title_changed:
             result["title"] = digest_title
 
-        # Forward usefulness labels (#17195): judge this turn's injected
-        # memories after digest persistence so digest state is never at risk.
-        # Default-off (memory.digest_memory_usefulness) and fail-open.
-        memory_usefulness = await judge_pending_memory_usefulness(
+        # Poll durable recall rows after digest persistence so shadow judging
+        # can never put digest state at risk.
+        await judge_shadow_candidate_relevance(
             memory_manager=memory_manager,
             llm_service=llm_service,
             config=config,
             session_id=session_id,
-            undigested_pairs=undigested_pairs,
         )
-        if memory_usefulness:
-            result["memory_usefulness"] = memory_usefulness
 
         return result
 
