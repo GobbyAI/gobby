@@ -26,6 +26,7 @@ from gobby.workflows.enforcement.blocking import (
     is_plan_file,
     is_server_listed,
     is_tool_unlocked,
+    plan_write_paths_allowed,
     requires_task_for_any_touched_file,
 )
 from gobby.workflows.safe_evaluator import SafeExpressionEvaluator, build_condition_helpers
@@ -151,6 +152,8 @@ class TemplatingMixin:
         """Build the shared helper-function dict for condition evaluation and template rendering."""
         variables = ctx.get("variables", {})
         project_path = (ctx.get("project") or {}).get("path")
+        event = ctx.get("event")
+        event_data = event.data if isinstance(event, HookEvent) else None
         funcs = build_condition_helpers(
             task_manager=getattr(self, "_task_manager", None),
             context=ctx,
@@ -167,6 +170,18 @@ class TemplatingMixin:
             )
         )
         funcs["get_touched_file_paths"] = get_touched_file_paths
+        funcs["plan_write_paths_allowed"] = (
+            lambda tool_input, provider, artifact_path=None, require_current_artifact=False: (
+                plan_write_paths_allowed(
+                    tool_input,
+                    provider,
+                    artifact_path,
+                    require_current_artifact,
+                    project_path=project_path,
+                    event_data=event_data,
+                )
+            )
+        )
         funcs["claimed_task_source_code_write"] = claimed_task_source_code_write
         funcs["requires_task_for_any_touched_file"] = requires_task_for_any_touched_file
         funcs["is_message_delivery_tool"] = is_message_delivery_tool

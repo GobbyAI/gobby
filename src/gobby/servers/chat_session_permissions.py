@@ -24,6 +24,7 @@ from gobby.servers.tool_approvals import (
     DEFAULT_GLOBAL_APPROVAL_RULES,
     SAFE_MCP_PROXY_TOOLS,
     approval_key_for_tool,
+    are_plan_mode_write_paths_allowed,
     find_out_of_repo_write_path,
     get_global_approval_rules,
     is_gcode_shell_command,
@@ -70,6 +71,7 @@ class ChatSessionPermissionsMixin:
 
     # Attribute type stubs — actual fields live on the ChatSession dataclass
     conversation_id: str
+    provider: str
     chat_mode: str
     _on_mode_changed: Callable[[str, str], Awaitable[None]] | None
     _on_pre_tool: Callable[[dict[str, Any]], Awaitable[dict[str, Any] | None]] | None
@@ -244,21 +246,29 @@ class ChatSessionPermissionsMixin:
     ) -> PermissionResultAllow | PermissionResultDeny:
         """Apply standard tool rules, approvals, and question handling."""
 
-        # Plan mode: always block normal repo mutations.
+        plan_mode_write_allowed = False
+
+        # Plan mode: block normal repo mutations while allowing plan and scratch files.
         if self.chat_mode == "plan":
             if tool_name in _PLAN_MODE_BLOCKED_TOOLS:
-                # Allow writes to plan files inside the active repo.
-                if tool_name in ("Write", "Edit"):
-                    file_path = input_data.get("file_path", "")
-                    if is_plan_file_path(file_path, project_path=self.project_path):
-                        self._plan_file_path = file_path
-                        return PermissionResultAllow(updated_input=input_data)
-                return PermissionResultDeny(
-                    message=(
-                        f"Plan mode is active — {tool_name} is blocked. "
-                        "Present your plan to the user for approval before making changes."
-                    )
+                plan_mode_write_allowed = are_plan_mode_write_paths_allowed(
+                    tool_name,
+                    input_data,
+                    provider=self.provider,
+                    project_path=self.project_path,
                 )
+                if not plan_mode_write_allowed:
+                    return PermissionResultDeny(
+                        message=(
+                            f"Plan mode is active — {tool_name} is blocked. "
+                            "Present your plan to the user for approval before making changes."
+                        )
+                    )
+                file_path = input_data.get("file_path", "")
+                if isinstance(file_path, str) and is_plan_file_path(
+                    file_path, project_path=self.project_path
+                ):
+                    self._plan_file_path = file_path
             if is_shell_tool(tool_name) and not is_gcode_shell_command(input_data):
                 return PermissionResultDeny(
                     message=(
@@ -305,6 +315,7 @@ class ChatSessionPermissionsMixin:
             tool_name,
             input_data,
             project_path=self.project_path,
+            plan_scratch_provider=self.provider if self.chat_mode == "plan" else None,
         )
         if out_of_repo_path:
             return PermissionResultDeny(
@@ -313,6 +324,9 @@ class ChatSessionPermissionsMixin:
                     f"Blocked path: {out_of_repo_path}"
                 )
             )
+
+        if plan_mode_write_allowed:
+            return PermissionResultAllow(updated_input=input_data)
 
         if tool_name in SAFE_MCP_PROXY_TOOLS:
             return PermissionResultAllow(updated_input=input_data)

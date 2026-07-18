@@ -34,9 +34,18 @@ def test_provider_metadata_preserves_order_and_live_api_metadata() -> None:
         "qwen",
         "agy",
     )
+    assert {entry.provider: entry.user_directory for entry in entries} == {
+        "claude": ".claude",
+        "codex": ".codex",
+        "droid": ".factory",
+        "grok": ".grok",
+        "qwen": ".qwen",
+        "agy": ".gemini",
+    }
     with patch("gobby.providers.registry.shutil.which", return_value="/usr/bin/claude"):
         metadata = entries[0].api_metadata()
 
     assert metadata["display_name"] == "Claude Code"
     assert metadata["installed"] is True
     assert metadata["supports_web_chat"] is True
+    assert "user_directory" not in metadata

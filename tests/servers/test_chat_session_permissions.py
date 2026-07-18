@@ -299,10 +299,132 @@ class TestCanUseTool:
         assert session._plan_file_path == ".gobby/plans/my_plan.md"
 
     @pytest.mark.asyncio
+    async def test_plan_mode_blocks_project_local_provider_config(
+        self, session: ChatSession, tmp_path: Path
+    ) -> None:
+        session.project_path = str(tmp_path)
+        session.set_chat_mode("plan")
+
+        result = await session._can_use_tool(
+            "Write", {"file_path": ".claude/plans/project-local.md"}, ToolPermissionContext()
+        )
+
+        assert isinstance(result, PermissionResultDeny)
+
+    @pytest.mark.parametrize(
+        ("tool_name", "path_key"),
+        [("Write", "file_path"), ("Edit", "file_path"), ("NotebookEdit", "notebook_path")],
+    )
+    @pytest.mark.parametrize("location", ["provider_home", "temp"])
+    async def test_plan_mode_allows_structured_provider_scratch_writes(
+        self,
+        session: ChatSession,
+        tmp_path: Path,
+        tool_name: str,
+        path_key: str,
+        location: str,
+    ) -> None:
+        repo = tmp_path / "repo"
+        repo.mkdir()
+        session.project_path = str(repo)
+        target = (
+            Path.home() / ".claude" / "scratch" / "state.json"
+            if location == "provider_home"
+            else tmp_path / "scratch" / "state.json"
+        )
+        session.set_chat_mode("plan")
+
+        result = await session._can_use_tool(
+            tool_name,
+            {path_key: str(target)},
+            ToolPermissionContext(tool_use_id="tool-scratch"),
+        )
+
+        assert isinstance(result, PermissionResultAllow)
+
+    async def test_plan_mode_blocks_cross_provider_scratch_write(
+        self,
+        session: ChatSession,
+        tmp_path: Path,
+    ) -> None:
+        repo = tmp_path / "repo"
+        repo.mkdir()
+        session.project_path = str(repo)
+        session.set_chat_mode("plan")
+
+        result = await session._can_use_tool(
+            "Write",
+            {"file_path": str(Path.home() / ".codex" / "scratch" / "state.json")},
+            ToolPermissionContext(tool_use_id="tool-cross-provider"),
+        )
+
+        assert isinstance(result, PermissionResultDeny)
+
+    async def test_plan_mode_multi_file_write_fails_closed(
+        self,
+        session: ChatSession,
+        tmp_path: Path,
+    ) -> None:
+        repo = tmp_path / "repo"
+        repo.mkdir()
+        session.project_path = str(repo)
+        session.set_chat_mode("plan")
+        approved = Path.home() / ".claude" / "scratch" / "state.json"
+        unsafe = repo / "src" / "unsafe.py"
+
+        result = await session._can_use_tool(
+            "Write",
+            {"changes": [{"path": str(approved)}, {"path": str(unsafe)}]},
+            ToolPermissionContext(tool_use_id="tool-mixed"),
+        )
+
+        assert isinstance(result, PermissionResultDeny)
+
+    async def test_normal_mode_still_blocks_out_of_repo_provider_path(
+        self,
+        session: ChatSession,
+        tmp_path: Path,
+    ) -> None:
+        repo = tmp_path / "repo"
+        repo.mkdir()
+        session.project_path = str(repo)
+
+        result = await session._can_use_tool(
+            "Write",
+            {"file_path": str(Path.home() / ".claude" / "scratch" / "state.json")},
+            ToolPermissionContext(tool_use_id="tool-normal"),
+        )
+
+        assert isinstance(result, PermissionResultDeny)
+        assert "outside the active repo" in result.message
+
+    async def test_plan_scratch_allowance_preserves_lifecycle_block(
+        self,
+        session: ChatSession,
+        tmp_path: Path,
+    ) -> None:
+        repo = tmp_path / "repo"
+        repo.mkdir()
+        session.project_path = str(repo)
+        session.set_chat_mode("plan")
+        session._on_pre_tool = AsyncMock(
+            return_value={"decision": "block", "reason": "Credential path blocked"}
+        )
+
+        result = await session._can_use_tool(
+            "Write",
+            {"file_path": str(Path.home() / ".claude" / "scratch" / "state.json")},
+            ToolPermissionContext(tool_use_id="tool-lifecycle"),
+        )
+
+        assert isinstance(result, PermissionResultDeny)
+        assert result.message == "Credential path blocked"
+
+    @pytest.mark.asyncio
     @pytest.mark.parametrize(
         ("tool_name", "file_path"),
         [
-            ("Write", ".claude/plans/external.md"),
+            ("Write", str(Path.home() / ".codex" / "plans" / "external.md")),
             ("Edit", "../../.gobby/plans/external.md"),
         ],
     )
@@ -316,7 +438,7 @@ class TestCanUseTool:
         repo = tmp_path / "repo"
         repo.mkdir()
         session.project_path = str(repo)
-        candidate = str(tmp_path / file_path) if file_path.startswith(".claude") else file_path
+        candidate = file_path
         session.set_chat_mode("plan")
 
         result = await session._can_use_tool(

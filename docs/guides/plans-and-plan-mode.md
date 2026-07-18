@@ -61,7 +61,16 @@ call_tool(server_name="gobby-plans", tool_name="create_plan", ...)
 Plan mode is enforced through workflow/rule state. In plan mode:
 
 - The agent may write the active plan artifact.
-- Unrelated file writes are blocked by `block-writes-outside-plan-artifact.yaml`.
+- Structured `Write`, `Edit`, and `NotebookEdit` calls may write scratch files
+  beneath the active provider's user directory (`~/.claude`, `~/.codex`,
+  `~/.factory`, `~/.grok`, `~/.qwen`, or `~/.gemini`) and OS temporary
+  directories. Cross-provider directories, relative project config directories,
+  and paths that escape an approved root remain blocked.
+- Multi-file operations are allowed only when every target is the active plan
+  artifact or an approved scratch path.
+- Other file writes are blocked by `block-writes-outside-plan-artifact.yaml`.
+- Shell mutation policy is unchanged; redirections and heredoc writes still use
+  the existing plan-mode shell restrictions.
 - `/gobby plan` does not create planning epics, review anchors, or per-round
   review tasks. Task management calls remain available for other planning
   workflows, but artifact-first planning keeps review state in the file.

@@ -1530,6 +1530,96 @@ class TestCodexBackend:
         assert result == backend._decline_response("item/commandExecution/requestApproval")
 
     @pytest.mark.asyncio
+    async def test_handle_approval_request_allows_codex_scratch_write_in_plan_mode(
+        self,
+        tmp_path: Path,
+    ) -> None:
+        backend = CodexWebChatBackend(client=MagicMock())
+        session = CodexManagedChatSession(conversation_id="conv-codex", _backend=backend)
+        repo = tmp_path / "repo"
+        repo.mkdir()
+        session.project_path = str(repo)
+        session.chat_mode = "plan"
+        session._thread_id = "thread-1"
+        backend._sessions_by_thread["thread-1"] = session
+        target = str(Path.home() / ".codex" / "scratch" / "state.json")
+
+        result = await backend.handle_approval_request(
+            "item/fileChange/requestApproval",
+            {"threadId": "thread-1", "changes": [{"path": target}]},
+        )
+
+        assert result == backend._accept_response("item/fileChange/requestApproval")
+
+    @pytest.mark.asyncio
+    async def test_handle_approval_request_blocks_project_local_codex_config(
+        self,
+        tmp_path: Path,
+    ) -> None:
+        backend = CodexWebChatBackend(client=MagicMock())
+        session = CodexManagedChatSession(conversation_id="conv-codex", _backend=backend)
+        repo = tmp_path / "repo"
+        repo.mkdir()
+        session.project_path = str(repo)
+        session.chat_mode = "plan"
+        session._thread_id = "thread-1"
+        backend._sessions_by_thread["thread-1"] = session
+
+        result = await backend.handle_approval_request(
+            "item/fileChange/requestApproval",
+            {"threadId": "thread-1", "changes": [{"path": ".codex/plans/project-local.md"}]},
+        )
+
+        assert result == backend._decline_response("item/fileChange/requestApproval")
+
+    @pytest.mark.asyncio
+    async def test_handle_approval_request_blocks_mixed_codex_plan_write(
+        self,
+        tmp_path: Path,
+    ) -> None:
+        backend = CodexWebChatBackend(client=MagicMock())
+        session = CodexManagedChatSession(conversation_id="conv-codex", _backend=backend)
+        repo = tmp_path / "repo"
+        repo.mkdir()
+        session.project_path = str(repo)
+        session.chat_mode = "plan"
+        session._thread_id = "thread-1"
+        backend._sessions_by_thread["thread-1"] = session
+        scratch = str(Path.home() / ".codex" / "scratch" / "state.json")
+
+        result = await backend.handle_approval_request(
+            "item/fileChange/requestApproval",
+            {
+                "threadId": "thread-1",
+                "changes": [{"path": scratch}, {"path": str(repo / "src" / "unsafe.py")}],
+            },
+        )
+
+        assert result == backend._decline_response("item/fileChange/requestApproval")
+
+    @pytest.mark.asyncio
+    async def test_handle_approval_request_blocks_codex_scratch_write_in_normal_mode(
+        self,
+        tmp_path: Path,
+    ) -> None:
+        backend = CodexWebChatBackend(client=MagicMock())
+        session = CodexManagedChatSession(conversation_id="conv-codex", _backend=backend)
+        repo = tmp_path / "repo"
+        repo.mkdir()
+        session.project_path = str(repo)
+        session.chat_mode = "normal"
+        session._thread_id = "thread-1"
+        backend._sessions_by_thread["thread-1"] = session
+        target = str(Path.home() / ".codex" / "scratch" / "state.json")
+
+        result = await backend.handle_approval_request(
+            "item/fileChange/requestApproval",
+            {"threadId": "thread-1", "changes": [{"path": target}]},
+        )
+
+        assert result == backend._decline_response("item/fileChange/requestApproval")
+
+    @pytest.mark.asyncio
     async def test_send_message_replays_deferred_context_prefix(self) -> None:
         backend = MagicMock()
         backend.attach_session = AsyncMock()

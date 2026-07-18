@@ -21,12 +21,12 @@ from gobby.config.ai import LocalGenerationEndpointConfig
 from gobby.llm.claude_models import ChatEvent, DoneEvent, TextChunk
 from gobby.servers.chat_session_helpers import (
     _BASH_WRITE_PATTERNS,
-    _PLAN_FILE_PATTERN,
     PendingApproval,
     build_compaction_context,
 )
 from gobby.servers.tool_approvals import (
     DEFAULT_GLOBAL_APPROVAL_RULES,
+    are_plan_mode_write_paths_allowed,
     find_out_of_repo_write_path,
     get_global_approval_rules,
     is_gcode_shell_command,
@@ -575,18 +575,21 @@ class CodexWebChatBackend:
             tool_name,
             input_data,
             project_path=session.project_path,
+            plan_scratch_provider=session.provider if session.chat_mode == "plan" else None,
         )
         if out_of_repo_path:
             return self._decline_response(method)
 
+        plan_mode_write_allowed = False
         if session.chat_mode == "plan":
             if tool_name in {"Write", "Edit", "NotebookEdit"}:
-                file_path = input_data.get("file_path", "")
-                if (
-                    not isinstance(file_path, str)
-                    or not file_path
-                    or not _PLAN_FILE_PATTERN.match(file_path)
-                ):
+                plan_mode_write_allowed = are_plan_mode_write_paths_allowed(
+                    tool_name,
+                    input_data,
+                    provider=session.provider,
+                    project_path=session.project_path,
+                )
+                if not plan_mode_write_allowed:
                     return self._decline_response(method)
             elif (
                 tool_name == "Bash"
@@ -594,6 +597,9 @@ class CodexWebChatBackend:
                 and not is_gcode_shell_command(input_data)
             ):
                 return self._decline_response(method)
+
+        if plan_mode_write_allowed:
+            return self._accept_response(method)
 
         if session.chat_mode == "bypass":
             return self._accept_response(method)

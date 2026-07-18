@@ -842,6 +842,82 @@ async def test_plan_mode_still_cancels_write_tool_without_blocking() -> None:
 
 
 @pytest.mark.asyncio
+async def test_plan_mode_blocks_project_local_droid_config() -> None:
+    backend = DroidWebChatBackend()
+    session, broadcasts = _exit_spec_session(backend)
+    events = parse_droid_stream_line(
+        _permission_request_line(
+            tool_name="Write",
+            tool_input={"file_path": ".factory/plans/project-local.md"},
+        )
+    )
+
+    result = await backend._resolve_permission_request(session, events)
+
+    assert result == "cancel"
+    assert session.has_blocking_plan_decision is False
+    assert broadcasts == []
+
+
+@pytest.mark.asyncio
+async def test_plan_mode_allows_droid_provider_scratch_write() -> None:
+    backend = DroidWebChatBackend()
+    session, broadcasts = _exit_spec_session(backend)
+    target = str(Path.home() / ".factory" / "scratch" / "state.json")
+    events = parse_droid_stream_line(
+        _permission_request_line(
+            tool_name="Write",
+            tool_input={"file_path": target, "content": "{}"},
+        )
+    )
+
+    result = await backend._resolve_permission_request(session, events)
+
+    assert result == "proceed_once"
+    assert session.has_blocking_plan_decision is False
+    assert broadcasts == []
+
+
+@pytest.mark.asyncio
+async def test_plan_mode_blocks_mixed_droid_scratch_write() -> None:
+    backend = DroidWebChatBackend()
+    session, broadcasts = _exit_spec_session(backend)
+    scratch = str(Path.home() / ".factory" / "scratch" / "state.json")
+    unsafe = str(Path.cwd() / "src" / "unsafe.py")
+    events = parse_droid_stream_line(
+        _permission_request_line(
+            tool_name="Write",
+            tool_input={"changes": [{"path": scratch}, {"path": unsafe}]},
+        )
+    )
+
+    result = await backend._resolve_permission_request(session, events)
+
+    assert result == "cancel"
+    assert session.has_blocking_plan_decision is False
+    assert broadcasts == []
+
+
+@pytest.mark.asyncio
+async def test_normal_mode_blocks_droid_provider_scratch_write() -> None:
+    backend = DroidWebChatBackend()
+    session, broadcasts = _exit_spec_session(backend)
+    session.chat_mode = "normal"
+    target = str(Path.home() / ".factory" / "scratch" / "state.json")
+    events = parse_droid_stream_line(
+        _permission_request_line(
+            tool_name="Write",
+            tool_input={"file_path": target, "content": "{}"},
+        )
+    )
+
+    result = await backend._resolve_permission_request(session, events)
+
+    assert result == "cancel"
+    assert broadcasts == []
+
+
+@pytest.mark.asyncio
 async def test_wait_for_plan_decision_times_out_to_reject() -> None:
     backend = DroidWebChatBackend()
     session, _broadcasts = _exit_spec_session(backend)

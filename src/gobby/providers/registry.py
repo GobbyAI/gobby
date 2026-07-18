@@ -22,6 +22,7 @@ class ProviderMetadata:
     provider: str
     binary: str
     display_name: str
+    user_directory: str
     supports_web_chat: bool = True
     supports_agent_spawn: bool = True
     live_model_discovery: bool = True
@@ -47,15 +48,16 @@ class ProviderMetadata:
 
 
 _PROVIDERS: tuple[ProviderMetadata, ...] = (
-    ProviderMetadata("claude", "claude", "Claude Code"),
-    ProviderMetadata("codex", "codex", "Codex"),
-    ProviderMetadata("droid", "droid", "Droid"),
-    ProviderMetadata("grok", "grok", "Grok"),
-    ProviderMetadata("qwen", "qwen", "Qwen"),
+    ProviderMetadata("claude", "claude", "Claude Code", ".claude"),
+    ProviderMetadata("codex", "codex", "Codex", ".codex"),
+    ProviderMetadata("droid", "droid", "Droid", ".factory"),
+    ProviderMetadata("grok", "grok", "Grok", ".grok"),
+    ProviderMetadata("qwen", "qwen", "Qwen", ".qwen"),
     ProviderMetadata(
         "agy",
         "agy",
         "AGY",
+        ".gemini",
         supports_web_chat=False,
         supports_agent_spawn=False,
         live_model_discovery=False,

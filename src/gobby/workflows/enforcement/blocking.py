@@ -10,6 +10,8 @@ import logging
 import os
 from typing import Any
 
+from gobby.providers.path_policy import is_plan_scratch_path, is_project_plan_artifact_path
+
 logger = logging.getLogger(__name__)
 
 # MCP discovery tools that don't require prior schema lookup
@@ -397,6 +399,43 @@ def get_write_file_paths(
     if isinstance(canonical_path, str) and canonical_path.strip():
         return [canonical_path.strip()]
     return []
+
+
+def plan_write_paths_allowed(
+    tool_input: Any,
+    provider: str | None,
+    artifact_path: str | None = None,
+    require_current_artifact: bool = False,
+    *,
+    project_path: str | None = None,
+    event_data: dict[str, Any] | None = None,
+) -> bool:
+    """Return whether every structured write target is plan-mode approved."""
+    paths = get_write_file_paths(tool_input, event_data)
+    if not paths:
+        return False
+
+    for path in paths:
+        if require_current_artifact:
+            if is_current_plan_artifact(path, artifact_path, project_path=project_path):
+                continue
+        elif is_project_plan_artifact_path(path, project_path):
+            continue
+        if project_path:
+            project_root = os.path.realpath(os.path.expanduser(project_path))
+            expanded = os.path.expanduser(path)
+            candidate = (
+                expanded if os.path.isabs(expanded) else os.path.join(project_root, expanded)
+            )
+            try:
+                if os.path.commonpath([project_root, os.path.realpath(candidate)]) == project_root:
+                    return False
+            except (OSError, ValueError):
+                return False
+        if is_plan_scratch_path(path, provider):
+            continue
+        return False
+    return True
 
 
 def requires_task_for_any_touched_file(

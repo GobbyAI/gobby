@@ -13,7 +13,8 @@ from pathlib import Path
 from typing import Any
 
 from gobby.hooks.normalization import canonicalize_shell_tool_name
-from gobby.servers.chat_session_helpers import _BASH_WRITE_PATTERNS, _PLAN_FILE_PATTERN
+from gobby.providers.path_policy import is_plan_scratch_path, is_project_plan_artifact_path
+from gobby.servers.chat_session_helpers import _BASH_WRITE_PATTERNS
 from gobby.storage.config_store import ConfigStore
 
 logger = logging.getLogger(__name__)
@@ -441,6 +442,9 @@ def extract_write_paths(tool_name: str, input_data: dict[str, Any]) -> list[str]
             value = input_data.get(key)
             if isinstance(value, str) and value.strip():
                 paths.append(value)
+        file_paths = input_data.get("file_paths")
+        if isinstance(file_paths, list):
+            paths.extend(value for value in file_paths if isinstance(value, str) and value.strip())
 
     changes = input_data.get("changes")
     if isinstance(changes, list):
@@ -463,18 +467,41 @@ def extract_write_paths(tool_name: str, input_data: dict[str, Any]) -> list[str]
 
 def is_plan_file_path(path_value: str, *, project_path: str | None) -> bool:
     """Return whether a path is an in-repo plan file."""
-    if not project_path or not _PLAN_FILE_PATTERN.match(path_value):
+    return is_project_plan_artifact_path(path_value, project_path)
+
+
+def are_plan_mode_write_paths_allowed(
+    tool_name: str,
+    input_data: dict[str, Any],
+    *,
+    provider: str | None,
+    project_path: str | None,
+) -> bool:
+    """Return whether every structured write target is a plan artifact or scratch path."""
+    canonical = str(canonicalize_shell_tool_name(tool_name))
+    if canonical not in {"Write", "Edit", "NotebookEdit"}:
         return False
 
-    repo_root = Path(project_path).resolve()
-    target = Path(path_value)
-    if not target.is_absolute():
-        target = repo_root / target
-    try:
-        resolved = target.resolve()
-    except OSError:
+    paths = extract_write_paths(canonical, input_data)
+    if not paths:
         return False
-    return resolved.is_relative_to(repo_root)
+
+    repo_root = Path(project_path).resolve() if project_path else None
+    for path in paths:
+        if is_plan_file_path(path, project_path=project_path):
+            continue
+        target = Path(path).expanduser()
+        if repo_root is not None:
+            if not target.is_absolute():
+                target = repo_root / target
+            try:
+                if target.resolve().is_relative_to(repo_root):
+                    return False
+            except OSError:
+                return False
+        if not is_plan_scratch_path(path, provider):
+            return False
+    return True
 
 
 def find_out_of_repo_write_path(
@@ -482,6 +509,7 @@ def find_out_of_repo_write_path(
     input_data: dict[str, Any],
     *,
     project_path: str | None,
+    plan_scratch_provider: str | None = None,
 ) -> str | None:
     """Return the first path that escapes the active repo, if any."""
     if not project_path:
@@ -490,6 +518,8 @@ def find_out_of_repo_write_path(
     repo_root = Path(project_path).resolve()
     for path_value in extract_write_paths(tool_name, input_data):
         if is_plan_file_path(path_value, project_path=project_path):
+            continue
+        if plan_scratch_provider and is_plan_scratch_path(path_value, plan_scratch_provider):
             continue
         target = Path(path_value)
         if not target.is_absolute():

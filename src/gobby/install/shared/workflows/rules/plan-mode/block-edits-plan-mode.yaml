@@ -2,17 +2,19 @@ tags: [plan-mode, enforcement, gobby, default]
 
 rules:
   block-edits-plan-mode:
-    description: "Block file edits during plan mode except for the plan file"
+    description: "Block file edits during plan mode except plan artifacts and provider scratch paths"
     event: before_tool
     enabled: true
     priority: 20
     when: >
       variables.get('plan_mode')
-      and not is_plan_file(tool_input.get('file_path', ''), source)
+      and not plan_write_paths_allowed(tool_input, source)
     effects:
       - type: block
         tools: [Edit, Write, NotebookEdit]
         reason: |
           Plan mode is active — file edits are blocked.
-          You may only edit the plan file itself.
+          Structured file tools may edit the plan file, the active provider's
+          user directory, or an OS temporary directory. Every target in a
+          multi-file operation must qualify.
           Use ExitPlanMode when your plan is finalized.

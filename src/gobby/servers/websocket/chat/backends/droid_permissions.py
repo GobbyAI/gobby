@@ -6,9 +6,10 @@ from collections.abc import Callable
 from typing import Any, Protocol
 
 from gobby.adapters.acp_client import StreamEvent
-from gobby.servers.chat_session_helpers import _BASH_WRITE_PATTERNS, _PLAN_FILE_PATTERN
+from gobby.servers.chat_session_helpers import _BASH_WRITE_PATTERNS
 from gobby.servers.tool_approvals import (
     DEFAULT_GLOBAL_APPROVAL_RULES,
+    are_plan_mode_write_paths_allowed,
     find_out_of_repo_write_path,
     get_global_approval_rules,
     is_gcode_shell_command,
@@ -32,6 +33,7 @@ class DroidPermissionSession(Protocol):
     """Session surface needed by Droid permission resolution."""
 
     project_path: str | None
+    provider: str
     chat_mode: str
     _approved_tools: set[str]
     _session_manager_ref: Any | None
@@ -79,6 +81,7 @@ class DroidPermissionResolver:
                 tool_name,
                 tool_input,
                 project_path=session.project_path,
+                plan_scratch_provider=session.provider if session.chat_mode == "plan" else None,
             ):
                 return DROID_PERMISSION_CANCEL
 
@@ -88,6 +91,38 @@ class DroidPermissionResolver:
         project_rules = await load_project_approval_rules_async(session.project_path)
         global_rules = self._global_rules_for_session(session)
         session_rules = normalize_approved_tool_keys(session._approved_tools)
+        if session.chat_mode == "plan":
+            if any(
+                self._plan_mode_blocks_tool(
+                    tool_name,
+                    tool_input,
+                    provider=session.provider,
+                    project_path=session.project_path,
+                )
+                for tool_name, tool_input, _tool_id in tool_payloads
+            ):
+                return DROID_PERMISSION_CANCEL
+            structured_writes = [
+                tool_name in {"Write", "Edit", "NotebookEdit"}
+                for tool_name, _tool_input, _tool_id in tool_payloads
+            ]
+            if any(structured_writes):
+                if all(structured_writes):
+                    return DROID_PERMISSION_PROCEED_ONCE
+                return DROID_PERMISSION_CANCEL
+            if all(
+                is_tool_auto_allowed(
+                    tool_name,
+                    tool_input,
+                    session_rules=session_rules,
+                    project_rules=project_rules,
+                    global_rules=global_rules,
+                )
+                for tool_name, tool_input, _tool_id in tool_payloads
+            ):
+                return DROID_PERMISSION_PROCEED_ONCE
+            return await self._resolve_plan_mode_request(session, tool_payloads)
+
         if all(
             is_tool_auto_allowed(
                 tool_name,
@@ -99,14 +134,6 @@ class DroidPermissionResolver:
             for tool_name, tool_input, _tool_id in tool_payloads
         ):
             return DROID_PERMISSION_PROCEED_ONCE
-
-        if session.chat_mode == "plan":
-            if any(
-                self._plan_mode_blocks_tool(tool_name, tool_input)
-                for tool_name, tool_input, _tool_id in tool_payloads
-            ):
-                return DROID_PERMISSION_CANCEL
-            return await self._resolve_plan_mode_request(session, tool_payloads)
 
         approval_tool_name, approval_input = self._approval_prompt_payload(tool_payloads)
         approval = await session._wait_for_tool_approval(approval_tool_name, approval_input)
@@ -179,13 +206,19 @@ class DroidPermissionResolver:
         )
 
     @staticmethod
-    def _plan_mode_blocks_tool(tool_name: str, tool_input: dict[str, Any]) -> bool:
+    def _plan_mode_blocks_tool(
+        tool_name: str,
+        tool_input: dict[str, Any],
+        *,
+        provider: str,
+        project_path: str | None,
+    ) -> bool:
         if tool_name in {"Write", "Edit", "NotebookEdit"}:
-            file_path = tool_input.get("file_path", "")
-            return (
-                not isinstance(file_path, str)
-                or not file_path
-                or not _PLAN_FILE_PATTERN.match(file_path)
+            return not are_plan_mode_write_paths_allowed(
+                tool_name,
+                tool_input,
+                provider=provider,
+                project_path=project_path,
             )
         if tool_name == "Bash":
             if is_gcode_shell_command(tool_input):
