@@ -133,6 +133,14 @@ class ProcessorLifecycleMixin:
             return SessionFlushResult(flushed=False, error=str(exc))
         return SessionFlushResult(flushed=True)
 
+    async def reconcile_codex_transcript(
+        self: ProcessorHost, session_id: str
+    ) -> SessionFlushResult:
+        """Catch up a registered terminal Codex rollout before completion checks."""
+        if self._session_sources.get(session_id) != "codex":
+            return SessionFlushResult(flushed=False, error="session is not registered as Codex")
+        return await self.flush_session(session_id)
+
     def unregister_session(self: ProcessorHost, session_id: str) -> None:
         """Stop monitoring a session."""
         was_registered = self._active_sessions.pop(session_id, None) is not None

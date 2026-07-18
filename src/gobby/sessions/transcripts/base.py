@@ -6,7 +6,10 @@ from collections.abc import Iterable, Iterator, Mapping
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import Any, Literal, Protocol, runtime_checkable
+from typing import TYPE_CHECKING, Any, Literal, Protocol, runtime_checkable
+
+if TYPE_CHECKING:
+    from gobby.sessions.transcripts.codex import CodexNestedExecOutcome
 
 from gobby.telemetry.logging import get_parser_error_logger, parser_error_log_path
 
@@ -239,6 +242,7 @@ class ParseEvent:
     parsed_index: int
     records: list[ParsedMessage | ParsedToolEvent] = field(default_factory=list)
     parser_safe: bool = True
+    codex_exec_outcomes: list[CodexNestedExecOutcome] = field(default_factory=list)
 
 
 @dataclass
@@ -304,6 +308,12 @@ class TranscriptParser(Protocol):
             List of ParsedMessage and/or ParsedToolEvent records, in source order.
         """
         ...
+
+    def iter_parse_events(
+        self, raw_lines: Iterable[RawLine], start_index: int = 0
+    ) -> Iterator[ParseEvent]: ...
+
+    def finalize(self) -> list[ParsedAdjustment]: ...
 
     def snapshot_state(self) -> dict[str, Any]: ...
 

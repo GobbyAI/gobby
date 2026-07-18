@@ -1,0 +1,221 @@
+from __future__ import annotations
+
+import json
+from collections.abc import Iterable
+from typing import Any
+
+import pytest
+
+from gobby.sessions.transcripts.base import raw_lines_from_texts
+from gobby.sessions.transcripts.codex import CodexNestedExecOutcome, CodexTranscriptParser
+
+pytestmark = pytest.mark.unit
+
+
+def _response_item(payload: dict[str, Any]) -> str:
+    return json.dumps(
+        {
+            "timestamp": "2026-07-18T21:00:00Z",
+            "type": "response_item",
+            "payload": payload,
+        }
+    )
+
+
+def _call(call_id: str, name: str, tool_input: str) -> str:
+    return _response_item(
+        {
+            "type": "custom_tool_call",
+            "call_id": call_id,
+            "name": name,
+            "input": tool_input,
+        }
+    )
+
+
+def _output(call_id: str, *texts: str) -> str:
+    return _response_item(
+        {
+            "type": "custom_tool_call_output",
+            "call_id": call_id,
+            "output": [{"type": "input_text", "text": text} for text in texts],
+        }
+    )
+
+
+def _outcomes(parser: CodexTranscriptParser, lines: Iterable[str]) -> list[CodexNestedExecOutcome]:
+    outcomes: list[CodexNestedExecOutcome] = []
+    for event in parser.iter_parse_events(raw_lines_from_texts(lines)):
+        outcomes.extend(event.codex_exec_outcomes)
+    return outcomes
+
+
+def test_derives_single_literal_exec_result() -> None:
+    parser = CodexTranscriptParser()
+    lines = [
+        _call(
+            "exec-1",
+            "exec",
+            'const r = await tools.exec_command({cmd:"uv run ruff check src/gobby"}); text(r);',
+        ),
+        _output("exec-1", json.dumps({"exit_code": 0, "output": "All checks passed"})),
+    ]
+
+    outcomes = _outcomes(parser, lines)
+
+    assert [(item.identity, item.command, item.result["exit_code"]) for item in outcomes] == [
+        ("exec-1:0", "uv run ruff check src/gobby", 0)
+    ]
+
+
+def test_derives_batched_results_in_content_block_order() -> None:
+    parser = CodexTranscriptParser()
+    lines = [
+        _call(
+            "exec-batch",
+            "exec",
+            "const rs = await Promise.all(commands.map(cmd => tools.exec_command({cmd})));",
+        ),
+        _output(
+            "exec-batch",
+            "Script completed successfully",
+            json.dumps({"cmd": "pytest focused", "exit_code": 1, "output": "failed"}),
+            json.dumps({"command": "ruff check", "exitCode": 0, "output": "passed"}),
+        ),
+    ]
+
+    outcomes = _outcomes(parser, lines)
+
+    assert [(item.identity, item.command, item.result) for item in outcomes] == [
+        (
+            "exec-batch:0",
+            "pytest focused",
+            {"cmd": "pytest focused", "exit_code": 1, "output": "failed"},
+        ),
+        (
+            "exec-batch:1",
+            "ruff check",
+            {"command": "ruff check", "exitCode": 0, "output": "passed"},
+        ),
+    ]
+
+
+def test_correlates_yielded_exec_with_final_wait_result() -> None:
+    parser = CodexTranscriptParser()
+    lines = [
+        _call(
+            "exec-yield",
+            "functions.exec",
+            'const r = await tools.exec_command({cmd:"pytest slow",yield_time_ms:1000}); text(r);',
+        ),
+        _output("exec-yield", "Script running with cell ID cell-7"),
+        _call("wait-1", "wait", json.dumps({"cell_id": "cell-7"})),
+        _output("wait-1", "Script running with cell ID cell-7"),
+        _call("wait-2", "functions.wait", json.dumps({"cell_id": "cell-7"})),
+        _output("wait-2", json.dumps({"exit_code": 7, "output": "one failed"})),
+    ]
+
+    outcomes = _outcomes(parser, lines)
+
+    assert [(item.identity, item.command, item.result["exit_code"]) for item in outcomes] == [
+        ("exec-yield:0", "pytest slow", 7)
+    ]
+
+
+def test_hydrates_pending_yielded_exec_state() -> None:
+    first_parser = CodexTranscriptParser()
+    _outcomes(
+        first_parser,
+        [
+            _call(
+                "exec-restart",
+                "exec",
+                'const r = await tools.exec_command({cmd:"mypy src"}); text(r);',
+            ),
+            _output("exec-restart", "Script running with cell ID 53"),
+        ],
+    )
+    resumed_parser = CodexTranscriptParser()
+    resumed_parser.hydrate_state(first_parser.snapshot_state())
+
+    outcomes = _outcomes(
+        resumed_parser,
+        [
+            _call("wait-restart", "wait", json.dumps({"cell_id": 53})),
+            _output("wait-restart", json.dumps({"exit_code": 0, "output": "clean"})),
+        ],
+    )
+
+    assert [(item.identity, item.command, item.result["exit_code"]) for item in outcomes] == [
+        ("exec-restart:0", "mypy src", 0)
+    ]
+
+
+def test_hydrates_pending_exec_call_before_output() -> None:
+    first_parser = CodexTranscriptParser()
+    _outcomes(
+        first_parser,
+        [
+            _call(
+                "exec-before-output",
+                "exec",
+                'const r = await tools.exec_command({cmd:"ruff check src"}); text(r);',
+            )
+        ],
+    )
+    resumed_parser = CodexTranscriptParser()
+    resumed_parser.hydrate_state(first_parser.snapshot_state())
+
+    outcomes = _outcomes(
+        resumed_parser,
+        [_output("exec-before-output", json.dumps({"exit_code": 0, "output": "clean"}))],
+    )
+
+    assert [(item.identity, item.command, item.result["exit_code"]) for item in outcomes] == [
+        ("exec-before-output:0", "ruff check src", 0)
+    ]
+
+
+@pytest.mark.parametrize(
+    ("tool_input", "result_texts"),
+    [
+        (
+            'const r = await tools.exec_command({cmd:"pytest"}); text(r.output);',
+            ("tests failed",),
+        ),
+        (
+            "const rs = await Promise.all(commands.map(cmd => tools.exec_command({cmd})));",
+            (
+                json.dumps({"exit_code": 0, "output": "first"}),
+                json.dumps({"exit_code": 0, "output": "second"}),
+            ),
+        ),
+        (
+            'const r = await tools.exec_command({cmd:"pytest"}); text(r);',
+            (json.dumps({"exit_code": 0, "exitCode": 1, "output": "conflict"}),),
+        ),
+        (
+            "const rs = await Promise.all(commands.map(cmd => tools.exec_command({cmd})));",
+            (
+                json.dumps(
+                    {
+                        "cmd": "pytest one",
+                        "command": "pytest two",
+                        "exit_code": 0,
+                    }
+                ),
+            ),
+        ),
+    ],
+)
+def test_ambiguous_or_unstructured_outputs_remain_unknown(
+    tool_input: str, result_texts: tuple[str, ...]
+) -> None:
+    parser = CodexTranscriptParser()
+
+    outcomes = _outcomes(
+        parser,
+        [_call("exec-unknown", "exec", tool_input), _output("exec-unknown", *result_texts)],
+    )
+
+    assert outcomes == []

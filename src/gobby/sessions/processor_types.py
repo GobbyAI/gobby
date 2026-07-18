@@ -15,7 +15,10 @@ from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.token_events import TokenEventStore
 
 if TYPE_CHECKING:
+    from gobby.hooks.events import HookEvent
     from gobby.hooks.hook_manager import HookManager
+    from gobby.sessions.processor_lifecycle import SessionFlushResult
+    from gobby.sessions.transcripts.codex import CodexNestedExecOutcome
     from gobby.storage.context_usage_snapshot import ContextUsageSnapshot
     from gobby.storage.sessions import SessionManager
     from gobby.storage.unmodeled_observations import UnmodeledObservationStore
@@ -84,6 +87,18 @@ class ProcessorHost(Protocol):
         model: str | None,
     ) -> ContextUsageSnapshot | None: ...
 
+    @staticmethod
+    def _build_codex_exec_outcome_event(
+        session: dict[str, Any],
+        outcome: CodexNestedExecOutcome,
+    ) -> HookEvent | None: ...
+
+    async def _dispatch_codex_exec_outcomes(
+        self,
+        session_id: str,
+        outcomes: list[CodexNestedExecOutcome],
+    ) -> None: ...
+
     async def _process_session(
         self,
         session_id: str,
@@ -91,6 +106,10 @@ class ProcessorHost(Protocol):
         *,
         at_eof: bool = False,
     ) -> None: ...
+
+    async def flush_session(self, session_id: str) -> SessionFlushResult: ...
+
+    async def reconcile_codex_transcript(self, session_id: str) -> SessionFlushResult: ...
 
     async def _process_session_unlocked(
         self,

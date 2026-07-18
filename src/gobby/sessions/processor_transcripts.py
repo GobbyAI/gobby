@@ -7,7 +7,7 @@ import json
 import logging
 import os
 from copy import deepcopy
-from typing import cast
+from typing import Any, cast
 
 import aiofiles
 import psycopg
@@ -19,7 +19,14 @@ from gobby.sessions.observation_tracker import ObservationTracker
 from gobby.sessions.processor_types import ProcessorHost
 from gobby.sessions.transcript_normalization import normalize_transcript_records
 from gobby.sessions.transcript_renderer import RenderState, render_incremental
-from gobby.sessions.transcripts.base import ParsedMessage
+from gobby.sessions.transcripts.base import (
+    ParsedMessage,
+    ParsedToolEvent,
+    TranscriptParser,
+    apply_adjustment,
+    raw_lines_from_texts,
+)
+from gobby.sessions.transcripts.codex import CodexNestedExecOutcome
 
 logger = logging.getLogger(__name__)
 
@@ -29,7 +36,55 @@ def _parser_source(parser: object | None) -> str | None:
     return source if isinstance(source, str) else None
 
 
+def _parse_incremental_records(
+    parser: TranscriptParser,
+    lines: list[str],
+    *,
+    start_index: int,
+) -> tuple[list[ParsedMessage | ParsedToolEvent], list[CodexNestedExecOutcome]]:
+    if _parser_source(parser) != "codex":
+        return parser.parse_lines(lines, start_index=start_index), []
+
+    records: list[ParsedMessage | ParsedToolEvent] = []
+    outcomes: list[CodexNestedExecOutcome] = []
+    for event in parser.iter_parse_events(raw_lines_from_texts(lines), start_index):
+        records.extend(event.records)
+        outcomes.extend(event.codex_exec_outcomes)
+    for adjustment in parser.finalize():
+        apply_adjustment(records, adjustment)
+    return records, outcomes
+
+
 class ProcessorTranscriptMixin:
+    async def _dispatch_codex_exec_outcomes(
+        self: ProcessorHost,
+        session_id: str,
+        outcomes: list[CodexNestedExecOutcome],
+    ) -> None:
+        """Send only definitive nested Bash completions to readiness observers."""
+        if not outcomes or self._hook_manager is None:
+            return
+
+        session_data: dict[str, Any] = {
+            "platform_session_id": session_id,
+            "external_id": session_id,
+        }
+        if self.session_manager is not None:
+            session = await self._run_db(self.session_manager.get, session_id)
+            if session is None:
+                logger.warning(
+                    "Skipping Codex transcript outcomes for missing session",
+                    extra={"session_id": session_id},
+                )
+                return
+            session_data = session.to_dict()
+            session_data.setdefault("platform_session_id", session_id)
+
+        for outcome in outcomes:
+            event = self._build_codex_exec_outcome_event(session_data, outcome)
+            if event is not None:
+                await self._hook_manager.handle_async(event)
+
     def _extract_native_titles(
         self: ProcessorHost, session_id: str, messages: list[ParsedMessage]
     ) -> list[ParsedMessage]:
@@ -244,13 +299,17 @@ class ProcessorTranscriptMixin:
         if not parser:
             return
 
-        parsed_records = normalize_transcript_records(
-            parser.parse_lines(new_lines, start_index=last_index + 1),
-            _parser_source(parser),
+        raw_records, codex_exec_outcomes = _parse_incremental_records(
+            parser,
+            new_lines,
+            start_index=last_index + 1,
         )
+        parsed_records = normalize_transcript_records(raw_records, _parser_source(parser))
         parsed_messages: list[ParsedMessage] = [
             r for r in parsed_records if isinstance(r, ParsedMessage)
         ]
+
+        await self._dispatch_codex_exec_outcomes(session_id, codex_exec_outcomes)
 
         latest_parsed_index = parsed_messages[-1].index if parsed_messages else last_index
         parsed_messages = await self._run_db(

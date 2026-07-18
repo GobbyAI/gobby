@@ -695,10 +695,15 @@ def completion_evidence_diagnostic(
     if state.unknown_outcome_seen:
         return (
             "Completion readiness has verification evidence with an unknown outcome; "
-            "the provider did not expose a definitive machine result."
+            "the provider did not expose a definitive machine result. For batched Codex "
+            "validation, emit every result as structured {cmd, ...result} output; human "
+            "summaries and text(result.output) are not machine evidence."
         )
     if not state.evidence_seen:
-        return "Completion readiness has no verification evidence for this task."
+        return (
+            "Completion readiness has no verification evidence for this task. For batched "
+            "Codex validation, emit every result as structured {cmd, ...result} output."
+        )
     return "Completion readiness has no successful verification evidence for this task."
 
 

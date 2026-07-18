@@ -90,6 +90,8 @@ def create_lifespan(
         else:
             logger.debug("Reusing preconfigured HookManager in daemon")
         server._hook_manager = app.state.hook_manager
+        if server.services.message_processor is not None:
+            server.services.message_processor.set_hook_manager(app.state.hook_manager)
 
         if server.services.database:
             from gobby.servers.pending_interactions import PendingInteractionManager
@@ -397,6 +399,8 @@ def create_lifespan(
                 logger.exception("PendingInteractionManager cleanup failed: %s", e)
 
         if hasattr(app.state, "hook_manager"):
+            if server.services.message_processor is not None:
+                server.services.message_processor.set_hook_manager(None)
             hook_manager_shutdown = getattr(app.state.hook_manager, "shutdown_async", None)
             if not callable(hook_manager_shutdown):
                 raise RuntimeError("Hook manager must provide callable shutdown_async()")

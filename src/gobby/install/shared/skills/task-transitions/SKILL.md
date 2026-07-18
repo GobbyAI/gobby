@@ -70,8 +70,23 @@ until a later validation command succeeds. Manual evidence can satisfy readiness
 when no failed validation command is pending, but it cannot clear a failed
 validation command.
 
-For manual review, PR state, or another non-command artifact, record evidence
-explicitly:
+Terminal Codex validation batches must emit every nested command result with
+its command attached. Preserve the structured result instead of printing only a
+summary or `result.output`:
+
+```javascript
+const results = await Promise.all(commands.map(cmd => tools.exec_command({cmd})));
+for (let i = 0; i < results.length; i++) {
+  text(JSON.stringify({cmd: commands[i], ...results[i]}));
+}
+```
+
+Human summaries and `text(result.output)` do not expose a definitive exit code,
+so they leave completion readiness unknown.
+
+For a genuinely non-command artifact such as manual review or PR state, record
+evidence explicitly. Do not use manual evidence to restate or replace a shell
+command's exit code; rerun that command with structured output instead.
 
 ```python
 call_tool("gobby-sessions", "record_verification_evidence", {

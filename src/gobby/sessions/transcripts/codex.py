@@ -25,9 +25,15 @@ import json
 import logging
 from collections import deque
 from collections.abc import Iterable, Iterator, Mapping
+from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import Any
 
+from gobby.adapters.codex_impl.item_normalization import (
+    extract_functions_exec_command,
+    extract_wait_cell_id,
+    extract_yielded_cell_id,
+)
 from gobby.sessions.transcripts.base import (
     BaseTranscriptParser,
     ParsedMessage,
@@ -44,6 +50,59 @@ logger = logging.getLogger(__name__)
 _ROLE_MAP = {
     "developer": "system",
 }
+
+_NESTED_EXEC_NAMES = frozenset({"exec", "functions.exec"})
+_NESTED_WAIT_NAMES = frozenset({"wait", "functions.wait"})
+_MAX_PENDING_NESTED_EXEC = 64
+
+
+@dataclass(frozen=True)
+class CodexNestedExecOutcome:
+    """Definitive nested shell result derived from terminal Codex history."""
+
+    outer_call_id: str
+    result_index: int
+    command: str
+    result: dict[str, Any]
+    timestamp: datetime
+    raw_json: dict[str, Any]
+
+    @property
+    def identity(self) -> str:
+        return f"{self.outer_call_id}:{self.result_index}"
+
+
+@dataclass(frozen=True)
+class _PendingNestedExec:
+    outer_call_id: str
+    literal_command: str | None = None
+    cell_id: str | None = None
+
+    def to_state(self) -> dict[str, Any]:
+        return {
+            "outer_call_id": self.outer_call_id,
+            "literal_command": self.literal_command,
+            "cell_id": self.cell_id,
+        }
+
+    @classmethod
+    def from_state(cls, value: Any) -> _PendingNestedExec | None:
+        if not isinstance(value, dict):
+            return None
+        outer_call_id = value.get("outer_call_id")
+        literal_command = value.get("literal_command")
+        cell_id = value.get("cell_id")
+        if not isinstance(outer_call_id, str) or not outer_call_id:
+            return None
+        if literal_command is not None and not isinstance(literal_command, str):
+            return None
+        if cell_id is not None and not isinstance(cell_id, str):
+            return None
+        return cls(
+            outer_call_id=outer_call_id,
+            literal_command=literal_command,
+            cell_id=cell_id,
+        )
 
 
 def _is_instruction_dump(content: str) -> bool:
@@ -158,6 +217,81 @@ def _dedupe_pending_tool_search_ids(values: Iterable[str]) -> deque[str]:
     return pending
 
 
+def _bounded_pending_state(value: Any) -> dict[str, _PendingNestedExec]:
+    if not isinstance(value, dict):
+        return {}
+    pending: dict[str, _PendingNestedExec] = {}
+    for key, raw_item in value.items():
+        if not isinstance(key, str) or not key:
+            continue
+        item = _PendingNestedExec.from_state(raw_item)
+        if item is not None:
+            pending[key] = item
+        if len(pending) >= _MAX_PENDING_NESTED_EXEC:
+            break
+    return pending
+
+
+def _decoded_exec_results(value: Any) -> list[dict[str, Any]]:
+    """Decode exact JSON result objects from custom-tool output blocks."""
+    if isinstance(value, str):
+        try:
+            value = json.loads(value)
+        except json.JSONDecodeError:
+            return []
+
+    if isinstance(value, list):
+        results: list[dict[str, Any]] = []
+        for item in value:
+            if isinstance(item, dict) and isinstance(item.get("text"), str):
+                results.extend(_decoded_exec_results(item["text"]))
+            elif isinstance(item, (dict, list, str)):
+                results.extend(_decoded_exec_results(item))
+        return results
+
+    if not isinstance(value, dict):
+        return []
+    if "exit_code" in value or "exitCode" in value:
+        return [value]
+    for wrapper_key in ("content", "output"):
+        wrapped = value.get(wrapper_key)
+        if isinstance(wrapped, list):
+            return _decoded_exec_results(wrapped)
+    return []
+
+
+def _definitive_exit_code(result: dict[str, Any]) -> int | None:
+    values = [result[key] for key in ("exit_code", "exitCode") if key in result]
+    if not values or any(not isinstance(value, int) or isinstance(value, bool) for value in values):
+        return None
+    first = values[0]
+    return first if all(value == first for value in values) else None
+
+
+def _explicit_result_command(result: dict[str, Any]) -> str | None:
+    values = [result[key] for key in ("cmd", "command") if key in result]
+    if not values or any(not isinstance(value, str) or not value for value in values):
+        return None
+    first = values[0]
+    return first if all(value == first for value in values) else None
+
+
+def _yielded_cell_id(output: Any) -> str | None:
+    if isinstance(output, list):
+        tool_output: dict[str, Any] = {"content": output}
+    elif isinstance(output, dict):
+        tool_output = output
+    elif isinstance(output, str):
+        try:
+            decoded = json.loads(output)
+        except json.JSONDecodeError:
+            return None
+        tool_output = decoded if isinstance(decoded, dict) else {"content": decoded}
+    else:
+        return None
+    return extract_yielded_cell_id({"tool_output": tool_output})
+
+
 class CodexTranscriptParser(BaseTranscriptParser):
     """
     Parses JSONL transcript files from Codex.
@@ -173,17 +307,37 @@ class CodexTranscriptParser(BaseTranscriptParser):
     ):
         super().__init__(cli_name="codex", session_id=session_id, logger_instance=logger_instance)
         self._pending_tool_search_use_ids: deque[str] = deque()
+        self._pending_nested_exec_calls: dict[str, _PendingNestedExec] = {}
+        self._pending_nested_exec_cells: dict[str, _PendingNestedExec] = {}
 
     def snapshot_state(self) -> dict[str, Any]:
-        return {"pending_tool_search_use_ids": list(self._pending_tool_search_use_ids)}
+        state: dict[str, Any] = {
+            "pending_tool_search_use_ids": list(self._pending_tool_search_use_ids)
+        }
+        if self._pending_nested_exec_calls:
+            state["pending_nested_exec_calls"] = {
+                key: value.to_state() for key, value in self._pending_nested_exec_calls.items()
+            }
+        if self._pending_nested_exec_cells:
+            state["pending_nested_exec_cells"] = {
+                key: value.to_state() for key, value in self._pending_nested_exec_cells.items()
+            }
+        return state
 
     def hydrate_state(self, state: Mapping[str, Any]) -> None:
         raw_queue = state.get("pending_tool_search_use_ids")
-        if not isinstance(raw_queue, list):
-            self._pending_tool_search_use_ids.clear()
-            return
-        self._pending_tool_search_use_ids = _dedupe_pending_tool_search_ids(
-            item for item in raw_queue if isinstance(item, str) and item
+        self._pending_tool_search_use_ids = (
+            _dedupe_pending_tool_search_ids(
+                item for item in raw_queue if isinstance(item, str) and item
+            )
+            if isinstance(raw_queue, list)
+            else deque()
+        )
+        self._pending_nested_exec_calls = _bounded_pending_state(
+            state.get("pending_nested_exec_calls")
+        )
+        self._pending_nested_exec_cells = _bounded_pending_state(
+            state.get("pending_nested_exec_cells")
         )
 
     def extract_last_messages(
@@ -227,8 +381,14 @@ class CodexTranscriptParser(BaseTranscriptParser):
         return turn.get("type") == "session_meta"
 
     def parse_line(self, line: str, index: int) -> ParsedMessage | ParsedToolEvent | None:
+        record, _ = self._parse_line_with_outcomes(line, index)
+        return record
+
+    def _parse_line_with_outcomes(
+        self, line: str, index: int
+    ) -> tuple[ParsedMessage | ParsedToolEvent | None, list[CodexNestedExecOutcome]]:
         if not line.strip():
-            return None
+            return None, []
 
         try:
             data = json.loads(line)
@@ -239,7 +399,7 @@ class CodexTranscriptParser(BaseTranscriptParser):
                 raw_text=line,
                 error=e,
             )
-            return None
+            return None, []
 
         if not isinstance(data, dict):
             self.error_log.log_decode_failure(
@@ -248,14 +408,32 @@ class CodexTranscriptParser(BaseTranscriptParser):
                 raw_text=line,
                 error=None,
             )
-            return None
+            return None, []
 
         line_type = data.get("type")
         payload = data.get("payload")
         if not isinstance(payload, dict):
-            return None
+            return None, []
 
         timestamp = _parse_timestamp(data)
+        outcomes: list[CodexNestedExecOutcome] = []
+        if line_type == "response_item":
+            payload_type = payload.get("type")
+            if payload_type == "custom_tool_call":
+                self._remember_nested_exec_call(payload)
+            elif payload_type == "custom_tool_call_output":
+                outcomes = self._resolve_nested_exec_output(data, payload, timestamp)
+
+        return self._parse_decoded_line(data, payload, index, timestamp), outcomes
+
+    def _parse_decoded_line(
+        self,
+        data: dict[str, Any],
+        payload: dict[str, Any],
+        index: int,
+        timestamp: datetime,
+    ) -> ParsedMessage | ParsedToolEvent | None:
+        line_type = data.get("type")
 
         if line_type == "event_msg":
             return self._parse_event_msg(data, payload, index, timestamp)
@@ -290,6 +468,97 @@ class CodexTranscriptParser(BaseTranscriptParser):
             timestamp=timestamp,
             message_id=self._message_id_for(index, payload.get("id")),
         )
+
+    def _remember_nested_exec_call(self, payload: dict[str, Any]) -> None:
+        call_id = payload.get("call_id")
+        name = payload.get("name")
+        if not isinstance(call_id, str) or not call_id or not isinstance(name, str):
+            return
+
+        if name in _NESTED_EXEC_NAMES:
+            pending = _PendingNestedExec(
+                outer_call_id=call_id,
+                literal_command=extract_functions_exec_command(payload.get("input")),
+            )
+            self._set_pending(self._pending_nested_exec_calls, call_id, pending)
+            return
+
+        if name not in _NESTED_WAIT_NAMES:
+            return
+        tool_input = _parse_tool_payload(payload.get("input"))
+        cell_id = extract_wait_cell_id({"tool_input": tool_input})
+        if cell_id is None:
+            return
+        wait_pending = self._pending_nested_exec_cells.get(cell_id)
+        if wait_pending is not None:
+            self._set_pending(self._pending_nested_exec_calls, call_id, wait_pending)
+
+    @staticmethod
+    def _set_pending(
+        pending_map: dict[str, _PendingNestedExec],
+        key: str,
+        pending: _PendingNestedExec,
+    ) -> None:
+        if key not in pending_map and len(pending_map) >= _MAX_PENDING_NESTED_EXEC:
+            pending_map.pop(next(iter(pending_map)))
+        pending_map[key] = pending
+
+    def _resolve_nested_exec_output(
+        self,
+        data: dict[str, Any],
+        payload: dict[str, Any],
+        timestamp: datetime,
+    ) -> list[CodexNestedExecOutcome]:
+        call_id = payload.get("call_id")
+        if not isinstance(call_id, str) or not call_id:
+            return []
+        pending = self._pending_nested_exec_calls.pop(call_id, None)
+        if pending is None:
+            return []
+
+        output = payload.get("output")
+        yielded_cell_id = _yielded_cell_id(output)
+        if yielded_cell_id is not None:
+            if pending.cell_id is not None and pending.cell_id != yielded_cell_id:
+                self._pending_nested_exec_cells.pop(pending.cell_id, None)
+            yielded_pending = _PendingNestedExec(
+                outer_call_id=pending.outer_call_id,
+                literal_command=pending.literal_command,
+                cell_id=yielded_cell_id,
+            )
+            self._set_pending(
+                self._pending_nested_exec_cells,
+                yielded_cell_id,
+                yielded_pending,
+            )
+            return []
+
+        if pending.cell_id is not None:
+            current = self._pending_nested_exec_cells.get(pending.cell_id)
+            if current is not None and current.outer_call_id == pending.outer_call_id:
+                self._pending_nested_exec_cells.pop(pending.cell_id, None)
+
+        results = _decoded_exec_results(output)
+        derived: list[CodexNestedExecOutcome] = []
+        for result_index, result in enumerate(results):
+            if _definitive_exit_code(result) is None:
+                continue
+            command = _explicit_result_command(result)
+            if command is None and len(results) == 1:
+                command = pending.literal_command
+            if command is None:
+                continue
+            derived.append(
+                CodexNestedExecOutcome(
+                    outer_call_id=pending.outer_call_id,
+                    result_index=result_index,
+                    command=command,
+                    result=dict(result),
+                    timestamp=timestamp,
+                    raw_json=data,
+                )
+            )
+        return derived
 
     def _parse_message(
         self,
@@ -490,11 +759,11 @@ class CodexTranscriptParser(BaseTranscriptParser):
         """
         current_index = start_index
         for raw in raw_lines:
-            record = self.parse_line(raw.text, current_index)
-            if record is None:
+            record, outcomes = self._parse_line_with_outcomes(raw.text, current_index)
+            if record is None and not outcomes:
                 continue
             records = annotate_record_source(
-                [record],
+                [record] if record is not None else [],
                 source=self.cli_name,
                 raw_line_no=raw.raw_line_no,
             )
@@ -504,6 +773,7 @@ class CodexTranscriptParser(BaseTranscriptParser):
                 parsed_index=current_index,
                 records=records,
                 parser_safe=True,
+                codex_exec_outcomes=outcomes,
             )
             if isinstance(record, ParsedMessage):
                 current_index += 1

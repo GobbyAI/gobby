@@ -30,9 +30,14 @@ rules:
           Recognized successful verification commands are recorded automatically.
           A failed command remains unresolved until a command in the same verification category succeeds.
 
-          For non-command evidence, call:
+          For batched Codex validation, emit every nested result as structured
+          {cmd, ...result} output. Human summaries and text(result.output) do not
+          expose a definitive shell exit code.
+
+          For genuinely non-command evidence, call:
           record_verification_evidence(summary="...", evidence_type="...",
           supports="task_id:#123", command="...", scope="...", task_id="#123")
+          Manual evidence must not restate or replace a shell command's exit code.
 
   block-direct-verification-evidence-variable-set:
     description: "Protect verification evidence variables from direct set_variable writes"
