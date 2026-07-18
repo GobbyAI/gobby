@@ -185,6 +185,7 @@ def test_turn_start_memory_recall_schedules_deferred_message(
 def test_memory_recall_context_skips_duplicate_turn_schedule(
     temp_db: HubDatabase,
 ) -> None:
+    _create_session(temp_db)
     SessionVariableManager(temp_db).set_variable(SESSION_ID, "parent_turn_seq", 3)
     manager = _make_manager(
         temp_db,
