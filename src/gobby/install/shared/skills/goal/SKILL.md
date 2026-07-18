@@ -134,7 +134,10 @@ On approval, set `status: active` and ask where it runs:
    5. If the target CLI has no gobby router installed, send the portable
       prompt from the Fallback section instead of the run command.
 3. **Spawned agent** — `gobby-agents:spawn_agent` with a prompt naming the
-   goal file and anchor; the spawned session runs `goal run` itself.
+   goal file and anchor; the spawned session runs `goal run` itself. The
+   prompt must end by instructing the agent to call
+   `gobby-agents:end_agent_run` after Completion, or its run never reaches
+   terminal status.
 
 ## Execute — Shared Setup
 
@@ -177,11 +180,18 @@ leaves.
 4. **Dispatch** — `suggest_next_task` for a non-conflicting batch; several →
    `gobby-agents:dispatch_batch`, one → `spawn_agent`. Route by the leaf's
    assigned agent or category defaults; override the model only when the goal
-   doc names one.
-5. **Harvest** — for each completed run, `get_agent_result` and verify the
-   leaf actually closed and the work landed. First failure on a leaf →
-   respawn once with the failure context. Second failure → take the leaf over
-   in this session or `escalate_task`. Never a third blind redispatch.
+   doc names one. Every worker prompt must end by instructing the worker to
+   call `gobby-agents:end_agent_run` once its leaf is closed — spawned
+   interactive CLI sessions idle at their prompt afterward and never reach
+   terminal run status on their own.
+5. **Harvest** — verify by task state; run status is advisory. For each
+   dispatched leaf, `get_task` must show it closed and the work landed;
+   use `get_agent_result` on runs that reached terminal status. A worker
+   whose leaf is verified closed but whose run is still `running` (idling
+   at its prompt) is harvested — reclaim its slot with `stop_agent` rather
+   than waiting on it. First failure on a leaf → respawn once with the
+   failure context. Second failure → take the leaf over in this session or
+   `escalate_task`. Never a third blind redispatch.
 6. Work actionable coordinator items yourself (escalations, small fixes,
    Progress Log). Compact on context pressure or after finishing your own
    work item.
