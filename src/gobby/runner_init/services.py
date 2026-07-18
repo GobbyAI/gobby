@@ -258,6 +258,7 @@ def _init_message_processor(runner: GobbyRunner) -> None:
             db=runner.database,
             poll_interval=runner.config.message_tracking.poll_interval,
             session_manager=runner.session_manager,
+            run_db=runner.db_executor.run,
         )
 
 

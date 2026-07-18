@@ -31,7 +31,7 @@ from typing import Any, ClassVar, cast
 import httpx
 
 from gobby.shutdown_intent import ShutdownIntent, read_active_shutdown_intent
-from gobby.utils.daemon_url import daemon_url, validate_daemon_url
+from gobby.utils.daemon_url import daemon_url, normalize_dial_host, validate_daemon_url
 from gobby.utils.local_token import daemon_auth_headers
 
 PLANNED_RESTART_MARKER_MAX_AGE_SECONDS = 120.0
@@ -99,7 +99,7 @@ class DaemonClient:
         elif port is None:
             self.url = daemon_url()
         else:
-            self.url = f"http://{host}:{port}"
+            self.url = f"http://{normalize_dial_host(host)}:{port}"
         self.timeout = timeout
         self.logger = logger or logging.getLogger(__name__)
         self._auth_headers = daemon_auth_headers()

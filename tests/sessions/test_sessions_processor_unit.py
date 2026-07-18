@@ -721,6 +721,90 @@ class TestProcessSession:
         # Message index should not have been set (no valid messages)
         assert "session-1" not in processor._message_indices
 
+    async def test_process_session_runs_index_append_on_db_executor(
+        self, mock_db, tmp_path
+    ) -> None:
+        transcript = tmp_path / "transcript.jsonl"
+        transcript.write_text('{"type": "unknown"}\n')
+        db_calls: list[str] = []
+
+        async def run_db(func, *args, **kwargs):
+            db_calls.append(func.__name__)
+            return await asyncio.to_thread(func, *args, **kwargs)
+
+        processor = SessionMessageProcessor(mock_db, run_db=run_db)
+        processor.register_session("session-1", str(transcript))
+        processor._parsers["session-1"] = MagicMock(parse_lines=MagicMock(return_value=[]))
+
+        await processor._process_session("session-1", str(transcript))
+
+        assert db_calls == [
+            "_revive_expired_terminal_session",
+            "_extract_native_titles",
+            "append_positioned_lines",
+        ]
+
+    async def test_process_batch_runs_session_updates_on_db_executor(self, mock_db) -> None:
+        db_calls: list[object] = []
+
+        async def run_db(func, *args, **kwargs):
+            db_calls.append(func)
+            return func(*args, **kwargs)
+
+        session_manager = MagicMock()
+        processor = SessionMessageProcessor(
+            mock_db,
+            session_manager=session_manager,
+            run_db=run_db,
+        )
+        processor._persist_usage_events = AsyncMock()
+        processor._render_and_broadcast_messages = AsyncMock()
+        message = ParsedMessage(
+            index=0,
+            role="user",
+            content="hello",
+            content_type="text",
+            tool_name=None,
+            tool_input=None,
+            tool_result=None,
+            timestamp=datetime.now(),
+            raw_json={},
+        )
+
+        await processor._process_parsed_batch("session-1", [message])
+
+        assert processor._accumulate_stats in db_calls
+        assert session_manager.touch in db_calls
+        assert session_manager.update_stats in db_calls
+
+    async def test_observation_render_runs_on_db_executor(self, mock_db) -> None:
+        db_calls: list[str] = []
+
+        async def run_db(func, *args, **kwargs):
+            db_calls.append(func.__name__)
+            return func(*args, **kwargs)
+
+        processor = SessionMessageProcessor(mock_db, run_db=run_db)
+        message = ParsedMessage(
+            index=0,
+            role="user",
+            content="hello",
+            content_type="text",
+            tool_name=None,
+            tool_input=None,
+            tool_result=None,
+            timestamp=datetime.now(),
+            raw_json={},
+        )
+
+        await processor._render_and_broadcast_messages(
+            "session-1",
+            [message],
+            record_observations=True,
+        )
+
+        assert db_calls == ["render_incremental"]
+
     @pytest.mark.asyncio
     async def test_process_session_advances_past_malformed_timestamp(self, processor, tmp_path):
         transcript = tmp_path / "transcript.jsonl"
@@ -1503,6 +1587,61 @@ class TestModelExtraction:
 
         assert "Failed to load session session-1 for token usage" in caplog.text
         mock_session_manager.update_usage.assert_not_called()
+
+    async def test_persist_usage_events_runs_storage_calls_on_db_executor(self, mock_db) -> None:
+        class FakeTokenEventStore:
+            def get_session_totals(self, _session_id: str) -> dict[str, int]:
+                return {
+                    "input_tokens": 0,
+                    "output_tokens": 0,
+                    "cache_creation_tokens": 0,
+                    "cache_read_tokens": 0,
+                }
+
+            def record(self, _event: object) -> bool:
+                return True
+
+        db_calls: list[object] = []
+
+        async def run_db(func, *args, **kwargs):
+            db_calls.append(func)
+            return func(*args, **kwargs)
+
+        session_manager = MagicMock()
+        session_manager.get.return_value = MagicMock(
+            project_id="project-1",
+            source="codex",
+            context_window=128_000,
+            model="gpt-5",
+        )
+        store = FakeTokenEventStore()
+        processor = SessionMessageProcessor(
+            mock_db,
+            session_manager=session_manager,
+            run_db=run_db,
+        )
+        processor._new_token_event_store = MagicMock(return_value=store)
+        message = ParsedMessage(
+            index=0,
+            role="assistant",
+            content="done",
+            content_type="text",
+            tool_name=None,
+            tool_input=None,
+            tool_result=None,
+            timestamp=datetime.now(),
+            raw_json={},
+            usage=TokenUsage(input_tokens=10, output_tokens=5),
+            model="gpt-5",
+        )
+
+        await processor._persist_usage_events("session-1", [message])
+
+        assert session_manager.get in db_calls
+        assert store.get_session_totals in db_calls
+        assert store.record in db_calls
+        assert session_manager.update_usage in db_calls
+        assert session_manager.update_context_usage in db_calls
 
     @pytest.mark.asyncio
     async def test_process_session_records_grok_window_only_snapshot(

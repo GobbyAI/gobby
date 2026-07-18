@@ -56,7 +56,7 @@ def endpoint_to_url(bootstrap: BootstrapConfig) -> str:
 def normalize_dial_host(host: str) -> str:
     """Convert daemon bind hosts into client-dialable hosts."""
     stripped = host.strip()
-    if stripped in {"", "0.0.0.0", "::", "::0", "[::]"}:
+    if stripped.lower() == "localhost" or stripped in {"", "0.0.0.0", "::", "::0", "[::]"}:
         return "127.0.0.1"
     if ":" in stripped and not stripped.startswith("["):
         return f"[{stripped}]"

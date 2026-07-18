@@ -795,7 +795,8 @@ class TestAdminRoutes:
         _mock_spawn,
         client,
     ) -> None:
-        response = client.post("/api/admin/restart")
+        with patch("gobby.runner_maintenance.write_shutdown_source"):
+            response = client.post("/api/admin/restart")
 
         assert response.json()["status"] == "restarting"
         mock_to_thread.assert_awaited_once_with(mock_service_mode)
@@ -949,16 +950,24 @@ class TestHealthEndpoint:
     ) -> None:
         diagnostic = _hook_runtime_diagnostic(runtime_state)
 
-        with patch(
-            "gobby.servers.routes.admin._health.read_ghook_runtime_diagnostic",
-            return_value=diagnostic,
-        ) as mock_read:
+        with (
+            patch(
+                "gobby.servers.routes.admin._health.read_ghook_runtime_diagnostic",
+                return_value=diagnostic,
+            ) as mock_read,
+            patch(
+                "gobby.servers.routes.admin._health.asyncio.to_thread",
+                new_callable=AsyncMock,
+                side_effect=lambda func, *args, **kwargs: func(*args, **kwargs),
+            ) as mock_to_thread,
+        ):
             response = client.get("/api/admin/health")
 
         assert response.status_code == 200
         assert response.json()["status"] == expected_health
         assert response.json()["hook_runtime"]["state"] == runtime_state.value
         mock_read.assert_called_once_with()
+        mock_to_thread.assert_awaited_once_with(mock_read)
 
     def test_health_surfaces_forced_runner_init_failure(
         self,

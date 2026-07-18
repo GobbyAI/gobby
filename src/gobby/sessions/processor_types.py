@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+from collections.abc import Awaitable, Callable
 from typing import TYPE_CHECKING, Any, Protocol
 from weakref import WeakValueDictionary
 
@@ -45,6 +46,7 @@ class ProcessorHost(Protocol):
     websocket_server: WebSocketServer | None
     session_manager: SessionManager | None
     _hook_manager: HookManager | None
+    _run_db: Callable[..., Awaitable[Any]]
     _active_sessions: dict[str, str]
     _processing_locks: WeakValueDictionary[str, asyncio.Lock]
     _parsers: dict[str, TranscriptParser]

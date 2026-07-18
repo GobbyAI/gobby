@@ -88,6 +88,7 @@ fn endpoint_to_url(endpoint: &DaemonEndpoint) -> String {
 fn dial_host(host: &str) -> Cow<'_, str> {
     match host.trim() {
         "" | "0.0.0.0" | "::" | "::0" | "[::]" => Cow::Borrowed("127.0.0.1"),
+        host if host.eq_ignore_ascii_case("localhost") => Cow::Borrowed("127.0.0.1"),
         host if host.contains(':') && !host.starts_with('[') => Cow::Owned(format!("[{host}]")),
         host => Cow::Borrowed(host),
     }
@@ -140,9 +141,10 @@ bind_host: "::0"
     }
 
     #[test]
-    fn localhost_passes_through() {
+    fn localhost_normalizes_to_numeric_loopback() {
         let (_dir, path) = write_bootstrap("daemon_port: 60887\nbind_host: localhost\n");
-        assert_eq!(daemon_url_at(&path), "http://localhost:60887");
+        assert_eq!(daemon_url_at(&path), "http://127.0.0.1:60887");
+        assert_eq!(dial_host("LOCALHOST"), "127.0.0.1");
     }
 
     #[test]

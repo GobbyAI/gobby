@@ -7,6 +7,7 @@ import json
 import logging
 import os
 from copy import deepcopy
+from typing import cast
 
 import aiofiles
 import psycopg
@@ -97,10 +98,14 @@ class ProcessorTranscriptMixin:
                 messages,
                 record_observations=True,
             )
-            stats = self._accumulate_stats(session_id, messages)
+            stats = cast(
+                MessageStats,
+                await self._run_db(self._accumulate_stats, session_id, messages),
+            )
             if self.session_manager:
-                self.session_manager.touch(session_id)
-                self.session_manager.update_stats(
+                await self._run_db(self.session_manager.touch, session_id)
+                await self._run_db(
+                    self.session_manager.update_stats,
                     session_id,
                     message_count=stats.get("message_count", 0),
                     turn_count=stats.get("turn_count", 0),
@@ -234,7 +239,7 @@ class ProcessorTranscriptMixin:
         if not new_lines:
             return
 
-        self._revive_expired_terminal_session(session_id)
+        await self._run_db(self._revive_expired_terminal_session, session_id)
         parser = self._parsers.get(session_id)
         if not parser:
             return
@@ -248,7 +253,11 @@ class ProcessorTranscriptMixin:
         ]
 
         latest_parsed_index = parsed_messages[-1].index if parsed_messages else last_index
-        parsed_messages = self._extract_native_titles(session_id, parsed_messages)
+        parsed_messages = await self._run_db(
+            self._extract_native_titles,
+            session_id,
+            parsed_messages,
+        )
 
         appender = self._index_appenders.get(session_id)
         pending_appender = None
@@ -258,7 +267,8 @@ class ProcessorTranscriptMixin:
             try:
                 appender_stat = await asyncio.to_thread(os.stat, transcript_path)
                 pending_appender = appender.clone()
-                pending_appender.append_positioned_lines(
+                await self._run_db(
+                    pending_appender.append_positioned_lines,
                     new_lines,
                     new_line_offsets,
                     mtime_ns=appender_stat.st_mtime_ns,
@@ -359,7 +369,7 @@ class ProcessorTranscriptMixin:
             )
             return
 
-        self._revive_expired_terminal_session(session_id)
+        await self._run_db(self._revive_expired_terminal_session, session_id)
 
         parser = self._parsers.get(session_id)
         if not parser or not hasattr(parser, "parse_session_json"):
@@ -385,7 +395,11 @@ class ProcessorTranscriptMixin:
         new_messages = [m for m in all_messages if m.index > last_index]
         latest_new_index = new_messages[-1].index if new_messages else last_index
 
-        new_messages = self._extract_native_titles(session_id, new_messages)
+        new_messages = await self._run_db(
+            self._extract_native_titles,
+            session_id,
+            new_messages,
+        )
 
         if not new_messages:
             if latest_new_index > last_index:
@@ -418,13 +432,23 @@ class ProcessorTranscriptMixin:
         observation_tracker = (
             ObservationTracker(self._observation_store) if record_observations else None
         )
-        completed, render_state = render_incremental(
-            messages,
-            render_state,
-            session_id=session_id,
-            source=source,
-            observation_tracker=observation_tracker,
-        )
+        if observation_tracker is None:
+            completed, render_state = render_incremental(
+                messages,
+                render_state,
+                session_id=session_id,
+                source=source,
+                observation_tracker=None,
+            )
+        else:
+            completed, render_state = await self._run_db(
+                render_incremental,
+                messages,
+                render_state,
+                session_id=session_id,
+                source=source,
+                observation_tracker=observation_tracker,
+            )
         if self.websocket_server:
             for rendered_msg in completed:
                 await self._broadcast_rendered_session_message(

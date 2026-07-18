@@ -35,7 +35,7 @@ class ProcessorUsageMixin:
             return
 
         try:
-            session = self.session_manager.get(session_id)
+            session = await self._run_db(self.session_manager.get, session_id)
         except psycopg.Error:
             logger.debug("Failed to load session %s for token usage", session_id, exc_info=True)
             return
@@ -55,10 +55,10 @@ class ProcessorUsageMixin:
             for msg in messages:
                 last_model = reconcile_observed_model(last_model, msg.model)
             if last_model is not None and last_model != session_model:
-                self.session_manager.update_model(session_id, last_model)
+                await self._run_db(self.session_manager.update_model, session_id, last_model)
             return
 
-        running_totals = store.get_session_totals(session_id)
+        running_totals = await self._run_db(store.get_session_totals, session_id)
         latest_context_snapshot = None
         latest_event_at: datetime | None = None
         saw_insert = False
@@ -119,7 +119,7 @@ class ProcessorUsageMixin:
                 usage=usage,
                 model=event.model,
             )
-            if not store.record(event):
+            if not await self._run_db(store.record, event):
                 continue
 
             saw_insert = True
@@ -152,10 +152,11 @@ class ProcessorUsageMixin:
         if not saw_insert:
             session_totals = running_totals
             if saw_token_usage:
-                totals = store.get_session_totals(session_id)
+                totals = await self._run_db(store.get_session_totals, session_id)
                 if any(totals.values()) or not any(running_totals.values()):
                     session_totals = totals
-                self.session_manager.update_usage(
+                await self._run_db(
+                    self.session_manager.update_usage,
                     session_id=session_id,
                     input_tokens=session_totals["input_tokens"],
                     output_tokens=session_totals["output_tokens"],
@@ -165,7 +166,11 @@ class ProcessorUsageMixin:
                     model=last_model,
                 )
             if latest_context_snapshot is not None:
-                self.session_manager.update_context_usage(session_id, latest_context_snapshot)
+                await self._run_db(
+                    self.session_manager.update_context_usage,
+                    session_id,
+                    latest_context_snapshot,
+                )
                 if self.websocket_server is not None:
                     await self.websocket_server.broadcast_session_usage_updated(
                         build_session_usage_payload(
@@ -194,11 +199,12 @@ class ProcessorUsageMixin:
                     )
             return
 
-        totals = store.get_session_totals(session_id)
+        totals = await self._run_db(store.get_session_totals, session_id)
         if not any(totals.values()) and any(running_totals.values()):
             totals = dict(running_totals)
         session_totals = totals
-        self.session_manager.update_usage(
+        await self._run_db(
+            self.session_manager.update_usage,
             session_id=session_id,
             input_tokens=session_totals["input_tokens"],
             output_tokens=session_totals["output_tokens"],
@@ -208,7 +214,11 @@ class ProcessorUsageMixin:
             model=last_model,
         )
         if latest_context_snapshot is not None:
-            self.session_manager.update_context_usage(session_id, latest_context_snapshot)
+            await self._run_db(
+                self.session_manager.update_context_usage,
+                session_id,
+                latest_context_snapshot,
+            )
         if self.websocket_server is not None:
             await self.websocket_server.broadcast_session_usage_updated(
                 build_session_usage_payload(

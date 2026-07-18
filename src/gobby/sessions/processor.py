@@ -11,6 +11,7 @@ Supports two transcript formats:
 
 import asyncio
 import logging
+from collections.abc import Awaitable, Callable
 from typing import TYPE_CHECKING, Any
 from weakref import WeakValueDictionary
 
@@ -61,12 +62,14 @@ class SessionMessageProcessor(
         websocket_server: "WebSocketServer | None" = None,
         session_manager: "SessionManager | None" = None,
         hook_manager: "HookManager | None" = None,
+        run_db: Callable[..., Awaitable[Any]] | None = None,
     ):
         self.db = db
         self.poll_interval = poll_interval
         self.websocket_server: WebSocketServer | None = websocket_server
         self.session_manager: SessionManager | None = session_manager
         self._hook_manager: Any | None = hook_manager
+        self._run_db = run_db or asyncio.to_thread
 
         # Track active sessions: session_id -> transcript_path
         self._active_sessions: dict[str, str] = {}

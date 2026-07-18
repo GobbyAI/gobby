@@ -173,7 +173,8 @@ class ProcessorLifecycleMixin:
         await asyncio.to_thread(discard_index_sidecar, transcript_path)
 
         if self.session_manager:
-            self.session_manager.update_stats(
+            await self._run_db(
+                self.session_manager.update_stats,
                 session_id,
                 message_count=0,
                 turn_count=0,

@@ -34,12 +34,12 @@ def test_wildcard_hosts_normalize_to_loopback(tmp_path: Path, host: str) -> None
     assert resolve_daemon_url(path, env={}) == "http://127.0.0.1:60887"
 
 
-def test_localhost_passes_through(tmp_path: Path) -> None:
+def test_localhost_normalizes_to_numeric_loopback(tmp_path: Path) -> None:
     path = _write_bootstrap(
         tmp_path / "bootstrap.yaml", "daemon_port: 60887\nbind_host: localhost\n"
     )
 
-    assert resolve_daemon_url(path, env={}) == "http://localhost:60887"
+    assert resolve_daemon_url(path, env={}) == "http://127.0.0.1:60887"
 
 
 def test_custom_port_and_host_compose(tmp_path: Path) -> None:
@@ -83,7 +83,7 @@ def test_empty_env_url_falls_back_to_port(tmp_path: Path) -> None:
 def test_invalid_env_port_falls_back_to_bootstrap(tmp_path: Path, port: str) -> None:
     path = _write_bootstrap(tmp_path / "bootstrap.yaml", "daemon_port: 61111\n")
 
-    assert resolve_daemon_url(path, env={"GOBBY_PORT": port}) == "http://localhost:61111"
+    assert resolve_daemon_url(path, env={"GOBBY_PORT": port}) == "http://127.0.0.1:61111"
 
 
 def test_deprecated_daemon_port_alias_is_honored(tmp_path: Path) -> None:

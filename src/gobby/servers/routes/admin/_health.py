@@ -152,7 +152,7 @@ def register_health_routes(router: APIRouter, server: "HTTPServer") -> None:
     @router.get("/health")
     async def health_check() -> dict[str, Any]:
         """Lightweight health check including local hook-runtime compatibility."""
-        hook_runtime = read_ghook_runtime_diagnostic()
+        hook_runtime = await asyncio.to_thread(read_ghook_runtime_diagnostic)
         degraded_services = _get_degraded_services(server)
         return {
             "status": "degraded" if hook_runtime.is_degraded or degraded_services else "ok",

@@ -28,7 +28,7 @@ class TestDaemonClientInit:
 
         client = DaemonClient()
 
-        assert client.url == "http://localhost:61999"
+        assert client.url == "http://127.0.0.1:61999"
         assert client.timeout == 5.0
 
     def test_custom_values(self) -> None:
@@ -37,6 +37,11 @@ class TestDaemonClientInit:
 
         assert client.url == "http://192.168.1.1:9000"
         assert client.timeout == 10.0
+
+    def test_explicit_localhost_uses_numeric_loopback(self) -> None:
+        client = DaemonClient(host="localhost", port=9000)
+
+        assert client.url == "http://127.0.0.1:9000"
 
     def test_url_constructor(self) -> None:
         """Test URL-based initialization values."""
