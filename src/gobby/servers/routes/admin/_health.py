@@ -594,5 +594,5 @@ def register_health_routes(router: APIRouter, server: "HTTPServer") -> None:
             return PlainTextResponse(content=generate_latest(), media_type=CONTENT_TYPE_LATEST)
 
         except Exception as e:
-            logger.error("Failed to export metrics: %s", e, exc_info=True)
+            logger.exception("Failed to export metrics: %s", e)
             raise

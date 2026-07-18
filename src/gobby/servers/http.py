@@ -603,10 +603,9 @@ class HTTPServer:
             duration_seconds = time.perf_counter() - start_time
             inc_counter("shutdown_failed_total")
 
-            logger.error(
+            logger.exception(
                 "Shutdown processing failed: %s",
                 e,
-                exc_info=True,
                 extra={"duration_seconds": duration_seconds},
             )
 

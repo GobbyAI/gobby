@@ -324,7 +324,7 @@ class ChatSessionMessagesMixin:
                     context_window = self._resolve_context_window_fallback()
                 yield DoneEvent(tool_calls_count=tool_calls_count, context_window=context_window)
             except Exception as e:
-                logger.error("ChatSession %s error: %s", self.conversation_id, e, exc_info=True)
+                logger.exception("ChatSession %s error: %s", self.conversation_id, e)
                 yield TextChunk(content=f"Generation failed: {sanitize_error(e)}")
                 if context_window is None:
                     context_window = self._resolve_context_window_fallback()

@@ -63,5 +63,5 @@ def register_config_routes(router: APIRouter, server: "HTTPServer") -> None:
             }
 
         except Exception as e:
-            logger.error("Config retrieval error: %s", e, exc_info=True)
+            logger.exception("Config retrieval error: %s", e)
             raise HTTPException(status_code=500, detail=str(e)) from e

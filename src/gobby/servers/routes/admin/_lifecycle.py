@@ -226,7 +226,7 @@ def register_lifecycle_routes(router: APIRouter, server: "HTTPServer") -> None:
             }
 
         except Exception as e:
-            logger.error("Error initiating shutdown: %s", e, exc_info=True)
+            logger.exception("Error initiating shutdown: %s", e)
             response.status_code = 500
             return {
                 "status": "error",
@@ -290,7 +290,7 @@ def register_lifecycle_routes(router: APIRouter, server: "HTTPServer") -> None:
             if not shutdown_initiated and restart_lock.locked():
                 restart_lock.release()
 
-            logger.error("Error initiating restart: %s", e, exc_info=True)
+            logger.exception("Error initiating restart: %s", e)
             return {
                 "status": "error",
                 "message": "Restart failed to initiate",
@@ -360,7 +360,7 @@ def register_lifecycle_routes(router: APIRouter, server: "HTTPServer") -> None:
             }
 
         except Exception as e:
-            logger.error("Error reloading workflows: %s", e, exc_info=True)
+            logger.exception("Error reloading workflows: %s", e)
             response.status_code = 500
             return {
                 "status": "error",

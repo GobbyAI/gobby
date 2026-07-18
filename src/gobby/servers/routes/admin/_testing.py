@@ -103,7 +103,7 @@ def register_testing_routes(router: APIRouter, server: "HTTPServer") -> None:
             }
 
         except Exception as e:
-            logger.error("Error registering test project: %s", e, exc_info=True)
+            logger.exception("Error registering test project: %s", e)
             raise HTTPException(status_code=500, detail=str(e)) from e
 
     class TestAgentRegisterRequest(BaseModel):
@@ -185,7 +185,7 @@ def register_testing_routes(router: APIRouter, server: "HTTPServer") -> None:
         except HTTPException:
             raise
         except Exception as e:
-            logger.error("Error registering test agent: %s", e, exc_info=True)
+            logger.exception("Error registering test agent: %s", e)
             raise HTTPException(status_code=500, detail=str(e)) from e
 
     @router.delete("/test/unregister-agent/{run_id}")
@@ -231,7 +231,7 @@ def register_testing_routes(router: APIRouter, server: "HTTPServer") -> None:
                 }
 
         except Exception as e:
-            logger.error("Error unregistering test agent: %s", e, exc_info=True)
+            logger.exception("Error unregistering test agent: %s", e)
             raise HTTPException(status_code=500, detail=str(e)) from e
 
     class TestSessionUsageRequest(BaseModel):
@@ -334,5 +334,5 @@ def register_testing_routes(router: APIRouter, server: "HTTPServer") -> None:
                 }
 
         except Exception as e:
-            logger.error("Error setting test session usage: %s", e, exc_info=True)
+            logger.exception("Error setting test session usage: %s", e)
             raise HTTPException(status_code=500, detail=str(e)) from e

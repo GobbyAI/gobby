@@ -140,7 +140,7 @@ async def discover_codex_models(
             try:
                 await client.stop()
             except Exception as exc:
-                logger.error("Failed to stop Codex model discovery client: %s", exc, exc_info=True)
+                logger.exception("Failed to stop Codex model discovery client: %s", exc)
 
     models: list[dict[str, Any]] = []
     for item in raw_models:
@@ -341,12 +341,11 @@ async def discover_acp_models(
             try:
                 await asyncio.to_thread(cleanup_tree, cwd)
             except Exception as cleanup_exc:
-                logger.error(
+                logger.exception(
                     "Failed to remove %s model-discovery cwd %s after authorization failure: %s",
                     client_cls.cli_name,
                     cwd,
                     cleanup_exc,
-                    exc_info=True,
                 )
         raise
     client = client_cls(
@@ -361,11 +360,10 @@ async def discover_acp_models(
         try:
             await client.stop()
         except Exception as exc:
-            logger.error(
+            logger.exception(
                 "Failed to stop %s model discovery client: %s",
                 client_cls.cli_name,
                 exc,
-                exc_info=True,
             )
 
     return parse_acp_models(client_cls, session_info)
