@@ -16,17 +16,18 @@ from gobby.hooks.events import HookEvent, HookEventType, SessionSource
 from gobby.servers.chat_session import ChatSession
 from gobby.servers.websocket.chat import ChatMixin
 from gobby.storage.hub.protocol import HubDatabase
-from gobby.storage.workflow_definitions import LocalWorkflowDefinitionManager
+from gobby.storage.workflow_definitions import (
+    LocalWorkflowDefinitionManager,
+    WorkflowDefinitionRow,
+)
 from gobby.workflows.engine.core import RuleEngine
 from gobby.workflows.state_manager import WorkflowInstanceManager
 
 pytestmark = pytest.mark.unit
 
-# sessions.id, projects.id, workflow_definitions.id, and workflow_instances.id
-# are native uuid columns.
+# sessions.id, projects.id, and workflow_instances.id are native uuid columns.
 SESSION_ID = "abababab-0000-4000-8000-000000000001"
 PROJECT_ID = "abababab-0000-4000-8000-000000000002"
-RULE_ID = "abababab-0000-4000-8000-000000000003"
 INSTANCE_ID = "abababab-0000-4000-8000-000000000004"
 
 
@@ -91,10 +92,9 @@ def _insert_block_rule(
     name: str,
     event: str,
     reason: str = "",
-) -> None:
+) -> WorkflowDefinitionRow:
     definition: dict[str, Any] = {
         "event": event,
-        "priority": 10,
         "effects": [
             {
                 "type": "block",
@@ -102,14 +102,11 @@ def _insert_block_rule(
             }
         ],
     }
-    db.execute(
-        """
-        INSERT INTO workflow_definitions (
-            id, name, workflow_type, definition_json, enabled, source
-        )
-        VALUES (%s, %s, 'rule', %s, %s, 'test')
-        """,
-        (RULE_ID, name, json.dumps(definition), True),
+    return LocalWorkflowDefinitionManager(db).create(
+        name=name,
+        definition_json=json.dumps(definition),
+        workflow_type="rule",
+        priority=10,
     )
 
 
@@ -216,7 +213,9 @@ async def test_rule_block_reason_and_log_are_structured(
     engine: RuleEngine,
     caplog: pytest.LogCaptureFixture,
 ) -> None:
-    _insert_block_rule(db, name="test-empty-block-reason", event="stop", reason="")
+    rule = _insert_block_rule(db, name="test-empty-block-reason", event="stop", reason="")
+    assert rule.priority == 10
+    assert "priority" not in json.loads(rule.definition_json)
     event = _make_event(event_type=HookEventType.STOP)
 
     with caplog.at_level(logging.DEBUG):
