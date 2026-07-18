@@ -6,7 +6,7 @@ from typing import Any
 
 from gobby.adapters.codex_impl.client import CodexAppServerClient
 from gobby.agents.codex_oss import (
-    codex_oss_config_overrides,
+    codex_oss_launch_args,
     codex_oss_provider_for_local_endpoint,
     codex_oss_supported_provider_clause,
 )
@@ -70,9 +70,7 @@ class WebChatRuntimeManager:
                 oss_provider = codex_oss_provider_for_local_endpoint(endpoint)
             except ValueError:
                 continue
-            local_client = CodexAppServerClient(
-                config_overrides=codex_oss_config_overrides(oss_provider)
-            )
+            local_client = CodexAppServerClient(global_args=codex_oss_launch_args(oss_provider))
             self._codex_local_backends[endpoint_name] = CodexWebChatBackend(
                 client=local_client,
                 local_endpoint=endpoint,

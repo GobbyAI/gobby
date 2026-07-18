@@ -420,6 +420,37 @@ class TestCodexAppServerClientStart:
         await client.stop()
 
     @pytest.mark.asyncio
+    async def test_start_places_global_args_before_app_server_subcommand(self) -> None:
+        """Global Codex flags precede the app-server subcommand."""
+        client = CodexAppServerClient(
+            global_args=("--oss", "--local-provider", "lmstudio"),
+        )
+        process = MagicMock()
+        process.stdin = MagicMock()
+        process.stdout = MagicMock()
+        process.stderr = MagicMock()
+        process.poll.return_value = None
+        process.stdout.readline.return_value = (
+            json.dumps({"jsonrpc": "2.0", "id": 1, "result": {"userAgent": "codex/1.0"}}) + "\n"
+        )
+
+        with patch(
+            "gobby.adapters.codex_impl.client.subprocess.Popen",
+            return_value=process,
+        ) as popen:
+            await client.start()
+
+        assert client.is_connected is True
+        assert popen.call_args.args[0] == [
+            "codex",
+            "--oss",
+            "--local-provider",
+            "lmstudio",
+            "app-server",
+        ]
+        await client.stop()
+
+    @pytest.mark.asyncio
     async def test_start_when_already_connected(self) -> None:
         """Start returns early when already connected."""
         client = CodexAppServerClient()

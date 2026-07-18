@@ -149,7 +149,14 @@ class TestWebChatRuntimeManager:
 
         assert isinstance(session, CodexManagedChatSession)
         assert session._model == "ollama/qwen3-coder"
-        assert session._backend is manager._codex_local_backends["ollama"]
+        local_backend = manager._codex_local_backends["ollama"]
+        assert session._backend is local_backend
+        assert local_backend.client is not None
+        assert local_backend.client._global_args == (
+            "--oss",
+            "--local-provider",
+            "ollama",
+        )
 
     def test_create_session_applies_codex_transcript_retry_config(self) -> None:
         manager = WebChatRuntimeManager(

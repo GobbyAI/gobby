@@ -33,7 +33,7 @@ async def start(client: CodexAppServerClient, subprocess_module: Any) -> None:
         env = os.environ.copy()
         # Prevent installed Codex hooks from registering nested daemon sessions.
         env["GOBBY_HOOKS_DISABLED"] = "1"
-        command = [client._codex_command, "app-server"]
+        command = [client._codex_command, *client._global_args, "app-server"]
         for override in client._config_overrides:
             command.extend(["-c", override])
         for feature in client._enabled_features:

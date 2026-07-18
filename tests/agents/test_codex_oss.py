@@ -4,7 +4,10 @@ from types import SimpleNamespace
 
 import pytest
 
-from gobby.agents.codex_oss import codex_oss_provider_for_local_endpoint
+from gobby.agents.codex_oss import (
+    codex_oss_launch_args,
+    codex_oss_provider_for_local_endpoint,
+)
 
 pytestmark = pytest.mark.unit
 
@@ -36,3 +39,11 @@ def test_codex_oss_provider_normalizes_supported_provider(provider: str, expecte
     endpoint = SimpleNamespace(provider=provider)
 
     assert codex_oss_provider_for_local_endpoint(endpoint) == expected
+
+
+def test_codex_oss_launch_args_use_current_global_flags() -> None:
+    assert codex_oss_launch_args("LMSTUDIO") == [
+        "--oss",
+        "--local-provider",
+        "lmstudio",
+    ]

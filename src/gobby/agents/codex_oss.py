@@ -34,9 +34,9 @@ def codex_oss_provider_for_local_endpoint(endpoint: CodexOSSLocalEndpoint) -> st
     return provider
 
 
-def codex_oss_config_overrides(oss_provider: str) -> list[str]:
-    """Return Codex app-server config overrides for an OSS local provider."""
+def codex_oss_launch_args(oss_provider: str) -> list[str]:
+    """Return Codex global CLI arguments for an OSS local provider."""
     provider = oss_provider.strip().lower()
     if provider not in CODEX_OSS_LOCAL_PROVIDERS:
         raise ValueError(f"Unsupported Codex OSS local provider: {oss_provider}")
-    return ['model_provider="oss"', f'oss_provider="{provider}"']
+    return ["--oss", "--local-provider", provider]

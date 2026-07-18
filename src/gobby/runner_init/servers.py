@@ -96,7 +96,7 @@ def init_servers(runner: GobbyRunner) -> None:
         from gobby.adapters.codex_impl.client import CodexAppServerClient
 
         codex_client = CodexAppServerClient()
-        logger.info("Codex app-server client created (will start in HTTP lifespan)")
+        logger.info("Codex app-server client created (will start after HTTP readiness)")
     runner.codex_client = codex_client
 
     services.web_chat_runtime_manager = WebChatRuntimeManager(

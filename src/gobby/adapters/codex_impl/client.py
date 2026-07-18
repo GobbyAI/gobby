@@ -62,6 +62,7 @@ class CodexAppServerClient:
         config_overrides: tuple[str, ...] | list[str] | None = None,
         enabled_features: tuple[str, ...] | list[str] | None = None,
         disabled_features: tuple[str, ...] | list[str] | None = None,
+        global_args: tuple[str, ...] | list[str] | None = None,
     ) -> None:
         """
         Initialize the Codex app-server client.
@@ -72,12 +73,14 @@ class CodexAppServerClient:
             config_overrides: Optional `-c key=value` overrides for app-server startup
             enabled_features: Optional feature names to pass with `--enable`
             disabled_features: Optional feature names to pass with `--disable`
+            global_args: Optional Codex arguments that must precede the app-server subcommand
         """
         self._codex_command = codex_command
         self._on_notification = on_notification
         self._config_overrides = tuple(config_overrides or ())
         self._enabled_features = tuple(enabled_features or ())
         self._disabled_features = tuple(disabled_features or ())
+        self._global_args = tuple(global_args or ())
 
         self._process: subprocess.Popen[str] | None = None
         self._state = CodexConnectionState.DISCONNECTED
