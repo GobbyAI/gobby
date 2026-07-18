@@ -80,11 +80,12 @@ class TestDaemonClientCheckHealth:
         mock_response = MagicMock()
         mock_response.status_code = 200
 
-        with patch("httpx.get", return_value=mock_response):
+        with patch("httpx.get", return_value=mock_response) as mock_get:
             is_healthy, error = client.check_health()
 
         assert is_healthy is True
         assert error is None
+        assert mock_get.call_args.kwargs["trust_env"] is False
         logger.debug.assert_called_once_with(
             "Daemon health check passed",
             extra={
@@ -120,6 +121,52 @@ class TestDaemonClientCheckHealth:
         assert is_healthy is False
         assert error is DaemonHealthError.NOT_RUNNING
         logger.warning.assert_called_once()
+
+    def test_single_health_timeout_is_debug_only(self) -> None:
+        """A transient timeout remains observable without warning noise."""
+        logger = MagicMock()
+        client = DaemonClient(logger=logger)
+        timeout = httpx.ReadTimeout("timed out")
+
+        with patch("httpx.get", side_effect=timeout):
+            assert client.check_health() == (False, "timed out")
+
+        logger.warning.assert_not_called()
+        logger.debug.assert_called_once_with(
+            "Daemon health check timed out (attempt %d): %s",
+            1,
+            timeout,
+        )
+
+    def test_repeated_health_timeouts_warn_once(self) -> None:
+        """Consecutive timeouts escalate once so persistent hangs stay visible."""
+        logger = MagicMock()
+        client = DaemonClient(logger=logger)
+        timeout = httpx.ReadTimeout("timed out")
+
+        with patch("httpx.get", side_effect=timeout):
+            assert client.check_health() == (False, "timed out")
+            assert client.check_health() == (False, "timed out")
+            assert client.check_health() == (False, "timed out")
+
+        logger.warning.assert_called_once_with(
+            "Daemon health check timed out twice consecutively: %s",
+            timeout,
+        )
+
+    def test_health_success_resets_timeout_streak(self) -> None:
+        """Separated transient timeouts never escalate to a warning."""
+        logger = MagicMock()
+        client = DaemonClient(logger=logger)
+        timeout = httpx.ReadTimeout("timed out")
+        success = MagicMock(status_code=200)
+
+        with patch("httpx.get", side_effect=[timeout, success, timeout]):
+            assert client.check_health() == (False, "timed out")
+            assert client.check_health() == (True, None)
+            assert client.check_health() == (False, "timed out")
+
+        logger.warning.assert_not_called()
 
     def test_health_check_recovery_logs_info_once(self) -> None:
         """Recovery after a failed health state is logged once at info level."""

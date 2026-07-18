@@ -106,6 +106,7 @@ class DaemonClient:
 
         self._health_log_lock = threading.Lock()
         self._health_failed_since_last_success = False
+        self._consecutive_health_timeouts = 0
 
     @classmethod
     def from_url(
@@ -132,6 +133,7 @@ class DaemonClient:
                 f"{self.url}/api/admin/health",
                 headers=self._auth_headers,
                 timeout=self.timeout,
+                trust_env=False,
             )
             if response.status_code == 401:
                 self._mark_health_failed()
@@ -156,6 +158,9 @@ class DaemonClient:
             else:
                 self.logger.warning("Daemon not running: %s", e)
             return False, DaemonHealthError.NOT_RUNNING
+        except httpx.TimeoutException as e:
+            self._record_health_timeout(e)
+            return False, str(e)
         except httpx.HTTPError as e:
             self._mark_health_failed()
             self.logger.warning("Daemon health check error: %s", e)
@@ -168,6 +173,7 @@ class DaemonClient:
                 "url": self.url,
                 "health_failed_since_last_success": was_recovering,
             }
+            self._consecutive_health_timeouts = 0
             if was_recovering:
                 self._health_failed_since_last_success = False
                 self.logger.info("Daemon health recovered", extra=log_extra)
@@ -177,6 +183,25 @@ class DaemonClient:
     def _mark_health_failed(self) -> None:
         with self._health_log_lock:
             self._health_failed_since_last_success = True
+            self._consecutive_health_timeouts = 0
+
+    def _record_health_timeout(self, error: httpx.TimeoutException) -> None:
+        with self._health_log_lock:
+            self._health_failed_since_last_success = True
+            self._consecutive_health_timeouts += 1
+            attempt = self._consecutive_health_timeouts
+
+        if attempt == 2:
+            self.logger.warning(
+                "Daemon health check timed out twice consecutively: %s",
+                error,
+            )
+        else:
+            self.logger.debug(
+                "Daemon health check timed out (attempt %d): %s",
+                attempt,
+                error,
+            )
 
     def check_status(self) -> tuple[bool, str | None, str, str | None]:
         """
