@@ -938,7 +938,7 @@ def setup_signal_handlers(
 
     def _read_signal_shutdown_record() -> ShutdownIntentRecord:
         home = get_gobby_home()
-        shutdown_record = read_shutdown_intent(home=home)
+        shutdown_record = read_shutdown_intent(home=home, consume=False)
         if shutdown_record.stale:
             return recover_stale_restart_intent(
                 shutdown_record,

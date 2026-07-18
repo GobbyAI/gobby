@@ -33,6 +33,7 @@ from gobby.runner_lifecycle_startup import (
 )
 from gobby.runner_lifecycle_subsystems import init_subsystems
 from gobby.runner_pid_file import PidFileClaim, claim_pid_file, probe_daemon_lock
+from gobby.shutdown_intent import clear_active_shutdown_intent
 from gobby.telemetry import shutdown_telemetry
 
 if TYPE_CHECKING:
@@ -208,6 +209,7 @@ async def run_daemon(runner: GobbyRunner, pid_claim: PidFileClaim | None = None)
                 await asyncio.sleep(0.01)
 
             if server.started and not runner._shutdown_requested:
+                clear_active_shutdown_intent()
                 runner._subsystem_init_task = asyncio.create_task(
                     _init_subsystems(runner, rebuild_vector_store),
                     name="subsystem-init",

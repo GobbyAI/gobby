@@ -103,6 +103,17 @@ def write_shutdown_intent(
             raise
 
 
+def clear_active_shutdown_intent(*, home: Path | None = None) -> None:
+    """Clear the active shutdown marker after a replacement daemon is listening."""
+    marker = get_shutdown_marker_path(home)
+    try:
+        marker.unlink()
+    except FileNotFoundError:
+        pass
+    except OSError as exc:
+        logger.warning("Failed to clear active shutdown marker %s: %s", marker, exc)
+
+
 def _write_marker_atomically(marker: Path, data: Mapping[str, object]) -> None:
     """Durably replace a shutdown marker with complete owner-only JSON."""
     marker.parent.mkdir(parents=True, exist_ok=True)

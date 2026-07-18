@@ -770,10 +770,11 @@ async def shutdown_daemon_services(
         except Exception as e:
             logger.warning("PID file cleanup failed: %s", e)
         finally:
-            try:
-                get_shutdown_marker_path().unlink()
-            except FileNotFoundError:
-                pass
-            except OSError as e:
-                logger.debug("Failed to remove shutdown marker during shutdown: %s", e)
+            if shutdown_intent is not ShutdownIntent.RESTART:
+                try:
+                    get_shutdown_marker_path().unlink()
+                except FileNotFoundError:
+                    pass
+                except OSError as e:
+                    logger.debug("Failed to remove shutdown marker during shutdown: %s", e)
     logger.info("Shutdown complete")

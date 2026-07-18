@@ -1185,7 +1185,7 @@ class TestShutdownDaemonServices:
         assert all(task.cancelled() for task in tasks)
 
     @pytest.mark.asyncio
-    async def test_restart_skips_stop_hook_grace(
+    async def test_restart_skips_stop_hook_grace_and_preserves_marker(
         self,
         tmp_path: Path,
         monkeypatch: pytest.MonkeyPatch,
@@ -1219,7 +1219,7 @@ class TestShutdownDaemonServices:
 
         grace_window.assert_not_awaited()
         assert server.should_exit is True
-        assert marker.exists() is False
+        assert marker.exists() is True
 
     @pytest.mark.asyncio
     async def test_shutdown_marker_is_removed_when_pid_cleanup_fails(
@@ -2459,7 +2459,7 @@ class TestSignalHandlerBehavior:
         captured_handler()
         assert shutdown_called is True
 
-    def test_signal_handler_preserves_restart_after_marker_is_consumed(
+    def test_signal_handler_preserves_restart_marker_for_restart_downtime(
         self,
         tmp_path: Path,
         caplog: pytest.LogCaptureFixture,
@@ -2502,6 +2502,7 @@ class TestSignalHandlerBehavior:
 
         shutdown_intent_callback.assert_called_once_with(ShutdownIntent.RESTART)
         assert shutdown_callback.call_count == 2
+        assert (tmp_path / "shutdown_intent_active.json").exists()
         received_logs = [
             record
             for record in caplog.records
@@ -2525,7 +2526,7 @@ class TestSignalHandlerBehavior:
             for record in caplog.records
         )
 
-    def test_signal_handler_recovers_consumed_thirty_second_restart_marker(
+    def test_signal_handler_recovers_thirty_second_restart_marker_without_consuming(
         self,
         tmp_path: Path,
     ) -> None:
@@ -2567,7 +2568,7 @@ class TestSignalHandlerBehavior:
 
         shutdown_intent_callback.assert_called_once_with(ShutdownIntent.RESTART)
         shutdown_callback.assert_called_once_with()
-        assert not (tmp_path / "shutdown_intent_active.json").exists()
+        assert (tmp_path / "shutdown_intent_active.json").exists()
 
     def test_signal_handler_still_shuts_down_when_intent_callback_fails(
         self,
@@ -2878,6 +2879,19 @@ class TestMessageProcessorWebSocketIntegration:
 class TestShutdownLoop:
     """Tests for the shutdown waiting loop."""
 
+    @staticmethod
+    def _minimal_runner(mock_config: object) -> SimpleNamespace:
+        return SimpleNamespace(
+            request_shutdown=MagicMock(),
+            _shutdown_requested=False,
+            config=mock_config,
+            http_server=SimpleNamespace(
+                app=MagicMock(),
+                port=8765,
+                services=SimpleNamespace(shutdown_in_progress=False),
+            ),
+        )
+
     @pytest.mark.asyncio
     async def test_run_waits_for_shutdown_signal(self, mock_config):
         """Test that run waits for shutdown signal in the main loop."""
@@ -2928,7 +2942,7 @@ class TestShutdownLoop:
 
         with ExitStack() as stack:
             [stack.enter_context(p) for p in patches]
-            runner = GobbyRunner()
+            runner = self._minimal_runner(mock_config)
 
             server = MagicMock()
             server.started = False
@@ -2951,6 +2965,9 @@ class TestShutdownLoop:
             start_periodic_tasks = stack.enter_context(
                 patch("gobby.runner_lifecycle._start_periodic_tasks")
             )
+            clear_shutdown_intent = stack.enter_context(
+                patch("gobby.runner_lifecycle.clear_active_shutdown_intent")
+            )
             shutdown_services = stack.enter_context(
                 patch("gobby.runner_lifecycle.shutdown_daemon_services")
             )
@@ -2967,6 +2984,7 @@ class TestShutdownLoop:
             assert runner._shutdown_requested is True
             init_subsystems.assert_not_awaited()
             start_periodic_tasks.assert_not_called()
+            clear_shutdown_intent.assert_not_called()
             shutdown_services.assert_awaited_once()
             assert "serve loop crashed before bind" in caplog.text
             assert "requesting daemon shutdown" in caplog.text
@@ -2982,7 +3000,7 @@ class TestShutdownLoop:
 
         with ExitStack() as stack:
             [stack.enter_context(p) for p in patches]
-            runner = GobbyRunner()
+            runner = self._minimal_runner(mock_config)
 
             server = MagicMock()
             server.started = False
@@ -3005,6 +3023,9 @@ class TestShutdownLoop:
                 patch("gobby.runner_lifecycle.claim_pid_file", return_value=pid_claim)
             )
             init_subsystems = stack.enter_context(patch("gobby.runner_lifecycle._init_subsystems"))
+            clear_shutdown_intent = stack.enter_context(
+                patch("gobby.runner_lifecycle.clear_active_shutdown_intent")
+            )
 
             def start_periodic_tasks(*_args: object, **_kwargs: object) -> None:
                 side_effects_started.set()
@@ -3029,6 +3050,7 @@ class TestShutdownLoop:
 
             assert exc_info.value.code == 1
             assert runner._shutdown_requested is True
+            clear_shutdown_intent.assert_called_once_with()
             init_subsystems.assert_awaited_once()
             periodic_tasks.assert_called_once()
             shutdown_services.assert_awaited_once()

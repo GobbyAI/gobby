@@ -15,6 +15,7 @@ import pytest
 from gobby.shutdown_intent import (
     ShutdownIntent,
     _write_marker_atomically,
+    clear_active_shutdown_intent,
     get_active_shutdown_marker_path,
     get_shutdown_source_path,
     read_active_shutdown_intent,
@@ -199,6 +200,17 @@ def test_write_shutdown_intent_records_active_marker(tmp_path: Path) -> None:
     assert source_record is not None
     assert source_record.source == "cli_restart"
     assert get_shutdown_source_path(tmp_path).exists()
+
+
+def test_clear_active_shutdown_intent_preserves_source_record(tmp_path: Path) -> None:
+    write_shutdown_intent("cli_restart", ShutdownIntent.RESTART, home=tmp_path)
+
+    clear_active_shutdown_intent(home=tmp_path)
+
+    assert read_active_shutdown_intent(home=tmp_path) is None
+    source_record = read_shutdown_source_record(home=tmp_path)
+    assert source_record is not None
+    assert source_record.intent is ShutdownIntent.RESTART
 
 
 @pytest.mark.parametrize(
