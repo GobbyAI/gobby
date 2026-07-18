@@ -138,6 +138,12 @@ On approval, set `status: active` and ask where it runs:
    prompt must end by instructing the agent to call
    `gobby-agents:end_agent_run` after Completion, or its run never reaches
    terminal status.
+4. **Taskmaster** (`--taskmaster`) — for swarm goals:
+   `gobby-agents:spawn_agent` with `agent="goal-taskmaster"` and a prompt
+   naming the goal file and anchor. The taskmaster template loads this
+   skill itself, runs Execute setup, coordinates the swarm loop with
+   routed workers, and already carries the end_agent_run and messaging
+   contract — the prompt only needs the file and anchor.
 
 ## Execute — Shared Setup
 
