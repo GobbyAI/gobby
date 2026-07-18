@@ -161,6 +161,62 @@ pub fn index_vault(
     Ok(())
 }
 
+pub fn index_path(
+    vault_root: impl AsRef<Path>,
+    store: &mut impl WikiIndexStore,
+    path: impl AsRef<Path>,
+    options: IndexOptions,
+    progress: &mut ProgressOptions<'_>,
+) -> Result<(), IndexError> {
+    let vault_root = vault_root.as_ref();
+    let path = path.as_ref();
+    if !path
+        .components()
+        .all(|component| matches!(component, Component::Normal(_)))
+    {
+        return Err(IndexError::PathOutsideVault {
+            path: path.to_path_buf(),
+            vault_root: vault_root.to_path_buf(),
+        });
+    }
+    if !is_indexable_vault_path(path) {
+        return Err(IndexError::Walk(format!(
+            "path {} is not an indexable wiki document",
+            path.display()
+        )));
+    }
+
+    let previous_hash = store.indexed_hashes()?.remove(path);
+    let content_hash = file_content_hash(vault_root.join(path))?;
+    let event = match previous_hash.as_deref() {
+        None => WikiIngestionEvent::Added,
+        Some(previous) if previous == content_hash => WikiIngestionEvent::Unchanged,
+        Some(_) => WikiIngestionEvent::Changed,
+    };
+    let mut current_hashes = BTreeMap::new();
+    current_hashes.insert(path.to_path_buf(), content_hash.clone());
+    let mut progress = ActiveProgress::new(progress, ProgressPhase::VaultIndex, 1);
+
+    if event == WikiIngestionEvent::Unchanged && !options.force {
+        store.record_ingestion(WikiIngestion {
+            path: path.to_path_buf(),
+            event,
+            content_hash: Some(content_hash),
+        })?;
+    } else {
+        index_file(
+            vault_root,
+            store,
+            path.to_path_buf(),
+            event,
+            &current_hashes,
+        )?;
+    }
+    progress.advance(&path.display().to_string());
+
+    Ok(())
+}
+
 fn index_event_path(event: &IndexEvent) -> &Path {
     match event {
         IndexEvent::Added(path)

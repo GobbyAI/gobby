@@ -39,7 +39,7 @@ EXPLICIT_WRITE_COMMANDS = frozenset(
         "page-delete",
     }
 )
-CLI_INDEXED_BATCH_COMMANDS = frozenset({"ingest-url", "refresh"})
+CLI_INDEXED_BATCH_COMMANDS = frozenset({"ingest-file", "ingest-url", "refresh"})
 
 
 class WikiUpdateCoordinator:

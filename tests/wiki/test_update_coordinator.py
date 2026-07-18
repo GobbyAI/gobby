@@ -296,7 +296,7 @@ async def test_index_status_does_not_duplicate_handoff() -> None:
     assert result["index_handoff"]["status"] == "indexed"
 
 
-@pytest.mark.parametrize("command", ["ingest-url", "refresh"])
+@pytest.mark.parametrize("command", ["ingest-file", "ingest-url", "refresh"])
 async def test_cli_indexed_batches_do_not_duplicate(command: str) -> None:
     gateway = RecordingGateway()
     coordinator = WikiUpdateCoordinator(gateway)

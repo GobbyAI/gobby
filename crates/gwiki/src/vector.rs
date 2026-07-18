@@ -1,4 +1,6 @@
+use std::collections::HashSet;
 use std::fmt;
+use std::path::PathBuf;
 
 use gobby_core::config::QdrantConfig;
 use gobby_core::qdrant::{UpsertRequest, VectorCollectionSchema};
@@ -70,6 +72,46 @@ pub(crate) trait WikiVectorChunkSource {
     fn chunks(&mut self, scope: &SearchScope) -> Result<Vec<WikiVectorChunk>, WikiVectorError>;
 
     fn stale_paths(&mut self, scope: &SearchScope) -> Result<Vec<String>, WikiVectorError>;
+}
+
+struct FilteredWikiVectorChunkSource<'a, S> {
+    source: &'a mut S,
+    paths: HashSet<String>,
+}
+
+impl<'a, S> FilteredWikiVectorChunkSource<'a, S> {
+    fn new(source: &'a mut S, paths: &[PathBuf]) -> Self {
+        Self {
+            source,
+            paths: paths
+                .iter()
+                .map(|path| crate::support::text::display_path(path))
+                .collect(),
+        }
+    }
+}
+
+impl<S> WikiVectorChunkSource for FilteredWikiVectorChunkSource<'_, S>
+where
+    S: WikiVectorChunkSource,
+{
+    fn chunks(&mut self, scope: &SearchScope) -> Result<Vec<WikiVectorChunk>, WikiVectorError> {
+        Ok(self
+            .source
+            .chunks(scope)?
+            .into_iter()
+            .filter(|chunk| self.paths.contains(&chunk.path))
+            .collect())
+    }
+
+    fn stale_paths(&mut self, scope: &SearchScope) -> Result<Vec<String>, WikiVectorError> {
+        Ok(self
+            .source
+            .stale_paths(scope)?
+            .into_iter()
+            .filter(|path| self.paths.contains(path))
+            .collect())
+    }
 }
 
 pub(crate) trait WikiVectorEmbedder {
@@ -198,6 +240,23 @@ where
         upserted,
         deleted_stale_paths: stale_paths.len(),
     })
+}
+
+pub(crate) fn sync_scope_vectors_for_paths<S, E, V>(
+    scope: &SearchScope,
+    paths: &[PathBuf],
+    source: &mut S,
+    embedder: &mut E,
+    store: &mut V,
+    progress: &mut crate::progress::ProgressOptions<'_>,
+) -> Result<WikiVectorSyncOutcome, WikiVectorError>
+where
+    S: WikiVectorChunkSource,
+    E: WikiVectorEmbedder,
+    V: WikiVectorStore,
+{
+    let mut source = FilteredWikiVectorChunkSource::new(source, paths);
+    sync_scope_vectors(scope, &mut source, embedder, store, progress)
 }
 
 pub(crate) fn collection_for_scope(scope: &SearchScope) -> Option<String> {
@@ -647,6 +706,76 @@ mod tests {
         );
     }
 
+    #[test]
+    fn vector_sync_for_paths_embeds_only_requested_documents() {
+        let scope = SearchScope::project("project-1");
+        let mut source = MockChunkSource {
+            chunks: vec![
+                WikiVectorChunk {
+                    id: "chunk:project:project-1:raw/changed.md:0".to_string(),
+                    path: "raw/changed.md".to_string(),
+                    title: Some("Changed".to_string()),
+                    heading: None,
+                    chunk_index: 0,
+                    byte_start: 0,
+                    byte_end: 7,
+                    content: "changed".to_string(),
+                },
+                WikiVectorChunk {
+                    id: "chunk:project:project-1:raw/unchanged.md:0".to_string(),
+                    path: "raw/unchanged.md".to_string(),
+                    title: Some("Unchanged".to_string()),
+                    heading: None,
+                    chunk_index: 0,
+                    byte_start: 0,
+                    byte_end: 9,
+                    content: "unchanged".to_string(),
+                },
+            ],
+            stale_paths: vec![
+                "raw/deleted.md".to_string(),
+                "raw/unrelated-deleted.md".to_string(),
+            ],
+        };
+        let mut embedder = MockEmbedder {
+            vectors: vec![vec![0.1, 0.2, 0.3]],
+            inputs: Vec::new(),
+        };
+        let mut store = RecordingVectorStore::default();
+        let paths = vec![
+            PathBuf::from("raw/changed.md"),
+            PathBuf::from("raw/deleted.md"),
+        ];
+
+        let outcome = sync_scope_vectors_for_paths(
+            &scope,
+            &paths,
+            &mut source,
+            &mut embedder,
+            &mut store,
+            &mut crate::progress::ProgressOptions::default(),
+        )
+        .expect("incremental vector sync succeeds");
+
+        assert_eq!(outcome.chunks, 1);
+        assert_eq!(outcome.upserted, 1);
+        assert_eq!(outcome.deleted_stale_paths, 1);
+        assert_eq!(embedder.inputs, vec!["changed"]);
+        assert_eq!(store.upserts.len(), 1);
+        assert_eq!(
+            store.upserts[0].points[0]
+                .payload
+                .get("path")
+                .and_then(Value::as_str),
+            Some("raw/changed.md")
+        );
+        assert_eq!(store.deleted.len(), 1);
+        assert_eq!(
+            filter_value(&store.deleted[0], "path"),
+            Some("raw/deleted.md".to_string())
+        );
+    }
+
     #[cfg(feature = "embeddings-http")]
     #[test]
     fn direct_embedding_backend_batches_texts() {
@@ -683,6 +812,43 @@ mod tests {
         assert!(request.contains("authorization: Bearer test-key"));
         assert_eq!(payload["model"], "embed-model");
         assert_eq!(payload["input"], serde_json::json!(texts));
+    }
+
+    #[cfg(feature = "embeddings-http")]
+    #[test]
+    fn direct_embedding_backend_surfaces_auth_failure_without_retry() {
+        let (api_base, request_handle) = crate::test_http::spawn_response(
+            401,
+            "application/json",
+            r#"{"error":{"code":"invalid_api_key","message":"token required"}}"#,
+        )
+        .expect("spawn test server");
+        let embedding = SemanticEmbedding::Direct(gobby_core::config::EmbeddingConfig {
+            api_base,
+            model: "embed-model".to_string(),
+            api_key: None,
+            query_prefix: None,
+            timeout_seconds: 5,
+        });
+        let mut backend = GwikiEmbeddingBackend::new(embedding);
+        let started = std::time::Instant::now();
+
+        let error = backend
+            .embed_texts(&["probe".to_string()])
+            .expect_err("401 must fail");
+        let elapsed = started.elapsed();
+        request_handle
+            .join()
+            .expect("request thread")
+            .expect("request captured");
+        let rendered = error.to_string();
+
+        assert!(
+            elapsed < std::time::Duration::from_secs(2),
+            "embedding 401 took {elapsed:?}"
+        );
+        assert!(rendered.contains("HTTP 401"));
+        assert!(rendered.contains("invalid_api_key"));
     }
 
     #[test]

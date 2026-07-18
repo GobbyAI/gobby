@@ -199,19 +199,15 @@ pub(crate) fn execute_ingest_file(
                 &mut progress_options,
             )?
         };
-        sync_qdrant_vectors(
+        sync_qdrant_vectors_for_paths(
             &mut conn,
             &search_scope,
+            &[PathBuf::from("raw/INDEX.md")],
             "gwiki ingest-file",
             &mut progress_options,
         )?;
         let counts = indexed_counts_for_postgres(&mut conn, &search_scope, true)?;
-        sync_falkor_graph(
-            &mut conn,
-            &search_scope,
-            "gwiki ingest-file",
-            &mut progress_options,
-        )?;
+        log::debug!("gwiki ingest-file deferred full Falkor graph reconciliation to gwiki index");
         crate::log::append_sources_ingested(scope.root(), &output_scope, &fetched_at, [&result])?;
         return Ok(render_ingest_file(&path, output_scope, &result, counts));
     }
@@ -274,18 +270,16 @@ pub(crate) fn execute_ingest_url(
         let counts =
             indexed_counts_for_postgres(&mut conn, &search_scope, !result.accepted.is_empty())?;
         if !result.accepted.is_empty() {
-            sync_qdrant_vectors(
+            sync_qdrant_vectors_for_paths(
                 &mut conn,
                 &search_scope,
+                &[PathBuf::from("raw/INDEX.md")],
                 "gwiki ingest-url",
                 &mut progress_options,
             )?;
-            sync_falkor_graph(
-                &mut conn,
-                &search_scope,
-                "gwiki ingest-url",
-                &mut progress_options,
-            )?;
+            log::debug!(
+                "gwiki ingest-url deferred full Falkor graph reconciliation to gwiki index"
+            );
         }
         crate::log::append_sources_ingested(
             scope.root(),
@@ -446,6 +440,26 @@ pub(crate) fn sync_qdrant_vectors(
     command: &'static str,
     progress: &mut ProgressOptions<'_>,
 ) -> Result<Option<DegradationKind>, WikiError> {
+    sync_qdrant_vectors_inner(conn, search_scope, None, command, progress)
+}
+
+fn sync_qdrant_vectors_for_paths(
+    conn: &mut Client,
+    search_scope: &SearchScope,
+    paths: &[PathBuf],
+    command: &'static str,
+    progress: &mut ProgressOptions<'_>,
+) -> Result<Option<DegradationKind>, WikiError> {
+    sync_qdrant_vectors_inner(conn, search_scope, Some(paths), command, progress)
+}
+
+fn sync_qdrant_vectors_inner(
+    conn: &mut Client,
+    search_scope: &SearchScope,
+    paths: Option<&[PathBuf]>,
+    command: &'static str,
+    progress: &mut ProgressOptions<'_>,
+) -> Result<Option<DegradationKind>, WikiError> {
     let gobby_home = gobby_home()?;
     let (embedding, qdrant) = {
         let primary = PostgresConfigSource { conn };
@@ -471,13 +485,24 @@ pub(crate) fn sync_qdrant_vectors(
     let mut source = vector::PostgresWikiVectorChunkSource::new(conn);
     let mut embedder = vector::GwikiEmbeddingBackend::new(embedding);
     let mut store = vector::GwikiQdrantVectorStore::new(qdrant);
-    let outcome = match vector::sync_scope_vectors(
-        search_scope,
-        &mut source,
-        &mut embedder,
-        &mut store,
-        progress,
-    ) {
+    let outcome = match paths {
+        Some(paths) => vector::sync_scope_vectors_for_paths(
+            search_scope,
+            paths,
+            &mut source,
+            &mut embedder,
+            &mut store,
+            progress,
+        ),
+        None => vector::sync_scope_vectors(
+            search_scope,
+            &mut source,
+            &mut embedder,
+            &mut store,
+            progress,
+        ),
+    };
+    let outcome = match outcome {
         Ok(outcome) => outcome,
         Err(error) => {
             log::warn!(

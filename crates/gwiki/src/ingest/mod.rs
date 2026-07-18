@@ -149,11 +149,16 @@ pub(crate) fn index_after_ingest(
     progress: &mut crate::progress::ProgressOptions<'_>,
 ) -> Result<(), WikiError> {
     let options = crate::support::config::local_index_options()?;
-    indexer::index_vault(vault_root, store, options, progress).map_err(|error| {
-        WikiError::InvalidInput {
-            field: "index",
-            message: error.to_string(),
-        }
+    indexer::index_path(
+        vault_root,
+        store,
+        Path::new("raw/INDEX.md"),
+        options,
+        progress,
+    )
+    .map_err(|error| WikiError::InvalidInput {
+        field: "index",
+        message: error.to_string(),
     })
 }
 
@@ -815,6 +820,13 @@ mod tests {
             ingestion.path == Path::new("raw/INDEX.md")
                 && ingestion.event == WikiIngestionEvent::Added
         }));
+        assert!(
+            store
+                .ingestions
+                .iter()
+                .all(|ingestion| ingestion.path == Path::new("raw/INDEX.md")),
+            "interactive ingest must not reconcile unrelated vault pages"
+        );
     }
 
     #[derive(Debug, Default)]
