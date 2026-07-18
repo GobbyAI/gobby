@@ -207,7 +207,7 @@ async def list_mcp_servers(
         }
 
     except Exception as e:
-        logger.error("List MCP servers error: %s", e, exc_info=True)
+        logger.exception("List MCP servers error: %s", e)
         return {"success": False, "error": str(e)}
 
 
@@ -287,7 +287,7 @@ async def add_mcp_server(
         response_time_ms = (time.perf_counter() - start_time) * 1000
         return {"success": False, "error": str(e), "response_time_ms": response_time_ms}
     except Exception as e:
-        logger.error("Add MCP server error: %s", e, exc_info=True)
+        logger.exception("Add MCP server error: %s", e)
         response_time_ms = (time.perf_counter() - start_time) * 1000
         return {"success": False, "error": str(e), "response_time_ms": response_time_ms}
 
@@ -356,7 +356,7 @@ async def update_mcp_server(
         response_time_ms = (time.perf_counter() - start_time) * 1000
         return {"success": False, "error": str(e), "response_time_ms": response_time_ms}
     except Exception as e:
-        logger.error("Update MCP server error: %s", e, exc_info=True)
+        logger.exception("Update MCP server error: %s", e)
         response_time_ms = (time.perf_counter() - start_time) * 1000
         return {"success": False, "error": str(e), "response_time_ms": response_time_ms}
 
@@ -461,7 +461,7 @@ async def import_mcp_server(
     except HTTPException:
         raise
     except Exception as e:
-        logger.error("Import MCP server error: %s", e, exc_info=True)
+        logger.exception("Import MCP server error: %s", e)
         response_time_ms = (time.perf_counter() - start_time) * 1000
         return {"success": False, "error": str(e), "response_time_ms": response_time_ms}
 
@@ -511,7 +511,7 @@ async def remove_mcp_server(
         response_time_ms = (time.perf_counter() - start_time) * 1000
         return {"success": False, "error": str(e), "response_time_ms": response_time_ms}
     except Exception as e:
-        logger.error("Remove MCP server error: %s", e, exc_info=True)
+        logger.exception("Remove MCP server error: %s", e)
         response_time_ms = (time.perf_counter() - start_time) * 1000
         return {"success": False, "error": str(e), "response_time_ms": response_time_ms}
 
@@ -588,10 +588,9 @@ async def set_mcp_server_enabled(
             detail={"success": False, "error": str(e), "response_time_ms": response_time_ms},
         ) from e
     except (ValueError, KeyError, RuntimeError, MCPError, CircuitBreakerOpen) as e:
-        logger.error(
+        logger.exception(
             "Set MCP server enabled error",
             extra={"server_name": name, "enabled": enabled, "error": str(e)},
-            exc_info=True,
         )
         response_time_ms = (time.perf_counter() - start_time) * 1000
         return {"success": False, "error": str(e), "response_time_ms": response_time_ms}

@@ -871,10 +871,9 @@ def create_hooks_router(server: "HTTPServer") -> APIRouter:
                 # Hook execution error - return graceful response so tool proceeds
                 # This prevents confusing "hook failed" warnings in Claude Code
                 inc_counter("hooks_failed_total")
-                logger.error(
+                logger.exception(
                     "Hook execution failed: %s",
                     hook_type,
-                    exc_info=True,
                     extra=_hook_log_extra(hook_type, request_metadata),
                 )
                 return mark_processed_and_return(
@@ -893,9 +892,8 @@ def create_hooks_router(server: "HTTPServer") -> APIRouter:
         except Exception as e:
             # Outer exception - return graceful response to prevent CLI warning
             inc_counter("hooks_failed_total")
-            logger.error(
+            logger.exception(
                 "Hook endpoint error",
-                exc_info=True,
                 extra=_hook_log_extra(hook_type, request_metadata),
             )
             if hook_type:

@@ -328,7 +328,7 @@ async def list_all_mcp_tools(
         }
 
     except Exception as e:
-        logger.error("List MCP tools error: %s", e, exc_info=True)
+        logger.exception("List MCP tools error: %s", e)
         response_time_ms = (time.perf_counter() - start_time) * 1000
         return {"success": False, "error": str(e), "response_time_ms": response_time_ms}
 
@@ -419,7 +419,7 @@ async def recommend_mcp_tools(
     except HTTPException:
         raise
     except Exception as e:
-        logger.error("Recommend tools error: %s", e, exc_info=True)
+        logger.exception("Recommend tools error: %s", e)
         response_time_ms = (time.perf_counter() - start_time) * 1000
         return {"success": False, "error": str(e), "response_time_ms": response_time_ms}
 
@@ -505,11 +505,10 @@ async def search_mcp_tools(
                                 internal_manager=server._internal_manager,
                             )
                         except Exception as e:
-                            logger.error(
+                            logger.exception(
                                 "Background embedding generation failed for project %s: %s",
                                 proj_id,
                                 e,
-                                exc_info=True,
                             )
 
                     # Trigger embedding generation as background task (non-blocking)
@@ -564,7 +563,7 @@ async def search_mcp_tools(
     except HTTPException:
         raise
     except Exception as e:
-        logger.error("Search tools error: %s", e, exc_info=True)
+        logger.exception("Search tools error: %s", e)
         response_time_ms = (time.perf_counter() - start_time) * 1000
         return {"success": False, "error": str(e), "response_time_ms": response_time_ms}
 

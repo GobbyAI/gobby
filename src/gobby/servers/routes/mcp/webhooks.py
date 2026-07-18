@@ -161,7 +161,7 @@ def create_webhooks_router() -> APIRouter:
         except HTTPException:
             raise
         except Exception as e:
-            logger.error("Webhook test error: %s", e, exc_info=True)
+            logger.exception("Webhook test error: %s", e)
             return {"success": False, "error": "Webhook test failed"}
 
     return router

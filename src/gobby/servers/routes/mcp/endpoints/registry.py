@@ -90,7 +90,7 @@ async def embed_mcp_tools(
         }
 
     except Exception as e:
-        logger.error("Embed tools error: %s", e, exc_info=True)
+        logger.exception("Embed tools error: %s", e)
         response_time_ms = (time.perf_counter() - start_time) * 1000
         return {"success": False, "error": str(e), "response_time_ms": response_time_ms}
 
@@ -151,7 +151,7 @@ async def get_mcp_status(
         }
 
     except Exception as e:
-        logger.error("Get MCP status error: %s", e, exc_info=True)
+        logger.exception("Get MCP status error: %s", e)
         response_time_ms = (time.perf_counter() - start_time) * 1000
         return {"success": False, "error": str(e), "response_time_ms": response_time_ms}
 
@@ -389,7 +389,7 @@ async def refresh_mcp_tools(
         }
 
     except Exception as e:
-        logger.error("Refresh tools error: %s", e, exc_info=True)
+        logger.exception("Refresh tools error: %s", e)
         response_time_ms = (time.perf_counter() - start_time) * 1000
         return {"success": False, "error": str(e), "response_time_ms": response_time_ms}
 

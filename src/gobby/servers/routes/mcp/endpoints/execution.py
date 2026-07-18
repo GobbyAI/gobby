@@ -353,11 +353,10 @@ async def _call_internal_tool(
         return _success_response_payload(result, response_time_ms)
     except Exception as e:
         inc_counter("mcp_tool_calls_failed_total")
-        logger.error(
+        logger.exception(
             "Internal MCP tool call error: %s.%s",
             server_name,
             tool_name,
-            exc_info=True,
             extra={"server": server_name, "tool": tool_name},
         )
         raise HTTPException(status_code=500, detail="Internal server error") from e
@@ -496,11 +495,10 @@ async def list_mcp_tools(
             return result
 
         except Exception as e:
-            logger.error(
+            logger.exception(
                 "Failed to list tools from %s: %s",
                 server_name,
                 e,
-                exc_info=True,
                 extra={"server": server_name},
             )
             response_time_ms = (time.perf_counter() - start_time) * 1000
@@ -514,7 +512,7 @@ async def list_mcp_tools(
     except HTTPException:
         raise
     except Exception as e:
-        logger.error("MCP list tools error: %s", server_name, exc_info=True)
+        logger.exception("MCP list tools error: %s", server_name)
         response_time_ms = (time.perf_counter() - start_time) * 1000
         return {"success": False, "error": str(e), "response_time_ms": response_time_ms}
     finally:
@@ -615,12 +613,11 @@ async def get_tool_schema(
                 return response
             except Exception as e:
                 # Connection, timeout, or internal errors
-                logger.error(
+                logger.exception(
                     "Failed to get tool schema %s/%s: %s",
                     server_name,
                     tool_name,
                     e,
-                    exc_info=True,
                 )
                 response_time_ms = (time.perf_counter() - start_time) * 1000
                 response = {
@@ -635,7 +632,7 @@ async def get_tool_schema(
     except HTTPException:
         raise
     except Exception as e:
-        logger.error("Get tool schema error: %s", e, exc_info=True)
+        logger.exception("Get tool schema error: %s", e)
         response_time_ms = (time.perf_counter() - start_time) * 1000
         return {"success": False, "error": str(e), "response_time_ms": response_time_ms}
 
@@ -739,11 +736,10 @@ async def call_mcp_tool(
                 return _timeout_response_payload(timeout, response_time_ms)
             except Exception as e:
                 inc_counter("mcp_tool_calls_failed_total")
-                logger.error(
+                logger.exception(
                     "MCP tool call error: %s.%s",
                     server_name,
                     tool_name,
-                    exc_info=True,
                     extra={"server": server_name, "tool": tool_name},
                 )
                 raise HTTPException(status_code=500, detail="Internal server error") from e
@@ -754,7 +750,7 @@ async def call_mcp_tool(
         raise
     except Exception as e:
         inc_counter("mcp_tool_calls_failed_total")
-        logger.error("Call MCP tool error", exc_info=True)
+        logger.exception("Call MCP tool error")
         raise HTTPException(status_code=500, detail="Internal server error") from e
 
 
@@ -874,11 +870,10 @@ async def mcp_proxy(
                 ) from e
             except Exception as e:
                 inc_counter("mcp_tool_calls_failed_total")
-                logger.error(
+                logger.exception(
                     "MCP tool call error: %s.%s",
                     server_name,
                     tool_name,
-                    exc_info=True,
                     extra={"server": server_name, "tool": tool_name},
                 )
                 raise HTTPException(status_code=500, detail="Internal server error") from e
@@ -890,7 +885,7 @@ async def mcp_proxy(
         raise
     except Exception as e:
         inc_counter("mcp_tool_calls_failed_total")
-        logger.error("MCP proxy error: %s.%s", server_name, tool_name, exc_info=True)
+        logger.exception("MCP proxy error: %s.%s", server_name, tool_name)
         raise HTTPException(status_code=500, detail="Internal server error") from e
 
 
