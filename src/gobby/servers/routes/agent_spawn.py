@@ -424,7 +424,7 @@ def create_agent_spawn_router(server: HTTPServer) -> APIRouter:
         except HTTPException:
             raise
         except Exception as e:
-            logger.error("Error spawning agent: %s", e, exc_info=True)
+            logger.exception("Error spawning agent: %s", e)
             raise HTTPException(status_code=500, detail="Internal server error") from e
 
     # -----------------------------------------------------------------------
@@ -478,7 +478,7 @@ def create_agent_spawn_router(server: HTTPServer) -> APIRouter:
             # Merge with built-in defaults for any missing categories
             return {"status": "success", "defaults": saved, "built_in": _BUILT_IN_DEFAULTS}
         except Exception as e:
-            logger.error("Error fetching launch defaults: %s", e, exc_info=True)
+            logger.exception("Error fetching launch defaults: %s", e)
             raise HTTPException(status_code=500, detail="Internal server error") from e
 
     # -----------------------------------------------------------------------
@@ -501,7 +501,7 @@ def create_agent_spawn_router(server: HTTPServer) -> APIRouter:
             store.set(key, existing, source="web_ui")
             return {"status": "success", "category": request.category}
         except Exception as e:
-            logger.error("Error saving launch defaults: %s", e, exc_info=True)
+            logger.exception("Error saving launch defaults: %s", e)
             raise HTTPException(status_code=500, detail="Internal server error") from e
 
     # -----------------------------------------------------------------------
@@ -563,7 +563,7 @@ def create_agent_spawn_router(server: HTTPServer) -> APIRouter:
         except HTTPException:
             raise
         except Exception as e:
-            logger.error("Error generating prompt preview: %s", e, exc_info=True)
+            logger.exception("Error generating prompt preview: %s", e)
             raise HTTPException(status_code=500, detail="Internal server error") from e
 
     return router
