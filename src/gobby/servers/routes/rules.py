@@ -360,12 +360,11 @@ def create_rules_router(server: "HTTPServer") -> APIRouter:
         try:
             updated = await server.run_db(manager.update, row.id, **fields)
         except Exception as e:
-            logger.error(
+            logger.exception(
                 "Failed to update rule %s (%s): %s",
                 row.id,
                 row.name,
                 e,
-                exc_info=True,
             )
             raise HTTPException(status_code=500, detail="Internal server error") from e
 

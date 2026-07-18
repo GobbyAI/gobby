@@ -133,7 +133,7 @@ def create_communications_router(server: HTTPServer) -> APIRouter:
             )
             return cast("dict[str, Any]", comms_manager.channel_to_dict(channel))
         except Exception as e:
-            logger.error("Failed to add channel: %s", e, exc_info=True)
+            logger.exception("Failed to add channel: %s", e)
             raise HTTPException(status_code=400, detail="Invalid channel configuration") from e
 
     @router.put("/channels/{channel_id}")

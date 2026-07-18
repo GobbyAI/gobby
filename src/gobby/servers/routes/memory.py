@@ -225,7 +225,7 @@ def create_memory_router(server: "HTTPServer") -> APIRouter:
                 completed_at=datetime.now(UTC).isoformat(),
                 error=str(e),
             )
-            logger.error("Background knowledge graph rebuild failed: %s", e, exc_info=True)
+            logger.exception("Background knowledge graph rebuild failed: %s", e)
             raise
 
     async def _run_graph_rebuild(job_id: str, project_id: str | None) -> None:
@@ -547,7 +547,7 @@ def create_memory_router(server: "HTTPServer") -> APIRouter:
                 result = await server.memory_manager.rebuild_indices(project_id=project_id)
                 logger.info("Background rebuild complete: %s", result)
             except Exception as e:
-                logger.error("Background rebuild failed: %s", e, exc_info=True)
+                logger.exception("Background rebuild failed: %s", e)
 
         task = asyncio.create_task(_background_rebuild())
         server._background_tasks.add(task)
@@ -601,7 +601,7 @@ def create_memory_router(server: "HTTPServer") -> APIRouter:
         except ValueError as e:
             raise HTTPException(status_code=404, detail=str(e)) from e
         except Exception as e:
-            logger.error("Failed to restore memory %s", memory_id, exc_info=True)
+            logger.exception("Failed to restore memory %s", memory_id)
             raise HTTPException(status_code=500, detail=str(e)) from e
 
         memory = server.memory_manager.get_memory(memory_id)
@@ -628,7 +628,7 @@ def create_memory_router(server: "HTTPServer") -> APIRouter:
         except ValueError as e:
             raise HTTPException(status_code=404, detail=str(e)) from e
         except Exception as e:
-            logger.error("Failed to promote memory %s", memory_id, exc_info=True)
+            logger.exception("Failed to promote memory %s", memory_id)
             raise HTTPException(status_code=500, detail=str(e)) from e
 
     @router.delete("/{memory_id}")

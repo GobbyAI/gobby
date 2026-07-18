@@ -402,7 +402,7 @@ def create_tasks_router(server: "HTTPServer") -> APIRouter:
         except ValueError as e:
             raise HTTPException(status_code=400, detail=str(e)) from e
         except Exception as e:
-            logger.error("Failed to create task: %s", e, exc_info=True)
+            logger.exception("Failed to create task: %s", e)
             raise HTTPException(status_code=500, detail="Internal server error") from e
 
     @router.get("/{task_id}")
@@ -472,7 +472,7 @@ def create_tasks_router(server: "HTTPServer") -> APIRouter:
         except ValueError as e:
             raise HTTPException(status_code=400, detail=str(e)) from e
         except Exception as e:
-            logger.error("Failed to update task %s: %s", task_id, e, exc_info=True)
+            logger.exception("Failed to update task %s: %s", task_id, e)
             raise HTTPException(status_code=500, detail="Internal server error") from e
 
     @router.delete("/{task_id}")
@@ -499,7 +499,7 @@ def create_tasks_router(server: "HTTPServer") -> APIRouter:
         except (ValueError, TaskNotFoundError) as e:
             raise HTTPException(status_code=404, detail=str(e)) from e
         except Exception as e:
-            logger.error("Failed to delete task %s: %s", task_id, e, exc_info=True)
+            logger.exception("Failed to delete task %s: %s", task_id, e)
             raise HTTPException(status_code=500, detail="Internal server error") from e
 
     register_task_comment_routes(

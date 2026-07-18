@@ -87,7 +87,7 @@ def create_embeddings_router(server: HTTPServer) -> APIRouter:
             logger.info("Embedding generation failed: %s", e)
             raise HTTPException(status_code=400, detail=str(e)) from e
         except Exception as e:
-            logger.error("Embedding generation failed", exc_info=True)
+            logger.exception("Embedding generation failed")
             raise HTTPException(status_code=500, detail="Embedding generation failed") from e
 
         return {

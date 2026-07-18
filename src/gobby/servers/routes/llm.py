@@ -250,7 +250,7 @@ def create_llm_router(server: HTTPServer) -> APIRouter:
             logger.info("Text generation rejected: %s", e)
             raise HTTPException(status_code=400, detail=str(e)) from e
         except Exception as e:
-            logger.error("Text generation failed", exc_info=True)
+            logger.exception("Text generation failed")
             raise HTTPException(status_code=500, detail="Text generation failed") from e
 
     @router.post("/chat/completions")
@@ -319,7 +319,7 @@ def create_llm_router(server: HTTPServer) -> APIRouter:
             logger.info("tool_chat rejected: %s", e)
             raise HTTPException(status_code=400, detail=str(e)) from e
         except Exception as e:
-            logger.error("tool_chat failed", exc_info=True)
+            logger.exception("tool_chat failed")
             raise HTTPException(status_code=500, detail="tool_chat failed") from e
 
     @router.get("/vision/status")
@@ -380,7 +380,7 @@ def create_llm_router(server: HTTPServer) -> APIRouter:
             logger.info("Vision extraction rejected: %s", e)
             raise HTTPException(status_code=400, detail=str(e)) from e
         except Exception as e:
-            logger.error("Vision extraction failed", exc_info=True)
+            logger.exception("Vision extraction failed")
             raise HTTPException(status_code=500, detail="Vision extraction failed") from e
         finally:
             if image_path is not None:

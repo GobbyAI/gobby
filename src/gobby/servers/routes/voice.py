@@ -311,7 +311,7 @@ def create_voice_router(server: HTTPServer) -> APIRouter:
                 content={"error": f"{failure_label} timed out", "text": ""},
             )
         except Exception:
-            logger.error("%s error", failure_label, exc_info=True)
+            logger.exception("%s error", failure_label)
             return JSONResponse(
                 status_code=500,
                 content={"error": f"{failure_label} failed", "text": ""},
