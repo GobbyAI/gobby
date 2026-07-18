@@ -15,7 +15,8 @@ services:
       # Pass-through so the healthcheck below can read the same value.
       - GOBBY_FALKORDB_PASSWORD=${GOBBY_FALKORDB_PASSWORD:-gobbyfalkor}
     volumes:
-      - gobby_falkordb_data:/data
+      # FalkorDB persists snapshots in its default data directory.
+      - gobby_falkordb_data:/var/lib/falkordb/data
     healthcheck:
       # Quote the shell-expanded password so future relaxed password rules do not word-split.
       test:

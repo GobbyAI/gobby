@@ -66,7 +66,7 @@ class TestDockerComposeServices:
             "GOBBY_FALKORDB_PASSWORD=${GOBBY_FALKORDB_PASSWORD:-gobbyfalkor}"
             in falkordb["environment"]
         )
-        assert falkordb["volumes"] == ["gobby_falkordb_data:/data"]
+        assert falkordb["volumes"] == ["gobby_falkordb_data:/var/lib/falkordb/data"]
         assert falkordb["healthcheck"]["test"] == [
             "CMD-SHELL",
             'redis-cli -a "$$GOBBY_FALKORDB_PASSWORD" PING | grep -q PONG',
