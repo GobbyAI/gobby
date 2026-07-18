@@ -28,7 +28,7 @@ vi.mock('../../../hooks/useTraces', () => ({
   useTraceDetail: () => detailMock,
 }))
 
-vi.mock('../../chat/artifacts/ResizeHandle', () => ({
+vi.mock('../../shared/ResizeHandle', () => ({
   ResizeHandle: () => null,
 }))
 

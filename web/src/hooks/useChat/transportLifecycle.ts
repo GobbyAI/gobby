@@ -114,7 +114,6 @@ export function connectChatTransport(
           "chat_error",
           "tool_status",
           "chat_thinking",
-          "artifact_event",
           "session_message",
           "session_usage_updated",
           "token_event",

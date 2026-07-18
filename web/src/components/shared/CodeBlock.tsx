@@ -53,7 +53,7 @@ export interface CodeBlockProps {
  * with the canonical `codeBlockTheme` and `lineNumberStyle` from
  * `codeBlockTheme.ts`.
  *
- * Editing surfaces (artifacts, FilesTab edit mode) keep CodeMirror —
+ * Editing surfaces such as FilesTab edit mode keep CodeMirror —
  * this component is for display only.
  */
 export function CodeBlock({

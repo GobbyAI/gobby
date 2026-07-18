@@ -4,15 +4,9 @@ import { normalizeChatMode } from "../../types/chat";
 
 type ModeChangedCallback = (mode: ChatMode) => void;
 type PlanReadyCallback = (content: string | null) => void;
-type ArtifactEventCallback = (
-  type: string,
-  content: string,
-  language?: string,
-  title?: string,
-) => void;
 type ChatLifecycleCallback = (conversationId: string) => void;
 
-export function usePlanArtifactCallbacks() {
+export function useChatCallbacksState() {
   const [planPendingApproval, setPlanPendingApproval] = useState(false);
   // Authoritative approval signal: true ONLY after the backend plan_approved
   // event. Reset on each fresh plan_pending_approval and on conversation
@@ -39,11 +33,6 @@ export function usePlanArtifactCallbacks() {
     onPlanReadyRef.current = fn;
   }, []);
 
-  const onArtifactEventRef = useRef<ArtifactEventCallback | null>(null);
-  const setOnArtifactEvent = useCallback((fn: ArtifactEventCallback | null) => {
-    onArtifactEventRef.current = fn;
-  }, []);
-
   const onChatDeletedRef = useRef<ChatLifecycleCallback | null>(null);
   const setOnChatDeleted = useCallback((fn: ChatLifecycleCallback) => {
     onChatDeletedRef.current = fn;
@@ -60,7 +49,6 @@ export function usePlanArtifactCallbacks() {
 
   return {
     currentModeRef,
-    onArtifactEventRef,
     onChatClearedRef,
     onChatDeletedRef,
     onModeChangedRef,
@@ -71,7 +59,6 @@ export function usePlanArtifactCallbacks() {
     planContentRef,
     planToolCallIdRef,
     planPendingApproval,
-    setOnArtifactEvent,
     setOnChatCleared,
     setOnChatDeleted,
     setCurrentMode,

@@ -438,7 +438,7 @@
     "workflows/rules/worker-safety/no-push-for-workers.yaml": "0f2a1c8e014b2cb20ad102d434e53e03e0c26af7c8cc05aa354c25f66b628292",
     "workflows/rules/worker-safety/no-push.yaml": "d1eb1d46a70ec0557c7f99a7ce17eca07ffca503cd7bfe2531f029bb163c0c59",
     "workflows/rules/worker-safety/no-remote-exec.yaml": "d1cf30a69804add69ee11394f376c4d33e68fe0c5d3eabb6d955595adc0cc7e5",
-    "workflows/variables/gobby-default-variables.yaml": "2ac11f1d5e30a7b5ba03ff8a1f36433d314ebf098f097f29b982b0132b2337ae"
+    "workflows/variables/gobby-default-variables.yaml": "973757fc4f0ff6918b270c69e996a46ff33deb1cd849067e50ee13c2b751d754"
   },
   "hash_algorithm": "sha256",
   "root": "shared",

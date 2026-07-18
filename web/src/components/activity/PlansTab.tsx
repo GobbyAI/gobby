@@ -1,18 +1,15 @@
 import { memo, useEffect } from 'react'
-import type { Artifact } from '../../types/artifacts'
+import type { Plan } from '../../types/plans'
 import type { ApprovalOption } from '../../types/chat'
 import type { PlanPendingVariant } from '../chat/planPendingSurface'
 import { ActivityPanelEmpty, PlansEmptyIcon } from './ActivityPanelEmpty'
 import { PlanReviewCard } from './PlanReviewCard'
 
 interface PlansTabProps {
-  artifacts: Map<string, Artifact>
-  artifact: Artifact | null
-  onOpenArtifact: (id: string) => void
-  // Accepted for caller compatibility; the review surface manages its own chrome.
-  onClose?: () => void
-  onUpdateContent?: (id: string, content: string) => void
-  onSetVersion: (id: string, index: number) => void
+  plans: Map<string, Plan>
+  activePlan: Plan | null
+  onOpenPlan: (id: string) => void
+  onSetPlanVersion: (id: string, index: number) => void
   planPendingApproval?: boolean
   planApproved?: boolean
   planApprovalOptions?: ApprovalOption[]
@@ -22,10 +19,10 @@ interface PlansTabProps {
 }
 
 export const PlansTab = memo(function PlansTab({
-  artifacts,
-  artifact,
-  onOpenArtifact,
-  onSetVersion,
+  plans,
+  activePlan,
+  onOpenPlan,
+  onSetPlanVersion,
   planPendingApproval,
   planApproved,
   planApprovalOptions,
@@ -33,22 +30,20 @@ export const PlansTab = memo(function PlansTab({
   onRequestPlanChanges,
   planPendingVariant,
 }: PlansTabProps) {
-  // Only plan artifacts, oldest -> newest by latest version timestamp.
-  const plans = Array.from(artifacts.values())
-    .filter((a) => a.isPlan)
+  const orderedPlans = Array.from(plans.values())
     .sort((a, b) => {
       const aTime = a.versions[a.versions.length - 1]?.timestamp.getTime() ?? 0
       const bTime = b.versions[b.versions.length - 1]?.timestamp.getTime() ?? 0
       return aTime - bTime
     })
-  const latestPlan = plans[plans.length - 1] ?? null
+  const latestPlan = orderedPlans[orderedPlans.length - 1] ?? null
 
   // Auto-open the latest plan if none is active.
   useEffect(() => {
-    if (!artifact && latestPlan) {
-      onOpenArtifact(latestPlan.id)
+    if (!activePlan && latestPlan) {
+      onOpenPlan(latestPlan.id)
     }
-  }, [artifact, latestPlan, onOpenArtifact])
+  }, [activePlan, latestPlan, onOpenPlan])
 
   if (!latestPlan) {
     return (
@@ -61,7 +56,7 @@ export const PlansTab = memo(function PlansTab({
   }
 
   // Show the active plan (or latest if none selected).
-  const displayPlan = artifact?.isPlan ? artifact : latestPlan
+  const displayPlan = activePlan ?? latestPlan
 
   return (
     <PlanReviewCard
@@ -71,7 +66,7 @@ export const PlansTab = memo(function PlansTab({
       planApprovalOptions={planApprovalOptions}
       onApprovePlan={onApprovePlan}
       onRequestPlanChanges={onRequestPlanChanges}
-      onSetVersion={onSetVersion}
+      onSetVersion={onSetPlanVersion}
       planPendingVariant={planPendingVariant}
     />
   )

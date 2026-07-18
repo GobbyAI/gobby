@@ -6,7 +6,7 @@ added in 1b). On the agent's next plan turn the shared send_message hook then
 (a) injects the feedback into the prompt via _pop_plan_mode_context and
 (b) re-broadcasts plan_pending_approval with the REVISED content, re-arming
 has_pending_plan. The revised content drives a new revision in the Plans panel
-history (verified separately in the web useArtifacts test).
+history (verified separately in the web usePlans test).
 """
 
 from __future__ import annotations

@@ -1,5 +1,5 @@
 import { memo, useMemo, useState } from 'react'
-import { ResizeHandle } from '../chat/artifacts/ResizeHandle'
+import { ResizeHandle } from '../shared/ResizeHandle'
 import { SegmentedControl } from '../ui/SegmentedControl'
 import { formatTime } from '../shared/executions/executionFormatters'
 import { useTraces, useTraceDetail } from '../../hooks/useTraces'

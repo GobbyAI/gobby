@@ -89,7 +89,6 @@ links to the guide that owns that topic.
 | Guide | Description |
 |-------|-------------|
 | [web-ui.md](web-ui.md) | Web app shell, chat, dashboard, projects, settings, and route/API flow |
-| [artifacts.md](artifacts.md) | The `gobby-artifacts` MCP tool, artifact panel, and file rendering |
 | [providers-and-models.md](providers-and-models.md) | Provider availability, model catalogs, web-chat backends, and local model warmup |
 | [frontend-style-guide.md](frontend-style-guide.md) | Design tokens, component patterns, and web UI styling rules |
 | [voice.md](voice.md) | Local speech-to-text and text-to-speech for web chat voice conversations |

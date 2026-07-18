@@ -1,6 +1,6 @@
 import { memo, useState, useEffect, useCallback, useRef, useMemo } from 'react'
 import { useConfirmDialog } from '../../hooks/useConfirmDialog'
-import { ResizeHandle } from '../chat/artifacts/ResizeHandle'
+import { ResizeHandle } from '../shared/ResizeHandle'
 import { SegmentedControl } from '../ui/SegmentedControl'
 import { PipelineStatusDot, StepDisplay, type StepData } from '../shared/executions/execution-utils'
 import { formatDateTime, formatDuration } from '../shared/executions/executionFormatters'

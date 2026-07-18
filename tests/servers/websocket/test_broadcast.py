@@ -539,18 +539,6 @@ class TestBroadcastEventMethods:
         assert msg["session_id"] == "sess-1"
 
     @pytest.mark.asyncio
-    async def test_broadcast_artifact_event(self) -> None:
-        b = FakeBroadcaster()
-        ws = _make_ws(subscriptions={"*"})
-        b.clients[ws] = {}
-
-        await b.broadcast_artifact_event("created", "conv-1", artifact_id="a-1")
-        msg = _sent_message(ws)
-        assert msg["type"] == "artifact_event"
-        assert msg["event"] == "created"
-        assert msg["conversation_id"] == "conv-1"
-        assert msg["artifact_id"] == "a-1"
-
     @pytest.mark.asyncio
     async def test_broadcast_task_event(self) -> None:
         b = FakeBroadcaster()

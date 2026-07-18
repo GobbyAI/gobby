@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef } from 'react'
-import { cn } from '../../../lib/utils'
+import { cn } from '../../lib/utils'
 
 interface ResizeHandleProps {
   onResize: (value: number) => void
@@ -34,7 +34,6 @@ export function ResizeHandle({
   const startPos = useRef(0)
   const startValue = useRef(0)
   const containerRef = useRef<HTMLDivElement>(null)
-
   const cleanupRef = useRef<(() => void) | null>(null)
 
   const startDrag = useCallback((clientPos: number) => {
@@ -45,7 +44,6 @@ export function ResizeHandle({
     const handleMove = (pos: number) => {
       if (!isDragging.current) return
       if (isVertical) {
-        // For vertical: compute percentage delta relative to parent height
         const parent = containerRef.current?.parentElement
         if (!parent) return
         const parentHeight = parent.getBoundingClientRect().height
@@ -72,14 +70,12 @@ export function ResizeHandle({
     }
 
     cleanupRef.current = handleEnd
-
     document.addEventListener('mousemove', handleMouseMove)
     document.addEventListener('mouseup', handleEnd)
     document.addEventListener('touchmove', handleTouchMove, { passive: false })
     document.addEventListener('touchend', handleEnd)
   }, [onResize, currentValue, minVal, maxVal, isVertical, horizontalDeltaMultiplier])
 
-  // Cleanup drag listeners if component unmounts mid-drag
   useEffect(() => {
     return () => { cleanupRef.current?.() }
   }, [])

@@ -14,7 +14,7 @@ vi.mock("../KnowledgeGraph", () => ({
   KnowledgeGraph: () => <div data-testid="knowledge-graph">Knowledge graph canvas</div>,
 }));
 
-vi.mock("../../../chat/artifacts/ResizeHandle", () => ({
+vi.mock("../../../shared/ResizeHandle", () => ({
   ResizeHandle: () => <div data-testid="resize-handle" />,
 }));
 

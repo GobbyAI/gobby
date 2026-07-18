@@ -53,7 +53,6 @@ GOBBY_EXEMPT_SERVERS = frozenset(
         "gobby",
         "gobby-agent",
         "gobby-agents",
-        "gobby-artifacts",
         "gobby-clone",
         "gobby-clones",
         "gobby-communications",

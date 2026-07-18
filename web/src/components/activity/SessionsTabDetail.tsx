@@ -1,8 +1,7 @@
 import type { Dispatch, SetStateAction } from "react";
 
 import type { SessionMessage } from "../../hooks/useSessionDetail";
-import { ResizeHandle } from "../chat/artifacts/ResizeHandle";
-import { ArtifactContext } from "../chat/artifacts/ArtifactContext";
+import { ResizeHandle } from "../shared/ResizeHandle";
 import { MemoizedMarkdown } from "../shared/MemoizedMarkdown";
 import {
   ClipboardListIcon,
@@ -16,11 +15,6 @@ import { WatchingTranscript } from "./WatchingTranscript";
 
 export type WatchingContentMode = "transcript" | "summary";
 
-interface NoopArtifactContext {
-  openCodeAsArtifact: () => void;
-  openFileAsArtifact: () => void;
-}
-
 interface SessionsTabDetailProps {
   clearSessionError: () => void;
   contentMode: WatchingContentMode;
@@ -33,7 +27,6 @@ interface SessionsTabDetailProps {
   loadMoreMessages: () => void;
   loadNewerMessages: () => void;
   messages: SessionMessage[];
-  noopArtifactCtx: NoopArtifactContext;
   onResumeSession?: (sessionId: string) => Promise<string> | string | void;
   onSwapSelectedSession: () => void;
   selectedEntry: WatchingSessionEntry | null;
@@ -62,7 +55,6 @@ export function SessionsTabDetailPane({
   loadMoreMessages,
   loadNewerMessages,
   messages,
-  noopArtifactCtx,
   onResumeSession,
   onSwapSelectedSession,
   selectedEntry,
@@ -180,8 +172,7 @@ export function SessionsTabDetailPane({
         </div>
       )}
 
-      <ArtifactContext.Provider value={noopArtifactCtx}>
-        {contentMode === "summary" ? (
+      {contentMode === "summary" ? (
           <div className="flex-1 overflow-y-auto p-4">
             {summaryMarkdown ? (
               <div className="message-content">
@@ -211,7 +202,6 @@ export function SessionsTabDetailPane({
             transcriptDegradedReason={transcriptDegradedReason}
           />
         )}
-      </ArtifactContext.Provider>
     </div>
   );
 }

@@ -68,6 +68,7 @@ def test_setup_with_all_managers_none() -> None:
     registry_names = [r.name for r in registries]
     # Always-on registries should be present
     assert "gobby-workflows" in registry_names
+    assert "gobby-artifacts" not in registry_names
     # These should NOT be present when their managers are None
     assert "gobby-memory" not in registry_names
     assert "gobby-metrics" not in registry_names

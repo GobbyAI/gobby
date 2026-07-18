@@ -4,7 +4,7 @@ import userEvent from '@testing-library/user-event'
 
 import { FileChangesTab } from '../FileChangesTab'
 
-vi.mock('../../chat/artifacts/ResizeHandle', () => ({
+vi.mock('../../shared/ResizeHandle', () => ({
   ResizeHandle: () => <div data-testid="resize-handle" />,
 }))
 

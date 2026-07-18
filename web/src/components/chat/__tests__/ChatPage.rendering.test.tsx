@@ -3,8 +3,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { ChatPage } from "../ChatPage";
 import {
-  DATA_URI,
-  createArtifactSpy,
+  createPlanSpy,
   createChat,
   createConversations,
   createVoice,
@@ -38,8 +37,8 @@ vi.mock("../AgentStatusBar", async () =>
 vi.mock("../../../hooks/useIsMobile", async () =>
   (await import("./chatPageTestSetup")).useIsMobileMockFactory(),
 );
-vi.mock("../../../hooks/useArtifacts", async () =>
-  (await import("./chatPageTestSetup")).useArtifactsMockFactory(),
+vi.mock("../../../hooks/usePlans", async () =>
+  (await import("./chatPageTestSetup")).usePlansMockFactory(),
 );
 vi.mock("../../activity/useActivityPanel", async () =>
   (await import("./chatPageTestSetup")).useActivityPanelMockFactory(),
@@ -201,52 +200,12 @@ describe("ChatPage – rendering", () => {
     expect(voiceStatus).toHaveAttribute("data-recording", "true");
   });
 
-  it("surfaces a show_file artifact inline without switching the activity tab", async () => {
-    let artifactEvent:
-      | ((
-          type: string,
-          content: string,
-          language?: string,
-          title?: string,
-        ) => void)
-      | null = null;
-    const setOnArtifactEvent = vi.fn((fn) => {
-      artifactEvent = fn;
-    });
-
-    render(
-      <ChatPage
-        chat={createChat({ setOnArtifactEvent })}
-        conversations={createConversations()}
-        voice={createVoice()}
-      />,
-    );
-
-    await waitFor(() => {
-      expect(setOnArtifactEvent).toHaveBeenCalled();
-    });
-
-    act(() => {
-      artifactEvent?.("image", DATA_URI, "png", "Generated image");
-    });
-
-    expect(createArtifactSpy).toHaveBeenCalledWith(
-      "image",
-      DATA_URI,
-      "png",
-      "Generated image",
-    );
-    // createArtifact opens the inline panel; the removed Artifacts tab must not
-    // be selected.
-    expect(showTabSpy).not.toHaveBeenCalledWith("artifacts");
-  });
-
-  it("does not create duplicate plan artifacts for identical plan-ready content", async () => {
+  it("does not create duplicate plans for identical plan-ready content", async () => {
     let planReady: ((content: string | null) => void) | null = null;
     const setOnPlanReady = vi.fn((fn) => {
       planReady = fn;
     });
-    createArtifactSpy.mockReturnValue("artifact-plan-1");
+    createPlanSpy.mockReturnValue("plan-1");
 
     render(
       <ChatPage
@@ -265,14 +224,8 @@ describe("ChatPage – rendering", () => {
       planReady?.("# Plan\n\nStep 1");
     });
 
-    expect(createArtifactSpy).toHaveBeenCalledTimes(1);
-    expect(createArtifactSpy).toHaveBeenCalledWith(
-      "text",
-      "# Plan\n\nStep 1",
-      "markdown",
-      "Plan",
-      { isPlan: true },
-    );
+    expect(createPlanSpy).toHaveBeenCalledTimes(1);
+    expect(createPlanSpy).toHaveBeenCalledWith("# Plan\n\nStep 1", "Plan");
     expect(showTabSpy).toHaveBeenCalledWith("plans");
   });
 

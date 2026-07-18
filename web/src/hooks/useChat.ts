@@ -19,7 +19,7 @@ import {
   uuid,
 } from "./useChat/conversationPersistence";
 import { useChatActions } from "./useChat/actions";
-import { usePlanArtifactCallbacks } from "./useChat/callbacksState";
+import { useChatCallbacksState } from "./useChat/callbacksState";
 import {
   createEmptyContextUsage,
   useContextUsageState,
@@ -75,7 +75,6 @@ export function useChat() {
 
   const {
     currentModeRef,
-    onArtifactEventRef,
     onChatClearedRef,
     onChatDeletedRef,
     onModeChangedRef,
@@ -86,7 +85,6 @@ export function useChat() {
     planContentRef,
     planToolCallIdRef,
     planPendingApproval,
-    setOnArtifactEvent,
     setOnChatCleared,
     setOnChatDeleted,
     setCurrentMode,
@@ -95,7 +93,7 @@ export function useChat() {
     setPlanApprovalOptions,
     setPlanApproved,
     setPlanPendingApproval,
-  } = usePlanArtifactCallbacks();
+  } = useChatCallbacksState();
 
   const {
     clearPreAttachContextUsage,
@@ -424,7 +422,6 @@ export function useChat() {
     messagesRef,
     observedSessionIdRef,
     observedSessionMetaRef,
-    onArtifactEventRef,
     onChatClearedRef,
     onChatDeletedRef,
     onModeChangedRef,
@@ -720,7 +717,6 @@ export function useChat() {
     continueSessionInChat,
     setOnModeChanged,
     setOnPlanReady,
-    setOnArtifactEvent,
     addSystemMessage,
     viewSession,
     clearViewingSession,

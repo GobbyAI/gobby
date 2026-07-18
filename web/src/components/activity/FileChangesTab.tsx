@@ -1,5 +1,5 @@
 import { memo, useState, useCallback, useEffect, useMemo } from 'react'
-import { ResizeHandle } from '../chat/artifacts/ResizeHandle'
+import { ResizeHandle } from '../shared/ResizeHandle'
 import { DiffBlock } from '../shared/DiffBlock'
 import { parseUnifiedDiffLines } from '../shared/DiffBlock.helpers'
 import type { ChangedFile } from '../../hooks/useFileChanges'

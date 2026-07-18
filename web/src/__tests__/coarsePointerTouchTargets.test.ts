@@ -8,7 +8,6 @@ import postcss from 'postcss'
 const targets = [
   'primary action',
   'queued-file remove',
-  'artifact open',
   'code copy',
   'session actions',
   'task actions',
@@ -105,7 +104,6 @@ describe('coarse-pointer touch targets', () => {
     document.body.innerHTML = `
       <button data-target="primary action" class="h-[36px] w-[36px] pointer-coarse:h-11 pointer-coarse:w-11">Send</button>
       <button data-target="queued-file remove" class="h-4 w-4 pointer-coarse:h-11 pointer-coarse:w-11">×</button>
-      <button data-target="artifact open" class="pointer-coarse:min-h-11 pointer-coarse:min-w-11">Open</button>
       <button data-target="code copy" class="pointer-coarse:min-h-11 pointer-coarse:min-w-11">Copy</button>
       <button data-target="session actions" class="session-more-btn">⋮</button>
       <button data-target="task actions" class="task-more-btn">⋮</button>

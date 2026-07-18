@@ -544,26 +544,6 @@ class TestCanUseTool:
         assert isinstance(result, PermissionResultAllow)
 
     @pytest.mark.asyncio
-    async def test_safe_artifacts_calls_skip_tool_approval(self, session: ChatSession) -> None:
-        """Read-only artifact display tools should be usable without prompting for approval."""
-        session.chat_mode = "normal"
-        config = MagicMock()
-        config.enabled = True
-        config.default_policy = "ask"
-        config.policies = []
-        session._tool_approval_config = config
-
-        result = await session._can_use_tool(
-            "mcp__gobby__call_tool",
-            {
-                "server_name": "gobby-artifacts",
-                "tool_name": "show_file",
-            },
-            ToolPermissionContext(tool_use_id="tool-test"),
-        )
-
-        assert isinstance(result, PermissionResultAllow)
-
     async def test_plan_mode_allows_read_only_mcp_call(self, session: ChatSession) -> None:
         session.set_chat_mode("plan")
 
@@ -663,9 +643,6 @@ class TestDangerousPatterns:
     def test_is_write_mcp_call(self, session: ChatSession) -> None:
         assert not session._is_write_mcp_call({"server_name": "x", "tool_name": "read_file"})
         assert not session._is_write_mcp_call({"server_name": "x", "tool_name": "list_dirs"})
-        assert not session._is_write_mcp_call(
-            {"server_name": "gobby-artifacts", "tool_name": "show_file"}
-        )
         assert session._is_write_mcp_call({"server_name": "x", "tool_name": "create_file"})
         assert session._is_write_mcp_call({})  # No tool name -> True by default
 

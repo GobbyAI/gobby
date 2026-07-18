@@ -34,8 +34,8 @@ vi.mock("../AgentStatusBar", async () =>
 vi.mock("../../../hooks/useIsMobile", async () =>
   (await import("./chatPageTestSetup")).useIsMobileMockFactory(),
 );
-vi.mock("../../../hooks/useArtifacts", async () =>
-  (await import("./chatPageTestSetup")).useArtifactsMockFactory(),
+vi.mock("../../../hooks/usePlans", async () =>
+  (await import("./chatPageTestSetup")).usePlansMockFactory(),
 );
 vi.mock("../../activity/useActivityPanel", async () =>
   (await import("./chatPageTestSetup")).useActivityPanelMockFactory(),

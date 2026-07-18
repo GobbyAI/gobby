@@ -2,10 +2,8 @@ import type { RefObject } from "react";
 
 import { AUTONOMOUS_CHAT_MODES } from "../../types/chat";
 import type { ChatState, VoiceProps } from "../../types/chat";
-import type { ArtifactType } from "../../types/artifacts";
 import type { AgentDefInfo } from "../../hooks/useAgentDefinitions";
 import type { VoiceInputMode } from "../../hooks/useSettings";
-import { ArtifactContext } from "./artifacts/ArtifactContext";
 import { AgentStatusBar } from "./AgentStatusBar";
 import { ChatInput } from "./ChatInput";
 import { CommandBar } from "./CommandBar";
@@ -47,17 +45,6 @@ interface ChatMainColumnProps extends AgentPickerProps {
   onVoiceInputModeChange?: (mode: VoiceInputMode) => void;
   onViewPlan?: () => void;
   planPendingVariant?: PlanPendingVariant;
-  openCodeAsArtifact: (
-    language: string,
-    content: string,
-    title?: string,
-  ) => void;
-  openFileAsArtifact: (
-    type: ArtifactType,
-    language: string,
-    content: string,
-    title?: string,
-  ) => void;
 }
 
 export function ChatMainColumn({
@@ -82,8 +69,6 @@ export function ChatMainColumn({
   onVoiceInputModeChange,
   onViewPlan,
   planPendingVariant,
-  openCodeAsArtifact,
-  openFileAsArtifact,
   agentDefinitions,
   agentGlobalDefs,
   agentProjectDefs,
@@ -133,10 +118,7 @@ export function ChatMainColumn({
         agentHasGlobal={agentHasGlobal}
         agentHasProject={agentHasProject}
       />
-      <ArtifactContext.Provider
-        value={{ openCodeAsArtifact, openFileAsArtifact }}
-      >
-        {chat.isReconnecting && (
+      {chat.isReconnecting && (
           <div className="bg-warning/20 text-warning-foreground text-xs text-center py-1 shrink-0">
             Reconnecting...
           </div>
@@ -254,7 +236,6 @@ export function ChatMainColumn({
             attachmentsDisabled={isProxyAttached}
           />
         )}
-      </ArtifactContext.Provider>
     </div>
   );
 }

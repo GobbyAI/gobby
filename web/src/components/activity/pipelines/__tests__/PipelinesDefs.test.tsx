@@ -3,7 +3,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { PipelinesTab } from '../../PipelinesTab'
 import { createMockFetch, type MockFetchInstance } from '../../../../test/mocks/fetch'
 
-vi.mock('../../../chat/artifacts/ResizeHandle', () => ({
+vi.mock('../../../shared/ResizeHandle', () => ({
   ResizeHandle: () => <div data-testid="resize-handle" />,
 }))
 

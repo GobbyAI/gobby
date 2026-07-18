@@ -5,7 +5,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { ACTIVITY_PANEL_TABS } from "../../ActivityPanelTabs";
 import { MemoryTab } from "../../MemoryTab";
 
-vi.mock("../../../chat/artifacts/ResizeHandle", () => ({
+vi.mock("../../../shared/ResizeHandle", () => ({
   ResizeHandle: () => <div data-testid="resize-handle" />,
 }));
 

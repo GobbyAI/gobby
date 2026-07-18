@@ -27,14 +27,6 @@ vi.mock('react-syntax-highlighter/dist/esm/styles/prism', () => ({
   oneLight: {},
 }))
 
-// Mock ArtifactContext
-const mockOpenCodeAsArtifact = vi.fn()
-vi.mock('../artifacts/ArtifactContext', () => ({
-  useArtifactContext: () => ({
-    openCodeAsArtifact: mockOpenCodeAsArtifact,
-  }),
-}))
-
 // Mock cn utility
 vi.mock('../../../lib/utils', () => ({
   cn: (...args: string[]) => args.filter(Boolean).join(' '),
@@ -115,46 +107,6 @@ describe('CodeBlock', () => {
 
     await userEvent.click(screen.getByTitle('Copy code'))
     expect(writeText).toHaveBeenCalledWith('const x = 1;\nconst y = 2;')
-  })
-
-  it('shows open-in-panel button for long code blocks', () => {
-    const longCode = Array.from({ length: 20 }, (_, i) => `line ${i}`).join('\n')
-    render(
-      <CodeBlock className="language-js">
-        {longCode}
-      </CodeBlock>,
-    )
-
-    expect(screen.getByTitle('Open in panel')).toHaveClass(
-      'pointer-coarse:min-h-11',
-      'pointer-coarse:min-w-11',
-    )
-  })
-
-  it('does not show open-in-panel for short code blocks', () => {
-    render(
-      <CodeBlock className="language-js">
-        {'const x = 1;\nconst y = 2;'}
-      </CodeBlock>,
-    )
-
-    expect(screen.queryByTitle('Open in panel')).toBeNull()
-  })
-
-  it('calls openCodeAsArtifact when panel button clicked', async () => {
-    const longCode = Array.from({ length: 20 }, (_, i) => `line ${i}`).join('\n')
-    render(
-      <CodeBlock className="language-python">
-        {longCode}
-      </CodeBlock>,
-    )
-
-    await userEvent.click(screen.getByTitle('Open in panel'))
-    expect(mockOpenCodeAsArtifact).toHaveBeenCalledWith(
-      'python',
-      longCode,
-      'python snippet',
-    )
   })
 
   it('strips trailing newline from code string', () => {

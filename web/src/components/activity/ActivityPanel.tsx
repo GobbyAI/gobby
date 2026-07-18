@@ -4,7 +4,7 @@ import {
   useRef,
   type CSSProperties,
 } from "react";
-import { ResizeHandle } from "../chat/artifacts/ResizeHandle";
+import { ResizeHandle } from "../shared/ResizeHandle";
 import { PlansTab } from "./PlansTab";
 import { FileChangesTab } from "./FileChangesTab";
 import { SessionsTab } from "./SessionsTab";
@@ -26,7 +26,7 @@ import {
   useDirtyGuardController,
   type DirtyGuardContextValue,
 } from "./dirtyGuard";
-import type { Artifact } from "../../types/artifacts";
+import type { Plan } from "../../types/plans";
 import type { ApprovalOption } from "../../types/chat";
 import type { GobbySession } from "../../types/sessions";
 import type { PlanPendingVariant } from "../chat/planPendingSurface";
@@ -69,13 +69,10 @@ interface ActivityPanelProps {
   onWidthChange: (width: number) => void;
   activeTab: ActivityTab;
   onTabChange: (tab: ActivityTab) => void;
-  // Artifacts tab props
-  artifacts: Map<string, Artifact>;
-  activeArtifact: Artifact | null;
-  onOpenArtifact: (id: string) => void;
-  onCloseArtifact: () => void;
-  onUpdateArtifactContent?: (id: string, content: string) => void;
-  onSetArtifactVersion: (id: string, index: number) => void;
+  plans: Map<string, Plan>;
+  activePlan: Plan | null;
+  onOpenPlan: (id: string) => void;
+  onSetPlanVersion: (id: string, index: number) => void;
   planPendingApproval?: boolean;
   planApproved?: boolean;
   planApprovalOptions?: ApprovalOption[];
@@ -189,12 +186,10 @@ export function ActivityPanel({
   onWidthChange,
   activeTab,
   onTabChange,
-  artifacts,
-  activeArtifact,
-  onOpenArtifact,
-  onCloseArtifact,
-  onUpdateArtifactContent,
-  onSetArtifactVersion,
+  plans,
+  activePlan,
+  onOpenPlan,
+  onSetPlanVersion,
   planPendingApproval,
   planApproved,
   planApprovalOptions,
@@ -363,12 +358,10 @@ export function ActivityPanel({
       case "plans":
         return (
           <PlansTab
-            artifacts={artifacts}
-            artifact={activeArtifact}
-            onOpenArtifact={onOpenArtifact}
-            onClose={onCloseArtifact}
-            onUpdateContent={onUpdateArtifactContent}
-            onSetVersion={onSetArtifactVersion}
+            plans={plans}
+            activePlan={activePlan}
+            onOpenPlan={onOpenPlan}
+            onSetPlanVersion={onSetPlanVersion}
             planPendingApproval={planPendingApproval}
             planApproved={planApproved}
             planApprovalOptions={planApprovalOptions}

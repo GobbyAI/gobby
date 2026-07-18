@@ -16,7 +16,6 @@ from starlette.responses import JSONResponse, Response
 
 from gobby.app_context import ServiceContainer
 from gobby.config.app import DaemonConfig
-from gobby.mcp_proxy.tools import artifacts as artifacts_tools
 from gobby.servers.auth_service import AuthService
 from gobby.servers.http import HTTPServer
 from gobby.servers.middleware.auth import AuthMiddleware
@@ -326,36 +325,6 @@ class TestLifespan:
 
         with TestClient(server.app):
             assert server._running is True
-
-    def test_lifespan_clears_artifact_broadcaster(
-        self,
-        session_storage: SessionManager,
-    ) -> None:
-        """Each lifespan owns its artifact broadcaster only while running."""
-
-        def build_server() -> HTTPServer:
-            services = ServiceContainer(
-                config=None,
-                database=session_storage.db,
-                session_manager=session_storage,
-                task_manager=MagicMock(),
-            )
-            return HTTPServer(services=services, port=60887, test_mode=True)
-
-        first_server = build_server()
-        second_server = build_server()
-
-        with TestClient(first_server.app):
-            first_broadcaster = artifacts_tools._artifact_broadcaster
-            assert first_broadcaster is not None
-
-        assert artifacts_tools._artifact_broadcaster is None
-
-        with TestClient(second_server.app):
-            assert artifacts_tools._artifact_broadcaster is not None
-            assert artifacts_tools._artifact_broadcaster is not first_broadcaster
-
-        assert artifacts_tools._artifact_broadcaster is None
 
     def test_lifespan_initializes_hook_manager(self, session_storage: SessionManager) -> None:
         """Test that lifespan initializes HookManager."""

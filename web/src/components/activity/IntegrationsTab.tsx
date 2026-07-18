@@ -2,7 +2,7 @@ import { memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import type { Channel } from "../../hooks/useIntegrations";
 import { useWebSocketEvent } from "../../hooks/useWebSocketEvent";
-import { ResizeHandle } from "../chat/artifacts/ResizeHandle";
+import { ResizeHandle } from "../shared/ResizeHandle";
 import { ActivityPanelEmpty, TasksEmptyIcon } from "./ActivityPanelEmpty";
 import { DEFAULT_TOP_PANEL_PERCENT } from "./constants";
 import {

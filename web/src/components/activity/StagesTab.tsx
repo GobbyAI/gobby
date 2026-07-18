@@ -1,6 +1,6 @@
 import { memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
 
-import { ResizeHandle } from "../chat/artifacts/ResizeHandle";
+import { ResizeHandle } from "../shared/ResizeHandle";
 import { SegmentedControl } from "../ui/SegmentedControl";
 import { ActivityPanelEmpty, TasksEmptyIcon } from "./ActivityPanelEmpty";
 import { ActivityPanelSearch } from "./ActivityPanelSearch";

@@ -10,13 +10,11 @@ import type { GobbySession } from "../../../types/sessions";
 import type { DirtyGuardContextValue } from "../../activity/dirtyGuard";
 import type { LayoutMode } from "../../activity/useActivityPanel";
 
-export const DATA_URI = "data:image/png;base64,iVBORw0KGgoAAAANSUhEUg==";
-
 export const isMobileState = { value: false };
 export const effectiveModeState: { value: LayoutMode } = { value: "split" };
 
-export const clearArtifactsSpy = vi.fn();
-export const createArtifactSpy = vi.fn();
+export const clearPlansSpy = vi.fn();
+export const createPlanSpy = vi.fn();
 export const scrollToBottomSpy = vi.fn();
 export const showTabSpy = vi.fn();
 export const toggleFromChatSpy = vi.fn();
@@ -393,16 +391,15 @@ export const useIsMobileMockFactory = () => ({
   useIsMobile: () => isMobileState.value,
 });
 
-export const useArtifactsMockFactory = () => ({
-  useArtifacts: () => ({
-    artifacts: new Map(),
-    activeArtifact: null,
-    createArtifact: createArtifactSpy,
-    updateArtifact: vi.fn(),
-    openArtifact: vi.fn(),
-    closePanel: vi.fn(),
-    clearArtifacts: clearArtifactsSpy,
-    setVersion: vi.fn(),
+export const usePlansMockFactory = () => ({
+  usePlans: () => ({
+    plans: new Map(),
+    activePlan: null,
+    createPlan: createPlanSpy,
+    updatePlan: vi.fn(),
+    openPlan: vi.fn(),
+    clearPlans: clearPlansSpy,
+    setPlanVersion: vi.fn(),
   }),
 });
 

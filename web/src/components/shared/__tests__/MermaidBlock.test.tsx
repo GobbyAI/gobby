@@ -35,10 +35,6 @@ vi.mock('react-syntax-highlighter/dist/esm/styles/prism', () => ({
   oneLight: {},
 }))
 
-vi.mock('../../chat/artifacts/ArtifactContext', () => ({
-  useArtifactContext: () => ({ openCodeAsArtifact: vi.fn() }),
-}))
-
 vi.mock('../../../lib/utils', async (importOriginal) => {
   const actual = await importOriginal<typeof import('../../../lib/utils')>()
   return {

@@ -204,8 +204,9 @@ use progressive discovery against `chrome-devtools`:
 4. `call_tool(...)`
 
 For product behavior, prefer native Gobby MCP servers such as `gobby-tasks`,
-`gobby-cron`, `gobby-metrics`, `gobby-artifacts`, `gobby-memory`, and
-`gobby-skills`.
+`gobby-cron`, `gobby-metrics`, `gobby-memory`, and `gobby-skills`. File previews
+are UI-owned: FilesTab uses `/api/files/read` and `/api/files/image`, while plan
+review and generated-image rendering use their chat transports directly.
 
 ## File Locations
 

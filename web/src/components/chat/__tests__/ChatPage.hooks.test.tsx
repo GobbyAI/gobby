@@ -9,7 +9,7 @@ import {
   createConversations,
   createVoice,
 } from "./chatPageTestSetup";
-import { useChatPageArtifacts } from "../useChatPageArtifacts";
+import { useChatPagePlans } from "../useChatPagePlans";
 import { useChatPageCommandPalette } from "../useChatPageCommandPalette";
 import { useChatPageProviderState } from "../useChatPageProviderState";
 import { useChatPageSessionRouting } from "../useChatPageSessionRouting";
@@ -795,16 +795,15 @@ describe("useChatPageProviderState", () => {
   });
 });
 
-describe("useChatPageArtifacts", () => {
-  it("does not create duplicate plan artifacts for identical content", async () => {
+describe("useChatPagePlans", () => {
+  it("does not create duplicate plans for identical content", async () => {
     let onPlanReady: ((content: string | null) => void) | null = null;
     const showTab = vi.fn();
     const { result } = renderHook(() =>
-      useChatPageArtifacts({
+      useChatPagePlans({
         chat: createChat({ setOnPlanReady: (fn) => void (onPlanReady = fn) }),
         showTab,
         dismissOnMobile: vi.fn(),
-        closeIfAutoOpened: vi.fn(),
       }),
     );
 
@@ -815,19 +814,18 @@ describe("useChatPageArtifacts", () => {
     });
 
     await waitFor(() => {
-      expect(result.current.artifacts.size).toBe(1);
+      expect(result.current.plans.size).toBe(1);
     });
     expect(showTab).toHaveBeenCalledWith("plans");
   });
 
-  it("adds plan revisions to the existing plan artifact", async () => {
+  it("adds revisions to the existing plan", async () => {
     let onPlanReady: ((content: string | null) => void) | null = null;
     const { result } = renderHook(() =>
-      useChatPageArtifacts({
+      useChatPagePlans({
         chat: createChat({ setOnPlanReady: (fn) => void (onPlanReady = fn) }),
         showTab: vi.fn(),
         dismissOnMobile: vi.fn(),
-        closeIfAutoOpened: vi.fn(),
       }),
     );
 
@@ -836,15 +834,15 @@ describe("useChatPageArtifacts", () => {
       onPlanReady?.("# Plan\n\nStep 1");
     });
     await waitFor(() => {
-      expect(result.current.artifacts.size).toBe(1);
+      expect(result.current.plans.size).toBe(1);
     });
     act(() => {
       onPlanReady?.("# Plan\n\nStep 2");
     });
 
     await waitFor(() => {
-      expect(result.current.activeArtifact?.versions).toHaveLength(2);
-      expect(result.current.activeArtifact?.versions[1].content).toBe(
+      expect(result.current.activePlan?.versions).toHaveLength(2);
+      expect(result.current.activePlan?.versions[1].content).toBe(
         "# Plan\n\nStep 2",
       );
     });
@@ -854,18 +852,17 @@ describe("useChatPageArtifacts", () => {
     // Repro: approving from the agent status-bar strip calls chat.onApprovePlan
     // directly (never handleApprovePlan), so the only signal the Plans panel
     // gets is chat.planPendingApproval flipping false via the backend
-    // mode_changed. The local pendingPlanArtifactId marker must clear with it,
+    // mode_changed. The local pendingPlanId marker must clear with it,
     // or the panel stays stuck on "Awaiting approval".
     let onPlanReady: ((content: string | null) => void) | null = null;
     const setOnPlanReady = (fn: (content: string | null) => void) =>
       void (onPlanReady = fn);
     const { result, rerender } = renderHook(
       ({ pending }: { pending: boolean }) =>
-        useChatPageArtifacts({
+        useChatPagePlans({
           chat: createChat({ planPendingApproval: pending, setOnPlanReady }),
           showTab: vi.fn(),
           dismissOnMobile: vi.fn(),
-          closeIfAutoOpened: vi.fn(),
         }),
       { initialProps: { pending: true } },
     );
@@ -883,16 +880,15 @@ describe("useChatPageArtifacts", () => {
     await waitFor(() => expect(result.current.planPendingApproval).toBe(false));
   });
 
-  it("exposes showPlanRef for reopening the plan artifact", async () => {
+  it("exposes showPlanRef for reopening the plan", async () => {
     let onPlanReady: ((content: string | null) => void) | null = null;
     const showTab = vi.fn();
     const showPlanRef = { current: null as (() => void) | null };
     renderHook(() =>
-      useChatPageArtifacts({
+      useChatPagePlans({
         chat: createChat({ setOnPlanReady: (fn) => void (onPlanReady = fn) }),
         showTab,
         dismissOnMobile: vi.fn(),
-        closeIfAutoOpened: vi.fn(),
         showPlanRef,
       }),
     );
@@ -910,44 +906,6 @@ describe("useChatPageArtifacts", () => {
     expect(showTab).toHaveBeenCalledWith("plans");
   });
 
-  it("routes valid artifact events into the artifact panel", async () => {
-    let onArtifactEvent:
-      | ((
-          type: string,
-          content: string,
-          language?: string,
-          title?: string,
-        ) => void)
-      | null = null;
-    const showTab = vi.fn();
-    const { result, unmount } = renderHook(() =>
-      useChatPageArtifacts({
-        chat: createChat({
-          setOnArtifactEvent: (fn) => void (onArtifactEvent = fn),
-        }),
-        showTab,
-        dismissOnMobile: vi.fn(),
-        closeIfAutoOpened: vi.fn(),
-      }),
-    );
-
-    await waitFor(() => expect(onArtifactEvent).toBeTruthy());
-    act(() => {
-      onArtifactEvent?.("image", "data:image/png;base64,abc", "png", "Image");
-      onArtifactEvent?.("unknown", "ignored");
-    });
-
-    await waitFor(() => {
-      expect(result.current.artifacts.size).toBe(1);
-      expect(result.current.activeArtifact?.title).toBe("Image");
-    });
-    // The artifact surfaces inline (activeArtifact set); the removed activity
-    // Artifacts tab must not be selected.
-    expect(showTab).not.toHaveBeenCalledWith("artifacts");
-
-    unmount();
-    expect(onArtifactEvent).toBeNull();
-  });
 });
 
 describe("useChatPageVoiceStatus", () => {

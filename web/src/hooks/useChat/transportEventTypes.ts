@@ -233,15 +233,6 @@ export interface ConnectionEstablishedMessage {
   conversation_ids?: string[];
 }
 
-export interface ArtifactEventMessage {
-  type: "artifact_event";
-  event?: string;
-  artifact_type?: string;
-  content?: string;
-  language?: string;
-  title?: string;
-}
-
 export interface AttachToSessionResultMessage {
   type: "attach_to_session_result";
   session_id?: string;
@@ -320,7 +311,6 @@ export type WebSocketMessage =
   | SessionContinuedMessage
   | TransportErrorMessage
   | ConnectionEstablishedMessage
-  | ArtifactEventMessage
   | AttachToSessionResultMessage
   | DetachFromSessionResultMessage
   | SessionMessage

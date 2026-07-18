@@ -221,16 +221,6 @@ def create_lifespan(
             )
             logger.debug("Completion registry connected to session coordinator")
 
-        from gobby.mcp_proxy.tools.artifacts import set_artifact_broadcaster
-
-        async def _artifact_broadcaster(**kwargs: Any) -> None:
-            ws = server.services.websocket_server or server.websocket_server
-            if ws and hasattr(ws, "broadcast_artifact_event"):
-                await ws.broadcast_artifact_event(**kwargs)
-
-        set_artifact_broadcaster(_artifact_broadcaster)
-        logger.debug("Artifact broadcaster connected to WebSocket server")
-
         app.state.server = server
         from gobby.servers.routes.llm import start_vision_temp_cleanup_task
 
@@ -310,8 +300,6 @@ def create_lifespan(
             yield
 
         logger.debug("Shutting down Gobby HTTP server")
-        set_artifact_broadcaster(None)
-
         if hasattr(app.state, "session_change_listener") and server.session_manager is not None:
             server.session_manager.unregister_session_change_listener(
                 app.state.session_change_listener

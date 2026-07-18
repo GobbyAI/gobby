@@ -424,22 +424,6 @@ class BroadcastMixin:
         }
         await self.broadcast(message)
 
-    async def broadcast_artifact_event(
-        self,
-        event: str,
-        conversation_id: str,
-        **kwargs: Any,
-    ) -> None:
-        """Broadcast artifact event to web clients."""
-        message = {
-            "type": "artifact_event",
-            "event": event,
-            "conversation_id": conversation_id,
-            "timestamp": datetime.now(UTC).isoformat(),
-            **kwargs,
-        }
-        await self.broadcast(message)
-
     async def broadcast_communications_event(
         self,
         event: str,

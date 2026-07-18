@@ -49,8 +49,8 @@ export const CODE_CHROME_VARS = {
 /**
  * Canonical typography + chrome geometry for code surfaces. Both the
  * view-only `CodeBlock` (Prism via react-syntax-highlighter) and the
- * editing `CodeMirrorEditor` widget read from this so an artifact opened
- * in CodeMirror and the same code rendered inline via CodeBlock are
+ * editing `CodeMirrorEditor` widget read from this so code opened in
+ * CodeMirror and the same code rendered inline via CodeBlock are
  * visually indistinguishable except for editing affordances.
  */
 export const CODE_CHROME_TYPOGRAPHY = {

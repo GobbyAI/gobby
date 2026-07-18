@@ -175,7 +175,6 @@ registries (`gobby-tasks`, `gobby-tasks-ops`, `gobby-workflows`,
 | `gobby-worktrees` | Git worktree isolation lifecycle | 17 |
 | `gobby-clones` | Git clone isolation lifecycle | 13 |
 | `gobby-merge` | Merge resolution, conflict prediction, branch protection | 12 |
-| `gobby-artifacts` | File display in the chat artifact panel | 1 |
 | `gobby-config` | Runtime config get/set | 7 |
 | `gobby-skills` | Skill discovery, install, hubs | 12 |
 | `gobby-metrics` | Tool/rule/skill metrics, usage reports | 13 |
@@ -867,16 +866,6 @@ call_tool("gobby-merge", "merge_resolve", {
 # Apply and complete
 call_tool("gobby-merge", "merge_apply", {"resolution_id": "<id>"})
 ```
-
----
-
-## Artifacts (`gobby-artifacts`)
-
-1 tool for chat-side artifact rendering.
-
-| Tool | Description |
-| :--- | :--- |
-| `show_file` | Show a file in the web chat artifacts panel (syntax highlighting or rendered markdown). |
 
 ---
 

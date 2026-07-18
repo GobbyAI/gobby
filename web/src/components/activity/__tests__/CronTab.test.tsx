@@ -18,7 +18,7 @@ vi.mock('../../../hooks/useCronJobs', () => ({
   useCronJobs: vi.fn(() => cronMock),
 }))
 
-vi.mock('../../chat/artifacts/ResizeHandle', () => ({
+vi.mock('../../shared/ResizeHandle', () => ({
   ResizeHandle: () => null,
 }))
 

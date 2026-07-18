@@ -2,7 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import type { RuleDetail, RuleSummary } from "../../hooks/useRules";
 import { cn } from "../../lib/utils";
-import { ResizeHandle } from "../chat/artifacts/ResizeHandle";
+import { ResizeHandle } from "../shared/ResizeHandle";
 import { SegmentedControl } from "../ui/SegmentedControl";
 import { Switch } from "../ui/Switch";
 import { ActivityPanelEmpty } from "./ActivityPanelEmpty";

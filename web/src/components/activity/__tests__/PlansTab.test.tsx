@@ -3,7 +3,7 @@ import { type ComponentProps } from 'react'
 import { render, screen, fireEvent } from '@testing-library/react'
 import { PlansTab } from '../PlansTab'
 import { getPlanPendingColors } from '../../chat/planPendingSurface'
-import type { Artifact } from '../../../types/artifacts'
+import type { Plan } from '../../../types/plans'
 
 const planPendingColors = getPlanPendingColors('info')
 
@@ -35,32 +35,28 @@ function setViewport(mobile: boolean) {
 
 beforeEach(() => setViewport(false))
 
-function makePlan(contents: string[]): Artifact {
+function makePlan(contents: string[]): Plan {
   return {
     id: 'plan-1',
-    type: 'text',
     title: 'Plan',
     versions: contents.map((content, i) => ({
       content,
       timestamp: new Date(1_700_000_000_000 + i * 1000),
     })),
     currentVersionIndex: contents.length - 1,
-    isPlan: true,
   }
 }
 
 function renderPlansTab(
-  plan: Artifact,
+  plan: Plan,
   overrides: Partial<ComponentProps<typeof PlansTab>> = {},
 ) {
-  const artifacts = new Map<string, Artifact>([[plan.id, plan]])
+  const plans = new Map<string, Plan>([[plan.id, plan]])
   const props: ComponentProps<typeof PlansTab> = {
-    artifacts,
-    artifact: plan,
-    onOpenArtifact: vi.fn(),
-    onClose: vi.fn(),
-    onUpdateContent: vi.fn(),
-    onSetVersion: vi.fn(),
+    plans,
+    activePlan: plan,
+    onOpenPlan: vi.fn(),
+    onSetPlanVersion: vi.fn(),
     onApprovePlan: vi.fn(),
     onRequestPlanChanges: vi.fn(),
     planPendingApproval: true,
@@ -73,10 +69,10 @@ describe('PlansTab', () => {
   it('renders the empty state when there are no plans', () => {
     render(
       <PlansTab
-        artifacts={new Map()}
-        artifact={null}
-        onOpenArtifact={vi.fn()}
-        onSetVersion={vi.fn()}
+        plans={new Map()}
+        activePlan={null}
+        onOpenPlan={vi.fn()}
+        onSetPlanVersion={vi.fn()}
       />,
     )
     expect(screen.getByText('Plans')).toBeInTheDocument()
@@ -146,7 +142,7 @@ describe('PlansTab', () => {
     expect(screen.getByText('Revision 3')).toBeInTheDocument()
 
     fireEvent.click(screen.getByText('Revision 1'))
-    expect(props.onSetVersion).toHaveBeenCalledWith('plan-1', 0)
+    expect(props.onSetPlanVersion).toHaveBeenCalledWith('plan-1', 0)
   })
 
   it('shows an approved state after the plan is approved', () => {

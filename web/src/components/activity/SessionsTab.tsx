@@ -166,14 +166,6 @@ export const SessionsTab = memo(function SessionsTab({
   const initialSelectionAppliedRef = useRef(false);
   const selectionClearedRef = useRef(false);
 
-  const noopArtifactCtx = useMemo(
-    () => ({
-      openCodeAsArtifact: () => {},
-      openFileAsArtifact: () => {},
-    }),
-    [],
-  );
-
   useEffect(() => {
     const timeout = window.setTimeout(() => {
       setSearch(searchInput);
@@ -576,7 +568,6 @@ export const SessionsTab = memo(function SessionsTab({
           loadMoreMessages={loadMoreMessages}
           loadNewerMessages={loadNewerMessages}
           messages={messages}
-          noopArtifactCtx={noopArtifactCtx}
           onResumeSession={onResumeSession ? handleResumeSession : undefined}
           onSwapSelectedSession={handleSwapSelectedSession}
           selectedEntry={selectedEntry}

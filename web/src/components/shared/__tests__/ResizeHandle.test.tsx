@@ -1,7 +1,7 @@
 import { fireEvent, render, screen } from '@testing-library/react'
 import { describe, expect, it, vi } from 'vitest'
 
-import { ResizeHandle } from '../artifacts/ResizeHandle'
+import { ResizeHandle } from '../ResizeHandle'
 
 describe('ResizeHandle', () => {
   it('expands a right-anchored horizontal pane when dragged left', () => {

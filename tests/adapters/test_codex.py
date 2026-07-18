@@ -4052,30 +4052,6 @@ class TestCodexAdapterApprovalHandling:
         assert result == {"action": "accept", "content": None, "_meta": None}
         mock_hm.handle.assert_called_once()
 
-    @pytest.mark.asyncio
-    async def test_handle_approval_auto_accepts_safe_artifacts_calls(self) -> None:
-        """Read-only artifact display tools should still fire hooks and force accept."""
-        mock_hm = MagicMock()
-        mock_hm.handle.return_value = HookResponse(decision="block")
-        adapter = CodexAdapter(hook_manager=mock_hm)
-
-        result = await adapter.handle_approval_request(
-            "item/mcpToolCall/requestApproval",
-            {
-                "threadId": "thr-artifacts-safe",
-                "itemId": "item-artifacts-safe",
-                "name": "mcp__gobby__call_tool",
-                "arguments": {
-                    "server_name": "gobby-artifacts",
-                    "tool_name": "show_file",
-                },
-            },
-        )
-
-        assert result == {"decision": "accept"}
-        mock_hm.handle.assert_called_once()
-
-
 class TestCodexAdapterApprovalAttach:
     """Tests for approval handler registration during adapter attach."""
 

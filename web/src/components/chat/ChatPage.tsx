@@ -13,7 +13,7 @@ import { CommandPalette } from "./CommandPalette";
 import { ChatMainColumn } from "./ChatMainColumn";
 import { type MessageListHandle } from "./MessageList";
 import type { ChatPageProps } from "./ChatPage.types";
-import { useChatPageArtifacts } from "./useChatPageArtifacts";
+import { useChatPagePlans } from "./useChatPagePlans";
 import { useChatPageCommandPalette } from "./useChatPageCommandPalette";
 import { useChatPageProviderState } from "./useChatPageProviderState";
 import { useChatPageSessionRouting } from "./useChatPageSessionRouting";
@@ -57,7 +57,6 @@ export function ChatPage({
   const { confirm, ConfirmDialogElement } = useConfirmDialog();
   const {
     activeTab: activityTab,
-    closeIfAutoOpened,
     dirtyGuard,
     dismissOnMobile,
     effectiveMode,
@@ -98,11 +97,10 @@ export function ChatPage({
     projectId,
     confirm,
   });
-  const artifacts = useChatPageArtifacts({
+  const plans = useChatPagePlans({
     chat,
     showTab,
     dismissOnMobile,
-    closeIfAutoOpened,
     showPlanRef,
   });
   const commandPalette = useChatPageCommandPalette({
@@ -178,8 +176,6 @@ export function ChatPage({
           onVoiceInputModeChange={onVoiceInputModeChange}
           onViewPlan={() => showPlanRef?.current?.()}
           planPendingVariant={planPendingVariant}
-          openCodeAsArtifact={artifacts.openCodeAsArtifact}
-          openFileAsArtifact={artifacts.openFileAsArtifact}
           agentDefinitions={agentDefinitions}
           agentGlobalDefs={agentGlobalDefs}
           agentProjectDefs={agentProjectDefs}
@@ -200,17 +196,15 @@ export function ChatPage({
           onWidthChange={setPanelWidth}
           activeTab={activityTab}
           onTabChange={setActivityTab}
-          artifacts={artifacts.artifacts}
-          activeArtifact={artifacts.activeArtifact}
-          onOpenArtifact={artifacts.openArtifact}
-          onCloseArtifact={artifacts.handleCloseArtifact}
-          onUpdateArtifactContent={artifacts.updateArtifact}
-          onSetArtifactVersion={artifacts.setVersion}
-          planPendingApproval={artifacts.planPendingApproval}
-          planApproved={artifacts.planApproved}
-          planApprovalOptions={artifacts.planApprovalOptions}
-          onApprovePlan={artifacts.handleApprovePlan}
-          onRequestPlanChanges={artifacts.handleRequestPlanChanges}
+          plans={plans.plans}
+          activePlan={plans.activePlan}
+          onOpenPlan={plans.openPlan}
+          onSetPlanVersion={plans.setPlanVersion}
+          planPendingApproval={plans.planPendingApproval}
+          planApproved={plans.planApproved}
+          planApprovalOptions={plans.planApprovalOptions}
+          onApprovePlan={plans.handleApprovePlan}
+          onRequestPlanChanges={plans.handleRequestPlanChanges}
           planPendingVariant={planPendingVariant}
           changedFiles={fileChanges.changedFiles}
           fetchDiff={fileChanges.fetchDiff}

@@ -2,7 +2,7 @@ import { memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import { useMemory, type GobbyMemory } from "../../hooks/useMemory";
 import { useIsMobile } from "../../hooks/useIsMobile";
-import { ResizeHandle } from "../chat/artifacts/ResizeHandle";
+import { ResizeHandle } from "../shared/ResizeHandle";
 import { ActivityPanelEmpty, SessionsEmptyIcon } from "./ActivityPanelEmpty";
 import { ActivityPanelSearch } from "./ActivityPanelSearch";
 import { DEFAULT_TOP_PANEL_PERCENT } from "./constants";

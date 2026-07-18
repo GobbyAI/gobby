@@ -9,7 +9,7 @@ vi.mock('../../../hooks/useIsMobile', () => ({
   useIsMobile: vi.fn(),
 }))
 
-vi.mock('../../chat/artifacts/ResizeHandle', () => ({
+vi.mock('../../shared/ResizeHandle', () => ({
   ResizeHandle: ({
     direction,
     horizontalAnchor,

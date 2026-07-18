@@ -8,7 +8,7 @@
 import { useCallback, useEffect, useMemo, useState, type KeyboardEvent } from "react";
 
 import { useConfirmDialog } from "../../../hooks/useConfirmDialog";
-import { ResizeHandle } from "../../chat/artifacts/ResizeHandle";
+import { ResizeHandle } from "../../shared/ResizeHandle";
 import { ActivityPanelEmpty } from "../ActivityPanelEmpty";
 import { DEFAULT_TOP_PANEL_PERCENT } from "../constants";
 import { WikiBacklinks } from "./WikiBacklinks";

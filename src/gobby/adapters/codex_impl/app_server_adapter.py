@@ -136,12 +136,6 @@ class CodexAdapter(BaseAdapter):
         "mcp__gobby__search_tools",
     }
 
-    # Read-only artifact display calls are safe: they present file contents in
-    # the web chat artifacts panel and do not mutate repo or system state.
-    SAFE_ARTIFACTS_CALL_TOOLS: set[str] = {
-        "show_file",
-    }
-
     # Item types that represent tool operations
     TOOL_ITEM_TYPES = _SHARED_TOOL_ITEM_TYPES
 
@@ -436,26 +430,8 @@ class CodexAdapter(BaseAdapter):
         return self.translate_from_hook_response(hook_response)
 
     def _is_safe_auto_approved_tool(self, hook_event: HookEvent) -> bool:
-        """Return True for safe MCP discovery/UI-only tool calls."""
-        tool_name = hook_event.data.get("tool_name")
-        if tool_name in self.SAFE_MCP_PROXY_TOOLS:
-            return True
-
-        mcp_server = hook_event.data.get("mcp_server")
-        mcp_tool = hook_event.data.get("mcp_tool")
-        if mcp_server == "gobby-artifacts" and mcp_tool in self.SAFE_ARTIFACTS_CALL_TOOLS:
-            return True
-
-        if tool_name != "mcp__gobby__call_tool":
-            return False
-
-        raw_input = hook_event.data.get("tool_input") or hook_event.data.get("toolArgs") or {}
-        if not isinstance(raw_input, dict):
-            return False
-        return (
-            raw_input.get("server_name") == "gobby-artifacts"
-            and raw_input.get("tool_name") in self.SAFE_ARTIFACTS_CALL_TOOLS
-        )
+        """Return True for safe MCP discovery tool calls."""
+        return hook_event.data.get("tool_name") in self.SAFE_MCP_PROXY_TOOLS
 
     def _translate_approval_event(self, method: str, params: dict[str, Any]) -> HookEvent | None:
         """Translate approval request to HookEvent."""

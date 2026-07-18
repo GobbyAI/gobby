@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useState, type KeyboardEvent } from "react";
 
-import { ResizeHandle } from "../../chat/artifacts/ResizeHandle";
+import { ResizeHandle } from "../../shared/ResizeHandle";
 import { ActivityPanelEmpty, TasksEmptyIcon } from "../ActivityPanelEmpty";
 import { DEFAULT_TOP_PANEL_PERCENT } from "../constants";
 import { loadSkillHubs, searchSkillHubs } from "./SkillsTabActions";

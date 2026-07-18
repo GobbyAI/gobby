@@ -1,5 +1,5 @@
 import { memo } from 'react'
-import type { Artifact } from '../../types/artifacts'
+import type { Plan } from '../../types/plans'
 import type { ApprovalOption } from '../../types/chat'
 import { cn } from '../../lib/utils'
 import { Markdown } from '../chat/Markdown'
@@ -11,7 +11,7 @@ import {
 import { useIsMobile } from '../../hooks/useIsMobile'
 
 interface PlanReviewCardProps {
-  plan: Artifact
+  plan: Plan
   planPendingApproval: boolean
   /** Authoritative approval signal from chat state (backend plan_approved). */
   planApproved?: boolean
@@ -133,7 +133,7 @@ function RevisionHistory({
   plan,
   onSetVersion,
 }: {
-  plan: Artifact
+  plan: Plan
   onSetVersion: (id: string, index: number) => void
 }) {
   return (

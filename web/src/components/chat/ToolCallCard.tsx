@@ -2,14 +2,11 @@ import { memo, useCallback, useMemo, useState } from 'react'
 import { CodeBlock } from '../shared/CodeBlock'
 import { MarkdownBody } from '../shared/MarkdownBody'
 import type { ToolCall, ToolResult } from '../../types/chat'
-import type { ArtifactType } from '../../types/artifacts'
 import { cn } from '../../lib/utils'
 import { Badge } from './ui/Badge'
 import { Button } from '../shared/Button'
 import { JsonBlock } from './JsonBlock'
-import { PanelIcon } from './icons/PanelIcon'
 import { RichContentBlocks } from './RichContentBlocks'
-import { useArtifactContext } from './artifacts/ArtifactContext'
 import {
   COMPACT_HEADER_NAMES,
   COMPACT_HEADER_TOOL_TYPES,
@@ -166,18 +163,6 @@ function numberValue(value: unknown): number | null {
   return typeof value === 'number' && Number.isFinite(value) ? value : null
 }
 
-const IMAGE_EXTENSIONS = new Set(['png', 'jpg', 'jpeg', 'gif', 'svg', 'webp'])
-const SHEET_EXTENSIONS = new Set(['csv', 'tsv'])
-
-function getArtifactTypeForFile(filePath: string): { type: ArtifactType; language: string } {
-  const ext = filePath.split('.').pop()?.toLowerCase() || ''
-  if (IMAGE_EXTENSIONS.has(ext)) return { type: 'image', language: ext }
-  if (SHEET_EXTENSIONS.has(ext)) return { type: 'sheet', language: ext }
-  const language = getLanguageFromPath(filePath)
-  if (language === 'markdown') return { type: 'text', language: 'markdown' }
-  return { type: 'code', language }
-}
-
 function ToolResultContent({ call }: { call: ToolCall }) {
   const toolType = resolveToolType(call)
   const extractedContent = extractResultContent(call.result)
@@ -332,22 +317,6 @@ const ToolCallItem = memo(function ToolCallItem({ call, onRespond, onRespondToAp
   const summary = getToolSummary(call)
   const isCompact = summary !== null && (COMPACT_HEADER_TOOL_TYPES.has(toolType) || COMPACT_HEADER_NAMES.has(displayName))
   const isFileHeader = FILE_TOOL_TYPES.has(toolType)
-  const { openFileAsArtifact } = useArtifactContext()
-
-  // Compute artifact info for Read tools to show button in toolbar
-  const artifactButton = useMemo(() => {
-    if (toolType !== 'read' || call.status !== 'completed' || !call.result) return null
-    const filePath = stringValue(call.arguments?.file_path)
-    if (!filePath) return null
-    const content = extractResultContent(call.result)
-    const resultStr = typeof content === 'string' ? content : String(content)
-    const parsed = parseReadOutput(resultStr)
-    if (!parsed) return null
-    const artifactInfo = getArtifactTypeForFile(filePath)
-    const fileName = pathBasename(filePath)
-    return { artifactInfo, parsed, fileName }
-  }, [toolType, call.status, call.result, call.arguments])
-
   if (call.tool_name === 'AskUserQuestion') {
     return <AskUserQuestionCard call={call} onRespond={onRespond} />
   }
@@ -400,19 +369,6 @@ const ToolCallItem = memo(function ToolCallItem({ call, onRespond, onRespondToAp
           <span className="text-muted-foreground text-xs truncate max-w-[12rem] @sm:max-w-[24rem]">{summary}</span>
         ) : null}
         <div className="flex-1" />
-        {artifactButton && (
-          <button
-            className="flex items-center gap-1 rounded px-1.5 py-0.5 text-muted-foreground hover:text-foreground hover:bg-muted transition-colors pointer-coarse:min-h-11 pointer-coarse:min-w-11"
-            onClick={(e) => {
-              e.stopPropagation()
-              openFileAsArtifact(artifactButton.artifactInfo.type, artifactButton.artifactInfo.language, artifactButton.parsed.content, artifactButton.fileName)
-            }}
-            title="Open in artifacts panel"
-            aria-label="Open file in artifacts panel"
-          >
-            <PanelIcon size={14} />
-          </button>
-        )}
         {hasDetails && (
           <span className="text-muted-foreground text-xs">{expanded ? '\u25BC' : '\u25B6'}</span>
         )}

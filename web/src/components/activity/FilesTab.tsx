@@ -2,7 +2,7 @@ import { memo, useState, useEffect, useCallback, useMemo, useRef, type CSSProper
 import { useConfirmDialog } from '../../hooks/useConfirmDialog'
 import { useDialogFocus } from '../../hooks/useDialogFocus'
 import { useIsMobile } from '../../hooks/useIsMobile'
-import { ResizeHandle } from '../chat/artifacts/ResizeHandle'
+import { ResizeHandle } from '../shared/ResizeHandle'
 import { CodeBlock } from '../shared/CodeBlock'
 import { MarkdownBody } from '../shared/MarkdownBody'
 import { CodeMirrorEditor } from '../shared/CodeMirrorEditor'

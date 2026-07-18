@@ -3,7 +3,7 @@ import { fileURLToPath } from 'node:url'
 import { dirname, join } from 'node:path'
 import { describe, it, expect, vi } from 'vitest'
 import { render, screen } from '@testing-library/react'
-import type { Artifact } from '../../../types/artifacts'
+import type { Plan } from '../../../types/plans'
 import { PlanReviewCard } from '../../activity/PlanReviewCard'
 import { PlanPendingActionStrip } from '../PlanPendingActionStrip'
 import { getPlanPendingColors } from '../planPendingSurface'
@@ -30,14 +30,12 @@ function readCss(rel: string, seen = new Set<string>()): string {
   )
 }
 
-function makePlan(): Artifact {
+function makePlan(): Plan {
   return {
     id: 'plan-1',
-    type: 'text',
     title: 'Plan',
     versions: [{ content: '# Plan', timestamp: new Date(1_700_000_000_000) }],
     currentVersionIndex: 0,
-    isPlan: true,
   }
 }
 

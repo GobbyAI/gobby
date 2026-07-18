@@ -15,27 +15,6 @@ function makeCall(overrides: Partial<ToolCall> & { id: string; tool_name: string
 }
 
 describe('ToolCallCard interactions', () => {
-  it('labels the artifact action and gives it a coarse-pointer floor', () => {
-    renderWithProviders(
-      <ToolCallCards
-        toolCalls={[
-          makeCall({
-            id: 'read-artifact',
-            tool_name: 'Read',
-            status: 'completed',
-            arguments: { file_path: '/tmp/example.txt' },
-            result: { content: '1→artifact content', kind: 'text', truncated: false },
-          }),
-        ]}
-      />,
-    )
-
-    expect(screen.getByRole('button', { name: 'Open file in artifacts panel' })).toHaveClass(
-      'pointer-coarse:min-h-11',
-      'pointer-coarse:min-w-11',
-    )
-  })
-
   it('expands a single tool card with the keyboard and exposes its result', () => {
     renderWithProviders(
       <ToolCallCards

@@ -1,10 +1,6 @@
 import React, { useCallback, useEffect, useRef, useState } from 'react'
 import { CodeBlock } from '../shared/CodeBlock'
 import { cn } from '../../lib/utils'
-import { useArtifactContext } from './artifacts/ArtifactContext'
-import { PanelIcon } from './icons/PanelIcon'
-
-const MIN_ARTIFACT_LINES = 15
 
 export interface CodeProps {
   children?: React.ReactNode
@@ -14,14 +10,12 @@ export interface CodeProps {
 
 export function CodeBlockInner({ children, className }: CodeProps) {
   const [copied, setCopied] = useState(false)
-  const { openCodeAsArtifact } = useArtifactContext()
   const copyTimeoutRef = useRef<number | null>(null)
 
   const match = /language-([\w+#\-./]+)/.exec(className || '')
   const language = match ? match[1] : ''
   const codeString = String(children).replace(/\n$/, '')
   const isInline = !match && !String(children).includes('\n')
-  const canOpenAsArtifact = codeString.split('\n').length >= MIN_ARTIFACT_LINES
 
   useEffect(() => {
     return () => {
@@ -39,14 +33,6 @@ export function CodeBlockInner({ children, className }: CodeProps) {
       console.error('Failed to copy to clipboard')
     }
   }, [codeString])
-
-  const handleOpenArtifact = useCallback(() => {
-    openCodeAsArtifact(
-      language || 'text',
-      codeString,
-      language ? `${language} snippet` : 'Code snippet',
-    )
-  }, [openCodeAsArtifact, language, codeString])
 
   if (isInline) {
     return (
@@ -66,16 +52,6 @@ export function CodeBlockInner({ children, className }: CodeProps) {
       <div className="flex items-center justify-between bg-muted/50 px-3 py-1.5 text-xs">
         <span className="text-muted-foreground font-mono">{language || 'text'}</span>
         <div className="flex items-center gap-1">
-          {canOpenAsArtifact && (
-            <button
-              className="flex items-center gap-1 rounded px-1.5 py-0.5 text-muted-foreground hover:text-foreground hover:bg-muted transition-colors pointer-coarse:min-h-11 pointer-coarse:min-w-11"
-              onClick={handleOpenArtifact}
-              title="Open in panel"
-              aria-label="Open code in panel"
-            >
-              <PanelIcon size={14} />
-            </button>
-          )}
           <button
             className="flex items-center gap-1 rounded px-1.5 py-0.5 text-muted-foreground hover:text-foreground hover:bg-muted transition-colors pointer-coarse:min-h-11 pointer-coarse:min-w-11"
             onClick={handleCopy}

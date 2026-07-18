@@ -12,6 +12,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Breaking Changes
 
+- Remove the `gobby-artifacts` MCP server and its `show_file` tool. The Web UI
+  continues to render plans, FilesTab previews, and generated images through
+  their independent UI-owned paths.
 - Daemon HTTP, MCP, memory, and WebSocket surfaces now require authentication
   by default. Existing installations must re-run `gobby install` to provision
   `~/.gobby/local_cli_token` and refresh installed Git-hook curl bodies before

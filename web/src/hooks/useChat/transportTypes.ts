@@ -48,13 +48,6 @@ export type SendMessage = (
   optimisticMessageId?: string,
 ) => boolean;
 
-export type ArtifactEventCallback = (
-  type: string,
-  content: string,
-  language?: string,
-  title?: string,
-) => void;
-
 export interface SessionRefs {
   activeRequestIdRef: MutableRefObject<string | null>;
   attachedSessionIdRef: MutableRefObject<string | null>;
@@ -90,7 +83,6 @@ export interface HandlerCallbacks {
   handleToolStatusRef: MutableRefObject<(status: ToolStatusMessage) => void>;
   handleVoiceMessageRef: MutableRefObject<(data: Record<string, unknown>) => void>;
   markSessionUsageFresh: (sessionId: string, rawTimestamp?: string) => void;
-  onArtifactEventRef: MutableRefObject<ArtifactEventCallback | null>;
   onChatClearedRef: MutableRefObject<((conversationId: string) => void) | null>;
   onChatDeletedRef: MutableRefObject<((conversationId: string) => void) | null>;
   onModeChangedRef: MutableRefObject<((mode: ChatMode) => void) | null>;

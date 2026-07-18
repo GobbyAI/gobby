@@ -5,7 +5,7 @@ import { describe, expect, it, vi } from 'vitest'
 import { ActivityPanel } from '../ActivityPanel'
 import { ACTIVITY_PANEL_DROPDOWN_TABS } from '../ActivityPanelTabs'
 
-vi.mock('../../chat/artifacts/ResizeHandle', () => ({
+vi.mock('../../shared/ResizeHandle', () => ({
   ResizeHandle: ({
     panelWidth,
     minWidth,
@@ -75,11 +75,10 @@ describe('ActivityPanel', () => {
         onWidthChange={vi.fn()}
         activeTab="sessions"
         onTabChange={vi.fn()}
-        artifacts={new Map()}
-        activeArtifact={null}
-        onOpenArtifact={vi.fn()}
-        onCloseArtifact={vi.fn()}
-        onSetArtifactVersion={vi.fn()}
+        plans={new Map()}
+        activePlan={null}
+        onOpenPlan={vi.fn()}
+        onSetPlanVersion={vi.fn()}
         isMobile={false}
       />,
     )
@@ -96,11 +95,10 @@ describe('ActivityPanel', () => {
         onWidthChange={vi.fn()}
         activeTab="sessions"
         onTabChange={vi.fn()}
-        artifacts={new Map()}
-        activeArtifact={null}
-        onOpenArtifact={vi.fn()}
-        onCloseArtifact={vi.fn()}
-        onSetArtifactVersion={vi.fn()}
+        plans={new Map()}
+        activePlan={null}
+        onOpenPlan={vi.fn()}
+        onSetPlanVersion={vi.fn()}
         isMobile={false}
       />,
     )
@@ -121,11 +119,10 @@ describe('ActivityPanel', () => {
         onWidthChange={vi.fn()}
         activeTab="sessions"
         onTabChange={vi.fn()}
-        artifacts={new Map()}
-        activeArtifact={null}
-        onOpenArtifact={vi.fn()}
-        onCloseArtifact={vi.fn()}
-        onSetArtifactVersion={vi.fn()}
+        plans={new Map()}
+        activePlan={null}
+        onOpenPlan={vi.fn()}
+        onSetPlanVersion={vi.fn()}
         isMobile={false}
       />,
     )
@@ -147,11 +144,10 @@ describe('ActivityPanel', () => {
         onWidthChange={vi.fn()}
         activeTab="sessions"
         onTabChange={onTabChange}
-        artifacts={new Map()}
-        activeArtifact={null}
-        onOpenArtifact={vi.fn()}
-        onCloseArtifact={vi.fn()}
-        onSetArtifactVersion={vi.fn()}
+        plans={new Map()}
+        activePlan={null}
+        onOpenPlan={vi.fn()}
+        onSetPlanVersion={vi.fn()}
         isMobile={true}
       />,
     )
@@ -179,11 +175,10 @@ describe('ActivityPanel', () => {
         onWidthChange={vi.fn()}
         activeTab="sessions"
         onTabChange={onTabChange}
-        artifacts={new Map()}
-        activeArtifact={null}
-        onOpenArtifact={vi.fn()}
-        onCloseArtifact={vi.fn()}
-        onSetArtifactVersion={vi.fn()}
+        plans={new Map()}
+        activePlan={null}
+        onOpenPlan={vi.fn()}
+        onSetPlanVersion={vi.fn()}
         isMobile={false}
       />,
     )
@@ -205,11 +200,10 @@ describe('ActivityPanel', () => {
         onWidthChange={vi.fn()}
         activeTab="sessions"
         onTabChange={vi.fn()}
-        artifacts={new Map()}
-        activeArtifact={null}
-        onOpenArtifact={vi.fn()}
-        onCloseArtifact={vi.fn()}
-        onSetArtifactVersion={vi.fn()}
+        plans={new Map()}
+        activePlan={null}
+        onOpenPlan={vi.fn()}
+        onSetPlanVersion={vi.fn()}
         isMobile={false}
       />,
     )
@@ -247,11 +241,10 @@ describe('ActivityPanel', () => {
           onWidthChange={vi.fn()}
           activeTab="sessions"
           onTabChange={vi.fn()}
-          artifacts={new Map()}
-          activeArtifact={null}
-          onOpenArtifact={vi.fn()}
-          onCloseArtifact={vi.fn()}
-          onSetArtifactVersion={vi.fn()}
+          plans={new Map()}
+          activePlan={null}
+          onOpenPlan={vi.fn()}
+          onSetPlanVersion={vi.fn()}
           isMobile={false}
         />,
       )
@@ -283,11 +276,10 @@ describe('ActivityPanel', () => {
         onWidthChange={vi.fn()}
         activeTab="changes"
         onTabChange={vi.fn()}
-        artifacts={new Map()}
-        activeArtifact={null}
-        onOpenArtifact={vi.fn()}
-        onCloseArtifact={vi.fn()}
-        onSetArtifactVersion={vi.fn()}
+        plans={new Map()}
+        activePlan={null}
+        onOpenPlan={vi.fn()}
+        onSetPlanVersion={vi.fn()}
         changedFiles={[{ path: 'src/example.ts', status: 'M' }]}
         isMobile={false}
       />,
@@ -305,11 +297,10 @@ describe('ActivityPanel', () => {
         onWidthChange={vi.fn()}
         activeTab="mcp"
         onTabChange={vi.fn()}
-        artifacts={new Map()}
-        activeArtifact={null}
-        onOpenArtifact={vi.fn()}
-        onCloseArtifact={vi.fn()}
-        onSetArtifactVersion={vi.fn()}
+        plans={new Map()}
+        activePlan={null}
+        onOpenPlan={vi.fn()}
+        onSetPlanVersion={vi.fn()}
         mcp={{} as never}
         isMobile={false}
       />,

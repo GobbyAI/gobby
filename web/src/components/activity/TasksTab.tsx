@@ -6,7 +6,7 @@ import {
   useRef,
   useMemo,
 } from "react";
-import { ResizeHandle } from "../chat/artifacts/ResizeHandle";
+import { ResizeHandle } from "../shared/ResizeHandle";
 import { useWebSocketEvent } from "../../hooks/useWebSocketEvent";
 import { useStagesRegistry } from "../../hooks/useStagesRegistry";
 import type { DependencyTree, GobbyTask } from "../../types/tasks";
