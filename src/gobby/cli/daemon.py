@@ -221,13 +221,13 @@ def _poll_startup_progress(http_port: int, max_wait: float = 60.0) -> bool:
             httpx.TooManyRedirects,
             json.JSONDecodeError,
         ) as e:
-            logger.error("Non-retryable startup progress polling error: %s", e, exc_info=True)
+            logger.exception("Non-retryable startup progress polling error: %s", e)
             return False
         except httpx.RequestError as e:
-            logger.error("Non-retryable startup progress request error: %s", e, exc_info=True)
+            logger.exception("Non-retryable startup progress request error: %s", e)
             return False
         except Exception as e:
-            logger.error("Unexpected startup progress polling error: %s", e, exc_info=True)
+            logger.exception("Unexpected startup progress polling error: %s", e)
             return False
         time.sleep(0.5)
     return False

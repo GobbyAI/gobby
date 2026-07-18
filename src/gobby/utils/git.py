@@ -180,7 +180,7 @@ def run_git_command(command: list[str], cwd: str | Path, timeout: int = 5) -> st
         logger.warning("Git executable not found in PATH")
         return None
     except Exception as e:
-        logger.error("Git command error: %s, error: %s", " ".join(command), e, exc_info=True)
+        logger.exception("Git command error: %s, error: %s", " ".join(command), e)
         return None
 
 
@@ -320,7 +320,7 @@ def get_git_metadata(cwd: str | Path | None = None) -> GitMetadata:
         )
 
     except Exception as e:
-        logger.error("Error extracting git metadata: %s", e, exc_info=True)
+        logger.exception("Error extracting git metadata: %s", e)
 
     return metadata
 

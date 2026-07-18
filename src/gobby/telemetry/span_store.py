@@ -54,7 +54,7 @@ class GobbySpanExporter(SpanExporter):
             log_pool_timeout_drop(logger, span_count=len(spans), error=exc)
             return SpanExportResult.FAILURE
         except Exception:
-            logger.error("Error exporting spans", exc_info=True)
+            logger.exception("Error exporting spans")
             return SpanExportResult.FAILURE
 
     def shutdown(self) -> None:
