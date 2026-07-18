@@ -526,6 +526,9 @@ fn expected_similarity_pair(
     }
     let left_page = pages_by_path.get(left).copied();
     let right_page = pages_by_path.get(right).copied();
+    if left_page.is_some_and(is_redirect_page) || right_page.is_some_and(is_redirect_page) {
+        return true;
+    }
     if left_page.is_some_and(is_session_digest) && right_page.is_some_and(is_session_digest) {
         return true;
     }
@@ -581,6 +584,12 @@ fn canonical_page_key(path: &str) -> String {
 /// A source digest recording a coding session (`source_kind: session`).
 fn is_session_digest(page: &lint::WikiPage) -> bool {
     page.parsed.frontmatter.source_kind == Some(crate::models::WikiSourceKind::Session)
+}
+
+fn is_redirect_page(page: &lint::WikiPage) -> bool {
+    parse_frontmatter(&page.markdown)
+        .ok()
+        .is_some_and(|parsed| parsed.metadata.unknown.contains_key("redirect"))
 }
 
 /// True when `citing` links to the source digest at `source` — the `Sources:`
@@ -1635,6 +1644,36 @@ mod tests {
 
         let pairs = near_duplicate_pairs(
             &[first, second],
+            SemanticProbe {
+                backend: &mut backend,
+                search_scope: SearchScope::topic("ops"),
+            },
+            &BTreeSet::new(),
+        )
+        .expect("scan succeeds");
+
+        assert_eq!(pairs, Vec::new());
+    }
+
+    #[test]
+    fn near_duplicates_skip_redirect_pairs() {
+        let redirect = knowledge_page(
+            "knowledge/topics/legacy-topic.md",
+            "---\nsource_kind: topic\nredirect: knowledge/topics/canonical-topic\n---\n# Legacy topic\n\n## Backlinks\n\n- [[knowledge/topics/canonical-topic|Canonical topic]]\n",
+        );
+        let source = knowledge_page(
+            "knowledge/sources/source.md",
+            "---\nsource_kind: source_note\n---\n# Source\n\nCanonical topic research.\n",
+        );
+        let mut backend = FixedSemanticBackend {
+            hits: vec![
+                semantic_hit("knowledge/topics/legacy-topic.md", 0.92),
+                semantic_hit("knowledge/sources/source.md", 0.92),
+            ],
+        };
+
+        let pairs = near_duplicate_pairs(
+            &[redirect, source],
             SemanticProbe {
                 backend: &mut backend,
                 search_scope: SearchScope::topic("ops"),
