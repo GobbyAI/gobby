@@ -450,9 +450,18 @@ def create_pipelines_router(server: "HTTPServer") -> APIRouter:
             execution = await executor.approve(token, approved_by=None)
 
             if execution.status == ExecutionStatus.FAILED:
+                logger.error(
+                    "Pipeline execution %s failed after approval",
+                    execution.id,
+                    extra={
+                        "execution_id": execution.id,
+                        "pipeline_name": execution.pipeline_name,
+                        "execution_status": execution.status.value,
+                    },
+                )
                 raise HTTPException(
                     status_code=500,
-                    detail=f"Pipeline execution {execution.id} failed after approval",
+                    detail="Internal server error",
                 )
 
             return {

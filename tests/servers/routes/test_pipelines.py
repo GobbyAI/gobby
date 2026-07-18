@@ -517,7 +517,10 @@ class TestApproveExecution:
             assert response.json()["execution_id"] == "pe-1"
 
     def test_approve_failed_resume_returns_server_error(
-        self, client: TestClient, mock_server: MagicMock
+        self,
+        client: TestClient,
+        mock_server: MagicMock,
+        caplog: pytest.LogCaptureFixture,
     ) -> None:
         with patch("gobby.storage.pipelines.LocalPipelineExecutionManager") as MockEM:
             mock_step = MagicMock(
@@ -540,7 +543,16 @@ class TestApproveExecution:
             response = client.post("/api/pipelines/approve/tok-1")
 
         assert response.status_code == 500
-        assert response.json()["detail"] == "Pipeline execution pe-1 failed after approval"
+        assert response.json()["detail"] == "Internal server error"
+        assert "Pipeline execution pe-1 failed after approval" in caplog.text
+        failure_record = next(
+            record
+            for record in caplog.records
+            if record.getMessage() == "Pipeline execution pe-1 failed after approval"
+        )
+        assert failure_record.__dict__["execution_id"] == "pe-1"
+        assert failure_record.__dict__["pipeline_name"] == "test"
+        assert failure_record.__dict__["execution_status"] == "failed"
 
     def test_approve_non_waiting_step_returns_conflict(
         self, client: TestClient, mock_server: MagicMock
