@@ -1,7 +1,7 @@
 ---
 name: goal
 description: "Author and execute durable goal loops: intake -> draft .gobby/goals/<slug>.md -> confirm -> execute in solo or swarm mode against an anchor task. Use for /gobby goal, goal run/resume/status, autonomous epic burn-down, and compact-and-continue loops."
-version: "1.0.0"
+version: "1.1.0"
 category: core
 triggers: goal, goal loop, autonomous loop, burn down epic, run until done
 metadata:
@@ -271,6 +271,80 @@ required.
    these variables are cleared.
 5. Report: criteria evidence, iterations, workers used, anything suspended or
    escalated.
+
+## Presets
+
+Presets are starting-point goal docs for recurring loop shapes. Copy one into
+`.gobby/goals/<slug>.md`, fill the placeholders, then confirm and kick off
+like any other goal.
+
+### build-coordinator
+
+Coordinate a `gobby build` run as a goal: the coordination epic is the anchor
+and the build-coordinator skill's During The Build loop is the Procedure. The
+executing session must load the `build-coordinator` skill alongside this one —
+it owns build semantics (startup, routing, bug policy, restart gates); the
+goal doc owns the loop. Mode is `solo`: build automation dispatches its own
+agents; the coordinator works coordination bugs itself, so the goal swarm
+loop is not involved.
+
+```markdown
+---
+goal: Coordinate gobby build <target-ref>
+status: draft
+anchor: "<coordination-epic-ref>"
+mode: solo
+created: <date>
+sessions: ["<session-ref>"]
+---
+
+## Objective
+Run gobby build <target-ref> to completion as coordinator: daemon-owned
+automation finishes the target tree, and every gobby build bug discovered
+during the run is fixed, committed, and closed under the coordination epic.
+
+## Success Criteria
+- [ ] Target work complete per its stages; no leaf in the wrong stage.
+- [ ] Every discovered build bug closed with a linked commit.
+- [ ] No agents running, no stray claims, no stale worktrees or clones.
+- [ ] Merge stage records the real merge SHA where applicable.
+
+## Non-Goals
+- Implementing product leaves yourself — assigned agents own product work.
+- Manual dispatcher ticking to keep the build moving.
+
+## Procedure
+1. Load the build-coordinator skill; run its Startup with this anchor as the
+   coordination epic; launch `gobby build <target-ref> --coordinator current`.
+2. Sweep per During The Build: build state, dispatch eligibility, active
+   agents, build history, workspace health, open coordination bugs.
+3. Work the highest-priority actionable coordination bug yourself; resume
+   automation only after blocking bugs are fixed. Daemon or build-system
+   fixes pass the Post-Fix Daemon Restart Gate before releasing blockers.
+4. compact_self after finishing a coordination bug or on context pressure.
+5. Idle only via bounded wait_for_agent (timeout_seconds=300); then go to 2.
+6. Build done: verify the build-coordinator Completion Gates, close the
+   anchor, set status: done, clear variables.
+
+## Budgets
+- max_iterations: 30
+- max_active_agents: <build concurrency>
+- max_runtime: 8h
+
+## Stop Conditions
+- Completion Gates met and anchor closed -> status: done
+- Any budget exceeded -> suspend, log, notify the user
+- External stop signal or user cancel -> suspend
+
+## Escalation
+- Blocked on a decision: escalate_task on the blocking bug, message the
+  user, continue other actionable work.
+- Never guess on: changing the required agent, provider, lifecycle route,
+  task scope, or acceptance criteria to make a build pass.
+
+## Progress Log
+- <date> <session-ref> setup — coordination epic created, build launched.
+```
 
 ## Boundaries
 

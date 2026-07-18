@@ -1,7 +1,7 @@
 ---
 name: build-coordinator
 description: "Use when coordinating a full gobby build run for an epic or task, especially when the user assigns the current session as coordinator, asks for a coordination epic, wants build agents/worktrees monitored, or wants gobby build bugs fixed so future runs work unattended."
-version: "1.1.0"
+version: "1.2.0"
 category: core
 triggers: gobby build coordinator, epic coordinator, coordination epic, unattended build, build bugs
 metadata:
@@ -250,44 +250,14 @@ discovered build bug from the run is fixed or explicitly blocked on a user
 decision. Keep discovered build bugs under the coordination epic while they are
 open; do not detach or reparent them to make the coordinator task closable.
 
-## Goal Prompt Template
+## Goal Preset
 
-When the user asks for a reusable `/goal` prompt, adapt this:
-
-```text
-$gobby build-coordinator <target-ref>
-/goal Act as the Gobby build coordinator for <target-ref>.
-
-Create a separate coordination epic outside <target-ref>. Use it for coordinator
-work and every gobby build bug discovered during this run.
-
-Run `gobby build <target-ref> --coordinator current` without `--quick`. If
-<target-ref> belongs to another project, run
-`gobby build <target-ref> --project <target-project> --coordinator current`.
-Coordinate agents and worktrees, but treat coordinator intervention as evidence
-of unattended-build gaps. File every discovered build bug under the coordination
-epic. Fix blocking build bugs immediately, fix non-blocking build bugs when
-opportunity arises, and fix all discovered build bugs before closing
-<target-ref>.
-
-Before dispatch, inspect the target task tree and normalize leaf task stages to
-the required stage. Default implementation leaves to development unless the user
-specified another stage.
-
-Monitor dispatch and the coordination epic every loop: build status, stage
-state, active agents, build history, workspace health, and open child bugs. Work
-actionable build bugs under the coordination epic before waiting. Use
-gobby-sessions:compact_self when context is stale or high, when you have not
-compacted recently, or after completing a coordination bug task. Use
-gobby-agents:wait_for_agent as the last idle action only when agents are running
-and no actionable coordinator work remains; use a bounded five-minute wait
-(`timeout_seconds=300`) for a specific run result.
-Resolve escalations yourself unless a genuine user decision is required.
-
-Completion requires the target work complete, all discovered build bugs fixed and
-closed with linked commits, required validation run, no unexpected running agents
-or claimed tasks, and final status covering build state, validation, bug fixes,
-escalations, and task states. Do not close the coordination epic to clear a stop
-hook while any completion requirement remains unmet; compact or continue the
-session instead.
-```
+Build coordination runs as a goal. When the user wants a reusable prompt or a
+durable loop for a coordinator run, use `/gobby goal` with the
+`build-coordinator` preset from the `goal` skill (`$gobby goal` in Codex)
+instead of a hand-rolled prompt: copy the preset into
+`.gobby/goals/build-<target>.md` — the coordination epic is the anchor and
+this skill's During The Build loop is the Procedure — then kick it off per the
+goal skill's Confirm & Kickoff options. The executing session loads this skill
+alongside the goal skill: the goal doc drives the loop, this skill drives the
+build semantics.
