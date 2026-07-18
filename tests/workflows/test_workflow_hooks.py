@@ -78,7 +78,6 @@ def test_handler_returns_allow_without_rule_engine(workflow_handler: WorkflowHoo
 def test_hook_manager_integration() -> None:
     """HookManager delegates workflow hook evaluation when daemon health is cached."""
     with (
-        patch("gobby.hooks.factory.HookManagerFactory._create_database", return_value=MagicMock()),
         patch("gobby.hooks.factory.SessionManager") as MockSessionManagerClass,
         patch("gobby.hooks.factory.SessionTaskManager"),
         patch("gobby.hooks.factory.DaemonClient") as MockDaemonClientClass,
@@ -95,7 +94,7 @@ def test_hook_manager_integration() -> None:
         mock_session_manager_instance = MockSessionManagerClass.return_value
         mock_session_manager_instance.get_session_id.return_value = MOCK_SESSION_ID
 
-        manager = HookManager(log_file="/tmp/gobby-test.log")
+        manager = HookManager(database=MagicMock())
 
         event = HookEvent(
             event_type=HookEventType.BEFORE_TOOL,
@@ -122,7 +121,6 @@ def test_hook_manager_integration() -> None:
 
 def test_hook_manager_blocks_on_workflow() -> None:
     with (
-        patch("gobby.hooks.factory.HookManagerFactory._create_database", return_value=MagicMock()),
         patch("gobby.hooks.factory.SessionManager") as MockSessionManagerClass,
         patch("gobby.hooks.factory.SessionTaskManager"),
         patch("gobby.hooks.factory.DaemonClient") as MockDaemonClientClass,
@@ -141,7 +139,7 @@ def test_hook_manager_blocks_on_workflow() -> None:
         mock_session_manager_instance = MockSessionManagerClass.return_value
         mock_session_manager_instance.get_session_id.return_value = MOCK_SESSION_ID
 
-        manager = HookManager(log_file="/tmp/gobby-test.log")
+        manager = HookManager(database=MagicMock())
 
         event = HookEvent(
             event_type=HookEventType.BEFORE_TOOL,
