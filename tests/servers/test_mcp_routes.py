@@ -35,6 +35,7 @@ import pytest
 from fastapi.testclient import TestClient
 from starlette.requests import ClientDisconnect
 
+from gobby.adapters.qwen import QwenAdapter
 from gobby.app_context import ServiceContainer
 from gobby.config.app import DaemonConfig
 from gobby.hooks.events import HookResponse
@@ -3196,8 +3197,15 @@ class TestHooksEndpoints:
         hook_manager = _mock_hook_manager()
         hook_manager.handle.return_value = hook_response
         server.app.state.hook_manager = hook_manager
+        adapter = QwenAdapter(hook_manager=hook_manager)
 
-        with TestClient(server.app) as client:
+        with (
+            patch(
+                "gobby.adapters.qwen.QwenAdapter",
+                return_value=adapter,
+            ) as adapter_constructor,
+            TestClient(server.app) as client,
+        ):
             response = client.post(
                 "/api/hooks/execute",
                 json=_hook_envelope(
@@ -3212,6 +3220,7 @@ class TestHooksEndpoints:
 
         assert response.status_code == 200
         assert response.json() == expected
+        adapter_constructor.assert_called_once_with(hook_manager=hook_manager)
 
     def test_execute_hook_qwen_stop_evaluation_failure_returns_structured_block(
         self,
@@ -3225,8 +3234,15 @@ class TestHooksEndpoints:
         hook_manager = _mock_hook_manager()
         hook_manager.handle.side_effect = RuntimeError("rule engine unavailable")
         server.app.state.hook_manager = hook_manager
+        adapter = QwenAdapter(hook_manager=hook_manager)
 
-        with TestClient(server.app) as client:
+        with (
+            patch(
+                "gobby.adapters.qwen.QwenAdapter",
+                return_value=adapter,
+            ) as adapter_constructor,
+            TestClient(server.app) as client,
+        ):
             response = client.post(
                 "/api/hooks/execute",
                 json=_hook_envelope(
@@ -3241,6 +3257,7 @@ class TestHooksEndpoints:
         assert response.json()["continue"] is True
         assert response.json()["decision"] == "block"
         assert "blocking this critical hook for safety" in response.json()["reason"]
+        adapter_constructor.assert_called_once_with(hook_manager=hook_manager)
 
     def test_execute_hook_droid_adapter_error_is_graceful(
         self,
