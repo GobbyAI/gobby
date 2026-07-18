@@ -184,7 +184,7 @@ class TTSPipeline:
             raise
         except Exception as exc:
             self._failed = True
-            logger.error("TTS synthesis/send failed", exc_info=True)
+            logger.exception("TTS synthesis/send failed")
             error_message = str(exc).strip() or "TTS synthesis failed"
             await _broadcast_tts_status(
                 self.clients,

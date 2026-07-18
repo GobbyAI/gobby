@@ -236,10 +236,9 @@ class ChatStreamEventHandler:
                     exc_info=True,
                 )
             except Exception:
-                logger.error(
+                logger.exception(
                     "Unexpected TTS feed_text failure",
                     extra={"conversation_id": self.conversation_id},
-                    exc_info=True,
                 )
                 raise
         return True
@@ -403,10 +402,9 @@ class ChatStreamEventHandler:
                     exc_info=True,
                 )
             except Exception:
-                logger.error(
+                logger.exception(
                     "Unexpected TTS flush failure",
                     extra={"conversation_id": self.conversation_id},
-                    exc_info=True,
                 )
                 raise
 

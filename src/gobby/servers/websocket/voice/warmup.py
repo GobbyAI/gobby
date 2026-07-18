@@ -353,7 +353,7 @@ class VoiceWarmupMixin:
             self._stt_warmup_next_retry_at = time.monotonic() + min(
                 30.0 * 2**self._stt_warmup_failures, 600.0
             )
-            logger.error("Whisper STT warmup failed", exc_info=True)
+            logger.exception("Whisper STT warmup failed")
 
     async def _warm_tts_model(self) -> None:
         """Warm the configured TTS model."""
@@ -386,7 +386,7 @@ class VoiceWarmupMixin:
             self._tts_warmup_next_retry_at = time.monotonic() + min(
                 30.0 * 2**self._tts_warmup_failures, 600.0
             )
-            logger.error("TTS warmup failed", exc_info=True)
+            logger.exception("TTS warmup failed")
 
     async def _ensure_stt_deps(self, voice_config: VoiceConfig) -> bool:
         """Check required STT dependencies."""

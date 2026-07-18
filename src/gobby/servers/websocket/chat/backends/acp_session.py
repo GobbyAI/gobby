@@ -251,12 +251,11 @@ class ACPManagedChatSession(
                     context_window=self._resolve_context_window(),
                 )
             except OSError as exc:
-                logger.error(
+                logger.exception(
                     "%s managed session %s error: %s",
                     self._provider_label(),
                     self.conversation_id,
                     exc,
-                    exc_info=True,
                 )
                 yield TextChunk(content=f"Generation failed: {exc}")
                 yield DoneEvent(tool_calls_count=0, context_window=self._resolve_context_window())

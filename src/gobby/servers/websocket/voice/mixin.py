@@ -397,7 +397,7 @@ class VoiceMixin(VoiceWarmupMixin):
             except (ConnectionClosed, ConnectionClosedError):
                 pass
         except Exception:
-            logger.error("Voice transcription error", exc_info=True)
+            logger.exception("Voice transcription error")
             try:
                 await websocket.send(
                     json_dumps(

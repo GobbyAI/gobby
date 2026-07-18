@@ -339,7 +339,7 @@ class ChatLifecycleMixin:
             # Defensive fail-open for web-chat lifecycle hooks. PreCompact runs
             # on the SDK compaction path; hook failures must not abort the
             # compaction itself or strand the active conversation.
-            logger.error("Lifecycle evaluation failed for %s: %s", event_type, e, exc_info=True)
+            logger.exception("Lifecycle evaluation failed for %s: %s", event_type, e)
             return None
 
     async def _evaluate_blocking_webhooks(
@@ -411,7 +411,7 @@ class ChatLifecycleMixin:
                     "system_message": None,
                 }
         except Exception as exc:
-            logger.error("Blocking webhook evaluation failed: %s", exc, exc_info=True)
+            logger.exception("Blocking webhook evaluation failed: %s", exc)
             # Fail-open for webhook errors
 
         return None
@@ -464,11 +464,10 @@ class ChatLifecycleMixin:
             if handler_response and handler_response.context:
                 return handler_response.context
         except Exception as exc:
-            logger.error(
+            logger.exception(
                 "_fire_lifecycle: event handler %s failed: %s",
                 event_type.name,
                 exc,
-                exc_info=True,
             )
         return None
 
