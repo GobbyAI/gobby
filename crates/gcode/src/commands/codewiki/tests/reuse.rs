@@ -1980,11 +1980,6 @@ fn deleted_file_rewrites_stale_ownership_file_links() {
         .expect("ownership page on disk");
     assert!(ownership_before.contains("code/files/src/group/two.rs|"));
 
-    let mut second_input = input;
-    second_input.files.retain(|file| file != "src/group/two.rs");
-    second_input
-        .symbols
-        .retain(|symbol| symbol.file_path != "src/group/two.rs");
     let mut second_generator =
         |_prompt: &str, _system: &str, _tier: PromptTier| Some("Second prose.".to_string());
     let mut plan = ReusePlan::load(project.path(), &out_dir, "symbols").expect("reuse plan loads");
@@ -1992,7 +1987,10 @@ fn deleted_file_rewrites_stale_ownership_file_links() {
     let mut progress = CodewikiProgress::silent();
     let mut second_meta = OwnershipMeta::default();
     let second = collect_docs(
-        &second_input,
+        // Keep the deleted path in the indexed input. Ownership generation
+        // must take its final link set from the filesystem, not this stale
+        // snapshot.
+        &input,
         GenerateDocsOptions {
             ownership: Some((project.path(), &mut second_meta)),
             generate: Some(&mut second_generator),

@@ -539,6 +539,15 @@ pub(crate) fn generate_hierarchical_docs(
     ))?;
     if let Some((project_root, ownership_meta)) = ownership {
         progress.emit("generating ownership docs");
+        // Codewiki input comes from the index and can outlive a source file
+        // during a long or resumed run. Ownership is emitted near the end, so
+        // take a fresh filesystem view here instead of publishing links for
+        // indexed paths that have since disappeared (#18483).
+        let ownership_files = files
+            .iter()
+            .filter(|file| project_root.join(file).is_file())
+            .cloned()
+            .collect::<Vec<_>>();
         // Ownership may only link module pages this run actually emitted;
         // raw `file_modules` cluster names can diverge from that set (#18005).
         let emitted_modules = module_docs
@@ -560,7 +569,7 @@ pub(crate) fn generate_hierarchical_docs(
                     .iter()
                     .map(String::as_str)
                     .chain(std::iter::once("--files--"))
-                    .chain(files.iter().map(String::as_str))
+                    .chain(ownership_files.iter().map(String::as_str))
                     .collect::<Vec<_>>()
                     .join("\n")
                     .as_bytes(),
@@ -570,7 +579,7 @@ pub(crate) fn generate_hierarchical_docs(
             path: "code/_ownership.md".to_string(),
             content: build_ownership_doc(
                 project_root,
-                &files,
+                &ownership_files,
                 &file_modules,
                 &emitted_modules,
                 ownership_meta,
