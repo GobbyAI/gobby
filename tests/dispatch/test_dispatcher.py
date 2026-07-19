@@ -545,6 +545,135 @@ async def test_stage_pipeline_loader_unexpected_error_propagates() -> None:
         )
 
 
+class _EnabledPipelineLoader:
+    async def load_pipeline(self, _name: str, _project_id: str) -> SimpleNamespace:
+        return SimpleNamespace(enabled=True, deprecated=False)
+
+
+def _unexpected_pipeline_call(*_args: object, **_kwargs: object) -> object:
+    raise AssertionError("pipeline dispatch should not reach this call")
+
+
+@pytest.mark.asyncio
+async def test_stage_pipeline_spawn_runs_on_current_loop_when_durable(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from gobby.dispatch import stage_pipeline
+
+    monkeypatch.setattr(
+        stage_pipeline, "reset_stage_pipeline_retry_neutral", lambda *_a, **_k: None
+    )
+    executed: dict[str, object] = {}
+    registered: list[tuple[str, asyncio.Task[object]]] = []
+
+    async def fake_execute(
+        _executor: object,
+        _pipeline: object,
+        _inputs: object,
+        _project_id: object,
+        execution_id: str,
+        _pipeline_name: str,
+        session_id: str | None = None,
+    ) -> None:
+        executed["loop"] = asyncio.get_running_loop()
+        executed["execution_id"] = execution_id
+
+    result = await stage_pipeline.start_pipeline_action(
+        _pipeline_action("7d34e462-6ba3-5a6c-b1c6-1584b855cb83"),
+        mutex=object(),
+        db=object(),
+        context=SimpleNamespace(project_id="0e27d5b7-167e-5a64-8bd9-6b980bd88f06"),
+        services=SimpleNamespace(
+            pipeline_executor=SimpleNamespace(loader=_EnabledPipelineLoader()),
+            main_loop=asyncio.get_running_loop(),
+            triggering_session_id=None,
+        ),
+        field=lambda obj, key, default=None: getattr(obj, key, default),
+        escalate_pipeline_dispatch=_unexpected_pipeline_call,
+        retry_neutral_pipeline_dispatch=_unexpected_pipeline_call,
+        render_dispatch_inputs=lambda *_a, **_k: {},
+        create_stage_pipeline_execution=lambda *_a, **_k: "exec-current-loop",
+        execute_pipeline_background=fake_execute,
+        register_background_task=lambda execution_id, task: registered.append((execution_id, task)),
+    )
+
+    assert result == {"success": True, "execution_id": "exec-current-loop", "status": "running"}
+    assert registered and registered[0][0] == "exec-current-loop"
+    await registered[0][1]
+    assert executed["loop"] is asyncio.get_running_loop()
+    assert executed["execution_id"] == "exec-current-loop"
+
+
+@pytest.mark.asyncio
+async def test_stage_pipeline_spawn_hands_off_to_main_loop_from_ephemeral_loop(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A tick on a short-lived loop must not strand the execution (task #18611).
+
+    Mirrors the HTTP build route, which drives the build service via
+    asyncio.run inside a worker thread: the pipeline coroutine must land on
+    the durable main loop and run to completion after the tick's loop is gone.
+    """
+    from gobby.dispatch import stage_pipeline
+
+    monkeypatch.setattr(
+        stage_pipeline, "reset_stage_pipeline_retry_neutral", lambda *_a, **_k: None
+    )
+    main_loop = asyncio.get_running_loop()
+    executed: dict[str, object] = {}
+    execution_done = asyncio.Event()
+    registered: list[tuple[str, asyncio.Task[object]]] = []
+
+    async def fake_execute(
+        _executor: object,
+        _pipeline: object,
+        _inputs: object,
+        _project_id: object,
+        execution_id: str,
+        _pipeline_name: str,
+        session_id: str | None = None,
+    ) -> None:
+        executed["loop"] = asyncio.get_running_loop()
+        executed["execution_id"] = execution_id
+        execution_done.set()
+
+    services = SimpleNamespace(
+        pipeline_executor=SimpleNamespace(loader=_EnabledPipelineLoader()),
+        main_loop=main_loop,
+        triggering_session_id=None,
+    )
+
+    def run_tick_on_ephemeral_loop() -> dict[str, object]:
+        return asyncio.run(
+            stage_pipeline.start_pipeline_action(
+                _pipeline_action("7d34e462-6ba3-5a6c-b1c6-1584b855cb83"),
+                mutex=object(),
+                db=object(),
+                context=SimpleNamespace(project_id="0e27d5b7-167e-5a64-8bd9-6b980bd88f06"),
+                services=services,
+                field=lambda obj, key, default=None: getattr(obj, key, default),
+                escalate_pipeline_dispatch=_unexpected_pipeline_call,
+                retry_neutral_pipeline_dispatch=_unexpected_pipeline_call,
+                render_dispatch_inputs=lambda *_a, **_k: {},
+                create_stage_pipeline_execution=lambda *_a, **_k: "exec-handoff",
+                execute_pipeline_background=fake_execute,
+                register_background_task=lambda execution_id, task: registered.append(
+                    (execution_id, task)
+                ),
+            )
+        )
+
+    result = await asyncio.to_thread(run_tick_on_ephemeral_loop)
+
+    assert result == {"success": True, "execution_id": "exec-handoff", "status": "running"}
+    await asyncio.wait_for(execution_done.wait(), timeout=2)
+    assert executed["loop"] is main_loop
+    assert executed["execution_id"] == "exec-handoff"
+    assert registered and registered[0][0] == "exec-handoff"
+    assert registered[0][1].get_loop() is main_loop
+    await registered[0][1]
+
+
 def test_candidate_filter_excludes_claimed_leased_blocked_terminal(temp_db, sample_project) -> None:
     """Candidate filter excludes claimed leased blocked terminal."""
     from gobby.storage.tasks import _automation

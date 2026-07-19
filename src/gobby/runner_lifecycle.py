@@ -146,6 +146,12 @@ async def run_daemon(runner: GobbyRunner, pid_claim: PidFileClaim | None = None)
         global _startup_tracker
         _startup_tracker = StartupTracker()
 
+        main_loop = asyncio.get_running_loop()
+        runner.main_loop = main_loop
+        http_services = getattr(runner.http_server, "services", None)
+        if http_services is not None:
+            http_services.main_loop = main_loop
+
         setup_signal_handlers(
             runner.request_shutdown,
             shutdown_intent_callback=runner.request_shutdown,

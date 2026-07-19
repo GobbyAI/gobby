@@ -122,18 +122,31 @@ async def start_pipeline_action(
             action, mutex, db, f"pipeline_attach_failed:unexpected:{exc}"
         )
     reset_stage_pipeline_retry_neutral(db, action.task_id, action.stage_name)
-    task: asyncio.Task[Any] = asyncio.create_task(
-        execute_pipeline_background(
-            executor,
-            pipeline,
-            inputs,
-            project_id,
-            execution_id,
-            action.pipeline_name,
-            session_id=getattr(services, "triggering_session_id", None),
-        ),
-        name=f"stage-pipeline-{action.pipeline_name}-{execution_id[:8]}",
+    coro = execute_pipeline_background(
+        executor,
+        pipeline,
+        inputs,
+        project_id,
+        execution_id,
+        action.pipeline_name,
+        session_id=getattr(services, "triggering_session_id", None),
     )
+    task_name = f"stage-pipeline-{action.pipeline_name}-{execution_id[:8]}"
+    main_loop = getattr(services, "main_loop", None)
+    current_loop = asyncio.get_running_loop()
+    if main_loop is not None and main_loop is not current_loop and not main_loop.is_closed():
+        # A tick may run on a short-lived loop (the HTTP build route drives the
+        # service via asyncio.run in a worker thread); a task created there is
+        # cancelled with that loop and the execution row strands at 'pending'
+        # until the heartbeat fails it, so the coroutine must live on the
+        # daemon's main loop instead.
+        def _spawn_on_main_loop() -> None:
+            spawned: asyncio.Task[Any] = asyncio.create_task(coro, name=task_name)
+            register_background_task(execution_id, spawned)
+
+        main_loop.call_soon_threadsafe(_spawn_on_main_loop)
+        return {"success": True, "execution_id": execution_id, "status": "running"}
+    task: asyncio.Task[Any] = asyncio.create_task(coro, name=task_name)
     register_background_task(execution_id, task)
     return {"success": True, "execution_id": execution_id, "status": "running"}
 

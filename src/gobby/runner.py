@@ -189,6 +189,9 @@ class GobbyRunner:
         )
 
         self.degraded_services = set()
+        # Captured by run_daemon once the daemon's long-lived loop is running;
+        # dispatch uses it to keep fire-and-forget work off short-lived loops.
+        self.main_loop: asyncio.AbstractEventLoop | None = None
         init_storage_and_config(self, config_path, verbose)
         init_services(self)
         init_orchestration(self)

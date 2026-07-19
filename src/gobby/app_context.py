@@ -118,6 +118,10 @@ class ServiceContainer:
     websocket_server: Any | None = None  # GobbyWebSocketServer
     startup_ready: bool = False
     shutdown_in_progress: bool = False
+    # The daemon's long-lived event loop, captured at run_daemon startup.
+    # Fire-and-forget work spawned from short-lived loops (e.g. the HTTP build
+    # route's worker-thread tick) must be scheduled here to survive the caller.
+    main_loop: asyncio.AbstractEventLoop | None = None
 
     # Lazy wiring for per-project executors
     tool_proxy_getter: Any | None = None  # Callable[[], ToolProxyService]
