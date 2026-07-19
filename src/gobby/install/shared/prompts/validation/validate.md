@@ -41,6 +41,14 @@ criteria or failing/missing gates in `blocking_reasons`; an `invalid` verdict wi
 empty `blocking_reasons` list is not allowed. When you return `valid`, `blocking_reasons`
 MUST be an empty list.
 
+`current_failure_evidence` is required on every verdict. Populate it with one string
+for each currently failing state you attest exists, and return an empty array when
+nothing is currently failing. A current failure does not include TDD red-phase
+history, quoted failure examples, descriptions of failure-handling code such as
+`FAILED=1`, or data/status values named `failed`. Those can appear in `feedback`
+without being current failures. A `valid` verdict with non-empty
+`current_failure_evidence` is contradictory and will be deterministically demoted.
+
 When a Changed File Manifest is present, treat it as authoritative for which
 files changed. Do not infer source, UI, test, docs, or config changes that are
 not listed there. If it says `Source/UI files changed: none`, do not require
@@ -70,9 +78,13 @@ File Context:
 {% endif %}
 IMPORTANT: Return ONLY a JSON object, nothing else. No explanation, no preamble.
 The object has "status" (one of "valid", "invalid", "pending"), "feedback" (a short
-justification), and "blocking_reasons" (a list naming the specific unmet criteria or
+justification), "blocking_reasons" (a list naming the specific unmet criteria or
 failing/missing gates — empty when status is "valid", non-empty when status is "invalid"
-or "pending").
-Format: {"status": "valid", "feedback": "...", "blocking_reasons": []},
-{"status": "invalid", "feedback": "...", "blocking_reasons": ["..."]},
-or {"status": "pending", "feedback": "...", "blocking_reasons": ["..."]}
+or "pending"), and "current_failure_evidence" (the required current-failure array
+defined above).
+Format: {"status": "valid", "feedback": "...", "blocking_reasons": [],
+"current_failure_evidence": []},
+{"status": "invalid", "feedback": "...", "blocking_reasons": ["..."],
+"current_failure_evidence": ["..."]},
+or {"status": "pending", "feedback": "...", "blocking_reasons": ["..."],
+"current_failure_evidence": []}

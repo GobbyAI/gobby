@@ -49,8 +49,9 @@ def validate_task_cmd(
 
     from gobby.config.app import load_config
     from gobby.llm import LLMService
-    from gobby.tasks.validation import TaskValidator, ValidationResult
+    from gobby.tasks.validation import TaskValidator
     from gobby.tasks.validation_history import ValidationHistoryManager
+    from gobby.tasks.validation_verdict import ValidationResult, format_close_validation_message
 
     manager = get_task_manager()
     resolved = resolve_task_id(manager, task_id)
@@ -111,8 +112,18 @@ def validate_task_cmd(
             result = ValidationResult(status="invalid", feedback=feedback)
 
         click.echo(f"Validation Status: {result.status.upper()}")
-        if result.feedback:
+        if result.status == "valid" and result.feedback:
             click.echo(f"Feedback:\n{result.feedback}")
+        elif result.status != "valid":
+            click.echo(
+                format_close_validation_message(
+                    result.status,
+                    result.feedback,
+                    result.blocking_reasons,
+                    result.verdict_override,
+                    lead="Validation blocked",
+                )
+            )
 
         # Update validation status
         updates: dict[str, Any] = {
@@ -166,8 +177,18 @@ def validate_task_cmd(
         )
 
         click.echo(f"Validation Status: {result.status.upper()}")
-        if result.feedback:
+        if result.status == "valid" and result.feedback:
             click.echo(f"Feedback:\n{result.feedback}")
+        elif result.status != "valid":
+            click.echo(
+                format_close_validation_message(
+                    result.status,
+                    result.feedback,
+                    result.blocking_reasons,
+                    result.verdict_override,
+                    lead="Validation blocked",
+                )
+            )
 
         # Apply validation updates
         validation_updates: dict[str, Any] = {

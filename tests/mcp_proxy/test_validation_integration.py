@@ -6,13 +6,16 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
+from gobby.config.tasks import TaskValidationConfig
+from gobby.llm import LLMService
 from gobby.mcp_proxy.tools.tasks import create_task_registry
 from gobby.mcp_proxy.tools.tasks._lifecycle_close import CLOSE_VALIDATION_EVIDENCE_CONTEXT_LIMIT
 from gobby.mcp_proxy.tools.tasks._verification_evidence_context import (
     format_verification_evidence_context,
 )
 from gobby.storage.tasks import LocalTaskManager, StageState, Task
-from gobby.tasks.validation import TaskValidator, ValidationResult
+from gobby.tasks.validation import TaskValidator
+from gobby.tasks.validation_verdict import ValidationResult
 from gobby.utils.session_context import session_context_for_test
 from gobby.workflows.verification_evidence import VERIFICATION_EVIDENCE_VARIABLE
 
@@ -159,6 +162,149 @@ def mock_task_validator() -> AsyncMock:
 # ============================================================================
 # Close Task with Commit-Based Validation Tests
 # ============================================================================
+
+
+async def _close_with_static_verdict(
+    task_manager: MagicMock,
+    repo_path: str,
+    payload: dict[str, object],
+    *,
+    diff: str = "diff --git a/check.sh b/check.sh\n+FAILED=1\n",
+) -> tuple[dict[str, Any], MagicMock, AsyncMock]:
+    task = _task(
+        id="structured-verdict-task",
+        title="Structured validation verdict",
+        project_id="p1",
+        status="open",
+        description="Implement structured validation.",
+        validation_criteria="Focused tests pass.",
+        commits=["abc123"],
+        priority=2,
+        task_type="task",
+        created_at="now",
+        updated_at="now",
+    )
+    task_manager.get_task.return_value = task
+    task_manager.list_tasks.return_value = []
+    task_manager.close_task.return_value = task
+    task_manager.increment_validation_failure.return_value = (1, False)
+    llm_service = MagicMock(spec=LLMService)
+    llm_service.call_json_feature = AsyncMock(return_value=payload)
+    validator = TaskValidator(
+        TaskValidationConfig(enabled=True, tool_loop_enabled=False),
+        llm_service,
+    )
+    validator._loader = MagicMock()
+    validator._loader.render.side_effect = lambda _path, context: context["changes_section"]
+
+    with (
+        patch("gobby.mcp_proxy.tools.tasks._context.TaskDependencyManager"),
+        patch("gobby.mcp_proxy.tools.tasks._context.SessionTaskManager"),
+        patch(
+            "gobby.tasks.commits.collect_task_diff_text",
+            return_value=_diff_result(diff=diff, commits=["abc123"], file_count=1),
+        ),
+        patch(
+            "gobby.mcp_proxy.tools.tasks._lifecycle_close.prepare_validation_diff",
+            return_value=_prepared_diff(commits=["abc123"], manifest_count=1),
+        ),
+        patch("gobby.mcp_proxy.tools.tasks._context.LocalProjectManager") as project_manager,
+        patch("gobby.utils.git.run_git_command", return_value="abc123"),
+        patch("gobby.utils.git.normalize_commit_sha", side_effect=lambda sha, cwd=None: sha),
+        patch(
+            "gobby.mcp_proxy.tools.tasks._lifecycle_validation._record_validation_iteration"
+        ) as record_iteration,
+    ):
+        project_manager.return_value.get.return_value = MagicMock(repo_path=repo_path)
+        registry = create_task_registry(
+            task_manager=task_manager,
+            sync_manager=MagicMock(),
+            task_validator=validator,
+        )
+        result = await registry.call(
+            "close_task",
+            {"task_id": task.id, "changes_summary": "Implemented structured verdicts."},
+        )
+
+    return result, record_iteration, llm_service.call_json_feature
+
+
+@pytest.mark.integration
+@pytest.mark.asyncio
+async def test_close_task_ignores_failure_vocabulary_when_structured_verdict_is_valid(
+    mock_task_manager: MagicMock, repo_path: str
+) -> None:
+    narrative = "The script sets FAILED=1 on failure; all focused checks pass."
+
+    result, _, call_json = await _close_with_static_verdict(
+        mock_task_manager,
+        repo_path,
+        {
+            "status": "valid",
+            "feedback": narrative,
+            "blocking_reasons": [],
+            "current_failure_evidence": [],
+        },
+    )
+
+    assert result["success"] is True
+    assert "verdict_override" not in result
+    assert "FAILED=1" in call_json.call_args.args[1]
+
+
+@pytest.mark.integration
+@pytest.mark.asyncio
+async def test_close_task_invalid_message_matches_persisted_history(
+    mock_task_manager: MagicMock, repo_path: str
+) -> None:
+    result, record_iteration, _ = await _close_with_static_verdict(
+        mock_task_manager,
+        repo_path,
+        {
+            "status": "invalid",
+            "feedback": "A required regression remains unverified.",
+            "blocking_reasons": ["Missing close-task regression coverage."],
+            "current_failure_evidence": [],
+        },
+    )
+
+    assert result["success"] is False
+    assert result["message"].startswith("Close blocked: validation verdict 'invalid'")
+    assert "Missing close-task regression coverage." in result["message"]
+    persisted = mock_task_manager.increment_validation_failure.call_args.kwargs[
+        "validation_feedback"
+    ]
+    history = record_iteration.call_args.kwargs["feedback"]
+    assert result["message"] == persisted == history
+
+
+@pytest.mark.integration
+@pytest.mark.asyncio
+async def test_close_task_exposes_structured_override_provenance(
+    mock_task_manager: MagicMock, repo_path: str
+) -> None:
+    result, _, _ = await _close_with_static_verdict(
+        mock_task_manager,
+        repo_path,
+        {
+            "status": "valid",
+            "feedback": "The implementation is complete, but a current check failed.",
+            "blocking_reasons": [],
+            "current_failure_evidence": ["pytest: 1 failed"],
+        },
+    )
+
+    assert result["success"] is False
+    assert result["verdict_override"] == {
+        "from": "valid",
+        "to": "invalid",
+        "reason": "current_failure_evidence",
+        "evidence": ["pytest: 1 failed"],
+    }
+    assert (
+        "verdict overridden: validator attested current failures: pytest: 1 failed"
+        in (result["message"])
+    )
 
 
 @pytest.mark.integration

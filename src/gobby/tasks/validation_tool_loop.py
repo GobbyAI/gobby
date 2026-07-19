@@ -39,6 +39,12 @@ from gobby.tasks.diff_paging import (
     read_file_at_commit,
 )
 from gobby.tasks.validation_coverage import analyze_evidence_coverage, plan_tool_calls
+from gobby.tasks.validation_verdict import (
+    contradiction_rejection_message,
+    demote_contradictory_valid,
+    filter_failure_evidence,
+    is_contradictory_valid,
+)
 
 TOOL_LOOP_MAX_CALLS = 32
 TOOL_LOOP_TOOL_TIMEOUT_SECONDS = 30.0
@@ -75,6 +81,7 @@ class ToolLoopVerdict:
     evidence_complete: bool
     trace_summary: tuple[dict[str, object], ...]
     evidence_error: dict[str, object] | None = None
+    verdict_override: dict[str, object] | None = None
 
 
 @dataclass
@@ -83,6 +90,8 @@ class ValidationVerdictSink:
 
     payload: dict[str, object] | None = None
     issued_evidence_refs: set[str] = field(default_factory=set)
+    contradiction_rejections: int = 0
+    last_contradiction: dict[str, object] | None = None
 
     def record_evidence_ref(self, evidence_ref: str) -> None:
         """Record a successful runtime-issued evidence reference."""
@@ -115,7 +124,18 @@ class ValidationVerdictSink:
                     "issued_evidence_refs": sorted(self.issued_evidence_refs),
                 },
             )
-        self.payload = dict(arguments)
+        submitted = dict(arguments)
+        evidence = filter_failure_evidence(submitted.get("current_failure_evidence"))
+        if is_contradictory_valid(submitted.get("status"), evidence):
+            self.last_contradiction = submitted
+            self.contradiction_rejections += 1
+            if self.contradiction_rejections == 1:
+                return BuiltinToolResult(
+                    error_code="verdict_contradiction",
+                    error=contradiction_rejection_message(submitted),
+                    details={"current_failure_evidence": evidence},
+                )
+        self.payload = submitted
         return BuiltinToolResult(
             payload={"accepted": True},
             selector={"kind": "validation_verdict"},
@@ -491,6 +511,10 @@ def build_validation_builtins(
             "status": {"type": "string", "enum": ["valid", "invalid", "pending"]},
             "feedback": {"type": "string"},
             "blocking_reasons": {"type": "array", "items": {"type": "string"}},
+            "current_failure_evidence": {
+                "type": "array",
+                "items": {"type": "string"},
+            },
             "evidence_refs": {"type": "array", "items": {"type": "string"}},
             "evidence_complete": {"type": "boolean"},
         },
@@ -498,6 +522,7 @@ def build_validation_builtins(
             "status",
             "feedback",
             "blocking_reasons",
+            "current_failure_evidence",
             "evidence_refs",
             "evidence_complete",
         ],
@@ -543,10 +568,16 @@ def _build_prompt(
         "same range after snapshot_required or view_changed. Once the aggregate task diff is "
         "complete, do not search the repository or acquire whole files. Cite only evidence_ref "
         "values returned by successful tool invocations.\n"
-        "Finish by calling submit_validation_verdict exactly once with status, feedback, "
-        "blocking_reasons, evidence_refs, and evidence_complete. status must be valid, invalid, "
-        "or pending. Cite every completed evidence page used. After the submission is accepted, "
-        "emit no narrative or additional JSON.\n\n"
+        "Finish by calling submit_validation_verdict with status, feedback, blocking_reasons, "
+        "current_failure_evidence, evidence_refs, and evidence_complete. status must be valid, "
+        "invalid, or pending. current_failure_evidence must contain one entry for each currently "
+        "failing state you attest exists, and must be an empty array when nothing is currently "
+        "failing. A current failure does not include TDD red-phase history, quoted failure "
+        "examples, failure-handling code such as FAILED=1, or status values named failed. Cite "
+        "every completed evidence page used. If a contradictory submission is rejected, correct "
+        "and resubmit it: either return status='invalid' with blocking_reasons, or return an empty "
+        "current_failure_evidence array if nothing is currently failing. After the submission is "
+        "accepted, emit no narrative or additional JSON.\n\n"
         f"Task title: {title}\n"
         f"{category_line}"
         f"{criteria_label}:\n{criteria}\n\n"
@@ -626,6 +657,7 @@ def normalize_tool_loop_result(
     result: ToolChatResult,
     *,
     submitted_verdict: Mapping[str, object] | None = None,
+    rejected_contradiction: Mapping[str, object] | None = None,
     require_submission: bool = False,
 ) -> ToolLoopVerdict:
     """Accept only mode-explicit, runtime-issued evidence from successful invocations."""
@@ -660,6 +692,8 @@ def normalize_tool_loop_result(
 
     if submitted_verdict is not None:
         payload: object = dict(submitted_verdict)
+    elif rejected_contradiction is not None:
+        payload = dict(rejected_contradiction)
     elif require_submission:
         return protocol_error("submit_validation_verdict was not called")
     else:
@@ -669,15 +703,37 @@ def normalize_tool_loop_result(
             return protocol_error("validator must return exactly one typed verdict object")
     if not isinstance(payload, dict):
         return protocol_error("validator must return exactly one typed verdict object")
+    if "current_failure_evidence" not in payload:
+        return protocol_error("current_failure_evidence is required")
     if "evidence_refs" not in payload or "evidence_complete" not in payload:
         return protocol_error("evidence_refs and evidence_complete are required")
+    required_fields = ("status", "feedback", "blocking_reasons")
+    missing_fields = [name for name in required_fields if name not in payload]
+    if missing_fields:
+        return protocol_error(f"{', '.join(missing_fields)} are required")
+
+    raw_status = payload["status"]
+    feedback = payload["feedback"]
+    raw_reasons = payload["blocking_reasons"]
+    raw_failure_evidence = payload["current_failure_evidence"]
     raw_refs = payload["evidence_refs"]
-    if (
-        not isinstance(raw_refs, list)
-        or any(not isinstance(ref, str) for ref in raw_refs)
-        or not isinstance(payload["evidence_complete"], bool)
+    if not isinstance(raw_status, str):
+        return protocol_error("status must be a string")
+    if not isinstance(feedback, str):
+        return protocol_error("feedback must be a string")
+    if not isinstance(raw_reasons, list) or any(
+        not isinstance(reason, str) for reason in raw_reasons
     ):
+        return protocol_error("blocking_reasons must be an array of strings")
+    if not isinstance(raw_failure_evidence, list) or any(
+        not isinstance(item, str) for item in raw_failure_evidence
+    ):
+        return protocol_error("current_failure_evidence must be an array of strings")
+    if not isinstance(raw_refs, list) or any(not isinstance(ref, str) for ref in raw_refs):
+        return protocol_error("evidence_refs must be an array of strings")
+    if not isinstance(payload["evidence_complete"], bool):
         return protocol_error("evidence_refs or evidence_complete has an invalid type")
+
     issued_refs = set(coverage.evidence_refs)
     verified_refs = tuple(dict.fromkeys(ref for ref in raw_refs if ref in issued_refs))
     fabricated_refs = tuple(dict.fromkeys(ref for ref in raw_refs if ref not in issued_refs))
@@ -694,8 +750,7 @@ def normalize_tool_loop_result(
             trace_summary=trace_summary,
             evidence_error=invalid_ref_error,
         )
-    raw_status = payload.get("status")
-    if not isinstance(raw_status, str) or raw_status not in _VERDICT_STATUSES:
+    if raw_status not in _VERDICT_STATUSES:
         return protocol_error("status must be valid, invalid, or pending")
     status = cast(Literal["valid", "invalid", "pending"], raw_status)
     if status != "pending" and not any(
@@ -707,14 +762,15 @@ def normalize_tool_loop_result(
             evidence_complete=True,
             trace_summary=trace_summary,
         )
-    feedback = payload.get("feedback")
-    feedback_text = feedback if isinstance(feedback, str) else None
-    raw_reasons = payload.get("blocking_reasons")
-    blocking_reasons = (
-        tuple(reason for reason in raw_reasons if isinstance(reason, str))
-        if isinstance(raw_reasons, list)
-        else ()
-    )
+    normalized_payload = dict(payload)
+    normalized_payload["current_failure_evidence"] = filter_failure_evidence(raw_failure_evidence)
+    normalized_payload = demote_contradictory_valid(normalized_payload)
+    normalized_status = normalized_payload.get("status")
+    assert isinstance(normalized_status, str)
+    status = cast(Literal["valid", "invalid", "pending"], normalized_status)
+    normalized_reasons = normalized_payload.get("blocking_reasons")
+    assert isinstance(normalized_reasons, list)
+    blocking_reasons = tuple(reason.strip() for reason in normalized_reasons if reason.strip())
     if status == "valid":
         blocking_reasons = ()
     elif status == "invalid" and not blocking_reasons:
@@ -727,7 +783,7 @@ def normalize_tool_loop_result(
     return ToolLoopVerdict(
         status=status,
         feedback=_feedback_with_provenance(
-            feedback_text,
+            feedback,
             evidence_refs=verified_refs,
             evidence_complete=True,
             trace_summary=trace_summary,
@@ -736,6 +792,10 @@ def normalize_tool_loop_result(
         evidence_refs=verified_refs,
         evidence_complete=True,
         trace_summary=trace_summary,
+        verdict_override=cast(
+            dict[str, object] | None,
+            normalized_payload.get("verdict_override"),
+        ),
     )
 
 
@@ -818,5 +878,6 @@ async def validate_with_tool_loop(
     return normalize_tool_loop_result(
         result,
         submitted_verdict=verdict_sink.payload,
+        rejected_contradiction=verdict_sink.last_contradiction,
         require_submission=True,
     )

@@ -14,6 +14,7 @@ from click.testing import CliRunner
 
 from gobby.cli import cli
 from gobby.config import DaemonConfig
+from gobby.tasks.validation_verdict import ValidationResult
 
 pytestmark = pytest.mark.unit
 
@@ -113,6 +114,90 @@ class TestValidateCommandWithNewFlags:
         )
         call_kwargs = mock_manager.update_task.call_args.kwargs
         assert "Exceeded max retries (2)" in call_kwargs["validation_feedback"]
+
+    @patch("gobby.cli.tasks.ai.get_task_manager")
+    @patch("gobby.cli.tasks.ai.resolve_task_id")
+    @patch("gobby.config.app.load_config")
+    @patch("gobby.tasks.validation.TaskValidator")
+    def test_invalid_override_uses_validation_blocked_formatter(
+        self,
+        mock_validator_cls: MagicMock,
+        mock_load_config: MagicMock,
+        mock_resolve: MagicMock,
+        mock_get_manager: MagicMock,
+        runner: CliRunner,
+        mock_task: MagicMock,
+    ) -> None:
+        mock_resolve.return_value = mock_task
+        mock_manager = MagicMock()
+        mock_manager.list_tasks.return_value = []
+        mock_get_manager.return_value = mock_manager
+        mock_load_config.return_value = DaemonConfig()
+        mock_validator_cls.return_value.validate_task = MagicMock(
+            return_value=ValidationResult(
+                status="invalid",
+                feedback="The implementation otherwise satisfies the criteria.",
+                blocking_reasons=["pytest: 1 failed"],
+                verdict_override={
+                    "from": "valid",
+                    "to": "invalid",
+                    "reason": "current_failure_evidence",
+                    "evidence": ["pytest: 1 failed"],
+                },
+            )
+        )
+
+        async def validate(*args: object, **kwargs: object) -> ValidationResult:
+            del args, kwargs
+            return mock_validator_cls.return_value.validate_task.return_value
+
+        mock_validator_cls.return_value.validate_task.side_effect = validate
+        with patch("gobby.cli.load_full_config_from_db", return_value=DaemonConfig()):
+            result = runner.invoke(
+                cli,
+                ["tasks", "validate", mock_task.id, "--summary", "test changes"],
+            )
+
+        assert result.exit_code == 0
+        assert "Validation blocked: validation verdict 'invalid'" in result.output
+        assert "verdict overridden: validator attested current failures: pytest: 1 failed" in (
+            result.output
+        )
+
+    @patch("gobby.cli.tasks.ai.get_task_manager")
+    @patch("gobby.cli.tasks.ai.resolve_task_id")
+    @patch("gobby.config.app.load_config")
+    @patch("gobby.tasks.validation.TaskValidator")
+    def test_valid_verdict_never_prints_blocked_text(
+        self,
+        mock_validator_cls: MagicMock,
+        mock_load_config: MagicMock,
+        mock_resolve: MagicMock,
+        mock_get_manager: MagicMock,
+        runner: CliRunner,
+        mock_task: MagicMock,
+    ) -> None:
+        mock_resolve.return_value = mock_task
+        mock_manager = MagicMock()
+        mock_manager.list_tasks.return_value = []
+        mock_get_manager.return_value = mock_manager
+        mock_load_config.return_value = DaemonConfig()
+
+        async def validate(*args: object, **kwargs: object) -> ValidationResult:
+            del args, kwargs
+            return ValidationResult(status="valid", feedback="All checks passed.")
+
+        mock_validator_cls.return_value.validate_task.side_effect = validate
+        with patch("gobby.cli.load_full_config_from_db", return_value=DaemonConfig()):
+            result = runner.invoke(
+                cli,
+                ["tasks", "validate", mock_task.id, "--summary", "test changes"],
+            )
+
+        assert result.exit_code == 0
+        assert "Validation Status: VALID" in result.output
+        assert "Feedback:\nAll checks passed." in result.output
+        assert "blocked" not in result.output.casefold()
 
     @patch("gobby.cli.tasks.ai.get_task_manager")
     @patch("gobby.cli.tasks.ai.resolve_task_id")

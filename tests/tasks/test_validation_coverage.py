@@ -82,6 +82,7 @@ def _valid_result(
                 "status": "valid",
                 "feedback": "Every criterion is grounded in the completed diff.",
                 "blocking_reasons": [],
+                "current_failure_evidence": [],
                 "evidence_refs": refs,
                 "evidence_complete": True,
             }
@@ -360,6 +361,7 @@ def test_submitted_typed_verdict_is_authoritative_over_malformed_text() -> None:
         "status": "valid",
         "feedback": "Grounded.",
         "blocking_reasons": [],
+        "current_failure_evidence": [],
         "evidence_refs": ["ev_diff"],
         "evidence_complete": True,
     }
@@ -445,6 +447,7 @@ async def test_verdict_submission_builtin_is_single_assignment() -> None:
         "status": "valid",
         "feedback": "Grounded.",
         "blocking_reasons": [],
+        "current_failure_evidence": [],
         "evidence_refs": [issued_ref],
         "evidence_complete": True,
     }

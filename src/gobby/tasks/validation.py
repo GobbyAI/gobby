@@ -15,9 +15,7 @@ import logging
 import re
 import subprocess  # nosec B404 # subprocess needed for validation commands
 from collections.abc import Callable, Mapping, Sequence
-from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, Literal, cast
 
 from gobby.ai import CapabilityUnavailableError, ToolChatService
 from gobby.ai.text_generation import is_feature_generation_infrastructure_error
@@ -25,11 +23,15 @@ from gobby.config.tasks import TaskValidationConfig
 from gobby.llm import LLMService
 from gobby.prompts import PromptLoader
 from gobby.storage.hub.protocol import HubDatabase
-from gobby.tasks._validation_feedback import matched_successful_validation_pattern
 from gobby.tasks.validation_evidence import (
     build_diff_validation_evidence,
     build_file_context_evidence,
     build_summary_validation_evidence,
+)
+from gobby.tasks.validation_verdict import (
+    ValidationResult,
+    _is_unsupported_reject,
+    _validation_result_from_data,
 )
 
 logger = logging.getLogger(__name__)
@@ -600,70 +602,6 @@ def get_git_diff(
     return combined
 
 
-@dataclass
-class ValidationResult:
-    """Result of task validation.
-
-    ``error`` is distinct from ``invalid``: it marks an LLM *infrastructure*
-    failure (no generation candidate produced a usable result) rather than a
-    genuine "requirements not met" verdict, so callers can back off and retry
-    instead of recording a false rejection.
-    """
-
-    status: Literal["valid", "invalid", "pending", "error"]
-    feedback: str | None = None
-    blocking_reasons: list[str] = field(default_factory=list)
-    mode: Literal["static", "tool_loop"] = "static"
-    evidence_refs: tuple[str, ...] = ()
-    evidence_complete: bool = True
-    trace_summary: tuple[dict[str, object], ...] = ()
-    evidence_error: dict[str, object] | None = None
-
-
-def _coerce_blocking_reasons(value: Any) -> list[str]:
-    if isinstance(value, list):
-        return [reason for item in value if (reason := str(item).strip())]
-    if isinstance(value, str) and value.strip():
-        return [value.strip()]
-    return []
-
-
-def _validation_result_from_data(result_data: dict[str, Any]) -> ValidationResult:
-    status = str(result_data.get("status", "pending")).strip().lower()
-    if status not in {"valid", "invalid", "pending"}:
-        status = "pending"
-    reasons = _coerce_blocking_reasons(result_data.get("blocking_reasons"))
-    feedback = result_data.get("feedback")
-    if not isinstance(feedback, str):
-        feedback = None
-    if status == "valid":
-        reasons = []
-    elif not reasons:
-        status = "pending"
-        reasons = ["Validation response did not name unmet criteria or failing gates"]
-    return ValidationResult(
-        status=cast(Literal["valid", "invalid", "pending", "error"], status),
-        feedback=feedback,
-        blocking_reasons=reasons,
-    )
-
-
-def _is_unsupported_reject(result_data: dict[str, Any]) -> bool:
-    """Detect contradictory ``invalid`` verdicts that should be revalidated."""
-    if str(result_data.get("status", "")).strip().lower() != "invalid":
-        return False
-    feedback = result_data.get("feedback")
-    success_feedback = (
-        matched_successful_validation_pattern(feedback) is not None
-        if isinstance(feedback, str)
-        else False
-    )
-    reasons = result_data.get("blocking_reasons")
-    if not isinstance(reasons, list | str):
-        return True
-    return not _coerce_blocking_reasons(reasons) or success_feedback
-
-
 class TaskValidator:
     """Validates task completion using LLM."""
 
@@ -782,6 +720,7 @@ class TaskValidator:
                     evidence_complete=verdict.evidence_complete,
                     trace_summary=verdict.trace_summary,
                     evidence_error=verdict.evidence_error,
+                    verdict_override=verdict.verdict_override,
                 )
 
         if static_evidence_loader is not None:
@@ -949,9 +888,7 @@ class TaskValidator:
                     status="pending", feedback="Validation failed: Empty response from LLM"
                 )
 
-            # Defense against inconsistent verdicts: re-validate an ``invalid``
-            # that lacks usable reasons, or one whose feedback explicitly says
-            # all validation criteria passed.
+            # Re-validate an ``invalid`` verdict that lacks usable structural reasons.
             if _is_unsupported_reject(result_data):
                 logger.warning(
                     "Task %s validation returned a contradictory 'invalid' verdict; "

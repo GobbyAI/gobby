@@ -1,4 +1,4 @@
-"""Regression tests for lifecycle validation feedback guards."""
+"""Regression contracts for structured lifecycle validation verdicts."""
 
 from __future__ import annotations
 
@@ -6,17 +6,12 @@ import contextlib
 from collections.abc import Iterator
 from datetime import UTC, datetime
 from types import SimpleNamespace
-from unittest.mock import AsyncMock, MagicMock
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from gobby.mcp_proxy.tools.tasks._lifecycle_validation import (
-    feedback_admits_required_validation_failure,
-    matched_required_validation_failure_pattern,
-    matched_successful_validation_pattern,
-    validate_leaf_task_with_llm,
-)
-from gobby.tasks.validation import ValidationResult as TaskValidationResult
+from gobby.mcp_proxy.tools.tasks._lifecycle_validation import validate_leaf_task_with_llm
+from gobby.tasks.validation_verdict import ValidationResult as TaskValidationResult
 
 pytestmark = pytest.mark.unit
 
@@ -49,7 +44,7 @@ _VALIDATION_FEEDBACK_17821 = (
 
 
 class _NoBackoffConn:
-    """Connection stub where validation backoff lookups always find no row."""
+    """Connection stub where validation backoff and history writes are inert."""
 
     rowcount = 0
 
@@ -61,8 +56,6 @@ class _NoBackoffConn:
 
 
 class _NoBackoffDB:
-    """HubDatabase stub so TaskValidationBackoffStore reads as 'no active backoff'."""
-
     def fetchone(self, *_args: object, **_kwargs: object) -> None:
         return None
 
@@ -71,9 +64,20 @@ class _NoBackoffDB:
         yield _NoBackoffConn()
 
 
-def _task_manager_mock(update_task: MagicMock) -> SimpleNamespace:
+def _task() -> SimpleNamespace:
     return SimpleNamespace(
-        update_task=update_task,
+        id="task-1",
+        title="Task",
+        description="Description",
+        validation_criteria="Tests pass",
+        category="code",
+        updated_at=_TASK_UPDATED_AT,
+    )
+
+
+def _task_manager_mock() -> SimpleNamespace:
+    return SimpleNamespace(
+        update_task=MagicMock(),
         increment_validation_failure=MagicMock(return_value=(1, False)),
         db=_NoBackoffDB(),
     )
@@ -81,16 +85,8 @@ def _task_manager_mock(update_task: MagicMock) -> SimpleNamespace:
 
 @pytest.mark.asyncio
 async def test_documentation_auto_validation_returns_named_reset_branch() -> None:
-    update_task = MagicMock()
-    task = SimpleNamespace(
-        id="task-doc",
-        title="Docs",
-        description="Update docs",
-        validation_criteria="Documentation is current",
-        category="documentation",
-        updated_at=_TASK_UPDATED_AT,
-    )
-    ctx = SimpleNamespace(task_manager=_task_manager_mock(update_task))
+    task = _task()
+    manager = _task_manager_mock()
     validator = SimpleNamespace(validate_task=AsyncMock())
 
     result = await validate_leaf_task_with_llm(
@@ -98,7 +94,7 @@ async def test_documentation_auto_validation_returns_named_reset_branch() -> Non
         validator,
         "docs context",
         None,
-        ctx,
+        SimpleNamespace(task_manager=manager),
         task.id,
         None,
         is_documentation_only=True,
@@ -108,788 +104,154 @@ async def test_documentation_auto_validation_returns_named_reset_branch() -> Non
     assert result.validation_status == "valid"
     assert result.reset_reason == "documentation_auto_validation"
     validator.validate_task.assert_not_awaited()
-    update_task.assert_not_called()
-    ctx.task_manager.increment_validation_failure.assert_not_called()
+    manager.update_task.assert_not_called()
+    manager.increment_validation_failure.assert_not_called()
 
 
 @pytest.mark.parametrize(
-    "feedback",
+    "narrative",
     [
-        "Required verification gate failed: Cargo test did not pass.",
-        "CI check did not pass because the Go integration tests are still failing.",
-        "Build errors remain in the TypeScript package.",
-        "Compiler errors remain in the Rust crate.",
-        "Static analysis check failed for the Java service.",
-        "The acceptance criteria are not met because the UI workflow is incomplete.",
+        _VALIDATION_FEEDBACK_17821,
+        "The wrapper sets FAILED=1 on failure and exits cleanly when every check passes.",
+        "TDD red evidence recorded 3 failed tests before implementation; final green is clean.",
+        "The API persists status=failed for failed jobs; all focused validation passes.",
+        "Failure-bucket totals are rendered for each historical run; current checks are green.",
     ],
 )
-def test_feedback_admits_required_validation_failure_across_languages(feedback: str) -> None:
-    """Required validation failures are detected without Python-specific tool names."""
-    assert feedback_admits_required_validation_failure(feedback) is True
-
-
-@pytest.mark.parametrize(
-    ("feedback", "expected"),
-    [
-        ("Required validation\n\ncheck did not\npass after retry.", True),
-        ("The criteria not satisfied by the delivered implementation.", True),
-        ("Validation errors remain unresolved in the frontend package.", True),
-        ("Mypy found incomplete type hints in the service boundary.", True),
-        ("The script's validation gate failed.", True),
-        ("The implementation mentions criteria and satisfied users.", False),
-        ("Errors were documented and resolved before closure.", False),
-        ("Mypy hints were improved and all work is complete.", False),
-    ],
-)
-def test_multiline_and_specific_pattern_variants(feedback: str, expected: bool) -> None:
-    """Failure feedback detection handles multiline positives without near-miss matches."""
-    assert feedback_admits_required_validation_failure(feedback) is expected
-
-
-def test_matched_pattern_helper_returns_the_triggering_pattern() -> None:
-    """The override path can log the concrete pattern that matched."""
-    feedback = "Required verification gate failed: cargo test failed."
-
-    pattern = matched_required_validation_failure_pattern(feedback)
-
-    assert pattern is not None
-    assert pattern.search("verification gate failed") is not None
-    assert feedback_admits_required_validation_failure(feedback) is True
-
-
-@pytest.mark.parametrize("feedback", [None, "", "   ", "All checks pass."])
-def test_matched_pattern_helper_returns_none_for_non_failures(feedback: str | None) -> None:
-    """Empty or successful feedback does not report a matched pattern."""
-    assert matched_required_validation_failure_pattern(feedback) is None
-
-
-@pytest.mark.parametrize(
-    "feedback",
-    [
-        "Not all acceptance criteria are met.",
-        "not ALL validation criteria are satisfied.",
-    ],
-)
-def test_successful_validation_pattern_ignores_not_all_feedback(feedback: str) -> None:
-    assert matched_successful_validation_pattern(feedback) is None
-
-
-@pytest.mark.parametrize(
-    "feedback",
-    [
-        "Verified all validation criteria are satisfied.",
-        "Verified all required validation criteria are satisfied.",
-        "Resolved: all acceptance criteria were met.",
-        "All validation criteria passed after the workflow was re-tested.",
-        "All validation criteria are satisfied.",
-        "All acceptance criteria are met.",
-        "All acceptance criteria passed.",
-        "Verified all criteria are satisfied.",
-        # The #17636 incident rationale: an unambiguous approval phrased against
-        # the task's own criteria list, returned alongside an invalid verdict.
-        "All three criteria are addressed: (1) the slug identity fix landed, "
-        "(2) regression tests cover the recompile, and (3) the binary was "
-        "reinstalled, which is sufficient corroborating evidence.",
-        "All 3 stated criteria are covered.",
-    ],
-)
-def test_successful_validation_pattern_requires_explicit_verified_success(
-    feedback: str,
-) -> None:
-    assert matched_successful_validation_pattern(feedback) is not None
-
-
-@pytest.mark.parametrize(
-    "feedback",
-    [
-        "Verified all previous validation criteria are satisfied.",
-        "Resolved: all prior acceptance criteria were met.",
-        "Verified all previously unmet validation criteria are satisfied.",
-        "Re-tested: all unsatisfied validation criteria passed.",
-    ],
-)
-def test_successful_validation_pattern_rejects_historical_or_mixed_criteria(
-    feedback: str,
-) -> None:
-    assert matched_successful_validation_pattern(feedback) is None
-
-
-@pytest.mark.parametrize(
-    "feedback",
-    [
-        "All other criteria are met.",
-        "All remaining criteria are satisfied.",
-        "All three criteria are addressed except the coverage gate.",
-        "All acceptance criteria are met, but the lint gate was not run.",
-        "Not all three criteria are addressed.",
-    ],
-)
-def test_successful_validation_pattern_rejects_partial_or_excepted_success(
-    feedback: str,
-) -> None:
-    """Approval that implies an exception elsewhere never counts as success."""
-    assert matched_successful_validation_pattern(feedback) is None
-
-
-@pytest.mark.parametrize(
-    "feedback",
-    [
-        "Tests were added for the new behavior.",
-        "The build configuration was updated and validation can run locally.",
-        "Static analysis coverage was expanded.",
-    ],
-)
-def test_feedback_without_failure_admission_is_allowed(feedback: str) -> None:
-    """Mentioning validation concepts alone is not treated as an admitted failure."""
-    assert feedback_admits_required_validation_failure(feedback) is False
-
-
-def test_successful_guard_feedback_does_not_match_across_sentence_boundary() -> None:
-    """Success feedback can describe fail-fast guard behavior without admitting failure."""
-    feedback = (
-        "All acceptance criteria are met. pre-push-test.sh resolves DATABASE_URL via a "
-        "three-tier fallback (env -> bootstrap config -> docker-compose.test.yml) through "
-        "resolve_pytest_database_url(), exports it into the isolated pytest environment as "
-        'DATABASE_URL="$PYTEST_DATABASE_URL", and check_pytest_postgres_skip_guard() scans '
-        "the pytest report for the Postgres DSN skip reason, failing the run clearly if "
-        "found. Two new CI contract tests "
-        "(test_pre_push_resolves_and_exports_postgres_database_url_for_pytest, "
-        "test_pre_push_fails_if_postgres_skip_reason_reaches_pytest_report) structurally "
-        "verify the script's resolution chain and skip guard. Verification evidence confirms "
-        "ruff check/format clean and both test_postgres_test_stack.py and "
-        "test_postgres_safety.py pass under GOBBY_TEST_PROTECT=1."
-    )
-
-    assert matched_required_validation_failure_pattern(feedback) is None
-    assert feedback_admits_required_validation_failure(feedback) is False
-
-
-def test_quoted_failure_examples_do_not_admit_failure() -> None:
-    """Quoted examples from validation criteria are not treated as actual failures."""
-    feedback = (
-        "All acceptance criteria are met. Existing parametrized tests for same-sentence "
-        "failures ('Tests are failing in the required check.', "
-        "'The validation gate did not pass.') remain in place and still match."
-    )
-
-    assert matched_required_validation_failure_pattern(feedback) is None
-    assert feedback_admits_required_validation_failure(feedback) is False
-
-
-def test_api_validation_error_description_does_not_admit_failure() -> None:
-    feedback = (
-        "All acceptance criteria are satisfied. Non-audit API and MCP research requests "
-        "now return a validation error without query, while audit requests remain queryless."
-    )
-
-    assert matched_successful_validation_pattern(feedback) is not None
-    assert matched_required_validation_failure_pattern(feedback) is None
-    assert feedback_admits_required_validation_failure(feedback) is False
-
-
-def test_success_feedback_with_negated_missing_gates_does_not_admit_failure() -> None:
-    feedback = (
-        "All acceptance criteria are met. The Changed File Manifest confirms source, test, "
-        "and config changes across all required areas. No missing gates or unmet criteria."
-    )
-
-    assert matched_successful_validation_pattern(feedback) is not None
-    assert matched_required_validation_failure_pattern(feedback) is None
-    assert feedback_admits_required_validation_failure(feedback) is False
-
-
-@pytest.mark.parametrize(
-    "feedback",
-    [
-        "tests: 10 passed, 0 failed",
-        "Validation summary: zero failures and all checks passed.",
-        "pytest report: failed=0, passed=18",
-    ],
-)
-def test_zero_failure_summaries_do_not_admit_failure(feedback: str) -> None:
-    """Benign zero-count failure tokens are ignored before failure-pattern matching."""
-    assert matched_required_validation_failure_pattern(feedback) is None
-    assert feedback_admits_required_validation_failure(feedback) is False
-
-
-@pytest.mark.parametrize(
-    "feedback",
-    [
-        "All acceptance criteria are met. The 5 previously failing tests now pass.",
-        "Verified all validation criteria are satisfied; formerly failed checks are now green.",
-        "All acceptance criteria are met. Prior failing tests have been fixed.",
-    ],
-)
-def test_resolved_regression_summaries_do_not_admit_failure(feedback: str) -> None:
-    """Resolved-regression wording is success context, not failure evidence."""
-    assert matched_successful_validation_pattern(feedback) is not None
-    assert matched_required_validation_failure_pattern(feedback) is None
-    assert feedback_admits_required_validation_failure(feedback) is False
-
-
-@pytest.mark.parametrize(
-    "feedback",
-    [
-        # The #17754 incident: the validator echoed TDD red evidence and the
-        # precedence guard demoted a 'valid' verdict to 'invalid' twice.
-        "All acceptance criteria are met. TDD evidence is documented: red "
-        "(3 failed - 404s and missing content-encoding), green (23 passed), "
-        "refactor/final-green (59 passed), with exact pytest commands captured.",
-        "All acceptance criteria are met. TDD evidence is documented: red "
-        "(3 failing tests, 404s and missing content-encoding header), green "
-        "(23 passed in test_wiki_routes.py), final-green (59 passed).",
-        # The validation_criteria template phrase validators echo verbatim.
-        "Red evidence: failing test output captured before implementation.",
-        "TDD evidence includes 2 tests failing prior to implementation and a green run after.",
-        "The red test run failed as expected; green and final-green runs pass.",
-        "Red-first run: 1 FAILED with a hard failure, followed by green.",
-        "The pre-fix run reported 1 failed; the post-fix run passed.",
-    ],
-)
-def test_tdd_red_evidence_does_not_admit_failure(feedback: str) -> None:
-    """TDD red-phase descriptions are expected failures, not admissions."""
-    assert matched_required_validation_failure_pattern(feedback) is None
-    assert feedback_admits_required_validation_failure(feedback) is False
-
-
-def test_17821_positive_feedback_does_not_admit_failure() -> None:
-    """The complete rejected #17821 verdict contains only historical failures."""
-    assert matched_required_validation_failure_pattern(_VALIDATION_FEEDBACK_17821) is None
-    assert feedback_admits_required_validation_failure(_VALIDATION_FEEDBACK_17821) is False
-
-
-@pytest.mark.parametrize(
-    "feedback",
-    [
-        "The reported test evidence (specific failing line, then passing counts) is complete.",
-        "All stated gates are clean with no contradicting or failing results.",
-        "There are no failing tests in the final run.",
-        "The release proceeds without failed checks.",
-        "Tests are not failing in the final run.",
-    ],
-)
-def test_gate_failure_vocabulary_near_misses_do_not_admit_failure(feedback: str) -> None:
-    """Gate nouns and failure words need a current-state predicate relationship."""
-    assert matched_required_validation_failure_pattern(feedback) is None
-    assert feedback_admits_required_validation_failure(feedback) is False
-
-
-@pytest.mark.parametrize(
-    "feedback",
-    [
-        "Red evidence was captured, but the final test run failed.",
-        "Tests are still failing in the required check after the TDD cycle.",
-    ],
-)
-def test_current_failures_near_tdd_wording_still_admit_failure(feedback: str) -> None:
-    """Genuine admissions keep their failure evidence despite TDD context."""
-    assert matched_required_validation_failure_pattern(feedback) is not None
-    assert feedback_admits_required_validation_failure(feedback) is True
-
-
-@pytest.mark.parametrize(
-    "feedback",
-    [
-        # Exact fragment from the #15950 round-2 verdict that misfired: the
-        # override flipped a 'valid' LLM verdict because "test ... failed"
-        # matched inside a description of an assertion.
-        (
-            "The agent's summary names focused tests for timeout/ok:false/degraded/"
-            "presync-failure plus an end-to-end test asserting a real CronRun records "
-            "status=failed with error populated, which aligns with the visible source logic."
-        ),
-        (
-            "The end-to-end test asserts the recorded cron run is marked failed "
-            "with error populated."
-        ),
-        "The handler change coerces degraded gwiki results into failed cron outcomes.",
-        "New tests verify the executor records the run as failed when the envelope is degraded.",
-        "The history output records status: failed so backoff can engage.",
-        (
-            "The storage test injects a raise between the two state changes and verifies both "
-            "updates roll back, then retries successfully to reach FAILED/CANCELLED — directly "
-            "matching the acceptance criterion. All acceptance criteria are met with concrete "
-            "evidence."
-        ),
-    ],
-)
-def test_failure_state_assertion_descriptions_do_not_admit_failure(feedback: str) -> None:
-    """Describing assertions or designed behavior about failure states is not an admission."""
-    assert matched_required_validation_failure_pattern(feedback) is None
-    assert feedback_admits_required_validation_failure(feedback) is False
-
-
-@pytest.mark.parametrize(
-    "feedback",
-    [
-        # Exact fragment from the #17734 verdict that misfired twice: `failed`
-        # names the refresh payload's result bucket, and "test" follows within
-        # the same-sentence proximity window.
-        (
-            "The explicit source_ids branch was not touched by this diff, so it "
-            "retains its prior behavior of pushing into failed; this is "
-            "corroborated by the pre-existing test "
-            "explicit_unsupported_and_missing_sources_fail_structurally still "
-            "passing per the agent's report."
-        ),
-        (
-            "A new bulk-path test was added asserting the source appears under "
-            "skipped with the correct code, an empty failed array, and status "
-            "unchanged."
-        ),
-        "The selection routes missing-replay records into the failed list only for explicit ids.",
-        "The compaction groups the failed entries by code before the check runs.",
-        # Exact fragments from the #17734 close verdict that misfired after the
-        # first round of bucket strips: an empty-bucket assertion and a
-        # hyphenated naming compound, each near a gate word.
-        ("The new test asserts skipped[0].code is correct and failed is empty for the bulk path."),
-        ("The pre-existing test (unchanged) still covers the explicit-id failed-path assertion."),
-    ],
-)
-def test_failure_bucket_references_do_not_admit_failure(feedback: str) -> None:
-    """Naming a `failed` result bucket or collection is not a failure admission."""
-    assert matched_required_validation_failure_pattern(feedback) is None
-    assert feedback_admits_required_validation_failure(feedback) is False
-
-
-@pytest.mark.parametrize(
-    "feedback",
-    [
-        # Exact fragment from the #17766 close verdict that misfired: ask-mode
-        # domain vocabulary ("error+retry", "resolved/unresolved citation
-        # behavior") sits between the gate word "tests" and the bare adjective
-        # "unresolved", which the loose errors-remain window read as
-        # "test ... errors ... unresolved".
-        (
-            "WikiAskMode.test.tsx (14 tests) covers extractive/synthesized "
-            "flows, staged progress/cancel, error+retry, resolved/unresolved "
-            "citation behavior with mode flip and search fallback, grounding "
-            "callout presence/absence, and history CRUD."
-        ),
-        ("The error chip and the unresolved citation chip are covered by the same rendering test."),
-        (
-            "New tests verify error+retry rendering and mark unresolved "
-            "citations with a search-vault fallback."
-        ),
-    ],
-)
-def test_ui_error_state_vocabulary_does_not_admit_failure(feedback: str) -> None:
-    """Feature vocabulary about error/unresolved UI states is not an admission."""
-    assert matched_required_validation_failure_pattern(feedback) is None
-    assert feedback_admits_required_validation_failure(feedback) is False
-
-
-@pytest.mark.parametrize(
-    "feedback",
-    [
-        "Test errors are unresolved in the frontend package.",
-        "Errors remain unresolved in the coverage check.",
-        "The lint gate reports errors still remaining after the fix.",
-    ],
-)
-def test_predicated_errors_remain_still_admits_failure(feedback: str) -> None:
-    """Errors genuinely predicated as remaining/unresolved still block closure."""
-    assert matched_required_validation_failure_pattern(feedback) is not None
-    assert feedback_admits_required_validation_failure(feedback) is True
-
-
-@pytest.mark.parametrize(
-    "feedback",
-    [
-        "tests: 9 passed, 1 failed",
-        "Validation summary: 2 failures remain.",
-        "Tests are failing in the required check.",
-        "Tests are still failing in the required check.",
-        "The validation gate did not pass.",
-        "The new tests verify the retry path, but the lint check failed.",
-        "Test evidence is complete, but lint check failed.",
-        "Gates are clean; however, CI is still failing.",
-        "Two failed tests remain in the required suite.",
-        "The build failed under load testing.",
-    ],
-)
-def test_nonzero_and_explicit_failure_summaries_still_admit_failure(feedback: str) -> None:
-    """Nonzero and explicit failure summaries still block lifecycle closure."""
-    assert feedback_admits_required_validation_failure(feedback) is True
-
-
 @pytest.mark.asyncio
-async def test_valid_llm_result_with_failure_feedback_is_overridden_to_invalid() -> None:
-    """A valid status cannot close when feedback admits a required validation failure."""
-    update_task = MagicMock()
-    task = SimpleNamespace(
-        id="task-1",
-        title="Task",
-        description="Description",
-        validation_criteria="Tests pass",
-        category="code",
-        updated_at=_TASK_UPDATED_AT,
-    )
+async def test_valid_structured_verdict_ignores_failure_vocabulary(narrative: str) -> None:
+    task = _task()
+    manager = _task_manager_mock()
     validator = SimpleNamespace(
         validate_task=AsyncMock(
             return_value=TaskValidationResult(
                 status="valid",
-                feedback="Required validation gate did not pass.",
+                feedback=narrative,
+                blocking_reasons=[],
             )
         )
     )
-    ctx = SimpleNamespace(task_manager=_task_manager_mock(update_task))
 
     result = await validate_leaf_task_with_llm(
         task,
         validator,
         "diff context",
         None,
-        ctx,
-        "task-1",
+        SimpleNamespace(task_manager=manager),
+        task.id,
         None,
     )
 
-    assert result.can_close is False
-    assert result.extra == {"validation_status": "invalid", "validation_fail_count": 1}
-    update_task.assert_not_called()
-    ctx.task_manager.increment_validation_failure.assert_called_once_with(
-        "task-1",
-        expected_updated_at=_TASK_UPDATED_AT,
-        threshold=5,
-        validation_status="invalid",
-        validation_feedback="Required validation gate did not pass.",
-        escalation_reason=(
-            "close validation remained invalid after reaching the 5-attempt threshold"
-        ),
-    )
+    assert result.can_close is True
+    assert result.validation_status == "valid"
+    assert result.validation_feedback == narrative
+    assert result.reset_reason == "llm_valid"
+    manager.update_task.assert_not_called()
+    manager.increment_validation_failure.assert_not_called()
 
 
 @pytest.mark.asyncio
-async def test_conflicting_success_and_failure_feedback_prefers_failure() -> None:
-    """Failure evidence wins when feedback also contains explicit success text."""
-    update_task = MagicMock()
-    task = SimpleNamespace(
-        id="task-1",
-        title="Task",
-        description="Description",
-        validation_criteria="Tests pass",
-        category="code",
-        updated_at=_TASK_UPDATED_AT,
-    )
-    feedback = (
-        "Required validation gate did not pass. Verified all validation criteria are satisfied."
-    )
+async def test_invalid_structured_verdict_is_never_promoted_by_positive_narrative() -> None:
+    task = _task()
+    manager = _task_manager_mock()
     validator = SimpleNamespace(
         validate_task=AsyncMock(
             return_value=TaskValidationResult(
                 status="invalid",
-                feedback=feedback,
+                feedback="All validation criteria are satisfied.",
+                blocking_reasons=["Required integration evidence is missing."],
             )
         )
     )
-    ctx = SimpleNamespace(task_manager=_task_manager_mock(update_task))
 
     result = await validate_leaf_task_with_llm(
         task,
         validator,
         "diff context",
         None,
-        ctx,
-        "task-1",
+        SimpleNamespace(task_manager=manager),
+        task.id,
         None,
     )
 
     assert result.can_close is False
-    assert result.extra == {"validation_status": "invalid", "validation_fail_count": 1}
-    update_task.assert_not_called()
+    assert result.extra["validation_status"] == "invalid"
+    assert result.message.startswith("Close blocked: validation verdict 'invalid'")
 
 
 @pytest.mark.asyncio
-async def test_invalid_result_with_blocking_reasons_preserves_close_metadata() -> None:
-    """Invalid close-layer validation surfaces blocking reasons to the caller."""
-    update_task = MagicMock()
-    task = SimpleNamespace(
-        id="task-1",
-        title="Task",
-        description="Description",
-        validation_criteria="Tests pass",
-        category="code",
-        updated_at=_TASK_UPDATED_AT,
-    )
-    blocking_reasons = ["pytest regression still fails", "lint gate failed"]
+async def test_blocked_message_is_identical_across_response_and_persistence() -> None:
+    task = _task()
+    manager = _task_manager_mock()
     validator = SimpleNamespace(
         validate_task=AsyncMock(
             return_value=TaskValidationResult(
                 status="invalid",
                 feedback="Validation did not pass.",
-                blocking_reasons=blocking_reasons,
+                blocking_reasons=["pytest regression still fails", "lint gate failed"],
             )
         )
     )
-    ctx = SimpleNamespace(task_manager=_task_manager_mock(update_task))
 
-    result = await validate_leaf_task_with_llm(
-        task,
-        validator,
-        "diff context",
-        None,
-        ctx,
-        "task-1",
-        None,
-    )
+    with patch(
+        "gobby.mcp_proxy.tools.tasks._lifecycle_validation._record_validation_iteration"
+    ) as record_iteration:
+        result = await validate_leaf_task_with_llm(
+            task,
+            validator,
+            "diff context",
+            None,
+            SimpleNamespace(task_manager=manager),
+            task.id,
+            None,
+        )
 
-    assert result.can_close is False
+    persisted_feedback = manager.increment_validation_failure.call_args.kwargs[
+        "validation_feedback"
+    ]
+    history_feedback = record_iteration.call_args.kwargs["feedback"]
+    assert result.message == persisted_feedback == history_feedback
+    assert result.message.count("Close blocked:") == 1
     assert result.message == (
-        "Validation did not pass.\n"
-        "Blocking reasons: pytest regression still fails; lint gate failed"
+        "Close blocked: validation verdict 'invalid'\n"
+        "Blocking reasons: pytest regression still fails; lint gate failed\n\n"
+        "Validator feedback:\nValidation did not pass."
     )
-    assert result.extra == {
-        "validation_status": "invalid",
-        "validation_fail_count": 1,
-        "blocking_reasons": blocking_reasons,
+
+
+@pytest.mark.asyncio
+async def test_override_provenance_is_rendered_and_returned_structurally() -> None:
+    task = _task()
+    manager = _task_manager_mock()
+    override: dict[str, object] = {
+        "from": "valid",
+        "to": "invalid",
+        "reason": "current_failure_evidence",
+        "evidence": ["pytest: 1 failed"],
     }
-
-
-@pytest.mark.asyncio
-async def test_valid_llm_result_with_zero_failure_feedback_remains_valid() -> None:
-    """A valid status stays valid when feedback only reports zero failures."""
-    update_task = MagicMock()
-    task = SimpleNamespace(
-        id="task-1",
-        title="Task",
-        description="Description",
-        validation_criteria="Tests pass",
-        category="code",
-        updated_at=_TASK_UPDATED_AT,
-    )
-    validator = SimpleNamespace(
-        validate_task=AsyncMock(
-            return_value=TaskValidationResult(
-                status="valid",
-                feedback="tests: 10 passed, 0 failed",
-            )
-        )
-    )
-    ctx = SimpleNamespace(task_manager=_task_manager_mock(update_task))
-
-    result = await validate_leaf_task_with_llm(
-        task,
-        validator,
-        "diff context",
-        None,
-        ctx,
-        "task-1",
-        None,
-    )
-
-    assert result.can_close is True
-    assert result.validation_status == "valid"
-    assert result.validation_feedback == "tests: 10 passed, 0 failed"
-    assert result.reset_reason == "llm_valid"
-    update_task.assert_not_called()
-
-
-@pytest.mark.asyncio
-async def test_valid_llm_result_with_17821_feedback_remains_valid() -> None:
-    """Positive #17821 feedback remains valid and persists unchanged."""
-    update_task = MagicMock()
-    task = SimpleNamespace(
-        id="task-1",
-        title="Task",
-        description="Description",
-        validation_criteria="Tests pass",
-        category="code",
-        updated_at=_TASK_UPDATED_AT,
-    )
-    validator = SimpleNamespace(
-        validate_task=AsyncMock(
-            return_value=TaskValidationResult(
-                status="valid",
-                feedback=_VALIDATION_FEEDBACK_17821,
-                blocking_reasons=[],
-            )
-        )
-    )
-    ctx = SimpleNamespace(task_manager=_task_manager_mock(update_task))
-
-    result = await validate_leaf_task_with_llm(
-        task,
-        validator,
-        "diff context",
-        None,
-        ctx,
-        "task-1",
-        None,
-    )
-
-    assert result.can_close is True
-    assert result.validation_status == "valid"
-    assert result.validation_feedback == _VALIDATION_FEEDBACK_17821
-    assert result.reset_reason == "llm_valid"
-    update_task.assert_not_called()
-
-
-@pytest.mark.asyncio
-async def test_invalid_llm_result_with_verified_success_feedback_is_promoted() -> None:
-    """Invalid status is corrected only for explicit verified criteria success feedback."""
-    update_task = MagicMock()
-    task = SimpleNamespace(
-        id="task-1",
-        title="Task",
-        description="Description",
-        validation_criteria="Tests pass",
-        category="code",
-        updated_at=_TASK_UPDATED_AT,
-    )
     validator = SimpleNamespace(
         validate_task=AsyncMock(
             return_value=TaskValidationResult(
                 status="invalid",
-                feedback="Verified all validation criteria are satisfied.",
+                feedback="The implementation otherwise satisfies the criteria.",
+                blocking_reasons=["pytest: 1 failed"],
+                verdict_override=override,
             )
         )
     )
-    ctx = SimpleNamespace(task_manager=_task_manager_mock(update_task))
 
     result = await validate_leaf_task_with_llm(
         task,
         validator,
         "diff context",
         None,
-        ctx,
-        "task-1",
+        SimpleNamespace(task_manager=manager),
+        task.id,
         None,
     )
 
-    assert result.can_close is True
-    assert result.validation_status == "valid"
-    assert result.validation_feedback == "Verified all validation criteria are satisfied."
-    assert result.reset_reason == "llm_valid"
-    update_task.assert_not_called()
-
-
-@pytest.mark.asyncio
-async def test_invalid_llm_result_with_negated_failure_success_feedback_is_promoted() -> None:
-    """Negated failure terms do not block promotion of explicit success feedback."""
-    update_task = MagicMock()
-    task = SimpleNamespace(
-        id="task-1",
-        title="Task",
-        description="Description",
-        validation_criteria="Tests pass",
-        category="code",
-        updated_at=_TASK_UPDATED_AT,
+    assert result.extra["verdict_override"] == override
+    assert result.message.startswith(
+        "Close blocked: validation verdict 'invalid' — verdict overridden: validator attested "
+        "current failures: pytest: 1 failed"
     )
-    feedback = (
-        "All acceptance criteria are met. The Changed File Manifest confirms source, test, "
-        "and config changes across all required areas. No missing gates or unmet criteria."
-    )
-    validator = SimpleNamespace(
-        validate_task=AsyncMock(
-            return_value=TaskValidationResult(
-                status="invalid",
-                feedback=feedback,
-            )
-        )
-    )
-    ctx = SimpleNamespace(task_manager=_task_manager_mock(update_task))
-
-    result = await validate_leaf_task_with_llm(
-        task,
-        validator,
-        "diff context",
-        None,
-        ctx,
-        "task-1",
-        None,
-    )
-
-    assert result.can_close is True
-    assert result.validation_status == "valid"
-    assert result.validation_feedback == feedback
-    assert result.reset_reason == "llm_valid"
-    update_task.assert_not_called()
-
-
-@pytest.mark.asyncio
-async def test_invalid_result_with_resolved_regression_success_feedback_is_promoted() -> None:
-    """Retrospective fixed-regression wording does not block explicit success feedback."""
-    update_task = MagicMock()
-    task = SimpleNamespace(
-        id="task-1",
-        title="Task",
-        description="Description",
-        validation_criteria="Tests pass",
-        category="code",
-        updated_at=_TASK_UPDATED_AT,
-    )
-    feedback = (
-        "All acceptance criteria are met. The 5 previously failing tests now pass "
-        "under GOBBY_TEST_PROTECT=1."
-    )
-    validator = SimpleNamespace(
-        validate_task=AsyncMock(
-            return_value=TaskValidationResult(
-                status="invalid",
-                feedback=feedback,
-            )
-        )
-    )
-    ctx = SimpleNamespace(task_manager=_task_manager_mock(update_task))
-
-    result = await validate_leaf_task_with_llm(
-        task,
-        validator,
-        "diff context",
-        None,
-        ctx,
-        "task-1",
-        None,
-    )
-
-    assert result.can_close is True
-    assert result.validation_status == "valid"
-    assert result.validation_feedback == feedback
-    assert result.reset_reason == "llm_valid"
-    update_task.assert_not_called()
-
-
-@pytest.mark.asyncio
-async def test_pending_llm_result_with_success_feedback_is_not_promoted() -> None:
-    """Pending/error statuses stay blocking even when feedback contains success text."""
-    update_task = MagicMock()
-    task = SimpleNamespace(
-        id="task-1",
-        title="Task",
-        description="Description",
-        validation_criteria="Tests pass",
-        category="code",
-        updated_at=_TASK_UPDATED_AT,
-    )
-    validator = SimpleNamespace(
-        validate_task=AsyncMock(
-            return_value=TaskValidationResult(
-                status="pending",
-                feedback=(
-                    "Validation failed: could not parse response. "
-                    "Verified all validation criteria are satisfied."
-                ),
-                evidence_error={"code": "verdict_protocol_error"},
-            )
-        )
-    )
-    ctx = SimpleNamespace(task_manager=_task_manager_mock(update_task))
-
-    result = await validate_leaf_task_with_llm(
-        task,
-        validator,
-        "diff context",
-        None,
-        ctx,
-        "task-1",
-        None,
-    )
-
-    assert result.can_close is False
-    assert result.extra == {
-        "validation_status": "pending",
-        "validation_fail_count": 1,
-        "evidence_error": {"code": "verdict_protocol_error"},
-    }
-    update_task.assert_not_called()

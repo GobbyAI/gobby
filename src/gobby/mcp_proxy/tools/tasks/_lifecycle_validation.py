@@ -15,16 +15,9 @@ from gobby.mcp_proxy.tools.tasks._escalation_coordinator import coordinate_task_
 from gobby.mcp_proxy.tools.tasks._helpers import SKIP_REASONS
 from gobby.storage.tasks import Task, TaskStaleStateError
 from gobby.storage.tasks._validation_backoff import TaskValidationBackoffStore
-from gobby.tasks._validation_feedback import (
-    feedback_admits_required_validation_failure,
-    matched_required_validation_failure_pattern,
-    matched_successful_validation_pattern,
-)
-from gobby.tasks._validation_feedback import (
-    matched_successful_validation_pattern_unchecked as _matched_successful_validation_pattern_unchecked,
-)
 from gobby.tasks.state_semantics import get_claimed_session_id, is_task_closed
 from gobby.tasks.validation_history import ValidationHistoryManager
+from gobby.tasks.validation_verdict import format_close_validation_message
 from gobby.utils.datetime import utc_now
 
 if TYPE_CHECKING:
@@ -38,10 +31,7 @@ logger = logging.getLogger(__name__)
 __all__ = [
     "ValidationContext",
     "ValidationResult",
-    "feedback_admits_required_validation_failure",
     "gather_validation_context",
-    "matched_required_validation_failure_pattern",
-    "matched_successful_validation_pattern",
     "validate_commit_requirements",
     "validate_leaf_task_with_llm",
     "validate_parent_task",
@@ -567,52 +557,22 @@ async def validate_leaf_task_with_llm(
 
     validation_status = result.status
     original_feedback = result.feedback
-    matched_failure_pattern = matched_required_validation_failure_pattern(original_feedback)
-    matched_success_pattern = _matched_successful_validation_pattern_unchecked(original_feedback)
-    feedback_length = len(original_feedback or "")
-    if matched_failure_pattern is not None and matched_success_pattern is not None:
-        logger.warning(
-            "Validation feedback for task %s contains both failure and "
-            "success evidence; failure takes precedence. Failure pattern: %s. Success "
-            "pattern: %s. Status: %s. Feedback length: %d",
-            resolved_id,
-            matched_failure_pattern.pattern,
-            matched_success_pattern.pattern,
-            result.status,
-            feedback_length,
-        )
-        if result.status != "pending":
-            validation_status = "invalid"
-    elif result.status == "valid" and matched_failure_pattern is not None:
-        logger.warning(
-            "Overriding validation status for task %s: LLM returned 'valid' but feedback "
-            "admits failure. Pattern: %s. Status: %s. Feedback length: %d",
-            resolved_id,
-            matched_failure_pattern.pattern,
-            result.status,
-            feedback_length,
-        )
-        validation_status = "invalid"
-    elif result.status == "invalid" and matched_success_pattern is not None:
-        logger.warning(
-            "Overriding validation status for task %s: LLM returned %r but feedback "
-            "says validation criteria are satisfied. Pattern: %s. Feedback length: %d",
-            resolved_id,
-            result.status,
-            matched_success_pattern.pattern,
-            feedback_length,
-        )
-        validation_status = "valid"
-
-    _record_validation_iteration(
-        task,
-        ctx,
-        status=validation_status,
-        feedback=original_feedback,
-        context_type=f"validation_{result.mode}",
-    )
 
     if validation_status != "valid":
+        blocking_reasons = list(result.blocking_reasons)
+        message = format_close_validation_message(
+            validation_status,
+            original_feedback,
+            blocking_reasons,
+            result.verdict_override,
+        )
+        _record_validation_iteration(
+            task,
+            ctx,
+            status=validation_status,
+            feedback=message,
+            context_type=f"validation_{result.mode}",
+        )
         threshold = (
             validation_config.close_validation_escalation_threshold
             if validation_config is not None
@@ -628,7 +588,7 @@ async def validate_leaf_task_with_llm(
                 expected_updated_at=task.updated_at,
                 threshold=threshold,
                 validation_status=validation_status,
-                validation_feedback=original_feedback,
+                validation_feedback=message,
                 escalation_reason=escalation_reason,
             )
         except TaskStaleStateError as exc:
@@ -639,14 +599,14 @@ async def validate_leaf_task_with_llm(
                 extra={"validation_status": validation_status, "stale_state": True},
             )
 
-        blocking_reasons = list(result.blocking_reasons)
-        message = original_feedback or "Validation did not pass"
         extra: dict[str, Any] = {
             "validation_status": validation_status,
             "validation_fail_count": fail_count,
         }
         if result.evidence_error is not None:
             extra["evidence_error"] = result.evidence_error
+        if result.verdict_override is not None:
+            extra["verdict_override"] = result.verdict_override
         if escalated_now:
             from gobby.utils.session_context import get_current_session_id
 
@@ -660,7 +620,6 @@ async def validate_leaf_task_with_llm(
             extra.update({"escalated": True, "escalation_event_id": event_id})
         if blocking_reasons:
             extra["blocking_reasons"] = blocking_reasons
-            message = f"{message}\nBlocking reasons: {'; '.join(blocking_reasons)}"
 
         # Block closing on invalid or pending (error during validation)
         return ValidationResult(
@@ -670,6 +629,13 @@ async def validate_leaf_task_with_llm(
             extra=extra,
         )
 
+    _record_validation_iteration(
+        task,
+        ctx,
+        status=validation_status,
+        feedback=original_feedback,
+        context_type=f"validation_{result.mode}",
+    )
     return ValidationResult(
         can_close=True,
         validation_status="valid",

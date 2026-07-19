@@ -445,9 +445,7 @@ class TestValidationInfrastructureFailure:
 
 
 class TestInconsistentVerdictReconciliation:
-    """An ``invalid`` verdict with no blocking reasons is the model
-    self-contradiction signature (passing feedback + reject label). It is
-    re-validated once instead of being trusted; reasoned rejects are not."""
+    """Static verdicts use structured fields, never narrative classification."""
 
     @pytest.fixture
     def mock_llm(self) -> MagicMock:
@@ -475,7 +473,7 @@ class TestInconsistentVerdictReconciliation:
                     "feedback": "Verified all validation criteria are satisfied.",
                     "blocking_reasons": ["missing 404 test"],
                 },
-                True,
+                False,
             ),
             (
                 # The #17636 incident: approval phrased against the task's own
@@ -490,7 +488,7 @@ class TestInconsistentVerdictReconciliation:
                     ),
                     "blocking_reasons": ["missing 404 test"],
                 },
-                True,
+                False,
             ),
             ({"status": "valid", "blocking_reasons": []}, False),
             ({"status": "pending", "blocking_reasons": []}, False),  # only invalid targeted
@@ -527,24 +525,18 @@ class TestInconsistentVerdictReconciliation:
         assert mock_llm.call_json_feature.call_count == 2
 
     @pytest.mark.asyncio
-    async def test_success_feedback_invalid_with_reasons_is_revalidated_once(
+    async def test_positive_narrative_does_not_reroll_reasoned_invalid(
         self,
         config: TaskValidationConfig,
         mock_llm: MagicMock,
     ) -> None:
         validator = TaskValidator(config, mock_llm)
-        mock_llm.call_json_feature.side_effect = [
-            {
-                "status": "invalid",
-                "feedback": "Verified all validation criteria are satisfied.",
-                "blocking_reasons": ["Missing regression coverage."],
-            },
-            {
-                "status": "valid",
-                "feedback": "Confirmed complete.",
-                "blocking_reasons": [],
-            },
-        ]
+        mock_llm.call_json_feature.return_value = {
+            "status": "invalid",
+            "feedback": "Verified all validation criteria are satisfied.",
+            "blocking_reasons": ["Missing regression coverage."],
+            "current_failure_evidence": [],
+        }
 
         result = await validator.validate_task(
             task_id="task-1",
@@ -554,107 +546,9 @@ class TestInconsistentVerdictReconciliation:
             validation_criteria="criteria",
         )
 
-        assert result.status == "valid"
-        assert result.feedback == "Confirmed complete."
-        assert mock_llm.call_json_feature.call_count == 2
-
-    @pytest.mark.asyncio
-    async def test_success_feedback_have_been_met_is_revalidated_once(
-        self,
-        config: TaskValidationConfig,
-        mock_llm: MagicMock,
-    ) -> None:
-        validator = TaskValidator(config, mock_llm)
-        mock_llm.call_json_feature.side_effect = [
-            {
-                "status": "invalid",
-                "feedback": "All acceptance criteria have been met.",
-                "blocking_reasons": ["Missing regression coverage."],
-            },
-            {
-                "status": "valid",
-                "feedback": "Confirmed complete.",
-                "blocking_reasons": [],
-            },
-        ]
-
-        result = await validator.validate_task(
-            task_id="task-1",
-            title="t",
-            description="d",
-            changes_summary="changes",
-            validation_criteria="criteria",
-        )
-
-        assert result.status == "valid"
-        assert mock_llm.call_json_feature.call_count == 2
-
-    @pytest.mark.asyncio
-    async def test_incident_rationale_invalid_with_reasons_is_revalidated_once(
-        self,
-        config: TaskValidationConfig,
-        mock_llm: MagicMock,
-    ) -> None:
-        """The verbatim #17636 incident response must not spuriously fail the close."""
-        validator = TaskValidator(config, mock_llm)
-        mock_llm.call_json_feature.side_effect = [
-            {
-                "status": "invalid",
-                "feedback": (
-                    "All three criteria are addressed: (1) the slug identity fix "
-                    "landed, (2) regression tests cover the recompile, and (3) the "
-                    "binary was reinstalled, which is sufficient corroborating "
-                    "evidence."
-                ),
-                "blocking_reasons": ["Diff evidence was partially omitted."],
-            },
-            {
-                "status": "valid",
-                "feedback": "Confirmed complete.",
-                "blocking_reasons": [],
-            },
-        ]
-
-        result = await validator.validate_task(
-            task_id="task-1",
-            title="t",
-            description="d",
-            changes_summary="changes",
-            validation_criteria="criteria",
-        )
-
-        assert result.status == "valid"
-        assert mock_llm.call_json_feature.call_count == 2
-
-    @pytest.mark.asyncio
-    async def test_success_feedback_invalid_empty_reroll_becomes_pending(
-        self,
-        config: TaskValidationConfig,
-        mock_llm: MagicMock,
-    ) -> None:
-        validator = TaskValidator(config, mock_llm)
-        mock_llm.call_json_feature.side_effect = [
-            {
-                "status": "invalid",
-                "feedback": "All acceptance criteria are met.",
-                "blocking_reasons": ["Missing regression coverage."],
-            },
-            None,
-        ]
-
-        result = await validator.validate_task(
-            task_id="task-1",
-            title="t",
-            description="d",
-            changes_summary="changes",
-            validation_criteria="criteria",
-        )
-
-        assert result.status == "pending"
-        assert result.blocking_reasons == [
-            "Validation response did not name unmet criteria or failing gates"
-        ]
-        assert mock_llm.call_json_feature.call_count == 2
+        assert result.status == "invalid"
+        assert result.feedback == "Verified all validation criteria are satisfied."
+        assert mock_llm.call_json_feature.call_count == 1
 
     @pytest.mark.asyncio
     async def test_invalid_malformed_blocking_reasons_is_revalidated_once(
@@ -802,7 +696,61 @@ class TestInconsistentVerdictReconciliation:
         )
 
         assert result.status == "valid"
+        assert result.verdict_override is None
         assert mock_llm.call_json_feature.call_count == 1
+
+    @pytest.mark.asyncio
+    async def test_static_contradictory_valid_is_demoted_with_provenance(
+        self, config, mock_llm
+    ) -> None:
+        validator = TaskValidator(config, mock_llm)
+        mock_llm.call_json_feature.return_value = {
+            "status": "valid",
+            "feedback": "All criteria satisfied, but the current test run is not clean.",
+            "blocking_reasons": [],
+            "current_failure_evidence": ["pytest: 1 failed"],
+        }
+
+        result = await validator.validate_task(
+            task_id="task-1",
+            title="t",
+            description="d",
+            changes_summary="changes",
+            validation_criteria="criteria",
+        )
+
+        assert result.status == "invalid"
+        assert result.blocking_reasons == ["pytest: 1 failed"]
+        assert result.verdict_override == {
+            "from": "valid",
+            "to": "invalid",
+            "reason": "current_failure_evidence",
+            "evidence": ["pytest: 1 failed"],
+        }
+        assert mock_llm.call_json_feature.call_count == 1
+
+    @pytest.mark.asyncio
+    async def test_static_malformed_or_nullish_failure_evidence_is_fail_open(
+        self, config, mock_llm
+    ) -> None:
+        validator = TaskValidator(config, mock_llm)
+        mock_llm.call_json_feature.return_value = {
+            "status": "valid",
+            "feedback": "All criteria satisfied.",
+            "blocking_reasons": [],
+            "current_failure_evidence": ["N/A", "  ", 1, None],
+        }
+
+        result = await validator.validate_task(
+            task_id="task-1",
+            title="t",
+            description="d",
+            changes_summary="changes",
+            validation_criteria="criteria",
+        )
+
+        assert result.status == "valid"
+        assert result.verdict_override is None
 
 
 class TestRunGitCommand:

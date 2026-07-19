@@ -18,8 +18,10 @@ from gobby.config.tasks import TaskValidationConfig
 from gobby.tasks.diff_paging import DiffPagingError
 from gobby.tasks.validation import TaskValidator, ValidationResult
 from gobby.tasks.validation_tool_loop import (
+    ValidationVerdictSink,
     build_validation_builtins,
     is_doc_only_manifest,
+    normalize_tool_loop_result,
     prepare_validation_diff,
 )
 
@@ -187,6 +189,7 @@ async def test_tool_loop_keeps_static_diff_evidence_lazy() -> None:
                 "status": "valid",
                 "feedback": "All criteria are verified.",
                 "blocking_reasons": [],
+                "current_failure_evidence": [],
                 "evidence_refs": ["ev_runtime"],
                 "evidence_complete": True,
             }
@@ -257,6 +260,7 @@ async def test_tool_loop_missing_evidence_fields_is_pending() -> None:
                 "status": "valid",
                 "feedback": "Claims success without grounded fields.",
                 "blocking_reasons": [],
+                "current_failure_evidence": [],
             }
         )
     )
@@ -279,6 +283,7 @@ async def test_fabricated_ref_is_rejected_before_terminal_verdict() -> None:
                 "status": "valid",
                 "feedback": "Claims fabricated evidence.",
                 "blocking_reasons": [],
+                "current_failure_evidence": [],
                 "evidence_refs": ["ev_fabricated"],
                 "evidence_complete": True,
             }
@@ -300,6 +305,7 @@ async def test_verified_refs_and_trace_are_in_feedback() -> None:
                 "status": "valid",
                 "feedback": "Grounded verdict.",
                 "blocking_reasons": [],
+                "current_failure_evidence": [],
                 "evidence_refs": ["ev_runtime"],
                 "evidence_complete": True,
             }
@@ -323,6 +329,7 @@ async def test_complete_evidence_verdict_survives_adapter_budget_flag() -> None:
                 "status": "valid",
                 "feedback": "Incomplete investigation.",
                 "blocking_reasons": [],
+                "current_failure_evidence": [],
                 "evidence_refs": ["ev_runtime"],
                 "evidence_complete": True,
             },
@@ -344,6 +351,7 @@ async def test_prompt_uses_commit_count_first_page_and_cursor_metadata() -> None
                 "status": "valid",
                 "feedback": "Grounded verdict.",
                 "blocking_reasons": [],
+                "current_failure_evidence": [],
                 "evidence_refs": ["ev_runtime"],
                 "evidence_complete": True,
             }
@@ -376,6 +384,15 @@ async def test_prompt_uses_commit_count_first_page_and_cursor_metadata() -> None
     assert request.limits.max_turns == 7
     assert request.tool_policy.tools == ()
     assert request.builtins[-1].name == "submit_validation_verdict"
+    verdict_schema = request.builtins[-1].input_schema
+    assert "current_failure_evidence" in verdict_schema["required"]
+    assert verdict_schema["properties"]["current_failure_evidence"] == {
+        "type": "array",
+        "items": {"type": "string"},
+    }
+    assert "TDD red-phase history" in request.prompt
+    assert "FAILED=1" in request.prompt
+    assert "return an empty current_failure_evidence array" in request.prompt
     assert request.limits.max_tool_calls == 7
     assert request.limits.tool_timeout_seconds == 30.0
 
@@ -508,3 +525,174 @@ def test_tool_loop_config_defaults() -> None:
 
     assert config.tool_loop_enabled is True
     assert config.tool_loop_preview_bytes == 16_384
+
+
+def _submitted_payload(
+    *,
+    status: str = "valid",
+    current_failure_evidence: list[object] | None = None,
+    blocking_reasons: list[str] | None = None,
+    evidence_refs: list[str] | None = None,
+) -> dict[str, object]:
+    return {
+        "status": status,
+        "feedback": "Grounded verdict.",
+        "blocking_reasons": blocking_reasons or [],
+        "current_failure_evidence": current_failure_evidence or [],
+        "evidence_refs": evidence_refs or ["ev_runtime"],
+        "evidence_complete": True,
+    }
+
+
+def test_first_contradiction_is_rejected_then_corrected_valid_wins() -> None:
+    sink = ValidationVerdictSink()
+    sink.record_evidence_ref("ev_runtime")
+    contradictory = _submitted_payload(current_failure_evidence=["pytest failed"])
+    corrected = _submitted_payload()
+
+    rejected = sink.submit(contradictory)
+    accepted = sink.submit(corrected)
+    verdict = normalize_tool_loop_result(
+        _tool_result(payload=corrected),
+        submitted_verdict=sink.payload,
+        rejected_contradiction=sink.last_contradiction,
+        require_submission=True,
+    )
+
+    assert rejected.error_code == "verdict_contradiction"
+    assert "Either return status='invalid'" in (rejected.error or "")
+    assert accepted.ok is True
+    assert verdict.status == "valid"
+    assert verdict.verdict_override is None
+
+
+def test_corrected_invalid_submission_is_accepted_without_override() -> None:
+    sink = ValidationVerdictSink()
+    sink.record_evidence_ref("ev_runtime")
+    contradictory = _submitted_payload(current_failure_evidence=["pytest failed"])
+    corrected = _submitted_payload(
+        status="invalid",
+        current_failure_evidence=["pytest failed"],
+        blocking_reasons=["pytest failed"],
+    )
+
+    sink.submit(contradictory)
+    accepted = sink.submit(corrected)
+    verdict = normalize_tool_loop_result(
+        _tool_result(payload=corrected),
+        submitted_verdict=sink.payload,
+        rejected_contradiction=sink.last_contradiction,
+        require_submission=True,
+    )
+
+    assert accepted.ok is True
+    assert verdict.status == "invalid"
+    assert verdict.blocking_reasons == ("pytest failed",)
+    assert verdict.verdict_override is None
+
+
+def test_repeated_contradiction_is_accepted_then_demoted() -> None:
+    sink = ValidationVerdictSink()
+    sink.record_evidence_ref("ev_runtime")
+    contradictory = _submitted_payload(current_failure_evidence=["pytest failed"])
+
+    first = sink.submit(contradictory)
+    second = sink.submit(contradictory)
+    verdict = normalize_tool_loop_result(
+        _tool_result(payload=contradictory),
+        submitted_verdict=sink.payload,
+        rejected_contradiction=sink.last_contradiction,
+        require_submission=True,
+    )
+
+    assert first.error_code == "verdict_contradiction"
+    assert second.ok is True
+    assert verdict.status == "invalid"
+    assert verdict.blocking_reasons == ("pytest failed",)
+    assert verdict.verdict_override == {
+        "from": "valid",
+        "to": "invalid",
+        "reason": "current_failure_evidence",
+        "evidence": ["pytest failed"],
+    }
+
+
+def test_loop_end_after_rejected_contradiction_demotes_instead_of_pending() -> None:
+    sink = ValidationVerdictSink()
+    sink.record_evidence_ref("ev_runtime")
+    contradictory = _submitted_payload(current_failure_evidence=["pytest failed"])
+
+    sink.submit(contradictory)
+    verdict = normalize_tool_loop_result(
+        _tool_result(payload=contradictory),
+        submitted_verdict=None,
+        rejected_contradiction=sink.last_contradiction,
+        require_submission=True,
+    )
+
+    assert verdict.status == "invalid"
+    assert verdict.verdict_override is not None
+
+
+def test_malformed_failure_evidence_precedes_reference_and_contradiction_checks() -> None:
+    payload = _submitted_payload(
+        current_failure_evidence=["pytest failed", 1],
+        evidence_refs=["fabricated"],
+    )
+
+    verdict = normalize_tool_loop_result(
+        _tool_result(payload=payload),
+        submitted_verdict=payload,
+        require_submission=True,
+    )
+
+    assert verdict.status == "pending"
+    assert verdict.evidence_error == {
+        "code": "verdict_protocol_error",
+        "message": "current_failure_evidence must be an array of strings",
+    }
+
+
+@pytest.mark.asyncio
+async def test_tool_loop_missing_current_failure_evidence_is_pending() -> None:
+    validator, _, _ = _validator(
+        _tool_result(
+            payload={
+                "status": "valid",
+                "feedback": "Grounded verdict.",
+                "blocking_reasons": [],
+                "evidence_refs": ["ev_runtime"],
+                "evidence_complete": True,
+            }
+        )
+    )
+
+    result = await _validate_linked(validator)
+
+    assert result.status == "pending"
+    assert result.evidence_error == {
+        "code": "verdict_protocol_error",
+        "message": "current_failure_evidence is required",
+    }
+
+
+@pytest.mark.asyncio
+async def test_tool_loop_override_propagates_into_validation_result() -> None:
+    validator, _, _ = _validator(
+        _tool_result(
+            payload=_submitted_payload(
+                current_failure_evidence=["pytest: 1 failed"],
+            )
+        )
+    )
+
+    result = await _validate_linked(validator)
+
+    assert result.status == "invalid"
+    assert result.blocking_reasons == ["pytest: 1 failed"]
+    assert result.verdict_override == {
+        "from": "valid",
+        "to": "invalid",
+        "reason": "current_failure_evidence",
+        "evidence": ["pytest: 1 failed"],
+    }
