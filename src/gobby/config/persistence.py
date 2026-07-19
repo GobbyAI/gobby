@@ -608,6 +608,7 @@ class MemoryConfig(BaseModel):
             "holdout baseline accuracy raises the drift alarm."
         ),
     )
+
     @model_validator(mode="after")
     def validate_digest_shadow_signal_hub(self) -> "MemoryConfig":
         """Require the durable signal hub whenever shadow judging is enabled."""

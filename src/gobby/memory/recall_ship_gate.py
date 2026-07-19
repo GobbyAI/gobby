@@ -193,9 +193,7 @@ def _wilson_lower_bound(successes: int, total: int) -> float:
     proportion = successes / total
     denominator = 1.0 + z * z / total
     center = proportion + z * z / (2.0 * total)
-    margin = z * sqrt(
-        proportion * (1.0 - proportion) / total + z * z / (4.0 * total * total)
-    )
+    margin = z * sqrt(proportion * (1.0 - proportion) / total + z * z / (4.0 * total * total))
     return (center - margin) / denominator
 
 
@@ -242,8 +240,7 @@ def evaluate_ship_audit(
     lower_bound = _wilson_lower_bound(agreements, AUDIT_SAMPLE_REQUESTS)
     status = (
         "passed"
-        if agreement >= AUDIT_MIN_AGREEMENT
-        and lower_bound >= AUDIT_MIN_WILSON_LOWER_BOUND
+        if agreement >= AUDIT_MIN_AGREEMENT and lower_bound >= AUDIT_MIN_WILSON_LOWER_BOUND
         else "below_threshold"
     )
     return ShipAuditResult(

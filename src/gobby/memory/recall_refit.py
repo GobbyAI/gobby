@@ -574,8 +574,8 @@ def run_ship_gate(
     holdout_status: str = "provided",
 ) -> GateDecision:
     """Fit one frozen cohort and apply data, audit, static, and guard gates."""
-    resolved_weighting_mode: WeightingMode = (
-        weighting_mode or ("full" if candidate_scope == "full" else "injected")
+    resolved_weighting_mode: WeightingMode = weighting_mode or (
+        "full" if candidate_scope == "full" else "injected"
     )
     if resolved_weighting_mode != candidate_scope:
         raise ValueError("weighting_mode must match candidate_scope")
@@ -741,8 +741,8 @@ def run_ship_gate_from_store(
 ) -> GateDecision:
     """Audit training rows, reserve holdout IDs, then read and evaluate holdout rows."""
     scope = candidate_scope or default_candidate_scope(label_source)
-    resolved_weighting_mode: WeightingMode = (
-        weighting_mode or ("full" if scope == "full" else "injected")
+    resolved_weighting_mode: WeightingMode = weighting_mode or (
+        "full" if scope == "full" else "injected"
     )
     if resolved_weighting_mode != scope:
         raise ValueError("weighting_mode must match candidate_scope")
@@ -805,8 +805,7 @@ def run_ship_gate_from_store(
         train_request_ids=train_request_ids,
     )
     expected_hashes = {
-        (target.request_id, target.memory_id): target.prompt_hash
-        for target in audit_sample.targets
+        (target.request_id, target.memory_id): target.prompt_hash for target in audit_sample.targets
     }
     audit_verdicts: list[dict[str, Any]] = []
     if len(audit_sample.targets) == AUDIT_SAMPLE_REQUESTS:

@@ -310,8 +310,7 @@ def evaluate_recall_drift(
     if baseline is None:
         status = "no_baseline"
     elif (
-        live.pair_count < thresholds.min_pairs
-        or live.mixed_request_count < MIN_EVAL_MIXED_REQUESTS
+        live.pair_count < thresholds.min_pairs or live.mixed_request_count < MIN_EVAL_MIXED_REQUESTS
     ):
         status = "insufficient_data"
     else:

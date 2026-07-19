@@ -737,9 +737,7 @@ def fit_and_evaluate_partitioned(
     )
     return LabeledFitReport(
         rows_total=len(train) + len(evaluation),
-        rows_labeled=sum(
-            1 for row in (*train, *evaluation) if row.judge_useful is not None
-        ),
+        rows_labeled=sum(1 for row in (*train, *evaluation) if row.judge_useful is not None),
         train_requests=len({row.recall_request_id for row in train}),
         eval_requests=len({row.recall_request_id for row in evaluation}),
         fitted=fitted,
