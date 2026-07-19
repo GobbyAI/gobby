@@ -63,6 +63,32 @@ def test_start_expansion_schema_accepts_reset_output(temp_db) -> None:
     assert schema["properties"]["stage_pipeline_mode"]["type"] == ["boolean", "null"]
 
 
+def test_start_expansion_schema_accepts_explicit_null_optionals(temp_db) -> None:
+    """The expand-task pipeline sends explicit nulls for unset optional inputs."""
+    from gobby.mcp_proxy.services.argument_validation import check_arguments
+    from gobby.mcp_proxy.tools.tasks._ops_factory import create_task_ops_registry
+
+    registry = create_task_ops_registry(
+        LocalTaskManager(temp_db),
+        sync_manager=MagicMock(),
+        config=MagicMock(),
+    )
+
+    schema = registry.get_schema("start_expansion_run")["inputSchema"]
+    errors = check_arguments(
+        {
+            "task_id": "#1",
+            "plan_file": None,
+            "provider": None,
+            "model": None,
+            "project": None,
+            "auto_apply": True,
+        },
+        schema,
+    )
+    assert errors == []
+
+
 def test_start_expansion_idempotent(temp_db, sample_project) -> None:
     from gobby.mcp_proxy.tools.tasks._expansion import start_expansion_run_impl
 

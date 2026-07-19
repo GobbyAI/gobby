@@ -159,7 +159,7 @@ def _register_start_tool(registry: InternalToolRegistry, ctx: RegistryContext) -
             "properties": {
                 "task_id": {"type": "string", "description": "Task reference to expand"},
                 "plan_file": {
-                    "type": "string",
+                    "type": ["string", "null"],
                     "description": "Optional plan file path relative to the project root",
                     "default": None,
                 },
@@ -179,17 +179,17 @@ def _register_start_tool(registry: InternalToolRegistry, ctx: RegistryContext) -
                     "default": False,
                 },
                 "provider": {
-                    "type": "string",
+                    "type": ["string", "null"],
                     "description": "Optional provider override",
                     "default": None,
                 },
                 "model": {
-                    "type": "string",
+                    "type": ["string", "null"],
                     "description": "Optional model override",
                     "default": None,
                 },
                 "project": {
-                    "type": "string",
+                    "type": ["string", "null"],
                     "description": "Optional project ref for task resolution",
                     "default": None,
                 },
