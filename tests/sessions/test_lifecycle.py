@@ -1447,38 +1447,54 @@ class TestProcessSessionTranscriptParsers:
         assert manager.session_manager.get.call_count == 0
 
 
-class TestProcessSessionTranscriptJsonDispatch:
+class TestProcessSessionTranscriptLineParsing:
     """Tests for .json transcript dispatch."""
 
     @pytest.mark.asyncio
     async def test_qwen_json_uses_current_line_parser(self, tmp_path, manager):
-        """Qwen .json records use the current JSONL-envelope parser contract."""
-        import json
-
+        """Lifecycle backfill indexes Qwen's current line-envelope .json file."""
         transcript_path = tmp_path / "session-abc.json"
-        transcript_path.write_text(
-            json.dumps(
-                {
-                    "type": "user",
-                    "message": {"role": "user", "parts": [{"text": "hi"}]},
-                }
-            )
+        fixture = (
+            Path(__file__).parents[1]
+            / "fixtures"
+            / "transcripts"
+            / "qwen"
+            / "current_envelope.jsonl"
         )
+        transcript_path.write_text(fixture.read_text())
 
         session = MagicMock()
         session.source = "qwen"
+        session.project_id = None
+        session.context_window = None
+        session.model = "qwen3-coder"
+        session.transcript_path = str(transcript_path)
+        session.usage_input_tokens = 0
+        session.usage_output_tokens = 0
+        session.usage_cache_creation_tokens = 0
+        session.usage_cache_read_tokens = 0
         manager.session_manager.get.return_value = session
+        manager.token_event_store = EmptyTokenEventStore()
 
-        with patch("gobby.sessions.transcript_processing.QwenTranscriptParser") as MockParser:
-            del MockParser.return_value.parse_session_json
-            MockParser.return_value.parse_lines.return_value = []
-            await manager._process_session_transcript("s1", str(transcript_path))
-            MockParser.return_value.parse_lines.assert_called_once()
-            assert manager.session_manager.update_usage.call_count == 0
+        await manager._process_session_transcript("s1", str(transcript_path))
+
+        st = transcript_path.stat()
+        index = load_index_sidecar(
+            str(transcript_path),
+            "qwen",
+            "s1",
+            seek_mode="byte",
+            mtime_ns=st.st_mtime_ns,
+            size=st.st_size,
+        )
+        assert index is not None
+        assert index.raw_record_count == 7
+        assert index.parsed_message_count == 7
+        manager.session_manager.update_stats.assert_called_once()
 
     @pytest.mark.asyncio
     async def test_jsonl_still_uses_parse_lines(self, tmp_path, manager):
-        """JSONL transcripts still use parse_lines for typed-JSON sources."""
+        """Qwen .jsonl transcripts use the same line parser."""
         transcript_path = tmp_path / "transcript.jsonl"
         transcript_path.write_text('{"type": "message"}\n')
 
@@ -1494,7 +1510,7 @@ class TestProcessSessionTranscriptJsonDispatch:
 
     @pytest.mark.asyncio
     async def test_invalid_json_returns_early(self, tmp_path, manager):
-        """Invalid JSON in .json file logs error and returns without crashing."""
+        """An invalid Qwen envelope fails soft without crashing."""
         transcript_path = tmp_path / "session-bad.json"
         transcript_path.write_text("{invalid json content")
 

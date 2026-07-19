@@ -14,7 +14,6 @@ gobby/                                  # Project root
 ├── pyproject.toml                      # Project configuration, dependencies, build settings
 ├── README.md                           # Project overview with architecture diagram
 ├── CLAUDE.md                           # Claude Code development instructions
-├── GEMINI.md                           # Legacy project instructions file
 ├── AGENTS.md                           # Agent definitions reference
 ├── CONTRIBUTING.md                     # Contribution guidelines
 ├── GUIDING_PRINCIPLES.md               # Development philosophy
@@ -141,8 +140,8 @@ src/gobby/
 ├── sessions/                           # Session lifecycle: lifecycle.py, processor.py
 │                                       #   (SessionMessageProcessor), mailbox.py,
 │                                       #   summarize.py, token_tracker.py
-│   └── transcripts/                    # Parsers: claude.py, gemini.py, codex.py,
-│                                       #   droid.py, grok.py, qwen.py
+│   └── transcripts/                    # Parsers: claude.py, codex.py, droid.py,
+│                                       #   grok.py, qwen.py
 ├── skills/                             # Skill management: loader.py (SkillLoader),
 │                                       #   parser.py, sync.py, search.py, formatting.py,
 │                                       #   hubs/

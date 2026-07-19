@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import asyncio
-import json
 import logging
 import os
 from copy import deepcopy
@@ -218,10 +217,6 @@ class ProcessorTranscriptMixin:
         if not await asyncio.to_thread(os.path.exists, transcript_path):
             return
 
-        if transcript_path.endswith(".json"):
-            await self._process_json_session(session_id, transcript_path)
-            return
-
         try:
             transcript_stat = await asyncio.to_thread(os.stat, transcript_path)
         except OSError as exc:
@@ -385,97 +380,6 @@ class ProcessorTranscriptMixin:
                 "session_id": session_id,
                 "transcript_path": transcript_path,
                 "message_count": len(parsed_messages),
-            },
-        )
-
-    async def _process_json_session(
-        self: ProcessorHost, session_id: str, transcript_path: str
-    ) -> None:
-        """
-        Process a JSON session file.
-
-        Uses mtime to detect changes, reads the entire file, and parses
-        all messages. Only stores messages newer than last_message_index.
-        """
-        try:
-            current_mtime = await asyncio.to_thread(os.path.getmtime, transcript_path)
-        except OSError:
-            return
-
-        last_mtime = self._last_mtime.get(session_id, 0.0)
-        if current_mtime <= last_mtime:
-            return
-
-        try:
-            async with aiofiles.open(transcript_path, encoding="utf-8") as f:
-                raw = await f.read()
-            data = json.loads(raw)
-        except (json.JSONDecodeError, OSError, UnicodeDecodeError) as e:
-            logger.error(
-                "Error reading JSON transcript",
-                extra={
-                    "session_id": session_id,
-                    "transcript_path": transcript_path,
-                    "error": str(e),
-                },
-            )
-            return
-
-        if not isinstance(data, dict):
-            logger.warning(
-                "JSON transcript is not an object",
-                extra={"session_id": session_id, "transcript_path": transcript_path},
-            )
-            return
-
-        await self._run_db(self._revive_expired_terminal_session, session_id)
-
-        parser = self._parsers.get(session_id)
-        if not parser or not hasattr(parser, "parse_session_json"):
-            logger.warning(
-                "No JSON-session transcript parser for session",
-                extra={"session_id": session_id, "transcript_path": transcript_path},
-            )
-            return
-
-        all_messages = [
-            r
-            for r in normalize_transcript_records(
-                parser.parse_session_json(data),
-                _parser_source(parser),
-            )
-            if isinstance(r, ParsedMessage)
-        ]
-        if not all_messages:
-            self._last_mtime[session_id] = current_mtime
-            return
-
-        last_index = self._message_indices.get(session_id, -1)
-        new_messages = [m for m in all_messages if m.index > last_index]
-        latest_new_index = new_messages[-1].index if new_messages else last_index
-
-        new_messages = await self._run_db(
-            self._extract_native_titles,
-            session_id,
-            new_messages,
-        )
-
-        if not new_messages:
-            if latest_new_index > last_index:
-                self._message_indices[session_id] = latest_new_index
-            self._last_mtime[session_id] = current_mtime
-            return
-
-        await self._process_parsed_batch(session_id, new_messages)
-        self._message_indices[session_id] = latest_new_index
-        self._last_mtime[session_id] = current_mtime
-
-        logger.debug(
-            "Processed JSON transcript messages",
-            extra={
-                "session_id": session_id,
-                "transcript_path": transcript_path,
-                "message_count": len(new_messages),
             },
         )
 

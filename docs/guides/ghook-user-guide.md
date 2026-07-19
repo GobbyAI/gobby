@@ -1,6 +1,6 @@
 # ghook User Guide
 
-ghook is the sandbox-tolerant hook dispatcher Gobby uses to receive lifecycle and tool-use events from host AI CLIs (Claude Code, Codex, Qwen CLI, Factory droid, Grok, Antigravity CLI). It enqueues an envelope to `~/.gobby/hooks/inbox/` *before* attempting to POST to the local Gobby daemon — so the daemon's drain worker can replay any envelope whose POST was lost to a sandbox FS-read denial, a network blip, or a daemon restart.
+ghook is the sandbox-tolerant hook dispatcher Gobby uses to receive lifecycle and tool-use events from host AI CLIs (Claude Code, Codex, Factory Droid, Grok, Qwen CLI, and AGY). It enqueues an envelope to `~/.gobby/hooks/inbox/` *before* attempting to POST to the local Gobby daemon — so the daemon's drain worker can replay any envelope whose POST was lost to a sandbox FS-read denial, a network blip, or a daemon restart.
 
 You don't usually invoke ghook directly. The Gobby installer wires it into each host CLI's hook configuration. This guide explains what it does, how to verify it's working, and how to wire it manually if you need to.
 
@@ -201,14 +201,12 @@ Grok uses native snake_case hook types (e.g. `session_start`, `session_end`, `pr
 
 Droid uses PascalCase hook types (`SessionStart`, `PreToolUse`, `PostToolUse`, `UserPromptSubmit`, `Notification`, `Stop`, `SubagentStop`, `PreCompact`, `SessionEnd`) and ghook forwards droid's stdin payload unchanged to the daemon with `source: "droid"`. Droid-specific block handling differs slightly from the other CLIs: daemon responses containing `continue:false` exit 2, while other meaningful response JSON is written to stdout with exit 0.
 
-Antigravity CLI uses PascalCase hook types (`SessionStart`, `UserPromptSubmit`, `PreToolUse`, `PostToolUse`, `Stop`) and ghook forwards them with `source: "agy"`. `SessionStart` is fail-closed; `Stop`, prompt, and tool hooks are non-critical.
+AGY uses PascalCase hook types (`SessionStart`, `UserPromptSubmit`, `PreToolUse`, `PostToolUse`, `Stop`) and ghook forwards them with `source: "agy"`. `SessionStart` is fail-closed; `Stop`, prompt, and tool hooks are non-critical.
 
 Qwen uses its current PascalCase terminal-hook names. Malformed input and
 transport failures exit `2` for its four critical hooks and `1` for its other
 hooks. Successful Qwen responses, including a blocking `Stop`, are serialized
 to stdout with exit `0` so Qwen can consume the structured decision and reason.
-
-Gemini CLI support has been removed. Diagnose mode reports `--cli=gemini` as unrecognized, and stale Gobby-owned Gemini hook invocations no-op with `{}` and exit 0 before enqueue or POST.
 
 Unknown `--cli` values fall back to conservative Claude-like dispatch behavior on the live path. Diagnose mode still reports unknown CLIs as unrecognized.
 

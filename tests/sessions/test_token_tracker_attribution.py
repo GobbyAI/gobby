@@ -79,7 +79,7 @@ async def test_non_claude_transcript_events_keep_source_and_session_model_attrib
         await lifecycle._process_session_transcript(codex_session.id, str(codex_path))
 
     qwen_path = tmp_path / "qwen.json"
-    qwen_path.write_text('{"sessionId":"qwen-ext","messages":[]}')
+    qwen_path.write_text('{"type":"user","message":{"role":"user","parts":[{"text":"hi"}]}}\n')
     qwen_session = session_manager.register(
         external_id="qwen-ext",
         machine_id="machine-1",
@@ -99,7 +99,7 @@ async def test_non_claude_transcript_events_keep_source_and_session_model_attrib
     # Keep this direct call paired with the Codex case above for stable
     # source/model attribution coverage.
     with patch("gobby.sessions.transcript_processing.QwenTranscriptParser") as parser_cls:
-        parser_cls.return_value.parse_session_json.return_value = [
+        parser_cls.return_value.parse_lines.return_value = [
             _message(message_id="qwen-msg", input_tokens=200, output_tokens=50)
         ]
         await lifecycle._process_session_transcript(qwen_session.id, str(qwen_path))

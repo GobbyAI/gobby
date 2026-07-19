@@ -43,7 +43,6 @@ _KNOWN_PROVIDER_PREFIXES = (
     "claude/",
     "codex/",
     "droid/",
-    "gemini/",
     "openai/",
     "google/",
     "grok/",

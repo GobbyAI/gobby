@@ -51,7 +51,7 @@ every diff because you can't actually trust what comes back.
 The fix isn't a better prompt. The fix is infrastructure around the agent.
 
 Gobby is a local daemon that sits underneath the AI coding CLIs you already use
-— Claude Code, Codex, Qwen CLI, Factory Droid, and AGY hooks — and gives them what
+— Claude Code, Codex, Factory Droid, Grok, Qwen CLI, and AGY — and gives them what
 they're missing: shared sessions, a durable task ledger, hook-time rules,
 progressive MCP discovery, agent isolation, review gates, and a build loop that
 turns a task into a PR without you in the middle.
@@ -183,7 +183,7 @@ finishing real work on real codebases, and the toolchain is part of the moat.
 
 | Tool | Category | Where Gobby differs |
 | --- | --- | --- |
-| **Claude Code, Codex, Qwen CLI, Droid, AGY hooks** | First-party AI coding CLIs and hook surfaces | Gobby runs *under* supported CLIs. They become the worker, not the orchestrator. |
+| **Claude Code, Codex, Droid, Grok, Qwen CLI, AGY** | First-party AI coding CLIs and hook surfaces | Gobby runs *under* supported CLIs. They become the worker, not the orchestrator. |
 | **Aider, Cline, OpenHands, Plandex, Continue** | Coding agents / IDE extensions | They each own the loop. Gobby owns the task, the rules, the dispatch, and the review gates around whichever loop you pick. |
 | **BMAD-METHOD** | Multi-agent role framework (Markdown/YAML personas) | Real overlap on staged work, but BMAD is a methodology layered on top of an existing agent; Gobby is the daemon, ledger, hook engine, and dispatcher. |
 | **Superset, parallel-code, claude_code_bridge, CLI Agent Orchestrator** | Parallel CLI launchers | They run multiple CLIs side-by-side in worktrees. They don't share session, task, memory, or rules across CLIs. Gobby does. |
@@ -235,7 +235,7 @@ Full release notes: [CHANGELOG.md](CHANGELOG.md).
 - HTTP API and installed web UI on `localhost:60887`, WebSocket on `:60888`,
   dev web UI on `:60889`
 - stdio MCP server for coding assistants
-- Hook adapters for Claude Code, Codex, Qwen CLI, Factory Droid, and AGY
+- Hook adapters for Claude Code, Codex, Factory Droid, Grok, Qwen CLI, and AGY
 - Optional Qdrant + FalkorDB for vector and graph-backed search
 - Companion Rust toolchain under `crates/`
 
@@ -265,9 +265,10 @@ See [docs/guides/README.md](docs/guides/README.md) for the full guide index.
 | --- | --- | --- |
 | Claude Code | Hooks + MCP | Durable sessions, task links, rule-enforced workflows, build dispatch |
 | Codex | Hooks + MCP | Shared tasks, MCP access, spawned agents, cross-CLI handoffs |
-| AGY | Hooks + MCP config | Cross-session context, memory, tasks, pipelines; live chat/spawn unavailable |
-| Qwen CLI | Hooks + MCP | Shared lifecycle, local-model flags, session state |
 | Factory Droid | Hooks + MCP | Droid sessions, transcript parsing, spawned-agent flows |
+| Grok | Hooks + MCP | Shared lifecycle, transcript parsing, spawned-agent flows |
+| Qwen CLI | Hooks + MCP | Shared lifecycle, local-model flags, session state |
+| AGY | Hooks + MCP config | Cross-session context, memory, tasks, pipelines; live chat/spawn unavailable |
 
 A task started in any one of them can be continued in any other with the same
 local state, validation gates, and review state. Hook policy is portable across

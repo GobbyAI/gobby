@@ -1,7 +1,8 @@
 """Unified transcript read layer: live transcript file -> gzip archive.
 
 Reads from live transcript files for active/paused sessions and falls back to
-gzip archives for expired sessions. Supports JSONL and native JSON transcripts.
+gzip archives for expired sessions. Supported CLI transcripts are line-oriented,
+including Qwen's ``.json`` envelope files.
 
 Rendered reads are **windowed** through a cached per-session boundary index
 (:mod:`gobby.sessions.transcript_index`) so daemon RAM stays bounded on very
@@ -12,7 +13,6 @@ limit`` instead of materializing the whole file.
 from __future__ import annotations
 
 import asyncio
-import json
 import logging
 import os
 from collections.abc import Iterator
@@ -34,36 +34,25 @@ from gobby.sessions.transcript_index import (
 )
 from gobby.sessions.transcript_io import (
     DecompressionError,
-    TranscriptTooLargeError,
     _iter_archive_lines,
     _iter_jsonl_lines,
-    _read_json_file,
     clear_archive_cache,
 )
-from gobby.sessions.transcript_limits import (
-    FLAT_ROW_LIMIT_MAX,
-    NATIVE_JSON_MAX_BYTES,
-    RENDERED_LIMIT_MAX,
-)
+from gobby.sessions.transcript_limits import FLAT_ROW_LIMIT_MAX, RENDERED_LIMIT_MAX
 from gobby.sessions.transcript_normalization import normalize_transcript_records
 from gobby.sessions.transcript_parsing import (
     _get_parser,
-    _parse_json_session,
-    _parse_lines,
     _parsed_to_dicts,
 )
-from gobby.sessions.transcript_paths import _find_transcript_on_disk, _is_json_session_file
-from gobby.sessions.transcript_renderer import render_transcript
+from gobby.sessions.transcript_paths import _find_transcript_on_disk
 from gobby.sessions.transcript_source import _resolve_effective_source
 from gobby.sessions.transcript_status import get_transcript_status_for_session
 from gobby.sessions.transcript_window import (
     MAX_WINDOW_SPAN_BYTES,
     WindowResult,
-    _requested_range,
     render_window,
 )
 from gobby.sessions.transcripts.base import (
-    NON_MESSAGE_CONTENT_TYPES,
     ParsedMessage,
     RawLine,
 )
@@ -86,8 +75,7 @@ __all__ = ["TranscriptReader", "clear_archive_cache"]
 class _Windowable:
     """A resolved transcript snapshot ready for windowed reads.
 
-    ``kind`` is ``"jsonl"`` (byte-seek), ``"archive"`` (gzip-block seek),
-    ``"native"`` (no windowing — render whole, ``size`` set for the guard), or
+    ``kind`` is ``"jsonl"`` (byte-seek), ``"archive"`` (gzip-block seek), or
     ``"missing"``.
     """
 
@@ -105,23 +93,6 @@ def _activity_counts_from_index(index: TranscriptIndex) -> dict[str, int]:
         "message_count": index.parsed_message_count,
         "turn_count": sum(1 for boundary in index.boundaries if boundary.role == "assistant"),
         "tool_call_count": len(index.tool_first_open),
-    }
-
-
-def _activity_counts_from_messages(messages: list[ParsedMessage]) -> dict[str, int]:
-    # Exclude session metadata (native titles, unmodeled-record sentinel) up
-    # front: this helper keys turn_count off role alone (no content_type gate),
-    # so filtering here is what keeps both message_count and turn_count from
-    # counting a metadata record.
-    messages = [m for m in messages if m.content_type not in NON_MESSAGE_CONTENT_TYPES]
-    return {
-        "message_count": len(messages),
-        "turn_count": sum(1 for msg in messages if msg.role == "assistant"),
-        "tool_call_count": sum(
-            1
-            for msg in messages
-            if msg.content_type in ("tool_use", "mcp_tool_use") and msg.tool_use_id
-        ),
     }
 
 
@@ -166,12 +137,6 @@ class TranscriptReader:
 
         path = await self._get_live_transcript_path(session_id, session)
         if path and os.path.isfile(path):
-            if _is_json_session_file(path):
-                try:
-                    return await self._flat_native(session_id, offset, limit, role)
-                except TranscriptTooLargeError as e:
-                    logger.warning("Skipping oversized native transcript for %s: %s", session_id, e)
-                    return []
             source = await asyncio.to_thread(
                 detect_source_bounded, path, session_source=session.source
             )
@@ -219,15 +184,6 @@ class TranscriptReader:
 
         return []
 
-    async def _flat_native(
-        self, session_id: str, offset: int, limit: int, role: str | None
-    ) -> list[dict[str, Any]]:
-        """Flat-row read for native JSON (small; rendered whole then sliced)."""
-        parsed = await self._get_parsed_messages_from_file(session_id)
-        dicts = _parsed_to_dicts(parsed)
-        filtered = _filter_messages(dicts, session_id=session_id, role=role)
-        return filtered[offset : offset + limit]
-
     # ------------------------------------------------------------------ #
     # Windowed rendered messages
     # ------------------------------------------------------------------ #
@@ -243,11 +199,9 @@ class TranscriptReader:
     ) -> WindowResult:
         """Render a bounded window of rendered groups off the event loop.
 
-        Resolves the live JSONL (byte-seek) / archive (line-seek) snapshot,
-        builds-or-reuses its cached boundary index, and delegates to
-        :func:`render_window`. Native-JSON transcripts have no line offsets and
-        are rendered whole with a size guard (raising
-        :class:`TranscriptTooLargeError` above the cap).
+        Resolves the live line-oriented (byte-seek) / archive (line-seek)
+        snapshot, builds-or-reuses its cached boundary index, and delegates to
+        :func:`render_window`.
         """
         session = self._session_manager.get(session_id)
         if not session:
@@ -259,10 +213,6 @@ class TranscriptReader:
             logger.warning("Failed to read archive for session %s: %s", session_id, e)
             return WindowResult(groups=[], returned_count=0, total_groups=0)
 
-        if resolved.kind == "native":
-            return await self._native_json_window(
-                session_id, resolved.path or "", resolved.size, limit, offset, order
-            )
         if resolved.index is None or resolved.path is None:
             return WindowResult(groups=[], returned_count=0, total_groups=0)
 
@@ -326,44 +276,6 @@ class TranscriptReader:
         )
         return result.groups
 
-    async def _native_json_window(
-        self,
-        session_id: str,
-        path: str,
-        size: int,
-        limit: int,
-        offset: int,
-        order: str,
-    ) -> WindowResult:
-        """Render a native-JSON transcript whole, then slice (size-guarded)."""
-        if size > NATIVE_JSON_MAX_BYTES:
-            raise TranscriptTooLargeError(size, NATIVE_JSON_MAX_BYTES)
-
-        parsed = await self._get_parsed_messages_from_file(session_id)
-        if not parsed:
-            return WindowResult(groups=[], returned_count=0, total_groups=0)
-
-        rendered = await asyncio.to_thread(
-            render_transcript,
-            parsed,
-            session_id=session_id,
-            source=parsed[0].source if parsed else None,
-            observation_tracker=ObservationTracker(self._observation_store),
-        )
-        total = len(rendered)
-        g_start, g_end = _requested_range(total, max(0, int(limit)), max(0, int(offset)), order)
-        groups = rendered[g_start:g_end]
-        return WindowResult(
-            groups=groups,
-            returned_count=len(groups),
-            total_groups=total,
-            # Render the full parsed list above (so any unmodeled-record sentinel
-            # is still observed), but the display count excludes session metadata.
-            parsed_message_count=sum(
-                1 for m in parsed if m.content_type not in NON_MESSAGE_CONTENT_TYPES
-            ),
-        )
-
     # ------------------------------------------------------------------ #
     # Counts / status
     # ------------------------------------------------------------------ #
@@ -376,10 +288,7 @@ class TranscriptReader:
 
         try:
             resolved = await self._resolve_windowable(session, session_id)
-            if resolved.kind == "native":
-                parsed = await self._get_parsed_messages_from_file(session_id)
-                return sum(1 for m in parsed if m.content_type not in NON_MESSAGE_CONTENT_TYPES)
-        except (DecompressionError, TranscriptTooLargeError) as e:
+        except DecompressionError as e:
             logger.warning("Failed to count transcript messages for session %s: %s", session_id, e)
             return 0
 
@@ -395,14 +304,10 @@ class TranscriptReader:
 
         try:
             resolved = await self._resolve_windowable(session, session_id)
-            if resolved.kind == "native":
-                return _activity_counts_from_messages(
-                    await self._get_parsed_messages_from_file(session_id)
-                )
             if resolved.index is not None:
                 return _activity_counts_from_index(resolved.index)
             return {"message_count": 0, "turn_count": 0, "tool_call_count": 0}
-        except (DecompressionError, TranscriptTooLargeError) as e:
+        except DecompressionError as e:
             logger.warning("Failed to count transcript activity for session %s: %s", session_id, e)
             return {"message_count": 0, "turn_count": 0, "tool_call_count": 0}
 
@@ -422,15 +327,13 @@ class TranscriptReader:
     async def _resolve_windowable(self, session: Session, session_id: str) -> _Windowable:
         """Resolve the current transcript snapshot and its cached boundary index.
 
-        One disk resolution feeds both counts and windowed renders. Live JSONL
-        builds a byte-seek index; the archive fallback decompresses once and
-        builds a line-seek index; native JSON is flagged for whole-render.
+        One disk resolution feeds both counts and windowed renders. Live
+        line-oriented transcripts build a byte-seek index; the archive fallback
+        decompresses once and builds a line-seek index.
         """
         path = await self._get_live_transcript_path(session_id, session)
         if path and os.path.isfile(path):
             st = await asyncio.to_thread(os.stat, path)
-            if _is_json_session_file(path):
-                return _Windowable(kind="native", path=path, source=session.source, size=st.st_size)
             source = await asyncio.to_thread(
                 detect_source_bounded, path, session_source=session.source
             )
@@ -530,70 +433,10 @@ class TranscriptReader:
             )
         return derived
 
-    async def _get_parsed_messages_from_file(self, session_id: str) -> list[ParsedMessage]:
-        """Read and parse ParsedMessages from live transcript file.
-
-        Used only for native-JSON whole renders/counts; large JSONL transcripts
-        go through the windowed index path instead.
-        """
-        session = self._session_manager.get(session_id)
-        if not session:
-            return []
-
-        transcript_path = await self._get_live_transcript_path(session_id, session)
-        if not transcript_path:
-            return []
-
-        try:
-            if _is_json_session_file(transcript_path):
-                size = await asyncio.to_thread(os.path.getsize, transcript_path)
-                if size > NATIVE_JSON_MAX_BYTES:
-                    raise TranscriptTooLargeError(size, NATIVE_JSON_MAX_BYTES)
-                data = await asyncio.to_thread(self._read_json_file, transcript_path)
-                source, _ = _resolve_effective_source(
-                    session,
-                    transcript_path=transcript_path,
-                    data=data,
-                    session_id=session_id,
-                )
-                return _parse_json_session(
-                    data,
-                    source,
-                    session_id=session_id,
-                    transcript_path=transcript_path,
-                )
-
-            lines = await asyncio.to_thread(_read_all_jsonl_lines, transcript_path)
-            source, _ = _resolve_effective_source(
-                session,
-                transcript_path=transcript_path,
-                lines=lines,
-                session_id=session_id,
-            )
-            return _parse_lines(
-                lines,
-                source,
-                session_id=session_id,
-                transcript_path=transcript_path,
-            )
-        except (json.JSONDecodeError, OSError, ValueError) as e:
-            logger.warning("Failed to read transcript for session %s: %s", session_id, e)
-            return []
-
-    @staticmethod
-    def _read_json_file(path: str) -> dict[str, Any]:
-        """Read and parse a JSON file. Runs in a thread."""
-        return _read_json_file(path)
-
 
 # --------------------------------------------------------------------------- #
 # Module-level streaming helpers (run inside worker threads)
 # --------------------------------------------------------------------------- #
-
-
-def _read_all_jsonl_lines(path: str) -> list[str]:
-    """Materialize all JSONL lines (native/whole-render fallback only)."""
-    return list(_iter_jsonl_lines(path))
 
 
 def _read_archive_sample(path: str, max_lines: int) -> list[str]:
@@ -730,17 +573,3 @@ def _collect_flat_dicts(
             if len(out) >= cap:
                 return out
     return out
-
-
-def _filter_messages(
-    messages: list[dict[str, Any]],
-    *,
-    session_id: str,
-    role: str | None,
-) -> list[dict[str, Any]]:
-    """Attach session ID and apply optional role filtering."""
-    normalized = [{**msg, "session_id": session_id} for msg in messages]
-
-    if role:
-        return [msg for msg in normalized if msg.get("role") == role]
-    return normalized

@@ -63,7 +63,7 @@ Plan mode is enforced through workflow/rule state. In plan mode:
 - The agent may write the active plan artifact.
 - Structured `Write`, `Edit`, and `NotebookEdit` calls may write scratch files
   beneath the active provider's user directory (`~/.claude`, `~/.codex`,
-  `~/.factory`, `~/.grok`, `~/.qwen`, or `~/.gemini`) and OS temporary
+  `~/.factory`, `~/.grok`, `~/.qwen`, or AGY's `~/.gemini`) and OS temporary
   directories. Cross-provider directories, relative project config directories,
   and paths that escape an approved root remain blocked.
 - Multi-file operations are allowed only when every target is the active plan

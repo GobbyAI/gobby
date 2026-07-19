@@ -21,7 +21,7 @@ def neutral_textgen_cwd() -> Iterator[Path]:
     """Yield a private temp directory to use as the cwd for one-shot text generation.
 
     Daemon-owned feature/text-gen CLI and SDK calls must NOT run in the project
-    directory. Running there loads project context (``GEMINI.md``, project skills,
+    directory. Running there loads project context (``AGENTS.md``, project skills,
     gobby lifecycle hooks, configured MCP servers) and adds a variable 20-40s
     startup tax that pushes calls past the candidate timeout. One-shot generation
     needs no project context — the prompt carries everything.

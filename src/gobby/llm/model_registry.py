@@ -32,7 +32,6 @@ OPENROUTER_MODELS_URL = "https://openrouter.ai/api/v1/models"
 PROVIDER_MAP: dict[str, str] = {
     "anthropic/": "claude",
     "openai/": "codex",
-    "google/": "gemini",
     "qwen/": "qwen",
     "z-ai/": "droid",
     "moonshotai/": "droid",
@@ -50,7 +49,7 @@ class ModelInfo:
 
     id: str
     name: str
-    provider: str  # Gobby provider name (claude, codex, gemini, qwen, droid)
+    provider: str  # Gobby provider name assigned by PROVIDER_MAP
     context_length: int
     max_completion_tokens: int | None
 

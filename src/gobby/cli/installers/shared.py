@@ -183,7 +183,7 @@ def install_shared_content(cli_path: Path, project_path: Path) -> dict[str, list
     Safely handles migration from dev-mode symlinks to copies.
 
     Args:
-        cli_path: Path to CLI config directory (e.g., .claude, .gemini)
+        cli_path: Path to CLI config directory (e.g., .claude or AGY's .gemini)
         project_path: Path to project root
 
     Returns:

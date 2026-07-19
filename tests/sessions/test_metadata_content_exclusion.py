@@ -4,7 +4,7 @@ message/flat counts everywhere.
 These lock in the unified "not a conversation message" rule for the three
 metadata content types — ``session_title``, ``hook_prompt``, and the
 ``unmodeled_record`` sentinel — at the pure-function choke points shared by the
-live processor, the lifecycle path, the index, and the native readers.
+live processor, the lifecycle path, and the index.
 """
 
 from __future__ import annotations
@@ -15,7 +15,6 @@ import pytest
 
 from gobby.sessions.message_stats import compute_message_stats
 from gobby.sessions.transcript_parsing import _parsed_to_dicts
-from gobby.sessions.transcript_reader import _activity_counts_from_messages
 from gobby.sessions.transcripts.base import (
     NON_MESSAGE_CONTENT_TYPES,
     UNMODELED_RECORD_CONTENT_TYPE,
@@ -88,24 +87,6 @@ class TestComputeMessageStatsExclusion:
         stats = compute_message_stats(messages)
         assert stats["message_count"] == 1
         assert stats["tool_call_count"] == 1
-
-
-class TestActivityCountsExclusion:
-    def test_metadata_excluded_even_with_assistant_role(self) -> None:
-        # _activity_counts_from_messages keys turn_count off role alone, so a
-        # metadata record carrying role="assistant" must still be filtered out.
-        messages = [
-            _msg(index=0, role="assistant", content_type="text", content="a"),
-            _msg(index=1, role="assistant", content_type="session_title", content="title"),
-            _msg(
-                index=2, role="assistant", content_type=UNMODELED_RECORD_CONTENT_TYPE, content="x"
-            ),
-            _msg(index=3, role="assistant", content_type="usage"),
-        ]
-        counts = _activity_counts_from_messages(messages)
-        assert counts["message_count"] == 1
-        assert counts["turn_count"] == 1
-        assert counts["tool_call_count"] == 0
 
 
 class TestParsedToDictsExclusion:

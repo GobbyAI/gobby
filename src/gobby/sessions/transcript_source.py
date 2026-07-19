@@ -47,34 +47,8 @@ def _load_json_object(raw: str) -> dict[str, Any] | None:
     return data if isinstance(data, dict) else None
 
 
-def _looks_like_qwen(data: dict[str, Any]) -> bool:
-    """Return True if the payload carries a Qwen model marker."""
-    for key in ("model", "modelName"):
-        value = data.get(key)
-        if isinstance(value, str) and "qwen" in value.lower():
-            return True
-    meta = data.get("meta")
-    if isinstance(meta, dict):
-        for key in ("model", "modelName"):
-            value = meta.get(key)
-            if isinstance(value, str) and "qwen" in value.lower():
-                return True
-    messages = data.get("messages")
-    if isinstance(messages, list):
-        for entry in messages:
-            if isinstance(entry, dict):
-                for key in ("model", "modelName"):
-                    value = entry.get(key)
-                    if isinstance(value, str) and "qwen" in value.lower():
-                        return True
-    return False
-
-
 def _detect_source_from_record(data: dict[str, Any]) -> str | None:
     """Infer transcript source from a decoded transcript record."""
-    if "sessionId" in data or isinstance(data.get("messages"), list):
-        return "qwen"
-
     params = data.get("params")
     if isinstance(params, dict):
         update = params.get("update")
@@ -97,6 +71,8 @@ def _detect_source_from_record(data: dict[str, Any]) -> str | None:
         return "codex"
 
     if isinstance(message, dict):
+        if isinstance(message.get("parts"), list):
+            return "qwen"
         if "role" in message:
             return "claude"
         if "content" in message:
@@ -111,13 +87,6 @@ def _detect_source_from_record(data: dict[str, Any]) -> str | None:
         return "qwen"
 
     return None
-
-
-def _detect_source_from_json_session(data: dict[str, Any]) -> str | None:
-    """Infer transcript source from a native JSON session file."""
-    if "sessionId" in data or isinstance(data.get("messages"), list):
-        return "qwen"
-    return _detect_source_from_record(data)
 
 
 def _detect_source_from_jsonl_lines(lines: list[str]) -> str | None:
@@ -139,13 +108,10 @@ def _resolve_effective_source(
     *,
     transcript_path: str | None = None,
     lines: list[str] | None = None,
-    data: dict[str, Any] | None = None,
     session_id: str | None = None,
 ) -> tuple[str, str | None]:
     """Choose the parser source from transcript evidence, with DB source as fallback."""
     detected_source = _detect_source_from_path(transcript_path)
-    if detected_source is None and data is not None:
-        detected_source = _detect_source_from_json_session(data)
     if detected_source is None and lines is not None:
         detected_source = _detect_source_from_jsonl_lines(lines)
 

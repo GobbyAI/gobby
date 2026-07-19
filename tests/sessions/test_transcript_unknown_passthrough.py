@@ -7,7 +7,6 @@ from gobby.sessions.transcripts.claude import ClaudeTranscriptParser
 from gobby.sessions.transcripts.codex import CodexTranscriptParser
 from gobby.sessions.transcripts.droid import DroidTranscriptParser
 from gobby.sessions.transcripts.grok import GrokTranscriptParser
-from gobby.sessions.transcripts.typed_json import TypedJsonTranscriptParser
 
 pytestmark = pytest.mark.unit
 
@@ -101,7 +100,6 @@ def test_unknown_records_are_preserved_but_protocol_records_stay_skipped() -> No
     todo_state = {"type": "todo_state", "timestamp": "2026-06-27T15:00:00Z"}
     droid_parser = DroidTranscriptParser(session_id="session-1")
     codex_parser = CodexTranscriptParser(session_id="session-1")
-    typed_parser = TypedJsonTranscriptParser(cli_name="typed", session_id="session-1")
 
     messages = droid_parser.parse_lines([_line(unknown), _line(session_start), _line(todo_state)])
 
@@ -115,46 +113,6 @@ def test_unknown_records_are_preserved_but_protocol_records_stay_skipped() -> No
         )
         is None
     )
-    assert typed_parser.parse_line(_line({"type": "init"}), 0) is None
-    assert typed_parser.parse_line(_line({"type": "result"}), 1) is None
-
-
-def test_typed_json_unknown_jsonl_and_session_messages_are_preserved() -> None:
-    parser = TypedJsonTranscriptParser(cli_name="typed", session_id="session-1")
-
-    jsonl_msg = parser.parse_line(
-        _line(
-            {
-                "type": "provider_extension",
-                "id": "evt-1",
-                "timestamp": "2026-06-27T15:00:00Z",
-                "content": "extension body",
-            }
-        ),
-        4,
-    )
-    session_messages = parser.parse_session_json(
-        {
-            "messages": [
-                {"type": "info", "content": "skip me"},
-                {
-                    "type": "provider_session_extension",
-                    "id": "msg-1",
-                    "timestamp": "2026-06-27T15:00:00Z",
-                    "content": "session body",
-                },
-            ]
-        }
-    )
-
-    assert jsonl_msg is not None
-    assert jsonl_msg.content_type == "provider_extension"
-    assert jsonl_msg.content == "extension body"
-    assert [msg.content_type for msg in session_messages] == ["provider_session_extension"]
-    assert session_messages[0].content == "session body"
-    assert session_messages[0].source == "typed"
-    assert session_messages[0].source_line == 1
-    assert session_messages[0].source_ref == "messages[1]"
 
 
 def test_grok_unknown_session_update_is_preserved() -> None:

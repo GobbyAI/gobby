@@ -562,7 +562,7 @@ class TestResolveContextWindow:
         [
             ("anthropic/claude-sonnet-4-6", 200_000),
             ("claude/claude-sonnet-4-6", 200_000),
-            ("gemini/gemini-3.5-flash", 1_048_576),
+            ("agy/gemini-3.5-flash", 1_048_576),
             ("codex/gpt-5.3-codex", 258_400),
             ("grok/grok-composer-2.5-fast", 200_000),
         ],

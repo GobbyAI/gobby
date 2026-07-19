@@ -57,6 +57,7 @@ _PROVIDERS: tuple[ProviderMetadata, ...] = (
         "agy",
         "agy",
         "AGY",
+        # AGY retains the upstream CLI's historical config-directory name.
         ".gemini",
         supports_web_chat=False,
         supports_agent_spawn=False,

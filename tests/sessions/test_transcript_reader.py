@@ -12,12 +12,10 @@ import pytest
 
 from gobby.sessions.gzip_seek_index import load_gzip_block_index
 from gobby.sessions.transcript_index import clear_index_cache, get_or_build_index
-from gobby.sessions.transcript_io import TranscriptTooLargeError
 from gobby.sessions.transcript_paths import _find_transcript_on_disk, _is_recent_file
 from gobby.sessions.transcript_reader import (
     TranscriptReader,
     _collect_flat_from_file,
-    _filter_messages,
     clear_archive_cache,
 )
 from gobby.sessions.transcript_renderer import RenderedMessage
@@ -73,15 +71,6 @@ def _make_msg_dict(index: int, role: str = "assistant", content: str = "hi") -> 
         "timestamp": datetime.now(UTC).isoformat(),
         "raw_json": {},
     }
-
-
-def test_filter_messages_does_not_mutate_input() -> None:
-    messages = [{"role": "user", "content": "hello"}]
-
-    result = _filter_messages(messages, session_id="sess-1", role=None)
-
-    assert result == [{"role": "user", "content": "hello", "session_id": "sess-1"}]
-    assert messages == [{"role": "user", "content": "hello"}]
 
 
 def test_codex_transcript_scan_respects_exact_max_days(
@@ -1061,120 +1050,37 @@ class TestTranscriptReaderWindowed:
         assert [g.content for g in result] == ["msg 0", "msg 1", "msg 2"]
 
     @pytest.mark.asyncio
-    async def test_native_json_size_guard_raises(
-        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
-        json_path = tmp_path / "session-big.json"
-        json_path.write_text(
-            json.dumps(
-                {
-                    "sessionId": "big-uuid",
-                    "messages": [
-                        {"type": "user", "content": "hi", "timestamp": "2025-03-23T10:00:00Z"},
-                    ],
-                }
-            )
+    async def test_qwen_json_uses_indexed_windows_counts_and_status(self, tmp_path: Path) -> None:
+        transcript = tmp_path / "qwen-session.json"
+        fixture = (
+            Path(__file__).parents[1]
+            / "fixtures"
+            / "transcripts"
+            / "qwen"
+            / "current_envelope.jsonl"
         )
+        transcript.write_text(fixture.read_text())
         session = MagicMock()
         session.source = "qwen"
-        session.transcript_path = str(json_path)
+        session.transcript_path = str(transcript)
         session.external_id = None
         session_manager = MagicMock()
         session_manager.get.return_value = session
-
-        monkeypatch.setattr("gobby.sessions.transcript_reader.NATIVE_JSON_MAX_BYTES", 1)
         reader = TranscriptReader(session_manager)
 
-        with pytest.raises(TranscriptTooLargeError):
-            await reader.get_rendered_window("sess-1", limit=50, offset=0, order="tail")
+        rows = await reader.get_messages("sess-1", limit=3, offset=1)
+        window = await reader.get_rendered_window("sess-1", limit=2, offset=0, order="head")
+        count = await reader.count_messages("sess-1")
+        activity = await reader.get_activity_counts("sess-1")
+        status = await reader.get_transcript_status("sess-1")
 
-    @pytest.mark.asyncio
-    async def test_native_json_get_messages_size_guard_returns_empty(
-        self,
-        tmp_path: Path,
-        monkeypatch: pytest.MonkeyPatch,
-    ) -> None:
-        json_path = tmp_path / "session-big.json"
-        json_path.write_text(
-            json.dumps(
-                {
-                    "sessionId": "big-uuid",
-                    "messages": [
-                        {"type": "user", "content": "hi", "timestamp": "2025-03-23T10:00:00Z"},
-                    ],
-                }
-            )
-        )
-        session = MagicMock()
-        session.source = "qwen"
-        session.transcript_path = str(json_path)
-        session.external_id = None
-        session_manager = MagicMock()
-        session_manager.get.return_value = session
-
-        monkeypatch.setattr("gobby.sessions.transcript_reader.NATIVE_JSON_MAX_BYTES", 1)
-        reader = TranscriptReader(session_manager)
-
-        assert await reader.get_messages("sess-1", limit=50) == []
-
-    @pytest.mark.asyncio
-    async def test_count_native_json_size_guard_returns_zero(
-        self,
-        tmp_path: Path,
-        monkeypatch: pytest.MonkeyPatch,
-    ) -> None:
-        json_path = tmp_path / "session-big.json"
-        json_path.write_text(
-            json.dumps(
-                {
-                    "sessionId": "big-uuid",
-                    "messages": [
-                        {"type": "user", "content": "hi", "timestamp": "2025-03-23T10:00:00Z"},
-                    ],
-                }
-            )
-        )
-        session = MagicMock()
-        session.source = "qwen"
-        session.transcript_path = str(json_path)
-        session.external_id = None
-        session_manager = MagicMock()
-        session_manager.get.return_value = session
-
-        monkeypatch.setattr("gobby.sessions.transcript_reader.NATIVE_JSON_MAX_BYTES", 1)
-        reader = TranscriptReader(session_manager)
-
-        assert await reader.count_messages("sess-1") == 0
-
-    @pytest.mark.asyncio
-    async def test_activity_counts_native_json_size_guard_returns_zero(
-        self,
-        tmp_path: Path,
-        monkeypatch: pytest.MonkeyPatch,
-    ) -> None:
-        json_path = tmp_path / "session-big.json"
-        json_path.write_text(
-            json.dumps(
-                {
-                    "sessionId": "big-uuid",
-                    "messages": [
-                        {"type": "user", "content": "hi", "timestamp": "2025-03-23T10:00:00Z"},
-                    ],
-                }
-            )
-        )
-        session = MagicMock()
-        session.source = "qwen"
-        session.transcript_path = str(json_path)
-        session.external_id = None
-        session_manager = MagicMock()
-        session_manager.get.return_value = session
-
-        monkeypatch.setattr("gobby.sessions.transcript_reader.NATIVE_JSON_MAX_BYTES", 1)
-        reader = TranscriptReader(session_manager)
-
-        assert await reader.get_activity_counts("sess-1") == {
-            "message_count": 0,
-            "turn_count": 0,
-            "tool_call_count": 0,
-        }
+        assert len(rows) == 3
+        assert window.returned_count == 2
+        assert count == 7
+        assert activity["message_count"] == 7
+        assert activity["tool_call_count"] == 1
+        assert status["raw_record_count"] == 7
+        assert status["parsed_message_count"] == 7
+        assert status["content_state"] == "messages"
+        assert status["detected_source"] == "qwen"
+        assert status["source_mismatch"] is False

@@ -7,7 +7,6 @@ by integration tests.
 
 import asyncio
 import json
-from collections.abc import Iterable
 from datetime import datetime
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -22,7 +21,6 @@ from gobby.sessions.transcript_index import (
     persist_index_sidecar,
 )
 from gobby.sessions.transcripts.base import ParsedMessage, TokenUsage
-from gobby.sessions.transcripts.typed_json import TypedJsonTranscriptParser
 from tests._timing import wait_for_async_condition
 
 pytestmark = pytest.mark.unit
@@ -207,6 +205,26 @@ class TestSessionRegistration:
         assert "claude-session" in processor._parsers
         assert "qwen-session" in processor._parsers
         assert "codex-session" in processor._parsers
+
+    def test_register_qwen_json_creates_incremental_index_appender(
+        self, processor, tmp_path
+    ) -> None:
+        transcript = tmp_path / "session.json"
+        transcript.write_text(
+            json.dumps(
+                {
+                    "type": "user",
+                    "uuid": "qwen-user-1",
+                    "timestamp": "2026-07-17T01:00:00Z",
+                    "message": {"role": "user", "parts": [{"text": "hi"}]},
+                }
+            )
+            + "\n"
+        )
+
+        processor.register_session("qwen-session", str(transcript), source="qwen")
+
+        assert "qwen-session" in processor._index_appenders
 
     def test_register_session_hydrates_matching_sidecar(self, mock_db, tmp_path) -> None:
         """Registration should resume byte offset, message index, stats, and appender."""
@@ -589,6 +607,49 @@ class TestProcessSession:
         assert processor._index_appenders["session-1"].index.raw_record_count == 1
 
     @pytest.mark.asyncio
+    async def test_qwen_json_processes_appended_envelopes_incrementally(
+        self, processor, tmp_path
+    ) -> None:
+        transcript = tmp_path / "session.json"
+        first = json.dumps(
+            {
+                "type": "user",
+                "uuid": "qwen-user-1",
+                "timestamp": "2026-07-17T01:00:00Z",
+                "message": {"role": "user", "parts": [{"text": "Hello"}]},
+            }
+        )
+        second = json.dumps(
+            {
+                "type": "assistant",
+                "uuid": "qwen-assistant-1",
+                "timestamp": "2026-07-17T01:00:01Z",
+                "message": {"role": "model", "parts": [{"text": "Hi"}]},
+            }
+        )
+        transcript.write_text(first + "\n")
+        processor.register_session("session-1", str(transcript), source="qwen")
+
+        await processor._process_session("session-1", str(transcript))
+        with transcript.open("a") as handle:
+            handle.write(second + "\n")
+        await processor._process_session("session-1", str(transcript))
+
+        st = transcript.stat()
+        index = load_index_sidecar(
+            str(transcript),
+            "qwen",
+            "session-1",
+            seek_mode="byte",
+            mtime_ns=st.st_mtime_ns,
+            size=st.st_size,
+        )
+        assert processor._stats["session-1"]["message_count"] == 2
+        assert processor._message_indices["session-1"] == 1
+        assert index is not None
+        assert index.parsed_message_count == 2
+
+    @pytest.mark.asyncio
     async def test_concurrent_poll_and_flush_do_not_double_process_json(
         self, processor, tmp_path
     ) -> None:
@@ -596,20 +657,15 @@ class TestProcessSession:
         transcript.write_text(
             json.dumps(
                 {
-                    "sessionId": "abc",
-                    "messages": [
-                        {
-                            "id": "1",
-                            "timestamp": "2024-01-01T10:00:00Z",
-                            "type": "user",
-                            "content": "Hello",
-                        }
-                    ],
+                    "type": "user",
+                    "uuid": "qwen-user-1",
+                    "timestamp": "2026-07-17T01:00:00Z",
+                    "message": {"role": "user", "parts": [{"text": "Hello"}]},
                 }
             )
+            + "\n"
         )
         processor.register_session("session-1", str(transcript), source="qwen")
-        processor._parsers["session-1"] = TypedJsonTranscriptParser(cli_name="typed-json")
         batch_entered = asyncio.Event()
         release_batch = asyncio.Event()
         second_batch_entered = asyncio.Event()
@@ -672,7 +728,6 @@ class TestProcessSession:
         state_maps = (
             processor._active_sessions,
             processor._parsers,
-            processor._last_mtime,
             processor._stats,
             processor._byte_offsets,
             processor._message_indices,
@@ -1887,316 +1942,6 @@ class TestInitialization:
 
         processor_no_ws = SessionMessageProcessor(mock_db)
         assert processor_no_ws.websocket_server is None
-
-    def test_initial_state_includes_mtime(self, mock_db) -> None:
-        """Should initialize with empty mtime tracking dict."""
-        processor = SessionMessageProcessor(mock_db)
-        assert processor._last_mtime == {}
-
-
-class TestUnregisterCleansMtime:
-    """Tests that unregister cleans up mtime tracking."""
-
-    def test_unregister_removes_mtime(self, processor, tmp_path) -> None:
-        """Unregister should clean up mtime tracking."""
-        transcript = tmp_path / "transcript.json"
-        transcript.touch()
-
-        processor.register_session("session-1", str(transcript), source="qwen")
-        processor._last_mtime["session-1"] = 12345.0
-
-        processor.unregister_session("session-1")
-        assert "session-1" not in processor._last_mtime
-
-    def test_unregister_no_mtime_entry(self, processor, tmp_path) -> None:
-        """Unregister should handle missing mtime entry gracefully."""
-        transcript = tmp_path / "transcript.jsonl"
-        transcript.touch()
-
-        processor.register_session("session-1", str(transcript))
-        # No mtime entry set
-        processor.unregister_session("session-1")
-        assert "session-1" not in processor._last_mtime
-
-
-class TestProcessJsonSession:
-    """Tests for _process_json_session (Qwen typed-JSON format)."""
-
-    @pytest.mark.asyncio
-    async def test_process_json_session_basic(self, mock_db, tmp_path) -> None:
-        """Should parse and store messages from a Qwen JSON session file."""
-        import json
-
-        processor = SessionMessageProcessor(mock_db)
-        transcript = tmp_path / "session-2024-01-01T10-00-abc12345.json"
-        data = {
-            "sessionId": "abc-12345",
-            "messages": [
-                {
-                    "id": "1",
-                    "timestamp": "2024-01-01T10:00:00Z",
-                    "type": "user",
-                    "content": "Hello",
-                },
-                {
-                    "id": "2",
-                    "timestamp": "2024-01-01T10:00:01Z",
-                    "type": "gemini",
-                    "content": "Hi there",
-                },
-            ],
-        }
-        transcript.write_text(json.dumps(data))
-
-        processor.register_session("session-1", str(transcript), source="qwen")
-        processor._parsers["session-1"] = TypedJsonTranscriptParser(cli_name="typed-json")
-
-        await processor._process_json_session("session-1", str(transcript))
-
-        # Should have processed 2 messages
-        assert processor._stats["session-1"]["message_count"] == 2
-        assert processor._message_indices["session-1"] == 1
-
-        # Should track mtime
-        assert "session-1" in processor._last_mtime
-
-    @pytest.mark.asyncio
-    async def test_process_json_session_retry_does_not_double_accumulate_stats(
-        self, mock_db, tmp_path
-    ) -> None:
-        processor = SessionMessageProcessor(mock_db)
-        transcript = tmp_path / "session.json"
-        transcript.write_text(
-            json.dumps(
-                {
-                    "sessionId": "abc",
-                    "messages": [
-                        {
-                            "id": "1",
-                            "timestamp": "2024-01-01T10:00:00Z",
-                            "type": "user",
-                            "content": "Hello",
-                        },
-                        {
-                            "id": "2",
-                            "timestamp": "2024-01-01T10:00:01Z",
-                            "type": "gemini",
-                            "content": "Hi there",
-                        },
-                    ],
-                }
-            )
-        )
-        processor.register_session("session-1", str(transcript), source="qwen")
-        processor._parsers["session-1"] = TypedJsonTranscriptParser(cli_name="typed-json")
-        processor._persist_usage_events = AsyncMock()
-        processor._render_and_broadcast_messages = AsyncMock(
-            side_effect=RuntimeError("render failed")
-        )
-
-        with pytest.raises(RuntimeError, match="render failed"):
-            await processor._process_json_session("session-1", str(transcript))
-
-        assert "session-1" not in processor._stats
-        assert "session-1" not in processor._message_indices
-        assert "session-1" not in processor._last_mtime
-
-        processor._render_and_broadcast_messages.side_effect = None
-        await processor._process_json_session("session-1", str(transcript))
-
-        assert processor._stats["session-1"]["message_count"] == 2
-        assert processor._message_indices["session-1"] == 1
-        assert "session-1" in processor._last_mtime
-
-    @pytest.mark.asyncio
-    async def test_process_json_session_passes_parser_source_to_normalizer(
-        self,
-        mock_db,
-        tmp_path,
-    ) -> None:
-        import json
-
-        processor = SessionMessageProcessor(mock_db)
-        transcript = tmp_path / "session.json"
-        transcript.write_text(
-            json.dumps(
-                {
-                    "sessionId": "abc",
-                    "messages": [
-                        {
-                            "id": "1",
-                            "timestamp": "2024-01-01T10:00:00Z",
-                            "type": "user",
-                            "content": "Hello",
-                        },
-                    ],
-                }
-            )
-        )
-        processor.register_session("session-1", str(transcript), source="qwen")
-        processor._parsers["session-1"] = TypedJsonTranscriptParser(cli_name="typed-json")
-        seen_sources: list[str | None] = []
-
-        def normalize(records: Iterable[object], source: str | None) -> list[object]:
-            seen_sources.append(source)
-            return list(records)
-
-        with patch(
-            "gobby.sessions.processor_transcripts.normalize_transcript_records",
-            side_effect=normalize,
-        ):
-            await processor._process_json_session("session-1", str(transcript))
-
-        assert seen_sources == ["typed-json"]
-
-    @pytest.mark.asyncio
-    async def test_process_json_session_skips_unchanged(self, mock_db, tmp_path) -> None:
-        """Should skip processing when file hasn't changed (mtime check)."""
-        import json
-        import os
-
-        processor = SessionMessageProcessor(mock_db)
-        transcript = tmp_path / "session.json"
-        data = {
-            "sessionId": "abc",
-            "messages": [
-                {
-                    "id": "1",
-                    "timestamp": "2024-01-01T10:00:00Z",
-                    "type": "user",
-                    "content": "Hello",
-                },
-            ],
-        }
-        transcript.write_text(json.dumps(data))
-
-        processor.register_session("session-1", str(transcript), source="qwen")
-        processor.message_manager = AsyncMock()
-
-        # Set mtime to current file mtime (pretend we already processed)
-        processor._last_mtime["session-1"] = os.path.getmtime(str(transcript))
-
-        await processor._process_json_session("session-1", str(transcript))
-
-        # Should not call get_state since we skipped
-        processor.message_manager.get_state.assert_not_called()
-        assert processor.message_manager.get_state.call_count == 0
-        assert not processor.message_manager.get_state.called
-
-    @pytest.mark.asyncio
-    async def test_process_json_session_incremental(self, mock_db, tmp_path) -> None:
-        """Should only store new messages beyond last_message_index."""
-        import json
-
-        processor = SessionMessageProcessor(mock_db)
-        transcript = tmp_path / "session.json"
-        data = {
-            "sessionId": "abc",
-            "messages": [
-                {
-                    "id": "1",
-                    "timestamp": "2024-01-01T10:00:00Z",
-                    "type": "user",
-                    "content": "First",
-                },
-                {
-                    "id": "2",
-                    "timestamp": "2024-01-01T10:00:01Z",
-                    "type": "gemini",
-                    "content": "Second",
-                },
-                {
-                    "id": "3",
-                    "timestamp": "2024-01-01T10:00:02Z",
-                    "type": "user",
-                    "content": "Third",
-                },
-            ],
-        }
-        transcript.write_text(json.dumps(data))
-
-        processor.register_session("session-1", str(transcript), source="qwen")
-        processor._parsers["session-1"] = TypedJsonTranscriptParser(cli_name="typed-json")
-        # Pretend we already processed up to index 1
-        processor._message_indices["session-1"] = 1
-
-        await processor._process_json_session("session-1", str(transcript))
-
-        # Should only have processed 1 new message (Third, at index 2)
-        assert processor._stats["session-1"]["message_count"] == 1
-        assert processor._message_indices["session-1"] == 2
-
-    @pytest.mark.asyncio
-    async def test_process_json_session_file_not_found(self, mock_db) -> None:
-        """Should return early when transcript file doesn't exist."""
-        processor = SessionMessageProcessor(mock_db)
-        processor.register_session("session-1", "/nonexistent/file.json", source="qwen")
-        processor.message_manager = AsyncMock()
-
-        await processor._process_json_session("session-1", "/nonexistent/file.json")
-        processor.message_manager.get_state.assert_not_called()
-        assert processor.message_manager.get_state.call_count == 0
-        assert not processor.message_manager.get_state.called
-
-    @pytest.mark.asyncio
-    async def test_process_json_session_invalid_json(self, mock_db, tmp_path, caplog) -> None:
-        """Should handle invalid JSON gracefully."""
-        processor = SessionMessageProcessor(mock_db)
-        transcript = tmp_path / "bad.json"
-        transcript.write_text("not valid json {{{")
-
-        processor.register_session("session-1", str(transcript), source="qwen")
-        processor.message_manager = AsyncMock()
-
-        await processor._process_json_session("session-1", str(transcript))
-        assert "Error reading JSON transcript" in caplog.text
-
-    @pytest.mark.asyncio
-    async def test_process_json_session_wrong_parser_type(self, mock_db, tmp_path, caplog) -> None:
-        """Should warn when source has no JSON session parser."""
-        import json
-
-        processor = SessionMessageProcessor(mock_db)
-        transcript = tmp_path / "session.json"
-        transcript.write_text(json.dumps({"sessionId": "x", "messages": []}))
-
-        # Register with claude parser (wrong for JSON)
-        processor.register_session("session-1", str(transcript), source="claude")
-        processor.message_manager = AsyncMock()
-        processor.message_manager.get_state = AsyncMock(return_value=None)
-
-        await processor._process_json_session("session-1", str(transcript))
-        assert "No JSON-session transcript parser" in caplog.text
-
-    @pytest.mark.asyncio
-    async def test_process_session_dispatches_to_json(self, mock_db, tmp_path) -> None:
-        """_process_session should dispatch to _process_json_session for .json files."""
-        import json
-
-        processor = SessionMessageProcessor(mock_db)
-        transcript = tmp_path / "session.json"
-        data = {
-            "sessionId": "abc",
-            "messages": [
-                {
-                    "id": "1",
-                    "timestamp": "2024-01-01T10:00:00Z",
-                    "type": "user",
-                    "content": "Hello",
-                },
-            ],
-        }
-        transcript.write_text(json.dumps(data))
-
-        processor.register_session("session-1", str(transcript), source="qwen")
-        processor._parsers["session-1"] = TypedJsonTranscriptParser(cli_name="typed-json")
-
-        await processor._process_session("session-1", str(transcript))
-
-        # Should have processed via JSON path
-        assert processor._stats["session-1"]["message_count"] == 1
-        assert processor._message_indices["session-1"] == 0
-        assert "session-1" in processor._last_mtime
 
 
 def _codex_event_msg(payload_type: str, **payload_extra) -> str:

@@ -27,12 +27,8 @@ from gobby.sessions.transcript_io import (
     DecompressionError,
     _iter_jsonl_lines,
     _read_archive_lines,
-    _read_json_file,
 )
-from gobby.sessions.transcript_parsing import _parse_json_session
-from gobby.sessions.transcript_paths import _is_json_session_file
 from gobby.sessions.transcript_source import _resolve_effective_source
-from gobby.sessions.transcripts.base import NON_MESSAGE_CONTENT_TYPES
 
 if TYPE_CHECKING:
     from gobby.storage.session_models import Session
@@ -64,35 +60,6 @@ def _read_sample_lines(path: str, max_lines: int) -> list[str]:
         if len(out) >= max_lines:
             break
     return out
-
-
-async def _json_transcript_counts(
-    session: Session,
-    session_id: str,
-    transcript_path: str,
-) -> tuple[int, int, str | None, bool]:
-    try:
-        data = await asyncio.to_thread(_read_json_file, transcript_path)
-        raw_record_count = len(data.get("messages", [])) if isinstance(data, dict) else 0
-        effective_source, detected_source = _resolve_effective_source(
-            session,
-            transcript_path=transcript_path,
-            data=data,
-            session_id=session_id,
-        )
-        parsed = _parse_json_session(
-            data,
-            effective_source,
-            session_id=session_id,
-            transcript_path=transcript_path,
-        )
-        parsed_message_count = sum(
-            1 for m in parsed if m.content_type not in NON_MESSAGE_CONTENT_TYPES
-        )
-        return raw_record_count, parsed_message_count, detected_source, False
-    except (json.JSONDecodeError, ValueError, OSError) as e:
-        logger.warning("Failed to parse JSON transcript for session %s: %s", session_id, e)
-        return 0, 0, None, True
 
 
 async def _jsonl_transcript_counts(
@@ -248,20 +215,12 @@ async def get_transcript_status_for_session(
     parse_failed = False
 
     if live_exists and transcript_path:
-        if _is_json_session_file(transcript_path):
-            (
-                raw_record_count,
-                parsed_message_count,
-                detected_source,
-                parse_failed,
-            ) = await _json_transcript_counts(session, session_id, transcript_path)
-        else:
-            (
-                raw_record_count,
-                parsed_message_count,
-                detected_source,
-                parse_failed,
-            ) = await _jsonl_transcript_counts(session, session_id, transcript_path)
+        (
+            raw_record_count,
+            parsed_message_count,
+            detected_source,
+            parse_failed,
+        ) = await _jsonl_transcript_counts(session, session_id, transcript_path)
     elif archive_exists and archive_path is not None:
         (
             raw_record_count,

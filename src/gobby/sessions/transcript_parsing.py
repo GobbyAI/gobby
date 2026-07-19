@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import json
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
@@ -62,21 +61,6 @@ def _parse_lines(
     parsed = parser.parse_lines(lines, start_index=0)
     normalized = normalize_transcript_records(parsed, source)
     return [r for r in normalized if isinstance(r, ParsedMessage)]
-
-
-def _parse_json_session(
-    data: dict[str, Any],
-    source: str,
-    session_id: str | None = None,
-    transcript_path: str | Path | None = None,
-) -> list[ParsedMessage]:
-    """Parse a native JSON session file."""
-    return _parse_lines(
-        [json.dumps(data)],
-        source,
-        session_id=session_id,
-        transcript_path=transcript_path,
-    )
 
 
 def _parse_lines_to_dicts(

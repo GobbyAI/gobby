@@ -173,8 +173,8 @@ class TestProviderForModel:
     def test_openai(self) -> None:
         assert _provider_for_model("openai/gpt-4o") == "codex"
 
-    def test_google(self) -> None:
-        assert _provider_for_model("google/gemini-2.5-pro") == "gemini"
+    def test_google_models_are_not_assigned_to_a_gobby_provider(self) -> None:
+        assert _provider_for_model("google/gemini-2.5-pro") is None
 
     def test_qwen(self) -> None:
         assert _provider_for_model("qwen/qwen3-coder") == "qwen"
@@ -210,10 +210,10 @@ class TestFetchModelsSync:
 
         models = fetch_models_sync()
 
-        # 8 valid models (mistral filtered by provider, free claude passes through)
-        assert len(models) == 8
+        # 7 valid models (Google/Mistral filtered by provider, free Claude passes through)
+        assert len(models) == 7
         providers = {m.provider for m in models}
-        assert providers == {"claude", "codex", "gemini", "qwen", "droid"}
+        assert providers == {"claude", "codex", "qwen", "droid"}
 
     @patch("gobby.llm.model_registry.httpx.get")
     def test_parses_model_fields(self, mock_get: MagicMock) -> None:

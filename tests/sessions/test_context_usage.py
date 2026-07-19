@@ -43,7 +43,7 @@ def test_snapshot_builders_resolve_one_million_context_marker() -> None:
     ("model", "expected"),
     [
         ("gemini-3.5-flash", 1_048_576),
-        ("gemini/gemini-3.5-flash", 1_048_576),
+        ("agy/gemini-3.5-flash", 1_048_576),
         ("Gemini 3.5 Flash (Medium)", 1_048_576),
         ("gemini-3.1-pro", 1_000_000),
         ("Gemini 3.1 Pro (High)", 1_000_000),
@@ -59,8 +59,17 @@ def test_agy_uses_model_family_context_windows(model: str, expected: int) -> Non
     assert context_window_for_source_model("agy", model) == expected
 
 
-def test_agy_does_not_use_gemini_fallback_for_unknown_models() -> None:
+def test_agy_does_not_use_family_fallback_for_unknown_models() -> None:
     assert context_window_for_source_model("agy", "unknown-claudeish-model") is None
+
+
+def test_agy_gemini_family_lookup_uses_agy_provider_catalog() -> None:
+    with patch(
+        "gobby.sessions.context_usage.resolve_context_window", return_value=1_048_576
+    ) as resolve:
+        assert context_usage._context_window_for_agy_model("gemini-3.5-flash") == 1_048_576
+
+    resolve.assert_called_once_with("gemini-3.5-flash", provider="agy")
 
 
 def test_private_resolver_uses_normalized_source_without_renormalizing(

@@ -152,7 +152,17 @@ def _claude_lines() -> list[str]:
 
 def _qwen_lines() -> list[str]:
     def line(role: str, text: str) -> str:
-        return json.dumps({"type": role, "content": text, "timestamp": "2024-01-01T12:00:00Z"})
+        return json.dumps(
+            {
+                "type": role,
+                "uuid": f"qwen-{role}-{text}",
+                "timestamp": "2024-01-01T12:00:00Z",
+                "message": {
+                    "role": "model" if role == "assistant" else "user",
+                    "parts": [{"text": text}],
+                },
+            }
+        )
 
     return [line("user", "hi"), line("assistant", "hello"), line("user", "more")]
 
@@ -548,6 +558,13 @@ def test_detect_source_bounded_samples_content(tmp_path: Path) -> None:
     assert detect_source_bounded(str(path), session_source="claude") == "codex"
 
 
+def test_detect_source_bounded_recognizes_current_qwen_envelope(tmp_path: Path) -> None:
+    path = tmp_path / "qwen-session.json"
+    path.write_text(_qwen_lines()[0] + "\n", encoding="utf-8")
+
+    assert detect_source_bounded(str(path), session_source="claude") == "qwen"
+
+
 @pytest.mark.asyncio
 async def test_get_or_build_index_caches_and_invalidates(tmp_path: Path) -> None:
     clear_index_cache()
@@ -759,6 +776,50 @@ def test_transcript_index_appender_persists_append_growth(tmp_path: Path) -> Non
     assert loaded.parsed_message_count == rebuilt.parsed_message_count
     assert loaded.total_groups == rebuilt.total_groups
     assert loaded.parsed_boundaries
+
+
+def test_qwen_json_index_appender_persists_incremental_growth(tmp_path: Path) -> None:
+    lines = _qwen_lines()
+    path = tmp_path / "qwen-session.json"
+    path.write_text("\n".join(lines) + "\n", encoding="utf-8")
+    offsets = _line_offsets(lines)
+    appender = TranscriptIndexAppender("qwen", SESSION, str(path))
+    first_batch = _line_texts(lines[:1])
+    second_batch = _line_texts(lines[1:])
+
+    appender.append_positioned_lines(
+        first_batch,
+        offsets[:1],
+        mtime_ns=0,
+        size=len(first_batch[0].encode("utf-8")),
+    )
+    first_count = appender.index.parsed_message_count
+    st = path.stat()
+    appender.append_positioned_lines(
+        second_batch,
+        offsets[1:],
+        mtime_ns=st.st_mtime_ns,
+        size=st.st_size,
+    )
+    persist_index_sidecar(str(path), appender.snapshot(mtime_ns=st.st_mtime_ns, size=st.st_size))
+
+    loaded = load_index_sidecar(
+        str(path),
+        "qwen",
+        SESSION,
+        seek_mode="byte",
+        mtime_ns=st.st_mtime_ns,
+        size=st.st_size,
+    )
+    rebuilt = build_index_from_file(
+        str(path), "qwen", SESSION, mtime_ns=st.st_mtime_ns, size=st.st_size
+    )
+
+    assert loaded is not None
+    assert first_count == 1
+    assert loaded.parsed_message_count == 3
+    assert loaded.parsed_message_count == rebuilt.parsed_message_count
+    assert loaded.total_groups == rebuilt.total_groups
 
 
 def test_transcript_index_appender_hydrate_restores_public_resume_state(

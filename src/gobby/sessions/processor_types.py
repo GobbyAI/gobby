@@ -55,7 +55,6 @@ class ProcessorHost(Protocol):
     _parsers: dict[str, TranscriptParser]
     _session_sources: dict[str, str]
     _transcript_file_state: dict[str, tuple[int, int, int]]
-    _last_mtime: dict[str, float]
     _byte_offsets: dict[str, int]
     _message_indices: dict[str, int]
     _render_states: dict[str, RenderState]
@@ -118,8 +117,6 @@ class ProcessorHost(Protocol):
         *,
         at_eof: bool = False,
     ) -> None: ...
-
-    async def _process_json_session(self, session_id: str, transcript_path: str) -> None: ...
 
     async def _loop(self) -> None: ...
 

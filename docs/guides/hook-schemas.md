@@ -108,8 +108,6 @@ monorepo. The retired `gobby-cli` checkout and repository preserve audit history
 only. Qwen `Stop` fails closed so a daemon outage cannot bypass Gobby's
 `turn_end` gates. The Qwen session can remain active until the daemon recovers
 or hooks are disabled; Claude's existing fail-open Stop behavior is unchanged.
-Gemini is retired and is not a supported source or a `ghook` CLI.
-
 ### Runtime Schema Compatibility
 
 Running `ghook --version` writes

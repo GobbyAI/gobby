@@ -65,7 +65,7 @@ You'll see a progress bar while indexing:
 After init, you can search immediately.
 
 For non-Gobby-managed projects, `gcode init` installs the bundled `gcode` skill
-for Claude Code, Codex, Droid, Grok, Qwen, and Antigravity CLI:
+for Claude Code, Codex, Droid, Grok, Qwen, and AGY:
 
 | CLI | Project-local files |
 |-----|---------------------|

@@ -86,8 +86,8 @@ _GROK_DISABLED_TOOLS = "Edit,Write,MultiEdit,NotebookEdit,Agent,Task"
 
 # Custom seatbelt profile name for the Qwen adapter.  The qwen-code package
 # (0.19.x) has a path-resolution bug: ``new URL('sandbox-macos-${profile}.sb',
-# import.meta.url)`` in ``chunks/gemini-NDTG7WAX.js`` resolves relative to the
-# chunk file inside ``chunks/``, but the ``.sb`` files live in the package
+# import.meta.url)`` in Qwen's upstream ``chunks/gemini-NDTG7WAX.js`` bundle
+# resolves relative to the chunk file inside ``chunks/``, but the ``.sb`` files live in the package
 # root — one directory up.  Builtin profile names trigger this broken path.
 # Custom (non-builtin) names fall back to ``path.join(".qwen",
 # "sandbox-macos-<name>.sb")`` relative to the cwd, which we can satisfy by

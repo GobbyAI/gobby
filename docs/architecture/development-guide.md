@@ -214,7 +214,7 @@ src/gobby/
 | `GOBBY_HOME` | Custom Gobby home directory (default `~/.gobby`); runtime config lives in the PostgreSQL hub, with pre-DB settings in `~/.gobby/bootstrap.yaml` |
 | `ANTHROPIC_API_KEY` | Claude API (BYOK mode) |
 | `OPENAI_API_KEY` | OpenAI API (BYOK mode) |
-| `GOOGLE_APPLICATION_CREDENTIALS` | Gemini ADC |
+| `GOOGLE_APPLICATION_CREDENTIALS` | Google/Vertex ADC forwarded to supported CLIs |
 
 ## Troubleshooting
 

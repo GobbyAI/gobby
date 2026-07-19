@@ -97,11 +97,6 @@ def _find_transcript_on_disk(
     return None
 
 
-def _is_json_session_file(path: str) -> bool:
-    """Check if a transcript file is a native JSON session file."""
-    return path.endswith(".json")
-
-
 def _safe_exists(path: Path) -> bool:
     try:
         return path.exists()

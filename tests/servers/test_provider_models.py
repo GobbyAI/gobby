@@ -368,6 +368,9 @@ class TestProviderModelCatalog:
         assert resolved.value == 200_000
         assert resolved.source == "provider_catalog"
 
+    def test_droid_gemini_family_does_not_delegate_to_a_removed_provider(self) -> None:
+        assert ProviderModelCatalog._droid_underlying_providers("gemini-3.5-flash") == ()
+
     def test_live_snapshot_order_and_metadata_are_preserved(self, temp_dir: Path) -> None:
         """Live discovery owns catalog model order and metadata."""
         catalog = ProviderModelCatalog(cache_path=temp_dir / "provider-model-catalog.json")

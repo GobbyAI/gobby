@@ -50,13 +50,15 @@ format for backends such as:
 
 - `claude`
 - `codex`
-- `gemini`
+- `droid`
+- `grok`
 - `qwen`
+- `agy`
 
-The provider routes also report availability for `droid` when present. Feature
-configs choose preferred candidate order; provider availability, auth mode, and
-model details come from CLI discovery, local compatible backends, and shipped
-catalog metadata.
+Feature configs choose preferred candidate order; provider availability, auth
+mode, and model details come from CLI discovery, local compatible backends, and
+shipped catalog metadata. Gemini-family model IDs remain available through the
+AGY and Droid catalogs; they are models, not a separate Gobby provider.
 
 Auth modes are provider-specific. Examples include subscription auth, API-key
 auth, and ADC-style auth for providers that support it.

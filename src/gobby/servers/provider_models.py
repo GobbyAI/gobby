@@ -416,8 +416,6 @@ class ProviderModelCatalog:
             return ("claude",)
         if normalized.startswith(("gpt-", "o1-", "o3-", "o4-")):
             return ("codex",)
-        if normalized.startswith("gemini-"):
-            return ("gemini",)
         return ()
 
     def status_snapshot(self) -> dict[str, dict[str, Any]]:

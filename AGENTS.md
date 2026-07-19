@@ -44,7 +44,7 @@ Task management MCP calls (gobby-tasks) are allowed during plan mode. Planning i
 
 ## Project Overview
 
-A local-first daemon to unify your AI coding tools. Session tracking and handoffs across Claude Code, Codex, Droid, Gemini, and QwenCode. An MCP proxy that discovers tools without flooding context. Task management with dependencies, validation, and TDD expansion. Agent spawning and worktree orchestration. Persistent memory, extensible workflows, and hooks.
+A local-first daemon to unify your AI coding tools. Session tracking and handoffs across Claude Code, Codex, Droid, Grok, Qwen, and AGY. An MCP proxy that discovers tools without flooding context. Task management with dependencies, validation, and TDD expansion. Agent spawning and worktree orchestration. Persistent memory, extensible workflows, and hooks.
 
 - **Session management** that survives restarts and context compactions
 - **Task system** with dependency graphs, TDD expansion, and validation gates

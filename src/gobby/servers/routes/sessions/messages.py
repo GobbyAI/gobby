@@ -12,7 +12,6 @@ from typing import TYPE_CHECKING, Any
 from fastapi import APIRouter, HTTPException, Query
 
 from gobby.sessions.transcript_archive import get_archive_dir, restore_transcript
-from gobby.sessions.transcript_io import TranscriptTooLargeError
 from gobby.sessions.transcript_limits import RENDERED_LIMIT_MAX
 
 if TYPE_CHECKING:
@@ -82,15 +81,6 @@ def register_message_routes(
                 "format": "rendered",
             }
 
-        except TranscriptTooLargeError as e:
-            size_mb = e.size_bytes // (1024 * 1024)
-            raise HTTPException(
-                status_code=413,
-                detail=(
-                    f"Transcript too large to render ({size_mb} MB); "
-                    "download via /transcript instead."
-                ),
-            ) from e
         except HTTPException:
             raise
         except Exception as e:

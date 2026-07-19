@@ -90,18 +90,15 @@ class ProcessorLifecycleMixin:
             self._transcript_file_state[session_id] = (st.st_dev, st.st_ino, st.st_mtime_ns)
         except OSError:
             transcript_exists = False
-        if not transcript_path.endswith(".json"):
-            appender = TranscriptIndexAppender(
-                source,
-                session_id,
-                transcript_path,
-                observation_tracker=ObservationTracker(self._observation_store),
-            )
-            self._index_appenders[session_id] = appender
-            if transcript_exists:
-                self._hydrate_registration_from_sidecar(
-                    session_id, transcript_path, source, appender
-                )
+        appender = TranscriptIndexAppender(
+            source,
+            session_id,
+            transcript_path,
+            observation_tracker=ObservationTracker(self._observation_store),
+        )
+        self._index_appenders[session_id] = appender
+        if transcript_exists:
+            self._hydrate_registration_from_sidecar(session_id, transcript_path, source, appender)
         if transcript_exists:
             logger.debug("Registered session %s for processing (%s)", session_id, source)
         else:
@@ -147,7 +144,6 @@ class ProcessorLifecycleMixin:
         self._parsers.pop(session_id, None)
         self._session_sources.pop(session_id, None)
         self._transcript_file_state.pop(session_id, None)
-        self._last_mtime.pop(session_id, None)
         self._stats.pop(session_id, None)
         self._stats_hydration_skipped.discard(session_id)
         self._byte_offsets.pop(session_id, None)

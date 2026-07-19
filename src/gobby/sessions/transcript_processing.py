@@ -315,28 +315,13 @@ class TranscriptProcessingMixin:
             )
         # Default (claude or unknown) uses Claude transcript format
 
-        # Structured JSON parsers can opt into whole-session parsing. Other
-        # parsers treat a .json file as a single line-oriented record.
-        if transcript_path.endswith(".json") and hasattr(parser, "parse_session_json"):
-            try:
-                data = json.loads(raw)
-            except json.JSONDecodeError as e:
-                logger.error("Invalid JSON in transcript %s: %s", transcript_path, e)
-                return
-            messages = [
-                r
-                for r in normalize_transcript_records(
-                    parser.parse_session_json(data), session.source
-                )
-                if isinstance(r, ParsedMessage)
-            ]
-        else:
-            # parse_lines may yield a mix of ParsedMessage and ParsedToolEvent
-            # records; this token-event path only consumes ParsedMessage
-            # fields (model, usage, message_id).
-            parsed_records = parser.parse_lines(raw.splitlines(keepends=True), start_index=0)
-            normalized = normalize_transcript_records(parsed_records, session.source)
-            messages = [r for r in normalized if isinstance(r, ParsedMessage)]
+        # parse_lines may yield a mix of ParsedMessage and ParsedToolEvent
+        # records; this token-event path only consumes ParsedMessage fields
+        # (model, usage, message_id). Qwen's .json transcripts use the same
+        # line-oriented envelope contract as the other supported CLIs.
+        parsed_records = parser.parse_lines(raw.splitlines(keepends=True), start_index=0)
+        normalized = normalize_transcript_records(parsed_records, session.source)
+        messages = [r for r in normalized if isinstance(r, ParsedMessage)]
 
         if not messages:
             return
@@ -367,26 +352,25 @@ class TranscriptProcessingMixin:
                 exc_info=True,
             )
 
-        if not transcript_path.endswith(".json"):
-            # Index sidecars are a seek optimization; transcript token processing must continue.
-            try:
-                st = os.stat(transcript_path)
-                index_source = session.source if isinstance(session.source, str) else None
-                await asyncio.to_thread(
-                    rebuild_and_persist_index,
-                    transcript_path,
-                    index_source or "claude",
-                    session_id,
-                    mtime_ns=st.st_mtime_ns,
-                    size=st.st_size,
-                )
-            except _TRANSCRIPT_INDEX_ERRORS:
-                logger.warning(
-                    "Failed to finalize transcript index for session %s at %s",
-                    session_id,
-                    transcript_path,
-                    exc_info=True,
-                )
+        # Index sidecars are a seek optimization; transcript token processing must continue.
+        try:
+            st = os.stat(transcript_path)
+            index_source = session.source if isinstance(session.source, str) else None
+            await asyncio.to_thread(
+                rebuild_and_persist_index,
+                transcript_path,
+                index_source or "claude",
+                session_id,
+                mtime_ns=st.st_mtime_ns,
+                size=st.st_size,
+            )
+        except _TRANSCRIPT_INDEX_ERRORS:
+            logger.warning(
+                "Failed to finalize transcript index for session %s at %s",
+                session_id,
+                transcript_path,
+                exc_info=True,
+            )
 
         # Replace any synthetic migration rows with real transcript events as soon as
         # we have a parseable transcript for this session.

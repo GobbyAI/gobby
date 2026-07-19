@@ -130,7 +130,7 @@ def _context_window_for_agy_model(model: str | None) -> int | None:
     if lookup_model is None:
         return None
     if lookup_model.startswith("gemini-"):
-        return resolve_context_window(lookup_model, provider="gemini")
+        return resolve_context_window(lookup_model, provider="agy")
     if lookup_model.startswith("claude-"):
         return resolve_context_window(lookup_model, provider="claude")
     if lookup_model.startswith("gpt-oss-"):
