@@ -1,7 +1,7 @@
 ---
 name: plan
 description: Artifact-first /gobby plan workflow. Drafts and revises a plan with the user, runs a constructive enhancement pass and then taskless adversarial review after approval, records enhancement and review history in the plan, and hands approved plans to gobby build.
-version: "3.2.0"
+version: "3.3.0"
 category: core
 triggers: plan, specification, requirements
 metadata:
@@ -96,22 +96,26 @@ which runs after approval and before the unchanged adversary gate.
 Use this same policy for enhancer and adversary runs after completing the
 mandatory post-launch `gobby-sessions:compact_self` call:
 
-1. Keep doing useful independent work while the run is active. Once its result
-   is the next dependency and no actionable independent work remains, call
-   `gobby-agents:wait_for_agent(run_id, timeout_seconds=300)`.
-2. If the bounded wait returns a terminal result, continue the workflow. If it
-   times out while the run is healthy, perform one status/health check and
-   re-wait at most once with the same bound. Never turn re-waiting into an
-   unbounded polling loop.
-3. If the second bounded wait expires, or waiting would displace useful
-   independent work, end the turn and resume from the run completion message.
-   Retrieve the terminal payload with `gobby-agents:get_agent_result(run_id)`
+1. Arm a background watcher loop for the run: a coarse-interval loop that
+   exits when the run reaches any terminal state, producing a single
+   completion notification (for example, a backgrounded `until`-loop that
+   polls run status via `gobby-agents:get_running_agent` or process liveness
+   every 10-30 seconds). The watcher must exit on every terminal state —
+   success, failure, and cancellation — never only on success.
+2. Keep doing useful independent work while the watcher is armed. When no
+   actionable independent work remains, end the turn and resume from the
+   watcher notification or the daemon's run completion message — spawned-run
+   results are also delivered as messages on completion.
+3. Retrieve the terminal payload with `gobby-agents:get_agent_result(run_id)`
    before using the result.
+4. Blocking `gobby-agents:wait_for_agent(run_id, timeout_seconds=300)` is a
+   last resort — use it only when the current harness offers no background
+   watcher mechanism. If a bounded wait times out while the run is healthy,
+   re-wait at most once; never turn blocking waits into an unbounded loop.
 
 The mandatory compaction immediately after each launch takes priority over
-independent work and waiting. A run already known to be terminal skips waiting
-and goes directly to `get_agent_result`. Do not substitute shell sleeps, tmux
-polling loops, or provider-specific monitor waits.
+arming watchers, independent work, and waiting. A run already known to be
+terminal skips watching and waiting and goes directly to `get_agent_result`.
 
 ## Changelog Contract
 
