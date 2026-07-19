@@ -14,6 +14,10 @@ def body() -> str:
     return SKILL_PATH.read_text()
 
 
+def test_plan_skill_version(body: str) -> None:
+    assert 'version: "3.2.0"' in body
+
+
 def test_plan_is_artifact_first_and_taskless(body: str) -> None:
     lowered = body.lower()
 
@@ -42,16 +46,43 @@ def test_review_spawn_uses_taskless_adversary_without_task_id(body: str) -> None
 
 def test_plan_compacts_after_every_review_agent_launch(body: str) -> None:
     enhancer_launch = body.index("Spawn `plan-enhancer-taskless`")
-    enhancer_wait = body.index("Wait for the run completion message", enhancer_launch)
+    enhancer_wait = body.index("Wait as described in **Waiting on Spawned Runs**", enhancer_launch)
     enhancer_handoff = body[enhancer_launch:enhancer_wait]
     assert "gobby-sessions:compact_self" in enhancer_handoff
     assert "every enhancement round" in enhancer_handoff
 
     adversary_launch = body.index("spawn `plan-adversary-taskless`")
-    adversary_wait = body.index("Wait for the adversary run completion message", adversary_launch)
+    adversary_wait = body.index(
+        "Wait as described in **Waiting on Spawned Runs**", adversary_launch
+    )
     adversary_handoff = body[adversary_launch:adversary_wait]
     assert "gobby-sessions:compact_self" in adversary_handoff
     assert "every adversarial review round" in adversary_handoff
+
+
+def test_spawned_run_waiting_policy_is_shared_and_bounded(body: str) -> None:
+    section = body[body.index("## Waiting on Spawned Runs") : body.index("## Changelog Contract")]
+    normalized = " ".join(section.split())
+
+    independent_work = section.index("Keep doing useful independent work")
+    bounded_wait = section.index("wait_for_agent(run_id, timeout_seconds=300)")
+    completion_message = section.index("run completion message")
+    assert independent_work < bounded_wait < completion_message
+
+    assert "re-wait at most once" in normalized
+    assert "Never turn re-waiting into an unbounded polling loop" in normalized
+    assert "get_agent_result(run_id)" in normalized
+    assert "mandatory post-launch `gobby-sessions:compact_self`" in normalized
+    assert "already known to be terminal skips waiting" in normalized
+
+    for forbidden in ("shell sleeps", "tmux polling loops", "provider-specific monitor waits"):
+        assert forbidden in normalized
+    assert "/loop" not in section
+    assert "/schedule" not in section
+
+
+def test_waiting_steps_redirect_to_shared_policy(body: str) -> None:
+    assert body.count("Wait as described in **Waiting on Spawned Runs**") == 2
 
 
 def test_review_history_uses_v1_changelog_verification_entries(body: str) -> None:

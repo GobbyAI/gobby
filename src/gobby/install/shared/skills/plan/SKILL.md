@@ -1,7 +1,7 @@
 ---
 name: plan
 description: Artifact-first /gobby plan workflow. Drafts and revises a plan with the user, runs a constructive enhancement pass and then taskless adversarial review after approval, records enhancement and review history in the plan, and hands approved plans to gobby build.
-version: "3.1.0"
+version: "3.2.0"
 category: core
 triggers: plan, specification, requirements
 metadata:
@@ -56,10 +56,10 @@ which runs after approval and before the unchanged adversary gate.
    2. Immediately after every enhancer launch, call
       `gobby-sessions:compact_self` for the parent session before waiting or
       doing any other work. This is mandatory on every enhancement round.
-   3. Wait for the run completion message, then surface the ranked suggestions
-      to the user — highest impact-vs-effort first — for accept/decline. The
-      human is the scope gate (present-and-stop): you present, the user decides
-      what ships.
+   3. Wait as described in **Waiting on Spawned Runs**, then surface the ranked
+      suggestions to the user — highest impact-vs-effort first — for
+      accept/decline. The human is the scope gate (present-and-stop): you
+      present, the user decides what ships.
    4. Apply only the **accepted** suggestions to the plan artifact, re-run
       `uv run gobby plans validate <plan-file>`, and append a `## V1 Plan
       Changelog` entry with `kind: enhancement`.
@@ -72,8 +72,9 @@ which runs after approval and before the unchanged adversary gate.
    Immediately after every adversary launch, call
    `gobby-sessions:compact_self` for the parent session before waiting or doing
    any other work. This is mandatory on every adversarial review round.
-6. Wait for the adversary run completion message. Read the run result and
-   append a `## V1 Plan Changelog` entry with `kind: verification`.
+6. Wait as described in **Waiting on Spawned Runs** for the adversary run. Read
+   the run result and append a `## V1 Plan Changelog` entry with
+   `kind: verification`.
 7. If the verdict is `needs_review`, revise the plan with the user, rerun
    validation, and dispatch the next taskless adversary round until the review
    cap is reached.
@@ -89,6 +90,28 @@ which runs after approval and before the unchanged adversary gate.
    ```bash
    uv run gobby build <plan-file> --planning-seed-state approved --completed-plan-review-rounds <N>
    ```
+
+## Waiting on Spawned Runs
+
+Use this same policy for enhancer and adversary runs after completing the
+mandatory post-launch `gobby-sessions:compact_self` call:
+
+1. Keep doing useful independent work while the run is active. Once its result
+   is the next dependency and no actionable independent work remains, call
+   `gobby-agents:wait_for_agent(run_id, timeout_seconds=300)`.
+2. If the bounded wait returns a terminal result, continue the workflow. If it
+   times out while the run is healthy, perform one status/health check and
+   re-wait at most once with the same bound. Never turn re-waiting into an
+   unbounded polling loop.
+3. If the second bounded wait expires, or waiting would displace useful
+   independent work, end the turn and resume from the run completion message.
+   Retrieve the terminal payload with `gobby-agents:get_agent_result(run_id)`
+   before using the result.
+
+The mandatory compaction immediately after each launch takes priority over
+independent work and waiting. A run already known to be terminal skips waiting
+and goes directly to `get_agent_result`. Do not substitute shell sleeps, tmux
+polling loops, or provider-specific monitor waits.
 
 ## Changelog Contract
 
