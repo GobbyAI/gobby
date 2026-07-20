@@ -14,6 +14,9 @@ _METADATA_KINDS = frozenset({"changed_files", "linked_commits"})
 RECOVERY_CALL_RESERVE = 4
 VERDICT_SUBMISSION_CALLS = 1
 MIN_TOOL_CALL_BUDGET = 6
+# Claude SDK counts text-only AssistantMessage instances as turns, so tool-call
+# plans need independent model-turn headroom beyond the evidence-call budget.
+TEXT_TURN_HEADROOM = 2
 
 
 @dataclass(frozen=True)
@@ -62,9 +65,10 @@ class EvidenceCoverage:
 
 @dataclass(frozen=True)
 class ToolCallPlan:
-    """Bounded tool-call allocation derived from known evidence pagination."""
+    """Bounded tool-call allocation with independent SDK turn headroom."""
 
     max_tool_calls: int
+    max_turns: int
     required_tool_calls: int
     diff_pages: int
     manifest_pages: int
@@ -156,6 +160,7 @@ def plan_tool_calls(
     allocated = min(configured_max_calls, max(MIN_TOOL_CALL_BUDGET, required))
     return ToolCallPlan(
         max_tool_calls=allocated,
+        max_turns=2 * allocated + TEXT_TURN_HEADROOM,
         required_tool_calls=required,
         diff_pages=diff_pages,
         manifest_pages=manifest_pages,

@@ -125,7 +125,35 @@ def test_wide_manifest_uses_derived_bounded_batch_plan() -> None:
     assert plan.verdict_calls == 1
     assert plan.required_tool_calls == 13
     assert plan.max_tool_calls == 13
+    assert plan.max_turns == 28
     assert plan.within_bound is True
+
+
+def test_over_budget_plan_derives_turns_from_capped_allocation() -> None:
+    plan = plan_tool_calls(
+        diff_total_bytes=1_000_000,
+        manifest_count=4,
+        preview_bytes=16_384,
+        manifest_page_limit=200,
+        configured_max_calls=32,
+    )
+
+    assert plan.within_bound is False
+    assert plan.max_tool_calls == 32
+    assert plan.max_turns == 66
+
+
+def test_minimum_plan_grants_turn_headroom_above_tool_budget() -> None:
+    plan = plan_tool_calls(
+        diff_total_bytes=1,
+        manifest_count=1,
+        preview_bytes=16_384,
+        manifest_page_limit=200,
+        configured_max_calls=32,
+    )
+
+    assert plan.max_tool_calls == 7
+    assert plan.max_turns == 16
 
 
 def test_wide_manifest_must_cover_every_changed_file_in_production() -> None:
@@ -199,6 +227,7 @@ def test_page_plan_reserves_every_known_continuation(total_bytes: int, expected_
 
     assert plan.diff_pages == expected_pages
     assert plan.required_tool_calls == expected_pages + 1 + 4 + 1
+    assert plan.max_turns == 2 * plan.max_tool_calls + 2
     assert plan.within_bound is True
 
 

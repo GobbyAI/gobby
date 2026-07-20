@@ -858,9 +858,11 @@ async def validate_with_tool_loop(
         project_path=repo_path,
         profile=config.profile.value,
         candidates=tuple(config.candidates),
-        max_turns=call_plan.max_tool_calls,
+        # Claude adapter consumes request.max_turns; OpenAI-compatible/local
+        # adapters consume limits.max_turns. Both must carry the turn budget.
+        max_turns=call_plan.max_turns,
         limits=ToolLoopLimits(
-            max_turns=call_plan.max_tool_calls,
+            max_turns=call_plan.max_turns,
             max_tool_calls=call_plan.max_tool_calls,
             tool_timeout_seconds=TOOL_LOOP_TOOL_TIMEOUT_SECONDS,
         ),

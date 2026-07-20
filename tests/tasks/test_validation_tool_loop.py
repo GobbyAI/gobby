@@ -380,8 +380,9 @@ async def test_prompt_uses_commit_count_first_page_and_cursor_metadata() -> None
     assert "pytest: 12 passed" in request.prompt
     assert "Implemented the requested validator." not in request.prompt
     assert "diff --git" not in request.prompt
-    assert request.max_turns == 7
-    assert request.limits.max_turns == 7
+    assert request.max_turns == 16
+    assert request.limits.max_turns == 16
+    assert request.max_turns == 2 * request.limits.max_tool_calls + 2
     assert request.tool_policy.tools == ()
     assert request.builtins[-1].name == "submit_validation_verdict"
     verdict_schema = request.builtins[-1].input_schema
