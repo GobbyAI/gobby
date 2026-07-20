@@ -118,7 +118,7 @@ def _write_config(config_path: Path, database_url: str, http_port: int, ws_port:
                 "  api_base: null",
                 "memory:",
                 '  backend: "null"',
-                "memory_sync:",
+                "memory_backup:",
                 "  enabled: false",
                 "message_tracking:",
                 "  enabled: false",

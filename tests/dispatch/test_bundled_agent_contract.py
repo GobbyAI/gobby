@@ -45,9 +45,7 @@ END_AGENT_RUN_PROXY_SYNTAX_MARKERS = (
 )
 
 
-def _tool_inventory(
-    temp_db: Any, temp_dir: Path, sample_project: dict[str, Any]
-) -> dict[str, set[str]]:
+def _tool_inventory(temp_db: Any, sample_project: dict[str, Any]) -> dict[str, set[str]]:
     from gobby.config.app import DaemonConfig
     from gobby.mcp_proxy.registries import setup_internal_registries
     from gobby.storage.clones import LocalCloneManager
@@ -56,14 +54,12 @@ def _tool_inventory(
     from gobby.storage.sessions import SessionManager
     from gobby.storage.tasks import LocalTaskManager
     from gobby.storage.worktrees import LocalWorktreeManager
-    from gobby.sync.tasks import TaskSyncManager
     from gobby.worktrees.merge.resolver import MergeResolver
 
     task_manager = LocalTaskManager(temp_db)
     manager = setup_internal_registries(
         DaemonConfig(),
         task_manager=task_manager,
-        sync_manager=TaskSyncManager(task_manager, str(temp_dir / "tasks.jsonl")),
         session_manager=SessionManager(temp_db),
         db=temp_db,
         worktree_storage=LocalWorktreeManager(temp_db),
@@ -92,10 +88,9 @@ def _all_agent_yaml_files() -> list[Path]:
 
 def test_bundled_agent_mcp_references_match_registered_tool_inventory(
     temp_db: Any,
-    temp_dir: Path,
     sample_project: dict[str, Any],
 ) -> None:
-    inventory = _tool_inventory(temp_db, temp_dir, sample_project)
+    inventory = _tool_inventory(temp_db, sample_project)
     missing: list[str] = []
     handler_not_allowed: list[str] = []
     malformed_allowed_tools: list[str] = []

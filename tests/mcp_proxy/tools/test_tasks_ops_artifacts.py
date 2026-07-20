@@ -2,8 +2,6 @@
 
 from __future__ import annotations
 
-from unittest.mock import MagicMock
-
 import pytest
 
 from gobby.mcp_proxy.tools.tasks._ops_factory import create_task_ops_registry
@@ -16,7 +14,7 @@ pytestmark = pytest.mark.unit
 
 def _registry(temp_db) -> tuple[LocalTaskManager, object]:
     task_manager = LocalTaskManager(temp_db)
-    return task_manager, create_task_ops_registry(task_manager, sync_manager=MagicMock())
+    return task_manager, create_task_ops_registry(task_manager)
 
 
 def test_artifact_tools_are_registered_on_tasks_ops(temp_db) -> None:

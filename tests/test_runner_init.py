@@ -499,8 +499,8 @@ class TestGobbyRunnerInitialization:
         mock_config.websocket = None
         mock_config.session_lifecycle = MagicMock()
         mock_config.message_tracking = None
-        mock_config.memory_sync = MagicMock()
-        mock_config.memory_sync.enabled = False
+        mock_config.memory_backup = MagicMock()
+        mock_config.memory_backup.enabled = False
         mock_config.memory = MagicMock()
 
         mock_memory_manager = MagicMock()
@@ -517,7 +517,7 @@ class TestGobbyRunnerInitialization:
             runner = GobbyRunner()
 
             assert runner.memory_manager == mock_memory_manager
-            assert runner.memory_sync_manager is None
+            assert runner.memory_backup_manager is None
 
     def test_init_memory_manager_exception(self, caplog: pytest.LogCaptureFixture) -> None:
         """Test that MemoryManager initialization exception is handled."""
@@ -526,8 +526,8 @@ class TestGobbyRunnerInitialization:
         mock_config.websocket = None
         mock_config.session_lifecycle = MagicMock()
         mock_config.message_tracking = None
-        mock_config.memory_sync = MagicMock()
-        mock_config.memory_sync.enabled = True
+        mock_config.memory_backup = MagicMock()
+        mock_config.memory_backup.enabled = True
         mock_config.memory = MagicMock()
 
         patches = create_base_patches(mock_config=mock_config)
@@ -544,8 +544,8 @@ class TestGobbyRunnerInitialization:
 
             runner = GobbyRunner()
             assert runner.memory_manager is None
-            assert runner.memory_sync_manager is None
-            assert {"memory_manager", "memory_sync_manager"} <= runner.degraded_services
+            assert runner.memory_backup_manager is None
+            assert {"memory_manager", "memory_backup_manager"} <= runner.degraded_services
             assert "Skipping MemoryBackupManager initialization" in caplog.text
             memory_error = next(
                 record
@@ -581,21 +581,21 @@ class TestGobbyRunnerInitialization:
             )
             assert code_index_error.exc_info is not None
 
-    def test_init_with_memory_backup_manager_does_not_import_jsonl(self) -> None:
-        """Test MemoryBackupManager initializes without automatic JSONL import."""
+    def test_init_with_memory_backup_manager_does_not_restore_jsonl(self) -> None:
+        """Test MemoryBackupManager initializes without automatic JSONL restore."""
         mock_config = MagicMock()
         mock_config.daemon_port = 60887
         mock_config.websocket = None
         mock_config.session_lifecycle = MagicMock()
         mock_config.message_tracking = None
         mock_config.memory = MagicMock()
-        mock_config.memory_sync = MagicMock()
-        mock_config.memory_sync.enabled = True
+        mock_config.memory_backup = MagicMock()
+        mock_config.memory_backup.enabled = True
 
         mock_memory_manager = MagicMock()
         mock_memory_manager.storage = MagicMock()
-        mock_memory_sync_manager = MagicMock()
-        mock_memory_sync_manager.import_sync.return_value = 0
+        mock_memory_backup_manager = MagicMock()
+        mock_memory_backup_manager.restore_sync.return_value = 0
 
         patches = create_base_patches(mock_config=mock_config)
         patches = [p for p in patches if "MemoryManager" not in str(p)]
@@ -606,7 +606,7 @@ class TestGobbyRunnerInitialization:
         patches.append(
             patch(
                 "gobby.runner_init.services.MemoryBackupManager",
-                return_value=mock_memory_sync_manager,
+                return_value=mock_memory_backup_manager,
             )
         )
 
@@ -615,36 +615,9 @@ class TestGobbyRunnerInitialization:
 
             runner = GobbyRunner()
 
-            assert runner.memory_sync_manager == mock_memory_sync_manager
+            assert runner.memory_backup_manager == mock_memory_backup_manager
             assert runner.memory_manager == mock_memory_manager
-            mock_memory_sync_manager.import_sync.assert_not_called()
-
-    def test_init_task_sync_manager_does_not_import_jsonl(self) -> None:
-        """Test TaskSyncManager initializes without automatic JSONL import."""
-        mock_config = MagicMock()
-        mock_config.daemon_port = 60887
-        mock_config.websocket = None
-        mock_config.session_lifecycle = MagicMock()
-        mock_config.message_tracking = None
-        mock_config.memory_sync = MagicMock()
-        mock_config.memory_sync.enabled = False
-
-        mock_task_sync_manager = MagicMock()
-
-        patches = create_base_patches(mock_config=mock_config)
-        patches = [p for p in patches if "TaskSyncManager" not in str(p)]
-        patches.append(
-            patch("gobby.runner_init.services.TaskSyncManager", return_value=mock_task_sync_manager)
-        )
-
-        with ExitStack() as stack:
-            [stack.enter_context(p) for p in patches]
-
-            runner = GobbyRunner()
-
-            assert runner.task_sync_manager == mock_task_sync_manager
-            assert runner.memory_sync_manager is None
-            mock_task_sync_manager.import_from_jsonl.assert_not_called()
+            mock_memory_backup_manager.restore_sync.assert_not_called()
 
     def test_init_memory_backup_manager_exception(self) -> None:
         """Test MemoryBackupManager initialization exception is handled."""
@@ -654,8 +627,8 @@ class TestGobbyRunnerInitialization:
         mock_config.session_lifecycle = MagicMock()
         mock_config.message_tracking = None
         mock_config.memory = MagicMock()
-        mock_config.memory_sync = MagicMock()
-        mock_config.memory_sync.enabled = True
+        mock_config.memory_backup = MagicMock()
+        mock_config.memory_backup.enabled = True
 
         mock_memory_manager = MagicMock()
         mock_memory_manager.storage = MagicMock()
@@ -677,7 +650,7 @@ class TestGobbyRunnerInitialization:
             [stack.enter_context(p) for p in patches]
 
             runner = GobbyRunner()
-            assert runner.memory_sync_manager is None
+            assert runner.memory_backup_manager is None
             assert runner.memory_manager == mock_memory_manager
 
     def test_init_with_message_processor(self) -> None:
@@ -686,8 +659,8 @@ class TestGobbyRunnerInitialization:
         mock_config.daemon_port = 60887
         mock_config.websocket = None
         mock_config.session_lifecycle = MagicMock()
-        mock_config.memory_sync = MagicMock()
-        mock_config.memory_sync.enabled = False
+        mock_config.memory_backup = MagicMock()
+        mock_config.memory_backup.enabled = False
         mock_config.message_tracking = MagicMock()
         mock_config.message_tracking.enabled = True
         mock_config.message_tracking.poll_interval = 5.0
@@ -802,8 +775,8 @@ class TestGobbyRunnerInitialization:
         mock_config.websocket = None
         mock_config.session_lifecycle = MagicMock()
         mock_config.message_tracking = None
-        mock_config.memory_sync = MagicMock()
-        mock_config.memory_sync.enabled = False
+        mock_config.memory_backup = MagicMock()
+        mock_config.memory_backup.enabled = False
 
         patches = create_base_patches(mock_config=mock_config)
         patches.append(
@@ -817,8 +790,9 @@ class TestGobbyRunnerInitialization:
             [stack.enter_context(p) for p in patches]
 
             runner = GobbyRunner()
+            assert runner.config is mock_config
             assert runner.agent_runner is None
-            assert runner.task_sync_manager is not None
+            assert runner.memory_backup_manager is None
 
     def test_init_llm_service_exception(self, caplog: pytest.LogCaptureFixture) -> None:
         """Test LLM service initialization exception is handled."""
@@ -827,8 +801,8 @@ class TestGobbyRunnerInitialization:
         mock_config.websocket = None
         mock_config.session_lifecycle = MagicMock()
         mock_config.message_tracking = None
-        mock_config.memory_sync = MagicMock()
-        mock_config.memory_sync.enabled = False
+        mock_config.memory_backup = MagicMock()
+        mock_config.memory_backup.enabled = False
 
         patches = create_base_patches(mock_config=mock_config)
         patches = [p for p in patches if "create_llm_service" not in str(p)]

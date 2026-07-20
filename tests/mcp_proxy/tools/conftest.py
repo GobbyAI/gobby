@@ -12,7 +12,6 @@ from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.session_models import Session
 from gobby.storage.sessions import SessionManager
 from gobby.storage.tasks import LocalTaskManager, Task
-from gobby.sync.tasks import TaskSyncManager
 
 
 @pytest.fixture
@@ -21,12 +20,6 @@ def mock_task_manager() -> MagicMock:
     manager = MagicMock(spec=LocalTaskManager)
     manager.db = MagicMock()
     return manager
-
-
-@pytest.fixture
-def mock_sync_manager() -> MagicMock:
-    """Create a mock sync manager."""
-    return MagicMock(spec=TaskSyncManager)
 
 
 @pytest.fixture
@@ -81,10 +74,9 @@ def mock_config() -> MagicMock:
 @pytest.fixture
 def task_registry(
     mock_task_manager: MagicMock,
-    mock_sync_manager: MagicMock,
 ) -> InternalToolRegistry:
     """Create a task registry with mocked dependencies."""
-    return create_task_registry(mock_task_manager, mock_sync_manager)
+    return create_task_registry(mock_task_manager)
 
 
 @pytest.fixture

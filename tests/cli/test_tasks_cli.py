@@ -1062,7 +1062,8 @@ class TestUpdateTaskCommand:
         result = runner.invoke(cli, ["tasks", "update", "gt-abc123", "--status", "in_progress"])
 
         assert result.exit_code != 0
-        assert "No such option: --status" in result.output
+        assert "No such option" in result.output
+        assert "--status" in result.output
 
     def test_update_task_rejects_claimed_session_option(self, runner: CliRunner) -> None:
         result = runner.invoke(
@@ -1071,7 +1072,8 @@ class TestUpdateTaskCommand:
         )
 
         assert result.exit_code != 0
-        assert "No such option: --claimed-by-session-id" in result.output
+        assert "No such option" in result.output
+        assert "--claimed-by-session-id" in result.output
 
     @patch("gobby.cli.tasks.crud.get_task_manager")
     @patch("gobby.cli.tasks.crud.resolve_task_id")
@@ -2365,94 +2367,47 @@ class TestFormatTaskList:
 # ==============================================================================
 
 
-class TestSyncTasksCommand:
-    """Tests for gobby tasks sync command."""
+class TestTaskBackupCommands:
+    """Tests for explicit task backup and restore commands."""
 
-    @patch("gobby.cli.tasks.main.get_sync_manager")
-    def test_sync_default_both(
-        self,
-        mock_get_sync: MagicMock,
-        runner: CliRunner,
-    ) -> None:
-        """Test sync with default behavior imports only."""
-        mock_manager = MagicMock()
-        mock_get_sync.return_value = mock_manager
+    @patch("gobby.cli.tasks.main.get_backup_manager")
+    def test_backup_with_output(self, mock_get_backup: MagicMock, runner: CliRunner) -> None:
+        manager = MagicMock()
+        manager.backup.return_value = 3
+        mock_get_backup.return_value = manager
 
+        result = runner.invoke(cli, ["tasks", "backup", "--output", "snapshot.jsonl"])
+
+        assert result.exit_code == 0
+        manager.backup.assert_called_once()
+        assert "Backed up 3 tasks" in result.output
+
+    @patch("gobby.cli.tasks.main.get_backup_manager")
+    def test_restore_with_input(self, mock_get_backup: MagicMock, runner: CliRunner) -> None:
+        manager = MagicMock()
+        manager.restore.return_value = 2
+        mock_get_backup.return_value = manager
+
+        result = runner.invoke(cli, ["tasks", "restore", "--input", "snapshot.jsonl"])
+
+        assert result.exit_code == 0
+        manager.restore.assert_called_once()
+        assert "Restored 2 tasks" in result.output
+
+    @patch("gobby.cli.tasks.main.get_backup_manager")
+    def test_backup_quiet_mode(self, mock_get_backup: MagicMock, runner: CliRunner) -> None:
+        mock_get_backup.return_value.backup.return_value = 1
+
+        result = runner.invoke(cli, ["tasks", "backup", "--quiet"])
+
+        assert result.exit_code == 0
+        assert result.output == ""
+
+    def test_sync_command_is_removed(self, runner: CliRunner) -> None:
         result = runner.invoke(cli, ["tasks", "sync"])
 
-        assert result.exit_code == 0
-        mock_manager.import_from_jsonl.assert_called_once()
-        mock_manager.export_to_jsonl.assert_not_called()
-        assert "Sync completed" in result.output
-
-    @patch("gobby.cli.tasks.main.get_sync_manager")
-    def test_sync_import_only(
-        self,
-        mock_get_sync: MagicMock,
-        runner: CliRunner,
-    ) -> None:
-        """Test sync with --import flag only."""
-        mock_manager = MagicMock()
-        mock_get_sync.return_value = mock_manager
-
-        result = runner.invoke(cli, ["tasks", "sync", "--import"])
-
-        assert result.exit_code == 0
-        mock_manager.import_from_jsonl.assert_called_once()
-        mock_manager.export_to_jsonl.assert_not_called()
-
-    @patch("gobby.cli.tasks.main.get_sync_manager")
-    def test_sync_export_only_skips_outside_remote_push_context(
-        self,
-        mock_get_sync: MagicMock,
-        runner: CliRunner,
-    ) -> None:
-        """Test sync with --export flag does not dirty JSONL locally."""
-        mock_manager = MagicMock()
-        mock_get_sync.return_value = mock_manager
-
-        result = runner.invoke(cli, ["tasks", "sync", "--export"])
-
-        assert result.exit_code == 0
-        mock_manager.import_from_jsonl.assert_not_called()
-        mock_manager.export_to_jsonl.assert_not_called()
-        assert ".gobby/tasks.jsonl is generated only during remote push" in result.output
-
-    @patch("gobby.cli.tasks.main.get_sync_manager")
-    def test_sync_export_only_runs_in_remote_push_context(
-        self,
-        mock_get_sync: MagicMock,
-        runner: CliRunner,
-    ) -> None:
-        """Test sync with --export flag in the pre-push publication context."""
-        mock_manager = MagicMock()
-        mock_get_sync.return_value = mock_manager
-
-        result = runner.invoke(
-            cli,
-            ["tasks", "sync", "--export"],
-            env={"GOBBY_JSONL_EXPORT_CONTEXT": "pre-push"},
-        )
-
-        assert result.exit_code == 0
-        mock_manager.import_from_jsonl.assert_not_called()
-        mock_manager.export_to_jsonl.assert_called_once()
-
-    @patch("gobby.cli.tasks.main.get_sync_manager")
-    def test_sync_quiet_mode(
-        self,
-        mock_get_sync: MagicMock,
-        runner: CliRunner,
-    ) -> None:
-        """Test sync with --quiet flag suppresses output."""
-        mock_manager = MagicMock()
-        mock_get_sync.return_value = mock_manager
-
-        result = runner.invoke(cli, ["tasks", "sync", "--quiet"])
-
-        assert result.exit_code == 0
-        assert "Importing" not in result.output
-        assert "Exporting" not in result.output
+        assert result.exit_code != 0
+        assert "No such command 'sync'" in result.output
 
 
 # ==============================================================================
@@ -2649,15 +2604,15 @@ class TestCompactStatsCommand:
 class TestImportGitHubCommand:
     """Tests for gobby tasks import github command."""
 
-    @patch("gobby.cli.tasks.main.get_sync_manager")
+    @patch("gobby.cli.tasks.main.get_github_importer")
     def test_import_github_success(
         self,
-        mock_get_sync: MagicMock,
+        mock_get_importer: MagicMock,
         runner: CliRunner,
     ) -> None:
         """Test successful GitHub import."""
         mock_manager = MagicMock()
-        mock_get_sync.return_value = mock_manager
+        mock_get_importer.return_value = mock_manager
 
         # Mock the async method
 
@@ -2675,15 +2630,15 @@ class TestImportGitHubCommand:
         assert result.exit_code == 0
         assert "Imported 5 issues" in result.output
 
-    @patch("gobby.cli.tasks.main.get_sync_manager")
+    @patch("gobby.cli.tasks.main.get_github_importer")
     def test_import_github_error(
         self,
-        mock_get_sync: MagicMock,
+        mock_get_importer: MagicMock,
         runner: CliRunner,
     ) -> None:
         """Test GitHub import error handling."""
         mock_manager = MagicMock()
-        mock_get_sync.return_value = mock_manager
+        mock_get_importer.return_value = mock_manager
 
         async def mock_import(*args, **kwargs):
             return {
@@ -2698,15 +2653,15 @@ class TestImportGitHubCommand:
         assert result.exit_code == 0
         assert "Error: Invalid GitHub URL" in result.output
 
-    @patch("gobby.cli.tasks.main.get_sync_manager")
+    @patch("gobby.cli.tasks.main.get_github_importer")
     def test_import_github_with_limit(
         self,
-        mock_get_sync: MagicMock,
+        mock_get_importer: MagicMock,
         runner: CliRunner,
     ) -> None:
         """Test GitHub import with custom limit."""
         mock_manager = MagicMock()
-        mock_get_sync.return_value = mock_manager
+        mock_get_importer.return_value = mock_manager
 
         async def mock_import(url, limit=50):
             assert limit == 100

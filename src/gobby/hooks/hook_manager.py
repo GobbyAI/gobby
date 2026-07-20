@@ -66,8 +66,6 @@ class HookManager:
         broadcaster: Any | None = None,
         tool_proxy_getter: Any | None = None,
         message_processor: Any | None = None,
-        memory_sync_manager: Any | None = None,
-        task_sync_manager: Any | None = None,
         agent_runner: "AgentRunner | None" = None,
         completion_registry: "CompletionEventRegistry | None" = None,
         database: "HubDatabase | None" = None,
@@ -81,8 +79,6 @@ class HookManager:
         self.broadcaster = broadcaster
         self.tool_proxy_getter = tool_proxy_getter
         self._message_processor = message_processor
-        self.memory_sync_manager = memory_sync_manager
-        self.task_sync_manager = task_sync_manager
         self._owns_database = database is None and session_manager is None
         self._shutdown_complete = False
 
@@ -121,8 +117,6 @@ class HookManager:
             broadcaster=broadcaster,
             tool_proxy_getter=tool_proxy_getter,
             message_processor=message_processor,
-            memory_sync_manager=memory_sync_manager,
-            task_sync_manager=task_sync_manager,
             agent_runner=agent_runner,
             completion_registry=completion_registry,
             database=database,

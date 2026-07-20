@@ -189,8 +189,8 @@ for the authoritative signature before calling a tool.
 | `rebuild_crossrefs` | Rebuild memory-to-memory cross-reference edges. |
 | `rebuild_knowledge_graph` | Extract entities and relationships into FalkorDB. |
 | `reindex_embeddings` | Regenerate embedding vectors for stored memories. |
-| `sync_import` | Import `.gobby/memories.jsonl` into the hub database. |
-| `sync_export` | Export project memories from the hub database to `.gobby/memories.jsonl`. |
+| `restore_memories` | Restore `.gobby/memories.jsonl` into the hub database without deleting absent or newer rows. |
+| `backup_memories` | Back up current live project memories to `.gobby/memories.jsonl`. |
 | `memory_dream` | Review stale memories, apply a validated plan, and snapshot mutations. |
 | `memory_dream_status` | Return status and summary for a memory dream run. |
 | `memory_dream_revert` | Revert a memory dream run from its snapshots. |
@@ -351,18 +351,16 @@ databases:
     graph_min_score: 0.5
     rrf_k: 60
 
-memory_sync:
+memory_backup:
   enabled: true
-  export_debounce: 5.0
-  export_path: .gobby/memories.jsonl
+  backup_path: .gobby/memories.jsonl
 ```
 
 Knowledge-graph extraction is enabled by FalkorDB being configured
 (`databases.falkordb.password`); `memory.kg` only selects the LLM profile and
 candidates for extraction — there is no `kg.enabled` flag.
 
-`memory_sync` is retained as the configuration key, but the implementation is a
-backup/export manager. Treat `.gobby/memories.jsonl` as a backup and migration
+`memory_backup` configures the backup manager. Treat `.gobby/memories.jsonl` as a backup and migration
 artifact, not a live bidirectional source of truth.
 
 ## Lifecycle Rules
@@ -421,16 +419,18 @@ clear that tracking after compaction or selected resumes.
 
 ## Backup Format
 
-`.gobby/memories.jsonl` stores one JSON object per line. The backup manager
-deduplicates by memory ID and updated timestamp during import/export.
+`.gobby/memories.jsonl` stores one JSON object per line. Backup writes exactly
+the current live scoped rows in deterministic order. Restore validates the
+complete file before writing, upserts by memory ID and updated timestamp, and
+preserves database-only and newer database rows.
 
 ```jsonl
 {"id":"mm-abc123","memory_type":"fact","content":"Use uv for local development","tags":["tooling"],"project_id":"..."}
 {"id":"mm-def456","memory_type":"preference","content":"Prefer focused validation over full suite runs","tags":["testing"]}
 ```
 
-Use `gobby memory backup` or MCP `sync_export` to write the file. Use
-`gobby memory restore` or MCP `sync_import` to import it.
+Use `gobby memory backup` or MCP `backup_memories` to write the file. Use
+`gobby memory restore` or MCP `restore_memories` to restore it explicitly.
 
 ## Maintenance Checklist
 

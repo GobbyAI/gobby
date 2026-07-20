@@ -55,7 +55,6 @@ def test_setup_with_all_managers_none() -> None:
         _config=mock_config,
         memory_manager=None,
         task_manager=None,
-        sync_manager=None,
         session_manager=None,
         metrics_manager=None,
         agent_runner=None,
@@ -234,12 +233,10 @@ def test_setup_tasks_disabled_by_config() -> None:
     mock_config = MagicMock()
     mock_config.get_gobby_tasks_config.return_value.enabled = False
     task_manager = MagicMock()
-    sync_manager = MagicMock()
 
     manager = setup_internal_registries(
         _config=mock_config,
         task_manager=task_manager,
-        sync_manager=sync_manager,
     )
 
     registries = manager.get_all_registries()
@@ -262,12 +259,10 @@ def test_setup_tasks_missing_task_manager() -> None:
     """Test tasks registry is not created when task_manager is None."""
     mock_config = MagicMock()
     mock_config.get_gobby_tasks_config.return_value.enabled = True
-    sync_manager = MagicMock()
 
     manager = setup_internal_registries(
         _config=mock_config,
         task_manager=None,
-        sync_manager=sync_manager,
     )
 
     registries = manager.get_all_registries()
@@ -276,8 +271,8 @@ def test_setup_tasks_missing_task_manager() -> None:
     assert "gobby-tasks" not in registry_names
 
 
-def test_setup_tasks_missing_sync_manager() -> None:
-    """Test tasks registry is not created when sync_manager is None."""
+def test_setup_tasks_only_requires_task_manager() -> None:
+    """Test task registries do not depend on a legacy sync manager."""
     mock_config = MagicMock()
     mock_config.get_gobby_tasks_config.return_value.enabled = True
     task_manager = MagicMock()
@@ -285,13 +280,12 @@ def test_setup_tasks_missing_sync_manager() -> None:
     manager = setup_internal_registries(
         _config=mock_config,
         task_manager=task_manager,
-        sync_manager=None,
     )
 
     registries = manager.get_all_registries()
     registry_names = [r.name for r in registries]
-    # Tasks should NOT be present when sync_manager is None
-    assert "gobby-tasks" not in registry_names
+    assert "gobby-tasks" in registry_names
+    assert "gobby-tasks-ops" in registry_names
 
 
 def test_setup_tasks_ops_registry_omits_legacy_front_half_tick(temp_db: Any) -> None:
@@ -304,7 +298,6 @@ def test_setup_tasks_ops_registry_omits_legacy_front_half_tick(temp_db: Any) -> 
     manager = setup_internal_registries(
         _config=mock_config,
         task_manager=LocalTaskManager(temp_db),
-        sync_manager=MagicMock(),
     )
 
     registry = manager.get_registry("gobby-tasks-ops")

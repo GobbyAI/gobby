@@ -4,8 +4,7 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from gobby.storage.tasks import LocalTaskManager
-from gobby.sync.tasks import TaskSyncManager
+from gobby.sync.task_github_import import GitHubIssueImporter
 
 pytestmark = pytest.mark.unit
 
@@ -18,14 +17,13 @@ RESOLUTION_PROJECT_ID = "aeaeaeae-0000-4000-8000-000000000002"
 
 
 @pytest.fixture
-def sync_manager(hub_db):
-    tm = LocalTaskManager(hub_db)
-    return TaskSyncManager(tm, export_path=".gobby/tasks.jsonl")
+def github_importer(hub_db):
+    return GitHubIssueImporter(hub_db)
 
 
 @pytest.mark.integration
 @pytest.mark.asyncio
-async def test_import_from_github_issues(sync_manager, hub_db):
+async def test_import_from_github_issues(github_importer, hub_db):
     # Setup project with matching URL
     hub_db.execute(
         "INSERT INTO projects (id, repo_path, name, github_url) VALUES (%s, %s, %s, %s)",
@@ -52,7 +50,7 @@ async def test_import_from_github_issues(sync_manager, hub_db):
             ),  # gh issue list
         ]
 
-        result = await sync_manager.import_from_github_issues("https://github.com/owner/repo")
+        result = await github_importer.import_from_github_issues("https://github.com/owner/repo")
 
         assert result["success"] is True
         assert len(result["imported"]) == 1
@@ -66,7 +64,7 @@ async def test_import_from_github_issues(sync_manager, hub_db):
 
 @pytest.mark.integration
 @pytest.mark.asyncio
-async def test_import_project_id_resolution(sync_manager, hub_db):
+async def test_import_project_id_resolution(github_importer, hub_db):
     """
     Test that import_from_github_issues correctly resolves the project_id
     from the database based on the repo URL, without needing claude_agent_sdk.
@@ -99,7 +97,7 @@ async def test_import_project_id_resolution(sync_manager, hub_db):
         ]
 
         # Act: Import without specifying project_id
-        result = await sync_manager.import_from_github_issues(repo_url)
+        result = await github_importer.import_from_github_issues(repo_url)
 
     # Assert
     assert result["success"] is True

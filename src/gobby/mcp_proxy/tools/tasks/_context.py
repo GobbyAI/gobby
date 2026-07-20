@@ -26,7 +26,6 @@ if TYPE_CHECKING:
     from gobby.llm.service import LLMService
     from gobby.mcp_proxy.manager import MCPClientManager
     from gobby.storage.hub.protocol import HubDatabase
-    from gobby.sync.tasks import TaskSyncManager
     from gobby.tasks.validation import TaskValidator
 
 
@@ -39,7 +38,6 @@ class RegistryContext:
 
     # Core managers
     task_manager: LocalTaskManager
-    sync_manager: "TaskSyncManager"
 
     # Optional managers
     task_validator: "TaskValidator | None" = None

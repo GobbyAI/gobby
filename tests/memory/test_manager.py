@@ -230,25 +230,25 @@ class TestCreateMemory:
         assert new_global.id not in {first_project.id, second_project.id}
         assert new_global.project_id is None
 
-    def test_create_memory_with_sync_metadata_uses_lww(self, memory_manager) -> None:
+    def test_create_memory_with_restore_metadata_uses_lww(self, memory_manager) -> None:
         memory_id = str(uuid.uuid4())
         created_at = datetime(2023, 1, 1, tzinfo=UTC)
         initial_updated_at = datetime(2023, 1, 2, tzinfo=UTC)
 
         initial = memory_manager.storage.create_memory(
-            content="initial synced memory",
+            content="initial restored memory",
             memory_id=memory_id,
             created_at=created_at,
             updated_at=initial_updated_at,
         )
         stale = memory_manager.storage.create_memory(
-            content="stale synced memory",
+            content="stale restored memory",
             memory_id=memory_id,
             created_at=datetime(2023, 1, 3, tzinfo=UTC),
             updated_at=datetime(2023, 1, 1, tzinfo=UTC),
         )
         fresh = memory_manager.storage.create_memory(
-            content="fresh synced memory",
+            content="fresh restored memory",
             memory_id=memory_id,
             created_at=datetime(2023, 1, 4, tzinfo=UTC),
             updated_at=datetime(2023, 1, 5, tzinfo=UTC),
@@ -256,8 +256,8 @@ class TestCreateMemory:
 
         assert initial.id == memory_id
         assert initial.created_at == created_at
-        assert stale.content == "initial synced memory"
-        assert fresh.content == "fresh synced memory"
+        assert stale.content == "initial restored memory"
+        assert fresh.content == "fresh restored memory"
         assert fresh.created_at == created_at
         assert fresh.updated_at == datetime(2023, 1, 5, tzinfo=UTC)
 

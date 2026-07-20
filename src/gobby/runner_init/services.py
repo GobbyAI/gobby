@@ -24,7 +24,6 @@ from gobby.storage.clones import LocalCloneManager
 from gobby.storage.mcp import LocalMCPManager
 from gobby.storage.worktrees import LocalWorktreeManager
 from gobby.sync.memories import MemoryBackupManager
-from gobby.sync.tasks import TaskSyncManager
 from gobby.tasks.validation import TaskValidator
 
 if TYPE_CHECKING:
@@ -48,7 +47,7 @@ def init_services(runner: GobbyRunner) -> None:
     _init_memory_stack(runner)
     _init_code_indexer(runner)
     _init_mcp_stack(runner)
-    _init_sync_managers(runner)
+    _init_memory_backup(runner)
     _init_message_processor(runner)
     _init_task_validator(runner)
     _init_project_context(runner)
@@ -227,25 +226,23 @@ def _init_mcp_stack(runner: GobbyRunner) -> None:
     )
 
 
-def _init_sync_managers(runner: GobbyRunner) -> None:
-    runner.task_sync_manager = TaskSyncManager(runner.task_manager)
-
-    runner.memory_sync_manager = None
-    if hasattr(runner.config, "memory_sync") and runner.config.memory_sync.enabled:
+def _init_memory_backup(runner: GobbyRunner) -> None:
+    runner.memory_backup_manager = None
+    if hasattr(runner.config, "memory_backup") and runner.config.memory_backup.enabled:
         if runner.memory_manager:
             try:
-                runner.memory_sync_manager = MemoryBackupManager(
+                runner.memory_backup_manager = MemoryBackupManager(
                     db=runner.database,
                     memory_manager=runner.memory_manager,
-                    config=runner.config.memory_sync,
+                    config=runner.config.memory_backup,
                 )
-                logger.debug("MemoryBackupManager initialized (backup/export only)")
+                logger.debug("MemoryBackupManager initialized")
 
             except Exception:
-                mark_service_degraded(runner, "memory_sync_manager")
+                mark_service_degraded(runner, "memory_backup_manager")
                 logger.exception("Failed to initialize MemoryBackupManager")
         else:
-            mark_service_degraded(runner, "memory_sync_manager")
+            mark_service_degraded(runner, "memory_backup_manager")
             logger.warning(
                 "Skipping MemoryBackupManager initialization; MemoryManager is unavailable"
             )

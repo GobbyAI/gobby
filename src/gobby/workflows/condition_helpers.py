@@ -34,7 +34,7 @@ TaskIdInput = TaskIdRef | Iterable[TaskIdRef | None] | None
 _ENV_ASSIGNMENT_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*=.*$")
 _TASK_COMMIT_PROJECT_PATH_GUARD_FILE_SUFFIXES = frozenset(
     {
-        "src/gobby/mcp_proxy/tools/task_sync.py",
+        "src/gobby/mcp_proxy/tools/task_commits.py",
         "src/gobby/mcp_proxy/tools/tasks/_lifecycle_close.py",
         "src/gobby/mcp_proxy/tools/_lifecycle_close.py",
     }

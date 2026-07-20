@@ -356,7 +356,7 @@ gobby tasks review TASK --submit
 gobby tasks review TASK --approve
 gobby tasks review TASK --reject --reason REASON
 
-# Expansion, validation, search, sync, and maintenance
+# Expansion, validation, search, backup, and maintenance
 gobby tasks expand validate-plan PLAN_FILE
 gobby tasks expand compile TASK [--plan-file PLAN_FILE]
 gobby tasks expand apply RUN_ID
@@ -367,7 +367,8 @@ gobby tasks validate TASK --summary SUMMARY
 gobby tasks validation-history TASK
 gobby tasks search QUERY [--limit N] [--json]
 gobby tasks reindex
-gobby tasks sync [--import] [--export]
+gobby tasks backup [--output PATH] [--quiet]
+gobby tasks restore [--input PATH] [--quiet]
 gobby tasks doctor
 gobby tasks repair-lifecycle
 ```
@@ -377,15 +378,20 @@ changes future dispatch state only. Gobby rejects `worktree` when clone
 artifacts are present and rejects `clone` when worktree artifacts are present;
 use the artifact cleanup tools before retargeting when cleanup is intentional.
 
-## Storage and Sync
+## Storage and Backups
 
-The canonical task data lives in Gobby's PostgreSQL hub. Tasks can also export
-to JSONL for git-friendly synchronization:
+The canonical task data lives in Gobby's PostgreSQL hub. Gobby writes a
+deterministic JSONL backup for recovery and migration:
 
-- Project task export: `.gobby/tasks.jsonl`
-- Fallback export: the legacy default path when no project resolves
-- Manual sync: `gobby tasks sync`
-- Git hook sync: installed by `gobby install`
+- Project task backup: `.gobby/tasks.jsonl`
+- Manual backup: `gobby tasks backup`
+- Explicit non-destructive restore: `gobby tasks restore`
+- Pre-push backup: installed by `gobby install`
+
+Backups contain only current live database rows, so deleting a task shrinks the
+next backup. Restore upserts by stable ID and updated timestamp; it preserves
+database-only rows and database versions newer than the backup. Restores are
+never run automatically during daemon or session startup.
 
 The human-friendly task reference is `#N` within a project. Hierarchical task
 paths are dotted `seq_num` chains such as `14370.14390`. MCP tools accept `#N`,

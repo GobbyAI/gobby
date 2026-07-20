@@ -658,7 +658,7 @@ class TestReturnValueBackwardsCompat:
         calls = [
             {
                 "server": "gobby-tasks",
-                "tool": "sync_export",
+                "tool": "backup_tasks",
                 "arguments": {},
                 "background": False,
             }

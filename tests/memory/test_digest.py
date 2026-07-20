@@ -29,8 +29,6 @@ from gobby.memory.digest import (
     _validate_turn_record_payload,
     bootstrap_session_title,
     build_turn_and_digest,
-    memory_sync_export,
-    memory_sync_import,
 )
 from gobby.memory.title_heuristics import (
     build_heuristic_title,
@@ -89,27 +87,6 @@ def _turn_record_payload(
     return payload
 
 
-class TestMemorySyncImportDirect:
-    """Direct tests for memory_sync_import function."""
-
-    @pytest.mark.asyncio
-    async def test_memory_sync_import_no_manager(self):
-        """Test memory_sync_import returns error when manager is None."""
-        result = await memory_sync_import(None)
-        assert result == {"error": "Memory Sync Manager not available"}
-
-    @pytest.mark.asyncio
-    async def test_memory_sync_import_success(self):
-        """Test memory_sync_import success path."""
-        mock_manager = AsyncMock()
-        mock_manager.import_from_files.return_value = 5
-
-        result = await memory_sync_import(mock_manager)
-
-        assert result == {"imported": {"memories": 5}}
-        mock_manager.import_from_files.assert_awaited_once()
-
-
 def test_turn_record_contract_log_omits_full_response(
     caplog: pytest.LogCaptureFixture,
 ) -> None:
@@ -125,48 +102,6 @@ def test_turn_record_contract_log_omits_full_response(
     assert f"response_chars={len(response_text)}" in caplog.text
     assert response_text[:40] in caplog.text
     assert "sensitive-tail" not in caplog.text
-
-
-class TestMemorySyncExportDirect:
-    """Direct tests for memory_sync_export function."""
-
-    @pytest.mark.asyncio
-    async def test_memory_sync_export_no_manager(self):
-        """Test memory_sync_export returns error when manager is None."""
-        result = await memory_sync_export(None)
-        assert result == {"error": "Memory Sync Manager not available"}
-
-    @pytest.mark.asyncio
-    async def test_memory_sync_export_skips_outside_jsonl_export_context(self, monkeypatch):
-        """Test memory_sync_export avoids local JSONL writes outside remote push."""
-        monkeypatch.delenv("GOBBY_JSONL_EXPORT_CONTEXT", raising=False)
-        mock_manager = AsyncMock()
-
-        result = await memory_sync_export(mock_manager)
-
-        assert result == {
-            "exported": {"memories": 0},
-            "skipped": True,
-            "reason": "not_remote_push",
-        }
-        mock_manager.export_to_files.assert_not_awaited()
-
-    @pytest.mark.asyncio
-    async def test_memory_sync_export_success(self, monkeypatch):
-        """Test memory_sync_export success path."""
-        monkeypatch.setenv("GOBBY_JSONL_EXPORT_CONTEXT", "pre-push")
-        mock_manager = AsyncMock()
-        mock_manager.export_to_files.return_value = 7
-
-        result = await memory_sync_export(mock_manager)
-
-        assert result == {"exported": {"memories": 7}}
-        mock_manager.export_to_files.assert_awaited_once()
-
-
-# =============================================================================
-# MEMORY INJECT PROJECT CONTEXT TESTS
-# =============================================================================
 
 
 class TestGetNextTurnNumber:

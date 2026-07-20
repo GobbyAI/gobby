@@ -45,7 +45,7 @@ class MemoryCrudMixin(MemoryStoreBase):
         now = utc_now()
         created_at_value = to_aware_utc(created_at) if created_at is not None else now
         updated_at_value = to_aware_utc(updated_at) if updated_at is not None else now
-        sync_metadata = memory_id is not None or created_at is not None or updated_at is not None
+        restore_metadata = memory_id is not None or created_at is not None or updated_at is not None
         # Normalize content for consistent ID generation (avoid duplicates from
         # whitespace differences)
         normalized_content = content.strip()
@@ -142,7 +142,7 @@ class MemoryCrudMixin(MemoryStoreBase):
                     and str(existing_row["content"]).strip() != normalized_content
                 ):
                     raise RuntimeError(f"Memory ID collision for content: {final_memory_id}")
-            if sync_metadata:
+            if restore_metadata:
                 cursor = conn.execute(
                     """
                     INSERT INTO memories (
@@ -152,67 +152,55 @@ class MemoryCrudMixin(MemoryStoreBase):
                     ) VALUES (%s, %s, %s, %s, %s, %s, 0, %s, %s, %s)
                     ON CONFLICT (id) DO UPDATE SET
                         project_id = CASE
-                            WHEN memories.deleted_at IS NOT NULL
-                              OR excluded.updated_at > memories.updated_at
+                            WHEN excluded.updated_at > memories.updated_at
                             THEN excluded.project_id
                             ELSE memories.project_id
                         END,
                         memory_type = CASE
-                            WHEN memories.deleted_at IS NOT NULL
-                              OR excluded.updated_at > memories.updated_at
+                            WHEN excluded.updated_at > memories.updated_at
                             THEN excluded.memory_type
                             ELSE memories.memory_type
                         END,
                         content = CASE
-                            WHEN memories.deleted_at IS NOT NULL
-                              OR excluded.updated_at > memories.updated_at
+                            WHEN excluded.updated_at > memories.updated_at
                             THEN excluded.content
                             ELSE memories.content
                         END,
                         source_type = CASE
-                            WHEN memories.deleted_at IS NOT NULL
-                              OR excluded.updated_at > memories.updated_at
+                            WHEN excluded.updated_at > memories.updated_at
                             THEN excluded.source_type
                             ELSE memories.source_type
                         END,
                         source_session_id = CASE
-                            WHEN memories.deleted_at IS NOT NULL
-                              OR excluded.updated_at > memories.updated_at
+                            WHEN excluded.updated_at > memories.updated_at
                             THEN excluded.source_session_id
                             ELSE memories.source_session_id
                         END,
                         tags = CASE
-                            WHEN memories.deleted_at IS NOT NULL
-                              OR excluded.updated_at > memories.updated_at
+                            WHEN excluded.updated_at > memories.updated_at
                             THEN excluded.tags
                             ELSE memories.tags
                         END,
-                        created_at = CASE
-                            WHEN memories.created_at <= excluded.created_at
-                            THEN memories.created_at
-                            ELSE excluded.created_at
-                        END,
                         updated_at = CASE
-                            WHEN memories.deleted_at IS NOT NULL
-                              OR excluded.updated_at > memories.updated_at
+                            WHEN excluded.updated_at > memories.updated_at
                             THEN excluded.updated_at
                             ELSE memories.updated_at
                         END,
                         deleted_at = CASE
                             WHEN memories.deleted_at IS NOT NULL
-                              AND excluded.updated_at >= memories.updated_at
+                              AND excluded.updated_at > memories.updated_at
                             THEN NULL
                             ELSE memories.deleted_at
                         END,
                         dream_action = CASE
                             WHEN memories.deleted_at IS NOT NULL
-                              AND excluded.updated_at >= memories.updated_at
+                              AND excluded.updated_at > memories.updated_at
                             THEN NULL
                             ELSE memories.dream_action
                         END,
                         last_dreamed_at = CASE
                             WHEN memories.deleted_at IS NOT NULL
-                              AND excluded.updated_at >= memories.updated_at
+                              AND excluded.updated_at > memories.updated_at
                             THEN NULL
                             ELSE memories.last_dreamed_at
                         END
@@ -261,12 +249,14 @@ class MemoryCrudMixin(MemoryStoreBase):
                     ),
                 )
             row = cursor.fetchone()
-            changed = existing_row is None or existing_row["deleted_at"] is not None
-            if sync_metadata and existing_row is not None:
+            changed = existing_row is None
+            if restore_metadata and existing_row is not None:
                 existing_updated_at = parse_stored_datetime(
                     existing_row["updated_at"]
                 ) or datetime.min.replace(tzinfo=UTC)
-                changed = changed or updated_at_value > existing_updated_at
+                changed = updated_at_value > existing_updated_at
+            elif existing_row is not None:
+                changed = existing_row["deleted_at"] is not None
 
         if row is None:
             raise RuntimeError(f"Memory {final_memory_id} not found after creation")

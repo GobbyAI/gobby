@@ -28,7 +28,6 @@ from gobby.mcp_proxy.tools.tasks._search import create_reindex_registry
 from gobby.mcp_proxy.tools.tasks._stage_ops import create_stage_ops_registry
 from gobby.mcp_proxy.tools.tasks._stage_registry_ops import create_stage_registry_ops_registry
 from gobby.storage.tasks import LocalTaskManager
-from gobby.sync.tasks import TaskSyncManager
 from gobby.tasks.validation import TaskValidator
 
 if TYPE_CHECKING:
@@ -56,7 +55,6 @@ class _TaskOpsToolRegistry(InternalToolRegistry):
 
 def create_task_ops_registry(
     task_manager: LocalTaskManager,
-    sync_manager: TaskSyncManager,
     task_validator: TaskValidator | None = None,
     config: "DaemonConfig | None" = None,
     llm_service: "LLMService | None" = None,
@@ -67,7 +65,6 @@ def create_task_ops_registry(
 
     Args:
         task_manager: LocalTaskManager instance
-        sync_manager: TaskSyncManager instance
         task_validator: TaskValidator instance (optional)
         config: DaemonConfig instance (optional)
 
@@ -77,7 +74,6 @@ def create_task_ops_registry(
     # Create own RegistryContext (lightweight, shares the same manager objects)
     ctx = RegistryContext(
         task_manager=task_manager,
-        sync_manager=sync_manager,
         task_validator=task_validator,
         config=config,
         llm_service=llm_service,

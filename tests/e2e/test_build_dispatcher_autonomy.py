@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import os
 import subprocess
 import time
@@ -55,7 +56,8 @@ class _MiniPipeline:
 
 
 class _MiniPipelineLoader:
-    async def load_pipeline(self, name: str) -> _MiniPipeline | None:
+    async def load_pipeline(self, name: str, project_id: str | None = None) -> _MiniPipeline | None:
+        _ = project_id
         return _MiniPipeline() if name == "expand-task" else None
 
 
@@ -91,7 +93,6 @@ class MiniBuildHarness:
         self.stage_registry = create_stage_ops_registry(
             RegistryContext(
                 task_manager=self.task_manager,
-                sync_manager=cast(Any, SimpleNamespace()),
             )
         )
 
@@ -208,9 +209,6 @@ class MiniBuildHarness:
                 raise AssertionError(f"Unhandled fake stage state: {stage_state}")
         assert "error" not in result
         self.run_manager.complete(cast(str, run["run_id"]), result="ok", tool_calls_count=1)
-        from gobby.hooks.event_handlers import _dispatch
-
-        _dispatch.on_agent_end_normal({"run_id": run["run_id"]}, storage=self.mutexes)
         run["completed"] = True
 
     async def assert_clean_final_state(self) -> None:
@@ -540,6 +538,14 @@ async def test_submit_for_review_autonomously_dispatches_reviewer_without_build_
         )
         return {"success": True, "run_id": run.id, "isolation": "none"}
 
+    async def run_inline(func: object, *args: object, **kwargs: object) -> object:
+        return cast(Any, func)(*args, **kwargs)
+
+    automation_loop = SystemAutomationLoop(
+        db=temp_db,
+        config=DaemonConfig(),
+        run_db=run_inline,
+    )
     services = SimpleNamespace(
         database=temp_db,
         task_manager=task_manager,
@@ -550,9 +556,15 @@ async def test_submit_for_review_autonomously_dispatches_reviewer_without_build_
         git_manager=None,
         clone_manager=None,
         completion_registry=None,
-        config=None,
+        config=DaemonConfig(),
         code_indexer=None,
+        system_automation_loop=automation_loop,
+        startup_ready=True,
+        shutdown_in_progress=False,
     )
+    automation_loop.set_services(services)
+    automation_loop._running = True
+    automation_loop._event_loop = asyncio.get_running_loop()
     monkeypatch.setattr("gobby.app_context._current_container", services)
     monkeypatch.setattr(
         "gobby.mcp_proxy.tools.spawn_agent._implementation.spawn_agent_impl",
@@ -563,7 +575,6 @@ async def test_submit_for_review_autonomously_dispatches_reviewer_without_build_
     registry = create_stage_ops_registry(
         RegistryContext(
             task_manager=registry_task_manager,
-            sync_manager=cast(Any, SimpleNamespace()),
         )
     )
     with session_context_for_test(worker.id):

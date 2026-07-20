@@ -2093,12 +2093,7 @@ class TestMemoryBackupConfig:
         """Test default memory backup config."""
         config = MemoryBackupConfig()
         assert config.enabled is True
-        assert config.export_debounce == 5.0
-
-    def test_debounce_validation(self) -> None:
-        """Test export debounce validation."""
-        with pytest.raises(ValidationError):
-            MemoryBackupConfig(export_debounce=-1.0)
+        assert config.backup_path == Path(".gobby/memories.jsonl")
 
 
 class TestMetricsConfig:
@@ -2222,7 +2217,7 @@ class TestDaemonConfigComposition:
 
         # Memory
         assert isinstance(config.memory, MemoryConfig)
-        assert isinstance(config.memory_sync, MemoryBackupConfig)
+        assert isinstance(config.memory_backup, MemoryBackupConfig)
 
     def test_getters_return_correct_configs(self) -> None:
         """Test all getter methods return correct configs."""
@@ -2233,7 +2228,7 @@ class TestDaemonConfigComposition:
         assert config.get_import_mcp_server_config() is config.import_mcp_server
         assert config.get_mcp_client_proxy_config() is config.mcp_client_proxy
         assert config.get_memory_config() is config.memory
-        assert config.get_memory_sync_config() is config.memory_sync
+        assert config.get_memory_backup_config() is config.memory_backup
         assert config.get_gobby_tasks_config() is config.gobby_tasks
         assert config.get_metrics_config() is config.metrics
         assert (

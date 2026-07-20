@@ -269,7 +269,32 @@ def test_postgres_migration_discovery_finds_all_post_baseline_migrations() -> No
         (321, "session_variables_session_cascade"),
         (322, "agent_run_capture_termination"),
         (323, "recall_usefulness_digest_shadow"),
+        (324, "drop_sync_tombstones"),
     ]
+
+
+def test_sync_tombstone_database_objects_are_removed(postgres_db: Any) -> None:
+    row = postgres_db.fetchone(
+        """
+        SELECT
+            to_regclass(current_schema() || '.sync_tombstones') AS tombstone_table,
+            to_regprocedure(current_schema() || '.capture_sync_tombstone()') AS capture_function,
+            (
+                SELECT COUNT(*)
+                FROM pg_trigger
+                WHERE tgname IN (
+                    'tasks_capture_sync_tombstone',
+                    'memories_capture_sync_tombstone'
+                )
+                AND NOT tgisinternal
+            ) AS capture_trigger_count
+        """
+    )
+
+    assert row is not None
+    assert row["tombstone_table"] is None
+    assert row["capture_function"] is None
+    assert row["capture_trigger_count"] == 0
 
 
 def test_memory_source_session_upgrade_preserves_memory(postgres_db: Any) -> None:

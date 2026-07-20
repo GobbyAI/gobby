@@ -90,7 +90,7 @@ def _coordinated_review_fixture(
         summary=summary,
     )
 
-    ctx = RegistryContext(task_manager=task_manager, sync_manager=MagicMock())
+    ctx = RegistryContext(task_manager=task_manager)
 
     def resolve_session_id(_session_ref: str) -> str:
         return reviewer.id

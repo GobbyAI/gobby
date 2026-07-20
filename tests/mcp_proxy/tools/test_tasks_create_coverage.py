@@ -33,10 +33,9 @@ class TestCreateTaskTool:
     async def test_create_task_minimal(
         self,
         mock_task_manager: MagicMock,
-        mock_sync_manager: MagicMock,
     ) -> None:
         """Test create_task with minimal arguments."""
-        registry = create_task_registry(mock_task_manager, mock_sync_manager)
+        registry = create_task_registry(mock_task_manager)
 
         mock_task = MagicMock()
         mock_task.id = "550e8400-e29b-41d4-a716-446655440001"
@@ -65,14 +64,14 @@ class TestCreateTaskTool:
 
     @pytest.mark.asyncio
     async def test_create_task_accepts_refactor_category(
-        self, mock_task_manager: MagicMock, mock_sync_manager: MagicMock
+        self, mock_task_manager: MagicMock
     ) -> None:
         """Happy-path: create_task(category='refactor') succeeds.
 
         Expansion produces refactor tasks (expansion_service.py:566). Before this was a
         canonical category, the MCP enum rejected those payloads. This locks in the fix.
         """
-        registry = create_task_registry(mock_task_manager, mock_sync_manager)
+        registry = create_task_registry(mock_task_manager)
 
         mock_task = MagicMock()
         mock_task.id = "550e8400-e29b-41d4-a716-446655440099"
@@ -100,7 +99,7 @@ class TestCreateTaskTool:
 
     @pytest.mark.asyncio
     async def test_create_task_accepts_additional_skills_and_affected_files(
-        self, mock_task_manager: MagicMock, mock_sync_manager: MagicMock
+        self, mock_task_manager: MagicMock
     ) -> None:
         """create_task forwards skill metadata and stores explicit affected files."""
         with patch(
@@ -109,7 +108,7 @@ class TestCreateTaskTool:
             mock_af_manager = MagicMock()
             MockAffectedFiles.return_value = mock_af_manager
 
-            registry = create_task_registry(mock_task_manager, mock_sync_manager)
+            registry = create_task_registry(mock_task_manager)
 
             mock_task = MagicMock()
             mock_task.id = "550e8400-e29b-41d4-a716-446655440088"
@@ -145,14 +144,13 @@ class TestCreateTaskTool:
     async def test_create_task_with_blocks(
         self,
         mock_task_manager: MagicMock,
-        mock_sync_manager: MagicMock,
     ) -> None:
         """Test create_task with blocks argument creates dependencies."""
         with patch("gobby.mcp_proxy.tools.tasks._context.TaskDependencyManager") as MockDepManager:
             mock_dep_instance = MagicMock()
             MockDepManager.return_value = mock_dep_instance
 
-            registry = create_task_registry(mock_task_manager, mock_sync_manager)
+            registry = create_task_registry(mock_task_manager)
 
             mock_task = MagicMock()
             mock_task.id = "550e8400-e29b-41d4-a716-446655440002"
@@ -191,14 +189,13 @@ class TestCreateTaskTool:
     async def test_create_task_with_depends_on(
         self,
         mock_task_manager: MagicMock,
-        mock_sync_manager: MagicMock,
     ) -> None:
         """Test create_task with depends_on argument creates dependencies."""
         with patch("gobby.mcp_proxy.tools.tasks._context.TaskDependencyManager") as MockDepManager:
             mock_dep_instance = MagicMock()
             MockDepManager.return_value = mock_dep_instance
 
-            registry = create_task_registry(mock_task_manager, mock_sync_manager)
+            registry = create_task_registry(mock_task_manager)
 
             mock_task = MagicMock()
             mock_task.id = "550e8400-e29b-41d4-a716-446655440010"
@@ -237,14 +234,13 @@ class TestCreateTaskTool:
     async def test_create_task_depends_on_with_errors(
         self,
         mock_task_manager: MagicMock,
-        mock_sync_manager: MagicMock,
     ) -> None:
         """Test create_task with depends_on handles invalid refs gracefully."""
         with patch("gobby.mcp_proxy.tools.tasks._context.TaskDependencyManager") as MockDepManager:
             mock_dep_instance = MagicMock()
             MockDepManager.return_value = mock_dep_instance
 
-            registry = create_task_registry(mock_task_manager, mock_sync_manager)
+            registry = create_task_registry(mock_task_manager)
 
             mock_task = MagicMock()
             mock_task.id = "550e8400-e29b-41d4-a716-446655440011"
@@ -278,10 +274,9 @@ class TestCreateTaskTool:
     async def test_create_task_with_labels(
         self,
         mock_task_manager: MagicMock,
-        mock_sync_manager: MagicMock,
     ) -> None:
         """Test create_task with labels argument."""
-        registry = create_task_registry(mock_task_manager, mock_sync_manager)
+        registry = create_task_registry(mock_task_manager)
 
         mock_task = MagicMock()
         mock_task.id = "550e8400-e29b-41d4-a716-446655440005"
@@ -309,10 +304,10 @@ class TestCreateTaskTool:
 
     @pytest.mark.asyncio
     async def test_create_code_task_requires_validation_criteria(
-        self, mock_task_manager: MagicMock, mock_sync_manager: MagicMock
+        self, mock_task_manager: MagicMock
     ) -> None:
         """Test that code tasks are rejected without validation_criteria."""
-        registry = create_task_registry(mock_task_manager, mock_sync_manager)
+        registry = create_task_registry(mock_task_manager)
 
         result = await registry.call(
             "create_task",
@@ -327,10 +322,10 @@ class TestCreateTaskTool:
 
     @pytest.mark.asyncio
     async def test_create_code_task_with_validation_criteria_succeeds(
-        self, mock_task_manager: MagicMock, mock_sync_manager: MagicMock
+        self, mock_task_manager: MagicMock
     ) -> None:
         """Test that code tasks succeed when validation_criteria is provided."""
-        registry = create_task_registry(mock_task_manager, mock_sync_manager)
+        registry = create_task_registry(mock_task_manager)
 
         mock_task = MagicMock()
         mock_task.id = "550e8400-e29b-41d4-a716-446655440007"
@@ -357,10 +352,10 @@ class TestCreateTaskTool:
 
     @pytest.mark.asyncio
     async def test_create_non_code_task_without_validation_criteria(
-        self, mock_task_manager: MagicMock, mock_sync_manager: MagicMock
+        self, mock_task_manager: MagicMock
     ) -> None:
         """Test that non-code tasks succeed without validation_criteria."""
-        registry = create_task_registry(mock_task_manager, mock_sync_manager)
+        registry = create_task_registry(mock_task_manager)
 
         mock_task = MagicMock()
         mock_task.id = "550e8400-e29b-41d4-a716-446655440006"
@@ -387,11 +382,10 @@ class TestCreateTaskTool:
     async def test_create_task_with_all_optional_fields(
         self,
         mock_task_manager: MagicMock,
-        mock_sync_manager: MagicMock,
         canonical_task_session: Session,
     ) -> None:
         """Test create_task with all optional fields."""
-        registry = create_task_registry(mock_task_manager, mock_sync_manager)
+        registry = create_task_registry(mock_task_manager)
 
         mock_task = MagicMock()
         mock_task.id = "550e8400-e29b-41d4-a716-446655440008"
@@ -430,11 +424,10 @@ class TestCreateTaskTool:
     async def test_create_task_uses_personal_project(
         self,
         mock_task_manager: MagicMock,
-        mock_sync_manager: MagicMock,
         personal_task_session: Session,
     ) -> None:
         """Test create_task uses the canonical session's personal project."""
-        registry = create_task_registry(mock_task_manager, mock_sync_manager)
+        registry = create_task_registry(mock_task_manager)
 
         mock_task = MagicMock()
         mock_task.id = "550e8400-e29b-41d4-a716-446655440010"
@@ -457,13 +450,12 @@ class TestCreateTaskTool:
     async def test_create_task_with_show_result_on_create(
         self,
         mock_task_manager: MagicMock,
-        mock_sync_manager: MagicMock,
         mock_config: MagicMock,
     ) -> None:
         """Test create_task returns full result when show_result_on_create is True."""
         mock_config.get_gobby_tasks_config.return_value.show_result_on_create = True
 
-        registry = create_task_registry(mock_task_manager, mock_sync_manager, config=mock_config)
+        registry = create_task_registry(mock_task_manager, config=mock_config)
 
         mock_task = MagicMock()
         mock_task.id = "550e8400-e29b-41d4-a716-446655440011"
@@ -496,7 +488,6 @@ class TestCreateTaskTool:
     async def test_create_task_auto_generates_validation(
         self,
         mock_task_manager: MagicMock,
-        mock_sync_manager: MagicMock,
         mock_task_validator: AsyncMock,
         mock_config: MagicMock,
     ) -> None:
@@ -505,7 +496,6 @@ class TestCreateTaskTool:
 
         registry = create_task_registry(
             mock_task_manager,
-            mock_sync_manager,
             task_validator=mock_task_validator,
             config=mock_config,
         )
@@ -531,7 +521,6 @@ class TestCreateTaskTool:
     async def test_create_task_default_no_claim(
         self,
         mock_task_manager: MagicMock,
-        mock_sync_manager: MagicMock,
         canonical_task_session: Session,
     ) -> None:
         """Test create_task without claim parameter does NOT auto-claim."""
@@ -541,7 +530,7 @@ class TestCreateTaskTool:
             mock_st_instance = MagicMock()
             MockSessionTaskManager.return_value = mock_st_instance
 
-            registry = create_task_registry(mock_task_manager, mock_sync_manager)
+            registry = create_task_registry(mock_task_manager)
 
             mock_task = MagicMock()
             mock_task.id = "550e8400-e29b-41d4-a716-446655440020"
@@ -575,7 +564,6 @@ class TestCreateTaskTool:
     async def test_create_task_with_claim_true(
         self,
         mock_task_manager: MagicMock,
-        mock_sync_manager: MagicMock,
         canonical_task_session: Session,
     ) -> None:
         """Test create_task with claim=True auto-claims the task."""
@@ -585,7 +573,7 @@ class TestCreateTaskTool:
             mock_st_instance = MagicMock()
             MockSessionTaskManager.return_value = mock_st_instance
 
-            registry = create_task_registry(mock_task_manager, mock_sync_manager)
+            registry = create_task_registry(mock_task_manager)
 
             mock_task = MagicMock()
             mock_task.id = "550e8400-e29b-41d4-a716-446655440021"
@@ -633,7 +621,6 @@ class TestCreateTaskTool:
     async def test_create_task_with_claim_sets_task_claimed_via_session_variables(
         self,
         mock_task_manager: MagicMock,
-        mock_sync_manager: MagicMock,
         canonical_task_session: Session,
     ) -> None:
         """create_task(claim=True) must set task_claimed via session_var_manager.
@@ -653,7 +640,7 @@ class TestCreateTaskTool:
             mock_sv_manager.get_variables.return_value = {}
             MockSVManager.return_value = mock_sv_manager
 
-            registry = create_task_registry(mock_task_manager, mock_sync_manager)
+            registry = create_task_registry(mock_task_manager)
 
             mock_task = MagicMock()
             mock_task.id = "550e8400-e29b-41d4-a716-446655440021"
@@ -685,7 +672,7 @@ class TestCreateTaskTool:
 
     @pytest.mark.asyncio
     async def test_create_task_with_claim_sets_required_skill_metadata(
-        self, mock_task_manager: MagicMock, mock_sync_manager: MagicMock
+        self, mock_task_manager: MagicMock
     ) -> None:
         """create_task(claim=True) persists proactive claimed-task skill metadata."""
         with (
@@ -700,7 +687,7 @@ class TestCreateTaskTool:
             mock_sv_manager.get_variables.return_value = {}
             MockSVManager.return_value = mock_sv_manager
 
-            registry = create_task_registry(mock_task_manager, mock_sync_manager)
+            registry = create_task_registry(mock_task_manager)
 
             mock_task = MagicMock()
             mock_task.id = "550e8400-e29b-41d4-a716-446655440021"
@@ -753,7 +740,7 @@ class TestCreateTaskCrossProjectClaimBlocking:
 
     @pytest.mark.asyncio
     async def test_create_task_claim_skipped_when_cross_project(
-        self, mock_task_manager: MagicMock, mock_sync_manager: MagicMock
+        self, mock_task_manager: MagicMock
     ) -> None:
         """create_task(claim=True) creates the task but skips claiming when cross-project."""
         with (
@@ -781,7 +768,7 @@ class TestCreateTaskCrossProjectClaimBlocking:
             )
             MockProjManager.return_value = mock_proj_instance
 
-            registry = create_task_registry(mock_task_manager, mock_sync_manager)
+            registry = create_task_registry(mock_task_manager)
 
             mock_task = MagicMock()
             mock_task.id = "550e8400-e29b-41d4-a716-446655440099"
@@ -815,7 +802,7 @@ class TestCreateTaskCrossProjectClaimBlocking:
 
     @pytest.mark.asyncio
     async def test_create_task_claim_allowed_when_same_project(
-        self, mock_task_manager: MagicMock, mock_sync_manager: MagicMock
+        self, mock_task_manager: MagicMock
     ) -> None:
         """create_task(claim=True) claims normally when projects match."""
         with (
@@ -836,7 +823,7 @@ class TestCreateTaskCrossProjectClaimBlocking:
             mock_session_manager.update_session_status.return_value = True
             MockSessionManager.return_value = mock_session_manager
 
-            registry = create_task_registry(mock_task_manager, mock_sync_manager)
+            registry = create_task_registry(mock_task_manager)
 
             mock_task = MagicMock()
             mock_task.id = "550e8400-e29b-41d4-a716-446655440099"
@@ -880,7 +867,7 @@ class TestCreateTaskCrossProjectClaimBlocking:
 
     @pytest.mark.asyncio
     async def test_create_task_claim_skipped_when_session_cannot_reactivate(
-        self, mock_task_manager: MagicMock, mock_sync_manager: MagicMock
+        self, mock_task_manager: MagicMock
     ) -> None:
         """Creation succeeds without a claim when confirmed activity cannot be stored."""
         with (
@@ -899,7 +886,7 @@ class TestCreateTaskCrossProjectClaimBlocking:
             mock_session_manager.update_session_status.return_value = False
             MockSessionManager.return_value = mock_session_manager
 
-            registry = create_task_registry(mock_task_manager, mock_sync_manager)
+            registry = create_task_registry(mock_task_manager)
             mock_task = MagicMock()
             mock_task.id = "550e8400-e29b-41d4-a716-446655440100"
             mock_task.seq_num = 501

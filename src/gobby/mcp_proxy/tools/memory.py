@@ -29,10 +29,6 @@ from gobby.memory.digest import (
 from gobby.memory.digest import (
     build_turn_and_digest as _build_turn_and_digest,
 )
-from gobby.memory.digest import (
-    memory_sync_export,
-    memory_sync_import,
-)
 from gobby.memory.manager import MemoryManager
 from gobby.sync.memories import is_ephemeral_implementation_note
 
@@ -145,7 +141,7 @@ def _redirect_speculative_memory_to_task(
 def create_memory_registry(
     memory_manager: MemoryManager,
     llm_service: LLMService | None = None,
-    memory_sync_manager: Any | None = None,
+    memory_backup_manager: Any | None = None,
     session_manager: Any | None = None,
     config: DaemonConfig | None = None,
     task_manager: SupportsTaskDecomposition | None = None,
@@ -156,7 +152,7 @@ def create_memory_registry(
     Args:
         memory_manager: MemoryManager instance
         llm_service: LLM service for AI-powered extraction (optional)
-        memory_sync_manager: MemoryBackupManager for sync import/export (optional)
+        memory_backup_manager: MemoryBackupManager for backup/restore (optional)
         session_manager: SessionManager for session lookups (optional)
         config: DaemonConfig carrying digest feature routing config (optional)
 
@@ -841,35 +837,31 @@ def create_memory_registry(
             return {"success": False, "error": str(e)}
 
     @registry.tool(
-        name="sync_import",
-        description="Import memories from .gobby/memories.jsonl into the database.",
+        name="restore_memories",
+        description="Restore memories from .gobby/memories.jsonl when backup timestamps win.",
     )
-    async def sync_import() -> dict[str, Any]:
-        """Import memories from filesystem JSONL into the hub database."""
-        if not memory_sync_manager:
-            return {"success": False, "error": "Memory sync manager not available"}
+    async def restore_memories() -> dict[str, Any]:
+        """Non-destructively restore memories from the configured JSONL backup."""
+        if not memory_backup_manager:
+            return {"success": False, "error": "Memory backup manager not available"}
         try:
-            result = await memory_sync_import(memory_sync_manager)
-            if "error" in result:
-                return {"success": False, "error": result["error"]}
-            return {"success": True, "imported": result["imported"]["memories"]}
+            count = await memory_backup_manager.restore()
+            return {"success": True, "restored": count}
         except Exception as e:
             return {"success": False, "error": str(e)}
 
     @registry.tool(
-        name="sync_export",
-        description="Export memories from the database to .gobby/memories.jsonl.",
+        name="backup_memories",
+        description="Write current live memories to .gobby/memories.jsonl.",
     )
-    async def sync_export() -> dict[str, Any]:
-        """Export memories from the hub database to filesystem JSONL for Git persistence."""
-        if not memory_sync_manager:
-            return {"success": False, "error": "Memory sync manager not available"}
+    async def backup_memories() -> dict[str, Any]:
+        """Write a deterministic JSONL backup from the hub database."""
+        if not memory_backup_manager:
+            return {"success": False, "error": "Memory backup manager not available"}
         try:
             project_id = get_current_project_id()
-            result = await memory_sync_export(memory_sync_manager, project_id=project_id)
-            if "error" in result:
-                return {"success": False, "error": result["error"]}
-            return {"success": True, "exported": result["exported"]["memories"]}
+            count = await memory_backup_manager.backup(project_id=project_id)
+            return {"success": True, "backed_up": count}
         except Exception as e:
             return {"success": False, "error": str(e)}
 

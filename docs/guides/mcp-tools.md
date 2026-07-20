@@ -163,7 +163,7 @@ registries (`gobby-tasks`, `gobby-tasks-ops`, `gobby-workflows`,
 
 | Registry | Purpose | Tools |
 | :--- | :--- | :--- |
-| `gobby-tasks` | Task lifecycle, dependencies, claim/close, search, build observability | 38 |
+| `gobby-tasks` | Task lifecycle, dependencies, claim/close, search, backup/restore, build observability | 40 |
 | `gobby-tasks-ops` | Expansion runs, artifacts, stage transitions, PR/merge state, build, GitHub | 45 |
 | `gobby-plans` | Plan-Coverage Contract registry | 8 |
 | `gobby-profiles` | Build profile registry | 8 |
@@ -188,7 +188,7 @@ registries (`gobby-tasks`, `gobby-tasks-ops`, `gobby-workflows`,
 
 ## Task Management (`gobby-tasks`)
 
-38 tools for the task lifecycle.
+40 tools for the task lifecycle.
 
 ### CRUD and Claim
 
@@ -277,6 +277,13 @@ artifacts. Use `clear_isolation_pair` when artifact cleanup is intended.
 | Tool | Description |
 | :--- | :--- |
 | `search_tasks` | pg_search BM25 over titles, descriptions, and validation criteria. |
+
+### Backup and Restore
+
+| Tool | Description |
+| :--- | :--- |
+| `backup_tasks` | Back up current live task rows to deterministic JSONL. |
+| `restore_tasks` | Explicitly restore task JSONL with non-destructive timestamp conflict handling. |
 
 ### Example: Task Workflow
 
@@ -531,12 +538,12 @@ and the optional FalkorDB knowledge graph.
 | `bootstrap_session_title` | Set a heuristic session title from the first meaningful prompt. |
 | `build_turn_and_digest` | Build a turn record from the last response and append it to the session digest. |
 
-### Sync and Maintenance
+### Backup, Restore, and Maintenance
 
 | Tool | Description |
 | :--- | :--- |
-| `sync_import` | Import memories from a sync file. |
-| `sync_export` | Export memories to a sync file. |
+| `restore_memories` | Explicitly restore memories from a JSONL backup without deleting absent or newer rows. |
+| `backup_memories` | Back up current live memories to deterministic JSONL. |
 | `memory_dream` | Review stale memories, apply a validated plan, and snapshot mutations. |
 | `memory_dream_status` | Return status and summary for a dream run. |
 | `memory_dream_revert` | Revert a dream run from its snapshots. |

@@ -56,7 +56,6 @@ def _shell_event(tool_name: str, command: str) -> HookEvent:
         "gobby tasks update #1 --priority 1",
         "gobby tasks close #1",
         "gobby tasks claim #1",
-        "gobby tasks sync --export",
     ],
 )
 def test_blocks_mutating_task_cli_commands(
@@ -76,6 +75,7 @@ def test_blocks_mutating_task_cli_commands(
         "gobby tasks blocked",
         "gobby tasks stats",
         "gobby tasks show #1",
+        "gobby tasks backup --quiet",
         "gobby tasks expand validate-plan .gobby/plans/example.md",
         "gobby tasks validation_history #1",
         "gobby tasks doctor",

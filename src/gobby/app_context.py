@@ -24,7 +24,6 @@ from gobby.storage.sessions import SessionManager
 from gobby.storage.tasks import LocalTaskManager
 from gobby.storage.worktrees import LocalWorktreeManager
 from gobby.sync.memories import MemoryBackupManager
-from gobby.sync.tasks import TaskSyncManager
 
 if TYPE_CHECKING:
     from gobby.code_index.codewiki_trigger import CodewikiRefreshTrigger
@@ -46,9 +45,8 @@ class ServiceContainer:
     db_executor: DatabaseExecutor | None = None
     span_storage: Any | None = None  # SpanStorage
 
-    # Sync Managers
-    task_sync_manager: TaskSyncManager | None = None
-    memory_sync_manager: MemoryBackupManager | None = None
+    # Backup manager
+    memory_backup_manager: MemoryBackupManager | None = None
 
     # Advanced Features
     memory_manager: MemoryManager | None = None

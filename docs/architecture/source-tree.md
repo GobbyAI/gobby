@@ -154,7 +154,7 @@ src/gobby/
 │   └── *.py                            # plans.py, build_history.py, build_profiles.py,
 │                                       #   memories.py, secrets.py, config_store.py,
 │                                       #   token_events.py, spans.py, cron.py, ...
-├── sync/                               # Task/memory sync (JSONL, GitHub, Linear)
+├── sync/                               # Task/memory JSONL backup/restore and issue import
 ├── tasks/                              # Task system: expansion/ + expansion_service.py
 │                                       #   (ExpansionService), validation.py
 │                                       #   (TaskValidator), state_semantics.py, prompts/

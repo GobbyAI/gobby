@@ -1,9 +1,4 @@
-"""
-Tests for task_sync.py MCP tools module (commit linking tools).
-
-Sync tools (sync_tasks, get_sync_status, sync_import, sync_export) have been
-removed from MCP — they are CLI-only operations.
-"""
+"""Tests for the task commit-linking MCP tools."""
 
 import threading
 from pathlib import Path
@@ -16,7 +11,7 @@ import pytest
 @pytest.mark.asyncio
 async def test_task_sync_git_helper_runs_off_event_loop_thread() -> None:
     """The actual task-sync registry must dispatch its synchronous Git helper off-loop."""
-    from gobby.mcp_proxy.tools.task_sync import create_commit_registry
+    from gobby.mcp_proxy.tools.task_commits import create_commit_registry
 
     event_loop_thread = threading.get_ident()
     helper_threads: list[int] = []
@@ -26,7 +21,6 @@ async def test_task_sync_git_helper_runs_off_event_loop_thread() -> None:
         return SimpleNamespace(linked_tasks=[], total_linked=0, skipped=0, skipped_refs=[])
 
     registry = create_commit_registry(
-        sync_manager=MagicMock(),
         task_manager=MagicMock(),
         project_manager=MagicMock(),
         auto_link_commits_fn=auto_link_commits_fn,
@@ -34,11 +28,11 @@ async def test_task_sync_git_helper_runs_off_event_loop_thread() -> None:
 
     with (
         patch(
-            "gobby.mcp_proxy.tools.task_sync.resolve_project_repo_path",
+            "gobby.mcp_proxy.tools.task_commits.resolve_project_repo_path",
             return_value="/repo",
         ),
         patch(
-            "gobby.mcp_proxy.tools.task_sync.get_project_context",
+            "gobby.mcp_proxy.tools.task_commits.get_project_context",
             return_value={"id": "project-id"},
         ),
     ):
@@ -57,7 +51,7 @@ class TestLinkCommit:
 
     def test_link_commit_success(self, mock_sync_registry) -> None:
         """Test successful commit linking."""
-        from gobby.mcp_proxy.tools.task_sync import create_commit_registry
+        from gobby.mcp_proxy.tools.task_commits import create_commit_registry
 
         task_manager = MagicMock()
         mock_task = MagicMock()
@@ -67,7 +61,6 @@ class TestLinkCommit:
 
         registry = create_commit_registry(
             task_manager=task_manager,
-            sync_manager=MagicMock(),
         )
 
         link = registry.get_tool("link_commit")
@@ -79,14 +72,13 @@ class TestLinkCommit:
 
     def test_link_commit_error(self, mock_sync_registry) -> None:
         """Test link_commit returns error on failure."""
-        from gobby.mcp_proxy.tools.task_sync import create_commit_registry
+        from gobby.mcp_proxy.tools.task_commits import create_commit_registry
 
         task_manager = MagicMock()
         task_manager.link_commit.side_effect = ValueError("Task not found")
 
         registry = create_commit_registry(
             task_manager=task_manager,
-            sync_manager=MagicMock(),
         )
 
         link = registry.get_tool("link_commit")
@@ -97,14 +89,13 @@ class TestLinkCommit:
 
     def test_link_commit_task_not_found_after_resolution(self, mock_sync_registry) -> None:
         """Resolved missing tasks return structured errors before Git work."""
-        from gobby.mcp_proxy.tools.task_sync import create_commit_registry
+        from gobby.mcp_proxy.tools.task_commits import create_commit_registry
 
         task_manager = MagicMock()
         task_manager.get_task.side_effect = [MagicMock(), None]
 
         registry = create_commit_registry(
             task_manager=task_manager,
-            sync_manager=MagicMock(),
         )
 
         link = registry.get_tool("link_commit")
@@ -115,7 +106,7 @@ class TestLinkCommit:
 
     def test_link_commit_empty_commits_list(self, mock_sync_registry) -> None:
         """Test link_commit when task had no previous commits."""
-        from gobby.mcp_proxy.tools.task_sync import create_commit_registry
+        from gobby.mcp_proxy.tools.task_commits import create_commit_registry
 
         task_manager = MagicMock()
         mock_task = MagicMock()
@@ -125,7 +116,6 @@ class TestLinkCommit:
 
         registry = create_commit_registry(
             task_manager=task_manager,
-            sync_manager=MagicMock(),
         )
 
         link = registry.get_tool("link_commit")
@@ -138,7 +128,7 @@ class TestLinkCommit:
         self, mock_sync_registry, tmp_path: Path
     ) -> None:
         """Explicit commit repos must be registered for the task project."""
-        from gobby.mcp_proxy.tools.task_sync import create_commit_registry
+        from gobby.mcp_proxy.tools.task_commits import create_commit_registry
 
         repo_path = tmp_path / "external" / "repo"
         repo_path.mkdir(parents=True)
@@ -155,7 +145,6 @@ class TestLinkCommit:
 
         registry = create_commit_registry(
             task_manager=task_manager,
-            sync_manager=MagicMock(),
             project_manager=project_manager,
         )
 
@@ -180,7 +169,7 @@ class TestLinkCommit:
         self, mock_sync_registry, tmp_path: Path
     ) -> None:
         """Unknown explicit repo paths are rejected before commit linking."""
-        from gobby.mcp_proxy.tools.task_sync import create_commit_registry
+        from gobby.mcp_proxy.tools.task_commits import create_commit_registry
 
         repo_path = tmp_path / "repo"
         outside = tmp_path / "outside"
@@ -195,7 +184,6 @@ class TestLinkCommit:
 
         registry = create_commit_registry(
             task_manager=task_manager,
-            sync_manager=MagicMock(),
             project_manager=project_manager,
         )
 
@@ -212,7 +200,7 @@ class TestUnlinkCommit:
 
     def test_unlink_commit_success(self, mock_sync_registry) -> None:
         """Test successful commit unlinking."""
-        from gobby.mcp_proxy.tools.task_sync import create_commit_registry
+        from gobby.mcp_proxy.tools.task_commits import create_commit_registry
 
         task_manager = MagicMock()
         mock_task = MagicMock()
@@ -222,7 +210,6 @@ class TestUnlinkCommit:
 
         registry = create_commit_registry(
             task_manager=task_manager,
-            sync_manager=MagicMock(),
         )
 
         unlink = registry.get_tool("unlink_commit")
@@ -234,14 +221,13 @@ class TestUnlinkCommit:
 
     def test_unlink_commit_error(self, mock_sync_registry) -> None:
         """Test unlink_commit returns error on failure."""
-        from gobby.mcp_proxy.tools.task_sync import create_commit_registry
+        from gobby.mcp_proxy.tools.task_commits import create_commit_registry
 
         task_manager = MagicMock()
         task_manager.unlink_commit.side_effect = ValueError("Commit not linked")
 
         registry = create_commit_registry(
             task_manager=task_manager,
-            sync_manager=MagicMock(),
         )
 
         unlink = registry.get_tool("unlink_commit")
@@ -252,14 +238,13 @@ class TestUnlinkCommit:
 
     def test_unlink_commit_task_not_found_after_resolution(self, mock_sync_registry) -> None:
         """Resolved missing tasks return structured errors before Git work."""
-        from gobby.mcp_proxy.tools.task_sync import create_commit_registry
+        from gobby.mcp_proxy.tools.task_commits import create_commit_registry
 
         task_manager = MagicMock()
         task_manager.get_task.side_effect = [MagicMock(), None]
 
         registry = create_commit_registry(
             task_manager=task_manager,
-            sync_manager=MagicMock(),
         )
 
         unlink = registry.get_tool("unlink_commit")
@@ -272,7 +257,7 @@ class TestUnlinkCommit:
         self, mock_sync_registry, tmp_path: Path
     ) -> None:
         """Explicit unlink repos must be registered for the task project."""
-        from gobby.mcp_proxy.tools.task_sync import create_commit_registry
+        from gobby.mcp_proxy.tools.task_commits import create_commit_registry
 
         repo_path = tmp_path / "external" / "repo"
         repo_path.mkdir(parents=True)
@@ -289,7 +274,6 @@ class TestUnlinkCommit:
 
         registry = create_commit_registry(
             task_manager=task_manager,
-            sync_manager=MagicMock(),
             project_manager=project_manager,
         )
 
@@ -314,7 +298,7 @@ class TestUnlinkCommit:
         self, mock_sync_registry, tmp_path: Path
     ) -> None:
         """Unknown explicit repo paths are rejected before unlink Git work."""
-        from gobby.mcp_proxy.tools.task_sync import create_commit_registry
+        from gobby.mcp_proxy.tools.task_commits import create_commit_registry
 
         repo_path = tmp_path / "repo"
         outside = tmp_path / "outside"
@@ -332,7 +316,6 @@ class TestUnlinkCommit:
 
         registry = create_commit_registry(
             task_manager=task_manager,
-            sync_manager=MagicMock(),
             project_manager=project_manager,
         )
 
@@ -349,7 +332,7 @@ class TestAutoLinkCommits:
 
     def test_auto_link_commits_basic(self, mock_sync_registry, tmp_path: Path) -> None:
         """Test auto_link_commits basic call."""
-        from gobby.mcp_proxy.tools.task_sync import create_commit_registry
+        from gobby.mcp_proxy.tools.task_commits import create_commit_registry
 
         task_manager = MagicMock()
         project_manager = MagicMock()
@@ -364,7 +347,6 @@ class TestAutoLinkCommits:
 
         registry = create_commit_registry(
             task_manager=task_manager,
-            sync_manager=MagicMock(),
             project_manager=project_manager,
             auto_link_commits_fn=MagicMock(return_value=mock_result),
         )
@@ -378,7 +360,7 @@ class TestAutoLinkCommits:
 
     def test_auto_link_commits_with_task_filter(self, mock_sync_registry) -> None:
         """Test auto_link_commits with task_id filter."""
-        from gobby.mcp_proxy.tools.task_sync import create_commit_registry
+        from gobby.mcp_proxy.tools.task_commits import create_commit_registry
 
         task_manager = MagicMock()
         project_manager = MagicMock()
@@ -393,7 +375,6 @@ class TestAutoLinkCommits:
 
         registry = create_commit_registry(
             task_manager=task_manager,
-            sync_manager=MagicMock(),
             project_manager=project_manager,
             auto_link_commits_fn=mock_fn,
         )
@@ -410,7 +391,7 @@ class TestAutoLinkCommits:
         self, mock_sync_registry, tmp_path: Path
     ) -> None:
         """Task-filtered auto-link supports registered explicit repo paths."""
-        from gobby.mcp_proxy.tools.task_sync import create_commit_registry
+        from gobby.mcp_proxy.tools.task_commits import create_commit_registry
 
         repo_path = tmp_path / "external" / "repo"
         repo_path.mkdir(parents=True)
@@ -432,7 +413,6 @@ class TestAutoLinkCommits:
 
         registry = create_commit_registry(
             task_manager=task_manager,
-            sync_manager=MagicMock(),
             project_manager=project_manager,
             auto_link_commits_fn=mock_fn,
         )
@@ -447,7 +427,7 @@ class TestAutoLinkCommits:
         self, mock_sync_registry, tmp_path: Path
     ) -> None:
         """Task-filtered auto-link rejects unknown explicit repo paths before Git scan."""
-        from gobby.mcp_proxy.tools.task_sync import create_commit_registry
+        from gobby.mcp_proxy.tools.task_commits import create_commit_registry
 
         repo_path = tmp_path / "repo"
         outside = tmp_path / "outside"
@@ -465,7 +445,6 @@ class TestAutoLinkCommits:
 
         registry = create_commit_registry(
             task_manager=task_manager,
-            sync_manager=MagicMock(),
             project_manager=project_manager,
             auto_link_commits_fn=mock_fn,
         )
@@ -479,7 +458,7 @@ class TestAutoLinkCommits:
 
     def test_auto_link_commits_task_filter_not_found(self, mock_sync_registry) -> None:
         """Filtered auto-link returns structured missing-task errors."""
-        from gobby.mcp_proxy.tools.task_sync import create_commit_registry
+        from gobby.mcp_proxy.tools.task_commits import create_commit_registry
 
         task_manager = MagicMock()
         task_manager.get_task.side_effect = [MagicMock(), None]
@@ -487,7 +466,6 @@ class TestAutoLinkCommits:
 
         registry = create_commit_registry(
             task_manager=task_manager,
-            sync_manager=MagicMock(),
             auto_link_commits_fn=mock_fn,
         )
 
@@ -504,7 +482,7 @@ class TestAutoLinkCommits:
 
     def test_auto_link_commits_with_since(self, mock_sync_registry) -> None:
         """Test auto_link_commits with since parameter."""
-        from gobby.mcp_proxy.tools.task_sync import create_commit_registry
+        from gobby.mcp_proxy.tools.task_commits import create_commit_registry
 
         task_manager = MagicMock()
         project_manager = MagicMock()
@@ -519,7 +497,6 @@ class TestAutoLinkCommits:
 
         registry = create_commit_registry(
             task_manager=task_manager,
-            sync_manager=MagicMock(),
             project_manager=project_manager,
             auto_link_commits_fn=mock_fn,
         )
@@ -533,7 +510,7 @@ class TestAutoLinkCommits:
 
     def test_auto_link_commits_no_project(self, mock_sync_registry) -> None:
         """Test auto_link_commits when no project context."""
-        from gobby.mcp_proxy.tools.task_sync import create_commit_registry
+        from gobby.mcp_proxy.tools.task_commits import create_commit_registry
 
         task_manager = MagicMock()
         project_manager = MagicMock()
@@ -547,12 +524,11 @@ class TestAutoLinkCommits:
         mock_fn.return_value = mock_result
 
         with patch(
-            "gobby.mcp_proxy.tools.task_sync.get_project_context",
+            "gobby.mcp_proxy.tools.task_commits.get_project_context",
             return_value=None,
         ):
             registry = create_commit_registry(
                 task_manager=task_manager,
-                sync_manager=MagicMock(),
                 project_manager=project_manager,
                 auto_link_commits_fn=mock_fn,
             )
@@ -571,7 +547,7 @@ class TestGitIntegrationEdgeCases:
 
     def test_link_commit_full_sha(self, mock_sync_registry) -> None:
         """Test linking with full SHA."""
-        from gobby.mcp_proxy.tools.task_sync import create_commit_registry
+        from gobby.mcp_proxy.tools.task_commits import create_commit_registry
 
         task_manager = MagicMock()
         mock_task = MagicMock()
@@ -581,7 +557,6 @@ class TestGitIntegrationEdgeCases:
 
         registry = create_commit_registry(
             task_manager=task_manager,
-            sync_manager=MagicMock(),
         )
 
         link = registry.get_tool("link_commit")
@@ -594,7 +569,7 @@ class TestGitIntegrationEdgeCases:
 
     def test_link_commit_short_sha(self, mock_sync_registry) -> None:
         """Test linking with short SHA."""
-        from gobby.mcp_proxy.tools.task_sync import create_commit_registry
+        from gobby.mcp_proxy.tools.task_commits import create_commit_registry
 
         task_manager = MagicMock()
         mock_task = MagicMock()
@@ -604,7 +579,6 @@ class TestGitIntegrationEdgeCases:
 
         registry = create_commit_registry(
             task_manager=task_manager,
-            sync_manager=MagicMock(),
         )
 
         link = registry.get_tool("link_commit")
@@ -616,7 +590,7 @@ class TestGitIntegrationEdgeCases:
 
     def test_auto_link_with_skipped_commits(self, mock_sync_registry) -> None:
         """Test auto_link_commits reports skipped commits."""
-        from gobby.mcp_proxy.tools.task_sync import create_commit_registry
+        from gobby.mcp_proxy.tools.task_commits import create_commit_registry
 
         task_manager = MagicMock()
         project_manager = MagicMock()
@@ -635,7 +609,6 @@ class TestGitIntegrationEdgeCases:
 
         registry = create_commit_registry(
             task_manager=task_manager,
-            sync_manager=MagicMock(),
             project_manager=project_manager,
             auto_link_commits_fn=mock_fn,
         )
@@ -651,15 +624,15 @@ class TestGitIntegrationEdgeCases:
 @pytest.fixture
 def mock_sync_registry():
     """Fixture providing mock dependencies for registry creation."""
-    with patch("gobby.mcp_proxy.tools.task_sync.get_project_context") as mock_proj:
+    with patch("gobby.mcp_proxy.tools.task_commits.get_project_context") as mock_proj:
         mock_proj.return_value = {"id": "test-project-id"}
         yield mock_proj
 
 
 def test_task_sync_git_helper_calls_follow_repo_path_resolution() -> None:
     """Commit/diff helpers must reject bad repo paths before Git helper work."""
+    from gobby.mcp_proxy.tools.task_commits import create_commit_registry
     from gobby.mcp_proxy.tools.task_repo_paths import RepoPathValidationError
-    from gobby.mcp_proxy.tools.task_sync import create_commit_registry
 
     class RejectingTaskManager:
         def __init__(self) -> None:
@@ -700,14 +673,13 @@ def test_task_sync_git_helper_calls_follow_repo_path_resolution() -> None:
 
     registry = create_commit_registry(
         task_manager=task_manager,
-        sync_manager=object(),
         project_manager=object(),
         auto_link_commits_fn=auto_link_commits_fn,
         get_task_diff_page_fn=get_task_diff_page_fn,
     )
 
     with patch(
-        "gobby.mcp_proxy.tools.task_sync.resolve_task_repo_path",
+        "gobby.mcp_proxy.tools.task_commits.resolve_task_repo_path",
         side_effect=RepoPathValidationError("repo path blocked"),
     ):
         results = [

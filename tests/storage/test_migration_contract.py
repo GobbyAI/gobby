@@ -247,6 +247,7 @@ def test_postgres_migrations_limited_to_known_post_baseline() -> None:
         "321_session_variables_session_cascade.sql",
         "322_agent_run_capture_termination.sql",
         "323_recall_usefulness_digest_shadow.sql",
+        "324_drop_sync_tombstones.sql",
     ]
 
 
@@ -336,7 +337,35 @@ def test_postgres_baseline_version_is_flattened_to_305() -> None:
     # The 0.5.0 pre-release flatten folded 295-305 into the baseline. Hubs below
     # 305 take the corrupt_partial backup/recreate path; later migrations replay.
     assert module.BASELINE_VERSION == 305
-    assert module.latest_known_version() == 323
+    assert module.latest_known_version() == 324
+
+
+def test_tombstone_cleanup_migration_and_baseline_remove_sync_objects() -> None:
+    migration = (SRC_ROOT / "storage" / "migrations" / "324_drop_sync_tombstones.sql").read_text(
+        encoding="utf-8"
+    )
+    baseline = _baseline_text()
+
+    _assert_contains_all(
+        "tombstone cleanup migration",
+        migration,
+        (
+            "DROP TRIGGER IF EXISTS tasks_capture_sync_tombstone ON tasks",
+            "DROP TRIGGER IF EXISTS memories_capture_sync_tombstone ON memories",
+            "DROP FUNCTION IF EXISTS capture_sync_tombstone()",
+            "DROP TABLE IF EXISTS sync_tombstones",
+        ),
+    )
+    _assert_absent_all(
+        "postgres baseline",
+        baseline,
+        (
+            "tasks_capture_sync_tombstone",
+            "memories_capture_sync_tombstone",
+            "capture_sync_tombstone",
+            "sync_tombstones",
+        ),
+    )
 
 
 def test_postgres_baseline_uses_uuid_for_internal_identity_columns() -> None:

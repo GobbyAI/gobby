@@ -3,7 +3,6 @@ from __future__ import annotations
 import hashlib
 from pathlib import Path
 from typing import Any
-from unittest.mock import MagicMock
 
 from gobby.mcp_proxy.tools.tasks._ops_factory import create_task_ops_registry
 from gobby.storage.expansion_runs import LocalExpansionRunManager
@@ -17,7 +16,7 @@ def sha256_file(path: Path) -> str:
 def make_expansion_qa_case(temp_db: Any, project_manager: Any, repo_path: Path) -> dict[str, Any]:
     project = project_manager.create(name="qa-project", repo_path=str(repo_path))
     task_manager = LocalTaskManager(temp_db)
-    registry = create_task_ops_registry(task_manager, sync_manager=MagicMock())
+    registry = create_task_ops_registry(task_manager)
     parent = task_manager.create_task(project_id=project.id, title="Expansion parent")
     plan_rel = Path(".gobby/plans/task-qa.md")
     plan_path = repo_path / plan_rel

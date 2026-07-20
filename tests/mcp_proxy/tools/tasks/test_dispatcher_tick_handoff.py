@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from types import SimpleNamespace
-from typing import Any, cast
+from typing import Any
 
 import pytest
 
@@ -24,7 +24,6 @@ async def test_schedule_dispatcher_tick_runs_with_matching_daemon_context(
     task_manager = LocalTaskManager(temp_db)
     ctx = RegistryContext(
         task_manager=task_manager,
-        sync_manager=cast(Any, SimpleNamespace()),
     )
     services = SimpleNamespace(
         agent_runner=SimpleNamespace(),
@@ -64,7 +63,6 @@ async def test_schedule_dispatcher_tick_accepts_distinct_task_manager_for_same_d
     registry_task_manager = LocalTaskManager(temp_db)
     ctx = RegistryContext(
         task_manager=registry_task_manager,
-        sync_manager=cast(Any, SimpleNamespace()),
     )
     services = SimpleNamespace(
         agent_runner=SimpleNamespace(),
@@ -102,7 +100,6 @@ async def test_schedule_dispatcher_tick_ignores_stale_app_context(
     task_manager = LocalTaskManager(temp_db)
     ctx = RegistryContext(
         task_manager=task_manager,
-        sync_manager=cast(Any, SimpleNamespace()),
     )
     stale_services = SimpleNamespace(
         agent_runner=SimpleNamespace(),

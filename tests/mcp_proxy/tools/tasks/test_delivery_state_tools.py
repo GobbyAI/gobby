@@ -4,7 +4,6 @@ import logging
 import threading
 from pathlib import Path
 from typing import Any, cast
-from unittest.mock import MagicMock
 
 import pytest
 
@@ -20,7 +19,6 @@ pytestmark = pytest.mark.unit
 def _registry(temp_db: Any) -> InternalToolRegistry:
     return create_task_ops_registry(
         LocalTaskManager(temp_db),
-        sync_manager=MagicMock(),
     )
 
 
@@ -52,7 +50,6 @@ class FakeGitHub:
 def _registry_with_github(temp_db: Any, github: FakeGitHub) -> InternalToolRegistry:
     return create_task_ops_registry(
         LocalTaskManager(temp_db),
-        sync_manager=MagicMock(),
         mcp_manager=cast(Any, github),
     )
 

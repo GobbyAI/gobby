@@ -111,10 +111,9 @@ const SCHEMA: Record<string, unknown> = {
     },
     MemoryBackupConfig: {
       type: 'object',
-      properties: {
-        enabled: { type: 'boolean' },
-        export_debounce: { type: 'number' },
-        export_path: { type: 'string' },
+        properties: {
+          enabled: { type: 'boolean' },
+          backup_path: { type: 'string' },
       },
     },
     WikiRootConfig: {
@@ -149,7 +148,7 @@ const SCHEMA: Record<string, unknown> = {
     embeddings: { $ref: '#/$defs/EmbeddingsConfig' },
     databases: { $ref: '#/$defs/DatabasesConfig' },
     knowledge_graph_queue: { $ref: '#/$defs/KnowledgeGraphQueueConfig' },
-    memory_sync: { $ref: '#/$defs/MemoryBackupConfig' },
+    memory_backup: { $ref: '#/$defs/MemoryBackupConfig' },
     wiki: { $ref: '#/$defs/WikiConfig' },
   },
 }
@@ -227,10 +226,9 @@ function makeConfigValues(): Record<string, unknown> {
       },
     },
     knowledge_graph_queue: { interval_minutes: 5, batch_size: 25 },
-    memory_sync: {
+    memory_backup: {
       enabled: true,
-      export_debounce: 1.5,
-      export_path: '.gobby/memory',
+      backup_path: '.gobby/memories.jsonl',
     },
     wiki: {
       enabled: true,
@@ -347,16 +345,16 @@ describe('MemoryKnowledgeSection', () => {
     expect(screen.queryByLabelText('FalkorDB password')).toBeNull()
   })
 
-  it('reads knowledge-graph queue and memory sync rows', () => {
+  it('reads knowledge-graph queue and memory backup rows', () => {
     renderSection(makeContext())
 
     expect(screen.getByLabelText('Queue interval (minutes)')).toHaveValue(5)
     expect(screen.getByLabelText('Queue batch size')).toHaveValue(25)
     expect(
-      screen.getByRole('switch', { name: 'Enable memory sync' }),
+      screen.getByRole('switch', { name: 'Enable memory backup' }),
     ).toBeChecked()
-    expect(screen.getByLabelText('Memory export path')).toHaveValue(
-      '.gobby/memory',
+    expect(screen.getByLabelText('Memory backup path')).toHaveValue(
+      '.gobby/memories.jsonl',
     )
   })
 

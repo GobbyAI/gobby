@@ -17,7 +17,6 @@ pytestmark = pytest.mark.unit
 def _registry(temp_db: Any) -> Any:
     return create_task_ops_registry(
         LocalTaskManager(temp_db),
-        sync_manager=MagicMock(),
         config=MagicMock(),
     )
 

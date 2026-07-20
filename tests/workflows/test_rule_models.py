@@ -179,7 +179,7 @@ class TestRuleEffect:
         effect = RuleEffect(
             type="mcp_call",
             server="gobby-memory",
-            tool="sync_import",
+            tool="memory_stats",
         )
         assert effect.background is False
 
@@ -251,7 +251,7 @@ class TestRuleEffect:
         effect = RuleEffect(
             type="mcp_call",
             server="gobby-memory",
-            tool="sync_import",
+            tool="memory_stats",
         )
         assert effect.inject_result is False
         assert effect.block_on_failure is False
@@ -442,7 +442,7 @@ class TestRuleDefinitionBody:
                 RuleEffect(
                     type="mcp_call",
                     server="gobby-memory",
-                    tool="sync_import",
+                    tool="memory_stats",
                 )
             ],
             group="memory-lifecycle",

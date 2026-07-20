@@ -628,10 +628,10 @@ class TestTaskTypeIn:
 class TestTaskCommitProjectPathAllowlistViolation:
     def test_blocks_raw_project_path_cwd_in_task_sync(self) -> None:
         event_data = {
-            "canonical_file_path": "/repo/src/gobby/mcp_proxy/tools/task_sync.py",
+            "canonical_file_path": "/repo/src/gobby/mcp_proxy/tools/task_commits.py",
         }
         tool_input = {
-            "file_path": "src/gobby/mcp_proxy/tools/task_sync.py",
+            "file_path": "src/gobby/mcp_proxy/tools/task_commits.py",
             "new_string": (
                 "task = task_manager.unlink_commit(resolved_task_id, commit_sha, cwd=project_path)"
             ),
@@ -659,10 +659,10 @@ class TestTaskCommitProjectPathAllowlistViolation:
 
     def test_allows_resolver_first_cwd(self) -> None:
         event_data = {
-            "canonical_file_path": "/repo/src/gobby/mcp_proxy/tools/task_sync.py",
+            "canonical_file_path": "/repo/src/gobby/mcp_proxy/tools/task_commits.py",
         }
         tool_input = {
-            "file_path": "src/gobby/mcp_proxy/tools/task_sync.py",
+            "file_path": "src/gobby/mcp_proxy/tools/task_commits.py",
             "content": """
                 repo_path = resolve_task_repo_path(
                     task_manager=task_manager,
@@ -678,10 +678,10 @@ class TestTaskCommitProjectPathAllowlistViolation:
 
     def test_allows_existing_get_task_and_repo_path_pattern(self) -> None:
         event_data = {
-            "canonical_file_path": "/repo/src/gobby/mcp_proxy/tools/task_sync.py",
+            "canonical_file_path": "/repo/src/gobby/mcp_proxy/tools/task_commits.py",
         }
         tool_input = {
-            "file_path": "src/gobby/mcp_proxy/tools/task_sync.py",
+            "file_path": "src/gobby/mcp_proxy/tools/task_commits.py",
             "content": """
                 task_and_repo_path = _get_task_and_repo_path(
                     resolved_task_id, task_id, project_path

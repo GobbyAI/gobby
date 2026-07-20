@@ -60,7 +60,6 @@ if TYPE_CHECKING:
     from gobby.storage.tasks import LocalTaskManager
     from gobby.storage.worktrees import LocalWorktreeManager
     from gobby.sync.memories import MemoryBackupManager
-    from gobby.sync.tasks import TaskSyncManager
     from gobby.tasks.validation import TaskValidator
     from gobby.wiki.watcher import WikiWatcher
     from gobby.workflows.loader import WorkflowLoader
@@ -152,8 +151,7 @@ class GobbyRunner:
     metrics_event_store: MetricsEventStore
     metrics_manager: ToolMetricsManager
     mcp_proxy: MCPClientManager
-    task_sync_manager: TaskSyncManager
-    memory_sync_manager: MemoryBackupManager | None
+    memory_backup_manager: MemoryBackupManager | None
     message_processor: SessionMessageProcessor | None
     task_validator: TaskValidator | None
     worktree_storage: LocalWorktreeManager

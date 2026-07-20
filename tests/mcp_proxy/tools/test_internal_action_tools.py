@@ -1,8 +1,8 @@
 """Tests for internal action MCP tools.
 
 Verifies that workflow action functions are exposed as MCP tools:
-- gobby-memory: sync_import, sync_export
-- gobby-tasks: sync_import, sync_export
+- gobby-memory: backup_memories, restore_memories
+- gobby-tasks: backup_tasks, restore_tasks
 - gobby-sessions: set_handoff_context, get_handoff_context, capture_baseline_dirty_files
 """
 
@@ -30,10 +30,10 @@ def mock_memory_manager():
 
 
 @pytest.fixture
-def mock_memory_sync_manager():
+def mock_memory_backup_manager():
     manager = MagicMock()
-    manager.import_from_files = AsyncMock(return_value=5)
-    manager.export_to_files = AsyncMock(return_value=3)
+    manager.restore = AsyncMock(return_value=5)
+    manager.backup = AsyncMock(return_value=3)
     return manager
 
 
@@ -65,21 +65,13 @@ def mock_task_manager():
     return manager
 
 
-@pytest.fixture
-def mock_task_sync_manager():
-    manager = MagicMock()
-    manager.import_from_jsonl = MagicMock()
-    manager.export_to_jsonl = MagicMock()
-    return manager
-
-
 # ─── Registry fixtures ───
 
 
 @pytest.fixture
 def memory_registry(
     mock_memory_manager,
-    mock_memory_sync_manager,
+    mock_memory_backup_manager,
     mock_session_manager,
     mock_llm_service,
 ):
@@ -88,24 +80,19 @@ def memory_registry(
     return create_memory_registry(
         memory_manager=mock_memory_manager,
         llm_service=mock_llm_service,
-        memory_sync_manager=mock_memory_sync_manager,
+        memory_backup_manager=mock_memory_backup_manager,
         session_manager=mock_session_manager,
     )
 
 
 @pytest.fixture
-def task_sync_registry(
-    mock_task_manager,
-    mock_task_sync_manager,
-    mock_session_manager,
-):
-    from gobby.mcp_proxy.tools.task_sync import create_commit_registry
+def task_backup_registry(mock_task_manager):
+    from gobby.mcp_proxy.tools.tasks._backup import create_backup_registry
 
-    return create_commit_registry(
-        sync_manager=mock_task_sync_manager,
-        task_manager=mock_task_manager,
-        session_manager=mock_session_manager,
-    )
+    ctx = MagicMock()
+    ctx.task_manager = mock_task_manager
+    ctx.get_current_project_id.return_value = "11111111-1111-4111-8111-111111110123"
+    return create_backup_registry(ctx)
 
 
 @pytest.fixture
@@ -124,61 +111,67 @@ def session_registry(
 
 
 # ═══════════════════════════════════════════════════════════════════════
-# gobby-memory: sync_import
+# gobby-memory: restore_memories
 # ═══════════════════════════════════════════════════════════════════════
 
 
-class TestMemorySyncImport:
-    """Verify sync_import is registered on gobby-memory and callable."""
-
+class TestMemoryRestore:
     def test_tool_registered(self, memory_registry) -> None:
-        assert "sync_import" in memory_registry._tools
+        assert "restore_memories" in memory_registry._tools
 
     @pytest.mark.asyncio
-    async def test_calls_sync_manager(self, memory_registry, mock_memory_sync_manager) -> None:
-        result = await memory_registry.call("sync_import", {})
+    async def test_calls_backup_manager(self, memory_registry, mock_memory_backup_manager) -> None:
+        result = await memory_registry.call("restore_memories", {})
         assert result["success"] is True
-        assert result["imported"] == 5
-        mock_memory_sync_manager.import_from_files.assert_awaited_once()
+        assert result["restored"] == 5
+        mock_memory_backup_manager.restore.assert_awaited_once()
 
     @pytest.mark.asyncio
-    async def test_error_when_no_sync_manager(self, mock_memory_manager) -> None:
+    async def test_error_when_no_backup_manager(self, mock_memory_manager) -> None:
         from gobby.mcp_proxy.tools.memory import create_memory_registry
 
-        registry = create_memory_registry(mock_memory_manager, memory_sync_manager=None)
-        result = await registry.call("sync_import", {})
+        registry = create_memory_registry(mock_memory_manager, memory_backup_manager=None)
+        result = await registry.call("restore_memories", {})
         assert result["success"] is False
         assert "error" in result
 
 
 # ═══════════════════════════════════════════════════════════════════════
-# gobby-memory: sync_export
+# gobby-memory: backup_memories
 # ═══════════════════════════════════════════════════════════════════════
 
 
-class TestMemorySyncExport:
-    """Verify sync_export is registered on gobby-memory and callable."""
-
+class TestMemoryBackup:
     def test_tool_registered(self, memory_registry) -> None:
-        assert "sync_export" in memory_registry._tools
+        assert "backup_memories" in memory_registry._tools
 
     @pytest.mark.asyncio
-    async def test_calls_sync_manager(
-        self, memory_registry, mock_memory_sync_manager, monkeypatch
-    ) -> None:
-        monkeypatch.setenv("GOBBY_JSONL_EXPORT_CONTEXT", "pre-push")
-        result = await memory_registry.call("sync_export", {})
+    async def test_calls_backup_manager(self, memory_registry, mock_memory_backup_manager) -> None:
+        result = await memory_registry.call("backup_memories", {})
         assert result["success"] is True
-        assert result["exported"] == 3
-        mock_memory_sync_manager.export_to_files.assert_awaited_once()
+        assert result["backed_up"] == 3
+        mock_memory_backup_manager.backup.assert_awaited_once()
 
 
 # ═══════════════════════════════════════════════════════════════════════
-# gobby-tasks: sync_import
+# gobby-tasks: backup_tasks / restore_tasks
 # ═══════════════════════════════════════════════════════════════════════
 
 
-# NOTE: TestTaskSyncImport and TestTaskSyncExport removed — sync tools are now CLI-only.
+class TestTaskBackupRestore:
+    @pytest.mark.asyncio
+    @patch("gobby.mcp_proxy.tools.tasks._backup.TaskBackupManager")
+    async def test_backup_and_restore_are_registered_and_callable(
+        self, manager_cls: MagicMock, task_backup_registry
+    ) -> None:
+        manager_cls.return_value.backup.return_value = 4
+        manager_cls.return_value.restore.return_value = 2
+
+        backup_result = await task_backup_registry.call("backup_tasks", {})
+        restore_result = await task_backup_registry.call("restore_tasks", {})
+
+        assert backup_result == {"success": True, "backed_up": 4}
+        assert restore_result == {"success": True, "restored": 2}
 
 
 # ═══════════════════════════════════════════════════════════════════════

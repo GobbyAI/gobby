@@ -14,8 +14,8 @@ pytestmark = pytest.mark.unit
 
 
 @pytest.fixture
-def task_ops_registry(mock_task_manager: Any, mock_sync_manager: Any) -> Any:
-    return create_task_ops_registry(mock_task_manager, mock_sync_manager)
+def task_ops_registry(mock_task_manager: Any) -> Any:
+    return create_task_ops_registry(mock_task_manager)
 
 
 class TestSkipReasons:
@@ -47,9 +47,7 @@ class TestSessionIntegrationTools:
             yield
 
     @pytest.mark.asyncio
-    async def test_link_task_to_session_success(
-        self, mock_task_manager: Any, mock_sync_manager: Any
-    ) -> None:
+    async def test_link_task_to_session_success(self, mock_task_manager: Any) -> None:
         """Test link_task_to_session creates a link."""
         with (
             patch(
@@ -65,7 +63,7 @@ class TestSessionIntegrationTools:
             mock_session_manager.resolve_session_reference.return_value = "sess-123"
             MockSessionManager.return_value = mock_session_manager
 
-            registry = create_task_registry(mock_task_manager, mock_sync_manager)
+            registry = create_task_registry(mock_task_manager)
 
             result = await registry.call(
                 "link_task_to_session",
@@ -83,9 +81,7 @@ class TestSessionIntegrationTools:
             assert result == {}
 
     @pytest.mark.asyncio
-    async def test_link_task_to_explicit_session(
-        self, mock_task_manager: Any, mock_sync_manager: Any
-    ) -> None:
+    async def test_link_task_to_explicit_session(self, mock_task_manager: Any) -> None:
         """An explicit session reference is resolved and used instead of context."""
         with (
             patch(
@@ -98,7 +94,7 @@ class TestSessionIntegrationTools:
             mock_session_manager = MagicMock()
             mock_session_manager.resolve_session_reference.return_value = "explicit-session-uuid"
             MockSessionManager.return_value = mock_session_manager
-            registry = create_task_registry(mock_task_manager, mock_sync_manager)
+            registry = create_task_registry(mock_task_manager)
 
             result = await registry.call(
                 "link_task_to_session",
@@ -120,7 +116,7 @@ class TestSessionIntegrationTools:
 
     @pytest.mark.asyncio
     async def test_link_task_invalid_explicit_session_does_not_fall_back(
-        self, mock_task_manager: Any, mock_sync_manager: Any
+        self, mock_task_manager: Any
     ) -> None:
         """An invalid explicit session is rejected without linking to context."""
         with (
@@ -136,7 +132,7 @@ class TestSessionIntegrationTools:
                 "Session not found"
             )
             MockSessionManager.return_value = mock_session_manager
-            registry = create_task_registry(mock_task_manager, mock_sync_manager)
+            registry = create_task_registry(mock_task_manager)
 
             result = await registry.call(
                 "link_task_to_session",
@@ -155,16 +151,14 @@ class TestSessionIntegrationTools:
             mock_st_instance.link_task.assert_not_called()
 
     @pytest.mark.asyncio
-    async def test_link_task_to_session_missing_session_id(
-        self, mock_task_manager: Any, mock_sync_manager: Any
-    ) -> None:
+    async def test_link_task_to_session_missing_session_id(self, mock_task_manager: Any) -> None:
         """Test link_task_to_session requires session context."""
         from gobby.utils.session_context import reset_session_context, set_session_context
 
         # Override autouse fixture: clear session context
         token = set_session_context(None)
         try:
-            registry = create_task_registry(mock_task_manager, mock_sync_manager)
+            registry = create_task_registry(mock_task_manager)
 
             result = await registry.call(
                 "link_task_to_session", {"task_id": "550e8400-e29b-41d4-a716-446655440000"}
@@ -175,9 +169,7 @@ class TestSessionIntegrationTools:
             reset_session_context(token)
 
     @pytest.mark.asyncio
-    async def test_link_task_to_session_error(
-        self, mock_task_manager: Any, mock_sync_manager: Any
-    ) -> None:
+    async def test_link_task_to_session_error(self, mock_task_manager: Any) -> None:
         """Test link_task_to_session handles errors."""
         with patch(
             "gobby.mcp_proxy.tools.tasks._context.SessionTaskManager"
@@ -186,7 +178,7 @@ class TestSessionIntegrationTools:
             mock_st_instance.link_task.side_effect = ValueError("Invalid task")
             MockSessionTaskManager.return_value = mock_st_instance
 
-            registry = create_task_registry(mock_task_manager, mock_sync_manager)
+            registry = create_task_registry(mock_task_manager)
 
             result = await registry.call(
                 "link_task_to_session",
@@ -196,7 +188,7 @@ class TestSessionIntegrationTools:
             assert "error" in result
 
     @pytest.mark.asyncio
-    async def test_get_session_tasks(self, mock_task_manager: Any, mock_sync_manager: Any) -> None:
+    async def test_get_session_tasks(self, mock_task_manager: Any) -> None:
         """Test get_session_tasks returns tasks for a session."""
         with (
             patch(
@@ -215,7 +207,7 @@ class TestSessionIntegrationTools:
             mock_session_manager.resolve_session_reference.return_value = "sess-123"
             MockSessionManager.return_value = mock_session_manager
 
-            registry = create_task_registry(mock_task_manager, mock_sync_manager)
+            registry = create_task_registry(mock_task_manager)
 
             result = await registry.call("get_session_tasks", {"session_id": "sess-123"})
 
@@ -223,7 +215,7 @@ class TestSessionIntegrationTools:
             assert len(result["tasks"]) == 1
 
     @pytest.mark.asyncio
-    async def test_get_task_sessions(self, mock_task_manager: Any, mock_sync_manager: Any) -> None:
+    async def test_get_task_sessions(self, mock_task_manager: Any) -> None:
         """Test get_task_sessions returns sessions for a task."""
         with patch(
             "gobby.mcp_proxy.tools.tasks._context.SessionTaskManager"
@@ -234,7 +226,7 @@ class TestSessionIntegrationTools:
             ]
             MockSessionTaskManager.return_value = mock_st_instance
 
-            registry = create_task_registry(mock_task_manager, mock_sync_manager)
+            registry = create_task_registry(mock_task_manager)
 
             result = await registry.call(
                 "get_task_sessions", {"task_id": "550e8400-e29b-41d4-a716-446655440000"}

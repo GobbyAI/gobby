@@ -1,4 +1,4 @@
-"""GitHub issue import operations for task synchronization."""
+"""Import GitHub issues into task storage."""
 
 from __future__ import annotations
 
@@ -11,16 +11,20 @@ import uuid
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any
 
+from gobby.storage.tasks import LocalTaskManager
+
 if TYPE_CHECKING:
     from gobby.storage.hub.protocol import HubDatabase
 
 logger = logging.getLogger(__name__)
 
 
-class GitHubTaskSyncMixin:
-    """GitHub issue import behavior shared by the task sync facade."""
+class GitHubIssueImporter:
+    """Import GitHub issues into task storage."""
 
-    db: HubDatabase
+    def __init__(self, db: HubDatabase) -> None:
+        self.db = db
+        self.task_manager = LocalTaskManager(db)
 
     async def import_from_github_issues(
         self, repo_url: str, project_id: str | None = None, limit: int = 50

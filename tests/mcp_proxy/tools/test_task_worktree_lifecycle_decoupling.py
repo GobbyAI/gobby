@@ -8,7 +8,6 @@ import pytest
 
 from gobby.mcp_proxy.tools.tasks import create_task_registry
 from gobby.storage.tasks import LocalTaskManager
-from gobby.sync.tasks import TaskSyncManager
 from gobby.utils.session_context import session_context_for_test
 
 pytestmark = pytest.mark.unit
@@ -23,11 +22,6 @@ def mock_task_manager() -> MagicMock:
     return manager
 
 
-@pytest.fixture
-def mock_sync_manager() -> MagicMock:
-    return MagicMock(spec=TaskSyncManager)
-
-
 @pytest.fixture(autouse=True)
 def _set_session_context() -> Iterator[None]:
     with session_context_for_test("test-session"):
@@ -38,7 +32,6 @@ def _set_session_context() -> Iterator[None]:
 @pytest.mark.parametrize("reason", ["completed", "duplicate"])
 async def test_close_task_does_not_mutate_worktree_status(
     mock_task_manager: MagicMock,
-    mock_sync_manager: MagicMock,
     reason: str,
 ) -> None:
     with (
@@ -57,7 +50,7 @@ async def test_close_task_does_not_mutate_worktree_status(
         MockProjManager.return_value = mock_proj_instance
         mock_git.return_value = "abc123"
 
-        registry = create_task_registry(mock_task_manager, mock_sync_manager)
+        registry = create_task_registry(mock_task_manager)
 
         mock_task = MagicMock()
         mock_task.id = "550e8400-e29b-41d4-a716-446655440000"

@@ -387,8 +387,7 @@ class TestInitSubsystems:
         runner.session_manager = None
         runner.task_manager = object()
         runner.span_storage = None
-        runner.task_sync_manager = None
-        runner.memory_sync_manager = None
+        runner.memory_backup_manager = None
         runner.memory_manager = None
         runner.llm_service = None
         runner.vector_store = None

@@ -938,17 +938,17 @@ class TestHookTemplates:
         assert "gobby hooks run pre-merge\n" in content
         assert "gobby hooks run pre-merge 2>/dev/null" not in content
 
-    def test_prepush_template_contains_gobby_sync(self) -> None:
-        """Test that pre-push template keeps JSONL export commands."""
+    def test_prepush_template_contains_gobby_backups(self) -> None:
+        """Test that pre-push backs up both JSONL artifacts."""
         content = HOOK_TEMPLATES["pre-push"]
-        assert "GOBBY_JSONL_EXPORT_CONTEXT=pre-push" in content
-        assert "gobby tasks sync --export" in content
+        assert "GOBBY_JSONL_EXPORT_CONTEXT" not in content
+        assert "gobby tasks backup --quiet" in content
         assert "gobby memory backup" in content
         assert '--no-verify --only -- "$@"' in content
         assert "run git push again to publish it" in content
 
-    def test_prepush_sync_commit_preserves_unrelated_staged_files(self, tmp_path: Path) -> None:
-        """The generated sync commit contains only JSONL changes and reports a second push."""
+    def test_prepush_backup_commit_preserves_unrelated_staged_files(self, tmp_path: Path) -> None:
+        """The generated backup commit contains only JSONL changes and reports a second push."""
         repo = tmp_path / "repo"
         repo.mkdir()
         subprocess.run(["git", "init", "-b", "main"], cwd=repo, check=True)
@@ -972,7 +972,7 @@ class TestHookTemplates:
         fake_gobby = bin_dir / "gobby"
         fake_gobby.write_text(
             "#!/bin/sh\n"
-            'if [ "$1 $2" = "tasks sync" ]; then echo "new task" > .gobby/tasks.jsonl; fi\n'
+            'if [ "$1 $2" = "tasks backup" ]; then echo "new task" > .gobby/tasks.jsonl; fi\n'
             'if [ "$1 $2" = "memory backup" ]; then echo "new memory" > .gobby/memories.jsonl; fi\n'
         )
         fake_gobby.chmod(0o755)
@@ -1085,7 +1085,8 @@ class TestHookTemplates:
         assert "while read -r OLD_REV NEW_REV" in rewrite
         assert 'git diff --name-only "$OLD_REV" "$NEW_REV"' in rewrite
 
-    def test_templates_do_not_import_jsonl(self) -> None:
-        """No installed hook template automatically imports JSONL."""
+    def test_templates_do_not_restore_jsonl(self) -> None:
+        """No installed hook template automatically restores JSONL."""
         for content in HOOK_TEMPLATES.values():
-            assert "gobby tasks sync --import" not in content
+            assert "gobby tasks restore" not in content
+            assert "gobby memory restore" not in content

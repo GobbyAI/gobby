@@ -1118,8 +1118,16 @@ def _snapshot_dir(path: Path) -> dict[str, float]:
 
     snapshot: dict[str, float] = {}
     for root, dirs, files in os.walk(path):
-        dirs[:] = [name for name in dirs if name not in _SNAPSHOT_EXCLUDED_DIRS]
         root_path = Path(root)
+        dirs[:] = [
+            name
+            for name in dirs
+            if name not in _SNAPSHOT_EXCLUDED_DIRS
+            and not any(
+                f"{(root_path / name).relative_to(path).as_posix()}/".startswith(prefix)
+                for prefix in _ALWAYS_EXEMPT_PREFIXES
+            )
+        ]
         for filename in files:
             file_path = root_path / filename
             try:

@@ -14,7 +14,6 @@ from unittest.mock import MagicMock, patch
 import pytest
 
 from gobby.storage.tasks import LocalTaskManager, Task, TaskNotFoundError
-from gobby.sync.tasks import TaskSyncManager
 
 pytestmark = pytest.mark.unit
 
@@ -25,12 +24,6 @@ def mock_task_manager():
     manager = MagicMock(spec=LocalTaskManager)
     manager.db = MagicMock()
     return manager
-
-
-@pytest.fixture
-def mock_sync_manager():
-    """Create a mock sync manager."""
-    return MagicMock(spec=TaskSyncManager)
 
 
 @pytest.fixture
@@ -135,9 +128,7 @@ class TestResolveTaskIdForMCP:
 class TestMCPGetTaskWithHashFormat:
     """Tests for get_task MCP tool with #N format."""
 
-    def test_get_task_with_hash_format(
-        self, mock_task_manager, mock_sync_manager, sample_task_uuid
-    ) -> None:
+    def test_get_task_with_hash_format(self, mock_task_manager, sample_task_uuid) -> None:
         """Test get_task resolves #N format correctly."""
         from gobby.mcp_proxy.tools.tasks import create_task_registry
 
@@ -146,7 +137,7 @@ class TestMCPGetTaskWithHashFormat:
         mock_task_manager.db = MagicMock()
 
         # Create registry and get the get_task tool
-        registry = create_task_registry(mock_task_manager, mock_sync_manager)
+        registry = create_task_registry(mock_task_manager)
         get_task_func = registry._tools["get_task"].func
 
         # Call with #1 format
@@ -162,16 +153,14 @@ class TestMCPGetTaskWithHashFormat:
             "#1", "11111111-1111-4111-8111-111111110001"
         )
 
-    def test_get_task_with_uuid_format(
-        self, mock_task_manager, mock_sync_manager, sample_task_uuid
-    ) -> None:
+    def test_get_task_with_uuid_format(self, mock_task_manager, sample_task_uuid) -> None:
         """Test get_task passes through UUID format."""
         from gobby.mcp_proxy.tools.tasks import create_task_registry
 
         mock_task_manager.get_task.return_value = sample_task_uuid
         mock_task_manager.db = MagicMock()
 
-        registry = create_task_registry(mock_task_manager, mock_sync_manager)
+        registry = create_task_registry(mock_task_manager)
         get_task_func = registry._tools["get_task"].func
 
         with patch(
@@ -182,7 +171,7 @@ class TestMCPGetTaskWithHashFormat:
 
         assert result.get("id") == sample_task_uuid.id
 
-    def test_get_task_with_gt_format_error(self, mock_task_manager, mock_sync_manager) -> None:
+    def test_get_task_with_gt_format_error(self, mock_task_manager) -> None:
         """Test get_task returns error for gt-* format (treated as invalid UUID)."""
         from gobby.mcp_proxy.tools.tasks import create_task_registry
 
@@ -190,7 +179,7 @@ class TestMCPGetTaskWithHashFormat:
         # gt-* format is treated as UUID, get_task returns None for invalid UUID
         mock_task_manager.get_task.return_value = None
 
-        registry = create_task_registry(mock_task_manager, mock_sync_manager)
+        registry = create_task_registry(mock_task_manager)
         get_task_func = registry._tools["get_task"].func
 
         with patch(
@@ -206,9 +195,7 @@ class TestMCPGetTaskWithHashFormat:
 class TestMCPUpdateTaskWithHashFormat:
     """Tests for update_task MCP tool with #N format."""
 
-    def test_update_task_with_hash_format(
-        self, mock_task_manager, mock_sync_manager, sample_task_uuid
-    ) -> None:
+    def test_update_task_with_hash_format(self, mock_task_manager, sample_task_uuid) -> None:
         """Test update_task resolves #N format correctly."""
         from gobby.mcp_proxy.tools.tasks import create_task_registry
 
@@ -217,7 +204,7 @@ class TestMCPUpdateTaskWithHashFormat:
         mock_task_manager.update_task.return_value = sample_task_uuid
         mock_task_manager.db = MagicMock()
 
-        registry = create_task_registry(mock_task_manager, mock_sync_manager)
+        registry = create_task_registry(mock_task_manager)
         update_task_func = registry._tools["update_task"].func
 
         with patch(
@@ -243,9 +230,7 @@ class TestMCPCloseTaskWithHashFormat:
     """Tests for close_task MCP tool with #N format."""
 
     @pytest.mark.asyncio
-    async def test_close_task_with_hash_format(
-        self, mock_task_manager, mock_sync_manager, sample_task_uuid
-    ):
+    async def test_close_task_with_hash_format(self, mock_task_manager, sample_task_uuid):
         """Test close_task resolves #N format correctly."""
         from gobby.mcp_proxy.tools.tasks import create_task_registry
 
@@ -255,7 +240,7 @@ class TestMCPCloseTaskWithHashFormat:
         mock_task_manager.list_tasks.return_value = []  # No children
         mock_task_manager.db = MagicMock()
 
-        registry = create_task_registry(mock_task_manager, mock_sync_manager)
+        registry = create_task_registry(mock_task_manager)
         close_task_func = registry._tools["close_task"].func
 
         with patch(
@@ -282,17 +267,15 @@ class TestIntegrationMCPTaskIdResolution:
         """Test MCP get_task with #N format using real database."""
         from gobby.mcp_proxy.tools.tasks import create_task_registry
         from gobby.storage.tasks import LocalTaskManager
-        from gobby.sync.tasks import TaskSyncManager
 
         manager = LocalTaskManager(temp_db)
-        sync_manager = TaskSyncManager(manager)
         project_id = sample_project["id"]
 
         # Create tasks
         task1 = manager.create_task(project_id=project_id, title="Task 1")
         task2 = manager.create_task(project_id=project_id, title="Task 2")
 
-        registry = create_task_registry(manager, sync_manager)
+        registry = create_task_registry(manager)
         get_task_func = registry._tools["get_task"].func
 
         # Test #1 resolution
@@ -332,17 +315,15 @@ class TestIntegrationMCPTaskIdResolution:
         """Test MCP get_task with path format using real database."""
         from gobby.mcp_proxy.tools.tasks import create_task_registry
         from gobby.storage.tasks import LocalTaskManager
-        from gobby.sync.tasks import TaskSyncManager
 
         manager = LocalTaskManager(temp_db)
-        sync_manager = TaskSyncManager(manager)
         project_id = sample_project["id"]
 
         # Create hierarchy
         parent = manager.create_task(project_id=project_id, title="Parent")
         child = manager.create_task(project_id=project_id, title="Child", parent_task_id=parent.id)
 
-        registry = create_task_registry(manager, sync_manager)
+        registry = create_task_registry(manager)
         get_task_func = registry._tools["get_task"].func
 
         # Test path resolution (1.2)
@@ -366,15 +347,13 @@ class TestIntegrationMCPTaskIdResolution:
         """Test MCP get_task returns error for gt-* format (unknown format)."""
         from gobby.mcp_proxy.tools.tasks import create_task_registry
         from gobby.storage.tasks import LocalTaskManager
-        from gobby.sync.tasks import TaskSyncManager
 
         manager = LocalTaskManager(temp_db)
-        sync_manager = TaskSyncManager(manager)
         project_id = sample_project["id"]
 
         manager.create_task(project_id=project_id, title="Task 1")
 
-        registry = create_task_registry(manager, sync_manager)
+        registry = create_task_registry(manager)
         get_task_func = registry._tools["get_task"].func
 
         with (

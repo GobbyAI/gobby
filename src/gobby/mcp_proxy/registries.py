@@ -28,7 +28,6 @@ if TYPE_CHECKING:
     from gobby.storage.sessions import SessionManager
     from gobby.storage.tasks import LocalTaskManager
     from gobby.storage.worktrees import LocalWorktreeManager
-    from gobby.sync.tasks import TaskSyncManager
     from gobby.tasks.validation import TaskValidator
     from gobby.workflows.loader import WorkflowLoader
     from gobby.workflows.pipeline_executor import PipelineExecutor
@@ -44,7 +43,6 @@ def setup_internal_registries(
     memory_manager: MemoryManager | None = None,
     task_manager: LocalTaskManager | None = None,
     db: HubDatabase | None = None,
-    sync_manager: TaskSyncManager | None = None,
     task_validator: TaskValidator | None = None,
     session_manager: SessionManager | None = None,
     metrics_manager: ToolMetricsManager | None = None,
@@ -64,7 +62,7 @@ def setup_internal_registries(
     hook_manager_resolver: Callable[[], HookManager | None] | None = None,
     config_store: ConfigStore | None = None,
     config_setter: Callable[[DaemonConfig], None] | None = None,
-    memory_sync_manager: Any | None = None,
+    memory_backup_manager: Any | None = None,
     completion_registry: CompletionEventRegistry | None = None,
     wake_dispatcher: WakeDispatcher | None = None,
     agent_lifecycle_monitor: AgentLifecycleMonitor | None = None,
@@ -85,7 +83,6 @@ def setup_internal_registries(
         memory_manager: Memory manager for memory operations
         task_manager: Task storage manager
         db: Active hub database connection for registries that need storage
-        sync_manager: Task sync manager for git sync
         task_validator: Task validator for validation
         session_manager: Session manager for session CRUD
         metrics_manager: Tool metrics manager for metrics operations
@@ -124,14 +121,11 @@ def setup_internal_registries(
     if gobby_tasks_enabled:
         if task_manager is None:
             logger.warning("Tasks registry not initialized: task_manager is None")
-        elif sync_manager is None:
-            logger.warning("Tasks registry not initialized: sync_manager is None")
         else:
             from gobby.mcp_proxy.tools.tasks import create_task_registry
 
             tasks_registry = create_task_registry(
                 task_manager=task_manager,
-                sync_manager=sync_manager,
                 task_validator=task_validator,
                 config=_config,
                 project_id=project_id,
@@ -144,7 +138,6 @@ def setup_internal_registries(
 
             ops_registry = create_task_ops_registry(
                 task_manager=task_manager,
-                sync_manager=sync_manager,
                 task_validator=task_validator,
                 config=_config,
                 llm_service=llm_service,
@@ -191,7 +184,7 @@ def setup_internal_registries(
         memory_registry = create_memory_registry(
             memory_manager=memory_manager,
             llm_service=llm_service,
-            memory_sync_manager=memory_sync_manager,
+            memory_backup_manager=memory_backup_manager,
             session_manager=session_manager,
             config=_config,
             task_manager=task_manager,

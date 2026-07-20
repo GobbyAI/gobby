@@ -31,7 +31,6 @@ from gobby.storage.session_tasks import SessionTaskManager
 from gobby.storage.sessions import SessionManager
 from gobby.storage.tasks import LocalTaskManager
 from gobby.storage.worktrees import LocalWorktreeManager
-from gobby.sync.memories import MemoryBackupManager
 from gobby.utils.daemon_client import DaemonClient
 from gobby.workflows.hooks import WorkflowHookHandler
 from gobby.workflows.loader import WorkflowLoader
@@ -124,8 +123,6 @@ class HookManagerFactory:
         broadcaster: Any | None,
         tool_proxy_getter: Any | None,
         message_processor: Any | None,
-        memory_sync_manager: MemoryBackupManager | None,
-        task_sync_manager: Any | None,
         agent_runner: Any | None,
         completion_registry: Any | None,
         get_machine_id: Callable[[], str],
@@ -147,8 +144,6 @@ class HookManagerFactory:
             broadcaster: Optional HookEventBroadcaster instance
             tool_proxy_getter: Callable returning ToolProxyService
             message_processor: SessionMessageProcessor instance
-            memory_sync_manager: Optional MemoryBackupManager instance
-            task_sync_manager: Optional TaskSyncManager instance
             agent_runner: Optional AgentRunner for agent-scoped workflow completion
             completion_registry: Optional CompletionEventRegistry for wait-step wakeups
             get_machine_id: Callable returning machine ID
@@ -213,8 +208,6 @@ class HookManagerFactory:
             mem_manager,
             storage,
             autonomous,
-            memory_sync_manager,
-            task_sync_manager,
             agent_runner,
             completion_registry,
             tool_proxy_getter,
@@ -510,8 +503,6 @@ class HookManagerFactory:
         memory_manager: MemoryManager,
         storage: _Storage,
         autonomous: _Autonomous,
-        memory_sync_manager: MemoryBackupManager | None,
-        task_sync_manager: Any | None,
         agent_runner: Any | None,
         completion_registry: Any | None,
         tool_proxy_getter: Any | None,

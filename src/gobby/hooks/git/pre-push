@@ -1,6 +1,6 @@
 #!/bin/sh
 # Gobby pre-push hook
-# Exports tasks and memories to JSONL and creates a sync commit before push.
+# Backs up tasks and memories to JSONL and creates a backup commit before push.
 
 # Skip for spawned agents to avoid JSONL contamination in worktrees
 if [ -n "$GOBBY_AGENT_RUN_ID" ]; then
@@ -19,10 +19,10 @@ if [ "$DELETE_ONLY" = true ]; then
     exit 0
 fi
 
-# Export tasks and memories, create new commit if JSONL files changed
+# Back up tasks and memories, create new commit if JSONL files changed
 if command -v gobby >/dev/null 2>&1; then
-    GOBBY_JSONL_EXPORT_CONTEXT=pre-push gobby tasks sync --export --quiet 2>/dev/null || true
-    GOBBY_JSONL_EXPORT_CONTEXT=pre-push gobby memory backup --quiet 2>/dev/null || true
+    gobby tasks backup --quiet 2>/dev/null || true
+    gobby memory backup --quiet 2>/dev/null || true
 
     commit_jsonl_files() {
         set --
@@ -35,13 +35,13 @@ if command -v gobby >/dev/null 2>&1; then
         done
 
         [ "$#" -gt 0 ] || return 1
-        git commit -m "gobby: sync tasks/memories" --no-verify --only -- "$@" \
+        git commit -m "gobby: backup tasks/memories" --no-verify --only -- "$@" \
             >/dev/null 2>&1
     }
 
     if commit_jsonl_files; then
-        SYNC_COMMIT=$(git rev-parse --short HEAD 2>/dev/null || true)
-        echo "gobby: sync commit $SYNC_COMMIT was created after push refs were resolved." >&2
+        BACKUP_COMMIT=$(git rev-parse --short HEAD 2>/dev/null || true)
+        echo "gobby: backup commit $BACKUP_COMMIT was created after push refs were resolved." >&2
         echo "gobby: run git push again to publish it." >&2
     fi
 fi

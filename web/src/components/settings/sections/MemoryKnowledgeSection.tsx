@@ -16,9 +16,9 @@ import { asString, asTypedList } from './configAccessors'
  * Memory & Knowledge settings section: the persistent memory store, its
  * knowledge-graph extraction and dreaming maintenance, observational recall,
  * the embedding model, the Qdrant vector store and FalkorDB graph store, the
- * background knowledge-graph queue, memory sync, and the wiki watcher. These
+ * background knowledge-graph queue, memory backup, and the wiki watcher. These
  * are the `memory.*`, `memory_recall.*`, `embeddings.*`, `databases.*`,
- * `knowledge_graph_queue.*`, `memory_sync.*`, and `wiki.*` keep-rows from the
+ * `knowledge_graph_queue.*`, `memory_backup.*`, and `wiki.*` keep-rows from the
  * configuration audit, with the array "fix" rows (`candidates`,
  * `wiki.ignore_globs`, `wiki.roots`) given typed list editors.
  *
@@ -99,10 +99,9 @@ const QUEUE_PATHS = [
   'knowledge_graph_queue.batch_size',
 ] as const
 
-const SYNC_PATHS = [
-  'memory_sync.enabled',
-  'memory_sync.export_debounce',
-  'memory_sync.export_path',
+const BACKUP_PATHS = [
+  'memory_backup.enabled',
+  'memory_backup.backup_path',
 ] as const
 
 const WIKI_PATHS = [
@@ -123,7 +122,7 @@ const OWNED_PATHS: readonly string[] = [
   ...EMBEDDINGS_PATHS,
   ...DATABASE_PATHS,
   ...QUEUE_PATHS,
-  ...SYNC_PATHS,
+  ...BACKUP_PATHS,
   ...WIKI_PATHS,
 ]
 
@@ -587,31 +586,24 @@ function QueueGroup({ fields }: { fields: SettingsSectionFields }) {
   )
 }
 
-function SyncGroup({ fields }: { fields: SettingsSectionFields }) {
+function BackupGroup({ fields }: { fields: SettingsSectionFields }) {
   return (
     <Subsection
-      title="Memory sync"
-      hint="Git-native export of memories so they travel with the repository."
+      title="Memory backup"
+      hint="Deterministic JSONL backup for explicit recovery and migration."
     >
       <SwitchConfigField
         fields={fields}
-        path="memory_sync.enabled"
-        label="Enable memory sync"
-        ariaLabel="Enable memory sync"
-      />
-      <NumberConfigField
-        fields={fields}
-        path="memory_sync.export_debounce"
-        label="Export debounce (seconds)"
-        ariaLabel="Export debounce (seconds)"
-        step={0.5}
+        path="memory_backup.enabled"
+        label="Enable memory backup"
+        ariaLabel="Enable memory backup"
       />
       <TextConfigField
         fields={fields}
-        path="memory_sync.export_path"
-        label="Export path"
-        ariaLabel="Memory export path"
-        placeholder=".gobby/memory"
+        path="memory_backup.backup_path"
+        label="Backup path"
+        ariaLabel="Memory backup path"
+        placeholder=".gobby/memories.jsonl"
       />
     </Subsection>
   )
@@ -733,7 +725,7 @@ export function MemoryKnowledgeSection() {
           <VectorStoreGroup fields={fields} />
           <GraphStoreGroup fields={fields} />
           <QueueGroup fields={fields} />
-          <SyncGroup fields={fields} />
+          <BackupGroup fields={fields} />
           <WikiGroup fields={fields} />
         </>
       )}

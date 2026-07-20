@@ -14,7 +14,7 @@ from typing import Any
 
 import pytest
 
-from gobby.mcp_proxy.tools.task_sync import create_commit_registry
+from gobby.mcp_proxy.tools.task_commits import create_commit_registry
 from gobby.tasks.diff_paging import (
     MAX_COMMITS_LIMIT,
     MAX_LIMIT_BYTES,
@@ -543,7 +543,6 @@ def test_sync_mcp_path_returns_git_timeout_and_reaps_child(
     _hanging_git(tmp_path, monkeypatch)
     manager = _manager()
     registry = create_commit_registry(
-        sync_manager=object(),
         task_manager=manager,
         project_manager=_ProjectManager(repo),
         get_task_diff_page_fn=get_task_diff_page,
@@ -591,7 +590,6 @@ def test_smaller_git_deadline_wins(
 
 def test_mcp_schema_enforces_all_server_maxima(repo: Path) -> None:
     registry = create_commit_registry(
-        sync_manager=object(),
         task_manager=_manager(),
         project_manager=_ProjectManager(repo),
         get_task_diff_page_fn=get_task_diff_page,

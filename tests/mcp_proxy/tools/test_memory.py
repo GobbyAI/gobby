@@ -2,7 +2,7 @@
 
 Focuses on:
 - removed image/screenshot ingestion tools
-- sync_import / sync_export
+- backup_memories / restore_memories
 - build_turn_and_digest
 - rebuild_crossrefs / rebuild_knowledge_graph
 - reindex_embeddings
@@ -75,8 +75,11 @@ def mock_llm_service() -> MagicMock:
 
 
 @pytest.fixture
-def mock_sync_manager() -> MagicMock:
-    return MagicMock()
+def mock_backup_manager() -> MagicMock:
+    manager = MagicMock()
+    manager.restore = AsyncMock(return_value=5)
+    manager.backup = AsyncMock(return_value=10)
+    return manager
 
 
 @pytest.fixture
@@ -103,17 +106,14 @@ class TestRemovedMediaIngestionTools:
         assert "remember_screenshot" not in tool_names
 
 
-# ─── sync_import / sync_export ──────────────────────────────────────────
+# ─── backup_memories / restore_memories ─────────────────────────────────
 
 
-class TestSyncImport:
-    """Tests for sync_import tool."""
-
+class TestRestoreMemories:
     @pytest.mark.asyncio
-    async def test_no_sync_manager(self, mock_memory_manager: MagicMock) -> None:
-        """Returns error when sync manager not available."""
+    async def test_no_backup_manager(self, mock_memory_manager: MagicMock) -> None:
         registry = create_memory_registry(mock_memory_manager)
-        result = await registry.call("sync_import", {})
+        result = await registry.call("restore_memories", {})
         assert result["success"] is False
         assert "not available" in result["error"]
 
@@ -121,110 +121,69 @@ class TestSyncImport:
     async def test_success(
         self,
         mock_memory_manager: MagicMock,
-        mock_sync_manager: MagicMock,
+        mock_backup_manager: MagicMock,
     ) -> None:
-        """Successful import."""
-        with patch(
-            "gobby.mcp_proxy.tools.memory.memory_sync_import",
-            new_callable=AsyncMock,
-            return_value={"imported": {"memories": 5}},
-        ):
-            registry = create_memory_registry(
-                mock_memory_manager, memory_sync_manager=mock_sync_manager
-            )
-            result = await registry.call("sync_import", {})
+        registry = create_memory_registry(
+            mock_memory_manager, memory_backup_manager=mock_backup_manager
+        )
+        result = await registry.call("restore_memories", {})
 
         assert result["success"] is True
-        assert result["imported"] == 5
-
-    @pytest.mark.asyncio
-    async def test_error_in_result(
-        self,
-        mock_memory_manager: MagicMock,
-        mock_sync_manager: MagicMock,
-    ) -> None:
-        """Returns error when import result has error key."""
-        with patch(
-            "gobby.mcp_proxy.tools.memory.memory_sync_import",
-            new_callable=AsyncMock,
-            return_value={"error": "File not found"},
-        ):
-            registry = create_memory_registry(
-                mock_memory_manager, memory_sync_manager=mock_sync_manager
-            )
-            result = await registry.call("sync_import", {})
-
-        assert result["success"] is False
+        assert result["restored"] == 5
+        mock_backup_manager.restore.assert_awaited_once()
 
     @pytest.mark.asyncio
     async def test_exception(
         self,
         mock_memory_manager: MagicMock,
-        mock_sync_manager: MagicMock,
+        mock_backup_manager: MagicMock,
     ) -> None:
-        """Returns error on exception."""
-        with patch(
-            "gobby.mcp_proxy.tools.memory.memory_sync_import",
-            new_callable=AsyncMock,
-            side_effect=Exception("Import crashed"),
-        ):
-            registry = create_memory_registry(
-                mock_memory_manager, memory_sync_manager=mock_sync_manager
-            )
-            result = await registry.call("sync_import", {})
+        mock_backup_manager.restore.side_effect = RuntimeError("Restore crashed")
+        registry = create_memory_registry(
+            mock_memory_manager, memory_backup_manager=mock_backup_manager
+        )
+        result = await registry.call("restore_memories", {})
 
         assert result["success"] is False
-        assert "Import crashed" in result["error"]
+        assert "Restore crashed" in result["error"]
 
 
-class TestSyncExport:
-    """Tests for sync_export tool."""
-
+class TestBackupMemories:
     @pytest.mark.asyncio
-    async def test_no_sync_manager(self, mock_memory_manager: MagicMock) -> None:
-        """Returns error when sync manager not available."""
+    async def test_no_backup_manager(self, mock_memory_manager: MagicMock) -> None:
         registry = create_memory_registry(mock_memory_manager)
-        result = await registry.call("sync_export", {})
+        result = await registry.call("backup_memories", {})
         assert result["success"] is False
 
     @pytest.mark.asyncio
     async def test_success(
         self,
         mock_memory_manager: MagicMock,
-        mock_sync_manager: MagicMock,
+        mock_backup_manager: MagicMock,
     ) -> None:
-        """Successful export."""
-        with patch(
-            "gobby.mcp_proxy.tools.memory.memory_sync_export",
-            new_callable=AsyncMock,
-            return_value={"exported": {"memories": 10}},
-        ):
-            registry = create_memory_registry(
-                mock_memory_manager, memory_sync_manager=mock_sync_manager
-            )
-            result = await registry.call("sync_export", {})
+        registry = create_memory_registry(
+            mock_memory_manager, memory_backup_manager=mock_backup_manager
+        )
+        result = await registry.call("backup_memories", {})
 
         assert result["success"] is True
-        assert result["exported"] == 10
+        assert result["backed_up"] == 10
+        mock_backup_manager.backup.assert_awaited_once()
 
     @pytest.mark.asyncio
-    async def test_error_in_result(
+    async def test_exception(
         self,
         mock_memory_manager: MagicMock,
-        mock_sync_manager: MagicMock,
+        mock_backup_manager: MagicMock,
     ) -> None:
-        """Returns error when export result has error key."""
-        with patch(
-            "gobby.mcp_proxy.tools.memory.memory_sync_export",
-            new_callable=AsyncMock,
-            return_value={"error": "Write failed"},
-        ):
-            registry = create_memory_registry(
-                mock_memory_manager, memory_sync_manager=mock_sync_manager
-            )
-            result = await registry.call("sync_export", {})
+        mock_backup_manager.backup.side_effect = RuntimeError("Backup failed")
+        registry = create_memory_registry(
+            mock_memory_manager, memory_backup_manager=mock_backup_manager
+        )
+        result = await registry.call("backup_memories", {})
 
         assert result["success"] is False
+        assert "Backup failed" in result["error"]
 
 
 # ─── bootstrap_session_title ────────────────────────────────────────────

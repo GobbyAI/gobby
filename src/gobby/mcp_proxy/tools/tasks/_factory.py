@@ -7,10 +7,11 @@ into a unified registry.
 from typing import TYPE_CHECKING
 
 from gobby.mcp_proxy.tools.internal import InternalToolRegistry
+from gobby.mcp_proxy.tools.task_commits import create_commit_registry
 from gobby.mcp_proxy.tools.task_dependencies import create_dependency_registry
 from gobby.mcp_proxy.tools.task_readiness import create_readiness_registry
-from gobby.mcp_proxy.tools.task_sync import create_commit_registry
 from gobby.mcp_proxy.tools.tasks._affected_files import create_core_affected_files_registry
+from gobby.mcp_proxy.tools.tasks._backup import create_backup_registry
 from gobby.mcp_proxy.tools.tasks._build_observability import (
     create_build_observability_registry,
 )
@@ -21,7 +22,6 @@ from gobby.mcp_proxy.tools.tasks._search import create_search_registry
 from gobby.mcp_proxy.tools.tasks._session import create_session_registry
 from gobby.mcp_proxy.tools.tasks._stage_read import create_stage_read_registry
 from gobby.storage.tasks import LocalTaskManager
-from gobby.sync.tasks import TaskSyncManager
 from gobby.tasks.validation import TaskValidator
 
 if TYPE_CHECKING:
@@ -30,7 +30,6 @@ if TYPE_CHECKING:
 
 def create_task_registry(
     task_manager: LocalTaskManager,
-    sync_manager: TaskSyncManager,
     task_validator: TaskValidator | None = None,
     config: "DaemonConfig | None" = None,
     project_id: str | None = None,
@@ -40,7 +39,6 @@ def create_task_registry(
 
     Args:
         task_manager: LocalTaskManager instance
-        sync_manager: TaskSyncManager instance
         task_validator: TaskValidator instance (optional)
         config: DaemonConfig instance (optional)
         project_id: Default project ID (optional)
@@ -51,7 +49,6 @@ def create_task_registry(
     # Create the shared context
     ctx = RegistryContext(
         task_manager=task_manager,
-        sync_manager=sync_manager,
         task_validator=task_validator,
         config=config,
     )
@@ -59,7 +56,7 @@ def create_task_registry(
     # Create the main registry
     registry = InternalToolRegistry(
         name="gobby-tasks",
-        description="Task management - CRUD, dependencies, sync",
+        description="Task management - CRUD, dependencies, backup and restore",
     )
 
     # Merge CRUD tools
@@ -94,13 +91,15 @@ def create_task_registry(
     # Merge read-only build observability tools (build_task lives in gobby-tasks-ops)
     registry.merge_from(create_build_observability_registry(ctx))
 
-    # Merge commit linking tools (sync tools removed — CLI only)
+    # Merge explicit JSONL backup and restore tools.
+    registry.merge_from(create_backup_registry(ctx))
+
+    # Merge commit linking tools.
     from gobby.tasks.commits import auto_link_commits as auto_link_commits_fn
     from gobby.tasks.diff_paging import get_task_diff_page
 
     registry.merge_from(
         create_commit_registry(
-            sync_manager=sync_manager,
             task_manager=task_manager,
             project_manager=ctx.project_manager,
             auto_link_commits_fn=auto_link_commits_fn,

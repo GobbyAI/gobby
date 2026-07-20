@@ -25,7 +25,6 @@ from gobby.memory.title_heuristics import (
     is_template_placeholder,
     normalize_title_candidate,
 )
-from gobby.sync.export_context import in_jsonl_export_context
 from gobby.utils.injected_context import strip_injected_context
 
 logger = logging.getLogger(__name__)
@@ -161,46 +160,6 @@ async def _provider_cancelled_fallback(
             "Persisted heuristic fallback title for cancelled digest session %s", session_id
         )
     return result
-
-
-async def memory_sync_import(memory_sync_manager: Any) -> dict[str, Any]:
-    """Import memories from filesystem.
-
-    Args:
-        memory_sync_manager: The memory sync manager instance
-
-    Returns:
-        Dict with imported count or error
-    """
-    if not memory_sync_manager:
-        return {"error": "Memory Sync Manager not available"}
-
-    count = await memory_sync_manager.import_from_files()
-    logger.info("Memory sync import: %s memories imported", count)
-    return {"imported": {"memories": count}}
-
-
-async def memory_sync_export(
-    memory_sync_manager: Any, project_id: str | None = None
-) -> dict[str, Any]:
-    """Export memories to filesystem.
-
-    Args:
-        memory_sync_manager: The memory sync manager instance
-        project_id: Optional project to scope export to.
-
-    Returns:
-        Dict with exported count or error
-    """
-    if not memory_sync_manager:
-        return {"error": "Memory Sync Manager not available"}
-
-    if not in_jsonl_export_context():
-        return {"exported": {"memories": 0}, "skipped": True, "reason": "not_remote_push"}
-
-    count = await memory_sync_manager.export_to_files(project_id=project_id)
-    logger.info("Memory sync export: %s memories exported", count)
-    return {"exported": {"memories": count}}
 
 
 async def _read_last_turn_from_transcript(

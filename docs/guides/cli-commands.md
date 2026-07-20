@@ -348,7 +348,8 @@ gobby tasks validation-history TASK [--clear] [--json]
 gobby tasks doctor
 gobby tasks clean
 gobby tasks repair-lifecycle [--task TASK] [--provenance LABEL] [--apply] [--force] [--json]
-gobby tasks sync [--import] [--export] [--quiet]
+gobby tasks backup [--output PATH] [--quiet]
+gobby tasks restore [--input PATH] [--quiet]
 ```
 
 `tasks search` supports `--type`, `--priority`, `--project`, `--all-projects`,

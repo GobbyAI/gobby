@@ -218,7 +218,6 @@ async def _close_with_static_verdict(
         project_manager.return_value.get.return_value = MagicMock(repo_path=repo_path)
         registry = create_task_registry(
             task_manager=task_manager,
-            sync_manager=MagicMock(),
             task_validator=validator,
         )
         result = await registry.call(
@@ -357,7 +356,6 @@ async def test_close_task_uses_commit_diff_when_commits_linked(
 
         registry = create_task_registry(
             task_manager=mock_task_manager,
-            sync_manager=MagicMock(),
             task_validator=mock_task_validator,
         )
 
@@ -451,7 +449,6 @@ async def test_close_task_includes_latest_thirty_verification_evidence(
 
         registry = create_task_registry(
             task_manager=mock_task_manager,
-            sync_manager=MagicMock(),
             task_validator=mock_task_validator,
         )
 
@@ -563,7 +560,6 @@ async def test_close_task_preserves_oversized_test_definitions_with_focused_evid
 
         registry = create_task_registry(
             task_manager=mock_task_manager,
-            sync_manager=MagicMock(),
             task_validator=mock_task_validator,
         )
 
@@ -680,7 +676,6 @@ async def test_close_task_autolinks_claim_window_before_validation(
 
         registry = create_task_registry(
             task_manager=mock_task_manager,
-            sync_manager=MagicMock(),
             task_validator=mock_task_validator,
         )
 
@@ -752,7 +747,6 @@ async def test_close_task_skip_validation_with_evidence_stores_override(
 
         registry = create_task_registry(
             task_manager=mock_task_manager,
-            sync_manager=MagicMock(),
             task_validator=mock_task_validator,
         )
 
@@ -814,7 +808,6 @@ async def test_close_task_skip_validation_fails_without_evidence(
 
         registry = create_task_registry(
             task_manager=mock_task_manager,
-            sync_manager=MagicMock(),
             task_validator=mock_task_validator,
         )
 
@@ -880,7 +873,6 @@ async def test_close_task_skip_reason_bypasses_commit_check(
 
         registry = create_task_registry(
             task_manager=mock_task_manager,
-            sync_manager=MagicMock(),
             task_validator=mock_task_validator,
         )
 
@@ -952,7 +944,6 @@ async def test_close_task_commit_diff_excludes_uncommitted_changes(
 
         registry = create_task_registry(
             task_manager=mock_task_manager,
-            sync_manager=MagicMock(),
             task_validator=mock_task_validator,
         )
 
@@ -1026,7 +1017,6 @@ async def test_close_task_with_commits_does_not_fallback_to_smart_context(
 
         registry = create_task_registry(
             task_manager=mock_task_manager,
-            sync_manager=MagicMock(),
             task_validator=mock_task_validator,
         )
 

@@ -109,7 +109,6 @@ def task_registry_with_patches(mock_task_manager, mock_task_validator):
     ):
         registry = create_task_registry(
             task_manager=mock_task_manager,
-            sync_manager=MagicMock(),
             task_validator=mock_task_validator,
         )
         yield registry

@@ -3,13 +3,15 @@ Task management commands - entry point and misc utilities.
 """
 
 import logging
+from pathlib import Path
 from typing import Any
 
 import click
 
 from gobby.cli.tasks._utils import (
     check_tasks_enabled,
-    get_sync_manager,
+    get_backup_manager,
+    get_github_importer,
     get_task_manager,
 )
 from gobby.cli.tasks.ai import (
@@ -38,7 +40,6 @@ from gobby.cli.tasks.repair import repair_lifecycle_cmd
 from gobby.cli.tasks.review import review_cmd
 from gobby.cli.tasks.search import reindex_tasks, search_tasks
 from gobby.cli.tasks.stages import advance_cmd, stages_cmd
-from gobby.sync.export_context import in_jsonl_export_context
 
 logger = logging.getLogger(__name__)
 
@@ -76,54 +77,50 @@ tasks.add_command(review_cmd)
 tasks.add_command(repair_lifecycle_cmd)
 
 
-@tasks.command("sync")
-@click.option("--import", "do_import", is_flag=True, help="Import tasks from JSONL")
+@tasks.command("backup")
 @click.option(
-    "--export",
-    "do_export",
-    is_flag=True,
-    help="Export tasks to JSONL when running in the remote-push export context",
+    "--output",
+    "output_path",
+    type=click.Path(path_type=Path),
+    help="Output file path (default: .gobby/tasks.jsonl)",
 )
 @click.option("--quiet", "-q", is_flag=True, help="Suppress output")
-def sync_tasks(do_import: bool, do_export: bool, quiet: bool) -> None:
-    """Sync tasks with .gobby/tasks.jsonl.
-
-    If neither --import nor --export specified, imports only. Task JSONL export
-    is limited to the remote-push path so local task activity does not dirty
-    .gobby/tasks.jsonl.
-    """
-    from pathlib import Path
-
+def backup_tasks(output_path: Path | None, quiet: bool) -> None:
+    """Write current project tasks to a deterministic JSONL backup."""
     from gobby.utils.project_context import get_project_context
 
     ctx = get_project_context(cwd=Path.cwd())
-    project_id = ctx.get("id") if ctx else None
-
-    manager = get_sync_manager()
-
-    # Default to import only. Export is publication material and is triggered
-    # from the pre-push hook with an explicit export context.
-    if not do_import and not do_export:
-        do_import = True
-
-    if do_import:
-        if not quiet:
-            click.echo("Importing tasks...")
-        manager.import_from_jsonl(project_id=project_id)
-
-    if do_export:
-        if not in_jsonl_export_context():
-            if not quiet:
-                click.echo(
-                    "Skipping task export: .gobby/tasks.jsonl is generated only during remote push."
-                )
-        else:
-            if not quiet:
-                click.echo("Exporting tasks...")
-            manager.export_to_jsonl(project_id=project_id)
-
+    raw_project_id = ctx.get("id") if ctx else None
+    project_id = str(raw_project_id) if raw_project_id else None
+    manager = get_backup_manager(output_path)
+    count = manager.backup(project_id=project_id)
     if not quiet:
-        click.echo("Sync completed")
+        click.echo(f"Backed up {count} tasks")
+
+
+@tasks.command("restore")
+@click.option(
+    "--input",
+    "input_path",
+    type=click.Path(path_type=Path),
+    help="Input file path (default: .gobby/tasks.jsonl)",
+)
+@click.option("--quiet", "-q", is_flag=True, help="Suppress output")
+def restore_tasks(input_path: Path | None, quiet: bool) -> None:
+    """Non-destructively restore tasks from a JSONL backup."""
+    from gobby.sync.tasks import TaskRestoreError
+    from gobby.utils.project_context import get_project_context
+
+    ctx = get_project_context(cwd=Path.cwd())
+    raw_project_id = ctx.get("id") if ctx else None
+    project_id = str(raw_project_id) if raw_project_id else None
+    manager = get_backup_manager(input_path)
+    try:
+        count = manager.restore(project_id=project_id)
+    except TaskRestoreError as exc:
+        raise click.ClickException(str(exc)) from exc
+    if not quiet:
+        click.echo(f"Restored {count} tasks")
 
 
 @tasks.group("compact")
@@ -215,7 +212,7 @@ def import_github(url: str, limit: int) -> None:
     """Import open issues from GitHub."""
     import asyncio
 
-    manager = get_sync_manager()
+    manager = get_github_importer()
 
     # We need to run async method
     async def run() -> dict[str, Any]:

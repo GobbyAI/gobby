@@ -84,11 +84,6 @@ def _task(
 
 
 @pytest.fixture
-def mock_sync_manager():
-    return MagicMock()
-
-
-@pytest.fixture
 def sample_task_needs_review():
     return _task(
         status="needs_review",
@@ -115,13 +110,12 @@ def sample_task_in_progress():
 
 
 @pytest.fixture
-def stage_ops_registry(mock_task_manager, mock_sync_manager):
+def stage_ops_registry(mock_task_manager):
     from gobby.mcp_proxy.tools.tasks._context import RegistryContext
     from gobby.mcp_proxy.tools.tasks._stage_ops import create_stage_ops_registry
 
     ctx = RegistryContext(
         task_manager=mock_task_manager,
-        sync_manager=mock_sync_manager,
     )
     ctx.resolve_session_id = MagicMock(return_value="resolved-session-abc")
     ctx.session_manager = MagicMock()

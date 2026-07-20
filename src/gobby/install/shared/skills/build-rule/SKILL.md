@@ -139,7 +139,7 @@ Templates support Jinja2: `{{ var }}`, `{{ var | default('') }}`, `{{ list | joi
 effect:
   type: mcp_call
   server: gobby-memory        # MCP server name
-  tool: sync_import           # Tool name
+tool: memory_stats          # Tool name
   arguments:                  # Optional args (supports {{ }} templates)
     session_id: "{{ session_id }}"
   background: true            # Optional: async execution (default: false)
@@ -439,15 +439,15 @@ inject-tdd-reminder:
       Write tests BEFORE implementation code.
 ```
 
-### Auto-run tool on session start
+### Observe memory stats on session start
 ```yaml
-import-memories:
+observe-memory-stats:
   event: session_start
   priority: 30
   effect:
     type: mcp_call
     server: gobby-memory
-    tool: sync_import
+tool: memory_stats
     background: true
 ```
 

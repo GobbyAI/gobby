@@ -68,7 +68,6 @@ def stage_ops_registry(mock_task_manager):
 
     ctx = RegistryContext(
         task_manager=mock_task_manager,
-        sync_manager=MagicMock(),
     )
     ctx.resolve_session_id = MagicMock(return_value="resolved-session-abc")
     ctx.session_manager = MagicMock()

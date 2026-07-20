@@ -42,7 +42,6 @@ class SessionLifecycleManager(TranscriptProcessingMixin):
         memory_manager: Any | None = None,
         llm_service: Any | None = None,
         session_summary_config: Any | None = None,
-        memory_sync_manager: Any | None = None,
         kg_queue_config: Any | None = None,
         memory_dream_config: Any | None = None,
     ):
@@ -53,7 +52,6 @@ class SessionLifecycleManager(TranscriptProcessingMixin):
         self.memory_manager = memory_manager
         self.llm_service = llm_service
         self.session_summary_config = session_summary_config
-        self.memory_sync_manager = memory_sync_manager
         self._kg_queue_config = kg_queue_config
         self._memory_dream_config = memory_dream_config
 

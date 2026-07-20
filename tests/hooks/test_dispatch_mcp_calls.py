@@ -318,7 +318,7 @@ class TestDispatchMcpCallsNoEventLoop:
         calls = [
             {
                 "server": "gobby-memory",
-                "tool": "sync_export",
+                "tool": "backup_memories",
                 "arguments": {},
                 "background": True,
             }
@@ -375,10 +375,10 @@ class TestDispatchMcpCallsNoEventLoop:
             },
             {
                 "server": "gobby-memory",
-                "tool": "sync_export",
+                "tool": "backup_memories",
                 "arguments": {},
             },
-            {"server": "gobby-tasks", "tool": "sync_export", "arguments": {}},
+            {"server": "gobby-tasks", "tool": "backup_tasks", "arguments": {}},
         ]
 
         stub._dispatch_mcp_calls(calls, event)

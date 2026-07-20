@@ -10,7 +10,7 @@ import pytest
 
 from gobby.storage.projects import LocalProjectManager
 from gobby.storage.tasks import LocalTaskManager
-from gobby.sync.tasks import TaskSyncManager
+from gobby.sync.tasks import TaskBackupManager
 
 pytestmark = pytest.mark.unit
 
@@ -20,7 +20,7 @@ def _write_jsonl(path: Path, row: dict[str, object]) -> None:
     path.write_text(json.dumps(row) + "\n", encoding="utf-8")
 
 
-def test_import_persists_supported_fields_from_current_shape(temp_db, tmp_path: Path) -> None:
+def test_restore_persists_supported_fields_from_current_shape(temp_db, tmp_path: Path) -> None:
     project = LocalProjectManager(temp_db).create("jsonl-shape", repo_path=str(tmp_path))
     export_path = tmp_path / ".gobby" / "tasks.jsonl"
     task_id = "11111111-1111-4111-8111-111111111111"
@@ -51,7 +51,7 @@ def test_import_persists_supported_fields_from_current_shape(temp_db, tmp_path: 
     )
     manager = LocalTaskManager(temp_db)
 
-    TaskSyncManager(manager).import_from_jsonl(project_id=project.id)
+    TaskBackupManager(manager, backup_path=export_path).restore(project_id=project.id)
 
     task = manager.get_task(task_id)
     assert task is not None
@@ -61,7 +61,7 @@ def test_import_persists_supported_fields_from_current_shape(temp_db, tmp_path: 
     assert task.seq_num == 987
 
 
-def test_import_ignores_top_level_legacy_keys(temp_db, tmp_path: Path) -> None:
+def test_restore_ignores_top_level_legacy_keys(temp_db, tmp_path: Path) -> None:
     project = LocalProjectManager(temp_db).create("jsonl-legacy", repo_path=str(tmp_path))
     export_path = tmp_path / ".gobby" / "tasks.jsonl"
     task_id = "22222222-2222-4222-8222-222222222222"
@@ -89,7 +89,7 @@ def test_import_ignores_top_level_legacy_keys(temp_db, tmp_path: Path) -> None:
     )
     manager = LocalTaskManager(temp_db)
 
-    TaskSyncManager(manager).import_from_jsonl(project_id=project.id)
+    TaskBackupManager(manager, backup_path=export_path).restore(project_id=project.id)
 
     task = manager.get_task(task_id)
     assert task is not None

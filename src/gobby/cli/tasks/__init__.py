@@ -9,13 +9,14 @@ This package contains the task management commands, split into logical modules:
 - hooks: Git hooks management subgroup
 - labels: Label management subgroup
 - stages/review: Stage-manifest operator commands
-- main: Entry point and misc commands (sync, compact, import, doctor, clean)
+- main: Entry point and misc commands (backup, restore, compact, import, doctor, clean)
 """
 
 from gobby.cli.tasks._utils import (
     cascade_progress,
     check_tasks_enabled,
-    get_sync_manager,
+    get_backup_manager,
+    get_github_importer,
     get_task_manager,
     parse_task_refs,
 )
@@ -25,7 +26,8 @@ __all__ = [
     "cascade_progress",
     "check_tasks_enabled",
     "get_task_manager",
-    "get_sync_manager",
+    "get_backup_manager",
+    "get_github_importer",
     "parse_task_refs",
     "tasks",
 ]

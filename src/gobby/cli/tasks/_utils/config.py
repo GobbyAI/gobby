@@ -2,17 +2,19 @@
 
 import logging
 import sys
+from pathlib import Path
 
 import click
 
 from gobby.config.app import load_config
 from gobby.storage.hub.runtime import open_runtime_hub_database
 from gobby.storage.tasks import LocalTaskManager
-from gobby.sync.tasks import TaskSyncManager
+from gobby.sync.task_github_import import GitHubIssueImporter
+from gobby.sync.tasks import TaskBackupManager
 
 logger = logging.getLogger(__name__)
 
-TASKS_EXPORT_PATH = ".gobby/tasks.jsonl"
+TASKS_BACKUP_PATH = ".gobby/tasks.jsonl"
 
 
 def check_tasks_enabled() -> None:
@@ -40,7 +42,12 @@ def get_task_manager() -> LocalTaskManager:
     return LocalTaskManager(db)
 
 
-def get_sync_manager() -> TaskSyncManager:
-    """Get initialized sync manager."""
+def get_backup_manager(path: str | Path | None = None) -> TaskBackupManager:
+    """Get initialized task backup manager."""
     manager = get_task_manager()
-    return TaskSyncManager(manager, export_path=TASKS_EXPORT_PATH)
+    return TaskBackupManager(manager, backup_path=path or TASKS_BACKUP_PATH)
+
+
+def get_github_importer() -> GitHubIssueImporter:
+    """Get initialized GitHub issue importer."""
+    return GitHubIssueImporter(get_task_manager().db)

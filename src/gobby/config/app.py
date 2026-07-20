@@ -344,9 +344,9 @@ class DaemonConfig(BaseModel):
         default_factory=MemoryConfig,
         description="Memory system configuration",
     )
-    memory_sync: MemoryBackupConfig = Field(
+    memory_backup: MemoryBackupConfig = Field(
         default_factory=MemoryBackupConfig,
-        description="Memory synchronization configuration",
+        description="Memory JSONL backup configuration",
     )
     skills: SkillsConfig = Field(
         default_factory=SkillsConfig,
@@ -477,9 +477,9 @@ class DaemonConfig(BaseModel):
         """Get memory configuration."""
         return self.memory
 
-    def get_memory_sync_config(self) -> MemoryBackupConfig:
-        """Get memory sync configuration."""
-        return self.memory_sync
+    def get_memory_backup_config(self) -> MemoryBackupConfig:
+        """Get memory backup configuration."""
+        return self.memory_backup
 
     def get_skills_config(self) -> SkillsConfig:
         """Get skills configuration."""

@@ -3,28 +3,20 @@ import logging
 from datetime import UTC, date, datetime
 from pathlib import Path
 from typing import Any
+from uuid import UUID
 
 from gobby.storage.tasks import LocalTaskManager
 from gobby.sync.jsonl_io import atomic_write_text, export_file_lock
-from gobby.sync.task_github_sync import GitHubTaskSyncMixin
-from gobby.sync.tombstones import (
-    apply_tombstone,
-    is_tombstone,
-    load_tombstones,
-    merge_jsonl_records,
-    newer_record,
-    record_timestamp,
-)
 from gobby.tasks.state_semantics import serialize_task_state
 from gobby.utils.json_helpers import json_dumps
 
-TASK_EXPORT_PAGE_SIZE = 100_000
+TASK_BACKUP_PAGE_SIZE = 100_000
 
 logger = logging.getLogger(__name__)
 
-# Removed in 0.2.28: continuous sync machinery (trigger_export, _process_export_queue,
-# stop, shutdown, debounce state). The DB is the source of truth; JSONL export now
-# happens on-demand via pre-push hook, CLI, and MCP tools. JSONL import is explicit.
+
+class TaskRestoreError(ValueError):
+    """Raised when a task backup cannot be restored safely."""
 
 
 def _parse_timestamp(ts: str | datetime) -> datetime:
@@ -101,7 +93,7 @@ def _known_session_id(value: str | None, existing_session_ids: set[str]) -> str 
         return None
     if value in existing_session_ids:
         return value
-    logger.warning("Dropping task sync session reference for unknown session %s", value)
+    logger.warning("Dropping task restore session reference for unknown session %s", value)
     return None
 
 
@@ -194,37 +186,144 @@ def _ensure_task_sequence_metadata(
     )
 
 
-class TaskSyncManager(GitHubTaskSyncMixin):
-    """
-    Manages synchronization of tasks to the filesystem (JSONL) for Git versioning.
-    """
+def _validate_uuid(value: Any, *, field: str, line_num: int, required: bool = False) -> None:
+    if value is None and not required:
+        return
+    if not isinstance(value, str):
+        raise TaskRestoreError(f"Task backup line {line_num}: {field} must be a UUID string")
+    try:
+        UUID(value)
+    except ValueError as exc:
+        raise TaskRestoreError(
+            f"Task backup line {line_num}: {field} is not a valid UUID: {value}"
+        ) from exc
+
+
+def _load_task_backup(path: Path) -> list[dict[str, Any]]:
+    """Parse and validate an entire task backup before any database access."""
+    records: list[dict[str, Any]] = []
+    seen_ids: set[str] = set()
+
+    try:
+        lines = path.read_text(encoding="utf-8").splitlines()
+    except OSError as exc:
+        raise TaskRestoreError(f"Failed to read task backup {path}: {exc}") from exc
+
+    for line_num, line in enumerate(lines, 1):
+        if not line.strip():
+            continue
+        try:
+            data = json.loads(line)
+        except json.JSONDecodeError as exc:
+            raise TaskRestoreError(f"Invalid JSON in task backup on line {line_num}") from exc
+        if not isinstance(data, dict):
+            raise TaskRestoreError(f"Task backup line {line_num}: record must be an object")
+        if "_deleted" in data:
+            raise TaskRestoreError(
+                f"Task backup line {line_num}: tombstone records are not supported"
+            )
+
+        task_id = data.get("id")
+        _validate_uuid(task_id, field="id", line_num=line_num, required=True)
+        assert isinstance(task_id, str)
+        if task_id in seen_ids:
+            raise TaskRestoreError(f"Task backup line {line_num}: duplicate id {task_id}")
+        seen_ids.add(task_id)
+
+        title = data.get("title")
+        if not isinstance(title, str) or not title.strip():
+            raise TaskRestoreError(f"Task backup line {line_num}: title must be non-empty")
+
+        for field in ("created_at", "updated_at"):
+            value = data.get(field)
+            if not isinstance(value, str):
+                raise TaskRestoreError(
+                    f"Task backup line {line_num}: {field} must be an ISO timestamp"
+                )
+            try:
+                _parse_timestamp(value)
+            except ValueError as exc:
+                raise TaskRestoreError(
+                    f"Task backup line {line_num}: invalid {field} timestamp"
+                ) from exc
+
+        state = data.get("state") or {}
+        for field in ("closed_at", "escalated_at"):
+            value = data.get(field, state.get(field))
+            if value is not None:
+                try:
+                    _parse_timestamp(value)
+                except (TypeError, ValueError) as exc:
+                    raise TaskRestoreError(
+                        f"Task backup line {line_num}: invalid {field} timestamp"
+                    ) from exc
+
+        uuid_fields = (
+            "project_id",
+            "parent_id",
+            "created_in_session_id",
+            "claimed_by_session_id",
+            "closed_in_session_id",
+        )
+        for field in uuid_fields:
+            _validate_uuid(data.get(field), field=field, line_num=line_num)
+        _validate_uuid(
+            state.get("owner_session_id"), field="state.owner_session_id", line_num=line_num
+        )
+        _validate_uuid(
+            state.get("closed_in_session_id"),
+            field="state.closed_in_session_id",
+            line_num=line_num,
+        )
+
+        for field in ("deps_on", "commits", "labels"):
+            value = data.get(field)
+            if value is not None and not isinstance(value, list):
+                raise TaskRestoreError(f"Task backup line {line_num}: {field} must be a list")
+            if (
+                value is not None
+                and field != "deps_on"
+                and not all(isinstance(item, str) for item in value)
+            ):
+                raise TaskRestoreError(
+                    f"Task backup line {line_num}: {field} entries must be strings"
+                )
+        for dependency in data.get("deps_on") or []:
+            _validate_uuid(dependency, field="deps_on entry", line_num=line_num, required=True)
+
+        for field in ("state", "validation"):
+            value = data.get(field)
+            if value is not None and not isinstance(value, dict):
+                raise TaskRestoreError(f"Task backup line {line_num}: {field} must be an object")
+
+        seq_num = data.get("seq_num")
+        if seq_num is not None and (type(seq_num) is not int or seq_num <= 0):
+            raise TaskRestoreError(
+                f"Task backup line {line_num}: seq_num must be a positive integer"
+            )
+
+        records.append(data)
+
+    return records
+
+
+class TaskBackupManager:
+    """Create and restore deterministic task JSONL backups."""
 
     def __init__(
         self,
         task_manager: LocalTaskManager,
-        export_path: str = ".gobby/tasks.jsonl",
-    ):
-        """
-        Initialize TaskSyncManager.
-
-        Args:
-            task_manager: LocalTaskManager instance
-            export_path: Path to the JSONL export file
-        """
+        backup_path: str | Path | None = None,
+    ) -> None:
         self.task_manager = task_manager
         self.db = task_manager.db
-        self.export_path = Path(export_path)
+        self.backup_path = Path(backup_path or ".gobby/tasks.jsonl")
+        self._custom_backup_path = backup_path is not None
 
-    def _get_export_path(self, project_id: str | None) -> Path:
-        """
-        Resolve the export path for a given project.
-
-        Resolution order:
-        1. If project_id provided -> find project repo_path -> .gobby/tasks.jsonl
-        2. Fallback to self.export_path (legacy/default behavior)
-        """
-        if not project_id:
-            return self.export_path
+    def _get_backup_path(self, project_id: str | None) -> Path:
+        """Resolve the configured or project-local backup path."""
+        if self._custom_backup_path or not project_id:
+            return self.backup_path
 
         # Try to find project
         from gobby.storage.projects import LocalProjectManager
@@ -235,23 +334,17 @@ class TaskSyncManager(GitHubTaskSyncMixin):
         if project and project.repo_path:
             return Path(project.repo_path) / ".gobby" / "tasks.jsonl"
 
-        return self.export_path
+        return self.backup_path
 
-    def export_to_jsonl(self, project_id: str | None = None) -> None:
-        """
-        Export tasks and their dependencies to a JSONL file.
-        Tasks are sorted by ID to ensure deterministic output.
-
-        Args:
-            project_id: Optional project to export. If matches context, uses project path.
-        """
+    def backup(self, project_id: str | None = None) -> int:
+        """Write current live task rows as a deterministic atomic JSONL snapshot."""
         try:
-            target_path = self._get_export_path(project_id)
+            target_path = self._get_backup_path(project_id)
 
             tasks = []
             offset = 0
             while page := self.task_manager.list_tasks(
-                limit=TASK_EXPORT_PAGE_SIZE, offset=offset, project_id=project_id
+                limit=TASK_BACKUP_PAGE_SIZE, offset=offset, project_id=project_id
             ):
                 tasks.extend(page)
                 offset += len(page)
@@ -267,7 +360,7 @@ class TaskSyncManager(GitHubTaskSyncMixin):
 
             tasks.sort(key=lambda t: t.id)
 
-            export_data: list[dict[str, Any]] = []
+            backup_data: list[dict[str, Any]] = []
             for task in tasks:
                 state = serialize_task_state(task)
                 state["closed_at"] = _normalize_timestamp(task.closed_at)
@@ -317,69 +410,39 @@ class TaskSyncManager(GitHubTaskSyncMixin):
                     # Escalation fields (normalize timestamps)
                     "escalated_at": _normalize_timestamp(task.escalated_at),
                     "escalation_reason": task.escalation_reason,
-                    # Human-friendly IDs (preserve across sync)
+                    # Human-friendly IDs (preserve across backup and restore)
                     "seq_num": task.seq_num,
                     "path_cache": task.path_cache,
                 }
-                export_data.append(task_dict)
+                backup_data.append(task_dict)
 
             with export_file_lock(target_path):
-                current_records = [
-                    *export_data,
-                    *load_tombstones(self.db, "task", project_id),
-                ]
-                merged_records = sorted(
-                    merge_jsonl_records(target_path, current_records, logger),
-                    key=lambda item: item["id"],
-                )
-                content = "".join(json_dumps(item) + "\n" for item in merged_records)
+                content = "".join(json_dumps(item) + "\n" for item in backup_data)
                 atomic_write_text(target_path, content)
 
-            logger.info("Exported %s tasks to %s", len(merged_records), target_path)
+            logger.info("Backed up %s tasks to %s", len(backup_data), target_path)
+            return len(backup_data)
 
         except Exception as e:
-            logger.exception("Failed to export tasks: %s", e)
+            logger.exception("Failed to back up tasks: %s", e)
             raise
 
-    def import_from_jsonl(self, project_id: str | None = None) -> None:
-        """
-        Import tasks from JSONL file into the hub database.
-        Uses Last-Write-Wins conflict resolution based on updated_at.
-
-        Args:
-            project_id: Optional project to import from. If matches context, uses project path.
-        """
-        target_path = self._get_export_path(project_id)
+    def restore(self, project_id: str | None = None) -> int:
+        """Non-destructively restore tasks when backup timestamps win."""
+        target_path = self._get_backup_path(project_id)
 
         if not target_path.exists():
-            logger.debug("No task export file found at %s, skipping import", target_path)
-            return
+            logger.debug("No task backup file found at %s, skipping restore", target_path)
+            return 0
 
         try:
-            with open(target_path, encoding="utf-8") as f:
-                lines = f.readlines()
-
-            tombstones: dict[str, dict[str, Any]] = {}
-            for line in lines:
-                if not line.strip():
-                    continue
-                candidate = json.loads(line)
-                if not isinstance(candidate, dict) or not is_tombstone(candidate):
-                    continue
-                task_id = candidate.get("id")
-                if not isinstance(task_id, str):
-                    continue
-                current = tombstones.get(task_id)
-                tombstones[task_id] = (
-                    candidate if current is None else newer_record(current, candidate)
-                )
+            records = _load_task_backup(target_path)
 
             imported_count = 0
             updated_count = 0
-            deleted_count = 0
             skipped_count = 0
 
-            # Phase 1: Import Tasks (Upsert)
+            # Phase 1: restore task rows with last-write-wins semantics.
             pending_deps: dict[str, list[str]] = {}
             pending_path_rebuilds: list[str] = []
 
@@ -387,11 +450,11 @@ class TaskSyncManager(GitHubTaskSyncMixin):
                 conn.execute("SET CONSTRAINTS ALL DEFERRED")
                 # Use the write transaction's snapshot for LWW and sequence decisions.
                 existing_tasks: dict[str, dict[str, Any]] = {}
-                for row in self.db.fetchall(
+                for row in conn.execute(
                     "SELECT id, updated_at, seq_num, path_cache, project_id, parent_task_id, "
                     "claimed_by_session_id, created_in_session_id, closed_in_session_id "
                     "FROM tasks"
-                ):
+                ).fetchall():
                     existing_tasks[row["id"]] = {
                         "updated_at": row["updated_at"],
                         "seq_num": row["seq_num"],
@@ -413,49 +476,11 @@ class TaskSyncManager(GitHubTaskSyncMixin):
                         max_seq_tracker[pid] = max(max_seq_tracker.get(pid, 0), sn)
                 batch_claimed: dict[str | None, set[int]] = {}
                 existing_session_ids = {
-                    row["id"] for row in self.db.fetchall("SELECT id FROM sessions")
+                    row["id"] for row in conn.execute("SELECT id FROM sessions").fetchall()
                 }
-                for task_id, deletion_record in tombstones.items():
-                    deleted_at = record_timestamp(deletion_record)
-                    if deleted_at is not None and apply_tombstone(
-                        conn, "task", task_id, deleted_at
-                    ):
-                        existing_tasks.pop(task_id, None)
-                        deleted_count += 1
-                for line in lines:
-                    if not line.strip():
-                        continue
-
-                    data = json.loads(line)
+                for data in records:
                     task_id = data["id"]
-                    if is_tombstone(data):
-                        continue
-                    # Guard against None/missing updated_at in JSONL
-                    raw_updated_at = data.get("updated_at")
-                    if raw_updated_at is None:
-                        # Skip tasks without timestamps or use a safe default
-                        logger.warning("Task %s missing updated_at, skipping", task_id)
-                        skipped_count += 1
-                        continue
-                    try:
-                        updated_at_file = _parse_timestamp(raw_updated_at)
-                    except ValueError as e:
-                        logger.warning(
-                            "Task %s: malformed timestamp '%s': %s, skipping",
-                            task_id,
-                            raw_updated_at,
-                            e,
-                        )
-                        skipped_count += 1
-                        continue
-
-                    task_tombstone = tombstones.get(task_id)
-                    tombstone_at = (
-                        record_timestamp(task_tombstone) if task_tombstone is not None else None
-                    )
-                    if tombstone_at is not None and tombstone_at >= updated_at_file:
-                        skipped_count += 1
-                        continue
+                    updated_at_file = _parse_timestamp(data["updated_at"])
 
                     # Check against bulk-loaded existing task data
                     existing_row = existing_tasks.get(task_id)
@@ -549,8 +574,7 @@ class TaskSyncManager(GitHubTaskSyncMixin):
                             existing_session_ids,
                         )
 
-                        # Common synced field values
-                        synced_values = {
+                        restored_values = {
                             "project_id": data.get("project_id"),
                             "title": data["title"],
                             "description": data.get("description"),
@@ -605,8 +629,8 @@ class TaskSyncManager(GitHubTaskSyncMixin):
 
                         if not existing_row:
                             # New task: preserve JSONL seq_num if available and unclaimed.
-                            task_project_id = synced_values.get("project_id")
-                            jsonl_seq = synced_values.get("seq_num")
+                            task_project_id = restored_values.get("project_id")
+                            jsonl_seq = restored_values.get("seq_num")
                             occupied = occupied_seq_nums.get(
                                 task_project_id, set()
                             ) | batch_claimed.get(task_project_id, set())
@@ -617,7 +641,7 @@ class TaskSyncManager(GitHubTaskSyncMixin):
                                 current_max = max_seq_tracker.get(task_project_id, 0)
                                 final_seq = current_max + 1
 
-                            synced_values["seq_num"] = final_seq
+                            restored_values["seq_num"] = final_seq
                             batch_claimed.setdefault(task_project_id, set()).add(final_seq)
                             max_seq_tracker[task_project_id] = max(
                                 max_seq_tracker.get(task_project_id, 0), final_seq
@@ -625,52 +649,50 @@ class TaskSyncManager(GitHubTaskSyncMixin):
 
                             # Rebuild after every task is present so file order cannot
                             # truncate a child's hierarchy.
-                            synced_values["path_cache"] = str(final_seq)
+                            restored_values["path_cache"] = str(final_seq)
 
-                            # INSERT with all synced fields
-                            columns = ", ".join(["id"] + list(synced_values.keys()))
-                            placeholders = ", ".join(["%s"] * (1 + len(synced_values)))
+                            columns = ", ".join(["id"] + list(restored_values.keys()))
+                            placeholders = ", ".join(["%s"] * (1 + len(restored_values)))
                             cursor = conn.execute(
                                 f"INSERT INTO {'tasks'} ({columns}) VALUES ({placeholders}) "
                                 "ON CONFLICT (id) DO NOTHING",
-                                (task_id, *synced_values.values()),
+                                (task_id, *restored_values.values()),
                             )
                             if cursor.rowcount == 0:
                                 skipped_count += 1
                                 continue
                             pending_path_rebuilds.append(task_id)
                             existing_tasks[task_id] = {
-                                "updated_at": synced_values["updated_at"],
-                                "seq_num": synced_values["seq_num"],
-                                "path_cache": synced_values["path_cache"],
-                                "project_id": synced_values["project_id"],
-                                "parent_task_id": synced_values["parent_task_id"],
-                                "claimed_by_session_id": synced_values["claimed_by_session_id"],
-                                "created_in_session_id": synced_values["created_in_session_id"],
-                                "closed_in_session_id": synced_values["closed_in_session_id"],
+                                "updated_at": restored_values["updated_at"],
+                                "seq_num": restored_values["seq_num"],
+                                "path_cache": restored_values["path_cache"],
+                                "project_id": restored_values["project_id"],
+                                "parent_task_id": restored_values["parent_task_id"],
+                                "claimed_by_session_id": restored_values["claimed_by_session_id"],
+                                "created_in_session_id": restored_values["created_in_session_id"],
+                                "closed_in_session_id": restored_values["closed_in_session_id"],
                             }
                             imported_count += 1
                         else:
-                            # Existing task: update synced fields while preserving local state.
-                            set_clause = ", ".join(f"{col} = %s" for col in synced_values)
+                            set_clause = ", ".join(f"{col} = %s" for col in restored_values)
                             cursor = conn.execute(
                                 f"UPDATE tasks SET {set_clause} WHERE id = %s "
                                 "AND (updated_at IS NULL OR updated_at < %s)",
-                                (*synced_values.values(), task_id, updated_at_file),
+                                (*restored_values.values(), task_id, updated_at_file),
                             )
                             if cursor.rowcount == 0:
                                 skipped_count += 1
                                 continue
                             existing_tasks[task_id] = {
                                 **existing_row,
-                                "updated_at": synced_values["updated_at"],
-                                "seq_num": synced_values["seq_num"],
-                                "path_cache": synced_values["path_cache"],
-                                "project_id": synced_values["project_id"],
-                                "parent_task_id": synced_values["parent_task_id"],
-                                "claimed_by_session_id": synced_values["claimed_by_session_id"],
-                                "created_in_session_id": synced_values["created_in_session_id"],
-                                "closed_in_session_id": synced_values["closed_in_session_id"],
+                                "updated_at": restored_values["updated_at"],
+                                "seq_num": restored_values["seq_num"],
+                                "path_cache": restored_values["path_cache"],
+                                "project_id": restored_values["project_id"],
+                                "parent_task_id": restored_values["parent_task_id"],
+                                "claimed_by_session_id": restored_values["claimed_by_session_id"],
+                                "created_in_session_id": restored_values["created_in_session_id"],
+                                "closed_in_session_id": restored_values["closed_in_session_id"],
                             }
                             updated_count += 1
 
@@ -719,31 +741,20 @@ class TaskSyncManager(GitHubTaskSyncMixin):
                         )
 
             logger.info(
-                "Import complete: %s imported, %s deleted, %s updated, %s skipped",
+                "Restore complete: %s imported, %s updated, %s skipped",
                 imported_count,
-                deleted_count,
                 updated_count,
                 skipped_count,
             )
 
-            # Rebuild search index to include imported tasks
-            if imported_count > 0 or updated_count > 0 or deleted_count > 0:
+            if imported_count > 0 or updated_count > 0:
                 try:
                     stats = self.task_manager.reindex_search(project_id)
                     logger.debug("Search index rebuilt with %s tasks", stats.get("item_count", 0))
                 except Exception as e:
                     logger.warning("Failed to rebuild search index: %s", e)
+            return imported_count + updated_count
 
         except Exception as e:
-            logger.exception("Failed to import tasks: %s", e)
+            logger.exception("Failed to restore tasks: %s", e)
             raise
-
-    def get_sync_status(self) -> dict[str, Any]:
-        """
-        Get sync availability based on whether the export file exists.
-        """
-        result_key = "status"
-        if not self.export_path.exists():
-            return {result_key: "no_file", "synced": False}
-
-        return {result_key: "available", "synced": True}

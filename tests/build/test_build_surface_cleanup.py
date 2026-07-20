@@ -105,7 +105,6 @@ def test_json_surfaces_omit_removed_fields(temp_db: HubDatabase) -> None:
 
     registry = create_task_ops_registry(
         LocalTaskManager(temp_db),
-        sync_manager=MagicMock(),
         config=MagicMock(),
     )
     tool = next(item for item in registry.list_tools() if item["name"] == "build_task")

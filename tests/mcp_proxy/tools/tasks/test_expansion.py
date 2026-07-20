@@ -39,7 +39,6 @@ def test_reset_expansion_output_tool_is_registered(temp_db) -> None:
 
     registry = create_task_ops_registry(
         LocalTaskManager(temp_db),
-        sync_manager=MagicMock(),
         config=MagicMock(),
     )
 
@@ -54,7 +53,6 @@ def test_start_expansion_schema_accepts_reset_output(temp_db) -> None:
 
     registry = create_task_ops_registry(
         LocalTaskManager(temp_db),
-        sync_manager=MagicMock(),
         config=MagicMock(),
     )
 
@@ -70,7 +68,6 @@ def test_start_expansion_schema_accepts_explicit_null_optionals(temp_db) -> None
 
     registry = create_task_ops_registry(
         LocalTaskManager(temp_db),
-        sync_manager=MagicMock(),
         config=MagicMock(),
     )
 

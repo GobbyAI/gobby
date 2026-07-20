@@ -38,7 +38,7 @@ async def test_create_task_fails_closed_when_session_project_lookup_errors(
         project_id=sample_project["id"],
     )
     manager = LocalTaskManager(temp_db)
-    ctx = RegistryContext(task_manager=manager, sync_manager=MagicMock())
+    ctx = RegistryContext(task_manager=manager)
     registry = create_crud_registry(ctx)
     session_count = manager.count_tasks(project_id=sample_project["id"])
     fallback_count = manager.count_tasks(project_id=fallback_project.id)
@@ -79,7 +79,7 @@ def test_build_task_tree_fails_closed_when_session_project_lookup_errors(
         project_id=sample_project["id"],
     )
     manager = LocalTaskManager(temp_db)
-    ctx = RegistryContext(task_manager=manager, sync_manager=MagicMock())
+    ctx = RegistryContext(task_manager=manager)
     before_count = manager.count_tasks(project_id=sample_project["id"])
     with patch.object(
         ctx.session_manager,
@@ -236,7 +236,7 @@ async def test_initialize_task_manifest_persists_review_anchor_cap(
         category="planning",
         task_type="review_anchor",
     )
-    ctx = RegistryContext(task_manager=manager, sync_manager=MagicMock())
+    ctx = RegistryContext(task_manager=manager)
     registry = create_stage_ops_registry(ctx)
     schema = registry.get_schema("initialize_task_manifest")
 
@@ -270,9 +270,7 @@ async def test_initialize_task_manifest_rejects_unknown_stage(
         category="planning",
         task_type="review_anchor",
     )
-    registry = create_stage_ops_registry(
-        RegistryContext(task_manager=manager, sync_manager=MagicMock())
-    )
+    registry = create_stage_ops_registry(RegistryContext(task_manager=manager))
 
     with pytest.raises(ValueError, match="Unknown stage 'missing'"):
         await registry.call(

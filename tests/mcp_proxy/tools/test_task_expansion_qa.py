@@ -6,7 +6,6 @@ from gobby.mcp_proxy.tools.tasks._context import RegistryContext
 from gobby.mcp_proxy.tools.tasks._expansion import create_expansion_registry
 from gobby.storage.expansion_runs import LocalExpansionRunManager
 from gobby.storage.tasks import LocalTaskManager
-from gobby.sync.tasks import TaskSyncManager
 
 pytestmark = pytest.mark.unit
 
@@ -14,11 +13,6 @@ pytestmark = pytest.mark.unit
 @pytest.fixture
 def task_manager(temp_db):
     return LocalTaskManager(temp_db)
-
-
-@pytest.fixture
-def sync_manager(task_manager, temp_dir):
-    return TaskSyncManager(task_manager, temp_dir / "tasks.jsonl")
 
 
 @pytest.fixture
@@ -31,10 +25,9 @@ def test_project(project_manager):
 
 
 @pytest.fixture
-def expansion_registry(task_manager, sync_manager):
+def expansion_registry(task_manager):
     ctx = RegistryContext(
         task_manager=task_manager,
-        sync_manager=sync_manager,
         task_validator=None,
         config=None,
     )

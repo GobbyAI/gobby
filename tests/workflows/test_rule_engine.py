@@ -1331,8 +1331,8 @@ class TestMultipleEffects:
             RuleDefinitionBody(
                 event=RuleTriggerEvent.PRE_COMPACT,
                 effects=[
-                    RuleEffect(type="mcp_call", server="gobby-tasks", tool="sync_export"),
-                    RuleEffect(type="mcp_call", server="gobby-memory", tool="sync_export"),
+                    RuleEffect(type="mcp_call", server="gobby-tasks", tool="backup_tasks"),
+                    RuleEffect(type="mcp_call", server="gobby-memory", tool="backup_memories"),
                 ],
             ),
         )

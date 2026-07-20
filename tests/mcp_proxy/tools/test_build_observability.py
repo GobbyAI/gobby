@@ -15,7 +15,6 @@ pytestmark = pytest.mark.unit
 def _registry(temp_db: Any) -> Any:
     return create_task_registry(
         LocalTaskManager(temp_db),
-        sync_manager=MagicMock(),
         config=MagicMock(),
     )
 
@@ -34,7 +33,6 @@ def test_build_observability_tools_are_registered_on_gobby_tasks(temp_db: Any) -
 def test_build_observability_tools_are_not_registered_on_gobby_tasks_ops(temp_db: Any) -> None:
     registry = create_task_ops_registry(
         LocalTaskManager(temp_db),
-        sync_manager=MagicMock(),
         config=MagicMock(),
     )
     tool_names = {tool["name"] for tool in registry.list_tools()}

@@ -9,7 +9,6 @@ import pytest
 from gobby.mcp_proxy.tools.tasks import create_task_registry
 from gobby.mcp_proxy.tools.tasks._ops_factory import create_task_ops_registry
 from gobby.storage.tasks import LocalTaskManager
-from gobby.sync.tasks import TaskSyncManager
 
 pytestmark = pytest.mark.unit
 
@@ -20,10 +19,9 @@ REVIEW_TOOLS = ("submit_for_review", "approve_review", "reject_review")
 def registries():
     task_manager = MagicMock(spec=LocalTaskManager)
     task_manager.db = MagicMock()
-    sync_manager = MagicMock(spec=TaskSyncManager)
     return (
-        create_task_registry(task_manager, sync_manager),
-        create_task_ops_registry(task_manager, sync_manager),
+        create_task_registry(task_manager),
+        create_task_ops_registry(task_manager),
     )
 
 

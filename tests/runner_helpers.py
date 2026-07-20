@@ -36,8 +36,8 @@ def apply_safe_runner_config_defaults(config: MagicMock) -> MagicMock:
 
     config.session_lifecycle = getattr(config, "session_lifecycle", MagicMock())
     config.message_tracking = getattr(config, "message_tracking", None)
-    config.memory_sync = getattr(config, "memory_sync", MagicMock())
-    set_mock_default(config.memory_sync, "enabled", False)
+    config.memory_backup = getattr(config, "memory_backup", MagicMock())
+    set_mock_default(config.memory_backup, "enabled", False)
 
     config.ui = getattr(config, "ui", MagicMock())
     set_mock_default(config.ui, "enabled", False)
@@ -122,7 +122,6 @@ def create_base_patches(
         patch("gobby.runner_init.storage.LocalTaskManager"),
         patch("gobby.runner_init.storage.SessionTaskManager"),
         patch("gobby.runner_init.services.MCPClientManager", return_value=mock_mcp_manager),
-        patch("gobby.runner_init.services.TaskSyncManager"),
         patch("gobby.runner_init.services.MemoryBackupManager"),
         patch("gobby.runner_init.services.SessionMessageProcessor", return_value=AsyncMock()),
         patch("gobby.runner_init.services.TaskValidator"),

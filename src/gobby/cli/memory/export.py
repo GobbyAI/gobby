@@ -6,8 +6,6 @@ from types import ModuleType
 
 import click
 
-from gobby.sync.export_context import in_jsonl_export_context
-
 
 def _facade() -> ModuleType:
     return importlib.import_module("gobby.cli.memory")
@@ -79,13 +77,8 @@ def export_memories(
     help="Output file path (default: .gobby/memories.jsonl)",
 )
 @click.option("--quiet", "-q", is_flag=True, help="Suppress output")
-@click.option(
-    "--force",
-    is_flag=True,
-    help="Allow replacing an existing backup with fewer merged records",
-)
 @click.pass_context
-def backup_memories(ctx: click.Context, output_path: str | None, quiet: bool, force: bool) -> None:
+def backup_memories(ctx: click.Context, output_path: str | None, quiet: bool) -> None:
     """Backup memories to JSONL file.
 
     Exports project-scoped memories to a JSONL file for backup/disaster recovery.
@@ -98,20 +91,12 @@ def backup_memories(ctx: click.Context, output_path: str | None, quiet: bool, fo
         gobby memory backup -o ~/backups/mem.jsonl   # Export to custom path
     """
     from gobby.config.persistence import MemoryBackupConfig
-    from gobby.sync.memories import MemoryBackupManager, MemoryExportError
+    from gobby.sync.memories import MemoryBackupError, MemoryBackupManager
     from gobby.utils.project_context import get_project_context
 
     project_ctx = get_project_context(cwd=Path.cwd())
     raw_project_id = project_ctx.get("id") if project_ctx else None
     project_id = str(raw_project_id) if raw_project_id else None
-
-    if not output_path and not in_jsonl_export_context():
-        if not quiet:
-            click.echo(
-                "Skipping memory backup: .gobby/memories.jsonl is generated only during "
-                "remote push."
-            )
-        return
 
     memory_module = _facade()
     manager = memory_module.get_memory_manager(ctx)
@@ -121,7 +106,7 @@ def backup_memories(ctx: click.Context, output_path: str | None, quiet: bool, fo
     else:
         export_path = _default_backup_path(project_ctx)
 
-    config = MemoryBackupConfig(enabled=True, export_path=export_path)
+    config = MemoryBackupConfig(enabled=True, backup_path=export_path)
     backup_mgr = MemoryBackupManager(
         db=manager.db,
         memory_manager=manager,
@@ -129,8 +114,8 @@ def backup_memories(ctx: click.Context, output_path: str | None, quiet: bool, fo
     )
 
     try:
-        count = backup_mgr.backup_sync(project_id=project_id, force=force)
-    except MemoryExportError as exc:
+        count = backup_mgr.backup_sync(project_id=project_id)
+    except MemoryBackupError as exc:
         raise click.ClickException(str(exc)) from exc
     if not quiet:
         if count > 0:
@@ -175,11 +160,11 @@ def restore_memories(ctx: click.Context, input_path: str | None, quiet: bool) ->
         return
 
     from gobby.config.persistence import MemoryBackupConfig
-    from gobby.sync.memories import MemoryBackupManager, MemoryImportError
+    from gobby.sync.memories import MemoryBackupManager, MemoryRestoreError
 
     memory_module = _facade()
     manager = memory_module.get_memory_manager(ctx)
-    config = MemoryBackupConfig(enabled=True, export_path=restore_path)
+    config = MemoryBackupConfig(enabled=True, backup_path=restore_path)
     backup_mgr = MemoryBackupManager(
         db=manager.db,
         memory_manager=manager,
@@ -187,8 +172,8 @@ def restore_memories(ctx: click.Context, input_path: str | None, quiet: bool) ->
     )
 
     try:
-        count = backup_mgr.import_sync()
-    except MemoryImportError as exc:
+        count = backup_mgr.restore_sync()
+    except MemoryRestoreError as exc:
         raise click.ClickException(str(exc)) from exc
     if not quiet:
         if count > 0:

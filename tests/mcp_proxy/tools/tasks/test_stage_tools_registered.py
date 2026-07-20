@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 from typing import Any
-from unittest.mock import MagicMock
 
 import pytest
 
@@ -31,36 +30,32 @@ def _tool_names(registry: Any) -> set[str]:
 
 def test_mutating_tools_absent_from_gobby_tasks(
     mock_task_manager: Any,
-    mock_sync_manager: Any,
 ) -> None:
-    names = _tool_names(create_task_registry(mock_task_manager, mock_sync_manager))
+    names = _tool_names(create_task_registry(mock_task_manager))
 
     assert names.isdisjoint(MUTATING_STAGE_TOOLS)
 
 
 def test_mutating_tools_visible_on_gobby_tasks_ops(
     mock_task_manager: Any,
-    mock_sync_manager: Any,
 ) -> None:
-    names = _tool_names(create_task_ops_registry(mock_task_manager, mock_sync_manager))
+    names = _tool_names(create_task_ops_registry(mock_task_manager))
 
     assert MUTATING_STAGE_TOOLS <= names
 
 
 def test_read_tools_absent_from_gobby_tasks_ops(
     mock_task_manager: Any,
-    mock_sync_manager: Any,
 ) -> None:
-    names = _tool_names(create_task_ops_registry(mock_task_manager, mock_sync_manager))
+    names = _tool_names(create_task_ops_registry(mock_task_manager))
 
     assert names.isdisjoint(READ_STAGE_TOOLS)
 
 
 def test_read_tools_visible_on_gobby_tasks(
     mock_task_manager: Any,
-    mock_sync_manager: Any,
 ) -> None:
-    names = _tool_names(create_task_registry(mock_task_manager, mock_sync_manager))
+    names = _tool_names(create_task_registry(mock_task_manager))
 
     assert READ_STAGE_TOOLS <= names
 
@@ -87,9 +82,7 @@ def _registry_with_custom_stage(temp_db: Any) -> Any:
             default_max_review_rounds=7,
         )
     )
-    return create_stage_registry_ops_registry(
-        RegistryContext(task_manager=manager, sync_manager=MagicMock())
-    )
+    return create_stage_registry_ops_registry(RegistryContext(task_manager=manager))
 
 
 @pytest.mark.asyncio
@@ -115,9 +108,7 @@ async def test_stage_registry_mutations_return_not_found_error(
     tool_name: str,
 ) -> None:
     manager = LocalTaskManager(temp_db)
-    registry = create_stage_registry_ops_registry(
-        RegistryContext(task_manager=manager, sync_manager=MagicMock())
-    )
+    registry = create_stage_registry_ops_registry(RegistryContext(task_manager=manager))
     arguments: dict[str, Any] = {"name": "missing_stage"}
     if tool_name == "update_stage":
         arguments["updates"] = {"description": "Still missing"}

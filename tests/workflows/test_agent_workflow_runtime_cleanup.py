@@ -194,9 +194,7 @@ async def test_submit_for_review_handoff_terminates_worker_and_unblocks_reviewer
         )
     )
 
-    registry = stage_ops.create_stage_ops_registry(
-        RegistryContext(task_manager=task_manager, sync_manager=SimpleNamespace())
-    )
+    registry = stage_ops.create_stage_ops_registry(RegistryContext(task_manager=task_manager))
     with session_context_for_test(child.id):
         handoff = registry.get_tool("submit_for_review")(
             task_id=task.id,

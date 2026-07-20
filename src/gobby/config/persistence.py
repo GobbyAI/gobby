@@ -5,7 +5,7 @@ Contains storage and sync-related Pydantic config models:
 - DatabasesConfig: Shared database connections (Qdrant, FalkorDB)
 - EmbeddingsConfig: Embedding model settings (shared by memory, tools, code index)
 - MemoryConfig: Memory-specific behavior (crossrefs, decay, search)
-- MemoryBackupConfig: Memory file sync settings (debounce, export path)
+- MemoryBackupConfig: Memory JSONL backup settings
 
 Extracted from app.py using Strangler Fig pattern for code decomposition.
 """
@@ -699,30 +699,13 @@ class MemoryConfig(BaseModel):
 
 
 class MemoryBackupConfig(BaseModel):
-    """Memory backup configuration (filesystem export).
-
-    Note: This was previously named MemorySyncConfig.
-    Memories are stored in the database via MemoryBackendProtocol; this config
-    controls the JSONL backup file export (for disaster recovery/migration).
-    """
+    """Memory JSONL backup configuration for disaster recovery and migration."""
 
     enabled: bool = Field(
         default=True,
-        description="Enable memory synchronization to filesystem",
+        description="Enable memory JSONL backup and restore tools",
     )
-    export_debounce: float = Field(
-        default=5.0,
-        description="Seconds to wait before exporting after a change",
-    )
-    export_path: Path = Field(
+    backup_path: Path = Field(
         default=Path(".gobby/memories.jsonl"),
-        description="Path to the memories export file (relative to project root or absolute)",
+        description="Path to the memories backup file (relative to project root or absolute)",
     )
-
-    @field_validator("export_debounce")
-    @classmethod
-    def validate_positive(cls, v: float) -> float:
-        """Validate value is non-negative."""
-        if v < 0:
-            raise ValueError("Value must be non-negative")
-        return v

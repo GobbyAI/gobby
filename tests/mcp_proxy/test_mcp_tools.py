@@ -5,7 +5,6 @@ import pytest
 from gobby.mcp_proxy.tools.internal import InternalToolRegistry
 from gobby.mcp_proxy.tools.tasks import create_task_registry
 from gobby.storage.tasks import LocalTaskManager
-from gobby.sync.tasks import TaskSyncManager
 
 pytestmark = pytest.mark.unit
 
@@ -18,13 +17,8 @@ def mock_task_manager():
 
 
 @pytest.fixture
-def mock_sync_manager():
-    return MagicMock(spec=TaskSyncManager)
-
-
-@pytest.fixture
-def task_registry(mock_task_manager, mock_sync_manager):
-    return create_task_registry(mock_task_manager, mock_sync_manager)
+def task_registry(mock_task_manager):
+    return create_task_registry(mock_task_manager)
 
 
 def test_create_task_registry_returns_registry(task_registry) -> None:
@@ -73,7 +67,7 @@ def test_task_registry_get_schema(task_registry) -> None:
 
 
 @pytest.mark.asyncio
-async def test_create_task(mock_task_manager, mock_sync_manager):
+async def test_create_task(mock_task_manager):
     """Test create_task tool execution."""
     # Mock return value for create_task_with_decomposition (returns dict with task key)
     mock_task = MagicMock()
@@ -95,7 +89,7 @@ async def test_create_task(mock_task_manager, mock_sync_manager):
         mock_session_manager.get.return_value = mock_session
         MockSessionManager.return_value = mock_session_manager
 
-        registry = create_task_registry(mock_task_manager, mock_sync_manager)
+        registry = create_task_registry(mock_task_manager)
 
         from gobby.utils.session_context import session_context_for_test
 
@@ -129,7 +123,7 @@ async def test_create_task(mock_task_manager, mock_sync_manager):
 
 
 @pytest.mark.asyncio
-async def test_create_task_with_session_id(mock_task_manager, mock_sync_manager):
+async def test_create_task_with_session_id(mock_task_manager):
     """Test create_task tool captures session_id as created_in_session_id."""
     # Mock return value for create_task_with_decomposition (returns dict with task key)
     mock_task = MagicMock()
@@ -150,7 +144,7 @@ async def test_create_task_with_session_id(mock_task_manager, mock_sync_manager)
         mock_session_manager.get.return_value = mock_session
         MockSessionManager.return_value = mock_session_manager
 
-        registry = create_task_registry(mock_task_manager, mock_sync_manager)
+        registry = create_task_registry(mock_task_manager)
 
         from gobby.utils.session_context import session_context_for_test
 
@@ -180,9 +174,9 @@ async def test_create_task_with_session_id(mock_task_manager, mock_sync_manager)
 
 
 @pytest.mark.asyncio
-async def test_get_task_not_found(mock_task_manager, mock_sync_manager):
+async def test_get_task_not_found(mock_task_manager):
     """Test get_task returns error when task not found."""
-    registry = create_task_registry(mock_task_manager, mock_sync_manager)
+    registry = create_task_registry(mock_task_manager)
 
     mock_task_manager.get_task.return_value = None
 
@@ -194,9 +188,9 @@ async def test_get_task_not_found(mock_task_manager, mock_sync_manager):
 
 
 @pytest.mark.asyncio
-async def test_list_ready_tasks(mock_task_manager, mock_sync_manager):
+async def test_list_ready_tasks(mock_task_manager):
     """Test list_ready_tasks tool execution."""
-    registry = create_task_registry(mock_task_manager, mock_sync_manager)
+    registry = create_task_registry(mock_task_manager)
 
     mock_t1 = MagicMock()
     mock_t1.to_brief.return_value = {"id": "t1"}
@@ -220,9 +214,9 @@ async def test_list_ready_tasks(mock_task_manager, mock_sync_manager):
 
 
 @pytest.mark.asyncio
-async def test_list_ready_tasks_all_projects(mock_task_manager, mock_sync_manager):
+async def test_list_ready_tasks_all_projects(mock_task_manager):
     """Test list_ready_tasks with all_projects=True ignores project filter."""
-    registry = create_task_registry(mock_task_manager, mock_sync_manager)
+    registry = create_task_registry(mock_task_manager)
 
     mock_t1 = MagicMock()
     mock_t1.to_brief.return_value = {"id": "t1"}
@@ -329,9 +323,9 @@ def test_get_task_diff_schema(task_registry) -> None:
 
 
 @pytest.mark.asyncio
-async def test_link_commit_tool(mock_task_manager, mock_sync_manager):
+async def test_link_commit_tool(mock_task_manager):
     """Test link_commit tool execution."""
-    registry = create_task_registry(mock_task_manager, mock_sync_manager)
+    registry = create_task_registry(mock_task_manager)
 
     mock_task = MagicMock()
     mock_task.id = "t1"
@@ -339,7 +333,7 @@ async def test_link_commit_tool(mock_task_manager, mock_sync_manager):
     mock_task.to_dict.return_value = {"id": "t1", "commits": ["abc123"]}
     mock_task_manager.link_commit.return_value = mock_task
 
-    with patch("gobby.mcp_proxy.tools.task_sync.get_project_context", return_value=None):
+    with patch("gobby.mcp_proxy.tools.task_commits.get_project_context", return_value=None):
         result = await registry.call(
             "link_commit",
             {"task_id": "t1", "commit_sha": "abc123"},
@@ -351,9 +345,9 @@ async def test_link_commit_tool(mock_task_manager, mock_sync_manager):
 
 
 @pytest.mark.asyncio
-async def test_unlink_commit_tool(mock_task_manager, mock_sync_manager):
+async def test_unlink_commit_tool(mock_task_manager):
     """Test unlink_commit tool execution."""
-    registry = create_task_registry(mock_task_manager, mock_sync_manager)
+    registry = create_task_registry(mock_task_manager)
 
     mock_task = MagicMock()
     mock_task.id = "t1"
@@ -361,7 +355,7 @@ async def test_unlink_commit_tool(mock_task_manager, mock_sync_manager):
     mock_task.to_dict.return_value = {"id": "t1", "commits": []}
     mock_task_manager.unlink_commit.return_value = mock_task
 
-    with patch("gobby.mcp_proxy.tools.task_sync.get_project_context", return_value=None):
+    with patch("gobby.mcp_proxy.tools.task_commits.get_project_context", return_value=None):
         result = await registry.call(
             "unlink_commit",
             {"task_id": "t1", "commit_sha": "abc123"},
@@ -372,14 +366,14 @@ async def test_unlink_commit_tool(mock_task_manager, mock_sync_manager):
 
 
 @pytest.mark.asyncio
-async def test_auto_link_commits_tool(mock_task_manager, mock_sync_manager):
+async def test_auto_link_commits_tool(mock_task_manager):
     """Test auto_link_commits tool execution."""
     from gobby.tasks.commits import AutoLinkResult
 
     # Patch before creating registry since functions are captured at creation time
     with (
         patch("gobby.tasks.commits.auto_link_commits") as mock_auto_link,
-        patch("gobby.mcp_proxy.tools.task_sync.resolve_project_repo_path", return_value=None),
+        patch("gobby.mcp_proxy.tools.task_commits.resolve_project_repo_path", return_value=None),
     ):
         mock_auto_link.return_value = AutoLinkResult(
             linked_tasks={"t1": ["abc123", "def456"]},
@@ -387,7 +381,7 @@ async def test_auto_link_commits_tool(mock_task_manager, mock_sync_manager):
             skipped=0,
         )
 
-        registry = create_task_registry(mock_task_manager, mock_sync_manager)
+        registry = create_task_registry(mock_task_manager)
         result = await registry.call(
             "auto_link_commits",
             {"since": "1 week ago"},
@@ -398,9 +392,9 @@ async def test_auto_link_commits_tool(mock_task_manager, mock_sync_manager):
 
 
 @pytest.mark.asyncio
-async def test_link_commit_invalid_task(mock_task_manager, mock_sync_manager):
+async def test_link_commit_invalid_task(mock_task_manager):
     """Test link_commit with non-existent task."""
-    registry = create_task_registry(mock_task_manager, mock_sync_manager)
+    registry = create_task_registry(mock_task_manager)
 
     mock_task_manager.link_commit.side_effect = ValueError("Task not found")
 

@@ -13,7 +13,6 @@ from gobby.mcp_proxy.tools.tasks._expansion import (
 )
 from gobby.storage.expansion_runs import LocalExpansionRunManager
 from gobby.storage.tasks import LocalTaskManager
-from gobby.sync.tasks import TaskSyncManager
 from gobby.utils.session_context import session_context_for_test
 from tests._timing import drain_asyncio_tasks
 
@@ -23,11 +22,6 @@ pytestmark = pytest.mark.unit
 @pytest.fixture
 def task_manager(temp_db):
     return LocalTaskManager(temp_db)
-
-
-@pytest.fixture
-def sync_manager(task_manager, temp_dir):
-    return TaskSyncManager(task_manager, temp_dir / "tasks.jsonl")
 
 
 @pytest.fixture
@@ -51,10 +45,9 @@ def test_session(session_manager, test_project):
 
 
 @pytest.fixture
-def expansion_registry(task_manager, sync_manager):
+def expansion_registry(task_manager):
     ctx = RegistryContext(
         task_manager=task_manager,
-        sync_manager=sync_manager,
         task_validator=None,
         config=None,
     )

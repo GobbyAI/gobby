@@ -10,7 +10,6 @@ import pytest
 from gobby.mcp_proxy.tools.tasks import create_task_registry
 from gobby.mcp_proxy.tools.tasks._errors import TaskToolErrorCode
 from gobby.storage.tasks import LocalTaskManager, Task
-from gobby.sync.tasks import TaskSyncManager
 from gobby.utils.session_context import session_context_for_test
 
 pytestmark = pytest.mark.unit
@@ -57,12 +56,7 @@ def mock_task_manager() -> MagicMock:
     return manager
 
 
-@pytest.fixture
-def mock_sync_manager() -> MagicMock:
-    return MagicMock(spec=TaskSyncManager)
-
-
-def _create_registry(task_manager: MagicMock, sync_manager: MagicMock) -> Any:
+def _create_registry(task_manager: MagicMock) -> Any:
     with (
         patch("gobby.mcp_proxy.tools.tasks._context.SessionTaskManager"),
         patch("gobby.mcp_proxy.tools.tasks._context.SessionManager") as mock_session_manager_cls,
@@ -73,17 +67,16 @@ def _create_registry(task_manager: MagicMock, sync_manager: MagicMock) -> Any:
             project_id="11111111-1111-4111-8111-111111110001"
         )
         mock_session_manager_cls.return_value = session_manager
-        return create_task_registry(task_manager, sync_manager)
+        return create_task_registry(task_manager)
 
 
 @pytest.mark.asyncio
 async def test_claim_task_closed_task_returns_task_closed(
     mock_task_manager: MagicMock,
-    mock_sync_manager: MagicMock,
 ) -> None:
     task = _make_task(status="closed")
     mock_task_manager.get_task.return_value = task
-    registry = _create_registry(mock_task_manager, mock_sync_manager)
+    registry = _create_registry(mock_task_manager)
 
     with session_context_for_test("session-abc"):
         result = await registry.call("claim_task", {"task_id": task.id})
@@ -98,11 +91,10 @@ async def test_claim_task_closed_task_returns_task_closed(
 @pytest.mark.asyncio
 async def test_claim_task_conflict_returns_claim_conflict(
     mock_task_manager: MagicMock,
-    mock_sync_manager: MagicMock,
 ) -> None:
     task = _make_task(status="in_progress", claimed_by_session_id="other-session")
     mock_task_manager.get_task.return_value = task
-    registry = _create_registry(mock_task_manager, mock_sync_manager)
+    registry = _create_registry(mock_task_manager)
 
     with session_context_for_test("session-abc"):
         result = await registry.call("claim_task", {"task_id": task.id})
@@ -125,14 +117,13 @@ async def test_claim_task_conflict_returns_claim_conflict(
 )
 async def test_lifecycle_closed_task_returns_task_closed(
     mock_task_manager: MagicMock,
-    mock_sync_manager: MagicMock,
     tool_name: str,
     extra_args: dict[str, Any],
     error_fragment: str,
 ) -> None:
     task = _make_task(status="closed")
     mock_task_manager.get_task.return_value = task
-    registry = _create_registry(mock_task_manager, mock_sync_manager)
+    registry = _create_registry(mock_task_manager)
 
     with session_context_for_test("session-abc"):
         result = await registry.call(tool_name, {"task_id": task.id, **extra_args})
@@ -153,14 +144,13 @@ async def test_lifecycle_closed_task_returns_task_closed(
 )
 async def test_lifecycle_invalid_status_returns_task_invalid_status(
     mock_task_manager: MagicMock,
-    mock_sync_manager: MagicMock,
     tool_name: str,
     status: str,
     extra_args: dict[str, Any],
 ) -> None:
     task = _make_task(status=status)
     mock_task_manager.get_task.return_value = task
-    registry = _create_registry(mock_task_manager, mock_sync_manager)
+    registry = _create_registry(mock_task_manager)
 
     with session_context_for_test("session-abc"):
         result = await registry.call(tool_name, {"task_id": task.id, **extra_args})
@@ -173,13 +163,12 @@ async def test_lifecycle_invalid_status_returns_task_invalid_status(
 @pytest.mark.asyncio
 async def test_lifecycle_value_error_with_unrelated_status_word_is_generic(
     mock_task_manager: MagicMock,
-    mock_sync_manager: MagicMock,
 ) -> None:
     task = _make_task(status="open")
     message = "Cannot update username status cache"
     mock_task_manager.get_task.return_value = task
     mock_task_manager.escalate_task.side_effect = ValueError(message)
-    registry = _create_registry(mock_task_manager, mock_sync_manager)
+    registry = _create_registry(mock_task_manager)
 
     with session_context_for_test("session-abc"):
         result = await registry.call(

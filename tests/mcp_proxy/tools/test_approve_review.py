@@ -88,12 +88,6 @@ def _task(
 
 
 @pytest.fixture
-def mock_sync_manager():
-    """Create a mock sync manager."""
-    return MagicMock()
-
-
-@pytest.fixture
 def sample_task_needs_review():
     """Create a task in needs_review status."""
     return _task(status="needs_review", description="Test description", seq_num=42)
@@ -112,14 +106,13 @@ def sample_task_open():
 
 
 @pytest.fixture
-def stage_ops_registry(mock_task_manager, mock_sync_manager):
+def stage_ops_registry(mock_task_manager):
     """Create a stage ops registry with approve_review tool."""
     from gobby.mcp_proxy.tools.tasks._context import RegistryContext
     from gobby.mcp_proxy.tools.tasks._stage_ops import create_stage_ops_registry
 
     ctx = RegistryContext(
         task_manager=mock_task_manager,
-        sync_manager=mock_sync_manager,
     )
     ctx.resolve_session_id = MagicMock(return_value="resolved-session-abc")
     ctx.session_manager = MagicMock()
@@ -333,13 +326,12 @@ class TestApproveSignoffSummary:
             yield
 
     @pytest.fixture
-    def registry_with_ctx(self, mock_task_manager, mock_sync_manager):
+    def registry_with_ctx(self, mock_task_manager):
         from gobby.mcp_proxy.tools.tasks._context import RegistryContext
         from gobby.mcp_proxy.tools.tasks._stage_ops import create_stage_ops_registry
 
         ctx = RegistryContext(
             task_manager=mock_task_manager,
-            sync_manager=mock_sync_manager,
         )
         ctx.resolve_session_id = MagicMock(return_value="resolved-session-abc")
         ctx.session_task_manager = MagicMock()

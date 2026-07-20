@@ -7,9 +7,6 @@ Provides tools for linking git commits to tasks:
 - auto_link_commits: Auto-detect and link commits mentioning task IDs
 - get_task_diff: Page a task's commit and working-tree diff
 
-Sync tools (sync_tasks, sync_import, sync_export, get_sync_status) have been
-removed from MCP — they are CLI-only operations.
-
 Extracted from tasks.py using Strangler Fig pattern for code decomposition.
 """
 
@@ -38,7 +35,6 @@ from gobby.utils.project_context import get_project_context
 if TYPE_CHECKING:
     from gobby.storage.projects import LocalProjectManager
     from gobby.storage.tasks import LocalTaskManager
-    from gobby.sync.tasks import TaskSyncManager
 
 __all__ = ["create_commit_registry"]
 
@@ -50,7 +46,6 @@ def get_current_project_id() -> str | None:
 
 
 def create_commit_registry(
-    sync_manager: "TaskSyncManager | None" = None,
     task_manager: "LocalTaskManager | None" = None,
     project_manager: "LocalProjectManager | None" = None,
     auto_link_commits_fn: Callable[..., Any] | None = None,
@@ -62,7 +57,6 @@ def create_commit_registry(
     Create a registry with commit linking tools.
 
     Args:
-        sync_manager: TaskSyncManager instance
         task_manager: LocalTaskManager instance (required for task ID resolution)
         project_manager: LocalProjectManager instance (for repo_path lookup)
         auto_link_commits_fn: Function for auto-linking commits (injectable for testing)
@@ -81,8 +75,6 @@ def create_commit_registry(
         description="Task commit linking tools",
     )
 
-    if sync_manager is None:
-        raise ValueError("sync_manager is required")
     if task_manager is None:
         raise ValueError("task_manager is required for task ID resolution")
 
