@@ -15,7 +15,7 @@ from gobby.ai import (
     ToolChatResult,
 )
 from gobby.config.tasks import TaskValidationConfig
-from gobby.tasks.diff_paging import DiffPagingError
+from gobby.tasks.diff_paging import DiffPagingError, ManifestItem
 from gobby.tasks.validation import TaskValidator, ValidationResult
 from gobby.tasks.validation_tool_loop import (
     ValidationVerdictSink,
@@ -23,6 +23,7 @@ from gobby.tasks.validation_tool_loop import (
     is_doc_only_manifest,
     normalize_tool_loop_result,
     prepare_validation_diff,
+    validate_with_tool_loop,
 )
 
 COMMIT_A = "a" * 40
@@ -163,6 +164,10 @@ async def _validate_linked(
     linked_commits: tuple[str, ...] = (COMMIT_A, COMMIT_B),
     first_commits_page: dict[str, object] | None = None,
     static_evidence_loader: MagicMock | None = None,
+    manifest_items: tuple[ManifestItem, ...] = (),
+    manifest_count: int = 3,
+    diff_total_bytes: int = 1_566,
+    verification_items: tuple[dict[str, object], ...] = (),
 ) -> ValidationResult:
     return await validator.validate_task(
         task_id="task-1",
@@ -175,8 +180,10 @@ async def _validate_linked(
         repo_path="/repo",
         linked_commits=linked_commits,
         first_commits_page=first_commits_page or _commit_page(COMMIT_A, total=2),
-        manifest_count=3,
-        diff_total_bytes=1_566,
+        manifest_items=manifest_items,
+        manifest_count=manifest_count,
+        diff_total_bytes=diff_total_bytes,
+        verification_items=verification_items,
         static_evidence_loader=static_evidence_loader,
     )
 
@@ -323,22 +330,32 @@ async def test_verified_refs_and_trace_are_in_feedback() -> None:
 
 @pytest.mark.asyncio
 async def test_complete_evidence_verdict_survives_adapter_budget_flag() -> None:
-    validator, _, _ = _validator(
-        _tool_result(
-            payload={
-                "status": "valid",
-                "feedback": "Incomplete investigation.",
-                "blocking_reasons": [],
-                "current_failure_evidence": [],
-                "evidence_refs": ["ev_runtime"],
-                "evidence_complete": True,
-            },
+    sink = ValidationVerdictSink()
+    sink.record_evidence_ref("ev_runtime")
+    submission = sink.submit(
+        {
+            "status": "valid",
+            "feedback": "Grounded verdict.",
+            "blocking_reasons": [],
+            "current_failure_evidence": [],
+            "evidence_refs": ["ev_runtime"],
+            "evidence_complete": True,
+        }
+    )
+    result = normalize_tool_loop_result(
+        ToolChatResult(
+            text="",
+            trace=_trace("ev_runtime"),
+            calls_used=2,
             budget_exhausted=True,
-        )
+            trace_available=True,
+            stop_reason="max_turns",
+        ),
+        submitted_verdict=sink.payload,
+        require_submission=True,
     )
 
-    result = await _validate_linked(validator)
-
+    assert submission.ok is True
     assert result.status == "valid"
     assert result.evidence_complete is True
 
@@ -377,12 +394,10 @@ async def test_prompt_uses_commit_count_first_page_and_cursor_metadata() -> None
     assert "Changed-file manifest count: 3" in request.prompt
     assert "Aggregate task-diff bytes: 1566" in request.prompt
     assert "without commit or path_selector" in request.prompt
-    assert "pytest: 12 passed" in request.prompt
+    assert "pytest: 12 passed" not in request.prompt
+    assert "No runtime-recorded command evidence items are available." in request.prompt
     assert "Implemented the requested validator." not in request.prompt
     assert "diff --git" not in request.prompt
-    assert request.max_turns == 16
-    assert request.limits.max_turns == 16
-    assert request.max_turns == 2 * request.limits.max_tool_calls + 2
     assert request.tool_policy.tools == ()
     assert request.builtins[-1].name == "submit_validation_verdict"
     verdict_schema = request.builtins[-1].input_schema
@@ -396,6 +411,54 @@ async def test_prompt_uses_commit_count_first_page_and_cursor_metadata() -> None
     assert "return an empty current_failure_evidence array" in request.prompt
     assert request.limits.max_tool_calls == 7
     assert request.limits.tool_timeout_seconds == 30.0
+
+
+@pytest.mark.asyncio
+async def test_request_wires_independent_turn_and_call_budgets() -> None:
+    validator, _, tool_chat_service = _validator(
+        _tool_result(
+            payload={
+                "status": "valid",
+                "feedback": "Grounded verdict.",
+                "blocking_reasons": [],
+                "current_failure_evidence": [],
+                "evidence_refs": ["ev_runtime"],
+                "evidence_complete": True,
+            }
+        )
+    )
+
+    await _validate_linked(validator)
+
+    request = tool_chat_service.chat_result.await_args.args[0]
+    assert request.max_turns == 16
+    assert request.limits.max_turns == 16
+    assert request.max_turns == 2 * request.limits.max_tool_calls + 2
+    assert request.limits.max_tool_calls == 7
+
+
+@pytest.mark.asyncio
+async def test_non_default_call_cap_reaches_bounded_request() -> None:
+    validator, _, tool_chat_service = _validator(
+        _tool_result(
+            payload={
+                "status": "pending",
+                "feedback": "Bounded.",
+                "blocking_reasons": [],
+                "current_failure_evidence": [],
+                "evidence_refs": ["ev_runtime"],
+                "evidence_complete": False,
+            }
+        ),
+        config=TaskValidationConfig(tool_loop_max_calls=20),
+    )
+
+    await _validate_linked(validator, diff_total_bytes=300_000)
+
+    request = tool_chat_service.chat_result.await_args.args[0]
+    assert request.limits.max_tool_calls == 20
+    assert request.max_turns == 42
+    assert "at most 14 content calls" in request.prompt
 
 
 def test_doc_only_classification_uses_complete_manifest_paths() -> None:
@@ -519,6 +582,330 @@ async def test_builtin_commit_is_checked_against_canonical_closure() -> None:
         await read_diff.handler({"commit": COMMIT_B}, context)
 
     assert exc_info.value.code == "commit_not_linked"
+
+
+@pytest.mark.asyncio
+async def test_bounded_builtins_forbid_broad_views_but_allow_per_file() -> None:
+    builtins = build_validation_builtins(
+        task_id="task-1",
+        repo_path="/repo",
+        canonical_commits=(COMMIT_A,),
+        preview_bytes=16_384,
+        bounded_mode=True,
+    )
+    read_diff = next(spec for spec in builtins if spec.name == "read_task_diff")
+    context = BuiltinExecutionContext(
+        max_payload_bytes=16_000,
+        evidence_ref="ev_file",
+        subprocess_deadline=None,
+    )
+
+    aggregate = await read_diff.handler({}, context)
+    per_commit = await read_diff.handler({"commit": COMMIT_A}, context)
+    page = {
+        "content": {"encoding": "utf-8", "text": "diff"},
+        "byte_start": 0,
+        "byte_end": 4,
+        "total_bytes": 4,
+        "complete": True,
+        "snapshot_hash": "snapshot-hash",
+        "view_hash": "view-hash",
+    }
+    with patch("gobby.tasks.validation_tool_loop.get_task_diff_page", return_value=page):
+        per_file = await read_diff.handler({"commit": COMMIT_A, "path_selector": "opaque"}, context)
+
+    assert aggregate.error_code == "bounded_view_forbidden"
+    assert per_commit.error_code == "bounded_view_forbidden"
+    assert per_file.ok is True
+    assert per_file.selector == {
+        "kind": "task_diff",
+        "task_id": "task-1",
+        "commit": COMMIT_A,
+        "path_selector": "opaque",
+    }
+
+
+def test_bounded_sink_rejects_complete_claim_then_accepts_correction() -> None:
+    sink = ValidationVerdictSink(bounded_mode=True)
+    sink.record_evidence_ref("ev_file")
+    payload = {
+        "status": "valid",
+        "feedback": "Grounded verdict.",
+        "blocking_reasons": [],
+        "current_failure_evidence": [],
+        "evidence_refs": ["ev_file"],
+        "evidence_complete": True,
+    }
+
+    rejected = sink.submit(payload)
+    payload["evidence_complete"] = False
+    accepted = sink.submit(payload)
+
+    assert rejected.error_code == "evidence_complete_invalid"
+    assert accepted.ok is True
+    assert sink.payload == payload
+
+
+@pytest.mark.asyncio
+async def test_verification_evidence_builtin_pages_successes_and_failures() -> None:
+    sink = ValidationVerdictSink()
+    builtins = build_validation_builtins(
+        task_id="task-1",
+        repo_path="/repo",
+        canonical_commits=(COMMIT_A,),
+        preview_bytes=16_384,
+        verdict_sink=sink,
+        verification_items=(
+            {"success": True, "command": "pytest tests/a.py", "private": "discard"},
+            {"success": False, "command": "ruff check", "exit_code": 1},
+        ),
+    )
+    list_evidence = next(spec for spec in builtins if spec.name == "list_verification_evidence")
+    context = BuiltinExecutionContext(
+        max_payload_bytes=16_000,
+        evidence_ref="ev_commands",
+        subprocess_deadline=None,
+    )
+
+    first = await list_evidence.handler({"offset": 0, "limit": 1}, context)
+    second = await list_evidence.handler({"offset": 1, "limit": 1}, context)
+    out_of_range = await list_evidence.handler({"offset": 3, "limit": 1}, context)
+
+    assert first.payload == {
+        "items": [{"success": True, "command": "pytest tests/a.py"}],
+        "total": 2,
+    }
+    assert first.complete is False
+    assert second.payload == {
+        "items": [{"success": False, "command": "ruff check", "exit_code": 1}],
+        "total": 2,
+    }
+    assert second.complete is True
+    assert out_of_range.error_code == "cursor_out_of_range"
+    assert sink.issued_evidence_refs == {"ev_commands"}
+
+
+def test_bounded_normalization_attaches_disclosure_and_rejects_complete_claim() -> None:
+    trace = (
+        _trace("ev_file")[0],
+        {
+            **_trace("ev_file")[1],
+            "arguments": {"commit": COMMIT_A, "path_selector": "opaque"},
+            "selector": {
+                "kind": "task_diff",
+                "task_id": "task-1",
+                "commit": COMMIT_A,
+                "path_selector": "opaque",
+            },
+        },
+    )
+    result = ToolChatResult(text="", trace=trace, trace_available=True)
+    payload = {
+        "status": "valid",
+        "feedback": "Selected file satisfies the criteria.",
+        "blocking_reasons": [],
+        "current_failure_evidence": [],
+        "evidence_refs": ["ev_file"],
+        "evidence_complete": False,
+    }
+    summary = {
+        "manifest_total": 2,
+        "inspected_count": 1,
+        "uninspected_count": 1,
+        "inspected_paths": ["src/a.py"],
+        "uninspected_sample": ["src/b.py"],
+        "content_call_budget": 26,
+    }
+
+    verdict = normalize_tool_loop_result(
+        result,
+        submitted_verdict=payload,
+        require_submission=True,
+        bounded_mode=True,
+        inspection_summary=summary,
+    )
+    invalid_claim = normalize_tool_loop_result(
+        result,
+        submitted_verdict={**payload, "evidence_complete": True},
+        require_submission=True,
+        bounded_mode=True,
+        inspection_summary=summary,
+    )
+
+    assert verdict.status == "valid"
+    assert verdict.evidence_complete is False
+    assert verdict.inspection_summary == summary
+    assert verdict.feedback is not None
+    provenance = json.loads(verdict.feedback.rsplit("\n", 1)[-1])
+    assert provenance["bounded_inspection"] == summary
+    assert invalid_claim.status == "pending"
+    assert invalid_claim.evidence_error == {
+        "code": "verdict_protocol_error",
+        "message": "bounded verdicts must submit evidence_complete=false",
+    }
+
+
+@pytest.mark.asyncio
+async def test_oversized_diff_runs_bounded_validation_with_disclosure() -> None:
+    service = AsyncMock()
+    manifest_items = (
+        ManifestItem(
+            commit=COMMIT_A,
+            status="M",
+            path={"encoding": "utf-8", "text": "src/a.py"},
+            path_selector="opaque-a",
+            lines_added=100,
+            lines_deleted=20,
+        ),
+        ManifestItem(
+            commit=COMMIT_A,
+            status="M",
+            path={"encoding": "utf-8", "text": "src/b.py"},
+            path_selector="opaque-b",
+            lines_added=2,
+            lines_deleted=1,
+        ),
+    )
+
+    async def run_bounded(request: ToolChatRequest) -> ToolChatResult:
+        specs = {spec.name: spec for spec in request.builtins}
+        page = {
+            "manifest": {
+                "items": list(manifest_items),
+                "cursor_offset": 0,
+                "cursor_end": 2,
+                "total": 2,
+                "complete": True,
+            },
+            "content": {"encoding": "utf-8", "text": "diff"},
+            "byte_start": 0,
+            "byte_end": 4,
+            "total_bytes": 4,
+            "complete": True,
+            "snapshot_hash": "snapshot-hash",
+            "view_hash": "view-hash",
+        }
+        with patch("gobby.tasks.validation_tool_loop.get_task_diff_page", return_value=page):
+            await specs["list_changed_files"].handler(
+                {"offset": 0},
+                BuiltinExecutionContext(
+                    max_payload_bytes=16_000,
+                    evidence_ref="ev_manifest",
+                    subprocess_deadline=None,
+                ),
+            )
+            await specs["read_task_diff"].handler(
+                {"commit": COMMIT_A, "path_selector": "opaque-a"},
+                BuiltinExecutionContext(
+                    max_payload_bytes=16_000,
+                    evidence_ref="ev_file",
+                    subprocess_deadline=None,
+                ),
+            )
+        await specs["submit_validation_verdict"].handler(
+            {
+                "status": "valid",
+                "feedback": "Relevant implementation file is correct.",
+                "blocking_reasons": [],
+                "current_failure_evidence": [],
+                "evidence_refs": ["ev_file"],
+                "evidence_complete": False,
+            },
+            BuiltinExecutionContext(
+                max_payload_bytes=16_000,
+                evidence_ref="ev_submit",
+                subprocess_deadline=None,
+            ),
+        )
+        trace = (
+            {
+                **_trace("ev_file")[0],
+                "range": {"cursor_offset": 0, "cursor_end": 2, "total": 2},
+            },
+            {
+                **_trace("ev_file")[1],
+                "arguments": {"commit": COMMIT_A, "path_selector": "opaque-a"},
+                "selector": {
+                    "kind": "task_diff",
+                    "task_id": "task-1",
+                    "commit": COMMIT_A,
+                    "path_selector": "opaque-a",
+                },
+            },
+        )
+        return ToolChatResult(text="", trace=trace, calls_used=3, trace_available=True)
+
+    service.chat_result.side_effect = run_bounded
+    verdict = await validate_with_tool_loop(
+        service,
+        TaskValidationConfig(),
+        task_id="task-1",
+        title="Validate a large change",
+        description="Inspect the relevant files.",
+        validation_criteria="Implementation is correct.",
+        category="code",
+        repo_path="/repo",
+        canonical_commits=(COMMIT_A,),
+        first_commits_page=_commit_page(COMMIT_A),
+        manifest_items=manifest_items,
+        manifest_count=2,
+        diff_total_bytes=1_078_130,
+    )
+
+    request = service.chat_result.call_args.args[0]
+    assert request.limits.max_tool_calls == 32
+    assert request.max_turns == request.limits.max_turns == 66
+    assert "at most 26 content calls" in request.prompt
+    assert "evidence_complete=false" in request.prompt
+    assert verdict.status == "valid"
+    assert verdict.evidence_complete is False
+    assert verdict.inspection_summary == {
+        "manifest_total": 2,
+        "inspected_count": 1,
+        "uninspected_count": 1,
+        "inspected_paths": ["src/a.py"],
+        "uninspected_sample": ["src/b.py"],
+        "content_call_budget": 26,
+    }
+
+
+@pytest.mark.asyncio
+async def test_infeasible_manifest_returns_typed_error_without_model_call() -> None:
+    service = AsyncMock()
+
+    verdict = await validate_with_tool_loop(
+        service,
+        TaskValidationConfig(),
+        task_id="task-1",
+        title="Validate an infeasible change",
+        description=None,
+        validation_criteria="Implementation is correct.",
+        category="code",
+        repo_path="/repo",
+        canonical_commits=(COMMIT_A,),
+        first_commits_page=_commit_page(COMMIT_A),
+        manifest_items=(),
+        manifest_count=6_000,
+        diff_total_bytes=1,
+    )
+
+    service.chat_result.assert_not_awaited()
+    assert verdict.status == "pending"
+    assert verdict.evidence_error == {
+        "code": "evidence_budget_exceeded",
+        "required_tool_calls": 36,
+        "configured_max_calls": 32,
+        "content_call_budget": 0,
+        "min_content_calls": 8,
+        "manifest_pages": 30,
+        "artifacts": [
+            {
+                "selector": {"kind": "task_diff", "task_id": "task-1"},
+                "total_bytes": 1,
+                "unconsumed_ranges": [[0, 1]],
+            }
+        ],
+    }
 
 
 def test_tool_loop_config_defaults() -> None:

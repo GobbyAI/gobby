@@ -1874,6 +1874,7 @@ class TestTaskValidationConfig:
         assert config.profile == FeatureProfile.MID
         assert "claude/sonnet" in candidate_labels(config.candidates)
         assert config.cli_candidate_timeout_seconds == 180.0
+        assert config.tool_loop_max_calls == 32
         assert config.prompt_path is None  # Uses default prompt from prompts/
 
 

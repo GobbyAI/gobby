@@ -9,7 +9,12 @@ from unittest.mock import patch
 import pytest
 
 from gobby.ai import BuiltinExecutionContext, InvocationRecord, ToolChatResult
-from gobby.tasks.validation_coverage import analyze_evidence_coverage, plan_tool_calls
+from gobby.tasks.diff_manifest import ManifestItem
+from gobby.tasks.validation_coverage import (
+    analyze_evidence_coverage,
+    compute_bounded_disclosure,
+    plan_tool_calls,
+)
 from gobby.tasks.validation_tool_loop import (
     ValidationVerdictSink,
     build_validation_builtins,
@@ -60,6 +65,24 @@ def _manifest_page(*, start: int, end: int, total: int, ref: str) -> InvocationR
         "complete": end == total,
         "content_hash": "snapshot",
     }
+
+
+def _manifest_item(
+    path: str,
+    selector: str,
+    *,
+    role: str | None = None,
+    status: str = "M",
+) -> ManifestItem:
+    item: ManifestItem = {
+        "commit": COMMIT,
+        "status": status,
+        "path": {"encoding": "utf-8", "text": path},
+        "path_selector": selector,
+    }
+    if role == "old" or role == "new":
+        item["role"] = role
+    return item
 
 
 def _retry_error(code: str) -> InvocationRecord:
@@ -127,6 +150,8 @@ def test_wide_manifest_uses_derived_bounded_batch_plan() -> None:
     assert plan.max_tool_calls == 13
     assert plan.max_turns == 28
     assert plan.within_bound is True
+    assert plan.mode == "exhaustive"
+    assert plan.content_call_budget == 7
 
 
 def test_over_budget_plan_derives_turns_from_capped_allocation() -> None:
@@ -141,9 +166,11 @@ def test_over_budget_plan_derives_turns_from_capped_allocation() -> None:
     assert plan.within_bound is False
     assert plan.max_tool_calls == 32
     assert plan.max_turns == 66
+    assert plan.mode == "bounded"
+    assert plan.content_call_budget == 26
 
 
-def test_minimum_plan_grants_turn_headroom_above_tool_budget() -> None:
+def test_smallest_derived_plan_grants_turn_headroom() -> None:
     plan = plan_tool_calls(
         diff_total_bytes=1,
         manifest_count=1,
@@ -154,6 +181,121 @@ def test_minimum_plan_grants_turn_headroom_above_tool_budget() -> None:
 
     assert plan.max_tool_calls == 7
     assert plan.max_turns == 16
+
+
+def test_oversized_production_shape_uses_bounded_content_budget() -> None:
+    plan = plan_tool_calls(
+        diff_total_bytes=1_078_130,
+        manifest_count=4,
+        preview_bytes=16_384,
+        manifest_page_limit=200,
+        configured_max_calls=32,
+    )
+
+    assert plan.required_tool_calls == 82
+    assert plan.mode == "bounded"
+    assert plan.content_call_budget == 26
+    assert plan.max_turns == 66
+
+
+def test_large_manifest_without_minimum_content_budget_is_infeasible() -> None:
+    plan = plan_tool_calls(
+        diff_total_bytes=1_000_000,
+        manifest_count=3_900,
+        preview_bytes=16_384,
+        manifest_page_limit=200,
+        configured_max_calls=32,
+    )
+
+    assert plan.mode == "infeasible"
+    assert plan.content_call_budget == 7
+
+
+def test_content_budget_clamps_to_zero() -> None:
+    plan = plan_tool_calls(
+        diff_total_bytes=1_000_000,
+        manifest_count=6_000,
+        preview_bytes=16_384,
+        manifest_page_limit=200,
+        configured_max_calls=32,
+    )
+
+    assert plan.mode == "infeasible"
+    assert plan.content_call_budget == 0
+
+
+def test_verification_page_is_reserved_in_exhaustive_and_bounded_plans() -> None:
+    exhaustive = plan_tool_calls(
+        diff_total_bytes=1,
+        manifest_count=1,
+        preview_bytes=16_384,
+        manifest_page_limit=200,
+        configured_max_calls=32,
+        verification_pages=1,
+    )
+    bounded = plan_tool_calls(
+        diff_total_bytes=1_000_000,
+        manifest_count=1,
+        preview_bytes=16_384,
+        manifest_page_limit=200,
+        configured_max_calls=32,
+        verification_pages=1,
+    )
+
+    assert exhaustive.required_tool_calls == 8
+    assert bounded.mode == "bounded"
+    assert bounded.content_call_budget == 25
+
+
+def test_bounded_disclosure_partitions_complete_content_artifacts() -> None:
+    manifest = (
+        _manifest_item("a.py", "a"),
+        _manifest_item("b.py", "b"),
+        _manifest_item("c.py", "c"),
+    )
+    trace = (
+        _page(start=0, end=10, total=10, ref="ev_a", path_selector="a"),
+        _page(start=0, end=5, total=10, ref="ev_b", path_selector="b"),
+    )
+
+    summary = compute_bounded_disclosure(trace, manifest_items=manifest, content_call_budget=26)
+
+    assert summary.manifest_total == 3
+    assert summary.inspected_paths == ("a.py",)
+    assert summary.uninspected_sample == ("b.py", "c.py")
+    assert summary.as_dict()["inspected_count"] == 1
+
+
+def test_bounded_disclosure_pairs_renames_and_accepts_file_artifacts() -> None:
+    manifest = (
+        _manifest_item("old.py", "old", role="old", status="R100"),
+        _manifest_item("new.py", "new", role="new", status="R100"),
+    )
+    trace = (
+        _page(
+            kind="file_at_commit",
+            start=0,
+            end=4,
+            total=4,
+            ref="ev_old",
+            path_selector="old",
+        ),
+    )
+
+    summary = compute_bounded_disclosure(trace, manifest_items=manifest, content_call_budget=8)
+
+    assert summary.manifest_total == 1
+    assert summary.inspected_count == 1
+    assert summary.inspected_paths == ("old.py -> new.py",)
+
+
+def test_bounded_disclosure_caps_uninspected_sample() -> None:
+    manifest = tuple(_manifest_item(f"file-{index}.py", str(index)) for index in range(25))
+
+    summary = compute_bounded_disclosure((), manifest_items=manifest, content_call_budget=8)
+
+    assert summary.uninspected_count == 25
+    assert len(summary.uninspected_sample) == 20
 
 
 def test_wide_manifest_must_cover_every_changed_file_in_production() -> None:
@@ -210,6 +352,45 @@ def test_production_requires_manifest_selection_before_terminal_verdict() -> Non
             }
         ],
     }
+
+
+def test_verification_metadata_cannot_replace_content_grounding() -> None:
+    verification_page: InvocationRecord = {
+        "tool_name": "list_verification_evidence",
+        "arguments": {"offset": 0},
+        "result_size_bytes": 128,
+        "ok": True,
+        "error_code": None,
+        "evidence_ref": "ev_commands",
+        "selector": {"kind": "verification_evidence", "task_id": "task-1"},
+        "range": {"cursor_offset": 0, "cursor_end": 1, "total": 1},
+        "complete": True,
+    }
+    trace = (
+        _manifest_page(start=0, end=1, total=1, ref="ev_manifest"),
+        _page(start=0, end=10, total=10, ref="ev_diff"),
+        verification_page,
+    )
+    payload = {
+        "status": "valid",
+        "feedback": "Commands passed.",
+        "blocking_reasons": [],
+        "current_failure_evidence": [],
+        "evidence_refs": ["ev_commands"],
+        "evidence_complete": True,
+    }
+
+    coverage = analyze_evidence_coverage(trace, require_manifest=True)
+    verdict = normalize_tool_loop_result(
+        ToolChatResult(text="", trace=trace, trace_available=True),
+        submitted_verdict=payload,
+        require_submission=True,
+    )
+
+    assert "ev_commands" in coverage.evidence_refs
+    assert "ev_commands" not in coverage.content_evidence_refs
+    assert verdict.status == "pending"
+    assert verdict.evidence_refs == ("ev_commands",)
 
 
 @pytest.mark.parametrize(

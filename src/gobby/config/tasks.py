@@ -165,6 +165,9 @@ class TaskExpansionConfig(FeatureDefaultConfig):
     )
 
 
+TOOL_LOOP_MAX_CALLS = 32
+
+
 class TaskValidationConfig(FeatureDefaultConfig):
     """Configuration for task validation (checking completion against criteria)."""
 
@@ -177,6 +180,12 @@ class TaskValidationConfig(FeatureDefaultConfig):
         ge=4,
         le=30_000,
         description="Default byte window for tool-loop diff and file reads.",
+    )
+    tool_loop_max_calls: int = Field(
+        default=TOOL_LOOP_MAX_CALLS,
+        ge=8,
+        le=128,
+        description="Maximum evidence-tool calls available to one validation loop.",
     )
     profile: FeatureProfile = Field(
         default=FeatureProfile.MID,

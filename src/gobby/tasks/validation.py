@@ -23,6 +23,7 @@ from gobby.config.tasks import TaskValidationConfig
 from gobby.llm import LLMService
 from gobby.prompts import PromptLoader
 from gobby.storage.hub.protocol import HubDatabase
+from gobby.tasks.diff_manifest import ManifestItem
 from gobby.tasks.validation_evidence import (
     build_diff_validation_evidence,
     build_file_context_evidence,
@@ -654,8 +655,10 @@ class TaskValidator:
         repo_path: str | None = None,
         linked_commits: Sequence[str] = (),
         first_commits_page: Mapping[str, object] | None = None,
+        manifest_items: Sequence[ManifestItem] = (),
         manifest_count: int = 0,
         diff_total_bytes: int = 0,
+        verification_items: Sequence[Mapping[str, object]] = (),
         static_evidence_loader: Callable[[], tuple[str, str | None]] | None = None,
     ) -> ValidationResult:
         """Validate through the grounded tool loop when linked diff metadata is available."""
@@ -682,12 +685,13 @@ class TaskValidator:
                     description=description,
                     validation_criteria=validation_criteria,
                     category=category,
-                    verification_evidence=verification_evidence,
                     repo_path=repo_path,
                     canonical_commits=linked_commits,
                     first_commits_page=first_commits_page,
+                    manifest_items=manifest_items,
                     manifest_count=manifest_count,
                     diff_total_bytes=diff_total_bytes,
+                    verification_items=verification_items,
                 )
             except CapabilityUnavailableError as exc:
                 logger.info(
@@ -721,6 +725,7 @@ class TaskValidator:
                     trace_summary=verdict.trace_summary,
                     evidence_error=verdict.evidence_error,
                     verdict_override=verdict.verdict_override,
+                    inspection_summary=verdict.inspection_summary,
                 )
 
         if static_evidence_loader is not None:

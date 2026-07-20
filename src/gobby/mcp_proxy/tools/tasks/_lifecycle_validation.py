@@ -15,6 +15,7 @@ from gobby.mcp_proxy.tools.tasks._escalation_coordinator import coordinate_task_
 from gobby.mcp_proxy.tools.tasks._helpers import SKIP_REASONS
 from gobby.storage.tasks import Task, TaskStaleStateError
 from gobby.storage.tasks._validation_backoff import TaskValidationBackoffStore
+from gobby.tasks.diff_manifest import ManifestItem
 from gobby.tasks.state_semantics import get_claimed_session_id, is_task_closed
 from gobby.tasks.validation_history import ValidationHistoryManager
 from gobby.tasks.validation_verdict import format_close_validation_message
@@ -402,8 +403,10 @@ async def validate_leaf_task_with_llm(
     repo_path: str | None = None,
     linked_commits: Sequence[str] = (),
     first_commits_page: Mapping[str, object] | None = None,
+    manifest_items: Sequence[ManifestItem] = (),
     manifest_count: int = 0,
     diff_total_bytes: int = 0,
+    verification_items: Sequence[Mapping[str, object]] = (),
     static_evidence_loader: Callable[[], tuple[str, str | None]] | None = None,
 ) -> ValidationResult:
     """Run LLM validation on a leaf task.
@@ -479,8 +482,10 @@ async def validate_leaf_task_with_llm(
         repo_path=repo_path,
         linked_commits=linked_commits,
         first_commits_page=first_commits_page,
+        manifest_items=manifest_items,
         manifest_count=manifest_count,
         diff_total_bytes=diff_total_bytes,
+        verification_items=verification_items,
         static_evidence_loader=static_evidence_loader,
     )
 
@@ -605,6 +610,8 @@ async def validate_leaf_task_with_llm(
         }
         if result.evidence_error is not None:
             extra["evidence_error"] = result.evidence_error
+        if result.inspection_summary is not None:
+            extra["inspection_summary"] = result.inspection_summary
         if result.verdict_override is not None:
             extra["verdict_override"] = result.verdict_override
         if escalated_now:
@@ -636,11 +643,17 @@ async def validate_leaf_task_with_llm(
         feedback=original_feedback,
         context_type=f"validation_{result.mode}",
     )
+    success_extra = (
+        {"inspection_summary": result.inspection_summary}
+        if result.inspection_summary is not None
+        else None
+    )
     return ValidationResult(
         can_close=True,
         validation_status="valid",
         validation_feedback=original_feedback,
         reset_reason="llm_valid",
+        extra=success_extra,
     )
 
 

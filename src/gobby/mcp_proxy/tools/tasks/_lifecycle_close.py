@@ -6,6 +6,7 @@ commit checks, session linking, and worktree status updates.
 
 import asyncio
 import logging
+from collections.abc import Mapping, Sequence
 from typing import Any
 
 from gobby.mcp_proxy.tools.internal import InternalToolRegistry
@@ -282,6 +283,7 @@ def register_close_task(registry: InternalToolRegistry, ctx: RegistryContext) ->
         should_skip = skip_validation or reason.lower() in SKIP_REASONS
         validation_status: str | None = None
         validation_feedback: str | None = None
+        close_extra: dict[str, Any] = {}
         validation_reset_reason = (
             "validation_skip_approval"
             if not skip_leaf_checks
@@ -351,10 +353,12 @@ def register_close_task(registry: InternalToolRegistry, ctx: RegistryContext) ->
                             task.id,
                             exc,
                         )
+                verification_items = _load_verification_items(ctx, resolved_session_id)
                 verification_evidence = _append_verification_evidence_context(
                     None,
                     ctx,
                     resolved_session_id,
+                    evidence_items=verification_items,
                 )
 
                 def load_static_evidence() -> tuple[str, str | None]:
@@ -386,12 +390,16 @@ def register_close_task(registry: InternalToolRegistry, ctx: RegistryContext) ->
                     first_commits_page=(
                         prepared_diff.first_commits_page if prepared_diff is not None else None
                     ),
+                    manifest_items=(
+                        prepared_diff.manifest_items if prepared_diff is not None else ()
+                    ),
                     manifest_count=(
                         prepared_diff.manifest_count if prepared_diff is not None else 0
                     ),
                     diff_total_bytes=(
                         prepared_diff.diff_total_bytes if prepared_diff is not None else 0
                     ),
+                    verification_items=verification_items,
                     static_evidence_loader=load_static_evidence,
                 )
                 if not llm_result.can_close:
@@ -406,6 +414,8 @@ def register_close_task(registry: InternalToolRegistry, ctx: RegistryContext) ->
                 validation_status = llm_result.validation_status
                 validation_feedback = llm_result.validation_feedback
                 validation_reset_reason = llm_result.reset_reason
+                if llm_result.extra:
+                    close_extra.update(llm_result.extra)
 
         # Determine close outcome
         route_to_escalation, store_override = determine_close_outcome(
@@ -554,7 +564,7 @@ def register_close_task(registry: InternalToolRegistry, ctx: RegistryContext) ->
             except Exception as e:
                 logger.debug("Best-effort had_edits reset failed: %s", e)
 
-        return {"success": True}
+        return {"success": True, **close_extra}
 
     registry.register(
         name="close_task",
@@ -623,22 +633,34 @@ def register_close_task(registry: InternalToolRegistry, ctx: RegistryContext) ->
     )
 
 
-def _append_verification_evidence_context(
-    validation_context: str | None,
+def _load_verification_items(
     ctx: RegistryContext,
     resolved_session_id: str | None,
-) -> str | None:
-    """Append successful validation command evidence to LLM validation context."""
+) -> tuple[Mapping[str, object], ...]:
     if not resolved_session_id:
-        return validation_context
+        return ()
     try:
         variables = ctx.session_var_manager.get_variables(resolved_session_id)
     except Exception as exc:
         logger.debug("Failed to load verification evidence for close validation: %s", exc)
-        return validation_context
-
+        return ()
     evidence_items = variables.get(VERIFICATION_EVIDENCE_VARIABLE)
     if not isinstance(evidence_items, list):
+        return ()
+    return tuple(item for item in evidence_items if isinstance(item, Mapping))
+
+
+def _append_verification_evidence_context(
+    validation_context: str | None,
+    ctx: RegistryContext,
+    resolved_session_id: str | None,
+    *,
+    evidence_items: Sequence[Mapping[str, object]] | None = None,
+) -> str | None:
+    """Append successful validation command evidence to LLM validation context."""
+    if evidence_items is None:
+        evidence_items = _load_verification_items(ctx, resolved_session_id)
+    if not evidence_items:
         return validation_context
 
     evidence_text = format_verification_evidence_context(

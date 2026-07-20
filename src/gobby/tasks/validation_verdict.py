@@ -23,6 +23,7 @@ class ValidationResult:
     trace_summary: tuple[dict[str, object], ...] = ()
     evidence_error: dict[str, object] | None = None
     verdict_override: dict[str, object] | None = None
+    inspection_summary: dict[str, object] | None = None
 
 
 def _coerce_blocking_reasons(value: object) -> list[str]:

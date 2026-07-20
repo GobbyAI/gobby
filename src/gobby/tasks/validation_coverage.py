@@ -6,14 +6,19 @@ import json
 import math
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
+from typing import Literal
 
 from gobby.ai import InvocationRecord
+from gobby.tasks.diff_manifest import ManifestItem
+from gobby.tasks.diff_paging import decode_content
 
 _CONTENT_KINDS = frozenset({"task_diff", "file_at_commit"})
-_METADATA_KINDS = frozenset({"changed_files", "linked_commits"})
+_METADATA_KINDS = frozenset({"changed_files", "linked_commits", "verification_evidence"})
 RECOVERY_CALL_RESERVE = 4
 VERDICT_SUBMISSION_CALLS = 1
 MIN_TOOL_CALL_BUDGET = 6
+MIN_BOUNDED_CONTENT_CALLS = 8
+UNINSPECTED_SAMPLE_LIMIT = 20
 # Claude SDK counts text-only AssistantMessage instances as turns, so tool-call
 # plans need independent model-turn headroom beyond the evidence-call budget.
 TEXT_TURN_HEADROOM = 2
@@ -75,6 +80,30 @@ class ToolCallPlan:
     recovery_calls: int
     verdict_calls: int
     within_bound: bool
+    mode: Literal["exhaustive", "bounded", "infeasible"] = "exhaustive"
+    content_call_budget: int = 0
+
+
+@dataclass(frozen=True)
+class BoundedInspectionSummary:
+    """Server-computed disclosure for a selective bounded investigation."""
+
+    manifest_total: int
+    inspected_count: int
+    uninspected_count: int
+    inspected_paths: tuple[str, ...]
+    uninspected_sample: tuple[str, ...]
+    content_call_budget: int
+
+    def as_dict(self) -> dict[str, object]:
+        return {
+            "manifest_total": self.manifest_total,
+            "inspected_count": self.inspected_count,
+            "uninspected_count": self.uninspected_count,
+            "inspected_paths": list(self.inspected_paths),
+            "uninspected_sample": list(self.uninspected_sample),
+            "content_call_budget": self.content_call_budget,
+        }
 
 
 @dataclass
@@ -144,9 +173,19 @@ def plan_tool_calls(
     preview_bytes: int,
     manifest_page_limit: int,
     configured_max_calls: int,
+    verification_pages: int = 0,
 ) -> ToolCallPlan:
     """Reserve evidence pages and retry capacity under one configured hard bound."""
-    if min(diff_total_bytes, manifest_count, preview_bytes, manifest_page_limit) < 0:
+    if (
+        min(
+            diff_total_bytes,
+            manifest_count,
+            preview_bytes,
+            manifest_page_limit,
+            verification_pages,
+        )
+        < 0
+    ):
         raise ValueError("validation pagination inputs must be non-negative")
     if preview_bytes == 0 or manifest_page_limit == 0 or configured_max_calls <= 0:
         raise ValueError("validation pagination limits must be positive")
@@ -156,10 +195,33 @@ def plan_tool_calls(
     effective_page_bytes = max(1, preview_bytes - 2_048)
     diff_pages = max(1, math.ceil(diff_total_bytes / effective_page_bytes))
     manifest_pages = max(1, math.ceil(manifest_count / manifest_page_limit))
-    required = diff_pages + manifest_pages + RECOVERY_CALL_RESERVE + VERDICT_SUBMISSION_CALLS
+    required = (
+        diff_pages
+        + manifest_pages
+        + verification_pages
+        + RECOVERY_CALL_RESERVE
+        + VERDICT_SUBMISSION_CALLS
+    )
     allocated = min(configured_max_calls, max(MIN_TOOL_CALL_BUDGET, required))
+    content_call_budget = (
+        diff_pages
+        if required <= configured_max_calls
+        else max(
+            0,
+            configured_max_calls
+            - manifest_pages
+            - verification_pages
+            - RECOVERY_CALL_RESERVE
+            - VERDICT_SUBMISSION_CALLS,
+        )
+    )
+    mode: Literal["exhaustive", "bounded", "infeasible"] = "exhaustive"
+    if required > configured_max_calls:
+        mode = "bounded" if content_call_budget >= MIN_BOUNDED_CONTENT_CALLS else "infeasible"
     return ToolCallPlan(
         max_tool_calls=allocated,
+        # 2N funds one tool-bearing turn plus one narration turn per call; +2
+        # funds opening and wrap-up slack.
         max_turns=2 * allocated + TEXT_TURN_HEADROOM,
         required_tool_calls=required,
         diff_pages=diff_pages,
@@ -167,16 +229,13 @@ def plan_tool_calls(
         recovery_calls=RECOVERY_CALL_RESERVE,
         verdict_calls=VERDICT_SUBMISSION_CALLS,
         within_bound=required <= configured_max_calls,
+        mode=mode,
+        content_call_budget=content_call_budget,
     )
 
 
-def analyze_evidence_coverage(
-    trace: Sequence[InvocationRecord], *, require_manifest: bool = False
-) -> EvidenceCoverage:
-    """Compute selected-artifact coverage from the union of runtime byte ranges."""
+def _replay_artifacts(trace: Sequence[InvocationRecord]) -> dict[str, _ArtifactCoverage]:
     artifacts: dict[str, _ArtifactCoverage] = {}
-    aggregate_key: str | None = None
-
     for index, record in enumerate(trace):
         if not record.get("ok") or record.get("error_code") is not None:
             continue
@@ -219,7 +278,17 @@ def analyze_evidence_coverage(
                 artifact.total_bytes = total
                 artifact.intervals.append((start, end))
 
-        if _is_aggregate_task_diff(selector) and artifact.complete:
+    return artifacts
+
+
+def analyze_evidence_coverage(
+    trace: Sequence[InvocationRecord], *, require_manifest: bool = False
+) -> EvidenceCoverage:
+    """Compute selected-artifact coverage from the union of runtime byte ranges."""
+    artifacts = _replay_artifacts(trace)
+    aggregate_key: str | None = None
+    for key, artifact in artifacts.items():
+        if _is_aggregate_task_diff(artifact.selector) and artifact.complete:
             aggregate_key = key
 
     relevant: list[_ArtifactCoverage] = []
@@ -283,6 +352,75 @@ def analyze_evidence_coverage(
         content_evidence_refs=tuple(dict.fromkeys(content_refs)),
         gaps=tuple(gaps),
         selected_artifact_count=content_artifact_count,
+    )
+
+
+def _display_path(item: ManifestItem) -> str:
+    return decode_content(item["path"]).decode("utf-8", errors="backslashreplace")
+
+
+def _logical_manifest_items(
+    manifest_items: Sequence[ManifestItem],
+) -> list[tuple[str, tuple[str, ...]]]:
+    logical: list[tuple[str, tuple[str, ...]]] = []
+    index = 0
+    while index < len(manifest_items):
+        item = manifest_items[index]
+        if item.get("role") == "old" and index + 1 < len(manifest_items):
+            next_item = manifest_items[index + 1]
+            if (
+                next_item.get("role") == "new"
+                and next_item["commit"] == item["commit"]
+                and next_item["status"] == item["status"]
+            ):
+                old_path = _display_path(item)
+                new_path = _display_path(next_item)
+                logical.append(
+                    (
+                        f"{old_path} -> {new_path}",
+                        (item["path_selector"], next_item["path_selector"]),
+                    )
+                )
+                index += 2
+                continue
+        logical.append((_display_path(item), (item["path_selector"],)))
+        index += 1
+    return logical
+
+
+def compute_bounded_disclosure(
+    trace: Sequence[InvocationRecord],
+    *,
+    manifest_items: Sequence[ManifestItem],
+    content_call_budget: int,
+) -> BoundedInspectionSummary:
+    """Partition changed files by complete server-observed content artifacts."""
+    artifacts = _replay_artifacts(trace)
+    inspected_selectors = {
+        path_selector
+        for artifact in artifacts.values()
+        if artifact.complete and artifact.selector.get("kind") in _CONTENT_KINDS
+        for path_selector in [artifact.selector.get("path_selector")]
+        if isinstance(path_selector, str)
+    }
+    logical_items = _logical_manifest_items(manifest_items)
+    inspected_paths = tuple(
+        display
+        for display, selectors in logical_items
+        if any(selector in inspected_selectors for selector in selectors)
+    )
+    uninspected_paths = tuple(
+        display
+        for display, selectors in logical_items
+        if all(selector not in inspected_selectors for selector in selectors)
+    )
+    return BoundedInspectionSummary(
+        manifest_total=len(logical_items),
+        inspected_count=len(inspected_paths),
+        uninspected_count=len(uninspected_paths),
+        inspected_paths=inspected_paths,
+        uninspected_sample=uninspected_paths[:UNINSPECTED_SAMPLE_LIMIT],
+        content_call_budget=content_call_budget,
     )
 
 

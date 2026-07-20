@@ -122,12 +122,14 @@ async def test_documentation_auto_validation_returns_named_reset_branch() -> Non
 async def test_valid_structured_verdict_ignores_failure_vocabulary(narrative: str) -> None:
     task = _task()
     manager = _task_manager_mock()
+    inspection_summary = {"manifest_total": 3, "inspected_count": 2, "uninspected_count": 1}
     validator = SimpleNamespace(
         validate_task=AsyncMock(
             return_value=TaskValidationResult(
                 status="valid",
                 feedback=narrative,
                 blocking_reasons=[],
+                inspection_summary=inspection_summary,
             )
         )
     )
@@ -146,6 +148,7 @@ async def test_valid_structured_verdict_ignores_failure_vocabulary(narrative: st
     assert result.validation_status == "valid"
     assert result.validation_feedback == narrative
     assert result.reset_reason == "llm_valid"
+    assert result.extra == {"inspection_summary": inspection_summary}
     manager.update_task.assert_not_called()
     manager.increment_validation_failure.assert_not_called()
 
@@ -154,12 +157,14 @@ async def test_valid_structured_verdict_ignores_failure_vocabulary(narrative: st
 async def test_invalid_structured_verdict_is_never_promoted_by_positive_narrative() -> None:
     task = _task()
     manager = _task_manager_mock()
+    inspection_summary = {"manifest_total": 3, "inspected_count": 1, "uninspected_count": 2}
     validator = SimpleNamespace(
         validate_task=AsyncMock(
             return_value=TaskValidationResult(
                 status="invalid",
                 feedback="All validation criteria are satisfied.",
                 blocking_reasons=["Required integration evidence is missing."],
+                inspection_summary=inspection_summary,
             )
         )
     )
@@ -176,6 +181,7 @@ async def test_invalid_structured_verdict_is_never_promoted_by_positive_narrativ
 
     assert result.can_close is False
     assert result.extra["validation_status"] == "invalid"
+    assert result.extra["inspection_summary"] == inspection_summary
     assert result.message.startswith("Close blocked: validation verdict 'invalid'")
 
 

@@ -3,6 +3,7 @@ AI-powered task commands (expand, validate, suggest, etc.)
 """
 
 import sys
+from collections.abc import Mapping
 from typing import Any
 
 import click
@@ -52,6 +53,23 @@ def validate_task_cmd(
     from gobby.tasks.validation import TaskValidator
     from gobby.tasks.validation_history import ValidationHistoryManager
     from gobby.tasks.validation_verdict import ValidationResult, format_close_validation_message
+
+    def echo_disclosure(result: ValidationResult) -> None:
+        if isinstance(result.evidence_error, Mapping):
+            click.echo(
+                "Evidence error: "
+                + json_dumps(result.evidence_error, ensure_ascii=True, separators=(",", ":"))
+            )
+        inspection = result.inspection_summary
+        if not isinstance(inspection, Mapping):
+            return
+        inspected = inspection.get("inspected_count", 0)
+        total = inspection.get("manifest_total", 0)
+        line = f"Bounded inspection: {inspected} of {total} changed files inspected"
+        sample = inspection.get("uninspected_sample")
+        if isinstance(sample, list) and sample:
+            line += "; uninspected sample: " + ", ".join(str(path) for path in sample)
+        click.echo(line)
 
     manager = get_task_manager()
     resolved = resolve_task_id(manager, task_id)
@@ -124,6 +142,7 @@ def validate_task_cmd(
                     lead="Validation blocked",
                 )
             )
+        echo_disclosure(result)
 
         # Update validation status
         updates: dict[str, Any] = {
@@ -189,6 +208,7 @@ def validate_task_cmd(
                     lead="Validation blocked",
                 )
             )
+        echo_disclosure(result)
 
         # Apply validation updates
         validation_updates: dict[str, Any] = {

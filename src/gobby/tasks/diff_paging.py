@@ -13,7 +13,32 @@ import tempfile
 import time
 from collections.abc import Callable, Sequence
 from pathlib import Path
-from typing import Literal, NotRequired, Protocol, TypedDict
+from typing import Literal, Protocol, TypedDict
+
+from gobby.tasks.diff_manifest import (
+    Base64Content as Base64Content,
+)
+from gobby.tasks.diff_manifest import (
+    DiffPagingError as DiffPagingError,
+)
+from gobby.tasks.diff_manifest import (
+    EncodedContent as EncodedContent,
+)
+from gobby.tasks.diff_manifest import (
+    ManifestItem as ManifestItem,
+)
+from gobby.tasks.diff_manifest import (
+    Utf8Content as Utf8Content,
+)
+from gobby.tasks.diff_manifest import (
+    _encode_bytes as _encode_bytes,
+)
+from gobby.tasks.diff_manifest import (
+    _ManifestParser as _ManifestParser,
+)
+from gobby.tasks.diff_manifest import (
+    parse_numstat,
+)
 
 MIN_LIMIT_BYTES = 4
 MAX_LIMIT_BYTES = 30_000
@@ -26,7 +51,6 @@ DEFAULT_GIT_TIMEOUT_SECONDS = 5.0
 _GIT_READ_CHUNK_BYTES = 64 * 1024
 _MAX_GIT_ERROR_BYTES = 8 * 1024
 _COMMIT_RE = re.compile(r"^[0-9a-fA-F]{4,64}$")
-_RENAME_OR_COPY = frozenset({b"R", b"C"})
 
 
 class TaskManagerProtocol(Protocol):
@@ -39,19 +63,6 @@ class _Digest(Protocol):
     def hexdigest(self) -> str: ...
 
 
-class Utf8Content(TypedDict):
-    encoding: Literal["utf-8"]
-    text: str
-
-
-class Base64Content(TypedDict):
-    encoding: Literal["base64"]
-    data: str
-
-
-type EncodedContent = Utf8Content | Base64Content
-
-
 class CommitCursorPage(TypedDict):
     items: list[str]
     cursor_offset: int
@@ -59,14 +70,6 @@ class CommitCursorPage(TypedDict):
     cursor_end: int
     total: int
     complete: bool
-
-
-class ManifestItem(TypedDict):
-    commit: str
-    status: str
-    path: EncodedContent
-    path_selector: str
-    role: NotRequired[Literal["old", "new"]]
 
 
 class ManifestCursorPage(TypedDict):
@@ -88,25 +91,6 @@ class DiffPage(TypedDict):
     manifest: ManifestCursorPage
     snapshot_hash: str
     view_hash: str
-
-
-class DiffPagingError(ValueError):
-    """Typed failure returned by every diff-paging surface."""
-
-    def __init__(self, code: str, message: str, **details: object) -> None:
-        super().__init__(message)
-        self.code = code
-        self.details = details
-
-    def as_dict(self) -> dict[str, object]:
-        result: dict[str, object] = {
-            "success": False,
-            "error_code": self.code,
-            "error": str(self),
-        }
-        if self.details:
-            result["details"] = self.details
-        return result
 
 
 class _WindowCollector:
@@ -303,13 +287,6 @@ def _canonicalize_commits(
     return canonical
 
 
-def _encode_bytes(value: bytes) -> EncodedContent:
-    try:
-        return {"encoding": "utf-8", "text": value.decode("utf-8")}
-    except UnicodeDecodeError:
-        return {"encoding": "base64", "data": base64.b64encode(value).decode("ascii")}
-
-
 def decode_content(content: EncodedContent) -> bytes:
     if content["encoding"] == "utf-8":
         return content["text"].encode("utf-8")
@@ -331,61 +308,20 @@ def _encode_window(value: bytes) -> tuple[EncodedContent, int]:
         return _encode_bytes(value), len(value)
 
 
-def _path_selector(commit: str, path: bytes) -> str:
-    digest = hashlib.sha256(commit.encode("ascii") + b"\0" + path).digest()
-    return base64.urlsafe_b64encode(digest).rstrip(b"=").decode("ascii")
-
-
-class _ManifestParser:
-    def __init__(self, commit: str, emit: Callable[[ManifestItem, bytes], None]) -> None:
-        self.commit = commit
-        self.emit = emit
-        self.buffer = bytearray()
-        self.status: bytes | None = None
-        self.paths_remaining = 0
-        self.path_index = 0
-
-    def feed(self, chunk: bytes) -> None:
-        self.buffer.extend(chunk)
-        while True:
-            try:
-                boundary = self.buffer.index(0)
-            except ValueError:
-                return
-            token = bytes(self.buffer[:boundary])
-            del self.buffer[: boundary + 1]
-            self._token(token)
-
-    def finish(self) -> None:
-        if self.buffer.strip() or self.paths_remaining:
-            raise DiffPagingError("git_failed", "git returned a malformed name-status manifest")
-
-    def _token(self, token: bytes) -> None:
-        if self.paths_remaining == 0:
-            status = token.lstrip(b"\n")
-            if not status:
-                return
-            self.status = status
-            self.paths_remaining = 2 if status[:1] in _RENAME_OR_COPY else 1
-            self.path_index = 0
-            return
-        assert self.status is not None
-        role: Literal["old", "new"] | None = None
-        if self.paths_remaining == 2:
-            role = "old"
-        elif self.path_index == 1:
-            role = "new"
-        item: ManifestItem = {
-            "commit": self.commit,
-            "status": self.status.decode("ascii", errors="replace"),
-            "path": _encode_bytes(token),
-            "path_selector": _path_selector(self.commit, token),
-        }
-        if role is not None:
-            item["role"] = role
-        self.emit(item, token)
-        self.paths_remaining -= 1
-        self.path_index += 1
+def _numstat_totals(
+    commit: str,
+    *,
+    cwd: Path,
+    subprocess_deadline: float | None,
+    git_timeout_seconds: float,
+) -> dict[bytes, tuple[int | None, int | None]]:
+    data = _read_git(
+        ["--literal-pathspecs", "show", "--format=", "--numstat", "-z", "-M", commit, "--"],
+        cwd=cwd,
+        subprocess_deadline=subprocess_deadline,
+        git_timeout_seconds=git_timeout_seconds,
+    )
+    return parse_numstat(data)
 
 
 def _manifest_page_candidates(
@@ -401,16 +337,31 @@ def _manifest_page_candidates(
     items: list[ManifestItem] = []
     total = 0
     matched: tuple[str, bytes, str] | None = None
+    current_numstat: dict[bytes, tuple[int | None, int | None]] | None = None
 
     def emit(item: ManifestItem, raw_path: bytes) -> None:
         nonlocal matched, total
         if offset <= total < offset + limit:
+            if current_numstat is not None:
+                magnitude = current_numstat.get(raw_path)
+                if magnitude is not None:
+                    item["lines_added"], item["lines_deleted"] = magnitude
             items.append(item)
         if wanted_selector is not None and item["path_selector"] == wanted_selector:
             matched = (item["commit"], raw_path, item["status"])
         total += 1
 
     for commit in commits:
+        current_numstat = (
+            _numstat_totals(
+                commit,
+                cwd=cwd,
+                subprocess_deadline=subprocess_deadline,
+                git_timeout_seconds=git_timeout_seconds,
+            )
+            if limit > 0
+            else None
+        )
         parser = _ManifestParser(commit, emit)
         _run_git(
             [

@@ -107,6 +107,8 @@ class TestValidateCommandWithNewFlags:
 
         assert result.exit_code == 0
         assert "Exceeded max retries" in result.output
+        assert "Evidence error:" not in result.output
+        assert "Bounded inspection:" not in result.output
         mock_manager.create_task.assert_not_called()
         mock_manager.escalate_task.assert_called_once_with(
             mock_task.id,
@@ -144,6 +146,13 @@ class TestValidateCommandWithNewFlags:
                     "reason": "current_failure_evidence",
                     "evidence": ["pytest: 1 failed"],
                 },
+                evidence_error={"code": "unconsumed_evidence", "artifacts": []},
+                inspection_summary={
+                    "manifest_total": 4,
+                    "inspected_count": 2,
+                    "uninspected_count": 2,
+                    "uninspected_sample": ["src/c.py", "src/d.py"],
+                },
             )
         )
 
@@ -163,6 +172,11 @@ class TestValidateCommandWithNewFlags:
         assert "verdict overridden: validator attested current failures: pytest: 1 failed" in (
             result.output
         )
+        assert 'Evidence error: {"code":"unconsumed_evidence","artifacts":[]}' in result.output
+        assert (
+            "Bounded inspection: 2 of 4 changed files inspected; "
+            "uninspected sample: src/c.py, src/d.py"
+        ) in result.output
 
     @patch("gobby.cli.tasks.ai.get_task_manager")
     @patch("gobby.cli.tasks.ai.resolve_task_id")
@@ -185,7 +199,15 @@ class TestValidateCommandWithNewFlags:
 
         async def validate(*args: object, **kwargs: object) -> ValidationResult:
             del args, kwargs
-            return ValidationResult(status="valid", feedback="All checks passed.")
+            return ValidationResult(
+                status="valid",
+                feedback="All checks passed.",
+                inspection_summary={
+                    "manifest_total": 3,
+                    "inspected_count": 2,
+                    "uninspected_count": 1,
+                },
+            )
 
         mock_validator_cls.return_value.validate_task.side_effect = validate
         with patch("gobby.cli.load_full_config_from_db", return_value=DaemonConfig()):
@@ -197,6 +219,7 @@ class TestValidateCommandWithNewFlags:
         assert result.exit_code == 0
         assert "Validation Status: VALID" in result.output
         assert "Feedback:\nAll checks passed." in result.output
+        assert "Bounded inspection: 2 of 3 changed files inspected" in result.output
         assert "blocked" not in result.output.casefold()
 
     @patch("gobby.cli.tasks.ai.get_task_manager")
@@ -479,7 +502,7 @@ class TestDeEscalateCommand:
         )
 
         assert result.exit_code == 2
-        assert "No such option: --target-status" in result.output
+        assert "No such option '--target-status'" in result.output
         mock_manager.de_escalate_task.assert_not_called()
 
 

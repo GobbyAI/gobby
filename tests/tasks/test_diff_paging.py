@@ -14,6 +14,7 @@ from typing import Any
 
 import pytest
 
+import gobby.tasks.diff_paging as diff_paging
 from gobby.mcp_proxy.tools.task_commits import create_commit_registry
 from gobby.tasks.diff_paging import (
     MAX_COMMITS_LIMIT,
@@ -473,6 +474,8 @@ def test_rename_manifest_addresses_both_paths(repo: Path) -> None:
     assert old_item["status"].startswith("R")
     assert old_item["role"] == "old"
     assert new_item["role"] == "new"
+    assert (old_item["lines_added"], old_item["lines_deleted"]) == (0, 0)
+    assert (new_item["lines_added"], new_item["lines_deleted"]) == (0, 0)
 
     for item, marker in ((old_item, b"-line one"), (new_item, b"+line one")):
         page = get_task_diff_page(
@@ -485,6 +488,39 @@ def test_rename_manifest_addresses_both_paths(repo: Path) -> None:
         )
         assert page["complete"]
         assert marker in decode_content(page["content"])
+
+
+def test_manifest_carries_line_counts(repo: Path) -> None:
+    (repo / "measured.txt").write_text("one\ntwo\n")
+    commit = _commit(repo, "measured")
+
+    page = get_task_diff_page("task-id", _manager(commit), cwd=repo)
+
+    item = _find_manifest_item(page, b"measured.txt")
+    assert item["lines_added"] == 2
+    assert item["lines_deleted"] == 0
+
+
+def test_manifest_limit_zero_skips_numstat(repo: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    (repo / "metadata-free.txt").write_text("value\n")
+    commit = _commit(repo, "metadata-free")
+    calls: list[tuple[str | bytes, ...]] = []
+    original_run_git = diff_paging._run_git
+
+    def recording_run_git(args: list[str | bytes], **kwargs: Any) -> None:
+        calls.append(tuple(args))
+        original_run_git(args, **kwargs)
+
+    monkeypatch.setattr(diff_paging, "_run_git", recording_run_git)
+
+    get_task_diff_page(
+        "task-id",
+        _manager(commit),
+        cwd=repo,
+        manifest_limit=0,
+    )
+
+    assert all("--numstat" not in call for call in calls)
 
 
 def test_unlinked_and_malformed_commits_rejected(repo: Path) -> None:

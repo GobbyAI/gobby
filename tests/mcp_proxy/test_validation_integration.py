@@ -395,7 +395,16 @@ async def test_close_task_includes_latest_thirty_verification_evidence(
     )
     mock_task_manager.get_task.return_value = task
     mock_task_manager.list_tasks.return_value = []
-    mock_task_validator.validate_task.return_value = ValidationResult(status="valid", feedback="OK")
+    inspection_summary = {
+        "manifest_total": 5,
+        "inspected_count": 3,
+        "uninspected_count": 2,
+    }
+    mock_task_validator.validate_task.return_value = ValidationResult(
+        status="valid",
+        feedback="OK",
+        inspection_summary=inspection_summary,
+    )
     mock_task_manager.close_task.return_value = task
 
     evidence = [
@@ -456,8 +465,9 @@ async def test_close_task_includes_latest_thirty_verification_evidence(
             "close_task", {"task_id": "t1", "changes_summary": "test changes"}
         )
 
-    assert result == {"success": True}
+    assert result == {"success": True, "inspection_summary": inspection_summary}
     validator_call = mock_task_validator.validate_task.call_args
+    assert validator_call.kwargs["verification_items"] == tuple(evidence)
     verification_evidence = validator_call.kwargs["verification_evidence"]
     assert "Successful verification evidence:" in verification_evidence
     assert "command: uv run pytest validation_suite_001.py" not in verification_evidence
