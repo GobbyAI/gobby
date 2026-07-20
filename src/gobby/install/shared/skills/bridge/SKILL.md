@@ -1,7 +1,7 @@
 ---
 name: bridge
-description: Process Drawbridge UI annotation tasks from .moat/ files. Use when the user runs /bridge, mentions Drawbridge or moat tasks, or wants browser UI annotations turned into code changes.
-version: "1.0.0"
+description: Process Drawbridge UI annotation tasks from .moat/ files. Use when the user runs /bridge, mentions Drawbridge or moat tasks, wants browser UI annotations turned into code changes, or wants a live annotate-implement-verify session (`bridge live`).
+version: "1.1.0"
 category: integration
 triggers: bridge, drawbridge, moat, ui annotation, annotation tasks, visual feedback
 metadata:
@@ -21,6 +21,13 @@ directly. There is no Drawbridge MCP server — the extension never shipped
 one, so do not attempt to build, configure, or connect one. (If an MCP-based
 annotation flow is wanted, the published alternative in this niche is
 `agentation-mcp` on npm.)
+
+## Invocation
+
+- `/gobby bridge [step|batch|yolo]` (Codex: `$gobby bridge ...`) — one-shot
+  processing of pending annotations using the sections below.
+- `/gobby bridge live`, or any bridge request containing the standalone word
+  "live" — jump to `## Live Mode`.
 
 ## Task Files
 
@@ -82,3 +89,88 @@ an edit fails, re-read and verify the checkbox state before retrying.
   element.
 - Report which paths were checked and the current working directory so the
   user can tell which case they are in.
+
+## Live Mode
+
+A continuous annotate → implement → verify loop inside **one turn**: the user
+stays in the browser annotating while you process each round as it arrives.
+One umbrella Gobby task covers every edit; a sentinel annotation ends the
+session; the wrap-up makes a single commit and closes the task.
+
+### Setup
+
+1. Locate the `.moat` files (same search order as `## Task Files`); if
+   missing, follow `## When Files Are Missing` and stop.
+2. Re-entry check: if an in-progress task titled `Process live Drawbridge
+   annotations — ...` already exists, `claim_task` it, reconcile `.moat`
+   statuses (finish or reset any `doing` entries), and resume under it —
+   never stack a second umbrella task.
+3. Otherwise create and claim the umbrella task:
+   `create_task(title="Process live Drawbridge annotations — <scope or date>",
+   category="code", claim=True, validation_criteria="Every annotation
+   processed this session has status done in .moat/moat-tasks-detail.json;
+   the committed diff implements those annotations; relevant project
+   verification commands pass.")`
+4. Merge `"bridge"` into the `additional_skills` session variable so this
+   skill reloads after a context compaction.
+5. Process any already-pending `"to do"` entries as round 1.
+
+### Round Loop
+
+1. Read `moat-tasks-detail.json`. New work = entries with status `"to do"`
+   whose id you have not processed this session. The extension rewrites the
+   whole array — never detect new work by array position or count; the
+   statuses in the file are the recoverable loop state.
+2. Check for a sentinel first: a new entry whose trimmed comment matches,
+   case-insensitively, exactly `done`, `stop`, or `end session` (optional
+   trailing `.` or `!`). Mark it `done` without implementing it and go to
+   Wrap-Up.
+3. Read screenshots for the new entries only — never re-read processed ones.
+4. Process the round as one dependency-ordered group following
+   `## Status Lifecycle` exactly. No chat approvals mid-loop: the annotation
+   is the instruction and the browser is the review surface.
+5. Verify: with a browser MCP connected (chrome-devtools, playwright),
+   snapshot the affected element and check for console errors; otherwise the
+   user verifies visually via hot reload.
+6. Record the ids as processed, report a one-line round summary, and wait
+   for the next round.
+
+### Waiting for Annotations
+
+**Never end the turn to wait** — while the umbrella task is claimed, ending
+the turn is blocked, and every wait must be a tool call.
+
+- **Claude Code**: use the `Monitor` tool with an until-condition on
+  `.moat/moat-tasks-detail.json` changing (content hash or mtime), polling
+  every 5-10 seconds, bounded at ~2 minutes per arm; re-arm when it expires
+  with no change.
+- **Other CLIs**: a bounded foreground poll in the shell tool, e.g.
+  `before=$(cksum .moat/moat-tasks-detail.json); for i in $(seq 1 24); do
+  sleep 5; [ "$(cksum .moat/moat-tasks-detail.json)" != "$before" ] && break;
+  done` — returns on any change or after ~2 minutes.
+- The watcher exits on **any** file change (the sentinel is itself a file
+  change — detect it in the loop, not the watcher) and if the file
+  disappears (extension disconnected → Wrap-Up).
+- Idle timeout: after ~5 consecutive empty waits (≈10 minutes with no
+  changes), go to Wrap-Up and tell the user how to start a new live session.
+- If the harness offers neither mechanism, say live mode is unsupported
+  there and fall back to one-shot `/gobby bridge` per batch.
+
+### Long Sessions
+
+- Checkpoint commits of accumulated verified work (same task ref) are fine
+  at any time; never close the task mid-session.
+- Under context pressure (~10+ rounds): checkpoint commit, then call
+  `gobby-sessions:compact_self` (it interrupts the active turn; expected).
+  On resume, rebuild the processed set from the file itself — every entry
+  with status other than `"to do"` is already handled.
+
+### Wrap-Up
+
+1. Reconcile: no entries may remain `"doing"`.
+2. Run the project's relevant verification commands for the touched files.
+3. Make a single commit of the session diff (or the final checkpoint commit)
+   referencing the umbrella task.
+4. `close_task` with the commit SHA and a `changes_summary` covering rounds,
+   annotations, and files touched.
+5. Report: rounds processed, annotations implemented, files changed.
