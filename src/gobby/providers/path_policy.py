@@ -79,11 +79,22 @@ def is_plan_scratch_path(
     if candidate is None:
         return False
 
-    roots: list[Path] = []
     provider_root = _resolve_path(resolved_home / user_directory)
-    if provider_root is not None and provider_root.is_relative_to(resolved_home):
-        roots.append(provider_root)
+    if provider_root is None or not provider_root.is_relative_to(resolved_home):
+        return False
 
+    # Provider directories take precedence over the general temp allowance.
+    # This matters when an isolated test HOME itself lives under the OS temp
+    # directory: another provider's home must not become writable merely
+    # because it is also beneath that broader root.
+    for metadata in provider_metadata():
+        known_root = _resolve_path(resolved_home / metadata.user_directory)
+        if known_root is None or not known_root.is_relative_to(resolved_home):
+            continue
+        if candidate == known_root or candidate.is_relative_to(known_root):
+            return known_root == provider_root
+
+    roots: list[Path] = []
     configured_temp = Path(tempfile.gettempdir()) if temp_root is None else Path(temp_root)
     resolved_temp = _resolve_path(configured_temp)
     if resolved_temp is not None:

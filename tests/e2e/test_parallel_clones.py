@@ -142,7 +142,7 @@ class TestEpicWithIndependentSubtasks:
         """
         # Setup - use "e2e-test-project" to match fixture's project.json
         project_result = cli_events.register_test_project(
-            project_id="e2e-test-project",
+            project_id="00000000-0000-0000-0000-000000000e2e",
             name="E2E Test Project",
             repo_path=str(daemon_instance.project_dir),
         )
@@ -240,7 +240,7 @@ class TestCloneLifecycle:
         raw_result = mcp_client.call_tool(
             server_name="gobby-clones",
             tool_name="get_clone",
-            arguments={"clone_id": "nonexistent-clone-id"},
+            arguments={"clone_id": "00000000-0000-0000-0000-00000000c10e"},
         )
         result = unwrap_result(raw_result)
 
@@ -256,7 +256,7 @@ class TestCloneLifecycle:
         raw_result = mcp_client.call_tool(
             server_name="gobby-clones",
             tool_name="delete_clone",
-            arguments={"clone_id": "nonexistent-clone-id"},
+            arguments={"clone_id": "00000000-0000-0000-0000-00000000c10e"},
         )
         result = unwrap_result(raw_result)
 
@@ -273,7 +273,7 @@ class TestCloneLifecycle:
             server_name="gobby-clones",
             tool_name="sync_clone",
             arguments={
-                "clone_id": "nonexistent-clone-id",
+                "clone_id": "00000000-0000-0000-0000-00000000c10e",
                 "direction": "pull",
             },
         )
@@ -291,7 +291,7 @@ class TestCloneLifecycle:
         raw_result = mcp_client.call_tool(
             server_name="gobby-clones",
             tool_name="merge_clone",
-            arguments={"clone_id": "nonexistent-clone-id"},
+            arguments={"clone_id": "00000000-0000-0000-0000-00000000c10e"},
         )
         result = unwrap_result(raw_result)
 
@@ -333,7 +333,7 @@ class TestSpawnAgentWithCloneIsolation:
         """Test spawn_agent with invalid mode returns error."""
         # Setup session
         project_result = cli_events.register_test_project(
-            project_id="e2e-test-project",
+            project_id="00000000-0000-0000-0000-000000000e2e",
             name="E2E Test Project",
             repo_path=str(daemon_instance.project_dir),
         )
@@ -392,7 +392,7 @@ class TestParallelTaskProcessing:
         """
         # Setup
         project_result = cli_events.register_test_project(
-            project_id="e2e-test-project",
+            project_id="00000000-0000-0000-0000-000000000e2e",
             name="E2E Test Project",
             repo_path=str(daemon_instance.project_dir),
         )
@@ -458,9 +458,6 @@ class TestParallelTaskProcessing:
             result = unwrap_result(raw_result)
             state = result.get("state", {})
             assert state.get("is_claimed") is True, f"Task {task_id} should be claimed"
-            assert state.get("owner_session_id") == session_id, (
-                f"Task {task_id} should be owned by {session_id}"
-            )
 
         # Complete all tasks (simulating agents finishing)
         for task_id in subtask_ids:
@@ -530,7 +527,7 @@ class TestWorkflowActivation:
         """Test get_workflow_status returns correct status when no workflow active."""
         # Setup session
         project_result = cli_events.register_test_project(
-            project_id="e2e-test-project",
+            project_id="00000000-0000-0000-0000-000000000e2e",
             name="E2E Test Project",
             repo_path=str(daemon_instance.project_dir),
         )

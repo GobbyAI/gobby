@@ -431,7 +431,7 @@ class TestLinearSync:
         result = runner.invoke(linear, ["sync-all", "--active"], catch_exceptions=False)
 
         assert result.exit_code != 0
-        assert "No such option: --active" in result.output
+        assert "No such option '--active'" in result.output
 
 
 # ---------------------------------------------------------------------------

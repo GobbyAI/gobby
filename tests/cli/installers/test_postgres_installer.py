@@ -330,6 +330,34 @@ async def test_get_postgres_status_returns_stable_payload(
     assert "keyring" not in status
 
 
+@pytest.mark.asyncio
+async def test_get_postgres_status_honors_gobby_home_environment(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    installer = _import_installer()
+    configured_home = tmp_path / "custom-gobby-home"
+    configured_home.mkdir()
+    bootstrap_path = configured_home / "bootstrap.yaml"
+    bootstrap_path.write_text(
+        "hub_backend: postgres\n"
+        "postgres_install_mode: docker\n"
+        "database_url: postgresql://invalid:invalid@127.0.0.1:1/custom_home_db\n"
+    )
+    bootstrap_path.chmod(0o600)
+    monkeypatch.setenv("GOBBY_HOME", str(configured_home))
+
+    status = await installer.get_postgres_status(
+        mode="docker",
+        readiness_timeout=1,
+        connect_timeout=1,
+    )
+
+    assert status["dsn_host"] == "127.0.0.1"
+    assert status["dsn_db"] == "custom_home_db"
+    assert status["healthy"] is False
+
+
 def test_render_postgres_status_omits_keyring_preflight() -> None:
     installer = _import_installer()
 

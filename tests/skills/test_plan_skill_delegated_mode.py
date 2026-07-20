@@ -15,7 +15,7 @@ def body() -> str:
 
 
 def test_plan_skill_version(body: str) -> None:
-    assert 'version: "3.2.0"' in body
+    assert 'version: "3.3.0"' in body
 
 
 def test_plan_is_artifact_first_and_taskless(body: str) -> None:
@@ -67,16 +67,15 @@ def test_spawned_run_waiting_policy_is_shared_and_bounded(body: str) -> None:
     independent_work = section.index("Keep doing useful independent work")
     bounded_wait = section.index("wait_for_agent(run_id, timeout_seconds=300)")
     completion_message = section.index("run completion message")
-    assert independent_work < bounded_wait < completion_message
+    assert independent_work < completion_message < bounded_wait
 
     assert "re-wait at most once" in normalized
-    assert "Never turn re-waiting into an unbounded polling loop" in normalized
+    assert "never turn blocking waits into an unbounded loop" in normalized
     assert "get_agent_result(run_id)" in normalized
     assert "mandatory post-launch `gobby-sessions:compact_self`" in normalized
-    assert "already known to be terminal skips waiting" in normalized
-
-    for forbidden in ("shell sleeps", "tmux polling loops", "provider-specific monitor waits"):
-        assert forbidden in normalized
+    assert "already known to be terminal skips watching and waiting" in normalized
+    assert "watcher must exit on every terminal state" in normalized
+    assert "current harness offers no background watcher mechanism" in normalized
     assert "/loop" not in section
     assert "/schedule" not in section
 

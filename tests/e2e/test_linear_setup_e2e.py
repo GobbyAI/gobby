@@ -111,7 +111,13 @@ async def test_linear_setup_stubbed_mcp_e2e(temp_db, tmp_path) -> None:
     task_manager = LocalTaskManager(temp_db)
     project = project_manager.create(name="gobby-e2e", repo_path=str(project_root))
     (project_root / ".gobby" / "project.json").write_text(
-        json.dumps({"id": project.id, "name": project.name, "created_at": project.created_at})
+        json.dumps(
+            {
+                "id": project.id,
+                "name": project.name,
+                "created_at": project.created_at.isoformat(),
+            }
+        )
     )
     task = task_manager.create_task(
         project_id=project.id,

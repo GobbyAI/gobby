@@ -29,7 +29,7 @@ def test_effective_dev_starts_vite(monkeypatch: pytest.MonkeyPatch, tmp_path: Pa
     web_dir = _source_web_dir(tmp_path)
     config = DaemonConfig(
         ui={"enabled": True, "mode": "auto", "web_dir": str(web_dir)},
-        telemetry={"log_file": str(tmp_path / "logs" / "gobby.log")},
+        logging={"dir": str(tmp_path / "logs")},
     )
     calls: list[tuple[object, ...]] = []
 
@@ -53,7 +53,7 @@ def test_source_checkout_auto_mode_starts_vite(
     monkeypatch.chdir(tmp_path)
     config = DaemonConfig(
         ui={"enabled": True, "mode": "auto"},
-        telemetry={"log_file": str(tmp_path / "logs" / "gobby.log")},
+        logging={"dir": str(tmp_path / "logs")},
     )
     calls: list[tuple[object, ...]] = []
 

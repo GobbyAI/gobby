@@ -53,7 +53,7 @@ def test_review_learning_skill_documents_record_skip_and_ladder_rules() -> None:
     assert "`stale` or `invalid`: skip recording" in body
     assert "`confirmed`, second occurrence: `test`" in body
     assert "`confirmed`, third or later occurrence: `validation`" in body
-    assert "`confirmed`, high risk with actionable signal: `test`" in body
+    assert "`confirmed`, high risk with actionable signal **and** a CI-corroborated" in body
     assert "Weak one-off findings stay" in body
     assert "`skipped_reason: insufficient_guardrail_signal`" in body
     assert "`rule`, `workflow`, and `pipeline` targets require" in body

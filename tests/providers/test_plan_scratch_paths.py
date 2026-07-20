@@ -78,6 +78,27 @@ def test_accepts_injected_os_temp_for_every_provider(tmp_path: Path, provider: s
     )
 
 
+def test_rejects_inactive_provider_directory_when_home_is_under_temp(tmp_path: Path) -> None:
+    temp = tmp_path / "system-temp"
+    home = temp / "home"
+    home.mkdir(parents=True)
+
+    assert is_plan_scratch_path(
+        str(home / ".gemini" / "scratch" / "state.json"),
+        "agy",
+        home_root=home,
+        temp_root=temp,
+        posix_tmp_root=None,
+    )
+    assert not is_plan_scratch_path(
+        str(home / ".claude" / "scratch" / "state.json"),
+        "agy",
+        home_root=home,
+        temp_root=temp,
+        posix_tmp_root=None,
+    )
+
+
 @pytest.mark.skipif(os.name != "posix", reason="POSIX /tmp policy")
 def test_accepts_resolved_posix_tmp(tmp_path: Path) -> None:
     home, temp = _roots(tmp_path)

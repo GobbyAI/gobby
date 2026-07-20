@@ -58,11 +58,11 @@ class TestInterAgentMessagingE2E:
         # (which creates entries in the sessions DB table)
         parent_external_id = f"parent-{uuid.uuid4().hex[:8]}"
         child_external_id = f"child-{uuid.uuid4().hex[:8]}"
-        run_id = f"run-{uuid.uuid4().hex[:8]}"
+        run_id = str(uuid.uuid4())
 
         # First, register the project in the database (required for FK constraint)
         project_result = cli_events.register_test_project(
-            project_id="e2e-test-project",
+            project_id="00000000-0000-0000-0000-000000000e2e",
             name="E2E Test Project",
             repo_path=str(daemon_instance.project_dir),
         )
@@ -114,6 +114,7 @@ class TestInterAgentMessagingE2E:
         assert parent_to_child_msg_id is not None
 
         # Step 2: Child receives message via deliver_pending_messages
+        mcp_client.session_id = child_session_id
         raw_result = mcp_client.call_tool(
             server_name="gobby-agents",
             tool_name="deliver_pending_messages",
@@ -154,6 +155,7 @@ class TestInterAgentMessagingE2E:
         assert child_to_parent_msg_id is not None
 
         # Step 4: Parent receives response via deliver_pending_messages
+        mcp_client.session_id = parent_session_id
         raw_result = mcp_client.call_tool(
             server_name="gobby-agents",
             tool_name="deliver_pending_messages",
@@ -190,7 +192,7 @@ class TestInterAgentMessagingE2E:
         """Test delivering messages returns empty list when no messages."""
         # First, register the project in the database (required for FK constraint)
         project_result = cli_events.register_test_project(
-            project_id="e2e-test-project",
+            project_id="00000000-0000-0000-0000-000000000e2e",
             name="E2E Test Project",
             repo_path=str(daemon_instance.project_dir),
         )
@@ -207,6 +209,7 @@ class TestInterAgentMessagingE2E:
         session_id = session_result["id"]
 
         # Deliver pending messages should return empty
+        mcp_client.session_id = session_id
         raw_result = mcp_client.call_tool(
             server_name="gobby-agents",
             tool_name="deliver_pending_messages",
@@ -230,10 +233,10 @@ class TestInterAgentMessagingE2E:
         """
         parent_external_id = f"parent-{uuid.uuid4().hex[:8]}"
         child_external_id = f"child-{uuid.uuid4().hex[:8]}"
-        run_id = f"run-{uuid.uuid4().hex[:8]}"
+        run_id = str(uuid.uuid4())
 
         project_result = cli_events.register_test_project(
-            project_id="e2e-test-project",
+            project_id="00000000-0000-0000-0000-000000000e2e",
             name="E2E Test Project",
             repo_path=str(daemon_instance.project_dir),
         )
@@ -277,6 +280,7 @@ class TestInterAgentMessagingE2E:
         )
 
         # First deliver - should return the message
+        mcp_client.session_id = child_session_id
         raw_result = mcp_client.call_tool(
             server_name="gobby-agents",
             tool_name="deliver_pending_messages",
@@ -305,7 +309,7 @@ class TestInterAgentMessagingE2E:
     ) -> None:
         """Test send_message fails when target session doesn't exist."""
         project_result = cli_events.register_test_project(
-            project_id="e2e-test-project",
+            project_id="00000000-0000-0000-0000-000000000e2e",
             name="E2E Test Project",
             repo_path=str(daemon_instance.project_dir),
         )
@@ -327,7 +331,7 @@ class TestInterAgentMessagingE2E:
             arguments={
                 "from_session": session_id,
                 "target": "session",
-                "target_id": "nonexistent-session-id",
+                "target_id": "00000000-0000-0000-0000-00000000dead",
                 "content": "Hello!",
             },
         )

@@ -102,7 +102,7 @@ class TestUsageReporting:
     ) -> None:
         """Test that usage report includes session usage."""
         project_result = cli_events.register_test_project(
-            project_id="e2e-test-project",
+            project_id="00000000-0000-0000-0000-000000000e2e",
             name="E2E Test Project",
             repo_path=str(daemon_instance.project_dir),
         )
@@ -151,7 +151,7 @@ class TestUsageReporting:
     ) -> None:
         """Test that usage reports aggregate usage from multiple sessions."""
         project_result = cli_events.register_test_project(
-            project_id="e2e-test-project",
+            project_id="00000000-0000-0000-0000-000000000e2e",
             name="E2E Test Project",
             repo_path=str(daemon_instance.project_dir),
         )

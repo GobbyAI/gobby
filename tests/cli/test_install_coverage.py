@@ -668,7 +668,7 @@ class TestUninstallCommand:
         result = runner.invoke(uninstall, ["--falkordb", "--yes"])
 
         assert result.exit_code == 2
-        assert "No such option: --falkordb" in result.output
+        assert "No such option '--falkordb'" in result.output
 
     def test_uninstall_all_nothing_found(self, runner: CliRunner, tmp_path: Path) -> None:
         """When --all is used but no CLI hooks are detected."""

@@ -5,6 +5,7 @@ and integration with worktrees for agent spawning.
 """
 
 import tempfile
+import uuid
 from collections.abc import Iterator
 from pathlib import Path
 from unittest.mock import patch
@@ -212,7 +213,7 @@ class TestPrepareTerminalSpawn:
 
         assert isinstance(result, PreparedSpawn)
         assert result.session_id is not None
-        assert result.agent_run_id.startswith("run-")
+        assert str(uuid.UUID(result.agent_run_id)) == result.agent_run_id
         assert result.parent_session_id == parent_session.id
         assert result.project_id == project.id
 

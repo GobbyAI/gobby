@@ -6,13 +6,12 @@ import json
 import os
 import subprocess
 from pathlib import Path
-from urllib.parse import quote
 
 import pytest
 
 from gobby.code_index.models import IndexedFile, Symbol
 from gobby.code_index.storage import CodeIndexStorage
-from gobby.storage.hub.protocol import HubDatabase
+from gobby.storage.hub.postgres import PostgresHubDatabase
 from gobby.utils.native_bin import resolve_native_bin
 
 pytestmark = pytest.mark.integration
@@ -29,11 +28,6 @@ class Worker:
         return greet("worker")
 '''
 CHANGED_SOURCE = INITIAL_SOURCE.replace("Hello", "Hi")
-
-
-def _scoped_database_url(database_url: str, schema: str) -> str:
-    separator = "&" if "?" in database_url else "?"
-    return f"{database_url}{separator}options=-csearch_path%3D{quote(schema)}"
 
 
 def _run_gcode(gcode_bin: str, root: Path, env: dict[str, str], *args: str) -> None:
@@ -81,9 +75,7 @@ def _symbol_row(
 def test_real_gcode_writer_matches_python_model_contract(
     tmp_path: Path,
     postgres_database_url: str,
-    postgres_schema: str,
-    code_storage: CodeIndexStorage,
-    code_db: HubDatabase,
+    request: pytest.FixtureRequest,
 ) -> None:
     """The production Rust writer and Python models share one storage contract."""
     gcode_bin = resolve_native_bin("gcode")
@@ -94,12 +86,29 @@ def test_real_gcode_writer_matches_python_model_contract(
     root.mkdir()
     _write_fixture(root, INITIAL_SOURCE)
 
+    code_db = PostgresHubDatabase(postgres_database_url)
+    code_db.apply_migrations()
+    request.addfinalizer(code_db.close)
+    code_storage = CodeIndexStorage(code_db)
+
     env = os.environ.copy()
-    env["GCODE_DATABASE_URL"] = _scoped_database_url(postgres_database_url, postgres_schema)
+    gobby_home = tmp_path / "gobby-home"
+    gobby_home.mkdir()
+    bootstrap_path = gobby_home / "bootstrap.yaml"
+    bootstrap_path.write_text(
+        f"hub_backend: postgres\ndatabase_url: {postgres_database_url}\n",
+        encoding="utf-8",
+    )
+    bootstrap_path.chmod(0o600)
+    env["GOBBY_HOME"] = str(gobby_home)
+    env["DATABASE_URL"] = postgres_database_url
+    env["GCODE_DATABASE_URL"] = postgres_database_url
+    env["GOBBY_POSTGRES_DSN"] = postgres_database_url
     env.setdefault("GCODE_BROKER_TIMEOUT_MS", "1")
 
     _run_gcode(gcode_bin, root, env, "init", "--quiet")
     project_id = _project_id(root)
+    request.addfinalizer(lambda: code_storage.delete_project_index(project_id))
     _run_gcode(gcode_bin, root, env, "index", "--full", "--quiet")
 
     greet = _symbol_row(code_storage, project_id, "greet")

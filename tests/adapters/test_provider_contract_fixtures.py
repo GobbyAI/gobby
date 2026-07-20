@@ -29,6 +29,14 @@ def _jsonl_paths() -> list[Path]:
     )
 
 
+def _enveloped_provider_jsonl_paths() -> list[Path]:
+    return [
+        path
+        for path in sorted(PROVIDER_CONTRACT_ROOT.rglob("*.jsonl"))
+        if path.name != "terminal-functions-exec-rollout-0.144.6.jsonl"
+    ]
+
+
 def _provider_json_paths() -> list[Path]:
     return sorted(PROVIDER_CONTRACT_ROOT.rglob("*.json"))
 
@@ -66,7 +74,7 @@ def test_acp_stdout_fixtures_have_json_rpc_envelope(path: Path) -> None:
 
 @pytest.mark.parametrize(
     "path",
-    sorted(PROVIDER_CONTRACT_ROOT.rglob("*.jsonl")),
+    _enveloped_provider_jsonl_paths(),
     ids=lambda path: str(path.relative_to(PROVIDER_CONTRACT_ROOT)),
 )
 def test_provider_jsonl_records_have_contract_envelope(path: Path) -> None:

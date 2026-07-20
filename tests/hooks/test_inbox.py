@@ -155,7 +155,10 @@ async def test_drain_hook_inbox_replays_full_envelope_with_promoted_headers(tmp_
     mock_client.__aenter__ = AsyncMock(return_value=mock_client)
     mock_client.__aexit__ = AsyncMock(return_value=False)
 
-    with patch("gobby.hooks.inbox.httpx.AsyncClient", return_value=mock_client):
+    with (
+        patch("gobby.hooks.inbox.read_local_api_token", return_value=None),
+        patch("gobby.hooks.inbox.httpx.AsyncClient", return_value=mock_client),
+    ):
         replayed = await drain_hook_inbox_once(FastAPI(), inbox_dir=inbox_dir)
 
     assert replayed == 1

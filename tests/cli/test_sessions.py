@@ -195,5 +195,5 @@ def test_renumber_sessions_rejects_removed_dry_run_option(mock_session_manager) 
     )
 
     assert result.exit_code != 0
-    assert "No such option: --dry-run" in result.output
+    assert "No such option '--dry-run'" in result.output
     mock_session_manager.renumber_project_sessions.assert_not_called()

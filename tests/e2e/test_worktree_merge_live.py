@@ -186,7 +186,7 @@ class TestMergeWorkflowBasics:
         raw_result = mcp_client.call_tool(
             server_name="gobby-merge",
             tool_name="merge_status",
-            arguments={"resolution_id": "nonexistent-resolution-id"},
+            arguments={"resolution_id": "00000000-0000-0000-0000-00000000beef"},
         )
         result = unwrap_result(raw_result)
 
@@ -202,7 +202,7 @@ class TestMergeWorkflowBasics:
         raw_result = mcp_client.call_tool(
             server_name="gobby-merge",
             tool_name="merge_abort",
-            arguments={"resolution_id": "nonexistent-resolution-id"},
+            arguments={"resolution_id": "00000000-0000-0000-0000-00000000beef"},
         )
         result = unwrap_result(raw_result)
 
@@ -239,7 +239,7 @@ class TestWorktreeLifecycle:
         raw_result = mcp_client.call_tool(
             server_name="gobby-worktrees",
             tool_name="get_worktree",
-            arguments={"worktree_id": "nonexistent-worktree-id"},
+            arguments={"worktree_id": "00000000-0000-0000-0000-00000000fade"},
         )
         result = unwrap_result(raw_result)
 
@@ -255,7 +255,7 @@ class TestWorktreeLifecycle:
         raw_result = mcp_client.call_tool(
             server_name="gobby-worktrees",
             tool_name="delete_worktree",
-            arguments={"worktree_id": "nonexistent-worktree-id"},
+            arguments={"worktree_id": "00000000-0000-0000-0000-00000000fade"},
         )
         result = unwrap_result(raw_result)
 
@@ -292,7 +292,7 @@ class TestCloneMergeWorkflow:
         raw_result = mcp_client.call_tool(
             server_name="gobby-clones",
             tool_name="get_clone",
-            arguments={"clone_id": "nonexistent-clone-id"},
+            arguments={"clone_id": "00000000-0000-0000-0000-00000000c10e"},
         )
         result = unwrap_result(raw_result)
 
@@ -309,7 +309,7 @@ class TestCloneMergeWorkflow:
             server_name="gobby-clones",
             tool_name="sync_clone",
             arguments={
-                "clone_id": "nonexistent-clone-id",
+                "clone_id": "00000000-0000-0000-0000-00000000c10e",
                 "direction": "pull",
             },
         )
@@ -327,7 +327,7 @@ class TestCloneMergeWorkflow:
         raw_result = mcp_client.call_tool(
             server_name="gobby-clones",
             tool_name="merge_clone",
-            arguments={"clone_id": "nonexistent-clone-id"},
+            arguments={"clone_id": "00000000-0000-0000-0000-00000000c10e"},
         )
         result = unwrap_result(raw_result)
 
@@ -343,7 +343,7 @@ class TestCloneMergeWorkflow:
         raw_result = mcp_client.call_tool(
             server_name="gobby-clones",
             tool_name="delete_clone",
-            arguments={"clone_id": "nonexistent-clone-id"},
+            arguments={"clone_id": "00000000-0000-0000-0000-00000000c10e"},
         )
         result = unwrap_result(raw_result)
 
@@ -364,7 +364,7 @@ class TestMergeConflictDetection:
             server_name="gobby-merge",
             tool_name="merge_resolve",
             arguments={
-                "conflict_id": "nonexistent-conflict-id",
+                "conflict_id": "00000000-0000-0000-0000-00000000c0ff",
                 "use_ai": False,
             },
         )
@@ -382,7 +382,7 @@ class TestMergeConflictDetection:
         raw_result = mcp_client.call_tool(
             server_name="gobby-merge",
             tool_name="merge_apply",
-            arguments={"resolution_id": "nonexistent-resolution-id"},
+            arguments={"resolution_id": "00000000-0000-0000-0000-00000000beef"},
         )
         result = unwrap_result(raw_result)
 
@@ -402,7 +402,7 @@ class TestWorktreeMergeIntegration:
         raw_result = mcp_client.call_tool(
             server_name="gobby-worktrees",
             tool_name="mark_worktree_merged",
-            arguments={"worktree_id": "nonexistent-worktree-id"},
+            arguments={"worktree_id": "00000000-0000-0000-0000-00000000fade"},
         )
         result = unwrap_result(raw_result)
 
@@ -418,7 +418,7 @@ class TestWorktreeMergeIntegration:
         """Test that worktrees can be linked to tasks."""
         # Setup - register project and session
         project_result = cli_events.register_test_project(
-            project_id="e2e-test-project",
+            project_id="00000000-0000-0000-0000-000000000e2e",
             name="E2E Test Project",
             repo_path=str(daemon_instance.project_dir),
         )

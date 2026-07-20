@@ -1217,6 +1217,14 @@
           "repeatable": true
         },
         {
+          "name": "--complete-scope",
+          "takes_value": false,
+          "value_name": null,
+          "allowed_values": [],
+          "required": false,
+          "repeatable": false
+        },
+        {
           "name": "--since",
           "takes_value": true,
           "value_name": "GIT_REF",

@@ -42,11 +42,11 @@ Keep two work streams separate:
 Do not close the target task or epic while known `gobby build` bugs from the run
 remain open.
 
-The coordination epic is the active goal record for the run. Do not close,
-unclaim, or move work out of it just to satisfy a stop hook, context limit, or
-handoff pressure. If the goal is not complete, keep the coordination epic
-claimed and continue, compact the session, or ask the user to explicitly cancel
-or pause the goal.
+The coordination epic is the active goal record for the run. Do not close, unclaim,
+or move work out of it just to satisfy a stop hook, context limit, or handoff
+pressure. If the goal is not complete, keep the coordination epic claimed and
+continue, compact the session, or ask the user to explicitly cancel or pause the
+goal.
 
 ## Startup
 
@@ -103,13 +103,14 @@ loop order is:
 4. Resume or launch build automation only after known blocking bugs for the
    immediate dispatch path are fixed or explicitly documented as non-blocking.
 5. Use `gobby-sessions:compact_self` when context pressure or handoff risk is
-   high, when you have not compacted recently, or after completing a
-   coordination bug task.
+   high or when you have not compacted recently. Always compact after completing a coordination bug task
+   before the next coordinator-loop iteration or agent wait.
 6. Use `gobby-agents:wait_for_agent` as the last idle action only when agents
    are running and no actionable work remains. Wait for a specific run result
    with a bounded five-minute wait (`timeout_seconds=300`), then run another
-   full status and health sweep. Shorter waits are for diagnostics or recovery
-   only.
+   full status and health sweep. Use wait_for_agent as the last idle action only when
+   agents are running and no actionable coordinator work remains. Shorter waits
+   are for diagnostics or recovery only.
 
 Do not keep the build moving by repeatedly manual-ticking the dispatcher. A
 normal build is daemon-owned automation. Use resume or explicit ticks only after
@@ -169,6 +170,8 @@ If a stop hook fires while the coordination epic is still claimed, continue the
 coordinator loop above. A claimed coordination epic means the build goal is still
 active; finish actionable child work, monitor agents, or hand off with saved
 context.
+
+Do not close the coordination epic to clear a stop hook.
 
 Resolve escalations yourself whenever possible. Leave a task escalated only
 when a user decision is genuinely required.

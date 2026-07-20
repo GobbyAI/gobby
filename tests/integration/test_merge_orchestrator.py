@@ -255,10 +255,10 @@ async def test_orchestrator_yaml_loads(tmp_path: Path) -> None:
         "report",
         "terminate",
     ]
-    # Contract: orchestrator runs on Claude Opus and never gets isolation (it
+    # Contract: orchestrator runs on Codex and never gets isolation (it
     # dispatches workers; doesn't edit code itself).
-    assert data["provider"] == "claude"
-    assert data["model"] == "opus"
+    assert data["provider"] == "codex"
+    assert data["model"] == "gpt-5.6-sol"
     assert data["isolation"] == "none"
 
     plan_step = next(step for step in data["steps"] if step["name"] == "plan")

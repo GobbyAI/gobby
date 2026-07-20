@@ -311,12 +311,7 @@ elif DATABASE_URL="$PYTEST_DATABASE_URL" \
     GOBBY_DATABASE_PATH="$PYTEST_ISOLATION_DIR/test.db" \
     GOBBY_CONFIG_FILE="$PYTEST_ISOLATION_DIR/config-test.yaml" \
     GOBBY_HOOKS_DIR="$PYTEST_ISOLATION_DIR/hooks" \
-    GOBBY_LOGGING_CLIENT="$PYTEST_ISOLATION_DIR/logs/gobby.log" \
-    GOBBY_LOGGING_CLIENT_ERROR="$PYTEST_ISOLATION_DIR/logs/gobby-error.log" \
-    GOBBY_LOGGING_CLIENT_STDERR="$PYTEST_ISOLATION_DIR/logs/gobby-stderr.log" \
-    GOBBY_LOGGING_MCP_SERVER="$PYTEST_ISOLATION_DIR/logs/mcp-server.log" \
-    GOBBY_LOGGING_MCP_CLIENT="$PYTEST_ISOLATION_DIR/logs/mcp-client.log" \
-    GOBBY_LOGGING_HOOK_MANAGER="$PYTEST_ISOLATION_DIR/logs/hook-manager.log" \
+    GOBBY_LOGGING_DIR="$PYTEST_ISOLATION_DIR/logs" \
     uv_run pytest "${PYTEST_SELECTION_ARGS[@]}" -v --tb=line -rFEsw --cov=gobby --cov-report=term-missing --cov-fail-under=80 2>&1 | timestamp | tee "$PYTEST_REPORT"; then
     if check_pytest_postgres_skip_guard "$PYTEST_REPORT"; then
         echo "✓ Pytest passed"

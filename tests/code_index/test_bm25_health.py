@@ -27,11 +27,13 @@ class FakeConnection:
         missing: set[str] | None = None,
         lock_available: bool = True,
         verify_error: psycopg.Error | None = None,
+        schema: str = "public",
     ) -> None:
         self.damaged = set(damaged or ())
         self.missing = set(missing or ())
         self.lock_available = lock_available
         self.verify_error = verify_error
+        self.schema = schema
         self.reindexed: list[str] = []
         self.executed: list[str] = []
 
@@ -49,6 +51,8 @@ class FakeConnection:
         self.executed.append(query_text)
         if "set_config" in query_text or "pg_advisory_unlock" in query_text:
             return FakeResult([(True,)])
+        if "current_schema" in query_text:
+            return FakeResult([(self.schema,)])
         if "pg_try_advisory_lock" in query_text:
             return FakeResult([(self.lock_available,)])
         if "to_regclass" in query_text:
@@ -86,6 +90,18 @@ def test_verify_preserves_corruption_error() -> None:
     assert status["healthy"] is False
     assert {item["state"] for item in status["indexes"]} == {"damaged"}
     assert all("invalid chunk style tag: 254" in item["error"] for item in status["indexes"])
+
+
+def test_verify_uses_connection_schema() -> None:
+    conn = FakeConnection(schema="isolated_test")
+
+    status = bm25_health.verify_bm25_indexes(conn)
+
+    assert status["healthy"] is True
+    assert {item["name"] for item in status["indexes"]} == {
+        "isolated_test.code_symbols_search_bm25",
+        "isolated_test.code_content_search_bm25",
+    }
 
 
 def test_repair_reindexes_only_damaged_index(monkeypatch: Any) -> None:

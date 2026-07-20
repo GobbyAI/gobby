@@ -17,7 +17,7 @@ from gobby.config.embedding_keys import (
     AI_EMBEDDING_MODEL_KEY,
 )
 from gobby.storage.config_store import ConfigStore
-from tests.e2e.conftest import DaemonInstance, MCPTestClient, find_free_port
+from tests.e2e.conftest import CLIEventSimulator, DaemonInstance, MCPTestClient, find_free_port
 
 pytestmark = pytest.mark.e2e
 
@@ -124,6 +124,26 @@ def _assert_not_failed(result: dict[str, Any]) -> None:
     assert "error" not in result, result
 
 
+def _set_project_context(
+    daemon_instance: DaemonInstance,
+    mcp_client: MCPTestClient,
+    cli_events: CLIEventSimulator,
+) -> None:
+    project_result = cli_events.register_test_project(
+        project_id="00000000-0000-0000-0000-000000000e2e",
+        name="E2E Test Project",
+        repo_path=str(daemon_instance.project_dir),
+    )
+    assert project_result["status"] in {"success", "already_exists"}
+    session_result = cli_events.register_session(
+        external_id="review-learning-e2e-session",
+        machine_id="test-machine",
+        source="Codex",
+        cwd=str(daemon_instance.project_dir),
+    )
+    mcp_client.session_id = session_result["id"]
+
+
 def _finding(
     *,
     pattern_id: str = PATTERN_ID,
@@ -221,7 +241,9 @@ class TestReviewLearningMCP:
         self,
         daemon_instance: DaemonInstance,
         mcp_client: MCPTestClient,
+        cli_events: CLIEventSimulator,
     ) -> None:
+        _set_project_context(daemon_instance, mcp_client, cli_events)
         first = _record_review_lesson(
             mcp_client,
             source_review="review-learning-e2e-review-1",
@@ -290,7 +312,9 @@ class TestReviewLearningMCP:
         self,
         daemon_instance: DaemonInstance,
         mcp_client: MCPTestClient,
+        cli_events: CLIEventSimulator,
     ) -> None:
+        _set_project_context(daemon_instance, mcp_client, cli_events)
         pattern_id = "review-learning-e2e-ci-unverified"
         result = _record_review_lesson(
             mcp_client,

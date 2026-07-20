@@ -26,6 +26,7 @@ from gobby.code_index.bm25_health import (
     verify_bm25_indexes,
 )
 from gobby.config.bootstrap import BootstrapConfigError
+from gobby.paths import get_gobby_home
 from gobby.utils.postgres_extensions import BASELINE_POSTGRES_EXTENSIONS
 
 from .compose_env import ComposeEnvironmentError, resolve_compose_runtime
@@ -56,7 +57,7 @@ def install_postgres(
 
 
 def _install_docker(*, gobby_home: Path | None, port: int) -> dict[str, Any]:
-    home = gobby_home or Path("~/.gobby").expanduser()
+    home = gobby_home or get_gobby_home()
     if not shutil.which("docker"):
         return {
             "success": False,
@@ -139,7 +140,7 @@ async def get_postgres_status(
     connect_timeout: int = 5,
 ) -> dict[str, Any]:
     """Return the stable PostgreSQL status payload used by runbooks."""
-    home = gobby_home or Path("~/.gobby").expanduser()
+    home = gobby_home or get_gobby_home()
     active_mode = mode or _active_install_mode(gobby_home=home)
     bootstrap_error: str | None = None
     try:
@@ -239,7 +240,7 @@ def _ensure_unified_compose(services_dir: Path) -> Path:
 
 def _sync_postgres_pgsearch_assets(*, gobby_home: Path | None = None) -> Path:
     """Copy the bundled postgres-pgsearch asset tree into the user services dir."""
-    home = gobby_home or Path("~/.gobby").expanduser()
+    home = gobby_home or get_gobby_home()
     target_root = home / "services" / "postgres-pgsearch"
     source_ref = resources.files("gobby").joinpath("data/postgres-pgsearch")
     with resources.as_file(source_ref) as source_root:

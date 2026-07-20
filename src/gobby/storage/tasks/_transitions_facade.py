@@ -3,6 +3,9 @@ from datetime import datetime
 from pathlib import Path
 
 from gobby.storage.hub.protocol import HubDatabase, TaskLifecycleMutation
+from gobby.storage.tasks._de_escalation import (
+    de_escalate_task as _de_escalate_task,
+)
 from gobby.storage.tasks._lifecycle import (
     close_task as _close_task,
 )
@@ -13,14 +16,14 @@ from gobby.storage.tasks._lifecycle import (
     reopen_task as _reopen_task,
 )
 from gobby.storage.tasks._models import UNSET, MaybeUnset, Task
+from gobby.storage.tasks._plan_enhancement import (
+    record_plan_enhancement as _record_plan_enhancement,
+)
 from gobby.storage.tasks._transitions import (
     approve_review as _approve_review,
 )
 from gobby.storage.tasks._transitions import (
     claim_task as _claim_task,
-)
-from gobby.storage.tasks._transitions import (
-    de_escalate_task as _de_escalate_task,
 )
 from gobby.storage.tasks._transitions import (
     escalate_task as _escalate_task,
@@ -30,9 +33,6 @@ from gobby.storage.tasks._transitions import (
 )
 from gobby.storage.tasks._transitions import (
     reconcile_task_state as _reconcile_task_state,
-)
-from gobby.storage.tasks._transitions import (
-    record_plan_enhancement as _record_plan_enhancement,
 )
 from gobby.storage.tasks._transitions import (
     reject_review as _reject_review,

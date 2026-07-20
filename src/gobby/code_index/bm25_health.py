@@ -28,7 +28,7 @@ def unavailable_bm25_status(error: str) -> dict[str, Any]:
 
 def verify_bm25_indexes(conn: Any) -> dict[str, Any]:
     """Verify every required BM25 index without mutating it."""
-    return _status_payload([_verify_index(conn, name) for name in BM25_INDEXES])
+    return _status_payload([_verify_index(conn, name) for name in _required_index_names(conn)])
 
 
 def repair_bm25_indexes(
@@ -172,6 +172,13 @@ def _acquire_repair_lock(
 def _qualified_identifier(name: str) -> sql.Identifier:
     schema, index = name.split(".", 1)
     return sql.Identifier(schema, index)
+
+
+def _required_index_names(conn: Any) -> tuple[str, ...]:
+    """Qualify required indexes with the connection's active schema."""
+    row = conn.execute("SELECT current_schema()").fetchone()
+    schema = str(row[0]) if row and row[0] else "public"
+    return tuple(f"{schema}.{name.rsplit('.', 1)[1]}" for name in BM25_INDEXES)
 
 
 def _index_payload(

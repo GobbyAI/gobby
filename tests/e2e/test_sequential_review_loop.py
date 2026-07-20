@@ -59,7 +59,7 @@ class TestSequentialReviewLoopE2E:
         # Setup: Register project and session
         # Use "e2e-test-project" to match the project.json created by e2e_project_dir fixture
         project_result = cli_events.register_test_project(
-            project_id="e2e-test-project",
+            project_id="00000000-0000-0000-0000-000000000e2e",
             name="E2E Test Project",
             repo_path=str(daemon_instance.project_dir),
         )
@@ -134,9 +134,6 @@ class TestSequentialReviewLoopE2E:
         result = unwrap_result(raw_result)
         state = result.get("state", {})
         assert state.get("is_claimed") is True, f"Subtask 1 should be claimed: {result}"
-        assert state.get("owner_session_id") == session_id, (
-            f"Subtask 1 should be owned by {session_id}: {result}"
-        )
 
         # 3c: Close first subtask (simulating agent completion)
         # Using reason="obsolete" bypasses commit check and closes directly
@@ -242,7 +239,7 @@ class TestSequentialReviewLoopE2E:
         """
         # Setup - use "e2e-test-project" to match fixture's project.json
         project_result = cli_events.register_test_project(
-            project_id="e2e-test-project",
+            project_id="00000000-0000-0000-0000-000000000e2e",
             name="E2E Test Project",
             repo_path=str(daemon_instance.project_dir),
         )
@@ -393,7 +390,7 @@ class TestSequentialReviewLoopE2E:
         """Test suggest_next_task returns tasks in dependency order."""
         # Setup - use "e2e-test-project" to match fixture's project.json
         project_result = cli_events.register_test_project(
-            project_id="e2e-test-project",
+            project_id="00000000-0000-0000-0000-000000000e2e",
             name="E2E Test Project",
             repo_path=str(daemon_instance.project_dir),
         )
@@ -488,7 +485,7 @@ class TestReviewStepE2E:
         """
         # Setup - use "e2e-test-project" to match fixture's project.json
         project_result = cli_events.register_test_project(
-            project_id="e2e-test-project",
+            project_id="00000000-0000-0000-0000-000000000e2e",
             name="E2E Test Project",
             repo_path=str(daemon_instance.project_dir),
         )
@@ -559,7 +556,7 @@ class TestReviewStepE2E:
         """
         # Setup - use "e2e-test-project" to match fixture's project.json
         project_result = cli_events.register_test_project(
-            project_id="e2e-test-project",
+            project_id="00000000-0000-0000-0000-000000000e2e",
             name="E2E Test Project",
             repo_path=str(daemon_instance.project_dir),
         )

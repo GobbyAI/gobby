@@ -113,7 +113,7 @@ class TestAutonomousSpawningGate:
         """
         # Setup - register project and session
         project_result = cli_events.register_test_project(
-            project_id="e2e-test-project",
+            project_id="00000000-0000-0000-0000-000000000e2e",
             name="E2E Test Project",
             repo_path=str(daemon_instance.project_dir),
         )
@@ -190,7 +190,7 @@ class TestAutonomousSpawningGate:
         """Test that suggest_next_task returns a task when ready tasks exist."""
         # Setup
         project_result = cli_events.register_test_project(
-            project_id="e2e-test-project",
+            project_id="00000000-0000-0000-0000-000000000e2e",
             name="E2E Test Project",
             repo_path=str(daemon_instance.project_dir),
         )

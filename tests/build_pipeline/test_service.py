@@ -11,6 +11,7 @@ from typing import TYPE_CHECKING, Any
 
 import pytest
 
+from gobby.storage.expansion_runs import LocalExpansionRunManager
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.projects import LocalProjectManager
 from gobby.storage.tasks import LocalTaskManager
@@ -77,6 +78,44 @@ def _init_git_repo(path: Path) -> None:
     (path / "README.md").write_text("initial\n")
     subprocess.run(["git", "add", "README.md"], cwd=path, check=True)
     subprocess.run(["git", "commit", "-m", "initial"], cwd=path, check=True, capture_output=True)
+
+
+def _record_completed_expansion_run(
+    *,
+    db: HubDatabase,
+    parent_task_id: str,
+    project_id: str,
+    task_id_map: dict[str, str],
+    created_task_ids: list[str],
+) -> None:
+    run_manager = LocalExpansionRunManager(db)
+    run = run_manager.create(
+        parent_task_id=parent_task_id,
+        project_id=project_id,
+        triggering_session_id=None,
+        input_source="task",
+    )
+    assert run.status == "pending"
+
+    running = run_manager.start(run.id)
+    assert running is not None
+    assert running.status == "running"
+
+    compiled = run_manager.save_compiled_spec(run.id, {})
+    assert compiled is not None
+    assert compiled.status == "compiled"
+
+    applying = run_manager.mark_applying(run.id)
+    assert applying is not None
+    assert applying.status == "applying"
+
+    completed = run_manager.save_apply_result(
+        run.id,
+        task_id_map=task_id_map,
+        created_task_ids=created_task_ids,
+    )
+    assert completed is not None
+    assert completed.status == "completed"
 
 
 @pytest.mark.asyncio
@@ -1988,8 +2027,6 @@ async def test_build_task_ref_automates_existing_expansion_output(
     temp_db,
     sample_project,
 ) -> None:
-    from gobby.storage.expansion_runs import LocalExpansionRunManager
-
     _disable_dispatcher_tick(monkeypatch)
     task_manager = LocalTaskManager(temp_db)
     parent = task_manager.create_task(
@@ -2005,14 +2042,10 @@ async def test_build_task_ref_automates_existing_expansion_output(
         category="code",
         task_type="task",
     )
-    run = LocalExpansionRunManager(temp_db).create(
+    _record_completed_expansion_run(
+        db=temp_db,
         parent_task_id=parent.id,
         project_id=sample_project["id"],
-        triggering_session_id=None,
-        input_source="task",
-    )
-    LocalExpansionRunManager(temp_db).save_apply_result(
-        run.id,
         task_id_map={"child": child.id},
         created_task_ids=[child.id],
     )
@@ -2051,7 +2084,6 @@ async def test_build_task_ref_repairs_legacy_expanded_epic_manifest_without_pr(
     temp_db: HubDatabase,
     sample_project: dict[str, Any],
 ) -> None:
-    from gobby.storage.expansion_runs import LocalExpansionRunManager
     from gobby.storage.tasks import StageManifestSpec
 
     _disable_dispatcher_tick(monkeypatch)
@@ -2103,14 +2135,10 @@ async def test_build_task_ref_repairs_legacy_expanded_epic_manifest_without_pr(
         ],
         by_session_id=None,
     )
-    run = LocalExpansionRunManager(temp_db).create(
+    _record_completed_expansion_run(
+        db=temp_db,
         parent_task_id=parent.id,
         project_id=sample_project["id"],
-        triggering_session_id=None,
-        input_source="task",
-    )
-    LocalExpansionRunManager(temp_db).save_apply_result(
-        run.id,
         task_id_map={"child": child.id},
         created_task_ids=[child.id],
     )
@@ -2142,7 +2170,6 @@ async def test_build_task_ref_removes_skipped_pr_from_progressed_child_epic(
     temp_db: HubDatabase,
     sample_project: dict[str, Any],
 ) -> None:
-    from gobby.storage.expansion_runs import LocalExpansionRunManager
     from gobby.storage.tasks import StageManifestSpec
 
     _disable_dispatcher_tick(monkeypatch)
@@ -2200,14 +2227,10 @@ async def test_build_task_ref_removes_skipped_pr_from_progressed_child_epic(
         """,
         ("aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaa5001", child.id),
     )
-    run = LocalExpansionRunManager(temp_db).create(
+    _record_completed_expansion_run(
+        db=temp_db,
         parent_task_id=parent.id,
         project_id=sample_project["id"],
-        triggering_session_id=None,
-        input_source="task",
-    )
-    LocalExpansionRunManager(temp_db).save_apply_result(
-        run.id,
         task_id_map={"child": child.id},
         created_task_ids=[child.id],
     )
@@ -2234,7 +2257,6 @@ async def test_build_task_ref_removes_auto_started_skipped_pr_from_child_epic(
     temp_db,
     sample_project,
 ) -> None:
-    from gobby.storage.expansion_runs import LocalExpansionRunManager
     from gobby.storage.tasks import StageManifestSpec
 
     _disable_dispatcher_tick(monkeypatch)
@@ -2284,14 +2306,10 @@ async def test_build_task_ref_removes_auto_started_skipped_pr_from_child_epic(
         """,
         (child.id,),
     )
-    run = LocalExpansionRunManager(temp_db).create(
+    _record_completed_expansion_run(
+        db=temp_db,
         parent_task_id=parent.id,
         project_id=sample_project["id"],
-        triggering_session_id=None,
-        input_source="task",
-    )
-    LocalExpansionRunManager(temp_db).save_apply_result(
-        run.id,
         task_id_map={"child": child.id},
         created_task_ids=[child.id],
     )
@@ -2315,7 +2333,6 @@ async def test_build_resume_cascades_skipped_pr_before_workspace_refresh(
     temp_db,
     sample_project,
 ) -> None:
-    from gobby.storage.expansion_runs import LocalExpansionRunManager
     from gobby.storage.tasks import StageManifestSpec
 
     _disable_dispatcher_tick(monkeypatch)
@@ -2390,14 +2407,10 @@ async def test_build_resume_cascades_skipped_pr_before_workspace_refresh(
         (parent.id,),
     )
     task_manager.artifacts.set_artifacts_atomic(parent.id, target_branch="main")
-    run = LocalExpansionRunManager(temp_db).create(
+    _record_completed_expansion_run(
+        db=temp_db,
         parent_task_id=parent.id,
         project_id=sample_project["id"],
-        triggering_session_id=None,
-        input_source="task",
-    )
-    LocalExpansionRunManager(temp_db).save_apply_result(
-        run.id,
         task_id_map={"child": child.id},
         created_task_ids=[child.id],
     )
@@ -2429,7 +2442,6 @@ async def test_build_resume_development_epic_defers_workspace_refresh(
     temp_db,
     sample_project,
 ) -> None:
-    from gobby.storage.expansion_runs import LocalExpansionRunManager
     from gobby.storage.tasks import StageManifestSpec
 
     _disable_dispatcher_tick(monkeypatch)
@@ -2454,14 +2466,10 @@ async def test_build_resume_development_epic_defers_workspace_refresh(
     ]
     task_manager.stage_states.initialize_manifest(parent.id, manifest, by_session_id=None)
     task_manager.stage_states.initialize_manifest(child.id, manifest, by_session_id=None)
-    run = LocalExpansionRunManager(temp_db).create(
+    _record_completed_expansion_run(
+        db=temp_db,
         parent_task_id=parent.id,
         project_id=sample_project["id"],
-        triggering_session_id=None,
-        input_source="task",
-    )
-    LocalExpansionRunManager(temp_db).save_apply_result(
-        run.id,
         task_id_map={"child": child.id},
         created_task_ids=[child.id],
     )
@@ -2504,8 +2512,6 @@ async def test_build_task_ref_can_reset_existing_expansion_output(
     temp_db,
     sample_project,
 ) -> None:
-    from gobby.storage.expansion_runs import LocalExpansionRunManager
-
     task_manager = LocalTaskManager(temp_db)
     parent = task_manager.create_task(
         project_id=sample_project["id"],
@@ -2520,14 +2526,10 @@ async def test_build_task_ref_can_reset_existing_expansion_output(
         category="code",
         task_type="task",
     )
-    run = LocalExpansionRunManager(temp_db).create(
+    _record_completed_expansion_run(
+        db=temp_db,
         parent_task_id=parent.id,
         project_id=sample_project["id"],
-        triggering_session_id=None,
-        input_source="task",
-    )
-    LocalExpansionRunManager(temp_db).save_apply_result(
-        run.id,
         task_id_map={"child": child.id},
         created_task_ids=[child.id],
     )

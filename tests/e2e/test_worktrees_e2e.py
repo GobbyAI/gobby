@@ -326,7 +326,7 @@ class TestWorktreeRetrieval:
         list_response = mcp_client.call_tool(
             server_name="gobby-worktrees",
             tool_name="list_worktrees",
-            arguments={},
+            arguments={"project_path": str(git_repo_with_origin)},
         )
         list_result = extract_result(list_response)
 
@@ -383,7 +383,7 @@ class TestWorktreeRetrieval:
         response = mcp_client.call_tool(
             server_name="gobby-worktrees",
             tool_name="get_worktree",
-            arguments={"worktree_id": "wt-nonexistent-12345"},
+            arguments={"worktree_id": "00000000-0000-0000-0000-00000000fade"},
         )
         result = extract_result(response)
 

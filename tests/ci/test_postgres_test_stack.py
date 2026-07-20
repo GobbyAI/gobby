@@ -242,6 +242,21 @@ def test_pre_push_resolves_and_exports_postgres_database_url_for_pytest(
     )
 
 
+def test_pre_push_uses_canonical_logging_dir_for_pytest(repo_root: Path) -> None:
+    script = _load_pre_push_script(repo_root)
+
+    assert 'GOBBY_LOGGING_DIR="$PYTEST_ISOLATION_DIR/logs"' in script
+    for legacy_name in (
+        "GOBBY_LOGGING_CLIENT",
+        "GOBBY_LOGGING_CLIENT_ERROR",
+        "GOBBY_LOGGING_CLIENT_STDERR",
+        "GOBBY_LOGGING_MCP_SERVER",
+        "GOBBY_LOGGING_MCP_CLIENT",
+        "GOBBY_LOGGING_HOOK_MANAGER",
+    ):
+        assert f"{legacy_name}=" not in script
+
+
 def test_pre_push_fails_if_postgres_skip_reason_reaches_pytest_report(
     repo_root: Path,
 ) -> None:

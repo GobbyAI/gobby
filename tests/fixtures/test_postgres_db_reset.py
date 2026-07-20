@@ -97,7 +97,7 @@ def test_seed_rows_survive_reset(
         )
         # (3) Projects: only the four canonical placeholders remain.
         rows = conn.execute("SELECT id FROM projects ORDER BY id").fetchall()
-        ids = [r[0] for r in rows]
+        ids = [str(r[0]) for r in rows]
         assert ids == [
             "00000000-0000-0000-0000-000000000000",
             "00000000-0000-0000-0000-000000000001",

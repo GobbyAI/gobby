@@ -338,7 +338,7 @@ def e2e_project_dir() -> Generator[Path]:
         project_json.write_text(
             json.dumps(
                 {
-                    "id": "e2e-test-project",
+                    "id": "00000000-0000-0000-0000-000000000e2e",
                     "name": "E2E Test Project",
                     "repo_path": str(project_dir),
                 }
@@ -422,6 +422,16 @@ gobby_tasks:
   expansion:
     enabled: false
   validation:
+    enabled: false
+
+code_index:
+  enabled: false
+
+embeddings:
+  api_base: "http://127.0.0.1:11434/v1"
+
+memory:
+  dream:
     enabled: false
 
 session_summary:

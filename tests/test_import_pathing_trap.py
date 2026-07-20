@@ -29,7 +29,8 @@ def test_import_pathing_trap_is_fixed(protect_production_resources) -> None:
     )
 
 
-def test_runner_uses_patched_config(protect_production_resources, monkeypatch) -> None:
+@pytest.mark.asyncio
+async def test_runner_uses_patched_config(protect_production_resources, monkeypatch) -> None:
     """Integration checks that Runner actually initializes with safe config."""
     # Only phase 1 (storage/config) is needed to check database path.
     # Phases 2-4 pull in numpy transitively, which crashes on reimport
