@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import inspect
 import logging
+import threading
 import uuid
 from collections.abc import Awaitable, Callable, Sequence
 from dataclasses import replace
@@ -82,7 +83,12 @@ from gobby.telemetry.health_metrics import record_automation_event
 from gobby.utils.datetime import parse_stored_datetime
 
 logger = logging.getLogger(__name__)
-_HEARTBEAT_LOCK = asyncio.Lock()
+# Heartbeats enter from multiple event loops: the automation loop ticks on the
+# daemon loop while the build route drives ticks via asyncio.run on a worker
+# thread. An asyncio.Lock binds to one loop on contended acquire, so cross-loop
+# exclusion needs a thread lock, acquired without blocking the running loop.
+_HEARTBEAT_LOCK = threading.Lock()
+_HEARTBEAT_LOCK_POLL_SECONDS = 0.05
 _P = ParamSpec("_P")
 _T = TypeVar("_T")
 
@@ -126,21 +132,24 @@ async def run_heartbeat(
     max_actions: int | None = None,
 ) -> HeartbeatResult:
     """Serialize heartbeat entry points before scanning and dispatching tasks."""
-    async with _HEARTBEAT_LOCK:
-        try:
-            return await _run_heartbeat_unlocked(
-                db=db,
-                project_id=project_id,
-                startup=startup,
-                max_active_agents=max_active_agents,
-                holder=holder,
-                ttl_seconds=ttl_seconds,
-                services=services,
-                max_actions=max_actions,
-            )
-        except Exception:
-            record_automation_event("dispatcher", "failed")
-            raise
+    while not _HEARTBEAT_LOCK.acquire(blocking=False):
+        await asyncio.sleep(_HEARTBEAT_LOCK_POLL_SECONDS)
+    try:
+        return await _run_heartbeat_unlocked(
+            db=db,
+            project_id=project_id,
+            startup=startup,
+            max_active_agents=max_active_agents,
+            holder=holder,
+            ttl_seconds=ttl_seconds,
+            services=services,
+            max_actions=max_actions,
+        )
+    except Exception:
+        record_automation_event("dispatcher", "failed")
+        raise
+    finally:
+        _HEARTBEAT_LOCK.release()
 
 
 async def _run_heartbeat_unlocked(

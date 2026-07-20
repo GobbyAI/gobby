@@ -4,6 +4,7 @@ import asyncio
 import logging
 import subprocess
 import sys
+import threading
 import uuid
 from datetime import UTC, datetime, timedelta
 from types import SimpleNamespace
@@ -4765,3 +4766,56 @@ async def test_heartbeat_preserves_fresh_no_run_mutex(
     mutex = storage.get_mutex(task.id)
     assert mutex is not None
     assert mutex.run_id is None
+
+
+def test_run_heartbeat_serializes_across_event_loops(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Contended heartbeats on distinct event loops serialize instead of raising.
+
+    The automation loop ticks on the daemon loop while the build route drives
+    ticks via asyncio.run on a worker thread; a module-level asyncio.Lock bound
+    itself to one loop on contended acquire and raised
+    "is bound to a different event loop" for the other.
+    """
+    from gobby.dispatch import dispatcher
+
+    state_lock = threading.Lock()
+    first_inside = threading.Event()
+    active = 0
+    max_active = 0
+
+    async def fake_unlocked(**_kwargs: Any) -> Any:
+        nonlocal active, max_active
+        with state_lock:
+            active += 1
+            max_active = max(max_active, active)
+        first_inside.set()
+        await asyncio.sleep(0.2)
+        with state_lock:
+            active -= 1
+        return dispatcher.HeartbeatResult()
+
+    monkeypatch.setattr(dispatcher, "_run_heartbeat_unlocked", fake_unlocked)
+
+    errors: list[Exception] = []
+
+    def run_tick() -> None:
+        try:
+            asyncio.run(dispatcher.run_heartbeat(db=MagicMock()))
+        except Exception as exc:
+            errors.append(exc)
+
+    first = threading.Thread(target=run_tick, daemon=True)
+    second = threading.Thread(target=run_tick, daemon=True)
+    first.start()
+    assert first_inside.wait(timeout=5.0)
+    second.start()
+    first.join(timeout=10.0)
+    second.join(timeout=10.0)
+
+    assert not first.is_alive()
+    assert not second.is_alive()
+    assert errors == []
+    assert max_active == 1
+    assert not dispatcher._HEARTBEAT_LOCK.locked()
