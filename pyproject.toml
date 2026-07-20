@@ -23,7 +23,8 @@ dependencies = [
     # CVE-2026-34993 and CVE-2026-47265.
     "aiohttp>=3.14.1",
     "anthropic>=0.75.0",
-    "click>=8.1.0",
+    # click <8.3.3 has PYSEC-2026-2132.
+    "click>=8.3.3",
     "fastapi>=0.136.0,!=0.136.3",
     # fastmcp <3.2.0 has CVE-2025-64340, CVE-2026-27124
     "fastmcp>=3.2.0",
@@ -99,7 +100,8 @@ constraint-dependencies = [
     "idna>=3.15",
     # starlette <0.49.1 has CVE-2025-62727; <1.3.1 has the later GHSA;
     # keep the ASGI stack on compatible floors.
-    "mcp>=1.27.1",
+    # mcp <1.28.1 has multiple 2026 advisories.
+    "mcp>=1.28.1",
     "sse-starlette>=3.4.4",
     "starlette>=1.3.1",
     # msgpack <=1.2.0 has GHSA (high), fixed in 1.2.1 (transitive via qdrant-client).
@@ -111,20 +113,25 @@ constraint-dependencies = [
     "authlib>=1.6.12",
     # joserfc <1.6.8 has HMAC empty-key and unencoded-payload limit bypass advisories.
     "joserfc>=1.6.8",
-    # torch <2.8.0 has GHSA-887c-mr87-cxwp (medium); <2.7.1-rc1 has GHSA-3749-ghw9-m3mg (low) - see override-dependencies below
+    # pillow <12.3.0 has multiple 2026 advisories (transitive via the voice stack).
+    "pillow>=12.3.0",
+    # torch <2.8.0 has GHSA-887c-mr87-cxwp; see override-dependencies below.
     "torch>=2.8.0",
 ]
-# torch, torchaudio, diffusers, gradio, and safetensors are exact-pinned by
-# chatterbox-tts==0.1.7 to vulnerable or incompatible versions, so constraints are
-# unsatisfiable on their own; overrides force fixed versions and unify the
-# required local voice stack. Revisit if chatterbox-tts surfaces ABI/API drift
-# at runtime.
+# torch, torchaudio, setuptools, diffusers, gradio, and safetensors are pinned by
+# chatterbox-tts==0.1.7 or its dependencies to vulnerable or incompatible versions,
+# so constraints are unsatisfiable on their own; overrides force fixed versions and
+# unify the required local voice stack. Revisit if chatterbox-tts surfaces ABI/API
+# drift at runtime.
 # Voice stack note (gobby-#14569): stable safetensors 0.8.0 was released on
 # 2026-06-09 and resolves with chatterbox-tts==0.1.7, so keep the override on
 # the stable audit floor while chatterbox keeps its exact pin.
 override-dependencies = [
     "torch==2.11.0",
     "torchaudio==2.11.0",
+    # torch 2.11 pins setuptools<82, but the exercised Gobby voice paths do not use
+    # the removed pkg_resources API. Force the security-fixed release.
+    "setuptools>=83.0.0",
     # chatterbox-tts==0.1.7 pins vulnerable voice-stack transitive versions.
     "onnx>=1.22.0",
     "transformers>=5.3.0",
@@ -140,14 +147,14 @@ override-dependencies = [
 
 [tool.uv.audit]
 # GHSA-rrmf-rvhw-rf47 / CVE-2025-3000 requires a local caller to exercise
-# torch.jit.script. Gobby does not invoke torch.jit.script, and OSV
-# currently publishes no fixed PyTorch release. This conditional ignore stops
-# applying automatically as soon as a fixed version becomes available.
-ignore-until-fixed = ["GHSA-rrmf-rvhw-rf47"]
+# torch.jit.script, which Gobby does not invoke. PyTorch 2.13.0 is fixed, but
+# torchaudio currently ends at 2.11.0 and must match torch for the voice stack.
+# Remove this ignore when a compatible torchaudio release is available.
+ignore = ["GHSA-rrmf-rvhw-rf47"]
 
 [build-system]
 requires = [
-    "setuptools>=64.0", # Provides PEP 660 editable-install hooks.
+    "setuptools>=83.0.0", # Provides PEP 660 editable-install hooks.
     "wheel",
 ]
 build-backend = "build_backend"
