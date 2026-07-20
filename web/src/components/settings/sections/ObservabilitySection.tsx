@@ -44,9 +44,23 @@ const TELEMETRY_PATHS = [
   'telemetry.llm_tracing.providers',
 ] as const
 
+const LOGGING_PATHS = [
+  'logging.level',
+  'logging.format',
+  'logging.dir',
+  'logging.max_size_mb',
+  'logging.backup_count',
+  'logging.runtime_max_size_mb',
+  'logging.growth_warn_mb_per_interval',
+] as const
+
 const METRICS_PATHS = ['metrics.list_limit'] as const
 
-const OWNED_PATHS: readonly string[] = [...TELEMETRY_PATHS, ...METRICS_PATHS]
+const OWNED_PATHS: readonly string[] = [
+  ...LOGGING_PATHS,
+  ...TELEMETRY_PATHS,
+  ...METRICS_PATHS,
+]
 
 function ServiceGroup({ fields }: { fields: SettingsSectionFields }) {
   return (
@@ -60,6 +74,59 @@ function ServiceGroup({ fields }: { fields: SettingsSectionFields }) {
         label="Service name"
         ariaLabel="Telemetry service name"
         placeholder="gobby-daemon"
+      />
+    </Subsection>
+  )
+}
+
+function RuntimeLoggingGroup({ fields }: { fields: SettingsSectionFields }) {
+  return (
+    <Subsection
+      title="Runtime logging"
+      hint="Format, location, rotation, and growth monitoring for Gobby log files."
+    >
+      <SchemaSelectField
+        fields={fields}
+        path="logging.level"
+        label="Runtime log level"
+        ariaLabel="Runtime log level"
+      />
+      <SchemaSelectField
+        fields={fields}
+        path="logging.format"
+        label="Runtime log format"
+        ariaLabel="Runtime log format"
+      />
+      <TextConfigField
+        fields={fields}
+        path="logging.dir"
+        label="Logs directory"
+        ariaLabel="Logs directory"
+        placeholder="~/.gobby/logs"
+      />
+      <NumberConfigField
+        fields={fields}
+        path="logging.max_size_mb"
+        label="Max rotating file size (MB)"
+        ariaLabel="Max rotating log file size"
+      />
+      <NumberConfigField
+        fields={fields}
+        path="logging.backup_count"
+        label="Rotated files to keep"
+        ariaLabel="Rotated log files to keep"
+      />
+      <NumberConfigField
+        fields={fields}
+        path="logging.runtime_max_size_mb"
+        label="Max runtime output size (MB)"
+        ariaLabel="Max runtime output file size"
+      />
+      <NumberConfigField
+        fields={fields}
+        path="logging.growth_warn_mb_per_interval"
+        label="Growth warning threshold (MB)"
+        ariaLabel="Logs directory growth warning threshold"
       />
     </Subsection>
   )
@@ -265,6 +332,7 @@ export function ObservabilitySection() {
       {(fields) => (
         <>
           <ServiceGroup fields={fields} />
+          <RuntimeLoggingGroup fields={fields} />
           <LoggingGroup fields={fields} />
           <TracingGroup fields={fields} />
           <MetricsGroup fields={fields} />
