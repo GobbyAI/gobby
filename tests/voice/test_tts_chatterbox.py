@@ -903,7 +903,7 @@ class TestMpsGuardrails:
 
         monkeypatch.setitem(sys.modules, "torch", ModuleType("torch"))
         provider = self._provider(voice_config)
-        provider._apply_mps_memory_cap()  # must not raise
+        assert provider._apply_mps_memory_cap() is None
 
     async def test_ensure_model_raises_when_load_guard_latched(
         self, voice_config: VoiceConfig
@@ -940,16 +940,23 @@ class TestMpsGuardrails:
     async def test_unload_awaits_inflight_load_before_release(
         self, voice_config: VoiceConfig
     ) -> None:
-        import asyncio
+        class ObservedFuture(asyncio.Future[Any]):
+            def __init__(self) -> None:
+                super().__init__()
+                self.wait_registered = asyncio.Event()
+
+            def add_done_callback(self, fn: Any, *, context: Any = None) -> None:
+                self.wait_registered.set()
+                super().add_done_callback(fn, context=context)
 
         provider = self._provider(voice_config)
-        loop = asyncio.get_running_loop()
-        inflight: asyncio.Future[Any] = loop.create_future()
+        inflight = ObservedFuture()
         provider._inflight_load = inflight
 
         unload_task = asyncio.create_task(provider.unload())
-        await asyncio.sleep(0.01)
+        await asyncio.wait_for(inflight.wait_registered.wait(), timeout=1.0)
         assert not unload_task.done()  # blocked on the in-flight load
+        assert provider._inflight_load is inflight
 
         inflight.set_result(MagicMock())
         await asyncio.wait_for(unload_task, timeout=1.0)

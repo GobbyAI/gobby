@@ -123,8 +123,15 @@ def test_main_exits_zero_on_lock_contention(tmp_path: Path) -> None:
 
 
 def test_main_passes_early_claim_to_run_gobby(tmp_path: Path) -> None:
+    class RecordingClaim:
+        def __init__(self) -> None:
+            self.released = False
+
+        def release(self) -> None:
+            self.released = True
+
     bootstrap = MagicMock(daemon_port=8765, bind_host="localhost")
-    claim = MagicMock()
+    claim = RecordingClaim()
     with (
         patch("gobby.config.bootstrap.load_bootstrap", return_value=bootstrap),
         patch("gobby.runner._healthy_daemon_running", return_value=False),
@@ -137,7 +144,7 @@ def test_main_passes_early_claim_to_run_gobby(tmp_path: Path) -> None:
         main()
 
     assert mock_run_gobby.call_args.kwargs["pid_claim"] is claim
-    claim.release.assert_called_once()
+    assert claim.released is True
 
 
 @pytest.mark.asyncio

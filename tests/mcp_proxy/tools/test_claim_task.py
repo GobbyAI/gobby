@@ -198,7 +198,12 @@ class TestClaimTaskTool:
 
             result = await registry.call("claim_task", {"task_id": sample_task.id})
 
+            assert result["success"] is False
+            assert result["error"] == (
+                "Current session could not be marked active; task was not claimed"
+            )
             assert result["error_code"] == "SESSION_INACTIVE"
+            assert result["session_id"] == "my-session-id"
             mock_task_manager.claim_task.assert_not_called()
 
     @pytest.mark.asyncio

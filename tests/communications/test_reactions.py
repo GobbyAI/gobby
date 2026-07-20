@@ -10,7 +10,18 @@ from gobby.storage.pipelines import LocalPipelineExecutionManager
 from gobby.workflows.pipeline_state import ExecutionStatus, StepStatus
 
 
-def make_service_container(pipeline_executor: MagicMock | None = None) -> SimpleNamespace:
+class RecordingPipelineExecutor:
+    def __init__(self) -> None:
+        self.actions: list[tuple[str, str, str]] = []
+
+    async def approve(self, token: str, *, approved_by: str) -> None:
+        self.actions.append(("approve", token, approved_by))
+
+    async def reject(self, token: str, *, rejected_by: str) -> None:
+        self.actions.append(("reject", token, rejected_by))
+
+
+def make_service_container(pipeline_executor: object | None = None) -> SimpleNamespace:
     return SimpleNamespace(
         pipeline_execution_manager=MagicMock(spec=LocalPipelineExecutionManager),
         pipeline_executor=pipeline_executor,
@@ -78,8 +89,7 @@ async def test_handle_reaction_approve():
 @pytest.mark.asyncio
 async def test_handle_reaction_reject():
     store = MagicMock()
-    pipeline_executor = MagicMock()
-    pipeline_executor.reject = AsyncMock()
+    pipeline_executor = RecordingPipelineExecutor()
     service_container = make_service_container(pipeline_executor)
 
     handler = ReactionHandler(store, service_container)
@@ -100,14 +110,13 @@ async def test_handle_reaction_reject():
 
     await handler.handle_reaction("test_channel", "msg_123", "-1", "user_123")
 
-    pipeline_executor.reject.assert_awaited_once_with("token_789", rejected_by="identity_1")
+    assert pipeline_executor.actions == [("reject", "token_789", "identity_1")]
 
 
 @pytest.mark.asyncio
 async def test_handle_reaction_unknown_message():
     store = MagicMock()
-    pipeline_executor = MagicMock()
-    pipeline_executor.approve = AsyncMock()
+    pipeline_executor = RecordingPipelineExecutor()
     service_container = make_service_container(pipeline_executor)
 
     handler = ReactionHandler(store, service_container)
@@ -116,7 +125,7 @@ async def test_handle_reaction_unknown_message():
 
     await handler.handle_reaction("test_channel", "msg_123", "+1", "user_123")
 
-    pipeline_executor.approve.assert_not_awaited()
+    assert pipeline_executor.actions == []
 
 
 async def test_handle_reaction_lookups_run_off_event_loop():
@@ -150,8 +159,7 @@ async def test_handle_reaction_lookups_run_off_event_loop():
 async def test_handle_reaction_custom_mapping():
     """Custom reaction_mappings in message metadata override defaults."""
     store = MagicMock()
-    pipeline_executor = MagicMock()
-    pipeline_executor.approve = AsyncMock()
+    pipeline_executor = RecordingPipelineExecutor()
     service_container = make_service_container(pipeline_executor)
 
     handler = ReactionHandler(store, service_container)
@@ -171,7 +179,7 @@ async def test_handle_reaction_custom_mapping():
 
     await handler.handle_reaction("test_channel", "msg_1", "rocket", "user_1")
 
-    pipeline_executor.approve.assert_awaited_once_with("token_1", approved_by="identity_1")
+    assert pipeline_executor.actions == [("approve", "token_1", "identity_1")]
 
 
 @pytest.mark.asyncio

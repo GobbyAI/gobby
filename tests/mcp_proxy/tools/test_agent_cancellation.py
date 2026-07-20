@@ -115,12 +115,17 @@ async def test_terminalize_cancelled_agent_run_fallback_skips_recovery_when_not_
 
 @pytest.mark.asyncio
 async def test_terminalize_killed_agent_run_error_recovers_claim_and_notifies() -> None:
+    notifications: list[tuple[str, dict[str, str], str]] = []
+
+    class RecordingCompletionRegistry:
+        async def notify(self, run_id: str, result: dict[str, str], *, message: str) -> None:
+            notifications.append((run_id, result, message))
+
     runner = MagicMock()
     failed_run = MagicMock()
     runner.run_storage.fail.return_value = failed_run
     runner.run_storage.get.return_value = failed_run
-    completion_registry = MagicMock()
-    completion_registry.notify = AsyncMock()
+    completion_registry = RecordingCompletionRegistry()
     task_manager = MagicMock()
 
     with patch("gobby.mcp_proxy.tools.agent_cancellation.TaskRecoveryHandler") as recovery_cls:
@@ -142,11 +147,13 @@ async def test_terminalize_killed_agent_run_error_recovers_claim_and_notifies() 
         failed_run,
         outcome="failed",
     )
-    completion_registry.notify.assert_awaited_once_with(
-        "run-123",
-        {"status": "error", "error": "Agent self-reported error"},
-        message="Agent run-123 failed",
-    )
+    assert notifications == [
+        (
+            "run-123",
+            {"status": "error", "error": "Agent self-reported error"},
+            "Agent run-123 failed",
+        )
+    ]
 
 
 @pytest.mark.asyncio

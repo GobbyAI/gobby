@@ -51,6 +51,11 @@ async def _run_sync(_owner: Any, func: Any, *args: Any, **kwargs: Any) -> Any:
     return func(*args, **kwargs)
 
 
+async def _park_plan_decision(session: DroidManagedChatSession, ready: asyncio.Event) -> str:
+    ready.set()
+    return await session._wait_for_plan_decision()
+
+
 class TestSetModeValidation:
     async def test_invalid_mode_sends_error(self) -> None:
         server = ConcreteSessionControl()
@@ -162,9 +167,10 @@ class TestSetModeReleasesParkedPlanDecision:
         session._pending_plan_structured = True
         server._chat_sessions["conv-droid"] = session
 
-        decision_task = asyncio.create_task(session._wait_for_plan_decision())
-        while session._pending_plan_event is None:
-            await asyncio.sleep(0)
+        ready = asyncio.Event()
+        decision_task = asyncio.create_task(_park_plan_decision(session, ready))
+        await asyncio.wait_for(ready.wait(), timeout=1.0)
+        assert session._pending_plan_event is not None
 
         await server._handle_set_mode(
             _make_ws(), {"conversation_id": "conv-droid", "mode": "normal"}
@@ -183,9 +189,10 @@ class TestSetModeReleasesParkedPlanDecision:
         assert session.has_pending_plan is False
         server._chat_sessions["conv-droid"] = session
 
-        decision_task = asyncio.create_task(session._wait_for_plan_decision())
-        while session._pending_plan_event is None:
-            await asyncio.sleep(0)
+        ready = asyncio.Event()
+        decision_task = asyncio.create_task(_park_plan_decision(session, ready))
+        await asyncio.wait_for(ready.wait(), timeout=1.0)
+        assert session._pending_plan_event is not None
 
         await server._handle_set_mode(
             _make_ws(), {"conversation_id": "conv-droid", "mode": "normal"}

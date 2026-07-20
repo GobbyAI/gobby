@@ -4780,8 +4780,30 @@ def test_run_heartbeat_serializes_across_event_loops(
     """
     from gobby.dispatch import dispatcher
 
+    class ObservedThreadLock:
+        def __init__(self) -> None:
+            self._lock = threading.Lock()
+            self.contention_observed = threading.Event()
+
+        def acquire(self, blocking: bool = True, timeout: float = -1) -> bool:
+            if timeout == -1:
+                acquired = self._lock.acquire(blocking=blocking)
+            else:
+                acquired = self._lock.acquire(blocking=blocking, timeout=timeout)
+            if not acquired:
+                self.contention_observed.set()
+            return acquired
+
+        def release(self) -> None:
+            self._lock.release()
+
+        def locked(self) -> bool:
+            return self._lock.locked()
+
     state_lock = threading.Lock()
+    heartbeat_lock = ObservedThreadLock()
     first_inside = threading.Event()
+    release_heartbeat = threading.Event()
     active = 0
     max_active = 0
 
@@ -4791,11 +4813,12 @@ def test_run_heartbeat_serializes_across_event_loops(
             active += 1
             max_active = max(max_active, active)
         first_inside.set()
-        await asyncio.sleep(0.2)
+        await asyncio.to_thread(release_heartbeat.wait)
         with state_lock:
             active -= 1
         return dispatcher.HeartbeatResult()
 
+    monkeypatch.setattr(dispatcher, "_HEARTBEAT_LOCK", heartbeat_lock)
     monkeypatch.setattr(dispatcher, "_run_heartbeat_unlocked", fake_unlocked)
 
     errors: list[Exception] = []
@@ -4811,6 +4834,8 @@ def test_run_heartbeat_serializes_across_event_loops(
     first.start()
     assert first_inside.wait(timeout=5.0)
     second.start()
+    assert heartbeat_lock.contention_observed.wait(timeout=5.0)
+    release_heartbeat.set()
     first.join(timeout=10.0)
     second.join(timeout=10.0)
 

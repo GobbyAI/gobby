@@ -617,13 +617,26 @@ class TestStopDaemon:
     def test_lock_survivor_silent_when_lock_free(self, temp_dir: Path) -> None:
         from gobby.cli.utils_shutdown import _report_lock_survivor
 
-        deps = MagicMock()
-        deps.get_gobby_home.return_value = temp_dir
+        warnings: list[tuple[object, ...]] = []
+        output: list[tuple[str, bool]] = []
 
-        _report_lock_survivor(deps, quiet=False)
+        class RecordingLogger:
+            def warning(self, *args: object) -> None:
+                warnings.append(args)
 
-        deps.logger.warning.assert_not_called()
-        deps._stop_step.assert_not_called()
+        class RecordingDeps:
+            logger = RecordingLogger()
+
+            def get_gobby_home(self) -> Path:
+                return temp_dir
+
+            def _stop_step(self, message: str, *, error: bool = False) -> None:
+                output.append((message, error))
+
+        _report_lock_survivor(RecordingDeps(), quiet=False)
+
+        assert warnings == []
+        assert output == []
 
     def test_stop_runs_lock_survivor_check(self, temp_dir: Path) -> None:
         """The SIGTERM-success path probes for a surviving lock owner."""
@@ -646,6 +659,7 @@ class TestStopDaemon:
         ):
             assert stop_daemon(quiet=True) is True
 
+        assert not pid_file.exists()
         mock_report.assert_called_once()
 
     def test_stale_pid_file(self, temp_dir: Path) -> None:

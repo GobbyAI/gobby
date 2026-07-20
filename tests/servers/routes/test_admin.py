@@ -798,7 +798,11 @@ class TestAdminRoutes:
         with patch("gobby.runner_maintenance.write_shutdown_source"):
             response = client.post("/api/admin/restart")
 
-        assert response.json()["status"] == "restarting"
+        payload = response.json()
+        assert response.status_code == 200
+        assert payload["status"] == "restarting"
+        assert payload["message"] == "Daemon restart initiated"
+        assert payload["response_time_ms"] >= 0
         mock_to_thread.assert_awaited_once_with(mock_service_mode)
 
     @patch(

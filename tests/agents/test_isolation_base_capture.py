@@ -140,13 +140,14 @@ async def test_repair_isolation_environment_propagates_project_json_failure() ->
             side_effect=error,
         ),
     ):
-        with pytest.raises(IsolationProjectJsonError, match="metadata failed"):
+        with pytest.raises(IsolationProjectJsonError, match="metadata failed") as exc_info:
             await repair_isolation_environment(
                 main_repo_path="/tmp/main",
                 isolated_path="/tmp/isolated",
                 provider="codex",
             )
 
+    assert exc_info.value is error
     patch_mcp.assert_not_awaited()
 
 
