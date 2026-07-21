@@ -306,9 +306,7 @@ class TestShipAuditSample:
         ("label_source", "expected"),
         [("digest_shadow", "full"), ("ablation", "injected")],
     )
-    def test_default_scope_is_bound_to_label_stream(
-        self, label_source: str, expected: str
-    ) -> None:
+    def test_default_scope_is_bound_to_label_stream(self, label_source: str, expected: str) -> None:
         assert default_candidate_scope(label_source) == expected
 
     def test_is_deterministic_and_uses_only_training_requests(self) -> None:

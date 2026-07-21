@@ -450,11 +450,14 @@ def _seed_shadow_gate_rows(store: RecallSignalStore) -> GateCohort:
         for target in sample.targets
     ]
     assert len(verdicts) == 50
-    assert store.insert_audit_verdicts(
-        verdicts,
-        cohort_digest=sample.cohort_digest,
-        sample_digest=sample.sample_digest,
-    ) == 50
+    assert (
+        store.insert_audit_verdicts(
+            verdicts,
+            cohort_digest=sample.cohort_digest,
+            sample_digest=sample.sample_digest,
+        )
+        == 50
+    )
     return cohort
 
 
