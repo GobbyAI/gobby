@@ -229,6 +229,7 @@ steps:
         when: "vars.task_claimed"
 
   - name: load_skill
+    mcp_error_policy: stay
     description: "Load the plan-review and proportionality methodology skills"
     status_message: |
       Load BOTH methodology skills before reviewing: call get_skill(name="plan-review")

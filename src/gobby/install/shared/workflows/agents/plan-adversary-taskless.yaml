@@ -101,6 +101,7 @@ step_variables:
 
 steps:
   - name: load_skill
+    mcp_error_policy: stay
     description: "Load the plan-review and proportionality methodology skills"
     status_message: |
       Load BOTH methodology skills before reviewing: call get_skill(name="plan-review")
@@ -136,6 +137,7 @@ steps:
         when: "vars.skill_loaded and vars.proportionality_loaded"
 
   - name: review
+    mcp_error_policy: stay
     description: "Review the plan artifact and return structured findings"
     status_message: |
       Review artifact_path. Return verdict approved, needs_review, or

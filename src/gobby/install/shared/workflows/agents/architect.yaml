@@ -78,6 +78,7 @@ step_variables:
 
 steps:
   - name: claim
+    mcp_error_policy: stay
     description: "Claim the assigned architecture task"
     status_message: |
       Claim assigned_task_id with claim_task, then read it with get_task.
@@ -100,6 +101,7 @@ steps:
         when: "vars.task_claimed"
 
   - name: load_skill
+    mcp_error_policy: stay
     description: "Load architecture methodology skill"
     status_message: |
       Call get_skill(name="architecture") on gobby-skills, then continue before
@@ -129,6 +131,7 @@ steps:
         when: "vars.architecture_skill_loaded"
 
   - name: draft
+    mcp_error_policy: stay
     description: "Draft and persist Architecture Brief and Test Architecture"
     status_message: |
       Read assigned_task_id with get_task, update only the architecture marker

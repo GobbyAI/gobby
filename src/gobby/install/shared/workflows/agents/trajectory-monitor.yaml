@@ -57,6 +57,7 @@ step_variables:
 
 steps:
   - name: claim
+    mcp_error_policy: stay
     description: "Claim the assigned task"
     status_message: |
       Claim assigned_task_id with claim_task. Spawn-time auto-claim may already
@@ -79,6 +80,7 @@ steps:
         when: "vars.task_claimed"
 
   - name: load_skills
+    mcp_error_policy: stay
     description: "Load required trajectory-review skills"
     status_message: |
       Load these exact skills from gobby-skills: code-index, task-transitions,
@@ -108,6 +110,7 @@ steps:
           all(skill in vars.get('loaded_skills', []) for skill in vars.required_skills)
 
   - name: review
+    mcp_error_policy: stay
     description: "Audit task trajectory and emit one PR-stage verdict"
     status_message: |
       Audit the assigned task without changing repository or task content.

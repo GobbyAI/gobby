@@ -10,6 +10,9 @@ from typing import Any
 from gobby.workflows.definitions import WorkflowDefinition, WorkflowStep
 from gobby.workflows.safe_evaluator import SafeExpressionEvaluator
 
+# Spawn infrastructure injects this before an agent's step workflow starts.
+_RUNTIME_HANDLER_VARIABLES = {"assigned_task_id"}
+
 
 @dataclass(frozen=True)
 class HandlerRouteFinding:
@@ -23,7 +26,7 @@ class HandlerRouteFinding:
 def check_handler_routes(definition: WorkflowDefinition) -> list[HandlerRouteFinding]:
     """Return missing failure-route and unsatisfiable ordering warnings."""
     reachable_steps = _reachable_steps(definition)
-    declared = set(definition.variables)
+    declared = set(definition.variables) | _RUNTIME_HANDLER_VARIABLES
     success_assignments = _assigned_variables(reachable_steps, "on_mcp_success")
     error_assignments = _assigned_variables(reachable_steps, "on_mcp_error")
     before_assignments = _assigned_variables(reachable_steps, "on_mcp_before")
@@ -34,14 +37,17 @@ def check_handler_routes(definition: WorkflowDefinition) -> list[HandlerRouteFin
     for step in definition.steps:
         success_targets = {_handler_target(handler) for handler in step.on_mcp_success}
         error_targets = {_handler_target(handler) for handler in step.on_mcp_error}
-        for server, tool in sorted(success_targets - error_targets):
+        missing_targets = success_targets - error_targets
+        for server, tool in sorted(missing_targets):
             if server and tool:
+                if step.mcp_error_policy == "stay":
+                    continue
                 findings.append(
                     HandlerRouteFinding(
                         code="MISSING_FAILURE_ROUTE",
                         message=(
                             f"Step '{step.name}' handles success for MCP tool "
-                            f"'{server}:{tool}' without an on_mcp_error route"
+                            f"'{server}:{tool}' without an on_mcp_error route or stay policy"
                         ),
                         detail={"step": step.name, "server": server, "tool": tool},
                     )

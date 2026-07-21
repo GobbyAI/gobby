@@ -201,6 +201,7 @@ step_variables:
 
 steps:
   - name: claim
+    mcp_error_policy: stay
     description: "Claim the assigned campaign task"
     status_message: |
       Claim the assigned campaign task with claim_task(task_id=assigned_task_id),
@@ -224,6 +225,7 @@ steps:
         when: "vars.task_claimed"
 
   - name: load_skill
+    mcp_error_policy: stay
     description: "Load required merge and build coordinator skills"
     status_message: |
       Call get_skill(name="merge-expert") and
@@ -258,6 +260,7 @@ steps:
         when: "vars.skill_loaded and vars.build_coordinator_skill_loaded"
 
   - name: survey
+    mcp_error_policy: stay
     description: "Survey unmerged worktrees and predict conflicts"
     status_message: |
       Run analyze_merge_landscape, predict_conflicts, and inspect_merge_state
@@ -302,6 +305,7 @@ steps:
         when: "vars.survey_complete"
 
   - name: plan
+    mcp_error_policy: stay
     description: "Emit an ordered merge_plan based on the survey"
     status_message: |
       Apply the merge-expert ordering rubric (recover orphans -> toposort by
@@ -345,6 +349,7 @@ steps:
         when: "vars.get('merge_plan') or vars.get('merge_plan_json')"
 
   - name: execute
+    mcp_error_policy: stay
     description: "Execute PR gating or direct merge steps"
     status_message: |
       If stage_name is pr, call open_delivery_pr, post COMMENT
@@ -564,6 +569,7 @@ steps:
         when: "vars.execution_complete"
 
   - name: report
+    mcp_error_policy: stay
     description: "Write the campaign report and transition the campaign task"
     status_message: |
       Call gobby-tasks-ops:record_merge_result with report_ref and either

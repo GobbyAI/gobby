@@ -82,6 +82,7 @@ step_variables:
 
 steps:
   - name: load_skill
+    mcp_error_policy: stay
     description: "Load the plan-enhance and proportionality methodology skills"
     status_message: |
       Load BOTH methodology skills before enhancing: call get_skill(name="plan-enhance")
@@ -117,6 +118,7 @@ steps:
         when: "vars.skill_loaded and vars.proportionality_loaded"
 
   - name: enhance
+    mcp_error_policy: stay
     description: "Read the plan artifact and return ranked enhancement suggestions"
     status_message: |
       Read artifact_path and the parent context. Walk both lenses (Better,

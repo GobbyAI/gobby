@@ -120,6 +120,7 @@ step_variables:
 
 steps:
   - name: claim
+    mcp_error_policy: stay
     description: "Claim the assigned planning task"
     status_message: |
       Claim the assigned planning task with claim_task, then read it with get_task.
@@ -142,6 +143,7 @@ steps:
         when: "vars.task_claimed"
 
   - name: load_skill
+    mcp_error_policy: stay
     description: "Load the plan-draft methodology skill"
     status_message: |
       Call get_skill(name="plan-draft") on gobby-skills, then continue before drafting.
@@ -171,6 +173,7 @@ steps:
         when: "vars.skill_loaded"
 
   - name: plan
+    mcp_error_policy: stay
     description: "Draft or revise the implementation plan"
     status_message: |
       Draft or revise the requested plan artifact. If requirements are insufficient,

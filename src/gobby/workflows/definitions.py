@@ -585,6 +585,8 @@ class WorkflowStep(BaseModel):
     on_mcp_before: list[dict[str, Any]] = Field(default_factory=list)
     on_mcp_success: list[dict[str, Any]] = Field(default_factory=list)
     on_mcp_error: list[dict[str, Any]] = Field(default_factory=list)
+    # Explicit fallback: an unhandled MCP failure leaves the workflow on this step.
+    mcp_error_policy: Literal["stay"] | None = None
 
 
 class WorkflowDefinition(BaseModel):

@@ -97,6 +97,7 @@ steps:
         when: "vars.coverage_result_saved"
 
   - name: qa_check
+    mcp_error_policy: stay
     description: "Validate expansion output: structural deps + plan comparison"
     status_message: |
       Validate the applied task tree against the compiled expansion run,

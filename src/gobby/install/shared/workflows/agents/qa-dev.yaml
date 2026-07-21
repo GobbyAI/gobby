@@ -56,6 +56,7 @@ step_variables:
 
 steps:
   - name: claim
+    mcp_error_policy: stay
     description: "Claim the assigned task"
     status_message: |
       Claim your task by calling claim_task with your assigned_task_id,
@@ -79,6 +80,7 @@ steps:
         when: "vars.task_claimed"
 
   - name: review_and_fix
+    mcp_error_policy: stay
     description: "Review code, fix issues, then approve or escalate"
     status_message: |
       Review and fix the code changes for the assigned task.

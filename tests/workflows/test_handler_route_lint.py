@@ -68,6 +68,23 @@ def test_matching_failure_route_clears_missing_route_warning() -> None:
     assert all(finding.code != "MISSING_FAILURE_ROUTE" for finding in findings)
 
 
+def test_explicit_stay_policy_clears_missing_route_warning() -> None:
+    definition = WorkflowDefinition(
+        name="handler-routes",
+        steps=[
+            WorkflowStep(
+                name="work",
+                on_mcp_success=[_handler("gobby-tasks", "close_task")],
+                mcp_error_policy="stay",
+            )
+        ],
+    )
+
+    findings = check_handler_routes(definition)
+
+    assert all(finding.code != "MISSING_FAILURE_ROUTE" for finding in findings)
+
+
 def test_unreachable_step_still_requires_failure_route() -> None:
     definition = WorkflowDefinition(
         name="handler-routes",
@@ -146,25 +163,21 @@ def test_unreachable_assignment_does_not_satisfy_handler_guard() -> None:
     assert finding.detail["variables"] == ["ready"]
 
 
-def test_bundled_merge_worker_handler_routes_are_clean() -> None:
-    path = (
-        Path(__file__).parents[2]
-        / "src"
-        / "gobby"
-        / "install"
-        / "shared"
-        / "workflows"
-        / "agents"
-        / "merge-worker.yaml"
+def test_bundled_agent_handler_routes_are_clean() -> None:
+    agents_dir = (
+        Path(__file__).parents[2] / "src" / "gobby" / "install" / "shared" / "workflows" / "agents"
     )
-    agent = AgentDefinitionBody.model_validate(yaml.safe_load(path.read_text()))
-    definition = WorkflowDefinition(
-        name=agent.name,
-        steps=agent.steps or [],
-        variables=agent.step_variables,
-        exit_condition=agent.exit_condition,
-    )
+    findings: dict[str, list[str]] = {}
+    for path in sorted(agents_dir.glob("*.yaml")):
+        agent = AgentDefinitionBody.model_validate(yaml.safe_load(path.read_text()))
+        definition = WorkflowDefinition(
+            name=agent.name,
+            steps=agent.steps or [],
+            variables=agent.step_variables,
+            exit_condition=agent.exit_condition,
+        )
+        codes = [finding.code for finding in check_handler_routes(definition)]
+        if codes:
+            findings[path.name] = codes
 
-    findings = check_handler_routes(definition)
-
-    assert findings == []
+    assert findings == {}

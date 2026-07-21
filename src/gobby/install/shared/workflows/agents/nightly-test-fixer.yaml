@@ -64,6 +64,7 @@ step_variables:
 
 steps:
   - name: claim
+    mcp_error_policy: stay
     description: "Claim the assigned task"
     status_message: |
       Claim your task by calling claim_task with your assigned_task_id,
@@ -87,6 +88,7 @@ steps:
         when: "vars.task_claimed"
 
   - name: fix
+    mcp_error_policy: stay
     description: "Read pytest report, fix test failures, run targeted tests, commit"
     status_message: |
       Read pytest report from ./reports/, fix root causes, run targeted tests

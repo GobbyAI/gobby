@@ -77,6 +77,7 @@ step_variables:
 
 steps:
   - name: claim
+    mcp_error_policy: stay
     description: "Claim the assigned research task"
     status_message: |
       Claim your assigned task with claim_task, passing task_id set to your
@@ -102,6 +103,7 @@ steps:
         when: "vars.task_claimed"
 
   - name: load_skill
+    mcp_error_policy: stay
     description: "Load the wiki-research methodology skill"
     status_message: |
       Call get_skill(name="wiki-research") on gobby-skills, then continue.
@@ -129,6 +131,7 @@ steps:
         when: "vars.skill_loaded"
 
   - name: research
+    mcp_error_policy: stay
     description: "Run the research pass: discover, curate, ingest, compile, report, close"
     status_message: |
       Follow the wiki-research skill: bootstrap context, discover up to

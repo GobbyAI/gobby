@@ -76,6 +76,7 @@ step_variables:
 
 steps:
   - name: claim
+    mcp_error_policy: stay
     description: "Claim the assigned PRD task"
     status_message: |
       Claim assigned_task_id with claim_task, then read it with get_task.
@@ -98,6 +99,7 @@ steps:
         when: "vars.task_claimed"
 
   - name: load_skill
+    mcp_error_policy: stay
     description: "Load the PRD methodology skill"
     status_message: |
       Call get_skill(name="prd") on gobby-skills, then continue before drafting.
@@ -125,6 +127,7 @@ steps:
         when: "vars.skill_loaded"
 
   - name: draft
+    mcp_error_policy: stay
     description: "Draft and persist the Product Reference Document"
     status_message: |
       Read assigned_task_id with get_task, update only the PRD marker block

@@ -77,6 +77,7 @@ step_variables:
 
 steps:
   - name: claim
+    mcp_error_policy: stay
     description: "Claim the assigned docs leaf"
     status_message: |
       Claim assigned_task_id with claim_task, then read it with get_task.
@@ -99,6 +100,7 @@ steps:
         when: "vars.task_claimed"
 
   - name: load_skills
+    mcp_error_policy: stay
     description: "Load required docs implementation session skills"
     status_message: |
       Load skills now before implementation:
@@ -129,6 +131,7 @@ steps:
           all(skill in vars.get('loaded_skills', []) for skill in vars.required_skills)
 
   - name: implement
+    mcp_error_policy: stay
     description: "Implement, validate, and hand off or close"
     status_message: |
       Implement the docs leaf. Commit changes, then inspect the assigned task

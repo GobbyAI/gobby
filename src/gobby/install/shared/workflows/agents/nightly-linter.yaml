@@ -64,6 +64,7 @@ step_variables:
 
 steps:
   - name: claim
+    mcp_error_policy: stay
     description: "Claim the assigned task"
     status_message: |
       Claim your task by calling claim_task with your assigned_task_id,
@@ -87,6 +88,7 @@ steps:
         when: "vars.task_claimed"
 
   - name: fix
+    mcp_error_policy: stay
     description: "Read reports, fix lint/type/security errors, run verification, commit"
     status_message: |
       Read reports from ./reports/, fix ruff/mypy/bandit errors, verify fixes,
