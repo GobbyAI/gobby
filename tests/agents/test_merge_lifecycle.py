@@ -333,6 +333,35 @@ async def test_merge_worker_failure_result_transitions_to_terminate(temp_db: Hub
     assert "merge -> terminate" in response.context
 
 
+@pytest.mark.parametrize(
+    "mcp_key",
+    [
+        "gobby-merge:merge_start",
+        "gobby-tasks-ops:record_merge_result",
+        "gobby-tasks-ops:close_linked_github_issue",
+    ],
+)
+async def test_merge_worker_tool_failure_routes_to_terminate(
+    temp_db: HubDatabase, mcp_key: str
+) -> None:
+    instance_manager = _install_merge_worker_workflow(temp_db)
+    engine = RuleEngine(temp_db)
+    variables: dict[str, Any] = {}
+
+    response = await engine.evaluate(
+        _mcp_event(mcp_key, event_type=HookEventType.AFTER_TOOL, is_error=True),
+        session_id="aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaa3002",
+        variables=variables,
+    )
+
+    instance = instance_manager.get_instance("aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaa3002", "merge-worker")
+    assert instance is not None
+    assert instance.current_step == "terminate"
+    assert instance.variables["merge_worker_ready_to_terminate"] is True
+    assert response.context is not None
+    assert "merge -> terminate" in response.context
+
+
 @pytest.mark.asyncio
 async def test_merge_worker_success_waits_for_issue_close_before_terminate(
     temp_db: HubDatabase,

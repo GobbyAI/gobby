@@ -251,14 +251,23 @@ steps:
         value: true
     on_mcp_error:
       - server: gobby-merge
+        tool: merge_start
+        action: set_variable
+        variable: merge_worker_ready_to_terminate
+        value: true
+      - server: gobby-merge
         tool: merge_resolve
         when: "not bool(tool_output.get('retry_later'))"
         action: set_variable
         variable: merge_resolve_attempts
         value: "vars.get('merge_resolve_attempts', []) + [tool_input.get('conflict_id', '')]"
       - server: gobby-tasks-ops
+        tool: record_merge_result
+        action: set_variable
+        variable: merge_worker_ready_to_terminate
+        value: true
+      - server: gobby-tasks-ops
         tool: close_linked_github_issue
-        when: "vars.get('merge_result_recorded') is True"
         action: set_variable
         variable: merge_worker_ready_to_terminate
         value: true

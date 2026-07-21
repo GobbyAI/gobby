@@ -20,6 +20,7 @@ from gobby.workflows.definitions import (
     WorkflowStep,
 )
 from gobby.workflows.dry_run_validation import analyze_condition, runtime_resolution_mismatches
+from gobby.workflows.handler_route_lint import check_handler_routes
 from gobby.workflows.native_tools import is_known_native_tool
 
 if TYPE_CHECKING:
@@ -502,6 +503,17 @@ def _check_structure(definition: WorkflowDefinition, result: WorkflowEvaluation)
                         detail={"step": step.name, "mcp_tools": sorted(overlap)},
                     )
                 )
+
+    for finding in check_handler_routes(definition):
+        result.items.append(
+            EvaluationItem(
+                layer="semantics",
+                level="warning",
+                code=finding.code,
+                message=finding.message,
+                detail=finding.detail,
+            )
+        )
 
 
 def _check_condition(

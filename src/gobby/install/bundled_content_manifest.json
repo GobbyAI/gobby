@@ -300,7 +300,7 @@
     "workflows/agents/goal-taskmaster.yaml": "13a5cbd2e4310aa7c69ddd3dc1bccbf0b40509d16fc4bcd92656555eb7654f3e",
     "workflows/agents/holistic-reviewer.yaml": "d3f3ec89ced9bbf967427d38ded1055761d7ec225c2d23dba1870c89c8efcd07",
     "workflows/agents/merge-orchestrator.yaml": "026ade63439f266e325792cbbd2a9aeb614634adce2f464902ce5602a3408006",
-    "workflows/agents/merge-worker.yaml": "647b48d0a219f0a57c727844b30597068855ac3b07fad4d4821927efc336e912",
+    "workflows/agents/merge-worker.yaml": "b1c2de05a1cb1d2dad030c97681b8874a5cfd828f45d13214b8297550ab23cb5",
     "workflows/agents/nightly-linter.yaml": "cf77231b47bc367c7498c2e790d6f4879785dd63a56c28295d893b3013ac9f5d",
     "workflows/agents/nightly-test-fixer.yaml": "af06a8138f0fc4cd61daa30cf3c973ad268e2c1eed7db1ec7a99a321628c8e33",
     "workflows/agents/plan-adversary-taskless.yaml": "759a391d9b8277d6d83880dbd77bcde47c2ff997c31c68d75d2cfd632dd4d467",
