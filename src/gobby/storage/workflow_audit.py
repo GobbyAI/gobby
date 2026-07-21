@@ -39,16 +39,12 @@ class WorkflowAuditEntry:
 class WorkflowAuditManager:
     """Manages workflow audit log entries in the hub database."""
 
-    def __init__(self, db: HubDatabase | None = None):
+    def __init__(self, db: HubDatabase):
         """Initialize the audit manager.
 
         Args:
-            db: Optional database instance. If None, creates a new one.
+            db: Borrowed database instance.
         """
-        if db is None:
-            from gobby.storage.hub.runtime import open_runtime_hub_database
-
-            db = open_runtime_hub_database(apply_migrations=False)
         self._db = db
 
     @property

@@ -11,7 +11,6 @@ import os
 import re
 import threading
 import uuid
-import weakref
 from collections.abc import AsyncIterator, Callable, Iterable, Iterator, Mapping, Sequence
 from contextlib import ExitStack, asynccontextmanager, contextmanager
 from datetime import date, datetime
@@ -59,7 +58,7 @@ from gobby.utils.datetime import to_aware_utc, to_json_safe
 
 logger = logging.getLogger(__name__)
 
-_OPEN_DATABASES: weakref.WeakSet[PostgresHubDatabase] = weakref.WeakSet()
+_OPEN_DATABASES: set[PostgresHubDatabase] = set()
 _POOL_CLOSE_TIMEOUT_SECONDS = 2.0
 
 
@@ -484,12 +483,13 @@ class PostgresHubDatabase:
     def close(self) -> None:
         if getattr(self, "_pool_closed", False):
             return
-        self._pool_closed = True
         # Daemon shutdown reserves three seconds after its 17-second async
         # cleanup deadline before the CLI force-kills the process at 20
         # seconds. Leave a one-second scheduling margin inside that tail.
         self._pool.close(timeout=_POOL_CLOSE_TIMEOUT_SECONDS)
         self._pool_opened = False
+        self._pool_closed = True
+        _OPEN_DATABASES.discard(self)
 
 
 class _PostgresTransaction:

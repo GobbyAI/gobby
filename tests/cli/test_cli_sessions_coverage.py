@@ -165,7 +165,7 @@ def test_delete_session_success(mock_session_manager, mock_resolve_session) -> N
     assert result.exit_code == 0
     assert "Deleted session: sess-1" in result.output
     mock_session_manager.delete.assert_called_with("sess-1")
-    mock_session_manager.db.close.assert_called_once_with()
+    mock_session_manager.db.close.assert_not_called()
 
 
 def test_delete_session_not_found(mock_session_manager, mock_resolve_session) -> None:
@@ -176,7 +176,7 @@ def test_delete_session_not_found(mock_session_manager, mock_resolve_session) ->
 
     assert result.exit_code == 1
     assert "Session not found" in result.output
-    mock_session_manager.db.close.assert_called_once_with()
+    mock_session_manager.db.close.assert_not_called()
 
 
 def test_session_stats(mock_session_manager) -> None:
@@ -266,7 +266,7 @@ def test_show_messages(mock_session_manager, mock_resolve_session) -> None:
 
 @pytest.mark.integration
 @patch("gobby.storage.projects.LocalProjectManager")
-@patch("gobby.cli.sessions.open_runtime_hub_database")
+@patch("gobby.cli.sessions.require_cli_database")
 @patch("subprocess.run")
 @patch("gobby.sessions.analyzer.TranscriptAnalyzer")
 @patch("pathlib.Path.exists")
@@ -348,7 +348,7 @@ def test_create_handoff(
 
 @pytest.mark.integration
 @patch("gobby.storage.projects.LocalProjectManager")
-@patch("gobby.cli.sessions.open_runtime_hub_database")
+@patch("gobby.cli.sessions.require_cli_database")
 @patch("subprocess.run")
 @patch("gobby.sessions.analyzer.TranscriptAnalyzer")
 @patch("pathlib.Path.exists")
@@ -598,7 +598,7 @@ def test_create_handoff_full_success(mock_session_manager, mock_resolve_session)
         patch("pathlib.Path.exists", return_value=True),
         patch("gobby.sessions.analyzer.TranscriptAnalyzer") as mock_analyzer,
         patch("subprocess.run"),
-        patch("gobby.cli.sessions.open_runtime_hub_database"),
+        patch("gobby.cli.sessions.require_cli_database"),
         patch("gobby.storage.projects.LocalProjectManager"),
         patch(
             "gobby.sessions.summarize.generate_session_summaries",

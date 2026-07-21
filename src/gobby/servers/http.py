@@ -277,6 +277,7 @@ class HTTPServer:
             websocket_port=ws_port,
             start_time=self._start_time,
             internal_manager=self._internal_manager,
+            db=services.database,
             config=services.config,
             llm_service=services.llm_service,
             session_manager=services.session_manager,

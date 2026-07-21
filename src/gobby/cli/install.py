@@ -12,6 +12,7 @@ import subprocess  # nosec B404 # fixed install preflight/start commands
 import sys
 import webbrowser
 from collections.abc import Callable
+from contextlib import ExitStack
 from pathlib import Path
 from typing import Any
 
@@ -670,12 +671,13 @@ def install(
     db: HubDatabase | None = None
     secret_store: SecretStore | None = None
     config_store: ConfigStore | None = None
+    database_stack = ExitStack()
 
     try:
-        from gobby.storage.hub.runtime import open_runtime_hub_database
+        from gobby.storage.hub.runtime import runtime_hub_database
 
         load_full_config_from_db()
-        db = open_runtime_hub_database()
+        db = database_stack.enter_context(runtime_hub_database())
         secret_store = SecretStore(db)
         config_store = ConfigStore(db)
     except (
@@ -780,8 +782,7 @@ def install(
         if is_full_install:
             _maybe_start_daemon_after_install(no_interactive=no_interactive_flag)
     finally:
-        if db is not None:
-            db.close()
+        database_stack.close()
 
 
 @click.command("uninstall")

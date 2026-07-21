@@ -46,6 +46,7 @@ class TestSearchToolsExceptionHandling:
             websocket_port=8788,
             start_time=1000.0,
             internal_manager=mock_internal_manager,
+            db=MagicMock(),
             semantic_search=mock_semantic,
         )
 
@@ -87,6 +88,7 @@ class TestCallToolSessionResolution:
             websocket_port=8788,
             start_time=1000.0,
             internal_manager=MagicMock(),
+            db=MagicMock(),
             session_manager=session_manager,
         )
         handler.tool_proxy = MagicMock()

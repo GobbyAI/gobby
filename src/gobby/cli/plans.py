@@ -45,15 +45,12 @@ def list_plans_command(
     """List plans."""
 
     db = _open_db()
-    try:
-        manager = LocalPlanManager(db)
-        records = manager.list_plans(
-            state=state,
-            plan_kind=plan_kind,
-            project_id=_project_id(project),
-        )
-    finally:
-        db.close()
+    manager = LocalPlanManager(db)
+    records = manager.list_plans(
+        state=state,
+        plan_kind=plan_kind,
+        project_id=_project_id(project),
+    )
 
     for record in records:
         click.echo(
@@ -73,8 +70,6 @@ def show_plan_command(plan_id: str, project: str | None) -> None:
         record = LocalPlanManager(db).get_plan(plan_id, project_id=_project_id(project))
     except PlanNotFoundError as exc:
         raise click.ClickException(str(exc)) from exc
-    finally:
-        db.close()
 
     for key, value in record.to_dict().items():
         click.echo(f"{key}: {value}")
@@ -102,17 +97,14 @@ def register_plan_command(
             raise click.ClickException("--root-task-ref is required when it cannot be inferred")
 
         db = _open_db()
-        try:
-            project_id = cast(str, _project_id(project, required=True))
-            record = LocalPlanManager(db).create_plan(
-                project_id=project_id,
-                plan_id=resolved_plan_id,
-                plan_path=plan_path,
-                plan_kind=plan_kind,
-                root_task_ref=resolved_root_ref,
-            )
-        finally:
-            db.close()
+        project_id = cast(str, _project_id(project, required=True))
+        record = LocalPlanManager(db).create_plan(
+            project_id=project_id,
+            plan_id=resolved_plan_id,
+            plan_path=plan_path,
+            plan_kind=plan_kind,
+            root_task_ref=resolved_root_ref,
+        )
     except click.ClickException:
         raise
     except (PlanParseError, UnicodeDecodeError, ValueError, OSError, psycopg.Error) as exc:
@@ -190,8 +182,6 @@ def archive_plan_command(plan_id: str, reason: str | None, project: str | None) 
         )
     except (PlanNotFoundError, ValueError, OSError, psycopg.Error) as exc:
         raise click.ClickException(str(exc)) from exc
-    finally:
-        db.close()
 
     click.echo(f"Archived {record.plan_id}: {record.plan_path}")
 
@@ -208,9 +198,9 @@ def review_runs_command(planning_task_ref: str) -> None:
 
 
 def _open_db() -> HubDatabase:
-    from gobby.storage.hub.runtime import open_runtime_hub_database
+    from gobby.cli.runtime import require_cli_database
 
-    return open_runtime_hub_database(apply_migrations=False)
+    return require_cli_database()
 
 
 def _validate_plan_for_cli(
@@ -237,22 +227,18 @@ def _validate_plan_for_cli(
         code_index = _CliCodeIndexContext(CodeIndexStorage(db))
 
     try:
-        try:
-            sweep = run_consumer_sweep(
-                plan_doc,
-                project_id=project_id,
-                code_index=code_index,
-                include_tests=include_tests,
-            )
-        except (OSError, psycopg.Error, ValueError) as exc:
-            return {
-                **result,
-                "valid": False,
-                "errors": [*result.get("errors", []), f"Consumer sweep failed: {exc}"],
-            }
-    finally:
-        if db is not None:
-            db.close()
+        sweep = run_consumer_sweep(
+            plan_doc,
+            project_id=project_id,
+            code_index=code_index,
+            include_tests=include_tests,
+        )
+    except (OSError, psycopg.Error, ValueError) as exc:
+        return {
+            **result,
+            "valid": False,
+            "errors": [*result.get("errors", []), f"Consumer sweep failed: {exc}"],
+        }
 
     result["consumer_sweep"] = sweep.to_dict()
     if not sweep.valid:

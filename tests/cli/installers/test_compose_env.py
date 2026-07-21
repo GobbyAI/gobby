@@ -19,6 +19,12 @@ class _Db:
     def close(self) -> None:
         self.closed = True
 
+    def __enter__(self) -> _Db:
+        return self
+
+    def __exit__(self, *_args: object) -> None:
+        self.close()
+
 
 class _ConfigStore:
     values: dict[str, Any] = {}
@@ -115,7 +121,7 @@ def test_service_environment_restores_persisted_custom_qdrant_port(
     }
     _SecretStore.values = {"falkor-test": "falkor-secret"}
     monkeypatch.setattr(
-        "gobby.storage.hub.runtime.open_runtime_hub_database",
+        "gobby.storage.hub.runtime.runtime_hub_database",
         lambda *_args, **_kwargs: db,
     )
     monkeypatch.setattr("gobby.storage.config_store.ConfigStore", _ConfigStore)
@@ -142,7 +148,7 @@ def test_missing_falkordb_secret_is_actionable_without_generating(
     }
     _SecretStore.values = {}
     monkeypatch.setattr(
-        "gobby.storage.hub.runtime.open_runtime_hub_database",
+        "gobby.storage.hub.runtime.runtime_hub_database",
         lambda *_args, **_kwargs: _Db(),
     )
     monkeypatch.setattr("gobby.storage.config_store.ConfigStore", _ConfigStore)

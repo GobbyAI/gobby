@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from contextlib import nullcontext
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -72,7 +73,10 @@ def test_services_start_uses_falkordb_config_store_password(
             "gobby.cli.installers.compose_env._bootstrap_database_url",
             return_value="postgresql://gobby:postgres-secret@localhost:5432/gobby",
         ),
-        patch("gobby.storage.hub.runtime.open_runtime_hub_database", return_value=postgres_db),
+        patch(
+            "gobby.storage.hub.runtime.runtime_hub_database",
+            return_value=nullcontext(postgres_db),
+        ),
         patch("gobby.cli.daemon.subprocess.run") as mock_run,
     ):
         mock_run.return_value = MagicMock(returncode=0)

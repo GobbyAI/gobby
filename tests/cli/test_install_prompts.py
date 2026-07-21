@@ -35,7 +35,7 @@ def patched_deps() -> Any:
     """Patch SecretStore, runtime hub open, and load_full_config_from_db."""
     with (
         patch("gobby.cli.utils.load_full_config_from_db") as mock_load,
-        patch("gobby.storage.hub.runtime.open_runtime_hub_database") as mock_db_cls,
+        patch("gobby.storage.hub.runtime.runtime_hub_database") as mock_db_cls,
         patch("gobby.storage.secrets.SecretStore") as mock_store_cls,
     ):
         mock_db = MagicMock()
@@ -386,7 +386,6 @@ class TestInstallCommandSharedStores:
                 hooks_flag=False,
                 all_flag=False,
                 config_only_flag=False,
-                no_ext_services_flag=True,
                 falkordb_flag=False,
                 falkordb_password_stdin=False,
                 voice_flag=False,
@@ -412,6 +411,8 @@ class TestInstallCommandSharedStores:
         mock_store_cls = MagicMock(return_value=secret_store)
         mock_config_cls = MagicMock(return_value=config_store)
         mock_provision_token = MagicMock()
+        db_context = MagicMock()
+        db_context.__enter__.return_value = db
 
         with (
             # all_flag auto-detects installed CLIs via these unpatched probes;
@@ -426,13 +427,14 @@ class TestInstallCommandSharedStores:
             patch("gobby.cli.install._is_droid_cli_installed", return_value=False),
             patch("gobby.cli.install.load_full_config_from_db", return_value=config),
             patch(
-                "gobby.storage.hub.runtime.open_runtime_hub_database", return_value=db
+                "gobby.storage.hub.runtime.runtime_hub_database", return_value=db_context
             ) as mock_db_cls,
             patch.multiple(
                 "gobby.cli.install",
                 SecretStore=mock_store_cls,
                 ConfigStore=mock_config_cls,
                 _provision_local_api_token=mock_provision_token,
+                install_postgres=MagicMock(return_value={"success": True}),
             ),
             patch(
                 "gobby.cli.install._ensure_daemon_config",
@@ -455,7 +457,6 @@ class TestInstallCommandSharedStores:
                 hooks_flag=False,
                 all_flag=False,
                 config_only_flag=False,
-                no_ext_services_flag=True,
                 falkordb_flag=False,
                 falkordb_password_stdin=False,
                 voice_flag=False,
@@ -465,7 +466,7 @@ class TestInstallCommandSharedStores:
                 embedding_model=None,
                 embedding_dim=None,
                 secret_kek_posture="key-file",
-                auth_mode="local",
+                auth_mode="disabled",
                 ide_settings_flag=None,
                 no_interactive_flag=True,
                 working_dir=tmp_path,
@@ -479,7 +480,8 @@ class TestInstallCommandSharedStores:
         assert mock_voice_install.call_args.kwargs["secret_store"] is secret_store
         assert mock_summary.call_args.kwargs["db"] is db
         assert mock_summary.call_args.kwargs["secret_store"] is secret_store
-        db.close.assert_called_once()
+        db_context.__exit__.assert_called_once()
+        db.close.assert_not_called()
 
     def test_forwards_embedding_provider_override_and_reuses_shared_stores(
         self, tmp_path: Path
@@ -493,6 +495,8 @@ class TestInstallCommandSharedStores:
         mock_store_cls = MagicMock(return_value=secret_store)
         mock_config_cls = MagicMock(return_value=config_store)
         mock_provision_token = MagicMock()
+        db_context = MagicMock()
+        db_context.__enter__.return_value = db
 
         with (
             # all_flag auto-detects installed CLIs via these unpatched probes;
@@ -507,13 +511,14 @@ class TestInstallCommandSharedStores:
             patch("gobby.cli.install._is_droid_cli_installed", return_value=False),
             patch("gobby.cli.install.load_full_config_from_db", return_value=config),
             patch(
-                "gobby.storage.hub.runtime.open_runtime_hub_database", return_value=db
+                "gobby.storage.hub.runtime.runtime_hub_database", return_value=db_context
             ) as mock_db_cls,
             patch.multiple(
                 "gobby.cli.install",
                 SecretStore=mock_store_cls,
                 ConfigStore=mock_config_cls,
                 _provision_local_api_token=mock_provision_token,
+                install_postgres=MagicMock(return_value={"success": True}),
             ),
             patch(
                 "gobby.cli.install._ensure_daemon_config",
@@ -544,7 +549,6 @@ class TestInstallCommandSharedStores:
                 hooks_flag=False,
                 all_flag=True,
                 config_only_flag=False,
-                no_ext_services_flag=True,
                 falkordb_flag=False,
                 falkordb_password_stdin=False,
                 voice_flag=False,
@@ -554,7 +558,7 @@ class TestInstallCommandSharedStores:
                 embedding_model=None,
                 embedding_dim=None,
                 secret_kek_posture="key-file",
-                auth_mode="local",
+                auth_mode="disabled",
                 ide_settings_flag=None,
                 no_interactive_flag=True,
                 working_dir=tmp_path,
@@ -571,4 +575,5 @@ class TestInstallCommandSharedStores:
         assert mock_voice_install.call_args.kwargs["secret_store"] is secret_store
         assert mock_summary.call_args.kwargs["db"] is db
         assert mock_summary.call_args.kwargs["secret_store"] is secret_store
-        db.close.assert_called_once()
+        db_context.__exit__.assert_called_once()
+        db.close.assert_not_called()

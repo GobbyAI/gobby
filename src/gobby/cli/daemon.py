@@ -411,7 +411,9 @@ def _wait_for_service_stop(
 @click.pass_context
 def start(ctx: click.Context, verbose: bool, no_ui: bool) -> None:
     """Start the Gobby daemon."""
-    config = ctx.obj["config"]
+    from gobby.cli.runtime import get_cli_runtime
+
+    config = get_cli_runtime(ctx).config
     gobby_dir = get_gobby_home()
 
     # Revive managed dependencies before launchd/systemd starts the runner.
@@ -596,7 +598,9 @@ def _do_stop(
     shutdown_intent: str = "stop",
 ) -> bool:
     """Stop the daemon and return whether shutdown succeeded."""
-    config = ctx.obj["config"]
+    from gobby.cli.runtime import get_cli_runtime
+
+    config = get_cli_runtime(ctx).config
     shutdown_source = "cli_restart" if shutdown_intent == "restart" else "cli_stop"
     # If OS service is installed and running, delegate to it
     docker_stopped = False
@@ -697,7 +701,9 @@ def restart(ctx: click.Context, verbose: bool, no_ui: bool, docker_flag: bool) -
 @click.pass_context
 def status(ctx: click.Context) -> None:
     """Show Gobby daemon operational health dashboard."""
-    config = ctx.obj["config"]
+    from gobby.cli.runtime import get_cli_runtime, require_cli_database
+
+    config = get_cli_runtime(ctx).config
     pid_file = get_gobby_home() / "gobby.pid"
     log_dir = resolved_logs_dir(config.logging)
 
@@ -768,7 +774,7 @@ def status(ctx: click.Context) -> None:
     # Collect dependency/CLI version info
     from gobby.utils.deps import check_config_mismatches, collect_all_deps
 
-    deps_info = collect_all_deps()
+    deps_info = collect_all_deps(require_cli_database(ctx))
     config_issues = check_config_mismatches(config)
 
     # Build service info
@@ -812,7 +818,9 @@ def status(ctx: click.Context) -> None:
 @click.pass_context
 def health(ctx: click.Context) -> None:
     """Quick one-line daemon health check."""
-    config = ctx.obj["config"]
+    from gobby.cli.runtime import get_cli_runtime
+
+    config = get_cli_runtime(ctx).config
     http_port = config.daemon_port
     pid_file = get_gobby_home() / "gobby.pid"
 

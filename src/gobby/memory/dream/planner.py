@@ -10,6 +10,7 @@ from typing import Any
 from gobby.llm.base import LLMProviderCancellation
 from gobby.memory.dream.models import DreamCandidate, DuplicateGroup
 from gobby.prompts.loader import PromptLoader
+from gobby.storage.hub.protocol import HubDatabase
 
 logger = logging.getLogger(__name__)
 DEFAULT_MIN_ACTION_CONFIDENCE = 0.72
@@ -34,7 +35,7 @@ async def build_raw_plan(
     duplicate_groups: list[DuplicateGroup],
     dream_config: Any,
     llm_service: Any | None,
-    db: Any | None,
+    db: HubDatabase,
     project_id: str | None,
     skip_consolidation: bool,
     truth_digest: str = "",
@@ -101,7 +102,7 @@ async def _run_planner_page(
     page: list[DreamCandidate],
     dream_config: Any,
     llm_service: Any,
-    db: Any | None,
+    db: HubDatabase,
     project_id: str | None,
     semaphore: asyncio.Semaphore,
     truth_digest: str = "",
@@ -177,7 +178,7 @@ async def _call_llm_planner(
     candidates: list[DreamCandidate],
     dream_config: Any,
     llm_service: Any,
-    db: Any | None,
+    db: HubDatabase,
     project_id: str | None,
     truth_digest: str = "",
 ) -> dict[str, Any]:

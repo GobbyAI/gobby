@@ -20,10 +20,10 @@ from typing import Any, cast
 import click
 import httpx
 
+from gobby.cli.runtime import require_cli_database
 from gobby.cli.utils import resolve_session_id
 from gobby.cli.utils_config import get_daemon_client, get_daemon_url
 from gobby.storage.agents import AgentRunStatus, LocalAgentRunManager
-from gobby.storage.hub.runtime import open_runtime_hub_database
 from gobby.storage.sql_dialect import older_than_now_expr
 from gobby.storage.workflow_definitions import LocalWorkflowDefinitionManager, WorkflowDefinitionRow
 from gobby.utils.json_helpers import json_dumps
@@ -34,44 +34,30 @@ from gobby.workflows.definitions import AgentDefinitionBody
 
 @contextmanager
 def _runtime_db_context() -> Iterator[Any]:
-    """Yield a short-lived runtime database and close it deterministically."""
-    db = open_runtime_hub_database(apply_migrations=False)
-    try:
-        yield db
-    finally:
-        db.close()
+    """Yield the database borrowed from the current CLI runtime."""
+    yield require_cli_database()
 
 
 def get_agent_run_manager() -> LocalAgentRunManager:
     """Get initialized agent run manager."""
-    db = open_runtime_hub_database(apply_migrations=False)
-    return LocalAgentRunManager(db)
+    return LocalAgentRunManager(require_cli_database())
 
 
 @contextmanager
 def agent_run_manager_context() -> Iterator[LocalAgentRunManager]:
-    """Yield a short-lived agent run manager and close its owned database."""
-    manager = get_agent_run_manager()
-    try:
-        yield manager
-    finally:
-        manager.db.close()
+    """Yield an agent run manager borrowing the CLI database."""
+    yield get_agent_run_manager()
 
 
 def get_agent_definition_manager() -> LocalWorkflowDefinitionManager:
     """Get initialized workflow definition manager for agent definitions."""
-    db = open_runtime_hub_database(apply_migrations=False)
-    return LocalWorkflowDefinitionManager(db)
+    return LocalWorkflowDefinitionManager(require_cli_database())
 
 
 @contextmanager
 def agent_definition_manager_context() -> Iterator[LocalWorkflowDefinitionManager]:
-    """Yield a short-lived agent definition manager and close its owned database."""
-    manager = get_agent_definition_manager()
-    try:
-        yield manager
-    finally:
-        manager.db.close()
+    """Yield an agent definition manager borrowing the CLI database."""
+    yield get_agent_definition_manager()
 
 
 def _escape_like_prefix(prefix: str) -> str:

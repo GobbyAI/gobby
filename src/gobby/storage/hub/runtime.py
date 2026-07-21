@@ -13,12 +13,13 @@ from gobby.config.bootstrap import (
 from gobby.storage.hub.protocol import HubDatabase
 
 
-def open_runtime_hub_database(
+@contextmanager
+def runtime_hub_database(
     config_file: str | None = None,
     *,
     apply_migrations: bool = True,
-) -> HubDatabase:
-    """Open the configured PostgreSQL runtime hub database."""
+) -> Iterator[HubDatabase]:
+    """Yield the active runtime hub database and close it afterwards."""
     config = load_config(config_file, resolve_database_url=True)
     if config.hub_backend != "postgres":
         raise RuntimeError(HUB_BACKEND_POSTGRES_REQUIRED)
@@ -34,21 +35,6 @@ def open_runtime_hub_database(
             from gobby.storage.projects import ensure_personal_project
 
             ensure_personal_project(db)
-    except Exception:
-        db.close()
-        raise
-    return db
-
-
-@contextmanager
-def runtime_hub_database(
-    config_file: str | None = None,
-    *,
-    apply_migrations: bool = True,
-) -> Iterator[HubDatabase]:
-    """Yield the active runtime hub database and close it afterwards."""
-    db = open_runtime_hub_database(config_file, apply_migrations=apply_migrations)
-    try:
         yield db
     finally:
         db.close()

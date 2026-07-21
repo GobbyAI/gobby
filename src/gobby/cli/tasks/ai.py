@@ -48,7 +48,7 @@ def validate_task_cmd(
     """
     import asyncio
 
-    from gobby.config.app import load_config
+    from gobby.cli.runtime import get_cli_runtime, require_cli_database
     from gobby.llm import LLMService
     from gobby.tasks.validation import TaskValidator
     from gobby.tasks.validation_history import ValidationHistoryManager
@@ -177,9 +177,13 @@ def validate_task_cmd(
 
     # Initialize validator
     try:
-        config = load_config()
+        config = get_cli_runtime().config
         llm_service = LLMService(config)
-        validator = TaskValidator(config.gobby_tasks.validation, llm_service)
+        validator = TaskValidator(
+            config.gobby_tasks.validation,
+            llm_service,
+            db=require_cli_database(),
+        )
     except Exception as e:
         raise click.ClickException(f"Error initializing validator: {e}") from e
 

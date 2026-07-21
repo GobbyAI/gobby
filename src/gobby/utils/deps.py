@@ -12,7 +12,7 @@ import re
 import shutil
 import subprocess  # nosec B404 # needed for version detection
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
 from urllib.parse import urlparse
 
 import psycopg
@@ -20,6 +20,9 @@ import psycopg
 from gobby.config.bootstrap import BootstrapConfigError
 from gobby.install.version_probe import probe_native_bin_version
 from gobby.utils.native_bin import local_native_bin_path, resolve_native_bin
+
+if TYPE_CHECKING:
+    from gobby.storage.hub.protocol import HubDatabase
 
 logger = logging.getLogger(__name__)
 
@@ -424,7 +427,11 @@ def _infer_from_config_or_none(*, dim: Any, api_key: Any, model: Any, api_base: 
     return None
 
 
-def get_configured_embedding_provider(*, raise_storage_errors: bool = False) -> str | None:
+def get_configured_embedding_provider(
+    db: HubDatabase,
+    *,
+    raise_storage_errors: bool = False,
+) -> str | None:
     """Get the configured embeddings provider from persisted config."""
     try:
         from gobby.config.embedding_keys import (
@@ -434,26 +441,24 @@ def get_configured_embedding_provider(*, raise_storage_errors: bool = False) -> 
             AI_EMBEDDING_MODEL_KEY,
         )
         from gobby.storage.config_store import ConfigStore
-        from gobby.storage.hub.runtime import runtime_hub_database
 
-        with runtime_hub_database(apply_migrations=False) as db:
-            store = ConfigStore(db)
-            model = _strip_config_string(store.get(AI_EMBEDDING_MODEL_KEY))
-            api_base = _strip_config_string(store.get(AI_EMBEDDING_API_BASE_KEY))
-            api_key = _strip_config_string(store.get(AI_EMBEDDING_API_KEY_KEY))
-            dim = _strip_config_string(store.get(AI_EMBEDDING_DIM_KEY))
+        store = ConfigStore(db)
+        model = _strip_config_string(store.get(AI_EMBEDDING_MODEL_KEY))
+        api_base = _strip_config_string(store.get(AI_EMBEDDING_API_BASE_KEY))
+        api_key = _strip_config_string(store.get(AI_EMBEDDING_API_KEY_KEY))
+        dim = _strip_config_string(store.get(AI_EMBEDDING_DIM_KEY))
 
-            inferred_from_config = _infer_from_config_or_none(
-                dim=dim, api_key=api_key, model=model, api_base=api_base
-            )
-            if inferred_from_config == "none":
-                return inferred_from_config
-
-            provider = _infer_embedding_provider_from_api_base(api_base)
-            if provider is not None:
-                return provider
-
+        inferred_from_config = _infer_from_config_or_none(
+            dim=dim, api_key=api_key, model=model, api_base=api_base
+        )
+        if inferred_from_config == "none":
             return inferred_from_config
+
+        provider = _infer_embedding_provider_from_api_base(api_base)
+        if provider is not None:
+            return provider
+
+        return inferred_from_config
     except (psycopg.Error, BootstrapConfigError, RuntimeError, OSError):
         logger.debug(
             "Failed to resolve configured embeddings provider from persisted config", exc_info=True
@@ -516,7 +521,7 @@ def check_config_mismatches(config: Any) -> list[dict[str, str]]:
 # ---------------------------------------------------------------------------
 
 
-def collect_all_deps() -> dict[str, Any]:
+def collect_all_deps(db: HubDatabase) -> dict[str, Any]:
     """Collect all dependency info for status display.
 
     Returns structured dict with all sections.
@@ -528,7 +533,7 @@ def collect_all_deps() -> dict[str, Any]:
 
     try:
         embeddings_provider: str | dict[str, str] | None = get_configured_embedding_provider(
-            raise_storage_errors=True
+            db, raise_storage_errors=True
         )
     except Exception as exc:
         logger.debug("Failed to probe embeddings provider for status", exc_info=True)

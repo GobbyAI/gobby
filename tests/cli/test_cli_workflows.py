@@ -1,5 +1,4 @@
 import json
-from contextlib import nullcontext
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -31,15 +30,15 @@ def cli_runner():
     return CliRunner()
 
 
-def test_close_session_var_manager_closes_cached_runtime_db() -> None:
-    """Cached workflow variable DB connections are closed before process exit."""
+def test_close_session_var_manager_releases_borrowed_db_reference() -> None:
+    """Clearing workflow caches does not close the CLI-owned database."""
     common._reset_session_var_manager_for_tests()
     db = MagicMock()
     next_db = MagicMock()
 
     try:
         with patch(
-            "gobby.cli.workflows.common.open_runtime_hub_database",
+            "gobby.cli.workflows.common.require_cli_database",
             return_value=db,
         ):
             manager = common.get_session_var_manager()
@@ -48,10 +47,10 @@ def test_close_session_var_manager_closes_cached_runtime_db() -> None:
 
         common.close_session_var_manager()
 
-        db.close.assert_called_once_with()
+        db.close.assert_not_called()
 
         with patch(
-            "gobby.cli.workflows.common.open_runtime_hub_database",
+            "gobby.cli.workflows.common.require_cli_database",
             return_value=next_db,
         ):
             next_manager = common.get_session_var_manager()
@@ -309,10 +308,7 @@ async def test_import_workflow_file(
 
     with (
         patch("gobby.cli.workflows.common.get_project_path", return_value=project_dir),
-        patch(
-            "gobby.cli.workflows.manage.runtime_hub_database",
-            return_value=nullcontext(temp_db),
-        ),
+        patch("gobby.cli.workflows.manage.require_cli_database", return_value=temp_db),
         patch("gobby.cli.workflows.manage._notify_daemon_reload") as notify_reload,
     ):
         result = cli_runner.invoke(workflows, ["import", str(source_file)])
@@ -371,7 +367,7 @@ def test_reinstall_preserves_custom_and_project_definitions(
     )
 
     with (
-        patch("gobby.storage.hub.runtime.open_runtime_hub_database", return_value=temp_db),
+        patch("gobby.cli.workflows.manage.require_cli_database", return_value=temp_db),
         patch(
             "gobby.cli.workflows.manage._run_sync",
             return_value={"pipeline": {"synced": 0, "updated": 0}},
@@ -413,7 +409,7 @@ def test_reinstall_type_deletes_bundled_row_for_requested_type(
     )
 
     with (
-        patch("gobby.storage.hub.runtime.open_runtime_hub_database", return_value=temp_db),
+        patch("gobby.cli.workflows.manage.require_cli_database", return_value=temp_db),
         patch(
             "gobby.cli.workflows.manage._run_sync",
             return_value={workflow_type: {"synced": 0, "updated": 0}},
@@ -455,7 +451,7 @@ def test_import_workflow_file_not_found(cli_runner) -> None:
 def test_audit_no_entries(cli_runner) -> None:
     """Test audit with no entries."""
     with (
-        patch("gobby.storage.hub.runtime.open_runtime_hub_database", return_value=MagicMock()),
+        patch("gobby.cli.runtime.require_cli_database", return_value=MagicMock()),
         patch("gobby.cli.workflows.common.resolve_session_id", return_value="sess1"),
         patch("gobby.storage.workflow_audit.WorkflowAuditManager") as MockAudit,
     ):
@@ -474,7 +470,7 @@ def test_audit_with_entries(cli_runner) -> None:
     from datetime import UTC, datetime
 
     with (
-        patch("gobby.storage.hub.runtime.open_runtime_hub_database", return_value=MagicMock()),
+        patch("gobby.cli.runtime.require_cli_database", return_value=MagicMock()),
         patch("gobby.cli.workflows.common.resolve_session_id", return_value="sess1"),
         patch("gobby.storage.workflow_audit.WorkflowAuditManager") as MockAudit,
     ):
@@ -506,7 +502,7 @@ def test_audit_json_format(cli_runner) -> None:
     from datetime import UTC, datetime
 
     with (
-        patch("gobby.storage.hub.runtime.open_runtime_hub_database", return_value=MagicMock()),
+        patch("gobby.cli.runtime.require_cli_database", return_value=MagicMock()),
         patch("gobby.cli.workflows.common.resolve_session_id", return_value="sess1"),
         patch("gobby.storage.workflow_audit.WorkflowAuditManager") as MockAudit,
     ):

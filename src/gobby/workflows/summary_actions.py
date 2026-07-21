@@ -677,7 +677,6 @@ async def generate_summary(
             session_summary_config=session_summary_config,
             db=getattr(session_manager, "db", None),
             session_manager=session_manager,
-            allow_runtime_db=False,
         )
 
     prompt_error = summary_prompt_validation_error(template)

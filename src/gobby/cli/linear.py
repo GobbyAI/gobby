@@ -10,11 +10,11 @@ from pathlib import Path
 
 import click
 
+from gobby.cli.runtime import require_cli_database
 from gobby.cli.tasks._utils import resolve_task_id
 from gobby.integrations.linear import LinearIntegration
 from gobby.mcp_proxy.manager import MCPClientManager
 from gobby.storage.hub.protocol import HubDatabase
-from gobby.storage.hub.runtime import open_runtime_hub_database
 from gobby.storage.mcp import LocalMCPManager
 from gobby.storage.projects import LocalProjectManager
 from gobby.storage.tasks import LocalTaskManager
@@ -32,7 +32,7 @@ def _optional_str(value: object) -> str | None:
 
 def get_linear_deps() -> tuple[LocalTaskManager, MCPClientManager, LocalProjectManager, str]:
     """Get dependencies for Linear commands."""
-    db = open_runtime_hub_database(apply_migrations=False)
+    db = require_cli_database()
     task_manager = LocalTaskManager(db)
     project_manager = LocalProjectManager(db)
 

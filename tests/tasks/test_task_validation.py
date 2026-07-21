@@ -1,9 +1,11 @@
+from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
 from gobby.config.tasks import TaskValidationConfig
 from gobby.llm import LLMService
+from gobby.storage.hub.protocol import HubDatabase
 from gobby.tasks.validation import (
     TaskValidator,
     extract_file_patterns_from_text,
@@ -15,6 +17,15 @@ from gobby.tasks.validation import (
     get_validation_context_smart,
     read_files_content,
 )
+
+
+def _task_validator(
+    config: TaskValidationConfig,
+    llm_service: LLMService,
+    **kwargs: Any,
+) -> TaskValidator:
+    return TaskValidator(config, llm_service, db=MagicMock(spec=HubDatabase), **kwargs)
+
 
 pytestmark = pytest.mark.unit
 
@@ -88,14 +99,14 @@ class TestTaskValidator:
     @pytest.mark.asyncio
     async def test_validate_task_disabled(self, mock_llm):
         config = TaskValidationConfig(enabled=False)
-        validator = TaskValidator(config, mock_llm)
+        validator = _task_validator(config, mock_llm)
         result = await validator.validate_task("task-1", "title", "instr", "summary")
         assert result.status == "pending"
         assert "disabled" in result.feedback
 
     @pytest.mark.asyncio
     async def test_validate_task_missing_info(self, config, mock_llm):
-        validator = TaskValidator(config, mock_llm)
+        validator = _task_validator(config, mock_llm)
         result = await validator.validate_task(
             "task-1", "title", None, "summary"
         )  # Missing instruction (instr is None)
@@ -104,7 +115,7 @@ class TestTaskValidator:
 
     @pytest.mark.asyncio
     async def test_validate_task_success(self, config, mock_llm):
-        validator = TaskValidator(config, mock_llm)
+        validator = _task_validator(config, mock_llm)
         mock_llm.call_json_feature.return_value = {"status": "valid", "feedback": "Good job"}
 
         result = await validator.validate_task("task-1", "title", "instr", "summary")
@@ -115,7 +126,7 @@ class TestTaskValidator:
 
     @pytest.mark.asyncio
     async def test_validate_task_with_context(self, config, mock_llm, tmp_path):
-        validator = TaskValidator(config, mock_llm)
+        validator = _task_validator(config, mock_llm)
 
         test_file = tmp_path / "test.txt"
         test_file.write_text("file content")
@@ -138,7 +149,7 @@ class TestTaskValidator:
 
     @pytest.mark.asyncio
     async def test_validate_task_llm_error(self, config, mock_llm):
-        validator = TaskValidator(config, mock_llm)
+        validator = _task_validator(config, mock_llm)
         mock_llm.call_json_feature.side_effect = Exception("LLM Error")
 
         result = await validator.validate_task("task-1", "title", "instr", "summary")
@@ -147,7 +158,7 @@ class TestTaskValidator:
 
     @pytest.mark.asyncio
     async def test_validate_task_bad_json(self, config, mock_llm):
-        validator = TaskValidator(config, mock_llm)
+        validator = _task_validator(config, mock_llm)
         mock_llm.call_json_feature.side_effect = ValueError("Invalid JSON")
 
         result = await validator.validate_task("task-1", "title", "instr", "summary")
@@ -459,7 +470,7 @@ class TestTaskValidatorEdgeCases:
     @pytest.mark.asyncio
     async def test_validate_with_validation_criteria_only(self, config, mock_llm):
         """Test validation with validation_criteria but no description."""
-        validator = TaskValidator(config, mock_llm)
+        validator = _task_validator(config, mock_llm)
         mock_llm.call_json_feature.return_value = {"status": "valid", "feedback": "OK"}
 
         result = await validator.validate_task(
@@ -480,7 +491,7 @@ class TestTaskValidatorEdgeCases:
     @pytest.mark.asyncio
     async def test_validate_with_git_diff_context(self, config, mock_llm):
         """Test validation detects git diff format in changes_summary."""
-        validator = TaskValidator(config, mock_llm)
+        validator = _task_validator(config, mock_llm)
         mock_llm.call_json_feature.return_value = {"status": "valid", "feedback": "OK"}
 
         # Git diff formatted summary
@@ -508,7 +519,7 @@ class TestTaskValidatorEdgeCases:
     @pytest.mark.asyncio
     async def test_validate_with_at_symbol_diff(self, config, mock_llm):
         """Test that @@ in changes_summary triggers git diff detection."""
-        validator = TaskValidator(config, mock_llm)
+        validator = _task_validator(config, mock_llm)
         mock_llm.call_json_feature.return_value = {"status": "valid", "feedback": "OK"}
 
         result = await validator.validate_task(
@@ -523,7 +534,7 @@ class TestTaskValidatorEdgeCases:
     @pytest.mark.asyncio
     async def test_validate_empty_llm_response(self, config, mock_llm):
         """Test handling of empty JSON result."""
-        validator = TaskValidator(config, mock_llm)
+        validator = _task_validator(config, mock_llm)
         mock_llm.call_json_feature.return_value = {}
 
         result = await validator.validate_task(
@@ -539,7 +550,7 @@ class TestTaskValidatorEdgeCases:
     @pytest.mark.asyncio
     async def test_validate_whitespace_only_response(self, config, mock_llm):
         """Test handling of missing JSON result."""
-        validator = TaskValidator(config, mock_llm)
+        validator = _task_validator(config, mock_llm)
         mock_llm.call_json_feature.return_value = None
 
         result = await validator.validate_task(
@@ -555,7 +566,7 @@ class TestTaskValidatorEdgeCases:
     @pytest.mark.asyncio
     async def test_validate_json_without_code_block(self, config, mock_llm):
         """Test handling a structured invalid result."""
-        validator = TaskValidator(config, mock_llm)
+        validator = _task_validator(config, mock_llm)
         mock_llm.call_json_feature.return_value = {
             "status": "invalid",
             "feedback": "Missing tests",
@@ -575,7 +586,7 @@ class TestTaskValidatorEdgeCases:
     @pytest.mark.asyncio
     async def test_validate_json_with_preamble(self, config, mock_llm):
         """Test handling a structured valid result."""
-        validator = TaskValidator(config, mock_llm)
+        validator = _task_validator(config, mock_llm)
         mock_llm.call_json_feature.return_value = {
             "status": "valid",
             "feedback": "All criteria met",
@@ -594,7 +605,7 @@ class TestTaskValidatorEdgeCases:
     @pytest.mark.asyncio
     async def test_validate_malformed_json(self, config, mock_llm):
         """Test handling a structured JSON service failure."""
-        validator = TaskValidator(config, mock_llm)
+        validator = _task_validator(config, mock_llm)
         mock_llm.call_json_feature.side_effect = ValueError("Malformed JSON")
 
         result = await validator.validate_task(
@@ -610,7 +621,7 @@ class TestTaskValidatorEdgeCases:
     @pytest.mark.asyncio
     async def test_validate_missing_status_field(self, config, mock_llm):
         """Test handling of JSON response missing status field."""
-        validator = TaskValidator(config, mock_llm)
+        validator = _task_validator(config, mock_llm)
         mock_llm.call_json_feature.return_value = {"feedback": "Looks good"}
 
         result = await validator.validate_task(
@@ -626,7 +637,7 @@ class TestTaskValidatorEdgeCases:
     @pytest.mark.asyncio
     async def test_validate_with_file_context_error(self, config, mock_llm, tmp_path):
         """Test graceful handling when context file cannot be read."""
-        validator = TaskValidator(config, mock_llm)
+        validator = _task_validator(config, mock_llm)
         mock_llm.call_json_feature.return_value = {"status": "valid", "feedback": "OK"}
 
         # Non-existent file
@@ -661,7 +672,7 @@ class TestTaskValidatorLLMErrors:
     async def test_validate_provider_not_found(self, config, mock_llm):
         """Test handling when LLM provider is not found."""
         mock_llm.call_json_feature.side_effect = ValueError("Provider not configured")
-        validator = TaskValidator(config, mock_llm)
+        validator = _task_validator(config, mock_llm)
 
         result = await validator.validate_task(
             task_id="task-1",
@@ -677,7 +688,7 @@ class TestTaskValidatorLLMErrors:
     async def test_validate_timeout_error(self, config, mock_llm):
         """Test handling of timeout during LLM call."""
         mock_llm.call_json_feature.side_effect = TimeoutError("Request timed out")
-        validator = TaskValidator(config, mock_llm)
+        validator = _task_validator(config, mock_llm)
 
         result = await validator.validate_task(
             task_id="task-1",
@@ -693,7 +704,7 @@ class TestTaskValidatorLLMErrors:
     async def test_validate_connection_error(self, config, mock_llm):
         """Test handling of connection error during LLM call."""
         mock_llm.call_json_feature.side_effect = ConnectionError("Network error")
-        validator = TaskValidator(config, mock_llm)
+        validator = _task_validator(config, mock_llm)
 
         result = await validator.validate_task(
             task_id="task-1",
@@ -721,7 +732,7 @@ class TestGatherValidationContext:
     @pytest.mark.asyncio
     async def test_gather_single_file(self, config, mock_llm, tmp_path):
         """Test gathering context from a single file."""
-        validator = TaskValidator(config, mock_llm)
+        validator = _task_validator(config, mock_llm)
         test_file = tmp_path / "test.py"
         test_file.write_text("def hello(): return 'world'")
 
@@ -733,7 +744,7 @@ class TestGatherValidationContext:
     @pytest.mark.asyncio
     async def test_gather_multiple_files(self, config, mock_llm, tmp_path):
         """Test gathering context from multiple files."""
-        validator = TaskValidator(config, mock_llm)
+        validator = _task_validator(config, mock_llm)
         file1 = tmp_path / "file1.py"
         file2 = tmp_path / "file2.py"
         file1.write_text("# File 1 content")
@@ -749,7 +760,7 @@ class TestGatherValidationContext:
     @pytest.mark.asyncio
     async def test_gather_nonexistent_file(self, config, mock_llm, tmp_path):
         """Test gathering context with a nonexistent file."""
-        validator = TaskValidator(config, mock_llm)
+        validator = _task_validator(config, mock_llm)
         missing = tmp_path / "missing.py"
 
         context = await validator.gather_validation_context([str(missing)])
@@ -760,7 +771,7 @@ class TestGatherValidationContext:
     @pytest.mark.asyncio
     async def test_gather_empty_file_list(self, config, mock_llm):
         """Test gathering context with empty file list."""
-        validator = TaskValidator(config, mock_llm)
+        validator = _task_validator(config, mock_llm)
 
         context = await validator.gather_validation_context([])
 
@@ -769,7 +780,7 @@ class TestGatherValidationContext:
     @pytest.mark.asyncio
     async def test_gather_binary_file(self, config, mock_llm, tmp_path):
         """Test handling of binary file that cannot be decoded as UTF-8."""
-        validator = TaskValidator(config, mock_llm)
+        validator = _task_validator(config, mock_llm)
         binary_file = tmp_path / "binary.bin"
         binary_file.write_bytes(b"\x80\x81\x82\x83")  # Invalid UTF-8
 

@@ -144,13 +144,12 @@ def _update_config(
 ) -> None:
     """Update daemon config with Qdrant settings via ConfigStore."""
     from gobby.storage.config_store import ConfigStore
-    from gobby.storage.hub.runtime import open_runtime_hub_database
+    from gobby.storage.hub.runtime import runtime_hub_database
 
-    db = open_runtime_hub_database(
+    with runtime_hub_database(
         str(gobby_home / "bootstrap.yaml"),
         apply_migrations=False,
-    )
-    try:
+    ) as db:
         store = ConfigStore(db)
         if qdrant_url:
             store.set("databases.qdrant.url", qdrant_url, source="install")
@@ -159,5 +158,3 @@ def _update_config(
         else:
             store.delete("databases.qdrant.url")
             store.delete("databases.qdrant.port")
-    finally:
-        db.close()

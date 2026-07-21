@@ -203,14 +203,10 @@ class TestPromptLoader:
         assert loader.exists("expansion/system") is True
         assert loader.exists("nonexistent/path") is False
 
-    def test_lazy_db_creation(self) -> None:
-        """Test that PromptLoader lazily creates a database if none provided."""
-        # This tests the fallback mechanism - PromptLoader() with no args
-        loader = PromptLoader()
-        # The loader should have been created without error
-        assert loader._db is None
-        # Accessing _get_db() would create a HubDatabase, but we don't
-        # test that here to avoid side effects on the real database
+    def test_database_is_required(self) -> None:
+        """PromptLoader requires its owner to inject a database."""
+        with pytest.raises(TypeError, match="db"):
+            PromptLoader()  # type: ignore[call-arg]
 
 
 class TestPromptTemplate:

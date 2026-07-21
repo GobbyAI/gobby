@@ -8,7 +8,6 @@ from dataclasses import dataclass
 from wcwidth import wcswidth
 
 from gobby.storage.hub.protocol import HubDatabase
-from gobby.storage.hub.runtime import open_runtime_hub_database
 from gobby.storage.tasks import Task
 from gobby.tasks.state_semantics import serialize_task_state
 
@@ -209,7 +208,7 @@ def _get_term_width(default: int = 100) -> int:
         return default
 
 
-def _resolve_session_refs(session_ids: set[str], db: HubDatabase | None = None) -> dict[str, str]:
+def _resolve_session_refs(session_ids: set[str], db: HubDatabase) -> dict[str, str]:
     """Batch-resolve ``session_id`` UUIDs to their ``#seq_num`` refs.
 
     Returns a map ``{uuid: "#N"}``. Missing rows are omitted (callers fall back
@@ -217,10 +216,9 @@ def _resolve_session_refs(session_ids: set[str], db: HubDatabase | None = None) 
     """
     if not session_ids:
         return {}
-    owner_db: HubDatabase = db or open_runtime_hub_database(apply_migrations=False)
     try:
         placeholders = ",".join("%s" for _ in session_ids)
-        rows = owner_db.fetchall(
+        rows = db.fetchall(
             f"SELECT id, seq_num FROM sessions WHERE id IN ({placeholders})",
             tuple(session_ids),
         )
@@ -228,19 +226,15 @@ def _resolve_session_refs(session_ids: set[str], db: HubDatabase | None = None) 
     except Exception as e:
         logger.debug("Failed to batch-resolve session refs: %s", e)
         return {}
-    finally:
-        if db is None:
-            owner_db.close()
 
 
-def _resolve_project_names(project_ids: set[str], db: HubDatabase | None = None) -> dict[str, str]:
+def _resolve_project_names(project_ids: set[str], db: HubDatabase) -> dict[str, str]:
     """Batch-resolve ``project_id`` UUIDs to project names."""
     if not project_ids:
         return {}
-    owner_db: HubDatabase = db or open_runtime_hub_database(apply_migrations=False)
     try:
         placeholders = ",".join("%s" for _ in project_ids)
-        rows = owner_db.fetchall(
+        rows = db.fetchall(
             f"SELECT id, name FROM projects WHERE id IN ({placeholders})",
             tuple(project_ids),
         )
@@ -248,9 +242,6 @@ def _resolve_project_names(project_ids: set[str], db: HubDatabase | None = None)
     except Exception as e:
         logger.debug("Failed to batch-resolve project names: %s", e)
         return {}
-    finally:
-        if db is None:
-            owner_db.close()
 
 
 def format_task_row(

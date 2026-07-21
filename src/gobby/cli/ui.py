@@ -23,7 +23,9 @@ if TYPE_CHECKING:
 
 def _resolve_source_web_dir(ctx: click.Context | None) -> Path | None:
     """Locate the web/ source tree (with package.json) for npm dev/build."""
-    config = ctx.obj.get("config") if ctx is not None and ctx.obj else None
+    from gobby.cli.runtime import get_cli_runtime
+
+    config = get_cli_runtime(ctx).config if ctx is not None else None
     return find_web_dir(config, require_source=True)
 
 
@@ -91,7 +93,9 @@ def ui() -> None:
 @click.pass_context
 def ui_start(ctx: click.Context) -> None:
     """Start the web UI server."""
-    config = ctx.obj["config"]
+    from gobby.cli.runtime import get_cli_runtime
+
+    config = get_cli_runtime(ctx).config
 
     if not config.ui.enabled:
         click.echo("Web UI is not enabled. Set ui.enabled: true in config.", err=True)
@@ -153,7 +157,9 @@ def ui_restart(ctx: click.Context) -> None:
 @click.pass_context
 def ui_status(ctx: click.Context) -> None:
     """Show web UI server status."""
-    config = ctx.obj["config"]
+    from gobby.cli.runtime import get_cli_runtime
+
+    config = get_cli_runtime(ctx).config
 
     if not config.ui.enabled:
         click.echo("Web UI: Disabled")

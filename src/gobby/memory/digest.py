@@ -25,6 +25,7 @@ from gobby.memory.title_heuristics import (
     is_template_placeholder,
     normalize_title_candidate,
 )
+from gobby.storage.hub.protocol import HubDatabase
 from gobby.utils.injected_context import strip_injected_context
 
 logger = logging.getLogger(__name__)
@@ -69,7 +70,7 @@ def _parser_for_transcript(source: str | None, transcript_path: str) -> Any | No
         return None
 
 
-def _render_prompt_template(template: str, values: dict[str, str], db: Any | None) -> str:
+def _render_prompt_template(template: str, values: dict[str, str], db: HubDatabase) -> str:
     from gobby.prompts.loader import PromptLoader
 
     return PromptLoader(db=db).render(template, values)
@@ -489,7 +490,7 @@ async def _build_turn_record(
     llm_service: Any,
     digest_config: Any,
     undigested_pairs: list[tuple[str, str]],
-    db: Any | None = None,
+    db: HubDatabase,
 ) -> _TurnRecord:
     """Build and validate turn record JSON via LLM from undigested pairs."""
     max_attempts = 3
@@ -614,7 +615,7 @@ async def _synthesize_title(
     session: Any,
     llm_service: Any,
     digest_config: Any,
-    db: Any | None = None,
+    db: HubDatabase,
 ) -> str | None:
     """Synthesize session title from digest via LLM and update tmux window.
 
@@ -671,7 +672,7 @@ async def build_turn_and_digest(
     session_id: str,
     prompt_text: str | None = None,
     llm_service: Any | None = None,
-    db: Any | None = None,
+    db: HubDatabase | None = None,
     config: Any | None = None,
 ) -> dict[str, Any] | None:
     """Build a detailed turn record, append to digest, and synthesize title.
@@ -703,10 +704,14 @@ async def build_turn_and_digest(
         logger.debug("build_turn_and_digest: skipped — no llm_service (session_id=%s)", session_id)
         return None
 
-    # PromptLoader(db=None) opens (and leaks) a fresh runtime hub pool per
-    # render; reuse the daemon's hub handle when the caller didn't pass one.
+    # Reuse the daemon's hub handle when the caller did not pass one.
     if db is None:
         db = getattr(memory_manager, "db", None)
+    if db is None:
+        logger.warning(
+            "build_turn_and_digest: skipped — no database available (session_id=%s)", session_id
+        )
+        return {"error": "database not available for prompt loading"}
 
     # Check DigestConfig.enabled
     digest_config = getattr(config, "digest", None) if config else None

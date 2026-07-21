@@ -190,9 +190,9 @@ class _CliEvidenceContext:
 
     @cached_property
     def task_manager(self) -> LocalTaskManager:
-        from gobby.storage.hub.runtime import open_runtime_hub_database
+        from gobby.cli.runtime import require_cli_database
 
-        db = open_runtime_hub_database(apply_migrations=False)
+        db = require_cli_database()
         return LocalTaskManager(db)
 
     def get_task_diff(self, task_ref: str) -> str:

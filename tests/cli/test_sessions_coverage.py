@@ -68,13 +68,13 @@ def _make_session(**overrides: Any) -> Session:
 
 
 class TestManagerCreation:
-    @patch("gobby.cli.sessions.open_runtime_hub_database")
+    @patch("gobby.cli.sessions.require_cli_database")
     @patch("gobby.cli.sessions.SessionManager")
     def test_get_session_manager(self, mock_mgr_cls: MagicMock, mock_db: MagicMock) -> None:
         from gobby.cli.sessions import get_session_manager
 
         result = get_session_manager()
-        mock_db.assert_called_once_with(apply_migrations=False)
+        mock_db.assert_called_once_with()
         mock_mgr_cls.assert_called_once()
         assert result == mock_mgr_cls.return_value
 
@@ -89,7 +89,7 @@ class TestManagerCreation:
             with session_manager_context():
                 raise RuntimeError("boom")
 
-        manager.db.close.assert_called_once_with()
+        manager.db.close.assert_not_called()
 
 
 # =============================================================================
@@ -294,7 +294,7 @@ class TestDeleteFailure:
         mock_session_manager.delete.return_value = False
         result = runner.invoke(sessions, ["delete", "sess-abc123", "--yes"])
         assert "Failed to delete session" in result.output
-        mock_session_manager.db.close.assert_called_once_with()
+        mock_session_manager.db.close.assert_not_called()
 
 
 # =============================================================================

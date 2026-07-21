@@ -258,21 +258,20 @@ def evaluate(
     recovery_epic_ref: str | None = None,
 ) -> CoverageReport:
     source = _task_tree_source(task_tree)
-    plan_doc = _load_plan(plan)
-    _ensure_fresh_plan_hash(plan_doc, plan_hash)
-    evidence_rows = tuple(evidence or ())
 
     if source is TaskTreeSource.matrix_file:
         if root_task_ref is not None or project_id is not None:
             raise MissingScopeError("matrix-file coverage does not accept root_task_ref/project_id")
         if matrix_file is None:
             raise MissingScopeError("matrix-file coverage requires matrix_file")
+        plan_doc = _load_plan(plan)
+        _ensure_fresh_plan_hash(plan_doc, plan_hash)
         return _evaluate_matrix_file(
             Path(matrix_file),
             plan_id=plan_id,
             plan_hash=plan_hash,
             plan_doc=plan_doc,
-            evidence=evidence_rows,
+            evidence=tuple(evidence or ()),
         )
 
     if not root_task_ref:
@@ -282,6 +281,26 @@ def evaluate(
     if matrix_file is not None:
         raise MissingScopeError(f"{source.value} coverage does not accept matrix_file")
 
+    if db is None and task_records is None:
+        from gobby.storage.hub.runtime import runtime_hub_database
+
+        with runtime_hub_database(apply_migrations=False) as owned_db:
+            return evaluate(
+                plan=plan,
+                plan_id=plan_id,
+                plan_hash=plan_hash,
+                task_tree=source,
+                root_task_ref=root_task_ref,
+                project_id=project_id,
+                db=owned_db,
+                task_tree_file=task_tree_file,
+                evidence=evidence,
+                recovery_epic_ref=recovery_epic_ref,
+            )
+
+    plan_doc = _load_plan(plan)
+    _ensure_fresh_plan_hash(plan_doc, plan_hash)
+    evidence_rows = tuple(evidence or ())
     records = _load_task_records(
         source,
         project_id=project_id,
@@ -702,6 +721,8 @@ def _load_task_records(
     if source is TaskTreeSource.db:
         if task_tree_file is not None:
             raise MissingScopeError("db coverage does not accept task_tree_file")
+        if db is None:
+            raise RuntimeError("db coverage requires an injected database")
         return _load_db_task_records(project_id, db=db)
 
     return ()
@@ -710,18 +731,9 @@ def _load_task_records(
 def _load_db_task_records(
     project_id: str,
     *,
-    db: HubDatabase | None,
+    db: HubDatabase,
 ) -> tuple[_TaskRecord, ...]:
-    from gobby.storage.hub.runtime import open_runtime_hub_database
-
-    if db is not None:
-        return _load_db_task_records_from_connection(project_id, db=db)
-
-    owned_db = open_runtime_hub_database(apply_migrations=False)
-    try:
-        return _load_db_task_records_from_connection(project_id, db=owned_db)
-    finally:
-        owned_db.close()
+    return _load_db_task_records_from_connection(project_id, db=db)
 
 
 def _load_db_task_records_from_connection(

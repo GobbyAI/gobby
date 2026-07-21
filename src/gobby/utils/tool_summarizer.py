@@ -24,8 +24,8 @@ _llm_service: LLMService | None = None
 
 def init_summarizer_config(
     config: ToolSummarizerConfig,
+    db: HubDatabase,
     project_dir: str | None = None,
-    db: HubDatabase | None = None,
     llm_service: LLMService | None = None,
 ) -> None:
     """Initialize the summarizer with configuration."""

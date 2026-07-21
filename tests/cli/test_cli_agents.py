@@ -764,7 +764,7 @@ class TestAgentsShowCommand:
         assert "Model: claude-3-sonnet" in result.output
 
     @patch("gobby.cli.agents.get_agent_run_manager")
-    @patch("gobby.cli.agents.open_runtime_hub_database")
+    @patch("gobby.cli.agents.require_cli_database")
     def test_show_prefix_match_single(
         self,
         mock_db_cls: MagicMock,
@@ -808,7 +808,7 @@ class TestAgentsShowCommand:
         assert "Agent Run:" in result.output
 
     @patch("gobby.cli.agents.get_agent_run_manager")
-    @patch("gobby.cli.agents.open_runtime_hub_database")
+    @patch("gobby.cli.agents.require_cli_database")
     def test_show_prefix_match_ambiguous(
         self,
         mock_db_cls: MagicMock,
@@ -872,7 +872,7 @@ class TestAgentsShowCommand:
         assert "ar-abc456" in result.output
 
     @patch("gobby.cli.agents.get_agent_run_manager")
-    @patch("gobby.cli.agents.open_runtime_hub_database")
+    @patch("gobby.cli.agents.require_cli_database")
     def test_show_not_found(
         self,
         mock_db_cls: MagicMock,
@@ -1118,7 +1118,7 @@ class TestAgentsStatusCommand:
         assert "Connection timeout" in result.output
 
     @patch("gobby.cli.agents.get_agent_run_manager")
-    @patch("gobby.cli.agents.open_runtime_hub_database")
+    @patch("gobby.cli.agents.require_cli_database")
     def test_status_prefix_match(
         self,
         mock_db_cls: MagicMock,
@@ -1161,7 +1161,7 @@ class TestAgentsStatusCommand:
         assert mock_agent_run.id in result.output
 
     @patch("gobby.cli.agents.get_agent_run_manager")
-    @patch("gobby.cli.agents.open_runtime_hub_database")
+    @patch("gobby.cli.agents.require_cli_database")
     def test_status_not_found(
         self,
         mock_db_cls: MagicMock,
@@ -1269,7 +1269,7 @@ class TestAgentsStopCommand:
         assert "Cannot stop agent in status" in result.output
 
     @patch("gobby.cli.agents.get_agent_run_manager")
-    @patch("gobby.cli.agents.open_runtime_hub_database")
+    @patch("gobby.cli.agents.require_cli_database")
     def test_stop_not_found(
         self,
         mock_db_cls: MagicMock,
@@ -1292,7 +1292,7 @@ class TestAgentsStopCommand:
 
     @patch("gobby.utils.daemon_client.DaemonClient")
     @patch("gobby.cli.agents.get_agent_run_manager")
-    @patch("gobby.cli.agents.open_runtime_hub_database")
+    @patch("gobby.cli.agents.require_cli_database")
     def test_stop_prefix_match(
         self,
         mock_db_cls: MagicMock,
@@ -1360,7 +1360,7 @@ class TestAgentsStatsCommand:
         assert result.exit_code == 0
         assert "--session" in result.output
 
-    @patch("gobby.cli.agents.open_runtime_hub_database")
+    @patch("gobby.cli.agents.require_cli_database")
     def test_stats_global(
         self,
         mock_db_cls: MagicMock,
@@ -1413,7 +1413,7 @@ class TestAgentsStatsCommand:
         assert "Agent Statistics for session sess-test123" in result.output
         assert "Total Runs: 13" in result.output
 
-    @patch("gobby.cli.agents.open_runtime_hub_database")
+    @patch("gobby.cli.agents.require_cli_database")
     def test_stats_no_runs(
         self,
         mock_db_cls: MagicMock,
@@ -1429,7 +1429,7 @@ class TestAgentsStatsCommand:
         assert result.exit_code == 0
         assert "No agent runs found" in result.output
 
-    @patch("gobby.cli.agents.open_runtime_hub_database")
+    @patch("gobby.cli.agents.require_cli_database")
     def test_stats_zero_total(
         self,
         mock_db_cls: MagicMock,
@@ -1507,7 +1507,7 @@ class TestAgentsCleanupCommand:
         assert result.exit_code == 0
         mock_manager.cleanup_stale_runs.assert_called_once_with(default_timeout_minutes=60)
 
-    @patch("gobby.cli.agents.open_runtime_hub_database")
+    @patch("gobby.cli.agents.require_cli_database")
     def test_cleanup_dry_run(
         self,
         mock_db_cls: MagicMock,
@@ -1534,7 +1534,7 @@ class TestAgentsCleanupCommand:
         assert "Stale pending runs" in result.output
         assert "ar-pending1" in result.output
 
-    @patch("gobby.cli.agents.open_runtime_hub_database")
+    @patch("gobby.cli.agents.require_cli_database")
     def test_cleanup_dry_run_no_stale(
         self,
         mock_db_cls: MagicMock,
@@ -1560,7 +1560,7 @@ class TestAgentsCleanupCommand:
 class TestHelperFunctions:
     """Tests for helper functions in agents module."""
 
-    @patch("gobby.cli.agents.open_runtime_hub_database")
+    @patch("gobby.cli.agents.require_cli_database")
     @patch("gobby.cli.agents.LocalAgentRunManager")
     def test_get_agent_run_manager(
         self,
@@ -1578,7 +1578,7 @@ class TestHelperFunctions:
 
         result = get_agent_run_manager()
 
-        mock_db_cls.assert_called_once_with(apply_migrations=False)
+        mock_db_cls.assert_called_once_with()
         assert mock_db_cls.call_count == 1
         assert mock_db_cls.call_args is not None
         mock_manager_cls.assert_called_once_with(mock_db)

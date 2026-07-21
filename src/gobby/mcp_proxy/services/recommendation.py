@@ -24,10 +24,10 @@ class RecommendationService:
         self,
         llm_service: Any,
         mcp_manager: Any,
+        db: HubDatabase,
         semantic_search: Any | None = None,
         project_id: str | None = None,
         config: RecommendToolsConfig | None = None,
-        db: HubDatabase | None = None,
     ):
         self._llm_service = llm_service
         self._mcp_manager = mcp_manager

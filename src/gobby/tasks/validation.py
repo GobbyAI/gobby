@@ -610,8 +610,8 @@ class TaskValidator:
         self,
         config: TaskValidationConfig,
         llm_service: LLMService,
+        db: HubDatabase,
         project_dir: Path | None = None,
-        db: HubDatabase | None = None,
         tool_chat_service: ToolChatService | None = None,
     ):
         self.config = config

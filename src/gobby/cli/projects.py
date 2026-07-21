@@ -9,7 +9,7 @@ from typing import Literal
 
 import click
 
-from gobby.storage.hub.runtime import open_runtime_hub_database
+from gobby.cli.runtime import require_cli_database
 from gobby.storage.projects import SYSTEM_PROJECT_NAMES, LocalProjectManager, Project
 from gobby.utils.json_helpers import json_dumps
 from gobby.utils.project_context import find_project_root
@@ -17,8 +17,7 @@ from gobby.utils.project_context import find_project_root
 
 def get_project_manager() -> LocalProjectManager:
     """Get initialized project manager."""
-    db = open_runtime_hub_database(apply_migrations=False)
-    return LocalProjectManager(db)
+    return LocalProjectManager(require_cli_database())
 
 
 def resolve_project(manager: LocalProjectManager, ref: str) -> Project:

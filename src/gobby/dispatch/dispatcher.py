@@ -135,6 +135,24 @@ async def run_heartbeat(
     while not _HEARTBEAT_LOCK.acquire(blocking=False):
         await asyncio.sleep(_HEARTBEAT_LOCK_POLL_SECONDS)
     try:
+        if db is None:
+            from gobby.storage.hub.runtime import runtime_hub_database
+
+            database_context = runtime_hub_database(apply_migrations=False)
+            owned_db = await run_db(database_context.__enter__)
+            try:
+                return await _run_heartbeat_unlocked(
+                    db=owned_db,
+                    project_id=project_id,
+                    startup=startup,
+                    max_active_agents=max_active_agents,
+                    holder=holder,
+                    ttl_seconds=ttl_seconds,
+                    services=services,
+                    max_actions=max_actions,
+                )
+            finally:
+                await run_db(database_context.__exit__, None, None, None)
         return await _run_heartbeat_unlocked(
             db=db,
             project_id=project_id,
@@ -154,7 +172,7 @@ async def run_heartbeat(
 
 async def _run_heartbeat_unlocked(
     *,
-    db: HubDatabase | None = None,
+    db: HubDatabase,
     project_id: str | None = None,
     startup: bool = False,
     max_active_agents: int | None = None,
@@ -172,12 +190,7 @@ async def _run_heartbeat_unlocked(
         record_automation_event("dispatcher", "skipped")
         return _unavailable(HeartbeatResult(), readiness_reason)
 
-    if db is None:
-        from gobby.storage.hub.runtime import open_runtime_hub_database
-
-        resolved_db = await run_db(open_runtime_hub_database, apply_migrations=False)
-    else:
-        resolved_db = db
+    resolved_db = db
     mutex_storage = TaskDispatchMutexManager(resolved_db)
     if startup:
         await sweep_expired_leases(mutex_storage)

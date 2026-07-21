@@ -648,7 +648,7 @@ class TestPersistEmbeddingConfig:
 
     @patch("gobby.storage.secrets.SecretStore")
     @patch("gobby.storage.config_store.ConfigStore")
-    @patch("gobby.storage.hub.runtime.open_runtime_hub_database")
+    @patch("gobby.storage.hub.runtime.runtime_hub_database")
     @patch("gobby.config.app.load_config")
     def test_persists_embeddings_namespace_only(
         self,
@@ -690,11 +690,12 @@ class TestPersistEmbeddingConfig:
         # No duplicate namespaces
         assert not any(k.startswith("search.") for k in entries)
         assert not any(k.startswith("mcp_client_proxy.") for k in entries)
-        mock_db.close.assert_called_once()
+        mock_db.__exit__.assert_called_once()
+        mock_db.close.assert_not_called()
 
     @patch("gobby.storage.secrets.SecretStore")
     @patch("gobby.storage.config_store.ConfigStore")
-    @patch("gobby.storage.hub.runtime.open_runtime_hub_database")
+    @patch("gobby.storage.hub.runtime.runtime_hub_database")
     @patch("gobby.config.app.load_config")
     def test_none_provider_clears_endpoints(
         self,
@@ -725,9 +726,8 @@ class TestPersistEmbeddingConfig:
             AI_EMBEDDING_QUERY_PREFIX_KEY: None,
             AI_EMBEDDING_CATALOG_KEY: None,
         }
-        mock_db.close.assert_called_once()
-        assert mock_db.close.call_count == 1
-        assert mock_db.close.call_args is not None
+        mock_db.__exit__.assert_called_once()
+        mock_db.close.assert_not_called()
 
     def test_embedding_key_stored_with_config_secret(
         self,
@@ -807,7 +807,7 @@ class TestPersistEmbeddingConfig:
 
     @patch("gobby.storage.secrets.SecretStore")
     @patch("gobby.storage.config_store.ConfigStore")
-    @patch("gobby.storage.hub.runtime.open_runtime_hub_database")
+    @patch("gobby.storage.hub.runtime.runtime_hub_database")
     @patch("gobby.config.app.load_config")
     def test_openai_provider_uses_unified_namespace(
         self,
@@ -844,9 +844,8 @@ class TestPersistEmbeddingConfig:
             AI_EMBEDDING_QUERY_PREFIX_KEY: None,
             AI_EMBEDDING_CATALOG_KEY: None,
         }
-        mock_db.close.assert_called_once()
-        assert mock_db.close.call_count == 1
-        assert mock_db.close.call_args is not None
+        mock_db.__exit__.assert_called_once()
+        mock_db.close.assert_not_called()
 
 
 class TestHealthCheck:

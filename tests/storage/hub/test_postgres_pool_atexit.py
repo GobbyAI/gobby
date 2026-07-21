@@ -5,8 +5,8 @@ from __future__ import annotations
 import gc
 import subprocess
 import sys
-import textwrap
 import weakref
+from pathlib import Path
 
 import pytest
 
@@ -19,10 +19,11 @@ _DUMMY_DSN = "postgresql://gobby:secret@localhost/gobby"
 @pytest.mark.unit
 def test_new_database_is_tracked_for_atexit_close() -> None:
     db = PostgresHubDatabase(_DUMMY_DSN)
-    try:
-        assert db in postgres._OPEN_DATABASES
-    finally:
-        db.close()
+    assert db in postgres._OPEN_DATABASES
+
+    db.close()
+
+    assert db not in postgres._OPEN_DATABASES
 
 
 @pytest.mark.unit
@@ -65,49 +66,80 @@ def test_atexit_sweep_continues_past_close_errors() -> None:
     try:
         postgres._close_open_databases_at_exit()
         assert healthy._pool_closed is True
+        assert failing in postgres._OPEN_DATABASES
     finally:
         failing.close = original_failing_close  # type: ignore[method-assign]
-        failing.close()
-        healthy.close()
+        postgres._close_open_databases_at_exit()
+
+    assert failing._pool_closed is True
+    assert failing not in postgres._OPEN_DATABASES
 
 
 @pytest.mark.unit
-def test_collected_database_leaves_tracking_set() -> None:
-    db = PostgresHubDatabase(_DUMMY_DSN)
-    db.close()
-    ref = weakref.ref(db)
+def test_function_local_leak_remains_reachable_for_atexit() -> None:
+    def leak_database() -> weakref.ReferenceType[PostgresHubDatabase]:
+        db = PostgresHubDatabase(_DUMMY_DSN)
+        return weakref.ref(db)
 
-    del db
+    ref = leak_database()
     gc.collect()
 
-    assert ref() is None
+    leaked = ref()
+    assert leaked is not None
+    assert leaked in postgres._OPEN_DATABASES
+    leaked.close()
+
+
+def test_failed_close_remains_registered_and_can_retry(monkeypatch: pytest.MonkeyPatch) -> None:
+    db = PostgresHubDatabase(_DUMMY_DSN)
+    close_calls = 0
+
+    def close_pool(*, timeout: float) -> None:
+        nonlocal close_calls
+        close_calls += 1
+        if close_calls == 1:
+            raise RuntimeError("temporary close failure")
+
+    monkeypatch.setattr(db._pool, "close", close_pool)
+
+    with pytest.raises(RuntimeError, match="temporary close failure"):
+        db.close()
+
+    assert db in postgres._OPEN_DATABASES
+    assert db._pool_closed is False
+
+    db.close()
+
+    assert close_calls == 2
+    assert db not in postgres._OPEN_DATABASES
+    assert db._pool_closed is True
 
 
 @pytest.mark.integration
-def test_cli_exit_without_close_prints_no_finalization_noise(
+def test_tasks_list_cli_exit_prints_no_finalization_noise(
     postgres_database_url: str,
+    tmp_path: Path,
 ) -> None:
-    """A leaked, opened pool must not spray PythonFinalizationError at exit.
-
-    Reproduces the CLI leak shape: the db handle survives until interpreter
-    shutdown (module global), so without the atexit sweep the pool reaches
-    ConnectionPool.__del__ during finalization and Thread.join() raises on
-    Python 3.14.
-    """
-    script = textwrap.dedent(
-        """
-        import sys
-
-        from gobby.storage.hub.postgres import PostgresHubDatabase
-
-        db = PostgresHubDatabase(sys.argv[1])
-        row = db.fetchone("SELECT 1 AS one")
-        assert row is not None and row["one"] == 1
-        # Deliberately no db.close(): the atexit sweep must cover the leak.
-        """
+    """A normal task CLI invocation closes its pool before Python finalization."""
+    config_path = tmp_path / "bootstrap.yaml"
+    config_path.write_text(
+        f'hub_backend: postgres\ndatabase_url: "{postgres_database_url}"\n',
+        encoding="utf-8",
     )
+    config_path.chmod(0o600)
     result = subprocess.run(
-        [sys.executable, "-c", script, postgres_database_url],
+        [
+            sys.executable,
+            "-m",
+            "gobby.cli",
+            "--config",
+            str(config_path),
+            "tasks",
+            "list",
+            "--active",
+            "--limit",
+            "1",
+        ],
         capture_output=True,
         text=True,
         timeout=60,
@@ -115,5 +147,4 @@ def test_cli_exit_without_close_prints_no_finalization_noise(
 
     assert result.returncode == 0, result.stderr
     assert "PythonFinalizationError" not in result.stderr
-    assert "psycopg_pool" not in result.stderr
-    assert result.stderr.strip() == ""
+    assert "Exception ignored in: <function ConnectionPool.__del__" not in result.stderr

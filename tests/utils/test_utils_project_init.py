@@ -2,6 +2,7 @@
 
 import json
 import os
+from contextlib import nullcontext
 from datetime import UTC, datetime
 from pathlib import Path
 from unittest.mock import MagicMock, patch
@@ -799,7 +800,7 @@ class TestInitializeProject:
                 "created_at": "2024-01-01",
             }
 
-            result = initialize_project(tmp_path)
+            result = initialize_project(tmp_path, db=MagicMock())
 
             assert result.project_id == "existing-id"
             assert result.project_name == "existing-name"
@@ -829,7 +830,7 @@ class TestInitializeProject:
         (subdir / "pyproject.toml").write_text("[tool.pytest.ini_options]\n", encoding="utf-8")
         (subdir / "tests").mkdir()
 
-        result = initialize_project(subdir)
+        result = initialize_project(subdir, db=MagicMock())
 
         root_data = json.loads(project_file.read_text(encoding="utf-8"))
         assert result.project_id == project_id
@@ -852,8 +853,8 @@ class TestInitializeProject:
             }
 
             with patch("gobby.utils.git.get_github_url", return_value=None):
-                with patch("gobby.storage.hub.runtime.open_runtime_hub_database"):
-                    with patch("gobby.storage.hub.runtime.open_runtime_hub_database"):
+                with patch("gobby.storage.hub.runtime.runtime_hub_database"):
+                    with patch("gobby.storage.hub.runtime.runtime_hub_database"):
                         with patch("gobby.storage.projects.LocalProjectManager") as mock_pm_cls:
                             mock_pm_instance = MagicMock()
                             mock_pm_instance.get_by_name.return_value = None
@@ -881,7 +882,7 @@ class TestInitializeProject:
         """Fresh initialization creates the project in the isolated database."""
         monkeypatch.delenv("GOBBY_PROJECT_ID", raising=False)
         with patch(
-            "gobby.storage.hub.runtime.open_runtime_hub_database", return_value=temp_db
+            "gobby.storage.hub.runtime.runtime_hub_database", return_value=nullcontext(temp_db)
         ) as open_db:
             result = initialize_project(tmp_path)
 
@@ -898,8 +899,8 @@ class TestInitializeProject:
         """Test that provided name overrides directory name."""
         with patch("gobby.utils.project_context.get_project_context", return_value=None):
             with patch("gobby.utils.git.get_github_url", return_value=None):
-                with patch("gobby.storage.hub.runtime.open_runtime_hub_database"):
-                    with patch("gobby.storage.hub.runtime.open_runtime_hub_database"):
+                with patch("gobby.storage.hub.runtime.runtime_hub_database"):
+                    with patch("gobby.storage.hub.runtime.runtime_hub_database"):
                         with patch("gobby.storage.projects.LocalProjectManager") as mock_pm_cls:
                             mock_pm_instance = MagicMock()
                             mock_pm_instance.get_by_name.return_value = None
@@ -922,8 +923,8 @@ class TestInitializeProject:
         """Test that provided github_url is used."""
         with patch("gobby.utils.project_context.get_project_context", return_value=None):
             with patch("gobby.utils.git.get_github_url", return_value="https://auto-detected.com"):
-                with patch("gobby.storage.hub.runtime.open_runtime_hub_database"):
-                    with patch("gobby.storage.hub.runtime.open_runtime_hub_database"):
+                with patch("gobby.storage.hub.runtime.runtime_hub_database"):
+                    with patch("gobby.storage.hub.runtime.runtime_hub_database"):
                         with patch("gobby.storage.projects.LocalProjectManager") as mock_pm_cls:
                             mock_pm_instance = MagicMock()
                             mock_pm_instance.get_by_name.return_value = None
@@ -952,8 +953,8 @@ class TestInitializeProject:
             with patch(
                 "gobby.utils.git.get_github_url", return_value="https://github.com/detected/repo"
             ):
-                with patch("gobby.storage.hub.runtime.open_runtime_hub_database"):
-                    with patch("gobby.storage.hub.runtime.open_runtime_hub_database"):
+                with patch("gobby.storage.hub.runtime.runtime_hub_database"):
+                    with patch("gobby.storage.hub.runtime.runtime_hub_database"):
                         with patch("gobby.storage.projects.LocalProjectManager") as mock_pm_cls:
                             mock_pm_instance = MagicMock()
                             mock_pm_instance.get_by_name.return_value = None
@@ -986,8 +987,8 @@ class TestInitializeProject:
         existing = manager.create(name=tmp_path.name)
         monkeypatch.delenv("GOBBY_PROJECT_ID", raising=False)
         monkeypatch.setattr(
-            "gobby.storage.hub.runtime.open_runtime_hub_database",
-            lambda *, apply_migrations: temp_db,
+            "gobby.storage.hub.runtime.runtime_hub_database",
+            lambda *, apply_migrations: nullcontext(temp_db),
         )
 
         result = initialize_project(tmp_path)
@@ -1014,8 +1015,8 @@ class TestInitializeProject:
         existing = manager.create(name=tmp_path.name, repo_path=str(other_repo))
         monkeypatch.delenv("GOBBY_PROJECT_ID", raising=False)
         monkeypatch.setattr(
-            "gobby.storage.hub.runtime.open_runtime_hub_database",
-            lambda *, apply_migrations: temp_db,
+            "gobby.storage.hub.runtime.runtime_hub_database",
+            lambda *, apply_migrations: nullcontext(temp_db),
         )
 
         with pytest.raises(ValueError, match=r"different repository.*--name"):
@@ -1037,8 +1038,8 @@ class TestInitializeProject:
         assert manager.soft_delete(deleted.id)
         monkeypatch.delenv("GOBBY_PROJECT_ID", raising=False)
         monkeypatch.setattr(
-            "gobby.storage.hub.runtime.open_runtime_hub_database",
-            lambda *, apply_migrations: temp_db,
+            "gobby.storage.hub.runtime.runtime_hub_database",
+            lambda *, apply_migrations: nullcontext(temp_db),
         )
 
         result = initialize_project(tmp_path)
@@ -1052,7 +1053,7 @@ class TestInitializeProject:
     def test_adopts_project_created_concurrently(self, tmp_path: Path) -> None:
         with patch("gobby.utils.project_context.get_project_context", return_value=None):
             with patch("gobby.utils.git.get_github_url", return_value=None):
-                with patch("gobby.storage.hub.runtime.open_runtime_hub_database"):
+                with patch("gobby.storage.hub.runtime.runtime_hub_database"):
                     with patch("gobby.storage.projects.LocalProjectManager") as mock_pm_cls:
                         winner = MagicMock()
                         winner.id = "winner-project-id"
@@ -1085,7 +1086,7 @@ class TestInitializeProject:
             with patch("pathlib.Path.cwd") as mock_cwd:
                 mock_cwd.return_value = Path("/some/path")
 
-                result = initialize_project(cwd=None)
+                result = initialize_project(cwd=None, db=MagicMock())
 
                 # Should use cwd
                 assert result.project_id == "id"
@@ -1099,8 +1100,8 @@ class TestInitializeProject:
             }
 
             with patch("gobby.utils.git.get_github_url", return_value=None):
-                with patch("gobby.storage.hub.runtime.open_runtime_hub_database"):
-                    with patch("gobby.storage.hub.runtime.open_runtime_hub_database"):
+                with patch("gobby.storage.hub.runtime.runtime_hub_database"):
+                    with patch("gobby.storage.hub.runtime.runtime_hub_database"):
                         with patch("gobby.storage.projects.LocalProjectManager") as mock_pm_cls:
                             mock_pm_instance = MagicMock()
                             mock_pm_instance.get_by_name.return_value = None
@@ -1132,8 +1133,8 @@ class TestInitializeProject:
 
         with patch("gobby.utils.project_context.get_project_context", return_value=None):
             with patch("gobby.utils.git.get_github_url", return_value=None):
-                with patch("gobby.storage.hub.runtime.open_runtime_hub_database"):
-                    with patch("gobby.storage.hub.runtime.open_runtime_hub_database"):
+                with patch("gobby.storage.hub.runtime.runtime_hub_database"):
+                    with patch("gobby.storage.hub.runtime.runtime_hub_database"):
                         with patch("gobby.storage.projects.LocalProjectManager") as mock_pm_cls:
                             mock_pm_instance = MagicMock()
                             mock_pm_instance.get_by_name.return_value = None
@@ -1163,8 +1164,8 @@ class TestInitializeProject:
 
         with patch("gobby.utils.project_context.get_project_context", return_value=None):
             with patch("gobby.utils.git.get_github_url", return_value=None):
-                with patch("gobby.storage.hub.runtime.open_runtime_hub_database"):
-                    with patch("gobby.storage.hub.runtime.open_runtime_hub_database"):
+                with patch("gobby.storage.hub.runtime.runtime_hub_database"):
+                    with patch("gobby.storage.hub.runtime.runtime_hub_database"):
                         with patch("gobby.storage.projects.LocalProjectManager") as mock_pm_cls:
                             mock_existing = MagicMock()
                             mock_existing.id = "db-proj-id"
@@ -1190,8 +1191,8 @@ class TestInitializeProject:
 
         with patch("gobby.utils.project_context.get_project_context", return_value=None):
             with patch("gobby.utils.git.get_github_url", return_value=None):
-                with patch("gobby.storage.hub.runtime.open_runtime_hub_database"):
-                    with patch("gobby.storage.hub.runtime.open_runtime_hub_database"):
+                with patch("gobby.storage.hub.runtime.runtime_hub_database"):
+                    with patch("gobby.storage.hub.runtime.runtime_hub_database"):
                         with patch("gobby.storage.projects.LocalProjectManager") as mock_pm_cls:
                             mock_pm_instance = MagicMock()
                             mock_pm_instance.get_by_name.return_value = None
@@ -1224,7 +1225,7 @@ class TestInitializeProject:
                 "created_at": "2024-01-01",
             }
 
-            result = initialize_project(subdir)
+            result = initialize_project(subdir, db=MagicMock())
 
             assert result.project_path == str(subdir.resolve())
 
@@ -1235,8 +1236,8 @@ class TestInitializeProject:
 
         with patch("gobby.utils.project_context.get_project_context", return_value=None):
             with patch("gobby.utils.git.get_github_url", return_value=None):
-                with patch("gobby.storage.hub.runtime.open_runtime_hub_database"):
-                    with patch("gobby.storage.hub.runtime.open_runtime_hub_database"):
+                with patch("gobby.storage.hub.runtime.runtime_hub_database"):
+                    with patch("gobby.storage.hub.runtime.runtime_hub_database"):
                         with patch("gobby.storage.projects.LocalProjectManager") as mock_pm_cls:
                             mock_pm_instance = MagicMock()
                             mock_pm_instance.get_by_name.return_value = None
@@ -1265,7 +1266,7 @@ class TestInitializeProject:
                 "created_at": "2024-01-01",
             }
 
-            result = initialize_project(tmp_path)
+            result = initialize_project(tmp_path, db=MagicMock())
 
             # Should use project_path from context
             assert result.project_path == "/original/path"
@@ -1280,7 +1281,7 @@ class TestInitializeProject:
                 "created_at": "2024-01-01",
             }
 
-            result = initialize_project(tmp_path)
+            result = initialize_project(tmp_path, db=MagicMock())
 
             # Should fall back to cwd
             assert result.project_path == str(tmp_path.resolve())
@@ -1295,7 +1296,7 @@ class TestInitializeProject:
                 # No created_at
             }
 
-            result = initialize_project(tmp_path)
+            result = initialize_project(tmp_path, db=MagicMock())
 
             # Should use empty string as default
             assert result.created_at == ""
@@ -1310,7 +1311,7 @@ class TestInitializeProject:
                 "created_at": "2024-01-01",
             }
 
-            result = initialize_project(tmp_path)
+            result = initialize_project(tmp_path, db=MagicMock())
 
             # Should use empty string as default
             assert result.project_name == ""

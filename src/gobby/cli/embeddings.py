@@ -30,7 +30,9 @@ def embeddings() -> None:
 @click.pass_context
 def doctor(ctx: click.Context) -> None:
     """Emit embedding config health as JSON."""
-    config = ctx.obj.get("config") if ctx.obj else None
+    from gobby.cli.runtime import get_cli_runtime
+
+    config = get_cli_runtime(ctx).config
     result = _doctor_payload(config)
     click.echo(json_dumps(result, sort_keys=True))
     raise click.exceptions.Exit(HEALTHY if result["namespace_resolved"] else CONFIG_NOT_RESOLVED)
@@ -62,11 +64,13 @@ def switch(
         gobby embeddings switch --resume      # Resume an interrupted run
         gobby embeddings switch --abort       # Abort the current run
     """
+    from contextlib import nullcontext
+
+    from gobby.cli.runtime import require_cli_database
     from gobby.storage.config_store import ConfigStore
-    from gobby.storage.hub.runtime import runtime_hub_database
 
     try:
-        with runtime_hub_database(apply_migrations=False) as db:
+        with nullcontext(require_cli_database(ctx)) as db:
             store = ConfigStore(db)
 
             if status:
@@ -241,12 +245,13 @@ def _doctor_payload(config: Any) -> dict[str, Any]:
 
 def _resolved_namespace() -> str | None:
     try:
+        from gobby.cli.runtime import require_cli_database
         from gobby.storage.config_store import ConfigStore
-        from gobby.storage.hub.runtime import runtime_hub_database
 
         # Diagnostic-only read: avoid mutating schema while reporting config health.
-        with runtime_hub_database(apply_migrations=False) as db:
-            keys = set(ConfigStore(db).list_keys(prefix=AI_EMBEDDINGS_CONFIG_PREFIX))
+        keys = set(
+            ConfigStore(require_cli_database()).list_keys(prefix=AI_EMBEDDINGS_CONFIG_PREFIX)
+        )
     except (ImportError, OSError, RuntimeError, psycopg.Error) as exc:
         logger.debug("Failed to resolve embedding config namespace: %s", exc, exc_info=True)
         return None

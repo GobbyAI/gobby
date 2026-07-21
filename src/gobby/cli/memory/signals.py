@@ -11,6 +11,7 @@ from typing import Any, cast
 
 import click
 
+from gobby.cli.runtime import get_cli_runtime, require_cli_database
 from gobby.memory.recall_fit import WeightingMode, split_request_ids_per_project
 from gobby.memory.recall_refit import run_ship_gate_from_store
 from gobby.memory.recall_ship_gate import (
@@ -26,7 +27,6 @@ from gobby.memory.recall_signal_log import (
     rotated_recall_signal_paths,
 )
 from gobby.memory.shadow_relevance import SHADOW_PROTOCOL_VERSION
-from gobby.storage.hub.runtime import open_runtime_hub_database
 from gobby.storage.recall_shadow_signals import ShadowCohortAmbiguityError
 from gobby.storage.recall_signals import RecallSignalStore
 
@@ -60,7 +60,7 @@ def backfill_events(path_: Path | None) -> None:
         sources = rotated_recall_signal_paths(resolved)
         if not sources:
             raise click.ClickException(f"No recall-signal log at {resolved}")
-    db = open_runtime_hub_database(apply_migrations=False)
+    db = require_cli_database()
     store = RecallSignalStore(db)
     for source in sources:
         inserted = store.load_signal_events_jsonl(source)
@@ -75,7 +75,7 @@ def backfill_labels(path_: Path) -> None:
     Accepts the #17193 calibration-dataset row shape (synthetic ``retro:``
     request ids). Idempotent on the contract §6 unique key.
     """
-    db = open_runtime_hub_database(apply_migrations=False)
+    db = require_cli_database()
     inserted = RecallSignalStore(db).backfill_usefulness_labels_jsonl(path_)
     click.echo(f"Inserted {inserted} usefulness-label rows from {path_}")
 
@@ -233,7 +233,7 @@ def gate(
     write_decision: Path | None,
 ) -> None:
     """Run the one-shot fitted-constants ship gate over an exact cohort."""
-    store = RecallSignalStore(open_runtime_hub_database(apply_migrations=False))
+    store = RecallSignalStore(require_cli_database())
     try:
         decision = run_ship_gate_from_store(
             store,
@@ -311,7 +311,7 @@ def audit_labels(
         completion_cutoff=completion_cutoff,
         weighting_mode=weighting_mode,
     )
-    store = RecallSignalStore(open_runtime_hub_database(apply_migrations=False))
+    store = RecallSignalStore(require_cli_database())
     try:
         cohort_rows = store.shadow_cohort_query(
             "audit_scored",
@@ -446,12 +446,9 @@ def drift(
     fires. The alarm's response path is the #17200 one-flag rollback:
     ``memory.use_fitted_recall_constants=false``.
     """
-    from gobby.config.app import DaemonConfig
     from gobby.memory.recall_drift import DriftThresholds, run_drift_check_from_store
 
-    config = ctx.obj.get("config") if isinstance(ctx.obj, dict) else None
-    if not isinstance(config, DaemonConfig):
-        raise click.ClickException("Daemon config is unavailable in CLI context")
+    config = get_cli_runtime(ctx).config
     memory_config = config.memory
 
     thresholds = None
@@ -462,7 +459,7 @@ def drift(
             min_pairs=min_pairs if min_pairs is not None else defaults.min_pairs,
         )
 
-    db = open_runtime_hub_database(apply_migrations=False)
+    db = require_cli_database(ctx)
     report = run_drift_check_from_store(
         RecallSignalStore(db),
         memory_config,

@@ -11,12 +11,12 @@ import click
 import httpx
 from croniter import croniter
 
+from gobby.cli.runtime import get_cli_runtime, require_cli_database
 from gobby.cli.utils import resolve_project_ref
 from gobby.cli.utils_config import get_daemon_client
 from gobby.config.app import DaemonConfig
 from gobby.storage.cron import CronJobStorage
 from gobby.storage.hub.protocol import HubDatabase
-from gobby.storage.hub.runtime import open_runtime_hub_database
 from gobby.utils.daemon_client import DaemonClient
 from gobby.utils.datetime import datetime_to_iso
 from gobby.utils.json_helpers import json_dumps
@@ -24,7 +24,7 @@ from gobby.utils.json_helpers import json_dumps
 
 def get_cron_storage() -> tuple[HubDatabase, CronJobStorage]:
     """Get initialized cron storage."""
-    db = open_runtime_hub_database(apply_migrations=False)
+    db = require_cli_database()
     return db, CronJobStorage(db)
 
 
@@ -48,7 +48,7 @@ def _resolve_job_id(storage: CronJobStorage, job_ref: str) -> str:
 
 
 def _get_daemon_client(ctx: click.Context) -> DaemonClient:
-    config = (ctx.obj or {}).get("config") if isinstance(ctx.obj, dict) else None
+    config = get_cli_runtime(ctx).config
     if not isinstance(config, DaemonConfig):
         raise click.ClickException(
             "Daemon configuration is unavailable. Run this command through the main "

@@ -27,15 +27,15 @@ if TYPE_CHECKING:
 
 import click
 
+from gobby.cli.runtime import require_cli_database
 from gobby.cli.utils_config import get_daemon_client
-from gobby.storage.hub.runtime import open_runtime_hub_database, runtime_hub_database
 from gobby.storage.workflow_definitions import LocalWorkflowDefinitionManager
 from gobby.utils.daemon_client import DaemonClient
 
 
 def _get_manager() -> LocalWorkflowDefinitionManager:
     """Get workflow definition manager."""
-    db = open_runtime_hub_database(apply_migrations=False)
+    db = require_cli_database()
     return LocalWorkflowDefinitionManager(db)
 
 
@@ -43,27 +43,21 @@ def _get_manager() -> LocalWorkflowDefinitionManager:
 def _manager_context() -> Iterator[LocalWorkflowDefinitionManager]:
     """Yield a short-lived workflow definition manager and close its owned database."""
     manager = _get_manager()
-    try:
-        yield manager
-    finally:
-        manager.db.close()
+    yield manager
 
 
 def _get_audit_manager() -> WorkflowAuditManager:
     """Get workflow audit manager."""
     from gobby.storage.workflow_audit import WorkflowAuditManager
 
-    return WorkflowAuditManager(open_runtime_hub_database(apply_migrations=False))
+    return WorkflowAuditManager(require_cli_database())
 
 
 @contextmanager
 def _audit_manager_context() -> Iterator[WorkflowAuditManager]:
     """Yield a short-lived workflow audit manager and close its owned database."""
     manager = _get_audit_manager()
-    try:
-        yield manager
-    finally:
-        manager.db.close()
+    yield manager
 
 
 def _get_daemon_client(ctx: click.Context) -> DaemonClient:
@@ -269,8 +263,7 @@ def import_rules(file: str) -> None:
 
     from gobby.workflows.sync_rules import sync_rule_file
 
-    with runtime_hub_database(apply_migrations=False) as db:
-        result = sync_rule_file(db, rule_file=path)
+    result = sync_rule_file(require_cli_database(), rule_file=path)
 
     if result.get("errors"):
         for err in result["errors"]:

@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import click
 
-from gobby.storage.hub.runtime import open_runtime_hub_database
+from gobby.cli.runtime import require_cli_database
 from gobby.storage.unmodeled_observations import (
     COUNT_SEMANTICS,
     UnmodeledObservationStore,
@@ -29,7 +29,7 @@ def list_observations(
     json_format: bool,
 ) -> None:
     """List unmodeled observations sorted by count."""
-    db = open_runtime_hub_database(apply_migrations=True)
+    db = require_cli_database()
     rows = UnmodeledObservationStore(db).list_observations(
         source=source,
         kind=kind,

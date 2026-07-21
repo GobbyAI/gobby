@@ -874,7 +874,7 @@ class TestInstallDefaultMCPServers:
                 "gobby.cli.installers.mcp_config_defaults.Path.expanduser",
                 return_value=mcp_path,
             ),
-            patch("gobby.storage.hub.runtime.open_runtime_hub_database"),
+            patch("gobby.storage.hub.runtime.runtime_hub_database"),
             patch("gobby.storage.mcp.LocalMCPManager") as mock_mcp_mgr,
             patch("gobby.storage.secrets.SecretStore", return_value=mock_secret_store),
         ):
@@ -925,7 +925,7 @@ class TestInstallDefaultMCPServers:
                 "gobby.cli.installers.mcp_config_defaults.Path.expanduser",
                 return_value=mcp_path,
             ),
-            patch("gobby.storage.hub.runtime.open_runtime_hub_database"),
+            patch("gobby.storage.hub.runtime.runtime_hub_database"),
             patch("gobby.storage.mcp.LocalMCPManager") as mock_mcp_mgr,
             patch("gobby.storage.secrets.SecretStore", return_value=mock_secret_store),
         ):
@@ -959,7 +959,7 @@ class TestInstallDefaultMCPServers:
                 "gobby.cli.installers.mcp_config_defaults.Path.expanduser",
                 return_value=mcp_path,
             ),
-            patch("gobby.storage.hub.runtime.open_runtime_hub_database"),
+            patch("gobby.storage.hub.runtime.runtime_hub_database"),
             patch("gobby.storage.mcp.LocalMCPManager") as mock_mcp_mgr,
             patch("gobby.storage.secrets.SecretStore", return_value=mock_secret_store),
         ):
@@ -993,7 +993,7 @@ class TestInstallDefaultMCPServers:
                 "gobby.cli.installers.mcp_config_defaults.Path.expanduser",
                 return_value=mcp_path,
             ),
-            patch("gobby.storage.hub.runtime.open_runtime_hub_database"),
+            patch("gobby.storage.hub.runtime.runtime_hub_database"),
             patch("gobby.storage.mcp.LocalMCPManager") as mock_mcp_mgr,
             patch("gobby.storage.secrets.SecretStore", return_value=mock_secret_store),
         ):
@@ -1013,7 +1013,7 @@ class TestInstallDefaultMCPServers:
                 "gobby.cli.installers.mcp_config_defaults.Path.expanduser",
                 return_value=mcp_path,
             ),
-            patch("gobby.storage.hub.runtime.open_runtime_hub_database"),
+            patch("gobby.storage.hub.runtime.runtime_hub_database"),
             patch("gobby.storage.mcp.LocalMCPManager") as mock_mcp_mgr,
             patch("gobby.storage.secrets.SecretStore", return_value=mock_secret_store),
         ):
@@ -1034,7 +1034,7 @@ class TestInstallDefaultMCPServers:
                 "gobby.cli.installers.mcp_config_defaults.Path.expanduser",
                 return_value=mcp_path,
             ),
-            patch("gobby.storage.hub.runtime.open_runtime_hub_database"),
+            patch("gobby.storage.hub.runtime.runtime_hub_database"),
             patch("gobby.storage.mcp.LocalMCPManager") as mock_mcp_mgr,
             patch("gobby.storage.secrets.SecretStore", return_value=mock_secret_store),
         ):
@@ -1066,7 +1066,7 @@ class TestInstallDefaultMCPServers:
                 "gobby.cli.installers.mcp_config_defaults.Path.expanduser",
                 return_value=mcp_path,
             ),
-            patch("gobby.storage.hub.runtime.open_runtime_hub_database"),
+            patch("gobby.storage.hub.runtime.runtime_hub_database"),
             patch("gobby.storage.mcp.LocalMCPManager") as mock_mcp_mgr,
             patch(
                 "gobby.storage.secrets.SecretStore",
@@ -1091,7 +1091,7 @@ class TestInstallDefaultMCPServers:
                 "gobby.cli.installers.mcp_config_defaults.Path.expanduser",
                 return_value=mcp_path,
             ),
-            patch("gobby.storage.hub.runtime.open_runtime_hub_database"),
+            patch("gobby.storage.hub.runtime.runtime_hub_database"),
             patch("gobby.storage.secrets.SecretStore", side_effect=TypeError("bad init")),
         ):
             with pytest.raises(TypeError, match="bad init"):
@@ -1113,7 +1113,7 @@ class TestInstallDefaultMCPServers:
                 "gobby.cli.installers.mcp_config_defaults.Path.expanduser",
                 return_value=mcp_path,
             ),
-            patch("gobby.storage.hub.runtime.open_runtime_hub_database"),
+            patch("gobby.storage.hub.runtime.runtime_hub_database"),
             patch("gobby.storage.mcp.LocalMCPManager") as mock_mcp_mgr,
             patch("gobby.storage.secrets.SecretStore", return_value=mock_secret_store),
         ):
@@ -1138,7 +1138,7 @@ class TestInstallDefaultMCPServers:
                 "gobby.cli.installers.mcp_config_defaults.Path.expanduser",
                 return_value=mcp_path,
             ),
-            patch("gobby.storage.hub.runtime.open_runtime_hub_database"),
+            patch("gobby.storage.hub.runtime.runtime_hub_database"),
             patch("gobby.storage.secrets.SecretStore", return_value=mock_secret_store),
         ):
             with pytest.raises(TypeError, match="bad read"):

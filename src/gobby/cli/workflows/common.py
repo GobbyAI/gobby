@@ -4,9 +4,9 @@ from collections.abc import Iterator
 from contextlib import contextmanager
 from pathlib import Path
 
+from gobby.cli.runtime import require_cli_database
 from gobby.cli.utils import resolve_session_id as resolve_session_id
 from gobby.storage.hub.protocol import HubDatabase
-from gobby.storage.hub.runtime import open_runtime_hub_database
 from gobby.workflows.loader import WorkflowLoader
 from gobby.workflows.state_manager import SessionVariableManager
 
@@ -20,9 +20,7 @@ def create_workflow_loader(db: HubDatabase | None = None) -> WorkflowLoader:
     Workflow and pipeline definitions live in the DB registry; a loader
     without a database cannot see bundled definitions.
     """
-    if db is not None:
-        return WorkflowLoader(db=db)
-    return WorkflowLoader(db=open_runtime_hub_database(apply_migrations=False))
+    return WorkflowLoader(db=db or require_cli_database())
 
 
 def get_workflow_loader(db: HubDatabase | None = None) -> WorkflowLoader:
@@ -33,21 +31,21 @@ def get_session_var_manager(db: HubDatabase | None = None) -> SessionVariableMan
     """Get session variable manager instance (cached).
 
     Args:
-        db: Optional database instance to inject. If not provided, a shared
-            active hub connection is used.
+        db: Optional database instance to inject. If not provided, the CLI
+            runtime database is borrowed.
     """
     global _db_instance, _session_var_manager_instance
     if db is not None:
         return SessionVariableManager(db)
     if _session_var_manager_instance is None:
-        _db_instance = open_runtime_hub_database(apply_migrations=False)
+        _db_instance = require_cli_database()
         _session_var_manager_instance = SessionVariableManager(_db_instance)
     return _session_var_manager_instance
 
 
 @contextmanager
 def session_var_manager_context(db: HubDatabase | None = None) -> Iterator[SessionVariableManager]:
-    """Yield a session variable manager and close cached CLI resources afterwards."""
+    """Yield a session variable manager and clear cached references afterwards."""
     manager = get_session_var_manager(db)
     try:
         yield manager
@@ -57,13 +55,10 @@ def session_var_manager_context(db: HubDatabase | None = None) -> Iterator[Sessi
 
 
 def close_session_var_manager() -> None:
-    """Close and clear the cached session variable manager database."""
+    """Clear cached session variable manager references."""
     global _db_instance, _session_var_manager_instance
-    db = _db_instance
     _db_instance = None
     _session_var_manager_instance = None
-    if db is not None:
-        db.close()
 
 
 def _reset_session_var_manager_for_tests() -> None:

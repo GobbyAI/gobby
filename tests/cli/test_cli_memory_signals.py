@@ -23,7 +23,7 @@ def _invoke_backfill(args: list[str]) -> tuple[MagicMock, object]:
     store = MagicMock()
     store.load_signal_events_jsonl.return_value = 2
     with (
-        patch("gobby.cli.memory.signals.open_runtime_hub_database") as mock_open_db,
+        patch("gobby.cli.memory.signals.require_cli_database") as mock_open_db,
         patch("gobby.cli.memory.signals.RecallSignalStore", return_value=store),
     ):
         mock_open_db.return_value = MagicMock()
@@ -128,7 +128,7 @@ def test_gate_forwards_exact_fences_and_writes_decision(tmp_path: Path) -> None:
     decision = SimpleNamespace(ship=True, to_record=lambda: {"ship": True, "decision_digest": "d1"})
     output_path = tmp_path / "decision.json"
     with (
-        patch("gobby.cli.memory.signals.open_runtime_hub_database"),
+        patch("gobby.cli.memory.signals.require_cli_database"),
         patch("gobby.cli.memory.signals.RecallSignalStore", return_value=store),
         patch("gobby.cli.memory.signals.run_ship_gate_from_store", return_value=decision) as run,
     ):
@@ -150,7 +150,7 @@ def test_gate_forwards_exact_fences_and_writes_decision(tmp_path: Path) -> None:
 def test_gate_exits_one_when_decision_rejects() -> None:
     decision = SimpleNamespace(ship=False, to_record=lambda: {"ship": False})
     with (
-        patch("gobby.cli.memory.signals.open_runtime_hub_database"),
+        patch("gobby.cli.memory.signals.require_cli_database"),
         patch("gobby.cli.memory.signals.RecallSignalStore"),
         patch("gobby.cli.memory.signals.run_ship_gate_from_store", return_value=decision),
     ):
@@ -163,7 +163,7 @@ def test_gate_exits_one_when_decision_rejects() -> None:
 def test_gate_ambiguity_lists_per_cohort_counts() -> None:
     ambiguity = ShadowCohortAmbiguityError("judge_model_key", {"judge-a": 12, "judge-b": 7})
     with (
-        patch("gobby.cli.memory.signals.open_runtime_hub_database"),
+        patch("gobby.cli.memory.signals.require_cli_database"),
         patch("gobby.cli.memory.signals.RecallSignalStore"),
         patch("gobby.cli.memory.signals.run_ship_gate_from_store", side_effect=ambiguity),
     ):
@@ -184,7 +184,7 @@ def test_audit_labels_uses_deterministic_training_partition_sample() -> None:
     outputs: list[dict[str, object]] = []
     for _ in range(2):
         with (
-            patch("gobby.cli.memory.signals.open_runtime_hub_database"),
+            patch("gobby.cli.memory.signals.require_cli_database"),
             patch("gobby.cli.memory.signals.RecallSignalStore", return_value=store),
         ):
             result = CliRunner().invoke(recall_signals, _cohort_args("audit-labels"))
@@ -224,7 +224,7 @@ def test_audit_labels_records_prompt_bound_agreement() -> None:
         for (request_id, memory_id), prompt_hash in kwargs["expected_prompt_hashes"].items()
     ]
     with (
-        patch("gobby.cli.memory.signals.open_runtime_hub_database"),
+        patch("gobby.cli.memory.signals.require_cli_database"),
         patch("gobby.cli.memory.signals.RecallSignalStore", return_value=store),
         patch("gobby.cli.memory.signals.click.confirm", return_value=True),
     ):
@@ -252,7 +252,7 @@ def test_audit_labels_diagnostic_is_training_only_and_excludes_ship_statistic() 
     store.shadow_cohort_query.return_value = cohorts
     store.fetch_shadow_replay_rows.return_value = rows
     with (
-        patch("gobby.cli.memory.signals.open_runtime_hub_database"),
+        patch("gobby.cli.memory.signals.require_cli_database"),
         patch("gobby.cli.memory.signals.RecallSignalStore", return_value=store),
     ):
         result = CliRunner().invoke(
@@ -288,7 +288,7 @@ def test_audit_labels_cutoff_change_produces_distinct_cohort_binding() -> None:
         args = _cohort_args("audit-labels")
         args[args.index("--completion-cutoff") + 1] = completion_cutoff
         with (
-            patch("gobby.cli.memory.signals.open_runtime_hub_database"),
+            patch("gobby.cli.memory.signals.require_cli_database"),
             patch("gobby.cli.memory.signals.RecallSignalStore", return_value=store),
         ):
             result = CliRunner().invoke(recall_signals, args)

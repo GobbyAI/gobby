@@ -62,22 +62,15 @@ def _ensure_db_and_secrets(
     ``gobby.cli`` package, mirroring the pattern used by the original
     in-function bootstrap blocks.
     """
-    from gobby.storage.hub.runtime import open_runtime_hub_database
+    from gobby.storage.hub.runtime import runtime_hub_database
     from gobby.storage.secrets import SecretStore as _SecretStore
 
-    owns_db = False
-    local_db: HubDatabase | None = db
-    local_store: SecretStore | None = secret_store
-    try:
-        if local_db is None:
-            local_db = open_runtime_hub_database()
-            owns_db = True
-        if local_store is None:
-            local_store = _SecretStore(local_db)
-        yield local_db, local_store
-    finally:
-        if owns_db and local_db is not None:
-            local_db.close()
+    if db is None:
+        with runtime_hub_database() as owned_db:
+            yield owned_db, secret_store or _SecretStore(owned_db)
+        return
+
+    yield db, secret_store or _SecretStore(db)
 
 
 def _echo_install_details(

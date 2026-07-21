@@ -48,13 +48,14 @@ class _NonClosingDb:
 
 @contextmanager
 def _patch_config_db(db: HubDatabase) -> Iterator[None]:
-    def open_db(_home: object = None, *, apply_migrations: bool = True) -> HubDatabase:
+    @contextmanager
+    def open_db(_home: object = None, *, apply_migrations: bool = True) -> Iterator[HubDatabase]:
         _ = apply_migrations
-        return cast(HubDatabase, _NonClosingDb(db))
+        yield cast(HubDatabase, _NonClosingDb(db))
 
     with (
-        patch("gobby.cli.installers.falkor._open_config_db", side_effect=open_db),
-        patch("gobby.storage.hub.runtime.open_runtime_hub_database", side_effect=open_db),
+        patch("gobby.cli.installers.falkor._config_db", side_effect=open_db),
+        patch("gobby.storage.hub.runtime.runtime_hub_database", side_effect=open_db),
         patch(
             "gobby.cli.installers.compose_env._bootstrap_database_url",
             return_value="postgresql://gobby:postgres-secret@localhost:5432/gobby",
@@ -326,10 +327,10 @@ class TestInstallFalkorDB:
         module = _falkor_module()
 
         with patch(
-            "gobby.storage.hub.runtime.open_runtime_hub_database",
+            "gobby.storage.hub.runtime.runtime_hub_database",
             return_value=object(),
         ) as open_db:
-            assert module._open_config_db(tmp_path, apply_migrations=False) is open_db.return_value
+            assert module._config_db(tmp_path, apply_migrations=False) is open_db.return_value
 
         open_db.assert_called_once_with(
             str(tmp_path / "bootstrap.yaml"),
@@ -354,10 +355,11 @@ class TestInstallFalkorDB:
             received_homes.append(gobby_home)
             return original_resolve_password(password, gobby_home=gobby_home)
 
-        def track_open_config_db(home: Path, *, apply_migrations: bool = True) -> HubDatabase:
+        @contextmanager
+        def track_config_db(home: Path, *, apply_migrations: bool = True) -> Iterator[HubDatabase]:
             _ = apply_migrations
             received_homes.append(home)
-            return cast(HubDatabase, _NonClosingDb(hub_db))
+            yield cast(HubDatabase, _NonClosingDb(hub_db))
 
         def track_update_config(
             *args: object, gobby_home: Path | None = None, **kwargs: object
@@ -366,7 +368,7 @@ class TestInstallFalkorDB:
             original_update_config(*args, gobby_home=gobby_home, **kwargs)
 
         monkeypatch.setattr(module, "_resolve_falkordb_password", track_password)
-        monkeypatch.setattr(module, "_open_config_db", track_open_config_db)
+        monkeypatch.setattr(module, "_config_db", track_config_db)
         monkeypatch.setattr(module, "_update_config", track_update_config)
 
         with (

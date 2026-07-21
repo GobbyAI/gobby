@@ -438,9 +438,16 @@ class HookManagerFactory:
 
             return PostgresHubDatabase(database_url, pool_config=config.postgres_pool)
 
-        from gobby.storage.hub.runtime import open_runtime_hub_database
+        from gobby.config.app import load_config
+        from gobby.storage.hub.postgres import PostgresHubDatabase
 
-        return open_runtime_hub_database(apply_migrations=False)
+        resolved_config = load_config(resolve_database_url=True)
+        if not resolved_config.database_url:
+            raise RuntimeError("PostgreSQL database URL is not configured")
+        return PostgresHubDatabase(
+            resolved_config.database_url,
+            pool_config=resolved_config.postgres_pool,
+        )
 
     @staticmethod
     def _create_storage(

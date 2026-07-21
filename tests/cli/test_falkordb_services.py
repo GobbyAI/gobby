@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, patch
 
@@ -19,9 +18,10 @@ class _NonClosingDb:
 
     def __init__(self, db: HubDatabase) -> None:
         self._db = db
+        self.close_count = 0
 
     def __setattr__(self, name: str, value: object) -> None:
-        if name == "_db":
+        if name in {"_db", "close_count"}:
             object.__setattr__(self, name, value)
             return
         setattr(self._db, name, value)
@@ -30,7 +30,7 @@ class _NonClosingDb:
         return getattr(self._db, name)
 
     def close(self) -> None:
-        pass
+        self.close_count += 1
 
 
 def _seed_falkordb_config(db: HubDatabase) -> None:
@@ -63,35 +63,23 @@ class _RedisFactory:
 
 
 class TestIsFalkorDBInstalled:
-    def test_uses_runtime_hub_for_requested_home(
-        self,
-        tmp_path: Path,
-        hub_db: HubDatabase,
-    ) -> None:
+    def test_uses_injected_database(self, hub_db: HubDatabase) -> None:
         import gobby.cli.services as services
 
         _seed_falkordb_config(hub_db)
         proxy = _NonClosingDb(hub_db)
-        with patch("gobby.cli.services._open_falkordb_config_db", return_value=proxy) as open_db:
-            assert services.is_falkordb_installed(gobby_home=tmp_path) is True
+        assert services.is_falkordb_installed(db=proxy) is True
 
-        open_db.assert_called_once_with(tmp_path, bootstrap=False)
+        assert proxy.close_count == 0
 
-    def test_uses_default_gobby_home_when_home_missing(
-        self,
-        tmp_path: Path,
-        monkeypatch: pytest.MonkeyPatch,
-        hub_db: HubDatabase,
-    ) -> None:
+    def test_does_not_close_injected_database(self, hub_db: HubDatabase) -> None:
         import gobby.cli.services as services
 
         _seed_falkordb_config(hub_db)
         proxy = _NonClosingDb(hub_db)
-        monkeypatch.setattr(services, "get_gobby_home", lambda: tmp_path)
-        with patch("gobby.cli.services._open_falkordb_config_db", return_value=proxy) as open_db:
-            assert services.is_falkordb_installed() is True
+        assert services.is_falkordb_installed(db=proxy) is True
 
-        open_db.assert_called_once_with(None, bootstrap=False)
+        assert proxy.close_count == 0
 
     def test_services_module_does_not_define_default_db_path_helper(self) -> None:
         import gobby.cli.services as services
@@ -127,7 +115,6 @@ class TestFalkorDBHealthAndStatus:
     @pytest.mark.asyncio
     async def test_status_reports_installed_health_and_endpoint(
         self,
-        tmp_path: Path,
         hub_db: HubDatabase,
     ) -> None:
         from gobby.cli.services import get_falkordb_status
@@ -135,10 +122,9 @@ class TestFalkorDBHealthAndStatus:
         _seed_falkordb_config(hub_db)
         proxy = _NonClosingDb(hub_db)
         with (
-            patch("gobby.cli.services._open_falkordb_config_db", return_value=proxy),
             patch("gobby.cli.services.is_falkordb_healthy", new=AsyncMock(return_value=True)),
         ):
-            status = await get_falkordb_status(gobby_home=tmp_path)
+            status = await get_falkordb_status(db=proxy)
 
         assert status == {
             "installed": True,

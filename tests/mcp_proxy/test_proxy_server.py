@@ -119,6 +119,7 @@ def daemon_tools(mock_mcp_manager, mock_llm_service):
         websocket_port=60888,
         start_time=1000.0,
         internal_manager=internal_manager,
+        db=MagicMock(),
         config=mock_config,
         llm_service=mock_llm_service,
     )

@@ -18,6 +18,7 @@ from click.testing import CliRunner
 
 from gobby.cli.memory import memory
 from gobby.cli.memory.maintenance import _list_all_memories
+from gobby.cli.runtime import CliRuntime
 from gobby.config.app import DaemonConfig
 
 pytestmark = pytest.mark.unit
@@ -62,7 +63,7 @@ def test_get_daemon_client_rejects_missing_cli_context_config() -> None:
 
     ctx = click.Context(click.Command("memory"), obj=None)
 
-    with pytest.raises(click.ClickException, match="Daemon config is unavailable"):
+    with pytest.raises(RuntimeError, match="Click context does not contain a CliRuntime"):
         _get_daemon_client(ctx)
 
 
@@ -71,7 +72,7 @@ def test_get_daemon_client_rejects_invalid_cli_context_config() -> None:
 
     ctx = click.Context(click.Command("memory"), obj={"config": object()})
 
-    with pytest.raises(click.ClickException, match="Daemon config is unavailable"):
+    with pytest.raises(RuntimeError, match="Click context does not contain a CliRuntime"):
         _get_daemon_client(ctx)
 
 
@@ -79,7 +80,8 @@ def test_get_daemon_client_uses_resolved_daemon_url(monkeypatch: pytest.MonkeyPa
     from gobby.cli.memory import _get_daemon_client
 
     monkeypatch.setenv("GOBBY_PORT", "12345")
-    ctx = click.Context(click.Command("memory"), obj={"config": DaemonConfig(daemon_port=60887)})
+    runtime = CliRuntime(config_file=None, config=DaemonConfig(daemon_port=60887))
+    ctx = click.Context(click.Command("memory"), obj=runtime)
 
     with patch("gobby.utils.daemon_client.DaemonClient") as daemon_client:
         client = _get_daemon_client(ctx)
@@ -101,16 +103,15 @@ class TestGetMemoryManager:
     def test_get_memory_manager_returns_instance(self) -> None:
         from gobby.cli.memory import get_memory_manager
 
-        mock_ctx = MagicMock()
-        mock_config = MagicMock()
-        mock_ctx.obj = {"config": mock_config}
+        runtime = CliRuntime(config_file=None)
+        mock_ctx = click.Context(click.Command("memory"), obj=runtime)
 
         with (
-            patch("gobby.cli.memory.open_runtime_hub_database") as mock_open,
+            patch("gobby.cli.memory.require_cli_database") as mock_open,
             patch("gobby.cli.memory.MemoryManager") as mock_mm,
         ):
             result = get_memory_manager(mock_ctx)
-            mock_open.assert_called_once_with(apply_migrations=False)
+            mock_open.assert_called_once_with(mock_ctx)
             mock_mm.assert_called_once()
             assert mock_mm.call_count == 1
             assert mock_mm.call_args is not None

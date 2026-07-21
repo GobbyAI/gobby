@@ -23,6 +23,7 @@ def _make_handler(session_manager: MagicMock | None = None) -> GobbyDaemonTools:
         websocket_port=60888,
         start_time=0.0,
         internal_manager=None,
+        db=MagicMock(),
         session_manager=session_manager,
     )
 

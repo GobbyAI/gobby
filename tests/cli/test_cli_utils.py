@@ -120,7 +120,7 @@ class TestResolveProjectRef:
         manager = LocalProjectManager(hub_db)
         project = manager.create(name="test-proj", repo_path="/tmp/test")
 
-        with patch("gobby.storage.hub.runtime.open_runtime_hub_database", return_value=hub_db):
+        with patch("gobby.cli.runtime.require_cli_database", return_value=hub_db):
             with patch.object(hub_db, "close"):  # Don't actually close
                 result = resolve_project_ref(project.id)
                 assert result == project.id
@@ -132,21 +132,21 @@ class TestResolveProjectRef:
         manager = LocalProjectManager(hub_db)
         project = manager.create(name="my-named-project", repo_path="/tmp/test")
 
-        with patch("gobby.storage.hub.runtime.open_runtime_hub_database", return_value=hub_db):
+        with patch("gobby.cli.runtime.require_cli_database", return_value=hub_db):
             with patch.object(hub_db, "close"):
                 result = resolve_project_ref("my-named-project")
                 assert result == project.id
 
     def test_not_found_returns_none(self, hub_db) -> None:
         """Test project not found returns None when exit_on_not_found=False."""
-        with patch("gobby.storage.hub.runtime.open_runtime_hub_database", return_value=hub_db):
+        with patch("gobby.cli.runtime.require_cli_database", return_value=hub_db):
             with patch.object(hub_db, "close"):
                 result = resolve_project_ref("nonexistent-project", exit_on_not_found=False)
                 assert result is None
 
     def test_not_found_exits(self, hub_db) -> None:
         """Test project not found exits when exit_on_not_found=True."""
-        with patch("gobby.storage.hub.runtime.open_runtime_hub_database", return_value=hub_db):
+        with patch("gobby.cli.runtime.require_cli_database", return_value=hub_db):
             with patch.object(hub_db, "close"):
                 with pytest.raises(SystemExit):
                     resolve_project_ref("nonexistent-project", exit_on_not_found=True)
@@ -191,10 +191,10 @@ class TestGetActiveSessionId:
         mock_db = MagicMock()
         mock_db.fetchone.return_value = None
 
-        with patch("gobby.storage.hub.runtime.open_runtime_hub_database", return_value=mock_db):
+        with patch("gobby.cli.runtime.require_cli_database", return_value=mock_db):
             result = get_active_session_id()
             assert result is None
-            mock_db.close.assert_called_once()
+            mock_db.close.assert_not_called()
 
 
 # ==============================================================================
@@ -221,14 +221,14 @@ class TestResolveSessionId:
             project_id=project.id,
         )
 
-        with patch("gobby.storage.hub.runtime.open_runtime_hub_database", return_value=hub_db):
+        with patch("gobby.cli.runtime.require_cli_database", return_value=hub_db):
             with patch.object(hub_db, "close"):
                 result = resolve_session_id(None, project_id=project.id)
                 assert result == session.id
 
     def test_no_active_session_raises(self, hub_db) -> None:
         """Test ClickException when no active session."""
-        with patch("gobby.storage.hub.runtime.open_runtime_hub_database", return_value=hub_db):
+        with patch("gobby.cli.runtime.require_cli_database", return_value=hub_db):
             with patch.object(hub_db, "close"):
                 with pytest.raises(click.ClickException) as exc_info:
                     resolve_session_id(None)
@@ -250,7 +250,7 @@ class TestResolveSessionId:
             project_id=project.id,
         )
 
-        with patch("gobby.storage.hub.runtime.open_runtime_hub_database", return_value=hub_db):
+        with patch("gobby.cli.runtime.require_cli_database", return_value=hub_db):
             with patch.object(hub_db, "close"):
                 result = resolve_session_id(session.id)
                 assert result == session.id
@@ -272,7 +272,7 @@ class TestResolveSessionId:
         )
 
         # Mock project context to return the project ID
-        with patch("gobby.storage.hub.runtime.open_runtime_hub_database", return_value=hub_db):
+        with patch("gobby.cli.runtime.require_cli_database", return_value=hub_db):
             with patch.object(hub_db, "close"):
                 with patch("gobby.cli.utils.get_project_context") as mock_ctx:
                     mock_ctx.return_value = {"id": project.id}
@@ -298,7 +298,7 @@ class TestResolveSessionId:
         )
 
         # Both sessions are #1 in their respective projects
-        with patch("gobby.storage.hub.runtime.open_runtime_hub_database", return_value=hub_db):
+        with patch("gobby.cli.runtime.require_cli_database", return_value=hub_db):
             with patch.object(hub_db, "close"):
                 # Resolve #1 in project1
                 result1 = resolve_session_id("#1", project_id=project1.id)
@@ -325,7 +325,7 @@ class TestListProjectNames:
         manager.create(name="project-alpha", repo_path="/tmp/alpha")
         manager.create(name="project-beta", repo_path="/tmp/beta")
 
-        with patch("gobby.storage.hub.runtime.open_runtime_hub_database", return_value=hub_db):
+        with patch("gobby.cli.runtime.require_cli_database", return_value=hub_db):
             with patch.object(hub_db, "close"):
                 result = list_project_names()
                 assert "project-alpha" in result
@@ -333,7 +333,7 @@ class TestListProjectNames:
 
     def test_returns_list(self, hub_db) -> None:
         """Test that list_project_names returns a list."""
-        with patch("gobby.storage.hub.runtime.open_runtime_hub_database", return_value=hub_db):
+        with patch("gobby.cli.runtime.require_cli_database", return_value=hub_db):
             with patch.object(hub_db, "close"):
                 result = list_project_names()
                 assert isinstance(result, list)
@@ -755,14 +755,25 @@ class TestInitLocalStorage:
     def test_creates_database(self, temp_dir: Path) -> None:
         """Test that database is created and migrations run."""
         mock_db = MagicMock()
+        config = MagicMock()
+        config.hub_backend = "postgres"
+        config.database_url = "postgresql://localhost/gobby"
+        deps = MagicMock()
+        deps.load_config.return_value = config
 
-        with patch(
-            "gobby.storage.hub.runtime.open_runtime_hub_database", return_value=mock_db
-        ) as mock_open:
+        with (
+            patch("gobby.cli.utils_config.facade", return_value=deps),
+            patch(
+                "gobby.storage.hub.postgres.PostgresHubDatabase", return_value=mock_db
+            ) as mock_open,
+            patch("gobby.storage.projects.ensure_personal_project") as ensure_personal,
+        ):
             result = init_local_storage()
 
         assert result is mock_db
-        mock_open.assert_called_once_with()
+        mock_open.assert_called_once_with(config.database_url, pool_config=config.postgres_pool)
+        mock_db.apply_migrations.assert_called_once_with()
+        ensure_personal.assert_called_once_with(mock_db)
 
 
 # ==============================================================================

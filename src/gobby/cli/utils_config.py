@@ -47,7 +47,11 @@ def get_daemon_client(
     return DaemonClient(url=get_daemon_url(), timeout=timeout, logger=logger)
 
 
-def load_full_config_from_db(config_file: str | None = None) -> DaemonConfig:
+def load_full_config_from_db(
+    config_file: str | None = None,
+    *,
+    database: HubDatabase | None = None,
+) -> DaemonConfig:
     """Load full DaemonConfig from the active hub config_store.
 
     Opens the PostgreSQL runtime hub, creates a ConfigStore, and calls
@@ -81,9 +85,33 @@ def load_full_config_from_db(config_file: str | None = None) -> DaemonConfig:
         return bootstrap_config
 
     try:
-        with runtime_hub_database(config_file) as db:
-            config_store = ConfigStore(db)
-            secret_store = SecretStore(db)
+        if database is None:
+            from gobby.cli.runtime import get_cli_runtime
+
+            try:
+                runtime = get_cli_runtime()
+            except RuntimeError:
+                runtime = None
+
+            if runtime is not None:
+                database = runtime.require_database()
+
+        if database is not None:
+            config_store = ConfigStore(database)
+            secret_store = SecretStore(database)
+            return cast(
+                DaemonConfig,
+                deps.load_config(
+                    config_file=config_file,
+                    config_store=config_store,
+                    secret_resolver=secret_store.get,
+                    resolve_database_url=True,
+                ),
+            )
+
+        with runtime_hub_database(config_file) as owned_database:
+            config_store = ConfigStore(owned_database)
+            secret_store = SecretStore(owned_database)
             return cast(
                 DaemonConfig,
                 deps.load_config(
@@ -149,9 +177,19 @@ def init_local_storage() -> HubDatabase:
     Returns:
         The initialized database instance. The caller owns the returned handle.
     """
-    from gobby.storage.hub.runtime import open_runtime_hub_database
+    from gobby.storage.hub.postgres import PostgresHubDatabase
+    from gobby.storage.projects import ensure_personal_project
 
-    hub_db = open_runtime_hub_database()
+    config = facade().load_config(resolve_database_url=True)
+    if config.hub_backend != "postgres" or not config.database_url:
+        raise RuntimeError("PostgreSQL hub database is not configured")
+    hub_db = PostgresHubDatabase(config.database_url, pool_config=config.postgres_pool)
+    try:
+        hub_db.apply_migrations()
+        ensure_personal_project(hub_db)
+    except Exception:
+        hub_db.close()
+        raise
     logger.debug("Database: PostgreSQL hub")
     return hub_db
 

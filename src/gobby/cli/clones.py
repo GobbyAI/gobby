@@ -13,10 +13,10 @@ Commands for managing git clones:
 import click
 import httpx
 
+from gobby.cli.runtime import require_cli_database
 from gobby.cli.utils import resolve_project_ref
 from gobby.cli.utils_config import get_daemon_url
 from gobby.storage.clones import LocalCloneManager
-from gobby.storage.hub.runtime import open_runtime_hub_database
 from gobby.utils.json_helpers import json_dumps
 from gobby.utils.local_token import daemon_auth_headers
 from gobby.utils.uuid_validation import is_full_uuid
@@ -24,8 +24,7 @@ from gobby.utils.uuid_validation import is_full_uuid
 
 def get_clone_manager() -> LocalCloneManager:
     """Get initialized clone manager."""
-    db = open_runtime_hub_database(apply_migrations=False)
-    return LocalCloneManager(db)
+    return LocalCloneManager(require_cli_database())
 
 
 @click.group()

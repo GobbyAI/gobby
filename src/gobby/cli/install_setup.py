@@ -336,27 +336,20 @@ def run_daemon_setup(project_path: Path, *, configure_ide_settings: bool) -> Non
     """
     from .installers import install_default_mcp_servers
 
-    db = None
     try:
-        from gobby.storage.hub.runtime import open_runtime_hub_database
+        from gobby.cli.installers.shared import sync_bundled_content_to_db
+        from gobby.storage.hub.runtime import runtime_hub_database
 
-        db = open_runtime_hub_database()
-        click.echo("PostgreSQL hub initialized")
-    except (OSError, PermissionError, RuntimeError, ValueError) as e:
-        click.echo(f"Warning: Database init failed ({type(e).__name__}): {e}")
-
-    if db is not None:
-        try:
-            from gobby.cli.installers.shared import sync_bundled_content_to_db
-
+        with runtime_hub_database() as db:
+            click.echo("PostgreSQL hub initialized")
             sync_result = sync_bundled_content_to_db(db)
             if sync_result["total_synced"] > 0:
                 click.echo(f"Synced {sync_result['total_synced']} bundled items to database")
             if sync_result["errors"]:
                 for err in sync_result["errors"]:
                     click.echo(f"  Warning: {err}")
-        finally:
-            db.close()
+    except (OSError, PermissionError, RuntimeError, ValueError) as e:
+        click.echo(f"Warning: Database init failed ({type(e).__name__}): {e}")
 
     mcp_result = install_default_mcp_servers()
     if mcp_result["success"]:

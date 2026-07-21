@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import sys
-from collections.abc import Callable
 from typing import Any
 
 import click
@@ -13,9 +12,8 @@ from gobby.cli._skills_daemon import (
     DaemonClientFactory,
     SkillToolCaller,
 )
+from gobby.storage.hub.protocol import HubDatabase
 from gobby.utils.json_helpers import json_dumps
-
-RuntimeDatabaseFactory = Callable[..., Any]
 
 VALID_HUB_TYPES = ["clawdhub", "skillsmp", "github", "claude-plugins"]
 
@@ -62,7 +60,7 @@ def list_hubs(
 
 
 def add_hub(
-    open_database: RuntimeDatabaseFactory,
+    db: HubDatabase,
     name: str,
     hub_type: str,
     base_url: str | None,
@@ -73,7 +71,7 @@ def add_hub(
     """Add a new skill hub."""
     _validate_hub_options(hub_type, base_url, repo)
     hub_config = _build_hub_config(hub_type, base_url, repo, branch, auth_key_name)
-    _store_hub_config(open_database, name, hub_config)
+    _store_hub_config(db, name, hub_config)
 
     click.echo(f"Added hub: {name} [{hub_type}]")
     click.echo("\nRestart the daemon for changes to take effect: gobby restart")
@@ -120,28 +118,24 @@ def _build_hub_config(
 
 
 def _store_hub_config(
-    open_database: RuntimeDatabaseFactory,
+    db: HubDatabase,
     name: str,
     hub_config: dict[str, Any],
 ) -> None:
     try:
         from gobby.storage.config_store import ConfigStore
 
-        db = open_database(apply_migrations=False)
-        try:
-            store = ConfigStore(db)
-            existing = store.get(f"skills.hubs.{name}.type")
-            if existing is not None:
-                click.echo(
-                    f"Error: Hub '{name}' already exists. Use 'hub remove' first to replace it.",
-                    err=True,
-                )
-                sys.exit(1)
+        store = ConfigStore(db)
+        existing = store.get(f"skills.hubs.{name}.type")
+        if existing is not None:
+            click.echo(
+                f"Error: Hub '{name}' already exists. Use 'hub remove' first to replace it.",
+                err=True,
+            )
+            sys.exit(1)
 
-            for key, value in hub_config.items():
-                store.set(f"skills.hubs.{name}.{key}", value, source="cli")
-        finally:
-            db.close()
+        for key, value in hub_config.items():
+            store.set(f"skills.hubs.{name}.{key}", value, source="cli")
     except (OSError, RuntimeError, ValueError) as exc:
         click.echo(f"Error: Failed to save hub config: {exc}", err=True)
         sys.exit(1)

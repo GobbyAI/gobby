@@ -19,6 +19,7 @@ from gobby.cli.daemon import (
     stop,
 )
 from gobby.cli.installers.compose_env import ComposeEnvironmentError, ComposeRuntime
+from gobby.cli.runtime import CliRuntime
 
 pytestmark = pytest.mark.unit
 
@@ -28,6 +29,12 @@ def _runtime(*profiles: str) -> ComposeRuntime:
         environment={"GOBBY_FALKORDB_PASSWORD": "password123"},
         profiles=profiles,
     )
+
+
+def _cli_runtime(config: MagicMock) -> CliRuntime:
+    runtime = CliRuntime(config_file=None, config=config)
+    runtime._database = MagicMock()
+    return runtime
 
 
 def _write_managed_compose(home: Path) -> None:
@@ -209,7 +216,7 @@ class TestStopCommand:
     def test_stop_success(self, _stop: MagicMock, _svc: MagicMock, runner: CliRunner) -> None:
         config = MagicMock()
         config.daemon_port = 60887
-        result = runner.invoke(stop, [], obj={"config": config}, catch_exceptions=False)
+        result = runner.invoke(stop, [], obj=_cli_runtime(config), catch_exceptions=False)
         assert result.exit_code == 0
 
     @patch(
@@ -219,7 +226,7 @@ class TestStopCommand:
     @patch("gobby.cli.daemon.stop_daemon_util", return_value=False)
     def test_stop_failure(self, _stop: MagicMock, _svc: MagicMock, runner: CliRunner) -> None:
         config = MagicMock()
-        result = runner.invoke(stop, [], obj={"config": config}, catch_exceptions=False)
+        result = runner.invoke(stop, [], obj=_cli_runtime(config), catch_exceptions=False)
         assert result.exit_code == 1
 
     @patch("gobby.cli.daemon._services_stop", return_value=True)
@@ -239,7 +246,7 @@ class TestStopCommand:
     ) -> None:
         config = MagicMock()
         config.daemon_port = 60887
-        result = runner.invoke(stop, ["--docker"], obj={"config": config}, catch_exceptions=False)
+        result = runner.invoke(stop, ["--docker"], obj=_cli_runtime(config), catch_exceptions=False)
         assert result.exit_code == 0
         mock_services.assert_called_once()
         assert mock_services.call_count == 1
@@ -262,7 +269,7 @@ class TestStopCommand:
     ) -> None:
         config = MagicMock(daemon_port=60887)
 
-        result = runner.invoke(stop, ["--docker"], obj={"config": config})
+        result = runner.invoke(stop, ["--docker"], obj=_cli_runtime(config))
 
         assert result.exit_code == 1
         assert "Stopping Docker containers" in result.output
@@ -287,7 +294,7 @@ class TestStatusCommand:
         mock_home.return_value = tmp_path
         config = MagicMock()
         config.logging.dir = str(tmp_path)
-        result = runner.invoke(status, [], obj={"config": config}, catch_exceptions=False)
+        result = runner.invoke(status, [], obj=_cli_runtime(config), catch_exceptions=False)
         assert result.exit_code == 0
         assert "Not running" in result.output
         _fmt.assert_called_once()
@@ -308,7 +315,7 @@ class TestStatusCommand:
         (tmp_path / "gobby.pid").write_text("not-a-number")
         config = MagicMock()
         config.logging.dir = str(tmp_path)
-        result = runner.invoke(status, [], obj={"config": config}, catch_exceptions=False)
+        result = runner.invoke(status, [], obj=_cli_runtime(config), catch_exceptions=False)
         assert result.exit_code == 0
         assert "Not running" in result.output
         _fmt.assert_called_once()
@@ -348,7 +355,7 @@ class TestStatusCommand:
         config.daemon_port = 60888
         config.websocket.port = 60889
         config.ui.enabled = False
-        result = runner.invoke(status, [], obj={"config": config}, catch_exceptions=False)
+        result = runner.invoke(status, [], obj=_cli_runtime(config), catch_exceptions=False)
         assert result.exit_code == 0
         assert "Running PID 123" in result.output
         assert _fmt.call_args.kwargs["control_plane_error"] == (
@@ -371,7 +378,7 @@ class TestStatusCommand:
         (tmp_path / "gobby.pid").write_text("99999")
         config = MagicMock()
         config.logging.dir = str(tmp_path)
-        result = runner.invoke(status, [], obj={"config": config}, catch_exceptions=False)
+        result = runner.invoke(status, [], obj=_cli_runtime(config), catch_exceptions=False)
         assert result.exit_code == 0
         assert "Stale" in result.output
 
@@ -400,7 +407,7 @@ class TestHealthCommand:
         }
         config = MagicMock(daemon_port=60887)
 
-        result = runner.invoke(health, [], obj={"config": config}, catch_exceptions=False)
+        result = runner.invoke(health, [], obj=_cli_runtime(config), catch_exceptions=False)
 
         assert result.exit_code == 1
         assert "Gobby daemon: degraded" in result.output

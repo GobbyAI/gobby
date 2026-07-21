@@ -4,7 +4,7 @@ import os
 
 import click
 
-from gobby.storage.hub.runtime import open_runtime_hub_database
+from gobby.cli.runtime import require_cli_database
 from gobby.storage.secrets import (
     POSTURE_KEY_FILE,
     POSTURE_SCRYPT_PASSPHRASE,
@@ -19,30 +19,17 @@ NEW_SECRET_KEK_PASSPHRASE_ENV = "GOBBY_NEW_SECRET_KEK_PASSPHRASE"
 
 
 class _SecretStoreContext:
-    """Context manager that ensures the DB is closed after use."""
+    """Context manager that borrows the CLI runtime database."""
 
     def __enter__(self) -> SecretStore:
         try:
-            self._db = open_runtime_hub_database()
+            db = require_cli_database()
         except (RuntimeError, ValueError) as exc:
             raise click.ClickException(str(exc)) from exc
-        return SecretStore(self._db)
+        return SecretStore(db)
 
     def __exit__(self, *args: object) -> None:
-        self._db.close()
-
-
-def _get_secret_store() -> SecretStore:
-    """Open the active hub and return a SecretStore (no daemon required).
-
-    NOTE: For proper cleanup, prefer using _SecretStoreContext() as a context manager.
-    Kept for backward compatibility with existing callers.
-    """
-    try:
-        db = open_runtime_hub_database()
-    except (RuntimeError, ValueError) as exc:
-        raise click.ClickException(str(exc)) from exc
-    return SecretStore(db)
+        return None
 
 
 def _display_posture(posture: str | None) -> str:

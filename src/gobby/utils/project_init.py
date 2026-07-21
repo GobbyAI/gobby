@@ -17,6 +17,7 @@ from typing import Any
 
 from psycopg.errors import UniqueViolation
 
+from gobby.storage.hub.protocol import HubDatabase
 from gobby.utils.datetime import datetime_to_required_iso
 
 logger = logging.getLogger(__name__)
@@ -166,6 +167,7 @@ def initialize_project(
     cwd: Path | None = None,
     name: str | None = None,
     github_url: str | None = None,
+    db: HubDatabase | None = None,
 ) -> InitResult:
     """
     Initialize a Gobby project in the given directory.
@@ -185,10 +187,14 @@ def initialize_project(
     Raises:
         Exception: If project creation fails.
     """
-    from gobby.storage.hub.runtime import open_runtime_hub_database
+    from gobby.storage.hub.runtime import runtime_hub_database
     from gobby.storage.projects import LocalProjectManager
     from gobby.utils.git import get_github_url as detect_github_url
     from gobby.utils.project_context import get_project_context
+
+    if db is None:
+        with runtime_hub_database(apply_migrations=False) as owned_db:
+            return initialize_project(cwd=cwd, name=name, github_url=github_url, db=owned_db)
 
     if cwd is None:
         cwd = Path.cwd()
@@ -226,8 +232,6 @@ def initialize_project(
     if not github_url:
         github_url = detect_github_url(cwd)
 
-    # Initialize database
-    db = open_runtime_hub_database(apply_migrations=False)
     project_manager = LocalProjectManager(db)
 
     # Auto-detect verification commands

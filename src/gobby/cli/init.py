@@ -50,8 +50,15 @@ def init(
     """Initialize a new Gobby project in the current directory."""
     cwd = working_dir.resolve() if working_dir else Path.cwd()
 
+    from gobby.cli.runtime import require_cli_database
+
     try:
-        result = initialize_project(cwd=cwd, name=name, github_url=github_url)
+        result = initialize_project(
+            cwd=cwd,
+            name=name,
+            github_url=github_url,
+            db=require_cli_database(),
+        )
     except Exception as e:
         click.echo(f"Failed to initialize project: {e}", err=True)
         sys.exit(1)
@@ -226,11 +233,11 @@ def _maybe_run_linear_setup(
 
     try:
         from gobby.cli.linear import _create_linear_mcp_manager, _run_linear_setup
-        from gobby.storage.hub.runtime import open_runtime_hub_database
+        from gobby.cli.runtime import require_cli_database
         from gobby.storage.projects import LocalProjectManager
         from gobby.storage.tasks import LocalTaskManager
 
-        db = open_runtime_hub_database(apply_migrations=False)
+        db = require_cli_database()
         project_manager = LocalProjectManager(db)
         result = asyncio.run(
             _run_linear_setup(

@@ -37,6 +37,7 @@ from gobby.memory.title_heuristics import (
     normalize_native_title,
     normalize_title_candidate,
 )
+from gobby.storage.hub.protocol import HubDatabase
 from tests._timing import wait_forever
 
 
@@ -1655,6 +1656,7 @@ class TestBuildTurnAndDigest:
                 session=session,
                 llm_service=llm_service,
                 digest_config=digest_config,
+                db=MagicMock(spec=HubDatabase),
             )
 
         assert llm_service.call_feature.await_args.kwargs["caller"] == "memory.title_synthesis"
@@ -1680,6 +1682,7 @@ class TestBuildTurnAndDigest:
                 session=session,
                 llm_service=llm_service,
                 digest_config=digest_config,
+                db=MagicMock(spec=HubDatabase),
             )
 
         prompt = llm_service.call_feature.await_args.args[1]

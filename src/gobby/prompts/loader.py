@@ -31,14 +31,14 @@ class PromptLoader:
 
     def __init__(
         self,
-        db: HubDatabase | None = None,
+        db: HubDatabase,
         project_id: str | None = None,
         notifier: Any | None = None,
     ):
         """Initialize the prompt loader.
 
         Args:
-            db: Database connection (if None, lazily creates an active hub handle)
+            db: Borrowed database connection
             project_id: Project context for precedence resolution
             notifier: Optional PromptChangeNotifier for cache invalidation
         """
@@ -59,11 +59,7 @@ class PromptLoader:
         self._cache.clear()
 
     def _get_db(self) -> HubDatabase:
-        """Get the database connection, lazily creating one if needed."""
-        if self._db is None:
-            from gobby.storage.hub.runtime import open_runtime_hub_database
-
-            self._db = open_runtime_hub_database(apply_migrations=False)
+        """Get the injected database connection."""
         return self._db
 
     def _get_manager(self) -> Any:

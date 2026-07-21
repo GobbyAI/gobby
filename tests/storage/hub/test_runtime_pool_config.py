@@ -6,7 +6,7 @@ from unittest.mock import MagicMock, patch
 import pytest
 
 from gobby.config.postgres_pool import PostgresPoolConfig
-from gobby.storage.hub.runtime import open_runtime_hub_database
+from gobby.storage.hub.runtime import runtime_hub_database
 
 pytestmark = pytest.mark.unit
 
@@ -29,7 +29,8 @@ def test_runtime_database_receives_resolved_pool_config() -> None:
         patch("gobby.storage.hub.postgres.PostgresHubDatabase") as database_class,
     ):
         database_class.return_value = MagicMock()
-        result = open_runtime_hub_database(apply_migrations=False)
+        with runtime_hub_database(apply_migrations=False) as result:
+            assert result is database_class.return_value
 
-    assert result is database_class.return_value
     database_class.assert_called_once_with(config.database_url, pool_config=pool_config)
+    database_class.return_value.close.assert_called_once_with()

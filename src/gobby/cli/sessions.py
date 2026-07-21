@@ -5,14 +5,14 @@ Session management CLI commands.
 import asyncio
 import json
 from collections.abc import Iterator, Sequence
-from contextlib import contextmanager
+from contextlib import contextmanager, nullcontext
 from pathlib import Path
 from typing import Any
 
 import click
 
+from gobby.cli.runtime import require_cli_database
 from gobby.cli.utils import resolve_project_ref, resolve_session_id
-from gobby.storage.hub.runtime import open_runtime_hub_database, runtime_hub_database
 from gobby.storage.projects import LocalProjectManager
 from gobby.storage.sessions import SessionManager
 from gobby.utils.json_helpers import json_dumps
@@ -20,18 +20,14 @@ from gobby.utils.json_helpers import json_dumps
 
 def get_session_manager() -> SessionManager:
     """Get initialized session manager."""
-    db = open_runtime_hub_database(apply_migrations=False)
+    db = require_cli_database()
     return SessionManager(db)
 
 
 @contextmanager
 def session_manager_context() -> Iterator[SessionManager]:
-    """Yield a short-lived session manager and close its owned database."""
-    manager = get_session_manager()
-    try:
-        yield manager
-    finally:
-        manager.db.close()
+    """Yield a session manager borrowing the CLI runtime database."""
+    yield get_session_manager()
 
 
 def _normalize_project_path(path: str) -> str:
@@ -494,16 +490,12 @@ def create_handoff(
     if session.project_id:
         from gobby.storage.projects import LocalProjectManager
 
-        project_db = open_runtime_hub_database(apply_migrations=False)
-        try:
-            project_manager = LocalProjectManager(project_db)
-            project = project_manager.get(session.project_id)
-            if project and project.repo_path:
-                project_repo = Path(project.repo_path)
-                if project_repo.exists():
-                    git_cwd = project_repo
-        finally:
-            project_db.close()
+        project_manager = LocalProjectManager(require_cli_database())
+        project = project_manager.get(session.project_id)
+        if project and project.repo_path:
+            project_repo = Path(project.repo_path)
+            if project_repo.exists():
+                git_cwd = project_repo
 
     # Enrich with real-time git status
     if not handoff_ctx.git_status:
@@ -647,7 +639,7 @@ def restore_transcript(
     if not session_ref and not restore_all:
         raise click.UsageError("Provide a session reference or use --all")
 
-    with runtime_hub_database(apply_migrations=False) as db:
+    with nullcontext(require_cli_database()) as db:
         sm = SessionManager(db)
         results: list[dict[str, Any]] = []
 

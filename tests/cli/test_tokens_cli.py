@@ -85,8 +85,7 @@ def test_audit_all_filters_by_project(runner: CliRunner, monkeypatch: pytest.Mon
     def resolve_project_ref(_ref: str | None, exit_on_not_found: bool = False) -> str:
         return "proj-1"
 
-    def open_runtime_hub_database(*, apply_migrations: bool = False) -> _FakeDatabase:
-        assert apply_migrations is False
+    def require_cli_database(ctx: object | None = None) -> _FakeDatabase:
         return fake_db
 
     def session_manager(_db: _FakeDatabase) -> SimpleNamespace:
@@ -99,7 +98,7 @@ def test_audit_all_filters_by_project(runner: CliRunner, monkeypatch: pytest.Mon
         return []
 
     monkeypatch.setattr(tokens_module, "resolve_project_ref", resolve_project_ref)
-    monkeypatch.setattr(tokens_module, "open_runtime_hub_database", open_runtime_hub_database)
+    monkeypatch.setattr(tokens_module, "require_cli_database", require_cli_database)
     monkeypatch.setattr(tokens_module, "SessionManager", session_manager)
     monkeypatch.setattr(tokens_module, "TokenEventStore", token_event_store)
     monkeypatch.setattr(tokens_module, "_load_session_messages", load_session_messages)
@@ -123,8 +122,7 @@ def test_audit_all_continues_after_transcript_failure(
             raise click.ClickException("bad transcript")
         return []
 
-    def open_runtime_hub_database(*, apply_migrations: bool = False) -> _FakeDatabase:
-        assert apply_migrations is False
+    def require_cli_database(ctx: object | None = None) -> _FakeDatabase:
         return fake_db
 
     def session_manager(_db: _FakeDatabase) -> SimpleNamespace:
@@ -133,7 +131,7 @@ def test_audit_all_continues_after_transcript_failure(
     def token_event_store(_db: _FakeDatabase) -> _FakeStore:
         return _FakeStore()
 
-    monkeypatch.setattr(tokens_module, "open_runtime_hub_database", open_runtime_hub_database)
+    monkeypatch.setattr(tokens_module, "require_cli_database", require_cli_database)
     monkeypatch.setattr(tokens_module, "SessionManager", session_manager)
     monkeypatch.setattr(tokens_module, "TokenEventStore", token_event_store)
     monkeypatch.setattr(tokens_module, "_load_session_messages", _load_messages)

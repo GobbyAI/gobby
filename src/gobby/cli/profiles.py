@@ -11,6 +11,7 @@ from typing import Any, TypeGuard
 import click
 import psycopg
 
+from gobby.cli.runtime import require_cli_database
 from gobby.config.build import DeliveryMode, Isolation
 from gobby.storage.build_profiles import (
     BuildProfileError,
@@ -18,7 +19,6 @@ from gobby.storage.build_profiles import (
     BuildProfileManager,
     BuildProfileSource,
 )
-from gobby.storage.hub.runtime import open_runtime_hub_database
 from gobby.utils.json_helpers import json_dumps
 
 logger = logging.getLogger(__name__)
@@ -26,7 +26,7 @@ logger = logging.getLogger(__name__)
 
 @contextmanager
 def _open_manager(*, sync: bool = True) -> Iterator[BuildProfileManager]:
-    db = open_runtime_hub_database(apply_migrations=False)
+    db = require_cli_database()
     try:
         if sync:
             BuildProfileLoader().sync(db)
@@ -36,15 +36,8 @@ def _open_manager(*, sync: bool = True) -> Iterator[BuildProfileManager]:
             "Failed to open build profile manager",
             extra={"sync": sync, "error_type": type(exc).__name__},
         )
-        db.close()
         raise
-    except Exception:
-        db.close()
-        raise
-    try:
-        yield manager
-    finally:
-        db.close()
+    yield manager
 
 
 def _scope(source: str, project_id: str | None) -> str | None:

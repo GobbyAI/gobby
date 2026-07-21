@@ -131,7 +131,7 @@ class TestEnsureDaemonConfig:
 
 
 class TestRunDaemonSetup:
-    @patch("gobby.storage.hub.runtime.open_runtime_hub_database")
+    @patch("gobby.storage.hub.runtime.runtime_hub_database")
     @patch("gobby.cli.installers.shared.sync_bundled_content_to_db")
     @patch("gobby.cli.installers.install_default_mcp_servers")
     @patch("subprocess.run")
@@ -151,7 +151,9 @@ class TestRunDaemonSetup:
         capsys: pytest.CaptureFixture[str],
     ):
         mock_db = MagicMock()
-        mock_init.return_value = mock_db
+        mock_context = MagicMock()
+        mock_context.__enter__.return_value = mock_db
+        mock_init.return_value = mock_context
         mock_sync.return_value = {"total_synced": 5, "errors": []}
         mock_mcp.return_value = {"success": True, "servers_added": ["gh"], "servers_skipped": []}
         mock_gcode.return_value = {"installed": True, "version": "1.0", "method": "github"}
@@ -174,9 +176,8 @@ class TestRunDaemonSetup:
         mock_sync.assert_called_once_with(mock_db)
         assert mock_sync.call_count == 1
         assert mock_sync.call_args is not None
-        mock_db.close.assert_called_once()
-        assert mock_db.close.call_count == 1
-        assert mock_db.close.call_args is not None
+        mock_context.__exit__.assert_called_once()
+        mock_db.close.assert_not_called()
         mock_mcp.assert_called_once()
         assert mock_mcp.call_count == 1
         assert mock_mcp.call_args is not None
@@ -200,7 +201,7 @@ class TestRunDaemonSetup:
             "Failed to parse settings.json"
         ) in output
 
-    @patch("gobby.storage.hub.runtime.open_runtime_hub_database")
+    @patch("gobby.storage.hub.runtime.runtime_hub_database")
     @patch("gobby.cli.installers.shared.sync_bundled_content_to_db")
     @patch("gobby.cli.installers.install_default_mcp_servers")
     @patch("subprocess.run")
@@ -248,7 +249,7 @@ class TestRunDaemonSetup:
         assert str(tmp_path / ".gobby" / "bin" / "ghook") in command
         assert "--gobby-owned" in command
 
-    @patch("gobby.storage.hub.runtime.open_runtime_hub_database")
+    @patch("gobby.storage.hub.runtime.runtime_hub_database")
     @patch("gobby.cli.installers.shared.sync_bundled_content_to_db")
     @patch("gobby.cli.installers.install_default_mcp_servers")
     @patch("subprocess.run")

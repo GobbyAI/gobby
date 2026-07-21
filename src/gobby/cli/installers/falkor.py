@@ -8,6 +8,7 @@ import secrets
 import shutil
 import string
 import subprocess  # nosec B404
+from contextlib import ExitStack
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -41,11 +42,11 @@ def _normalize_home(gobby_home: Path | None = None) -> Path:
     return get_gobby_home()
 
 
-def _open_config_db(gobby_home: Path, *, apply_migrations: bool = True) -> Any:
-    """Open the active PostgreSQL hub database for a Gobby home."""
-    from gobby.storage.hub.runtime import open_runtime_hub_database
+def _config_db(gobby_home: Path, *, apply_migrations: bool = True) -> Any:
+    """Build a bounded PostgreSQL hub context for a Gobby home."""
+    from gobby.storage.hub.runtime import runtime_hub_database
 
-    return open_runtime_hub_database(
+    return runtime_hub_database(
         str(gobby_home / "bootstrap.yaml"),
         apply_migrations=apply_migrations,
     )
@@ -70,7 +71,8 @@ def _resolve_falkordb_password(
             expose_value=False,
         )
 
-    db = _open_config_db(home)
+    database_stack = ExitStack()
+    db = database_stack.enter_context(_config_db(home))
     try:
         from gobby.storage.config_store import ConfigStore
         from gobby.storage.secrets import SecretStore
@@ -104,7 +106,7 @@ def _resolve_falkordb_password(
                 expose_value=False,
             )
     finally:
-        db.close()
+        database_stack.close()
 
     return ResolvedFalkorPassword(
         value=_generate_falkordb_password(),
@@ -320,7 +322,8 @@ async def _wait_for_health_async(
 
 
 def _update_config(*, host: str, port: int, password: str, gobby_home: Path) -> None:
-    db = _open_config_db(gobby_home)
+    database_stack = ExitStack()
+    db = database_stack.enter_context(_config_db(gobby_home))
     try:
         from gobby.storage.config_store import ConfigStore
         from gobby.storage.secrets import SecretStore
@@ -337,11 +340,12 @@ def _update_config(*, host: str, port: int, password: str, gobby_home: Path) -> 
                 source="install",
             )
     finally:
-        db.close()
+        database_stack.close()
 
 
 def _clear_config(*, gobby_home: Path) -> None:
-    db = _open_config_db(gobby_home)
+    database_stack = ExitStack()
+    db = database_stack.enter_context(_config_db(gobby_home))
     try:
         from gobby.storage.config_store import ConfigStore
         from gobby.storage.secrets import SecretStore
@@ -354,4 +358,4 @@ def _clear_config(*, gobby_home: Path) -> None:
     except Exception as exc:
         logger.warning("Failed to clear FalkorDB config: %s", exc)
     finally:
-        db.close()
+        database_stack.close()

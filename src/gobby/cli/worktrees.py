@@ -22,10 +22,10 @@ from typing import Any, cast
 import click
 import httpx
 
+from gobby.cli.runtime import require_cli_database
 from gobby.cli.tasks._utils import get_task_manager, resolve_task_id
 from gobby.cli.utils import resolve_project_ref, resolve_session_id
 from gobby.cli.utils_config import get_daemon_url
-from gobby.storage.hub.runtime import open_runtime_hub_database
 from gobby.storage.worktrees import LocalWorktreeManager
 from gobby.utils.json_helpers import json_dumps
 from gobby.utils.local_token import daemon_auth_headers
@@ -34,18 +34,13 @@ from gobby.utils.uuid_validation import is_full_uuid
 
 def get_worktree_manager() -> LocalWorktreeManager:
     """Get initialized worktree manager."""
-    db = open_runtime_hub_database(apply_migrations=False)
-    return LocalWorktreeManager(db)
+    return LocalWorktreeManager(require_cli_database())
 
 
 @contextmanager
 def worktree_manager_context() -> Iterator[LocalWorktreeManager]:
-    """Yield a short-lived worktree manager and close its owned database."""
-    manager = get_worktree_manager()
-    try:
-        yield manager
-    finally:
-        manager.db.close()
+    """Yield a worktree manager borrowing the CLI database."""
+    yield get_worktree_manager()
 
 
 def _call_worktree_tool(

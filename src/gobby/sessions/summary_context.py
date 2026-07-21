@@ -50,11 +50,10 @@ def load_summary_prompt_template(
     session_summary_config: SessionSummaryConfigProtocol | None,
     db: HubDatabase | None,
     session_manager: SessionManagerProtocol,
-    allow_runtime_db: bool = True,
 ) -> str | None:
     prompt_template = getattr(session_summary_config, "prompt", None)
     resolved_db = _summary_context_db(db, session_manager)
-    if resolved_db is None and not allow_runtime_db:
+    if resolved_db is None:
         return prompt_template
 
     try:

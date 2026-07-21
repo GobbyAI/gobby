@@ -125,10 +125,10 @@ def sync(
 
     # --- Initialize DB and sync ---
     from gobby.cli.installers.shared import sync_bundled_content_to_db
-    from gobby.storage.hub.runtime import open_runtime_hub_database
+    from gobby.cli.runtime import require_cli_database
 
     try:
-        db = open_runtime_hub_database(apply_migrations=False)
+        db = require_cli_database()
     except RuntimeError as exc:
         click.echo(f"Database unavailable: {exc}", err=True)
         sys.exit(1)

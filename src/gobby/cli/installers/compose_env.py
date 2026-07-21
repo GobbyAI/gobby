@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import os
 import platform
+from contextlib import ExitStack
 from dataclasses import dataclass
 from importlib import resources
 from pathlib import Path
@@ -129,13 +130,16 @@ def _service_environment(
     required_profiles: tuple[str, ...] = MANAGED_SERVICE_PROFILES,
 ) -> dict[str, str]:
     from gobby.storage.config_store import ConfigStore
-    from gobby.storage.hub.runtime import open_runtime_hub_database
+    from gobby.storage.hub.runtime import runtime_hub_database
     from gobby.storage.secrets import SecretStore
 
+    database_stack = ExitStack()
     try:
-        db = open_runtime_hub_database(
-            str(gobby_home / "bootstrap.yaml"),
-            apply_migrations=False,
+        db = database_stack.enter_context(
+            runtime_hub_database(
+                str(gobby_home / "bootstrap.yaml"),
+                apply_migrations=False,
+            )
         )
     except Exception as exc:
         raise ComposeEnvironmentError(
@@ -199,7 +203,7 @@ def _service_environment(
 
         return values
     finally:
-        db.close()
+        database_stack.close()
 
 
 def _positive_port(value: Any, key: str) -> int:

@@ -13,11 +13,20 @@ from gobby.mcp_proxy.tools.tasks._lifecycle_close import CLOSE_VALIDATION_EVIDEN
 from gobby.mcp_proxy.tools.tasks._verification_evidence_context import (
     format_verification_evidence_context,
 )
+from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.tasks import LocalTaskManager, StageState, Task
 from gobby.tasks.validation import TaskValidator
 from gobby.tasks.validation_verdict import ValidationResult
 from gobby.utils.session_context import session_context_for_test
 from gobby.workflows.verification_evidence import VERIFICATION_EVIDENCE_VARIABLE
+
+
+def _task_validator(
+    config: TaskValidationConfig,
+    llm_service: LLMService,
+    **kwargs: Any,
+) -> TaskValidator:
+    return TaskValidator(config, llm_service, db=MagicMock(spec=HubDatabase), **kwargs)
 
 
 def _diff_result(
@@ -190,7 +199,7 @@ async def _close_with_static_verdict(
     task_manager.increment_validation_failure.return_value = (1, False)
     llm_service = MagicMock(spec=LLMService)
     llm_service.call_json_feature = AsyncMock(return_value=payload)
-    validator = TaskValidator(
+    validator = _task_validator(
         TaskValidationConfig(enabled=True, tool_loop_enabled=False),
         llm_service,
     )

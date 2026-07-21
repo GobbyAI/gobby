@@ -129,7 +129,7 @@ def list_tasks_impl(
         display_tasks, primary_ids = services.collect_ancestors(tasks_list, manager)
 
     display_tasks = services.sort_tasks_for_tree(display_tasks)
-    claimed_owner_map = services.get_claimed_task_owners()
+    claimed_owner_map = services.get_claimed_task_owners(manager.db)
     claimed_ids = set(claimed_owner_map)
 
     effective_group_by = group_by
@@ -181,7 +181,7 @@ def ready_tasks_impl(
         click.echo("No ready tasks found.")
         return
 
-    claimed_owner_map = services.get_claimed_task_owners()
+    claimed_owner_map = services.get_claimed_task_owners(manager.db)
     claimed_ids = set(claimed_owner_map)
 
     click.echo(f"Found {len(tasks_list)} ready tasks:")

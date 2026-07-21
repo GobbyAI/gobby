@@ -602,7 +602,7 @@ def test_load_full_config_from_db_reads_ui_enabled_from_config_store(
         yaml.safe_dump(
             {
                 "hub_backend": "postgres",
-                "database_url": "postgresql://example",
+                "database_url": "postgresql://gobby:test@localhost:5432/gobby",
                 "daemon_port": 60887,
                 "websocket_port": 60888,
                 "ui_port": 60889,
@@ -656,13 +656,12 @@ def test_resolve_project_ref_by_uuid() -> None:
     mock_manager.get.return_value = mock_project
 
     with (
-        patch("gobby.storage.hub.runtime.open_runtime_hub_database", return_value=mock_db),
+        patch("gobby.cli.runtime.require_cli_database", return_value=mock_db),
         patch("gobby.cli.utils.LocalProjectManager", return_value=mock_manager),
     ):
         result = resolve_project_ref("uuid-abc")
     assert result == "uuid-abc"
-    mock_db.close.assert_called_once()
-    assert mock_db.close.call_count == 1
+    mock_db.close.assert_not_called()
 
 
 def test_resolve_project_ref_by_name() -> None:
@@ -678,12 +677,12 @@ def test_resolve_project_ref_by_name() -> None:
     mock_manager.get_by_name.return_value = mock_project
 
     with (
-        patch("gobby.storage.hub.runtime.open_runtime_hub_database", return_value=mock_db),
+        patch("gobby.cli.runtime.require_cli_database", return_value=mock_db),
         patch("gobby.cli.utils.LocalProjectManager", return_value=mock_manager),
     ):
         result = resolve_project_ref("my-project")
     assert result == "uuid-from-name"
-    assert mock_db.close.call_count == 1
+    mock_db.close.assert_not_called()
 
 
 def test_resolve_project_ref_not_found_returns_none() -> None:
@@ -696,12 +695,12 @@ def test_resolve_project_ref_not_found_returns_none() -> None:
     mock_manager.get_by_name.return_value = None
 
     with (
-        patch("gobby.storage.hub.runtime.open_runtime_hub_database", return_value=mock_db),
+        patch("gobby.cli.runtime.require_cli_database", return_value=mock_db),
         patch("gobby.cli.utils.LocalProjectManager", return_value=mock_manager),
     ):
         result = resolve_project_ref("nonexistent", exit_on_not_found=False)
     assert result is None
-    assert mock_db.close.call_count == 1
+    mock_db.close.assert_not_called()
 
 
 def test_resolve_project_ref_not_found_exits() -> None:
@@ -714,13 +713,12 @@ def test_resolve_project_ref_not_found_exits() -> None:
     mock_manager.get_by_name.return_value = None
 
     with (
-        patch("gobby.storage.hub.runtime.open_runtime_hub_database", return_value=mock_db),
+        patch("gobby.cli.runtime.require_cli_database", return_value=mock_db),
         patch("gobby.cli.utils.LocalProjectManager", return_value=mock_manager),
         pytest.raises(SystemExit),
     ):
         resolve_project_ref("nonexistent", exit_on_not_found=True)
-    mock_db.close.assert_called_once()
-    assert mock_db.close.call_count == 1
+    mock_db.close.assert_not_called()
 
 
 # ---------------------------------------------------------------------------
@@ -750,17 +748,17 @@ def test_get_active_session_id_no_result() -> None:
     assert result is None
 
 
-def test_get_active_session_id_creates_db() -> None:
-    """Creates and closes the runtime hub database when none provided."""
+def test_get_active_session_id_borrows_cli_database() -> None:
+    """Borrows the CLI database when none is explicitly provided."""
     from gobby.cli.utils import get_active_session_id
 
     mock_db = MagicMock()
     mock_db.fetchone.return_value = {"id": "sess-auto"}
 
-    with patch("gobby.storage.hub.runtime.open_runtime_hub_database", return_value=mock_db):
+    with patch("gobby.cli.runtime.require_cli_database", return_value=mock_db):
         result = get_active_session_id(None)
     assert result == "sess-auto"
-    mock_db.close.assert_called_once()
+    mock_db.close.assert_not_called()
 
 
 # ---------------------------------------------------------------------------
@@ -775,12 +773,12 @@ def test_resolve_session_id_no_ref_active() -> None:
     mock_db = MagicMock()
 
     with (
-        patch("gobby.storage.hub.runtime.open_runtime_hub_database", return_value=mock_db),
+        patch("gobby.cli.runtime.require_cli_database", return_value=mock_db),
         patch("gobby.cli.utils.get_active_session_id", return_value="sess-active"),
     ):
         result = resolve_session_id(None)
     assert result == "sess-active"
-    mock_db.close.assert_called_once()
+    mock_db.close.assert_not_called()
 
 
 def test_resolve_session_id_no_ref_no_active() -> None:
@@ -790,7 +788,7 @@ def test_resolve_session_id_no_ref_no_active() -> None:
     mock_db = MagicMock()
 
     with (
-        patch("gobby.storage.hub.runtime.open_runtime_hub_database", return_value=mock_db),
+        patch("gobby.cli.runtime.require_cli_database", return_value=mock_db),
         patch("gobby.cli.utils.get_active_session_id", return_value=None),
         pytest.raises(click.ClickException, match="No active session"),
     ):
@@ -806,13 +804,13 @@ def test_resolve_session_id_with_ref() -> None:
     mock_manager.resolve_session_reference.return_value = "uuid-resolved"
 
     with (
-        patch("gobby.storage.hub.runtime.open_runtime_hub_database", return_value=mock_db),
+        patch("gobby.cli.runtime.require_cli_database", return_value=mock_db),
         patch("gobby.cli.utils.get_project_context", return_value={"id": "proj-1"}),
         patch("gobby.cli.utils.SessionManager", return_value=mock_manager),
     ):
         result = resolve_session_id("#5")
     assert result == "uuid-resolved"
-    assert mock_db.close.call_count == 1
+    mock_db.close.assert_not_called()
 
 
 def test_resolve_session_id_value_error() -> None:
@@ -824,13 +822,13 @@ def test_resolve_session_id_value_error() -> None:
     mock_manager.resolve_session_reference.side_effect = ValueError("ambiguous")
 
     with (
-        patch("gobby.storage.hub.runtime.open_runtime_hub_database", return_value=mock_db),
+        patch("gobby.cli.runtime.require_cli_database", return_value=mock_db),
         patch("gobby.cli.utils.get_project_context", return_value=None),
         patch("gobby.cli.utils.SessionManager", return_value=mock_manager),
         pytest.raises(click.ClickException, match="ambiguous"),
     ):
         resolve_session_id("abc")
-    assert mock_db.close.call_count == 1
+    mock_db.close.assert_not_called()
 
 
 # ---------------------------------------------------------------------------
@@ -850,13 +848,12 @@ def test_list_project_names() -> None:
     mock_manager.list.return_value = [p1, p2]
 
     with (
-        patch("gobby.storage.hub.runtime.open_runtime_hub_database", return_value=mock_db),
+        patch("gobby.cli.runtime.require_cli_database", return_value=mock_db),
         patch("gobby.cli.utils.LocalProjectManager", return_value=mock_manager),
     ):
         result = list_project_names()
     assert result == ["alpha", "beta"]
-    mock_db.close.assert_called_once()
-    assert mock_db.close.call_count == 1
+    mock_db.close.assert_not_called()
 
 
 # ---------------------------------------------------------------------------
@@ -967,14 +964,23 @@ def test_init_local_storage(tmp_path: Path) -> None:
     from gobby.cli.utils import init_local_storage
 
     mock_db = MagicMock()
+    config = MagicMock()
+    config.hub_backend = "postgres"
+    config.database_url = "postgresql://localhost/gobby"
+    deps = MagicMock()
+    deps.load_config.return_value = config
 
-    with patch(
-        "gobby.storage.hub.runtime.open_runtime_hub_database", return_value=mock_db
-    ) as mock_open:
+    with (
+        patch("gobby.cli.utils_config.facade", return_value=deps),
+        patch("gobby.storage.hub.postgres.PostgresHubDatabase", return_value=mock_db) as mock_open,
+        patch("gobby.storage.projects.ensure_personal_project") as ensure_personal,
+    ):
         result = init_local_storage()
 
     assert result is mock_db
-    mock_open.assert_called_once_with()
+    mock_open.assert_called_once_with(config.database_url, pool_config=config.postgres_pool)
+    mock_db.apply_migrations.assert_called_once_with()
+    ensure_personal.assert_called_once_with(mock_db)
 
 
 # ---------------------------------------------------------------------------

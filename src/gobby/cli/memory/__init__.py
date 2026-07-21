@@ -2,10 +2,10 @@ from __future__ import annotations
 
 import click
 
+from gobby.cli.runtime import get_cli_runtime, require_cli_database
 from gobby.cli.utils import resolve_project_ref
 from gobby.config.app import DaemonConfig
 from gobby.memory.manager import MemoryManager
-from gobby.storage.hub.runtime import open_runtime_hub_database
 
 from .common import _get_daemon_client
 from .main import memory
@@ -13,8 +13,8 @@ from .main import memory
 
 def get_memory_manager(ctx: click.Context) -> MemoryManager:
     """Get memory manager."""
-    config: DaemonConfig = ctx.obj["config"]
-    db = open_runtime_hub_database(apply_migrations=False)
+    config: DaemonConfig = get_cli_runtime(ctx).config
+    db = require_cli_database(ctx)
 
     return MemoryManager(db, config.memory)
 

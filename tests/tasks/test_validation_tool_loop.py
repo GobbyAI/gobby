@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -15,6 +16,7 @@ from gobby.ai import (
     ToolChatResult,
 )
 from gobby.config.tasks import TaskValidationConfig
+from gobby.storage.hub.protocol import HubDatabase
 from gobby.tasks.diff_paging import DiffPagingError, ManifestItem
 from gobby.tasks.validation import TaskValidator, ValidationResult
 from gobby.tasks.validation_tool_loop import (
@@ -25,6 +27,15 @@ from gobby.tasks.validation_tool_loop import (
     prepare_validation_diff,
     validate_with_tool_loop,
 )
+
+
+def _task_validator(
+    config: TaskValidationConfig,
+    llm_service: Any,
+    **kwargs: Any,
+) -> TaskValidator:
+    return TaskValidator(config, llm_service, db=MagicMock(spec=HubDatabase), **kwargs)
+
 
 COMMIT_A = "a" * 40
 COMMIT_B = "b" * 40
@@ -150,7 +161,7 @@ def _validator(
             return tool_result
 
         tool_chat_service.chat_result.side_effect = submit_verdict
-    validator = TaskValidator(
+    validator = _task_validator(
         config or TaskValidationConfig(),
         llm_service,
         tool_chat_service=tool_chat_service,

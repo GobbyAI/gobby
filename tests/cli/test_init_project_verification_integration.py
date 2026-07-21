@@ -33,7 +33,7 @@ def test_init_succeeds_with_array_package_json(tmp_path: Path) -> None:
         patch("gobby.utils.project_context.get_project_context", return_value=None),
         patch("gobby.utils.git.get_github_url", return_value=None),
         patch(
-            "gobby.storage.hub.runtime.open_runtime_hub_database",
+            "gobby.cli.runtime.runtime_hub_database",
             return_value=MagicMock(),
         ),
         patch("gobby.storage.projects.LocalProjectManager", return_value=project_manager),

@@ -75,7 +75,6 @@ async def compact_summary_metadata_matches(
             session_summary_config=session_summary_config,
             db=db,
             session_manager=session_manager,
-            allow_runtime_db=False,
         )
         current_hash = source_context_hash(
             _source_hash_payload(

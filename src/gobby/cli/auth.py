@@ -1,7 +1,10 @@
 """CLI command for managing web UI authentication."""
 
+from contextlib import nullcontext
+
 import click
 
+from gobby.cli.runtime import require_cli_database
 from gobby.storage.auth import (
     LOCAL_API_TOKEN_HASH_KEY,
     PASSWORD_HASH_KEY,
@@ -11,7 +14,6 @@ from gobby.storage.auth import (
     rotate_local_api_token,
 )
 from gobby.storage.config_store import ConfigStore
-from gobby.storage.hub.runtime import runtime_hub_database
 from gobby.storage.secrets import SecretStore
 from gobby.utils.local_token import local_token_path, read_local_api_token
 
@@ -26,7 +28,7 @@ def auth() -> None:
 def credentials(remove: bool) -> None:
     """Set up or reset web UI authentication credentials."""
     try:
-        with runtime_hub_database(apply_migrations=False) as db:
+        with nullcontext(require_cli_database()) as db:
             config_store = ConfigStore(db)
             secret_store = SecretStore(db)
 
@@ -70,7 +72,7 @@ def token(show: bool, rotate: bool) -> None:
     """Show token status. Repair mismatches with `gobby auth token --rotate`."""
     path = local_token_path()
     try:
-        with runtime_hub_database(apply_migrations=False) as db:
+        with nullcontext(require_cli_database()) as db:
             config_store = ConfigStore(db)
             plaintext_token = read_local_api_token()
             if rotate:

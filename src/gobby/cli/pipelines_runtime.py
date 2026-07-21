@@ -90,12 +90,12 @@ def try_daemon_run(name: str, inputs: dict[str, str], project_id: str) -> dict[s
 
 def get_pipeline_executor() -> Any:
     """Get pipeline executor instance for local CLI fallback."""
-    from gobby.storage.hub.runtime import open_runtime_hub_database
+    from gobby.cli.runtime import require_cli_database
     from gobby.storage.pipelines import LocalPipelineExecutionManager
     from gobby.workflows.pipeline_executor import PipelineExecutor
     from gobby.workflows.templates import TemplateEngine
 
-    db = open_runtime_hub_database(apply_migrations=False)
+    db = require_cli_database()
 
     project_id = get_project_id()
     execution_manager = LocalPipelineExecutionManager(db, project_id)

@@ -1,7 +1,6 @@
 import json
 import logging
 import subprocess
-from contextlib import contextmanager
 from pathlib import Path
 from typing import Any
 from unittest.mock import MagicMock, patch
@@ -19,14 +18,6 @@ from gobby.config.embedding_keys import (
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.utils import deps
 from gobby.utils.status import format_status_message
-
-
-def _patch_runtime_hub_database(db: Any):
-    @contextmanager
-    def _runtime_hub_database(*_args: Any, **_kwargs: Any):
-        yield db
-
-    return patch("gobby.storage.hub.runtime.runtime_hub_database", _runtime_hub_database)
 
 
 def test_run_cmd() -> None:
@@ -324,8 +315,7 @@ def test_get_configured_embedding_provider_detects_ollama(temp_db: HubDatabase) 
         }
     )
 
-    with _patch_runtime_hub_database(temp_db):
-        assert deps.get_configured_embedding_provider() == "ollama"
+    assert deps.get_configured_embedding_provider(temp_db) == "ollama"
 
 
 @pytest.mark.unit
@@ -340,8 +330,7 @@ def test_get_configured_embedding_provider_detects_lmstudio(temp_db: HubDatabase
         }
     )
 
-    with _patch_runtime_hub_database(temp_db):
-        assert deps.get_configured_embedding_provider() == "lmstudio"
+    assert deps.get_configured_embedding_provider(temp_db) == "lmstudio"
 
 
 @pytest.mark.unit
@@ -364,14 +353,13 @@ def test_get_configured_embedding_provider_detects_embedding_api_key(
     )
 
     monkeypatch.setenv("GOBBY_HOME", str(tmp_path))
-    with _patch_runtime_hub_database(temp_db):
-        store.set_secret(
-            AI_EMBEDDING_API_KEY_KEY,
-            "sk-test",
-            SecretStore(temp_db),
-            source="test",
-        )
-        assert deps.get_configured_embedding_provider() == "openai"
+    store.set_secret(
+        AI_EMBEDDING_API_KEY_KEY,
+        "sk-test",
+        SecretStore(temp_db),
+        source="test",
+    )
+    assert deps.get_configured_embedding_provider(temp_db) == "openai"
 
 
 @pytest.mark.unit
@@ -403,14 +391,13 @@ def test_get_configured_embedding_provider_detects_explicit_cloud_api_base(
     )
 
     monkeypatch.setenv("GOBBY_HOME", str(tmp_path))
-    with _patch_runtime_hub_database(temp_db):
-        store.set_secret(
-            AI_EMBEDDING_API_KEY_KEY,
-            "sk-test",
-            SecretStore(temp_db),
-            source="test",
-        )
-        assert deps.get_configured_embedding_provider() == "openai"
+    store.set_secret(
+        AI_EMBEDDING_API_KEY_KEY,
+        "sk-test",
+        SecretStore(temp_db),
+        source="test",
+    )
+    assert deps.get_configured_embedding_provider(temp_db) == "openai"
 
 
 @pytest.mark.unit
@@ -435,8 +422,7 @@ def test_get_configured_embedding_provider_strips_whitespace_values(
         (AI_EMBEDDING_API_KEY_KEY, json.dumps(" sk-test ")),
     )
 
-    with _patch_runtime_hub_database(temp_db):
-        assert deps.get_configured_embedding_provider() == "openai"
+    assert deps.get_configured_embedding_provider(temp_db) == "openai"
 
 
 @pytest.mark.unit
@@ -461,8 +447,7 @@ def test_get_configured_embedding_provider_ignores_whitespace_only_api_key(
         (AI_EMBEDDING_API_KEY_KEY, json.dumps("   ")),
     )
 
-    with _patch_runtime_hub_database(temp_db):
-        assert deps.get_configured_embedding_provider() is None
+    assert deps.get_configured_embedding_provider(temp_db) is None
 
 
 @pytest.mark.unit
@@ -481,8 +466,7 @@ def test_get_configured_embedding_provider_returns_none_without_secret(
         }
     )
 
-    with _patch_runtime_hub_database(temp_db):
-        assert deps.get_configured_embedding_provider() is None
+    assert deps.get_configured_embedding_provider(temp_db) is None
 
 
 @pytest.mark.unit
@@ -497,8 +481,7 @@ def test_get_configured_embedding_provider_detects_disabled_state(temp_db: HubDa
         }
     )
 
-    with _patch_runtime_hub_database(temp_db):
-        assert deps.get_configured_embedding_provider() == "none"
+    assert deps.get_configured_embedding_provider(temp_db) == "none"
 
 
 @pytest.mark.unit
@@ -515,8 +498,7 @@ def test_get_configured_embedding_provider_disabled_state_overrides_stale_api_ba
         }
     )
 
-    with _patch_runtime_hub_database(temp_db):
-        assert deps.get_configured_embedding_provider() == "none"
+    assert deps.get_configured_embedding_provider(temp_db) == "none"
 
 
 @pytest.mark.unit
@@ -533,8 +515,7 @@ def test_get_configured_embedding_provider_ignores_invalid_dim_string(
         }
     )
 
-    with _patch_runtime_hub_database(temp_db):
-        assert deps.get_configured_embedding_provider() is None
+    assert deps.get_configured_embedding_provider(temp_db) is None
 
 
 @pytest.mark.unit
@@ -551,22 +532,22 @@ def test_get_configured_embedding_provider_returns_none_for_storage_errors(
     error: Exception,
 ) -> None:
     with patch(
-        "gobby.storage.hub.runtime.runtime_hub_database",
+        "gobby.storage.config_store.ConfigStore",
         side_effect=error,
     ):
-        assert deps.get_configured_embedding_provider() is None
+        assert deps.get_configured_embedding_provider(MagicMock()) is None
 
 
 @pytest.mark.unit
 def test_get_configured_embedding_provider_reraises_unexpected_errors() -> None:
     with (
         patch(
-            "gobby.storage.hub.runtime.runtime_hub_database",
+            "gobby.storage.config_store.ConfigStore",
             side_effect=AssertionError("database invariant bug"),
         ),
         pytest.raises(AssertionError, match="database invariant bug"),
     ):
-        deps.get_configured_embedding_provider()
+        deps.get_configured_embedding_provider(MagicMock())
 
 
 def test_check_config_mismatches() -> None:
@@ -619,7 +600,7 @@ def test_collect_all_deps() -> None:
         patch("gobby.utils.deps.get_ollama_info", return_value={}),
         patch("gobby.utils.deps.get_lmstudio_info", return_value={}),
     ):
-        res = deps.collect_all_deps()
+        res = deps.collect_all_deps(MagicMock())
         assert res["gobby"]["gobby"] == "1"
         assert res["gobby"]["ghook"] == "3.5"
         assert res["gobby"]["gwiki"] == "3.7"
@@ -638,10 +619,10 @@ def test_collect_all_deps() -> None:
 )
 def test_collect_all_deps_degrades_when_embeddings_probe_fails(error: Exception) -> None:
     with patch(
-        "gobby.storage.hub.runtime.runtime_hub_database",
+        "gobby.utils.deps.get_configured_embedding_provider",
         side_effect=error,
     ):
-        res = deps.collect_all_deps()
+        res = deps.collect_all_deps(MagicMock())
 
     error_name = type(error).__name__
     assert res["dependencies"]["embeddings_provider"] == {

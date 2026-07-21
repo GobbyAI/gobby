@@ -101,18 +101,6 @@ async def get_qdrant_status(
 # ---------------------------------------------------------------------------
 
 
-def _open_falkordb_config_db(gobby_home: Path | None, *, bootstrap: bool = False) -> Any:
-    from gobby.storage.hub.runtime import open_runtime_hub_database
-
-    home = gobby_home if gobby_home is not None else get_gobby_home()
-    if bootstrap:
-        home = home / "bootstrap"
-    return open_runtime_hub_database(
-        str(home / "bootstrap.yaml"),
-        apply_migrations=False,
-    )
-
-
 def _coerce_falkordb_port(value: Any | None) -> int | None:
     if value is None:
         return None
@@ -149,27 +137,16 @@ def _read_falkordb_connection_config(db: Any) -> tuple[str | None, int | None, s
 
 def is_falkordb_installed(
     *,
-    db: Any | None = None,
-    gobby_home: Path | None = None,
-    bootstrap: bool = False,
+    db: Any,
 ) -> bool:
     """Check whether FalkorDB connection keys were recorded in config_store."""
-    owned_db: Any | None = None
-    if db is None:
-        db = _open_falkordb_config_db(gobby_home, bootstrap=bootstrap)
-        owned_db = db
-
     from gobby.storage.config_store import ConfigStore
 
-    try:
-        store = ConfigStore(db)
-        return (
-            store.get("databases.falkordb.host") is not None
-            and store.get("databases.falkordb.port") is not None
-        )
-    finally:
-        if owned_db is not None:
-            owned_db.close()
+    store = ConfigStore(db)
+    return (
+        store.get("databases.falkordb.host") is not None
+        and store.get("databases.falkordb.port") is not None
+    )
 
 
 async def is_falkordb_healthy(
@@ -208,32 +185,19 @@ async def is_falkordb_healthy(
 
 async def get_falkordb_status(
     *,
-    db: Any | None = None,
-    gobby_home: Path | None = None,
+    db: Any,
     host: str | None = None,
     port: int | None = None,
     password: str | None = None,
 ) -> dict[str, Any]:
     """Get FalkorDB install and runtime health status."""
-    owned_db: Any | None = None
-    status_db = db
-    if status_db is None:
-        status_db = _open_falkordb_config_db(gobby_home)
-        owned_db = status_db
-
-    try:
-        installed = is_falkordb_installed(db=status_db)
-        if installed and (host is None or port is None or password is None):
-            configured_host, configured_port, configured_password = (
-                _read_falkordb_connection_config(status_db)
-            )
-            host = host if host is not None else configured_host
-            port = port if port is not None else configured_port
-            password = password if password is not None else configured_password
-        healthy = await is_falkordb_healthy(host, port, password) if installed else False
-    finally:
-        if owned_db is not None:
-            owned_db.close()
+    installed = is_falkordb_installed(db=db)
+    if installed and (host is None or port is None or password is None):
+        configured_host, configured_port, configured_password = _read_falkordb_connection_config(db)
+        host = host if host is not None else configured_host
+        port = port if port is not None else configured_port
+        password = password if password is not None else configured_password
+    healthy = await is_falkordb_healthy(host, port, password) if installed else False
 
     return {
         "installed": installed,

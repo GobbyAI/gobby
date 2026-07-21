@@ -123,7 +123,7 @@ def _mock_ext_services_and_prompts():
         patch("gobby.cli.install._run_falkordb_install"),
         patch("gobby.cli.install._run_install_preflight", return_value=([], [])),
         patch("gobby.cli.install._maybe_start_daemon_after_install"),
-        patch("gobby.storage.hub.runtime.open_runtime_hub_database", return_value=MagicMock()),
+        patch("gobby.storage.hub.runtime.runtime_hub_database", return_value=MagicMock()),
         patch("gobby.cli.install.SecretStore"),
         patch("gobby.cli.install.ConfigStore"),
         patch(

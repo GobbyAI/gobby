@@ -42,12 +42,13 @@ def _mock_skill(**overrides: Any) -> MagicMock:
     return skill
 
 
-def _make_config_obj() -> dict[str, Any]:
+def _make_config_obj() -> Any:
+    from gobby.cli.runtime import CliRuntime
     from gobby.config.app import DaemonConfig
 
     config = MagicMock(spec=DaemonConfig)
     config.daemon_port = 60888
-    return {"config": config}
+    return CliRuntime(config_file=None, config=config)
 
 
 # ---------------------------------------------------------------------------
@@ -855,7 +856,8 @@ class TestSkillsHub:
         )
         assert result.exit_code == 0
 
-    def test_hub_add_invalid_type(self, runner: CliRunner) -> None:
+    @patch("gobby.cli.skills.require_cli_database")
+    def test_hub_add_invalid_type(self, _db: MagicMock, runner: CliRunner) -> None:
         result = runner.invoke(
             skills,
             ["hub", "add", "test-hub", "--type", "invalid"],
@@ -864,7 +866,8 @@ class TestSkillsHub:
         )
         assert result.exit_code == 1
 
-    def test_hub_add_skillsmp_no_url(self, runner: CliRunner) -> None:
+    @patch("gobby.cli.skills.require_cli_database")
+    def test_hub_add_skillsmp_no_url(self, _db: MagicMock, runner: CliRunner) -> None:
         result = runner.invoke(
             skills,
             ["hub", "add", "test-hub", "--type", "skillsmp"],
@@ -873,7 +876,8 @@ class TestSkillsHub:
         )
         assert result.exit_code == 1
 
-    def test_hub_add_github_no_repo(self, runner: CliRunner) -> None:
+    @patch("gobby.cli.skills.require_cli_database")
+    def test_hub_add_github_no_repo(self, _db: MagicMock, runner: CliRunner) -> None:
         result = runner.invoke(
             skills,
             ["hub", "add", "test-hub", "--type", "github"],
@@ -882,7 +886,7 @@ class TestSkillsHub:
         )
         assert result.exit_code == 1
 
-    @patch("gobby.cli.skills.open_runtime_hub_database")
+    @patch("gobby.cli.skills.require_cli_database")
     @patch("gobby.storage.config_store.ConfigStore")
     @patch("gobby.cli.utils.load_full_config_from_db")
     def test_hub_add_success(
@@ -902,7 +906,7 @@ class TestSkillsHub:
         assert result.exit_code == 0
         assert "Added hub" in result.output
 
-    @patch("gobby.cli.skills.open_runtime_hub_database")
+    @patch("gobby.cli.skills.require_cli_database")
     @patch("gobby.storage.config_store.ConfigStore")
     @patch("gobby.cli.utils.load_full_config_from_db")
     def test_hub_add_already_exists(
@@ -929,17 +933,15 @@ class TestHelperFunctions:
     def test_get_daemon_client_no_config(self, runner: CliRunner) -> None:
         from gobby.cli.skills import get_daemon_client
 
-        ctx = MagicMock(spec=["obj"])
-        ctx.obj = None
-        with pytest.raises(click.ClickException):
+        ctx = click.Context(click.Command("skills"), obj=None)
+        with pytest.raises(RuntimeError, match="Click context does not contain a CliRuntime"):
             get_daemon_client(ctx)
 
     def test_get_daemon_client_wrong_type(self, runner: CliRunner) -> None:
         from gobby.cli.skills import get_daemon_client
 
-        ctx = MagicMock(spec=["obj"])
-        ctx.obj = {"config": "not-a-DaemonConfig"}
-        with pytest.raises(click.ClickException):
+        ctx = click.Context(click.Command("skills"), obj={"config": "not-a-DaemonConfig"})
+        with pytest.raises(RuntimeError, match="Click context does not contain a CliRuntime"):
             get_daemon_client(ctx)
 
     @patch("gobby.cli.skills.DaemonClient")

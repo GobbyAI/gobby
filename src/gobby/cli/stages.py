@@ -7,19 +7,13 @@ from typing import Any
 
 import click
 
-from gobby.storage.hub.protocol import HubDatabase
-from gobby.storage.hub.runtime import open_runtime_hub_database
+from gobby.cli.runtime import require_cli_database
 from gobby.storage.tasks import StageRegistryManager
 from gobby.utils.json_helpers import json_dumps
 
 
-def _open_manager() -> tuple[HubDatabase, StageRegistryManager]:
-    db = open_runtime_hub_database(apply_migrations=False)
-    try:
-        return db, StageRegistryManager(db)
-    except Exception:
-        db.close()
-        raise
+def _open_manager() -> StageRegistryManager:
+    return StageRegistryManager(require_cli_database())
 
 
 def _echo(data: Any) -> None:
@@ -34,25 +28,19 @@ def stages() -> None:
 @stages.command("list")
 @click.option("--include-deleted", is_flag=True, default=False)
 def list_stages(include_deleted: bool) -> None:
-    db, manager = _open_manager()
-    try:
-        _echo([asdict(entry) for entry in manager.list_all(include_deleted=include_deleted)])
-    finally:
-        db.close()
+    manager = _open_manager()
+    _echo([asdict(entry) for entry in manager.list_all(include_deleted=include_deleted)])
 
 
 @stages.command("show")
 @click.argument("name")
 @click.option("--include-deleted", is_flag=True, default=False)
 def show_stage(name: str, include_deleted: bool) -> None:
-    db, manager = _open_manager()
-    try:
-        entry = manager.get(name, include_deleted=include_deleted)
-        if entry is None:
-            raise click.ClickException(f"Unknown stage '{name}'")
-        _echo(asdict(entry))
-    finally:
-        db.close()
+    manager = _open_manager()
+    entry = manager.get(name, include_deleted=include_deleted)
+    if entry is None:
+        raise click.ClickException(f"Unknown stage '{name}'")
+    _echo(asdict(entry))
 
 
 @stages.command("update")
@@ -113,37 +101,31 @@ def update_stage(
     }.items():
         if value is not None:
             updates[key] = value
-    db, manager = _open_manager()
+    manager = _open_manager()
     try:
         _echo(asdict(manager.update_stage(name, updates)))
     except ValueError as e:
         raise click.ClickException(str(e)) from e
-    finally:
-        db.close()
 
 
 @stages.command("restore")
 @click.argument("name")
 def restore_stage(name: str) -> None:
-    db, manager = _open_manager()
+    manager = _open_manager()
     try:
         _echo(asdict(manager.restore_stage(name)))
     except ValueError as e:
         raise click.ClickException(str(e)) from e
-    finally:
-        db.close()
 
 
 @stages.command("delete")
 @click.argument("name")
 def delete_stage(name: str) -> None:
-    db, manager = _open_manager()
+    manager = _open_manager()
     try:
         _echo(asdict(manager.delete_stage(name)))
     except ValueError as e:
         raise click.ClickException(str(e)) from e
-    finally:
-        db.close()
 
 
 def _set_parse_error(raw: str, position: int, reason: str) -> click.ClickException:
@@ -173,7 +155,7 @@ def _parse_default_stage(raw: str) -> tuple[str, int]:
     help="stage:position entry. May be repeated.",
 )
 def defaults(task_type: str, stage_values: tuple[str, ...]) -> None:
-    db, manager = _open_manager()
+    manager = _open_manager()
     try:
         if stage_values:
             manager.set_default_stages(
@@ -188,5 +170,3 @@ def defaults(task_type: str, stage_values: tuple[str, ...]) -> None:
         )
     except ValueError as e:
         raise click.ClickException(str(e)) from e
-    finally:
-        db.close()

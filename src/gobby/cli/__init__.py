@@ -34,6 +34,7 @@ from .profiles import profiles
 from .projects import projects
 from .qdrant import qdrant
 from .rules import rules
+from .runtime import CliRuntime
 from .secrets import secrets
 from .service import service
 from .sessions import sessions
@@ -74,8 +75,10 @@ def _version_callback(ctx: click.Context, _param: click.Parameter, value: bool) 
 @click.pass_context
 def cli(ctx: click.Context, config: str | None) -> None:
     """Gobby - Local-first daemon for AI coding assistants."""
-    ctx.ensure_object(dict)
-    ctx.obj["config"] = load_full_config_from_db(config)
+    runtime = CliRuntime(config_file=config)
+    ctx.obj = runtime
+    ctx.call_on_close(runtime.close)
+    runtime.config = load_full_config_from_db(config)
 
 
 # Register commands

@@ -99,14 +99,10 @@ def _resolve_build_project_context(
 
 
 def _project_repo_path(project_id: str) -> Path:
-    from gobby.storage.hub.runtime import open_runtime_hub_database
+    from gobby.cli.runtime import require_cli_database
     from gobby.storage.projects import LocalProjectManager
 
-    db = open_runtime_hub_database(apply_migrations=False)
-    try:
-        project = LocalProjectManager(db).get(project_id)
-    finally:
-        db.close()
+    project = LocalProjectManager(require_cli_database()).get(project_id)
     if project is None:
         raise click.ClickException(f"Project not found: {project_id}")
     if not project.repo_path:
@@ -120,10 +116,10 @@ def invoke_build_skill() -> None:
 
 
 def _open_database() -> HubDatabase:
-    """Open the active hub database before build storage use."""
-    from gobby.storage.hub.runtime import open_runtime_hub_database
+    """Borrow the active hub database before build storage use."""
+    from gobby.cli.runtime import require_cli_database
 
-    return open_runtime_hub_database(apply_migrations=False)
+    return require_cli_database()
 
 
 def _make_build_options(
@@ -382,8 +378,6 @@ def build_command(
             raise BuildProfileClickException(str(exc)) from exc
         except ValueError as exc:
             raise click.ClickException(str(exc)) from exc
-        finally:
-            db.close()
 
     _echo_build_result(result)
 
@@ -415,10 +409,7 @@ def _coordinator_session_ref(
     codex_thread_id = (os.environ.get("CODEX_THREAD_ID") or "").strip()
     if codex_thread_id:
         db = _open_database()
-        try:
-            session = SessionManager(db).find_active_by_external_id(codex_thread_id, "codex")
-        finally:
-            db.close()
+        session = SessionManager(db).find_active_by_external_id(codex_thread_id, "codex")
         if session and (
             caller_project_id is None or getattr(session, "project_id", None) == caller_project_id
         ):
@@ -466,8 +457,6 @@ def _run_build_stop(input_ref: str | None = None, *, project_ref: str | None = N
             payload = asdict(target_result)
     except ValueError as exc:
         raise click.ClickException(str(exc)) from exc
-    finally:
-        db.close()
 
     if payload is not None:
         _echo_target_control_result(payload)
@@ -500,8 +489,6 @@ def _run_build_resume(input_ref: str | None = None, *, project_ref: str | None =
             payload = asdict(target_result)
     except ValueError as exc:
         raise click.ClickException(str(exc)) from exc
-    finally:
-        db.close()
 
     if payload is not None:
         _echo_target_control_result(payload)
@@ -559,8 +546,6 @@ def _run_build_clean(
         )
     except ValueError as exc:
         raise click.ClickException(str(exc)) from exc
-    finally:
-        db.close()
     _echo_target_control_result(asdict(result))
 
 
@@ -611,6 +596,4 @@ def _run_build_restart(
         )
     except ValueError as exc:
         raise click.ClickException(str(exc)) from exc
-    finally:
-        db.close()
     _echo_target_control_result(asdict(result))

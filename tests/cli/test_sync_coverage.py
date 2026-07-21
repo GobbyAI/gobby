@@ -22,7 +22,7 @@ def runner() -> CliRunner:
 @pytest.fixture(autouse=True)
 def mock_runtime_hub_database():
     """Keep sync CLI tests isolated from the user's runtime hub config."""
-    with patch("gobby.storage.hub.runtime.open_runtime_hub_database") as mock_open:
+    with patch("gobby.cli.runtime.require_cli_database") as mock_open:
         mock_open.return_value = MagicMock()
         yield mock_open
 
@@ -31,7 +31,7 @@ def mock_runtime_hub_database():
 #   from gobby.utils.dev import is_dev_mode          -> gobby.utils.dev.is_dev_mode
 #   from gobby.sync.integrity import ...             -> gobby.sync.integrity.*
 #   from gobby.config.app import load_config         -> gobby.config.app.load_config
-#   from gobby.storage.hub.runtime import open_runtime_hub_database -> gobby.storage.hub.runtime.open_runtime_hub_database
+#   from gobby.cli.runtime import require_cli_database -> gobby.cli.runtime.require_cli_database
 #   from gobby.cli.installers.shared import sync_bundled_content_to_db -> gobby.cli.installers.shared.sync_bundled_content_to_db
 
 

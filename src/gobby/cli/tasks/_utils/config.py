@@ -6,8 +6,8 @@ from pathlib import Path
 
 import click
 
+from gobby.cli.runtime import require_cli_database
 from gobby.config.app import load_config
-from gobby.storage.hub.runtime import open_runtime_hub_database
 from gobby.storage.tasks import LocalTaskManager
 from gobby.sync.task_github_import import GitHubIssueImporter
 from gobby.sync.tasks import TaskBackupManager
@@ -36,7 +36,7 @@ def check_tasks_enabled() -> None:
 def get_task_manager() -> LocalTaskManager:
     """Get initialized task manager."""
     try:
-        db = open_runtime_hub_database(apply_migrations=False)
+        db = require_cli_database()
     except RuntimeError as exc:
         raise click.ClickException(str(exc)) from exc
     return LocalTaskManager(db)

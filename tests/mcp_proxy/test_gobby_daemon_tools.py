@@ -43,6 +43,7 @@ def tools_handler(mock_mcp_manager, mock_internal_manager):
         websocket_port=8788,
         start_time=1000.0,
         internal_manager=mock_internal_manager,
+        db=MagicMock(),
     )
 
 
@@ -57,6 +58,7 @@ class TestGobbyDaemonToolsInit:
             websocket_port=8788,
             start_time=1000.0,
             internal_manager=mock_internal_manager,
+            db=MagicMock(),
         )
 
         assert handler.tool_proxy is not None
@@ -71,6 +73,7 @@ class TestGobbyDaemonToolsInit:
             websocket_port=8788,
             start_time=1000.0,
             internal_manager=mock_internal_manager,
+            db=MagicMock(),
         )
 
         assert handler._mcp_manager is mock_mcp_manager
@@ -85,6 +88,7 @@ class TestGobbyDaemonToolsInit:
             websocket_port=8788,
             start_time=1000.0,
             internal_manager=mock_internal_manager,
+            db=MagicMock(),
             semantic_search=mock_semantic,
         )
 
@@ -103,6 +107,7 @@ class TestGobbyDaemonToolsStatus:
             websocket_port=8788,
             start_time=1000.0,
             internal_manager=mock_internal_manager,
+            db=MagicMock(),
         )
 
         result = await handler.status()
@@ -123,6 +128,7 @@ class TestGobbyDaemonToolsStatus:
             websocket_port=8788,
             start_time=1000.0,
             internal_manager=mock_internal_manager,
+            db=MagicMock(),
         )
 
         result = await handler.status()
@@ -148,6 +154,7 @@ class TestGobbyDaemonToolsListMcpServers:
             websocket_port=8788,
             start_time=1000.0,
             internal_manager=mock_internal_manager,
+            db=MagicMock(),
         )
 
         result = await handler.list_mcp_servers()
@@ -192,6 +199,7 @@ class TestGobbyDaemonToolsListMcpServers:
             websocket_port=8788,
             start_time=1000.0,
             internal_manager=mock_internal_manager,
+            db=MagicMock(),
         )
 
         result = await handler.list_mcp_servers()

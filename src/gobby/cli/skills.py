@@ -40,10 +40,9 @@ from gobby.cli._skills_metadata import unset_metadata as _unset_metadata
 from gobby.cli._skills_scaffold import create_skill as _create_skill
 from gobby.cli._skills_scaffold import init_skills as _init_skills
 from gobby.cli._skills_validation import validate_skill as _validate_skill
+from gobby.cli.runtime import get_cli_runtime, require_cli_database
 from gobby.cli.utils_config import get_daemon_client as _shared_daemon_client
-from gobby.config.app import DaemonConfig
 from gobby.skills import metadata as skills_metadata
-from gobby.storage.hub.runtime import open_runtime_hub_database
 from gobby.storage.skills import LocalSkillManager
 from gobby.utils.daemon_client import DaemonClient
 
@@ -56,21 +55,13 @@ unset_nested_value = skills_metadata.unset_nested_value
 
 def get_skill_storage() -> LocalSkillManager:
     """Get skill storage manager."""
-    db = open_runtime_hub_database(apply_migrations=False)
+    db = require_cli_database()
     return LocalSkillManager(db)
 
 
 def get_daemon_client(ctx: click.Context) -> DaemonClient:
     """Get daemon client from context config."""
-    if ctx.obj is None or "config" not in ctx.obj:
-        raise click.ClickException(
-            "Configuration not initialized. Ensure the CLI is invoked through the main entry point."
-        )
-    config = ctx.obj.get("config")
-    if not isinstance(config, DaemonConfig):
-        raise click.ClickException(
-            f"Invalid configuration type: expected DaemonConfig, got {type(config).__name__}"
-        )
+    get_cli_runtime(ctx)
     return _shared_daemon_client()
 
 
@@ -445,4 +436,4 @@ def hub_add(
         gobby skills hub add my-skillsmp --type skillsmp --url https://skillsmp.com/api/v1
         gobby skills hub add company-skills --type github --repo myorg/skills
     """
-    _add_hub(open_runtime_hub_database, name, hub_type, base_url, repo, branch, auth_key_name)
+    _add_hub(require_cli_database(ctx), name, hub_type, base_url, repo, branch, auth_key_name)

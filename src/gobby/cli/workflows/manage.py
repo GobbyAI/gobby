@@ -10,9 +10,9 @@ from urllib.parse import urlparse
 import click
 import yaml
 
+from gobby.cli.runtime import require_cli_database
 from gobby.cli.workflows import common
 from gobby.paths import get_global_workflows_dir
-from gobby.storage.hub.runtime import runtime_hub_database
 from gobby.utils.local_token import daemon_auth_headers
 from gobby.utils.project_context import get_project_context
 from gobby.workflows.imports import sync_imported_workflow_file
@@ -36,8 +36,6 @@ GOBBY_OWNED_WORKFLOW_SOURCES = ("installed", "template")
 @click.option("--force", "-f", is_flag=True, help="Skip confirmation prompt")
 def reinstall_workflows(workflow_type: str | None, force: bool) -> None:
     """Delete bundled workflow definitions and reinstall from bundled templates."""
-    from gobby.storage.hub.runtime import open_runtime_hub_database
-
     type_label = workflow_type or "all"
     if not force:
         click.confirm(
@@ -46,7 +44,7 @@ def reinstall_workflows(workflow_type: str | None, force: bool) -> None:
             abort=True,
         )
 
-    db = open_runtime_hub_database(apply_migrations=False)
+    db = require_cli_database()
 
     # 1. Hard-delete Gobby-owned rows; preserve user/project-authored definitions.
     with db.transaction() as conn:
@@ -228,8 +226,7 @@ def import_workflow(ctx: click.Context, source: str, name: str | None, is_global
         data["name"] = workflow_name
         dest_path.write_text(yaml.safe_dump(data, sort_keys=False), encoding="utf-8")
     try:
-        with runtime_hub_database(apply_migrations=False) as db:
-            sync_imported_workflow_file(db, dest_path, project_id)
+        sync_imported_workflow_file(require_cli_database(ctx), dest_path, project_id)
     except Exception as exc:
         if previous_contents is None:
             dest_path.unlink(missing_ok=True)

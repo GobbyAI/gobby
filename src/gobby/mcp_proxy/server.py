@@ -24,6 +24,7 @@ from gobby.mcp_proxy.services.recommendation import RecommendationService, Searc
 from gobby.mcp_proxy.services.server_mgmt import ServerManagementService
 from gobby.mcp_proxy.services.tool_proxy import ToolProxyService
 from gobby.mcp_proxy.wait_tools import call_with_wait_heartbeat, prepare_client_guard
+from gobby.storage.hub.protocol import HubDatabase
 from gobby.utils import project_context as project_context_utils
 from gobby.utils.session_context import (
     reset_seeded_contexts,
@@ -43,6 +44,7 @@ class GobbyDaemonTools:
         websocket_port: int,
         start_time: float,
         internal_manager: Any,
+        db: HubDatabase,
         config: DaemonConfig | None = None,
         llm_service: Any | None = None,
         session_manager: Any | None = None,
@@ -74,6 +76,7 @@ class GobbyDaemonTools:
         self.recommendation = RecommendationService(
             llm_service,
             mcp_manager,
+            db=db,
             semantic_search=semantic_search,
             project_id=None,  # Resolved per-call via get_project_context()
             config=config.recommend_tools if config else None,

@@ -1458,7 +1458,8 @@ class TestStatusCommand:
             gobby_dir.mkdir(parents=True, exist_ok=True)
             mock_get_gobby_home.return_value = gobby_dir
 
-            result = runner.invoke(cli, ["status"])
+            with patch("gobby.cli.runtime.CliRuntime.require_database", return_value=MagicMock()):
+                result = runner.invoke(cli, ["status"])
 
             assert result.exit_code == 0
             assert "Stopped" in result.output
@@ -1487,7 +1488,8 @@ class TestStatusCommand:
             pid_file = gobby_dir / "gobby.pid"
             pid_file.write_text("not-a-number")
 
-            result = runner.invoke(cli, ["status"])
+            with patch("gobby.cli.runtime.CliRuntime.require_database", return_value=MagicMock()):
+                result = runner.invoke(cli, ["status"])
 
             assert result.exit_code == 0
             assert "Stopped" in result.output
@@ -1515,7 +1517,8 @@ class TestStatusCommand:
             pid_file = gobby_dir / "gobby.pid"
             pid_file.write_text("99999999")
 
-            result = runner.invoke(cli, ["status"])
+            with patch("gobby.cli.runtime.CliRuntime.require_database", return_value=MagicMock()):
+                result = runner.invoke(cli, ["status"])
 
             assert result.exit_code == 0
             assert "Stopped" in result.output
@@ -1592,7 +1595,8 @@ class TestStatusCommand:
             pid_file = gobby_dir / "gobby.pid"
             pid_file.write_text(str(os.getpid()))
 
-            result = runner.invoke(cli, ["status"])
+            with patch("gobby.cli.runtime.CliRuntime.require_database", return_value=MagicMock()):
+                result = runner.invoke(cli, ["status"])
 
             assert result.exit_code == 0
             assert "Running" in result.output
@@ -1634,7 +1638,10 @@ class TestStatusCommand:
             pid_file.write_text(str(os.getpid()))
 
             with patch("gobby.cli.daemon.get_gobby_home", return_value=gobby_dir):
-                result = runner.invoke(cli, ["status"])
+                with patch(
+                    "gobby.cli.runtime.CliRuntime.require_database", return_value=MagicMock()
+                ):
+                    result = runner.invoke(cli, ["status"])
 
             # Should still work, just without uptime info
             assert result.exit_code == 0
@@ -1946,7 +1953,10 @@ class TestEdgeCases:
             pid_file.write_text(str(os.getpid()))
 
             with patch("gobby.cli.daemon.get_gobby_home", return_value=gobby_dir):
-                result = runner.invoke(cli, ["status"])
+                with patch(
+                    "gobby.cli.runtime.CliRuntime.require_database", return_value=MagicMock()
+                ):
+                    result = runner.invoke(cli, ["status"])
 
             assert result.exit_code == 0
             assert "LM Studio (running)" in result.output

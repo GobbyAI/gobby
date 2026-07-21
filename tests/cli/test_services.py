@@ -2,7 +2,6 @@
 
 import logging
 import subprocess
-from pathlib import Path
 from typing import Any
 from unittest.mock import AsyncMock, patch
 
@@ -41,33 +40,22 @@ class TestIsFalkorDBInstalled:
     def test_not_installed_when_connection_keys_missing(self, hub_db: HubDatabase) -> None:
         assert is_falkordb_installed(db=hub_db) is False
 
-    def test_gobby_home_without_bootstrap_uses_home_database(
-        self,
-        tmp_path: Path,
-        hub_db: HubDatabase,
-    ) -> None:
+    def test_borrows_injected_database(self, hub_db: HubDatabase) -> None:
         store = ConfigStore(hub_db)
         store.set("databases.falkordb.host", "127.0.0.1")
         store.set("databases.falkordb.port", 16379)
 
-        with patch("gobby.cli.services._open_falkordb_config_db", return_value=hub_db) as open_db:
-            assert is_falkordb_installed(gobby_home=tmp_path) is True
+        with patch.object(hub_db, "close") as close:
+            assert is_falkordb_installed(db=hub_db) is True
 
-        open_db.assert_called_once_with(tmp_path, bootstrap=False)
+        close.assert_not_called()
 
-    def test_gobby_home_with_bootstrap_uses_bootstrap_database_url(
-        self,
-        tmp_path: Path,
-        hub_db: HubDatabase,
-    ) -> None:
+    def test_injected_database_is_required(self, hub_db: HubDatabase) -> None:
         store = ConfigStore(hub_db)
         store.set("databases.falkordb.host", "127.0.0.1")
         store.set("databases.falkordb.port", 16379)
 
-        with patch("gobby.cli.services._open_falkordb_config_db", return_value=hub_db) as open_db:
-            assert is_falkordb_installed(gobby_home=tmp_path, bootstrap=True) is True
-
-        open_db.assert_called_once_with(tmp_path, bootstrap=True)
+        assert is_falkordb_installed(db=hub_db) is True
 
 
 @pytest.fixture

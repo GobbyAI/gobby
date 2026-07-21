@@ -124,8 +124,8 @@ def mock_manager() -> MagicMock:
 def test_get_task_manager_uses_runtime_hub(monkeypatch: pytest.MonkeyPatch) -> None:
     """Task CLI storage follows the configured runtime hub storage."""
     db = MagicMock()
-    open_hub = MagicMock(return_value=db)
-    monkeypatch.setattr(task_config_utils, "open_runtime_hub_database", open_hub)
+    require_database = MagicMock(return_value=db)
+    monkeypatch.setattr(task_config_utils, "require_cli_database", require_database)
     manager_cls = MagicMock(return_value=SimpleNamespace(db=db))
     monkeypatch.setattr(task_config_utils, "LocalTaskManager", manager_cls)
 
@@ -133,7 +133,7 @@ def test_get_task_manager_uses_runtime_hub(monkeypatch: pytest.MonkeyPatch) -> N
 
     assert manager is manager_cls.return_value
     assert manager.db is db
-    open_hub.assert_called_once_with(apply_migrations=False)
+    require_database.assert_called_once_with()
     manager_cls.assert_called_once_with(db)
 
 
@@ -143,7 +143,7 @@ def test_get_task_manager_rejects_removed_bootstrap(
     """Task CLI does not fall back to removed PostgreSQL runtime storage."""
     monkeypatch.setattr(
         task_config_utils,
-        "open_runtime_hub_database",
+        "require_cli_database",
         MagicMock(side_effect=RuntimeError("hub_backend must be postgres")),
     )
 
@@ -1824,14 +1824,14 @@ class TestValidateCommandExtended:
         assert "10 of 10" in result.output
         assert "more" in result.output  # Should show truncation
 
-    @patch("gobby.config.app.load_config")
+    @patch("gobby.llm.LLMService")
     @patch("gobby.cli.tasks.ai.get_task_manager")
     @patch("gobby.cli.tasks.ai.resolve_task_id")
     def test_validate_with_file_summary(
         self,
         mock_resolve: MagicMock,
         mock_get_manager: MagicMock,
-        mock_config: MagicMock,
+        mock_llm_service: MagicMock,
         runner: CliRunner,
         mock_task: MagicMock,
         tmp_path: Path,
@@ -1846,7 +1846,7 @@ class TestValidateCommandExtended:
         summary_file = tmp_path / "summary.txt"
         summary_file.write_text("This is a test summary from file")
 
-        mock_config.side_effect = Exception("Config not available")
+        mock_llm_service.side_effect = Exception("Config not available")
 
         result = runner.invoke(cli, ["tasks", "validate", "gt-abc123", "--file", str(summary_file)])
 
@@ -1911,14 +1911,12 @@ class TestValidateCommandExtended:
             assert "Lint Error (count: 2)" in result.output
             assert "Total iterations: 3" in result.output
 
-    @patch("gobby.config.app.load_config")
     @patch("gobby.cli.tasks.ai.get_task_manager")
     @patch("gobby.cli.tasks.ai.resolve_task_id")
     def test_validate_max_retries_exceeded(
         self,
         mock_resolve: MagicMock,
         mock_get_manager: MagicMock,
-        mock_config: MagicMock,
         runner: CliRunner,
         mock_task: MagicMock,
     ) -> None:
@@ -1943,8 +1941,10 @@ class TestValidateCommandExtended:
 
             # With 2 failures + 1 new failure = 3, --max-iterations 3 is exceeded.
 
-            mock_config.return_value = DaemonConfig()
-            with patch("gobby.cli.load_full_config_from_db", return_value=DaemonConfig()):
+            with (
+                patch("gobby.cli.load_full_config_from_db", return_value=DaemonConfig()),
+                patch("gobby.cli.runtime.require_cli_database", return_value=MagicMock()),
+            ):
                 result = runner.invoke(
                     cli,
                     [

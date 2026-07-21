@@ -3,17 +3,18 @@
 from __future__ import annotations
 
 import json
+from contextlib import nullcontext
 from pathlib import Path
 from typing import Any, cast
 
 import click
 
+from gobby.cli.runtime import require_cli_database
 from gobby.cli.utils import resolve_project_ref, resolve_session_id
 from gobby.sessions.model_family import normalize_model
 from gobby.sessions.transcripts.claude import ClaudeTranscriptParser
 from gobby.sessions.transcripts.codex import CodexTranscriptParser
 from gobby.sessions.transcripts.qwen import QwenTranscriptParser
-from gobby.storage.hub.runtime import open_runtime_hub_database
 from gobby.storage.sessions import SessionManager
 from gobby.storage.token_events import TokenEvent, TokenEventStore
 
@@ -136,8 +137,7 @@ def audit_tokens(
 
     project_id = resolve_project_ref(project_ref, exit_on_not_found=False) if project_ref else None
 
-    db = open_runtime_hub_database(apply_migrations=False)
-    try:
+    with nullcontext(require_cli_database()) as db:
         session_manager = SessionManager(db)
         store = TokenEventStore(db)
 
@@ -224,8 +224,6 @@ def audit_tokens(
             if fix
             else f"audited={audited} drifted={drifted}"
         )
-    finally:
-        db.close()
 
 
 @tokens.command("stats")
@@ -233,8 +231,7 @@ def audit_tokens(
 def token_stats(project_ref: str | None) -> None:
     """Show token event ledger statistics."""
     project_id = resolve_project_ref(project_ref, exit_on_not_found=False) if project_ref else None
-    db = open_runtime_hub_database(apply_migrations=False)
-    try:
+    with nullcontext(require_cli_database()) as db:
         store = TokenEventStore(db)
         breakdown = store.get_breakdown(project_id=project_id)
         total_rows = db.fetchone(
@@ -255,5 +252,3 @@ def token_stats(project_ref: str | None) -> None:
             )
         )
         click.echo(f"sessions={breakdown['totals']['session_count']}")
-    finally:
-        db.close()

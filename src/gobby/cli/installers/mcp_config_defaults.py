@@ -1,6 +1,7 @@
 """Default bundled MCP server installation."""
 
 import json
+from contextlib import ExitStack
 from pathlib import Path
 from typing import Any, cast
 
@@ -102,6 +103,7 @@ def install_default_mcp_servers() -> dict[str, Any]:
     # Resolve optional_secret_args via secret store (lazy init)
     secret_store = None
     secret_store_db = None
+    secret_store_stack = ExitStack()
     secret_store_init_failed = False
 
     # Add default servers if not already present
@@ -116,10 +118,12 @@ def install_default_mcp_servers() -> dict[str, Any]:
                 for secret_name, extra_args in optional_secret_args.items():
                     if secret_store is None and not secret_store_init_failed:
                         try:
-                            from gobby.storage.hub.runtime import open_runtime_hub_database
+                            from gobby.storage.hub.runtime import runtime_hub_database
                             from gobby.storage.secrets import SecretStore
 
-                            secret_store_db = open_runtime_hub_database(apply_migrations=False)
+                            secret_store_db = secret_store_stack.enter_context(
+                                runtime_hub_database(apply_migrations=False)
+                            )
                             secret_store = SecretStore(secret_store_db)
                         except (ImportError, OSError, RuntimeError, psycopg.Error):
                             secret_store_init_failed = True
@@ -162,8 +166,7 @@ def install_default_mcp_servers() -> dict[str, Any]:
                 )
                 result["servers_added"].append(server["name"])
     finally:
-        if secret_store_db is not None:
-            secret_store_db.close()
+        secret_store_stack.close()
 
     # Write updated config if any servers were added or repaired
     if result["servers_added"] or servers_repaired:
@@ -181,19 +184,16 @@ def install_default_mcp_servers() -> dict[str, Any]:
 
     # Sync .mcp.json to database so the daemon proxy can serve them
     try:
-        from gobby.storage.hub.runtime import open_runtime_hub_database
+        from gobby.storage.hub.runtime import runtime_hub_database
         from gobby.storage.mcp import LocalMCPManager
         from gobby.storage.projects import GLOBAL_PROJECT_ID
 
-        db = open_runtime_hub_database(apply_migrations=False)
-        try:
+        with runtime_hub_database(apply_migrations=False) as db:
             mcp_db = LocalMCPManager(db)
             imported = mcp_db.import_from_mcp_json(mcp_config_path, project_id=GLOBAL_PROJECT_ID)
             mcp_db.normalize_bundled_servers()
             if imported:
                 logger.info("Synced %s MCP servers to database", imported)
-        finally:
-            db.close()
     except Exception as e:
         logger.warning("Failed to sync MCP servers to database: %s", e)
 

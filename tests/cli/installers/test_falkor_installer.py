@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import shutil
+from collections.abc import Iterator
+from contextlib import contextmanager
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
@@ -200,11 +202,12 @@ class TestInstallFalkorDB:
             def close(self) -> None:
                 pass
 
-        def open_db(_home: Path, *, apply_migrations: bool = True) -> NonClosingDb:
+        @contextmanager
+        def open_db(_home: Path, *, apply_migrations: bool = True) -> Iterator[NonClosingDb]:
             _ = apply_migrations
-            return NonClosingDb()
+            yield NonClosingDb()
 
-        with patch("gobby.cli.installers.falkor._open_config_db", side_effect=open_db):
+        with patch("gobby.cli.installers.falkor._config_db", side_effect=open_db):
             _update_config(
                 host="127.0.0.1",
                 port=16379,

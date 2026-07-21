@@ -1175,7 +1175,7 @@ class TestGenerateSessionSummaries:
                 summary_context={},
                 llm_service=llm_service,
                 session_summary_config=_summary_config(),
-                db=None,
+                db=MagicMock(spec=HubDatabase),
                 session_manager=session_manager,
             )
 

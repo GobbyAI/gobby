@@ -17,16 +17,15 @@ from typing import Any
 
 import click
 
+from gobby.cli.runtime import require_cli_database
 from gobby.mcp_proxy.tools.merge_conflict_hydration import conflict_hunks_for_ai
-from gobby.storage.hub.runtime import open_runtime_hub_database
 from gobby.storage.merge_resolutions import ConflictStatus, MergeResolutionManager
 from gobby.utils.json_helpers import json_dumps
 
 
 def get_merge_manager() -> MergeResolutionManager:
     """Get initialized merge resolution manager."""
-    db = open_runtime_hub_database(apply_migrations=False)
-    return MergeResolutionManager(db)
+    return MergeResolutionManager(require_cli_database())
 
 
 def get_merge_resolver() -> Any:
@@ -40,18 +39,13 @@ def get_worktree_manager() -> Any:
     """Get initialized worktree storage manager."""
     from gobby.storage.worktrees import LocalWorktreeManager
 
-    db = open_runtime_hub_database(apply_migrations=False)
-    return LocalWorktreeManager(db)
+    return LocalWorktreeManager(require_cli_database())
 
 
 @contextmanager
 def worktree_manager_context() -> Iterator[Any]:
-    """Yield a short-lived worktree manager and close its owned database."""
-    manager = get_worktree_manager()
-    try:
-        yield manager
-    finally:
-        manager.db.close()
+    """Yield a worktree manager borrowing the CLI database."""
+    yield get_worktree_manager()
 
 
 def get_git_manager(worktree_path: str) -> Any:
@@ -171,7 +165,7 @@ def get_worktree_context() -> dict[str, Any] | None:
 
     from gobby.storage.worktrees import LocalWorktreeManager
 
-    db = open_runtime_hub_database(apply_migrations=False)
+    db = require_cli_database()
     manager = LocalWorktreeManager(db)
 
     # Check if current directory is a worktree
