@@ -6,6 +6,7 @@ import asyncio
 import json
 import logging
 import signal
+from dataclasses import replace
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Protocol
 from uuid import uuid4
@@ -13,7 +14,7 @@ from uuid import uuid4
 from gobby.code_index.gcode_gateway import GcodeCommandError, GcodeCommandResult
 from gobby.code_index.maintenance_log import log_gcode_maintenance_event
 from gobby.scheduler.executor import CronHandler
-from gobby.storage.cron import CronJobStorage
+from gobby.storage.cron import CronJobStorage, compute_next_run
 from gobby.storage.cron_models import CronJob
 
 if TYPE_CHECKING:
@@ -327,7 +328,13 @@ def register_code_index_prune_cron(
         interval_seconds=CODE_INDEX_PRUNE_INTERVAL_SECONDS,
     )
     if repaired is not None and not repaired.enabled:
-        cron_storage.wake_system_job(repaired.id)
+        enabled_job = replace(repaired, enabled=True)
+        next_run = compute_next_run(enabled_job)
+        cron_storage.reconcile_system_job_identity(
+            repaired.id,
+            enabled=True,
+            next_run_at=next_run.isoformat() if next_run is not None else None,
+        )
     elif repaired is not None and repaired.next_run_at is None:
         cron_storage.wake_system_job(repaired.id)
 

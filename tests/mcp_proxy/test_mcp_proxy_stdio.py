@@ -2276,12 +2276,16 @@ class TestEnsureDaemonRunningFailures:
                                     ensure_daemon_running,
                                 )
 
-                                result = await ensure_daemon_running()
+                                with patch("gobby.mcp_proxy.stdio.logger") as mock_logger:
+                                    result = await ensure_daemon_running()
 
                                 assert result is None
                                 assert mock_health.await_count == DAEMON_HEALTH_ATTEMPTS
                                 assert mock_sleep.await_count == DAEMON_HEALTH_ATTEMPTS
                                 mock_pid.assert_called_once_with()
+                                extra = mock_logger.error.call_args.kwargs["extra"]
+                                assert "last_health_response" in extra
+                                assert "last_health" not in extra
 
 
 class TestStripNone:

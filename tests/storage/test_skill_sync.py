@@ -39,6 +39,7 @@ class TestSyncBundledSkills:
 
         assert callable(sync_bundled_skills)
 
+    @pytest.mark.unit
     @pytest.mark.parametrize("root_kind", ["missing", "file"])
     def test_invalid_bundled_skills_root_returns_failure_result(
         self,
@@ -60,6 +61,7 @@ class TestSyncBundledSkills:
         assert result["purged_project_overrides"] == 0
         assert result["errors"]
 
+    @pytest.mark.unit
     def test_bundled_skills_root_enumeration_error_returns_failure_result(
         self,
         db: HubDatabase,
@@ -200,30 +202,45 @@ class TestSyncBundledSkills:
         assert retained is not None
         assert retained.deleted_at is None
 
-    def test_unexpected_load_error_propagates(
+    @pytest.mark.unit
+    def test_oserror_loading_one_skill_reports_error_and_continues(
         self,
         db: HubDatabase,
         tmp_path: Path,
         monkeypatch: pytest.MonkeyPatch,
     ) -> None:
         from gobby.skills.loader import SkillLoader
+        from gobby.skills.parser import ParsedSkill
         from gobby.skills.sync import sync_bundled_skills
 
         broken_dir = tmp_path / "broken-skill"
         broken_dir.mkdir()
         (broken_dir / "SKILL.md").write_text("unreadable")
+        good_dir = tmp_path / "good-skill"
+        good_dir.mkdir()
+        (good_dir / "SKILL.md").write_text(
+            "---\nname: good-skill\ndescription: A readable skill\n---\n# Good skill\n"
+        )
         load_skill = SkillLoader.load_skill
 
-        def load_with_error(self, path, *, validate=True):
+        def load_with_error(
+            loader_self: SkillLoader,
+            path: Path,
+            *,
+            validate: bool = True,
+        ) -> ParsedSkill:
             if path.name == "broken-skill":
                 raise OSError("cannot read skill")
-            return load_skill(self, path, validate=validate)
+            return load_skill(loader_self, path, validate=validate)
 
         monkeypatch.setattr(SkillLoader, "load_skill", load_with_error)
         monkeypatch.setattr("gobby.skills.sync.get_bundled_skills_path", lambda: tmp_path)
 
-        with pytest.raises(OSError, match="cannot read skill"):
-            sync_bundled_skills(db)
+        result = sync_bundled_skills(db)
+
+        assert result["success"] is False
+        assert result["synced"] == 1
+        assert any("broken-skill" in error for error in result["errors"])
 
     def test_empty_bundled_skills_directory_does_not_orphan_existing_skills(
         self,

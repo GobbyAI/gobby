@@ -5,8 +5,10 @@ from __future__ import annotations
 import asyncio
 from typing import TYPE_CHECKING
 
+import httpx
+
 from gobby.cli.services import is_qdrant_healthy
-from gobby.memory.falkor_client import FalkorClient
+from gobby.memory.falkor_client import FalkorClient, FalkorConnectionError, FalkorQueryError
 
 if TYPE_CHECKING:
     from gobby.runner import GobbyRunner
@@ -39,7 +41,7 @@ async def _check_managed_services_ready_once(
 
     try:
         qdrant_healthy = await is_qdrant_healthy(qdrant_url)
-    except Exception as exc:
+    except httpx.HTTPError as exc:
         raise ManagedServiceReadinessError(
             f"Qdrant readiness check failed at {qdrant_url}: {exc}"
         ) from exc
@@ -57,7 +59,7 @@ async def _check_managed_services_ready_once(
     try:
         try:
             falkor_healthy = await client.ping()
-        except Exception as exc:
+        except (FalkorConnectionError, FalkorQueryError) as exc:
             raise ManagedServiceReadinessError(
                 f"FalkorDB readiness check failed at {falkor.host}:{falkor.port}: {exc}"
             ) from exc

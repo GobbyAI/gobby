@@ -82,7 +82,7 @@ def test_build_cli_parses_flags_and_calls_shared_service(tmp_path: Path) -> None
 
     with (
         patch("gobby.cli.build.resolve_project_id", return_value="project-1"),
-        patch("gobby.cli.build._open_database") as open_db,
+        patch("gobby.cli.build._require_database") as open_db,
         patch("gobby.cli.build._try_daemon_build", return_value=None),
         patch("gobby.cli.build.asyncio.run", return_value=build_result) as run,
         patch("gobby.cli.build.build", new=AsyncMock()) as build,
@@ -133,7 +133,7 @@ def test_build_cli_parses_flags_and_calls_shared_service(tmp_path: Path) -> None
     assert "expansion" in result.output
     assert "Dispatcher tick: scanned=4 executed=2 skipped=1" in result.output
     open_db.assert_called_once_with()
-    open_db.return_value.close.assert_called_once_with()
+    open_db.return_value.close.assert_not_called()
     run.assert_called_once()
     call = build.call_args
     assert call.args[0] == str(plan_file)
@@ -188,7 +188,7 @@ def test_build_cli_omitted_backend_defaults_to_worktree(tmp_path: Path) -> None:
 
     with (
         patch("gobby.cli.build.resolve_project_id", return_value="project-1"),
-        patch("gobby.cli.build._open_database") as open_db,
+        patch("gobby.cli.build._require_database") as open_db,
         patch("gobby.cli.build._try_daemon_build", return_value=None),
         patch("gobby.cli.build.asyncio.run", return_value=build_result),
         patch("gobby.cli.build.build", new=AsyncMock()) as build,
@@ -224,7 +224,7 @@ def test_build_cli_accepts_explicit_isolation(tmp_path: Path, isolation: str) ->
 
     with (
         patch("gobby.cli.build.resolve_project_id", return_value="project-1"),
-        patch("gobby.cli.build._open_database") as open_db,
+        patch("gobby.cli.build._require_database") as open_db,
         patch("gobby.cli.build._try_daemon_build", return_value=None),
         patch("gobby.cli.build.asyncio.run", return_value=build_result),
         patch("gobby.cli.build.build", new=AsyncMock()) as build,
@@ -357,7 +357,7 @@ def test_build_cli_bare_coordinator_uses_current_session(
 
     with (
         patch("gobby.cli.build.resolve_project_id", return_value="project-1"),
-        patch("gobby.cli.build._open_database") as open_db,
+        patch("gobby.cli.build._require_database") as open_db,
         patch("gobby.cli.build._try_daemon_build", return_value=None),
         patch("gobby.cli.build.asyncio.run", return_value=build_result),
         patch("gobby.cli.build.build", new=AsyncMock()) as build,
@@ -366,7 +366,7 @@ def test_build_cli_bare_coordinator_uses_current_session(
 
     assert result.exit_code == 0
     assert build.call_args.args[1].coordinator_session_ref == "session-current"
-    open_db.return_value.close.assert_called_once_with()
+    open_db.return_value.close.assert_not_called()
 
 
 def test_build_cli_bare_coordinator_requires_current_session(
@@ -408,7 +408,7 @@ def test_build_cli_bare_coordinator_uses_codex_thread_session(
 
     with (
         patch("gobby.cli.build.resolve_project_id", return_value="project-1"),
-        patch("gobby.cli.build._open_database") as open_db,
+        patch("gobby.cli.build._require_database") as open_db,
         patch("gobby.cli.build.SessionManager") as manager_cls,
         patch("gobby.cli.build._try_daemon_build", return_value=build_result) as daemon,
     ):
@@ -424,7 +424,7 @@ def test_build_cli_bare_coordinator_uses_codex_thread_session(
     manager_cls.return_value.find_active_by_external_id.assert_called_once_with(
         "thread-current", "codex"
     )
-    open_db.return_value.close.assert_called_once_with()
+    open_db.return_value.close.assert_not_called()
 
 
 def test_build_cli_prints_manifest_chain_when_present(tmp_path: Path) -> None:
@@ -453,7 +453,7 @@ def test_build_cli_prints_manifest_chain_when_present(tmp_path: Path) -> None:
     with (
         patch("gobby.cli.build.resolve_project_id", return_value="project-1"),
         patch("gobby.cli.build._try_daemon_build", return_value=build_result),
-        patch("gobby.cli.build._open_database") as open_db,
+        patch("gobby.cli.build._require_database") as open_db,
     ):
         result = CliRunner().invoke(cli, ["build", str(plan_file), "--dry-run"])
 
@@ -507,7 +507,7 @@ def test_build_cli_explicit_project_uses_target_repo_context(
         patch("gobby.cli.build.resolve_project_id", return_value="target-project") as resolve_id,
         patch("gobby.cli.build._project_repo_path", return_value=target_repo),
         patch("gobby.cli.build._try_daemon_build", return_value=build_result) as daemon,
-        patch("gobby.cli.build._open_database") as open_db,
+        patch("gobby.cli.build._require_database") as open_db,
     ):
         result = CliRunner().invoke(cli, ["build", "plan.md", "--project", project_ref])
 
@@ -662,7 +662,7 @@ def test_build_stop_cli_uses_cwd_project_when_no_ref() -> None:
     from gobby.cli import cli
 
     with (
-        patch("gobby.cli.build._open_database") as open_db,
+        patch("gobby.cli.build._require_database") as open_db,
         patch("gobby.cli.build.build_stop") as build_stop,
     ):
         result = CliRunner().invoke(cli, ["build", "stop"])
@@ -671,7 +671,7 @@ def test_build_stop_cli_uses_cwd_project_when_no_ref() -> None:
     build_stop.assert_called_once()
     assert build_stop.call_args.kwargs["db"] is open_db.return_value
     assert build_stop.call_args.kwargs["project_id"]
-    open_db.return_value.close.assert_called_once_with()
+    open_db.return_value.close.assert_not_called()
 
 
 def test_build_resume_cli_kicks_dispatcher() -> None:
@@ -693,7 +693,7 @@ def test_build_resume_cli_kicks_dispatcher() -> None:
 
     with (
         patch("gobby.cli.build.resolve_project_id", return_value="project-1"),
-        patch("gobby.cli.build._open_database") as open_db,
+        patch("gobby.cli.build._require_database") as open_db,
         patch("gobby.cli.build.build_resume", return_value=control_result) as build_resume,
         patch("gobby.cli.build.asyncio.run", return_value=None) as run,
         patch("gobby.cli.build._kick_dispatcher_tick", new=AsyncMock()) as tick,
@@ -709,7 +709,7 @@ def test_build_resume_cli_kicks_dispatcher() -> None:
     build_resume.assert_called_once_with(db=open_db.return_value, project_id="project-1")
     tick.assert_called_once_with(open_db.return_value, "project-1")
     run.assert_called_once()
-    open_db.return_value.close.assert_called_once_with()
+    open_db.return_value.close.assert_not_called()
 
 
 def test_build_stop_cli_accepts_task_ref() -> None:
@@ -728,7 +728,7 @@ def test_build_stop_cli_accepts_task_ref() -> None:
 
     with (
         patch("gobby.cli.build.resolve_project_id", return_value="project-1"),
-        patch("gobby.cli.build._open_database") as open_db,
+        patch("gobby.cli.build._require_database") as open_db,
         patch("gobby.cli.build._try_daemon_build_control", return_value=None),
         patch("gobby.cli.build.asyncio.run", return_value=control_result) as run,
         patch("gobby.cli.build.build_stop_target", new=AsyncMock()) as stop_target,
@@ -741,7 +741,7 @@ def test_build_stop_cli_accepts_task_ref() -> None:
     call = stop_target.call_args
     assert call.args[0] == "#1"
     assert call.kwargs == {"db": open_db.return_value, "project_id": "project-1"}
-    open_db.return_value.close.assert_called_once_with()
+    open_db.return_value.close.assert_not_called()
 
 
 def test_build_resume_task_ref_prefers_daemon_control_endpoint() -> None:
@@ -793,7 +793,7 @@ def test_build_resume_task_ref_prefers_daemon_control_endpoint() -> None:
         patch("gobby.cli.build.resolve_project_id", return_value="project-1"),
         patch("gobby.config.app.load_config", return_value=SimpleNamespace(daemon_port=1234)),
         patch("gobby.utils.daemon_client.DaemonClient", FakeDaemonClient),
-        patch("gobby.cli.build._open_database") as open_db,
+        patch("gobby.cli.build._require_database") as open_db,
         patch("gobby.cli.build.build_resume_target", new=AsyncMock()) as resume_target,
     ):
         result = CliRunner().invoke(cli, ["build", "resume", "#12761"])
@@ -855,7 +855,7 @@ def test_build_task_control_honors_explicit_project(
         patch("gobby.cli.build.resolve_project_id", return_value="target-project"),
         patch("gobby.cli.build._project_repo_path", return_value=target_repo),
         patch("gobby.cli.build._try_daemon_build_control", return_value=payload) as daemon,
-        patch("gobby.cli.build._open_database") as open_db,
+        patch("gobby.cli.build._require_database") as open_db,
     ):
         result = CliRunner().invoke(
             cli,
@@ -899,7 +899,7 @@ def test_build_project_control_honors_explicit_project(
         patch("gobby.cli.build.resolve_project_ref", return_value="caller-project"),
         patch("gobby.cli.build.resolve_project_id", return_value="target-project"),
         patch("gobby.cli.build._project_repo_path", return_value=target_repo),
-        patch("gobby.cli.build._open_database") as open_db,
+        patch("gobby.cli.build._require_database") as open_db,
         patch("gobby.cli.build.asyncio.run", return_value=None) as run,
         patch("gobby.cli.build._kick_dispatcher_tick", new=AsyncMock()) as tick,
         control_patch as control,
@@ -913,7 +913,7 @@ def test_build_project_control_honors_explicit_project(
     assert "Project: target-project" in result.output
     assert f"Event: gobby build {action}" in result.output
     control.assert_called_once_with(db=open_db.return_value, project_id="target-project")
-    open_db.return_value.close.assert_called_once_with()
+    open_db.return_value.close.assert_not_called()
     if action == "resume":
         tick.assert_called_once_with(open_db.return_value, "target-project")
         run.assert_called_once()
@@ -956,7 +956,7 @@ def test_build_clean_cli_forwards_dirty_worktree_override() -> None:
 
     with (
         patch("gobby.cli.build.resolve_project_id", return_value="project-1"),
-        patch("gobby.cli.build._open_database") as open_db,
+        patch("gobby.cli.build._require_database") as open_db,
         patch("gobby.cli.build._try_daemon_build_control", return_value=None),
         patch("gobby.cli.build.asyncio.run", return_value=control_result) as run,
         patch("gobby.cli.build.build_clean_target", new=AsyncMock()) as clean_target,
@@ -973,7 +973,7 @@ def test_build_clean_cli_forwards_dirty_worktree_override() -> None:
     assert call.kwargs["force"] is True
     assert call.kwargs["delete_dirty_worktrees"] is True
     assert call.kwargs["yes"] is True
-    open_db.return_value.close.assert_called_once_with()
+    open_db.return_value.close.assert_not_called()
 
 
 def test_build_restart_cli_forwards_dry_run_force_and_confirmation() -> None:
@@ -993,7 +993,7 @@ def test_build_restart_cli_forwards_dry_run_force_and_confirmation() -> None:
 
     with (
         patch("gobby.cli.build.resolve_project_id", return_value="project-1"),
-        patch("gobby.cli.build._open_database") as open_db,
+        patch("gobby.cli.build._require_database") as open_db,
         patch("gobby.cli.build._try_daemon_build_control", return_value=None),
         patch("gobby.cli.build.asyncio.run", return_value=control_result) as run,
         patch("gobby.cli.build.build_restart_target", new=AsyncMock()) as restart_target,
@@ -1012,7 +1012,7 @@ def test_build_restart_cli_forwards_dry_run_force_and_confirmation() -> None:
     assert call.kwargs["force"] is True
     assert call.kwargs["yes"] is True
     assert call.kwargs["no_resume"] is True
-    open_db.return_value.close.assert_called_once_with()
+    open_db.return_value.close.assert_not_called()
 
 
 def test_build_restart_cli_forwards_build_shaping_options() -> None:
@@ -1030,7 +1030,7 @@ def test_build_restart_cli_forwards_build_shaping_options() -> None:
 
     with (
         patch("gobby.cli.build.resolve_project_id", return_value="project-1"),
-        patch("gobby.cli.build._open_database") as open_db,
+        patch("gobby.cli.build._require_database") as open_db,
         patch("gobby.cli.build._try_daemon_build_control", return_value=None) as daemon,
         patch("gobby.cli.build.asyncio.run", return_value=control_result),
         patch("gobby.cli.build.build_restart_target", new=AsyncMock()) as restart_target,
@@ -1068,7 +1068,7 @@ def test_build_restart_cli_forwards_build_shaping_options() -> None:
         (item.stage_name, item.max_work_attempts, item.max_review_rounds)
         for item in local_opts.stage_caps
     ] == [("planning", 99, 99)]
-    open_db.return_value.close.assert_called_once_with()
+    open_db.return_value.close.assert_not_called()
 
 
 def test_build_restart_empty_pr_counts_as_supplied() -> None:

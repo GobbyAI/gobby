@@ -115,7 +115,7 @@ def invoke_build_skill() -> None:
     click.echo("No build input provided. Invoke the build skill from your active Gobby session.")
 
 
-def _open_database() -> HubDatabase:
+def _require_database() -> HubDatabase:
     """Borrow the active hub database before build storage use."""
     from gobby.cli.runtime import require_cli_database
 
@@ -371,7 +371,7 @@ def build_command(
     cwd = str(project_context.cwd)
     result = _try_daemon_build(input_ref, opts, project_id=project_id, cwd=cwd)
     if result is None:
-        db = _open_database()
+        db = _require_database()
         try:
             result = asyncio.run(build(input_ref, opts, db=db, project_id=project_id))
         except BuildProfileError as exc:
@@ -408,7 +408,7 @@ def _coordinator_session_ref(
             raise click.ClickException(f"Could not resolve current coordinator: {exc}") from exc
     codex_thread_id = (os.environ.get("CODEX_THREAD_ID") or "").strip()
     if codex_thread_id:
-        db = _open_database()
+        db = _require_database()
         session = SessionManager(db).find_active_by_external_id(codex_thread_id, "codex")
         if session and (
             caller_project_id is None or getattr(session, "project_id", None) == caller_project_id
@@ -446,7 +446,7 @@ def _run_build_stop(input_ref: str | None = None, *, project_ref: str | None = N
         if daemon_payload is not None:
             _echo_target_control_result(daemon_payload)
             return
-    db = _open_database()
+    db = _require_database()
     try:
         if input_ref is None:
             result = build_stop(db=db, project_id=project_id)
@@ -475,7 +475,7 @@ def _run_build_resume(input_ref: str | None = None, *, project_ref: str | None =
         if daemon_payload is not None:
             _echo_target_control_result(daemon_payload)
             return
-    db = _open_database()
+    db = _require_database()
     try:
         if input_ref is None:
             result = build_resume(db=db, project_id=project_id)
@@ -531,7 +531,7 @@ def _run_build_clean(
     if daemon_payload is not None:
         _echo_target_control_result(daemon_payload)
         return
-    db = _open_database()
+    db = _require_database()
     try:
         result = asyncio.run(
             build_clean_target(
@@ -580,7 +580,7 @@ def _run_build_restart(
     if daemon_payload is not None:
         _echo_target_control_result(daemon_payload)
         return
-    db = _open_database()
+    db = _require_database()
     try:
         result = asyncio.run(
             build_restart_target(

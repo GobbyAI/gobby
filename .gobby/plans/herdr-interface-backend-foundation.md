@@ -19,7 +19,7 @@ Gobby 0.5.0 already has the tmux agent layer (`src/gobby/agents/tmux/`), a WS ev
 - tmux remains the terminal backend. No native VT/multiplexer engine.
 - Session lifecycle statuses (`active`/`paused`/`handoff_ready`/`expired`/`completed`) are load-bearing for hook flows and handoff resolution; attention is an orthogonal dimension, never a new lifecycle status value, and `SessionStatus` unions in CLI/web stay lifecycle-only.
 - No backward compatibility shims — 0.5.0 is unshipped.
-- Database work uses the hub Postgres transaction boundary and psycopg `%s` placeholders per CLAUDE.md. Schema changes are numbered migration files under `src/gobby/storage/migrations/`; table creation never lives in runtime manager modules. Migration numbers in this plan (326/327) were renumbered 2026-07-21 after the originally planned 324/325 were taken on disk; re-check the next free number at implementation time and renumber again if concurrent work has landed migrations.
+- Database work uses the hub Postgres transaction boundary and psycopg `%s` placeholders per CLAUDE.md. Schema changes are numbered migration files under `src/gobby/storage/migrations/`; table creation never lives in runtime manager modules. Migration numbers in this plan (329/330) were renumbered 2026-07-21 after 324 through 328 were allocated; re-check the next free number at implementation time and renumber again if concurrent work has landed migrations.
 - Existing auto-dismissal behavior (trust prompts, loop prompts, queued continuation prompts) is preserved unchanged for spawned runs; `blocked` is only for prompts Gobby declines to auto-answer. On interactive (human-owned) panes, detection is report-only — Gobby never auto-answers there.
 - Regexes evaluated on the daemon path (detection manifests from the DB, `wait_for_output` patterns) are data-controlled input and must run under bounded size and execution time.
 - New HTTP surface lives in a dedicated `src/gobby/servers/routes/attention.py` module so `agents.py` and other existing modules stay below the 1,000-line source limit.
@@ -34,11 +34,11 @@ Gobby 0.5.0 already has the tmux agent layer (`src/gobby/agents/tmux/`), a WS ev
 
 `kind: deliverable`
 
-Targets: `src/gobby/storage/attention.py`, `src/gobby/storage/migrations/326_attention_states.sql`, `src/gobby/agents/idle_check_handler.py`, `src/gobby/agents/tmux/pane_monitor.py`, `src/gobby/servers/websocket/broadcast.py`
+Targets: `src/gobby/storage/attention.py`, `src/gobby/storage/migrations/329_attention_states.sql`, `src/gobby/agents/idle_check_handler.py`, `src/gobby/agents/tmux/pane_monitor.py`, `src/gobby/servers/websocket/broadcast.py`
 
 **Entry identity.** Every attention-capable surface has a stable `entry_id`: `run:<run_id>` for spawned agent runs, `session:<session_id>` for interactive tmux-backed sessions (the roster in 1.3 uses the same ids). This is what lets the follow-up TUI act on interactive sessions — "your desktop session is blocked while you're away" — not just spawned runs.
 
-**Episode identity.** A fingerprint identifies prompt *content*; it does not identify an *episode* (the same approval prompt can recur after clearing). New storage module `src/gobby/storage/attention.py` (model + manager only) with schema in migration `src/gobby/storage/migrations/326_attention_states.sql`:
+**Episode identity.** A fingerprint identifies prompt *content*; it does not identify an *episode* (the same approval prompt can recur after clearing). New storage module `src/gobby/storage/attention.py` (model + manager only) with schema in migration `src/gobby/storage/migrations/329_attention_states.sql`:
 
 ```sql
 CREATE TABLE attention_states (
@@ -65,7 +65,7 @@ The `entry_id` primary key is the CAS anchor: all mutations — detection sets b
 
 **Acceptance:**
 
-- 1.1.1 - Migration creates `attention_states` with the one-active-episode-per-entry primary key; an isolated migration/startup test applies it cleanly. file: `src/gobby/storage/migrations/326_attention_states.sql`.
+- 1.1.1 - Migration creates `attention_states` with the one-active-episode-per-entry primary key; an isolated migration/startup test applies it cleanly. file: `src/gobby/storage/migrations/329_attention_states.sql`.
 - 1.1.2 - The storage manager exposes a single conditional transition function; all attention mutations route through it and stale mutations (wrong `attention_id` or fingerprint) affect zero rows. file: `src/gobby/storage/attention.py`.
 - 1.1.3 - `IdleCheckHandler` opens blocked episodes for non-auto-answered prompts and sustained provider stalls, and clears them on fingerprint mismatch, injection, or terminal status. file: `src/gobby/agents/idle_check_handler.py`.
 - 1.1.4 - Interactive tmux-backed sessions get report-only attention detection with auto-dismiss disabled. file: `src/gobby/agents/tmux/pane_monitor.py`.
@@ -244,9 +244,9 @@ No behavior change for covered providers: the existing prompt/idle/stall test su
 
 `kind: deliverable`
 
-Targets: `src/gobby/install/shared/detection/claude.toml`, `src/gobby/install/bundled_content_manifest.json`, `src/gobby/agents/detection/registry.py`, `src/gobby/storage/migrations/327_detection_manifests.sql`, `src/gobby/mcp_proxy/tools/workflows/_import.py`
+Targets: `src/gobby/install/shared/detection/claude.toml`, `src/gobby/install/bundled_content_manifest.json`, `src/gobby/agents/detection/registry.py`, `src/gobby/storage/migrations/330_detection_manifests.sql`, `src/gobby/mcp_proxy/tools/workflows/_import.py`
 
-Ship per-provider manifests as bundled templates under `src/gobby/install/shared/detection/<provider>.toml` — one file each for `claude`, `codex`, `gemini`, `qwen`, and `droid` (`claude.toml` is the representative target) — registered in `src/gobby/install/bundled_content_manifest.json`. Schema lives in migration `src/gobby/storage/migrations/327_detection_manifests.sql`: a `detection_manifests` table keyed by provider id with `version`, `engine`, `content`, `source` (`bundled` | `user`), and timestamps.
+Ship per-provider manifests as bundled templates under `src/gobby/install/shared/detection/<provider>.toml` — one file each for `claude`, `codex`, `gemini`, `qwen`, and `droid` (`claude.toml` is the representative target) — registered in `src/gobby/install/bundled_content_manifest.json`. Schema lives in migration `src/gobby/storage/migrations/330_detection_manifests.sql`: a `detection_manifests` table keyed by provider id with `version`, `engine`, `content`, `source` (`bundled` | `user`), and timestamps.
 
 Startup sync follows the existing bundled-content pattern: templates seed on first install; Gobby-owned (`source='bundled'`) rows refresh on definition drift; a manually edited row is stamped `source='user'` and is never clobbered by sync. The DB is the source of truth.
 
@@ -255,7 +255,7 @@ Startup sync follows the existing bundled-content pattern: templates seed on fir
 **Acceptance:**
 
 - 2.3.1 - Bundled manifests for all five providers exist and are hash-registered. file: `src/gobby/install/shared/detection/claude.toml`.
-- 2.3.2 - Migration creates `detection_manifests` with version, engine, and ownership fields; an isolated migration/startup test applies it cleanly. file: `src/gobby/storage/migrations/327_detection_manifests.sql`.
+- 2.3.2 - Migration creates `detection_manifests` with version, engine, and ownership fields; an isolated migration/startup test applies it cleanly. file: `src/gobby/storage/migrations/330_detection_manifests.sql`.
 - 2.3.3 - Startup sync seeds and drift-refreshes bundled rows while preserving `source='user'` rows. file: `src/gobby/agents/detection/registry.py`.
 - 2.3.4 - Detection through an already-cached `IdleCheckHandler` (warm registry, constructed detectors) observes a DB row edit — including a content change with no `version` bump — within the bounded staleness window and immediately on explicit `reload_cache`, changing detection outcomes without code changes or handler reconstruction. test: `tests/agents/detection/test_registry.py::test_cache_boundary_and_user_ownership`.
 
@@ -396,7 +396,7 @@ Run against an isolated test daemon (`GOBBY_TEST_PROTECT=1`, temporary state and
   - R1-CACHE-007 / blocking / registry cache had no update boundary beyond startup sync; user-owned row semantics undefined
   - R1-WAIT-008 / blocking / wait_for_output left lookup/capture/pane-loss/numeric/cancellation branches unspecified
   - R1-HUB-009 / blocking / topic hub had no caps for fan-out, traversal, sizes, or downloads over an untrusted topic
-- resolution_notes: All nine resolved in this revision. Ordering coordinator moved into the 1.1 transition function holding one lock across commit+seq+enqueue (R1-ORDER-001, tested by forced interleaving). 1.2 respond contract fully specified: exactly-one variant, option membership, 2,048-byte text bound, key allowlist, per-entry injection serialization with capture adjacent to send, stable 404/409 stale_episode/409 prompt_changed/502 injection_failed semantics preserving the episode, and an honest external-typing race exclusion (R1-RESPOND-002). Provider routing defined via registry `for_provider` with per-provider detector construction, run.provider / session-source wiring, unknown-provider skip + once-per-provider log, and five bundled manifests (R1-PROVIDER-003). Dependencies corrected: 2.2 depends on 2.3; 3.1 depends on 2.1 with safe_regex owned by 2.1 and imported read-only (R1-DEPS-004). Concrete migrations 326_attention_states.sql and 327_detection_manifests.sql with isolated migration tests; table creation kept out of managers (R1-SCHEMA-005). 1.4 retargeted to SessionsFilterDropdown/SessionsTab/helpers/useAgentRuns with a frontend aggregation test; 3.2 names producer sites (IdleCheckHandler, agent hook handlers) and serializer sites (attention routes, broadcast) (R1-TARGETS-006). Registry cache boundary: 30s staleness check + explicit reload + source='user' preservation, pinned by 2.3.4 (R1-CACHE-007). wait_for_output branch semantics enumerated including capture-failure retry, pane loss as terminal, numeric clamping, and prompt cancellation (R1-WAIT-008). Topic hub hardened with explicit caps, SHA tarball fetch instead of clone, path confinement, backoff/cache on rate limits, and item_unavailable semantics (R1-HUB-009). New HTTP surface consolidated in routes/attention.py to respect the 1,000-line limit. Re-validated with `uv run gobby plans validate`.
+- resolution_notes: All nine resolved in this revision. Ordering coordinator moved into the 1.1 transition function holding one lock across commit+seq+enqueue (R1-ORDER-001, tested by forced interleaving). 1.2 respond contract fully specified: exactly-one variant, option membership, 2,048-byte text bound, key allowlist, per-entry injection serialization with capture adjacent to send, stable 404/409 stale_episode/409 prompt_changed/502 injection_failed semantics preserving the episode, and an honest external-typing race exclusion (R1-RESPOND-002). Provider routing defined via registry `for_provider` with per-provider detector construction, run.provider / session-source wiring, unknown-provider skip + once-per-provider log, and five bundled manifests (R1-PROVIDER-003). Dependencies corrected: 2.2 depends on 2.3; 3.1 depends on 2.1 with safe_regex owned by 2.1 and imported read-only (R1-DEPS-004). Concrete migrations 329_attention_states.sql and 330_detection_manifests.sql with isolated migration tests; table creation kept out of managers (R1-SCHEMA-005). 1.4 retargeted to SessionsFilterDropdown/SessionsTab/helpers/useAgentRuns with a frontend aggregation test; 3.2 names producer sites (IdleCheckHandler, agent hook handlers) and serializer sites (attention routes, broadcast) (R1-TARGETS-006). Registry cache boundary: 30s staleness check + explicit reload + source='user' preservation, pinned by 2.3.4 (R1-CACHE-007). wait_for_output branch semantics enumerated including capture-failure retry, pane loss as terminal, numeric clamping, and prompt cancellation (R1-WAIT-008). Topic hub hardened with explicit caps, SHA tarball fetch instead of clone, path confinement, backoff/cache on rate limits, and item_unavailable semantics (R1-HUB-009). New HTTP surface consolidated in routes/attention.py to respect the 1,000-line limit. Re-validated with `uv run gobby plans validate`.
 
 **Round 2** `kind: verification`
 
@@ -407,7 +407,7 @@ Run against an isolated test daemon (`GOBBY_TEST_PROTECT=1`, temporary state and
   - R2-ORDER-010 / blocking / roster released the ordering lock between cursor read and state read, so the roster could hold state newer than its cursor; 1.4 lacked the subscribe-first reconciliation requirement
   - R2-RESPOND-011 / blocking / respond path undefined for non-actionable stall episodes, per-variant injection actions, partial submission (paste ok / Enter fails), and blocked events omitted the prompt payload
   - R2-CACHE-012 / blocking / detector-held CompiledManifests survived registry refreshes, and version-keyed compilation missed content-only DB edits
-  - R2-ROUTES-013 / blocking / attention router never wired into the FastAPI route registry (_app_routes.py / routes __init__ untargeted) — endpoints implementable yet unreachable
+- R2-ROUTES-013 / blocking / attention router never wired into the FastAPI route registry (`_app_routes.py` / routes `__init__` untargeted) — endpoints implementable yet unreachable
   - R2-WAIT-014 / blocking / wait_for_output branches lacked collision precedence; pane loss overloaded reason=terminal with a possibly nonterminal status
   - R2-META-015 / blocking / metadata set() published no event, so chips without a concurrent transition were invisible until unrelated traffic; text/ttl_ms unbounded
   - R2-HUB-016 / blocking / archive cap covered compressed bytes only — no member-count/expanded-bytes caps, link/device members not rejected
@@ -478,7 +478,7 @@ Run against an isolated test daemon (`GOBBY_TEST_PROTECT=1`, temporary state and
   category: code
   task_type: feature
   depends_on: []
-  validation_criteria: src/gobby/storage/migrations/326_attention_states.sql
+  validation_criteria: src/gobby/storage/migrations/329_attention_states.sql
   labels:
   - covers:herdr-interface-backend-foundation:1.1:1.1.1
   - covers:herdr-interface-backend-foundation:1.1:1.1.2

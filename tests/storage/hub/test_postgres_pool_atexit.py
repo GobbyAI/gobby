@@ -90,6 +90,7 @@ def test_function_local_leak_remains_reachable_for_atexit() -> None:
     leaked.close()
 
 
+@pytest.mark.unit
 def test_failed_close_remains_registered_and_can_retry(monkeypatch: pytest.MonkeyPatch) -> None:
     db = PostgresHubDatabase(_DUMMY_DSN)
     close_calls = 0

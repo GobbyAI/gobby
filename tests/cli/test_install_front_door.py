@@ -5,7 +5,7 @@ from __future__ import annotations
 import importlib
 import subprocess
 from pathlib import Path
-from unittest.mock import MagicMock
+from unittest.mock import MagicMock, call
 
 import pytest
 from click.testing import CliRunner
@@ -14,6 +14,22 @@ daemon_module = importlib.import_module("gobby.cli._install_daemon")
 install_module = importlib.import_module("gobby.cli.install")
 
 pytestmark = pytest.mark.unit
+
+
+def test_port_available_sets_reuseaddr_before_timeout_and_bind(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    sock = MagicMock()
+    sock.__enter__.return_value = sock
+    socket_factory = MagicMock(return_value=sock)
+    monkeypatch.setattr(daemon_module.socket, "socket", socket_factory)
+
+    assert daemon_module._port_available(60887) is True
+    assert sock.method_calls[:3] == [
+        call.setsockopt(daemon_module.socket.SOL_SOCKET, daemon_module.socket.SO_REUSEADDR, 1),
+        call.settimeout(0.2),
+        call.bind(("0.0.0.0", 60887)),
+    ]
 
 
 def test_source_checkout_install_requires_repo_marker(tmp_path: Path) -> None:

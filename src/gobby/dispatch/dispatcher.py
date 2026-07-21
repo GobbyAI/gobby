@@ -8,6 +8,7 @@ import logging
 import threading
 import uuid
 from collections.abc import Awaitable, Callable, Sequence
+from contextlib import ExitStack
 from dataclasses import replace
 from datetime import datetime
 from typing import Any, ParamSpec, TypeVar, cast
@@ -139,8 +140,9 @@ async def run_heartbeat(
             from gobby.storage.hub.runtime import runtime_hub_database
 
             database_context = runtime_hub_database(apply_migrations=False)
-            owned_db = await run_db(database_context.__enter__)
+            database_stack = ExitStack()
             try:
+                owned_db = await run_db(database_stack.enter_context, database_context)
                 return await _run_heartbeat_unlocked(
                     db=owned_db,
                     project_id=project_id,
@@ -152,7 +154,7 @@ async def run_heartbeat(
                     max_actions=max_actions,
                 )
             finally:
-                await run_db(database_context.__exit__, None, None, None)
+                await run_db(database_stack.close)
         return await _run_heartbeat_unlocked(
             db=db,
             project_id=project_id,

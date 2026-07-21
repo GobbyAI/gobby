@@ -50,12 +50,9 @@ class TestIsFalkorDBInstalled:
 
         close.assert_not_called()
 
-    def test_injected_database_is_required(self, hub_db: HubDatabase) -> None:
-        store = ConfigStore(hub_db)
-        store.set("databases.falkordb.host", "127.0.0.1")
-        store.set("databases.falkordb.port", 16379)
-
-        assert is_falkordb_installed(db=hub_db) is True
+    def test_injected_database_is_required(self) -> None:
+        with pytest.raises(TypeError):
+            is_falkordb_installed()  # type: ignore[call-arg]
 
 
 @pytest.fixture

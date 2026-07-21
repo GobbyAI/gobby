@@ -5052,3 +5052,51 @@ def test_run_heartbeat_serializes_across_event_loops(
     assert errors == []
     assert max_active == 1
     assert not dispatcher._HEARTBEAT_LOCK.locked()
+
+
+@pytest.mark.asyncio
+async def test_run_heartbeat_closes_owned_database_when_dispatch_fails(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from gobby.dispatch import dispatcher
+
+    class DatabaseContext:
+        def __init__(self) -> None:
+            self.entered = False
+            self.exited = False
+
+        def __enter__(self) -> object:
+            self.entered = True
+            return object()
+
+        def __exit__(
+            self,
+            _exc_type: object,
+            _exc_value: object,
+            _traceback: object,
+        ) -> None:
+            self.exited = True
+
+    database_context = DatabaseContext()
+    run_db_calls: list[str] = []
+
+    async def run_inline(func: Any, *args: Any) -> Any:
+        run_db_calls.append(func.__name__)
+        return func(*args)
+
+    async def fail_heartbeat(**_kwargs: Any) -> dispatcher.HeartbeatResult:
+        raise RuntimeError("dispatch failed")
+
+    monkeypatch.setattr(
+        "gobby.storage.hub.runtime.runtime_hub_database",
+        lambda **_kwargs: database_context,
+    )
+    monkeypatch.setattr(dispatcher, "run_db", run_inline)
+    monkeypatch.setattr(dispatcher, "_run_heartbeat_unlocked", fail_heartbeat)
+
+    with pytest.raises(RuntimeError, match="dispatch failed"):
+        await dispatcher.run_heartbeat()
+
+    assert run_db_calls == ["enter_context", "close"]
+    assert database_context.entered is True
+    assert database_context.exited is True

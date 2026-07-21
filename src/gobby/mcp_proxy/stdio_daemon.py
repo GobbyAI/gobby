@@ -144,7 +144,7 @@ async def ensure_daemon_running(
                 "port": port,
                 "ws_port": ws_port,
                 "attempts": DAEMON_HEALTH_ATTEMPTS,
-                "last_health": last_health_response,
+                "last_health_response": last_health_response,
             },
         )
         return
@@ -185,7 +185,7 @@ async def ensure_daemon_running(
             "port": port,
             "ws_port": ws_port,
             "attempts": DAEMON_HEALTH_ATTEMPTS,
-            "last_health": last_health_response,
+            "last_health_response": last_health_response,
         },
     )
     return

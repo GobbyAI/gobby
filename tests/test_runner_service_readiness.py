@@ -3,9 +3,11 @@ from __future__ import annotations
 from types import SimpleNamespace
 from typing import TYPE_CHECKING, Any, cast
 
+import httpx
 import pytest
 
 from gobby import runner_service_readiness as readiness
+from gobby.memory.falkor_client import FalkorConnectionError
 
 if TYPE_CHECKING:
     from gobby.runner import GobbyRunner
@@ -142,7 +144,7 @@ async def test_falkordb_ping_exception_is_wrapped_and_client_closes(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     health = FakeHealthCheck(True)
-    client = FakeFalkorClient(OSError("connection reset"))
+    client = FakeFalkorClient(FalkorConnectionError("connection reset"))
     monkeypatch.setattr(readiness, "is_qdrant_healthy", health)
     monkeypatch.setattr(readiness, "FalkorClient", _client_factory(client))
 
@@ -150,6 +152,51 @@ async def test_falkordb_ping_exception_is_wrapped_and_client_closes(
         readiness.ManagedServiceReadinessError,
         match="FalkorDB readiness check failed at 127.0.0.1:16379",
     ):
+        await readiness.require_managed_services_ready(
+            _runner(qdrant_url="http://localhost:6333", falkor_password="secret")
+        )
+
+    assert client.close_calls == 1
+
+
+@pytest.mark.asyncio
+async def test_qdrant_http_error_is_wrapped(monkeypatch: pytest.MonkeyPatch) -> None:
+    async def fail_qdrant(_url: str) -> bool:
+        raise httpx.ConnectError("connection refused")
+
+    monkeypatch.setattr(readiness, "is_qdrant_healthy", fail_qdrant)
+
+    with pytest.raises(
+        readiness.ManagedServiceReadinessError,
+        match="Qdrant readiness check failed",
+    ):
+        await readiness.require_managed_services_ready(
+            _runner(qdrant_url="http://localhost:6333", falkor_password="secret")
+        )
+
+
+@pytest.mark.asyncio
+async def test_unexpected_qdrant_error_propagates(monkeypatch: pytest.MonkeyPatch) -> None:
+    async def fail_qdrant(_url: str) -> bool:
+        raise RuntimeError("programming error")
+
+    monkeypatch.setattr(readiness, "is_qdrant_healthy", fail_qdrant)
+
+    with pytest.raises(RuntimeError, match="programming error"):
+        await readiness.require_managed_services_ready(
+            _runner(qdrant_url="http://localhost:6333", falkor_password="secret")
+        )
+
+
+@pytest.mark.asyncio
+async def test_unexpected_falkordb_error_propagates_and_client_closes(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    client = FakeFalkorClient(RuntimeError("programming error"))
+    monkeypatch.setattr(readiness, "is_qdrant_healthy", FakeHealthCheck(True))
+    monkeypatch.setattr(readiness, "FalkorClient", _client_factory(client))
+
+    with pytest.raises(RuntimeError, match="programming error"):
         await readiness.require_managed_services_ready(
             _runner(qdrant_url="http://localhost:6333", falkor_password="secret")
         )

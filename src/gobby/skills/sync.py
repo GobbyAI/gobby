@@ -255,7 +255,7 @@ def sync_bundled_skills(db: HubDatabase) -> dict[str, Any]:
             # validate=False for bundled skills since they're trusted and may have
             # version formats like "2.0" instead of strict semver "2.0.0"
             parsed_skills.append(loader.load_skill(skill_dir, validate=False))
-        except SkillLoadError as e:
+        except (SkillLoadError, OSError) as e:
             error_msg = f"Failed to load bundled skill '{skill_dir.name}': {e}"
             logger.error(
                 "Failed to load bundled skill",

@@ -33,7 +33,7 @@ def test_cli_stage_cap_overrides_propagate_to_dispatcher(
         "gobby.cli.build.resolve_project_id",
         lambda _project_ref=None: "0e27d5b7-167e-5a64-8bd9-6b980bd88f06",
     )
-    monkeypatch.setattr("gobby.cli.build._open_database", lambda: _ClosableDb())
+    monkeypatch.setattr("gobby.cli.build._require_database", lambda: _ClosableDb())
     monkeypatch.setattr("gobby.cli.build._try_daemon_build", lambda *_args, **_kwargs: None)
     monkeypatch.setattr("gobby.cli.build.build", fake_build)
 

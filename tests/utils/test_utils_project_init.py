@@ -854,24 +854,23 @@ class TestInitializeProject:
 
             with patch("gobby.utils.git.get_github_url", return_value=None):
                 with patch("gobby.storage.hub.runtime.runtime_hub_database"):
-                    with patch("gobby.storage.hub.runtime.runtime_hub_database"):
-                        with patch("gobby.storage.projects.LocalProjectManager") as mock_pm_cls:
-                            mock_pm_instance = MagicMock()
-                            mock_pm_instance.get_by_name.return_value = None
+                    with patch("gobby.storage.projects.LocalProjectManager") as mock_pm_cls:
+                        mock_pm_instance = MagicMock()
+                        mock_pm_instance.get_by_name.return_value = None
 
-                            mock_project = MagicMock()
-                            mock_project.id = "new-proj-id"
-                            mock_project.name = tmp_path.name
-                            mock_project.created_at = datetime(2024, 1, 1, tzinfo=UTC)
-                            mock_pm_instance.create.return_value = mock_project
+                        mock_project = MagicMock()
+                        mock_project.id = "new-proj-id"
+                        mock_project.name = tmp_path.name
+                        mock_project.created_at = datetime(2024, 1, 1, tzinfo=UTC)
+                        mock_pm_instance.create.return_value = mock_project
 
-                            mock_pm_cls.return_value = mock_pm_instance
+                        mock_pm_cls.return_value = mock_pm_instance
 
-                            result = initialize_project(tmp_path)
+                        result = initialize_project(tmp_path)
 
-                            # Should create new project since id was empty
-                            assert result.already_existed is False
-                            assert result.project_id == "new-proj-id"
+                        # Should create new project since id was empty
+                        assert result.already_existed is False
+                        assert result.project_id == "new-proj-id"
 
     def test_new_project_creation(
         self,
@@ -900,52 +899,48 @@ class TestInitializeProject:
         with patch("gobby.utils.project_context.get_project_context", return_value=None):
             with patch("gobby.utils.git.get_github_url", return_value=None):
                 with patch("gobby.storage.hub.runtime.runtime_hub_database"):
-                    with patch("gobby.storage.hub.runtime.runtime_hub_database"):
-                        with patch("gobby.storage.projects.LocalProjectManager") as mock_pm_cls:
-                            mock_pm_instance = MagicMock()
-                            mock_pm_instance.get_by_name.return_value = None
+                    with patch("gobby.storage.projects.LocalProjectManager") as mock_pm_cls:
+                        mock_pm_instance = MagicMock()
+                        mock_pm_instance.get_by_name.return_value = None
 
-                            mock_project = MagicMock()
-                            mock_project.id = "id"
-                            mock_project.name = "custom-name"
-                            mock_project.created_at = datetime(2024, 1, 1, tzinfo=UTC)
-                            mock_pm_instance.create.return_value = mock_project
+                        mock_project = MagicMock()
+                        mock_project.id = "id"
+                        mock_project.name = "custom-name"
+                        mock_project.created_at = datetime(2024, 1, 1, tzinfo=UTC)
+                        mock_pm_instance.create.return_value = mock_project
 
-                            mock_pm_cls.return_value = mock_pm_instance
+                        mock_pm_cls.return_value = mock_pm_instance
 
-                            result = initialize_project(tmp_path, name="custom-name")
+                        result = initialize_project(tmp_path, name="custom-name")
 
-                            call_kwargs = mock_pm_instance.create.call_args
-                            assert call_kwargs.kwargs["name"] == "custom-name"
-                            assert result.project_name == "custom-name"
+                        call_kwargs = mock_pm_instance.create.call_args
+                        assert call_kwargs.kwargs["name"] == "custom-name"
+                        assert result.project_name == "custom-name"
 
     def test_uses_provided_github_url(self, tmp_path: Path) -> None:
         """Test that provided github_url is used."""
         with patch("gobby.utils.project_context.get_project_context", return_value=None):
             with patch("gobby.utils.git.get_github_url", return_value="https://auto-detected.com"):
                 with patch("gobby.storage.hub.runtime.runtime_hub_database"):
-                    with patch("gobby.storage.hub.runtime.runtime_hub_database"):
-                        with patch("gobby.storage.projects.LocalProjectManager") as mock_pm_cls:
-                            mock_pm_instance = MagicMock()
-                            mock_pm_instance.get_by_name.return_value = None
+                    with patch("gobby.storage.projects.LocalProjectManager") as mock_pm_cls:
+                        mock_pm_instance = MagicMock()
+                        mock_pm_instance.get_by_name.return_value = None
 
-                            mock_project = MagicMock()
-                            mock_project.id = "id"
-                            mock_project.name = "name"
-                            mock_project.created_at = datetime(2024, 1, 1, tzinfo=UTC)
-                            mock_pm_instance.create.return_value = mock_project
+                        mock_project = MagicMock()
+                        mock_project.id = "id"
+                        mock_project.name = "name"
+                        mock_project.created_at = datetime(2024, 1, 1, tzinfo=UTC)
+                        mock_pm_instance.create.return_value = mock_project
 
-                            mock_pm_cls.return_value = mock_pm_instance
+                        mock_pm_cls.return_value = mock_pm_instance
 
-                            result = initialize_project(
-                                tmp_path, github_url="https://github.com/custom/repo"
-                            )
+                        result = initialize_project(
+                            tmp_path, github_url="https://github.com/custom/repo"
+                        )
 
-                            call_kwargs = mock_pm_instance.create.call_args
-                            assert (
-                                call_kwargs.kwargs["github_url"] == "https://github.com/custom/repo"
-                            )
-                            assert result.project_id == "id"
+                        call_kwargs = mock_pm_instance.create.call_args
+                        assert call_kwargs.kwargs["github_url"] == "https://github.com/custom/repo"
+                        assert result.project_id == "id"
 
     def test_auto_detects_github_url(self, tmp_path: Path) -> None:
         """Test that github URL is auto-detected from git remote."""
@@ -954,27 +949,25 @@ class TestInitializeProject:
                 "gobby.utils.git.get_github_url", return_value="https://github.com/detected/repo"
             ):
                 with patch("gobby.storage.hub.runtime.runtime_hub_database"):
-                    with patch("gobby.storage.hub.runtime.runtime_hub_database"):
-                        with patch("gobby.storage.projects.LocalProjectManager") as mock_pm_cls:
-                            mock_pm_instance = MagicMock()
-                            mock_pm_instance.get_by_name.return_value = None
+                    with patch("gobby.storage.projects.LocalProjectManager") as mock_pm_cls:
+                        mock_pm_instance = MagicMock()
+                        mock_pm_instance.get_by_name.return_value = None
 
-                            mock_project = MagicMock()
-                            mock_project.id = "id"
-                            mock_project.name = "name"
-                            mock_project.created_at = datetime(2024, 1, 1, tzinfo=UTC)
-                            mock_pm_instance.create.return_value = mock_project
+                        mock_project = MagicMock()
+                        mock_project.id = "id"
+                        mock_project.name = "name"
+                        mock_project.created_at = datetime(2024, 1, 1, tzinfo=UTC)
+                        mock_pm_instance.create.return_value = mock_project
 
-                            mock_pm_cls.return_value = mock_pm_instance
+                        mock_pm_cls.return_value = mock_pm_instance
 
-                            result = initialize_project(tmp_path)
+                        result = initialize_project(tmp_path)
 
-                            call_kwargs = mock_pm_instance.create.call_args
-                            assert (
-                                call_kwargs.kwargs["github_url"]
-                                == "https://github.com/detected/repo"
-                            )
-                            assert result.project_id == "id"
+                        call_kwargs = mock_pm_instance.create.call_args
+                        assert (
+                            call_kwargs.kwargs["github_url"] == "https://github.com/detected/repo"
+                        )
+                        assert result.project_id == "id"
 
     def test_existing_db_project_no_local_json(
         self,
@@ -1101,24 +1094,23 @@ class TestInitializeProject:
 
             with patch("gobby.utils.git.get_github_url", return_value=None):
                 with patch("gobby.storage.hub.runtime.runtime_hub_database"):
-                    with patch("gobby.storage.hub.runtime.runtime_hub_database"):
-                        with patch("gobby.storage.projects.LocalProjectManager") as mock_pm_cls:
-                            mock_pm_instance = MagicMock()
-                            mock_pm_instance.get_by_name.return_value = None
+                    with patch("gobby.storage.projects.LocalProjectManager") as mock_pm_cls:
+                        mock_pm_instance = MagicMock()
+                        mock_pm_instance.get_by_name.return_value = None
 
-                            mock_project = MagicMock()
-                            mock_project.id = "new-proj-id"
-                            mock_project.name = tmp_path.name
-                            mock_project.created_at = datetime(2024, 1, 1, tzinfo=UTC)
-                            mock_pm_instance.create.return_value = mock_project
+                        mock_project = MagicMock()
+                        mock_project.id = "new-proj-id"
+                        mock_project.name = tmp_path.name
+                        mock_project.created_at = datetime(2024, 1, 1, tzinfo=UTC)
+                        mock_pm_instance.create.return_value = mock_project
 
-                            mock_pm_cls.return_value = mock_pm_instance
+                        mock_pm_cls.return_value = mock_pm_instance
 
-                            result = initialize_project(tmp_path)
+                        result = initialize_project(tmp_path)
 
-                            # Should create new project since id was None
-                            assert result.already_existed is False
-                            assert result.project_id == "new-proj-id"
+                        # Should create new project since id was None
+                        assert result.already_existed is False
+                        assert result.project_id == "new-proj-id"
 
     def test_new_project_with_verification_commands(self, tmp_path: Path) -> None:
         """Test that new project creation includes verification commands."""
@@ -1134,25 +1126,24 @@ class TestInitializeProject:
         with patch("gobby.utils.project_context.get_project_context", return_value=None):
             with patch("gobby.utils.git.get_github_url", return_value=None):
                 with patch("gobby.storage.hub.runtime.runtime_hub_database"):
-                    with patch("gobby.storage.hub.runtime.runtime_hub_database"):
-                        with patch("gobby.storage.projects.LocalProjectManager") as mock_pm_cls:
-                            mock_pm_instance = MagicMock()
-                            mock_pm_instance.get_by_name.return_value = None
+                    with patch("gobby.storage.projects.LocalProjectManager") as mock_pm_cls:
+                        mock_pm_instance = MagicMock()
+                        mock_pm_instance.get_by_name.return_value = None
 
-                            mock_project = MagicMock()
-                            mock_project.id = "new-proj-id"
-                            mock_project.name = tmp_path.name
-                            mock_project.created_at = datetime(2024, 1, 1, tzinfo=UTC)
-                            mock_pm_instance.create.return_value = mock_project
+                        mock_project = MagicMock()
+                        mock_project.id = "new-proj-id"
+                        mock_project.name = tmp_path.name
+                        mock_project.created_at = datetime(2024, 1, 1, tzinfo=UTC)
+                        mock_pm_instance.create.return_value = mock_project
 
-                            mock_pm_cls.return_value = mock_pm_instance
+                        mock_pm_cls.return_value = mock_pm_instance
 
-                            result = initialize_project(tmp_path)
+                        result = initialize_project(tmp_path)
 
-                            assert result.verification is not None
-                            assert result.verification.unit_tests == "pytest tests/ -v"
-                            assert result.verification.type_check == "mypy src/"
-                            assert result.verification.lint == "ruff check src/"
+                        assert result.verification is not None
+                        assert result.verification.unit_tests == "pytest tests/ -v"
+                        assert result.verification.type_check == "mypy src/"
+                        assert result.verification.lint == "ruff check src/"
 
     def test_existing_db_project_includes_verification(self, tmp_path: Path) -> None:
         """Test that existing DB project includes verification commands when synced."""
@@ -1165,25 +1156,24 @@ class TestInitializeProject:
         with patch("gobby.utils.project_context.get_project_context", return_value=None):
             with patch("gobby.utils.git.get_github_url", return_value=None):
                 with patch("gobby.storage.hub.runtime.runtime_hub_database"):
-                    with patch("gobby.storage.hub.runtime.runtime_hub_database"):
-                        with patch("gobby.storage.projects.LocalProjectManager") as mock_pm_cls:
-                            mock_existing = MagicMock()
-                            mock_existing.id = "db-proj-id"
-                            mock_existing.name = tmp_path.name
-                            mock_existing.repo_path = str(tmp_path)
-                            mock_existing.created_at = datetime(2023, 1, 1, tzinfo=UTC)
-                            mock_existing.deleted_at = None
+                    with patch("gobby.storage.projects.LocalProjectManager") as mock_pm_cls:
+                        mock_existing = MagicMock()
+                        mock_existing.id = "db-proj-id"
+                        mock_existing.name = tmp_path.name
+                        mock_existing.repo_path = str(tmp_path)
+                        mock_existing.created_at = datetime(2023, 1, 1, tzinfo=UTC)
+                        mock_existing.deleted_at = None
 
-                            mock_pm_instance = MagicMock()
-                            mock_pm_instance.get_by_name.return_value = mock_existing
+                        mock_pm_instance = MagicMock()
+                        mock_pm_instance.get_by_name.return_value = mock_existing
 
-                            mock_pm_cls.return_value = mock_pm_instance
+                        mock_pm_cls.return_value = mock_pm_instance
 
-                            result = initialize_project(tmp_path)
+                        result = initialize_project(tmp_path)
 
-                            # Should include verification
-                            assert result.verification is not None
-                            assert result.verification.type_check == "mypy src/"
+                        # Should include verification
+                        assert result.verification is not None
+                        assert result.verification.type_check == "mypy src/"
 
     def test_new_project_without_verification_commands(self, tmp_path: Path) -> None:
         """Test that new project without recognizable structure has no verification."""
@@ -1192,24 +1182,23 @@ class TestInitializeProject:
         with patch("gobby.utils.project_context.get_project_context", return_value=None):
             with patch("gobby.utils.git.get_github_url", return_value=None):
                 with patch("gobby.storage.hub.runtime.runtime_hub_database"):
-                    with patch("gobby.storage.hub.runtime.runtime_hub_database"):
-                        with patch("gobby.storage.projects.LocalProjectManager") as mock_pm_cls:
-                            mock_pm_instance = MagicMock()
-                            mock_pm_instance.get_by_name.return_value = None
+                    with patch("gobby.storage.projects.LocalProjectManager") as mock_pm_cls:
+                        mock_pm_instance = MagicMock()
+                        mock_pm_instance.get_by_name.return_value = None
 
-                            mock_project = MagicMock()
-                            mock_project.id = "new-proj-id"
-                            mock_project.name = tmp_path.name
-                            mock_project.created_at = datetime(2024, 1, 1, tzinfo=UTC)
-                            mock_pm_instance.create.return_value = mock_project
+                        mock_project = MagicMock()
+                        mock_project.id = "new-proj-id"
+                        mock_project.name = tmp_path.name
+                        mock_project.created_at = datetime(2024, 1, 1, tzinfo=UTC)
+                        mock_pm_instance.create.return_value = mock_project
 
-                            mock_pm_cls.return_value = mock_pm_instance
+                        mock_pm_cls.return_value = mock_pm_instance
 
-                            result = initialize_project(tmp_path)
+                        result = initialize_project(tmp_path)
 
-                            # No verification since no recognizable project type
-                            assert result.verification is None
-                            assert result.project_id == "new-proj-id"
+                        # No verification since no recognizable project type
+                        assert result.verification is None
+                        assert result.project_id == "new-proj-id"
 
     def test_path_resolution(self, tmp_path: Path) -> None:
         """Test that path is properly resolved."""
@@ -1237,24 +1226,23 @@ class TestInitializeProject:
         with patch("gobby.utils.project_context.get_project_context", return_value=None):
             with patch("gobby.utils.git.get_github_url", return_value=None):
                 with patch("gobby.storage.hub.runtime.runtime_hub_database"):
-                    with patch("gobby.storage.hub.runtime.runtime_hub_database"):
-                        with patch("gobby.storage.projects.LocalProjectManager") as mock_pm_cls:
-                            mock_pm_instance = MagicMock()
-                            mock_pm_instance.get_by_name.return_value = None
+                    with patch("gobby.storage.projects.LocalProjectManager") as mock_pm_cls:
+                        mock_pm_instance = MagicMock()
+                        mock_pm_instance.get_by_name.return_value = None
 
-                            mock_project = MagicMock()
-                            mock_project.id = "id"
-                            mock_project.name = "my-awesome-project"
-                            mock_project.created_at = datetime(2024, 1, 1, tzinfo=UTC)
-                            mock_pm_instance.create.return_value = mock_project
+                        mock_project = MagicMock()
+                        mock_project.id = "id"
+                        mock_project.name = "my-awesome-project"
+                        mock_project.created_at = datetime(2024, 1, 1, tzinfo=UTC)
+                        mock_pm_instance.create.return_value = mock_project
 
-                            mock_pm_cls.return_value = mock_pm_instance
+                        mock_pm_cls.return_value = mock_pm_instance
 
-                            result = initialize_project(project_dir)
+                        result = initialize_project(project_dir)
 
-                            call_kwargs = mock_pm_instance.create.call_args
-                            assert call_kwargs.kwargs["name"] == "my-awesome-project"
-                            assert result.project_name == "my-awesome-project"
+                        call_kwargs = mock_pm_instance.create.call_args
+                        assert call_kwargs.kwargs["name"] == "my-awesome-project"
+                        assert result.project_name == "my-awesome-project"
 
     def test_already_initialized_returns_correct_project_path(self, tmp_path: Path) -> None:
         """Test that project_path from context is used when already initialized."""

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import signal
+from datetime import UTC, datetime
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
@@ -20,6 +21,7 @@ from gobby.code_index.prune import (
     CodeIndexPruner,
     register_code_index_prune_cron,
 )
+from gobby.storage.cron_models import CronJob
 
 pytestmark = pytest.mark.unit
 
@@ -406,3 +408,56 @@ def test_register_code_index_prune_cron_creates_hourly_system_job() -> None:
     assert storage.created["is_system"] is True
     assert storage.created["action_config"]["handler"] == CODE_INDEX_PRUNE_HANDLER
     assert "limit" not in storage.created["action_config"]
+
+
+def test_register_code_index_prune_cron_reactivates_disabled_job_with_next_run() -> None:
+    now = datetime.now(UTC)
+    disabled_job = CronJob(
+        id="prune-job",
+        project_id="personal",
+        name=CODE_INDEX_PRUNE_JOB_NAME,
+        schedule_type="interval",
+        action_type="handler",
+        action_config={"handler": CODE_INDEX_PRUNE_HANDLER},
+        created_at=now,
+        updated_at=now,
+        interval_seconds=CODE_INDEX_PRUNE_INTERVAL_SECONDS,
+        enabled=False,
+        is_system=True,
+        next_run_at=None,
+    )
+
+    class CronStorage:
+        def __init__(self) -> None:
+            self.identity_update: dict[str, Any] | None = None
+
+        def get_job_by_name(self, _name: str) -> CronJob:
+            return disabled_job
+
+        def reconcile_system_job_definition(self, _job_id: str, **_fields: Any) -> CronJob:
+            return disabled_job
+
+        def reconcile_system_job_identity(self, _job_id: str, **fields: Any) -> None:
+            self.identity_update = fields
+
+        def wake_system_job(self, _job_id: str) -> None:
+            pytest.fail("disabled jobs must be reconciled atomically")
+
+    class CronExecutor:
+        def register_handler(self, _name: str, _handler: Any) -> None:
+            pass
+
+    storage = CronStorage()
+    context = PruneContext(PruneStorage(), PruneGateway(), Path("/tmp/maintenance.log"))
+    pruner = CodeIndexPruner(context)  # type: ignore[arg-type]
+
+    register_code_index_prune_cron(
+        cron_storage=storage,  # type: ignore[arg-type]
+        cron_executor=CronExecutor(),
+        pruner=pruner,
+        project_id="personal",
+    )
+
+    assert storage.identity_update is not None
+    assert storage.identity_update["enabled"] is True
+    assert datetime.fromisoformat(storage.identity_update["next_run_at"]) > now

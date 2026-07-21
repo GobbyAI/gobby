@@ -2,7 +2,6 @@ import uuid
 from datetime import UTC, datetime, timedelta
 from unittest.mock import MagicMock
 
-import psycopg
 import pytest
 
 from gobby.storage.hub.protocol import HubDatabase
@@ -145,13 +144,23 @@ def test_cleanup_entries(audit_manager, test_db) -> None:
 
 
 def test_log_tolerates_missing_session_foreign_key_race(audit_manager) -> None:
-    audit_manager.db.execute = MagicMock(side_effect=psycopg.errors.ForeignKeyViolation())
+    missing_session_id = str(uuid.uuid4())
+    with audit_manager.db.transaction() as transaction:
+        assert audit_manager.log(missing_session_id, "step", "event", "result") is None
+        row = transaction.execute("SELECT 1 AS ready").fetchone()
 
-    assert audit_manager.log("s1", "step", "event", "result") is None
+    assert row["ready"] == 1
 
 
-def test_log_propagates_unexpected_database_error(audit_manager) -> None:
-    audit_manager.db.execute = MagicMock(side_effect=RuntimeError("DB Error"))
+def test_log_propagates_unexpected_database_error(audit_manager, monkeypatch) -> None:
+    transaction = MagicMock()
+    transaction.__enter__.return_value = transaction
+    transaction.execute.side_effect = RuntimeError("DB Error")
+    monkeypatch.setattr(
+        audit_manager.db,
+        "transaction",
+        MagicMock(return_value=transaction),
+    )
 
     with pytest.raises(RuntimeError, match="DB Error"):
         audit_manager.log("s1", "step", "event", "result")

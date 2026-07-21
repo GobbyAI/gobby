@@ -80,33 +80,38 @@ class WorkflowAuditManager:
         Returns:
             The inserted row ID, or None if the session was removed before insertion.
         """
-        try:
-            timestamp = utc_now()
-            context_json = json.dumps(context) if context else None
+        timestamp = utc_now()
+        context_json = json.dumps(context) if context else None
 
-            row = self.db.execute(
-                """
-                INSERT INTO workflow_audit_log
-                (session_id, timestamp, step, event_type, tool_name, rule_id, condition, result, reason, context)
-                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
-                RETURNING id
-                """,
-                (
-                    session_id,
-                    timestamp,
-                    step,
-                    event_type,
-                    tool_name,
-                    rule_id,
-                    condition,
-                    result,
-                    reason,
-                    context_json,
-                ),
-            ).fetchone()
+        with self.db.transaction() as transaction:
+            savepoint = transaction.savepoint("workflow_audit_insert")
+            try:
+                row = transaction.execute(
+                    """
+                    INSERT INTO workflow_audit_log
+                    (session_id, timestamp, step, event_type, tool_name, rule_id, condition, result, reason, context)
+                    VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                    RETURNING id
+                    """,
+                    (
+                        session_id,
+                        timestamp,
+                        step,
+                        event_type,
+                        tool_name,
+                        rule_id,
+                        condition,
+                        result,
+                        reason,
+                        context_json,
+                    ),
+                ).fetchone()
+            except psycopg.errors.ForeignKeyViolation:
+                savepoint.rollback()
+                savepoint.release()
+                return None
+            savepoint.release()
             return int(row["id"]) if row is not None else None
-        except psycopg.errors.ForeignKeyViolation:
-            return None
 
     def log_tool_call(
         self,

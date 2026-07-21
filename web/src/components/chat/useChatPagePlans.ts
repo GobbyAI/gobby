@@ -148,6 +148,7 @@ export function useChatPagePlans({
       previous.switchKey === conversationSwitchKey
         ? { ...previous, pendingPlanId: null }
         : emptyConversationPlanState(conversationSwitchKey);
+    planStateRef.current = nextPlanState;
     setPlanState(nextPlanState);
   }, [conversationSwitchKey]);
 

@@ -41,7 +41,7 @@ def _get_manager() -> LocalWorkflowDefinitionManager:
 
 @contextmanager
 def _manager_context() -> Iterator[LocalWorkflowDefinitionManager]:
-    """Yield a short-lived workflow definition manager and close its owned database."""
+    """Yield a workflow definition manager borrowing the CLI runtime database."""
     manager = _get_manager()
     yield manager
 
@@ -55,7 +55,7 @@ def _get_audit_manager() -> WorkflowAuditManager:
 
 @contextmanager
 def _audit_manager_context() -> Iterator[WorkflowAuditManager]:
-    """Yield a short-lived workflow audit manager and close its owned database."""
+    """Yield a workflow audit manager borrowing the CLI runtime database."""
     manager = _get_audit_manager()
     yield manager
 

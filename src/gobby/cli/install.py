@@ -585,37 +585,37 @@ def install(
     database_stack = ExitStack()
 
     try:
-        from gobby.storage.hub.runtime import runtime_hub_database
+        try:
+            from gobby.storage.hub.runtime import runtime_hub_database
 
-        load_full_config_from_db()
-        db = database_stack.enter_context(runtime_hub_database())
-        secret_store = SecretStore(db)
-        config_store = ConfigStore(db)
-    except (
-        BootstrapConfigError,
-        FileNotFoundError,
-        PermissionError,
-        OSError,
-        RuntimeError,
-        ValueError,
-    ) as exc:
-        # Missing config file, unavailable hub, malformed config values.
-        # The orchestration proceeds with db/secret_store=None — downstream
-        # steps open their own DB via _ensure_db_and_secrets if they need it.
-        logger.warning(
-            "Failed to initialize install database/secret store (%s): %s",
-            type(exc).__name__,
-            exc,
+            load_full_config_from_db()
+            db = database_stack.enter_context(runtime_hub_database())
+            secret_store = SecretStore(db)
+            config_store = ConfigStore(db)
+        except (
+            BootstrapConfigError,
+            FileNotFoundError,
+            PermissionError,
+            OSError,
+            RuntimeError,
+            ValueError,
+        ) as exc:
+            # Missing config file, unavailable hub, malformed config values.
+            # The orchestration proceeds with db/secret_store=None — downstream
+            # steps open their own DB via _ensure_db_and_secrets if they need it.
+            logger.warning(
+                "Failed to initialize install database/secret store (%s): %s",
+                type(exc).__name__,
+                exc,
+            )
+
+        _configure_secret_kek_posture(
+            secret_store,
+            secret_kek_posture,
+            no_interactive=no_interactive_flag,
         )
+        _provision_local_api_token(config_store)
 
-    _configure_secret_kek_posture(
-        secret_store,
-        secret_kek_posture,
-        no_interactive=no_interactive_flag,
-    )
-    _provision_local_api_token(config_store)
-
-    try:
         install_state = empty_install_state()
         if is_full_install:
             install_state = prepare_install_state(config_store, secret_store)

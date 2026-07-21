@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from pathlib import Path
 from typing import Any
-from unittest.mock import MagicMock, patch
+from unittest.mock import MagicMock, call, patch
 
 import click
 import pytest
@@ -482,6 +482,71 @@ class TestInstallCommandSharedStores:
         assert mock_summary.call_args.kwargs["secret_store"] is secret_store
         db_context.__exit__.assert_called_once()
         db.close.assert_not_called()
+
+    def test_closes_database_context_when_secret_setup_fails(self, tmp_path: Path) -> None:
+        db = MagicMock()
+        db_context = MagicMock()
+        db_context.__enter__.return_value = db
+        secret_store = MagicMock()
+        config_store = MagicMock()
+        secret_store_cls = MagicMock(return_value=secret_store)
+        config_store_cls = MagicMock(return_value=config_store)
+        configure_secret_kek = MagicMock(side_effect=RuntimeError("secret setup failed"))
+
+        with (
+            patch("gobby.cli.install._is_claude_code_installed", return_value=True),
+            patch("gobby.cli.install._is_grok_cli_installed", return_value=False),
+            patch("gobby.cli.install._is_agy_cli_installed", return_value=False),
+            patch("gobby.cli.install._is_qwen_cli_installed", return_value=False),
+            patch("gobby.cli.install._is_codex_cli_installed", return_value=False),
+            patch("gobby.cli.install._is_droid_cli_installed", return_value=False),
+            patch("gobby.cli.install.load_full_config_from_db"),
+            patch("gobby.storage.hub.runtime.runtime_hub_database", return_value=db_context),
+            patch("gobby.cli.install.SecretStore", secret_store_cls),
+            patch("gobby.cli.install.ConfigStore", config_store_cls),
+            patch("gobby.cli.install._configure_secret_kek_posture", configure_secret_kek),
+            patch(
+                "gobby.cli.install._ensure_daemon_config",
+                return_value={"created": False, "path": str(tmp_path / "bootstrap.yaml")},
+            ),
+            patch("gobby.cli.install.run_daemon_setup"),
+            patch("gobby.cli.install.get_install_dir", return_value=tmp_path),
+            pytest.raises(RuntimeError, match="secret setup failed"),
+        ):
+            install_command.callback(
+                claude_flag=False,
+                grok_flag=False,
+                agy_flag=False,
+                codex_flag=True,
+                droid_flag=False,
+                qwen_flag=False,
+                hooks_flag=False,
+                all_flag=False,
+                config_only_flag=False,
+                falkordb_flag=False,
+                falkordb_password_stdin=False,
+                voice_flag=False,
+                project_flag=False,
+                embedding_url=None,
+                embedding_provider=None,
+                embedding_model=None,
+                embedding_dim=None,
+                secret_kek_posture="key-file",
+                auth_mode="disabled",
+                ide_settings_flag=None,
+                no_interactive_flag=True,
+                working_dir=tmp_path,
+            )
+
+        assert db_context.__enter__.call_count == 1
+        assert secret_store_cls.call_args == call(db)
+        assert config_store_cls.call_args == call(db)
+        assert configure_secret_kek.call_args == call(
+            secret_store,
+            "key-file",
+            no_interactive=True,
+        )
+        assert db_context.__exit__.call_count == 1
 
     def test_forwards_embedding_provider_override_and_reuses_shared_stores(
         self, tmp_path: Path

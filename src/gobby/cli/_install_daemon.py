@@ -51,6 +51,7 @@ def _docker_daemon_available() -> bool:
 
 def _port_available(port: int, host: str = "0.0.0.0") -> bool:  # nosec B104
     with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
+        sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
         sock.settimeout(0.2)
         try:
             sock.bind((host, port))

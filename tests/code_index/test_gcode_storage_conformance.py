@@ -88,7 +88,10 @@ def test_real_gcode_writer_matches_python_model_contract(
     root.mkdir()
     _write_fixture(root, INITIAL_SOURCE)
 
-    scoped_database_url = postgres_database_url + f"?options=-csearch_path%3D{postgres_schema}"
+    separator = "&" if "?" in postgres_database_url else "?"
+    scoped_database_url = (
+        postgres_database_url + f"{separator}options=-csearch_path%3D{postgres_schema}"
+    )
     code_db = PostgresHubDatabase(scoped_database_url)
     code_db.apply_migrations()
     request.addfinalizer(code_db.close)
