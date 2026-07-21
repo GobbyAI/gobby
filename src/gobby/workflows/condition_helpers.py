@@ -683,6 +683,13 @@ def completion_evidence_ready(
     return _completion_evidence_state(variables, task_ref).ready
 
 
+_CODEX_VALIDATION_RECOVERY = (
+    'Codex shell evidence requires one literal `tools.exec_command({cmd:"..."})` inside each '
+    "top-level `functions.exec`. Rerun variable-driven, looped, or batched commands as separate "
+    "calls, emit the full structured result, and use `functions.wait` until yielded calls finish."
+)
+
+
 def completion_evidence_diagnostic(
     variables: Mapping[str, Any] | None,
     task_ref: Any = None,
@@ -694,14 +701,13 @@ def completion_evidence_diagnostic(
     if state.unknown_outcome_seen:
         return (
             "Completion readiness has verification evidence with an unknown outcome; "
-            "the provider did not expose a definitive machine result. For batched Codex "
-            "validation, emit every result as structured {cmd, ...result} output; human "
-            "summaries and text(result.output) are not machine evidence."
+            "the provider did not expose a definitive machine result. "
+            f"{_CODEX_VALIDATION_RECOVERY}"
         )
     if not state.evidence_seen:
         return (
-            "Completion readiness has no verification evidence for this task. For batched "
-            "Codex validation, emit every result as structured {cmd, ...result} output."
+            "Completion readiness has no verification evidence for this task. "
+            f"{_CODEX_VALIDATION_RECOVERY}"
         )
     return "Completion readiness has no successful verification evidence for this task."
 

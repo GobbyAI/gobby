@@ -13,6 +13,7 @@ from gobby.workflows.verification_evidence import (
     MAX_VERIFICATION_EVIDENCE_ITEMS,
     VERIFICATION_EVIDENCE_RECORDED_VARIABLE,
     VERIFICATION_EVIDENCE_TYPE_MANUAL_DIFF_REVIEW,
+    VERIFICATION_EVIDENCE_TYPE_VALIDATION_COMMAND,
     VERIFICATION_EVIDENCE_VARIABLE,
     append_verification_evidence,
     validate_verification_evidence,
@@ -66,6 +67,11 @@ def register_verification_tools(
             return {
                 "success": False,
                 "error": "summary, evidence_type, and supports must be non-empty",
+            }
+        if evidence_type == VERIFICATION_EVIDENCE_TYPE_VALIDATION_COMMAND:
+            return {
+                "success": False,
+                "error": "validation_command evidence must come from a captured shell result",
             }
 
         if not session_id:

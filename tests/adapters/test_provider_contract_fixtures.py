@@ -9,7 +9,10 @@ from typing import Any
 import pytest
 
 from gobby.adapters.codex_impl.app_server_adapter import CodexAdapter
-from gobby.adapters.codex_impl.item_normalization import extract_yielded_cell_id
+from gobby.adapters.codex_impl.item_normalization import (
+    extract_functions_exec_command,
+    extract_yielded_cell_id,
+)
 from gobby.adapters.grok import GrokAdapter
 from gobby.hooks.events import HookEventType, SessionSource
 from gobby.servers.websocket.chat.backends.droid_stream import parse_droid_stream_line
@@ -165,13 +168,34 @@ def test_codex_functions_exec_contract_correlates_yielded_final_outcome() -> Non
     failed = adapter._build_completed_tool_data(by_case["yielded_final_failure"])
     unknown = adapter._build_completed_tool_data(by_case["outcome_free"])
 
+    expected_command = "GOBBY_TEST_PROTECT=1 uv run pytest tests/hooks/test_tool_outcomes.py -q"
+    assert succeeded["tool_name"] == "Bash"
+    assert succeeded["tool_input"] == {"command": expected_command}
     assert succeeded["tool_outcome"]["status"] == "succeeded"
+    assert succeeded["tool_outcome"]["exit_code"] == 0
     assert yielded["tool_outcome"]["status"] == "unknown"
     assert failed["tool_name"] == "Bash"
     assert failed["tool_input"] == yielded["tool_input"]
+    assert failed["tool_input"] == {"command": expected_command}
     assert failed["tool_outcome"]["status"] == "failed"
     assert failed["tool_outcome"]["exit_code"] == 7
     assert unknown["tool_outcome"]["status"] == "unknown"
+
+
+@pytest.mark.parametrize(
+    "arguments",
+    [
+        (
+            'const commands = ["uv run pytest tests/a.py", "uv run ruff check src/"]; '
+            "await Promise.all(commands.map(cmd => tools.exec_command({cmd})));"
+        ),
+        'const cmd = "uv run pytest tests/a.py"; await tools.exec_command({cmd});',
+    ],
+)
+def test_codex_functions_exec_contract_fails_closed_for_unsupported_shapes(
+    arguments: str,
+) -> None:
+    assert extract_functions_exec_command(arguments) is None
 
 
 @pytest.mark.parametrize(

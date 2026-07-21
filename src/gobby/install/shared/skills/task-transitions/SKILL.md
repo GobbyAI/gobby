@@ -70,19 +70,19 @@ until a later validation command succeeds. Manual evidence can satisfy readiness
 when no failed validation command is pending, but it cannot clear a failed
 validation command.
 
-Terminal Codex validation batches must emit every nested command result with
-its command attached. Preserve the structured result instead of printing only a
-summary or `result.output`:
+The Terminal Codex collector accepts one literal nested shell command per tool
+event. Run one top-level `functions.exec` call per validation command, with the
+command written directly in `cmd`, and emit the full structured result:
 
 ```javascript
-const results = await Promise.all(commands.map(cmd => tools.exec_command({cmd})));
-for (let i = 0; i < results.length; i++) {
-  text(JSON.stringify({cmd: commands[i], ...results[i]}));
-}
+const result = await tools.exec_command({cmd:"GOBBY_TEST_PROTECT=1 uv run pytest tests/path/test_file.py -q"});
+text(JSON.stringify(result));
 ```
 
-Human summaries and `text(result.output)` do not expose a definitive exit code,
-so they leave completion readiness unknown.
+If `functions.exec` yields a cell ID, call `functions.wait` on that cell until it
+finishes. Variable-driven, looped, and batched nested calls are unsupported by
+the live collector; rerun those commands as separate literal calls. Human
+summaries and `text(result.output)` leave completion readiness unknown.
 
 For a genuinely non-command artifact such as manual review or PR state, record
 evidence explicitly. Do not use manual evidence to restate or replace a shell

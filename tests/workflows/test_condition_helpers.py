@@ -123,7 +123,7 @@ class TestCompletionEvidenceReady:
         assert expected in reason
         assert "did not attach" not in reason
 
-    def test_unknown_diagnostic_explains_structured_codex_batch_results(self) -> None:
+    def test_unknown_diagnostic_explains_supported_codex_command_shape(self) -> None:
         reason = completion_evidence_diagnostic(
             {
                 "verification_evidence": [
@@ -136,8 +136,9 @@ class TestCompletionEvidenceReady:
             }
         )
 
-        assert "{cmd, ...result}" in reason
-        assert "text(result.output)" in reason
+        assert 'tools.exec_command({cmd:"..."})' in reason
+        assert "separate" in reason
+        assert "functions.wait" in reason
 
     def test_successful_validation_evidence_is_ready(self) -> None:
         assert (

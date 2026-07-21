@@ -69,6 +69,22 @@ def _codex_unknown_event() -> HookEvent:
     return event
 
 
+def _codex_functions_exec_events() -> dict[str, HookEvent]:
+    payload = json.loads((FIXTURE_ROOT / "codex" / "functions-exec-items.json").read_text())
+    adapter = CodexAdapter()
+    result: dict[str, HookEvent] = {}
+    for record in payload["events"]:
+        event = adapter.translate_to_hook_event(
+            {
+                "method": "item/completed",
+                "params": {"threadId": SESSION_ID, "item": copy.deepcopy(record["item"])},
+            }
+        )
+        assert event is not None
+        result[record["case"]] = event
+    return result
+
+
 def _grok_events() -> dict[str, HookEvent]:
     records = [
         json.loads(line)
@@ -146,6 +162,7 @@ INTERACTIVE_SESSION_SOURCES = frozenset(
     }
 )
 EXCLUDED_SESSION_SOURCES = frozenset({SessionSource.PIPELINE, SessionSource.UNKNOWN})
+CODEX_FUNCTIONS_EXEC_EVENTS = _codex_functions_exec_events()
 PROVIDER_OUTCOME_CASES = (
     ("claude-success", _hook_event(ClaudeCodeAdapter(), "PostToolUse"), "succeeded"),
     ("claude-failure", _hook_event(ClaudeCodeAdapter(), "PostToolUseFailure"), "failed"),
@@ -153,6 +170,12 @@ PROVIDER_OUTCOME_CASES = (
     ("qwen-failure", _hook_event(QwenAdapter(), "PostToolUseFailure"), "failed"),
     ("codex-success", _codex_native_event(0), "succeeded"),
     ("codex-failure", _codex_native_event(7), "failed"),
+    ("codex-functions-exec-success", CODEX_FUNCTIONS_EXEC_EVENTS["direct_success"], "succeeded"),
+    (
+        "codex-functions-wait-failure",
+        CODEX_FUNCTIONS_EXEC_EVENTS["yielded_final_failure"],
+        "failed",
+    ),
     ("codex-outcome-free", _codex_unknown_event(), "unknown"),
     ("grok-success", _grok_events()["succeeded"], "succeeded"),
     ("grok-failure", _grok_events()["failed"], "failed"),
@@ -182,6 +205,8 @@ def test_provider_outcome_drives_evidence_and_readiness(
     evidence = variables["verification_evidence"][-1]  # type: ignore[index]
     expected_success = {"succeeded": True, "failed": False, "unknown": None}
     assert event.data["tool_outcome"]["status"] == expected_outcome, provider
+    assert evidence["command"] == COMMAND
+    assert evidence.get("exit_code") == event.data["tool_outcome"].get("exit_code")
     assert evidence["success"] is expected_success[expected_outcome]
     assert completion_evidence_ready(variables) is (expected_outcome == "succeeded")
 

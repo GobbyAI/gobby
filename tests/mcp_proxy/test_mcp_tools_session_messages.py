@@ -126,6 +126,37 @@ async def test_record_verification_evidence_sets_readiness(
     assert variables["verification_evidence"][0]["tool_name"] == "record_verification_evidence"
 
 
+async def test_record_verification_evidence_rejects_validation_command(
+    temp_db, session_manager, sample_project
+) -> None:
+    session = session_manager.register(
+        external_id="reject-manual-command",
+        machine_id="machine-1",
+        source="codex",
+        project_id=sample_project["id"],
+        title="Reject manual command",
+    )
+    registry = create_session_messages_registry(session_manager=session_manager, db=temp_db)
+
+    result = await registry.call(
+        "record_verification_evidence",
+        {
+            "session_id": session.id,
+            "summary": "pytest passed",
+            "evidence_type": "validation_command",
+            "supports": "completion readiness",
+            "command": "uv run pytest tests/workflows/test_condition_helpers.py -q",
+        },
+    )
+
+    assert result == {
+        "success": False,
+        "error": "validation_command evidence must come from a captured shell result",
+    }
+    variables = SessionVariableManager(temp_db).get_variables(session.id)
+    assert "verification_evidence" not in variables
+
+
 @pytest.mark.asyncio
 async def test_record_verification_evidence_keeps_latest_50_items(
     temp_db, session_manager, sample_project
