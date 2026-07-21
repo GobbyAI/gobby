@@ -4,9 +4,12 @@ import asyncio
 import logging
 from copy import deepcopy
 from datetime import UTC, datetime
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from gobby.mcp_proxy.models import ToolProxyErrorCode
+
+if TYPE_CHECKING:
+    from gobby.hooks.events import HookEvent
 
 logger = logging.getLogger("gobby.mcp.server")
 
@@ -71,7 +74,7 @@ def build_before_tool_event(
     server_name: str,
     tool_name: str,
     arguments: dict[str, Any],
-) -> Any:
+) -> "HookEvent":
     """Build the before_tool event used for direct MCP execution."""
     from gobby.hooks.events import HookEvent, HookEventType
 

@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import json
 from dataclasses import dataclass
-from datetime import UTC
+from datetime import UTC, datetime
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
@@ -30,6 +30,7 @@ from gobby.wiki.scheduled_jobs import (
     create_wiki_upkeep_handler,
     register_wiki_cron_jobs,
 )
+from gobby.wiki.scope_resolution import ResolvedWikiScope
 from gobby.wiki.update_coordinator import WikiUpdateCoordinator
 
 WIKI_JOB_COMMANDS = (
@@ -294,8 +295,8 @@ def _job(
         interval_seconds=3600,
         action_type="handler",
         action_config=config,
-        created_at="2026-01-01T00:00:00+00:00",
-        updated_at="2026-01-01T00:00:00+00:00",
+        created_at=datetime(2026, 1, 1, tzinfo=UTC),
+        updated_at=datetime(2026, 1, 1, tzinfo=UTC),
     )
 
 
@@ -664,7 +665,7 @@ async def test_degraded_index_handoff_marks_history_failed() -> None:
     gateway = RecordingGateway()
     handler = create_wiki_refresh_handler(
         gateway=gateway,
-        coordinator=DegradedIndexCoordinator(),  # type: ignore[arg-type]
+        coordinator=DegradedIndexCoordinator(),
         scope="project:alpha",
     )
 
@@ -781,6 +782,7 @@ async def test_gwiki_timeout_envelope_records_failed_cron_run(
         action_config={"handler": "wiki:refresh:project:alpha", "scope": "project:alpha"},
     )
     run = cron_storage.create_run(job.id)
+    assert run is not None
 
     updated = await executor.execute(job, run)
 
@@ -831,6 +833,7 @@ async def test_upkeep_synthesis_failures_record_failed_cron_run(
         action_config={"handler": "wiki:upkeep:project:alpha", "scope": "project:alpha"},
     )
     run = cron_storage.create_run(job.id)
+    assert run is not None
 
     updated = await executor.execute(job, run)
 
@@ -1095,7 +1098,11 @@ async def test_default_wiki_cron_scope_resolves_project_root(
     temp_db: Any,
 ) -> None:
     executor = RecordingExecutor(handlers={})
-    resolved_scopes = []
+    resolved_scopes: list[ResolvedWikiScope] = []
+
+    def gateway_factory(scope: ResolvedWikiScope) -> RecordingGateway:
+        resolved_scopes.append(scope)
+        return RecordingGateway()
 
     await register_wiki_cron_jobs(
         cron_storage=cron_storage,
@@ -1103,7 +1110,7 @@ async def test_default_wiki_cron_scope_resolves_project_root(
         project_id=project_id,
         db=temp_db,
         scopes=None,
-        gateway_factory=lambda scope: resolved_scopes.append(scope) or RecordingGateway(),
+        gateway_factory=gateway_factory,
     )
 
     assert {scope.identity for scope in resolved_scopes} == {f"project:{project_id}"}

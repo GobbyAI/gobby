@@ -9,7 +9,6 @@ from pathlib import Path
 from typing import Any, Literal, Protocol
 
 from gobby.gwiki_gateway import GwikiCommandError, GwikiGateway, GwikiGatewayError
-from gobby.scheduler.executor import CronHandler
 from gobby.storage.cron import CronJobStorage, compute_next_run
 from gobby.storage.cron_models import CronJob
 from gobby.storage.hub.protocol import HubDatabase
@@ -33,6 +32,8 @@ from gobby.wiki.scope_resolution import (
 from gobby.wiki.update_coordinator import WikiUpdateCoordinator, written_cluster_paths
 
 logger = logging.getLogger(__name__)
+
+WikiCronHandler = Callable[[CronJob], Awaitable[str]]
 
 WIKI_REFRESH_INTERVAL_SECONDS = 60 * 60
 WIKI_HEALTH_INTERVAL_SECONDS = 30 * 60
@@ -101,8 +102,12 @@ class WikiGatewayProtocol(Protocol):
     async def recap(self, *, date: str | None = None) -> dict[str, Any]: ...
 
 
+class WikiUpdateCoordinatorProtocol(Protocol):
+    async def handle_write_result(self, result: dict[str, Any]) -> dict[str, Any]: ...
+
+
 class CronRegistrationProtocol(Protocol):
-    def register_handler(self, name: str, handler: CronHandler) -> None: ...
+    def register_handler(self, name: str, handler: WikiCronHandler) -> None: ...
 
 
 class LibrarianTaskManagerProtocol(Protocol):
@@ -135,9 +140,9 @@ WIKI_HANDLER_NAME_PREFIX = "wiki:"
 def create_wiki_refresh_handler(
     *,
     gateway: WikiGatewayProtocol,
-    coordinator: WikiUpdateCoordinator,
+    coordinator: WikiUpdateCoordinatorProtocol,
     scope: str,
-) -> CronHandler:
+) -> WikiCronHandler:
     async def refresh_handler(job: CronJob) -> str:
         result = await gateway.refresh(source_ids=None)
         coordinated = await coordinator.handle_write_result(result)
@@ -156,7 +161,7 @@ def create_wiki_health_handler(
     *,
     gateway: WikiGatewayProtocol,
     scope: str,
-) -> CronHandler:
+) -> WikiCronHandler:
     async def health_handler(job: CronJob) -> str:
         result = await gateway.health()
         return _health_history_output(
@@ -172,9 +177,9 @@ def create_wiki_health_handler(
 def create_wiki_audit_handler(
     *,
     gateway: WikiGatewayProtocol,
-    coordinator: WikiUpdateCoordinator,
+    coordinator: WikiUpdateCoordinatorProtocol,
     scope: str,
-) -> CronHandler:
+) -> WikiCronHandler:
     async def audit_handler(job: CronJob) -> str:
         result = await gateway.audit()
         coordinated = await coordinator.handle_write_result(result)
@@ -192,9 +197,9 @@ def create_wiki_audit_handler(
 def create_wiki_sync_sessions_handler(
     *,
     gateway: WikiGatewayProtocol,
-    coordinator: WikiUpdateCoordinator,
+    coordinator: WikiUpdateCoordinatorProtocol,
     scope: str,
-) -> CronHandler:
+) -> WikiCronHandler:
     async def sync_sessions_handler(job: CronJob) -> str:
         result = await gateway.sync_sessions()
         coordinated = await coordinator.handle_write_result(result)
@@ -212,9 +217,9 @@ def create_wiki_sync_sessions_handler(
 def create_wiki_upkeep_handler(
     *,
     gateway: WikiGatewayProtocol,
-    coordinator: WikiUpdateCoordinator,
+    coordinator: WikiUpdateCoordinatorProtocol,
     scope: str,
-) -> CronHandler:
+) -> WikiCronHandler:
     async def upkeep_handler(job: CronJob) -> str:
         result = await gateway.upkeep(
             ai="auto",
@@ -239,7 +244,7 @@ def create_wiki_librarian_handler(
     scope: str,
     task_manager: LibrarianTaskManagerProtocol | None,
     fallback_project_id: str,
-) -> CronHandler:
+) -> WikiCronHandler:
     """Build the librarian cron handler.
 
     Librarian is read-only for the WikiUpdateCoordinator boundary: it emits
@@ -270,9 +275,9 @@ def create_wiki_librarian_handler(
 def create_wiki_recap_handler(
     *,
     gateway: WikiGatewayProtocol,
-    coordinator: WikiUpdateCoordinator,
+    coordinator: WikiUpdateCoordinatorProtocol,
     scope: str,
-) -> CronHandler:
+) -> WikiCronHandler:
     """Build the nightly recap cron handler.
 
     Session digests come from sync-sessions, whose 24h interval job carries no
@@ -419,11 +424,11 @@ async def register_wiki_cron_jobs_for_projects(
 def _wiki_command_specs(
     *,
     gateway: WikiGatewayProtocol,
-    coordinator: WikiUpdateCoordinator,
+    coordinator: WikiUpdateCoordinatorProtocol,
     scope: str,
     task_manager: LibrarianTaskManagerProtocol | None,
     fallback_project_id: str,
-) -> tuple[tuple[str, str, int | None, str | None, CronHandler], ...]:
+) -> tuple[tuple[str, str, int | None, str | None, WikiCronHandler], ...]:
     """One (command, purpose, interval, cron_expr, handler) spec per wiki command."""
     return (
         (

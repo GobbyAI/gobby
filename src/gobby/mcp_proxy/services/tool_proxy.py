@@ -55,6 +55,7 @@ from .tool_proxy_constants import PROXY_NAMESPACE, SERVER_SUGGESTIONS
 from .tool_proxy_utils import safe_truncate
 
 if TYPE_CHECKING:
+    from gobby.hooks.events import HookEvent
     from gobby.hooks.hook_manager import HookManager
     from gobby.mcp_proxy.services.fallback import ToolFallbackResolver
     from gobby.mcp_proxy.tools.internal import InternalRegistryManager
@@ -192,7 +193,7 @@ class ToolProxyService:
         server_name: str,
         tool_name: str,
         arguments: dict[str, Any],
-    ) -> Any:
+    ) -> "HookEvent":
         """Build the before_tool event used for direct MCP execution."""
         return build_before_tool_event(
             self, effective_session_id, server_name, tool_name, arguments

@@ -137,7 +137,12 @@ def test_compute_path_cache_prefers_existing_task_cache() -> None:
 class TestTaskBackupManager:
     @pytest.mark.integration
     @pytest.mark.slow
-    def test_backup(self, backup_manager, task_manager, sample_project) -> None:
+    def test_backup(
+        self,
+        backup_manager: TaskBackupManager,
+        task_manager: LocalTaskManager,
+        sample_project: dict[str, Any],
+    ) -> None:
         # Create tasks
         t1 = task_manager.create_task(sample_project["id"], "Task 1")
         t2 = task_manager.create_task(sample_project["id"], "Task 2")
@@ -173,7 +178,12 @@ class TestTaskBackupManager:
         assert task2_data["state"]["is_closed"] is False
         assert "status" not in task2_data
 
-    def test_backup_fetches_all_pages(self, backup_manager, task_manager, sample_project) -> None:
+    def test_backup_fetches_all_pages(
+        self,
+        backup_manager: TaskBackupManager,
+        task_manager: LocalTaskManager,
+        sample_project: dict[str, Any],
+    ) -> None:
         task_manager.create_task(sample_project["id"], "Task 1")
         task_manager.create_task(sample_project["id"], "Task 2")
 
@@ -189,7 +199,10 @@ class TestTaskBackupManager:
 
     @pytest.mark.integration
     def test_jsonl_round_trip_preserves_state_packed_columns(
-        self, backup_manager, task_manager, sample_project
+        self,
+        backup_manager: TaskBackupManager,
+        task_manager: LocalTaskManager,
+        sample_project: dict[str, Any],
     ) -> None:
         task = task_manager.create_task(
             sample_project["id"],
@@ -218,7 +231,12 @@ class TestTaskBackupManager:
         assert imported.additional_skills == ["test-driven-development"]
 
     @pytest.mark.integration
-    def test_restore(self, backup_manager, task_manager, sample_project) -> None:
+    def test_restore(
+        self,
+        backup_manager: TaskBackupManager,
+        task_manager: LocalTaskManager,
+        sample_project: dict[str, Any],
+    ) -> None:
         """Test importing tasks from JSONL."""
         # Create JSONL file content
         now = "2023-01-02T00:00:00+00:00"
@@ -282,7 +300,11 @@ class TestTaskBackupManager:
 
     @pytest.mark.integration
     def test_import_skips_dependency_with_missing_endpoint(
-        self, backup_manager, task_manager, sample_project, caplog
+        self,
+        backup_manager: TaskBackupManager,
+        task_manager: LocalTaskManager,
+        sample_project: dict[str, Any],
+        caplog: pytest.LogCaptureFixture,
     ) -> None:
         task_id = _task_id("task-with-dangling-dependency")
         other_task_id = _task_id("independent-imported-task")
@@ -329,7 +351,12 @@ class TestTaskBackupManager:
         )
 
     @pytest.mark.integration
-    def test_import_conflict_resolution(self, backup_manager, task_manager, sample_project) -> None:
+    def test_import_conflict_resolution(
+        self,
+        backup_manager: TaskBackupManager,
+        task_manager: LocalTaskManager,
+        sample_project: dict[str, Any],
+    ) -> None:
         """Test LWW conflict resolution during import."""
         # 1. Local Task is NEWER (should keep local)
         t1 = task_manager.create_task(sample_project["id"], "Local Newer")
@@ -389,7 +416,10 @@ class TestTaskBackupManager:
         assert t2_fresh.title == "File Newer"
 
     def test_restore_preserves_newer_database_row(
-        self, backup_manager, task_manager, sample_project
+        self,
+        backup_manager: TaskBackupManager,
+        task_manager: LocalTaskManager,
+        sample_project: dict[str, Any],
     ) -> None:
         task = task_manager.create_task(sample_project["id"], "Newer local")
         local_old = "2020-01-01T00:00:00+00:00"
@@ -419,7 +449,10 @@ class TestTaskBackupManager:
         assert imported.updated_at == datetime.fromisoformat(database_time)
 
     def test_restore_preserves_equal_timestamp_database_row(
-        self, backup_manager, task_manager, sample_project
+        self,
+        backup_manager: TaskBackupManager,
+        task_manager: LocalTaskManager,
+        sample_project: dict[str, Any],
     ) -> None:
         task_id = _task_id("equal-timestamp")
         file_time = "2022-01-01T00:00:00+00:00"
@@ -459,7 +492,10 @@ class TestTaskBackupManager:
 
     @pytest.mark.integration
     def test_export_always_writes_fresh_content(
-        self, backup_manager, task_manager, sample_project
+        self,
+        backup_manager: TaskBackupManager,
+        task_manager: LocalTaskManager,
+        sample_project: dict[str, Any],
     ) -> None:
         """Test that export always writes correct content, even if file was externally modified."""
         task = task_manager.create_task(sample_project["id"], "Task 1")
@@ -487,7 +523,10 @@ class TestTaskBackupManager:
         assert restored_content == correct_content
 
     def test_backup_replaces_previous_file_with_live_database_rows(
-        self, backup_manager, task_manager, sample_project
+        self,
+        backup_manager: TaskBackupManager,
+        task_manager: LocalTaskManager,
+        sample_project: dict[str, Any],
     ) -> None:
         local_task = task_manager.create_task(sample_project["id"], "Local task")
         remote_task_id = _task_id("remote-only")
@@ -506,7 +545,10 @@ class TestTaskBackupManager:
         assert records[0]["title"] == "Local task"
 
     def test_backup_shrinks_after_deletion_and_restore_preserves_absent_row(
-        self, backup_manager, task_manager, sample_project
+        self,
+        backup_manager: TaskBackupManager,
+        task_manager: LocalTaskManager,
+        sample_project: dict[str, Any],
     ) -> None:
         task = task_manager.create_task(sample_project["id"], "Delete everywhere")
         backup_manager.backup()
@@ -535,7 +577,10 @@ class TestTaskBackupManager:
         assert backup_manager.db.fetchone("SELECT id FROM tasks WHERE id = %s", (task.id,))
 
     def test_import_replaces_removed_dependencies(
-        self, backup_manager, task_manager, sample_project
+        self,
+        backup_manager: TaskBackupManager,
+        task_manager: LocalTaskManager,
+        sample_project: dict[str, Any],
     ) -> None:
         blocker = task_manager.create_task(sample_project["id"], "Blocker")
         task = task_manager.create_task(sample_project["id"], "Dependent")
@@ -567,7 +612,10 @@ class TestTaskBackupManager:
 
     @pytest.mark.integration
     def test_export_replace_failure_preserves_existing_file(
-        self, backup_manager, task_manager, sample_project
+        self,
+        backup_manager: TaskBackupManager,
+        task_manager: LocalTaskManager,
+        sample_project: dict[str, Any],
     ) -> None:
         backup_manager.backup_path.parent.mkdir(parents=True, exist_ok=True)
         original = b'{"id": "existing"}\n'
@@ -588,7 +636,7 @@ class TestImportEdgeCases:
     """Tests for import edge cases and error handling."""
 
     @pytest.mark.integration
-    def test_import_no_file_exists(self, backup_manager) -> None:
+    def test_import_no_file_exists(self, backup_manager: TaskBackupManager) -> None:
         """Test import when file doesn't exist - should just return."""
         # Ensure file doesn't exist
         assert not backup_manager.backup_path.exists()
@@ -597,7 +645,12 @@ class TestImportEdgeCases:
         backup_manager.restore()
 
     @pytest.mark.integration
-    def test_import_with_empty_lines(self, backup_manager, task_manager, sample_project) -> None:
+    def test_import_with_empty_lines(
+        self,
+        backup_manager: TaskBackupManager,
+        task_manager: LocalTaskManager,
+        sample_project: dict[str, Any],
+    ) -> None:
         """Test import handles empty lines in JSONL file."""
         now = "2023-01-02T00:00:00+00:00"
 
@@ -628,7 +681,10 @@ class TestImportEdgeCases:
 
     @pytest.mark.integration
     def test_import_with_validation_data(
-        self, backup_manager, task_manager, sample_project
+        self,
+        backup_manager: TaskBackupManager,
+        task_manager: LocalTaskManager,
+        sample_project: dict[str, Any],
     ) -> None:
         """Test import handles validation object."""
         now = "2023-01-02T00:00:00+00:00"
@@ -665,7 +721,12 @@ class TestImportEdgeCases:
         assert task.validation_criteria == "Must pass unit tests"
 
     @pytest.mark.integration
-    def test_import_with_commits(self, backup_manager, task_manager, sample_project) -> None:
+    def test_import_with_commits(
+        self,
+        backup_manager: TaskBackupManager,
+        task_manager: LocalTaskManager,
+        sample_project: dict[str, Any],
+    ) -> None:
         """Test import handles commits array."""
         now = "2023-01-02T00:00:00+00:00"
 
@@ -694,7 +755,10 @@ class TestImportEdgeCases:
 
     @pytest.mark.integration
     def test_import_with_escalation_data(
-        self, backup_manager, task_manager, sample_project
+        self,
+        backup_manager: TaskBackupManager,
+        task_manager: LocalTaskManager,
+        sample_project: dict[str, Any],
     ) -> None:
         """Test import handles escalation fields."""
         now = "2023-01-02T00:00:00+00:00"
@@ -726,7 +790,10 @@ class TestImportEdgeCases:
 
     @pytest.mark.integration
     def test_import_with_canonical_state_projection(
-        self, backup_manager, task_manager, sample_project
+        self,
+        backup_manager: TaskBackupManager,
+        task_manager: LocalTaskManager,
+        sample_project: dict[str, Any],
     ) -> None:
         """Test import reads canonical lifecycle and ownership from the state object."""
         now = "2023-01-02T00:00:00+00:00"
@@ -771,7 +838,10 @@ class TestImportEdgeCases:
 
     @pytest.mark.integration
     def test_import_with_null_validation(
-        self, backup_manager, task_manager, sample_project
+        self,
+        backup_manager: TaskBackupManager,
+        task_manager: LocalTaskManager,
+        sample_project: dict[str, Any],
     ) -> None:
         """Test import handles null validation object."""
         now = "2023-01-02T00:00:00+00:00"
@@ -806,7 +876,11 @@ class TestImportEdgeCases:
         ids=["malformed", "tombstone"],
     )
     def test_invalid_record_aborts_restore_before_mutation(
-        self, bad_line, backup_manager, task_manager, sample_project
+        self,
+        bad_line: str,
+        backup_manager: TaskBackupManager,
+        task_manager: LocalTaskManager,
+        sample_project: dict[str, Any],
     ) -> None:
         task_id = _task_id("valid-before-invalid")
         valid_record = {
@@ -831,7 +905,10 @@ class TestClosedStateRoundTrip:
 
     @pytest.mark.integration
     def test_closed_task_round_trip_preserves_all_fields(
-        self, backup_manager, task_manager, sample_project
+        self,
+        backup_manager: TaskBackupManager,
+        task_manager: LocalTaskManager,
+        sample_project: dict[str, Any],
     ) -> None:
         """Test that a closed task with full metadata survives export → import."""
         task = task_manager.create_task(sample_project["id"], "Task to close")
@@ -902,7 +979,10 @@ class TestClosedStateRoundTrip:
 
     @pytest.mark.integration
     def test_update_path_preserves_session_local_fields(
-        self, backup_manager, task_manager, sample_project
+        self,
+        backup_manager: TaskBackupManager,
+        task_manager: LocalTaskManager,
+        sample_project: dict[str, Any],
     ) -> None:
         """Test that UPDATE import path preserves session-local columns."""
         task = task_manager.create_task(sample_project["id"], "Session task")
@@ -961,6 +1041,7 @@ class TestClosedStateRoundTrip:
             "compacted_at FROM tasks WHERE id = %s",
             (task.id,),
         )
+        assert row is not None
         assert row["claimed_by_session_id"] == claimed_session_id
         assert row["created_in_session_id"] == created_session_id
         assert row["closed_in_session_id"] == closed_session_id
@@ -968,7 +1049,10 @@ class TestClosedStateRoundTrip:
 
     @pytest.mark.integration
     def test_export_includes_priority_and_task_type(
-        self, backup_manager, task_manager, sample_project
+        self,
+        backup_manager: TaskBackupManager,
+        task_manager: LocalTaskManager,
+        sample_project: dict[str, Any],
     ) -> None:
         """Test that export includes priority and task_type fields."""
         task = task_manager.create_task(sample_project["id"], "Typed task")
@@ -990,7 +1074,10 @@ class TestExportEdgeCases:
 
     @pytest.mark.integration
     def test_export_multiple_dependencies(
-        self, backup_manager, task_manager, sample_project
+        self,
+        backup_manager: TaskBackupManager,
+        task_manager: LocalTaskManager,
+        sample_project: dict[str, Any],
     ) -> None:
         """Test export with task having multiple dependencies."""
         t1 = task_manager.create_task(sample_project["id"], "Dependency 1")
@@ -1019,7 +1106,10 @@ class TestExportEdgeCases:
 
     @pytest.mark.integration
     def test_export_with_validation_data(
-        self, backup_manager, task_manager, sample_project
+        self,
+        backup_manager: TaskBackupManager,
+        task_manager: LocalTaskManager,
+        sample_project: dict[str, Any],
     ) -> None:
         """Test export includes validation data."""
         task = task_manager.create_task(sample_project["id"], "Task with validation")
@@ -1047,7 +1137,12 @@ class TestExportEdgeCases:
         assert data["validation"]["criteria"] == "Must pass CI"
 
     @pytest.mark.integration
-    def test_export_with_commits(self, backup_manager, task_manager, sample_project) -> None:
+    def test_export_with_commits(
+        self,
+        backup_manager: TaskBackupManager,
+        task_manager: LocalTaskManager,
+        sample_project: dict[str, Any],
+    ) -> None:
         """Test export includes commits array."""
         task = task_manager.create_task(sample_project["id"], "Task with commits")
 
@@ -1066,7 +1161,12 @@ class TestExportEdgeCases:
         assert data["commits"] == ["commit1", "commit2"]
 
     @pytest.mark.integration
-    def test_export_error_propagates(self, backup_manager, task_manager, sample_project) -> None:
+    def test_export_error_propagates(
+        self,
+        backup_manager: TaskBackupManager,
+        task_manager: LocalTaskManager,
+        sample_project: dict[str, Any],
+    ) -> None:
         """Test that export errors are propagated."""
         task_manager.create_task(sample_project["id"], "Task 1")
 
@@ -1080,7 +1180,7 @@ class TestExportEdgeCases:
         assert isinstance(exc_info.value.__cause__, IsADirectoryError)
 
     @pytest.mark.integration
-    def test_export_empty_tasks(self, backup_manager) -> None:
+    def test_export_empty_tasks(self, backup_manager: TaskBackupManager) -> None:
         """Test export with no tasks creates empty file."""
         backup_manager.backup()
 
@@ -1094,7 +1194,7 @@ class TestImportFromGitHubIssues:
 
     @pytest.mark.asyncio
     @pytest.mark.integration
-    async def test_import_invalid_github_url(self, github_importer):
+    async def test_import_invalid_github_url(self, github_importer: GitHubIssueImporter) -> None:
         """Test import with invalid GitHub URL."""
         result = await github_importer.import_from_github_issues("not-a-url")
 
@@ -1103,7 +1203,9 @@ class TestImportFromGitHubIssues:
 
     @pytest.mark.asyncio
     @pytest.mark.integration
-    async def test_import_github_url_with_git_suffix(self, github_importer, sample_project):
+    async def test_import_github_url_with_git_suffix(
+        self, github_importer: GitHubIssueImporter, sample_project: dict[str, Any]
+    ) -> None:
         """Test import handles .git suffix in URL."""
         with patch("subprocess.run") as mock_run:
             # Mock gh --version check
@@ -1122,7 +1224,9 @@ class TestImportFromGitHubIssues:
 
     @pytest.mark.asyncio
     @pytest.mark.integration
-    async def test_import_gh_not_installed(self, github_importer, sample_project):
+    async def test_import_gh_not_installed(
+        self, github_importer: GitHubIssueImporter, sample_project: dict[str, Any]
+    ) -> None:
         """Test import when gh CLI is not installed."""
         with patch("subprocess.run") as mock_run:
             mock_run.side_effect = FileNotFoundError()
@@ -1137,7 +1241,9 @@ class TestImportFromGitHubIssues:
 
     @pytest.mark.asyncio
     @pytest.mark.integration
-    async def test_import_gh_command_fails(self, github_importer, sample_project):
+    async def test_import_gh_command_fails(
+        self, github_importer: GitHubIssueImporter, sample_project: dict[str, Any]
+    ) -> None:
         """Test import when gh command fails."""
         with patch("subprocess.run") as mock_run:
             mock_run.side_effect = [
@@ -1744,7 +1850,10 @@ class TestImportSeqNumPreservation:
 
     @pytest.mark.integration
     def test_import_preserves_seq_num_from_jsonl(
-        self, backup_manager, task_manager, sample_project
+        self,
+        backup_manager: TaskBackupManager,
+        task_manager: LocalTaskManager,
+        sample_project: dict[str, Any],
     ) -> None:
         """seq_num 42 into empty DB → gets 42."""
         now = "2023-01-02T00:00:00+00:00"
@@ -1776,7 +1885,10 @@ class TestImportSeqNumPreservation:
 
     @pytest.mark.integration
     def test_import_assigns_fresh_on_collision(
-        self, backup_manager, task_manager, sample_project
+        self,
+        backup_manager: TaskBackupManager,
+        task_manager: LocalTaskManager,
+        sample_project: dict[str, Any],
     ) -> None:
         """DB has seq_num 5, import different task with 5 → gets fresh seq."""
         # Create existing task with seq_num 5
@@ -1812,11 +1924,15 @@ class TestImportSeqNumPreservation:
         # Should NOT be 5 since that's taken
         assert task.seq_num != 5
         # Should be > 5 (fresh assignment)
+        assert task.seq_num is not None
         assert task.seq_num > 5
 
     @pytest.mark.integration
     def test_import_update_keeps_local_sequence_metadata_on_collision(
-        self, backup_manager, task_manager, sample_project
+        self,
+        backup_manager: TaskBackupManager,
+        task_manager: LocalTaskManager,
+        sample_project: dict[str, Any],
     ) -> None:
         """Updating a task keeps its local sequence metadata when the JSONL seq is occupied."""
         task = task_manager.create_task(sample_project["id"], "Task to update")
@@ -1858,7 +1974,12 @@ class TestImportSeqNumPreservation:
         assert updated.path_cache == "5"
 
     @pytest.mark.integration
-    def test_import_batch_dedup(self, backup_manager, task_manager, sample_project) -> None:
+    def test_import_batch_dedup(
+        self,
+        backup_manager: TaskBackupManager,
+        task_manager: LocalTaskManager,
+        sample_project: dict[str, Any],
+    ) -> None:
         """Two JSONL tasks with same seq_num → first wins, second gets fresh."""
         now = "2023-01-02T00:00:00+00:00"
 
@@ -1903,10 +2024,16 @@ class TestImportSeqNumPreservation:
         # First one should get 100, second should get something else
         assert t1.seq_num == 100
         assert t2.seq_num != 100
+        assert t2.seq_num is not None
         assert t2.seq_num > 100
 
     @pytest.mark.integration
-    def test_import_no_seq_num_in_jsonl(self, backup_manager, task_manager, sample_project) -> None:
+    def test_import_no_seq_num_in_jsonl(
+        self,
+        backup_manager: TaskBackupManager,
+        task_manager: LocalTaskManager,
+        sample_project: dict[str, Any],
+    ) -> None:
         """No seq_num field in JSONL → gets fresh assignment."""
         now = "2023-01-02T00:00:00+00:00"
 
@@ -1937,7 +2064,10 @@ class TestImportSeqNumPreservation:
 
     @pytest.mark.integration
     def test_path_cache_is_order_independent(
-        self, backup_manager, task_manager, sample_project
+        self,
+        backup_manager: TaskBackupManager,
+        task_manager: LocalTaskManager,
+        sample_project: dict[str, Any],
     ) -> None:
         """Child imported before its parent still gets the complete path_cache."""
         now = "2023-01-02T00:00:00+00:00"
@@ -1996,7 +2126,10 @@ class TestImportSeqNumPreservation:
 
     @pytest.mark.integration
     def test_import_path_cache_ignores_parent_from_other_project(
-        self, backup_manager, task_manager, sample_project
+        self,
+        backup_manager: TaskBackupManager,
+        task_manager: LocalTaskManager,
+        sample_project: dict[str, Any],
     ) -> None:
         """A foreign-project parent id must not shape imported task path_cache."""
         other_project = LocalProjectManager(backup_manager.db).create(

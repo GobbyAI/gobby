@@ -6,14 +6,17 @@ import subprocess
 import sys
 import threading
 import uuid
+from collections.abc import Callable
 from datetime import UTC, datetime, timedelta
+from pathlib import Path
 from types import SimpleNamespace
-from typing import Any, NoReturn
+from typing import Any, NoReturn, Protocol, cast
 from unittest.mock import MagicMock
 
 import psycopg
 import pytest
 
+from gobby.dispatch import rules as dispatch_rules
 from gobby.dispatch.actions import (
     AppendAuditMarkerAction,
     CreateIsolationAction,
@@ -22,6 +25,9 @@ from gobby.dispatch.actions import (
     StartPipelineAction,
     StartStageAction,
 )
+from gobby.dispatch.audit import append_audit_marker
+from gobby.dispatch.mutex import RuntimeDispatchMutex
+from gobby.dispatch.spawn_errors import DispatchSpawnFailed
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.task_affected_files import TaskAffectedFileManager
 from gobby.storage.tasks import LocalTaskManager, Task
@@ -46,6 +52,35 @@ _LEGACY_STAGE_MAP = {
     "merged": "merge",
 }
 STABLE_TEST_UUID_NAMESPACE = uuid.UUID("283ea5ca-a422-500e-b771-0533679ebc0a")
+
+
+class _HasId(Protocol):
+    id: str
+
+
+class _HasRepoPath(Protocol):
+    repo_path: str
+
+
+class _DispatchInputsLogRecord(Protocol):
+    registry_entry: dict[str, str]
+    raw_dispatch_inputs_json: str
+    error: str
+
+
+class _DispatchContext(Protocol):
+    stage_registry: dict[str, Any]
+    agents: dict[str, Any]
+    agent_definitions: dict[str, Any]
+
+
+def _required[T](value: T | None) -> T:
+    assert value is not None
+    return value
+
+
+def _field(obj: object | None, key: str, default: object | None = None) -> object | None:
+    return getattr(obj, key, default)
 
 
 @pytest.fixture(autouse=True)
@@ -255,12 +290,12 @@ async def test_sweep_expired_leases_retains_run_attached_after_candidate_select(
             "UPDATE task_dispatch_mutex SET run_id = %s WHERE task_id = %s",
             (run.id, task.id),
         )
-        return rows
+        return [dict(row) for row in rows]
 
     monkeypatch.setattr(temp_db, "fetchall", fetch_candidates_then_attach_run)
 
     assert await sweep_expired_leases(storage) == 0
-    assert storage.get_mutex(task.id).run_id == run.id
+    assert _required(storage.get_mutex(task.id)).run_id == run.id
 
 
 @pytest.mark.parametrize(
@@ -284,13 +319,11 @@ async def test_append_audit_marker_is_exact_marker_idempotent(
     temp_db: HubDatabase,
     sample_project: dict[str, Any],
 ) -> None:
-    from gobby.dispatch import dispatcher
-
     task = _task(temp_db, sample_project)
 
-    assert await dispatcher.append_audit_marker(temp_db, task.id, "Dispatch", "marker") is True
-    assert await dispatcher.append_audit_marker(temp_db, task.id, "Dispatch", "marker") is False
-    assert await dispatcher.append_audit_marker(temp_db, task.id, "Dispatch", "other") is True
+    assert await append_audit_marker(temp_db, task.id, "Dispatch", "marker") is True
+    assert await append_audit_marker(temp_db, task.id, "Dispatch", "marker") is False
+    assert await append_audit_marker(temp_db, task.id, "Dispatch", "other") is True
     description = get_task(temp_db, task.id).description or ""
     assert description.count("### Dispatch\n\nmarker") == 1
     assert description.count("### Dispatch") == 2
@@ -301,14 +334,13 @@ async def test_append_audit_marker_only_dedupes_trailing_marker(
     temp_db: HubDatabase,
     sample_project: dict[str, Any],
 ) -> None:
-    from gobby.dispatch import dispatcher
     from gobby.dispatch.audit import audit_marker_text
 
     task = _task(temp_db, sample_project)
     marker = audit_marker_text("Dispatch", "marker")
     update_task(temp_db, task.id, description=f"Earlier note{marker}\n\nLater note")
 
-    assert await dispatcher.append_audit_marker(temp_db, task.id, "Dispatch", "marker") is True
+    assert await append_audit_marker(temp_db, task.id, "Dispatch", "marker") is True
     description = get_task(temp_db, task.id).description or ""
     assert description.count(marker) == 2
 
@@ -317,16 +349,11 @@ async def test_append_audit_marker_only_dedupes_trailing_marker(
 async def test_append_audit_marker_returns_false_on_db_failure(
     caplog: pytest.LogCaptureFixture,
 ) -> None:
-    from gobby.dispatch import dispatcher
-
     broken_db = MagicMock()
     broken_db.fetchone.side_effect = psycopg.OperationalError("database unavailable")
     caplog.set_level(logging.WARNING, logger="gobby.dispatch.audit")
 
-    assert (
-        await dispatcher.append_audit_marker(broken_db, UNKNOWN_TASK_ID, "Dispatch", "marker")
-        is False
-    )
+    assert await append_audit_marker(broken_db, UNKNOWN_TASK_ID, "Dispatch", "marker") is False
     assert f"Failed to append dispatch audit marker for task {UNKNOWN_TASK_ID}" in caplog.text
 
 
@@ -372,7 +399,7 @@ class _FakePipeline:
     name = "02e3e743-e572-51b3-a0f4-83e68271282f"
     enabled = True
     deprecated = False
-    steps = []
+    steps: list[object] = []
 
     def model_dump_json(self) -> str:
         return '{"name":"02e3e743-e572-51b3-a0f4-83e68271282f"}'
@@ -382,7 +409,7 @@ class _FakePipelineLoader:
     def __init__(self) -> None:
         self.project_ids: list[str] = []
 
-    async def load_pipeline(self, name: str, project_id: str):
+    async def load_pipeline(self, name: str, project_id: str) -> _FakePipeline | None:
         self.project_ids.append(project_id)
         return _FakePipeline() if name == "02e3e743-e572-51b3-a0f4-83e68271282f" else None
 
@@ -393,7 +420,7 @@ class _FakePipelineExecutor:
         self.calls: list[dict[str, object]] = []
         self.called = asyncio.Event()
 
-    async def execute(self, **kwargs):
+    async def execute(self, **kwargs: Any) -> SimpleNamespace:
         self.record_call(kwargs)
         return SimpleNamespace(id=kwargs["execution_id"], status="completed")
 
@@ -444,8 +471,8 @@ async def test_stage_pipeline_loader_value_error_escalates() -> None:
 
     def escalate(
         action: StartPipelineAction,
-        received_mutex: object,
-        received_db: object,
+        received_mutex: RuntimeDispatchMutex,
+        received_db: HubDatabase,
         reason: str,
     ) -> dict[str, object]:
         escalations.append(
@@ -458,7 +485,7 @@ async def test_stage_pipeline_loader_value_error_escalates() -> None:
         )
         return {"success": False, "reason": reason}
 
-    def unexpected_sync_call(*_args: object, **_kwargs: object) -> object:
+    def unexpected_sync_call(*_args: object, **_kwargs: object) -> NoReturn:
         raise AssertionError("pipeline dispatch should have escalated before this call")
 
     async def unexpected_async_call(*_args: object, **_kwargs: object) -> None:
@@ -466,13 +493,13 @@ async def test_stage_pipeline_loader_value_error_escalates() -> None:
 
     result = await start_pipeline_action(
         _pipeline_action("7d34e462-6ba3-5a6c-b1c6-1584b855cb83"),
-        mutex=mutex,
-        db=db,
+        mutex=cast(RuntimeDispatchMutex, mutex),
+        db=cast(HubDatabase, db),
         context=SimpleNamespace(project_id="0e27d5b7-167e-5a64-8bd9-6b980bd88f06"),
         services=SimpleNamespace(
             pipeline_executor=SimpleNamespace(loader=_ValueErrorPipelineLoader())
         ),
-        field=lambda obj, key, default=None: getattr(obj, key, default),
+        field=_field,
         escalate_pipeline_dispatch=escalate,
         retry_neutral_pipeline_dispatch=unexpected_sync_call,
         render_dispatch_inputs=unexpected_sync_call,
@@ -498,14 +525,14 @@ async def test_stage_pipeline_disabled_definition_escalates() -> None:
 
     def escalate(
         _action: StartPipelineAction,
-        _mutex: object,
-        _db: object,
+        _mutex: RuntimeDispatchMutex,
+        _db: HubDatabase,
         reason: str,
     ) -> dict[str, object]:
         escalations.append(reason)
         return {"success": False, "reason": reason}
 
-    def unexpected_sync_call(*_args: object, **_kwargs: object) -> object:
+    def unexpected_sync_call(*_args: object, **_kwargs: object) -> NoReturn:
         raise AssertionError("disabled pipeline dispatch should stop before execution")
 
     async def unexpected_async_call(*_args: object, **_kwargs: object) -> None:
@@ -513,13 +540,13 @@ async def test_stage_pipeline_disabled_definition_escalates() -> None:
 
     result = await start_pipeline_action(
         action,
-        mutex=mutex,
-        db=db,
+        mutex=cast(RuntimeDispatchMutex, mutex),
+        db=cast(HubDatabase, db),
         context=SimpleNamespace(project_id="0e27d5b7-167e-5a64-8bd9-6b980bd88f06"),
         services=SimpleNamespace(
             pipeline_executor=SimpleNamespace(loader=_DisabledPipelineLoader())
         ),
-        field=lambda obj, key, default=None: getattr(obj, key, default),
+        field=_field,
         escalate_pipeline_dispatch=escalate,
         retry_neutral_pipeline_dispatch=unexpected_sync_call,
         render_dispatch_inputs=unexpected_sync_call,
@@ -537,7 +564,7 @@ async def test_stage_pipeline_disabled_definition_escalates() -> None:
 async def test_stage_pipeline_loader_unexpected_error_propagates() -> None:
     from gobby.dispatch.stage_pipeline import start_pipeline_action
 
-    def unexpected_sync_call(*_args: object, **_kwargs: object) -> object:
+    def unexpected_sync_call(*_args: object, **_kwargs: object) -> NoReturn:
         raise AssertionError("unexpected loader errors should propagate before this call")
 
     async def unexpected_async_call(*_args: object, **_kwargs: object) -> None:
@@ -546,13 +573,13 @@ async def test_stage_pipeline_loader_unexpected_error_propagates() -> None:
     with pytest.raises(RuntimeError, match="loader unavailable"):
         await start_pipeline_action(
             _pipeline_action("7d34e462-6ba3-5a6c-b1c6-1584b855cb83"),
-            mutex=object(),
-            db=object(),
+            mutex=cast(RuntimeDispatchMutex, object()),
+            db=cast(HubDatabase, object()),
             context=SimpleNamespace(project_id="0e27d5b7-167e-5a64-8bd9-6b980bd88f06"),
             services=SimpleNamespace(
                 pipeline_executor=SimpleNamespace(loader=_RuntimeErrorPipelineLoader())
             ),
-            field=lambda obj, key, default=None: getattr(obj, key, default),
+            field=_field,
             escalate_pipeline_dispatch=unexpected_sync_call,
             retry_neutral_pipeline_dispatch=unexpected_sync_call,
             render_dispatch_inputs=unexpected_sync_call,
@@ -567,7 +594,7 @@ class _EnabledPipelineLoader:
         return SimpleNamespace(enabled=True, deprecated=False)
 
 
-def _unexpected_pipeline_call(*_args: object, **_kwargs: object) -> object:
+def _unexpected_pipeline_call(*_args: object, **_kwargs: object) -> NoReturn:
     raise AssertionError("pipeline dispatch should not reach this call")
 
 
@@ -595,23 +622,26 @@ async def test_stage_pipeline_spawn_runs_on_current_loop_when_durable(
         executed["loop"] = asyncio.get_running_loop()
         executed["execution_id"] = execution_id
 
+    def register_background_task(execution_id: str, task: asyncio.Task[Any]) -> None:
+        registered.append((execution_id, task))
+
     result = await stage_pipeline.start_pipeline_action(
         _pipeline_action("7d34e462-6ba3-5a6c-b1c6-1584b855cb83"),
-        mutex=object(),
-        db=object(),
+        mutex=cast(RuntimeDispatchMutex, object()),
+        db=cast(HubDatabase, object()),
         context=SimpleNamespace(project_id="0e27d5b7-167e-5a64-8bd9-6b980bd88f06"),
         services=SimpleNamespace(
             pipeline_executor=SimpleNamespace(loader=_EnabledPipelineLoader()),
             main_loop=asyncio.get_running_loop(),
             triggering_session_id=None,
         ),
-        field=lambda obj, key, default=None: getattr(obj, key, default),
+        field=_field,
         escalate_pipeline_dispatch=_unexpected_pipeline_call,
         retry_neutral_pipeline_dispatch=_unexpected_pipeline_call,
         render_dispatch_inputs=lambda *_a, **_k: {},
         create_stage_pipeline_execution=lambda *_a, **_k: "exec-current-loop",
         execute_pipeline_background=fake_execute,
-        register_background_task=lambda execution_id, task: registered.append((execution_id, task)),
+        register_background_task=register_background_task,
     )
 
     assert result == {"success": True, "execution_id": "exec-current-loop", "status": "running"}
@@ -654,6 +684,9 @@ async def test_stage_pipeline_spawn_hands_off_to_main_loop_from_ephemeral_loop(
         executed["execution_id"] = execution_id
         execution_done.set()
 
+    def register_background_task(execution_id: str, task: asyncio.Task[Any]) -> None:
+        registered.append((execution_id, task))
+
     services = SimpleNamespace(
         pipeline_executor=SimpleNamespace(loader=_EnabledPipelineLoader()),
         main_loop=main_loop,
@@ -664,19 +697,17 @@ async def test_stage_pipeline_spawn_hands_off_to_main_loop_from_ephemeral_loop(
         return asyncio.run(
             stage_pipeline.start_pipeline_action(
                 _pipeline_action("7d34e462-6ba3-5a6c-b1c6-1584b855cb83"),
-                mutex=object(),
-                db=object(),
+                mutex=cast(RuntimeDispatchMutex, object()),
+                db=cast(HubDatabase, object()),
                 context=SimpleNamespace(project_id="0e27d5b7-167e-5a64-8bd9-6b980bd88f06"),
                 services=services,
-                field=lambda obj, key, default=None: getattr(obj, key, default),
+                field=_field,
                 escalate_pipeline_dispatch=_unexpected_pipeline_call,
                 retry_neutral_pipeline_dispatch=_unexpected_pipeline_call,
                 render_dispatch_inputs=lambda *_a, **_k: {},
                 create_stage_pipeline_execution=lambda *_a, **_k: "exec-handoff",
                 execute_pipeline_background=fake_execute,
-                register_background_task=lambda execution_id, task: registered.append(
-                    (execution_id, task)
-                ),
+                register_background_task=register_background_task,
             )
         )
 
@@ -716,17 +747,24 @@ async def test_stage_pipeline_spawn_fails_when_target_loop_does_not_acknowledge(
     async def fake_execute(*_args: object, **_kwargs: object) -> None:
         return None
 
+    def record_escalation(
+        _action: StartPipelineAction,
+        _mutex: RuntimeDispatchMutex,
+        _db: HubDatabase,
+        reason: str,
+    ) -> dict[str, object]:
+        escalated.append(reason)
+        return {"success": False, "error": reason}
+
     try:
         result = await stage_pipeline.start_pipeline_action(
             _pipeline_action("7d34e462-6ba3-5a6c-b1c6-1584b855cb83"),
-            mutex=object(),
-            db=object(),
+            mutex=cast(RuntimeDispatchMutex, object()),
+            db=cast(HubDatabase, object()),
             context=SimpleNamespace(project_id="0e27d5b7-167e-5a64-8bd9-6b980bd88f06"),
             services=services,
-            field=lambda obj, key, default=None: getattr(obj, key, default),
-            escalate_pipeline_dispatch=lambda _action, _mutex, _db, reason: (
-                escalated.append(reason) or {"success": False, "error": reason}
-            ),
+            field=_field,
+            escalate_pipeline_dispatch=record_escalation,
             retry_neutral_pipeline_dispatch=_unexpected_pipeline_call,
             render_dispatch_inputs=lambda *_a, **_k: {},
             create_stage_pipeline_execution=lambda *_a, **_k: "exec-timeout",
@@ -791,11 +829,11 @@ async def test_stage_pipeline_timeout_cancels_task_registered_late(
     try:
         result = await stage_pipeline.start_pipeline_action(
             _pipeline_action("7d34e462-6ba3-5a6c-b1c6-1584b855cb83"),
-            mutex=object(),
-            db=object(),
+            mutex=cast(RuntimeDispatchMutex, object()),
+            db=cast(HubDatabase, object()),
             context=SimpleNamespace(project_id="0e27d5b7-167e-5a64-8bd9-6b980bd88f06"),
             services=services,
-            field=lambda obj, key, default=None: getattr(obj, key, default),
+            field=_field,
             escalate_pipeline_dispatch=lambda _action, _mutex, _db, reason: {
                 "success": False,
                 "error": reason,
@@ -855,11 +893,11 @@ async def test_stage_pipeline_handles_loop_closing_before_scheduling(
 
     result = await stage_pipeline.start_pipeline_action(
         _pipeline_action("7d34e462-6ba3-5a6c-b1c6-1584b855cb83"),
-        mutex=object(),
-        db=object(),
+        mutex=cast(RuntimeDispatchMutex, object()),
+        db=cast(HubDatabase, object()),
         context=SimpleNamespace(project_id="0e27d5b7-167e-5a64-8bd9-6b980bd88f06"),
         services=services,
-        field=lambda obj, key, default=None: getattr(obj, key, default),
+        field=_field,
         escalate_pipeline_dispatch=lambda _action, _mutex, _db, reason: {
             "success": False,
             "error": reason,
@@ -875,7 +913,9 @@ async def test_stage_pipeline_handles_loop_closing_before_scheduling(
     execution_manager.update_execution_status.assert_called_once()
 
 
-def test_candidate_filter_excludes_claimed_leased_blocked_terminal(temp_db, sample_project) -> None:
+def test_candidate_filter_excludes_claimed_leased_blocked_terminal(
+    temp_db: HubDatabase, sample_project: dict[str, Any]
+) -> None:
     """Candidate filter excludes claimed leased blocked terminal."""
     from gobby.storage.tasks import _automation
 
@@ -914,8 +954,8 @@ def test_candidate_filter_excludes_claimed_leased_blocked_terminal(temp_db, samp
 
 @pytest.mark.asyncio
 async def test_heartbeat_blocks_child_development_while_parent_expansion_needs_review(
-    temp_db,
-    sample_project,
+    temp_db: HubDatabase,
+    sample_project: dict[str, Any],
 ) -> None:
     from gobby.dispatch import dispatcher
     from gobby.storage.tasks import _automation
@@ -939,15 +979,18 @@ async def test_heartbeat_blocks_child_development_while_parent_expansion_needs_r
 
     assert child.id not in {candidate.id for candidate in candidates}
     assert result.executed == 0
-    assert LocalTaskManager(temp_db).stage_states.get(child.id, "development").state == "ready"
+    assert (
+        _required(LocalTaskManager(temp_db).stage_states.get(child.id, "development")).state
+        == "ready"
+    )
 
 
 @pytest.mark.parametrize("parent_development_state", ["ready", "in_progress"])
 @pytest.mark.asyncio
 async def test_heartbeat_allows_child_development_after_parent_expansion_done(
     parent_development_state: str,
-    temp_db,
-    sample_project,
+    temp_db: HubDatabase,
+    sample_project: dict[str, Any],
 ) -> None:
     from gobby.dispatch import dispatcher
 
@@ -969,7 +1012,7 @@ async def test_heartbeat_allows_child_development_after_parent_expansion_done(
     result = await dispatcher.run_heartbeat(db=temp_db, project_id=sample_project["id"])
 
     assert result.executed == 1
-    assert LocalTaskManager(temp_db).stage_states.get(child.id, "development").state == (
+    assert _required(LocalTaskManager(temp_db).stage_states.get(child.id, "development")).state == (
         "in_progress"
     )
 
@@ -1016,8 +1059,13 @@ async def test_heartbeat_records_gated_epic_root_before_reopened_descendant(
     )
 
     assert result.executed == 1
-    assert LocalTaskManager(temp_db).stage_states.get(child.id, "development").state == "ready"
-    assert LocalTaskManager(temp_db).stage_states.get(root.id, "epic_qa").state == "ready"
+    assert (
+        _required(LocalTaskManager(temp_db).stage_states.get(child.id, "development")).state
+        == "ready"
+    )
+    assert (
+        _required(LocalTaskManager(temp_db).stage_states.get(root.id, "epic_qa")).state == "ready"
+    )
     root_description = get_task(temp_db, root.id).description or ""
     assert "### Epic QA deferred" in root_description
 
@@ -1124,7 +1172,9 @@ async def test_heartbeat_escalates_exhausted_epic_qa_review(
     assert escalated.escalation_reason == "epic_qa_max_review_rounds"
 
 
-def test_count_active_agents_scopes_by_parent_session_project(temp_db, sample_project) -> None:
+def test_count_active_agents_scopes_by_parent_session_project(
+    temp_db: HubDatabase, sample_project: dict[str, Any]
+) -> None:
     """Count active agents scopes by parent session project."""
     from gobby.dispatch.dispatcher import count_active_agents
     from gobby.storage.agents import LocalAgentRunManager
@@ -1160,16 +1210,20 @@ def test_count_active_agents_scopes_by_parent_session_project(temp_db, sample_pr
 
 @pytest.mark.asyncio
 async def test_max_active_agents_cap(
-    monkeypatch: pytest.MonkeyPatch, temp_db, sample_project
+    monkeypatch: pytest.MonkeyPatch, temp_db: HubDatabase, sample_project: dict[str, Any]
 ) -> None:
     """Max active agents cap."""
     from gobby.dispatch import dispatcher
 
     _task(temp_db, sample_project)
     spawned: list[object] = []
+
+    def record_spawn(*args: object, **_kwargs: object) -> None:
+        spawned.append(args)
+
     monkeypatch.setattr(dispatcher, "count_active_agents", lambda *args, **kwargs: 2)
     monkeypatch.setattr(dispatcher, "MAX_ACTIVE_AGENTS", 2)
-    monkeypatch.setattr(dispatcher, "spawn_agent", lambda *args, **kwargs: spawned.append(args))
+    monkeypatch.setattr(dispatcher, "spawn_agent", record_spawn)
 
     result = await dispatcher.run_heartbeat(db=temp_db, project_id=sample_project["id"])
 
@@ -1179,7 +1233,7 @@ async def test_max_active_agents_cap(
 
 @pytest.mark.asyncio
 async def test_heartbeat_reaps_stale_pending_runs_before_agent_cap(
-    monkeypatch: pytest.MonkeyPatch, temp_db, sample_project
+    monkeypatch: pytest.MonkeyPatch, temp_db: HubDatabase, sample_project: dict[str, Any]
 ) -> None:
     from gobby.dispatch import dispatcher
 
@@ -1356,7 +1410,7 @@ async def test_global_agent_cap_admission_releases_after_interrupted_spawn(
         if project_id == sample_project["id"]:
             first_entered.set()
             await release_first.wait()
-            raise dispatcher.DispatchSpawnFailed("injected spawn failure")
+            raise DispatchSpawnFailed("injected spawn failure")
         second_entered.set()
         return runs.create(
             parent_session_id=parent_sessions[project_id],
@@ -1412,8 +1466,8 @@ async def test_global_agent_cap_admission_releases_after_interrupted_spawn(
 
 @pytest.mark.asyncio
 async def test_run_heartbeat_serializes_overlapping_development_start_actions(
-    temp_db,
-    sample_project,
+    temp_db: HubDatabase,
+    sample_project: dict[str, Any],
 ) -> None:
     """Run heartbeat serializes overlapping development start actions."""
     from gobby.dispatch import dispatcher
@@ -1429,14 +1483,14 @@ async def test_run_heartbeat_serializes_overlapping_development_start_actions(
     stage_states = LocalTaskManager(temp_db).stage_states
     assert result.executed == 1
     assert result.skipped == 1
-    assert stage_states.get(first.id, "development").state == "in_progress"
-    assert stage_states.get(second.id, "development").state == "ready"
+    assert _required(stage_states.get(first.id, "development")).state == "in_progress"
+    assert _required(stage_states.get(second.id, "development")).state == "ready"
 
 
 @pytest.mark.asyncio
 async def test_run_heartbeat_allows_disjoint_development_write_sets(
-    temp_db,
-    sample_project,
+    temp_db: HubDatabase,
+    sample_project: dict[str, Any],
 ) -> None:
     """Run heartbeat allows disjoint development write sets."""
     from gobby.dispatch import dispatcher
@@ -1452,14 +1506,14 @@ async def test_run_heartbeat_allows_disjoint_development_write_sets(
     stage_states = LocalTaskManager(temp_db).stage_states
     assert result.executed == 2
     assert result.skipped == 0
-    assert stage_states.get(first.id, "development").state == "in_progress"
-    assert stage_states.get(second.id, "development").state == "in_progress"
+    assert _required(stage_states.get(first.id, "development")).state == "in_progress"
+    assert _required(stage_states.get(second.id, "development")).state == "in_progress"
 
 
 @pytest.mark.asyncio
 async def test_run_heartbeat_max_actions_stops_after_one_lifecycle_action(
-    temp_db,
-    sample_project,
+    temp_db: HubDatabase,
+    sample_project: dict[str, Any],
 ) -> None:
     """A quick dispatcher pass runs exactly one action even with multiple ready tasks."""
     from gobby.dispatch import dispatcher
@@ -1476,14 +1530,14 @@ async def test_run_heartbeat_max_actions_stops_after_one_lifecycle_action(
     stage_states = LocalTaskManager(temp_db).stage_states
     assert result.executed == 1
     assert result.cap_reached is True
-    assert stage_states.get(first.id, "development").state == "in_progress"
-    assert stage_states.get(second.id, "development").state == "ready"
+    assert _required(stage_states.get(first.id, "development")).state == "in_progress"
+    assert _required(stage_states.get(second.id, "development")).state == "ready"
 
 
 @pytest.mark.asyncio
 async def test_run_heartbeat_blocks_ready_task_behind_active_overlapping_write_set(
-    temp_db,
-    sample_project,
+    temp_db: HubDatabase,
+    sample_project: dict[str, Any],
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """Run heartbeat blocks ready task behind active overlapping write set."""
@@ -1517,7 +1571,10 @@ async def test_run_heartbeat_blocks_ready_task_behind_active_overlapping_write_s
     assert result.executed == 0
     assert result.skipped == 1
     assert metric_outcomes == ["dispatcher:skipped"]
-    assert LocalTaskManager(temp_db).stage_states.get(waiting.id, "development").state == "ready"
+    assert (
+        _required(LocalTaskManager(temp_db).stage_states.get(waiting.id, "development")).state
+        == "ready"
+    )
 
 
 @pytest.mark.asyncio
@@ -1532,7 +1589,11 @@ async def test_run_heartbeat_skips_spawn_when_daemon_not_ready(
     _task(temp_db, sample_project)
     spawned: list[object] = []
     services = SimpleNamespace(startup_ready=False, shutdown_in_progress=False)
-    monkeypatch.setattr(dispatcher, "spawn_agent", lambda *args, **kwargs: spawned.append(args))
+
+    def record_spawn(*args: object, **_kwargs: object) -> None:
+        spawned.append(args)
+
+    monkeypatch.setattr(dispatcher, "spawn_agent", record_spawn)
 
     result = await dispatcher.run_heartbeat(
         db=temp_db,
@@ -1548,8 +1609,8 @@ async def test_run_heartbeat_skips_spawn_when_daemon_not_ready(
 @pytest.mark.asyncio
 async def test_cancelled_spawn_releases_no_run_mutex(
     monkeypatch: pytest.MonkeyPatch,
-    temp_db,
-    sample_project,
+    temp_db: HubDatabase,
+    sample_project: dict[str, Any],
 ) -> None:
     """Cancelled spawn releases no run mutex."""
     from gobby.dispatch import dispatcher
@@ -1588,8 +1649,8 @@ async def test_cancelled_spawn_releases_no_run_mutex(
 
 async def test_cancelled_heartbeat_candidate_releases_mutex_before_next_heartbeat(
     monkeypatch: pytest.MonkeyPatch,
-    temp_db,
-    sample_project,
+    temp_db: HubDatabase,
+    sample_project: dict[str, Any],
 ) -> None:
     """Heartbeat cancellation cannot strand a candidate mutex."""
     from gobby.dispatch import dispatcher
@@ -1608,7 +1669,7 @@ async def test_cancelled_heartbeat_candidate_releases_mutex_before_next_heartbea
             await asyncio.Future()
         return True
 
-    monkeypatch.setattr(dispatcher.dispatch_rules, "evaluate", lambda *args, **kwargs: action)
+    monkeypatch.setattr(dispatch_rules, "evaluate", lambda *args, **kwargs: action)
     monkeypatch.setattr(dispatcher, "execute_action", cancel_first_action)
 
     heartbeat = asyncio.create_task(
@@ -1641,7 +1702,7 @@ async def test_mutex_lifecycle(
     task = _task(temp_db, sample_project)
     storage = _mutex_storage(temp_db)
     monkeypatch.setattr(
-        dispatcher.dispatch_rules,
+        dispatch_rules,
         "evaluate",
         lambda *args, **kwargs: _audit_action(task.id),
     )
@@ -1649,12 +1710,12 @@ async def test_mutex_lifecycle(
     await dispatcher.run_heartbeat(db=temp_db, project_id=sample_project["id"])
 
     assert storage.get_mutex(task.id) is None
-    assert "### Dispatch" in get_task(temp_db, task.id).description
+    assert "### Dispatch" in (get_task(temp_db, task.id).description or "")
 
 
 @pytest.mark.asyncio
 async def test_toctou_skip_on_changed_tuple(
-    monkeypatch: pytest.MonkeyPatch, temp_db, sample_project
+    monkeypatch: pytest.MonkeyPatch, temp_db: HubDatabase, sample_project: dict[str, Any]
 ) -> None:
     """Toctou skip on changed tuple."""
     from gobby.dispatch import dispatcher
@@ -1662,13 +1723,14 @@ async def test_toctou_skip_on_changed_tuple(
     _task(temp_db, sample_project)
     executed: list[object] = []
 
-    def reload_changed(task_id: str, **kwargs):
+    def reload_changed(task_id: str, **kwargs: Any) -> Task:
         return get_task(temp_db, task_id) if executed else _task_changed(temp_db, task_id)
 
+    def record_action(action: object, **_kwargs: object) -> None:
+        executed.append(action)
+
     monkeypatch.setattr(dispatcher, "reload_candidate", reload_changed)
-    monkeypatch.setattr(
-        dispatcher, "execute_action", lambda action, **kwargs: executed.append(action)
-    )
+    monkeypatch.setattr(dispatcher, "execute_action", record_action)
 
     result = await dispatcher.run_heartbeat(db=temp_db, project_id=sample_project["id"])
 
@@ -1676,14 +1738,14 @@ async def test_toctou_skip_on_changed_tuple(
     assert executed == []
 
 
-def _task_changed(temp_db, task_id: str):
+def _task_changed(temp_db: HubDatabase, task_id: str) -> Task:
     set_stage_state(temp_db, task_id, "development", "in_progress")
     return get_task(temp_db, task_id)
 
 
 @pytest.mark.asyncio
 async def test_first_match_action_executed(
-    monkeypatch: pytest.MonkeyPatch, temp_db, sample_project
+    monkeypatch: pytest.MonkeyPatch, temp_db: HubDatabase, sample_project: dict[str, Any]
 ) -> None:
     """First match action executed."""
     from gobby.dispatch import dispatcher
@@ -1691,10 +1753,12 @@ async def test_first_match_action_executed(
     task = _task(temp_db, sample_project)
     executed: list[object] = []
     action = _audit_action(task.id)
-    monkeypatch.setattr(dispatcher.dispatch_rules, "evaluate", lambda *args, **kwargs: action)
-    monkeypatch.setattr(
-        dispatcher, "execute_action", lambda action, **kwargs: executed.append(action)
-    )
+
+    def record_action(action: object, **_kwargs: object) -> None:
+        executed.append(action)
+
+    monkeypatch.setattr(dispatch_rules, "evaluate", lambda *args, **kwargs: action)
+    monkeypatch.setattr(dispatcher, "execute_action", record_action)
 
     await dispatcher.run_heartbeat(db=temp_db, project_id=sample_project["id"])
 
@@ -1703,7 +1767,7 @@ async def test_first_match_action_executed(
 
 @pytest.mark.asyncio
 async def test_spawn_action_links_run_id(
-    monkeypatch: pytest.MonkeyPatch, temp_db, sample_project
+    monkeypatch: pytest.MonkeyPatch, temp_db: HubDatabase, sample_project: dict[str, Any]
 ) -> None:
     """Spawn action links run id."""
     from gobby.dispatch import dispatcher
@@ -1716,19 +1780,19 @@ async def test_spawn_action_links_run_id(
         agent_slug="backend-developer",
         prompt="go",
     )
-    monkeypatch.setattr(dispatcher.dispatch_rules, "evaluate", lambda *args, **kwargs: action)
+    monkeypatch.setattr(dispatch_rules, "evaluate", lambda *args, **kwargs: action)
     monkeypatch.setattr(
         dispatcher, "spawn_agent", lambda *args, **kwargs: "ac314d27-4314-5fe3-a0ab-01645086e137"
     )
 
     await dispatcher.run_heartbeat(db=temp_db, project_id=sample_project["id"])
 
-    assert storage.get_mutex(task.id).run_id == "ac314d27-4314-5fe3-a0ab-01645086e137"
+    assert _required(storage.get_mutex(task.id)).run_id == "ac314d27-4314-5fe3-a0ab-01645086e137"
 
 
 @pytest.mark.asyncio
 async def test_spawn_action_skips_stale_candidate_with_active_run_mutex(
-    monkeypatch: pytest.MonkeyPatch, temp_db, sample_project
+    monkeypatch: pytest.MonkeyPatch, temp_db: HubDatabase, sample_project: dict[str, Any]
 ) -> None:
     """Stale candidates cannot overwrite an existing active run mutex."""
     from gobby.dispatch import dispatcher
@@ -1749,16 +1813,14 @@ async def test_spawn_action_skips_stale_candidate_with_active_run_mutex(
         prompt="go",
     )
     spawned: list[tuple[str, str, str]] = []
+
+    def record_spawn(action: SpawnAgentAction, **_kwargs: object) -> str:
+        spawned.append((action.task_id, action.task_ref, action.agent_slug))
+        return "ad91abd1-f0f0-527c-a037-2270467bb189"
+
     monkeypatch.setattr(dispatcher, "list_automation_candidates", lambda *args, **kwargs: [task])
-    monkeypatch.setattr(dispatcher.dispatch_rules, "evaluate", lambda *args, **kwargs: action)
-    monkeypatch.setattr(
-        dispatcher,
-        "spawn_agent",
-        lambda action, **_kwargs: spawned.append(
-            (action.task_id, action.task_ref, action.agent_slug)
-        )
-        or "ad91abd1-f0f0-527c-a037-2270467bb189",
-    )
+    monkeypatch.setattr(dispatch_rules, "evaluate", lambda *args, **kwargs: action)
+    monkeypatch.setattr(dispatcher, "spawn_agent", record_spawn)
 
     result = await dispatcher.run_heartbeat(db=temp_db, project_id=sample_project["id"])
 
@@ -1773,8 +1835,8 @@ async def test_spawn_action_skips_stale_candidate_with_active_run_mutex(
 @pytest.mark.asyncio
 async def test_spawn_attach_failure_terminalizes_created_run(
     monkeypatch: pytest.MonkeyPatch,
-    temp_db,
-    sample_project,
+    temp_db: HubDatabase,
+    sample_project: dict[str, Any],
 ) -> None:
     """Mutex attach failure cannot leak an active spawned run."""
     from gobby.dispatch import dispatcher
@@ -1812,7 +1874,7 @@ async def test_spawn_attach_failure_terminalizes_created_run(
         run_storage.fail(run_id, error=f"dispatch mutex attach failed: {error}")
         return True
 
-    monkeypatch.setattr(dispatcher.dispatch_rules, "evaluate", lambda *args, **kwargs: action)
+    monkeypatch.setattr(dispatch_rules, "evaluate", lambda *args, **kwargs: action)
     monkeypatch.setattr(dispatcher, "spawn_agent", fake_spawn_agent)
     monkeypatch.setattr(
         dispatcher,
@@ -1844,15 +1906,15 @@ async def test_spawn_attach_failure_terminalizes_created_run(
     assert run is not None
     assert run.status == "error"
     assert storage.get_mutex(task.id) is None
-    assert task_manager.stage_states.get(task.id, "development").state == "ready"
+    assert _required(task_manager.stage_states.get(task.id, "development")).state == "ready"
     assert updated.dispatch_failure_count == 1
-    assert "dispatch_mutex_attach_failed" in updated.description
+    assert "dispatch_mutex_attach_failed" in (updated.description or "")
 
 
 async def test_cancel_between_spawn_and_attach_terminalizes_run_before_redispatch(
     monkeypatch: pytest.MonkeyPatch,
-    temp_db,
-    sample_project,
+    temp_db: HubDatabase,
+    sample_project: dict[str, Any],
 ) -> None:
     """Cancellation in the spawn-attach window cleans up before redispatch."""
     from gobby.agents import kill as agent_kill
@@ -1888,13 +1950,15 @@ async def test_cancel_between_spawn_and_attach_terminalizes_run_before_redispatc
         spawned.append(run.id)
         return run.id
 
-    async def fake_kill_agent(run, db: HubDatabase, *, close_terminal: bool) -> dict[str, bool]:
+    async def fake_kill_agent(
+        run: Any, db: HubDatabase, *, close_terminal: bool
+    ) -> dict[str, bool]:
         assert db is temp_db
         assert close_terminal is True
         killed.append(run.id)
         return {"success": True}
 
-    async def cancel_first_attach(func, *args, **kwargs):
+    async def cancel_first_attach(func: Callable[..., Any], *args: Any, **kwargs: Any) -> Any:
         nonlocal attach_attempts
         if getattr(func, "__name__", None) == "attach":
             attach_attempts += 1
@@ -1903,7 +1967,7 @@ async def test_cancel_between_spawn_and_attach_terminalizes_run_before_redispatc
                 await asyncio.Future()
         return await original_run_db(func, *args, **kwargs)
 
-    monkeypatch.setattr(dispatcher.dispatch_rules, "evaluate", lambda *args, **kwargs: action)
+    monkeypatch.setattr(dispatch_rules, "evaluate", lambda *args, **kwargs: action)
     monkeypatch.setattr(dispatcher, "spawn_agent", fake_spawn_agent)
     monkeypatch.setattr(agent_kill, "kill_agent", fake_kill_agent)
     monkeypatch.setattr(dispatcher, "run_db", cancel_first_attach)
@@ -1930,12 +1994,12 @@ async def test_cancel_between_spawn_and_attach_terminalizes_run_before_redispatc
     assert spawned == run_ids
     assert second_run is not None
     assert second_run.status == "running"
-    assert storage.get_mutex(task.id).run_id == run_ids[1]
+    assert _required(storage.get_mutex(task.id)).run_id == run_ids[1]
 
 
 @pytest.mark.asyncio
 async def test_spawn_action_uses_services_and_records_agent_run(
-    monkeypatch: pytest.MonkeyPatch, temp_db, sample_project
+    monkeypatch: pytest.MonkeyPatch, temp_db: HubDatabase, sample_project: dict[str, Any]
 ) -> None:
     """Spawn action uses services and records agent run."""
     from gobby.agents.sync import sync_bundled_agents
@@ -1954,9 +2018,9 @@ async def test_spawn_action_uses_services_and_records_agent_run(
         agent_slug="backend-developer",
         prompt="go",
     )
-    spawn_kwargs: dict[str, object] = {}
+    spawn_kwargs: dict[str, Any] = {}
 
-    async def fake_spawn_agent_impl(**kwargs):
+    async def fake_spawn_agent_impl(**kwargs: Any) -> dict[str, object]:
         spawn_kwargs.update(kwargs)
         run = LocalAgentRunManager(temp_db).create(
             parent_session_id=kwargs["parent_session_id"],
@@ -1972,7 +2036,7 @@ async def test_spawn_action_uses_services_and_records_agent_run(
         "gobby.mcp_proxy.tools.spawn_agent._implementation.spawn_agent_impl",
         fake_spawn_agent_impl,
     )
-    monkeypatch.setattr(dispatcher.dispatch_rules, "evaluate", lambda *args, **kwargs: action)
+    monkeypatch.setattr(dispatch_rules, "evaluate", lambda *args, **kwargs: action)
     services = SimpleNamespace(
         database=temp_db,
         task_manager=task_manager,
@@ -1986,15 +2050,15 @@ async def test_spawn_action_uses_services_and_records_agent_run(
         services=services,
     )
 
-    run = LocalAgentRunManager(temp_db).get("2d6f8387-ee3f-5abb-98f4-70ace5661263")
-    launcher = session_manager.get(run.parent_session_id)
+    run = _required(LocalAgentRunManager(temp_db).get("2d6f8387-ee3f-5abb-98f4-70ace5661263"))
+    launcher = _required(session_manager.get(run.parent_session_id))
     assert result.executed == 1
     assert run.agent_name == "backend-developer"
     assert run.task_id == task.id
     assert spawn_kwargs["task_id"] == task.id
     assert spawn_kwargs["initial_variables"]["_step_workflow_name"] == "backend-developer-steps"
     assert launcher.source == "dispatcher_launcher"
-    assert storage.get_mutex(task.id).run_id == "2d6f8387-ee3f-5abb-98f4-70ace5661263"
+    assert _required(storage.get_mutex(task.id)).run_id == "2d6f8387-ee3f-5abb-98f4-70ace5661263"
 
 
 @pytest.mark.parametrize("agent_slug", ["planner", "plan-adversary"])
@@ -2002,8 +2066,8 @@ async def test_spawn_action_uses_services_and_records_agent_run(
 async def test_planning_agents_inherit_task_worktree_isolation(
     agent_slug: str,
     monkeypatch: pytest.MonkeyPatch,
-    temp_db,
-    sample_project,
+    temp_db: HubDatabase,
+    sample_project: dict[str, Any],
 ) -> None:
     """Planning agents inherit build task worktree isolation."""
     from gobby.agents.sync import sync_bundled_agents
@@ -2056,7 +2120,7 @@ async def test_planning_agents_inherit_task_worktree_isolation(
         "gobby.mcp_proxy.tools.spawn_agent._implementation.spawn_agent_impl",
         fake_spawn_agent_impl,
     )
-    monkeypatch.setattr(dispatcher.dispatch_rules, "evaluate", lambda *args, **kwargs: action)
+    monkeypatch.setattr(dispatch_rules, "evaluate", lambda *args, **kwargs: action)
     services = SimpleNamespace(
         database=temp_db,
         task_manager=task_manager,
@@ -2083,8 +2147,8 @@ async def test_planning_agents_inherit_task_worktree_isolation(
 @pytest.mark.asyncio
 async def test_expansion_review_inherits_task_worktree_isolation(
     monkeypatch: pytest.MonkeyPatch,
-    temp_db,
-    sample_project,
+    temp_db: HubDatabase,
+    sample_project: dict[str, Any],
 ) -> None:
     """Expansion review inherits build task worktree isolation."""
     from gobby.agents.sync import sync_bundled_agents
@@ -2134,7 +2198,7 @@ async def test_expansion_review_inherits_task_worktree_isolation(
         "gobby.mcp_proxy.tools.spawn_agent._implementation.spawn_agent_impl",
         fake_spawn_agent_impl,
     )
-    monkeypatch.setattr(dispatcher.dispatch_rules, "evaluate", lambda *args, **kwargs: action)
+    monkeypatch.setattr(dispatch_rules, "evaluate", lambda *args, **kwargs: action)
     services = SimpleNamespace(
         database=temp_db,
         task_manager=task_manager,
@@ -2160,8 +2224,8 @@ async def test_expansion_review_inherits_task_worktree_isolation(
 @pytest.mark.asyncio
 async def test_backend_developer_inherits_task_worktree_isolation(
     monkeypatch: pytest.MonkeyPatch,
-    temp_db,
-    sample_project,
+    temp_db: HubDatabase,
+    sample_project: dict[str, Any],
 ) -> None:
     """Backend developer inherits task worktree isolation."""
     from gobby.agents.sync import sync_bundled_agents
@@ -2203,7 +2267,7 @@ async def test_backend_developer_inherits_task_worktree_isolation(
         "gobby.mcp_proxy.tools.spawn_agent._implementation.spawn_agent_impl",
         fake_spawn_agent_impl,
     )
-    monkeypatch.setattr(dispatcher.dispatch_rules, "evaluate", lambda *args, **kwargs: action)
+    monkeypatch.setattr(dispatch_rules, "evaluate", lambda *args, **kwargs: action)
     services = SimpleNamespace(
         database=temp_db,
         task_manager=task_manager,
@@ -2223,7 +2287,7 @@ async def test_backend_developer_inherits_task_worktree_isolation(
 
 @pytest.mark.asyncio
 async def test_spawn_action_subscribes_build_coordinator_completion(
-    monkeypatch: pytest.MonkeyPatch, temp_db, sample_project
+    monkeypatch: pytest.MonkeyPatch, temp_db: HubDatabase, sample_project: dict[str, Any]
 ) -> None:
     """Spawn action subscribes build coordinator completion."""
     from gobby.agents.sync import sync_bundled_agents
@@ -2274,7 +2338,7 @@ async def test_spawn_action_subscribes_build_coordinator_completion(
         "gobby.mcp_proxy.tools.spawn_agent._implementation.spawn_agent_impl",
         fake_spawn_agent_impl,
     )
-    monkeypatch.setattr(dispatcher.dispatch_rules, "evaluate", lambda *args, **kwargs: action)
+    monkeypatch.setattr(dispatch_rules, "evaluate", lambda *args, **kwargs: action)
     services = SimpleNamespace(
         database=temp_db,
         task_manager=task_manager,
@@ -2301,8 +2365,8 @@ async def test_spawn_action_subscribes_build_coordinator_completion(
 
 
 def test_spawn_action_skips_cross_project_build_coordinator_completion(
-    temp_db,
-    sample_project,
+    temp_db: HubDatabase,
+    sample_project: dict[str, Any],
 ) -> None:
     """Spawn action skips cross project build coordinator completion."""
     from gobby.dispatch.spawn import _subscribe_build_coordinator_completion
@@ -2350,8 +2414,8 @@ def test_spawn_action_skips_cross_project_build_coordinator_completion(
 
 
 def test_spawn_action_allows_explicit_cross_project_build_coordinator_completion(
-    temp_db,
-    sample_project,
+    temp_db: HubDatabase,
+    sample_project: dict[str, Any],
 ) -> None:
     """Spawn action subscribes a cross-project coordinator when build metadata authorizes it."""
     from gobby.dispatch.spawn import _subscribe_build_coordinator_completion
@@ -2407,7 +2471,7 @@ def test_spawn_action_allows_explicit_cross_project_build_coordinator_completion
 
 @pytest.mark.asyncio
 async def test_spawn_action_without_coordinator_does_not_subscribe_launcher(
-    monkeypatch: pytest.MonkeyPatch, temp_db, sample_project
+    monkeypatch: pytest.MonkeyPatch, temp_db: HubDatabase, sample_project: dict[str, Any]
 ) -> None:
     """Spawn action without coordinator does not subscribe launcher."""
     from gobby.agents.sync import sync_bundled_agents
@@ -2443,7 +2507,7 @@ async def test_spawn_action_without_coordinator_does_not_subscribe_launcher(
         "gobby.mcp_proxy.tools.spawn_agent._implementation.spawn_agent_impl",
         fake_spawn_agent_impl,
     )
-    monkeypatch.setattr(dispatcher.dispatch_rules, "evaluate", lambda *args, **kwargs: action)
+    monkeypatch.setattr(dispatch_rules, "evaluate", lambda *args, **kwargs: action)
     services = SimpleNamespace(
         database=temp_db,
         task_manager=task_manager,
@@ -2468,7 +2532,7 @@ async def test_spawn_action_without_coordinator_does_not_subscribe_launcher(
 
 @pytest.mark.asyncio
 async def test_spawn_action_clears_missing_worktree_artifact_before_reuse(
-    monkeypatch: pytest.MonkeyPatch, temp_db, sample_project
+    monkeypatch: pytest.MonkeyPatch, temp_db: HubDatabase, sample_project: dict[str, Any]
 ) -> None:
     """Spawn action clears missing worktree artifact before reuse."""
     from gobby.agents.sync import sync_bundled_agents
@@ -2500,7 +2564,7 @@ async def test_spawn_action_clears_missing_worktree_artifact_before_reuse(
     )
     spawn_kwargs: dict[str, object] = {}
 
-    async def fake_spawn_agent_impl(**kwargs):
+    async def fake_spawn_agent_impl(**kwargs: Any) -> dict[str, object]:
         spawn_kwargs.update(kwargs)
         run = LocalAgentRunManager(temp_db).create(
             parent_session_id=kwargs["parent_session_id"],
@@ -2516,7 +2580,7 @@ async def test_spawn_action_clears_missing_worktree_artifact_before_reuse(
         "gobby.mcp_proxy.tools.spawn_agent._implementation.spawn_agent_impl",
         fake_spawn_agent_impl,
     )
-    monkeypatch.setattr(dispatcher.dispatch_rules, "evaluate", lambda *args, **kwargs: action)
+    monkeypatch.setattr(dispatch_rules, "evaluate", lambda *args, **kwargs: action)
     services = SimpleNamespace(
         database=temp_db,
         task_manager=task_manager,
@@ -2541,7 +2605,7 @@ async def test_spawn_action_clears_missing_worktree_artifact_before_reuse(
 
 @pytest.mark.asyncio
 async def test_leaf_spawn_recovers_parent_integration_target_branch(
-    monkeypatch: pytest.MonkeyPatch, temp_db, sample_git_project
+    monkeypatch: pytest.MonkeyPatch, temp_db: HubDatabase, sample_git_project: dict[str, Any]
 ) -> None:
     """Leaf spawn recovers parent integration target branch."""
     from gobby.agents.sync import sync_bundled_agents
@@ -2609,7 +2673,7 @@ async def test_leaf_spawn_recovers_parent_integration_target_branch(
         "gobby.mcp_proxy.tools.spawn_agent._implementation.spawn_agent_impl",
         fake_spawn_agent_impl,
     )
-    monkeypatch.setattr(dispatcher.dispatch_rules, "evaluate", lambda *args, **kwargs: action)
+    monkeypatch.setattr(dispatch_rules, "evaluate", lambda *args, **kwargs: action)
     services = SimpleNamespace(
         database=temp_db,
         task_manager=task_manager,
@@ -2632,7 +2696,7 @@ async def test_leaf_spawn_recovers_parent_integration_target_branch(
 
 @pytest.mark.asyncio
 async def test_leaf_spawn_skips_stale_parent_integration_branch(
-    monkeypatch: pytest.MonkeyPatch, temp_db, sample_project
+    monkeypatch: pytest.MonkeyPatch, temp_db: HubDatabase, sample_project: dict[str, Any]
 ) -> None:
     """Leaf spawn skips stale parent integration branch artifacts."""
     from gobby.agents.sync import sync_bundled_agents
@@ -2706,7 +2770,7 @@ async def test_leaf_spawn_skips_stale_parent_integration_branch(
         "gobby.mcp_proxy.tools.spawn_agent._implementation.spawn_agent_impl",
         fake_spawn_agent_impl,
     )
-    monkeypatch.setattr(dispatcher.dispatch_rules, "evaluate", lambda *args, **kwargs: action)
+    monkeypatch.setattr(dispatch_rules, "evaluate", lambda *args, **kwargs: action)
     services = SimpleNamespace(
         database=temp_db,
         task_manager=task_manager,
@@ -2736,8 +2800,8 @@ async def test_leaf_spawn_skips_stale_parent_integration_branch(
 )
 async def test_merge_ready_leaf_spawn_blocks_contaminated_task_branch(
     monkeypatch: pytest.MonkeyPatch,
-    temp_db,
-    sample_git_project,
+    temp_db: HubDatabase,
+    sample_git_project: dict[str, Any],
     branch_sha: str | None,
     reason: str,
 ) -> None:
@@ -2810,7 +2874,7 @@ async def test_merge_ready_leaf_spawn_blocks_contaminated_task_branch(
 
 @pytest.mark.asyncio
 async def test_epic_qa_spawn_refreshes_and_reuses_integration_workspace(
-    monkeypatch: pytest.MonkeyPatch, temp_db, sample_project
+    monkeypatch: pytest.MonkeyPatch, temp_db: HubDatabase, sample_project: dict[str, Any]
 ) -> None:
     """Epic QA spawn refreshes and reuses integration workspace."""
     from gobby.agents.sync import sync_bundled_agents
@@ -2878,7 +2942,7 @@ async def test_epic_qa_spawn_refreshes_and_reuses_integration_workspace(
         "gobby.mcp_proxy.tools.spawn_agent._implementation.spawn_agent_impl",
         fake_spawn_agent_impl,
     )
-    monkeypatch.setattr(dispatcher.dispatch_rules, "evaluate", lambda *args, **kwargs: action)
+    monkeypatch.setattr(dispatch_rules, "evaluate", lambda *args, **kwargs: action)
     services = SimpleNamespace(
         database=temp_db,
         task_manager=task_manager,
@@ -2895,7 +2959,8 @@ async def test_epic_qa_spawn_refreshes_and_reuses_integration_workspace(
 
     assert result.executed == 1
     assert prepare_calls
-    assert prepare_calls[0]["root_task"].id == task.id
+    root_task = cast(_HasId, prepare_calls[0]["root_task"])
+    assert root_task.id == task.id
     assert spawn_kwargs["worktree_id"] == "de982dee-65f9-5a31-a035-b8016c3cd62b"
     assert spawn_kwargs["clone_id"] is None
     assert artifacts.worktree_id is None
@@ -2905,7 +2970,10 @@ async def test_epic_qa_spawn_refreshes_and_reuses_integration_workspace(
 
 @pytest.mark.asyncio
 async def test_epic_qa_spawn_promotes_existing_worktree_when_target_missing(
-    monkeypatch: pytest.MonkeyPatch, temp_db, sample_project, tmp_path
+    monkeypatch: pytest.MonkeyPatch,
+    temp_db: HubDatabase,
+    sample_project: dict[str, Any],
+    tmp_path: Path,
 ) -> None:
     """Epic QA spawn promotes existing worktree when target missing."""
     from gobby.agents.sync import sync_bundled_agents
@@ -2980,7 +3048,7 @@ async def test_epic_qa_spawn_promotes_existing_worktree_when_target_missing(
         "gobby.mcp_proxy.tools.spawn_agent._implementation.spawn_agent_impl",
         fake_spawn_agent_impl,
     )
-    monkeypatch.setattr(dispatcher.dispatch_rules, "evaluate", lambda *args, **kwargs: action)
+    monkeypatch.setattr(dispatch_rules, "evaluate", lambda *args, **kwargs: action)
     services = SimpleNamespace(
         database=temp_db,
         task_manager=task_manager,
@@ -3010,7 +3078,7 @@ async def test_epic_qa_spawn_promotes_existing_worktree_when_target_missing(
 
 @pytest.mark.asyncio
 async def test_epic_qa_spawn_recovers_missing_target_from_current_branch(
-    monkeypatch: pytest.MonkeyPatch, temp_db, sample_git_project
+    monkeypatch: pytest.MonkeyPatch, temp_db: HubDatabase, sample_git_project: dict[str, Any]
 ) -> None:
     """Epic QA spawn recovers missing target from current branch."""
     from gobby.agents.sync import sync_bundled_agents
@@ -3062,7 +3130,7 @@ async def test_epic_qa_spawn_recovers_missing_target_from_current_branch(
         "gobby.mcp_proxy.tools.spawn_agent._implementation.spawn_agent_impl",
         fake_spawn_agent_impl,
     )
-    monkeypatch.setattr(dispatcher.dispatch_rules, "evaluate", lambda *args, **kwargs: action)
+    monkeypatch.setattr(dispatch_rules, "evaluate", lambda *args, **kwargs: action)
     services = SimpleNamespace(
         database=temp_db,
         task_manager=task_manager,
@@ -3086,8 +3154,8 @@ async def test_epic_qa_spawn_recovers_missing_target_from_current_branch(
 async def test_epic_qa_workspace_conflict_rolls_back_without_heartbeat_error(
     monkeypatch: pytest.MonkeyPatch,
     caplog: pytest.LogCaptureFixture,
-    temp_db,
-    sample_project,
+    temp_db: HubDatabase,
+    sample_project: dict[str, Any],
 ) -> None:
     """Epic QA workspace conflict rolls back without heartbeat error."""
     from gobby.agents.sync import sync_bundled_agents
@@ -3149,7 +3217,7 @@ async def test_epic_qa_workspace_conflict_rolls_back_without_heartbeat_error(
         "gobby.mcp_proxy.tools.spawn_agent._implementation.spawn_agent_impl",
         unexpected_spawn_agent_impl,
     )
-    monkeypatch.setattr(dispatcher.dispatch_rules, "evaluate", lambda *args, **kwargs: action)
+    monkeypatch.setattr(dispatch_rules, "evaluate", lambda *args, **kwargs: action)
     services = SimpleNamespace(
         database=temp_db,
         task_manager=task_manager,
@@ -3180,14 +3248,14 @@ async def test_epic_qa_workspace_conflict_rolls_back_without_heartbeat_error(
     assert reopened_child.closed_at is None
     assert updated.dispatch_failure_count == 0
     assert updated.is_escalated is False
-    assert "### Dispatch spawn failed" in updated.description
-    assert "failed to refresh integration workspace: CONFLICT" in updated.description
+    assert "### Dispatch spawn failed" in (updated.description or "")
+    assert "failed to refresh integration workspace: CONFLICT" in (updated.description or "")
     assert "Dispatcher heartbeat candidate failed" not in caplog.text
 
 
 @pytest.mark.asyncio
 async def test_spawn_failure_rolls_stage_ready_and_releases(
-    monkeypatch: pytest.MonkeyPatch, temp_db, sample_project
+    monkeypatch: pytest.MonkeyPatch, temp_db: HubDatabase, sample_project: dict[str, Any]
 ) -> None:
     """Spawn failure rolls stage ready and releases."""
     from gobby.agents.sync import sync_bundled_agents
@@ -3201,14 +3269,14 @@ async def test_spawn_failure_rolls_stage_ready_and_releases(
     storage = _mutex_storage(temp_db)
     action = SpawnAgentAction(task.id, f"#{task.seq_num}", "backend-developer", "go")
 
-    async def fake_spawn_agent_impl(**_kwargs):
+    async def fake_spawn_agent_impl(**_kwargs: Any) -> dict[str, object]:
         return {"success": False, "error": "tmux unavailable"}
 
     monkeypatch.setattr(
         "gobby.mcp_proxy.tools.spawn_agent._implementation.spawn_agent_impl",
         fake_spawn_agent_impl,
     )
-    monkeypatch.setattr(dispatcher.dispatch_rules, "evaluate", lambda *args, **kwargs: action)
+    monkeypatch.setattr(dispatch_rules, "evaluate", lambda *args, **kwargs: action)
     services = SimpleNamespace(
         database=temp_db,
         task_manager=task_manager,
@@ -3225,9 +3293,9 @@ async def test_spawn_failure_rolls_stage_ready_and_releases(
     updated = get_task(temp_db, task.id)
     assert result.executed == 1
     assert storage.get_mutex(task.id) is None
-    assert task_manager.stage_states.get(task.id, "development").state == "ready"
+    assert _required(task_manager.stage_states.get(task.id, "development")).state == "ready"
     assert updated.dispatch_failure_count == 1
-    assert "### Dispatch spawn failed" in updated.description
+    assert "### Dispatch spawn failed" in (updated.description or "")
     assert LocalAgentRunManager(temp_db).get("2d6f8387-ee3f-5abb-98f4-70ace5661263") is None
 
 
@@ -3284,11 +3352,11 @@ async def test_artifact_persistence_failure_terminalizes_or_quarantines_before_r
     def fail_set_artifacts_atomic(*_args: object, **_kwargs: object) -> None:
         raise ValueError("injected artifact persistence failure")
 
-    original_get_artifacts = spawn_artifacts.TaskArtifactManager.get_artifacts
+    original_get_artifacts = TaskArtifactManager.get_artifacts
     artifact_read_failed = False
 
     def fail_first_post_spawn_artifact_read(
-        manager: spawn_artifacts.TaskArtifactManager,
+        manager: TaskArtifactManager,
         task_id: str,
     ) -> Any:
         nonlocal artifact_read_failed
@@ -3318,14 +3386,14 @@ async def test_artifact_persistence_failure_terminalizes_or_quarantines_before_r
     )
     if artifact_failure_point.startswith("read"):
         monkeypatch.setattr(
-            spawn_artifacts.TaskArtifactManager,
+            TaskArtifactManager,
             "get_artifacts",
             fail_first_post_spawn_artifact_read,
         )
     else:
         monkeypatch.setattr(spawn_artifacts, "_set_artifacts_atomic", fail_set_artifacts_atomic)
     monkeypatch.setattr(agent_kill, "kill_agent", fake_kill_agent)
-    monkeypatch.setattr(dispatcher.dispatch_rules, "evaluate", lambda *args, **kwargs: action)
+    monkeypatch.setattr(dispatch_rules, "evaluate", lambda *args, **kwargs: action)
     services = SimpleNamespace(
         database=temp_db,
         task_manager=task_manager,
@@ -3347,11 +3415,13 @@ async def test_artifact_persistence_failure_terminalizes_or_quarantines_before_r
     if kill_outcome == "success":
         assert first_run.status == "error"
         assert storage.get_mutex(task.id) is None
-        assert task_manager.stage_states.get(task.id, "development").state == "ready"
+        assert _required(task_manager.stage_states.get(task.id, "development")).state == "ready"
     else:
         assert first_run.status == "running"
-        assert storage.get_mutex(task.id).run_id == run_ids[0]
-        assert task_manager.stage_states.get(task.id, "development").state == "in_progress"
+        assert _required(storage.get_mutex(task.id)).run_id == run_ids[0]
+        assert (
+            _required(task_manager.stage_states.get(task.id, "development")).state == "in_progress"
+        )
         quarantined_task = task_manager.get_task(task.id)
         assert quarantined_task.is_escalated is True
         assert quarantined_task.escalation_reason == (
@@ -3371,7 +3441,7 @@ async def test_artifact_persistence_failure_terminalizes_or_quarantines_before_r
         assert spawned == run_ids
         assert second_run is not None
         assert second_run.status == "running"
-        assert storage.get_mutex(task.id).run_id == run_ids[1]
+        assert _required(storage.get_mutex(task.id)).run_id == run_ids[1]
     else:
         assert second_result.executed == 0
         assert spawned == [run_ids[0]]
@@ -3387,7 +3457,7 @@ async def test_spawn_quarantine_escalates_when_reattach_and_audit_fail(
     """Quarantine remains durable when mutex reattach and audit both fail."""
     from gobby.agents import kill as agent_kill
     from gobby.agents.sync import sync_bundled_agents
-    from gobby.dispatch import dispatcher, spawn_artifacts
+    from gobby.dispatch import dispatcher
     from gobby.storage.agents import LocalAgentRunManager
     from gobby.storage.sessions import SYSTEM_SESSION_ID, SessionManager
 
@@ -3403,7 +3473,7 @@ async def test_spawn_quarantine_escalates_when_reattach_and_audit_fail(
     ]
     spawned: list[str] = []
     artifact_read_failed = False
-    original_get_artifacts = spawn_artifacts.TaskArtifactManager.get_artifacts
+    original_get_artifacts = TaskArtifactManager.get_artifacts
 
     async def fake_spawn_agent_impl(**_kwargs: object) -> dict[str, object]:
         run_id = run_ids[len(spawned)]
@@ -3426,7 +3496,7 @@ async def test_spawn_quarantine_escalates_when_reattach_and_audit_fail(
         }
 
     def fail_first_post_spawn_artifact_read(
-        manager: spawn_artifacts.TaskArtifactManager,
+        manager: TaskArtifactManager,
         task_id: str,
     ) -> Any:
         nonlocal artifact_read_failed
@@ -3455,14 +3525,14 @@ async def test_spawn_quarantine_escalates_when_reattach_and_audit_fail(
         fake_spawn_agent_impl,
     )
     monkeypatch.setattr(
-        spawn_artifacts.TaskArtifactManager,
+        TaskArtifactManager,
         "get_artifacts",
         fail_first_post_spawn_artifact_read,
     )
     monkeypatch.setattr(agent_kill, "kill_agent", unconfirmed_kill)
     monkeypatch.setattr(TaskDispatchMutexManager, "attach_run_id", fail_mutex_reattach)
     monkeypatch.setattr(dispatcher, "append_audit_marker", fail_audit)
-    monkeypatch.setattr(dispatcher.dispatch_rules, "evaluate", lambda *args, **kwargs: action)
+    monkeypatch.setattr(dispatch_rules, "evaluate", lambda *args, **kwargs: action)
     services = SimpleNamespace(
         database=temp_db,
         task_manager=task_manager,
@@ -3534,7 +3604,7 @@ async def test_repeatedly_cancelled_spawn_cleanup_quarantines_before_propagating
         )
         run_storage.start(run.id)
         spawned.append(run.id)
-        raise dispatcher.DispatchSpawnFailed(
+        raise DispatchSpawnFailed(
             "injected post-spawn persistence failure",
             spawned_run_id=run.id,
         )
@@ -3555,7 +3625,7 @@ async def test_repeatedly_cancelled_spawn_cleanup_quarantines_before_propagating
         await allow_kill_result.wait()
         return {"success": False, "error": "termination remains unconfirmed"}
 
-    monkeypatch.setattr(dispatcher.dispatch_rules, "evaluate", lambda *args, **kwargs: action)
+    monkeypatch.setattr(dispatch_rules, "evaluate", lambda *args, **kwargs: action)
     monkeypatch.setattr(dispatcher, "spawn_agent", fake_spawn_agent)
     monkeypatch.setattr(agent_kill, "kill_agent", fake_kill_agent)
 
@@ -3628,7 +3698,7 @@ async def test_inner_spawn_cleanup_cancellation_quarantines_without_spinning(
             raise AssertionError("cancelled cleanup task was awaited repeatedly")
         return await task
 
-    monkeypatch.setattr(spawn_actions.asyncio, "shield", bounded_shield)
+    monkeypatch.setattr("gobby.dispatch.spawn_actions.asyncio.shield", bounded_shield)
 
     with pytest.raises(asyncio.CancelledError, match="cleanup cancelled internally"):
         await spawn_actions._cleanup_or_quarantine_spawned_run(
@@ -3648,8 +3718,8 @@ async def test_inner_spawn_cleanup_cancellation_quarantines_without_spinning(
 @pytest.mark.asyncio
 async def test_spawn_unavailable_does_not_mark_task_failed(
     monkeypatch: pytest.MonkeyPatch,
-    temp_db,
-    sample_project,
+    temp_db: HubDatabase,
+    sample_project: dict[str, Any],
 ) -> None:
     """Spawn unavailable does not mark task failed."""
     from gobby.dispatch import dispatcher
@@ -3659,7 +3729,7 @@ async def test_spawn_unavailable_does_not_mark_task_failed(
     storage = _mutex_storage(temp_db)
     action = SpawnAgentAction(task.id, f"#{task.seq_num}", "backend-developer", "go")
 
-    monkeypatch.setattr(dispatcher.dispatch_rules, "evaluate", lambda *args, **kwargs: action)
+    monkeypatch.setattr(dispatch_rules, "evaluate", lambda *args, **kwargs: action)
 
     result = await dispatcher.run_heartbeat(db=temp_db, project_id=sample_project["id"])
 
@@ -3668,14 +3738,14 @@ async def test_spawn_unavailable_does_not_mark_task_failed(
     assert result.skipped == 1
     assert result.reason == "services_missing:database,task_manager,session_manager,agent_runner"
     assert storage.get_mutex(task.id) is None
-    assert task_manager.stage_states.get(task.id, "development").state == "in_progress"
+    assert _required(task_manager.stage_states.get(task.id, "development")).state == "in_progress"
     assert updated.dispatch_failure_count == 0
     assert "### Dispatch spawn failed" not in (updated.description or "")
 
 
 @pytest.mark.asyncio
 async def test_unregistered_spawn_records_dispatch_failure_telemetry(
-    monkeypatch: pytest.MonkeyPatch, temp_db, sample_project
+    monkeypatch: pytest.MonkeyPatch, temp_db: HubDatabase, sample_project: dict[str, Any]
 ) -> None:
     """Unregistered spawn records dispatch failure telemetry."""
     from gobby.agents.sync import sync_bundled_agents
@@ -3688,14 +3758,14 @@ async def test_unregistered_spawn_records_dispatch_failure_telemetry(
     storage = _mutex_storage(temp_db)
     action = SpawnAgentAction(task.id, f"#{task.seq_num}", "backend-developer", "go")
 
-    async def fake_spawn_agent_impl(**_kwargs):
+    async def fake_spawn_agent_impl(**_kwargs: Any) -> dict[str, object]:
         return {"success": False, "error": "agent_did_not_register"}
 
     monkeypatch.setattr(
         "gobby.mcp_proxy.tools.spawn_agent._implementation.spawn_agent_impl",
         fake_spawn_agent_impl,
     )
-    monkeypatch.setattr(dispatcher.dispatch_rules, "evaluate", lambda *args, **kwargs: action)
+    monkeypatch.setattr(dispatch_rules, "evaluate", lambda *args, **kwargs: action)
     services = SimpleNamespace(
         database=temp_db,
         task_manager=task_manager,
@@ -3712,19 +3782,19 @@ async def test_unregistered_spawn_records_dispatch_failure_telemetry(
     updated = get_task(temp_db, task.id)
     assert result.executed == 1
     assert storage.get_mutex(task.id) is None
-    assert task_manager.stage_states.get(task.id, "development").state == "ready"
+    assert _required(task_manager.stage_states.get(task.id, "development")).state == "ready"
     assert updated.claimed_by_session_id is None
     assert updated.dispatch_failure_count == 1
-    assert "### Dispatch spawn failed" in updated.description
-    assert "agent_did_not_register" in updated.description
+    assert "### Dispatch spawn failed" in (updated.description or "")
+    assert "agent_did_not_register" in (updated.description or "")
 
 
 @pytest.mark.asyncio
 async def test_spawn_failure_cleanup_tolerates_already_ready_stage(
     monkeypatch: pytest.MonkeyPatch,
     caplog: pytest.LogCaptureFixture,
-    temp_db,
-    sample_project,
+    temp_db: HubDatabase,
+    sample_project: dict[str, Any],
 ) -> None:
     """Spawn failure cleanup tolerates already ready stage."""
     from gobby.agents.sync import sync_bundled_agents
@@ -3738,10 +3808,10 @@ async def test_spawn_failure_cleanup_tolerates_already_ready_stage(
     storage = _mutex_storage(temp_db)
     action = SpawnAgentAction(task.id, f"#{task.seq_num}", "backend-developer", "go")
 
-    async def fake_spawn_agent_impl(**_kwargs):
+    async def fake_spawn_agent_impl(**_kwargs: Any) -> dict[str, object]:
         return {"success": False, "error": "code_index_preflight_failed"}
 
-    def racing_fail_stage(*_args, **_kwargs):
+    def racing_fail_stage(*_args: Any, **_kwargs: Any) -> NoReturn:
         set_stage_state(temp_db, task.id, "development", "ready")
         raise IllegalStageTransitionError("development", "ready", "fail_stage", "required")
 
@@ -3750,7 +3820,7 @@ async def test_spawn_failure_cleanup_tolerates_already_ready_stage(
         fake_spawn_agent_impl,
     )
     monkeypatch.setattr(task_manager.stage_states, "fail_stage", racing_fail_stage)
-    monkeypatch.setattr(dispatcher.dispatch_rules, "evaluate", lambda *args, **kwargs: action)
+    monkeypatch.setattr(dispatch_rules, "evaluate", lambda *args, **kwargs: action)
     services = SimpleNamespace(
         database=temp_db,
         task_manager=task_manager,
@@ -3768,15 +3838,15 @@ async def test_spawn_failure_cleanup_tolerates_already_ready_stage(
     updated = get_task(temp_db, task.id)
     assert result.executed == 1
     assert storage.get_mutex(task.id) is None
-    assert task_manager.stage_states.get(task.id, "development").state == "ready"
+    assert _required(task_manager.stage_states.get(task.id, "development")).state == "ready"
     assert updated.dispatch_failure_count == 1
-    assert "### Dispatch spawn failed" in updated.description
+    assert "### Dispatch spawn failed" in (updated.description or "")
     assert "Failed to roll back stage after dispatch spawn failure" not in caplog.text
 
 
 @pytest.mark.asyncio
 async def test_third_spawn_failure_escalates(
-    monkeypatch: pytest.MonkeyPatch, temp_db, sample_project
+    monkeypatch: pytest.MonkeyPatch, temp_db: HubDatabase, sample_project: dict[str, Any]
 ) -> None:
     """Third spawn failure escalates."""
     from gobby.agents.sync import sync_bundled_agents
@@ -3788,14 +3858,14 @@ async def test_third_spawn_failure_escalates(
     task = _task(temp_db, sample_project, stage_state="in_progress", dispatch_failure_count=2)
     action = SpawnAgentAction(task.id, f"#{task.seq_num}", "backend-developer", "go")
 
-    async def fake_spawn_agent_impl(**_kwargs):
+    async def fake_spawn_agent_impl(**_kwargs: Any) -> dict[str, object]:
         return {"success": False, "error": "broken"}
 
     monkeypatch.setattr(
         "gobby.mcp_proxy.tools.spawn_agent._implementation.spawn_agent_impl",
         fake_spawn_agent_impl,
     )
-    monkeypatch.setattr(dispatcher.dispatch_rules, "evaluate", lambda *args, **kwargs: action)
+    monkeypatch.setattr(dispatch_rules, "evaluate", lambda *args, **kwargs: action)
     services = SimpleNamespace(
         database=temp_db,
         task_manager=task_manager,
@@ -3807,15 +3877,15 @@ async def test_third_spawn_failure_escalates(
 
     updated = get_task(temp_db, task.id)
     assert updated.is_escalated is True
-    assert updated.escalation_reason.startswith("dispatch_spawn_max_attempts:broken")
+    assert (updated.escalation_reason or "").startswith("dispatch_spawn_max_attempts:broken")
 
 
 @pytest.mark.asyncio
 async def test_spawn_prefers_project_scoped_git_manager(
     monkeypatch: pytest.MonkeyPatch,
-    temp_db,
-    sample_project,
-    tmp_path,
+    temp_db: HubDatabase,
+    sample_project: dict[str, Any],
+    tmp_path: Path,
 ) -> None:
     """Spawn prefers project scoped git manager."""
     from gobby.agents.sync import sync_bundled_agents
@@ -3836,7 +3906,7 @@ async def test_spawn_prefers_project_scoped_git_manager(
     default_clone = object()
     captured: dict[str, object] = {}
 
-    async def fake_spawn_agent_impl(**kwargs):
+    async def fake_spawn_agent_impl(**kwargs: Any) -> dict[str, object]:
         captured.update(kwargs)
         return {"success": True, "run_id": "aa37aedd-eea4-5c79-a039-aa80a4a17195"}
 
@@ -3863,7 +3933,7 @@ async def test_spawn_prefers_project_scoped_git_manager(
     assert run_id == "aa37aedd-eea4-5c79-a039-aa80a4a17195"
     assert captured["git_manager"] is project_git
     assert captured["clone_manager"] is not default_clone
-    clone_manager = captured["clone_manager"]
+    clone_manager = cast(_HasRepoPath, captured["clone_manager"])
     assert str(clone_manager.repo_path) == project_git.repo_path
     assert captured["base_branch"] == "dev"
 
@@ -3871,8 +3941,8 @@ async def test_spawn_prefers_project_scoped_git_manager(
 @pytest.mark.asyncio
 async def test_dispatch_spawn_uses_task_project_context_for_cross_project_build(
     monkeypatch: pytest.MonkeyPatch,
-    temp_db,
-    tmp_path,
+    temp_db: HubDatabase,
+    tmp_path: Path,
 ) -> None:
     """Dispatcher-spawned agents use the target task project, not the caller project."""
     from gobby.agents.sync import sync_bundled_agents
@@ -3897,7 +3967,7 @@ async def test_dispatch_spawn_uses_task_project_context_for_cross_project_build(
     )
     captured: dict[str, object] = {}
 
-    async def fake_spawn_agent_impl(**kwargs):
+    async def fake_spawn_agent_impl(**kwargs: Any) -> dict[str, object]:
         captured.update(kwargs)
         return {"success": True, "run_id": "4bd0f604-127d-596e-9130-67a92c34f6ef"}
 
@@ -3929,7 +3999,7 @@ async def test_dispatch_spawn_uses_task_project_context_for_cross_project_build(
 
 @pytest.mark.asyncio
 async def test_bad_candidate_is_skipped_and_next_candidate_executes(
-    monkeypatch: pytest.MonkeyPatch, temp_db, sample_project
+    monkeypatch: pytest.MonkeyPatch, temp_db: HubDatabase, sample_project: dict[str, Any]
 ) -> None:
     """Bad candidate is skipped and next candidate executes."""
     from gobby.dispatch import dispatcher
@@ -3939,21 +4009,21 @@ async def test_bad_candidate_is_skipped_and_next_candidate_executes(
     executed: list[str] = []
     metric_outcomes: list[str] = []
 
-    def action_for(task, *_args):
+    def action_for(task: Task, *_args: Any) -> AppendAuditMarkerAction:
         return _audit_action(task.id)
 
-    async def flaky_execute(action, **kwargs):
+    async def flaky_execute(action: AppendAuditMarkerAction, **kwargs: Any) -> bool:
         if action.task_id == first.id:
             raise RuntimeError("bad candidate")
         executed.append(action.task_id)
-        return await dispatcher.append_audit_marker(
+        return await append_audit_marker(
             kwargs["db"],
             action.task_id,
             action.heading,
             action.body,
         )
 
-    monkeypatch.setattr(dispatcher.dispatch_rules, "evaluate", action_for)
+    monkeypatch.setattr(dispatch_rules, "evaluate", action_for)
     monkeypatch.setattr(dispatcher, "execute_action", flaky_execute)
 
     def record_metric(component: str, outcome: str) -> None:
@@ -3971,12 +4041,12 @@ async def test_bad_candidate_is_skipped_and_next_candidate_executes(
     assert result.skipped == 1
     assert executed == [second.id]
     assert metric_outcomes == ["dispatcher:failed", "dispatcher:succeeded"]
-    assert "### Dispatch failed" in get_task(temp_db, first.id).description
+    assert "### Dispatch failed" in (get_task(temp_db, first.id).description or "")
 
 
 @pytest.mark.asyncio
 async def test_transient_database_error_releases_and_skips_candidate(
-    monkeypatch: pytest.MonkeyPatch, temp_db, sample_project
+    monkeypatch: pytest.MonkeyPatch, temp_db: HubDatabase, sample_project: dict[str, Any]
 ) -> None:
     """A candidate-local database error does not starve later candidates."""
     from gobby.dispatch import dispatcher
@@ -3985,21 +4055,21 @@ async def test_transient_database_error_releases_and_skips_candidate(
     second = _task(temp_db, sample_project, "second")
     executed: list[str] = []
 
-    def action_for(task, *_args):
+    def action_for(task: Task, *_args: Any) -> AppendAuditMarkerAction:
         return _audit_action(task.id)
 
-    async def deadlocking_execute(action, **kwargs):
+    async def deadlocking_execute(action: AppendAuditMarkerAction, **kwargs: Any) -> bool:
         if action.task_id == first.id:
             raise psycopg.errors.DeadlockDetected("candidate deadlock")
         executed.append(action.task_id)
-        return await dispatcher.append_audit_marker(
+        return await append_audit_marker(
             kwargs["db"],
             action.task_id,
             action.heading,
             action.body,
         )
 
-    monkeypatch.setattr(dispatcher.dispatch_rules, "evaluate", action_for)
+    monkeypatch.setattr(dispatch_rules, "evaluate", action_for)
     monkeypatch.setattr(dispatcher, "execute_action", deadlocking_execute)
 
     result = await dispatcher.run_heartbeat(db=temp_db, project_id=sample_project["id"])
@@ -4007,13 +4077,13 @@ async def test_transient_database_error_releases_and_skips_candidate(
     assert result.executed == 1
     assert result.skipped == 1
     assert executed == [second.id]
-    assert "### Dispatch failed" in get_task(temp_db, first.id).description
+    assert "### Dispatch failed" in (get_task(temp_db, first.id).description or "")
     assert _mutex_storage(temp_db).get_mutex(first.id) is None
 
 
 @pytest.mark.asyncio
 async def test_connection_database_error_aborts_candidate_scan(
-    monkeypatch: pytest.MonkeyPatch, temp_db, sample_project
+    monkeypatch: pytest.MonkeyPatch, temp_db: HubDatabase, sample_project: dict[str, Any]
 ) -> None:
     """A connection-level database error terminates the heartbeat scan."""
     from gobby.dispatch import dispatcher
@@ -4022,14 +4092,14 @@ async def test_connection_database_error_aborts_candidate_scan(
     _task(temp_db, sample_project, "second")
     attempted: list[str] = []
 
-    def action_for(task, *_args):
+    def action_for(task: Task, *_args: Any) -> AppendAuditMarkerAction:
         return _audit_action(task.id)
 
-    async def disconnected_execute(action, **_kwargs):
+    async def disconnected_execute(action: AppendAuditMarkerAction, **_kwargs: Any) -> NoReturn:
         attempted.append(action.task_id)
         raise psycopg.errors.ConnectionException("connection lost")
 
-    monkeypatch.setattr(dispatcher.dispatch_rules, "evaluate", action_for)
+    monkeypatch.setattr(dispatch_rules, "evaluate", action_for)
     monkeypatch.setattr(dispatcher, "execute_action", disconnected_execute)
 
     with pytest.raises(psycopg.errors.ConnectionException, match="connection lost"):
@@ -4043,8 +4113,8 @@ async def test_connection_database_error_aborts_candidate_scan(
 @pytest.mark.asyncio
 async def test_advance_action_releases_lease_immediately(
     monkeypatch: pytest.MonkeyPatch,
-    temp_db,
-    sample_project,
+    temp_db: HubDatabase,
+    sample_project: dict[str, Any],
 ) -> None:
     """Advance action releases lease immediately."""
     from gobby.dispatch import dispatcher
@@ -4055,7 +4125,7 @@ async def test_advance_action_releases_lease_immediately(
         task_id=task.id,
         stage_name="development",
     )
-    monkeypatch.setattr(dispatcher.dispatch_rules, "evaluate", lambda *args, **kwargs: action)
+    monkeypatch.setattr(dispatch_rules, "evaluate", lambda *args, **kwargs: action)
 
     await dispatcher.run_heartbeat(db=temp_db, project_id=sample_project["id"])
 
@@ -4065,8 +4135,8 @@ async def test_advance_action_releases_lease_immediately(
 @pytest.mark.asyncio
 async def test_merge_workspace_action_releases_lease_before_stage_transition(
     monkeypatch: pytest.MonkeyPatch,
-    temp_db,
-    sample_project,
+    temp_db: HubDatabase,
+    sample_project: dict[str, Any],
 ) -> None:
     """Merge actions release their dispatch lease before completing the merge stage."""
     from gobby.dispatch import dispatcher
@@ -4119,8 +4189,8 @@ async def test_merge_workspace_action_releases_lease_before_stage_transition(
 @pytest.mark.asyncio
 async def test_start_pipeline_action_links_execution_id(
     monkeypatch: pytest.MonkeyPatch,
-    temp_db,
-    sample_project,
+    temp_db: HubDatabase,
+    sample_project: dict[str, Any],
 ) -> None:
     """Start pipeline action links execution id."""
     from gobby.dispatch import dispatcher
@@ -4128,7 +4198,7 @@ async def test_start_pipeline_action_links_execution_id(
     task = _task(temp_db, sample_project, lifecycle="expanding")
     storage = _mutex_storage(temp_db)
     monkeypatch.setattr(
-        dispatcher.dispatch_rules,
+        dispatch_rules,
         "evaluate",
         lambda *args, **kwargs: _pipeline_action(task.id),
     )
@@ -4143,7 +4213,7 @@ async def test_start_pipeline_action_links_execution_id(
     assert services.pipeline_executor.loader.project_ids == [sample_project["id"]]
 
 
-def test_dispatcher_run_heartbeat_cold_imports(repo_root) -> None:
+def test_dispatcher_run_heartbeat_cold_imports(repo_root: Path) -> None:
     """Dispatcher run heartbeat cold imports."""
     result = subprocess.run(
         [
@@ -4183,15 +4253,18 @@ def test_dispatch_inputs_invalid_json_logs_debug(
         if record.message == "Invalid stage registry dispatch_inputs_json; ignoring"
     ]
     assert len(records) == 1
-    assert records[0].registry_entry == {
+    record = cast(_DispatchInputsLogRecord, records[0])
+    assert record.registry_entry == {
         "id": "63c76849-8ad5-5e57-b9b6-a362883e46c3",
         "stage_name": "expansion",
     }
-    assert records[0].raw_dispatch_inputs_json == '{"invalid"'
-    assert "Expecting" in records[0].error
+    assert record.raw_dispatch_inputs_json == '{"invalid"'
+    assert "Expecting" in record.error
 
 
-def test_build_context_loads_stage_registry_and_bundled_agents(temp_db, sample_project) -> None:
+def test_build_context_loads_stage_registry_and_bundled_agents(
+    temp_db: HubDatabase, sample_project: dict[str, Any]
+) -> None:
     """Build context loads stage registry and bundled agents."""
     from gobby.agents.sync import sync_bundled_agents
     from gobby.dispatch import dispatcher
@@ -4199,14 +4272,16 @@ def test_build_context_loads_stage_registry_and_bundled_agents(temp_db, sample_p
     sync_bundled_agents(temp_db)
     task = _task(temp_db, sample_project, stage_name="pr", stage_state="in_progress")
 
-    context = dispatcher.build_context(temp_db, task)
+    context = cast(_DispatchContext, dispatcher.build_context(temp_db, task))
 
     assert context.stage_registry["pr"].default_agent == "merge-orchestrator"
     assert context.agents["merge-orchestrator"].enabled is True
     assert context.agent_definitions["merge-orchestrator"].spawn_capable is True
 
 
-def test_build_context_project_disabled_agent_override_wins(temp_db, sample_project) -> None:
+def test_build_context_project_disabled_agent_override_wins(
+    temp_db: HubDatabase, sample_project: dict[str, Any]
+) -> None:
     """Build context project disabled agent override wins."""
     from gobby.agents.sync import sync_bundled_agents
     from gobby.dispatch import dispatcher
@@ -4228,7 +4303,7 @@ def test_build_context_project_disabled_agent_override_wins(temp_db, sample_proj
     )
     task = _task(temp_db, sample_project, stage_name="pr", stage_state="in_progress")
 
-    context = dispatcher.build_context(temp_db, task)
+    context = cast(_DispatchContext, dispatcher.build_context(temp_db, task))
 
     assert context.agents["merge-orchestrator"].enabled is False
     assert context.agents["merge-orchestrator"].project_id == sample_project["id"]
@@ -4237,8 +4312,8 @@ def test_build_context_project_disabled_agent_override_wins(temp_db, sample_proj
 @pytest.mark.asyncio
 async def test_real_heartbeat_pr_stage_spawns_merge_orchestrator_without_false_no_agent(
     monkeypatch: pytest.MonkeyPatch,
-    temp_db,
-    sample_project,
+    temp_db: HubDatabase,
+    sample_project: dict[str, Any],
 ) -> None:
     """Real heartbeat pr stage spawns merge orchestrator without false no agent."""
     from gobby.agents.sync import sync_bundled_agents
@@ -4247,12 +4322,12 @@ async def test_real_heartbeat_pr_stage_spawns_merge_orchestrator_without_false_n
     sync_bundled_agents(temp_db)
     task = _task(temp_db, sample_project, stage_name="pr", stage_state="in_progress")
     spawned: list[str] = []
-    monkeypatch.setattr(
-        dispatcher,
-        "spawn_agent",
-        lambda action, **kwargs: spawned.append(action.agent_slug)
-        or "39ad77a9-2925-5095-a22e-82412ecd6d0c",
-    )
+
+    def record_spawn(action: SpawnAgentAction, **_kwargs: object) -> str:
+        spawned.append(action.agent_slug)
+        return "39ad77a9-2925-5095-a22e-82412ecd6d0c"
+
+    monkeypatch.setattr(dispatcher, "spawn_agent", record_spawn)
 
     result = await dispatcher.run_heartbeat(db=temp_db, project_id=sample_project["id"])
 
@@ -4264,8 +4339,8 @@ async def test_real_heartbeat_pr_stage_spawns_merge_orchestrator_without_false_n
 @pytest.mark.asyncio
 async def test_real_heartbeat_merge_ready_starts_then_spawns_merge_orchestrator(
     monkeypatch: pytest.MonkeyPatch,
-    temp_db,
-    sample_project,
+    temp_db: HubDatabase,
+    sample_project: dict[str, Any],
 ) -> None:
     """Real heartbeat merge ready starts then spawns merge orchestrator."""
     from gobby.agents.sync import sync_bundled_agents
@@ -4284,27 +4359,27 @@ async def test_real_heartbeat_merge_ready_starts_then_spawns_merge_orchestrator(
     set_stage_state(temp_db, task.id, "pr", "done")
     set_stage_state(temp_db, task.id, "merge", "ready")
     spawned: list[str] = []
-    monkeypatch.setattr(
-        dispatcher,
-        "spawn_agent",
-        lambda action, **kwargs: spawned.append(action.agent_slug)
-        or "1c750214-6550-592b-b1fd-0b01aa584ad0",
-    )
+
+    def record_spawn(action: SpawnAgentAction, **_kwargs: object) -> str:
+        spawned.append(action.agent_slug)
+        return "1c750214-6550-592b-b1fd-0b01aa584ad0"
+
+    monkeypatch.setattr(dispatcher, "spawn_agent", record_spawn)
 
     first = await dispatcher.run_heartbeat(db=temp_db, project_id=sample_project["id"])
     second = await dispatcher.run_heartbeat(db=temp_db, project_id=sample_project["id"])
 
     assert first.executed == 1
     assert second.executed == 1
-    assert manager.stage_states.get(task.id, "merge").state == "in_progress"
+    assert _required(manager.stage_states.get(task.id, "merge")).state == "in_progress"
     assert spawned == ["merge-orchestrator"]
 
 
 @pytest.mark.asyncio
 async def test_dispatcher_starts_stage_pipeline_with_injected_services(
     monkeypatch: pytest.MonkeyPatch,
-    temp_db,
-    sample_project,
+    temp_db: HubDatabase,
+    sample_project: dict[str, Any],
 ) -> None:
     """Dispatcher starts stage pipeline with injected services."""
     from gobby.dispatch import dispatcher
@@ -4317,12 +4392,12 @@ async def test_dispatcher_starts_stage_pipeline_with_injected_services(
         triggering_session_id=SESSION_1,
     )
     monkeypatch.setattr(
-        dispatcher.dispatch_rules,
+        dispatch_rules,
         "evaluate",
         lambda *args, **kwargs: _pipeline_action(task.id),
     )
 
-    async def record_background(*args, **kwargs):
+    async def record_background(*args: Any, **kwargs: Any) -> None:
         executor.record_call(
             {
                 "inputs": args[2],
@@ -4343,8 +4418,8 @@ async def test_dispatcher_starts_stage_pipeline_with_injected_services(
 @pytest.mark.asyncio
 async def test_execution_id_attaches_before_background_pipeline_start(
     monkeypatch: pytest.MonkeyPatch,
-    temp_db,
-    sample_project,
+    temp_db: HubDatabase,
+    sample_project: dict[str, Any],
 ) -> None:
     """Execution id attaches before background pipeline start."""
     from gobby.dispatch import dispatcher
@@ -4354,12 +4429,12 @@ async def test_execution_id_attaches_before_background_pipeline_start(
     executor = _FakePipelineExecutor()
     services = SimpleNamespace(pipeline_executor=executor)
     monkeypatch.setattr(
-        dispatcher.dispatch_rules,
+        dispatch_rules,
         "evaluate",
         lambda *args, **kwargs: _pipeline_action(task.id),
     )
 
-    async def record_background(*args, **kwargs):
+    async def record_background(*args: Any, **kwargs: Any) -> None:
         executor.record_call({"execution_id": args[4]})
 
     monkeypatch.setattr(dispatcher, "_execute_pipeline_background", record_background)
@@ -4368,14 +4443,14 @@ async def test_execution_id_attaches_before_background_pipeline_start(
     calls = await _wait_for_executor_calls(executor)
 
     execution_id = calls[0]["execution_id"]
-    assert storage.get_mutex(task.id).run_id == execution_id
+    assert _required(storage.get_mutex(task.id)).run_id == execution_id
 
 
 @pytest.mark.asyncio
 async def test_pipeline_terminal_handler_releases_lease(
     monkeypatch: pytest.MonkeyPatch,
-    temp_db,
-    sample_project,
+    temp_db: HubDatabase,
+    sample_project: dict[str, Any],
 ) -> None:
     """Pipeline terminal handler releases lease."""
     from gobby.dispatch import dispatcher
@@ -4386,12 +4461,12 @@ async def test_pipeline_terminal_handler_releases_lease(
     executor = _FakePipelineExecutor()
     services = SimpleNamespace(pipeline_executor=executor)
     monkeypatch.setattr(
-        dispatcher.dispatch_rules,
+        dispatch_rules,
         "evaluate",
         lambda *args, **kwargs: _pipeline_action(task.id),
     )
 
-    async def record_background(*args, **kwargs):
+    async def record_background(*args: Any, **kwargs: Any) -> None:
         executor.record_call({"execution_id": args[4]})
 
     monkeypatch.setattr(dispatcher, "_execute_pipeline_background", record_background)
@@ -4410,8 +4485,8 @@ async def test_pipeline_terminal_handler_releases_lease(
 @pytest.mark.asyncio
 async def test_invalid_pipeline_target_escalates_and_releases(
     monkeypatch: pytest.MonkeyPatch,
-    temp_db,
-    sample_project,
+    temp_db: HubDatabase,
+    sample_project: dict[str, Any],
 ) -> None:
     """Invalid pipeline target escalates and releases."""
     from gobby.dispatch import dispatcher
@@ -4419,7 +4494,7 @@ async def test_invalid_pipeline_target_escalates_and_releases(
     task = _task(temp_db, sample_project, lifecycle="expanding")
     storage = _mutex_storage(temp_db)
     monkeypatch.setattr(
-        dispatcher.dispatch_rules,
+        dispatch_rules,
         "evaluate",
         lambda *args, **kwargs: StartPipelineAction(
             task_id=task.id,
@@ -4440,8 +4515,8 @@ async def test_invalid_pipeline_target_escalates_and_releases(
 @pytest.mark.asyncio
 async def test_stage_pipeline_runtime_mutex_failure_is_retry_neutral(
     monkeypatch: pytest.MonkeyPatch,
-    temp_db,
-    sample_project,
+    temp_db: HubDatabase,
+    sample_project: dict[str, Any],
 ) -> None:
     """Internal stage-pipeline mutex races restore the stage without burning attempts."""
     from gobby.dispatch import dispatcher
@@ -4459,7 +4534,7 @@ async def test_stage_pipeline_runtime_mutex_failure_is_retry_neutral(
     storage = _mutex_storage(temp_db)
     services = SimpleNamespace(pipeline_executor=_FakePipelineExecutor())
     monkeypatch.setattr(
-        dispatcher.dispatch_rules,
+        dispatch_rules,
         "evaluate",
         lambda *args, **kwargs: _pipeline_action(task.id),
     )
@@ -4493,8 +4568,8 @@ async def test_stage_pipeline_runtime_mutex_failure_is_retry_neutral(
 @pytest.mark.asyncio
 async def test_create_isolation_action_writes_artifact_pair_and_base_commit_sha_atomically(
     monkeypatch: pytest.MonkeyPatch,
-    temp_db,
-    sample_project,
+    temp_db: HubDatabase,
+    sample_project: dict[str, Any],
 ) -> None:
     """Create isolation action writes artifact pair and base commit sha atomically."""
     from gobby.dispatch import dispatcher
@@ -4503,7 +4578,7 @@ async def test_create_isolation_action_writes_artifact_pair_and_base_commit_sha_
     TaskArtifactManager(temp_db).set_artifacts_atomic(task.id, target_branch="main")
     monkeypatch.setattr(dispatcher, "resolve_branch_sha", lambda branch: "abc123")
     monkeypatch.setattr(
-        dispatcher.dispatch_rules,
+        dispatch_rules,
         "evaluate",
         lambda *args, **kwargs: CreateIsolationAction(
             task_id=task.id,
@@ -4523,8 +4598,8 @@ async def test_create_isolation_action_writes_artifact_pair_and_base_commit_sha_
 @pytest.mark.asyncio
 async def test_create_isolation_action_resolves_base_commit_sha_from_target_branch(
     monkeypatch: pytest.MonkeyPatch,
-    temp_db,
-    sample_project,
+    temp_db: HubDatabase,
+    sample_project: dict[str, Any],
 ) -> None:
     """Create isolation action resolves base commit sha from target branch."""
     from gobby.dispatch import dispatcher
@@ -4532,11 +4607,14 @@ async def test_create_isolation_action_resolves_base_commit_sha_from_target_bran
     task = _task(temp_db, sample_project, isolation="worktree")
     TaskArtifactManager(temp_db).set_artifacts_atomic(task.id, target_branch="main")
     resolved: list[str] = []
+
+    def resolve_branch_sha(branch: str) -> str:
+        resolved.append(branch)
+        return "abc123"
+
+    monkeypatch.setattr(dispatcher, "resolve_branch_sha", resolve_branch_sha)
     monkeypatch.setattr(
-        dispatcher, "resolve_branch_sha", lambda branch: resolved.append(branch) or "abc123"
-    )
-    monkeypatch.setattr(
-        dispatcher.dispatch_rules,
+        dispatch_rules,
         "evaluate",
         lambda *args, **kwargs: CreateIsolationAction(task.id, "#1", "worktree"),
     )
@@ -4547,8 +4625,8 @@ async def test_create_isolation_action_resolves_base_commit_sha_from_target_bran
 
 
 def test_persist_spawn_artifacts_writes_base_commit_sha(
-    temp_db,
-    sample_project,
+    temp_db: HubDatabase,
+    sample_project: dict[str, Any],
 ) -> None:
     """Persist spawn artifacts writes base commit sha."""
     from gobby.dispatch.spawn import _persist_spawn_artifacts
@@ -4588,8 +4666,8 @@ def test_persist_spawn_artifacts_writes_base_commit_sha(
 
 
 def test_persist_spawn_artifacts_reraises_persistence_errors(
-    temp_db,
-    sample_project,
+    temp_db: HubDatabase,
+    sample_project: dict[str, Any],
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """Artifact persistence failures propagate to dispatcher callers."""
@@ -4619,8 +4697,8 @@ def test_persist_spawn_artifacts_reraises_persistence_errors(
 
 
 def test_persist_spawn_artifacts_updates_standalone_base_commit_sha(
-    temp_db,
-    sample_project,
+    temp_db: HubDatabase,
+    sample_project: dict[str, Any],
 ) -> None:
     """A spawn result may only refresh the base SHA for an existing workspace."""
     from gobby.dispatch.spawn import _persist_spawn_artifacts
@@ -4644,8 +4722,8 @@ def test_persist_spawn_artifacts_updates_standalone_base_commit_sha(
 @pytest.mark.asyncio
 async def test_dispatch_spawn_tolerates_build_coordinator_subscription_failure(
     monkeypatch: pytest.MonkeyPatch,
-    temp_db,
-    sample_project,
+    temp_db: HubDatabase,
+    sample_project: dict[str, Any],
 ) -> None:
     """Agent spawn succeeds even when best-effort coordinator subscription fails."""
     from gobby.agents.sync import sync_bundled_agents
@@ -4671,7 +4749,7 @@ async def test_dispatch_spawn_tolerates_build_coordinator_subscription_failure(
         summary={"coordinator_session_id": coordinator.id},
     )
 
-    async def fake_spawn_agent_impl(**_kwargs):
+    async def fake_spawn_agent_impl(**_kwargs: Any) -> dict[str, object]:
         return {"success": True, "run_id": "2130ceda-1787-5c67-8ff4-7232d3b8fbd7"}
 
     monkeypatch.setattr(
@@ -4701,17 +4779,21 @@ async def test_dispatch_spawn_tolerates_build_coordinator_subscription_failure(
 @pytest.mark.asyncio
 async def test_create_isolation_action_missing_target_branch_escalates(
     monkeypatch: pytest.MonkeyPatch,
-    temp_db,
-    sample_project,
+    temp_db: HubDatabase,
+    sample_project: dict[str, Any],
 ) -> None:
     """Create isolation action missing target branch escalates."""
     from gobby.dispatch import dispatcher
 
     task = _task(temp_db, sample_project, isolation="worktree")
     escalations: list[dict[str, object]] = []
-    monkeypatch.setattr(dispatcher, "escalate_task", lambda **kwargs: escalations.append(kwargs))
+
+    def record_escalation(**kwargs: object) -> None:
+        escalations.append(kwargs)
+
+    monkeypatch.setattr(dispatcher, "escalate_task", record_escalation)
     monkeypatch.setattr(
-        dispatcher.dispatch_rules,
+        dispatch_rules,
         "evaluate",
         lambda *args, **kwargs: CreateIsolationAction(task.id, "#1", "worktree"),
     )
@@ -4724,8 +4806,8 @@ async def test_create_isolation_action_missing_target_branch_escalates(
 @pytest.mark.asyncio
 async def test_dev_rule_fires_after_isolation_and_stage_start(
     monkeypatch: pytest.MonkeyPatch,
-    temp_db,
-    sample_project,
+    temp_db: HubDatabase,
+    sample_project: dict[str, Any],
 ) -> None:
     """Dev rule fires after isolation and stage start."""
     from gobby.agents.sync import sync_bundled_agents
@@ -4736,12 +4818,12 @@ async def test_dev_rule_fires_after_isolation_and_stage_start(
     TaskArtifactManager(temp_db).set_artifacts_atomic(task.id, target_branch="main")
     spawned: list[str] = []
     monkeypatch.setattr(dispatcher, "resolve_branch_sha", lambda branch: "abc123")
-    monkeypatch.setattr(
-        dispatcher,
-        "spawn_agent",
-        lambda action, **kwargs: spawned.append(action.task_id)
-        or "ac314d27-4314-5fe3-a0ab-01645086e137",
-    )
+
+    def record_spawn(action: SpawnAgentAction, **_kwargs: object) -> str:
+        spawned.append(action.task_id)
+        return "ac314d27-4314-5fe3-a0ab-01645086e137"
+
+    monkeypatch.setattr(dispatcher, "spawn_agent", record_spawn)
 
     first = await dispatcher.run_heartbeat(db=temp_db, project_id=sample_project["id"])
     second = await dispatcher.run_heartbeat(db=temp_db, project_id=sample_project["id"])
@@ -4849,7 +4931,7 @@ async def test_heartbeat_preserves_no_run_mutex_with_live_lease(
     )
     spawned: list[tuple[str, str, str]] = []
     monkeypatch.setattr(
-        dispatcher.dispatch_rules,
+        dispatch_rules,
         "evaluate",
         lambda *args, **kwargs: SpawnAgentAction(
             task_id=task.id,
@@ -4858,14 +4940,12 @@ async def test_heartbeat_preserves_no_run_mutex_with_live_lease(
             prompt="resume work",
         ),
     )
-    monkeypatch.setattr(
-        dispatcher,
-        "spawn_agent",
-        lambda action, **kwargs: spawned.append(
-            (action.task_id, action.task_ref, action.agent_slug)
-        )
-        or "ad91abd1-f0f0-527c-a037-2270467bb189",
-    )
+
+    def record_spawn(action: SpawnAgentAction, **_kwargs: object) -> str:
+        spawned.append((action.task_id, action.task_ref, action.agent_slug))
+        return "ad91abd1-f0f0-527c-a037-2270467bb189"
+
+    monkeypatch.setattr(dispatcher, "spawn_agent", record_spawn)
 
     first = await dispatcher.run_heartbeat(db=temp_db, project_id=sample_project["id"])
 
@@ -4916,7 +4996,7 @@ async def test_heartbeat_recovers_expired_no_run_mutex(
     )
     spawned: list[str] = []
     monkeypatch.setattr(
-        dispatcher.dispatch_rules,
+        dispatch_rules,
         "evaluate",
         lambda *args, **kwargs: SpawnAgentAction(
             task_id=task.id,
@@ -4925,12 +5005,12 @@ async def test_heartbeat_recovers_expired_no_run_mutex(
             prompt="resume work",
         ),
     )
-    monkeypatch.setattr(
-        dispatcher,
-        "spawn_agent",
-        lambda action, **kwargs: spawned.append(action.task_id)
-        or "0dc284d8-ee46-5ebb-961d-881bbee9b1d0",
-    )
+
+    def record_spawn(action: SpawnAgentAction, **_kwargs: object) -> str:
+        spawned.append(action.task_id)
+        return "0dc284d8-ee46-5ebb-961d-881bbee9b1d0"
+
+    monkeypatch.setattr(dispatcher, "spawn_agent", record_spawn)
 
     result = await dispatcher.run_heartbeat(db=temp_db, project_id=sample_project["id"])
 
@@ -4960,12 +5040,12 @@ async def test_heartbeat_preserves_fresh_no_run_mutex(
         now=datetime.now(UTC),
     )
     spawned: list[str] = []
-    monkeypatch.setattr(
-        dispatcher,
-        "spawn_agent",
-        lambda action, **kwargs: spawned.append(action.task_id)
-        or "7747170d-ab96-5f8c-bade-08c58891d57d",
-    )
+
+    def record_spawn(action: SpawnAgentAction, **_kwargs: object) -> str:
+        spawned.append(action.task_id)
+        return "7747170d-ab96-5f8c-bade-08c58891d57d"
+
+    monkeypatch.setattr(dispatcher, "spawn_agent", record_spawn)
 
     result = await dispatcher.run_heartbeat(db=temp_db, project_id=sample_project["id"])
 
