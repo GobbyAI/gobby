@@ -95,3 +95,8 @@ so each iteration resumes from the durable goal document and live task state.
   and test-quality reported zero issues. Close validation passed after rerunning
   gates with exit-code-correlated evidence; close-triggered compaction supplied
   the required boundary.
+- 2026-07-21 #9341 iteration 2 — closed #17659 with commit `c08fa44bc`;
+  4 focused composition tests and 133 dispatcher/observability tests passed;
+  Ruff format/check, mypy, Bandit, and test-quality passed. Close validation
+  passed after rerunning the long suite with exit-code-correlated evidence;
+  close-triggered compaction supplied the required boundary.
