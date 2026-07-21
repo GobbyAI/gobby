@@ -136,7 +136,9 @@ async def ensure_daemon_running(
 
         pid = effective_deps.get_daemon_pid()
         effective_deps.logger.error(
-            "Daemon is running but did not become healthy (pid=%s, port=%s) after %s attempts. Refusing to restart it from a stdio MCP client because that can interrupt active dispatch agents.",
+            "Daemon is running but did not become healthy (pid=%s, port=%s) after %s "
+            "attempts. Refusing to restart it from a stdio MCP client because that can "
+            "interrupt active dispatch agents.",
             pid,
             port,
             DAEMON_HEALTH_ATTEMPTS,
@@ -173,7 +175,8 @@ async def ensure_daemon_running(
 
     pid = effective_deps.get_daemon_pid()
     effective_deps.logger.error(
-        "Daemon failed to become healthy after %s attempts (pid=%s, port=%s, ws_port=%s, last_health=%s)",
+        "Daemon failed to become healthy after %s attempts "
+        "(pid=%s, port=%s, ws_port=%s, last_health=%s)",
         DAEMON_HEALTH_ATTEMPTS,
         pid,
         port,

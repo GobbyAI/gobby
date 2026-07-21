@@ -72,7 +72,6 @@ _UV_RUN_OPTIONS_WITH_VALUE = frozenset(
         "--index",
         "--index-strategy",
         "--index-url",
-        "--keyring-provider",
         "--link-mode",
         "--no-binary-package",
         "--no-build-isolation-package",
@@ -970,7 +969,8 @@ def _is_tree_complete(task_manager: Any, task_id: str) -> bool:
 
     if not task_closed:
         logger.debug(
-            "task_tree_complete: Task '%s' not explicitly closed but all %s subtask(s) complete — tree is complete",
+            "task_tree_complete: Task '%s' not explicitly closed but all %s subtask(s) "
+            "complete — tree is complete",
             task_id,
             len(subtasks),
         )

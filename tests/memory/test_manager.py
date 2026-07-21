@@ -53,7 +53,7 @@ def memory_config():
 
 
 @pytest.fixture
-def memory_manager(db, memory_config):
+def memory_manager(db: HubDatabase, memory_config: MemoryConfig) -> MemoryManager:
     """Create a MemoryManager with real database."""
     return MemoryManager(db=db, config=memory_config)
 
@@ -117,7 +117,7 @@ class TestCreateMemory:
     """Tests for the create_memory method."""
 
     @pytest.mark.asyncio
-    async def test_create_memory_basic(self, memory_manager) -> None:
+    async def test_create_memory_basic(self, memory_manager: MemoryManager) -> None:
         """Test basic memory creation."""
         memory = await memory_manager.create_memory(
             content="Test fact",
@@ -129,7 +129,9 @@ class TestCreateMemory:
         assert memory.memory_type == "fact"
 
     @pytest.mark.asyncio
-    async def test_create_memory_restores_soft_hidden_duplicate(self, memory_manager) -> None:
+    async def test_create_memory_restores_soft_hidden_duplicate(
+        self, memory_manager: MemoryManager
+    ) -> None:
         """Re-creating content dream GC soft-hid reactivates the row via the
         lifecycle content-check path, not an invisible duplicate."""
         created = await memory_manager.create_memory(content="reactivate me via facade")
@@ -176,7 +178,7 @@ class TestCreateMemory:
         assert memory.tags == ["ui", "theme"]
 
     @pytest.mark.asyncio
-    async def test_create_memory_default_values(self, memory_manager):
+    async def test_create_memory_default_values(self, memory_manager: MemoryManager):
         """Test memory creation uses correct defaults."""
         memory = await memory_manager.create_memory(content="Simple fact")
 
@@ -187,7 +189,7 @@ class TestCreateMemory:
     @pytest.mark.asyncio
     async def test_create_memory_uses_project_plus_global_dedup_scope(
         self,
-        memory_manager,
+        memory_manager: MemoryManager,
         db,
     ) -> None:
         """Facade creation sees globals, isolates projects, and keeps global creation global."""
@@ -230,7 +232,9 @@ class TestCreateMemory:
         assert new_global.id not in {first_project.id, second_project.id}
         assert new_global.project_id is None
 
-    def test_create_memory_with_restore_metadata_uses_lww(self, memory_manager) -> None:
+    def test_create_memory_with_restore_metadata_uses_lww(
+        self, memory_manager: MemoryManager
+    ) -> None:
         memory_id = str(uuid.uuid4())
         created_at = datetime(2023, 1, 1, tzinfo=UTC)
         initial_updated_at = datetime(2023, 1, 2, tzinfo=UTC)
@@ -389,7 +393,9 @@ class TestSearchMemories:
     """Tests for the search_memories method."""
 
     @pytest.mark.asyncio
-    async def test_search_memories_no_query_returns_top_memories(self, memory_manager):
+    async def test_search_memories_no_query_returns_top_memories(
+        self, memory_manager: MemoryManager
+    ):
         """Test search_memories without query returns top memories."""
         await memory_manager.create_memory(content="Low importance")
         await memory_manager.create_memory(content="High importance")
@@ -400,7 +406,7 @@ class TestSearchMemories:
         assert len(memories) == 2
 
     @pytest.mark.asyncio
-    async def test_search_memories_no_query_all_returned(self, memory_manager):
+    async def test_search_memories_no_query_all_returned(self, memory_manager: MemoryManager):
         """Test search_memories without query returns all memories (no VectorStore)."""
         await memory_manager.create_memory(content="Python is a programming language")
         await memory_manager.create_memory(content="JavaScript runs in browsers")
@@ -410,7 +416,7 @@ class TestSearchMemories:
         assert len(memories) == 2
 
     @pytest.mark.asyncio
-    async def test_search_memories_by_memory_type(self, memory_manager):
+    async def test_search_memories_by_memory_type(self, memory_manager: MemoryManager):
         """Test search_memories filters by memory type."""
         await memory_manager.create_memory(content="Fact 1", memory_type="fact")
         await memory_manager.create_memory(content="Pref 1", memory_type="preference")
@@ -421,7 +427,7 @@ class TestSearchMemories:
         assert memories[0].memory_type == "preference"
 
     @pytest.mark.asyncio
-    async def test_search_memories_limit(self, memory_manager):
+    async def test_search_memories_limit(self, memory_manager: MemoryManager):
         """Test search_memories respects limit parameter."""
         for i in range(5):
             await memory_manager.create_memory(content=f"Memory {i}")
@@ -431,7 +437,7 @@ class TestSearchMemories:
         assert len(memories) == 3
 
     @pytest.mark.asyncio
-    async def test_search_memories_updates_access_stats(self, memory_manager):
+    async def test_search_memories_updates_access_stats(self, memory_manager: MemoryManager):
         """Test search_memories updates access statistics."""
         memory = await memory_manager.create_memory(content="Track access")
         original_count = memory.access_count
@@ -443,7 +449,9 @@ class TestSearchMemories:
         assert updated.last_accessed_at is not None
 
     @pytest.mark.asyncio
-    async def test_recall_search_on_degraded_manager_emits_caller_event(self, memory_manager):
+    async def test_recall_search_on_degraded_manager_emits_caller_event(
+        self, memory_manager: MemoryManager
+    ):
         """Regression #17491: a manager without vector wiring routes queries through
         the keyword fallback, which must still emit one recall-signal event per
         search carrying the caller and join keys — fallback is never silent."""
@@ -472,7 +480,7 @@ class TestAccessStats:
     """Tests for access statistics updates."""
 
     @pytest.mark.asyncio
-    async def test_update_access_stats_debouncing(self, memory_manager):
+    async def test_update_access_stats_debouncing(self, memory_manager: MemoryManager):
         """Test access stats debouncing prevents rapid updates."""
         memory = await memory_manager.create_memory(content="Debounce test")
 
@@ -488,7 +496,7 @@ class TestAccessStats:
         # Should still be same count due to debouncing
         assert updated_again.access_count == first_access_count
 
-    async def test_update_access_stats_empty_list(self, memory_manager) -> None:
+    async def test_update_access_stats_empty_list(self, memory_manager: MemoryManager) -> None:
         """Test _update_access_stats handles empty list."""
         with patch.object(memory_manager.storage, "update_access_stats") as update_access_stats:
             result = await memory_manager._update_access_stats([])
@@ -531,7 +539,7 @@ class TestDeleteMemory:
     """Tests for the delete_memory method."""
 
     @pytest.mark.asyncio
-    async def test_delete_existing_memory(self, memory_manager):
+    async def test_delete_existing_memory(self, memory_manager: MemoryManager):
         """Test deleting an existing memory."""
         memory = await memory_manager.create_memory(content="To delete")
 
@@ -541,7 +549,7 @@ class TestDeleteMemory:
         assert memory_manager.get_memory(memory.id) is None
 
     @pytest.mark.asyncio
-    async def test_delete_nonexistent_memory(self, memory_manager) -> None:
+    async def test_delete_nonexistent_memory(self, memory_manager: MemoryManager) -> None:
         """Test deleting a non-existent memory returns False."""
         result = await memory_manager.delete_memory(MISSING_MEMORY_ID)
         assert result is False
@@ -556,7 +564,7 @@ class TestListMemories:
     """Tests for list_memories method."""
 
     @pytest.mark.asyncio
-    async def test_list_memories_basic(self, memory_manager):
+    async def test_list_memories_basic(self, memory_manager: MemoryManager):
         """Test basic memory listing."""
         await memory_manager.create_memory(content="Memory 1")
         await memory_manager.create_memory(content="Memory 2")
@@ -566,7 +574,7 @@ class TestListMemories:
         assert len(memories) == 2
 
     @pytest.mark.asyncio
-    async def test_list_memories_with_offset(self, memory_manager):
+    async def test_list_memories_with_offset(self, memory_manager: MemoryManager):
         """Test memory listing with offset."""
         for i in range(5):
             await memory_manager.create_memory(content=f"Memory {i}")
@@ -576,7 +584,7 @@ class TestListMemories:
         assert len(memories) == 2
 
     @pytest.mark.asyncio
-    async def test_list_memories_by_type(self, memory_manager):
+    async def test_list_memories_by_type(self, memory_manager: MemoryManager):
         """Test memory listing filtered by type."""
         await memory_manager.create_memory(content="Fact", memory_type="fact")
         await memory_manager.create_memory(content="Preference", memory_type="preference")
@@ -596,7 +604,7 @@ class TestContentExists:
     """Tests for content_exists method."""
 
     @pytest.mark.asyncio
-    async def test_content_exists_true(self, memory_manager):
+    async def test_content_exists_true(self, memory_manager: MemoryManager):
         """Test content_exists returns True for existing content."""
         await memory_manager.create_memory(content="Existing content")
 
@@ -604,7 +612,7 @@ class TestContentExists:
 
         assert result is True
 
-    def test_content_exists_false(self, memory_manager) -> None:
+    def test_content_exists_false(self, memory_manager: MemoryManager) -> None:
         """Test content_exists returns False for non-existing content."""
         result = memory_manager.content_exists("Non-existing content")
 
@@ -620,7 +628,7 @@ class TestGetMemory:
     """Tests for get_memory method."""
 
     @pytest.mark.asyncio
-    async def test_get_memory_exists(self, memory_manager):
+    async def test_get_memory_exists(self, memory_manager: MemoryManager):
         """Test getting an existing memory."""
         created = await memory_manager.create_memory(content="Get test")
 
@@ -630,7 +638,7 @@ class TestGetMemory:
         assert retrieved.id == created.id
         assert retrieved.content == created.content
 
-    def test_get_memory_not_found(self, memory_manager) -> None:
+    def test_get_memory_not_found(self, memory_manager: MemoryManager) -> None:
         """Test getting a non-existent memory returns None."""
         result = memory_manager.get_memory(MISSING_MEMORY_ID)
 
@@ -646,7 +654,7 @@ class TestUpdateMemory:
     """Tests for update_memory method."""
 
     @pytest.mark.asyncio
-    async def test_update_memory_content(self, memory_manager):
+    async def test_update_memory_content(self, memory_manager: MemoryManager):
         """Test updating memory content preserves the memory ID."""
         memory = await memory_manager.create_memory(content="Original")
 
@@ -657,7 +665,7 @@ class TestUpdateMemory:
         assert memory_manager.get_memory(memory.id).content == "Updated"
 
     @pytest.mark.asyncio
-    async def test_update_memory_tags(self, memory_manager):
+    async def test_update_memory_tags(self, memory_manager: MemoryManager):
         """Test updating memory tags."""
         memory = await memory_manager.create_memory(content="Test", tags=["old"])
 
@@ -666,7 +674,7 @@ class TestUpdateMemory:
         assert updated.tags == ["new", "tags"]
 
     @pytest.mark.asyncio
-    async def test_update_memory_type(self, memory_manager):
+    async def test_update_memory_type(self, memory_manager: MemoryManager):
         """Test updating and persisting a memory type."""
         memory = await memory_manager.create_memory(content="Test", memory_type="fact")
 
@@ -676,7 +684,7 @@ class TestUpdateMemory:
         assert memory_manager.get_memory(memory.id).memory_type == "preference"
 
     @pytest.mark.asyncio
-    async def test_update_memory_not_found_raises(self, memory_manager):
+    async def test_update_memory_not_found_raises(self, memory_manager: MemoryManager):
         """Test updating non-existent memory raises ValueError."""
         with pytest.raises(ValueError, match="not found"):
             await memory_manager.update_memory(MISSING_MEMORY_ID, tags=["new"])
@@ -722,7 +730,7 @@ class TestUpdateMemory:
 class TestGetStats:
     """Tests for get_stats method."""
 
-    def test_get_stats_empty(self, memory_manager) -> None:
+    def test_get_stats_empty(self, memory_manager: MemoryManager) -> None:
         """Test stats with no memories."""
         stats = memory_manager.get_stats()
 
@@ -730,7 +738,7 @@ class TestGetStats:
         assert stats["by_type"] == {}
 
     @pytest.mark.asyncio
-    async def test_get_stats_with_memories(self, memory_manager):
+    async def test_get_stats_with_memories(self, memory_manager: MemoryManager):
         """Test stats with multiple memories."""
         await memory_manager.create_memory(content="Fact 1", memory_type="fact")
         await memory_manager.create_memory(content="Fact 2", memory_type="fact")
@@ -752,7 +760,7 @@ class TestEdgeCases:
     """Tests for edge cases and error handling."""
 
     @pytest.mark.asyncio
-    async def test_duplicate_content_handling(self, memory_manager):
+    async def test_duplicate_content_handling(self, memory_manager: MemoryManager):
         """Test creating memory with duplicate content returns existing."""
         memory1 = await memory_manager.create_memory(content="Duplicate test")
         memory2 = await memory_manager.create_memory(content="Duplicate test")
@@ -760,7 +768,7 @@ class TestEdgeCases:
         assert memory1.id == memory2.id
 
     @pytest.mark.asyncio
-    async def test_search_memories_empty_database(self, memory_manager):
+    async def test_search_memories_empty_database(self, memory_manager: MemoryManager):
         """Test search_memories on empty database returns empty list."""
         memories = await memory_manager.search_memories()
         assert memories == []
@@ -852,7 +860,7 @@ class TestVectorStoreIntegration:
     """Tests for VectorStore-related operations."""
 
     @pytest.mark.asyncio
-    async def test_embed_and_upsert_no_vectorstore(self, memory_manager) -> None:
+    async def test_embed_and_upsert_no_vectorstore(self, memory_manager: MemoryManager) -> None:
         """_embed_and_upsert does nothing when no VectorStore."""
         result = await memory_manager._embed_and_upsert("id", "content")
 
@@ -1192,7 +1200,7 @@ class TestADeleteMemory:
     """Tests for adelete_memory."""
 
     @pytest.mark.asyncio
-    async def test_adelete_existing(self, memory_manager) -> None:
+    async def test_adelete_existing(self, memory_manager: MemoryManager) -> None:
         """adelete_memory removes an existing memory."""
         memory = await memory_manager.create_memory(content="Async delete test")
         result = await memory_manager.adelete_memory(memory.id)
@@ -1200,7 +1208,7 @@ class TestADeleteMemory:
         assert memory_manager.get_memory(memory.id) is None
 
     @pytest.mark.asyncio
-    async def test_adelete_nonexistent(self, memory_manager) -> None:
+    async def test_adelete_nonexistent(self, memory_manager: MemoryManager) -> None:
         """adelete_memory returns False for nonexistent memory."""
         result = await memory_manager.adelete_memory(MISSING_MEMORY_ID)
         assert result is False
@@ -1215,7 +1223,7 @@ class TestAGetMemory:
     """Tests for aget_memory."""
 
     @pytest.mark.asyncio
-    async def test_aget_existing(self, memory_manager) -> None:
+    async def test_aget_existing(self, memory_manager: MemoryManager) -> None:
         """aget_memory returns existing memory."""
         created = await memory_manager.create_memory(content="Async get test")
         result = await memory_manager.aget_memory(created.id)
@@ -1223,7 +1231,7 @@ class TestAGetMemory:
         assert result.content == "Async get test"
 
     @pytest.mark.asyncio
-    async def test_aget_nonexistent(self, memory_manager) -> None:
+    async def test_aget_nonexistent(self, memory_manager: MemoryManager) -> None:
         """aget_memory returns None for nonexistent memory."""
         result = await memory_manager.aget_memory(MISSING_MEMORY_ID)
         assert result is None
@@ -1243,7 +1251,7 @@ class TestAListMemories:
         assert signature.parameters["limit"].default == DEFAULT_LIST_LIMIT
 
     @pytest.mark.asyncio
-    async def test_alist_basic(self, memory_manager) -> None:
+    async def test_alist_basic(self, memory_manager: MemoryManager) -> None:
         """alist_memories returns memories."""
         await memory_manager.create_memory(content="AList 1")
         await memory_manager.create_memory(content="AList 2")
@@ -1251,7 +1259,7 @@ class TestAListMemories:
         assert len(result) == 2
 
     @pytest.mark.asyncio
-    async def test_alist_with_limit(self, memory_manager) -> None:
+    async def test_alist_with_limit(self, memory_manager: MemoryManager) -> None:
         """alist_memories respects limit."""
         for i in range(5):
             await memory_manager.create_memory(content=f"AList limit {i}")
@@ -1259,7 +1267,7 @@ class TestAListMemories:
         assert len(result) == 3
 
     @pytest.mark.asyncio
-    async def test_alist_with_none_limit_uses_default(self, memory_manager) -> None:
+    async def test_alist_with_none_limit_uses_default(self, memory_manager: MemoryManager) -> None:
         """alist_memories treats explicit None as the default limit."""
         for i in range(DEFAULT_LIST_LIMIT + 1):
             await memory_manager.create_memory(content=f"AList default {i}")
@@ -1267,7 +1275,7 @@ class TestAListMemories:
         assert len(result) == DEFAULT_LIST_LIMIT
 
     @pytest.mark.asyncio
-    async def test_alist_with_zero_limit(self, memory_manager) -> None:
+    async def test_alist_with_zero_limit(self, memory_manager: MemoryManager) -> None:
         """alist_memories preserves explicit limit=0."""
         await memory_manager.create_memory(content="AList zero")
         result = await memory_manager.alist_memories(limit=0)
@@ -1283,14 +1291,14 @@ class TestAContentExists:
     """Tests for acontent_exists."""
 
     @pytest.mark.asyncio
-    async def test_acontent_exists_true(self, memory_manager) -> None:
+    async def test_acontent_exists_true(self, memory_manager: MemoryManager) -> None:
         """acontent_exists returns True for existing content."""
         await memory_manager.create_memory(content="Async exists test")
         result = await memory_manager.acontent_exists("Async exists test")
         assert result is True
 
     @pytest.mark.asyncio
-    async def test_acontent_exists_false(self, memory_manager) -> None:
+    async def test_acontent_exists_false(self, memory_manager: MemoryManager) -> None:
         """acontent_exists returns False for non-existing content."""
         result = await memory_manager.acontent_exists("Non-existing async content")
         assert result is False
@@ -1305,7 +1313,7 @@ class TestAUpdateMemory:
     """Tests for aupdate_memory."""
 
     @pytest.mark.asyncio
-    async def test_aupdate_content(self, memory_manager) -> None:
+    async def test_aupdate_content(self, memory_manager: MemoryManager) -> None:
         """aupdate_memory revises content and preserves the memory ID."""
         memory = await memory_manager.create_memory(content="Original async")
         memory_manager.mark_graph_processed(memory.id)
@@ -1321,7 +1329,7 @@ class TestAUpdateMemory:
         assert graph_row["graph_processed"] is False
 
     @pytest.mark.asyncio
-    async def test_aupdate_tags(self, memory_manager) -> None:
+    async def test_aupdate_tags(self, memory_manager: MemoryManager) -> None:
         """aupdate_memory updates tags."""
         memory = await memory_manager.create_memory(content="Tag async", tags=["old"])
         updated = await memory_manager.aupdate_memory(memory.id, tags=["new"])
@@ -1337,7 +1345,7 @@ class TestFindByPrefix:
     """Tests for find_by_prefix."""
 
     @pytest.mark.asyncio
-    async def test_find_by_prefix(self, memory_manager) -> None:
+    async def test_find_by_prefix(self, memory_manager: MemoryManager) -> None:
         """find_by_prefix returns memories matching ID prefix."""
         memory = await memory_manager.create_memory(content="Prefix test")
         prefix = memory.id[:8]
@@ -1345,7 +1353,7 @@ class TestFindByPrefix:
         assert len(results) >= 1
         assert any(r.id == memory.id for r in results)
 
-    def test_find_by_prefix_no_match(self, memory_manager) -> None:
+    def test_find_by_prefix_no_match(self, memory_manager: MemoryManager) -> None:
         """find_by_prefix returns empty list for non-matching prefix."""
         results = memory_manager.find_by_prefix("zzz-nonexistent")
         assert results == []
@@ -1359,19 +1367,19 @@ class TestFindByPrefix:
 class TestCountMemories:
     """Tests for count_memories."""
 
-    def test_count_empty(self, memory_manager) -> None:
+    def test_count_empty(self, memory_manager: MemoryManager) -> None:
         """count_memories returns 0 for empty database."""
         assert memory_manager.count_memories() == 0
 
     @pytest.mark.asyncio
-    async def test_count_with_memories(self, memory_manager) -> None:
+    async def test_count_with_memories(self, memory_manager: MemoryManager) -> None:
         """count_memories returns correct count."""
         await memory_manager.create_memory(content="Count 1")
         await memory_manager.create_memory(content="Count 2")
         assert memory_manager.count_memories() == 2
 
     @pytest.mark.asyncio
-    async def test_count_filters_by_memory_type(self, memory_manager) -> None:
+    async def test_count_filters_by_memory_type(self, memory_manager: MemoryManager) -> None:
         """count_memories filters totals by memory_type."""
         await memory_manager.create_memory(content="Count fact", memory_type="fact")
         await memory_manager.create_memory(content="Count preference", memory_type="preference")
@@ -1390,7 +1398,7 @@ class TestReindexEmbeddings:
     """Tests for reindex_embeddings."""
 
     @pytest.mark.asyncio
-    async def test_reindex_no_vectorstore(self, memory_manager) -> None:
+    async def test_reindex_no_vectorstore(self, memory_manager: MemoryManager) -> None:
         """reindex_embeddings returns error when no VectorStore."""
         result = await memory_manager.reindex_embeddings()
         assert result["success"] is False
@@ -1475,13 +1483,13 @@ class TestExportMarkdown:
     """Tests for export_markdown."""
 
     @pytest.mark.asyncio
-    async def test_export_empty(self, memory_manager) -> None:
+    async def test_export_empty(self, memory_manager: MemoryManager) -> None:
         """export_markdown returns something for empty database."""
         result = memory_manager.export_markdown()
         assert isinstance(result, str)
 
     @pytest.mark.asyncio
-    async def test_export_with_memories(self, memory_manager) -> None:
+    async def test_export_with_memories(self, memory_manager: MemoryManager) -> None:
         """export_markdown includes memory content."""
         await memory_manager.create_memory(content="Export test memory")
         result = memory_manager.export_markdown()
@@ -1526,21 +1534,21 @@ class TestRRFMerge:
 class TestLLMServiceProperty:
     """Tests for llm_service property getter/setter."""
 
-    def test_get_llm_service(self, memory_manager) -> None:
+    def test_get_llm_service(self, memory_manager: MemoryManager) -> None:
         """llm_service getter returns value from ingestion service."""
         assert memory_manager.llm_service is None
 
-    def test_set_llm_service(self, memory_manager) -> None:
+    def test_set_llm_service(self, memory_manager: MemoryManager) -> None:
         """llm_service setter updates both internal and ingestion service."""
         mock_service = MagicMock()
         memory_manager.llm_service = mock_service
         assert memory_manager._llm_service is mock_service
 
-    def test_embed_fn_property(self, memory_manager) -> None:
+    def test_embed_fn_property(self, memory_manager: MemoryManager) -> None:
         """embed_fn property returns None when not configured."""
         assert memory_manager.embed_fn is None
 
-    def test_kg_service_property(self, memory_manager) -> None:
+    def test_kg_service_property(self, memory_manager: MemoryManager) -> None:
         """kg_service property returns None when not configured."""
         assert memory_manager.kg_service is None
 
@@ -1572,7 +1580,7 @@ class TestCreateCrossrefs:
     """Tests for _create_crossrefs."""
 
     @pytest.mark.asyncio
-    async def test_no_vectorstore_returns_zero(self, memory_manager) -> None:
+    async def test_no_vectorstore_returns_zero(self, memory_manager: MemoryManager) -> None:
         """_create_crossrefs returns 0 when no VectorStore."""
         memory = await memory_manager.create_memory(content="Crossref no VS")
         result = await memory_manager._create_crossrefs(memory)
@@ -1612,7 +1620,7 @@ class TestGetRelated:
     """Tests for get_related."""
 
     @pytest.mark.asyncio
-    async def test_get_related_empty(self, memory_manager) -> None:
+    async def test_get_related_empty(self, memory_manager: MemoryManager) -> None:
         """get_related returns empty list when no crossrefs exist."""
         memory = await memory_manager.create_memory(content="Related test")
         related = await memory_manager.get_related(memory.id)

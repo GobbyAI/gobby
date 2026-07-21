@@ -111,7 +111,10 @@ def clear_active_shutdown_intent(*, home: Path | None = None) -> None:
     except FileNotFoundError:
         pass
     except OSError as exc:
-        logger.warning("Failed to clear active shutdown marker %s: %s", marker, exc)
+        logger.warning(
+            "Failed to clear active shutdown marker",
+            extra={"marker_path": str(marker), "error": str(exc)},
+        )
 
 
 def _write_marker_atomically(marker: Path, data: Mapping[str, object]) -> None:

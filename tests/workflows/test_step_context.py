@@ -2,10 +2,10 @@
 
 from __future__ import annotations
 
-import sqlite3
 from types import SimpleNamespace
 from unittest.mock import MagicMock
 
+import psycopg
 import pytest
 
 from gobby.workflows.step_context import get_active_step_workflow_context
@@ -15,7 +15,7 @@ pytestmark = pytest.mark.unit
 
 class _FailingDb:
     def fetchall(self, *_args: object, **_kwargs: object) -> list[object]:
-        raise sqlite3.DatabaseError("database unavailable")
+        raise psycopg.DatabaseError("database unavailable")
 
 
 def test_get_active_step_workflow_context_propagates_db_failures(
@@ -24,7 +24,7 @@ def test_get_active_step_workflow_context_propagates_db_failures(
     """Synchronous DB driver failures propagate without duplicate local logging."""
     # A valid uuid session id is required to get past the is_session_uuid
     # guard so the lookup actually reaches the (failing) database.
-    with pytest.raises(sqlite3.DatabaseError):
+    with pytest.raises(psycopg.DatabaseError):
         get_active_step_workflow_context(
             _FailingDb(),  # type: ignore[arg-type]
             "11111111-1111-4111-8111-111111111111",

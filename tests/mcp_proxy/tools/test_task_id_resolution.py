@@ -9,17 +9,19 @@ These tests verify that MCP tools correctly resolve task references:
 """
 
 import uuid
+from typing import Any
 from unittest.mock import MagicMock, patch
 
 import pytest
 
+from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.tasks import LocalTaskManager, Task, TaskNotFoundError
 
 pytestmark = pytest.mark.unit
 
 
 @pytest.fixture
-def mock_task_manager():
+def mock_task_manager() -> MagicMock:
     """Create a mock task manager."""
     manager = MagicMock(spec=LocalTaskManager)
     manager.db = MagicMock()
@@ -27,7 +29,7 @@ def mock_task_manager():
 
 
 @pytest.fixture
-def sample_task_uuid():
+def sample_task_uuid() -> Task:
     """Create a sample task with UUID-format ID."""
     task_id = str(uuid.uuid4())
     return Task(
@@ -48,7 +50,9 @@ def sample_task_uuid():
 class TestResolveTaskIdForMCP:
     """Tests for the resolve_task_id_for_mcp helper function."""
 
-    def test_resolve_uuid_passthrough(self, mock_task_manager, sample_task_uuid) -> None:
+    def test_resolve_uuid_passthrough(
+        self, mock_task_manager: MagicMock, sample_task_uuid: Task
+    ) -> None:
         """Test that valid UUID passes through to get_task."""
         from gobby.mcp_proxy.tools.tasks import resolve_task_id_for_mcp
 
@@ -63,7 +67,9 @@ class TestResolveTaskIdForMCP:
         assert result == sample_task_uuid.id
         mock_task_manager.get_task.assert_called_once_with(sample_task_uuid.id)
 
-    def test_resolve_hash_format_success(self, mock_task_manager, sample_task_uuid) -> None:
+    def test_resolve_hash_format_success(
+        self, mock_task_manager: MagicMock, sample_task_uuid: Task
+    ) -> None:
         """Test #N format resolution to UUID."""
         from gobby.mcp_proxy.tools.tasks import resolve_task_id_for_mcp
 
@@ -79,7 +85,7 @@ class TestResolveTaskIdForMCP:
             "#1", "11111111-1111-4111-8111-111111110001"
         )
 
-    def test_resolve_hash_format_not_found(self, mock_task_manager) -> None:
+    def test_resolve_hash_format_not_found(self, mock_task_manager: MagicMock) -> None:
         """Test #N format when task doesn't exist."""
         from gobby.mcp_proxy.tools.tasks import resolve_task_id_for_mcp
 
@@ -94,7 +100,9 @@ class TestResolveTaskIdForMCP:
 
         assert "#999" in str(exc_info.value)
 
-    def test_resolve_path_format_success(self, mock_task_manager, sample_task_uuid) -> None:
+    def test_resolve_path_format_success(
+        self, mock_task_manager: MagicMock, sample_task_uuid: Task
+    ) -> None:
         """Test path format (e.g., 1.2.3) resolution."""
         from gobby.mcp_proxy.tools.tasks import resolve_task_id_for_mcp
 
@@ -109,7 +117,7 @@ class TestResolveTaskIdForMCP:
             "1.2.3", "11111111-1111-4111-8111-111111110001"
         )
 
-    def test_resolve_gt_format_returns_error(self, mock_task_manager) -> None:
+    def test_resolve_gt_format_returns_error(self, mock_task_manager: MagicMock) -> None:
         """Test gt-* format returns 'task not found' error (treated as invalid UUID)."""
         from gobby.mcp_proxy.tools.tasks import resolve_task_id_for_mcp
 
@@ -128,7 +136,9 @@ class TestResolveTaskIdForMCP:
 class TestMCPGetTaskWithHashFormat:
     """Tests for get_task MCP tool with #N format."""
 
-    def test_get_task_with_hash_format(self, mock_task_manager, sample_task_uuid) -> None:
+    def test_get_task_with_hash_format(
+        self, mock_task_manager: MagicMock, sample_task_uuid: Task
+    ) -> None:
         """Test get_task resolves #N format correctly."""
         from gobby.mcp_proxy.tools.tasks import create_task_registry
 
@@ -153,7 +163,9 @@ class TestMCPGetTaskWithHashFormat:
             "#1", "11111111-1111-4111-8111-111111110001"
         )
 
-    def test_get_task_with_uuid_format(self, mock_task_manager, sample_task_uuid) -> None:
+    def test_get_task_with_uuid_format(
+        self, mock_task_manager: MagicMock, sample_task_uuid: Task
+    ) -> None:
         """Test get_task passes through UUID format."""
         from gobby.mcp_proxy.tools.tasks import create_task_registry
 
@@ -171,7 +183,7 @@ class TestMCPGetTaskWithHashFormat:
 
         assert result.get("id") == sample_task_uuid.id
 
-    def test_get_task_with_gt_format_error(self, mock_task_manager) -> None:
+    def test_get_task_with_gt_format_error(self, mock_task_manager: MagicMock) -> None:
         """Test get_task returns error for gt-* format (treated as invalid UUID)."""
         from gobby.mcp_proxy.tools.tasks import create_task_registry
 
@@ -195,7 +207,9 @@ class TestMCPGetTaskWithHashFormat:
 class TestMCPUpdateTaskWithHashFormat:
     """Tests for update_task MCP tool with #N format."""
 
-    def test_update_task_with_hash_format(self, mock_task_manager, sample_task_uuid) -> None:
+    def test_update_task_with_hash_format(
+        self, mock_task_manager: MagicMock, sample_task_uuid: Task
+    ) -> None:
         """Test update_task resolves #N format correctly."""
         from gobby.mcp_proxy.tools.tasks import create_task_registry
 
@@ -230,7 +244,9 @@ class TestMCPCloseTaskWithHashFormat:
     """Tests for close_task MCP tool with #N format."""
 
     @pytest.mark.asyncio
-    async def test_close_task_with_hash_format(self, mock_task_manager, sample_task_uuid):
+    async def test_close_task_with_hash_format(
+        self, mock_task_manager: MagicMock, sample_task_uuid: Task
+    ) -> None:
         """Test close_task resolves #N format correctly."""
         from gobby.mcp_proxy.tools.tasks import create_task_registry
 
@@ -263,7 +279,9 @@ class TestIntegrationMCPTaskIdResolution:
     """Integration tests using real database for MCP task ID resolution."""
 
     @pytest.mark.integration
-    def test_mcp_get_task_with_hash_format(self, temp_db, sample_project) -> None:
+    def test_mcp_get_task_with_hash_format(
+        self, temp_db: HubDatabase, sample_project: dict[str, Any]
+    ) -> None:
         """Test MCP get_task with #N format using real database."""
         from gobby.mcp_proxy.tools.tasks import create_task_registry
         from gobby.storage.tasks import LocalTaskManager
@@ -311,7 +329,9 @@ class TestIntegrationMCPTaskIdResolution:
         assert result.get("title") == "Task 2"
 
     @pytest.mark.integration
-    def test_mcp_get_task_with_path_format(self, temp_db, sample_project) -> None:
+    def test_mcp_get_task_with_path_format(
+        self, temp_db: HubDatabase, sample_project: dict[str, Any]
+    ) -> None:
         """Test MCP get_task with path format using real database."""
         from gobby.mcp_proxy.tools.tasks import create_task_registry
         from gobby.storage.tasks import LocalTaskManager
@@ -343,7 +363,9 @@ class TestIntegrationMCPTaskIdResolution:
         assert result.get("title") == "Child"
 
     @pytest.mark.integration
-    def test_mcp_get_task_with_gt_format_error(self, temp_db, sample_project) -> None:
+    def test_mcp_get_task_with_gt_format_error(
+        self, temp_db: HubDatabase, sample_project: dict[str, Any]
+    ) -> None:
         """Test MCP get_task returns error for gt-* format (unknown format)."""
         from gobby.mcp_proxy.tools.tasks import create_task_registry
         from gobby.storage.tasks import LocalTaskManager

@@ -9,7 +9,10 @@ ALTER TABLE recall_usefulness
     ADD CONSTRAINT recall_usefulness_label_source_check
     CHECK (
         label_source IN ('llm_judge', 'ablation', 'digest', 'digest_shadow', 'human')
-    );
+    ) NOT VALID;
+
+ALTER TABLE recall_usefulness
+    VALIDATE CONSTRAINT recall_usefulness_label_source_check;
 
 ALTER TABLE recall_signal_hits
     ADD COLUMN content_hash TEXT;
@@ -79,6 +82,3 @@ CREATE TABLE recall_holdout_consumed (
         REFERENCES recall_gate_runs(holdout_consumption_key) ON DELETE RESTRICT,
     consumed_at TIMESTAMPTZ NOT NULL
 );
-
-CREATE INDEX idx_recall_usefulness_request_source_protocol
-    ON recall_usefulness(recall_request_id, label_source, judge_protocol_version);

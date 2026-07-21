@@ -1,6 +1,8 @@
 from __future__ import annotations
 
+import asyncio
 from typing import Any
+from unittest.mock import MagicMock
 
 import httpx
 import pytest
@@ -9,6 +11,51 @@ from gobby.config.ai import LocalGenerationEndpointConfig
 from gobby.servers.local_provider_models import discover_local_endpoint_model_group
 
 pytestmark = pytest.mark.unit
+
+
+@pytest.mark.asyncio
+async def test_ollama_detail_fanout_is_bounded_to_four(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from gobby.servers import local_provider_models
+
+    active = 0
+    max_active = 0
+    first_wave_started = asyncio.Event()
+    release_first_wave = asyncio.Event()
+
+    async def fake_details(
+        _client: Any,
+        _endpoint: LocalGenerationEndpointConfig,
+        model_id: str,
+    ) -> tuple[bool, dict[str, Any]]:
+        nonlocal active, max_active
+        active += 1
+        max_active = max(max_active, active)
+        if active == 4:
+            first_wave_started.set()
+        await release_first_wave.wait()
+        active -= 1
+        return True, {"model": model_id}
+
+    monkeypatch.setattr(local_provider_models, "_ollama_model_details", fake_details)
+    endpoint = LocalGenerationEndpointConfig(
+        provider="ollama",
+        api_base="http://localhost:11434",
+        model="model-0",
+    )
+
+    batch_task = asyncio.create_task(
+        local_provider_models._ollama_model_details_batch(
+            MagicMock(), endpoint, [f"model-{index}" for index in range(9)]
+        )
+    )
+    await asyncio.wait_for(first_wave_started.wait(), timeout=1)
+    assert max_active == 4
+    release_first_wave.set()
+    results = await batch_task
+
+    assert [details["model"] for _, details in results] == [f"model-{index}" for index in range(9)]
 
 
 class _FakeResponse:

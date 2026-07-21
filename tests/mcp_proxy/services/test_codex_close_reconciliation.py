@@ -167,6 +167,7 @@ async def test_codex_close_reconciliation_timeout_remains_fail_closed(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     service = _Service(SessionSource.CODEX, require_ready=True)
+    service.variables["verification_evidence_recorded"] = True
 
     async def _slow_reconcile(_session_id: str) -> SimpleNamespace:
         service.order.append("reconcile")
@@ -187,8 +188,10 @@ async def test_codex_close_reconciliation_timeout_remains_fail_closed(
     )
 
     assert error is not None
-    assert error["error"] == "completion readiness blocked"
-    assert service.order == ["reconcile", "evaluate"]
+    assert error["error_code"] == "TOOL_BLOCKED"
+    assert error["retryable"] is True
+    assert "retry task closure" in error["error"]
+    assert service.order == ["reconcile"]
 
 
 @pytest.mark.asyncio

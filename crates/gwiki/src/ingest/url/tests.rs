@@ -446,6 +446,7 @@ fn batch_url_ingest_indexes_once_after_accepted_batch() {
     assert_eq!(result.status(), "ingested");
     assert_eq!(result.accepted.len(), 2);
     assert_eq!(store.indexed_hash_reads, 1);
+    assert_eq!(store.indexed_hashes_reads, 0);
 }
 
 #[test]
@@ -556,12 +557,18 @@ fn test_snapshot(
 struct CountingStore {
     inner: MemoryWikiStore,
     indexed_hash_reads: usize,
+    indexed_hashes_reads: usize,
 }
 
 impl WikiIndexStore for CountingStore {
     fn indexed_hashes(&mut self) -> Result<BTreeMap<PathBuf, String>, StoreError> {
-        self.indexed_hash_reads += 1;
+        self.indexed_hashes_reads += 1;
         self.inner.indexed_hashes()
+    }
+
+    fn indexed_hash(&mut self, path: &Path) -> Result<Option<String>, StoreError> {
+        self.indexed_hash_reads += 1;
+        self.inner.indexed_hash(path)
     }
 
     fn upsert_document(&mut self, document: WikiDocument) -> Result<(), StoreError> {

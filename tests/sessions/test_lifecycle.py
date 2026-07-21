@@ -131,7 +131,7 @@ class TestSessionLifecycleManager:
         await asyncio.gather(task, return_exceptions=True)
 
     @pytest.mark.asyncio
-    async def test_expire_stale_sessions(self, manager):
+    async def test_expire_stale_sessions(self, manager: SessionLifecycleManager) -> None:
         """Test expiring stale sessions."""
         # Setup mocks
         manager.session_manager.pause_inactive_active_sessions.return_value = 2
@@ -211,7 +211,9 @@ class TestSessionLifecycleManager:
             await manager._process_session_transcript("session-1", str(transcript))
 
     @pytest.mark.asyncio
-    async def test_process_pending_transcripts_none_found(self, manager):
+    async def test_process_pending_transcripts_none_found(
+        self, manager: SessionLifecycleManager
+    ) -> None:
         """Test processing when no sessions pending."""
         manager.session_manager.get_pending_transcript_sessions.return_value = []
 
@@ -221,7 +223,9 @@ class TestSessionLifecycleManager:
         manager.session_manager.mark_transcript_processed.assert_not_called()
 
     @pytest.mark.asyncio
-    async def test_process_pending_transcripts_success(self, tmp_path, manager):
+    async def test_process_pending_transcripts_success(
+        self, tmp_path: Path, manager: SessionLifecycleManager
+    ) -> None:
         """Test successful processing of a transcript."""
         # Create a mock session
         session = MagicMock(spec=Session)
@@ -322,7 +326,9 @@ class TestSessionLifecycleManager:
         assert processed == 1
 
     @pytest.mark.asyncio
-    async def test_process_pending_transcripts_skips_subagent_sessions(self, tmp_path, manager):
+    async def test_process_pending_transcripts_skips_subagent_sessions(
+        self, tmp_path: Path, manager: SessionLifecycleManager
+    ) -> None:
         """Subagent sessions (agent_depth > 0) skip memory extraction and summary generation."""
         session = MagicMock(spec=Session)
         session.id = "s-sub"
@@ -349,7 +355,9 @@ class TestSessionLifecycleManager:
             manager.session_manager.mark_transcript_processed.assert_called_once_with("s-sub")
 
     @pytest.mark.asyncio
-    async def test_process_pending_transcripts_skips_pipeline_sessions(self, tmp_path, manager):
+    async def test_process_pending_transcripts_skips_pipeline_sessions(
+        self, tmp_path: Path, manager: SessionLifecycleManager
+    ) -> None:
         """Pipeline sessions skip summary generation."""
         session = MagicMock(spec=Session)
         session.id = "s-pipe"
@@ -376,7 +384,9 @@ class TestSessionLifecycleManager:
             manager.session_manager.mark_transcript_processed.assert_called_once_with("s-pipe")
 
     @pytest.mark.asyncio
-    async def test_process_session_transcript_real_parsing(self, tmp_path, manager):
+    async def test_process_session_transcript_real_parsing(
+        self, tmp_path: Path, manager: SessionLifecycleManager
+    ) -> None:
         """Test parsing logic inside _process_session_transcript."""
         transcript_path = tmp_path / "transcript.jsonl"
         with open(transcript_path, "w") as f:
@@ -397,7 +407,9 @@ class TestSessionLifecycleManager:
             assert manager.session_manager.update_usage.call_count == 0
 
     @pytest.mark.asyncio
-    async def test_process_session_transcript_writes_stats(self, tmp_path, manager):
+    async def test_process_session_transcript_writes_stats(
+        self, tmp_path: Path, manager: SessionLifecycleManager
+    ) -> None:
         """The expiry path persists message/turn/tool stats via update_stats.
 
         Sessions the live processor never tailed before expiry must still record
@@ -450,13 +462,17 @@ class TestSessionLifecycleManager:
         }
 
     @pytest.mark.asyncio
-    async def test_process_session_transcript_missing_file(self, manager):
+    async def test_process_session_transcript_missing_file(
+        self, manager: SessionLifecycleManager
+    ) -> None:
         """Test handling of missing file."""
         await manager._process_session_transcript("s1", "/non/existent/file.jsonl")
         assert manager.session_manager.get.call_count == 0
 
     @pytest.mark.asyncio
-    async def test_process_session_transcript_read_error(self, tmp_path, manager):
+    async def test_process_session_transcript_read_error(
+        self, tmp_path: Path, manager: SessionLifecycleManager
+    ) -> None:
         """Test error reading transcript file."""
         transcript_path = tmp_path / "transcript.jsonl"
         with open(transcript_path, "w") as f:
@@ -468,7 +484,9 @@ class TestSessionLifecycleManager:
                 await manager._process_session_transcript("s1", str(transcript_path))
 
     @pytest.mark.asyncio
-    async def test_process_session_transcript_empty_file(self, tmp_path, manager):
+    async def test_process_session_transcript_empty_file(
+        self, tmp_path: Path, manager: SessionLifecycleManager
+    ) -> None:
         """Test processing empty file."""
         transcript_path = tmp_path / "transcript.jsonl"
         transcript_path.touch()
@@ -477,7 +495,9 @@ class TestSessionLifecycleManager:
         assert manager.session_manager.get.call_count == 0
 
     @pytest.mark.asyncio
-    async def test_process_session_transcript_no_messages(self, tmp_path, manager):
+    async def test_process_session_transcript_no_messages(
+        self, tmp_path: Path, manager: SessionLifecycleManager
+    ) -> None:
         """Test file with no valid messages."""
         transcript_path = tmp_path / "transcript.jsonl"
         with open(transcript_path, "w") as f:
@@ -490,7 +510,9 @@ class TestSessionLifecycleManager:
         assert manager.session_manager.update_usage.call_count == 0
 
     @pytest.mark.asyncio
-    async def test_process_pending_transcripts_loop_error(self, manager):
+    async def test_process_pending_transcripts_loop_error(
+        self, manager: SessionLifecycleManager
+    ) -> None:
         """Test error handling in process loop (single iteration logic)."""
         manager.session_manager.get_pending_transcript_sessions.side_effect = Exception("DB Error")
 
@@ -499,7 +521,9 @@ class TestSessionLifecycleManager:
             await manager._process_pending_transcripts()
 
     @pytest.mark.asyncio
-    async def test_process_pending_transcripts_individual_error(self, manager):
+    async def test_process_pending_transcripts_individual_error(
+        self, manager: SessionLifecycleManager
+    ) -> None:
         """Test error handling for individual session processing.
 
         Even when transcript processing fails for a session, summary/memory
@@ -553,7 +577,9 @@ class TestSessionLifecycleManager:
             assert mock_proc.call_count == 2
 
     @pytest.mark.asyncio
-    async def test_missing_transcript_with_digest_regenerates_artifacts(self, manager):
+    async def test_missing_transcript_with_digest_regenerates_artifacts(
+        self, manager: SessionLifecycleManager
+    ) -> None:
         """A purged transcript with a usable digest regenerates artifacts.
 
         Instead of short-circuiting, the loop falls through to
@@ -640,7 +666,9 @@ class TestSessionLifecycleManager:
         assert processed == 1
 
     @pytest.mark.asyncio
-    async def test_missing_transcript_invalid_summary_stays_unprocessed(self, manager):
+    async def test_missing_transcript_invalid_summary_stays_unprocessed(
+        self, manager: SessionLifecycleManager
+    ) -> None:
         """A digest-backed recovery defers until the summary itself is valid.
 
         The flat wiki file is a best-effort mirror written inside
@@ -681,7 +709,9 @@ class TestSessionLifecycleManager:
         assert processed == 0
 
     @pytest.mark.asyncio
-    async def test_missing_transcript_no_digest_marks_processed(self, manager):
+    async def test_missing_transcript_no_digest_marks_processed(
+        self, manager: SessionLifecycleManager
+    ) -> None:
         """A purged transcript with no usable digest is finalized without synthesis."""
         session = MagicMock(spec=Session)
         session.id = "s1"
@@ -708,7 +738,9 @@ class TestSessionLifecycleManager:
         assert processed == 1
 
     @pytest.mark.asyncio
-    async def test_pending_graph_memory_db_work_uses_memory_run_db(self, mock_db, mock_config):
+    async def test_pending_graph_memory_db_work_uses_memory_run_db(
+        self, mock_db, mock_config
+    ) -> None:
         """Queued graph memory DB work uses the bounded memory DB executor."""
 
         class MemoryManagerStub:
@@ -831,7 +863,9 @@ class TestBackgroundLoops:
     """Tests for infinite background loops."""
 
     @pytest.mark.asyncio
-    async def test_expire_loop_runs_and_calls_delegate(self, manager):
+    async def test_expire_loop_runs_and_calls_delegate(
+        self, manager: SessionLifecycleManager
+    ) -> None:
         """Test expire loop calls delegate and sleeps."""
         manager._running = True
 
@@ -851,7 +885,9 @@ class TestBackgroundLoops:
             assert manager._running is False
 
     @pytest.mark.asyncio
-    async def test_process_loop_runs_and_calls_delegate(self, manager):
+    async def test_process_loop_runs_and_calls_delegate(
+        self, manager: SessionLifecycleManager
+    ) -> None:
         """Test process loop calls delegate and sleeps."""
         manager._running = True
 
@@ -871,7 +907,7 @@ class TestBackgroundLoops:
             assert manager._running is False
 
     @pytest.mark.asyncio
-    async def test_loops_handle_exceptions(self, manager):
+    async def test_loops_handle_exceptions(self, manager: SessionLifecycleManager) -> None:
         """Test loops catch exceptions from delegate."""
         manager._running = True
 
@@ -894,7 +930,7 @@ class TestBackgroundLoops:
             assert manager._running is False
 
     @pytest.mark.asyncio
-    async def test_loops_handle_cancellation(self, manager):
+    async def test_loops_handle_cancellation(self, manager: SessionLifecycleManager) -> None:
         """Test loops exit on CancelledError during sleep."""
         manager._running = True
         manager._expire_stale_sessions = AsyncMock()
@@ -907,7 +943,9 @@ class TestBackgroundLoops:
 class TestPromptFileCleanup:
     """Tests for _cleanup_prompt_files (#7389)."""
 
-    def test_removes_old_prompt_files(self, tmp_path, manager):
+    def test_removes_old_prompt_files(
+        self, tmp_path: Path, manager: SessionLifecycleManager
+    ) -> None:
         """Old prompt files are deleted."""
         prompt_dir = tmp_path / "gobby-prompts"
         prompt_dir.mkdir()
@@ -924,7 +962,9 @@ class TestPromptFileCleanup:
         assert removed == 1
         assert not old_file.exists()
 
-    def test_keeps_recent_prompt_files(self, tmp_path, manager):
+    def test_keeps_recent_prompt_files(
+        self, tmp_path: Path, manager: SessionLifecycleManager
+    ) -> None:
         """Recent prompt files are kept."""
         prompt_dir = tmp_path / "gobby-prompts"
         prompt_dir.mkdir()
@@ -939,7 +979,7 @@ class TestPromptFileCleanup:
         assert removed == 0
         assert recent_file.exists()
 
-    def test_mixed_old_and_recent(self, tmp_path, manager):
+    def test_mixed_old_and_recent(self, tmp_path: Path, manager: SessionLifecycleManager) -> None:
         """Only old files are removed, recent ones kept."""
         prompt_dir = tmp_path / "gobby-prompts"
         prompt_dir.mkdir()
@@ -959,7 +999,7 @@ class TestPromptFileCleanup:
         assert not old_file.exists()
         assert recent_file.exists()
 
-    def test_no_prompt_dir(self, tmp_path, manager):
+    def test_no_prompt_dir(self, tmp_path: Path, manager: SessionLifecycleManager) -> None:
         """Returns 0 when prompt directory doesn't exist."""
         with patch("tempfile.gettempdir", return_value=str(tmp_path)):
             removed = manager._cleanup_prompt_files()
@@ -967,7 +1007,7 @@ class TestPromptFileCleanup:
         assert removed == 0
 
     @pytest.mark.asyncio
-    async def test_expire_calls_cleanup(self, manager):
+    async def test_expire_calls_cleanup(self, manager: SessionLifecycleManager) -> None:
         """_expire_stale_sessions calls _cleanup_prompt_files."""
         manager.session_manager = MagicMock()
         manager.session_manager.pause_inactive_active_sessions.return_value = 0
@@ -987,7 +1027,7 @@ class TestGenerateArtifactsIfNeeded:
     """Tests for _generate_artifacts_if_needed."""
 
     @pytest.mark.asyncio
-    async def test_no_llm_service(self, manager):
+    async def test_no_llm_service(self, manager: SessionLifecycleManager) -> None:
         """Skips when llm_service is None."""
         manager.llm_service = None
         await manager._generate_artifacts_if_needed("sess-1")
@@ -995,7 +1035,7 @@ class TestGenerateArtifactsIfNeeded:
         assert manager.session_manager.get.call_count == 0
 
     @pytest.mark.asyncio
-    async def test_session_not_found(self, manager):
+    async def test_session_not_found(self, manager: SessionLifecycleManager) -> None:
         """Skips when session not found."""
         manager.llm_service = MagicMock()
         manager.session_manager.get.return_value = None
@@ -1003,7 +1043,9 @@ class TestGenerateArtifactsIfNeeded:
         assert manager.session_manager.get.call_args.args == ("sess-1",)
 
     @pytest.mark.asyncio
-    async def test_session_has_summary_and_wiki_file_skips(self, manager):
+    async def test_session_has_summary_and_wiki_file_skips(
+        self, manager: SessionLifecycleManager
+    ) -> None:
         """Skips when the session has a valid summary AND the flat wiki file exists."""
         manager.llm_service = MagicMock()
         session = MagicMock()
@@ -1029,7 +1071,9 @@ class TestGenerateArtifactsIfNeeded:
         assert session.summary_markdown.startswith("## Current State")
 
     @pytest.mark.asyncio
-    async def test_sentinel_summary_does_not_count_as_existing_summary(self, manager):
+    async def test_sentinel_summary_does_not_count_as_existing_summary(
+        self, manager: SessionLifecycleManager
+    ) -> None:
         """Provider failure sentinels are retried instead of treated as summaries."""
         manager.llm_service = MagicMock()
         session = MagicMock()
@@ -1050,7 +1094,7 @@ class TestGenerateArtifactsIfNeeded:
         assert session.transcript_path is None
 
     @pytest.mark.asyncio
-    async def test_session_no_transcript_path(self, manager):
+    async def test_session_no_transcript_path(self, manager: SessionLifecycleManager) -> None:
         """Skips when session has no transcript_path."""
         manager.llm_service = MagicMock()
         session = MagicMock()
@@ -1061,7 +1105,7 @@ class TestGenerateArtifactsIfNeeded:
         assert manager.session_manager.get.call_args.args == ("sess-1",)
 
     @pytest.mark.asyncio
-    async def test_summary_generation_exception(self, manager):
+    async def test_summary_generation_exception(self, manager: SessionLifecycleManager) -> None:
         """Catches summary generation errors."""
         manager.llm_service = MagicMock()
         session = MagicMock()
@@ -1079,7 +1123,7 @@ class TestGenerateArtifactsIfNeeded:
         assert manager.session_manager.get.call_args.args == ("sess-1",)
 
     @pytest.mark.asyncio
-    async def test_summary_generation_success(self, manager):
+    async def test_summary_generation_success(self, manager: SessionLifecycleManager) -> None:
         """Successful summary generation."""
         manager.llm_service = MagicMock()
         session = MagicMock()
@@ -1096,7 +1140,9 @@ class TestGenerateArtifactsIfNeeded:
             assert mock_gen.await_args.kwargs["session_id"] == "sess-1"
 
     @pytest.mark.asyncio
-    async def test_valid_summary_missing_wiki_file_still_triggers(self, manager):
+    async def test_valid_summary_missing_wiki_file_still_triggers(
+        self, manager: SessionLifecycleManager
+    ) -> None:
         """Valid summary but missing flat wiki file still triggers generation.
 
         The artifact gate must proceed when the flat wiki file is absent even
@@ -1134,7 +1180,7 @@ class TestPurgeSoftDeletedDefinitions:
     """Tests for _purge_soft_deleted_definitions."""
 
     @pytest.mark.asyncio
-    async def test_success(self, manager):
+    async def test_success(self, manager: SessionLifecycleManager) -> None:
         """Purge runs without error."""
         with patch("gobby.storage.workflow_definitions.LocalWorkflowDefinitionManager") as MockWFM:
             await manager._purge_soft_deleted_definitions()
@@ -1142,7 +1188,7 @@ class TestPurgeSoftDeletedDefinitions:
         assert MockWFM.return_value.purge_deleted.call_count == 1
 
     @pytest.mark.asyncio
-    async def test_exception_handled(self, manager):
+    async def test_exception_handled(self, manager: SessionLifecycleManager) -> None:
         """Purge errors are caught and logged."""
         with patch("gobby.storage.workflow_definitions.LocalWorkflowDefinitionManager") as MockWFM:
             MockWFM.return_value.purge_deleted.side_effect = Exception("DB error")
@@ -1175,7 +1221,7 @@ class TestPurgeDreamHiddenMemories:
             )
 
     @pytest.mark.asyncio
-    async def test_purges_both_actions_then_prunes_runs(self, mock_db, mock_config):
+    async def test_purges_both_actions_then_prunes_runs(self, mock_db, mock_config) -> None:
         """Both grace windows purge with reconcile, then run history is pruned."""
         purge = AsyncMock()
         memory_manager = SimpleNamespace(purge_dream_hidden=purge)
@@ -1197,7 +1243,7 @@ class TestPurgeDreamHiddenMemories:
         store.prune_runs.assert_called_once_with(45)
 
     @pytest.mark.asyncio
-    async def test_noop_without_dream_config(self, mock_db, mock_config):
+    async def test_noop_without_dream_config(self, mock_db, mock_config) -> None:
         """No config means nothing to purge (memory disabled / unconfigured)."""
         purge = AsyncMock()
         memory_manager = SimpleNamespace(purge_dream_hidden=purge)
@@ -1212,7 +1258,7 @@ class TestPurgeDreamHiddenMemories:
         store_cls.assert_not_called()
 
     @pytest.mark.asyncio
-    async def test_runs_independently_of_dream_enabled(self, mock_db, mock_config):
+    async def test_runs_independently_of_dream_enabled(self, mock_db, mock_config) -> None:
         """Purge reclaims rows even after dream is switched off."""
         purge = AsyncMock()
         memory_manager = SimpleNamespace(purge_dream_hidden=purge)
@@ -1232,7 +1278,7 @@ class TestPurgeDreamHiddenMemories:
         store.prune_runs.assert_called_once_with(45)
 
     @pytest.mark.asyncio
-    async def test_purge_failure_does_not_block_run_pruning(self, mock_db, mock_config):
+    async def test_purge_failure_does_not_block_run_pruning(self, mock_db, mock_config) -> None:
         """A purge error for one action is logged; pruning still runs."""
         purge = AsyncMock(side_effect=Exception("qdrant down"))
         memory_manager = SimpleNamespace(purge_dream_hidden=purge)
@@ -1253,7 +1299,9 @@ class TestProcessSessionTranscriptParsers:
     """Tests for _process_session_transcript parser selection."""
 
     @pytest.mark.asyncio
-    async def test_qwen_parser_selected(self, tmp_path, manager):
+    async def test_qwen_parser_selected(
+        self, tmp_path: Path, manager: SessionLifecycleManager
+    ) -> None:
         """Qwen source uses QwenTranscriptParser."""
         transcript_path = tmp_path / "transcript.jsonl"
         transcript_path.write_text('{"type": "message"}\n')
@@ -1269,7 +1317,9 @@ class TestProcessSessionTranscriptParsers:
             assert manager.session_manager.update_usage.call_count == 0
 
     @pytest.mark.asyncio
-    async def test_codex_parser_selected(self, tmp_path, manager):
+    async def test_codex_parser_selected(
+        self, tmp_path: Path, manager: SessionLifecycleManager
+    ) -> None:
         """Codex source uses CodexTranscriptParser."""
         transcript_path = tmp_path / "transcript.jsonl"
         transcript_path.write_text('{"type": "message"}\n')
@@ -1285,7 +1335,9 @@ class TestProcessSessionTranscriptParsers:
             assert manager.session_manager.update_usage.call_count == 0
 
     @pytest.mark.asyncio
-    async def test_droid_parser_selected_with_transcript_path(self, tmp_path, manager):
+    async def test_droid_parser_selected_with_transcript_path(
+        self, tmp_path: Path, manager: SessionLifecycleManager
+    ) -> None:
         """Droid source uses DroidTranscriptParser with the transcript path for sidecars."""
         transcript_path = tmp_path / "transcript.jsonl"
         transcript_path.write_text('{"type": "message"}\n')
@@ -1305,7 +1357,9 @@ class TestProcessSessionTranscriptParsers:
             assert manager.session_manager.update_usage.call_count == 0
 
     @pytest.mark.asyncio
-    async def test_droid_backfill_records_sidecar_token_usage(self, tmp_path, manager):
+    async def test_droid_backfill_records_sidecar_token_usage(
+        self, tmp_path: Path, manager: SessionLifecycleManager
+    ) -> None:
         """Droid lifecycle backfill records TokenUsage from the adjacent settings sidecar."""
         transcript_path = tmp_path / "droid-session.jsonl"
         transcript_path.write_text(DROID_FIXTURE_JSONL.read_text(encoding="utf-8"))
@@ -1375,8 +1429,8 @@ class TestProcessSessionTranscriptParsers:
 
     @pytest.mark.asyncio
     async def test_codex_backfill_uses_latest_context_window_for_session_usage(
-        self, tmp_path, manager
-    ):
+        self, tmp_path: Path, manager: SessionLifecycleManager
+    ) -> None:
         """Codex token_count backfill should hydrate context pie fields."""
         transcript_path = tmp_path / "codex-rollout.jsonl"
         transcript_path.write_text(
@@ -1431,7 +1485,9 @@ class TestProcessSessionTranscriptParsers:
         assert snapshot.context_usage_ratio == pytest.approx(104960 / 258400)
 
     @pytest.mark.asyncio
-    async def test_session_not_found_returns_early(self, tmp_path, manager):
+    async def test_session_not_found_returns_early(
+        self, tmp_path: Path, manager: SessionLifecycleManager
+    ) -> None:
         """Returns early when session not found in DB."""
         transcript_path = tmp_path / "transcript.jsonl"
         transcript_path.write_text('{"type": "message"}\n')
@@ -1441,7 +1497,7 @@ class TestProcessSessionTranscriptParsers:
         assert manager.session_manager.update_usage.call_count == 0
 
     @pytest.mark.asyncio
-    async def test_none_transcript_path(self, manager):
+    async def test_none_transcript_path(self, manager: SessionLifecycleManager) -> None:
         """Handles None transcript_path."""
         await manager._process_session_transcript("s1", None)
         assert manager.session_manager.get.call_count == 0
@@ -1451,7 +1507,9 @@ class TestProcessSessionTranscriptLineParsing:
     """Tests for .json transcript dispatch."""
 
     @pytest.mark.asyncio
-    async def test_qwen_json_uses_current_line_parser(self, tmp_path, manager):
+    async def test_qwen_json_uses_current_line_parser(
+        self, tmp_path: Path, manager: SessionLifecycleManager
+    ) -> None:
         """Lifecycle backfill indexes Qwen's current line-envelope .json file."""
         transcript_path = tmp_path / "session-abc.json"
         fixture = (
@@ -1493,7 +1551,9 @@ class TestProcessSessionTranscriptLineParsing:
         manager.session_manager.update_stats.assert_called_once()
 
     @pytest.mark.asyncio
-    async def test_jsonl_still_uses_parse_lines(self, tmp_path, manager):
+    async def test_jsonl_still_uses_parse_lines(
+        self, tmp_path: Path, manager: SessionLifecycleManager
+    ) -> None:
         """Qwen .jsonl transcripts use the same line parser."""
         transcript_path = tmp_path / "transcript.jsonl"
         transcript_path.write_text('{"type": "message"}\n')
@@ -1509,7 +1569,9 @@ class TestProcessSessionTranscriptLineParsing:
             assert manager.session_manager.update_usage.call_count == 0
 
     @pytest.mark.asyncio
-    async def test_invalid_json_returns_early(self, tmp_path, manager):
+    async def test_invalid_json_returns_early(
+        self, tmp_path: Path, manager: SessionLifecycleManager
+    ) -> None:
         """An invalid Qwen envelope fails soft without crashing."""
         transcript_path = tmp_path / "session-bad.json"
         transcript_path.write_text("{invalid json content")
@@ -1528,7 +1590,9 @@ class TestProcessSessionTranscriptTokenPreservation:
     """Tests for preserving hook-captured tokens when transcript yields 0."""
 
     @pytest.mark.asyncio
-    async def test_zero_tokens_preserves_existing_nonzero(self, tmp_path, manager):
+    async def test_zero_tokens_preserves_existing_nonzero(
+        self, tmp_path: Path, manager: SessionLifecycleManager
+    ) -> None:
         """When transcript yields 0 tokens but session has existing tokens, don't overwrite."""
         transcript_path = tmp_path / "transcript.jsonl"
         transcript_path.write_text('{"type": "message"}\n')
@@ -1554,7 +1618,9 @@ class TestProcessSessionTranscriptTokenPreservation:
         assert manager.session_manager.update_usage.call_count == 0
 
     @pytest.mark.asyncio
-    async def test_zero_tokens_updates_when_existing_also_zero(self, tmp_path, manager):
+    async def test_zero_tokens_updates_when_existing_also_zero(
+        self, tmp_path: Path, manager: SessionLifecycleManager
+    ) -> None:
         """When both transcript and existing are 0, update_usage is still called (nothing to preserve)."""
         from gobby.sessions.transcripts.base import ParsedMessage
 
@@ -1584,7 +1650,9 @@ class TestProcessSessionTranscriptTokenPreservation:
         assert call_kwargs["output_tokens"] == 0
 
     @pytest.mark.asyncio
-    async def test_nonzero_tokens_always_updates(self, tmp_path, manager):
+    async def test_nonzero_tokens_always_updates(
+        self, tmp_path: Path, manager: SessionLifecycleManager
+    ) -> None:
         """When transcript yields real tokens, always update regardless of existing values."""
         from gobby.sessions.transcripts.base import ParsedMessage, TokenUsage
 
@@ -1612,7 +1680,7 @@ class TestProcessSessionTranscriptTokenPreservation:
 
     @pytest.mark.asyncio
     async def test_final_claude_usage_preserves_one_million_session_model(
-        self, tmp_path, manager
+        self, tmp_path: Path, manager: SessionLifecycleManager
     ) -> None:
         from gobby.sessions.transcripts.base import ParsedMessage, TokenUsage
 
@@ -1667,7 +1735,7 @@ class TestProcessPendingTranscriptsArchive:
     """Tests for transcript archive and message purge logic."""
 
     @pytest.mark.asyncio
-    async def test_archive_success_purges_messages(self, manager):
+    async def test_archive_success_purges_messages(self, manager: SessionLifecycleManager) -> None:
         """Successful archive triggers message purge."""
         session = MagicMock()
         session.id = "s1"
@@ -1690,7 +1758,7 @@ class TestProcessPendingTranscriptsArchive:
         assert processed == 1
 
     @pytest.mark.asyncio
-    async def test_archive_returns_none(self, manager):
+    async def test_archive_returns_none(self, manager: SessionLifecycleManager) -> None:
         """When archive returns None, session is still processed."""
         session = MagicMock()
         session.id = "s1"
@@ -1712,7 +1780,7 @@ class TestProcessPendingTranscriptsArchive:
         assert processed == 1
 
     @pytest.mark.asyncio
-    async def test_archive_failure_handled(self, manager):
+    async def test_archive_failure_handled(self, manager: SessionLifecycleManager) -> None:
         """Transcript backup failure doesn't prevent marking as processed."""
         session = MagicMock()
         session.id = "s1"
@@ -1739,7 +1807,7 @@ class TestStartStopIdempotent:
     """Tests for start/stop idempotency."""
 
     @pytest.mark.asyncio
-    async def test_double_start_is_noop(self, manager):
+    async def test_double_start_is_noop(self, manager: SessionLifecycleManager) -> None:
         """Calling start twice doesn't create duplicate tasks."""
         await manager.start()
         task1 = manager._expire_task
@@ -1753,7 +1821,7 @@ class TestStartStopIdempotent:
         await manager.stop()
 
     @pytest.mark.asyncio
-    async def test_stop_without_start(self, manager):
+    async def test_stop_without_start(self, manager: SessionLifecycleManager) -> None:
         """Calling stop without start is safe."""
         await manager.stop()
         assert manager._expire_task is None

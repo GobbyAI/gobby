@@ -4,10 +4,10 @@ from __future__ import annotations
 
 import asyncio
 import logging
-import sqlite3
 from types import SimpleNamespace
 from typing import Any, NoReturn
 
+import psycopg
 import pytest
 
 pytestmark = pytest.mark.unit
@@ -70,7 +70,7 @@ def test_missing_plan_file_is_ignored(monkeypatch: pytest.MonkeyPatch) -> None:
     [
         PermissionError("archive denied"),
         OSError("archive filesystem unavailable"),
-        sqlite3.DatabaseError("archive database unavailable"),
+        psycopg.DatabaseError("archive database unavailable"),
     ],
     ids=["permission", "os", "database"],
 )

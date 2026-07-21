@@ -855,6 +855,8 @@ async def test_oversized_diff_runs_bounded_validation_with_disclosure() -> None:
     request = service.chat_result.call_args.args[0]
     assert request.limits.max_tool_calls == 32
     assert request.max_turns == request.limits.max_turns == 66
+    assert request.candidate_timeout_seconds == 180.0
+    assert request.cli_candidate_timeout_seconds == 180.0
     assert "at most 26 content calls" in request.prompt
     assert "evidence_complete=false" in request.prompt
     assert verdict.status == "valid"
@@ -867,6 +869,38 @@ async def test_oversized_diff_runs_bounded_validation_with_disclosure() -> None:
         "uninspected_sample": ["src/b.py"],
         "content_call_budget": 26,
     }
+
+
+@pytest.mark.asyncio
+async def test_validation_request_uses_configured_full_candidate_timeout() -> None:
+    service = AsyncMock()
+    service.chat_result.return_value = ToolChatResult(
+        text="",
+        trace=(),
+        calls_used=0,
+        trace_available=False,
+    )
+    config = TaskValidationConfig(cli_candidate_timeout_seconds=12.5)
+
+    await validate_with_tool_loop(
+        service,
+        config,
+        task_id="task-1",
+        title="Validate timeout propagation",
+        description=None,
+        validation_criteria="The candidate loop is bounded.",
+        category="code",
+        repo_path="/repo",
+        canonical_commits=(COMMIT_A,),
+        first_commits_page=_commit_page(COMMIT_A),
+        manifest_items=(),
+        manifest_count=0,
+        diff_total_bytes=1,
+    )
+
+    request = service.chat_result.call_args.args[0]
+    assert request.candidate_timeout_seconds == 12.5
+    assert request.cli_candidate_timeout_seconds == 12.5
 
 
 @pytest.mark.asyncio

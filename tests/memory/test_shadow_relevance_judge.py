@@ -391,9 +391,15 @@ async def test_digest_drives_shadow_poll_without_legacy_result_payload(
         return 2
 
     monkeypatch.setattr(digest_mod, "judge_shadow_candidate_relevance", fake_judge)
+    scheduled: list[tuple[Any, str]] = []
+
+    def schedule_background_task(coroutine: Any, *, name: str) -> None:
+        scheduled.append((coroutine, name))
+
     memory_manager = SimpleNamespace(
         config=SimpleNamespace(enabled=True, digest_shadow_usefulness=True),
         db=temp_db,
+        schedule_background_task=schedule_background_task,
     )
     session_manager = _FakeDigestSessionManager()
     config = SimpleNamespace(
@@ -417,6 +423,9 @@ async def test_digest_drives_shadow_poll_without_legacy_result_payload(
     assert "memory_usefulness" not in result
     assert len(session_manager.persist_calls) == 1
     assert "Turn 1" in session_manager.persist_calls[0]["digest_markdown"]
+    assert seen == {}
+    assert scheduled[0][1] == "memory-shadow-judge-session-shadow-digest"
+    await scheduled[0][0]
     assert seen == {
         "memory_manager": memory_manager,
         "llm_service": llm_service,

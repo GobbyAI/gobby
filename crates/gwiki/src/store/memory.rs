@@ -32,6 +32,10 @@ impl WikiIndexStore for MemoryWikiStore {
         Ok(self.file_hashes.clone())
     }
 
+    fn indexed_hash(&mut self, path: &Path) -> Result<Option<String>, StoreError> {
+        Ok(self.file_hashes.get(path).cloned())
+    }
+
     fn upsert_document(&mut self, document: WikiDocument) -> Result<(), StoreError> {
         self.document_upserts += 1;
         self.documents.insert(document.path.clone(), document);

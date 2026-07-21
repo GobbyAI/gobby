@@ -171,7 +171,8 @@ async def memory_reconcile_loop(
             falkordb_entities = report.get("falkordb", {}).get("orphan_entities_deleted", 0)
             if qdrant_orphans or falkordb_orphans or falkordb_entities:
                 logger.info(
-                    "Memory reconciliation: %s Qdrant orphans, %s FalkorDB memory orphans, %s FalkorDB entity orphans cleaned",
+                    "Memory reconciliation: %s Qdrant orphans, %s FalkorDB memory orphans, "
+                    "%s FalkorDB entity orphans cleaned",
                     qdrant_orphans,
                     falkordb_orphans,
                     falkordb_entities,

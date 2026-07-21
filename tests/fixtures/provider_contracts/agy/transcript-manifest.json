@@ -28,7 +28,7 @@
       "path_template": "~/.gemini/antigravity-cli/log/cli-YYYYMMDD_HHMMSS.log",
       "observed_log": "~/.gemini/antigravity-cli/log/cli-20260522_171625.log",
       "scrubbed_findings": [
-        "Silent auth via keyring succeeded.",
+        "Silent authentication succeeded.",
         "Selected model label propagated as Gemini 3.5 Flash (Low).",
         "Created conversation c27f2817-0ce1-4b68-b246-0afe6a8160ce.",
         "Conversation payload written under conversations/<conversation-id>.pb."

@@ -181,7 +181,7 @@ bypass Gobby's `turn_end` gates merely because the daemon cannot evaluate them;
 the Qwen session can therefore remain active during an outage until the daemon
 recovers or hooks are disabled. Claude's existing fail-open behavior is unchanged.
 
-### Codex, Qwen, Droid, Grok, Antigravity CLI
+### Codex, Qwen, Droid, Grok, AGY
 
 Same pattern with different `--cli` and `--type` values. ghook's per-CLI
 registry (see `crates/ghook/src/cli_config.rs`) defines which hooks are

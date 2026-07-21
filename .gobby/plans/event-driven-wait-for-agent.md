@@ -4,6 +4,7 @@
 **Plan ID:** event-driven-wait-for-agent
 
 ## Overview
+
 `kind: framing`
 
 Replace `wait_for_agent`'s bounded polling loop with the production
@@ -76,6 +77,7 @@ notify→cleanup helper defines the contract — and §1.4 routes every bypass
 producer through that helper.
 
 ## Constraints
+
 `kind: framing`
 
 - Pre-0.5.0: no backward compatibility. Callers passing `timeout_seconds` or
@@ -107,17 +109,20 @@ producer through that helper.
   `tests/test_build_backend.py::test_committed_bundled_content_manifest_matches_shared_tree`.
 
 ## P1: Event-driven core
+
 `kind: framing`
 
 **Goal**: `wait_for_agent(run_id)` subscribes durably and returns immediately;
 normal terminal completion cleans up subscriptions.
 
 ### 1.1 Add strict persistence, registration outcome, and scoped removal to the subscription helpers [category: code]
+
 `kind: deliverable`
 
 Targets: `src/gobby/agents/completion_subscribers.py`,
 `src/gobby/events/completion_registry.py`,
 `src/gobby/storage/pipeline_subscribers.py`,
+`tests/agents/test_completion_subscribers.py`,
 `src/gobby/mcp_proxy/tools/spawn_agent/_factory.py`,
 `src/gobby/dispatch/spawn_completion.py`
 
@@ -204,6 +209,7 @@ an existing one, and both 1.2 and 1.3 need to remove durable rows for a
   `tests/events/test_subscriber_storage.py`.
 
 ### 1.2 Rewrite wait_for_agent as subscribe-and-return [category: code] (depends: 1.1)
+
 `kind: deliverable`
 
 Target: `src/gobby/mcp_proxy/tools/agents_query_tools.py`,
@@ -446,6 +452,7 @@ Supporting changes:
   immediate-return contract. test: `tests/servers/test_mcp_routes.py`.
 
 ### 1.3 Acknowledged terminal delivery and sweep redelivery [category: code] (depends: 1.1, 1.2)
+
 `kind: deliverable`
 
 Targets: `src/gobby/agents/agent_cleanup.py`, `src/gobby/events/wake.py`,
@@ -693,6 +700,7 @@ Makes the terminal handoff loss-free (the Overview's stranding scenario):
   test: `tests/test_runner_lifecycle.py`.
 
 ### 1.4 Close the completion-subscription leak on bypass terminal paths [category: code] (depends: 1.2, 1.3)
+
 `kind: deliverable`
 
 Targets: `src/gobby/mcp_proxy/tools/agents_termination.py`,
@@ -1375,7 +1383,12 @@ seam function — defaulting to inline invocation on the calling
 thread when unset, pointed at the managed executor's `submit` by
 the same post-claim activation step (1.4.20) —
 and `_terminate_agent_run`'s storage call goes through that
-module-level function and blocks on the returned future. None of
+module-level function and blocks on the returned future for at most five
+seconds via `Future.result(timeout=5)`. A
+`concurrent.futures.TimeoutError` follows the same retryable outcome as a
+revoked or rejected submission: it does not remove any durable subscriber
+row, logs the run id, and leaves the next boot's acknowledged sweep to finish
+or redeliver the transition. None of
 the four wiring files above is touched. The failure taxonomy is
 named exactly: a queued submission revoked by the barrier's
 `cancel_futures` raises `concurrent.futures.CancelledError` from
@@ -1757,11 +1770,17 @@ wake session lookup, the dedup read and message insert, the SDK
 lookup, the subscriber-row removal, and the bounded terminal
 re-read — runs under the same helper through the call-site
 wrappers above, which keep the storage managers themselves and
-their ambient-transaction callers untouched. The hub pool's connection kwargs
+their ambient-transaction callers untouched. At bootstrap, derive one stable
+deployment token as the first 16 hexadecimal characters of SHA-256 over the
+resolved Gobby data-root path. The token is shared by successor daemon
+lifecycles using that installation and differs for separate deployments even
+when they share a PostgreSQL database. The terminal fence advisory-lock key,
+hub application names, gate application names, and severance predicates all
+include this token; no unnamespaced fallback is accepted. The hub pool's connection kwargs
 gain `connect_timeout` (10 seconds), TCP keepalive settings
 (`keepalives=1`, `keepalives_idle=30`, `keepalives_interval=10`,
 `keepalives_count=3`), and a lifecycle-scoped `application_name`
-marker — the literal prefix `gobby-hub-` plus a nonce minted at
+marker — `gobby-hub-<deployment-token>-<nonce>`, with the nonce minted at
 each pool open, so a successor lifecycle in the same interpreter
 carries a fresh marker — which the boot gate's severance sweep
 below matches. The timeout and keepalive kwargs bound connection
@@ -1782,7 +1801,8 @@ itself carries no statement bound; its indeterminacy is resolved
 by the fence, not by a timer. The fence: every terminal-status
 transaction's first statements, after the bounds, include
 `pg_advisory_xact_lock_shared` on a dedicated
-fence key constant defined beside the terminal methods
+fence key deterministically derived from the deployment token and defined
+beside the terminal methods
 (`storage/agents/_lifecycle.py`) — shared mode, so concurrent
 terminal commits never serialize against each other, and
 transaction-scoped, so the lock releases exactly when the
@@ -1832,8 +1852,9 @@ via `asyncio.create_subprocess_exec`, handing it the DSN, fence
 key, remaining budget, and this lifecycle's hub
 `application_name` marker as one JSON document on stdin — never
 argv or environment — and reading one JSON result from stdout.
-The child's own connection carries a distinct `gobby-gate-`
-marker the severance-sweep filter below never matches.
+The child's own connection carries
+`gobby-gate-<deployment-token>-<nonce>`, a distinct marker the exact
+hub-marker severance predicate below never matches.
 The child holds a single dedicated direct psycopg connection,
 opened under the ten-second `connect_timeout` with the keepalive
 settings above; it never touches the hub pool, so pool
@@ -1872,8 +1893,10 @@ While the exclusive lock is held — after acquisition, before the
 gate transaction resolves — the child runs one more admitted
 step, the severance sweep: a terminate-and-verify loop over
 `pg_stat_activity` targeting every backend in the hub
-database whose `application_name` carries the `gobby-hub-` marker
-of a different lifecycle. The loop issues `pg_terminate_backend`
+database whose `application_name` carries the exact
+`gobby-hub-<deployment-token>-` prefix and a different lifecycle nonce.
+Backends from another deployment token are never matched. The loop issues
+`pg_terminate_backend`
 in its positive-timeout form — the form that waits for actual
 process exit and returns false when the wait expires, because the
 zero-timeout default only reports that the signal was sent, never
@@ -2618,12 +2641,14 @@ unrestricted. Correct **both** stale findings in
   when the seam is unset; the coordinator's hook-thread terminal commit goes through
   the module-level synchronous seam function — inline invocation by
   default, the executor's sync `submit` under production supply —
-  and blocks on the returned future, with no executor parameter on
+  and blocks for no more than five seconds on the returned future, with no executor parameter on
   `SessionCoordinator.__init__` and no edits to the hook factory,
   hook manager, or app-lifecycle wiring; a queued coordinator
   submission revoked by the barrier raises
-  `concurrent.futures.CancelledError` from `Future.result()` and a
-  post-shutdown submission raises `RuntimeError`, each caught by
+  `concurrent.futures.CancelledError` from `Future.result()`, an
+  in-flight submission exceeding the bound raises
+  `concurrent.futures.TimeoutError`, and a post-shutdown submission raises
+  `RuntimeError`, each caught by
   name on the hook thread; and in both shapes, as for a queued
   complete-run offload and a queued capture offload against a
   shut-down executor, nothing commits — the run stays active and
@@ -2821,7 +2846,12 @@ unrestricted. Correct **both** stale findings in
   `WakeDispatcher.wake` expires at its client-side deadline into
   the established failure shape with the durable notification
   already stored; the hub pool's connection kwargs carry
-  `connect_timeout` and TCP keepalive settings, and the
+  `connect_timeout` and TCP keepalive settings; the stable data-root-derived
+  deployment token namespaces the terminal advisory key, the
+  `gobby-hub-<deployment-token>-<nonce>` and
+  `gobby-gate-<deployment-token>-<nonce>` application names, and the
+  severance predicate, so the gate targets predecessor lifecycles from the
+  same deployment and never another deployment sharing the database; and the
   post-`PoolTimeout` retry path performs no validation query —
   with a pooled connection whose validation query would never
   return, acquisition fails within the bounded two-attempt window;
@@ -2925,11 +2955,13 @@ unrestricted. Correct **both** stale findings in
   `tests/test_runner_lifecycle.py`.
 
 ## P2: Wrapper simplification
+
 `kind: framing`
 
 **Goal**: the wrapper treats `wait_for_agent` as an ordinary fast tool.
 
 ### 2.1 Remove wait_for_agent from wrapper wait-tool handling [category: code] (depends: 1.2)
+
 `kind: deliverable`
 
 Target: `src/gobby/mcp_proxy/wait_tools.py`,
@@ -2966,6 +2998,7 @@ stays valid and unchanged.
   `tests/mcp_proxy/test_gobby_daemon_tools.py`.
 
 ## P3: Guidance, workflows, and docs
+
 `kind: framing`
 
 **Goal**: every bundled instruction surface teaches subscribe-once, end the
@@ -2973,6 +3006,7 @@ turn, full sweep after the daemon wake; behavioral workflow rules keep
 working.
 
 ### 3.1 Rework merge orchestration for wake-driven waits [category: config] (depends: 1.2)
+
 `kind: deliverable`
 
 Target: `src/gobby/install/shared/workflows/agents/merge-orchestrator.yaml`,
@@ -3022,8 +3056,10 @@ is therefore defined explicitly:
   the existing wait rules read flat and nested `run_id` — so the
   capture rule normalizes first, appending the nested `result`'s
   successful ids (flat/native fallback) to whatever is already
-  outstanding, so a follow-up batch never clobbers live state:
-  `"(vars.get('current_batch_run_ids') or []) + [r.get('run_id') for r in ((tool_output.get('result') or tool_output).get('results') or []) if r.get('success') and r.get('run_id') and r.get('run_id') not in (vars.get('current_batch_run_ids') or [])]"`.
+  outstanding. It deduplicates both against the outstanding list and within
+  the current response, so repeated result entries and follow-up batches never
+  duplicate or clobber live state:
+  `"(vars.get('current_batch_run_ids') or []) + list(dict((r.get('run_id'), True) for r in ((tool_output.get('result') or tool_output).get('results') or []) if r.get('success') and r.get('run_id') and r.get('run_id') not in (vars.get('current_batch_run_ids') or [])).keys())"`.
   List-typed rule variables are established practice in this workflow
   (`verification_evidence` list append, `:496-497`) and
   `SafeExpressionEvaluator` evaluates comprehensions
@@ -3123,6 +3159,7 @@ the bundled manifest.
   `tests/agents/test_merge_orchestrator_contract.py`.
 
 ### 3.2 Update coordinator, goal, and plan guidance [category: config] (depends: 3.1)
+
 `kind: deliverable`
 
 Target: `src/gobby/install/shared/skills/build-coordinator/SKILL.md`,
@@ -3173,6 +3210,7 @@ updated skill bodies. Regenerate the bundled manifest; this leaf runs after
   `tests/skills/test_skill_tdd_harness.py`.
 
 ### 3.3 Update MCP tool documentation [category: docs] (depends: 1.2)
+
 `kind: deliverable`
 
 Target: `docs/guides/mcp-tools.md`
@@ -3189,6 +3227,7 @@ inbox message plus live nudge.
   `docs/guides/mcp-tools.md`.
 
 ## V2 End-to-End Verification
+
 `kind: verification`
 
 - Focused protected test files (never the full suite), with
@@ -3241,6 +3280,7 @@ inbox message plus live nudge.
   new subscription and that `completion_subscribers` has no rows for the run.
 
 ## V1 Plan Changelog
+
 `kind: verification`
 
 **Round 0** `kind: verification`
@@ -5223,6 +5263,7 @@ findings; artifact unmodified by reviewer)
   Validation passed after edits.
 
 ## M1 Task Manifest
+
 `kind: manifest`
 
 ```yaml

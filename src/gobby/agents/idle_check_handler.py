@@ -4,7 +4,6 @@ import asyncio
 import json
 import logging
 import re
-import sqlite3
 from collections import deque
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
@@ -517,7 +516,7 @@ class IdleCheckHandler:
                 self.db,
                 run.child_session_id,
             )
-        except (sqlite3.DatabaseError, psycopg.Error):
+        except psycopg.DatabaseError:
             logger.warning(
                 "Database error loading active step workflow context for idle reprompt on "
                 "run %s session %s",

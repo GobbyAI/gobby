@@ -1,6 +1,7 @@
 """Focused coverage tests for task MCP tools."""
 
 from collections.abc import Iterator
+from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -835,7 +836,7 @@ class TestCreateTaskCrossProjectClaimBlocking:
             }
             mock_task_manager.get_task.return_value = mock_task
 
-            def claim_after_activity(*args, **kwargs):
+            def claim_after_activity(*args: Any, **kwargs: Any) -> MagicMock:
                 mock_session_manager.update_session_status.assert_called_once_with(
                     "test-session",
                     "active",

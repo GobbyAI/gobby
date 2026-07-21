@@ -163,8 +163,8 @@ registries (`gobby-tasks`, `gobby-tasks-ops`, `gobby-workflows`,
 
 | Registry | Purpose | Tools |
 | :--- | :--- | :--- |
-| `gobby-tasks` | Task lifecycle, dependencies, claim/close, search, backup/restore, build observability | 40 |
-| `gobby-tasks-ops` | Expansion runs, artifacts, stage transitions, PR/merge state, build, GitHub | 45 |
+| `gobby-tasks` | Task lifecycle, dependencies, claim/close, search, backup/restore, build observability | 36 |
+| `gobby-tasks-ops` | Expansion runs, artifacts, stage transitions, PR/merge state, build, GitHub | 49 |
 | `gobby-plans` | Plan-Coverage Contract registry | 8 |
 | `gobby-profiles` | Build profile registry | 8 |
 | `gobby-sessions` | Session lifecycle, handoffs, transcripts, tmux integration | 20 |
@@ -188,7 +188,7 @@ registries (`gobby-tasks`, `gobby-tasks-ops`, `gobby-workflows`,
 
 ## Task Management (`gobby-tasks`)
 
-40 tools for the task lifecycle.
+36 tools for the task lifecycle.
 
 ### CRUD and Claim
 
@@ -241,10 +241,6 @@ artifacts. Use `clear_isolation_pair` when artifact cleanup is intended.
 | `get_task_stages` | Return a task's stage manifest in position order. |
 | `list_stages_registry` | Return all registered stage definitions. |
 | `get_task_type_defaults` | Return the default manifest for a task type. |
-| `set_task_type_defaults` | Replace a task type's default stage manifest. |
-| `update_stage` | Update editable stage registry metadata. |
-| `restore_stage` | Restore a bundled stage registry row. |
-| `delete_stage` | Soft-delete an unused stage registry row. |
 
 ### Build Observability
 
@@ -316,7 +312,7 @@ call_tool("gobby-tasks", "close_task", {
 
 ## Task Operations (`gobby-tasks-ops`)
 
-45 tools for expansion runs, sparse dispatch artifacts, stage transitions,
+49 tools for expansion runs, sparse dispatch artifacts, stage transitions,
 PR/merge delivery state, GitHub issues, and the shared `build_task` entry
 point.
 
@@ -369,6 +365,15 @@ point.
 | `record_plan_enhancement` | Record a constructive plan-enhancement round on the `planning` stage. When suggestions exist, returns `needs_review` to `ready` for the planner **without** incrementing the adversary review budget; when converged or empty, leaves `needs_review` so adversary dispatch proceeds. |
 | `add_stage` | Insert a future ready stage into a manifest. |
 | `remove_stage` | Remove a future ready stage from a manifest. |
+
+### Stage Registry
+
+| Tool | Description |
+| :--- | :--- |
+| `set_task_type_defaults` | Replace a task type's default stage manifest. |
+| `update_stage` | Update editable stage registry metadata. |
+| `restore_stage` | Restore a bundled stage registry row. |
+| `delete_stage` | Soft-delete an unused stage registry row. |
 
 ### PR and Merge Delivery
 

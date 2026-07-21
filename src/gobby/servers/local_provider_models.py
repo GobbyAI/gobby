@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 from dataclasses import dataclass
 from typing import Any
 
@@ -188,8 +189,13 @@ async def _ollama_native_models(
     models_by_id.setdefault(endpoint.model, {"name": endpoint.model})
 
     eligible: list[tuple[dict[str, Any], str]] = []
-    for model_id, model in models_by_id.items():
-        show_available, details = await _ollama_model_details(client, endpoint, model_id)
+    model_items = list(models_by_id.items())
+    detail_results = await _ollama_model_details_batch(
+        client, endpoint, [model_id for model_id, _ in model_items]
+    )
+    for (model_id, model), (show_available, details) in zip(
+        model_items, detail_results, strict=True
+    ):
         native_available = native_available or show_available
         if not _supports_ollama_completion(details):
             continue
@@ -202,15 +208,33 @@ async def _validated_ollama_fallback_models(
     endpoint: LocalGenerationEndpointConfig,
     models: list[dict[str, Any]],
 ) -> list[dict[str, Any]]:
+    model_items = [
+        (model, model_id)
+        for model in models
+        if (model_id := _first_string(model, "canonical_id")) is not None
+    ]
+    detail_results = await _ollama_model_details_batch(
+        client, endpoint, [model_id for _, model_id in model_items]
+    )
     eligible: list[dict[str, Any]] = []
-    for model in models:
-        model_id = _first_string(model, "canonical_id")
-        if model_id is None:
-            continue
-        _, details = await _ollama_model_details(client, endpoint, model_id)
+    for (model, _), (_, details) in zip(model_items, detail_results, strict=True):
         if _supports_ollama_completion(details):
             eligible.append(model)
     return eligible
+
+
+async def _ollama_model_details_batch(
+    client: httpx.AsyncClient,
+    endpoint: LocalGenerationEndpointConfig,
+    model_ids: list[str],
+) -> list[tuple[bool, dict[str, Any]]]:
+    semaphore = asyncio.Semaphore(4)
+
+    async def fetch(model_id: str) -> tuple[bool, dict[str, Any]]:
+        async with semaphore:
+            return await _ollama_model_details(client, endpoint, model_id)
+
+    return list(await asyncio.gather(*(fetch(model_id) for model_id in model_ids)))
 
 
 async def _ollama_model_details(

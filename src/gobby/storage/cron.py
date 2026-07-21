@@ -136,7 +136,10 @@ def compute_next_run(job: CronJob) -> datetime | None:
         now_utc = datetime.now(ZoneInfo("UTC"))
         if run_at_utc <= now_utc:
             logger.debug(
-                "Job %s: one-shot run_at %s is in the past (now=%s)", job.id, run_at_utc, now_utc
+                "Job %s: one-shot run_at %s is in the past (now=%s)",
+                job.id,
+                run_at_utc,
+                now_utc,
             )
             return None
         return run_at_utc

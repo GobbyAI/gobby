@@ -6,6 +6,7 @@ from unittest.mock import MagicMock, patch
 import pytest
 
 from gobby.mcp_proxy.tools.tasks import create_task_registry
+from gobby.storage.tasks import Task
 
 pytestmark = pytest.mark.unit
 
@@ -80,7 +81,7 @@ class TestGetTaskTool:
     """Tests for get_task MCP tool."""
 
     @pytest.mark.asyncio
-    async def test_get_task_found(self, mock_task_manager, sample_task):
+    async def test_get_task_found(self, mock_task_manager: MagicMock, sample_task: Task) -> None:
         """Test get_task returns task with dependencies."""
         with patch("gobby.mcp_proxy.tools.tasks._context.TaskDependencyManager") as MockDepManager:
             mock_dep_instance = MagicMock()
@@ -104,7 +105,7 @@ class TestGetTaskTool:
             assert "blocking" in result["dependencies"]
 
     @pytest.mark.asyncio
-    async def test_get_task_not_found(self, mock_task_manager):
+    async def test_get_task_not_found(self, mock_task_manager: MagicMock) -> None:
         """Test get_task returns error when task not found."""
         registry = create_task_registry(mock_task_manager)
 
@@ -118,7 +119,9 @@ class TestGetTaskTool:
         assert result["found"] is False
 
     @pytest.mark.asyncio
-    async def test_get_task_with_dependencies(self, mock_task_manager, sample_task):
+    async def test_get_task_with_dependencies(
+        self, mock_task_manager: MagicMock, sample_task: Task
+    ) -> None:
         """Test get_task with brief=False includes full dependency information."""
         with patch("gobby.mcp_proxy.tools.tasks._context.TaskDependencyManager") as MockDepManager:
             mock_dep_instance = MagicMock()
@@ -161,7 +164,9 @@ class TestGetTaskTool:
             }
 
     @pytest.mark.asyncio
-    async def test_get_task_brief_returns_agent_task_card(self, mock_task_manager, sample_task):
+    async def test_get_task_brief_returns_agent_task_card(
+        self, mock_task_manager: MagicMock, sample_task: Task
+    ) -> None:
         """Test get_task with brief=True returns concise actionable fields."""
         with patch("gobby.mcp_proxy.tools.tasks._context.TaskDependencyManager") as MockDepManager:
             mock_dep_instance = MagicMock()
@@ -186,7 +191,9 @@ class TestGetTaskTool:
             assert "dependencies" in result
 
     @pytest.mark.asyncio
-    async def test_get_task_brief_false_returns_full(self, mock_task_manager, sample_task):
+    async def test_get_task_brief_false_returns_full(
+        self, mock_task_manager: MagicMock, sample_task: Task
+    ) -> None:
         """Test get_task with brief=False returns full format."""
         with patch("gobby.mcp_proxy.tools.tasks._context.TaskDependencyManager") as MockDepManager:
             mock_dep_instance = MagicMock()
@@ -206,7 +213,9 @@ class TestGetTaskTool:
             assert "dependencies" in result
 
     @pytest.mark.asyncio
-    async def test_get_task_brief_resolves_dependencies(self, mock_task_manager, sample_task):
+    async def test_get_task_brief_resolves_dependencies(
+        self, mock_task_manager: MagicMock, sample_task: Task
+    ) -> None:
         """Test get_task brief mode resolves deps to ref+title+state."""
         with patch("gobby.mcp_proxy.tools.tasks._context.TaskDependencyManager") as MockDepManager:
             mock_dep_instance = MagicMock()
@@ -260,7 +269,7 @@ class TestUpdateTaskTool:
     """Tests for update_task MCP tool."""
 
     @pytest.mark.asyncio
-    async def test_update_task_title(self, mock_task_manager, sample_task):
+    async def test_update_task_title(self, mock_task_manager: MagicMock, sample_task: Task) -> None:
         """Test update_task updates title."""
         registry = create_task_registry(mock_task_manager)
 
@@ -278,7 +287,7 @@ class TestUpdateTaskTool:
         assert result == {}
 
     @pytest.mark.asyncio
-    async def test_update_task_not_found(self, mock_task_manager):
+    async def test_update_task_not_found(self, mock_task_manager: MagicMock) -> None:
         """Test update_task returns error when task not found."""
         registry = create_task_registry(mock_task_manager)
 
@@ -291,7 +300,9 @@ class TestUpdateTaskTool:
         assert "error" in result
 
     @pytest.mark.asyncio
-    async def test_update_task_rejects_code_category_without_criteria(self, mock_task_manager):
+    async def test_update_task_rejects_code_category_without_criteria(
+        self, mock_task_manager: MagicMock
+    ) -> None:
         """A category flip must satisfy the effective code-task invariant."""
         registry = create_task_registry(mock_task_manager)
         mock_task_manager.get_task.return_value = SimpleNamespace(
@@ -313,7 +324,9 @@ class TestUpdateTaskTool:
         mock_task_manager.update_task.assert_not_called()
 
     @pytest.mark.asyncio
-    async def test_update_task_rejects_code_category_without_domain(self, mock_task_manager):
+    async def test_update_task_rejects_code_category_without_domain(
+        self, mock_task_manager: MagicMock
+    ) -> None:
         """A category flip with criteria must still provide an implementation domain."""
         registry = create_task_registry(mock_task_manager)
         mock_task_manager.get_task.return_value = SimpleNamespace(
@@ -339,7 +352,9 @@ class TestUpdateTaskTool:
         mock_task_manager.update_task.assert_not_called()
 
     @pytest.mark.asyncio
-    async def test_update_task_rejects_clearing_code_task_criteria(self, mock_task_manager):
+    async def test_update_task_rejects_clearing_code_task_criteria(
+        self, mock_task_manager: MagicMock
+    ) -> None:
         """An existing code task cannot clear its validation criteria."""
         registry = create_task_registry(mock_task_manager)
         mock_task_manager.get_task.return_value = SimpleNamespace(
@@ -364,7 +379,9 @@ class TestUpdateTaskTool:
         mock_task_manager.update_task.assert_not_called()
 
     @pytest.mark.asyncio
-    async def test_update_task_accepts_valid_code_category_flip(self, mock_task_manager):
+    async def test_update_task_accepts_valid_code_category_flip(
+        self, mock_task_manager: MagicMock
+    ) -> None:
         """A category flip succeeds when the effective code-task state is valid."""
         registry = create_task_registry(mock_task_manager)
         mock_task_manager.get_task.return_value = SimpleNamespace(
@@ -394,7 +411,7 @@ class TestUpdateTaskTool:
         )
 
     @pytest.mark.asyncio
-    async def test_update_task_metadata_fields(self, mock_task_manager):
+    async def test_update_task_metadata_fields(self, mock_task_manager: MagicMock) -> None:
         """Test update_task with representative metadata fields.
 
         Note: All status transitions are blocked by production code.
@@ -437,7 +454,7 @@ class TestUpdateTaskTool:
         assert mock_task_manager.update_task.call_args is not None
 
     @pytest.mark.asyncio
-    async def test_update_task_task_type(self, mock_task_manager):
+    async def test_update_task_task_type(self, mock_task_manager: MagicMock) -> None:
         """update_task forwards task_type to the storage layer."""
         registry = create_task_registry(mock_task_manager)
 
@@ -455,7 +472,7 @@ class TestUpdateTaskTool:
         assert result == {}
 
     @pytest.mark.asyncio
-    async def test_update_task_allow_automation(self, mock_task_manager):
+    async def test_update_task_allow_automation(self, mock_task_manager: MagicMock) -> None:
         """update_task forwards allow_automation to the storage layer."""
         registry = create_task_registry(mock_task_manager)
 
@@ -476,7 +493,7 @@ class TestUpdateTaskTool:
         assert result == {}
 
     @pytest.mark.asyncio
-    async def test_update_task_isolation(self, mock_task_manager):
+    async def test_update_task_isolation(self, mock_task_manager: MagicMock) -> None:
         """update_task forwards validated isolation to the storage layer."""
         registry = create_task_registry(mock_task_manager)
 
@@ -497,7 +514,9 @@ class TestUpdateTaskTool:
         assert result == {}
 
     @pytest.mark.asyncio
-    async def test_update_task_rejects_isolation_artifact_conflict(self, mock_task_manager):
+    async def test_update_task_rejects_isolation_artifact_conflict(
+        self, mock_task_manager: MagicMock
+    ) -> None:
         """update_task rejects retargeting to a conflicting isolation artifact family."""
         registry = create_task_registry(mock_task_manager)
         mock_task_manager.artifacts.get_artifacts.return_value = MagicMock(
@@ -522,7 +541,7 @@ class TestUpdateTaskTool:
         mock_task_manager.update_task.assert_not_called()
 
     @pytest.mark.asyncio
-    async def test_update_task_assigned_agent(self, mock_task_manager):
+    async def test_update_task_assigned_agent(self, mock_task_manager: MagicMock) -> None:
         """update_task forwards assigned_agent to the storage layer."""
         registry = create_task_registry(mock_task_manager)
 
@@ -543,7 +562,7 @@ class TestUpdateTaskTool:
         assert result == {}
 
     @pytest.mark.asyncio
-    async def test_update_task_additional_skills(self, mock_task_manager):
+    async def test_update_task_additional_skills(self, mock_task_manager: MagicMock) -> None:
         """update_task forwards additional_skills to the storage layer."""
         registry = create_task_registry(mock_task_manager)
 
@@ -564,7 +583,9 @@ class TestUpdateTaskTool:
         assert result == {}
 
     @pytest.mark.asyncio
-    async def test_update_task_assignment_fields_combined(self, mock_task_manager):
+    async def test_update_task_assignment_fields_combined(
+        self, mock_task_manager: MagicMock
+    ) -> None:
         """update_task forwards both assignment fields together."""
         registry = create_task_registry(mock_task_manager)
 
@@ -588,7 +609,7 @@ class TestUpdateTaskTool:
         assert result == {}
 
     @pytest.mark.asyncio
-    async def test_update_task_partial_update(self, mock_task_manager):
+    async def test_update_task_partial_update(self, mock_task_manager: MagicMock) -> None:
         """Test update_task only includes provided metadata fields."""
         registry = create_task_registry(mock_task_manager)
 
@@ -621,7 +642,7 @@ class TestLabelTools:
     """Tests for add_label and remove_label MCP tools."""
 
     @pytest.mark.asyncio
-    async def test_add_label_success(self, mock_task_manager, sample_task):
+    async def test_add_label_success(self, mock_task_manager: MagicMock, sample_task: Task) -> None:
         """Test add_label adds a label to task."""
         registry = create_task_registry(mock_task_manager)
 
@@ -638,7 +659,7 @@ class TestLabelTools:
         assert result == {"success": True, "task_id": "550e8400-e29b-41d4-a716-446655440000"}
 
     @pytest.mark.asyncio
-    async def test_add_label_task_not_found(self, mock_task_manager):
+    async def test_add_label_task_not_found(self, mock_task_manager: MagicMock) -> None:
         """Test add_label returns error when task not found."""
         registry = create_task_registry(mock_task_manager)
 
@@ -651,7 +672,7 @@ class TestLabelTools:
         assert "error" in result
 
     @pytest.mark.asyncio
-    async def test_remove_label_success(self, mock_task_manager):
+    async def test_remove_label_success(self, mock_task_manager: MagicMock) -> None:
         """Test remove_label removes a label from task."""
         registry = create_task_registry(mock_task_manager)
 
@@ -668,7 +689,7 @@ class TestLabelTools:
         assert result == {"success": True, "task_id": "550e8400-e29b-41d4-a716-446655440000"}
 
     @pytest.mark.asyncio
-    async def test_remove_label_task_not_found(self, mock_task_manager):
+    async def test_remove_label_task_not_found(self, mock_task_manager: MagicMock) -> None:
         """Test remove_label returns error when task not found."""
         registry = create_task_registry(mock_task_manager)
 
@@ -690,7 +711,7 @@ class TestDeleteTaskTool:
     """Tests for delete_task MCP tool."""
 
     @pytest.mark.asyncio
-    async def test_delete_task_success(self, mock_task_manager):
+    async def test_delete_task_success(self, mock_task_manager: MagicMock) -> None:
         """Test delete_task successfully deletes a task."""
         registry = create_task_registry(mock_task_manager)
 
@@ -707,7 +728,7 @@ class TestDeleteTaskTool:
         assert result["deleted_task_id"] == "550e8400-e29b-41d4-a716-446655440000"
 
     @pytest.mark.asyncio
-    async def test_delete_task_not_found(self, mock_task_manager):
+    async def test_delete_task_not_found(self, mock_task_manager: MagicMock) -> None:
         """Test delete_task returns error when task not found."""
         registry = create_task_registry(mock_task_manager)
 
@@ -720,7 +741,7 @@ class TestDeleteTaskTool:
         assert "error" in result
 
     @pytest.mark.asyncio
-    async def test_delete_task_without_cascade(self, mock_task_manager):
+    async def test_delete_task_without_cascade(self, mock_task_manager: MagicMock) -> None:
         """Test delete_task without cascade option."""
         registry = create_task_registry(mock_task_manager)
 
@@ -737,7 +758,7 @@ class TestDeleteTaskTool:
         assert mock_task_manager.delete_task.call_args is not None
 
     @pytest.mark.asyncio
-    async def test_delete_task_with_unlink(self, mock_task_manager):
+    async def test_delete_task_with_unlink(self, mock_task_manager: MagicMock) -> None:
         """Test delete_task with unlink option preserves dependents."""
         registry = create_task_registry(mock_task_manager)
 
@@ -754,7 +775,7 @@ class TestDeleteTaskTool:
         assert "error" not in result
 
     @pytest.mark.asyncio
-    async def test_delete_task_dependents_error(self, mock_task_manager):
+    async def test_delete_task_dependents_error(self, mock_task_manager: MagicMock) -> None:
         """Test delete_task returns structured error when task has dependents."""
         registry = create_task_registry(mock_task_manager)
 
@@ -781,7 +802,7 @@ class TestListTasksTool:
     """Tests for list_tasks MCP tool."""
 
     @pytest.mark.asyncio
-    async def test_list_tasks_basic(self, mock_task_manager):
+    async def test_list_tasks_basic(self, mock_task_manager: MagicMock) -> None:
         """Test list_tasks returns tasks with count."""
         registry = create_task_registry(mock_task_manager)
 
@@ -821,7 +842,7 @@ class TestListTasksTool:
                 assert NOISY_TASK_KEYS.isdisjoint(task)
 
     @pytest.mark.asyncio
-    async def test_list_tasks_with_filters(self, mock_task_manager):
+    async def test_list_tasks_with_filters(self, mock_task_manager: MagicMock) -> None:
         """Test list_tasks applies filters correctly."""
         registry = create_task_registry(mock_task_manager)
 
@@ -857,7 +878,7 @@ class TestListTasksTool:
             assert mock_task_manager.list_tasks.call_args is not None
 
     @pytest.mark.asyncio
-    async def test_list_tasks_all_projects(self, mock_task_manager):
+    async def test_list_tasks_all_projects(self, mock_task_manager: MagicMock) -> None:
         """Test list_tasks with all_projects=True ignores project filter."""
         registry = create_task_registry(mock_task_manager)
 
@@ -872,7 +893,7 @@ class TestListTasksTool:
             assert call_kwargs["project_id"] is None
 
     @pytest.mark.asyncio
-    async def test_list_tasks_comma_separated_status(self, mock_task_manager):
+    async def test_list_tasks_comma_separated_status(self, mock_task_manager: MagicMock) -> None:
         """Test list_tasks handles comma-separated current_stage_state strings."""
         registry = create_task_registry(mock_task_manager)
 

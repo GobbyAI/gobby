@@ -534,7 +534,12 @@ class SessionCoordinator:
                     )
                     flush_future.result(timeout=5)
                 except Exception as e:
-                    self.logger.debug("Failed to flush session stats for %s: %s", session_id, e)
+                    self.logger.warning(
+                        "Failed to flush session stats for %s: %s",
+                        session_id,
+                        e,
+                        exc_info=True,
+                    )
 
                 # Re-fetch session from DB to get updated stats
                 refreshed = self._session_manager.get(session_id) if self._session_manager else None

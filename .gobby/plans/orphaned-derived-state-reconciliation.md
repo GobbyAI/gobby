@@ -3,6 +3,7 @@
 **Plan ID:** orphaned-derived-state-reconciliation
 
 ## Overview
+
 `kind: framing`
 
 Derived vector/graph state leaks across Gobby's per-project stores. Verified live (2026-07-18): 81 orphaned `code_symbols_<uuid>` Qdrant collections (~2.38 GB allocated) against 15 registered `code_indexed_projects` rows; the leak's root cause is prune's stale-project phase calling `indexer::invalidate` (`crates/gcode/src/index/indexer/lifecycle.rs:86`), which deletes all SQL rows but never the Qdrant collection — and once the parent row is gone, child-row-driven orphan discovery (`collect_orphan_project_ids`, `crates/gcode/src/commands/status/prune.rs:203`) can never find it. Additionally: the hourly cron records failures as successes (plain-string result coerced to `completed`); gwiki has per-scope collections with no registry, no reconciler, and no deletion hook (3 of 7 project scopes are dead); and project soft-delete is terminal — nothing ever reclaims a soft-deleted project's state.
@@ -10,6 +11,7 @@ Derived vector/graph state leaks across Gobby's per-project stores. Verified liv
 This epic adds global Qdrant reconciliation to `gcode prune --force`, honest cron result semantics, a `gwiki prune` reconciler with its own hourly system job, and a full-hard-delete project purge lifecycle (30-day retention, no tombstone) with a manual `gobby projects purge` command, then performs one-time rollout cleanup.
 
 ## Constraints
+
 `kind: framing`
 
 - Preserve the existing `gobby:code-index-prune` job identity. Registration is name-keyed (`register_code_index_prune_cron`, `src/gobby/code_index/prune.py:288`) and `reconcile_system_job_definition` (`src/gobby/storage/cron.py:550`) updates descriptions in place — ID `b049d115-c932-5c31-9d0c-8f3f89f67117`, cadence, and ownership are preserved. **Known defect in scope (2.1)**: the current registration re-enables operator-disabled jobs (`toggle_job` on any disabled reconciled row); the fix preserves the operator's enabled toggle and only wakes enabled rows whose `next_run_at` is null.
@@ -24,11 +26,13 @@ This epic adds global Qdrant reconciliation to `gcode prune --force`, honest cro
 - Out of scope: Qdrant optimizer/segment tuning; topic TTL; `gobby_test_*` schema cleanup (already self-healing via `_cleanup_orphaned_schemas`, `tests/fixtures/postgres.py:84`, 24h threshold, runs each pytest session).
 
 ## P1: gcode Global Qdrant Reconciliation
+
 `kind: framing`
 
 **Goal**: `gcode prune --force` reconciles every `code_symbols_<uuid>` Qdrant collection against `code_indexed_projects`, safely and observably, with zero registered projects supported.
 
 ### 1.1 Add project-identity advisory lock entry point [category: code]
+
 `kind: deliverable`
 
 Target: `crates/gcode/src/index_lock.rs`
@@ -55,6 +59,7 @@ pub(crate) fn lock_project_by_id(
 - 1.1.2 - Busy locks return a deferred signal (`Ok(None)`) after a 150 ms maintenance attempt instead of erroring. behavior: "busy advisory lock defers, does not fail" in `crates/gcode/src/index_lock.rs`.
 
 ### 1.2 Global Qdrant collection reconciliation phase in prune [category: code] (depends: 1.1, 1.3)
+
 `kind: deliverable`
 
 Targets: `crates/gcode/src/commands/status/prune.rs`, `crates/gcode/src/vector/code_symbols/qdrant.rs`, `crates/gcode/src/graph/code_graph/write/deletion.rs`
@@ -81,6 +86,7 @@ Concurrency contract (unchanged from the indexer side): the indexer seeds its `c
 - 1.2.9 - With Falkor configured, prune enumerates project scopes from the code graph **during discovery**, includes graph orphans in the combined prompt, and clears those with no `code_indexed_projects` row even when SQL rows are already gone (lock + under-lock re-check per scope); configured-but-unreachable Falkor aborts the **entire run** before any mutation — stale, collection, and graph phases alike; missing Falkor config is a Falkor-only skip. behavior: "graph-side Falkor scope reconciliation" in `crates/gcode/src/commands/status/prune.rs`.
 
 ### 1.3 ID-native, projection-first, lock-guarded project invalidation [category: code] (depends: 1.1)
+
 `kind: deliverable`
 
 Targets: `crates/gcode/src/commands/status/invalidate.rs`, `crates/gcode/src/cli.rs`, `crates/gcode/src/dispatch.rs`
@@ -99,11 +105,13 @@ The purge service (4.2) must clean a project's code index by **ID** (a soft-dele
 - 1.3.4 - Missing Qdrant or Falkor configuration is a per-backend skip that still completes the SQL phase (each is later reconcilable via 1.2's backend-side sweeps); a configured-but-unreachable backend aborts before SQL with a nonzero exit. behavior: "missing-config skip vs unreachable-backend abort" in `crates/gcode/src/commands/status/invalidate.rs`.
 
 ## P2: Honest Cron Result Semantics
+
 `kind: framing`
 
 **Goal**: failed, timed-out, or gateway-unavailable global prunes record as failed cron runs.
 
 ### 2.1 Return a structured mapping from the global prune handler [category: code]
+
 `kind: deliverable`
 
 Target: `src/gobby/code_index/prune.py`
@@ -136,11 +144,13 @@ Change `CodeIndexPruner.prune_all_projects()` (`prune.py:107`) to return a mappi
 - 2.1.3 - Reconcile no longer re-enables an operator-disabled job; only enabled rows with null `next_run_at` are woken. behavior: "enabled-toggle preservation" in `src/gobby/code_index/prune.py`.
 
 ## P3: gwiki Reconciler
+
 `kind: framing`
 
 **Goal**: `gwiki prune` reconciles wiki scopes against the hub `projects` table with the same observability contract as gcode.
 
 ### 3.1 Add gwiki prune command [category: code] (depends: 3.2)
+
 `kind: deliverable`
 
 Targets: `crates/gwiki/src/commands/prune.rs` (new), `crates/gwiki/src/commands/mod.rs`, `crates/gwiki/src/commands/purge.rs`, `crates/gwiki/src/cli.rs`, `crates/gwiki/src/cli/mapping.rs`, `crates/gwiki/src/api.rs`
@@ -168,6 +178,7 @@ Also add an **ID-native purge selector**: `gwiki purge --project-id <uuid> --yes
 - 3.1.9 - A dead scope represented **only** in a non-document table (e.g. an ingestion-only scope with rows solely in `gwiki_ingestions`) is discovered and fully purged; SQL discovery provably unions all five `GWIKI_POSTGRES_TABLES` tables. behavior: "five-table scope discovery" in `crates/gwiki/src/commands/prune.rs`.
 
 ### 3.2 Cross-process gwiki project writer lock [category: code]
+
 `kind: deliverable`
 
 Targets: `crates/gwiki/src/project_lock.rs` (new), `crates/gwiki/src/commands/mod.rs`, `crates/gwiki/src/commands/index.rs`, `crates/gwiki/src/commands/session_sync.rs`, `crates/gwiki/src/commands/purge.rs`, `crates/gwiki/src/scope.rs`
@@ -191,11 +202,13 @@ gwiki writes are reachable from outside the daemon: the standalone CLI's project
 - 3.2.4 - A project-scoped `sync-sessions` admitted before soft deletion completes its full write sequence before 4.2's drain barrier can acquire (guard-lifetime race: writer paused between its Postgres write and its Qdrant/Falkor sync still blocks the barrier); one started after soft deletion refuses under the lock with zero SQL, Qdrant, or Falkor writes. behavior: "sync-sessions fenced end-to-end" in `crates/gwiki/src/commands/session_sync.rs`.
 
 ## P4: Daemon Wiring
+
 `kind: framing`
 
 **Goal**: the daemon runs wiki reconciliation hourly, and projects have a real end-of-life: 30-day retention then full hard delete, plus immediate manual purge.
 
 ### 4.1 GwikiGateway prune/purge methods and wiki-prune system job [category: code] (depends: P3)
+
 `kind: deliverable`
 
 Target: `src/gobby/gwiki_gateway.py`, `src/gobby/wiki/prune_job.py`, `src/gobby/runner_lifecycle_subsystems.py`
@@ -212,6 +225,7 @@ Target: `src/gobby/gwiki_gateway.py`, `src/gobby/wiki/prune_job.py`, `src/gobby/
 - 4.1.3 - With zero non-protected projects (empty scopes, no stale IDs), startup still registers `gobby:wiki-prune` and its handler is callable; `scheduled_jobs.py` remains under 1,000 lines. behavior: "global registration precedes the per-project early return" in `src/gobby/runner_lifecycle_subsystems.py`.
 
 ### 4.2 Project purge service, retention cron, and CLI/HTTP surface [category: code] (depends: 4.1, P1)
+
 `kind: deliverable`
 
 Targets: `src/gobby/projects/purge.py` (new), `src/gobby/projects/write_fence.py` (new), `src/gobby/code_index/gcode_gateway.py`, `src/gobby/runner_init/orchestration.py`, `src/gobby/storage/projects.py`, `src/gobby/storage/cron.py`, `src/gobby/wiki/scheduled_jobs.py`, `src/gobby/code_index/codewiki_nightly.py`, `src/gobby/memory/services/lifecycle.py`, `src/gobby/memory/services/dedup.py`, `src/gobby/memory/services/indexing.py`, `src/gobby/memory/services/knowledge_graph/maintenance.py`, `src/gobby/memory/services/knowledge_graph/service.py`, `src/gobby/memory/collection_names.py`, `src/gobby/memory/vectorstore.py`, `src/gobby/mcp_proxy/semantic_search.py`, `src/gobby/ai/embedding_switch_runner.py`, `src/gobby/ai/embedding_switch.py`, `src/gobby/github_triage/issue_index.py`, `src/gobby/runner_maintenance.py`, `src/gobby/runner_lifecycle_subsystems.py`, `src/gobby/cli/projects.py`, `src/gobby/cli/embeddings.py`, `src/gobby/cli/installers/embedding.py`, `src/gobby/servers/routes/projects.py`, `src/gobby/servers/routes/embeddings.py`, `src/gobby/storage/config_store.py`, `src/gobby/config/embedding_keys.py`, `src/gobby/config/app.py`, `src/gobby/mcp_proxy/tools/config.py`, `src/gobby/servers/routes/configuration_values.py`, `src/gobby/servers/routes/configuration_secrets.py`, `src/gobby/servers/routes/configuration_templates.py`, `src/gobby/servers/routes/configuration_import_export.py`, `src/gobby/cli/secrets.py`
@@ -274,12 +288,22 @@ Retention, wiring, and surfaces:
 - 4.2.19 - A pre-flip abort (FLIPPING never entered) cleans its staged artifacts: after in-flight writes settle, every staged `kind@run_id` physical collection for the journal's run_id is enumerated and deleted **before** the journal is deleted; a failed cleanup retains a durable aborted/cleanup-pending journal, and a re-issued abort or daemon restart retries the cleanup to completion — tested with abort after each of the three staged collections is created and with a cleanup failure injected. Once FLIPPING has ever begun, staged-run cleanup is never executed — the staged physicals are actual or imminent alias targets and the run completes forward per 4.2.17. behavior: "staged-artifact cleanup before journal deletion" in `src/gobby/ai/embedding_switch_runner.py`.
 - 4.2.20 - The daemon is the complete embedding-config mutation owner: `gobby install` writes embedding config directly only on proven first bootstrap (no existing embedding config, no switch journal, no managed collections, no live switch) and otherwise delegates to the daemon lifecycle gate or refuses with zero writes; every mutation surface in the step-2 inventory — generic set/batch/import, MCP `delete_config`/`ensure_defaults`, HTTP values delete and `reset_config`, template save's bulk replacement, `ConfigStore.delete`/`delete_all`/`set_secret`/`clear_secret`, and CLI/server secret CRUD for `ai.embeddings.api_key` — executes its check-and-write under the same journal-key admission lock as switch start, and while a switch is live each rejects with zero writes or routes through the owner, with bulk paths preserving the journal. Simultaneous-barrier race tests run switch start against each mutation class (installer reconfigure, generic set, delete/reset, template save, `ensure_defaults`, secret CRUD), and live-switch zero-write tests cover delete, reset, template save, defaults, and secret CRUD — proving no canonical config or embedding-secret write ever bypasses the single-flight gate. file: `src/gobby/cli/installers/embedding.py`.
 
+- 4.2.21 - Every embedding-config and secret mutation makes its live-journal
+  admission decision while holding the lifecycle owner's journal-key lock. If a
+  live or cleanup-pending journal exists, that transaction either rejects the
+  mutation atomically with zero writes or executes it through the lifecycle
+  owner; no caller performs a pre-lock check followed by an independent write.
+  behavior: "atomic live-journal mutation admission" in
+  `src/gobby/ai/embedding_switch.py`.
+
 ## P5: Rollout
+
 `kind: framing`
 
 **Goal**: the live environment is reconciled, the one-time debt is cleared, and failure visibility is demonstrated.
 
 ### 5.1 Live reconciliation verification and one-time cleanup [category: test] (depends: P1, P2, P4)
+
 `kind: deliverable`
 
 Target: `~/.gobby/bin/{gcode,gwiki}` (reinstall), live daemon
@@ -302,6 +326,7 @@ Target: `~/.gobby/bin/{gcode,gwiki}` (reinstall), live daemon
 - 5.1.2 - Dead gwiki scopes and the one-time debt (non-UUID collections, junk topics, gobby-cli/gsqz) are fully reclaimed, and a forced-failure cron run records as failed. behavior: "live wiki/purge verification with failure visibility" in `src/gobby/projects/purge.py`.
 
 ## Task Mapping
+
 `kind: framing`
 
 <!-- Updated after task creation -->
@@ -309,6 +334,7 @@ Target: `~/.gobby/bin/{gcode,gwiki}` (reinstall), live daemon
 |-----------|----------|--------|
 
 ## V1 Plan Changelog
+
 `kind: verification`
 
 **Round 1** `kind: verification`
@@ -445,6 +471,7 @@ Target: `~/.gobby/bin/{gcode,gwiki}` (reinstall), live daemon
 - resolution_notes: Round 11 ran as the third user-approved extension past the max_review_rounds = 8 cap, scoped to the three absorbed Round-10 resolutions. The adversary re-verified the read-side lifecycle-key contract across the `get_all` consumers, the complete mutation inventory and shared admission lock, and the irreversible forward-completion region against the real runner's flip/gc paths, swept the whole plan for regressions from the Round-10 edits, and returned zero findings. The adversary wrote `## M1 Task Manifest` and reported `manifest: written`; `uv run gobby plans validate --mode expansion` passes. Convergence reached after 11 rounds.
 
 ## M1 Task Manifest
+
 `kind: manifest`
 
 ```yaml
@@ -578,6 +605,7 @@ Target: `~/.gobby/bin/{gcode,gwiki}` (reinstall), live daemon
     - covers:orphaned-derived-state-reconciliation:4.2:4.2.18
     - covers:orphaned-derived-state-reconciliation:4.2:4.2.19
     - covers:orphaned-derived-state-reconciliation:4.2:4.2.20
+    - covers:orphaned-derived-state-reconciliation:4.2:4.2.21
   implementation_domain: backend
   tdd: true
   source_section: "4.2"

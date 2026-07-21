@@ -1344,8 +1344,10 @@ class TestMultipleEffects:
         assert response.decision == "allow"
         calls = response.metadata.get("mcp_calls", [])
         assert len(calls) == 2
-        assert calls[0]["server"] == "gobby-tasks"
-        assert calls[1]["server"] == "gobby-memory"
+        assert [(call["server"], call["tool"]) for call in calls] == [
+            ("gobby-tasks", "backup_tasks"),
+            ("gobby-memory", "backup_memories"),
+        ]
 
 
 class TestBeforeToolBlockTracking:

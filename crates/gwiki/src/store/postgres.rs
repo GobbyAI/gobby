@@ -117,6 +117,21 @@ impl WikiIndexStore for PostgresWikiStore<'_> {
             .collect())
     }
 
+    fn indexed_hash(&mut self, path: &Path) -> Result<Option<String>, StoreError> {
+        let path_string = display_path(path);
+        let row = self.conn.query_opt(
+            "SELECT content_hash
+             FROM gwiki_documents
+             WHERE scope_kind = $1 AND scope_id = $2 AND path = $3",
+            &[
+                &self.scope.scope_kind(),
+                &self.scope.scope_id(),
+                &path_string,
+            ],
+        )?;
+        Ok(row.map(|value| value.get("content_hash")))
+    }
+
     fn upsert_document(&mut self, document: WikiDocument) -> Result<(), StoreError> {
         let id = scoped_id("document", &self.scope, &document.path, None);
         let path = display_path(&document.path);

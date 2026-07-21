@@ -32,12 +32,13 @@ from __future__ import annotations
 import importlib.resources
 import logging
 import re
-from collections.abc import Iterator
+from collections.abc import Callable, Iterator
+from contextlib import closing
 from dataclasses import dataclass
 from importlib.resources.abc import Traversable
 from typing import Any, Protocol
 
-from gobby.storage.hub.protocol import HubDatabase, Transaction
+from gobby.storage.hub.protocol import HubDatabase
 
 logger = logging.getLogger(__name__)
 
@@ -71,6 +72,10 @@ class _TransactionLike(Protocol):
     def execute(self, sql: str, params: Any = ()) -> Any: ...
 
 
+class _AutocommitConnection(_TransactionLike, Protocol):
+    def close(self) -> None: ...
+
+
 @dataclass(frozen=True)
 class Migration:
     version: int
@@ -78,15 +83,25 @@ class Migration:
     path: Traversable
 
 
+_NON_TRANSACTIONAL_DIRECTIVE = "-- gobby:non-transactional"
+_MIGRATION_LOCK_SQL = "hashtext('postgres_migrations_apply')"
+
+
 class MigrationRunner:
     """PostgreSQL file-based migration runner."""
 
-    def __init__(self, hub: HubDatabase) -> None:
+    def __init__(
+        self,
+        hub: HubDatabase,
+        *,
+        autocommit_connection: Callable[[], _AutocommitConnection] | None = None,
+    ) -> None:
         if hub.dialect != "postgres":
             raise MigrationUnsupportedError(
                 "MigrationRunner only supports PostgreSQL hub databases."
             )
         self._hub = hub
+        self._autocommit_connection = autocommit_connection
 
     def apply_pending(self) -> None:
         self._ensure_schema_migrations_table()
@@ -94,8 +109,12 @@ class MigrationRunner:
         for migration in self._discover_migrations():
             if migration.version in applied:
                 continue
+            if self._is_non_transactional(migration):
+                self._apply_non_transactional(migration)
+                applied.add(migration.version)
+                continue
             with self._hub.transaction() as txn:
-                txn.execute("SELECT pg_advisory_xact_lock(hashtext('postgres_migrations_apply'))")
+                txn.execute(f"SELECT pg_advisory_xact_lock({_MIGRATION_LOCK_SQL})")
                 row = txn.execute(
                     "SELECT version FROM schema_migrations WHERE version = %s",
                     (migration.version,),
@@ -109,6 +128,30 @@ class MigrationRunner:
                 self._run_migration(txn, migration)
                 self._record_applied_version(txn, migration.version)
             applied.add(migration.version)
+
+    def _apply_non_transactional(self, migration: Migration) -> None:
+        if self._autocommit_connection is None:
+            raise MigrationUnsupportedError(
+                "Non-transactional migration requires an autocommit connection."
+            )
+        with closing(self._autocommit_connection()) as connection:
+            connection.execute(f"SELECT pg_advisory_lock({_MIGRATION_LOCK_SQL})")
+            try:
+                row = connection.execute(
+                    "SELECT version FROM schema_migrations WHERE version = %s",
+                    (migration.version,),
+                ).fetchone()
+                if row is not None:
+                    return
+                logger.info(
+                    "Applying non-transactional PostgreSQL migration %s_%s",
+                    migration.version,
+                    migration.name,
+                )
+                self._run_migration(connection, migration)
+                self._record_applied_version(connection, migration.version)
+            finally:
+                connection.execute(f"SELECT pg_advisory_unlock({_MIGRATION_LOCK_SQL})")
 
     def _ensure_schema_migrations_table(self) -> None:
         with self._hub.transaction() as txn:
@@ -148,10 +191,15 @@ class MigrationRunner:
 
         return [migration for _version, migration in sorted(grouped.items())]
 
-    def _run_migration(self, txn: Transaction, migration: Migration) -> None:
+    @staticmethod
+    def _is_non_transactional(migration: Migration) -> bool:
+        first_line = migration.path.read_text().splitlines()[0].strip()
+        return first_line == _NON_TRANSACTIONAL_DIRECTIVE
+
+    def _run_migration(self, txn: _TransactionLike, migration: Migration) -> None:
         _execute_sql_script(txn, migration.path.read_text())
 
-    def _record_applied_version(self, txn: Transaction, version: int) -> None:
+    def _record_applied_version(self, txn: _TransactionLike, version: int) -> None:
         txn.execute(
             "INSERT INTO schema_migrations(version, applied_at) VALUES (%s, NOW())",
             (version,),

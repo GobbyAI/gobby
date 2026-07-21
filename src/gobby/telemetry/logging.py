@@ -345,7 +345,7 @@ def _parser_handler_matches(
 ) -> bool:
     return (
         isinstance(handler, RotatingFileHandler)
-        and Path(handler.baseFilename) == path.resolve()
+        and Path(handler.baseFilename).resolve() == path.resolve()
         and handler.maxBytes == config.max_bytes
         and handler.backupCount == config.backup_count
     )

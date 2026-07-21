@@ -105,7 +105,8 @@ class SessionLifecycleManager(TranscriptProcessingMixin):
             getattr(self._kg_queue_config, "interval_minutes", 30) if self._kg_queue_config else 30
         )
         logger.info(
-            "SessionLifecycleManager started (expire every %sm, process every %sm, kg_queue every %sm)",
+            "SessionLifecycleManager started "
+            "(expire every %sm, process every %sm, kg_queue every %sm)",
             self.config.expire_check_interval_minutes,
             self.config.transcript_processing_interval_minutes,
             kg_interval,

@@ -776,7 +776,7 @@ def normalize_tool_loop_result(
     if not isinstance(raw_refs, list) or any(not isinstance(ref, str) for ref in raw_refs):
         return protocol_error("evidence_refs must be an array of strings")
     if not isinstance(payload["evidence_complete"], bool):
-        return protocol_error("evidence_refs or evidence_complete has an invalid type")
+        return protocol_error("evidence_complete has an invalid type")
     if bounded_mode and payload["evidence_complete"] is not False:
         return protocol_error("bounded verdicts must submit evidence_complete=false")
 
@@ -917,6 +917,8 @@ async def validate_with_tool_loop(
         project_path=repo_path,
         profile=config.profile.value,
         candidates=tuple(config.candidates),
+        candidate_timeout_seconds=config.cli_candidate_timeout_seconds,
+        cli_candidate_timeout_seconds=config.cli_candidate_timeout_seconds,
         # Claude adapter consumes request.max_turns; OpenAI-compatible/local
         # adapters consume limits.max_turns. Both must carry the turn budget.
         max_turns=call_plan.max_turns,

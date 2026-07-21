@@ -12,6 +12,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
+from gobby.sync.tasks import TaskBackupError
 from gobby.utils.session_context import session_context_for_test
 
 pytestmark = pytest.mark.unit
@@ -172,6 +173,17 @@ class TestTaskBackupRestore:
 
         assert backup_result == {"success": True, "backed_up": 4}
         assert restore_result == {"success": True, "restored": 2}
+
+    @pytest.mark.asyncio
+    @patch("gobby.mcp_proxy.tools.tasks._backup.TaskBackupManager")
+    async def test_backup_returns_structured_failure(
+        self, manager_cls: MagicMock, task_backup_registry
+    ) -> None:
+        manager_cls.return_value.backup.side_effect = TaskBackupError("backup unavailable")
+
+        result = await task_backup_registry.call("backup_tasks", {})
+
+        assert result == {"success": False, "error": "backup unavailable"}
 
 
 # ═══════════════════════════════════════════════════════════════════════

@@ -83,7 +83,7 @@ Extend `PromptDetector` to return a structured payload alongside detection: prom
 
 Add a respond endpoint in the new `src/gobby/servers/routes/attention.py` module, keyed by entry:
 
-```
+```http
 POST /api/attention/{entry_id}/respond
 {"attention_id": "<id>", "fingerprint": "<sha256>", "answer": {"option": 1}}   # or {"text": "..."} or {"key": "escape"}
 ```
@@ -121,7 +121,7 @@ Targets: `src/gobby/servers/routes/attention.py`, `src/gobby/servers/websocket/b
 
 The roster query. The client handshake is subscribe-first, everywhere it is described: subscribe to WS events, buffer attention events, *then* fetch this roster and reconcile (full contract below) — the roster is never fetched before subscribing:
 
-```
+```http
 GET /api/attention/roster
 {
   "epoch": "b1f4...",        # broadcaster epoch UUID (new per daemon start)
@@ -329,7 +329,7 @@ Targets: `src/gobby/skills/hubs/github_topic.py`, `src/gobby/config/skills.py`, 
 
 New `GitHubTopicProvider(HubProvider)` (`src/gobby/skills/hubs/base.py` ABC): `discover`/`search` query the GitHub search API for public repos tagged with a configurable topic (default `gobby-skill`); `list_skills`/`get_skill_details` reuse the tree-walking primitives from `GitHubCollectionProvider` (`src/gobby/skills/hubs/github_collection.py`) under the caps below.
 
-**Identity and pinning.** A bare skill slug is ambiguous across a whole topic. The canonical topic-hub item ID is `owner/repo:path`, normalized and confined (reject `..`, absolute paths, and anything escaping the repo root; extraction is confined to the destination directory). Each discovery hit is resolved to the head commit SHA of the repo's default branch at discovery time, and caches, `get_skill_details`, and `download_skill` are keyed by `(item_id, sha)` — content is fetched at that SHA via tarball/contents-at-ref, never a branch ref and never a full clone, so a branch moving between review and install cannot swap the content. Install provenance records `repo`, `path`, and `sha`.
+**Identity and pinning.** A bare skill slug is ambiguous across a whole topic. The canonical topic-hub item ID is `owner/repo:path`, normalized and confined (reject `..`, absolute paths, and anything escaping the repo root; extraction is confined to the destination directory). Each discovery hit is resolved to the head commit SHA of the repo's default branch at discovery time and persisted as a discovery record containing `item_id`, `repo`, `path`, and `sha`. `get_skill_details`, `download_skill`, and install resolve that persisted record and carry its SHA through every step; a missing record or SHA mismatch returns a stable `item_unavailable` error instead of re-resolving a branch. Caches and content fetches are keyed by `(item_id, sha)`, and content is fetched at that SHA via tarball/contents-at-ref, never a branch ref and never a full clone, so a branch moving between review and install cannot swap the content. Install provenance records the exact persisted `repo`, `path`, and `sha`.
 
 **Untrusted-input hardening.** A public topic is untrusted and unbounded. Hard caps, enforced in the provider: search results ≤ 3 pages / 100 repos per refresh; ≤ 4 concurrent repo probes; per-repo tree traversal depth ≤ 3 and ≤ 200 entries; ≤ 50 skills per repo; manifest/skill files ≤ 256 KB each; downloaded archive ≤ 10 MB compressed (streamed with early abort). All HTTP calls carry timeouts. On 403/rate-limit: exponential backoff and serve the cached discovery set. A repo deleted or made private after discovery yields a clear `item_unavailable` error, not a crash. Over-cap repos are skipped with a logged reason, never partially ingested.
 
@@ -343,16 +343,22 @@ Config: add `"github-topic"` to the `HubConfig.type` Literal in `src/gobby/confi
 
 - 4.1.1 - `GitHubTopicProvider` discovers and searches repos by topic with TTL caching and optional token auth. file: `src/gobby/skills/hubs/github_topic.py`.
 - 4.1.2 - `github-topic` is a valid configured hub type with a registered factory and default entry. file: `src/gobby/config/skills.py`.
-- 4.1.3 - Items are identified as normalized, confined `owner/repo:path` and pinned to a commit SHA from discovery through download, with provenance recorded on install. test: `tests/skills/hubs/test_github_topic.py::test_sha_pinned_identity`.
+- 4.1.3 - Items are identified as normalized, confined `owner/repo:path`; discovery persists the resolved SHA, and details, download, and install consume that same record without branch re-resolution, with exact SHA provenance recorded on install. test: `tests/skills/hubs/test_github_topic.py::test_sha_pinned_identity`.
 - 4.1.4 - Duplicate slugs across repos resolve unambiguously, and a default branch moving between discovery and download does not change installed content. test: `tests/skills/hubs/test_github_topic.py::test_duplicate_slugs_and_moving_branch`.
 - 4.1.5 - Caps and failure fixtures: oversized/adversarial repos are skipped at their caps; archive-bomb fixtures (member-count and expansion-ratio) and symlink/hardlink-escape fixtures are rejected with partial extraction cleaned up; rate-limiting backs off and serves cache; a repo disappearing after discovery yields `item_unavailable`. test: `tests/skills/hubs/test_github_topic.py::test_caps_rate_limit_and_disappearing_repo`.
-- 4.1.6 - End-to-end install: `install_skill("gobby-topic:owner/repo:path")` parses the topic item ID (second colon, dotted repo names), rejects unconfined paths, downloads at the discovery-pinned SHA, installs, and records `repo`/`path`/`sha` provenance. test: `tests/skills/hubs/test_github_topic.py::test_install_skill_topic_reference_end_to_end`.
+- 4.1.6 - End-to-end install: `install_skill("gobby-topic:owner/repo:path")` parses the topic item ID (second colon, dotted repo names), rejects unconfined paths, loads the persisted discovery record, downloads at that record's SHA, installs, and records its exact `repo`/`path`/`sha` provenance; a missing record or mismatch fails closed. test: `tests/skills/hubs/test_github_topic.py::test_install_skill_topic_reference_end_to_end`.
 
-## E1: End-to-End Verification
+## E1: End-to-End Verification [category: test] (depends: P1, P2, P3, P4)
 
-`kind: verification`
+`kind: deliverable`
+
+Target: `tests/e2e/test_herdr_backend_foundation.py`
 
 Run against an isolated test daemon (`GOBBY_TEST_PROTECT=1`, temporary state and ports — never the user's daemon). Drive scripted tmux panes — one spawned run, one interactive session — through approval-prompt, recurrence, stall, idle, and completion transitions: assert the episode lifecycle end-to-end (attention rows, WS agent events with epoch/seq under the ordering coordinator, notification dedupe by episode, roster contents including tmux coordinates with the roster cursor bounding both attention and transient-metadata state under forced interleaving, all three attention endpoints reachable through the real app, CAS respond including recurrence rejection, `not_actionable` stalls, and partial-injection indeterminacy, seen-stamping, per-session blocked aggregation with subscribe-first reconciliation). Validate P2 by editing a DB manifest row — including content-only changes with no version bump — and observing changed detection through every production composition root — a warm `AgentLifecycleMonitor`, a warm `TmuxPaneMonitor` interactive pass, and rotation provider-error classification — at the cache boundary with no code change, by the unchanged pre-existing detector suites, by multi-provider and unknown-provider routing, and by pathological-pattern bounds. Validate 3.1 with a pane that prints delayed output plus the failure branches and collision boundaries. Validate 3.2 by fetching the roster mid-TTL, evicting on `expires_at` with no follow-up event, and observing live metadata events from producers with no attention transition. Validate 4.1 against recorded GitHub API fixtures including a moved default branch, rate-limiting, over-cap repos, archive-bomb/link-escape archives, and an end-to-end `install_skill` of a `gobby-topic:owner/repo:path` reference with pinned-SHA provenance. CLI/web surfacing (1.4) is checked by rendering the roster of the test daemon in `gobby sessions` and the web activity page.
+
+**Acceptance:**
+
+- E1.1 - One isolated-daemon verification run exercises every P1-P4 contract above, including persisted discovery-SHA continuity through details, download, and install, and all focused backend, CLI, and web checks pass without contacting user daemon state. test: `tests/e2e/test_herdr_backend_foundation.py::test_backend_foundation_end_to_end`.
 
 ## V1 Plan Changelog
 
@@ -464,6 +470,7 @@ Run against an isolated test daemon (`GOBBY_TEST_PROTECT=1`, temporary state and
 - resolution_notes: Verification-only pass over the four R7-TARGET-024 resolution points (§2.2 Targets includes `src/gobby/runner.py`; typed phase-3 declaration `detection_registry: DetectionManifestRegistry` with the `completion_registry` precedent; class name pinned in §2.3; 2.2.7 asserts the typed declaration with construction order and same-object identity unchanged). Zero findings — plan approved at round 8.
 
 ## M1 Task Manifest
+
 `kind: manifest`
 
 ```yaml
@@ -618,4 +625,24 @@ Run against an isolated test daemon (`GOBBY_TEST_PROTECT=1`, temporary state and
   tdd: true
   source_section: '4.1'
   implementation_domain: backend
+- title: Verify Herdr backend foundation end to end
+  category: test
+  task_type: task
+  depends_on:
+  - '1.1'
+  - '1.2'
+  - '1.3'
+  - '1.4'
+  - '2.1'
+  - '2.2'
+  - '2.3'
+  - '3.1'
+  - '3.2'
+  - '4.1'
+  validation_criteria: Run the isolated-daemon E1 verification and all focused backend, CLI, and web checks.
+  labels:
+  - covers:herdr-interface-backend-foundation:E1:E1.1
+  tdd: false
+  source_section: 'E1'
+  assigned_agent: backend-developer
 ```

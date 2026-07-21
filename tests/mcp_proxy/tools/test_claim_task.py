@@ -10,6 +10,7 @@ combining:
 This follows the pattern established by claim_worktree in worktrees.py.
 """
 
+from typing import Any
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -22,7 +23,7 @@ pytestmark = pytest.mark.unit
 
 
 @pytest.fixture
-def mock_task_manager():
+def mock_task_manager() -> MagicMock:
     """Create a mock task manager."""
     manager = MagicMock(spec=LocalTaskManager)
     manager.db = MagicMock()
@@ -60,7 +61,7 @@ def _task(
 
 
 @pytest.fixture
-def sample_task():
+def sample_task() -> Task:
     """Create a sample unclaimed task."""
     return _task(
         task_id="550e8400-e29b-41d4-a716-446655440000",
@@ -71,7 +72,7 @@ def sample_task():
 
 
 @pytest.fixture
-def claimed_task():
+def claimed_task() -> Task:
     """Create a sample task already claimed by another session."""
     return _task(
         task_id="550e8400-e29b-41d4-a716-446655440001",
@@ -83,7 +84,7 @@ def claimed_task():
 
 
 @pytest.fixture
-def parent_owned_task():
+def parent_owned_task() -> Task:
     """Create a sample task claimed by a spawning parent session."""
     return _task(
         task_id="550e8400-e29b-41d4-a716-446655440010",
@@ -104,7 +105,9 @@ class TestClaimTaskTool:
             yield
 
     @pytest.mark.asyncio
-    async def test_claim_task_success(self, mock_task_manager, sample_task):
+    async def test_claim_task_success(
+        self, mock_task_manager: MagicMock, sample_task: Task
+    ) -> None:
         """Test successfully claiming an unclaimed task."""
         with (
             patch(
@@ -132,7 +135,7 @@ class TestClaimTaskTool:
             updated_task.id = sample_task.id
             updated_task.claimed_by_session_id = "my-session-id"
 
-            def claim_after_activity(*args, **kwargs):
+            def claim_after_activity(*args: Any, **kwargs: Any) -> Task:
                 mock_session_manager.update_session_status.assert_called_once_with(
                     "my-session-id",
                     "active",
@@ -167,8 +170,8 @@ class TestClaimTaskTool:
 
     @pytest.mark.asyncio
     async def test_claim_task_rejects_present_session_that_cannot_reactivate(
-        self, mock_task_manager, sample_task
-    ):
+        self, mock_task_manager: MagicMock, sample_task: Task
+    ) -> None:
         """A non-live current session must not receive a sweepable task claim."""
         with (
             patch(

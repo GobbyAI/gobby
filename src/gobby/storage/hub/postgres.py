@@ -332,6 +332,7 @@ class PostgresHubDatabase:
             self._conninfo,
             application_name=self._application_name,
             prepare_threshold=None,
+            autocommit=True,
             row_factory=dict_row,
         )
 
@@ -428,7 +429,7 @@ class PostgresHubDatabase:
         return self.execute(sql, params)
 
     def apply_migrations(self) -> None:
-        runner = MigrationRunner(self)
+        runner = MigrationRunner(self, autocommit_connection=self._open_advisory_lock_connection)
         if not self._postgres_baseline_already_applied():
             self._apply_postgres_baseline()
         runner.apply_pending()
@@ -563,11 +564,9 @@ class _PostgresTransaction:
 
 
 class _PostgresCursor:
-    """Cursor adapter that can detach results from a checked-out connection.
+    """Cursor adapter whose buffered rows survive returning a connection to the pool.
 
-    Non-ambient database execution materializes rows before returning its
-    connection to the pool. The buffered cursor retains normal sequential
-    ``fetchone`` and ``fetchall`` behavior after that checkout ends.
+    It retains normal sequential ``fetchone`` and ``fetchall`` behavior.
     """
 
     def __init__(self, cursor: Any | None, *, rowcount: int = -1) -> None:

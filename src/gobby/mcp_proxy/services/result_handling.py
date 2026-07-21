@@ -20,16 +20,16 @@ async def _reconcile_codex_close_transcript(
     server_name: str,
     tool_name: str,
     effective_session_id: str,
-) -> None:
+) -> bool:
     """Bound terminal Codex catch-up so close rules see the latest shell result."""
     source = getattr(event.source, "value", event.source)
     if source != "codex" or server_name != "gobby-tasks" or tool_name != "close_task":
-        return
+        return True
 
     processor = getattr(hook_manager, "_message_processor", None)
     reconcile = getattr(processor, "reconcile_codex_transcript", None)
     if not callable(reconcile):
-        return
+        return False
     platform_session_id = event.metadata.get("_platform_session_id")
     if not isinstance(platform_session_id, str) or not platform_session_id:
         platform_session_id = effective_session_id
@@ -44,14 +44,14 @@ async def _reconcile_codex_close_transcript(
             "Timed out reconciling Codex transcript before task closure",
             extra={"session_id": platform_session_id},
         )
-        return
+        return False
     except Exception:
         logger.warning(
             "Failed to reconcile Codex transcript before task closure",
             extra={"session_id": platform_session_id},
             exc_info=True,
         )
-        return
+        return False
 
     if not getattr(result, "flushed", False):
         logger.debug(
@@ -61,6 +61,8 @@ async def _reconcile_codex_close_transcript(
                 "error": getattr(result, "error", None),
             },
         )
+        return False
+    return True
 
 
 def build_before_tool_event(
@@ -169,13 +171,27 @@ async def apply_before_tool_enforcement(
             logger=logger,
         )
         logger.debug("Session activation reconciliation result: %s", activation_result)
-    await _reconcile_codex_close_transcript(
+    reconciled = await _reconcile_codex_close_transcript(
         hook_manager,
         event,
         server_name=server_name,
         tool_name=tool_name,
         effective_session_id=effective_session_id,
     )
+    if not reconciled:
+        return (
+            server_name,
+            tool_name,
+            arguments,
+            {
+                "success": False,
+                "error": "Codex transcript reconciliation did not complete; retry task closure.",
+                "error_code": ToolProxyErrorCode.TOOL_BLOCKED.value,
+                "server_name": server_name,
+                "tool_name": tool_name,
+                "retryable": True,
+            },
+        )
     has_pending_context = getattr(workflow_handler, "has_pending_tool_context", None)
     if callable(has_pending_context):
         try:

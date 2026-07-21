@@ -142,36 +142,33 @@ export function useChatPagePlans({
     chat.setOnPlanReady?.(onPlanReady);
   }, [chat, onPlanReady]);
 
+  const clearCurrentConversationPendingPlan = useCallback(() => {
+    setPlanState((previous) => {
+      const nextPlanState =
+        previous.switchKey === conversationSwitchKey
+          ? { ...previous, pendingPlanId: null }
+          : emptyConversationPlanState(conversationSwitchKey);
+      planStateRef.current = nextPlanState;
+      return nextPlanState;
+    });
+  }, [conversationSwitchKey]);
+
   const handleApprovePlan = useCallback(
     (option?: ApprovalOption) => {
-      setPlanState((previous) => {
-        const nextPlanState =
-          previous.switchKey === conversationSwitchKey
-            ? { ...previous, pendingPlanId: null }
-            : emptyConversationPlanState(conversationSwitchKey);
-        planStateRef.current = nextPlanState;
-        return nextPlanState;
-      });
+      clearCurrentConversationPendingPlan();
       chat.onApprovePlan?.(option);
       dismissOnMobile();
     },
-    [chat, conversationSwitchKey, dismissOnMobile],
+    [chat, clearCurrentConversationPendingPlan, dismissOnMobile],
   );
 
   const handleRequestPlanChanges = useCallback(
     (feedback: string) => {
-      setPlanState((previous) => {
-        const nextPlanState =
-          previous.switchKey === conversationSwitchKey
-            ? { ...previous, pendingPlanId: null }
-            : emptyConversationPlanState(conversationSwitchKey);
-        planStateRef.current = nextPlanState;
-        return nextPlanState;
-      });
+      clearCurrentConversationPendingPlan();
       chat.onRequestPlanChanges?.(feedback);
       dismissOnMobile();
     },
-    [chat, conversationSwitchKey, dismissOnMobile],
+    [chat, clearCurrentConversationPendingPlan, dismissOnMobile],
   );
 
   useEffect(() => {

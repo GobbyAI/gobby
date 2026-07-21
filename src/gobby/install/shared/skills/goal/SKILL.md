@@ -212,15 +212,19 @@ leaves.
 
 ## Resume
 
-1. Locate the goal doc: the argument, else `get_variable("goal_file")`, else
-   the newest `status: active` file in `.gobby/goals/`.
-2. Read it. Reconcile the Progress Log against the live tree with
+1. Locate the candidate goal doc: the argument, else `get_variable("goal_file")`,
+   else the newest `status: active` file in `.gobby/goals/`.
+2. Read the candidate and its anchor. Resume only when the document has
+   `status: active` and its recorded anchor exactly matches the live anchor
+   task. If this session already has `goal_file` or `auto_task_ref`, both must
+   exactly match the candidate path and anchor; reject a different goal.
+3. Reconcile the Progress Log against the live tree with
    `get_task` / `list_tasks` — the database wins over the log.
-3. Re-claim the anchor if unclaimed, run Execute setup, append a resume entry
+4. Re-claim the anchor if unclaimed, run Execute setup, append a resume entry
    with this session's ref, and enter the mode's loop.
 
-Everything resume needs is the file plus database state, so any CLI can pick
-up a goal another CLI started.
+Everything resume needs is the matching active file, matching anchor, and
+database state, so any CLI can pick up the same goal another CLI started.
 
 ## Fallback — Target CLIs Without The Router
 

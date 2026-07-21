@@ -40,14 +40,15 @@ export function ResizeHandle({
     isDragging.current = true
     startPos.current = clientPos
     startValue.current = currentValue
+    const verticalParentHeight = isVertical
+      ? containerRef.current?.parentElement?.getBoundingClientRect().height
+      : undefined
 
     const handleMove = (pos: number) => {
       if (!isDragging.current) return
       if (isVertical) {
-        const parent = containerRef.current?.parentElement
-        if (!parent) return
-        const parentHeight = parent.getBoundingClientRect().height
-        const deltaPercent = ((pos - startPos.current) / parentHeight) * 100
+        if (!verticalParentHeight) return
+        const deltaPercent = ((pos - startPos.current) / verticalParentHeight) * 100
         const newHeight = Math.max(minVal, Math.min(maxVal, startValue.current + deltaPercent))
         onResize(newHeight)
       } else {

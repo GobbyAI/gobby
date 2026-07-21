@@ -675,6 +675,59 @@ async def test_stage_pipeline_spawn_hands_off_to_main_loop_from_ephemeral_loop(
     await registered[0][1]
 
 
+@pytest.mark.asyncio
+async def test_stage_pipeline_spawn_fails_when_target_loop_does_not_acknowledge(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from gobby.dispatch import stage_pipeline
+
+    monkeypatch.setattr(
+        stage_pipeline, "reset_stage_pipeline_retry_neutral", lambda *_a, **_k: None
+    )
+    monkeypatch.setattr(stage_pipeline, "PIPELINE_START_ACK_TIMEOUT_SECONDS", 0.01)
+    target_loop = asyncio.new_event_loop()
+    execution_manager = MagicMock()
+    services = SimpleNamespace(
+        pipeline_executor=SimpleNamespace(
+            loader=_EnabledPipelineLoader(),
+            execution_manager=execution_manager,
+        ),
+        main_loop=target_loop,
+        triggering_session_id=None,
+    )
+    escalated: list[str] = []
+
+    async def fake_execute(*_args: object, **_kwargs: object) -> None:
+        return None
+
+    try:
+        result = await stage_pipeline.start_pipeline_action(
+            _pipeline_action("7d34e462-6ba3-5a6c-b1c6-1584b855cb83"),
+            mutex=object(),
+            db=object(),
+            context=SimpleNamespace(project_id="0e27d5b7-167e-5a64-8bd9-6b980bd88f06"),
+            services=services,
+            field=lambda obj, key, default=None: getattr(obj, key, default),
+            escalate_pipeline_dispatch=lambda _action, _mutex, _db, reason: (
+                escalated.append(reason) or {"success": False, "error": reason}
+            ),
+            retry_neutral_pipeline_dispatch=_unexpected_pipeline_call,
+            render_dispatch_inputs=lambda *_a, **_k: {},
+            create_stage_pipeline_execution=lambda *_a, **_k: "exec-timeout",
+            execute_pipeline_background=fake_execute,
+            register_background_task=lambda *_a, **_k: None,
+        )
+    finally:
+        target_loop.close()
+
+    assert result == {
+        "success": False,
+        "error": "pipeline_start_registration_timeout",
+    }
+    assert escalated == ["pipeline_start_registration_timeout"]
+    execution_manager.update_execution_status.assert_called_once()
+
+
 def test_candidate_filter_excludes_claimed_leased_blocked_terminal(temp_db, sample_project) -> None:
     """Candidate filter excludes claimed leased blocked terminal."""
     from gobby.storage.tasks import _automation
@@ -1302,10 +1355,14 @@ async def test_run_heartbeat_blocks_ready_task_behind_active_overlapping_write_s
     af_manager.set_files(active.id, ["src/gobby/config/bootstrap.py"], source="expansion")
     af_manager.set_files(waiting.id, ["src/gobby/config/bootstrap.py"], source="expansion")
     metric_outcomes: list[str] = []
+
+    def record_metric(component: str, outcome: str) -> None:
+        metric_outcomes.append(f"{component}:{outcome}")
+
     monkeypatch.setattr(
         dispatcher,
         "record_automation_event",
-        lambda component, outcome: metric_outcomes.append(f"{component}:{outcome}"),
+        record_metric,
     )
 
     result = await dispatcher.run_heartbeat(db=temp_db, project_id=sample_project["id"])
@@ -3751,10 +3808,14 @@ async def test_bad_candidate_is_skipped_and_next_candidate_executes(
 
     monkeypatch.setattr(dispatcher.dispatch_rules, "evaluate", action_for)
     monkeypatch.setattr(dispatcher, "execute_action", flaky_execute)
+
+    def record_metric(component: str, outcome: str) -> None:
+        metric_outcomes.append(f"{component}:{outcome}")
+
     monkeypatch.setattr(
         dispatcher,
         "record_automation_event",
-        lambda component, outcome: metric_outcomes.append(f"{component}:{outcome}"),
+        record_metric,
     )
 
     result = await dispatcher.run_heartbeat(db=temp_db, project_id=sample_project["id"])
@@ -4786,12 +4847,12 @@ def test_run_heartbeat_serializes_across_event_loops(
             self.contention_observed = threading.Event()
 
         def acquire(self, blocking: bool = True, timeout: float = -1) -> bool:
+            if self._lock.locked():
+                self.contention_observed.set()
             if timeout == -1:
                 acquired = self._lock.acquire(blocking=blocking)
             else:
                 acquired = self._lock.acquire(blocking=blocking, timeout=timeout)
-            if not acquired:
-                self.contention_observed.set()
             return acquired
 
         def release(self) -> None:

@@ -732,8 +732,9 @@ def test_apply_migrations_proceeds_when_pg_search_present(monkeypatch) -> None:
     locked = _ApplyConnection("fresh")
 
     class FakeRunner:
-        def __init__(self, hub) -> None:
+        def __init__(self, hub, *, autocommit_connection) -> None:
             self.hub = hub
+            self.autocommit_connection = autocommit_connection
 
         def apply_pending(self) -> None:
             calls.append("file_migrations")
@@ -775,8 +776,9 @@ def test_apply_migrations_runs_postgres_baseline_before_file_migrations(monkeypa
     calls: list[str] = []
 
     class FakeRunner:
-        def __init__(self, hub) -> None:
+        def __init__(self, hub, *, autocommit_connection) -> None:
             self.hub = hub
+            self.autocommit_connection = autocommit_connection
 
         def apply_pending(self) -> None:
             calls.append("file_migrations")
@@ -804,8 +806,9 @@ def test_apply_migrations_skips_postgres_baseline_when_already_applied(monkeypat
     calls: list[str] = []
 
     class FakeRunner:
-        def __init__(self, hub) -> None:
+        def __init__(self, hub, *, autocommit_connection) -> None:
             self.hub = hub
+            self.autocommit_connection = autocommit_connection
 
         def apply_pending(self) -> None:
             calls.append("file_migrations")

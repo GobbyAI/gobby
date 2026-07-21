@@ -124,9 +124,13 @@ async def test_stalled_no_agents_marks_failed(
     exe_id = _create_stalled_execution(exec_manager, temp_db)
 
     outcomes: list[tuple[str, str]] = []
+
+    def record_metric(component: str, outcome: str) -> None:
+        outcomes.append((component, outcome))
+
     monkeypatch.setattr(
         "gobby.workflows.pipeline_heartbeat.record_automation_event",
-        lambda component, outcome: outcomes.append((component, outcome)),
+        record_metric,
     )
 
     count = await heartbeat.check_stalled_executions()
@@ -478,9 +482,13 @@ async def test_stale_task_with_terminal_agent_run_recovered(
     agent_run_manager.fail(run_id, error="Agent died")
 
     outcomes: list[tuple[str, str]] = []
+
+    def record_metric(component: str, outcome: str) -> None:
+        outcomes.append((component, outcome))
+
     monkeypatch.setattr(
         "gobby.workflows.pipeline_heartbeat.record_automation_event",
-        lambda component, outcome: outcomes.append((component, outcome)),
+        record_metric,
     )
 
     result = await heartbeat_with_tasks.check_stale_tasks()

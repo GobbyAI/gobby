@@ -346,17 +346,33 @@ RULE_DEFINITION_ROW_METADATA_FIELDS = (
 )
 
 
+class RuleDefinitionMetadata(BaseModel):
+    """Validated row-level metadata for a rule definition."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    description: str | None = None
+    enabled: bool = True
+    priority: int = 100
+    tags: list[str] = Field(default_factory=list)
+
+
 def split_rule_definition_data(
     data: Mapping[str, Any],
 ) -> tuple[dict[str, Any], dict[str, Any]]:
     """Separate and validate a stored rule body from row-level metadata."""
     body_data = dict(data)
-    metadata: dict[str, Any] = {}
-    for field in RULE_DEFINITION_ROW_METADATA_FIELDS:
-        if field in body_data:
-            metadata[field] = body_data.pop(field)
+    name = body_data.pop("name", None)
+    raw_metadata = {
+        field: body_data.pop(field)
+        for field in RULE_DEFINITION_ROW_METADATA_FIELDS
+        if field != "name" and field in body_data
+    }
 
     RuleDefinitionBody.model_validate(body_data)
+    metadata = RuleDefinitionMetadata.model_validate(raw_metadata).model_dump()
+    if name is not None:
+        metadata["name"] = name
     return body_data, metadata
 
 

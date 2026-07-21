@@ -34,11 +34,11 @@ _PROJECT_PATH_MAX_CHARS = 120
 
 # Canonical platform truths the planner judges memories against. These are the
 # obsolescence signals the sweep exists to catch (e.g. a memory still asserting
-# Neo4j or SQLite). Update these when the platform's architecture changes.
+# Neo4j or MySQL). Update these when the platform's architecture changes.
 _CANONICAL_FACTS: tuple[str, ...] = (
     "Hub database: PostgreSQL. The daemon stores tasks, sessions, memories, "
-    "rules, and workflows in a PostgreSQL hub. SQLite is retired except for "
-    "one-shot import tooling (gobby postgres migrate-from-sqlite).",
+    "rules, and workflows in a PostgreSQL hub. PostgreSQL is the only supported "
+    "hub database.",
     "Knowledge graph backend: FalkorDB. Neo4j is retired and no longer used.",
     "Vector store: Qdrant backs embedding-based memory recall; the FalkorDB "
     "graph backs the entity/relationship knowledge graph.",

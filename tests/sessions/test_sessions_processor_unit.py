@@ -7,7 +7,10 @@ by integration tests.
 
 import asyncio
 import json
+from collections.abc import Callable
 from datetime import datetime
+from pathlib import Path
+from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import psycopg
@@ -27,13 +30,13 @@ pytestmark = pytest.mark.unit
 
 
 @pytest.fixture
-def mock_db():
+def mock_db() -> MagicMock:
     """Create a mock database."""
     return MagicMock()
 
 
 @pytest.fixture
-def processor(mock_db):
+def processor(mock_db: MagicMock) -> SessionMessageProcessor:
     """Create a processor with mocked dependencies."""
     return SessionMessageProcessor(mock_db, poll_interval=0.1)
 
@@ -776,14 +779,17 @@ class TestProcessSession:
         # Message index should not have been set (no valid messages)
         assert "session-1" not in processor._message_indices
 
+    @pytest.mark.asyncio
     async def test_process_session_runs_index_append_on_db_executor(
-        self, mock_db, tmp_path
+        self,
+        mock_db: MagicMock,
+        tmp_path: Path,
     ) -> None:
         transcript = tmp_path / "transcript.jsonl"
         transcript.write_text('{"type": "unknown"}\n')
         db_calls: list[str] = []
 
-        async def run_db(func, *args, **kwargs):
+        async def run_db(func: Callable[..., Any], *args: Any, **kwargs: Any) -> Any:
             db_calls.append(func.__name__)
             return await asyncio.to_thread(func, *args, **kwargs)
 
@@ -799,10 +805,14 @@ class TestProcessSession:
             "append_positioned_lines",
         ]
 
-    async def test_process_batch_runs_session_updates_on_db_executor(self, mock_db) -> None:
+    @pytest.mark.asyncio
+    async def test_process_batch_runs_session_updates_on_db_executor(
+        self,
+        mock_db: MagicMock,
+    ) -> None:
         db_calls: list[object] = []
 
-        async def run_db(func, *args, **kwargs):
+        async def run_db(func: Callable[..., Any], *args: Any, **kwargs: Any) -> Any:
             db_calls.append(func)
             return func(*args, **kwargs)
 
@@ -832,10 +842,14 @@ class TestProcessSession:
         assert session_manager.touch in db_calls
         assert session_manager.update_stats in db_calls
 
-    async def test_observation_render_runs_on_db_executor(self, mock_db) -> None:
+    @pytest.mark.asyncio
+    async def test_observation_render_runs_on_db_executor(
+        self,
+        mock_db: MagicMock,
+    ) -> None:
         db_calls: list[str] = []
 
-        async def run_db(func, *args, **kwargs):
+        async def run_db(func: Callable[..., Any], *args: Any, **kwargs: Any) -> Any:
             db_calls.append(func.__name__)
             return func(*args, **kwargs)
 
@@ -1643,7 +1657,11 @@ class TestModelExtraction:
         assert "Failed to load session session-1 for token usage" in caplog.text
         mock_session_manager.update_usage.assert_not_called()
 
-    async def test_persist_usage_events_runs_storage_calls_on_db_executor(self, mock_db) -> None:
+    @pytest.mark.asyncio
+    async def test_persist_usage_events_runs_storage_calls_on_db_executor(
+        self,
+        mock_db: MagicMock,
+    ) -> None:
         class FakeTokenEventStore:
             def get_session_totals(self, _session_id: str) -> dict[str, int]:
                 return {
@@ -1658,7 +1676,7 @@ class TestModelExtraction:
 
         db_calls: list[object] = []
 
-        async def run_db(func, *args, **kwargs):
+        async def run_db(func: Callable[..., Any], *args: Any, **kwargs: Any) -> Any:
             db_calls.append(func)
             return func(*args, **kwargs)
 

@@ -6,12 +6,14 @@ import asyncio
 import inspect
 import json
 import shutil
+from collections.abc import AsyncIterator
 from pathlib import Path
 from typing import Any
 from unittest.mock import AsyncMock, patch
 
 import pytest
 
+from gobby.adapters.acp_client import StreamEvent
 from gobby.llm.claude_models import (
     DoneEvent,
     TextChunk,
@@ -316,7 +318,7 @@ async def test_managed_session_translates_text_thinking_and_done() -> None:
     session._model = "gpt-5.4"
     session._context_window_overrides = {"gpt-5.4": 200_000}
 
-    async def fake_send_message(_session: Any, _prompt: str):
+    async def fake_send_message(_session: Any, _prompt: str) -> AsyncIterator[StreamEvent]:
         for line in _fixture_lines("thinking.jsonl"):
             for event in parse_droid_stream_line(line):
                 yield event
@@ -343,7 +345,7 @@ async def test_managed_session_propagates_stream_errors(
     session = DroidManagedChatSession(conversation_id="conv-droid", _backend=backend)
     session._connected = True
 
-    async def failing_send_message(_session: Any, _prompt: str):
+    async def failing_send_message(_session: Any, _prompt: str) -> AsyncIterator[StreamEvent]:
         raise error_type("boom")
         yield
 
@@ -359,7 +361,7 @@ async def test_managed_session_translates_structured_tool_events() -> None:
     session = DroidManagedChatSession(conversation_id="conv-droid", _backend=backend)
     session._connected = True
 
-    async def fake_send_message(_session: Any, _prompt: str):
+    async def fake_send_message(_session: Any, _prompt: str) -> AsyncIterator[StreamEvent]:
         for line in _fixture_lines("tool_call.jsonl"):
             for event in parse_droid_stream_line(line):
                 yield event
@@ -399,7 +401,7 @@ async def test_managed_session_leaves_ambiguous_tool_outcome_unknown() -> None:
         },
     ]
 
-    async def fake_send_message(_session: Any, _prompt: str):
+    async def fake_send_message(_session: Any, _prompt: str) -> AsyncIterator[StreamEvent]:
         for record in records:
             for event in parse_droid_stream_line(json.dumps(record)):
                 yield event
@@ -421,7 +423,7 @@ async def test_managed_session_preserves_live_droid_command_outcomes() -> None:
     session._connected = True
     session._on_post_tool = AsyncMock(return_value=None)
 
-    async def fake_send_message(_session: Any, _prompt: str):
+    async def fake_send_message(_session: Any, _prompt: str) -> AsyncIterator[StreamEvent]:
         for record in payload["events"]:
             for event in parse_droid_stream_line(json.dumps(record)):
                 yield event

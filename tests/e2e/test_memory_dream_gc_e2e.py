@@ -43,10 +43,10 @@ pytestmark = pytest.mark.e2e
 
 # Memories whose content contradicts the current platform truth (FalkorDB graph
 # backend, Postgres hub) must be flagged for deletion; everything else is kept.
-OBSOLETE_MARKERS = ("neo4j", "sqlite")
+OBSOLETE_MARKERS = ("neo4j", "mysql")
 
 NEO4J_CONTENT = "The Gobby knowledge graph is backed by Neo4j."
-SQLITE_CONTENT = "Gobby stores all hub data in a local SQLite database."
+MYSQL_CONTENT = "Gobby stores all hub data in a MySQL database."
 CURRENT_CONTENT = "Gobby is a local-first daemon that unifies AI coding tools."
 
 
@@ -147,12 +147,12 @@ async def test_dream_gc_soft_delete_lifecycle(
     # rows written here are served verbatim by the daemon's HTTP routes.
     manager = LocalMemoryManager(postgres_db)
     neo4j = manager.create_memory(content=NEO4J_CONTENT, memory_type="fact")
-    sqlite = manager.create_memory(content=SQLITE_CONTENT, memory_type="fact")
+    mysql = manager.create_memory(content=MYSQL_CONTENT, memory_type="fact")
     manager.create_memory(content=CURRENT_CONTENT, memory_type="fact")
 
     # All three are visible to agent recall before the sweep.
     active, _ = await _list_by_visibility(async_daemon_client, "active")
-    assert active == {NEO4J_CONTENT, SQLITE_CONTENT, CURRENT_CONTENT}
+    assert active == {NEO4J_CONTENT, MYSQL_CONTENT, CURRENT_CONTENT}
 
     # 1. Full sweep: obsolete memories are soft-hidden, the current one kept.
     result = await _run_sweep(manager)
@@ -168,13 +168,13 @@ async def test_dream_gc_soft_delete_lifecycle(
     assert active == {CURRENT_CONTENT}
 
     hidden, hidden_rows = await _list_by_visibility(async_daemon_client, "hidden")
-    assert hidden == {NEO4J_CONTENT, SQLITE_CONTENT}
+    assert hidden == {NEO4J_CONTENT, MYSQL_CONTENT}
     assert hidden_rows[NEO4J_CONTENT]["dream_action"] == "delete"
-    assert hidden_rows[SQLITE_CONTENT]["dream_action"] == "delete"
+    assert hidden_rows[MYSQL_CONTENT]["dream_action"] == "delete"
     assert hidden_rows[NEO4J_CONTENT]["deleted_at"] is not None
 
     all_scope, _ = await _list_by_visibility(async_daemon_client, "all")
-    assert all_scope == {NEO4J_CONTENT, SQLITE_CONTENT, CURRENT_CONTENT}
+    assert all_scope == {NEO4J_CONTENT, MYSQL_CONTENT, CURRENT_CONTENT}
 
     # 3. Immediate re-run is a no-op: every row was just stamped inside the
     #    redream cooldown window, so the candidate set drains to empty.
@@ -196,14 +196,14 @@ async def test_dream_gc_soft_delete_lifecycle(
     active, _ = await _list_by_visibility(async_daemon_client, "active")
     assert active == {CURRENT_CONTENT, NEO4J_CONTENT}
     hidden, _ = await _list_by_visibility(async_daemon_client, "hidden")
-    assert hidden == {SQLITE_CONTENT}
+    assert hidden == {MYSQL_CONTENT}
 
     # 5. Purge hard-removes aged hidden rows. Age the surviving hidden row past
     #    the delete grace window, then purge that action class.
     aged_when = (datetime.now(UTC) - timedelta(days=40)).isoformat()
-    manager.mark_dreamed(sqlite.id, hidden_as="delete", when=aged_when)
+    manager.mark_dreamed(mysql.id, hidden_as="delete", when=aged_when)
     purged = manager.purge_dream_hidden("delete", older_than_days=30)
-    assert sqlite.id in purged
+    assert mysql.id in purged
 
     # The purged row is gone from every visibility scope; the restored and the
     # always-current memory remain.

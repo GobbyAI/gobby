@@ -1572,7 +1572,7 @@ class TestToolErrorDetection:
         assert "is_error" not in data
         assert data["tool_outcome"]["status"] == "unknown"
 
-    def test_non_string_tool_result_ignored(self) -> None:
+    def test_structured_non_string_tool_result_is_authoritative(self) -> None:
         """A structured exit code is authoritative."""
         data = {
             "tool_name": "Bash",

@@ -121,6 +121,7 @@ rules:
         assert result["synced"] == 1
         row = manager.get_by_name("single-yml-rule")
         assert row is not None
+        assert row.enabled is True
         assert row.tags == ["user"]
         assert json.loads(row.definition_json)["event"] == "turn_start"
 

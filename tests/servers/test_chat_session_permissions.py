@@ -316,6 +316,7 @@ class TestCanUseTool:
         [("Write", "file_path"), ("Edit", "file_path"), ("NotebookEdit", "notebook_path")],
     )
     @pytest.mark.parametrize("location", ["provider_home", "temp"])
+    @pytest.mark.asyncio
     async def test_plan_mode_allows_structured_provider_scratch_writes(
         self,
         session: ChatSession,
@@ -342,6 +343,7 @@ class TestCanUseTool:
 
         assert isinstance(result, PermissionResultAllow)
 
+    @pytest.mark.asyncio
     async def test_plan_mode_blocks_cross_provider_scratch_write(
         self,
         session: ChatSession,
@@ -360,6 +362,7 @@ class TestCanUseTool:
 
         assert isinstance(result, PermissionResultDeny)
 
+    @pytest.mark.asyncio
     async def test_plan_mode_multi_file_write_fails_closed(
         self,
         session: ChatSession,
@@ -380,6 +383,7 @@ class TestCanUseTool:
 
         assert isinstance(result, PermissionResultDeny)
 
+    @pytest.mark.asyncio
     async def test_normal_mode_still_blocks_out_of_repo_provider_path(
         self,
         session: ChatSession,
@@ -398,6 +402,7 @@ class TestCanUseTool:
         assert isinstance(result, PermissionResultDeny)
         assert "outside the active repo" in result.message
 
+    @pytest.mark.asyncio
     async def test_plan_scratch_allowance_preserves_lifecycle_block(
         self,
         session: ChatSession,

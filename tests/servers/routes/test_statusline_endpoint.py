@@ -53,7 +53,7 @@ def _make_session(**overrides) -> MagicMock:
 
 
 @pytest.fixture
-def mock_server():
+def mock_server() -> MagicMock:
     server = MagicMock()
     server.session_manager = MagicMock()
     server.session_manager.db = MagicMock()
@@ -65,14 +65,14 @@ def mock_server():
 
 
 @pytest.fixture
-def mock_hook_manager():
+def mock_hook_manager() -> MagicMock:
     hook_manager = MagicMock()
     hook_manager._stop_registry = MagicMock()
     return hook_manager
 
 
 @pytest.fixture
-def client(mock_server, mock_hook_manager):
+def client(mock_server: MagicMock, mock_hook_manager: MagicMock) -> TestClient:
     app = FastAPI()
     router = create_sessions_router(mock_server)
     app.include_router(router)

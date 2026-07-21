@@ -164,10 +164,16 @@ class MCPConfigManager:
         seen_names: set[str] = set()
 
         for server_dict in config.get("servers", []):
+            if not isinstance(server_dict, dict):
+                logger.warning(
+                    "Skipping invalid MCP server config entry",
+                    extra={"entry_type": type(server_dict).__name__},
+                )
+                continue
             try:
                 # Validate required fields
                 if "name" not in server_dict:
-                    logger.warning("Skipping MCP server config without 'name': %s", server_dict)
+                    logger.warning("Skipping MCP server config without 'name'")
                     continue
                 name = str(server_dict["name"])
                 if name in seen_names:

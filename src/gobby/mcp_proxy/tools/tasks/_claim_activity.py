@@ -5,6 +5,8 @@ from __future__ import annotations
 import logging
 from typing import Any
 
+import psycopg
+
 from gobby.mcp_proxy.tools.tasks._context import RegistryContext
 
 logger = logging.getLogger(__name__)
@@ -30,6 +32,6 @@ def confirm_claiming_session_activity(
             "active",
             activity_confirmed=True,
         )
-    except Exception:
+    except psycopg.DatabaseError:
         logger.exception("Failed to confirm activity for claiming session %s", session_id)
         return False

@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import logging
-import sqlite3
 from typing import TYPE_CHECKING
 
 import psycopg
@@ -40,7 +39,7 @@ def completion_subscriber_lineage(
         lineage_ids = [str(session.id) for session in lineage]
         if session_id not in lineage_ids:
             lineage_ids.append(session_id)
-    except (sqlite3.DatabaseError, psycopg.Error) as e:
+    except psycopg.DatabaseError as e:
         logger.warning(
             "Could not resolve session lineage for %s: %s",
             session_id,
@@ -79,7 +78,7 @@ def subscribe_agent_completion(
             manager = CompletionSubscriberManager(db=db)
             try:
                 manager.add_completion_subscribers(run_id, subscribers)
-            except (sqlite3.DatabaseError, psycopg.Error):
+            except psycopg.DatabaseError:
                 logger.debug(
                     "Failed to persist completion subscribers for run %s",
                     run_id,
@@ -100,7 +99,7 @@ def remove_agent_completion_subscribers(*, db: HubDatabase, run_id: str) -> None
     manager = CompletionSubscriberManager(db=db)
     try:
         manager.remove_completion_subscribers(run_id)
-    except (sqlite3.DatabaseError, psycopg.Error):
+    except psycopg.DatabaseError:
         logger.debug(
             "Failed to remove completion subscribers for run %s",
             run_id,

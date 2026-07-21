@@ -95,6 +95,40 @@ def test_workflow_definition_session_variables_vs_variables() -> None:
     assert wf.session_variables == {"session_shared": True}
 
 
+def test_rule_definition_metadata_defaults_are_normalized() -> None:
+    from gobby.workflows.definitions import split_rule_definition_data
+
+    body, metadata = split_rule_definition_data(
+        {
+            "event": "before_tool",
+            "effects": [{"type": "block", "reason": "blocked"}],
+        }
+    )
+
+    assert body["event"] == "before_tool"
+    assert metadata == {
+        "description": None,
+        "enabled": True,
+        "priority": 100,
+        "tags": [],
+    }
+
+
+def test_rule_definition_metadata_rejects_invalid_values() -> None:
+    from pydantic import ValidationError
+
+    from gobby.workflows.definitions import split_rule_definition_data
+
+    with pytest.raises(ValidationError):
+        split_rule_definition_data(
+            {
+                "event": "before_tool",
+                "effects": [{"type": "block", "reason": "blocked"}],
+                "enabled": "sometimes",
+            }
+        )
+
+
 # --- WorkflowInstance tests ---
 
 

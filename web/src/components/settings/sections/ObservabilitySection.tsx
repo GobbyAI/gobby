@@ -79,7 +79,7 @@ function ServiceGroup({ fields }: { fields: SettingsSectionFields }) {
   )
 }
 
-function RuntimeLoggingGroup({ fields }: { fields: SettingsSectionFields }) {
+function RuntimeLoggingGroup({ fields }: { fields: SettingsSectionFields }): JSX.Element {
   return (
     <Subsection
       title="Runtime logging"

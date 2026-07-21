@@ -149,17 +149,44 @@ pub(crate) fn index_after_ingest(
     progress: &mut crate::progress::ProgressOptions<'_>,
 ) -> Result<(), WikiError> {
     let options = crate::support::config::local_index_options()?;
-    indexer::index_path(
-        vault_root,
-        store,
-        Path::new("raw/INDEX.md"),
-        options,
-        progress,
-    )
-    .map_err(|error| WikiError::InvalidInput {
-        field: "index",
-        message: error.to_string(),
-    })
+    let mut paths = vec![PathBuf::from("raw/INDEX.md")];
+    let source_notes_root = vault_root.join("knowledge/sources");
+    if source_notes_root.is_dir() {
+        let entries =
+            std::fs::read_dir(&source_notes_root).map_err(|error| WikiError::InvalidInput {
+                field: "index",
+                message: error.to_string(),
+            })?;
+        let mut source_notes = Vec::new();
+        for entry in entries {
+            let path = entry
+                .map_err(|error| WikiError::InvalidInput {
+                    field: "index",
+                    message: error.to_string(),
+                })?
+                .path();
+            if path.is_file() && path.extension().is_some_and(|ext| ext == "md") {
+                let relative_path =
+                    path.strip_prefix(vault_root)
+                        .map_err(|error| WikiError::InvalidInput {
+                            field: "index",
+                            message: error.to_string(),
+                        })?;
+                source_notes.push(relative_path.to_path_buf());
+            }
+        }
+        source_notes.sort();
+        paths.extend(source_notes);
+    }
+    for path in paths {
+        indexer::index_path(vault_root, store, path, options, progress).map_err(|error| {
+            WikiError::InvalidInput {
+                field: "index",
+                message: error.to_string(),
+            }
+        })?;
+    }
+    Ok(())
 }
 
 #[allow(dead_code, reason = "reserved gwiki CLI/API split")]
@@ -861,6 +888,10 @@ mod tests {
             &mut self,
         ) -> Result<std::collections::BTreeMap<PathBuf, String>, StoreError> {
             self.inner.indexed_hashes()
+        }
+
+        fn indexed_hash(&mut self, path: &Path) -> Result<Option<String>, StoreError> {
+            self.inner.indexed_hash(path)
         }
 
         fn upsert_document(&mut self, document: WikiDocument) -> Result<(), StoreError> {

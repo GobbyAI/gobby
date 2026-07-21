@@ -1,9 +1,11 @@
 import json
+import subprocess
 import uuid
-from unittest.mock import MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
+from gobby.storage.hub.protocol import HubDatabase
 from gobby.sync.task_github_import import GitHubIssueImporter
 
 pytestmark = pytest.mark.unit
@@ -17,13 +19,16 @@ RESOLUTION_PROJECT_ID = "aeaeaeae-0000-4000-8000-000000000002"
 
 
 @pytest.fixture
-def github_importer(hub_db):
+def github_importer(hub_db: HubDatabase) -> GitHubIssueImporter:
     return GitHubIssueImporter(hub_db)
 
 
 @pytest.mark.integration
 @pytest.mark.asyncio
-async def test_import_from_github_issues(github_importer, hub_db):
+async def test_import_from_github_issues(
+    github_importer: GitHubIssueImporter,
+    hub_db: HubDatabase,
+) -> None:
     # Setup project with matching URL
     hub_db.execute(
         "INSERT INTO projects (id, repo_path, name, github_url) VALUES (%s, %s, %s, %s)",
@@ -64,7 +69,10 @@ async def test_import_from_github_issues(github_importer, hub_db):
 
 @pytest.mark.integration
 @pytest.mark.asyncio
-async def test_import_project_id_resolution(github_importer, hub_db):
+async def test_import_project_id_resolution(
+    github_importer: GitHubIssueImporter,
+    hub_db: HubDatabase,
+) -> None:
     """
     Test that import_from_github_issues correctly resolves the project_id
     from the database based on the repo URL, without needing claude_agent_sdk.
@@ -107,3 +115,57 @@ async def test_import_project_id_resolution(github_importer, hub_db):
     imported_id = result["imported"][0]
     row = hub_db.fetchone("SELECT project_id FROM tasks WHERE id = %s", (imported_id,))
     assert row["project_id"] == expected_project_id
+
+
+@pytest.mark.asyncio
+async def test_import_runs_database_upserts_in_worker_thread(
+    github_importer: GitHubIssueImporter,
+) -> None:
+    issue = {
+        "number": 7,
+        "title": "Threaded import",
+        "body": "Body",
+        "createdAt": "2023-01-01T00:00:00Z",
+    }
+    with (
+        patch.object(
+            github_importer,
+            "_fetch_github_issues_mcp",
+            new=AsyncMock(return_value=[issue]),
+        ),
+        patch(
+            "gobby.sync.task_github_import.asyncio.to_thread",
+            new=AsyncMock(return_value=(["task-id"], 1)),
+        ) as mock_to_thread,
+    ):
+        result = await github_importer.import_from_github_issues(
+            "https://github.com/owner/repo",
+            project_id=PROJECT_ID,
+        )
+
+    assert result["success"] is True
+    assert mock_to_thread.await_count == 1
+    assert mock_to_thread.await_args.args[0] == github_importer._upsert_issues
+
+
+def test_github_cli_subprocess_timeouts_are_bounded(
+    github_importer: GitHubIssueImporter,
+) -> None:
+    with patch(
+        "subprocess.run",
+        side_effect=subprocess.TimeoutExpired(["gh", "--version"], timeout=5),
+    ) as mock_run:
+        assert github_importer._fetch_github_issues_cli("owner", "repo", "url", 50) is None
+    assert mock_run.call_args.kwargs["timeout"] == 5
+
+    with patch(
+        "subprocess.run",
+        side_effect=[
+            MagicMock(returncode=0),
+            subprocess.TimeoutExpired(["gh", "issue", "list"], timeout=30),
+        ],
+    ) as mock_run:
+        with pytest.raises(RuntimeError, match="timed out after 30 seconds"):
+            github_importer._fetch_github_issues_cli("owner", "repo", "url", 50)
+    assert mock_run.call_args_list[0].kwargs["timeout"] == 5
+    assert mock_run.call_args_list[1].kwargs["timeout"] == 30

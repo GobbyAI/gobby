@@ -343,7 +343,9 @@ def register_lifecycle_routes(router: APIRouter, server: "HTTPServer") -> None:
                     "message": "reload_cache tool not found",
                 }
             except Exception as e:
-                logger.error("Failed to execute reload_cache: %s", e)
+                logger.error(  # noqa: G201 - preserve the existing error-level audit contract
+                    "Failed to execute reload_cache: %s", e, exc_info=True
+                )
                 response.status_code = 500
                 return {
                     "status": "error",

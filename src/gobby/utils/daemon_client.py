@@ -83,7 +83,7 @@ class DaemonClient:
         logger: logging.Logger | None = None,
         *,
         url: str | None = None,
-    ):
+    ) -> None:
         """
         Initialize DaemonClient.
 
@@ -193,14 +193,21 @@ class DaemonClient:
 
         if attempt == 2:
             self.logger.warning(
-                "Daemon health check timed out twice consecutively: %s",
-                error,
+                "Daemon health check timed out twice consecutively",
+                extra={
+                    "daemon_url": self.url,
+                    "timeout_streak": attempt,
+                    "error": str(error),
+                },
             )
         else:
             self.logger.debug(
-                "Daemon health check timed out (attempt %d): %s",
-                attempt,
-                error,
+                "Daemon health check timed out",
+                extra={
+                    "daemon_url": self.url,
+                    "timeout_streak": attempt,
+                    "error": str(error),
+                },
             )
 
     def check_status(self) -> tuple[bool, str | None, str, str | None]:

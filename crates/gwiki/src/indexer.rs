@@ -186,7 +186,7 @@ pub fn index_path(
         )));
     }
 
-    let previous_hash = store.indexed_hashes()?.remove(path);
+    let previous_hash = store.indexed_hash(path)?;
     let content_hash = file_content_hash(vault_root.join(path))?;
     let event = match previous_hash.as_deref() {
         None => WikiIngestionEvent::Added,

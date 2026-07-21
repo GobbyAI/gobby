@@ -187,7 +187,8 @@ class SessionLivenessMonitor:
                 else:
                     if not self._is_pid_alive(record.parent_pid):
                         logger.debug(
-                            "Session %s has live tmux pane %s despite dead parent PID %s - refreshing",
+                            "Session %s has live tmux pane %s despite dead parent PID %s - "
+                            "refreshing",
                             record.session_id,
                             record.tmux_pane,
                             record.parent_pid,

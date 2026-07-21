@@ -242,8 +242,7 @@ def create_commit_registry(
                 return {"error": str(e)}
 
         # Get project_id for resolving #N task references
-        ctx = get_project_context()
-        project_id = task_project_id or (ctx.get("id") if ctx else None)
+        project_id = task_project_id or get_current_project_id()
 
         result = auto_link_commits_fn(
             task_manager=task_manager,

@@ -271,7 +271,9 @@ class RuleEngine(EvaluationMixin, EffectsMixin, TemplatingMixin, EnforcementMixi
                 if is_turn_end:
                     variables["stop_attempts"] = variables.get("stop_attempts", 0) + 1
                     logger.debug(
-                        "TURN_END gate diagnostics: session_id=%s, raw_event=%s, auto_task_ref=%r, stop_attempts=%s, task_claimed=%s, claimed_tasks=%s, edit_write_pending=%s, tool_block_pending=%s",
+                        "TURN_END gate diagnostics: session_id=%s, raw_event=%s, "
+                        "auto_task_ref=%r, stop_attempts=%s, task_claimed=%s, "
+                        "claimed_tasks=%s, edit_write_pending=%s, tool_block_pending=%s",
                         session_id,
                         raw_event_value,
                         variables.get("auto_task_ref"),

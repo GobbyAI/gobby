@@ -227,7 +227,7 @@ def test_clear_postgres_fields_preserves_postgres_runtime_bootstrap(temp_dir: Pa
     assert persisted["postgres_install_mode"] == "docker"
 
 
-def test_clear_postgres_fields_rejects_legacy_database_url_ref(temp_dir: Path) -> None:
+def test_clear_postgres_fields_rejects_unsupported_database_url_ref(temp_dir: Path) -> None:
     from gobby.config.bootstrap import BootstrapConfigError
     from gobby.config.postgres_bootstrap import clear_postgres_fields
 
@@ -235,7 +235,7 @@ def test_clear_postgres_fields_rejects_legacy_database_url_ref(temp_dir: Path) -
     _write_bootstrap(
         bootstrap_file,
         "hub_backend: postgres\n"
-        "database_url_ref: keyring:gobby:postgres_database_url\n"
+        "database_url_ref: unsupported:gobby:postgres_database_url\n"
         "postgres_install_mode: docker\n",
     )
 
@@ -244,7 +244,7 @@ def test_clear_postgres_fields_rejects_legacy_database_url_ref(temp_dir: Path) -
 
     persisted = yaml.safe_load(bootstrap_file.read_text())
     assert persisted["hub_backend"] == "postgres"
-    assert persisted["database_url_ref"] == "keyring:gobby:postgres_database_url"
+    assert persisted["database_url_ref"] == "unsupported:gobby:postgres_database_url"
     assert persisted["postgres_install_mode"] == "docker"
 
 
@@ -275,7 +275,7 @@ def test_database_url_ref_is_rejected_for_runtime(temp_dir: Path) -> None:
     _write_bootstrap(
         bootstrap_file,
         "hub_backend: postgres\n"
-        "database_url_ref: keyring:gobby:postgres_database_url\n"
+        "database_url_ref: unsupported:gobby:postgres_database_url\n"
         "postgres_install_mode: docker\n",
     )
 

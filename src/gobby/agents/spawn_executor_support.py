@@ -4,7 +4,6 @@ import asyncio
 import inspect
 import json
 import logging
-import sqlite3
 from collections.abc import Mapping
 from typing import TYPE_CHECKING
 
@@ -128,7 +127,7 @@ def _record_resume_launch_details(
         from gobby.storage.agents import LocalAgentRunManager
 
         LocalAgentRunManager(db).update_resume_metadata(agent_run_id, metadata)
-    except (sqlite3.DatabaseError, psycopg.Error) as exc:
+    except psycopg.DatabaseError as exc:
         logger.warning("Failed to persist resume launch metadata: %s", exc)
 
 

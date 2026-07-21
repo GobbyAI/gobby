@@ -5,10 +5,10 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
-import sqlite3
 from typing import Any, cast
 from unittest.mock import MagicMock, patch
 
+import psycopg
 import pytest
 
 from gobby.mcp_proxy.tools.internal import InternalToolRegistry
@@ -128,7 +128,7 @@ def test_signoff_relay_warning_includes_project_and_exception(
     with (
         patch(
             "gobby.mcp_proxy.tools.tasks._stage_review._relay_signoff_to_build_coordinator_sync",
-            side_effect=sqlite3.OperationalError("database unavailable"),
+            side_effect=psycopg.OperationalError("database unavailable"),
         ),
         caplog.at_level(logging.WARNING, logger="gobby.mcp_proxy.tools.tasks._stage_review"),
     ):

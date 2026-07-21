@@ -74,7 +74,7 @@ for Claude Code, Codex, Droid, Grok, Qwen, and AGY:
 | Droid | `.factory/skills/gcode/SKILL.md` |
 | Grok | `.grok/skills/gcode/SKILL.md` |
 | Qwen | `.qwen/skills/gcode/SKILL.md` |
-| Antigravity CLI | `.agents/skills/gcode/SKILL.md` |
+| AGY | `.agents/skills/gcode/SKILL.md` |
 
 Gobby-managed projects skip these project-local writes because Gobby owns CLI
 wiring.

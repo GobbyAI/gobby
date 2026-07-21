@@ -19,6 +19,10 @@ class TaskRestoreError(ValueError):
     """Raised when a task backup cannot be restored safely."""
 
 
+class TaskBackupError(RuntimeError):
+    """Raised when a task backup cannot be written safely."""
+
+
 def _parse_timestamp(ts: str | datetime) -> datetime:
     """Parse ISO 8601 timestamp string to datetime.
 
@@ -425,7 +429,7 @@ class TaskBackupManager:
 
         except Exception as e:
             logger.exception("Failed to back up tasks: %s", e)
-            raise
+            raise TaskBackupError(str(e)) from e
 
     def restore(self, project_id: str | None = None) -> int:
         """Non-destructively restore tasks when backup timestamps win."""

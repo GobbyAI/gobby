@@ -80,7 +80,7 @@ def backfill_labels(path_: Path) -> None:
     click.echo(f"Inserted {inserted} usefulness-label rows from {path_}")
 
 
-class _AwareDateTime(click.ParamType[datetime]):
+class _AwareDateTime(click.ParamType):
     name = "timezone-aware ISO-8601 timestamp"
 
     def convert(

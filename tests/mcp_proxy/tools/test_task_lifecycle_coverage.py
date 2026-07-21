@@ -4,12 +4,12 @@ from __future__ import annotations
 
 import ast
 import inspect
-import sqlite3
 from collections.abc import Iterator
 from pathlib import Path
 from typing import Any
 from unittest.mock import ANY, AsyncMock, MagicMock, patch
 
+import psycopg
 import pytest
 
 from gobby.mcp_proxy.tools.tasks import create_task_registry
@@ -202,7 +202,9 @@ class TestCloseTask:
         assert "not found" in result["error"]
 
     @pytest.mark.asyncio
-    async def test_close_epic_all_children_closed_no_commit_needed(self, mock_task_manager):
+    async def test_close_epic_all_children_closed_no_commit_needed(
+        self, mock_task_manager: MagicMock
+    ) -> None:
         """Closing a parent task (epic) with all children closed succeeds without commits."""
         parent = _make_task(task_type="epic", commits=None)
         child = _make_task(
@@ -241,7 +243,7 @@ class TestCloseTask:
         mock_epic_terminal.assert_called_once()
 
     @pytest.mark.asyncio
-    async def test_close_epic_open_children_blocked(self, mock_task_manager):
+    async def test_close_epic_open_children_blocked(self, mock_task_manager: MagicMock) -> None:
         """Closing a parent task with open children is blocked."""
         parent = _make_task(task_type="epic", commits=None)
         open_child = _make_task(
@@ -264,7 +266,9 @@ class TestCloseTask:
         assert "open" in result["message"].lower()
 
     @pytest.mark.asyncio
-    async def test_close_epic_no_children_no_commit_succeeds(self, mock_task_manager):
+    async def test_close_epic_no_children_no_commit_succeeds(
+        self, mock_task_manager: MagicMock
+    ) -> None:
         """Closing an epic with no children succeeds without commits or changes_summary."""
         epic = _make_task(task_type="epic", commits=None)
         mock_task_manager.get_task.return_value = epic
@@ -299,10 +303,11 @@ class TestCloseTask:
         [
             PermissionError("archive denied"),
             OSError("archive filesystem unavailable"),
-            sqlite3.DatabaseError("archive database unavailable"),
+            psycopg.DatabaseError("archive database unavailable"),
         ],
         ids=["permission", "os", "database"],
     )
+    @pytest.mark.asyncio
     async def test_archive_failure_after_epic_close_preserves_notification_and_claim_cleanup(
         self,
         mock_task_manager: MagicMock,
@@ -366,7 +371,7 @@ class TestCloseTask:
         assert merged_claim_state["active_task_id"] is None
 
     @pytest.mark.asyncio
-    async def test_close_commit_requirements_fail(self, mock_task_manager):
+    async def test_close_commit_requirements_fail(self, mock_task_manager: MagicMock) -> None:
         """Returns error when commit requirements fail."""
         task = _make_task()
         mock_task_manager.get_task.return_value = task
@@ -402,7 +407,9 @@ class TestCloseTask:
         assert result["error"] == "missing_commits"
 
     @pytest.mark.asyncio
-    async def test_close_task_invalid_commit_sha_returns_error(self, mock_task_manager):
+    async def test_close_task_invalid_commit_sha_returns_error(
+        self, mock_task_manager: MagicMock
+    ) -> None:
         """Returns error when commit_sha cannot be resolved (nonexistent or non-commit)."""
         task = _make_task()
         mock_task_manager.get_task.return_value = task
@@ -420,7 +427,7 @@ class TestCloseTask:
         assert "Invalid or unresolved" in result["error"]
 
     @pytest.mark.asyncio
-    async def test_close_task_passes_cwd_to_link_commit(self, mock_task_manager):
+    async def test_close_task_passes_cwd_to_link_commit(self, mock_task_manager: MagicMock) -> None:
         """Verifies link_commit receives the project repo_path as cwd."""
         task = _make_task(commits=["abc1234"])
         mock_task_manager.get_task.return_value = task
@@ -446,8 +453,8 @@ class TestCloseTask:
 
     @pytest.mark.asyncio
     async def test_close_task_uses_project_path_override_for_commit_checks(
-        self, mock_task_manager, tmp_path
-    ):
+        self, mock_task_manager: MagicMock, tmp_path: Path
+    ) -> None:
         """Cross-repo close_task calls must use a registered repo path."""
         repo_path = tmp_path / "external" / "repo"
         repo_path.mkdir(parents=True)
@@ -496,9 +503,10 @@ class TestCloseTask:
         assert close_call is not None
         assert close_call.kwargs["closed_commit_sha"] == "abc1234"
 
+    @pytest.mark.asyncio
     async def test_close_task_accepts_active_external_project_worktree(
-        self, mock_task_manager, tmp_path
-    ):
+        self, mock_task_manager: MagicMock, tmp_path: Path
+    ) -> None:
         """An active worktree may belong to a different project and sibling task."""
         task_repo = tmp_path / "task-repo"
         external_worktree = tmp_path / "external-project" / "worktree"
@@ -557,8 +565,8 @@ class TestCloseTask:
 
     @pytest.mark.asyncio
     async def test_close_task_rejects_missing_project_path_before_git(
-        self, mock_task_manager, tmp_path
-    ):
+        self, mock_task_manager: MagicMock, tmp_path: Path
+    ) -> None:
         task = _make_task(commits=["abc1234"])
         mock_task_manager.get_task.return_value = task
         mock_task_manager.list_tasks.return_value = []
@@ -581,8 +589,8 @@ class TestCloseTask:
 
     @pytest.mark.asyncio
     async def test_close_task_rejects_non_directory_project_path_before_git(
-        self, mock_task_manager, tmp_path
-    ):
+        self, mock_task_manager: MagicMock, tmp_path: Path
+    ) -> None:
         task = _make_task(commits=["abc1234"])
         mock_task_manager.get_task.return_value = task
         mock_task_manager.list_tasks.return_value = []
@@ -607,7 +615,7 @@ class TestCloseTask:
 
     @pytest.mark.asyncio
     async def test_close_code_leaf_without_criteria_validates_against_description(
-        self, mock_task_manager
+        self, mock_task_manager: MagicMock
     ) -> None:
         task = _make_task(description="Implement the required behavior")
         task.category = "code"
@@ -634,7 +642,10 @@ class TestCloseTask:
         assert validation_kwargs["validation_criteria"] is None
         mock_task_manager.close_task.assert_not_called()
 
-    async def test_no_diff_close_resets_validation_failure_count(self, mock_task_manager) -> None:
+    @pytest.mark.asyncio
+    async def test_no_diff_close_resets_validation_failure_count(
+        self, mock_task_manager: MagicMock
+    ) -> None:
         task = _make_task(commits=None)
         mock_task_manager.get_task.return_value = task
         mock_task_manager.list_tasks.return_value = []
@@ -649,8 +660,9 @@ class TestCloseTask:
         assert result == {"success": True}
         assert mock_task_manager.close_task.call_args.kwargs["reset_validation_fail_count"] is True
 
+    @pytest.mark.asyncio
     async def test_close_task_valid_llm_result_closes_when_feedback_satisfies_criteria(
-        self, mock_task_manager
+        self, mock_task_manager: MagicMock
     ) -> None:
         """A clean valid validator result allows close_task to close."""
         task = _make_task(validation_criteria="Strict mypy and focused tests are clean")
@@ -661,6 +673,7 @@ class TestCloseTask:
         task_validator.validate_task.return_value = MagicMock(
             status="valid",
             feedback="All criteria satisfied. Strict mypy and focused tests are clean.",
+            inspection_summary=None,
         )
 
         registry = _create_registry(mock_task_manager, task_validator)
@@ -689,7 +702,9 @@ class TestCloseTask:
         )
 
     @pytest.mark.asyncio
-    async def test_close_task_normalized_valid_result_closes(self, mock_task_manager) -> None:
+    async def test_close_task_normalized_valid_result_closes(
+        self, mock_task_manager: MagicMock
+    ) -> None:
         """A validator result normalized to valid permits closure."""
         task = _make_task(validation_criteria="Focused tests and lint pass")
         mock_task_manager.get_task.return_value = task
@@ -727,7 +742,7 @@ class TestCloseTask:
 
     @pytest.mark.asyncio
     async def test_close_task_normalized_invalid_result_is_rejected(
-        self, mock_task_manager
+        self, mock_task_manager: MagicMock
     ) -> None:
         """A validator result normalized to invalid blocks closure."""
         task = _make_task(validation_criteria="Strict mypy on touched tests is clean")
@@ -766,7 +781,7 @@ class TestCloseTask:
     @pytest.mark.parametrize("status", ["invalid", "pending"])
     @pytest.mark.asyncio
     async def test_close_task_invalid_and_pending_llm_results_remain_rejected(
-        self, mock_task_manager, status: str
+        self, mock_task_manager: MagicMock, status: str
     ) -> None:
         """Existing invalid and pending validator statuses still block close_task."""
         task = _make_task(validation_criteria="Focused tests pass")
@@ -858,7 +873,7 @@ class TestReopenTask:
     """Tests for reopen_task tool."""
 
     @pytest.mark.asyncio
-    async def test_reopen_success(self, mock_task_manager):
+    async def test_reopen_success(self, mock_task_manager: MagicMock) -> None:
         """Reopen resolves task and calls reopen."""
         mock_task_manager.get_task.return_value = _make_task(status="in_progress")
         registry = _create_registry(mock_task_manager)
@@ -870,7 +885,7 @@ class TestReopenTask:
         assert "error" not in result
 
     @pytest.mark.asyncio
-    async def test_reopen_clears_claimed_tasks_variable(self, mock_task_manager):
+    async def test_reopen_clears_claimed_tasks_variable(self, mock_task_manager: MagicMock) -> None:
         """Reopen removes task from claimed_tasks session variable for prior claimed_by_session_id."""
         task_id = "550e8400-e29b-41d4-a716-446655440000"
         session_id = "session-abc"
@@ -918,7 +933,7 @@ class TestReopenTask:
             mock_remove.assert_called_once_with(mock_svm.get_variables.return_value, task_id)
 
     @pytest.mark.asyncio
-    async def test_reopen_value_error(self, mock_task_manager):
+    async def test_reopen_value_error(self, mock_task_manager: MagicMock) -> None:
         """Returns error when reopen raises ValueError."""
         mock_task_manager.get_task.return_value = _make_task(status="in_progress")
         mock_task_manager.reopen_task.side_effect = ValueError("cannot reopen")
@@ -941,7 +956,7 @@ class TestDeleteTask:
     """Tests for delete_task tool."""
 
     @pytest.mark.asyncio
-    async def test_delete_success(self, mock_task_manager):
+    async def test_delete_success(self, mock_task_manager: MagicMock) -> None:
         """Delete resolves task and deletes."""
         task = _make_task()
         mock_task_manager.get_task.return_value = task
@@ -953,7 +968,7 @@ class TestDeleteTask:
         assert result["ref"] == "#42"
 
     @pytest.mark.asyncio
-    async def test_delete_not_found(self, mock_task_manager):
+    async def test_delete_not_found(self, mock_task_manager: MagicMock) -> None:
         """Returns error when task not found."""
         mock_task_manager.get_task.return_value = None
         registry = _create_registry(mock_task_manager)
@@ -964,7 +979,7 @@ class TestDeleteTask:
         assert "error" in result
 
     @pytest.mark.asyncio
-    async def test_delete_has_dependents_error(self, mock_task_manager):
+    async def test_delete_has_dependents_error(self, mock_task_manager: MagicMock) -> None:
         """Returns specific error when task has dependent task(s)."""
         task = _make_task()
         mock_task_manager.get_task.return_value = task
@@ -980,7 +995,7 @@ class TestDeleteTask:
         assert "suggestion" in result
 
     @pytest.mark.asyncio
-    async def test_delete_has_children_error(self, mock_task_manager):
+    async def test_delete_has_children_error(self, mock_task_manager: MagicMock) -> None:
         """Returns specific error when task has children."""
         task = _make_task()
         mock_task_manager.get_task.return_value = task
@@ -995,7 +1010,7 @@ class TestDeleteTask:
         assert result["error"] == "has_children"
 
     @pytest.mark.asyncio
-    async def test_delete_returns_false(self, mock_task_manager):
+    async def test_delete_returns_false(self, mock_task_manager: MagicMock) -> None:
         """Returns error when delete returns False."""
         task = _make_task()
         mock_task_manager.get_task.return_value = task
@@ -1016,7 +1031,7 @@ class TestLabels:
     """Tests for add_label and remove_label tools."""
 
     @pytest.mark.asyncio
-    async def test_add_label_success(self, mock_task_manager):
+    async def test_add_label_success(self, mock_task_manager: MagicMock) -> None:
         task = _make_task(labels=["existing"])
         mock_task_manager.add_label.return_value = task
         registry = _create_registry(mock_task_manager)
@@ -1025,7 +1040,7 @@ class TestLabels:
         assert "error" not in result
 
     @pytest.mark.asyncio
-    async def test_add_label_not_found(self, mock_task_manager):
+    async def test_add_label_not_found(self, mock_task_manager: MagicMock) -> None:
         mock_task_manager.add_label.return_value = None
         registry = _create_registry(mock_task_manager)
 
@@ -1036,7 +1051,7 @@ class TestLabels:
         assert "error" in result
 
     @pytest.mark.asyncio
-    async def test_remove_label_success(self, mock_task_manager):
+    async def test_remove_label_success(self, mock_task_manager: MagicMock) -> None:
         task = _make_task(labels=[])
         mock_task_manager.remove_label.return_value = task
         registry = _create_registry(mock_task_manager)
@@ -1045,7 +1060,7 @@ class TestLabels:
         assert "error" not in result
 
     @pytest.mark.asyncio
-    async def test_remove_label_not_found(self, mock_task_manager):
+    async def test_remove_label_not_found(self, mock_task_manager: MagicMock) -> None:
         mock_task_manager.remove_label.return_value = None
         registry = _create_registry(mock_task_manager)
 
@@ -1070,7 +1085,7 @@ class TestEscalateTask:
             yield
 
     @pytest.mark.asyncio
-    async def test_escalate_success(self, mock_task_manager):
+    async def test_escalate_success(self, mock_task_manager: MagicMock) -> None:
         task = _make_task(status="in_progress")
         mock_task_manager.get_task.return_value = task
         registry = _create_registry(mock_task_manager)
@@ -1082,7 +1097,7 @@ class TestEscalateTask:
         assert "error" not in result
 
     @pytest.mark.asyncio
-    async def test_escalate_already_escalated(self, mock_task_manager):
+    async def test_escalate_already_escalated(self, mock_task_manager: MagicMock) -> None:
         task = _make_task(status="escalated")
         mock_task_manager.get_task.return_value = task
         registry = _create_registry(mock_task_manager)
@@ -1095,7 +1110,7 @@ class TestEscalateTask:
         assert "escalated" in result["error"]
 
     @pytest.mark.asyncio
-    async def test_escalate_closed_task(self, mock_task_manager):
+    async def test_escalate_closed_task(self, mock_task_manager: MagicMock) -> None:
         task = _make_task(status="closed")
         mock_task_manager.get_task.return_value = task
         registry = _create_registry(mock_task_manager)
@@ -1107,7 +1122,7 @@ class TestEscalateTask:
         assert "error" in result
 
     @pytest.mark.asyncio
-    async def test_escalate_with_session_id(self, mock_task_manager):
+    async def test_escalate_with_session_id(self, mock_task_manager: MagicMock) -> None:
         task = _make_task(status="in_progress")
         mock_task_manager.get_task.return_value = task
         registry = _create_registry(mock_task_manager)
@@ -1122,7 +1137,9 @@ class TestEscalateTask:
         assert "error" not in result
 
     @pytest.mark.asyncio
-    async def test_escalate_clears_claimed_tasks_variable(self, mock_task_manager):
+    async def test_escalate_clears_claimed_tasks_variable(
+        self, mock_task_manager: MagicMock
+    ) -> None:
         """Escalation removes the task from the prior owner's claimed_tasks."""
         task_id = "550e8400-e29b-41d4-a716-446655440000"
         session_id = "session-abc"
@@ -1183,7 +1200,7 @@ class TestMarkTaskReviewApproved:
             yield
 
     @pytest.mark.asyncio
-    async def test_approve_needs_review(self, mock_task_manager):
+    async def test_approve_needs_review(self, mock_task_manager: MagicMock) -> None:
         task = _make_task(status="needs_review")
         mock_task_manager.get_task.return_value = task
         mock_task_manager.approve_review.return_value = task
@@ -1196,7 +1213,7 @@ class TestMarkTaskReviewApproved:
         assert "error" not in result
 
     @pytest.mark.asyncio
-    async def test_approve_wrong_status(self, mock_task_manager):
+    async def test_approve_wrong_status(self, mock_task_manager: MagicMock) -> None:
         task = _make_task(status="closed")
         mock_task_manager.get_task.return_value = task
         mock_task_manager.approve_review.side_effect = ValueError("No current stage")
@@ -1210,7 +1227,7 @@ class TestMarkTaskReviewApproved:
         assert "No current stage" in result["error"]
 
     @pytest.mark.asyncio
-    async def test_approve_with_notes(self, mock_task_manager):
+    async def test_approve_with_notes(self, mock_task_manager: MagicMock) -> None:
         task = _make_task(status="needs_review", description="Original desc")
         mock_task_manager.get_task.return_value = task
         mock_task_manager.approve_review.return_value = task
@@ -1233,7 +1250,7 @@ class TestMarkTaskReviewApproved:
         )
 
     @pytest.mark.asyncio
-    async def test_approve_update_fails(self, mock_task_manager):
+    async def test_approve_update_fails(self, mock_task_manager: MagicMock) -> None:
         task = _make_task(status="needs_review")
         mock_task_manager.get_task.return_value = task
         mock_task_manager.approve_review.return_value = None
@@ -1257,7 +1274,9 @@ class TestMarkTaskReviewApproved:
         release.assert_not_called()
 
     @pytest.mark.asyncio
-    async def test_approve_clears_claimed_tasks_variable(self, mock_task_manager):
+    async def test_approve_clears_claimed_tasks_variable(
+        self, mock_task_manager: MagicMock
+    ) -> None:
         """Review approval removes the task from the prior owner's claimed_tasks."""
         task_id = "550e8400-e29b-41d4-a716-446655440000"
         session_id = "session-abc"
@@ -1315,7 +1334,7 @@ class TestMarkTaskNeedsReview:
             yield
 
     @pytest.mark.asyncio
-    async def test_mark_needs_review_success(self, mock_task_manager):
+    async def test_mark_needs_review_success(self, mock_task_manager: MagicMock) -> None:
         task = _make_task(status="in_progress")
         mock_task_manager.get_task.return_value = task
         mock_task_manager.submit_for_review.return_value = task
@@ -1328,7 +1347,7 @@ class TestMarkTaskNeedsReview:
         assert "error" not in result
 
     @pytest.mark.asyncio
-    async def test_mark_needs_review_with_notes(self, mock_task_manager):
+    async def test_mark_needs_review_with_notes(self, mock_task_manager: MagicMock) -> None:
         task = _make_task(status="in_progress", description="Original")
         mock_task_manager.get_task.return_value = task
         mock_task_manager.submit_for_review.return_value = task
@@ -1351,7 +1370,7 @@ class TestMarkTaskNeedsReview:
         )
 
     @pytest.mark.asyncio
-    async def test_mark_needs_review_update_fails(self, mock_task_manager):
+    async def test_mark_needs_review_update_fails(self, mock_task_manager: MagicMock) -> None:
         task = _make_task(status="in_progress")
         mock_task_manager.get_task.return_value = task
         mock_task_manager.submit_for_review.return_value = None
@@ -1375,7 +1394,7 @@ class TestMarkTaskNeedsReview:
         release.assert_not_called()
 
     @pytest.mark.asyncio
-    async def test_mark_needs_review_not_found(self, mock_task_manager):
+    async def test_mark_needs_review_not_found(self, mock_task_manager: MagicMock) -> None:
         mock_task_manager.get_task.return_value = None
         registry = _create_stage_ops_registry(mock_task_manager)
 
@@ -1386,7 +1405,9 @@ class TestMarkTaskNeedsReview:
         assert "error" in result
 
     @pytest.mark.asyncio
-    async def test_mark_needs_review_clears_claimed_tasks_variable(self, mock_task_manager):
+    async def test_mark_needs_review_clears_claimed_tasks_variable(
+        self, mock_task_manager: MagicMock
+    ) -> None:
         """Needs-review transition removes the task from the prior owner's claimed_tasks."""
         task_id = "550e8400-e29b-41d4-a716-446655440000"
         session_id = "session-abc"
@@ -1438,13 +1459,13 @@ class TestMarkTaskNeedsReview:
 class TestIsUuid:
     """Tests for the _is_uuid helper."""
 
-    def test_valid_uuid(self):
+    def test_valid_uuid(self) -> None:
         assert _is_uuid("550e8400-e29b-41d4-a716-446655440000") is True
 
-    def test_invalid_uuid(self):
+    def test_invalid_uuid(self) -> None:
         assert _is_uuid("#123") is False
 
-    def test_none_value(self):
+    def test_none_value(self) -> None:
         assert _is_uuid(None) is False
 
 
@@ -1458,7 +1479,7 @@ class TestCloseTaskSessionContextGuard:
 
     @pytest.mark.asyncio
     async def test_close_task_without_session_context_falls_back_to_claimed_by_session_id(
-        self, mock_task_manager, caplog
+        self, mock_task_manager: MagicMock, caplog: pytest.LogCaptureFixture
     ) -> None:
         """No SessionContext → uses task.claimed_by_session_id for the audit write."""
         import logging as _logging
@@ -1492,7 +1513,7 @@ class TestCloseTaskSessionContextGuard:
 
     @pytest.mark.asyncio
     async def test_close_task_without_session_context_or_claimed_by_errors(
-        self, mock_task_manager
+        self, mock_task_manager: MagicMock
     ) -> None:
         """No SessionContext and no claimed_by → explicit no_session_context error."""
         task = _make_task(claimed_by_session_id=None, commits=None)
@@ -1513,7 +1534,9 @@ class TestEscalateTaskSessionContextGuard:
     """escalate_task / de_escalate_task must error without an active session context."""
 
     @pytest.mark.asyncio
-    async def test_escalate_task_without_session_context_errors(self, mock_task_manager) -> None:
+    async def test_escalate_task_without_session_context_errors(
+        self, mock_task_manager: MagicMock
+    ) -> None:
         task = _make_task(status="in_progress")
         mock_task_manager.get_task.return_value = task
 
@@ -1527,7 +1550,9 @@ class TestEscalateTaskSessionContextGuard:
         mock_task_manager.escalate_task.assert_not_called()
 
     @pytest.mark.asyncio
-    async def test_de_escalate_task_without_session_context_errors(self, mock_task_manager) -> None:
+    async def test_de_escalate_task_without_session_context_errors(
+        self, mock_task_manager: MagicMock
+    ) -> None:
         task = _make_task(status="escalated")
         mock_task_manager.get_task.return_value = task
 

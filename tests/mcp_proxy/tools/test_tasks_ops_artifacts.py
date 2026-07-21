@@ -6,18 +6,18 @@ import pytest
 
 from gobby.mcp_proxy.tools.tasks._ops_factory import create_task_ops_registry
 from gobby.storage.hub._ambient import ambient_transaction
-from gobby.storage.hub.protocol import TaskLifecycleMutation
+from gobby.storage.hub.protocol import HubDatabase, TaskLifecycleMutation
 from gobby.storage.tasks import LocalTaskManager
 
 pytestmark = pytest.mark.unit
 
 
-def _registry(temp_db) -> tuple[LocalTaskManager, object]:
+def _registry(temp_db: HubDatabase) -> tuple[LocalTaskManager, object]:
     task_manager = LocalTaskManager(temp_db)
     return task_manager, create_task_ops_registry(task_manager)
 
 
-def test_artifact_tools_are_registered_on_tasks_ops(temp_db) -> None:
+def test_artifact_tools_are_registered_on_tasks_ops(temp_db: HubDatabase) -> None:
     _task_manager, registry = _registry(temp_db)
 
     tool_names = {tool["name"] for tool in registry.list_tools()}
@@ -32,7 +32,7 @@ def test_artifact_tools_are_registered_on_tasks_ops(temp_db) -> None:
 
 
 def test_append_description_section_is_idempotent_for_same_heading_and_body(
-    temp_db,
+    temp_db: HubDatabase,
     sample_project,
 ) -> None:
     task_manager, registry = _registry(temp_db)
@@ -62,7 +62,7 @@ def test_append_description_section_is_idempotent_for_same_heading_and_body(
 
 
 def test_append_description_section_notifies_after_committed_state_is_visible(
-    temp_db,
+    temp_db: HubDatabase,
     sample_project,
 ) -> None:
     task_manager, registry = _registry(temp_db)
@@ -94,7 +94,7 @@ def test_append_description_section_notifies_after_committed_state_is_visible(
 
 
 def test_after_commit_listener_is_discarded_when_transaction_rolls_back(
-    temp_db,
+    temp_db: HubDatabase,
 ) -> None:
     task_manager = LocalTaskManager(temp_db)
     listener_calls: list[bool] = []
@@ -108,7 +108,7 @@ def test_after_commit_listener_is_discarded_when_transaction_rolls_back(
     assert listener_calls == []
 
 
-def test_artifact_tools_mutate_and_fetch_artifacts(temp_db, sample_project) -> None:
+def test_artifact_tools_mutate_and_fetch_artifacts(temp_db: HubDatabase, sample_project) -> None:
     task_manager, registry = _registry(temp_db)
     task = task_manager.create_task(project_id=sample_project["id"], title="Artifacts")
     set_artifacts_atomic = registry.get_tool("set_artifacts_atomic")
@@ -140,7 +140,7 @@ def test_artifact_tools_mutate_and_fetch_artifacts(temp_db, sample_project) -> N
     assert artifacts["target_branch"] == "release/0.4"
 
 
-def test_set_artifact_validates_field_allowlist(temp_db, sample_project) -> None:
+def test_set_artifact_validates_field_allowlist(temp_db: HubDatabase, sample_project) -> None:
     task_manager, registry = _registry(temp_db)
     task = task_manager.create_task(project_id=sample_project["id"], title="Single artifact")
     set_artifact = registry.get_tool("set_artifact")
@@ -158,7 +158,7 @@ def test_set_artifact_validates_field_allowlist(temp_db, sample_project) -> None
 
 
 def test_set_artifacts_atomic_returns_structured_constraint_errors(
-    temp_db,
+    temp_db: HubDatabase,
     sample_project,
 ) -> None:
     task_manager, registry = _registry(temp_db)

@@ -840,13 +840,16 @@ async def build_turn_and_digest(
         if digest_title and title_changed:
             result["title"] = digest_title
 
-        # Poll durable recall rows after digest persistence so shadow judging
-        # can never put digest state at risk.
-        await judge_shadow_candidate_relevance(
-            memory_manager=memory_manager,
-            llm_service=llm_service,
-            config=config,
-            session_id=session_id,
+        # Poll durable recall rows after digest persistence. The manager retains
+        # this work independently so digest completion does not await judging.
+        memory_manager.schedule_background_task(
+            judge_shadow_candidate_relevance(
+                memory_manager=memory_manager,
+                llm_service=llm_service,
+                config=config,
+                session_id=session_id,
+            ),
+            name=f"memory-shadow-judge-{session_id}",
         )
 
         return result

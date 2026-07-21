@@ -4,7 +4,7 @@ from typing import Any
 
 from gobby.mcp_proxy.tools.internal import InternalToolRegistry
 from gobby.mcp_proxy.tools.tasks._context import RegistryContext
-from gobby.sync.tasks import TaskBackupManager, TaskRestoreError
+from gobby.sync.tasks import TaskBackupError, TaskBackupManager, TaskRestoreError
 
 
 def create_backup_registry(ctx: RegistryContext) -> InternalToolRegistry:
@@ -18,7 +18,10 @@ def create_backup_registry(ctx: RegistryContext) -> InternalToolRegistry:
         """Write current project tasks to a deterministic JSONL backup."""
         project_id = ctx.get_current_project_id()
         manager = TaskBackupManager(ctx.task_manager, backup_path=output_path)
-        count = manager.backup(project_id=project_id)
+        try:
+            count = manager.backup(project_id=project_id)
+        except TaskBackupError as exc:
+            return {"success": False, "error": str(exc)}
         return {"success": True, "backed_up": count}
 
     registry.register(

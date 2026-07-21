@@ -27,7 +27,7 @@ platform availability.
 
 ## Persistence And Codable
 
-- Treat Codable, Core Data, SwiftData, SQLite, GRDB, file storage, UserDefaults,
+- Treat Codable, Core Data, SwiftData, GRDB, file storage, UserDefaults,
   and Keychain as boundary layers.
 - Add migrations or compatibility defaults when stored data changes shape.
 - Keep encoding/decoding failure behavior explicit. Do not swallow corrupt data

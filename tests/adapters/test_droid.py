@@ -14,8 +14,9 @@ from gobby.hooks.events import HookEventType, HookResponse, SessionSource
 
 pytestmark = pytest.mark.unit
 
-DROID_COMMAND_OUTCOMES_FIXTURE = Path(
-    "tests/fixtures/provider_contracts/droid/command-outcomes-0.174.0.json"
+DROID_COMMAND_OUTCOMES_FIXTURE = (
+    Path(__file__).resolve().parents[1]
+    / "fixtures/provider_contracts/droid/command-outcomes-0.174.0.json"
 )
 
 

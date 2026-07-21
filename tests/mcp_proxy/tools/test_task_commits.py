@@ -1,6 +1,7 @@
 """Tests for the task commit-linking MCP tools."""
 
 import threading
+from collections.abc import Iterator
 from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
@@ -49,7 +50,7 @@ pytestmark = pytest.mark.unit
 class TestLinkCommit:
     """Tests for link_commit MCP tool."""
 
-    def test_link_commit_success(self, mock_sync_registry) -> None:
+    def test_link_commit_success(self, patched_project_context) -> None:
         """Test successful commit linking."""
         from gobby.mcp_proxy.tools.task_commits import create_commit_registry
 
@@ -70,7 +71,7 @@ class TestLinkCommit:
         assert "abc123" in result["commits"]
         task_manager.link_commit.assert_called_once_with("task-1", "abc123", cwd=None)
 
-    def test_link_commit_error(self, mock_sync_registry) -> None:
+    def test_link_commit_error(self, patched_project_context) -> None:
         """Test link_commit returns error on failure."""
         from gobby.mcp_proxy.tools.task_commits import create_commit_registry
 
@@ -87,7 +88,7 @@ class TestLinkCommit:
         assert "error" in result
         assert "Task not found" in result["error"]
 
-    def test_link_commit_task_not_found_after_resolution(self, mock_sync_registry) -> None:
+    def test_link_commit_task_not_found_after_resolution(self, patched_project_context) -> None:
         """Resolved missing tasks return structured errors before Git work."""
         from gobby.mcp_proxy.tools.task_commits import create_commit_registry
 
@@ -104,7 +105,7 @@ class TestLinkCommit:
         assert result == {"error": "Task task-uuid not found"}
         task_manager.link_commit.assert_not_called()
 
-    def test_link_commit_empty_commits_list(self, mock_sync_registry) -> None:
+    def test_link_commit_empty_commits_list(self, patched_project_context) -> None:
         """Test link_commit when task had no previous commits."""
         from gobby.mcp_proxy.tools.task_commits import create_commit_registry
 
@@ -125,7 +126,7 @@ class TestLinkCommit:
         assert result["commits"] == []
 
     def test_link_commit_uses_registered_project_path_override(
-        self, mock_sync_registry, tmp_path: Path
+        self, patched_project_context, tmp_path: Path
     ) -> None:
         """Explicit commit repos must be registered for the task project."""
         from gobby.mcp_proxy.tools.task_commits import create_commit_registry
@@ -166,7 +167,7 @@ class TestLinkCommit:
         )
 
     def test_link_commit_rejects_unknown_project_path(
-        self, mock_sync_registry, tmp_path: Path
+        self, patched_project_context, tmp_path: Path
     ) -> None:
         """Unknown explicit repo paths are rejected before commit linking."""
         from gobby.mcp_proxy.tools.task_commits import create_commit_registry
@@ -198,7 +199,7 @@ class TestLinkCommit:
 class TestUnlinkCommit:
     """Tests for unlink_commit MCP tool."""
 
-    def test_unlink_commit_success(self, mock_sync_registry) -> None:
+    def test_unlink_commit_success(self, patched_project_context) -> None:
         """Test successful commit unlinking."""
         from gobby.mcp_proxy.tools.task_commits import create_commit_registry
 
@@ -219,7 +220,7 @@ class TestUnlinkCommit:
         assert result["commits"] == []
         task_manager.unlink_commit.assert_called_once_with("task-1", "abc123", cwd=None)
 
-    def test_unlink_commit_error(self, mock_sync_registry) -> None:
+    def test_unlink_commit_error(self, patched_project_context) -> None:
         """Test unlink_commit returns error on failure."""
         from gobby.mcp_proxy.tools.task_commits import create_commit_registry
 
@@ -236,7 +237,7 @@ class TestUnlinkCommit:
         assert "error" in result
         assert "Commit not linked" in result["error"]
 
-    def test_unlink_commit_task_not_found_after_resolution(self, mock_sync_registry) -> None:
+    def test_unlink_commit_task_not_found_after_resolution(self, patched_project_context) -> None:
         """Resolved missing tasks return structured errors before Git work."""
         from gobby.mcp_proxy.tools.task_commits import create_commit_registry
 
@@ -254,7 +255,7 @@ class TestUnlinkCommit:
         task_manager.unlink_commit.assert_not_called()
 
     def test_unlink_commit_uses_registered_project_path_override(
-        self, mock_sync_registry, tmp_path: Path
+        self, patched_project_context, tmp_path: Path
     ) -> None:
         """Explicit unlink repos must be registered for the task project."""
         from gobby.mcp_proxy.tools.task_commits import create_commit_registry
@@ -295,7 +296,7 @@ class TestUnlinkCommit:
         )
 
     def test_unlink_commit_rejects_unknown_project_path_before_git(
-        self, mock_sync_registry, tmp_path: Path
+        self, patched_project_context, tmp_path: Path
     ) -> None:
         """Unknown explicit repo paths are rejected before unlink Git work."""
         from gobby.mcp_proxy.tools.task_commits import create_commit_registry
@@ -330,7 +331,7 @@ class TestUnlinkCommit:
 class TestAutoLinkCommits:
     """Tests for auto_link_commits MCP tool."""
 
-    def test_auto_link_commits_basic(self, mock_sync_registry, tmp_path: Path) -> None:
+    def test_auto_link_commits_basic(self, patched_project_context, tmp_path: Path) -> None:
         """Test auto_link_commits basic call."""
         from gobby.mcp_proxy.tools.task_commits import create_commit_registry
 
@@ -358,7 +359,7 @@ class TestAutoLinkCommits:
         assert "task-1" in result["linked_tasks"]
         assert "task-2" in result["linked_tasks"]
 
-    def test_auto_link_commits_with_task_filter(self, mock_sync_registry) -> None:
+    def test_auto_link_commits_with_task_filter(self, patched_project_context) -> None:
         """Test auto_link_commits with task_id filter."""
         from gobby.mcp_proxy.tools.task_commits import create_commit_registry
 
@@ -388,7 +389,7 @@ class TestAutoLinkCommits:
         assert result["linked_tasks"] == ["task-1"]
 
     def test_auto_link_commits_task_filter_uses_registered_project_path_override(
-        self, mock_sync_registry, tmp_path: Path
+        self, patched_project_context, tmp_path: Path
     ) -> None:
         """Task-filtered auto-link supports registered explicit repo paths."""
         from gobby.mcp_proxy.tools.task_commits import create_commit_registry
@@ -424,7 +425,7 @@ class TestAutoLinkCommits:
         assert mock_fn.call_args.kwargs["cwd"] == str(repo_path)
 
     def test_auto_link_commits_task_filter_rejects_unknown_project_path_before_git(
-        self, mock_sync_registry, tmp_path: Path
+        self, patched_project_context, tmp_path: Path
     ) -> None:
         """Task-filtered auto-link rejects unknown explicit repo paths before Git scan."""
         from gobby.mcp_proxy.tools.task_commits import create_commit_registry
@@ -456,7 +457,7 @@ class TestAutoLinkCommits:
         assert "outside the task project repo" in result["error"]
         mock_fn.assert_not_called()
 
-    def test_auto_link_commits_task_filter_not_found(self, mock_sync_registry) -> None:
+    def test_auto_link_commits_task_filter_not_found(self, patched_project_context) -> None:
         """Filtered auto-link returns structured missing-task errors."""
         from gobby.mcp_proxy.tools.task_commits import create_commit_registry
 
@@ -480,7 +481,7 @@ class TestAutoLinkCommits:
         task_manager.resolve_task_reference.assert_not_called()
         mock_fn.assert_not_called()
 
-    def test_auto_link_commits_with_since(self, mock_sync_registry) -> None:
+    def test_auto_link_commits_with_since(self, patched_project_context) -> None:
         """Test auto_link_commits with since parameter."""
         from gobby.mcp_proxy.tools.task_commits import create_commit_registry
 
@@ -508,7 +509,7 @@ class TestAutoLinkCommits:
         assert call_kwargs["since"] == "1 week ago"
         assert result["total_linked"] == 0
 
-    def test_auto_link_commits_no_project(self, mock_sync_registry) -> None:
+    def test_auto_link_commits_no_project(self, patched_project_context) -> None:
         """Test auto_link_commits when no project context."""
         from gobby.mcp_proxy.tools.task_commits import create_commit_registry
 
@@ -545,7 +546,7 @@ class TestAutoLinkCommits:
 class TestGitIntegrationEdgeCases:
     """Tests for git integration edge cases."""
 
-    def test_link_commit_full_sha(self, mock_sync_registry) -> None:
+    def test_link_commit_full_sha(self, patched_project_context) -> None:
         """Test linking with full SHA."""
         from gobby.mcp_proxy.tools.task_commits import create_commit_registry
 
@@ -567,7 +568,7 @@ class TestGitIntegrationEdgeCases:
         assert task_manager.link_commit.call_count >= 1
         assert task_manager.link_commit.call_args is not None
 
-    def test_link_commit_short_sha(self, mock_sync_registry) -> None:
+    def test_link_commit_short_sha(self, patched_project_context) -> None:
         """Test linking with short SHA."""
         from gobby.mcp_proxy.tools.task_commits import create_commit_registry
 
@@ -588,7 +589,7 @@ class TestGitIntegrationEdgeCases:
         assert task_manager.link_commit.call_count >= 1
         assert task_manager.link_commit.call_args is not None
 
-    def test_auto_link_with_skipped_commits(self, mock_sync_registry) -> None:
+    def test_auto_link_with_skipped_commits(self, patched_project_context) -> None:
         """Test auto_link_commits reports skipped commits."""
         from gobby.mcp_proxy.tools.task_commits import create_commit_registry
 
@@ -622,11 +623,11 @@ class TestGitIntegrationEdgeCases:
 
 
 @pytest.fixture
-def mock_sync_registry():
+def patched_project_context() -> Iterator[MagicMock]:
     """Fixture providing mock dependencies for registry creation."""
-    with patch("gobby.mcp_proxy.tools.task_commits.get_project_context") as mock_proj:
-        mock_proj.return_value = {"id": "test-project-id"}
-        yield mock_proj
+    with patch("gobby.mcp_proxy.tools.task_commits.get_current_project_id") as mock_project_id:
+        mock_project_id.return_value = "test-project-id"
+        yield mock_project_id
 
 
 def test_task_sync_git_helper_calls_follow_repo_path_resolution() -> None:

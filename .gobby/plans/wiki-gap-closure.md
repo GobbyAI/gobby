@@ -3,6 +3,7 @@
 **Plan ID:** wiki-gap-closure
 
 ## Overview
+
 `kind: framing`
 
 The June 2026 wiki bake-off's ten adoption candidates (C1–C10) all shipped; a July 2026
@@ -16,6 +17,7 @@ transport, deterministic renderers recoverable from `git show cfb49261c^`, and t
 candidate/quarantine lifecycle.
 
 ## Constraints
+
 `kind: framing`
 
 - Pre-0.5.0: no backward compatibility anywhere; rename and drop freely.
@@ -32,12 +34,14 @@ candidate/quarantine lifecycle.
   by 4.4).
 
 ## P1: Ask retrieval and synthesis fixes
+
 `kind: framing`
 
 **Goal**: wiki_ask/wiki_search handle natural-language queries, keep hub pages out of
 results, feed clean evidence to synthesis, and authenticate the direct AI route.
 
 ### 1.1 Harden shared pg_search sanitizer and surface backend errors [category: code]
+
 `kind: deliverable`
 
 Target: `crates/gcore/src/search.rs`, `crates/gwiki/src/search/bm25.rs`, `crates/gwiki/src/search/mod.rs`
@@ -85,6 +89,7 @@ Changes:
   quote without `SearchError::Backend`. test: `crates/gwiki/src/search/bm25.rs`.
 
 ### 1.2 Strip frontmatter and empty excerpts from ask evidence [category: code]
+
 `kind: deliverable`
 
 Target: `crates/gwiki/src/commands/search.rs`, `crates/gwiki/src/commands/ask/evidence.rs`
@@ -116,6 +121,7 @@ Changes:
   citation still reference the document's original page/source. test: `crates/gwiki/src/commands/ask/evidence.rs`.
 
 ### 1.3 Down-weight hub backlinks and hydrate titles in graph boost [category: code]
+
 `kind: deliverable`
 
 Target: `crates/gwiki/src/search/graph_boost.rs`
@@ -144,6 +150,7 @@ Changes:
 - 1.3.3 - Integration guard: hub pages stay out of top results for unrelated queries. test: `crates/gwiki/src/search/mod.rs::graph_linked_pages_enter_search_results`.
 
 ### 1.4 Add conventional-env api_key fallback to the direct AI route [category: code]
+
 `kind: deliverable`
 
 Target: `crates/gcore/src/ai/generation/profile.rs`
@@ -179,12 +186,14 @@ Changes:
 - 1.4.3 - Regression pin on existing behavior: HTTP failures surface status + bounded body snippet in `ai.error`. test: `crates/gwiki/src/commands/ask/synthesis.rs::ask_model_unavailable_marks_degraded`.
 
 ## P2: Generation-lane naming cleanup
+
 `kind: framing`
 
 **Goal**: retire widget_a-style Lane-A/Lane-B codenames for semantic names before the deep
 ask work builds on those modules.
 
 ### 2.1 Rename Lane A/Lane B identifiers to semantic names [category: refactor]
+
 `kind: deliverable`
 
 Target: `crates/gcore/src/ai/generation/one_shot.rs`, `crates/gcore/src/ai/generation/mod.rs`, `crates/gcore/src/ai/generation/tests.rs`, `crates/gwiki/src/commands/generation_routes.rs` (renamed from `lanes.rs`), `crates/gwiki/src/commands/compile.rs`, `crates/gwiki/src/commands/upkeep.rs`, `crates/gcode/src/commands/codewiki/build_parts/curated_content/tool_loop_dump.rs` (renamed from `lane_b_dump.rs`), `crates/gcode/src/commands/codewiki/build_parts/curated_content.rs`, `crates/gcode/src/commands/codewiki/generation.rs`, `crates/gcode/src/commands/codewiki/frontmatter.rs`, `crates/gcode/src/commands/codewiki/text/frontmatter.rs`, `crates/gcode/src/commands/codewiki/build_parts/concepts/render.rs`, `crates/gcode/src/commands/codewiki/render/overview.rs`, `crates/gcode/src/commands/codewiki/render/repo.rs`, `crates/gcode/src/commands/codewiki/run.rs`, `crates/gcode/src/commands/codewiki/tests/concepts.rs`, `crates/gcode/src/commands/codewiki/tests/io_safety.rs`
@@ -227,12 +236,14 @@ generation. Blast radius (verified by grep):
 - 2.1.3 - Tool-loop dump directory renamed and orphan-GC test updated. file: `crates/gcode/src/commands/codewiki/build_parts/curated_content/tool_loop_dump.rs`. test: `crates/gcode/src/commands/codewiki/tests/io_safety.rs`.
 
 ## P3: Deep-research ask
+
 `kind: framing`
 
 **Goal**: `gwiki ask --deep` runs a bounded agentic research loop over the vault with
 grounded citations, exposed through daemon, MCP, and HTTP.
 
 ### 3.1 Implement gwiki ask --deep agentic research mode [category: code] (depends: 1.2, 1.4, 2.1, 3.3)
+
 `kind: deliverable`
 
 Target: `crates/gwiki/src/commands/ask.rs`, `crates/gwiki/src/commands/ask/deep.rs`, `crates/gwiki/src/commands/ask/synthesis.rs`, `crates/gwiki/src/commands/ask/assembly.rs`, `crates/gwiki/src/commands/ask/render.rs`, `crates/gwiki/src/commands/generation_routes.rs`, `crates/gwiki/src/commands/vault_tools.rs`, `crates/gwiki/src/commands/mod.rs`, `crates/gwiki/src/cli.rs`, `crates/gwiki/src/cli/mapping.rs`, `crates/gwiki/src/api.rs`, `crates/gwiki/src/output.rs`, `crates/gwiki/tests/cli_contract.rs`, `crates/gcore/src/ai/generation/transport.rs`, `crates/gcore/src/ai/generation/tests/daemon_agentic.rs`, `crates/gcode/src/commands/codewiki/text/generation.rs`, `crates/gcode/src/commands/codewiki/build_parts/concepts/render.rs`, `crates/gcode/src/commands/codewiki/text/frontmatter.rs`
@@ -422,6 +433,7 @@ Changes:
   test: `crates/gcode/src/commands/codewiki/text/generation.rs`.
 
 ### 3.2 Expose deep ask through daemon gateway, MCP, and HTTP [category: code] (depends: 3.1)
+
 `kind: deliverable`
 
 Target: `src/gobby/gwiki_gateway.py`, `src/gobby/mcp_proxy/tools/wiki.py`, `src/gobby/servers/routes/wiki.py`
@@ -446,6 +458,7 @@ Changes:
 - 3.2.4 - HTTP route accepts `deep=true` with an explicit AI route/`require_ai` and no `llm`; `ai`/`require_ai` with neither `llm` nor `deep` still rejected (the gwiki CLI's `--deep --ai off` rejection stays pinned by 3.1.4). test: `tests/servers/routes/test_wiki_routes.py`.
 
 ### 3.3 Normalize daemon tool-chat adapter stop-reason reporting [category: code]
+
 `kind: deliverable`
 
 Target: `src/gobby/ai/_tool_chat_contracts.py`, `src/gobby/ai/_tool_chat_adapters.py`, `src/gobby/ai/_tool_chat_spawn.py`, `src/gobby/ai/_text_generation_adapters.py`, `tests/ai/test_tool_chat_adapters.py`, `tests/ai/test_tool_chat_spawn.py`, `tests/ai/test_text_generation.py`
@@ -569,12 +582,14 @@ Changes:
 - 3.3.6 - `turns` is optional and provider-native across adapters: grok reports the session records' `turnCount`, qwen reports the result event's `num_turns`, droid reports its envelope count, codex reports `None`; a fixture where turn and tool-call counts differ pins the de-aliasing; the `ToolChatResult.turns: int | None = None` contract default is pinned (review round 9 WGC-TOOL-CHAT-RESULT-CONTRACT-R9); `tool_use_count` unchanged. test: `tests/ai/test_tool_chat_spawn.py`.
 
 ## P4: Diagram restoration
+
 `kind: framing`
 
 **Goal**: module pages get deterministic dependency (and where evidenced, call-sequence)
 diagrams; every narrative chapter and concept page draws; diagram suppression is observable.
 
 ### 4.1 Typed DiagramOutcome and per-run diagram stats [category: code] (depends: 2.1, 3.1)
+
 `kind: deliverable`
 
 Target: `crates/gcode/src/commands/codewiki/diagram_compose.rs`, `crates/gcode/src/commands/codewiki/architecture_diagrams.rs`, `crates/gcode/src/commands/codewiki/build_parts/curated_content.rs`, `crates/gcode/src/commands/codewiki/build_parts/concepts/render.rs`, `crates/gcode/src/commands/codewiki/generation.rs`, `crates/gcode/src/commands/codewiki/run.rs`, `crates/gcode/src/commands/codewiki/types.rs`, `crates/gcode/src/commands/codewiki/io.rs`
@@ -612,6 +627,7 @@ Changes:
   attempted diagram slots (page × kind) and matches final log lines. test: `crates/gcode/src/commands/codewiki/diagram_compose.rs`.
 
 ### 4.2 Deterministic module dependency flowcharts [category: code] (depends: 4.1)
+
 `kind: deliverable`
 
 Target: `crates/gcode/src/commands/codewiki/render/diagrams.rs`, `crates/gcode/src/commands/codewiki/render/pages.rs`, `crates/gcode/src/commands/codewiki/build_parts/modules.rs`, `crates/gcode/src/commands/codewiki/generation.rs`, `crates/gcode/src/commands/codewiki/types.rs`, `crates/gcode/src/commands/codewiki/stubs.rs`, `crates/gcode/src/commands/codewiki/architecture_diagrams.rs`, `crates/gcode/src/commands/codewiki/tests/modules.rs`, `crates/gcode/src/commands/codewiki/build_parts/curated_content/tests.rs`
@@ -661,6 +677,7 @@ Changes:
   byte-identical mermaid and captions. test: `crates/gcode/src/commands/codewiki/tests/modules.rs`.
 
 ### 4.3 Deterministic module call-sequence diagrams [category: code] (depends: 4.2)
+
 `kind: deliverable`
 
 Target: `crates/gcode/src/commands/codewiki/render/diagrams.rs`, `crates/gcode/src/commands/codewiki/render/pages.rs`, `crates/gcode/src/commands/codewiki/types.rs`, `crates/gcode/src/commands/codewiki/mod.rs`, `crates/gcode/src/commands/codewiki/tests/modules.rs`, `crates/gcode/src/commands/codewiki/tests/architecture.rs`, `crates/gcore/src/vault/mermaid.rs`
@@ -699,6 +716,7 @@ Changes:
   file: `crates/gcode/src/commands/codewiki/mod.rs`.
 
 ### 4.4 Curated two-pass evidence and containment fallback diagrams [category: code] (depends: 4.1, 4.3)
+
 `kind: deliverable`
 
 Target: `crates/gcode/src/commands/codewiki/build_parts/curated_content.rs`, `crates/gcode/src/commands/codewiki/mod.rs`, `crates/gcode/src/commands/codewiki/build_parts/curated_content/tests.rs`
@@ -747,12 +765,14 @@ Changes:
   test: `crates/gcode/src/commands/codewiki/build_parts/curated_content/tests.rs`.
 
 ## P5: Agent export pipeline
+
 `kind: framing`
 
 **Goal**: outputs/pages JSON, graph.jsonld, llms.txt, and llms-full.txt stay fresh
 automatically, and health flags them when they are not.
 
 ### 5.1 Daemon scheduled exports job and gateway methods [category: code] (depends: 3.2)
+
 `kind: deliverable`
 
 Target: `src/gobby/wiki/scheduled_jobs.py`, `src/gobby/gwiki_gateway.py`, `tests/wiki/test_scheduled_jobs.py`
@@ -784,6 +804,7 @@ Changes:
 - 5.1.2 - Gateway methods exist and are serialized. symbol: `GwikiGateway.graph_artifacts`. file: `src/gobby/gwiki_gateway.py`.
 
 ### 5.2 Health stale-exports check and ai-readme freshness note [category: code]
+
 `kind: deliverable`
 
 Target: `crates/gwiki/src/health.rs`, `crates/gwiki/src/vault.rs`
@@ -808,6 +829,7 @@ Changes:
   graph/llms named stale; and the converse. test: `crates/gwiki/src/health.rs`.
 
 ## P6: Commit anchoring and concept hygiene
+
 `kind: framing`
 
 **Goal**: pages say which commit generated them and when (in human-readable local time), a
@@ -815,6 +837,7 @@ CI diff mode consumes those stamps, and the knowledge concept space stops accumu
 and undetected duplicates.
 
 ### 6.1 Commit stamping in codewiki output [category: code] (depends: 4.3, 3.1)
+
 `kind: deliverable`
 
 Target: `crates/gcode/src/commands/codewiki/run.rs`, `crates/gcode/src/commands/codewiki/io.rs`, `crates/gcode/src/commands/codewiki/types.rs`, `crates/gcode/src/commands/codewiki/doc_paths.rs`, `crates/gcode/src/commands/codewiki/text/frontmatter.rs`, `crates/gcode/src/commands/codewiki/truth_digest.rs`, `crates/gcode/src/commands/codewiki/tests/reuse.rs`, `crates/gcode/src/commands/codewiki/tests/truth_digest.rs`
@@ -861,6 +884,7 @@ Changes:
 - 6.1.4 - Truth digest carries commit + dirty, omitted for non-git roots; every `build_truth_digest` call site updated (review round 8 WGC-TARGET-COVERAGE-SWEEP-R8). file: `crates/gcode/src/commands/codewiki/truth_digest.rs`. test: `crates/gcode/src/commands/codewiki/tests/truth_digest.rs`.
 
 ### 6.2 Add gcode codewiki --compare-to diff summary [category: code] (depends: 6.1, 4.4)
+
 `kind: deliverable`
 
 Target: `crates/gcode/src/cli.rs`, `crates/gcode/src/commands/codewiki/compare.rs` (new), `crates/gcode/src/commands/codewiki/mod.rs`, `crates/gcode/src/commands/codewiki/tests/incremental.rs`
@@ -901,6 +925,7 @@ absent/malformed baseline metadata), committing BOTH the baseline and current sn
   test: `crates/gcode/src/commands/codewiki/tests/incremental.rs`.
 
 ### 6.3 Concept worthiness gate and recurring archive pass [category: code]
+
 `kind: deliverable`
 
 Target: `crates/gwiki/src/links.rs`, `crates/gwiki/src/upkeep.rs`, `crates/gwiki/src/librarian.rs`, `crates/gwiki/src/librarian/semantic.rs`
@@ -959,6 +984,7 @@ Changes:
   broken-link path and regenerated indexes exclude archived pages. test: `crates/gwiki/src/upkeep.rs`.
 
 ### 6.4 Alias- and prefix-aware duplicate concept detection in health [category: code] (depends: 5.2, 6.3)
+
 `kind: deliverable`
 
 Target: `crates/gwiki/src/health.rs`, `crates/gwiki/src/librarian.rs`, `crates/gwiki/src/librarian/semantic.rs`
@@ -989,6 +1015,7 @@ Changes:
 - 6.4.2 - Reworked check with reasons, consuming `load_distinct_pairs` via the `pub(crate)` re-export in librarian.rs. symbol: `duplicate_concepts`. file: `crates/gwiki/src/health.rs`.
 
 ### 6.5 Render human-readable local timestamps in gwiki page bodies [category: code]
+
 `kind: deliverable`
 
 Target: `crates/gwiki/src/support/time.rs`, `crates/gwiki/src/recap.rs`, `crates/gwiki/src/citations.rs`, `crates/gwiki/src/log.rs`
@@ -1042,6 +1069,7 @@ Changes:
   date for ordering). file: `crates/gwiki/src/support/time.rs`. test: `crates/gwiki/src/recap.rs`.
 
 ## V2 End-to-End Verification
+
 `kind: verification`
 
 - Scoped tests: `cargo test -p gobby-core -p gobby-wiki -p gobby-code`;
@@ -1065,6 +1093,7 @@ Changes:
 - Full-repo wiki regeneration; spot-read narrative chapters for diagrams + honest captions.
 
 ## V1 Plan Changelog
+
 `kind: verification`
 
 **Round 1** `kind: enhancement`
@@ -1394,6 +1423,7 @@ Changes:
   6.2 → [6.1, 4.4], 6.4 → [5.2, 6.3], rest []).
 
 ## M1 Task Manifest
+
 `kind: manifest`
 
 ```yaml
@@ -1644,6 +1674,7 @@ Changes:
 ```
 
 ## Task Mapping
+
 `kind: framing`
 
 <!-- Updated after task creation -->

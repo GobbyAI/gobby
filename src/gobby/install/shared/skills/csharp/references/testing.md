@@ -26,7 +26,7 @@ Keep tests focused on behavior and use the repo's existing test framework.
 - Use integration tests when behavior depends on DI registration, middleware,
   routing, model binding, authorization, EF Core provider behavior, SQL,
   transactions, or configuration.
-- Prefer real providers for database behavior. SQLite/in-memory replacements can
+- Prefer real providers for database behavior. In-memory replacements can
   hide translation, constraint, and concurrency problems.
 - Reset state between tests with transactions, Respawn, container recreation, or
   repo-provided fixtures.

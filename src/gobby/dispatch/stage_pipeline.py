@@ -7,6 +7,7 @@ import json
 import logging
 import uuid
 from collections.abc import Callable, Coroutine
+from concurrent.futures import Future
 from datetime import UTC, datetime
 from typing import Any, cast
 
@@ -17,6 +18,7 @@ from gobby.dispatch.mutex import RuntimeDispatchMutex, RuntimeDispatchMutexError
 from gobby.storage.hub.protocol import DispatchMutexRow, HubDatabase
 from gobby.storage.tasks._lifecycle_events import TaskLifecycleEventManager
 from gobby.workflows.pipeline.renderer import StepRenderer
+from gobby.workflows.pipeline_state import ExecutionStatus
 from gobby.workflows.templates import TemplateEngine
 
 logger = logging.getLogger(__name__)
@@ -48,6 +50,7 @@ StageStatesManagerFactory = Callable[..., Any]
 # task escalates instead of spinning on the assumption that the mutex lease will
 # eventually expire.
 MAX_PIPELINE_RETRY_NEUTRAL_RESTORES = 3
+PIPELINE_START_ACK_TIMEOUT_SECONDS = 5.0
 
 
 async def start_pipeline_action(
@@ -134,20 +137,72 @@ async def start_pipeline_action(
     task_name = f"stage-pipeline-{action.pipeline_name}-{execution_id[:8]}"
     main_loop = getattr(services, "main_loop", None)
     current_loop = asyncio.get_running_loop()
-    if main_loop is not None and main_loop is not current_loop and not main_loop.is_closed():
+
+    def fail_start(reason: str) -> dict[str, object]:
+        try:
+            executor.execution_manager.update_execution_status(
+                execution_id,
+                ExecutionStatus.FAILED,
+                outputs_json=json.dumps({"error": reason}),
+            )
+        except Exception:
+            logger.exception("Failed to mark pipeline execution %s failed", execution_id)
+        return escalate_pipeline_dispatch(action, mutex, db, reason)
+
+    if main_loop is not None and main_loop is not current_loop:
+        if main_loop.is_closed():
+            coro.close()
+            return fail_start("pipeline_start_loop_closed")
         # A tick may run on a short-lived loop (the HTTP build route drives the
         # service via asyncio.run in a worker thread); a task created there is
         # cancelled with that loop and the execution row strands at 'pending'
         # until the heartbeat fails it, so the coroutine must live on the
         # daemon's main loop instead.
+        registration: Future[asyncio.Task[Any]] = Future()
+
         def _spawn_on_main_loop() -> None:
-            spawned: asyncio.Task[Any] = asyncio.create_task(coro, name=task_name)
-            register_background_task(execution_id, spawned)
+            if not registration.set_running_or_notify_cancel():
+                coro.close()
+                return
+            spawned: asyncio.Task[Any] | None = None
+            try:
+                spawned = asyncio.create_task(coro, name=task_name)
+                register_background_task(execution_id, spawned)
+            except Exception as exc:
+                if spawned is not None:
+                    spawned.cancel()
+                registration.set_exception(exc)
+            else:
+                registration.set_result(spawned)
 
         main_loop.call_soon_threadsafe(_spawn_on_main_loop)
+        try:
+            await asyncio.wait_for(
+                asyncio.shield(asyncio.wrap_future(registration)),
+                timeout=PIPELINE_START_ACK_TIMEOUT_SECONDS,
+            )
+        except TimeoutError:
+            if registration.cancel():
+                coro.close()
+            if registration.done() and not registration.cancelled():
+                try:
+                    registration.result().cancel()
+                except Exception:
+                    pass
+            return fail_start("pipeline_start_registration_timeout")
+        except Exception as exc:
+            return fail_start(f"pipeline_start_registration_failed:{exc}")
         return {"success": True, "execution_id": execution_id, "status": "running"}
-    task: asyncio.Task[Any] = asyncio.create_task(coro, name=task_name)
-    register_background_task(execution_id, task)
+    task: asyncio.Task[Any] | None = None
+    try:
+        task = asyncio.create_task(coro, name=task_name)
+        register_background_task(execution_id, task)
+    except Exception as exc:
+        if task is None:
+            coro.close()
+        else:
+            task.cancel()
+        return fail_start(f"pipeline_start_registration_failed:{exc}")
     return {"success": True, "execution_id": execution_id, "status": "running"}
 
 

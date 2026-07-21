@@ -152,7 +152,6 @@ pub(in crate::index::import_resolution) const JS_BUILTIN_MODULES: &[&str] = &[
     "stream/promises",
     "stream/web",
     "string_decoder",
-    "sqlite",
     "sys",
     "timers",
     "timers/promises",

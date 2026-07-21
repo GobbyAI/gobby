@@ -479,7 +479,7 @@ class TestUnifiedSearcher:
             assert searcher.get_active_backend() == "keyword"
 
 
-class TestDeprecatedSqliteKeywordSearch:
+class TestDeprecatedKeywordSearch:
     """Tests for the legacy PostgreSQL keyword fallback used by fixtures."""
 
     @pytest.mark.asyncio

@@ -93,6 +93,7 @@ def test_postgres_pending_migration_logs_info(caplog: pytest.LogCaptureFixture) 
     runner._ensure_schema_migrations_table = MethodType(ensure_schema_migrations_table, runner)
     runner._read_applied_versions = MethodType(read_applied_versions, runner)
     runner._discover_migrations = MethodType(discover_migrations, runner)
+    runner._is_non_transactional = MethodType(lambda self, item: False, runner)
     runner._run_migration = MethodType(run_migration, runner)
     runner._record_applied_version = MethodType(record_applied_version, runner)
 
@@ -168,6 +169,7 @@ def test_apply_pending_serializes_concurrent_migrators_and_rechecks_version() ->
     for runner in runners:
         runner._ensure_schema_migrations_table = MethodType(lambda self: None, runner)
         runner._discover_migrations = MethodType(lambda self: [migration], runner)
+        runner._is_non_transactional = MethodType(lambda self, item: False, runner)
 
         def run_migration(
             self: Any, txn: _ConcurrentMigrationTransaction, discovered: Migration
@@ -270,7 +272,86 @@ def test_postgres_migration_discovery_finds_all_post_baseline_migrations() -> No
         (322, "agent_run_capture_termination"),
         (323, "recall_usefulness_digest_shadow"),
         (324, "drop_sync_tombstones"),
+        (325, "recall_usefulness_shadow_index"),
     ]
+
+
+class _AutocommitMigrationState:
+    def __init__(self) -> None:
+        self.applied: set[int] = set()
+        self.locked = False
+        self.closed = 0
+        self.unlocked = 0
+        self.index_runs = 0
+
+
+class _AutocommitMigrationConnection:
+    def __init__(self, state: _AutocommitMigrationState) -> None:
+        self.state = state
+
+    def execute(self, sql: str, params: tuple[Any, ...] = ()) -> _Result:
+        if "pg_advisory_lock" in sql and "unlock" not in sql:
+            assert not self.state.locked
+            self.state.locked = True
+            return _Result()
+        if "pg_advisory_unlock" in sql:
+            assert self.state.locked
+            self.state.locked = False
+            self.state.unlocked += 1
+            return _Result()
+        if "SELECT version FROM schema_migrations WHERE" in sql:
+            rows = [{"version": params[0]}] if params[0] in self.state.applied else []
+            return _Result(rows)
+        if "CREATE INDEX CONCURRENTLY" in sql:
+            assert self.state.locked
+            self.state.index_runs += 1
+            return _Result()
+        if "INSERT INTO schema_migrations" in sql:
+            self.state.applied.add(params[0])
+            return _Result()
+        raise AssertionError(f"unexpected query: {sql}")
+
+    def close(self) -> None:
+        self.state.closed += 1
+
+
+def test_non_transactional_migration_retries_after_unrecorded_index_creation(
+    tmp_path: Path,
+) -> None:
+    module = _migration_module()
+    migration_path = tmp_path / "325_shadow_index.sql"
+    migration_path.write_text(
+        "-- gobby:non-transactional\n"
+        "CREATE INDEX CONCURRENTLY IF NOT EXISTS idx_shadow ON recall_usefulness(id);\n"
+    )
+    migration = Migration(version=325, name="shadow_index", path=migration_path)
+    state = _AutocommitMigrationState()
+
+    def make_runner() -> Any:
+        runner = module.MigrationRunner(
+            _PostgresMigrationHub(),
+            autocommit_connection=lambda: _AutocommitMigrationConnection(state),
+        )
+        runner._ensure_schema_migrations_table = MethodType(lambda self: None, runner)
+        runner._read_applied_versions = MethodType(lambda self: set(state.applied), runner)
+        runner._discover_migrations = MethodType(lambda self: [migration], runner)
+        return runner
+
+    first = make_runner()
+
+    def fail_record_once(self: Any, txn: Any, version: int) -> None:
+        raise RuntimeError("simulated crash after index creation")
+
+    first._record_applied_version = MethodType(fail_record_once, first)
+    with pytest.raises(RuntimeError, match="simulated crash"):
+        first.apply_pending()
+
+    make_runner().apply_pending()
+
+    assert state.applied == {325}
+    assert state.index_runs == 2
+    assert state.unlocked == 2
+    assert state.closed == 2
 
 
 def test_sync_tombstone_database_objects_are_removed(postgres_db: Any) -> None:

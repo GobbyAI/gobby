@@ -450,7 +450,10 @@ def dispatch_mcp_calls(
         needs_capture = inject_result or block_on_failure or block_on_success
 
         if not server or not tool:
-            logger.warning("dispatch_mcp_calls: missing server or tool in %s", call)
+            logger.warning(
+                "dispatch_mcp_calls: missing server or tool",
+                extra={"server": call.get("server"), "tool": call.get("tool")},
+            )
             continue
 
         logger.debug("dispatch_mcp_calls: %s/%s (background=%s)", server, tool, background)

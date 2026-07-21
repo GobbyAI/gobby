@@ -6,6 +6,8 @@ import pytest
 
 from gobby.hooks.tool_outcomes import ToolOutcomeStatus, normalize_tool_outcome
 
+pytestmark = pytest.mark.unit
+
 
 @pytest.mark.parametrize("field", ["exitCode", "exit_code", "returncode"])
 def test_structured_exit_code_aliases_are_normalized(field: str) -> None:

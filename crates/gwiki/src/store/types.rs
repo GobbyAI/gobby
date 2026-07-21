@@ -145,6 +145,7 @@ impl From<postgres::Error> for StoreError {
 
 pub trait WikiIndexStore {
     fn indexed_hashes(&mut self) -> Result<BTreeMap<PathBuf, String>, StoreError>;
+    fn indexed_hash(&mut self, path: &Path) -> Result<Option<String>, StoreError>;
     fn upsert_document(&mut self, document: WikiDocument) -> Result<(), StoreError>;
     fn replace_chunks(&mut self, path: &Path, chunks: Vec<WikiChunk>) -> Result<(), StoreError>;
     fn replace_links(&mut self, path: &Path, links: Vec<WikiLink>) -> Result<(), StoreError>;

@@ -283,7 +283,8 @@ def sync_bundled_skills(db: HubDatabase) -> dict[str, Any]:
 
     total = result["synced"] + result["updated"] + result["skipped"]
     logger.info(
-        "Skill sync complete: %s synced, %s updated, %s skipped, %s orphaned, %s project overrides purged, %s total",
+        "Skill sync complete: %s synced, %s updated, %s skipped, %s orphaned, "
+        "%s project overrides purged, %s total",
         result["synced"],
         result["updated"],
         result["skipped"],

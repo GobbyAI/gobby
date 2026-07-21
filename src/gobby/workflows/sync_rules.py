@@ -348,7 +348,7 @@ def _sync_single_rule(
     definition_data = {
         **body_dict,
         "description": rule_data.get("description"),
-        "enabled": rule_data.get("enabled", False),
+        "enabled": rule_data.get("enabled", True),
         "priority": rule_data.get("priority", 100),
         "tags": file_tags,
     }

@@ -2202,7 +2202,7 @@ def test_dream_prompt_declares_actions_and_truth_digest() -> None:
     assert "- `supersede`" not in prompt
     # obsolete-fact guidance names the canonical infra migrations.
     assert "Neo4j" in prompt
-    assert "SQLite" in prompt
+    assert "MySQL" in prompt
     assert "authoritative - complete current set" in prompt
     assert "partial - do NOT infer staleness from absence" in prompt
 

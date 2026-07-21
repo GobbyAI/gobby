@@ -327,7 +327,6 @@ async def test_get_postgres_status_returns_stable_payload(
     assert isinstance(status["healthy"], bool)
     assert set(status["extensions"]) == {"pg_search", "pgaudit", "pgcrypto"}
     assert isinstance(status["preload_libraries"], list)
-    assert "keyring" not in status
 
 
 @pytest.mark.asyncio
@@ -358,7 +357,7 @@ async def test_get_postgres_status_honors_gobby_home_environment(
     assert status["healthy"] is False
 
 
-def test_render_postgres_status_omits_keyring_preflight() -> None:
+def test_render_postgres_status_omits_legacy_preflight_sections() -> None:
     installer = _import_installer()
 
     rendered = installer.render_postgres_status(
@@ -371,6 +370,5 @@ def test_render_postgres_status_omits_keyring_preflight() -> None:
         }
     )
 
-    assert "Keyring:" not in rendered
     assert "Migration:" not in rendered
     assert "pgcrypto:    yes" in rendered

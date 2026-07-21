@@ -208,6 +208,14 @@ class SessionMessageProcessor(
         """Build one synthetic Bash completion from a correlated rollout result."""
         external_id = session.get("external_id")
         if not isinstance(external_id, str) or not external_id.strip():
+            logger.warning(
+                "Skipping Codex synthesized tool event without external_id",
+                extra={
+                    "platform_session_id": session.get("platform_session_id"),
+                    "tool_name": "Bash",
+                    "phase": "end",
+                },
+            )
             return None
 
         data: dict[str, Any] = {
