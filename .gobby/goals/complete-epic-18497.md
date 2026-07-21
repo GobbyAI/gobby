@@ -1,6 +1,6 @@
 ---
 goal: Complete 0.5.0 ship-blocker epic #18497
-status: draft
+status: active
 anchor: "#18497"
 mode: solo
 created: 2026-07-21
@@ -87,3 +87,6 @@ so each iteration resumes from the durable goal document and live task state.
 
 - 2026-07-21 #9341 draft — verified open epic #18497 and its 17 open descendants;
   created solo compact-between-leaves execution contract.
+- 2026-07-21 #9341 activation — user approved execution here; claimed #18497,
+  set `auto_task_ref`, `goal_file`, and `additional_skills`, and reconciled 17
+  remaining open descendants plus closed setup task #18667.
