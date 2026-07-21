@@ -85,6 +85,13 @@ class TestNullBackend:
         assert record.id is not None
 
     @pytest.mark.asyncio
+    async def test_null_backend_create_rejects_noncanonical_memory_type(self) -> None:
+        backend = get_backend("null")
+
+        with pytest.raises(ValueError, match="Invalid memory_type 'debugging_pattern'"):
+            await backend.create("test memory content", memory_type="debugging_pattern")
+
+    @pytest.mark.asyncio
     async def test_null_backend_get_returns_none(self):
         """Test that NullBackend.get() returns None (no persistence)."""
         backend = get_backend("null")

@@ -41,7 +41,7 @@ class ProjectionScopeRepairService:
         *,
         storage_provider: Callable[[], LocalMemoryManager],
         run_db: Callable[..., Awaitable[Any]],
-        restore_memory_indices: Callable[[str, str, str, bool], Awaitable[bool]],
+        restore_memory_indices: Callable[[str, str, str, bool, str], Awaitable[bool]],
         falkor_client_provider: Callable[[], FalkorQueryProtocol | None],
     ) -> None:
         self._storage_provider = storage_provider
@@ -65,6 +65,7 @@ class ProjectionScopeRepairService:
                     memory.content,
                     memory.project_id,
                     memory.is_global,
+                    memory.memory_type.value,
                 ):
                     vectors_repaired += 1
             except Exception as exc:

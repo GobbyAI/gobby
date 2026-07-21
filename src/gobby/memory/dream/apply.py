@@ -143,6 +143,7 @@ async def revert_dream_run(
                         str(before["content"]),
                         str(before["project_id"]),
                         bool(before["is_global"]),
+                        str(before["memory_type"]),
                     )
                 restored += 1
         except Exception as exc:

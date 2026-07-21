@@ -627,8 +627,9 @@ async def test_apply_and_revert_soft_hide_refresh_and_keep() -> None:
         content: str,
         project_id: str,
         is_global: bool,
+        memory_type: str,
     ) -> None:
-        del content, project_id, is_global
+        del content, project_id, is_global, memory_type
         manager.graph_ids.add(memory_id)
 
     async def reconcile_missing_vectors(dry_run: bool = False) -> dict[str, Any]:
@@ -1746,8 +1747,9 @@ class _FakeMemoryManager:
         content: str,
         project_id: str,
         is_global: bool,
+        memory_type: str,
     ) -> None:
-        del content, project_id, is_global
+        del content, project_id, is_global, memory_type
         self.vector_ids.add(memory_id)
         self.graph_ids.add(memory_id)
 

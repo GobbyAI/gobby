@@ -3,10 +3,33 @@ import uuid
 from collections.abc import Mapping
 from dataclasses import dataclass
 from datetime import datetime
+from enum import StrEnum
 from typing import Any, Literal, cast
 
 from gobby.storage.projects import PERSONAL_PROJECT_ID
 from gobby.utils.datetime import normalize_datetime_model
+
+
+class MemoryType(StrEnum):
+    """Canonical persisted memory categories."""
+
+    FACT = "fact"
+    PREFERENCE = "preference"
+    PATTERN = "pattern"
+    CONTEXT = "context"
+
+
+MEMORY_TYPE_VALUES = tuple(memory_type.value for memory_type in MemoryType)
+
+
+def validate_memory_type(value: str | MemoryType) -> MemoryType:
+    """Return a canonical memory type or reject an invalid value."""
+    try:
+        return MemoryType(value)
+    except (TypeError, ValueError):
+        expected = ", ".join(MEMORY_TYPE_VALUES)
+        raise ValueError(f"Invalid memory_type {value!r}; expected one of: {expected}") from None
+
 
 # Stable namespace for deterministic memory UUIDs (uuid5)
 MEMORY_UUID_NAMESPACE = uuid.UUID("a3b2c1d0-1234-5678-9abc-def012345678")
@@ -77,7 +100,7 @@ class MemoryCrossRef:
 @dataclass
 class Memory:
     id: str
-    memory_type: Literal["fact", "preference", "pattern", "context"]
+    memory_type: MemoryType
     content: str
     created_at: datetime
     updated_at: datetime
@@ -102,6 +125,9 @@ class Memory:
     temporal_decay_factor: float | None = None  # Search-time decay, not persisted
     ranking_mode: str | None = None  # Search-time scoring mode, not persisted
 
+    def __post_init__(self) -> None:
+        self.memory_type = validate_memory_type(self.memory_type)
+
     @classmethod
     def from_row(cls, row: Mapping[str, Any]) -> "Memory":
         tags_json = row["tags"]
@@ -120,7 +146,7 @@ class Memory:
 
         return cls(
             id=row["id"],
-            memory_type=row["memory_type"],
+            memory_type=validate_memory_type(row["memory_type"]),
             content=row["content"],
             created_at=row["created_at"],
             updated_at=row["updated_at"],
@@ -146,7 +172,7 @@ class Memory:
     def to_dict(self) -> dict[str, Any]:
         data: dict[str, Any] = {
             "id": self.id,
-            "memory_type": self.memory_type,
+            "memory_type": self.memory_type.value,
             "content": self.content,
             "created_at": self.created_at,
             "updated_at": self.updated_at,

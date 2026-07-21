@@ -764,7 +764,9 @@ CREATE TABLE memories (
     id UUID PRIMARY KEY,
     project_id UUID NOT NULL REFERENCES projects(id) ON DELETE RESTRICT DEFERRABLE INITIALLY IMMEDIATE,
     is_global BOOLEAN NOT NULL DEFAULT FALSE,
-    memory_type TEXT NOT NULL,
+    memory_type TEXT NOT NULL DEFAULT 'fact'
+        CONSTRAINT memories_memory_type_check
+        CHECK (memory_type IN ('fact', 'preference', 'pattern', 'context')),
     content TEXT NOT NULL,
     source_type TEXT,
     source_session_id UUID REFERENCES sessions(id) ON DELETE SET NULL DEFERRABLE INITIALLY IMMEDIATE,

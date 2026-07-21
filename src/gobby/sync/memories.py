@@ -14,7 +14,7 @@ from uuid import UUID
 from gobby.config.persistence import MemoryBackupConfig
 from gobby.memory.manager import MemoryManager
 from gobby.storage.hub.protocol import HubDatabase
-from gobby.storage.memories import ALL_MEMORIES, MemoryScope
+from gobby.storage.memories import ALL_MEMORIES, MemoryScope, validate_memory_type
 from gobby.sync.jsonl_io import atomic_write_text, export_file_lock
 from gobby.utils.datetime import datetime_to_iso, parse_stored_datetime
 from gobby.utils.json_helpers import json_dumps
@@ -108,6 +108,10 @@ def _validate_memory_record(data: dict[str, Any], line_num: int) -> dict[str, An
     memory_type = data.get("type")
     if not isinstance(memory_type, str) or not memory_type:
         raise MemoryRestoreError(f"Memory backup line {line_num}: type must be non-empty")
+    try:
+        data["type"] = validate_memory_type(memory_type).value
+    except ValueError as exc:
+        raise MemoryRestoreError(f"Memory backup line {line_num}: {exc}") from exc
 
     tags = data.get("tags")
     if tags is not None and (
@@ -304,7 +308,7 @@ class MemoryBackupManager:
                 {
                     "id": memory.id,
                     "content": memory.content,
-                    "type": memory.memory_type,
+                    "type": memory.memory_type.value,
                     "tags": memory.tags,
                     "created_at": memory.created_at,
                     "updated_at": memory.updated_at,

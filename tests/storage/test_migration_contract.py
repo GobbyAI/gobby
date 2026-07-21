@@ -252,6 +252,7 @@ def test_postgres_migrations_limited_to_known_post_baseline() -> None:
         "326_validate_recall_usefulness_label_source.sql",
         "327_failure_category_taxonomy.sql",
         "328_memory_global_visibility.sql",
+        "329_memory_type_enum.sql",
     ]
 
 
@@ -366,7 +367,7 @@ def test_postgres_baseline_version_is_flattened_to_305() -> None:
     # The 0.5.0 pre-release flatten folded 295-305 into the baseline. Hubs below
     # 305 take the corrupt_partial backup/recreate path; later migrations replay.
     assert module.BASELINE_VERSION == 305
-    assert module.latest_known_version() == 328
+    assert module.latest_known_version() == 329
 
 
 def test_failure_category_taxonomy_is_closed_in_baseline_and_migration() -> None:
@@ -836,6 +837,31 @@ def test_memory_global_visibility_schema_and_migration_contract() -> None:
             "WHERE is_global IS TRUE AND deleted_at IS NULL",
         ),
     )
+
+
+def test_memory_type_schema_and_migration_close_free_text_contract() -> None:
+    baseline = _normalize_sql_whitespace(_baseline_text())
+    migration = _normalize_sql_whitespace(
+        (SRC_ROOT / "storage" / "migrations" / "329_memory_type_enum.sql").read_text(
+            encoding="utf-8"
+        )
+    )
+
+    constraint = (
+        "CONSTRAINT memories_memory_type_check CHECK "
+        "(memory_type IN ('fact', 'preference', 'pattern', 'context'))"
+    )
+    assert constraint in baseline
+    assert constraint in migration
+    for legacy_type, canonical_type in (
+        ("debugging_pattern", "pattern"),
+        ("user_preference", "preference"),
+        ("project_context", "context"),
+        ("implementation_note", "fact"),
+    ):
+        assert f"('{legacy_type}', '{canonical_type}')" in migration
+    assert "COALESCE(memory_type_mapping.canonical_type, 'fact')" in migration
+    assert "UPDATE memories SET vector_needs_reindex = TRUE" in migration
 
 
 def test_memory_dream_baseline_and_runtime_define_invariants() -> None:

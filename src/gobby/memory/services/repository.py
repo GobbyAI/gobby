@@ -51,9 +51,7 @@ class MemoryRepository:
         """Convert a MemoryRecord from the backend to a Memory."""
         return Memory(
             id=record.id,
-            memory_type=cast(
-                Literal["fact", "preference", "pattern", "context"], record.memory_type
-            ),
+            memory_type=record.memory_type,
             content=record.content,
             created_at=record.created_at or utc_now(),
             updated_at=record.updated_at or utc_now(),

@@ -407,8 +407,8 @@ class TestProcess:
         """Transient VectorStore upsert failures should not disable future embeddings."""
         mock_vector_store.upsert.side_effect = VectorStoreUnavailableError()
 
-        await dedup_service._embed_and_upsert("mem-1", "content", "proj-1", False)
-        await dedup_service._embed_and_upsert("mem-2", "content", "proj-1", False)
+        await dedup_service._embed_and_upsert("mem-1", "content", "proj-1", False, "fact")
+        await dedup_service._embed_and_upsert("mem-2", "content", "proj-1", False, "fact")
 
         assert mock_embed_fn.call_count == 2
         assert mock_vector_store.upsert.call_count == 2

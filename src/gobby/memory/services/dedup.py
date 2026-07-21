@@ -22,7 +22,7 @@ from gobby.memory.vectorstore import (
     is_recoverable_vector_store_error,
     memory_scope_filter,
 )
-from gobby.storage.memories import MemoryScope
+from gobby.storage.memories import MemoryScope, validate_memory_type
 
 if TYPE_CHECKING:
     from gobby.memory.vectorstore import VectorStore
@@ -139,6 +139,7 @@ class DedupService:
         Returns:
             DedupResult with lists of added and updated memories
         """
+        memory_type = validate_memory_type(memory_type).value
         result = DedupResult()
 
         # Embed the new memory content
@@ -206,7 +207,13 @@ class DedupService:
                     updated = await self._run_storage(
                         self.storage.update_memory, memory_id, content=content
                     )
-                    await self._embed_and_upsert(memory_id, content, project_id, is_global)
+                    await self._embed_and_upsert(
+                        memory_id,
+                        content,
+                        project_id,
+                        is_global,
+                        updated.memory_type.value,
+                    )
                     result.updated.append(updated)
                     return result
                 # Existing content is sufficient
@@ -221,6 +228,7 @@ class DedupService:
         content: str,
         project_id: str,
         is_global: bool,
+        memory_type: str,
     ) -> None:
         """Embed content and upsert to VectorStore."""
         try:
@@ -237,6 +245,7 @@ class DedupService:
                     "content": content,
                     "project_id": project_id,
                     "is_global": is_global,
+                    "memory_type": memory_type,
                 },
             )
         except Exception as e:
@@ -285,5 +294,11 @@ class DedupService:
             source_session_id=source_session_id,
             tags=tags,
         )
-        await self._embed_and_upsert(memory.id, content, project_id, is_global)
+        await self._embed_and_upsert(
+            memory.id,
+            content,
+            project_id,
+            is_global,
+            memory.memory_type.value,
+        )
         return DedupResult(added=[memory])

@@ -12,6 +12,7 @@ TDD RED phase: These tests define expected behavior before implementation.
 from __future__ import annotations
 
 from datetime import UTC, datetime
+from typing import cast
 
 import pytest
 
@@ -22,6 +23,7 @@ from gobby.memory.protocol import (
     MemoryQuery,
     MemoryRecord,
 )
+from gobby.storage.memories import MemoryType
 from gobby.storage.memories_scope import ALL_MEMORIES, MemoryScope
 
 pytestmark = pytest.mark.unit
@@ -113,6 +115,18 @@ class TestMemoryQuery:
         assert query.tags_none is None
         assert query.search_mode == "auto"
 
+    def test_memory_type_is_canonical_enum(self) -> None:
+        query = MemoryQuery(text="test", memory_type=cast(MemoryType, "pattern"))
+
+        assert query.memory_type is MemoryType.PATTERN
+
+    def test_noncanonical_memory_type_is_rejected(self) -> None:
+        with pytest.raises(ValueError, match="Invalid memory_type 'debugging_pattern'"):
+            MemoryQuery(
+                text="test",
+                memory_type=cast(MemoryType, "debugging_pattern"),
+            )
+
     def test_query_is_immutable(self) -> None:
         """Test that query is a frozen dataclass."""
         query = MemoryQuery(text="test")
@@ -172,6 +186,15 @@ class TestMemoryRecord:
         assert record.memory_type == "fact"  # Default type
         assert record.tags == [] or record.tags is None
         assert record.access_count == 0
+
+    def test_noncanonical_memory_type_is_rejected(self) -> None:
+        with pytest.raises(ValueError, match="Invalid memory_type 'debugging_pattern'"):
+            MemoryRecord(
+                id="mem-invalid",
+                content="Invalid",
+                created_at=datetime.now(UTC),
+                memory_type=cast(MemoryType, "debugging_pattern"),
+            )
 
     def test_record_to_dict(self) -> None:
         """Test converting record to dictionary."""

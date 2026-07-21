@@ -14,7 +14,7 @@ from fastapi import APIRouter, HTTPException, Query
 from pydantic import BaseModel, Field
 
 from gobby.servers.responses import JSONResponse
-from gobby.storage.memories import Memory, Visibility
+from gobby.storage.memories import Memory, MemoryType, Visibility
 from gobby.storage.projects import PERSONAL_PROJECT_ID
 
 if TYPE_CHECKING:
@@ -58,8 +58,9 @@ class MemoryCreateRequest(BaseModel):
     """Request body for creating a memory."""
 
     content: str = Field(..., description="Memory content text")
-    memory_type: str = Field(
-        default="fact", description="Memory type (fact, preference, pattern, context)"
+    memory_type: MemoryType = Field(
+        default=MemoryType.FACT,
+        description="Memory type (fact, preference, pattern, context)",
     )
     project_id: str | None = Field(default=None, description="Project ID to associate with")
     is_global: bool = Field(default=False, description="Whether the memory is globally visible")
@@ -76,7 +77,7 @@ class MemoryUpdateRequest(BaseModel):
 
     content: str | None = Field(default=None, description="New content text")
     tags: list[str] | None = Field(default=None, description="New tags")
-    memory_type: str | None = Field(default=None, description="New memory type")
+    memory_type: MemoryType | None = Field(default=None, description="New memory type")
 
 
 class MemoryMoveRequest(BaseModel):
@@ -233,7 +234,7 @@ def create_memory_router(server: "HTTPServer") -> APIRouter:
     @router.get("")
     def list_memories(
         project_id: str | None = Query(None, description="Filter by project ID"),
-        memory_type: str | None = Query(None, description="Filter by memory type"),
+        memory_type: MemoryType | None = Query(None, description="Filter by memory type"),
         limit: int = Query(50, description="Maximum results"),
         offset: int = Query(0, description="Pagination offset"),
         visibility: Visibility = Query(
@@ -291,6 +292,7 @@ def create_memory_router(server: "HTTPServer") -> APIRouter:
     async def search_memories(
         q: str = Query(..., description="Search query"),
         project_id: str | None = Query(None, description="Filter by project ID"),
+        memory_type: MemoryType | None = Query(None, description="Filter by memory type"),
         limit: int = Query(10, description="Maximum results"),
     ) -> dict[str, Any]:
         """Search memories by query."""
@@ -298,6 +300,7 @@ def create_memory_router(server: "HTTPServer") -> APIRouter:
             results = await server.memory_manager.search_memories(
                 query=q,
                 project_id=project_id,
+                memory_type=memory_type,
                 limit=limit,
                 caller="http.memory.search",
             )

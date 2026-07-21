@@ -19,7 +19,7 @@ from __future__ import annotations
 import asyncio
 import logging
 from dataclasses import asdict
-from typing import TYPE_CHECKING, Any, Protocol
+from typing import TYPE_CHECKING, Any, Literal, Protocol
 
 from gobby.mcp_proxy.tools.internal import InternalToolRegistry
 from gobby.mcp_proxy.tools.memory_dream import register_memory_dream_tools
@@ -30,6 +30,7 @@ from gobby.memory.digest import (
     build_turn_and_digest as _build_turn_and_digest,
 )
 from gobby.memory.manager import MemoryManager
+from gobby.storage.memories import MemoryType, validate_memory_type
 from gobby.storage.projects import PERSONAL_PROJECT_ID
 from gobby.sync.memories import is_ephemeral_implementation_note
 
@@ -170,7 +171,7 @@ def create_memory_registry(
     )
     async def create_memory(
         content: str,
-        memory_type: str = "fact",
+        memory_type: MemoryType | Literal["implementation_note"] = MemoryType.FACT,
         tags: list[str] | None = None,
         session_id: str | None = None,
         is_global: bool = False,
@@ -193,6 +194,7 @@ def create_memory_registry(
                     "skipped": True,
                     "reason": "ephemeral_implementation_note",
                 }
+            canonical_memory_type = validate_memory_type(memory_type)
 
             project_id = get_current_project_id() or PERSONAL_PROJECT_ID
 
@@ -235,7 +237,7 @@ def create_memory_registry(
 
             memory = await memory_manager.create_memory(
                 content=content,
-                memory_type=memory_type,
+                memory_type=canonical_memory_type,
                 project_id=project_id,
                 tags=tags,
                 source_type="agent",
@@ -291,6 +293,7 @@ def create_memory_registry(
         query: str | None = None,
         limit: int = 10,
         min_score: float = 0.0,
+        memory_type: MemoryType | None = None,
         tags_all: list[str] | None = None,
         tags_any: list[str] | None = None,
         tags_none: list[str] | None = None,
@@ -316,6 +319,9 @@ def create_memory_registry(
             # the returned payload, and any downstream injection outcome.
             recall_request_id = str(uuid4())
             current_project_id = get_current_project_id() or PERSONAL_PROJECT_ID
+            canonical_memory_type = (
+                validate_memory_type(memory_type) if memory_type is not None else None
+            )
 
             # Fetch extra candidates so we can report diagnostics when
             # nothing passes the threshold.
@@ -324,6 +330,7 @@ def create_memory_registry(
                 project_id=current_project_id,
                 limit=limit * 2 if effective_min_score > 0 else limit,
                 min_score=None,  # no threshold — filter below
+                memory_type=canonical_memory_type,
                 tags_all=tags_all,
                 tags_any=tags_any,
                 tags_none=tags_none,
@@ -484,7 +491,7 @@ def create_memory_registry(
         description="List all memories with optional filtering. Supports tag-based filtering.",
     )
     def list_memories(
-        memory_type: str | None = None,
+        memory_type: MemoryType | None = None,
         limit: int = 50,
         tags_all: list[str] | None = None,
         tags_any: list[str] | None = None,
@@ -501,9 +508,12 @@ def create_memory_registry(
             tags_none: Memory must have NONE of these tags
         """
         try:
+            canonical_memory_type = (
+                validate_memory_type(memory_type) if memory_type is not None else None
+            )
             memories = memory_manager.list_memories(
                 project_id=get_current_project_id() or PERSONAL_PROJECT_ID,
-                memory_type=memory_type,
+                memory_type=canonical_memory_type,
                 limit=limit,
                 tags_all=tags_all,
                 tags_any=tags_any,

@@ -7,6 +7,7 @@ from unittest.mock import AsyncMock, MagicMock
 import pytest
 
 from gobby.memory.services.projection_repair import ProjectionScopeRepairService
+from gobby.storage.memories_models import MemoryType
 from gobby.storage.memories_scope import ALL_MEMORIES
 from gobby.storage.projects import GLOBAL_PROJECT_ID
 
@@ -22,6 +23,7 @@ async def test_repair_uses_authoritative_scope_and_repairs_falkor_in_place() -> 
         content="explicit scope",
         project_id="project-1",
         is_global=False,
+        memory_type=MemoryType.FACT,
     )
     storage = MagicMock()
     storage.list_vector_reindex_ids = MagicMock(side_effect=[[memory.id], []])
@@ -50,7 +52,13 @@ async def test_repair_uses_authoritative_scope_and_repairs_falkor_in_place() -> 
     assert result.graph_memories_repaired == 1
     assert result.graph_entities_repaired == 5
     assert result.failures == []
-    restore.assert_awaited_once_with(memory.id, memory.content, "project-1", False)
+    restore.assert_awaited_once_with(
+        memory.id,
+        memory.content,
+        "project-1",
+        False,
+        memory.memory_type.value,
+    )
     storage.get_memories.assert_called_once_with([memory.id], ALL_MEMORIES, visibility="all")
     memory_cypher, memory_params = falkor.query.await_args_list[0].args
     assert "SET m.project_id = $project_id, m.is_global = $is_global" in memory_cypher
@@ -70,6 +78,7 @@ async def test_repair_preserves_pending_work_and_reports_retryable_failures() ->
         content="retry me",
         project_id="project-1",
         is_global=True,
+        memory_type=MemoryType.FACT,
     )
     storage = MagicMock()
     storage.list_vector_reindex_ids = MagicMock(return_value=[memory.id])

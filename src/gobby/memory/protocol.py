@@ -28,6 +28,7 @@ from datetime import UTC, datetime
 from enum import Enum
 from typing import TYPE_CHECKING, Any, Protocol, runtime_checkable
 
+from gobby.storage.memories_models import MemoryType, validate_memory_type
 from gobby.storage.memories_scope import ALL_MEMORIES, MemoryScope
 from gobby.storage.projects import PERSONAL_PROJECT_ID
 
@@ -127,12 +128,16 @@ class MemoryQuery:
     scope: MemoryScope = ALL_MEMORIES
     user_id: str | None = None
     limit: int = 10
-    memory_type: str | None = None
+    memory_type: MemoryType | None = None
     tags_all: list[str] | None = None
     tags_any: list[str] | None = None
     tags_none: list[str] | None = None
     search_mode: str = "auto"
     visibility: Visibility = "active"
+
+    def __post_init__(self) -> None:
+        if self.memory_type is not None:
+            object.__setattr__(self, "memory_type", validate_memory_type(self.memory_type))
 
 
 @dataclass
@@ -171,7 +176,7 @@ class MemoryRecord:
     content: str
     created_at: datetime
     project_id: str = PERSONAL_PROJECT_ID
-    memory_type: str = "fact"
+    memory_type: MemoryType = MemoryType.FACT
     updated_at: datetime | None = None
     is_global: bool = False
     user_id: str | None = None
@@ -186,13 +191,16 @@ class MemoryRecord:
     last_dreamed_at: datetime | None = None
     vector_needs_reindex: bool = False
 
+    def __post_init__(self) -> None:
+        self.memory_type = validate_memory_type(self.memory_type)
+
     def to_dict(self) -> dict[str, Any]:
         """Convert record to dictionary for serialization."""
         return {
             "id": self.id,
             "content": self.content,
             "created_at": self.created_at.isoformat() if self.created_at else None,
-            "memory_type": self.memory_type,
+            "memory_type": self.memory_type.value,
             "updated_at": self.updated_at.isoformat() if self.updated_at else None,
             "project_id": self.project_id,
             "is_global": self.is_global,
@@ -241,7 +249,7 @@ class MemoryRecord:
             id=data["id"],
             content=data["content"],
             created_at=created_at,
-            memory_type=data.get("memory_type", "fact"),
+            memory_type=validate_memory_type(data.get("memory_type", MemoryType.FACT)),
             updated_at=updated_at,
             project_id=data["project_id"],
             is_global=bool(data.get("is_global", False)),

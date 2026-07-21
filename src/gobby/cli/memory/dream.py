@@ -6,6 +6,7 @@ import click
 import httpx
 
 from gobby.cli.memory.common import _get_daemon_client
+from gobby.storage.memories import MEMORY_TYPE_VALUES
 
 
 @click.group("dream", invoke_without_command=True)
@@ -15,7 +16,12 @@ from gobby.cli.memory.common import _get_daemon_client
     is_flag=True,
     help="Skip consolidation planning and leave candidates for review",
 )
-@click.option("--memory-type", "memory_type", help="Limit the scan to a memory type")
+@click.option(
+    "--memory-type",
+    "memory_type",
+    type=click.Choice(MEMORY_TYPE_VALUES),
+    help="Limit the scan to a memory type",
+)
 @click.option(
     "--full/--no-full",
     "full_sweep",

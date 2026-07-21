@@ -67,6 +67,21 @@ class TestMemoryCreateCommand:
             source_type="user",
         )
 
+    @patch("gobby.cli.memory.get_memory_manager")
+    def test_create_rejects_noncanonical_memory_type(
+        self,
+        mock_get_manager: MagicMock,
+        runner: CliRunner,
+    ) -> None:
+        result = runner.invoke(
+            cli,
+            ["memory", "create", "Bad type", "--type", "debugging_pattern"],
+        )
+
+        assert result.exit_code == 2
+        assert "Invalid value for '--type'" in result.output
+        mock_get_manager.assert_not_called()
+
 
 class TestMemoryShowCommand:
     """Tests for gobby memory show command."""
@@ -304,6 +319,21 @@ class TestMemoryRecallCommand:
         assert call_kwargs["tags_any"] == ["tag3", "tag4"]
         assert call_kwargs["tags_none"] == ["excluded"]
 
+    @patch("gobby.cli.memory.get_memory_manager")
+    def test_recall_rejects_noncanonical_memory_type(
+        self,
+        mock_get_manager: MagicMock,
+        runner: CliRunner,
+    ) -> None:
+        result = runner.invoke(
+            cli,
+            ["memory", "recall", "query", "--type", "debugging_pattern"],
+        )
+
+        assert result.exit_code == 2
+        assert "Invalid value for '--type'" in result.output
+        mock_get_manager.assert_not_called()
+
 
 class TestMemoryListCommand:
     """Tests for gobby memory list command."""
@@ -387,6 +417,21 @@ class TestMemoryListCommand:
         call_kwargs = mock_manager.list_memories.call_args[1]
         assert call_kwargs["memory_type"] == "fact"
         assert call_kwargs["limit"] == 20
+
+    @patch("gobby.cli.memory.get_memory_manager")
+    def test_list_rejects_noncanonical_memory_type(
+        self,
+        mock_get_manager: MagicMock,
+        runner: CliRunner,
+    ) -> None:
+        result = runner.invoke(
+            cli,
+            ["memory", "list", "--type", "debugging_pattern"],
+        )
+
+        assert result.exit_code == 2
+        assert "Invalid value for '--type'" in result.output
+        mock_get_manager.assert_not_called()
 
 
 class TestMemoryStatsCommand:
@@ -750,48 +795,6 @@ class TestMemoryRestoreCommand:
 
         assert result.exit_code == 1
         assert "corrupt JSONL" in result.output
-
-
-class TestMemoryFixNullProjectCommand:
-    """Tests for gobby memory fix-null-project."""
-
-    @pytest.fixture
-    def runner(self) -> CliRunner:
-        """Create a CLI test runner."""
-        return CliRunner()
-
-    @patch("gobby.cli.memory.get_memory_manager")
-    def test_fix_null_project_dry_run_delegates_to_manager(
-        self,
-        mock_get_manager: MagicMock,
-        runner: CliRunner,
-    ) -> None:
-        """The repair command delegates mutation planning to MemoryManager."""
-        mock_manager = MagicMock()
-        mock_manager.fix_null_project_ids_from_sessions = AsyncMock(
-            return_value=SimpleNamespace(
-                total=1,
-                fixable=1,
-                fixed=0,
-                repairs=[
-                    SimpleNamespace(
-                        memory_id="mem-123456789",
-                        content="Needs project assignment",
-                        source_session_id="sess-123",
-                        project_id="proj-123456789",
-                    )
-                ],
-            )
-        )
-        mock_get_manager.return_value = mock_manager
-
-        result = runner.invoke(cli, ["memory", "fix-null-project", "--dry-run"])
-
-        assert result.exit_code == 0
-        mock_manager.fix_null_project_ids_from_sessions.assert_awaited_once_with(dry_run=True)
-        assert "Found 1 memories with NULL project_id from sessions/agents." in result.output
-        assert "Would fix mem-12345678: set project_id=proj-1234567" in result.output
-        assert "Would fix 1 memories. Run without --dry-run to apply." in result.output
 
 
 class TestResolveMemoryId:

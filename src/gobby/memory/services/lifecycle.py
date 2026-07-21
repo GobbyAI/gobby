@@ -11,7 +11,13 @@ from typing import TYPE_CHECKING, Any, cast
 from gobby.memory.protocol import MemoryBackendProtocol, MemoryRecord
 from gobby.memory.services.crossref import CrossrefService
 from gobby.memory.vectorstore import is_recoverable_vector_store_error
-from gobby.storage.memories import LocalMemoryManager, Memory, MemoryScope
+from gobby.storage.memories import (
+    LocalMemoryManager,
+    Memory,
+    MemoryScope,
+    MemoryType,
+    validate_memory_type,
+)
 
 if TYPE_CHECKING:
     from gobby.config.persistence import MemoryConfig
@@ -180,7 +186,7 @@ class MemoryLifecycleService:
         self,
         content: str,
         project_id: str,
-        memory_type: str = "fact",
+        memory_type: str | MemoryType = MemoryType.FACT,
         source_type: str = "agent",
         source_session_id: str | None = None,
         tags: list[str] | None = None,
@@ -188,6 +194,7 @@ class MemoryLifecycleService:
         is_global: bool = False,
     ) -> Memory:
         """Store a new memory in storage and secondary indices."""
+        memory_type = validate_memory_type(memory_type)
         normalized_content = content.strip()
         scope = MemoryScope.global_only() if is_global else MemoryScope.project_visible(project_id)
         if await self.backend.content_exists(normalized_content, scope):
@@ -205,7 +212,7 @@ class MemoryLifecycleService:
         record = await self.backend.create(
             content=content,
             project_id=project_id,
-            memory_type=memory_type,
+            memory_type=memory_type.value,
             is_global=is_global,
             source_type=source_type,
             source_session_id=source_session_id,
@@ -216,7 +223,11 @@ class MemoryLifecycleService:
         await self._embed_and_upsert(
             memory.id,
             content,
-            payload={"project_id": project_id, "is_global": is_global},
+            payload={
+                "project_id": project_id,
+                "is_global": is_global,
+                "memory_type": memory.memory_type.value,
+            },
         )
 
         if getattr(self._config, "auto_crossref", False):
@@ -330,7 +341,11 @@ class MemoryLifecycleService:
             try:
                 await self._vector_store.set_payload(
                     memory.id,
-                    {"project_id": memory.project_id, "is_global": memory.is_global},
+                    {
+                        "project_id": memory.project_id,
+                        "is_global": memory.is_global,
+                        "memory_type": memory.memory_type.value,
+                    },
                 )
             except Exception as exc:
                 logger.warning("VectorStore scope sync failed for %s: %s", memory.id, exc)
@@ -344,12 +359,17 @@ class MemoryLifecycleService:
         content: str,
         project_id: str,
         is_global: bool,
+        memory_type: str,
     ) -> bool:
         """Recreate vector and graph-index state for a restored memory row."""
         indexed = await self._embed_and_upsert(
             memory_id,
             content,
-            payload={"project_id": project_id, "is_global": is_global},
+            payload={
+                "project_id": project_id,
+                "is_global": is_global,
+                "memory_type": validate_memory_type(memory_type).value,
+            },
         )
         if indexed:
             await self._run_storage(
@@ -402,7 +422,11 @@ class MemoryLifecycleService:
         indexed = await self._embed_and_upsert(
             memory.id,
             memory.content,
-            payload={"project_id": memory.project_id, "is_global": memory.is_global},
+            payload={
+                "project_id": memory.project_id,
+                "is_global": memory.is_global,
+                "memory_type": memory.memory_type.value,
+            },
         )
         if indexed:
             cleared = await self._run_storage(
@@ -439,6 +463,37 @@ class MemoryLifecycleService:
             except Exception as exc:
                 logger.warning("Crossref rebuild failed for %s: %s", memory.id, exc)
 
+    async def _sync_memory_type_payload(self, memory: Memory) -> None:
+        """Update the Qdrant type payload after a type-only revision."""
+        if self._vector_store is None:
+            return
+        try:
+            await self._vector_store.set_payload(
+                memory.id,
+                {
+                    "project_id": memory.project_id,
+                    "is_global": memory.is_global,
+                    "memory_type": memory.memory_type.value,
+                },
+            )
+        except Exception as exc:
+            logger.warning("VectorStore type sync failed for %s: %s", memory.id, exc)
+            return
+        cleared = await self._run_storage(
+            self.storage.mark_vectors_reindexed,
+            {memory.id: memory.content},
+        )
+        if cleared:
+            memory.vector_needs_reindex = False
+
+    async def _sync_updated_indices(self, old_memory: Memory | None, memory: Memory) -> None:
+        if old_memory is None:
+            return
+        if old_memory.content != memory.content:
+            await self._refresh_content_indices(old_memory=old_memory, memory=memory)
+        elif old_memory.memory_type != memory.memory_type:
+            await self._sync_memory_type_payload(memory)
+
     async def update_memory(
         self,
         memory_id: str,
@@ -449,7 +504,7 @@ class MemoryLifecycleService:
         """Update a memory and refresh secondary indices after content revisions."""
         old_memory = (
             await self._run_storage(self.storage.get_memory, memory_id, visibility="all")
-            if content is not None
+            if content is not None or memory_type is not None
             else None
         )
         result = await self._run_storage(
@@ -459,8 +514,7 @@ class MemoryLifecycleService:
             tags=tags,
             memory_type=memory_type,
         )
-        if old_memory is not None and old_memory.content != result.content:
-            await self._refresh_content_indices(old_memory=old_memory, memory=result)
+        await self._sync_updated_indices(old_memory, result)
         return result
 
     async def update_memory_scoped(
@@ -479,7 +533,7 @@ class MemoryLifecycleService:
                 scope=MemoryScope.project_visible(project_id),
                 visibility="all",
             )
-            if content is not None
+            if content is not None or memory_type is not None
             else None
         )
         result = await self._run_storage(
@@ -490,8 +544,7 @@ class MemoryLifecycleService:
             tags=tags,
             memory_type=memory_type,
         )
-        if old_memory is not None and old_memory.content != result.content:
-            await self._refresh_content_indices(old_memory=old_memory, memory=result)
+        await self._sync_updated_indices(old_memory, result)
         return result
 
     async def aupdate_memory(

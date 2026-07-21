@@ -73,6 +73,7 @@ class MemoryDreamManagerProtocol(Protocol):
         content: str,
         project_id: str,
         is_global: bool,
+        memory_type: str,
     ) -> bool: ...
 
     async def delete_memory(self, memory_id: str) -> bool: ...

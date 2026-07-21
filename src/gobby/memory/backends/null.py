@@ -14,6 +14,7 @@ from typing import TYPE_CHECKING, Any
 from uuid import uuid4
 
 from gobby.memory.protocol import MemoryCapability, MemoryQuery, MemoryRecord
+from gobby.storage.memories_models import validate_memory_type
 from gobby.storage.memories_scope import ALL_MEMORIES, MemoryScope
 from gobby.storage.projects import PERSONAL_PROJECT_ID
 
@@ -57,7 +58,7 @@ class NullBackend:
             id=f"null-{uuid4().hex[:8]}",
             content=content,
             created_at=now,
-            memory_type=memory_type,
+            memory_type=validate_memory_type(memory_type),
             project_id=project_id,
             is_global=is_global,
             user_id=user_id,

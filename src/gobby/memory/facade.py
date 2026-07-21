@@ -503,12 +503,14 @@ class MemoryManagerFacadeMethods:
         content: str,
         project_id: str,
         is_global: bool,
+        memory_type: str,
     ) -> bool:
         return await self._lifecycle_service.restore_memory_indices(
             memory_id,
             content,
             project_id,
             is_global,
+            memory_type,
         )
 
     async def repair_secondary_scope_projections(self) -> ProjectionScopeRepairResult:

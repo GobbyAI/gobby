@@ -319,7 +319,8 @@ class TestMemoryScopeChanges:
         assert result is updated
         manager.storage.set_memory_global.assert_called_once_with("mem-1", True)
         vector_store.set_payload.assert_awaited_once_with(
-            "mem-1", {"project_id": "proj-1", "is_global": True}
+            "mem-1",
+            {"project_id": "proj-1", "is_global": True, "memory_type": "fact"},
         )
         manager.storage.mark_pending_graph.assert_called_once_with("mem-1")
 
@@ -902,7 +903,11 @@ class TestVectorStoreIntegration:
         mock_vs.upsert.assert_awaited_once_with(
             memory.id,
             [0.1, 0.2],
-            {"project_id": PERSONAL_PROJECT_ID, "is_global": False},
+            {
+                "project_id": PERSONAL_PROJECT_ID,
+                "is_global": False,
+                "memory_type": "fact",
+            },
         )
         embedding_records = [
             record
@@ -962,12 +967,22 @@ class TestLifecycleService:
         )
         manager.storage.mark_graph_processed(memory.id)
 
-        await manager.restore_memory_indices(memory.id, memory.content, PROJECT_ID, False)
+        await manager.restore_memory_indices(
+            memory.id,
+            memory.content,
+            PROJECT_ID,
+            False,
+            memory.memory_type.value,
+        )
 
         mock_vs.upsert.assert_awaited_once_with(
             memory.id,
             [0.1, 0.2],
-            {"project_id": PROJECT_ID, "is_global": False},
+            {
+                "project_id": PROJECT_ID,
+                "is_global": False,
+                "memory_type": memory.memory_type.value,
+            },
         )
         row = db.fetchone("SELECT graph_processed FROM memories WHERE id = %s", (memory.id,))
         assert row is not None
@@ -1045,7 +1060,7 @@ class TestLifecycleService:
         mock_vs.upsert.assert_awaited_once_with(
             memory.id,
             [0.1, 0.2],
-            {"project_id": PROJECT_ID, "is_global": False},
+            {"project_id": PROJECT_ID, "is_global": False, "memory_type": "fact"},
         )
         kg_service.remove_memory_from_graph.assert_awaited_once_with(
             memory.id,

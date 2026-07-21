@@ -2,7 +2,12 @@ from datetime import datetime
 from typing import Any
 
 from gobby.storage.memories_base import MemoryStoreBase
-from gobby.storage.memories_models import Memory, Visibility, visibility_predicate
+from gobby.storage.memories_models import (
+    Memory,
+    Visibility,
+    validate_memory_type,
+    visibility_predicate,
+)
 from gobby.storage.memories_scope import ALL_MEMORIES, MemoryScope, memory_scope_predicate
 from gobby.storage.sql_dialect import json_array_contains_condition, json_empty_array_coalesce_expr
 from gobby.utils.datetime import parse_stored_datetime
@@ -23,9 +28,9 @@ class MemoryQueryMixin(MemoryStoreBase):
         if scope_predicate:
             clauses.append(scope_predicate)
             params.extend(scope_params)
-        if memory_type:
+        if memory_type is not None:
             clauses.append("memory_type = %s")
-            params.append(memory_type)
+            params.append(validate_memory_type(memory_type).value)
         vis = visibility_predicate(visibility)
         if vis:
             clauses.append(vis)
@@ -74,9 +79,9 @@ class MemoryQueryMixin(MemoryStoreBase):
             query += f" AND {scope_predicate}"
             params.extend(scope_params)
 
-        if memory_type:
+        if memory_type is not None:
             query += " AND memory_type = %s"
-            params.append(memory_type)
+            params.append(validate_memory_type(memory_type).value)
 
         vis = visibility_predicate(visibility)
         if vis:

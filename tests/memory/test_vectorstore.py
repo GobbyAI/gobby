@@ -355,6 +355,17 @@ def test_memory_scope_filter_includes_project_and_explicit_global_payloads() -> 
     ]
 
 
+def test_memory_scope_filter_requires_canonical_memory_type() -> None:
+    scope_filter = memory_scope_filter(MemoryScope.project_visible("proj-A"), "pattern")
+
+    assert scope_filter is not None
+    dumped = scope_filter.model_dump(mode="python")
+    assert dumped["must"][0]["key"] == "memory_type"
+    assert dumped["must"][0]["match"] == {"value": "pattern"}
+    with pytest.raises(ValueError, match="Invalid memory_type 'debugging_pattern'"):
+        memory_scope_filter(MemoryScope.project_visible("proj-A"), "debugging_pattern")
+
+
 @pytest.mark.asyncio
 async def test_search_with_memory_scope_filter_includes_explicit_globals(
     vector_store: VectorStore,

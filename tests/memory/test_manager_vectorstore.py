@@ -241,8 +241,38 @@ async def test_update_memory_content_reembeds_same_id(
     mock_vector_store.upsert.assert_awaited_once_with(
         memory.id,
         [0.1, 0.2, 0.3, 0.4] * 384,
-        {"project_id": PERSONAL_PROJECT_ID, "is_global": False},
+        {
+            "project_id": PERSONAL_PROJECT_ID,
+            "is_global": False,
+            "memory_type": "fact",
+        },
     )
+
+
+@pytest.mark.asyncio
+async def test_update_memory_type_syncs_qdrant_payload_without_reembedding(
+    manager: MemoryManager,
+    mock_vector_store: AsyncMock,
+    mock_embed_fn: AsyncMock,
+) -> None:
+    memory = await manager.create_memory(content="typed payload")
+    await asyncio.gather(*tuple(manager._background_tasks))
+    mock_vector_store.set_payload.reset_mock()
+    mock_embed_fn.reset_mock()
+
+    updated = await manager.update_memory(memory.id, memory_type="pattern")
+
+    mock_vector_store.set_payload.assert_awaited_once_with(
+        memory.id,
+        {
+            "project_id": PERSONAL_PROJECT_ID,
+            "is_global": False,
+            "memory_type": "pattern",
+        },
+    )
+    mock_embed_fn.assert_not_awaited()
+    assert updated.memory_type == "pattern"
+    assert updated.vector_needs_reindex is False
 
 
 @pytest.mark.asyncio

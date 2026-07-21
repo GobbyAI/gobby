@@ -186,7 +186,12 @@ async def test_reconcile_backfills_missing_vectors_and_deletes_orphans() -> None
         (
             "missing",
             [0.4, 0.5],
-            {"content": "Missing", "project_id": "project-1", "is_global": False},
+            {
+                "content": "Missing",
+                "project_id": "project-1",
+                "is_global": False,
+                "memory_type": "fact",
+            },
         )
     ]
 

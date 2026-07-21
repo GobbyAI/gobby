@@ -308,6 +308,12 @@ class TestListMemories:
         assert response.status_code == 422
         mock_server.memory_manager.list_memories.assert_not_called()
 
+    def test_list_rejects_noncanonical_memory_type(self, client, mock_server) -> None:
+        response = client.get("/api/memories", params={"memory_type": "debugging_pattern"})
+
+        assert response.status_code == 422
+        mock_server.memory_manager.list_memories.assert_not_called()
+
 
 # =============================================================================
 # POST /memories - create
@@ -340,6 +346,15 @@ class TestCreateMemory:
         """POST /memories requires content field."""
         response = client.post("/api/memories", json={})
         assert response.status_code == 422
+
+    def test_create_rejects_noncanonical_memory_type(self, client, mock_server) -> None:
+        response = client.post(
+            "/api/memories",
+            json={"content": "Bad type", "memory_type": "debugging_pattern"},
+        )
+
+        assert response.status_code == 422
+        mock_server.memory_manager.create_memory.assert_not_called()
 
     def test_create_memory_server_error(self, client, mock_server) -> None:
         """POST /memories returns 500 when manager raises error."""
@@ -409,6 +424,15 @@ class TestUpdateMemory:
         mock_server.memory_manager.update_memory.side_effect = ValueError("Memory not found")
         response = client.put("/api/memories/nonexistent", json={"content": "new content"})
         assert response.status_code == 404
+
+    def test_update_rejects_noncanonical_memory_type(self, client, mock_server) -> None:
+        response = client.put(
+            "/api/memories/mm-abc123",
+            json={"memory_type": "debugging_pattern"},
+        )
+
+        assert response.status_code == 422
+        mock_server.memory_manager.update_memory.assert_not_called()
 
 
 # =============================================================================
@@ -533,15 +557,30 @@ class TestSearchMemories:
         mock_server.memory_manager.search_memories.return_value = []
         response = client.get(
             "/api/memories/search",
-            params={"q": "test", "project_id": "proj-1", "limit": 5},
+            params={
+                "q": "test",
+                "project_id": "proj-1",
+                "memory_type": "pattern",
+                "limit": 5,
+            },
         )
         assert response.status_code == 200
         mock_server.memory_manager.search_memories.assert_called_once_with(
             query="test",
             project_id="proj-1",
+            memory_type="pattern",
             limit=5,
             caller="http.memory.search",
         )
+
+    def test_search_rejects_noncanonical_memory_type(self, client, mock_server) -> None:
+        response = client.get(
+            "/api/memories/search",
+            params={"q": "test", "memory_type": "debugging_pattern"},
+        )
+
+        assert response.status_code == 422
+        mock_server.memory_manager.search_memories.assert_not_called()
 
 
 # =============================================================================

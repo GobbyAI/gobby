@@ -6,6 +6,8 @@ from types import ModuleType
 
 import click
 
+from gobby.storage.memories import MEMORY_TYPE_VALUES
+
 from ._formatting import format_tags, parse_tags, truncate
 
 
@@ -16,7 +18,12 @@ def _facade() -> ModuleType:
 @click.command()
 @click.argument("content")
 @click.option(
-    "--type", "-t", "memory_type", default="fact", help="Type of memory (fact, preference, etc.)"
+    "--type",
+    "-t",
+    "memory_type",
+    type=click.Choice(MEMORY_TYPE_VALUES),
+    default="fact",
+    help="Type of memory",
 )
 @click.option("--project", "-p", "project_ref", help="Project (name or UUID)")
 @click.pass_context
@@ -39,6 +46,7 @@ def create(ctx: click.Context, content: str, memory_type: str, project_ref: str 
 @click.command()
 @click.argument("query", required=False)
 @click.option("--project", "-p", "project_ref", help="Project (name or UUID)")
+@click.option("--type", "-t", "memory_type", type=click.Choice(MEMORY_TYPE_VALUES))
 @click.option("--limit", "-n", default=10, help="Max results")
 @click.option("--tags-all", "tags_all", help="Require ALL tags (comma-separated)")
 @click.option("--tags-any", "tags_any", help="Require ANY tag (comma-separated)")
@@ -48,6 +56,7 @@ def recall(
     ctx: click.Context,
     query: str | None,
     project_ref: str | None,
+    memory_type: str | None,
     limit: int,
     tags_all: str | None,
     tags_any: str | None,
@@ -62,6 +71,7 @@ def recall(
         manager.search_memories(
             query=query,
             project_id=project_id,
+            memory_type=memory_type,
             limit=limit,
             tags_all=parse_tags(tags_all),
             tags_any=parse_tags(tags_any),
@@ -98,7 +108,9 @@ def delete(ctx: click.Context, memory_ref: str, project_ref: str | None = None) 
 
 
 @click.command("list")
-@click.option("--type", "-t", "memory_type", help="Filter by memory type")
+@click.option(
+    "--type", "-t", "memory_type", type=click.Choice(MEMORY_TYPE_VALUES), help="Filter by type"
+)
 @click.option("--limit", "-n", default=50, help="Max results")
 @click.option("--project", "-p", "project_ref", help="Project (name or UUID)")
 @click.option("--tags-all", "tags_all", help="Require ALL tags (comma-separated)")

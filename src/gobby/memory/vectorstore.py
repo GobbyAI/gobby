@@ -34,6 +34,7 @@ from qdrant_client.models import (
 
 from gobby.memory.vectorstore_rebuild import RebuildCollectionPlan
 from gobby.memory.vectorstore_status import VectorStoreStatus
+from gobby.storage.memories_models import MemoryType, validate_memory_type
 from gobby.storage.memories_scope import MemoryScope, MemoryScopeKind
 
 logger = logging.getLogger(__name__)
@@ -76,35 +77,38 @@ def is_recoverable_vector_store_error(error: BaseException) -> bool:
     return isinstance(error, httpx.TransportError)
 
 
-def memory_scope_filter(scope: MemoryScope) -> Filter | None:
+def memory_scope_filter(
+    scope: MemoryScope, memory_type: str | MemoryType | None = None
+) -> Filter | None:
     """Return a Qdrant filter for an explicit memory scope."""
-    if scope.kind is MemoryScopeKind.ALL:
-        return None
-    if scope.kind is MemoryScopeKind.GLOBAL_ONLY:
-        return Filter(
-            must=[
-                FieldCondition(key="is_global", match=MatchValue(value=True)),
-            ]
+    type_conditions = []
+    if memory_type is not None:
+        type_conditions.append(
+            FieldCondition(
+                key="memory_type",
+                match=MatchValue(value=validate_memory_type(memory_type).value),
+            )
         )
+    if scope.kind is MemoryScopeKind.ALL:
+        return Filter(must=type_conditions) if type_conditions else None
+    global_condition = FieldCondition(key="is_global", match=MatchValue(value=True))
+    if scope.kind is MemoryScopeKind.GLOBAL_ONLY:
+        return Filter(must=[*type_conditions, global_condition])
     project_condition = FieldCondition(
         key="project_id",
         match=MatchValue(value=scope.project_id),
     )
     if scope.kind is MemoryScopeKind.OWNER:
-        return Filter(must=[project_condition])
+        return Filter(must=[*type_conditions, project_condition])
     if scope.kind is MemoryScopeKind.PROJECT_ONLY:
         return Filter(
             must=[
+                *type_conditions,
                 project_condition,
                 FieldCondition(key="is_global", match=MatchValue(value=False)),
             ]
         )
-    return Filter(
-        should=[
-            project_condition,
-            FieldCondition(key="is_global", match=MatchValue(value=True)),
-        ]
-    )
+    return Filter(must=type_conditions or None, should=[project_condition, global_condition])
 
 
 class VectorStore:

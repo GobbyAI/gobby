@@ -6,7 +6,7 @@ import pytest
 
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.memories import LocalMemoryManager
-from gobby.storage.memories_models import Memory, visibility_predicate
+from gobby.storage.memories_models import Memory, MemoryType, visibility_predicate
 from gobby.storage.memories_scope import ALL_MEMORIES, GLOBAL_MEMORIES, MemoryScope
 from gobby.storage.projects import PERSONAL_PROJECT_ID
 
@@ -68,6 +68,17 @@ def test_create_memory(memory_manager) -> None:
     assert memory.tags == ["test"]
 
 
+def test_create_memory_rejects_noncanonical_type(memory_manager) -> None:
+    with pytest.raises(ValueError, match="Invalid memory_type 'debugging_pattern'"):
+        memory_manager.create_memory(content="Bad type", memory_type="debugging_pattern")
+
+
+def test_memory_model_coerces_canonical_string_to_enum(memory_manager) -> None:
+    memory = memory_manager.create_memory(content="Canonical type", memory_type="fact")
+
+    assert memory.memory_type is MemoryType.FACT
+
+
 def test_get_memory(memory_manager) -> None:
     created = memory_manager.create_memory(content="Test get")
     retrieved = memory_manager.get_memory(created.id)
@@ -83,6 +94,45 @@ def test_update_memory(memory_manager) -> None:
     assert updated.id == created.id
     assert updated.content == "Updated"
     assert memory_manager.get_memory(created.id).content == "Updated"
+
+
+def test_update_memory_type_marks_vector_payload_stale(memory_manager) -> None:
+    memory = memory_manager.create_memory(content="Type update")
+
+    updated = memory_manager.update_memory(memory.id, memory_type="pattern")
+
+    assert updated.memory_type is MemoryType.PATTERN
+    assert updated.vector_needs_reindex is True
+
+
+def test_update_memory_with_same_type_keeps_vector_payload_fresh(memory_manager) -> None:
+    memory = memory_manager.create_memory(content="Same type update")
+
+    updated = memory_manager.update_memory(memory.id, memory_type="fact")
+
+    assert updated.memory_type is MemoryType.FACT
+    assert updated.vector_needs_reindex is False
+
+
+def test_update_content_and_type_marks_vector_payload_stale_once(memory_manager) -> None:
+    memory = memory_manager.create_memory(content="Combined type update")
+
+    updated = memory_manager.update_memory(
+        memory.id,
+        content="Combined type and content update",
+        memory_type="context",
+    )
+
+    assert updated.content == "Combined type and content update"
+    assert updated.memory_type is MemoryType.CONTEXT
+    assert updated.vector_needs_reindex is True
+
+
+def test_update_memory_rejects_noncanonical_type(memory_manager) -> None:
+    memory = memory_manager.create_memory(content="Type update rejection")
+
+    with pytest.raises(ValueError, match="Invalid memory_type 'debugging_pattern'"):
+        memory_manager.update_memory(memory.id, memory_type="debugging_pattern")
 
 
 def test_content_update_tracks_and_clears_stale_vector_state(memory_manager) -> None:
@@ -701,6 +751,14 @@ def test_list_memories_by_type(memory_manager) -> None:
     preferences = memory_manager.list_memories(memory_type="preference")
     assert len(preferences) == 1
     assert preferences[0].memory_type == "preference"
+
+
+def test_list_and_count_reject_noncanonical_type(memory_manager) -> None:
+    for invalid_type in ("debugging_pattern", ""):
+        with pytest.raises(ValueError, match="Invalid memory_type"):
+            memory_manager.list_memories(memory_type=invalid_type)
+        with pytest.raises(ValueError, match="Invalid memory_type"):
+            memory_manager.count_memories(memory_type=invalid_type)
 
 
 def test_list_memories_offset(memory_manager) -> None:

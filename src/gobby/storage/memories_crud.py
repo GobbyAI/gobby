@@ -8,7 +8,9 @@ from gobby.storage.memories_base import MemoryStoreBase
 from gobby.storage.memories_models import (
     MEMORY_UUID_NAMESPACE,
     Memory,
+    MemoryType,
     Visibility,
+    validate_memory_type,
     visibility_predicate,
 )
 from gobby.storage.memories_scope import (
@@ -34,7 +36,7 @@ class MemoryCrudMixin(MemoryStoreBase):
         self,
         content: str,
         project_id: str,
-        memory_type: str = "fact",
+        memory_type: str | MemoryType = MemoryType.FACT,
         source_type: str = "agent",
         source_session_id: str | None = None,
         tags: list[str] | None = None,
@@ -49,6 +51,7 @@ class MemoryCrudMixin(MemoryStoreBase):
             logger.warning("Skipping memory creation: empty content provided")
             raise ValueError("Memory content cannot be empty")
 
+        canonical_memory_type = validate_memory_type(memory_type)
         now = utc_now()
         created_at_value = to_aware_utc(created_at) if created_at is not None else now
         updated_at_value = to_aware_utc(updated_at) if updated_at is not None else now
@@ -215,7 +218,7 @@ class MemoryCrudMixin(MemoryStoreBase):
                         final_memory_id,
                         project_id,
                         is_global,
-                        memory_type,
+                        canonical_memory_type.value,
                         normalized_content,
                         source_type,
                         source_session_id,
@@ -246,7 +249,7 @@ class MemoryCrudMixin(MemoryStoreBase):
                         final_memory_id,
                         project_id,
                         is_global,
-                        memory_type,
+                        canonical_memory_type.value,
                         normalized_content,
                         source_type,
                         source_session_id,
@@ -388,7 +391,7 @@ class MemoryCrudMixin(MemoryStoreBase):
         memory_id: str,
         content: str | None = None,
         tags: list[str] | None = None,
-        memory_type: str | None = None,
+        memory_type: str | MemoryType | None = None,
     ) -> Memory:
         return self._update_memory_in_scope(
             memory_id=memory_id,
@@ -405,7 +408,7 @@ class MemoryCrudMixin(MemoryStoreBase):
         project_id: str,
         content: str | None = None,
         tags: list[str] | None = None,
-        memory_type: str | None = None,
+        memory_type: str | MemoryType | None = None,
     ) -> Memory:
         """Update a memory only when it is visible in the requested project scope."""
         scope_predicate, scope_params = memory_scope_predicate(
@@ -426,12 +429,14 @@ class MemoryCrudMixin(MemoryStoreBase):
         memory_id: str,
         content: str | None,
         tags: list[str] | None,
-        memory_type: str | None,
+        memory_type: str | MemoryType | None,
         scope_clause: str,
         scope_params: tuple[str, ...],
     ) -> Memory:
         updates = []
         params: list[Any] = []
+        needs_vector_reindex = False
+        canonical_memory_type: MemoryType | None = None
 
         if content is not None:
             content = content.strip()
@@ -460,13 +465,23 @@ class MemoryCrudMixin(MemoryStoreBase):
             updates.append("content = %s")
             params.append(content)
             if content != current["content"]:
-                updates.append("vector_needs_reindex = TRUE")
+                needs_vector_reindex = True
         if tags is not None:
             updates.append("tags = %s")
             params.append(json.dumps(tags))
         if memory_type is not None:
+            canonical_memory_type = validate_memory_type(memory_type)
             updates.append("memory_type = %s")
-            params.append(memory_type)
+            params.append(canonical_memory_type.value)
+        if needs_vector_reindex:
+            updates.append("vector_needs_reindex = TRUE")
+        elif canonical_memory_type is not None:
+            updates.append(
+                "vector_needs_reindex = CASE "
+                "WHEN memory_type IS DISTINCT FROM %s THEN TRUE "
+                "ELSE vector_needs_reindex END"
+            )
+            params.append(canonical_memory_type.value)
 
         if not updates:
             row = self.db.fetchone(

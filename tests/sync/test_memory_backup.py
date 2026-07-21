@@ -55,11 +55,12 @@ def _create_memory(
     *,
     memory_id: str,
     content: str,
+    memory_type: str = "fact",
     updated_at: datetime = OLD_TIME,
 ) -> None:
     memory_manager.storage.create_memory(
         content=content,
-        memory_type="fact",
+        memory_type=memory_type,
         source_type="agent",
         project_id=PERSONAL_PROJECT_ID,
         memory_id=memory_id,
@@ -72,12 +73,13 @@ def _record(
     *,
     memory_id: str,
     content: str,
+    memory_type: str = "fact",
     updated_at: datetime = OLD_TIME,
 ) -> dict[str, object]:
     return {
         "id": memory_id,
         "content": content,
-        "type": "fact",
+        "type": memory_type,
         "tags": [],
         "created_at": OLD_TIME.isoformat(),
         "updated_at": updated_at.isoformat(),
@@ -97,13 +99,19 @@ def test_backup_contains_only_live_rows_in_deterministic_order_and_shrinks(
     memory_manager: MemoryManager,
     backup_path: Path,
 ) -> None:
-    _create_memory(memory_manager, memory_id=MEMORY_B, content="memory B")
+    _create_memory(
+        memory_manager,
+        memory_id=MEMORY_B,
+        content="memory B",
+        memory_type="preference",
+    )
     _create_memory(memory_manager, memory_id=MEMORY_A, content="memory A")
 
     assert backup_manager.backup_sync() == 2
     first_content = backup_path.read_text(encoding="utf-8")
     first_records = [json.loads(line) for line in first_content.splitlines()]
     assert [record["id"] for record in first_records] == [MEMORY_A, MEMORY_B]
+    assert [record["type"] for record in first_records] == ["fact", "preference"]
     assert all("_deleted" not in record for record in first_records)
 
     assert backup_manager.backup_sync() == 2
@@ -150,13 +158,16 @@ def test_restore_creates_missing_and_preserves_rows_absent_from_backup(
     backup_path: Path,
 ) -> None:
     _create_memory(memory_manager, memory_id=MEMORY_A, content="database only")
-    _write_records(backup_path, [_record(memory_id=MEMORY_B, content="restored")])
+    _write_records(
+        backup_path,
+        [_record(memory_id=MEMORY_B, content="restored", memory_type="context")],
+    )
 
     assert backup_manager.restore_sync() == 1
-    rows = backup_manager.db.fetchall("SELECT id, content FROM memories ORDER BY id")
-    assert [(row["id"], row["content"]) for row in rows] == [
-        (MEMORY_A, "database only"),
-        (MEMORY_B, "restored"),
+    rows = backup_manager.db.fetchall("SELECT id, content, memory_type FROM memories ORDER BY id")
+    assert [(row["id"], row["content"], row["memory_type"]) for row in rows] == [
+        (MEMORY_A, "database only", "fact"),
+        (MEMORY_B, "restored", "context"),
     ]
 
 
@@ -222,8 +233,15 @@ def test_older_backup_does_not_reactivate_newer_hidden_memory(
     [
         "{malformed json",
         json.dumps({"id": MEMORY_B, "_deleted": True}),
+        json.dumps(
+            _record(
+                memory_id=MEMORY_B,
+                content="invalid type",
+                memory_type="debugging_pattern",
+            )
+        ),
     ],
-    ids=["malformed", "tombstone"],
+    ids=["malformed", "tombstone", "noncanonical-memory-type"],
 )
 def test_invalid_record_aborts_restore_before_any_mutation(
     bad_line: str,

@@ -250,7 +250,7 @@ class TestCreateMemory:
                 "create_memory",
                 {
                     "content": proposal,
-                    "memory_type": "debugging_pattern",
+                    "memory_type": "pattern",
                     "tags": ["session-start"],
                 },
             )
@@ -258,8 +258,23 @@ class TestCreateMemory:
         assert result["success"] is True
         task_manager.create_task_with_decomposition.assert_called_once()
         call_kwargs = mock_memory_manager.create_memory.call_args.kwargs
-        assert call_kwargs["memory_type"] == "debugging_pattern"
+        assert call_kwargs["memory_type"] == "pattern"
         assert call_kwargs["tags"] == ["session-start"]
+
+    @pytest.mark.asyncio
+    async def test_create_memory_rejects_noncanonical_type(
+        self,
+        memory_registry,
+        mock_memory_manager,
+    ) -> None:
+        result = await memory_registry.call(
+            "create_memory",
+            {"content": "Bad type", "memory_type": "debugging_pattern"},
+        )
+
+        assert result["success"] is False
+        assert "Invalid memory_type 'debugging_pattern'" in result["error"]
+        mock_memory_manager.create_memory.assert_not_called()
 
     @pytest.mark.asyncio
     async def test_create_memory_with_session_id(self, memory_registry, mock_memory_manager):
@@ -411,6 +426,7 @@ class TestSearchMemories:
                 "search_memories",
                 {
                     "query": "test",
+                    "memory_type": "pattern",
                     "tags_all": ["important"],
                     "tags_any": ["work", "personal"],
                     "tags_none": ["archived"],
@@ -419,9 +435,25 @@ class TestSearchMemories:
 
         assert result["success"] is True
         call_kwargs = mock_memory_manager.search_memories.call_args.kwargs
+        assert call_kwargs["memory_type"] == "pattern"
         assert call_kwargs["tags_all"] == ["important"]
         assert call_kwargs["tags_any"] == ["work", "personal"]
         assert call_kwargs["tags_none"] == ["archived"]
+
+    @pytest.mark.asyncio
+    async def test_search_memories_rejects_noncanonical_type(
+        self,
+        memory_registry,
+        mock_memory_manager,
+    ) -> None:
+        result = await memory_registry.call(
+            "search_memories",
+            {"query": "test", "memory_type": "debugging_pattern"},
+        )
+
+        assert result["success"] is False
+        assert "Invalid memory_type 'debugging_pattern'" in result["error"]
+        mock_memory_manager.search_memories.assert_not_called()
 
     @pytest.mark.asyncio
     async def test_search_memories_does_not_apply_default_threshold(

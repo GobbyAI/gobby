@@ -18,7 +18,13 @@ from gobby.memory.services._search_paths import search_qdrant_keyword, search_wi
 from gobby.memory.services._search_results import build_results
 from gobby.memory.services._search_rrf import rrf_merge, rrf_scores
 from gobby.memory.vectorstore import memory_scope_filter
-from gobby.storage.memories import ALL_MEMORIES, LocalMemoryManager, Memory, MemoryScope
+from gobby.storage.memories import (
+    ALL_MEMORIES,
+    LocalMemoryManager,
+    Memory,
+    MemoryScope,
+    validate_memory_type,
+)
 
 if TYPE_CHECKING:
     from gobby.config.persistence import MemoryConfig
@@ -122,6 +128,8 @@ class SearchService:
         include_global: bool = True,
     ) -> list[Memory]:
         """Retrieve memories via VectorStore + optional FalkorDB graph search."""
+        if memory_type is not None:
+            memory_type = validate_memory_type(memory_type)
         scope = ALL_MEMORIES
         if project_id is not None:
             scope = (
@@ -136,7 +144,7 @@ class SearchService:
             query_embedding = await self._embed_fn(embed_query, is_query=True)
             half_life = self._recall_constants.half_life_days
             effective_min_score = min_score if min_score is not None else 0.0
-            filters = memory_scope_filter(scope)
+            filters = memory_scope_filter(scope, memory_type)
             use_graph = self._kg_service is not None and self._falkordb_graph_search
 
             if use_graph:

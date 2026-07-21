@@ -2,7 +2,7 @@ from datetime import datetime
 from typing import Any, Literal
 
 from gobby.storage.memories_base import MemoryStoreBase
-from gobby.storage.memories_models import Memory
+from gobby.storage.memories_models import Memory, validate_memory_type
 from gobby.storage.memories_scope import MemoryScope, memory_scope_predicate
 from gobby.storage.sql_dialect import (
     json_array_contains_condition,
@@ -162,7 +162,7 @@ class MemoryDreamMixin(MemoryStoreBase):
             params.extend(scope_params)
         if memory_type is not None:
             clauses.append("memory_type = %s")
-            params.append(memory_type)
+            params.append(validate_memory_type(memory_type).value)
         where = " AND ".join(clauses)
         params.append(limit)
         rows = self.db.fetchall(

@@ -133,6 +133,7 @@ class IndexingService:
                 "content": mem.content,
                 "project_id": mem.project_id,
                 "is_global": mem.is_global,
+                "memory_type": mem.memory_type.value,
             }
             for mem in memories
         ]
@@ -147,6 +148,7 @@ class IndexingService:
                         "id": mem["id"],
                         "project_id": mem.get("project_id"),
                         "is_global": mem.get("is_global"),
+                        "memory_type": mem.get("memory_type"),
                     },
                     sort_keys=True,
                     separators=(",", ":"),
@@ -384,6 +386,7 @@ class IndexingService:
                         "content": memory.content,
                         "project_id": memory.project_id,
                         "is_global": memory.is_global,
+                        "memory_type": memory.memory_type.value,
                     },
                 )
             )
