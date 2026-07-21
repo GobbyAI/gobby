@@ -62,6 +62,7 @@ def _dispatch_context() -> SimpleNamespace:
         agents={
             "holistic-reviewer": {"enabled": True},
             "merge-orchestrator": {"enabled": True},
+            "trajectory-monitor": {"enabled": True},
         },
         agent_definitions={},
         children=[],
@@ -139,6 +140,19 @@ def test_full_delivery_chain_5_state(temp_db, sample_project) -> None:
         verdict="approve",
         findings="approved",
         report_ref="pr-review.md",
+    )
+    assert stage_row(temp_db, task.id, "pr")["state"] == "needs_review"
+
+    pr_review = rules.pr_review_rule(
+        _task_view(task.id, manager.list_for_task(task.id)),
+        context,
+    )
+    assert isinstance(pr_review, SpawnAgentAction)
+    assert pr_review.agent_slug == "trajectory-monitor"
+    manager.approve_review(
+        task.id,
+        "pr",
+        by_session_id="trajectory-monitor",
     )
     assert stage_row(temp_db, task.id, "pr")["state"] == "review_approved"
 
@@ -289,6 +303,16 @@ async def test_parent_holistic_pr_merge_closes_with_real_heartbeat(
         verdict="approve",
         findings="approved",
         report_ref="pr-review.md",
+    )
+
+    await dispatcher.run_heartbeat(db=temp_db, project_id=sample_project["id"])
+    assert spawned[-1] == "trajectory-monitor"
+    assert stage_row(temp_db, parent.id, "pr")["state"] == "needs_review"
+    TaskDispatchMutexManager(temp_db).force_release(parent.id)
+    manager.stage_states.approve_review(
+        parent.id,
+        "pr",
+        by_session_id="trajectory-monitor",
     )
 
     await dispatcher.run_heartbeat(db=temp_db, project_id=sample_project["id"])

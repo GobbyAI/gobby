@@ -75,6 +75,7 @@ stages:
     description: Open/update PR, capture verdict, gate on external review.
     category: delivery
     default_agent: merge-orchestrator
+    reviewer_agent: trajectory-monitor
     review_policy: required
     position_hint: 130
   - name: merge

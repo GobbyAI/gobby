@@ -222,6 +222,23 @@ def _qa_reviewer(task: object, context: Mapping[str, object]) -> str:
     )
 
 
+def _trajectory_monitor(task: object, context: Mapping[str, object]) -> str:
+    base = _prompt(
+        task,
+        context,
+        role="Audit the full implementation trajectory",
+        contract="trajectory-monitor.yaml agent",
+    )
+    return (
+        f"{base}\n"
+        "Resolve the authoritative workspace and target branch from task "
+        "artifacts before inspecting git history. Audit every linked commit, "
+        "the cumulative merge-base..HEAD diff, unlinked branch commits, and "
+        "the post-approval delta against the task and plan scope. Emit exactly "
+        "one PR-stage verdict, then terminate."
+    )
+
+
 def _doc_reviewer(task: object, context: Mapping[str, object]) -> str:
     return _prompt(
         task,
@@ -309,6 +326,7 @@ PROMPT_BUILDERS: dict[str, PromptBuilder] = {
     "product-manager": _product_manager,
     "qa-dev": _qa_dev,
     "qa-reviewer": _qa_reviewer,
+    "trajectory-monitor": _trajectory_monitor,
     "reviewer": _holistic_reviewer,
     "researcher": _researcher,
     "tech-writer": _developer,

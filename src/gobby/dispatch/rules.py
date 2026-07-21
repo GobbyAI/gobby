@@ -341,8 +341,15 @@ def pr_work_rule(task: object, context: object) -> Action | None:
 
 
 def pr_review_rule(task: object, context: object) -> Action | None:
-    _ = task, context
-    return None
+    stage = _matching_current_stage(task, context, "pr", "needs_review")
+    if stage is None:
+        return None
+    if _stage_review_exhausted(stage, context):
+        return EscalateAction(task_id=_task_id(task), reason="pr_max_review_rounds")
+    reviewer_agent = _field(stage, "reviewer_agent")
+    if not reviewer_agent or not _agent_dispatchable(context, str(reviewer_agent)):
+        return EscalateAction(task_id=_task_id(task), reason="pr_no_reviewer")
+    return _spawn_stage_agent(task, stage, context, str(reviewer_agent))
 
 
 def pr_advance_rule(task: object, context: object) -> Action | None:

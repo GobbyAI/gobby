@@ -6,7 +6,7 @@ import pytest
 
 import gobby.mcp_proxy.tools.tasks._stage_ops as stage_ops
 from gobby.dispatch import rules
-from gobby.dispatch.actions import AdvanceStageAction, StartStageAction
+from gobby.dispatch.actions import AdvanceStageAction, SpawnAgentAction, StartStageAction
 from gobby.storage.tasks import LocalTaskManager
 from tests.storage.tasks._stage_test_helpers import (
     make_task_with_manifest,
@@ -39,7 +39,10 @@ def _dispatch_context() -> SimpleNamespace:
                 default_max_review_rounds=1,
             )
         },
-        agents={"merge-worker": {"enabled": True}},
+        agents={
+            "merge-worker": {"enabled": True},
+            "trajectory-monitor": {"enabled": True},
+        },
         agent_definitions={},
         children=[],
         prompt_context={},
@@ -70,10 +73,17 @@ def test_pr_lifecycle_with_rejection_then_approval(temp_db, sample_project) -> N
 
     manager.start_stage(task.id, "pr", by_session_id="dispatcher")
     manager.submit_for_review(task.id, "pr", by_session_id="operator")
-    record_pr_verdict(
-        task_id=task.id,
-        verdict="request_changes",
-        findings="missing release notes",
+    review_action = rules.pr_review_rule(
+        _task_view(task.id, manager.list_for_task(task.id)),
+        _dispatch_context(),
+    )
+    assert isinstance(review_action, SpawnAgentAction)
+    assert review_action.agent_slug == "trajectory-monitor"
+    manager.reject_review(
+        task.id,
+        "pr",
+        reason="missing release notes",
+        by_session_id="trajectory-monitor",
     )
 
     row = stage_row(temp_db, task.id, "pr")
@@ -86,7 +96,21 @@ def test_pr_lifecycle_with_rejection_then_approval(temp_db, sample_project) -> N
     record_pr_verdict(
         task_id=task.id,
         verdict="approve",
-        findings="approved on second pass",
+        findings="delivery gates ready on second pass",
+    )
+    assert stage_row(temp_db, task.id, "pr")["state"] == "needs_review"
+
+    review_action = rules.pr_review_rule(
+        _task_view(task.id, manager.list_for_task(task.id)),
+        _dispatch_context(),
+    )
+    assert isinstance(review_action, SpawnAgentAction)
+    assert review_action.agent_slug == "trajectory-monitor"
+    manager.approve_review(
+        task.id,
+        "pr",
+        by_session_id="trajectory-monitor",
+        notes="trajectory review approved",
     )
     assert stage_row(temp_db, task.id, "pr")["state"] == "review_approved"
 

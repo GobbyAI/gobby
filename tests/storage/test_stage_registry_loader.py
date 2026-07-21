@@ -60,7 +60,7 @@ def test_parses_bundled_yaml() -> None:
         "rules": [{"category": "docs", "reviewer_agent": "doc-reviewer"}],
     }
     assert by_name["pr"].review_policy == "required"
-    assert by_name["pr"].reviewer_agent is None
+    assert by_name["pr"].reviewer_agent == "trajectory-monitor"
     assert by_name["merge"].review_policy == "none"
 
 

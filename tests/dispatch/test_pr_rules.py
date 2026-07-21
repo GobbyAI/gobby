@@ -10,17 +10,26 @@ from gobby.dispatch.actions import AdvanceStageAction, EscalateAction, SpawnAgen
 pytestmark = pytest.mark.unit
 
 
-def _stage(stage_name: str, state: str, position: int = 0) -> SimpleNamespace:
+def _stage(
+    stage_name: str,
+    state: str,
+    position: int = 0,
+    *,
+    reviewer_agent: str | None = None,
+    review_round_count: int = 0,
+    max_review_rounds: int | None = None,
+) -> SimpleNamespace:
     return SimpleNamespace(
         stage_name=stage_name,
         name=stage_name,
         state=state,
         position=position,
         work_attempt_count=0,
-        review_round_count=0,
+        review_round_count=review_round_count,
         max_work_attempts=None,
-        max_review_rounds=None,
+        max_review_rounds=max_review_rounds,
         default_agent=None,
+        reviewer_agent=reviewer_agent,
         requires_human=False,
     )
 
@@ -95,8 +104,45 @@ def test_pr_work_escalates_when_merge_orchestrator_disabled() -> None:
     assert action.reason == "pr_no_agent"
 
 
-def test_pr_review_rule_is_no_op() -> None:
-    assert rules.pr_review_rule(_task(_stage("pr", "needs_review")), _context()) is None
+def test_pr_review_spawns_stage_reviewer() -> None:
+    action = rules.pr_review_rule(
+        _task(_stage("pr", "needs_review", reviewer_agent="trajectory-monitor")),
+        _context(agents={"trajectory-monitor": {"enabled": True}}),
+    )
+
+    assert isinstance(action, SpawnAgentAction)
+    assert action.task_id == "c465ddfe-ebc1-5611-af14-493e6e202c38"
+    assert action.task_ref == "#99"
+    assert action.agent_slug == "trajectory-monitor"
+    assert action.initial_variables == {"stage_name": "pr", "stage_state": "needs_review"}
+
+
+def test_pr_review_escalates_when_review_rounds_exhausted() -> None:
+    action = rules.pr_review_rule(
+        _task(
+            _stage(
+                "pr",
+                "needs_review",
+                reviewer_agent="trajectory-monitor",
+                review_round_count=2,
+                max_review_rounds=2,
+            )
+        ),
+        _context(agents={"trajectory-monitor": {"enabled": True}}),
+    )
+
+    assert isinstance(action, EscalateAction)
+    assert action.reason == "pr_max_review_rounds"
+
+
+def test_pr_review_escalates_when_stage_reviewer_is_unavailable() -> None:
+    action = rules.pr_review_rule(
+        _task(_stage("pr", "needs_review", reviewer_agent="trajectory-monitor")),
+        _context(),
+    )
+
+    assert isinstance(action, EscalateAction)
+    assert action.reason == "pr_no_reviewer"
 
 
 def test_pr_advance_rule_completes_pr_stage() -> None:

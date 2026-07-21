@@ -24,12 +24,23 @@ from tests.storage.tasks._stage_test_helpers import (
 pytestmark = pytest.mark.unit
 
 
-def _context(temp_db, sample_project) -> SimpleNamespace:
+def _context(
+    temp_db,
+    sample_project,
+    *,
+    reviewer_agent: str | None = None,
+) -> SimpleNamespace:
     task = create_task(temp_db, sample_project, task_type="feature")
     stage_states = SimpleNamespace(
         approve_review=Mock(return_value=SimpleNamespace(stage_name="pr", state="review_approved")),
         reject_review=Mock(return_value=SimpleNamespace(stage_name="pr", state="ready")),
-        get=Mock(return_value=SimpleNamespace(stage_name="pr", state="needs_review")),
+        get=Mock(
+            return_value=SimpleNamespace(
+                stage_name="pr",
+                state="needs_review",
+                reviewer_agent=reviewer_agent,
+            )
+        ),
         complete_stage=Mock(side_effect=AssertionError("record_pr_verdict must not advance")),
     )
     return SimpleNamespace(
@@ -110,6 +121,42 @@ def test_approved_calls_approve_review_no_advance(
         notes="looks good",
     )
     ctx.task_manager.stage_states.complete_stage.assert_not_called()
+
+
+def test_approved_with_independent_reviewer_records_delivery_without_self_approval(
+    monkeypatch: pytest.MonkeyPatch,
+    temp_db,
+    sample_project,
+) -> None:
+    _patch_stage_view(monkeypatch)
+    monkeypatch.setattr(stage_ops, "get_current_session_id", lambda: "merge-session")
+    release = Mock()
+    monkeypatch.setattr(stage_ops, "_release_current_agent_dispatch_mutex", release)
+    ctx = _context(temp_db, sample_project, reviewer_agent="trajectory-monitor")
+
+    result = _record_pr_verdict(ctx)(
+        task_id=ctx.task_id,
+        verdict="approve",
+        findings="delivery gates ready",
+        report_ref="delivery-report.md",
+    )
+
+    assert result["stage"] == {"stage_name": "pr", "state": "needs_review"}
+    ctx.task_manager.stage_states.approve_review.assert_not_called()
+    ctx.task_manager.stage_states.complete_stage.assert_not_called()
+    row = temp_db.fetchone(
+        "SELECT state, pr_report_ref FROM task_delivery_campaigns WHERE task_id = %s",
+        (ctx.task_id,),
+    )
+    assert row is not None
+    assert row["state"] == "ready_to_merge"
+    assert row["pr_report_ref"] == "delivery-report.md"
+    release.assert_called_once_with(
+        ctx,
+        task_id=ctx.task_id,
+        session_id="merge-session",
+        run_id=None,
+    )
 
 
 def test_approved_transition_failure_does_not_write_ready_to_merge(

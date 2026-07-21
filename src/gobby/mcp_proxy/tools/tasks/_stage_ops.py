@@ -461,13 +461,15 @@ def create_stage_ops_registry(ctx: RegistryContext) -> InternalToolRegistry:
         if verdict == "approve":
             resolved_session_id = _session_id(ctx)
             dispatch_kwargs = _dispatch_run_kwargs(ctx, resolved_id, resolved_session_id)
-            stage = ctx.task_manager.stage_states.approve_review(
-                resolved_id,
-                "pr",
-                by_session_id=resolved_session_id,
-                notes=findings_body,
-                **dispatch_kwargs,
-            )
+            stage = _get_stage_state(ctx, resolved_id, "pr")
+            if stage is None or not stage.reviewer_agent:
+                stage = ctx.task_manager.stage_states.approve_review(
+                    resolved_id,
+                    "pr",
+                    by_session_id=resolved_session_id,
+                    notes=findings_body,
+                    **dispatch_kwargs,
+                )
         elif verdict == "request_changes":
             resolved_session_id = _session_id(ctx)
             dispatch_kwargs = _dispatch_run_kwargs(ctx, resolved_id, resolved_session_id)
