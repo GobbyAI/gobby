@@ -140,3 +140,9 @@ so each iteration resumes from the durable goal document and live task state.
   frontend type-check/lint/build, package build, test-quality, structured-data,
   diff, legacy-term, and source-size checks also passed. Direct `compact_self`
   follows this bookkeeping commit as the required iteration boundary.
+- 2026-07-21 #9341 iteration 9 — closed #18637 with commit `060ccadda`;
+  added a task-scoped, one-action continuation that dispatches asynchronous
+  expansion review after the initial quick-build tick while preserving explicit
+  automation policy and duplicate-review protection. Targeted validation passed
+  44 tests with 1 skip; adjacent lifecycle validation passed 217 tests. Ruff,
+  strict mypy, Bandit, test-quality, diff, and source-size checks also passed.
