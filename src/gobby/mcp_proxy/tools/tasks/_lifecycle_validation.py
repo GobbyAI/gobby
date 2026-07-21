@@ -9,6 +9,11 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
+from gobby.failure_categories import (
+    INFRASTRUCTURE_FAILURE_CATEGORIES,
+    FailureCategory,
+    classify_failure,
+)
 from gobby.mcp_proxy.tools._task_query_pagination import collect_task_query_pages
 from gobby.mcp_proxy.tools.tasks._escalation_coordinator import coordinate_task_escalation
 from gobby.mcp_proxy.tools.tasks._helpers import SKIP_REASONS
@@ -48,6 +53,7 @@ class ValidationResult:
     validation_status: str | None = None
     validation_feedback: str | None = None
     reset_reason: str | None = None
+    failure_category: FailureCategory | None = None
 
 
 @dataclass(frozen=True)
@@ -68,6 +74,7 @@ def _record_validation_iteration(
     feedback: str | None,
     context_type: str,
     validator_type: str = "llm",
+    failure_category: FailureCategory | None = None,
 ) -> None:
     """Record one live validation attempt with a monotonic task-local number."""
     history_manager = ValidationHistoryManager(ctx.task_manager.db)
@@ -80,6 +87,7 @@ def _record_validation_iteration(
         context_type=context_type,
         context_summary="Live close-task validation",
         validator_type=validator_type,
+        failure_category=failure_category,
     )
 
 
@@ -442,6 +450,10 @@ async def validate_leaf_task_with_llm(
     now = utc_now()
     backoff_state = backoff_store.get(task.id)
     if backoff_state is not None and backoff_state.is_in_backoff_window(now):
+        failure_category = classify_failure(
+            backoff_state.last_error,
+            default=FailureCategory.PROVIDER,
+        )
         retry_at = (
             backoff_state.next_retry_at.isoformat() if backoff_state.next_retry_at else "later"
         )
@@ -458,10 +470,12 @@ async def validate_leaf_task_with_llm(
             message=f"Validation generation unavailable (infrastructure); retry after {retry_at}.",
             extra={
                 "validation_status": "error",
+                "failure_category": failure_category.value,
                 "retryable": True,
                 "next_retry_at": retry_at,
                 "consecutive_failures": backoff_state.consecutive_failures,
             },
+            failure_category=failure_category,
         )
 
     # Run LLM validation
@@ -479,6 +493,7 @@ async def validate_leaf_task_with_llm(
     # verdict: record/extend the backoff and escalate after too many in a row, but do
     # not persist 'invalid' or burn the validation-failure / work-attempt counters.
     if result.status == "error":
+        failure_category = result.failure_category or FailureCategory.PROVIDER
         state = backoff_store.record_failure(task.id, error=result.feedback, now=now)
         ctx.task_manager.update_task(
             resolved_id,
@@ -491,6 +506,7 @@ async def validate_leaf_task_with_llm(
             status="error",
             feedback=result.feedback,
             context_type="validation_evidence_gate",
+            failure_category=failure_category,
         )
         retry_at = state.next_retry_at.isoformat() if state.next_retry_at else "later"
         if state.should_escalate():
@@ -517,10 +533,12 @@ async def validate_leaf_task_with_llm(
                 ),
                 extra={
                     "validation_status": "error",
+                    "failure_category": failure_category.value,
                     "retryable": False,
                     "escalated": True,
                     "consecutive_failures": state.consecutive_failures,
                 },
+                failure_category=failure_category,
             )
         logger.warning(
             "Validation infrastructure failure for task %s (consecutive_failures=%d); "
@@ -535,34 +553,66 @@ async def validate_leaf_task_with_llm(
             message=f"Validation generation unavailable (infrastructure); retry after {retry_at}.",
             extra={
                 "validation_status": "error",
+                "failure_category": failure_category.value,
                 "retryable": True,
                 "next_retry_at": retry_at,
                 "consecutive_failures": state.consecutive_failures,
             },
+            failure_category=failure_category,
         )
-
-    # Real verdict (or pending/disabled) this round — clear any prior infra backoff so
-    # an old outage cannot poison later attempts.
-    if backoff_state is not None:
-        backoff_store.clear(task.id)
 
     validation_status = result.status
     original_feedback = result.feedback
 
     if validation_status != "valid":
         blocking_reasons = list(result.blocking_reasons)
+        failure_category = result.failure_category or classify_failure(
+            "\n".join(part for part in (original_feedback, *blocking_reasons) if part)
+        )
         message = format_close_validation_message(
             validation_status,
             original_feedback,
             blocking_reasons,
             result.verdict_override,
         )
+        if failure_category in INFRASTRUCTURE_FAILURE_CATEGORIES:
+            state = backoff_store.record_failure(task.id, error=message, now=now)
+            ctx.task_manager.update_task(
+                resolved_id,
+                validation_status="error",
+                validation_feedback=message,
+            )
+            _record_validation_iteration(
+                task,
+                ctx,
+                status="error",
+                feedback=message,
+                context_type="validation_evidence_gate",
+                failure_category=failure_category,
+            )
+            retry_at = state.next_retry_at.isoformat() if state.next_retry_at else "later"
+            return ValidationResult(
+                can_close=False,
+                error_type="validation_infrastructure_failure",
+                message=message,
+                extra={
+                    "validation_status": "error",
+                    "failure_category": failure_category.value,
+                    "retryable": True,
+                    "next_retry_at": retry_at,
+                    "consecutive_failures": state.consecutive_failures,
+                },
+                failure_category=failure_category,
+            )
+        if backoff_state is not None:
+            backoff_store.clear(task.id)
         _record_validation_iteration(
             task,
             ctx,
             status=validation_status,
             feedback=message,
             context_type="validation_evidence_gate",
+            failure_category=failure_category,
         )
         threshold = (
             validation_config.close_validation_escalation_threshold
@@ -593,6 +643,7 @@ async def validate_leaf_task_with_llm(
         extra: dict[str, Any] = {
             "validation_status": validation_status,
             "validation_fail_count": fail_count,
+            "failure_category": failure_category.value,
         }
         if result.verdict_override is not None:
             extra["verdict_override"] = result.verdict_override
@@ -616,8 +667,12 @@ async def validate_leaf_task_with_llm(
             error_type="validation_failed",
             message=message,
             extra=extra,
+            failure_category=failure_category,
         )
 
+    # A real valid verdict clears any prior infrastructure outage state.
+    if backoff_state is not None:
+        backoff_store.clear(task.id)
     _record_validation_iteration(
         task,
         ctx,

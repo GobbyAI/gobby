@@ -29,6 +29,7 @@ def test_get_build_status_reports_agents_mutex_artifacts_events_and_comments(
     tmp_path: Path,
 ) -> None:
     from gobby.build.observability import get_build_status
+    from gobby.failure_categories import FailureCategory
     from gobby.storage.agents import LocalAgentRunManager
     from gobby.storage.sessions import SYSTEM_SESSION_ID
     from gobby.storage.tasks import LocalTaskManager, TaskArtifactManager
@@ -44,6 +45,14 @@ def test_get_build_status_reports_agents_mutex_artifacts_events_and_comments(
         to_state="development",
         reason=BUILD_EVENT_REASON,
         by_actor="build",
+    )
+    manager.lifecycle_events.record_lifecycle_event(
+        task.id,
+        from_state="development:in_progress",
+        to_state="development:ready",
+        reason="PostgreSQL connection refused",
+        by_actor="agent",
+        failure_category=FailureCategory.ENVIRONMENT,
     )
     missing_path = tmp_path / "missing-worktree"
     TaskArtifactManager(temp_db).set_artifacts_atomic(
@@ -90,7 +99,8 @@ def test_get_build_status_reports_agents_mutex_artifacts_events_and_comments(
     assert status["mutexes"][0]["state"] == "active_no_run"
     assert status["artifact_health"]["ok"] is False
     assert status["artifact_health"]["items"][0]["artifacts"][0]["exists"] is False
-    assert status["recent_events"][0]["reason"] == BUILD_EVENT_REASON
+    assert status["recent_events"][0]["failure_category"] == "environment"
+    assert status["failure_categories"]["environment"] == 1
 
 
 def test_get_build_status_reports_invalid_integration_worktree_artifact(

@@ -6,6 +6,7 @@ import inspect
 
 import pytest
 
+from gobby.failure_categories import FailureCategory
 from gobby.storage.delivery import TaskDeliveryStateManager
 from gobby.storage.sessions import SessionManager
 from gobby.storage.tasks import LocalTaskManager
@@ -400,6 +401,25 @@ def test_fail_stage_preserves_real_max_attempt_escalation(
     task_after = task_row(temp_db, task.id)
     assert task_after["is_escalated"] is True
     assert task_after["escalation_reason"] == "development_work_failed:max"
+
+
+def test_fail_stage_records_failure_category(temp_db, sample_project) -> None:
+    task, manager = make_task_with_manifest(
+        temp_db,
+        sample_project,
+        [spec("development", 0, max_work_attempts=2)],
+    )
+    manager.start_stage(task.id, "development", by_session_id="dispatcher")
+
+    manager.fail_stage(
+        task.id,
+        "development",
+        reason="PostgreSQL connection refused in worktree",
+        by_session_id="agent-session",
+    )
+
+    event = LocalTaskManager(temp_db).lifecycle_events.list_lifecycle_events(task.id)[-1]
+    assert event.failure_category is FailureCategory.ENVIRONMENT
 
 
 def test_invalid_transition_error_carries_full_payload(temp_db, sample_project) -> None:

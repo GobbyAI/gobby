@@ -5,6 +5,7 @@ from uuid import uuid4
 
 import pytest
 
+from gobby.failure_categories import FailureCategory
 from gobby.tasks.validation_history import ValidationHistoryManager, ValidationIteration
 from gobby.tasks.validation_models import Issue, IssueSeverity, IssueType
 
@@ -63,6 +64,7 @@ class TestValidationHistoryManager:
             context_type="git_diff",
             context_summary="Modified 3 files",
             validator_type="llm",
+            failure_category=FailureCategory.TEST,
         )
 
         # Verify record exists in database
@@ -71,6 +73,7 @@ class TestValidationHistoryManager:
         assert history[0].iteration == 1
         assert history[0].status == "invalid"
         assert history[0].feedback == "Tests are failing"
+        assert history[0].failure_category is FailureCategory.TEST
 
     def test_record_multiple_iterations(self, history_manager, sample_task) -> None:
         """Test recording multiple iterations for same task."""

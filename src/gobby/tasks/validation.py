@@ -18,6 +18,7 @@ from pathlib import Path
 
 from gobby.ai.text_generation import is_feature_generation_infrastructure_error
 from gobby.config.tasks import TaskValidationConfig
+from gobby.failure_categories import FailureCategory, classify_exception
 from gobby.llm import LLMService
 from gobby.prompts import PromptLoader
 from gobby.storage.hub.protocol import HubDatabase
@@ -842,6 +843,11 @@ class TaskValidator:
                 return ValidationResult(
                     status="error",
                     feedback=f"Validation generation unavailable (infrastructure): {e}",
+                    failure_category=classify_exception(e),
                 )
             logger.error("Failed to validate task %s: %s", task_id, e)
-            return ValidationResult(status="pending", feedback=f"Validation failed: {str(e)}")
+            return ValidationResult(
+                status="pending",
+                feedback=f"Validation failed: {str(e)}",
+                failure_category=FailureCategory.CODE,
+            )

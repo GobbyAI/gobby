@@ -250,6 +250,7 @@ def test_postgres_migrations_limited_to_known_post_baseline() -> None:
         "324_drop_sync_tombstones.sql",
         "325_recall_usefulness_shadow_index.sql",
         "326_validate_recall_usefulness_label_source.sql",
+        "327_failure_category_taxonomy.sql",
     ]
 
 
@@ -364,7 +365,19 @@ def test_postgres_baseline_version_is_flattened_to_305() -> None:
     # The 0.5.0 pre-release flatten folded 295-305 into the baseline. Hubs below
     # 305 take the corrupt_partial backup/recreate path; later migrations replay.
     assert module.BASELINE_VERSION == 305
-    assert module.latest_known_version() == 326
+    assert module.latest_known_version() == 327
+
+
+def test_failure_category_taxonomy_is_closed_in_baseline_and_migration() -> None:
+    baseline = (SRC_ROOT / "storage" / "postgres_baseline_schema.sql").read_text(encoding="utf-8")
+    migration = (
+        SRC_ROOT / "storage" / "migrations" / "327_failure_category_taxonomy.sql"
+    ).read_text(encoding="utf-8")
+    categories = "'environment', 'dependency', 'code', 'test', 'provider', 'timeout'"
+
+    for schema in (baseline, migration):
+        assert schema.count("failure_category TEXT CHECK") == 2
+        assert schema.count(categories) == 2
 
 
 def test_tombstone_cleanup_migration_and_baseline_remove_sync_objects() -> None:

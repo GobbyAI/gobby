@@ -552,6 +552,9 @@ CREATE TABLE task_lifecycle_events (
     from_state TEXT,
     to_state TEXT NOT NULL,
     reason TEXT NOT NULL,
+    failure_category TEXT CHECK (
+        failure_category IN ('environment', 'dependency', 'code', 'test', 'provider', 'timeout')
+    ),
     by_actor TEXT NOT NULL,
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
@@ -672,6 +675,9 @@ CREATE TABLE task_validation_history (
     context_type TEXT,
     context_summary TEXT,
     validator_type TEXT,
+    failure_category TEXT CHECK (
+        failure_category IN ('environment', 'dependency', 'code', 'test', 'provider', 'timeout')
+    ),
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 

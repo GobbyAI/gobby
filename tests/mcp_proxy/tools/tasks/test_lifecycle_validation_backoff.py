@@ -9,6 +9,7 @@ from typing import Any
 import pytest
 
 import gobby.mcp_proxy.tools.tasks._lifecycle_validation as lifecycle
+from gobby.failure_categories import FailureCategory
 from gobby.mcp_proxy.tools.tasks._lifecycle_validation import validate_leaf_task_with_llm
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.tasks import LocalTaskManager
@@ -119,3 +120,42 @@ async def test_real_verdict_after_window_clears_backoff(
         (1, "error"),
         (2, "valid"),
     ]
+
+
+@pytest.mark.asyncio
+async def test_environment_verdict_is_retryable_and_does_not_increment_fail_count(
+    temp_db: HubDatabase,
+    sample_project: dict[str, Any],
+) -> None:
+    manager = LocalTaskManager(temp_db)
+    task = _make_leaf_task(manager, sample_project["id"])
+    validator = _StubValidator(
+        [
+            TaskValidationResult(
+                status="invalid",
+                feedback="PostgreSQL connection refused",
+                blocking_reasons=["worktree database unavailable"],
+                failure_category=FailureCategory.ENVIRONMENT,
+            )
+        ]
+    )
+
+    result = await validate_leaf_task_with_llm(
+        task,
+        validator,
+        "context",
+        SimpleNamespace(task_manager=manager),
+        task.id,
+        None,
+    )
+
+    assert result.error_type == "validation_infrastructure_failure"
+    assert result.extra is not None
+    assert result.extra["retryable"] is True
+    assert result.extra["validation_status"] == "error"
+    assert result.extra["failure_category"] == "environment"
+    assert manager.get_task(task.id).validation_fail_count == 0
+    assert manager.get_task(task.id).validation_status == "error"
+    history = ValidationHistoryManager(temp_db).get_iteration_history(task.id)
+    assert history[-1].status == "error"
+    assert history[-1].failure_category is FailureCategory.ENVIRONMENT

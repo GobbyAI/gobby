@@ -22,6 +22,7 @@ from gobby.dispatch.actions import (
 from gobby.dispatch.agent_counts import count_active_agents
 from gobby.dispatch.context import build_context, reload_candidate
 from gobby.dispatch.skill_composition import inspect_skill_composition
+from gobby.failure_categories import FailureCategory
 from gobby.storage.agents import LocalAgentRunManager
 from gobby.storage.build_history import BuildHistoryStorage
 from gobby.storage.clones import LocalCloneManager
@@ -72,6 +73,7 @@ def get_build_status(
         "mutexes": _mutex_summaries(db, task_ids),
         "artifact_health": _artifact_health(task_manager, tasks),
         "recent_events": _recent_lifecycle_events(db, task_ids, limit=history_limit),
+        "failure_categories": _failure_category_counts(db, task_ids),
         "recent_history": [run.to_dict() for run in recent_history],
         "resume_summary": _resume_summary(task_manager, tasks, active_agents),
     }
@@ -494,7 +496,8 @@ def _recent_lifecycle_events(
     placeholders = ", ".join("%s" for _ in task_ids)
     rows = db.fetchall(
         f"""
-        SELECT id, task_id, from_state, to_state, reason, by_actor, created_at
+        SELECT id, task_id, from_state, to_state, reason, by_actor,
+               failure_category, created_at
           FROM task_lifecycle_events
          WHERE task_id IN ({placeholders})
          ORDER BY created_at DESC, id DESC
@@ -503,6 +506,35 @@ def _recent_lifecycle_events(
         (*task_ids, _bounded_limit(limit)),
     )
     return [dict(row) for row in rows]
+
+
+def _failure_category_counts(db: HubDatabase, task_ids: Sequence[str]) -> dict[str, int]:
+    counts = {category.value: 0 for category in FailureCategory}
+    if not task_ids:
+        return counts
+    placeholders = ", ".join("%s" for _ in task_ids)
+    rows = db.fetchall(
+        f"""
+        SELECT failure_category, COUNT(*) AS failure_count
+          FROM (
+                SELECT failure_category
+                  FROM task_lifecycle_events
+                 WHERE task_id IN ({placeholders})
+                   AND failure_category IS NOT NULL
+                UNION ALL
+                SELECT failure_category
+                  FROM task_validation_history
+                 WHERE task_id IN ({placeholders})
+                   AND failure_category IS NOT NULL
+                   AND status <> 'valid'
+               ) categorized_failures
+         GROUP BY failure_category
+        """,  # nosec B608
+        (*task_ids, *task_ids),
+    )
+    for row in rows:
+        counts[str(row["failure_category"])] = int(row["failure_count"])
+    return counts
 
 
 def _resume_summary(

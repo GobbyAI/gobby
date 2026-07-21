@@ -27,6 +27,7 @@ from gobby.config.validation_detection import (
     classify_validation_command,
     resolve_validation_detection_config,
 )
+from gobby.failure_categories import FailureCategory, classify_failure
 from gobby.mcp_proxy.tools.internal import InternalToolRegistry
 
 if TYPE_CHECKING:
@@ -626,23 +627,47 @@ def register_merge_landscape_tools(
         final: bool = False,
     ) -> dict[str, Any]:
         if not command.strip():
-            return {"success": False, "error": "command is required"}
+            return {
+                "success": False,
+                "error": "command is required",
+                "failure_category": FailureCategory.CODE.value,
+            }
         try:
             argv = shlex.split(command)
         except ValueError as exc:
-            return {"success": False, "error": f"failed to parse command: {exc}"}
+            return {
+                "success": False,
+                "error": f"failed to parse command: {exc}",
+                "failure_category": FailureCategory.CODE.value,
+            }
         if not argv:
-            return {"success": False, "error": "command is required"}
+            return {
+                "success": False,
+                "error": "command is required",
+                "failure_category": FailureCategory.CODE.value,
+            }
         argv, command_env, rejection = _normalize_verification_command(argv)
         if rejection:
-            return {"success": False, "error": rejection}
+            return {
+                "success": False,
+                "error": rejection,
+                "failure_category": FailureCategory.CODE.value,
+            }
 
         wt_path, _, err = _resolve_worktree_path(worktree_manager, worktree_id)
         if err or not wt_path:
-            return {"success": False, "error": err}
+            return {
+                "success": False,
+                "error": err,
+                "failure_category": FailureCategory.ENVIRONMENT.value,
+            }
         rejection = _reject_verification_command(argv, wt_path)
         if rejection:
-            return {"success": False, "error": rejection}
+            return {
+                "success": False,
+                "error": rejection,
+                "failure_category": FailureCategory.CODE.value,
+            }
         safe_env = _verification_environment()
         safe_env.update(command_env)
 
@@ -665,6 +690,7 @@ def register_merge_landscape_tools(
                     "error": f"command timed out after {timeout}s",
                     "exit_code": None,
                     "timed_out": True,
+                    "failure_category": FailureCategory.TIMEOUT.value,
                 }
             exit_code = proc.returncode
             stdout = stdout_b.decode("utf-8", errors="replace")
@@ -677,6 +703,7 @@ def register_merge_landscape_tools(
                         "stdout": stdout,
                         "stderr": stderr,
                         "error": "git_manager not configured for final clean-tree check",
+                        "failure_category": FailureCategory.ENVIRONMENT.value,
                     }
                 status_rc, status_stdout, status_stderr = await _git_async(
                     git_manager,
@@ -691,6 +718,7 @@ def register_merge_landscape_tools(
                         "stdout": stdout,
                         "stderr": stderr,
                         "error": f"git status failed after verification: {status_stderr.strip()}",
+                        "failure_category": FailureCategory.ENVIRONMENT.value,
                     }
                 dirty_files = [line for line in status_stdout.splitlines() if line.strip()]
                 if dirty_files:
@@ -701,16 +729,27 @@ def register_merge_landscape_tools(
                         "stderr": stderr,
                         "error": "final verification failed: worktree is dirty",
                         "dirty_files": dirty_files,
+                        "failure_category": FailureCategory.CODE.value,
                     }
-            return {
+            result = {
                 "success": exit_code == 0,
                 "exit_code": exit_code,
                 "stdout": stdout,
                 "stderr": stderr,
             }
+            if exit_code != 0:
+                result["failure_category"] = classify_failure(
+                    f"{stdout}\n{stderr}",
+                    command=command,
+                ).value
+            return result
         except (OSError, ValueError) as e:
             logger.exception("verify_in_worktree subprocess failed for %s", worktree_id)
-            return {"success": False, "error": f"failed to start command: {e}"}
+            return {
+                "success": False,
+                "error": f"failed to start command: {e}",
+                "failure_category": classify_failure(str(e), command=command).value,
+            }
 
     @registry.tool(
         name="inspect_merge_state",

@@ -756,6 +756,7 @@ async def test_verify_in_worktree_command_failure(tmp_path) -> None:
 
     assert result["success"] is False
     assert result["exit_code"] != 0
+    assert result["failure_category"] == "environment"
 
 
 @pytest.mark.asyncio
@@ -851,6 +852,7 @@ async def test_verify_in_worktree_timeout(tmp_path, monkeypatch) -> None:
 
     assert result["success"] is False
     assert result.get("timed_out") is True
+    assert result["failure_category"] == "timeout"
     assert subprocess_options["start_new_session"] is True
     killpg.assert_called_once_with(1234, 9)
 

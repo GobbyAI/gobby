@@ -21,6 +21,7 @@ import pytest
 
 from gobby.ai.text_generation import FeatureGenerationUnavailableError
 from gobby.config.tasks import TaskValidationConfig
+from gobby.failure_categories import FailureCategory
 from gobby.llm import LLMService
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.tasks.validation import (
@@ -474,6 +475,35 @@ class TestValidationInfrastructureFailure:
 
         assert result.status == "error"
         assert result.feedback is not None
+
+    @pytest.mark.parametrize(
+        ("message", "expected"),
+        [
+            ("Claude SDK hit maximum number of turns", FailureCategory.TIMEOUT),
+            ("provider returned HTTP 429 Too Many Requests", FailureCategory.PROVIDER),
+        ],
+    )
+    @pytest.mark.asyncio
+    async def test_infrastructure_failure_category(
+        self,
+        config,
+        mock_llm,
+        message: str,
+        expected: FailureCategory,
+    ) -> None:
+        validator = _task_validator(config, mock_llm)
+        mock_llm.call_json_feature.side_effect = FeatureGenerationUnavailableError(message)
+
+        result = await validator.validate_task(
+            task_id="task-1",
+            title="t",
+            description="d",
+            changes_summary="changes",
+            validation_criteria="criteria",
+        )
+
+        assert result.status == "error"
+        assert result.failure_category is expected
 
     @pytest.mark.asyncio
     async def test_non_infrastructure_exception_returns_pending(self, config, mock_llm) -> None:

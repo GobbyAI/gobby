@@ -9,6 +9,7 @@ from dataclasses import dataclass
 from difflib import SequenceMatcher
 from typing import TYPE_CHECKING, Any
 
+from gobby.failure_categories import FailureCategory
 from gobby.tasks.validation_models import Issue
 
 if TYPE_CHECKING:
@@ -43,6 +44,7 @@ class ValidationIteration:
     context_type: str | None = None
     context_summary: str | None = None
     validator_type: str | None = None
+    failure_category: FailureCategory | None = None
     created_at: str | None = None
 
 
@@ -70,6 +72,7 @@ class ValidationHistoryManager:
         context_type: str | None = None,
         context_summary: str | None = None,
         validator_type: str | None = None,
+        failure_category: FailureCategory | None = None,
     ) -> None:
         """Record a validation iteration for a task.
 
@@ -92,8 +95,8 @@ class ValidationHistoryManager:
             conn.execute(
                 """INSERT INTO task_validation_history
                    (task_id, iteration, status, feedback, issues, context_type,
-                    context_summary, validator_type)
-                   VALUES (%s, %s, %s, %s, %s, %s, %s, %s)""",
+                    context_summary, validator_type, failure_category)
+                   VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)""",
                 (
                     task_id,
                     iteration,
@@ -103,6 +106,7 @@ class ValidationHistoryManager:
                     context_type,
                     context_summary,
                     validator_type,
+                    failure_category.value if failure_category is not None else None,
                 ),
             )
 
@@ -187,6 +191,11 @@ class ValidationHistoryManager:
             context_type=row["context_type"],
             context_summary=row["context_summary"],
             validator_type=row["validator_type"],
+            failure_category=(
+                FailureCategory(row["failure_category"])
+                if row["failure_category"] is not None
+                else None
+            ),
             created_at=row["created_at"],
         )
 

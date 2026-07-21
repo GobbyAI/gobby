@@ -8,6 +8,7 @@ from typing import Any
 import click
 
 from gobby.cli.tasks._utils import get_task_manager, resolve_task_id
+from gobby.failure_categories import INFRASTRUCTURE_FAILURE_CATEGORIES
 from gobby.tasks.state_semantics import current_stage_state, is_task_closed
 from gobby.utils.json_helpers import json_dumps
 
@@ -202,7 +203,10 @@ def validate_task_cmd(
         if result.status == "valid":
             manager.close_task(resolved.id, reason="Completed via validation")
             click.echo("Task closed.")
-        elif result.status == "invalid":
+        elif (
+            result.status == "invalid"
+            and result.failure_category not in INFRASTRUCTURE_FAILURE_CATEGORIES
+        ):
             current_fail_count = resolved.validation_fail_count or 0
             new_fail_count = current_fail_count + 1
             validation_updates["validation_fail_count"] = new_fail_count

@@ -9,6 +9,7 @@ from collections.abc import Mapping, Sequence
 from datetime import datetime
 from typing import Literal
 
+from gobby.failure_categories import classify_failure
 from gobby.storage.hub.protocol import HubDatabase, Transaction
 from gobby.storage.session_resolution import is_session_uuid
 from gobby.storage.tasks._dispatcher_wake import wake_dispatcher_for_task_change
@@ -179,6 +180,7 @@ class StageStateTransitions:
                     f"{stage_name}:{to_state}",
                     event_reason,
                     by_actor=holder,
+                    failure_category=(classify_failure(reason) if verb == "fail_stage" else None),
                 )
                 if verb == "fail_stage" and stage_name == "holistic_qa" and cited_subtasks:
                     self.reset_holistic_failure_targets(

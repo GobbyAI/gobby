@@ -14,6 +14,7 @@ from click.testing import CliRunner
 
 from gobby.cli import cli
 from gobby.config import DaemonConfig
+from gobby.failure_categories import FailureCategory
 from gobby.tasks.validation_verdict import ValidationResult
 
 pytestmark = pytest.mark.unit
@@ -173,6 +174,51 @@ class TestValidateCommandWithNewFlags:
         assert "verdict overridden: validator attested current failures: pytest: 1 failed" in (
             result.output
         )
+
+    @patch("gobby.cli.tasks.ai.get_task_manager")
+    @patch("gobby.cli.tasks.ai.resolve_task_id")
+    @patch("gobby.config.app.load_config")
+    @patch("gobby.tasks.validation.TaskValidator")
+    def test_infrastructure_verdict_does_not_increment_validation_fail_count(
+        self,
+        mock_validator_cls: MagicMock,
+        mock_load_config: MagicMock,
+        mock_resolve: MagicMock,
+        mock_get_manager: MagicMock,
+        runner: CliRunner,
+        mock_task: MagicMock,
+    ) -> None:
+        mock_task.validation_fail_count = 3
+        mock_resolve.return_value = mock_task
+        mock_manager = MagicMock()
+        mock_manager.list_tasks.return_value = []
+        mock_get_manager.return_value = mock_manager
+        mock_load_config.return_value = DaemonConfig()
+
+        async def validate(*args: object, **kwargs: object) -> ValidationResult:
+            del args, kwargs
+            return ValidationResult(
+                status="invalid",
+                feedback="PostgreSQL connection refused",
+                failure_category=FailureCategory.ENVIRONMENT,
+            )
+
+        mock_validator_cls.return_value.validate_task.side_effect = validate
+        with (
+            patch("gobby.cli.runtime.get_cli_runtime") as cli_runtime,
+            patch("gobby.cli.runtime.require_cli_database", return_value=MagicMock()),
+        ):
+            cli_runtime.return_value.config = DaemonConfig()
+            result = runner.invoke(
+                cli,
+                ["tasks", "validate", mock_task.id, "--summary", "test changes"],
+            )
+
+        assert result.exit_code == 0, (result.output, result.exception)
+        update_kwargs = mock_manager.update_task.call_args.kwargs
+        assert "validation_fail_count" not in update_kwargs
+        mock_manager.create_task.assert_not_called()
+        mock_manager.escalate_task.assert_not_called()
 
     @patch("gobby.cli.tasks.ai.get_task_manager")
     @patch("gobby.cli.tasks.ai.resolve_task_id")

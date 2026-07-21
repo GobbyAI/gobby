@@ -6,6 +6,8 @@ from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
 from typing import Literal, cast
 
+from gobby.failure_categories import FailureCategory, classify_failure
+
 _NULLISH_FAILURE_EVIDENCE = frozenset({"n/a", "none", "null"})
 _VERDICT_STATUSES = frozenset({"valid", "invalid", "pending"})
 
@@ -18,6 +20,7 @@ class ValidationResult:
     feedback: str | None = None
     blocking_reasons: list[str] = field(default_factory=list)
     verdict_override: dict[str, object] | None = None
+    failure_category: FailureCategory | None = None
 
 
 def _coerce_blocking_reasons(value: object) -> list[str]:
@@ -93,11 +96,17 @@ def _validation_result_from_data(result_data: Mapping[str, object]) -> Validatio
     override = normalized.get("verdict_override")
     if not isinstance(override, dict):
         override = None
+    failure_category = None
+    if status != "valid":
+        failure_category = classify_failure(
+            "\n".join(part for part in (feedback, *reasons) if part)
+        )
     return ValidationResult(
         status=cast(Literal["valid", "invalid", "pending", "error"], status),
         feedback=feedback,
         blocking_reasons=reasons,
         verdict_override=override,
+        failure_category=failure_category,
     )
 
 

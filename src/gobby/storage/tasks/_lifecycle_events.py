@@ -7,6 +7,7 @@ from dataclasses import dataclass
 from datetime import datetime
 from typing import Any
 
+from gobby.failure_categories import FailureCategory
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.utils.datetime import normalize_datetime_model
 
@@ -26,6 +27,7 @@ class TaskLifecycleEvent:
     to_state: str
     reason: str
     by_actor: str
+    failure_category: FailureCategory | None
     created_at: datetime
 
     @classmethod
@@ -37,6 +39,11 @@ class TaskLifecycleEvent:
             to_state=row["to_state"],
             reason=row["reason"],
             by_actor=row["by_actor"],
+            failure_category=(
+                FailureCategory(row["failure_category"])
+                if row.get("failure_category") is not None
+                else None
+            ),
             created_at=row["created_at"],
         )
 
@@ -56,6 +63,7 @@ class TaskLifecycleEventManager:
         by_actor: str | None = None,
         *,
         by: str | None = None,
+        failure_category: FailureCategory | None = None,
     ) -> TaskLifecycleEvent:
         actor = by_actor if by_actor is not None else by
         if not reason.strip():
@@ -67,12 +75,19 @@ class TaskLifecycleEventManager:
             row = conn.execute(
                 """
                 INSERT INTO task_lifecycle_events (
-                    task_id, from_state, to_state, reason, by_actor
+                    task_id, from_state, to_state, reason, by_actor, failure_category
                 )
-                VALUES (%s, %s, %s, %s, %s)
+                VALUES (%s, %s, %s, %s, %s, %s)
                 RETURNING id
                 """,
-                (task_id, from_state, to_state, reason, actor),
+                (
+                    task_id,
+                    from_state,
+                    to_state,
+                    reason,
+                    actor,
+                    failure_category.value if failure_category is not None else None,
+                ),
             ).fetchone()
             if row is None:
                 raise RuntimeError("PostgreSQL hub did not return a lifecycle event id")
