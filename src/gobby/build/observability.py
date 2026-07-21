@@ -21,6 +21,7 @@ from gobby.dispatch.actions import (
 )
 from gobby.dispatch.agent_counts import count_active_agents
 from gobby.dispatch.context import build_context, reload_candidate
+from gobby.dispatch.skill_composition import inspect_skill_composition
 from gobby.storage.agents import LocalAgentRunManager
 from gobby.storage.build_history import BuildHistoryStorage
 from gobby.storage.clones import LocalCloneManager
@@ -34,6 +35,7 @@ from gobby.storage.tasks._dispatch_mutex import TaskDispatchMutexManager
 from gobby.storage.tasks._holistic_gate import find_holistic_descendant_gate
 from gobby.storage.worktrees import LocalWorktreeManager
 from gobby.utils.datetime import parse_stored_datetime
+from gobby.workflows.agent_resolver import resolve_agent
 
 MAX_ACTIVE_AGENTS = 10
 
@@ -115,11 +117,23 @@ def explain_dispatch(
         ancestor_gate,
     )
     action = None
+    skill_composition: dict[str, object] | None = None
     if reason is None:
         context = build_context(db, candidate, services=services)
         action = dispatch_rules.evaluate(candidate, context, dispatch_rules.RULES)
         if action is None:
             reason = "no_matching_rule"
+        elif isinstance(action, SpawnAgentAction):
+            agent_body = resolve_agent(action.agent_slug, db, project_id=project_id)
+            report = inspect_skill_composition(
+                db,
+                project_id=project_id,
+                agent_body=agent_body,
+                additional_skills=action.additional_skills,
+            )
+            skill_composition = report.to_dict()
+            if report.failure_reason is not None:
+                reason = report.failure_reason
 
     return {
         "ok": True,
@@ -134,6 +148,7 @@ def explain_dispatch(
         ),
         "mutex": mutex,
         "active_agents": active_agents,
+        "skill_composition": skill_composition,
         "proposed_action": _action_summary(action),
     }
 

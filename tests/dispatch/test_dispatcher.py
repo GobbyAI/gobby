@@ -48,6 +48,22 @@ _LEGACY_STAGE_MAP = {
 STABLE_TEST_UUID_NAMESPACE = uuid.UUID("283ea5ca-a422-500e-b771-0533679ebc0a")
 
 
+@pytest.fixture(autouse=True)
+def _sync_bundled_skills_with_agents(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Keep bundled agent test fixtures paired with their required skills."""
+    from gobby.agents import sync as agent_sync
+    from gobby.skills.sync import sync_bundled_skills
+
+    sync_agents = agent_sync.sync_bundled_agents
+
+    def sync_agents_and_skills(db: HubDatabase) -> dict[str, Any]:
+        skill_result = sync_bundled_skills(db)
+        assert skill_result["success"] is True
+        return sync_agents(db)
+
+    monkeypatch.setattr(agent_sync, "sync_bundled_agents", sync_agents_and_skills)
+
+
 def stable_test_uuid(label: str) -> str:
     return str(uuid.uuid5(STABLE_TEST_UUID_NAMESPACE, f"gobby:test:{label}"))
 

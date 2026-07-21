@@ -7,6 +7,7 @@ import logging
 from typing import TYPE_CHECKING, cast
 
 from gobby.dispatch.actions import SpawnAgentAction
+from gobby.dispatch.skill_composition import inspect_skill_composition
 from gobby.dispatch.spawn_artifacts import (
     SpawnIsolation,
     _artifact_ref_resolves,
@@ -111,16 +112,26 @@ async def spawn_agent(
     from gobby.storage.projects import LocalProjectManager
     from gobby.workflows.agent_resolver import AgentResolutionError, resolve_agent
 
+    try:
+        agent_body = resolve_agent(action.agent_slug, db, project_id=project_id)
+    except AgentResolutionError as exc:
+        raise DispatchSpawnFailed(f"agent_definition_missing:{action.agent_slug}") from exc
+
+    skill_composition = inspect_skill_composition(
+        db,
+        project_id=project_id,
+        agent_body=agent_body,
+        additional_skills=action.additional_skills,
+    )
+    if skill_composition.failure_reason is not None:
+        raise DispatchSpawnFailed(skill_composition.failure_reason)
+
     parent_session_id = get_or_create_launcher_session(
         session_manager,
         project_id,
         "dispatcher_launcher",
         "Dispatcher Launcher",
     )
-    try:
-        agent_body = resolve_agent(action.agent_slug, db, project_id=project_id)
-    except AgentResolutionError as exc:
-        raise DispatchSpawnFailed(f"agent_definition_missing:{action.agent_slug}") from exc
 
     prompt = action.prompt
     if agent_body is not None:
