@@ -119,3 +119,9 @@ so each iteration resumes from the durable goal document and live task state.
   ordering guards. Ruff format/check, strict mypy, Bandit, package build, YAML
   schema, test-quality, and diff checks passed; close-triggered compaction supplied
   the required boundary.
+- 2026-07-21 #9341 iteration 6 — closed #18490 with commits `592f4326b` and
+  `9faa749dd`; replaced NULL-as-global memory scope with required project
+  ownership plus explicit `is_global` visibility throughout PostgreSQL, services,
+  secondary projections, APIs, sync, and the web UI. The exact acceptance suite
+  passed with 1,273 backend tests and 29 frontend tests (2 backend tests skipped);
+  Ruff, mypy, frontend type-check, and frontend lint also passed.
