@@ -362,12 +362,15 @@ def test_sync_tombstone_database_objects_are_removed(postgres_db: Any) -> None:
             to_regprocedure(current_schema() || '.capture_sync_tombstone()') AS capture_function,
             (
                 SELECT COUNT(*)
-                FROM pg_trigger
+                FROM pg_trigger AS trigger
+                JOIN pg_class AS relation ON relation.oid = trigger.tgrelid
+                JOIN pg_namespace AS namespace ON namespace.oid = relation.relnamespace
                 WHERE tgname IN (
                     'tasks_capture_sync_tombstone',
                     'memories_capture_sync_tombstone'
                 )
                 AND NOT tgisinternal
+                AND namespace.nspname = current_schema()
             ) AS capture_trigger_count
         """
     )

@@ -186,6 +186,8 @@ class DaemonConfig(BaseModel):
                 raise ValueError(
                     "memory_recall_helper config has been removed. Use memory_recall instead."
                 )
+            if "memory_sync" in data:
+                raise ValueError("memory_sync config has been removed. Use memory_backup instead.")
             if "local" in data:
                 raise ValueError(
                     "local config has been removed. Use "

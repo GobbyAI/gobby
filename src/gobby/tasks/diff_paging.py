@@ -338,30 +338,31 @@ def _manifest_page_candidates(
     total = 0
     matched: tuple[str, bytes, str] | None = None
     current_numstat: dict[bytes, tuple[int | None, int | None]] | None = None
+    numstat_loaded = False
 
     def emit(item: ManifestItem, raw_path: bytes) -> None:
-        nonlocal matched, total
+        nonlocal current_numstat, matched, numstat_loaded, total
         if offset <= total < offset + limit:
-            if current_numstat is not None:
-                magnitude = current_numstat.get(raw_path)
-                if magnitude is not None:
-                    item["lines_added"], item["lines_deleted"] = magnitude
+            if not numstat_loaded:
+                current_numstat = _numstat_totals(
+                    item["commit"],
+                    cwd=cwd,
+                    subprocess_deadline=subprocess_deadline,
+                    git_timeout_seconds=git_timeout_seconds,
+                )
+                numstat_loaded = True
+            assert current_numstat is not None
+            magnitude = current_numstat.get(raw_path)
+            if magnitude is not None:
+                item["lines_added"], item["lines_deleted"] = magnitude
             items.append(item)
         if wanted_selector is not None and item["path_selector"] == wanted_selector:
             matched = (item["commit"], raw_path, item["status"])
         total += 1
 
     for commit in commits:
-        current_numstat = (
-            _numstat_totals(
-                commit,
-                cwd=cwd,
-                subprocess_deadline=subprocess_deadline,
-                git_timeout_seconds=git_timeout_seconds,
-            )
-            if limit > 0
-            else None
-        )
+        current_numstat = None
+        numstat_loaded = False
         parser = _ManifestParser(commit, emit)
         _run_git(
             [

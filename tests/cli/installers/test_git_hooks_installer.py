@@ -1089,4 +1089,5 @@ class TestHookTemplates:
         """No installed hook template automatically restores JSONL."""
         for content in HOOK_TEMPLATES.values():
             assert "gobby tasks restore" not in content
+            assert "gobby tasks sync --import" not in content
             assert "gobby memory restore" not in content

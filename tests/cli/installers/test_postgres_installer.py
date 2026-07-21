@@ -62,6 +62,16 @@ def test_docker_install_runs_postgres_profile_and_writes_bootstrap(
     def _write_bootstrap_defaults(*args: Any, **kwargs: Any) -> None:
         bootstrap_payloads.append({"args": args, "kwargs": kwargs})
 
+    def _record_asset_sync(**_kwargs: Any) -> None:
+        helper_calls.append("sync_assets")
+
+    def _record_probe(**kwargs: Any) -> None:
+        helper_calls.append(f"probe:{kwargs['sql']}")
+
+    def _record_readiness(**_kwargs: Any) -> bool:
+        helper_calls.append("pg_isready")
+        return True
+
     monkeypatch.setattr(installer.shutil, "which", lambda name: "/usr/bin/docker")
     monkeypatch.setattr(installer.subprocess, "run", _run)
     monkeypatch.delenv("GOBBY_POSTGRES_PASSWORD", raising=False)
@@ -69,19 +79,19 @@ def test_docker_install_runs_postgres_profile_and_writes_bootstrap(
     monkeypatch.setattr(
         installer,
         "_sync_postgres_pgsearch_assets",
-        lambda **_kwargs: helper_calls.append("sync_assets"),
+        _record_asset_sync,
         raising=False,
     )
     monkeypatch.setattr(
         installer,
         "_wait_for_pg_isready",
-        lambda **_kwargs: helper_calls.append("pg_isready") or True,
+        _record_readiness,
         raising=False,
     )
     monkeypatch.setattr(
         installer,
         "_probe_create_extension",
-        lambda **kwargs: helper_calls.append(f"probe:{kwargs['sql']}"),
+        _record_probe,
         raising=False,
     )
     monkeypatch.setattr(
@@ -118,7 +128,7 @@ def test_docker_install_runs_postgres_profile_and_writes_bootstrap(
     assert "docker" in payload_text
 
 
-def test_postgres_database_url_reuses_bootstrap_credentials(
+def test_postgres_database_url_matches_validated_compose_runtime(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
 ) -> None:
@@ -136,10 +146,32 @@ def test_postgres_database_url_reuses_bootstrap_credentials(
         lambda _size: pytest.fail("persisted installs must not generate a new password"),
     )
 
-    assert (
-        installer._resolve_postgres_install_database_url(gobby_home=tmp_path, port=60991)
-        == "postgresql://gobby:persisted-password@localhost:5432/gobby"
+    database_url, runtime = installer._resolve_postgres_install_database_url(
+        gobby_home=tmp_path,
+        port=60991,
     )
+
+    assert database_url == "postgresql://gobby:transient-password@localhost:5432/gobby"
+    assert runtime.environment["GOBBY_POSTGRES_PASSWORD"] == "transient-password"
+
+
+def test_docker_install_reports_incomplete_compose_environment(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    installer = _import_installer()
+    monkeypatch.setattr(installer.shutil, "which", lambda _name: "/usr/bin/docker")
+    monkeypatch.setattr(installer, "_sync_postgres_pgsearch_assets", lambda **_kwargs: None)
+    monkeypatch.setattr(
+        installer,
+        "resolve_compose_runtime",
+        lambda *_args, **_kwargs: installer.ComposeRuntime(environment={}, profiles=()),
+    )
+
+    result = installer._install_docker(gobby_home=tmp_path, port=60991)
+
+    assert result["success"] is False
+    assert "GOBBY_POSTGRES_USER" in result["error"]
 
 
 def test_postgres_install_refreshes_stale_unified_compose(

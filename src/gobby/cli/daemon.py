@@ -9,8 +9,9 @@ import os
 import subprocess  # nosec B404 # subprocess needed for daemon management
 import sys
 import time
+from dataclasses import dataclass
 from pathlib import Path
-from typing import Any
+from typing import Any, Literal
 
 import click
 import httpx
@@ -53,7 +54,13 @@ logger = logging.getLogger(__name__)
 SERVICE_MANAGED_STOP_TIMEOUT_SECONDS = 75.0
 
 
-def _services_start(gobby_home: Path) -> None:
+@dataclass(frozen=True)
+class ServiceStartResult:
+    outcome: Literal["success", "skipped", "failed"]
+    detail: str
+
+
+def _services_start(gobby_home: Path) -> ServiceStartResult:
     """Start Docker services (Qdrant, FalkorDB) via unified compose file.
 
     Uses Docker Compose profiles to start only installed services.
@@ -61,23 +68,21 @@ def _services_start(gobby_home: Path) -> None:
     import shutil
 
     if not shutil.which("docker"):
-        return
+        return ServiceStartResult("skipped", "Docker executable is unavailable")
 
     services_dir = gobby_home / "services"
     compose_file = services_dir / "docker-compose.yml"
 
     if not compose_file.exists():
-        return
+        return ServiceStartResult("skipped", f"Compose file is missing: {compose_file}")
 
     try:
         runtime = resolve_compose_runtime(gobby_home)
     except ComposeEnvironmentError as exc:
-        logger.warning("Could not resolve config for services; skipping Docker startup: %s", exc)
-        return
+        return ServiceStartResult("failed", f"Could not resolve Docker service config: {exc}")
 
     if not runtime.profiles:
-        logger.debug("No external services configured — skipping Docker startup")
-        return
+        return ServiceStartResult("skipped", "No Docker service profiles are configured")
 
     cmd = ["docker", "compose", "-f", str(compose_file)]
     for profile in runtime.profiles:
@@ -94,11 +99,15 @@ def _services_start(gobby_home: Path) -> None:
             cwd=str(services_dir),
         )
         if result.returncode != 0:
-            logger.warning("Failed to start services: %s", result.stderr or result.stdout)
+            return ServiceStartResult(
+                "failed",
+                f"Docker compose up failed: {result.stderr or result.stdout}",
+            )
     except subprocess.TimeoutExpired:
-        logger.warning("Timed out starting Docker services")
-    except Exception as e:
-        logger.warning("Failed to start Docker services: %s", e)
+        return ServiceStartResult("failed", "Docker compose up timed out after 120s")
+    except (OSError, subprocess.SubprocessError) as exc:
+        return ServiceStartResult("failed", f"Docker compose execution failed: {exc}")
+    return ServiceStartResult("success", "Docker services started")
 
 
 def _services_stop(gobby_home: Path) -> None:
@@ -358,8 +367,14 @@ def start(ctx: click.Context, verbose: bool, no_ui: bool, docker_flag: bool) -> 
     # Revive managed dependencies before launchd/systemd starts the runner.
     services_compose = gobby_dir / "services" / "docker-compose.yml"
     if services_compose.exists() or docker_flag:
-        _services_start(gobby_dir)
-        _step("Docker services started")
+        services_result = _services_start(gobby_dir)
+        if services_result.outcome == "success":
+            _step("Docker services started")
+        elif services_result.outcome == "failed":
+            _step(services_result.detail, error=True)
+            sys.exit(1)
+        else:
+            _step(f"Docker services skipped: {services_result.detail}")
 
     # If OS service is installed, delegate to it
     svc = get_service_status()

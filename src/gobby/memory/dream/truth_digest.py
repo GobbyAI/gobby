@@ -45,7 +45,7 @@ _CANONICAL_FACTS: tuple[str, ...] = (
     "Tooling uses an MCP proxy with progressive discovery "
     "(list_mcp_servers -> list_tools -> get_tool_schema -> call_tool).",
     "Gobby is a local-first daemon; sessions persist across restarts and "
-    "context compactions, and PostgreSQL-authoritative task state with JSONL backups.",
+    "context compactions, and stores PostgreSQL-authoritative task state with JSONL backups.",
 )
 
 # Allowlist of safe (label, dotted-attribute-path) pairs read off daemon config.

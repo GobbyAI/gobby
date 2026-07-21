@@ -26,35 +26,36 @@ def de_escalate_task(
     if not task.is_escalated:
         raise ValueError(f"Task {task_id} is not escalated")
 
-    if restore_stage_from_history:
-        _restore_stage_from_history_for_de_escalation(
-            db,
-            task_id,
-            reason=reason,
-            escalation_reason=task.escalation_reason,
-        )
-
     description = (
         f"{task.description}\n\nDe-escalated: {reason}"
         if task.description
         else f"De-escalated: {reason}"
     )
 
-    release_task_claim(
-        db,
-        task_id,
-        description=description,
-        escalated_at=None,
-        escalation_reason=None,
-        validation_fail_count=0 if reset_validation else UNSET,
-    )
-    if reset_stage_attempts:
-        _reset_stage_work_attempts_for_de_escalation(
+    with db.transaction():
+        if restore_stage_from_history:
+            _restore_stage_from_history_for_de_escalation(
+                db,
+                task_id,
+                reason=reason,
+                escalation_reason=task.escalation_reason,
+            )
+
+        release_task_claim(
             db,
             task_id,
-            reason=reason,
-            escalation_reason=task.escalation_reason,
+            description=description,
+            escalated_at=None,
+            escalation_reason=None,
+            validation_fail_count=0 if reset_validation else UNSET,
         )
+        if reset_stage_attempts:
+            _reset_stage_work_attempts_for_de_escalation(
+                db,
+                task_id,
+                reason=reason,
+                escalation_reason=task.escalation_reason,
+            )
     return get_task(db, task_id)
 
 
@@ -90,22 +91,25 @@ def _restore_stage_from_history_for_de_escalation(
     restored_state = "review_approved"
     history = db.fetchone(
         """
-        SELECT 1
+        SELECT from_state, reason
           FROM task_lifecycle_events
          WHERE task_id = %s
-           AND from_state = %s
            AND to_state = %s
-           AND reason = 'build_stop'
          ORDER BY id DESC
          LIMIT 1
         """,
-        (task_id, f"{stage_name}:{restored_state}", f"{stage_name}:ready"),
+        (task_id, f"{stage_name}:ready"),
     )
-    if history is None:
+    expected_from_state = f"{stage_name}:{restored_state}"
+    if (
+        history is None
+        or history["from_state"] != expected_from_state
+        or history["reason"] != "build_stop"
+    ):
         raise ValueError(
             "Cannot restore task "
-            f"{task_id} stage {stage_name!r} from history: no build_stop "
-            f"{restored_state!r} to 'ready' lifecycle event was found"
+            f"{task_id} stage {stage_name!r} from history: latest transition into "
+            f"'ready' was not a build_stop {restored_state!r} to 'ready' event"
         )
 
     now = utc_now()

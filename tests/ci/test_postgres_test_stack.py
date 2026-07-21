@@ -254,7 +254,7 @@ def test_pre_push_uses_canonical_logging_dir_for_pytest(repo_root: Path) -> None
         "GOBBY_LOGGING_MCP_CLIENT",
         "GOBBY_LOGGING_HOOK_MANAGER",
     ):
-        assert f"{legacy_name}=" not in script
+        assert legacy_name not in script
 
 
 def test_pre_push_fails_if_postgres_skip_reason_reaches_pytest_report(

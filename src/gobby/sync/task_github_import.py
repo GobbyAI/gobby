@@ -269,7 +269,7 @@ class GitHubIssueImporter:
         """Fetch issues using gh CLI. Returns None if gh is not available."""
         try:
             subprocess.run(  # nosec B603 B607
-                ["gh", "--version"], capture_output=True, check=True, timeout=5
+                ["gh", "--version"], capture_output=True, check=True, timeout=180
             )
         except (subprocess.CalledProcessError, FileNotFoundError, subprocess.TimeoutExpired):
             return None
@@ -288,10 +288,10 @@ class GitHubIssueImporter:
         ]
         try:
             result = subprocess.run(  # nosec B603
-                cmd, capture_output=True, text=True, timeout=30
+                cmd, capture_output=True, text=True, timeout=180
             )
         except subprocess.TimeoutExpired as exc:
-            raise RuntimeError("gh issue list timed out after 30 seconds") from exc
+            raise RuntimeError("gh issue list timed out after 180 seconds") from exc
         if result.returncode != 0:
             raise RuntimeError(f"gh command failed: {result.stderr}")
         parsed: list[dict[str, Any]] = json.loads(result.stdout)

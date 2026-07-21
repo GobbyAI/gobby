@@ -2,12 +2,15 @@
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from types import SimpleNamespace
+from typing import Any
 from uuid import UUID
 
 import pytest
 
-from gobby.storage.tasks import LocalTaskManager
+from gobby.storage.hub.protocol import HubDatabase
+from gobby.storage.tasks import LocalTaskManager, Task
 from gobby.workflows.condition_helpers import (
     _normalize_task_id,
     completion_evidence_diagnostic,
@@ -26,11 +29,15 @@ from gobby.workflows.condition_helpers import (
 pytestmark = pytest.mark.unit
 
 
-def _manager(temp_db) -> LocalTaskManager:
+def _manager(temp_db: HubDatabase) -> LocalTaskManager:
     return LocalTaskManager(temp_db)
 
 
-def _task(manager: LocalTaskManager, sample_project: dict, **kwargs):
+def _task(
+    manager: LocalTaskManager,
+    sample_project: dict[str, Any],
+    **kwargs: Any,
+) -> Task:
     title = kwargs.pop("title", "Condition helper task")
     return manager.create_task(project_id=sample_project["id"], title=title, **kwargs)
 
@@ -40,7 +47,7 @@ def _start_development_stage(manager: LocalTaskManager, task_id: str) -> None:
     manager.stage_states.start_stage(task_id, "development", by_session_id=None)
 
 
-def _seq_ref(task) -> str:
+def _seq_ref(task: Task) -> str:
     assert task.seq_num is not None
     return f"#{task.seq_num}"
 
@@ -318,7 +325,7 @@ class TestNormalizeTaskId:
 
 
 class TestIsTaskComplete:
-    def test_closed_is_complete(self, temp_db, sample_project) -> None:
+    def test_closed_is_complete(self, temp_db: HubDatabase, sample_project: dict[str, Any]) -> None:
         manager = _manager(temp_db)
         task = _task(manager, sample_project)
 
@@ -327,18 +334,24 @@ class TestIsTaskComplete:
         assert not hasattr(closed, "status")
         assert is_task_complete(closed) is True
 
-    def test_ready_is_not_complete(self, temp_db, sample_project) -> None:
+    def test_ready_is_not_complete(
+        self, temp_db: HubDatabase, sample_project: dict[str, Any]
+    ) -> None:
         task = _task(_manager(temp_db), sample_project)
         assert is_task_complete(task) is False
 
-    def test_in_progress_is_not_complete(self, temp_db, sample_project) -> None:
+    def test_in_progress_is_not_complete(
+        self, temp_db: HubDatabase, sample_project: dict[str, Any]
+    ) -> None:
         manager = _manager(temp_db)
         task = _task(manager, sample_project)
         _start_development_stage(manager, task.id)
 
         assert is_task_complete(manager.get_task(task.id)) is False
 
-    def test_needs_review_is_not_complete(self, temp_db, sample_project) -> None:
+    def test_needs_review_is_not_complete(
+        self, temp_db: HubDatabase, sample_project: dict[str, Any]
+    ) -> None:
         manager = _manager(temp_db)
         task = _task(manager, sample_project)
         _start_development_stage(manager, task.id)
@@ -346,7 +359,9 @@ class TestIsTaskComplete:
 
         assert is_task_complete(reviewed) is False
 
-    def test_escalated_is_not_complete(self, temp_db, sample_project) -> None:
+    def test_escalated_is_not_complete(
+        self, temp_db: HubDatabase, sample_project: dict[str, Any]
+    ) -> None:
         manager = _manager(temp_db)
         task = _task(manager, sample_project)
         escalated = manager.escalate_task(task.id, reason="needs human")
@@ -355,42 +370,50 @@ class TestIsTaskComplete:
 
 
 class TestTaskTreeCompleteIntHandling:
-    def test_int_task_id_closed(self, temp_db, sample_project) -> None:
+    def test_int_task_id_closed(self, temp_db: HubDatabase, sample_project: dict[str, Any]) -> None:
         manager = _manager(temp_db)
         task = _task(manager, sample_project)
         manager.close_task(task.id, force=True)
 
         assert task_tree_complete(manager, task.seq_num) is True
 
-    def test_int_task_id_open(self, temp_db, sample_project) -> None:
+    def test_int_task_id_open(self, temp_db: HubDatabase, sample_project: dict[str, Any]) -> None:
         manager = _manager(temp_db)
         task = _task(manager, sample_project)
 
         assert task_tree_complete(manager, task.seq_num) is False
 
-    def test_int_task_id_not_found(self, temp_db) -> None:
+    def test_int_task_id_not_found(self, temp_db: HubDatabase) -> None:
         assert task_tree_complete(_manager(temp_db), 9438) is False
 
-    def test_int_does_not_raise_type_error(self, temp_db, sample_project) -> None:
+    def test_int_does_not_raise_type_error(
+        self, temp_db: HubDatabase, sample_project: dict[str, Any]
+    ) -> None:
         manager = _manager(temp_db)
         task = _task(manager, sample_project)
 
         assert task_tree_complete(manager, task.seq_num) is False
 
 
-def test_task_needs_human_review_returns_false_for_invalid_uuid_bytes(temp_db) -> None:
+def test_task_needs_human_review_returns_false_for_invalid_uuid_bytes(
+    temp_db: HubDatabase,
+) -> None:
     assert task_needs_human_review(_manager(temp_db), b"short") is False
 
 
 class TestTaskTreeCompleteString:
-    def test_string_task_id_closed(self, temp_db, sample_project) -> None:
+    def test_string_task_id_closed(
+        self, temp_db: HubDatabase, sample_project: dict[str, Any]
+    ) -> None:
         manager = _manager(temp_db)
         task = _task(manager, sample_project)
         manager.close_task(task.id, force=True)
 
         assert task_tree_complete(manager, task.id) is True
 
-    def test_string_task_id_open(self, temp_db, sample_project) -> None:
+    def test_string_task_id_open(
+        self, temp_db: HubDatabase, sample_project: dict[str, Any]
+    ) -> None:
         manager = _manager(temp_db)
         task = _task(manager, sample_project)
 
@@ -398,7 +421,9 @@ class TestTaskTreeCompleteString:
 
 
 class TestTaskTreeCompleteList:
-    def test_list_of_strings_all_closed(self, temp_db, sample_project) -> None:
+    def test_list_of_strings_all_closed(
+        self, temp_db: HubDatabase, sample_project: dict[str, Any]
+    ) -> None:
         manager = _manager(temp_db)
         first = _task(manager, sample_project, title="First")
         second = _task(manager, sample_project, title="Second")
@@ -407,7 +432,9 @@ class TestTaskTreeCompleteList:
 
         assert task_tree_complete(manager, [first.id, second.id]) is True
 
-    def test_list_of_ints_all_closed(self, temp_db, sample_project) -> None:
+    def test_list_of_ints_all_closed(
+        self, temp_db: HubDatabase, sample_project: dict[str, Any]
+    ) -> None:
         manager = _manager(temp_db)
         first = _task(manager, sample_project, title="First")
         second = _task(manager, sample_project, title="Second")
@@ -416,7 +443,7 @@ class TestTaskTreeCompleteList:
 
         assert task_tree_complete(manager, [first.seq_num, second.seq_num]) is True
 
-    def test_mixed_list(self, temp_db, sample_project) -> None:
+    def test_mixed_list(self, temp_db: HubDatabase, sample_project: dict[str, Any]) -> None:
         manager = _manager(temp_db)
         first = _task(manager, sample_project, title="First")
         second = _task(manager, sample_project, title="Second")
@@ -425,7 +452,7 @@ class TestTaskTreeCompleteList:
 
         assert task_tree_complete(manager, [first.id, second.seq_num]) is True
 
-    def test_list_one_open(self, temp_db, sample_project) -> None:
+    def test_list_one_open(self, temp_db: HubDatabase, sample_project: dict[str, Any]) -> None:
         manager = _manager(temp_db)
         first = _task(manager, sample_project, title="First")
         second = _task(manager, sample_project, title="Second")
@@ -435,7 +462,9 @@ class TestTaskTreeCompleteList:
 
 
 class TestTaskTreeCompleteIterableInputs:
-    def test_tuple_of_strings_all_closed(self, temp_db, sample_project) -> None:
+    def test_tuple_of_strings_all_closed(
+        self, temp_db: HubDatabase, sample_project: dict[str, Any]
+    ) -> None:
         manager = _manager(temp_db)
         first = _task(manager, sample_project, title="First")
         second = _task(manager, sample_project, title="Second")
@@ -444,7 +473,9 @@ class TestTaskTreeCompleteIterableInputs:
 
         assert task_tree_complete(manager, (first.id, second.id)) is True
 
-    def test_generator_of_ints_all_closed(self, temp_db, sample_project) -> None:
+    def test_generator_of_ints_all_closed(
+        self, temp_db: HubDatabase, sample_project: dict[str, Any]
+    ) -> None:
         manager = _manager(temp_db)
         first = _task(manager, sample_project, title="First")
         second = _task(manager, sample_project, title="Second")
@@ -463,9 +494,9 @@ class TestTaskTreeCompleteIterableInputs:
     )
     def test_bytes_like_uuid_is_scalar_task_id(
         self,
-        temp_db,
-        sample_project,
-        bytes_factory,
+        temp_db: HubDatabase,
+        sample_project: dict[str, Any],
+        bytes_factory: Callable[[bytes], bytes | bytearray | memoryview],
     ) -> None:
         manager = _manager(temp_db)
         task = _task(manager, sample_project)
@@ -475,13 +506,13 @@ class TestTaskTreeCompleteIterableInputs:
 
 
 class TestTaskTreeCompleteEdgeCases:
-    def test_none_returns_true(self, temp_db) -> None:
+    def test_none_returns_true(self, temp_db: HubDatabase) -> None:
         assert task_tree_complete(_manager(temp_db), None) is True
 
     def test_no_task_manager_returns_false(self) -> None:
         assert task_tree_complete(None, "#1") is False
 
-    def test_subtree_all_closed(self, temp_db, sample_project) -> None:
+    def test_subtree_all_closed(self, temp_db: HubDatabase, sample_project: dict[str, Any]) -> None:
         manager = _manager(temp_db)
         parent = _task(manager, sample_project, title="Parent")
         child_a = _task(manager, sample_project, title="Child A", parent_task_id=parent.id)
@@ -491,7 +522,7 @@ class TestTaskTreeCompleteEdgeCases:
 
         assert task_tree_complete(manager, parent.id) is True
 
-    def test_subtree_one_open(self, temp_db, sample_project) -> None:
+    def test_subtree_one_open(self, temp_db: HubDatabase, sample_project: dict[str, Any]) -> None:
         manager = _manager(temp_db)
         parent = _task(manager, sample_project, title="Parent")
         child_a = _task(manager, sample_project, title="Child A", parent_task_id=parent.id)
@@ -500,7 +531,7 @@ class TestTaskTreeCompleteEdgeCases:
 
         assert task_tree_complete(manager, parent.id) is False
 
-    def test_nested_subtree(self, temp_db, sample_project) -> None:
+    def test_nested_subtree(self, temp_db: HubDatabase, sample_project: dict[str, Any]) -> None:
         manager = _manager(temp_db)
         parent = _task(manager, sample_project, title="Parent")
         child = _task(manager, sample_project, title="Child", parent_task_id=parent.id)
@@ -509,7 +540,9 @@ class TestTaskTreeCompleteEdgeCases:
 
         assert task_tree_complete(manager, parent.id) is True
 
-    def test_nested_subtree_incomplete(self, temp_db, sample_project) -> None:
+    def test_nested_subtree_incomplete(
+        self, temp_db: HubDatabase, sample_project: dict[str, Any]
+    ) -> None:
         manager = _manager(temp_db)
         parent = _task(manager, sample_project, title="Parent")
         child = _task(manager, sample_project, title="Child", parent_task_id=parent.id)
@@ -519,20 +552,26 @@ class TestTaskTreeCompleteEdgeCases:
 
 
 class TestTaskNeedsHumanReview:
-    def test_int_task_id_escalated(self, temp_db, sample_project) -> None:
+    def test_int_task_id_escalated(
+        self, temp_db: HubDatabase, sample_project: dict[str, Any]
+    ) -> None:
         manager = _manager(temp_db)
         task = _task(manager, sample_project)
         manager.escalate_task(task.id, reason="needs human")
 
         assert task_needs_human_review(manager, task.seq_num) is True
 
-    def test_int_task_id_not_escalated(self, temp_db, sample_project) -> None:
+    def test_int_task_id_not_escalated(
+        self, temp_db: HubDatabase, sample_project: dict[str, Any]
+    ) -> None:
         manager = _manager(temp_db)
         task = _task(manager, sample_project)
 
         assert task_needs_human_review(manager, task.seq_num) is False
 
-    def test_needs_review_is_not_human_review(self, temp_db, sample_project) -> None:
+    def test_needs_review_is_not_human_review(
+        self, temp_db: HubDatabase, sample_project: dict[str, Any]
+    ) -> None:
         manager = _manager(temp_db)
         task = _task(manager, sample_project)
         _start_development_stage(manager, task.id)
@@ -540,14 +579,14 @@ class TestTaskNeedsHumanReview:
 
         assert task_needs_human_review(manager, task.id) is False
 
-    def test_string_task_id(self, temp_db, sample_project) -> None:
+    def test_string_task_id(self, temp_db: HubDatabase, sample_project: dict[str, Any]) -> None:
         manager = _manager(temp_db)
         task = _task(manager, sample_project)
         manager.escalate_task(task.id, reason="needs human")
 
         assert task_needs_human_review(manager, task.id) is True
 
-    def test_none_returns_false(self, temp_db) -> None:
+    def test_none_returns_false(self, temp_db: HubDatabase) -> None:
         assert task_needs_human_review(_manager(temp_db), None) is False
 
     def test_no_manager_returns_false(self) -> None:
@@ -555,62 +594,80 @@ class TestTaskNeedsHumanReview:
 
 
 class TestTaskTypeIn:
-    def test_matches_epic_by_uuid(self, temp_db, sample_project) -> None:
+    def test_matches_epic_by_uuid(
+        self, temp_db: HubDatabase, sample_project: dict[str, Any]
+    ) -> None:
         manager = _manager(temp_db)
         task = _task(manager, sample_project, task_type="epic")
 
         assert task_type_in(manager, task.id, "epic") is True
 
-    def test_matches_epic_by_uuid_instance(self, temp_db, sample_project) -> None:
+    def test_matches_epic_by_uuid_instance(
+        self, temp_db: HubDatabase, sample_project: dict[str, Any]
+    ) -> None:
         manager = _manager(temp_db)
         task = _task(manager, sample_project, task_type="epic")
 
         assert task_type_in(manager, UUID(task.id), "epic") is True
 
-    def test_matches_epic_by_raw_uuid_bytes(self, temp_db, sample_project) -> None:
+    def test_matches_epic_by_raw_uuid_bytes(
+        self, temp_db: HubDatabase, sample_project: dict[str, Any]
+    ) -> None:
         manager = _manager(temp_db)
         task = _task(manager, sample_project, task_type="epic")
 
         assert task_type_in(manager, UUID(task.id).bytes, "epic") is True
 
-    def test_matches_epic_by_raw_uuid_bytearray(self, temp_db, sample_project) -> None:
+    def test_matches_epic_by_raw_uuid_bytearray(
+        self, temp_db: HubDatabase, sample_project: dict[str, Any]
+    ) -> None:
         manager = _manager(temp_db)
         task = _task(manager, sample_project, task_type="epic")
 
         assert task_type_in(manager, bytearray(UUID(task.id).bytes), "epic") is True
 
-    def test_matches_epic_by_hash_ref(self, temp_db, sample_project) -> None:
+    def test_matches_epic_by_hash_ref(
+        self, temp_db: HubDatabase, sample_project: dict[str, Any]
+    ) -> None:
         manager = _manager(temp_db)
         task = _task(manager, sample_project, task_type="epic")
 
         assert task_type_in(manager, _seq_ref(task), "epic") is True
 
-    def test_matches_epic_by_int_seq_ref(self, temp_db, sample_project) -> None:
+    def test_matches_epic_by_int_seq_ref(
+        self, temp_db: HubDatabase, sample_project: dict[str, Any]
+    ) -> None:
         manager = _manager(temp_db)
         task = _task(manager, sample_project, task_type="epic")
 
         assert task_type_in(manager, task.seq_num, "epic") is True
 
-    def test_matches_mixed_list_when_any_task_type_matches(self, temp_db, sample_project) -> None:
+    def test_matches_mixed_list_when_any_task_type_matches(
+        self, temp_db: HubDatabase, sample_project: dict[str, Any]
+    ) -> None:
         manager = _manager(temp_db)
         normal = _task(manager, sample_project, title="Normal", task_type="task")
         epic = _task(manager, sample_project, title="Epic", task_type="epic")
 
         assert task_type_in(manager, [normal.id, epic.seq_num], "epic") is True
 
-    def test_returns_false_for_bytes_ref_without_iterating_bytes(self, temp_db) -> None:
+    def test_returns_false_for_bytes_ref_without_iterating_bytes(
+        self, temp_db: HubDatabase
+    ) -> None:
         assert task_type_in(_manager(temp_db), b"#1", "epic") is False
 
-    def test_returns_false_for_invalid_uuid_bytes_in_list(self, temp_db) -> None:
+    def test_returns_false_for_invalid_uuid_bytes_in_list(self, temp_db: HubDatabase) -> None:
         assert task_type_in(_manager(temp_db), [b"#1"], "epic") is False
 
-    def test_returns_false_for_missing_task(self, temp_db) -> None:
+    def test_returns_false_for_missing_task(self, temp_db: HubDatabase) -> None:
         assert task_type_in(_manager(temp_db), "#999999", "epic") is False
 
     def test_returns_false_without_task_manager(self) -> None:
         assert task_type_in(None, "#1", "epic") is False
 
-    def test_returns_false_for_non_matching_type(self, temp_db, sample_project) -> None:
+    def test_returns_false_for_non_matching_type(
+        self, temp_db: HubDatabase, sample_project: dict[str, Any]
+    ) -> None:
         manager = _manager(temp_db)
         task = _task(manager, sample_project, task_type="task")
 
@@ -626,7 +683,7 @@ class TestTaskTypeIn:
 
 
 class TestTaskCommitProjectPathAllowlistViolation:
-    def test_blocks_raw_project_path_cwd_in_task_sync(self) -> None:
+    def test_blocks_raw_project_path_cwd_in_task_commits(self) -> None:
         event_data = {
             "canonical_file_path": "/repo/src/gobby/mcp_proxy/tools/task_commits.py",
         }

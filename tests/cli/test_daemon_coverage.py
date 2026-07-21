@@ -10,6 +10,7 @@ import pytest
 from click.testing import CliRunner
 
 from gobby.cli.daemon import (
+    ServiceStartResult,
     _services_start,
     _services_stop,
     health,
@@ -39,7 +40,8 @@ def runner() -> CliRunner:
 class TestServicesStart:
     def test_no_compose_file(self, tmp_path: Path) -> None:
         """No compose file → early return, no error."""
-        _services_start(tmp_path)
+        result = _services_start(tmp_path)
+        assert result.outcome == "skipped"
         assert not (tmp_path / "services" / "docker-compose.yml").exists()
 
     @patch("gobby.cli.daemon.subprocess.run")
@@ -55,7 +57,8 @@ class TestServicesStart:
         )
 
         with patch("gobby.cli.daemon.resolve_compose_runtime", return_value=runtime):
-            _services_start(tmp_path)
+            result = _services_start(tmp_path)
+        assert result == ServiceStartResult("success", "Docker services started")
         mock_run.assert_called_once()
         assert mock_run.call_args is not None
         cmd = mock_run.call_args.args[0]
@@ -71,7 +74,9 @@ class TestServicesStart:
         mock_run.return_value = MagicMock(returncode=1, stderr="err", stdout="")
 
         with patch("gobby.cli.daemon.resolve_compose_runtime", return_value=_runtime("qdrant")):
-            _services_start(tmp_path)
+            result = _services_start(tmp_path)
+        assert result.outcome == "failed"
+        assert "Docker compose up failed" in result.detail
         mock_run.assert_called_once()
         assert mock_run.call_count == 1
         assert mock_run.call_args is not None
@@ -87,7 +92,8 @@ class TestServicesStart:
         mock_run.side_effect = subprocess.TimeoutExpired(cmd="docker", timeout=120)
         with patch("gobby.cli.daemon.resolve_compose_runtime", return_value=_runtime("qdrant")):
             result = _services_start(tmp_path)
-        assert result is None
+        assert result.outcome == "failed"
+        assert "timed out" in result.detail
         mock_run.assert_called_once()
         assert mock_run.call_count == 1
         assert mock_run.call_args is not None
@@ -105,7 +111,8 @@ class TestServicesStart:
                 side_effect=ComposeEnvironmentError("config error"),
             ):
                 result = _services_start(tmp_path)
-            assert result is None
+            assert result.outcome == "failed"
+            assert result.detail.endswith("config error")
             assert compose.exists()
             mock_run.assert_not_called()
 
@@ -128,25 +135,35 @@ class TestServicesStop:
         assert mock_run.call_args is not None
 
     @patch("gobby.cli.daemon.subprocess.run")
-    def test_stop_timeout(self, mock_run: MagicMock, tmp_path: Path) -> None:
+    def test_stop_timeout(
+        self,
+        mock_run: MagicMock,
+        tmp_path: Path,
+        caplog: pytest.LogCaptureFixture,
+    ) -> None:
         compose = tmp_path / "services" / "docker-compose.yml"
         compose.parent.mkdir(parents=True)
         compose.write_text("version: '3'")
         mock_run.side_effect = subprocess.TimeoutExpired(cmd="docker", timeout=60)
         with patch("gobby.cli.daemon.resolve_compose_runtime", return_value=_runtime()):
-            result = _services_stop(tmp_path)
-        assert result is None
+            _services_stop(tmp_path)
+        assert "Timed out stopping Docker services" in caplog.text
         mock_run.assert_called_once()
 
     @patch("gobby.cli.daemon.subprocess.run")
-    def test_stop_exception(self, mock_run: MagicMock, tmp_path: Path) -> None:
+    def test_stop_exception(
+        self,
+        mock_run: MagicMock,
+        tmp_path: Path,
+        caplog: pytest.LogCaptureFixture,
+    ) -> None:
         compose = tmp_path / "services" / "docker-compose.yml"
         compose.parent.mkdir(parents=True)
         compose.write_text("version: '3'")
         mock_run.side_effect = FileNotFoundError("docker not found")
         with patch("gobby.cli.daemon.resolve_compose_runtime", return_value=_runtime()):
-            result = _services_stop(tmp_path)
-        assert result is None
+            _services_stop(tmp_path)
+        assert "Failed to stop Docker services: docker not found" in caplog.text
         mock_run.assert_called_once()
 
 

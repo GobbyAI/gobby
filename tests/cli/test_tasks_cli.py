@@ -10,6 +10,7 @@ Tests use Click's CliRunner and mock external dependencies.
 import json
 from pathlib import Path
 from types import SimpleNamespace
+from typing import Any, cast
 from unittest.mock import ANY, MagicMock, patch
 
 import pytest
@@ -50,7 +51,7 @@ def runner() -> CliRunner:
 
 
 @pytest.fixture
-def mock_task():
+def mock_task() -> MagicMock:
     """Create a mock task with common attributes."""
     task = MagicMock()
     task.id = "gt-abc123"
@@ -113,7 +114,7 @@ def mock_task():
 
 
 @pytest.fixture
-def mock_manager():
+def mock_manager() -> MagicMock:
     """Create a mock task manager."""
     manager = MagicMock()
     manager.db = MagicMock()
@@ -1514,7 +1515,7 @@ class TestSuggestCommand:
         mock_manager.list_ready_tasks.return_value = [parent_task, leaf_task]
 
         # Parent has children, leaf doesn't
-        def list_tasks_side_effect(**kwargs):
+        def list_tasks_side_effect(**kwargs: Any) -> list[MagicMock]:
             if kwargs.get("parent_task_id") == "gt-parent":
                 return [MagicMock()]  # Has child
             return []  # No children
@@ -1833,7 +1834,7 @@ class TestValidateCommandExtended:
         mock_config: MagicMock,
         runner: CliRunner,
         mock_task: MagicMock,
-        tmp_path,
+        tmp_path: Path,
     ) -> None:
         """Test validate with --file option for summary."""
         mock_resolve.return_value = mock_task
@@ -1935,7 +1936,7 @@ class TestValidateCommandExtended:
             future.status = "invalid"
             future.feedback = "Still broken"
 
-            async def async_result(*args, **kwargs):
+            async def async_result(*args: Any, **kwargs: Any) -> Any:
                 return future
 
             validator_mock.validate_task.side_effect = async_result
@@ -2213,7 +2214,7 @@ class TestFormatTaskList:
         mock_db = MagicMock()
         mock_db.fetchall.return_value = []
 
-        rendered = format_task_list(tasks, db=mock_db, term_width=120)
+        rendered = format_task_list(cast(Any, tasks), db=mock_db, term_width=120)
         plain = self._strip_ansi(rendered)
 
         assert "#1" in plain
@@ -2379,6 +2380,7 @@ class TestTaskBackupCommands:
         result = runner.invoke(cli, ["tasks", "backup", "--output", "snapshot.jsonl"])
 
         assert result.exit_code == 0
+        mock_get_backup.assert_called_once_with(Path("snapshot.jsonl"))
         manager.backup.assert_called_once()
         assert "Backed up 3 tasks" in result.output
 
@@ -2391,6 +2393,7 @@ class TestTaskBackupCommands:
         result = runner.invoke(cli, ["tasks", "restore", "--input", "snapshot.jsonl"])
 
         assert result.exit_code == 0
+        mock_get_backup.assert_called_once_with(Path("snapshot.jsonl"))
         manager.restore.assert_called_once()
         assert "Restored 2 tasks" in result.output
 
@@ -2616,7 +2619,7 @@ class TestImportGitHubCommand:
 
         # Mock the async method
 
-        async def mock_import(*args, **kwargs):
+        async def mock_import(*args: Any, **kwargs: Any) -> dict[str, Any]:
             return {
                 "success": True,
                 "message": "Imported 5 issues",
@@ -2640,7 +2643,7 @@ class TestImportGitHubCommand:
         mock_manager = MagicMock()
         mock_get_importer.return_value = mock_manager
 
-        async def mock_import(*args, **kwargs):
+        async def mock_import(*args: Any, **kwargs: Any) -> dict[str, Any]:
             return {
                 "success": False,
                 "error": "Invalid GitHub URL",
@@ -2663,7 +2666,7 @@ class TestImportGitHubCommand:
         mock_manager = MagicMock()
         mock_get_importer.return_value = mock_manager
 
-        async def mock_import(url, limit=50):
+        async def mock_import(url: str, limit: int = 50) -> dict[str, Any]:
             assert limit == 100
             return {"success": True, "message": "Done", "imported": []}
 
@@ -2861,9 +2864,12 @@ class TestTaskUtilsFunctions:
         """Test check_tasks_enabled handles config errors gracefully."""
         from gobby.cli.tasks._utils import check_tasks_enabled
 
-        with patch("gobby.cli.tasks._utils.config.load_config", side_effect=FileNotFoundError):
+        with patch(
+            "gobby.cli.tasks._utils.config.load_config", side_effect=FileNotFoundError
+        ) as mock_load_config:
             check_tasks_enabled()
-            assert check_tasks_enabled() is None
+            check_tasks_enabled()
+        assert mock_load_config.call_count == 2
 
     def test_stage_state_choices(self) -> None:
         """Test stage-state CLI choices."""
@@ -2906,7 +2912,7 @@ class TestTaskUtilsFunctions:
         child2.parent_task_id = "parent-1"
 
         tasks = [child2, child1, parent]  # Out of order
-        result = sort_tasks_for_tree(tasks)
+        result = sort_tasks_for_tree(cast(Any, tasks))
 
         # Parent should come before children
         assert result[0].id == "parent-1"
@@ -2944,7 +2950,7 @@ class TestTaskUtilsFunctions:
 
         mock_manager = MagicMock()
 
-        def list_tasks_side_effect(**kwargs):
+        def list_tasks_side_effect(**kwargs: Any) -> list[MagicMock]:
             parent_id = kwargs.get("parent_task_id")
             if parent_id == "parent-1":
                 return [child]

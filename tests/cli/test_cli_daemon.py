@@ -300,14 +300,52 @@ class TestStartCommand:
         mock_get_gobby_home.return_value = tmp_path
         mock_load_config.return_value = mock_daemon_config
         call_order: list[str] = []
-        mock_services_start.side_effect = lambda _home: call_order.append("docker")
-        mock_service_start.side_effect = lambda: (call_order.append("service") or {"success": True})
+
+        def start_services(_home: Path) -> object:
+            from gobby.cli.daemon import ServiceStartResult
+
+            call_order.append("docker")
+            return ServiceStartResult("success", "Docker services started")
+
+        def start_service() -> dict[str, bool]:
+            call_order.append("service")
+            return {"success": True}
+
+        mock_services_start.side_effect = start_services
+        mock_service_start.side_effect = start_service
 
         result = runner.invoke(cli, ["start"])
 
         assert result.exit_code == 0
         assert call_order == ["docker", "service"]
         mock_services_start.assert_called_once_with(tmp_path)
+
+    def test_start_stops_before_service_manager_when_docker_start_fails(
+        self,
+        runner: CliRunner,
+        mock_daemon_config: MagicMock,
+        tmp_path: Path,
+    ) -> None:
+        from gobby.cli.daemon import ServiceStartResult
+
+        services_dir = tmp_path / "services"
+        services_dir.mkdir()
+        (services_dir / "docker-compose.yml").touch()
+        with (
+            patch("gobby.cli.load_full_config_from_db", return_value=mock_daemon_config),
+            patch("gobby.cli.daemon.get_gobby_home", return_value=tmp_path),
+            patch(
+                "gobby.cli.daemon._services_start",
+                return_value=ServiceStartResult("failed", "compose failed"),
+            ),
+            patch("gobby.cli.daemon.service_start") as mock_service_start,
+        ):
+            result = runner.invoke(cli, ["start"])
+
+        assert result.exit_code == 1
+        assert "compose failed" in result.output
+        assert "Docker services started" not in result.output
+        mock_service_start.assert_not_called()
 
     @patch("gobby.cli.daemon.fetch_rich_status")
     @patch("gobby.cli.daemon.httpx.get")

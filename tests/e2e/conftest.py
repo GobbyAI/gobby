@@ -19,10 +19,10 @@ import subprocess
 import sys
 import tempfile
 import time
-from collections.abc import AsyncGenerator, Generator
+from collections.abc import AsyncGenerator, Callable, Generator
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 
 import httpx
 import pytest
@@ -149,7 +149,7 @@ def find_free_port(max_retries: int = 20) -> int:
     for _attempt in range(max_retries):
         with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
             s.bind(("0.0.0.0", 0))
-            port = s.getsockname()[1]
+            port = int(s.getsockname()[1])
 
         if port in EXCLUDED_PORTS or not (PORT_MIN <= port <= PORT_MAX):
             continue
@@ -700,7 +700,7 @@ class CLIEventSimulator:
 
         response = self.client.post("/api/sessions/register", json=payload)
         response.raise_for_status()
-        return response.json()
+        return cast(dict[str, Any], response.json())
 
     def session_start(
         self,
@@ -731,7 +731,7 @@ class CLIEventSimulator:
 
         response = self.client.post("/api/hooks/execute", json=self._hook_envelope(**payload))
         response.raise_for_status()
-        return response.json()
+        return cast(dict[str, Any], response.json())
 
     def session_end(
         self,
@@ -751,7 +751,7 @@ class CLIEventSimulator:
 
         response = self.client.post("/api/hooks/execute", json=self._hook_envelope(**payload))
         response.raise_for_status()
-        return response.json()
+        return cast(dict[str, Any], response.json())
 
     def tool_use(
         self,
@@ -773,7 +773,7 @@ class CLIEventSimulator:
 
         response = self.client.post("/api/hooks/execute", json=self._hook_envelope(**payload))
         response.raise_for_status()
-        return response.json()
+        return cast(dict[str, Any], response.json())
 
     def user_prompt_submit(
         self,
@@ -816,7 +816,7 @@ class CLIEventSimulator:
 
         response = self.client.post("/api/hooks/execute", json=self._hook_envelope(**payload))
         response.raise_for_status()
-        return response.json()
+        return cast(dict[str, Any], response.json())
 
     def register_test_agent(
         self,
@@ -844,13 +844,13 @@ class CLIEventSimulator:
 
         response = self.client.post("/api/admin/test/register-agent", json=payload)
         response.raise_for_status()
-        return response.json()
+        return cast(dict[str, Any], response.json())
 
     def unregister_test_agent(self, run_id: str) -> dict[str, Any]:
         """Unregister a test agent from the running agent registry."""
         response = self.client.delete(f"/api/admin/test/unregister-agent/{run_id}")
         response.raise_for_status()
-        return response.json()
+        return cast(dict[str, Any], response.json())
 
     def register_test_project(
         self,
@@ -873,7 +873,7 @@ class CLIEventSimulator:
         response = self.client.post("/api/admin/test/register-project", json=payload)
         assert response.is_success, response.text
         response.raise_for_status()
-        return response.json()
+        return cast(dict[str, Any], response.json())
 
     def set_session_usage(
         self,
@@ -897,7 +897,7 @@ class CLIEventSimulator:
 
         response = self.client.post("/api/admin/test/set-session-usage", json=payload)
         response.raise_for_status()
-        return response.json()
+        return cast(dict[str, Any], response.json())
 
 
 @pytest.fixture(scope="function")
@@ -943,7 +943,8 @@ class MCPTestClient:
         """List available MCP servers."""
         response = self.client.get("/api/mcp/servers")
         response.raise_for_status()
-        return response.json().get("servers", [])
+        payload = cast(dict[str, Any], response.json())
+        return cast(list[dict[str, Any]], payload.get("servers", []))
 
     def list_tools(self, server_name: str | None = None) -> list[dict[str, Any]]:
         """List tools, optionally filtered by server.
@@ -994,7 +995,7 @@ class MCPTestClient:
             "/api/mcp/tools/call", json=payload, headers=self._session_headers()
         )
         response.raise_for_status()
-        return response.json()
+        return cast(dict[str, Any], response.json())
 
     def get_tool_schema(self, server_name: str, tool_name: str) -> dict[str, Any]:
         """Get full schema for a tool."""
@@ -1005,7 +1006,7 @@ class MCPTestClient:
             headers=self._session_headers(),
         )
         response.raise_for_status()
-        return response.json()
+        return cast(dict[str, Any], response.json())
 
 
 @pytest.fixture(scope="function")
@@ -1048,7 +1049,8 @@ class AsyncMCPTestClient:
         """List available MCP servers."""
         response = await self.client.get("/api/mcp/servers")
         response.raise_for_status()
-        return response.json().get("servers", [])
+        payload = cast(dict[str, Any], response.json())
+        return cast(list[dict[str, Any]], payload.get("servers", []))
 
     async def list_tools(self, server_name: str | None = None) -> list[dict[str, Any]]:
         """List tools, optionally filtered by server.
@@ -1099,7 +1101,7 @@ class AsyncMCPTestClient:
             "/api/mcp/tools/call", json=payload, headers=self._session_headers()
         )
         response.raise_for_status()
-        return response.json()
+        return cast(dict[str, Any], response.json())
 
 
 @pytest_asyncio.fixture
@@ -1312,11 +1314,11 @@ def cleanup_orphan_processes() -> Generator[None]:
 
 
 @pytest.fixture
-def wait_for_condition():
+def wait_for_condition() -> Callable[[Callable[[], bool], float, float, str], bool]:
     """Fixture providing a polling utility for async conditions."""
 
     def _wait(
-        condition_fn,
+        condition_fn: Callable[[], bool],
         timeout: float = 5.0,
         poll_interval: float = 0.1,
         description: str = "condition",

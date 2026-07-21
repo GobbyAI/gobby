@@ -107,9 +107,8 @@ loop order is:
    before the next coordinator-loop iteration or agent wait.
 6. Use `gobby-agents:wait_for_agent` as the last idle action only when agents
    are running and no actionable work remains. Wait for a specific run result
-   with a bounded five-minute wait (`timeout_seconds=300`), then run another
-   full status and health sweep. Use wait_for_agent as the last idle action only when
-   agents are running and no actionable coordinator work remains. Shorter waits
+with a bounded five-minute wait (`timeout_seconds=300`), then run another
+full status and health sweep. Shorter waits
    are for diagnostics or recovery only.
 
 Do not keep the build moving by repeatedly manual-ticking the dispatcher. A

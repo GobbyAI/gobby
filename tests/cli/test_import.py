@@ -114,6 +114,7 @@ async def test_import_project_id_resolution(
     # Verify the task was created with the correct project_id
     imported_id = result["imported"][0]
     row = hub_db.fetchone("SELECT project_id FROM tasks WHERE id = %s", (imported_id,))
+    assert row is not None
     assert row["project_id"] == expected_project_id
 
 
@@ -145,6 +146,7 @@ async def test_import_runs_database_upserts_in_worker_thread(
 
     assert result["success"] is True
     assert mock_to_thread.await_count == 1
+    assert mock_to_thread.await_args is not None
     assert mock_to_thread.await_args.args[0] == github_importer._upsert_issues
 
 
@@ -153,19 +155,19 @@ def test_github_cli_subprocess_timeouts_are_bounded(
 ) -> None:
     with patch(
         "subprocess.run",
-        side_effect=subprocess.TimeoutExpired(["gh", "--version"], timeout=5),
+        side_effect=subprocess.TimeoutExpired(["gh", "--version"], timeout=180),
     ) as mock_run:
         assert github_importer._fetch_github_issues_cli("owner", "repo", "url", 50) is None
-    assert mock_run.call_args.kwargs["timeout"] == 5
+    assert mock_run.call_args.kwargs["timeout"] == 180
 
     with patch(
         "subprocess.run",
         side_effect=[
             MagicMock(returncode=0),
-            subprocess.TimeoutExpired(["gh", "issue", "list"], timeout=30),
+            subprocess.TimeoutExpired(["gh", "issue", "list"], timeout=180),
         ],
     ) as mock_run:
-        with pytest.raises(RuntimeError, match="timed out after 30 seconds"):
+        with pytest.raises(RuntimeError, match="timed out after 180 seconds"):
             github_importer._fetch_github_issues_cli("owner", "repo", "url", 50)
-    assert mock_run.call_args_list[0].kwargs["timeout"] == 5
-    assert mock_run.call_args_list[1].kwargs["timeout"] == 30
+    assert mock_run.call_args_list[0].kwargs["timeout"] == 180
+    assert mock_run.call_args_list[1].kwargs["timeout"] == 180

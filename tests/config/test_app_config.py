@@ -515,6 +515,13 @@ class TestDaemonConfig:
         with pytest.raises(ValidationError, match="conductor config has been removed"):
             DaemonConfig(conductor={"enabled": False})
 
+    def test_rejects_removed_memory_sync_section(self) -> None:
+        with pytest.raises(
+            ValidationError,
+            match="memory_sync config has been removed. Use memory_backup instead",
+        ):
+            DaemonConfig(memory_sync={"enabled": True})
+
 
 class TestLoadYaml:
     """Tests for load_yaml function."""

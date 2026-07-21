@@ -40,12 +40,14 @@ def _fold_enhancement_round(
     """
     heading = f"## Enhancement Suggestions — Round {round_number}"
     section = f"{heading}\n\n{_enhancement_section_body(suggestions, converged=converged)}"
-    if heading in existing:
+    exact_heading = rf"^{re.escape(heading)}$"
+    if re.search(exact_heading, existing, re.MULTILINE):
         pattern = re.compile(
-            rf"^{re.escape(heading)}.*?(?=^## Enhancement Suggestions — Round |\Z)",
+            exact_heading + r".*?(?=^## Enhancement Suggestions — Round [0-9]+$|\Z)",
             re.DOTALL | re.MULTILINE,
         )
-        return pattern.sub(section.rstrip() + "\n\n", existing).rstrip() or section
+        replacement = section.rstrip() + "\n\n"
+        return pattern.sub(lambda _match: replacement, existing).rstrip() or section
     return f"{existing}\n\n{section}" if existing else section
 
 

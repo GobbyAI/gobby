@@ -425,8 +425,8 @@ complete file before writing, upserts by memory ID and updated timestamp, and
 preserves database-only and newer database rows.
 
 ```jsonl
-{"id":"mm-abc123","memory_type":"fact","content":"Use uv for local development","tags":["tooling"],"project_id":"..."}
-{"id":"mm-def456","memory_type":"preference","content":"Prefer focused validation over full suite runs","tags":["testing"]}
+{"id":"8de06cb8-99b8-4fc4-a16c-5af217132b81","type":"fact","content":"Use uv for local development","tags":["tooling"],"source":"agent","created_at":"2026-07-20T12:00:00Z","updated_at":"2026-07-20T12:00:00Z"}
+{"id":"70d53c95-4316-4f79-a2c2-6e1e25781063","type":"preference","content":"Prefer focused validation over full suite runs","tags":["testing"],"source":"user","created_at":"2026-07-20T12:05:00Z","updated_at":"2026-07-20T12:05:00Z"}
 ```
 
 Use `gobby memory backup` or MCP `backup_memories` to write the file. Use

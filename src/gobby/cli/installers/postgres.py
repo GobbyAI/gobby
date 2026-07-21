@@ -29,7 +29,7 @@ from gobby.config.bootstrap import BootstrapConfigError
 from gobby.paths import get_gobby_home
 from gobby.utils.postgres_extensions import BASELINE_POSTGRES_EXTENSIONS
 
-from .compose_env import ComposeEnvironmentError, resolve_compose_runtime
+from .compose_env import ComposeEnvironmentError, ComposeRuntime, resolve_compose_runtime
 
 logger = logging.getLogger(__name__)
 
@@ -68,14 +68,12 @@ def _install_docker(*, gobby_home: Path | None, port: int) -> dict[str, Any]:
     compose_file = _ensure_unified_compose(services_dir)
     _sync_postgres_pgsearch_assets(gobby_home=home)
     try:
-        database_url = _resolve_postgres_install_database_url(gobby_home=home, port=port)
-        env = resolve_compose_runtime(
-            home,
-            database_url=database_url,
-            include_services=False,
-        ).environment
-        database_url = _database_url_from_compose_environment(env)
-    except (BootstrapConfigError, ComposeEnvironmentError, click.ClickException) as exc:
+        database_url, runtime = _resolve_postgres_install_database_url(
+            gobby_home=home,
+            port=port,
+        )
+        env = runtime.environment
+    except (BootstrapConfigError, ComposeEnvironmentError, KeyError, click.ClickException) as exc:
         return {"success": False, "error": str(exc)}
 
     try:
@@ -266,7 +264,11 @@ def _read_pgsearch_version_manifest() -> dict[str, str]:
     }
 
 
-def _resolve_postgres_install_database_url(*, gobby_home: Path, port: int) -> str:
+def _resolve_postgres_install_database_url(
+    *,
+    gobby_home: Path,
+    port: int,
+) -> tuple[str, ComposeRuntime]:
     bootstrap_path = gobby_home / "bootstrap.yaml"
     if bootstrap_path.exists():
         database_url = _read_bootstrap_database_url(gobby_home)
@@ -274,15 +276,20 @@ def _resolve_postgres_install_database_url(*, gobby_home: Path, port: int) -> st
             raise click.ClickException(
                 f"{bootstrap_path} is missing database_url; repair it before reinstalling PostgreSQL"
             )
-        resolve_compose_runtime(
+        runtime = resolve_compose_runtime(
             gobby_home,
             database_url=database_url,
             include_services=False,
         )
-        return database_url
+        return _database_url_from_compose_environment(runtime.environment), runtime
 
     password = os.environ.get("GOBBY_POSTGRES_PASSWORD") or secrets.token_urlsafe(32)
-    return _docker_database_url(port, password=password)
+    runtime = resolve_compose_runtime(
+        gobby_home,
+        database_url=_docker_database_url(port, password=password),
+        include_services=False,
+    )
+    return _database_url_from_compose_environment(runtime.environment), runtime
 
 
 def _write_bootstrap_defaults(

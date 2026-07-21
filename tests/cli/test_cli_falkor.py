@@ -106,7 +106,7 @@ class TestDaemonDockerFlag:
             result = _services_start(tmp_path)
 
         compose_calls = [call for call in mock_run.call_args_list if "up" in str(call)]
-        assert result is None
+        assert result.outcome == "success"
         assert compose_calls
 
     def test_services_start_skips_when_no_docker(self, tmp_path: Path) -> None:
@@ -116,7 +116,7 @@ class TestDaemonDockerFlag:
             with patch("gobby.cli.daemon.subprocess.run") as mock_run:
                 result = _services_start(tmp_path)
 
-        assert result is None
+        assert result.outcome == "skipped"
         mock_run.assert_not_called()
 
     def test_services_start_skips_when_config_unavailable(self, tmp_path: Path) -> None:
@@ -136,7 +136,7 @@ class TestDaemonDockerFlag:
         ):
             result = _services_start(tmp_path)
 
-        assert result is None
+        assert result.outcome == "failed"
         mock_run.assert_not_called()
 
     def test_services_stop_runs_compose_down(self, tmp_path: Path) -> None:
@@ -163,14 +163,16 @@ class TestDaemonDockerFlag:
         assert mock_run.call_args.kwargs["cwd"] == str(svc_dir)
         assert mock_run.call_args.kwargs["env"] == {"PATH": "test"}
 
-    def test_services_stop_skips_when_no_docker(self, tmp_path: Path) -> None:
+    def test_services_stop_skips_when_no_docker(
+        self, tmp_path: Path, caplog: pytest.LogCaptureFixture
+    ) -> None:
         from gobby.cli.daemon import _services_stop
 
         with patch("shutil.which", return_value=None):
             with patch("gobby.cli.daemon.subprocess.run") as mock_run:
-                result = _services_stop(tmp_path)
+                _services_stop(tmp_path)
 
-        assert result is None
+        assert caplog.records == []
         mock_run.assert_not_called()
 
 

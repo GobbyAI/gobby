@@ -10,12 +10,13 @@ import time
 from dataclasses import dataclass, field
 from pathlib import Path
 from types import SimpleNamespace
-from typing import Any
+from typing import Any, cast
 
 import pytest
 
 import gobby.tasks.diff_paging as diff_paging
 from gobby.mcp_proxy.tools.task_commits import create_commit_registry
+from gobby.tasks.diff_manifest import ManifestItem
 from gobby.tasks.diff_paging import (
     MAX_COMMITS_LIMIT,
     MAX_LIMIT_BYTES,
@@ -121,7 +122,7 @@ def _page_all_diff(
     return b"".join(chunks), pages
 
 
-def _find_manifest_item(page: DiffPage, raw_path: bytes) -> dict[str, Any]:
+def _find_manifest_item(page: DiffPage, raw_path: bytes) -> ManifestItem:
     for item in page["manifest"]["items"]:
         if decode_content(item["path"]) == raw_path:
             return item
@@ -523,6 +524,43 @@ def test_manifest_limit_zero_skips_numstat(repo: Path, monkeypatch: pytest.Monke
     assert all("--numstat" not in call for call in calls)
 
 
+def test_manifest_offset_skips_numstat_for_noncontributing_commits(
+    repo: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    (repo / "first.txt").write_text("first\n")
+    first = _commit(repo, "first")
+    (repo / "second.txt").write_text("second\n")
+    second = _commit(repo, "second")
+    numstat_commits: list[str] = []
+    original_numstat = diff_paging._numstat_totals
+
+    def recording_numstat(commit: str, **kwargs: Any) -> dict[bytes, tuple[int | None, int | None]]:
+        numstat_commits.append(commit)
+        return original_numstat(commit, **kwargs)
+
+    monkeypatch.setattr(diff_paging, "_numstat_totals", recording_numstat)
+    initial = get_task_diff_page(
+        "task-id",
+        _manager(first, second),
+        cwd=repo,
+        manifest_limit=0,
+    )
+
+    page = get_task_diff_page(
+        "task-id",
+        _manager(first, second),
+        cwd=repo,
+        manifest_offset=1,
+        manifest_limit=1,
+        snapshot_hash=initial["snapshot_hash"],
+        view_hash=initial["view_hash"],
+    )
+
+    assert page["manifest"]["items"][0]["commit"] == second
+    assert numstat_commits == [second]
+
+
 def test_unlinked_and_malformed_commits_rejected(repo: Path) -> None:
     (repo / "file.txt").write_text("content\n")
     linked = _commit(repo, "linked")
@@ -579,8 +617,8 @@ def test_sync_mcp_path_returns_git_timeout_and_reaps_child(
     _hanging_git(tmp_path, monkeypatch)
     manager = _manager()
     registry = create_commit_registry(
-        task_manager=manager,
-        project_manager=_ProjectManager(repo),
+        task_manager=cast(Any, manager),
+        project_manager=cast(Any, _ProjectManager(repo)),
         get_task_diff_page_fn=get_task_diff_page,
         git_timeout_seconds=0.05,
     )
@@ -591,7 +629,7 @@ def test_sync_mcp_path_returns_git_timeout_and_reaps_child(
 
     assert result["error_code"] == "git_timeout"
     assert result["details"]["reaped"] is True
-    _assert_process_absent(result["details"]["pid"])
+    _assert_process_absent(cast(int, result["details"]["pid"]))
 
 
 @pytest.mark.parametrize(
@@ -621,13 +659,13 @@ def test_smaller_git_deadline_wins(
     assert error.value.code == "git_timeout"
     assert time.monotonic() - started < 0.3
     assert error.value.details["reaped"] is True
-    _assert_process_absent(error.value.details["pid"])
+    _assert_process_absent(cast(int, error.value.details["pid"]))
 
 
 def test_mcp_schema_enforces_all_server_maxima(repo: Path) -> None:
     registry = create_commit_registry(
-        task_manager=_manager(),
-        project_manager=_ProjectManager(repo),
+        task_manager=cast(Any, _manager()),
+        project_manager=cast(Any, _ProjectManager(repo)),
         get_task_diff_page_fn=get_task_diff_page,
     )
     schema = registry.get_schema("get_task_diff")

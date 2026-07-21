@@ -10,24 +10,24 @@ pytestmark = pytest.mark.unit
 
 
 @pytest.fixture
-def mock_task_manager():
+def mock_task_manager() -> MagicMock:
     manager = MagicMock(spec=LocalTaskManager)
     manager.db = MagicMock()
     return manager
 
 
 @pytest.fixture
-def task_registry(mock_task_manager):
+def task_registry(mock_task_manager: MagicMock) -> InternalToolRegistry:
     return create_task_registry(mock_task_manager)
 
 
-def test_create_task_registry_returns_registry(task_registry) -> None:
+def test_create_task_registry_returns_registry(task_registry: InternalToolRegistry) -> None:
     """Test that create_task_registry returns an InternalToolRegistry."""
     assert isinstance(task_registry, InternalToolRegistry)
     assert task_registry.name == "gobby-tasks"
 
 
-def test_create_task_registry_has_all_tools(task_registry) -> None:
+def test_create_task_registry_has_all_tools(task_registry: InternalToolRegistry) -> None:
     """Test that all expected tools are registered."""
     expected_tools = [
         "create_task",
@@ -54,7 +54,7 @@ def test_create_task_registry_has_all_tools(task_registry) -> None:
         assert tool_name in tool_names, f"Missing tool: {tool_name}"
 
 
-def test_task_registry_get_schema(task_registry) -> None:
+def test_task_registry_get_schema(task_registry: InternalToolRegistry) -> None:
     """Test that schemas can be retrieved from the registry."""
     schema = task_registry.get_schema("create_task")
 
@@ -67,7 +67,7 @@ def test_task_registry_get_schema(task_registry) -> None:
 
 
 @pytest.mark.asyncio
-async def test_create_task(mock_task_manager):
+async def test_create_task(mock_task_manager: MagicMock) -> None:
     """Test create_task tool execution."""
     # Mock return value for create_task_with_decomposition (returns dict with task key)
     mock_task = MagicMock()
@@ -123,7 +123,7 @@ async def test_create_task(mock_task_manager):
 
 
 @pytest.mark.asyncio
-async def test_create_task_with_session_id(mock_task_manager):
+async def test_create_task_with_session_id(mock_task_manager: MagicMock) -> None:
     """Test create_task tool captures session_id as created_in_session_id."""
     # Mock return value for create_task_with_decomposition (returns dict with task key)
     mock_task = MagicMock()
@@ -174,7 +174,7 @@ async def test_create_task_with_session_id(mock_task_manager):
 
 
 @pytest.mark.asyncio
-async def test_get_task_not_found(mock_task_manager):
+async def test_get_task_not_found(mock_task_manager: MagicMock) -> None:
     """Test get_task returns error when task not found."""
     registry = create_task_registry(mock_task_manager)
 
@@ -188,7 +188,7 @@ async def test_get_task_not_found(mock_task_manager):
 
 
 @pytest.mark.asyncio
-async def test_list_ready_tasks(mock_task_manager):
+async def test_list_ready_tasks(mock_task_manager: MagicMock) -> None:
     """Test list_ready_tasks tool execution."""
     registry = create_task_registry(mock_task_manager)
 
@@ -214,7 +214,7 @@ async def test_list_ready_tasks(mock_task_manager):
 
 
 @pytest.mark.asyncio
-async def test_list_ready_tasks_all_projects(mock_task_manager):
+async def test_list_ready_tasks_all_projects(mock_task_manager: MagicMock) -> None:
     """Test list_ready_tasks with all_projects=True ignores project filter."""
     registry = create_task_registry(mock_task_manager)
 
@@ -251,7 +251,7 @@ async def test_list_ready_tasks_all_projects(mock_task_manager):
 # =============================================================================
 
 
-def test_task_registry_has_commit_linking_tools(task_registry) -> None:
+def test_task_registry_has_commit_linking_tools(task_registry: InternalToolRegistry) -> None:
     """Test that commit linking tools are registered."""
     expected_tools = [
         "link_commit",
@@ -267,7 +267,7 @@ def test_task_registry_has_commit_linking_tools(task_registry) -> None:
         assert tool_name in tool_names, f"Missing commit linking tool: {tool_name}"
 
 
-def test_link_commit_schema(task_registry) -> None:
+def test_link_commit_schema(task_registry: InternalToolRegistry) -> None:
     """Test link_commit tool schema."""
     schema = task_registry.get_schema("link_commit")
 
@@ -281,7 +281,7 @@ def test_link_commit_schema(task_registry) -> None:
     assert "project_path" in properties
 
 
-def test_unlink_commit_schema(task_registry) -> None:
+def test_unlink_commit_schema(task_registry: InternalToolRegistry) -> None:
     """Test unlink_commit tool schema."""
     schema = task_registry.get_schema("unlink_commit")
 
@@ -295,7 +295,7 @@ def test_unlink_commit_schema(task_registry) -> None:
     assert "project_path" in properties
 
 
-def test_auto_link_commits_schema(task_registry) -> None:
+def test_auto_link_commits_schema(task_registry: InternalToolRegistry) -> None:
     """Test auto_link_commits tool schema."""
     schema = task_registry.get_schema("auto_link_commits")
 
@@ -309,7 +309,7 @@ def test_auto_link_commits_schema(task_registry) -> None:
     assert "project_path" in properties
 
 
-def test_get_task_diff_schema(task_registry) -> None:
+def test_get_task_diff_schema(task_registry: InternalToolRegistry) -> None:
     """Test get_task_diff tool schema."""
     schema = task_registry.get_schema("get_task_diff")
 
@@ -323,7 +323,7 @@ def test_get_task_diff_schema(task_registry) -> None:
 
 
 @pytest.mark.asyncio
-async def test_link_commit_tool(mock_task_manager):
+async def test_link_commit_tool(mock_task_manager: MagicMock) -> None:
     """Test link_commit tool execution."""
     registry = create_task_registry(mock_task_manager)
 
@@ -345,7 +345,7 @@ async def test_link_commit_tool(mock_task_manager):
 
 
 @pytest.mark.asyncio
-async def test_unlink_commit_tool(mock_task_manager):
+async def test_unlink_commit_tool(mock_task_manager: MagicMock) -> None:
     """Test unlink_commit tool execution."""
     registry = create_task_registry(mock_task_manager)
 
@@ -366,7 +366,7 @@ async def test_unlink_commit_tool(mock_task_manager):
 
 
 @pytest.mark.asyncio
-async def test_auto_link_commits_tool(mock_task_manager):
+async def test_auto_link_commits_tool(mock_task_manager: MagicMock) -> None:
     """Test auto_link_commits tool execution."""
     from gobby.tasks.commits import AutoLinkResult
 
@@ -392,7 +392,7 @@ async def test_auto_link_commits_tool(mock_task_manager):
 
 
 @pytest.mark.asyncio
-async def test_link_commit_invalid_task(mock_task_manager):
+async def test_link_commit_invalid_task(mock_task_manager: MagicMock) -> None:
     """Test link_commit with non-existent task."""
     registry = create_task_registry(mock_task_manager)
 
