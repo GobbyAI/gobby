@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import logging
 import time
+from collections.abc import Callable
 from pathlib import Path
 from typing import Any, Literal, Protocol
 
@@ -27,6 +28,14 @@ class DatabasePathConfig(Protocol):
     hub_backend: Literal["postgres"]
     database_url: str | None
     postgres_pool: PostgresPoolConfig
+
+
+class _MigrationDatabase(Protocol):
+    """Database operations required during startup migration retries."""
+
+    def apply_migrations(self) -> None: ...
+
+    def close(self) -> None: ...
 
 
 _HEADLESS_SETTINGS = Path.home() / ".gobby" / "settings" / "headless.json"
@@ -73,19 +82,24 @@ def init_hub_database(config: DatabasePathConfig) -> Any:
 
     from gobby.storage.hub.postgres import PostgresHubDatabase
 
-    postgres_db = PostgresHubDatabase(database_url, pool_config=config.postgres_pool)
-    _apply_postgres_migrations_with_startup_retry(postgres_db)
+    postgres_db = _initialize_postgres_with_startup_retry(
+        lambda: PostgresHubDatabase(database_url, pool_config=config.postgres_pool)
+    )
     logger.info("Database: PostgreSQL hub")
     return postgres_db
 
 
-def _apply_postgres_migrations_with_startup_retry(postgres_db: Any) -> None:
-    """Apply startup migrations, retrying transient PostgreSQL connection failures."""
+def _initialize_postgres_with_startup_retry(
+    database_factory: Callable[[], _MigrationDatabase],
+) -> _MigrationDatabase:
+    """Create and migrate a usable database, replacing failed connection pools."""
     for attempt, delay in enumerate((*_POSTGRES_STARTUP_RETRY_DELAYS, None), start=1):
+        postgres_db = database_factory()
         try:
             postgres_db.apply_migrations()
-            return
+            return postgres_db
         except (psycopg.OperationalError, PoolTimeout) as exc:
+            postgres_db.close()
             if delay is None:
                 raise
             logger.warning(
@@ -95,3 +109,5 @@ def _apply_postgres_migrations_with_startup_retry(postgres_db: Any) -> None:
                 exc,
             )
             time.sleep(delay)
+
+    raise RuntimeError("PostgreSQL startup retry loop exhausted")

@@ -353,6 +353,13 @@ def _wait_for_service_stop(
 def start(ctx: click.Context, verbose: bool, no_ui: bool, docker_flag: bool) -> None:
     """Start the Gobby daemon."""
     config = ctx.obj["config"]
+    gobby_dir = get_gobby_home()
+
+    # Revive managed dependencies before launchd/systemd starts the runner.
+    services_compose = gobby_dir / "services" / "docker-compose.yml"
+    if services_compose.exists() or docker_flag:
+        _services_start(gobby_dir)
+        _step("Docker services started")
 
     # If OS service is installed, delegate to it
     svc = get_service_status()
@@ -375,7 +382,6 @@ def start(ctx: click.Context, verbose: bool, no_ui: bool, docker_flag: bool) -> 
         _step(f"Service start failed: {result.get('error')}", error=True)
         click.echo("  Falling back to direct start...")
 
-    gobby_dir = get_gobby_home()
     pid_file = gobby_dir / "gobby.pid"
     runtime_log_file = resolved_log_path(config.logging, RUNTIME_LOG_FILENAME)
 
@@ -404,12 +410,6 @@ def start(ctx: click.Context, verbose: bool, no_ui: bool, docker_flag: bool) -> 
         if killed_count > 0:
             _step(f"Stopped {killed_count} existing process(es)")
             time.sleep(2.0)
-
-    # Start Docker services if compose file exists or --docker flag
-    services_compose = gobby_dir / "services" / "docker-compose.yml"
-    if services_compose.exists() or docker_flag:
-        _services_start(gobby_dir)
-        _step("Docker services started")
 
     # Initialize runtime hub storage after services are up.
     hub_db = init_local_storage()

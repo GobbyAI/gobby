@@ -449,15 +449,20 @@ class TestInitHubDatabase:
         sleeps: list[float] = []
 
         class FakePostgresDatabase:
-            calls = 0
+            attempts = 0
+            instances: list["FakePostgresDatabase"] = []
 
             def __init__(self, _dsn: str, *, pool_config: object) -> None:
-                pass
+                self.closed = False
+                self.instances.append(self)
 
             def apply_migrations(self) -> None:
-                self.calls += 1
-                if self.calls < 3:
+                type(self).attempts += 1
+                if self.attempts < 3:
                     raise psycopg.OperationalError("database is starting")
+
+            def close(self) -> None:
+                self.closed = True
 
         monkeypatch.setattr(
             "gobby.storage.hub.postgres.PostgresHubDatabase",
@@ -473,7 +478,12 @@ class TestInitHubDatabase:
         result = helpers.init_hub_database(config)
 
         assert isinstance(result, FakePostgresDatabase)
-        assert result.calls == 3
+        assert result is FakePostgresDatabase.instances[2]
+        assert [instance.closed for instance in FakePostgresDatabase.instances] == [
+            True,
+            True,
+            False,
+        ]
         assert sleeps == [0.25, 0.5]
 
     def test_postgres_backend_requires_database_url(self) -> None:

@@ -270,6 +270,45 @@ class TestStartCommand:
         mock_wait_for_health.assert_called_once_with(mock_daemon_config.daemon_port)
         mock_poll_startup.assert_called_once_with(mock_daemon_config.daemon_port)
 
+    @patch("gobby.cli.daemon._poll_startup_progress", return_value=True)
+    @patch("gobby.cli.daemon._wait_for_daemon_health", return_value=2.5)
+    @patch("gobby.cli.daemon._services_start")
+    @patch("gobby.cli.daemon.service_start", return_value={"success": True})
+    @patch(
+        "gobby.cli.daemon.get_service_status",
+        return_value={"installed": True, "platform": "macos"},
+    )
+    @patch("gobby.cli.daemon.get_gobby_home")
+    @patch("gobby.cli.load_full_config_from_db")
+    def test_start_via_service_starts_docker_dependencies_first(
+        self,
+        mock_load_config: MagicMock,
+        mock_get_gobby_home: MagicMock,
+        _mock_get_service_status: MagicMock,
+        mock_service_start: MagicMock,
+        mock_services_start: MagicMock,
+        _mock_wait_for_health: MagicMock,
+        _mock_poll_startup: MagicMock,
+        runner: CliRunner,
+        mock_daemon_config: MagicMock,
+        tmp_path: Path,
+    ) -> None:
+        """Managed service startup first revives configured Docker dependencies."""
+        services_dir = tmp_path / "services"
+        services_dir.mkdir()
+        (services_dir / "docker-compose.yml").touch()
+        mock_get_gobby_home.return_value = tmp_path
+        mock_load_config.return_value = mock_daemon_config
+        call_order: list[str] = []
+        mock_services_start.side_effect = lambda _home: call_order.append("docker")
+        mock_service_start.side_effect = lambda: (call_order.append("service") or {"success": True})
+
+        result = runner.invoke(cli, ["start"])
+
+        assert result.exit_code == 0
+        assert call_order == ["docker", "service"]
+        mock_services_start.assert_called_once_with(tmp_path)
+
     @patch("gobby.cli.daemon.fetch_rich_status")
     @patch("gobby.cli.daemon.httpx.get")
     @patch("gobby.cli.daemon.subprocess.Popen")
