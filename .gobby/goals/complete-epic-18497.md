@@ -125,3 +125,10 @@ so each iteration resumes from the durable goal document and live task state.
   secondary projections, APIs, sync, and the web UI. The exact acceptance suite
   passed with 1,273 backend tests and 29 frontend tests (2 backend tests skipped);
   Ruff, mypy, frontend type-check, and frontend lint also passed.
+- 2026-07-21 #9341 iteration 7 — closed #18499 with commit `b4d6b5c19`;
+  normalized `memory_type` to the four canonical enum values across write
+  boundaries, storage migration, JSONL sync, and Qdrant payloads and filters.
+  Broad focused validation passed with 1,338 tests and 2 skips; the final
+  correlated acceptance run passed 392 tests, with Ruff, strict mypy, Bandit,
+  test-quality audit, and diff checks also passing. Direct `compact_self` follows
+  this bookkeeping commit as the required iteration boundary.
