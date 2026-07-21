@@ -132,3 +132,11 @@ so each iteration resumes from the durable goal document and live task state.
   correlated acceptance run passed 392 tests, with Ruff, strict mypy, Bandit,
   test-quality audit, and diff checks also passing. Direct `compact_self` follows
   this bookkeeping commit as the required iteration boundary.
+- 2026-07-21 #9341 iteration 8 — closed #18501 with commit `eb7fdeb8a`;
+  renamed the epic review agent, skill, stage, configuration, migration, bundled
+  content, tests, docs, and web normalization fixtures in one atomic change.
+  Broad focused validation passed 994 backend tests with 1 skip; direct closure
+  evidence passed 241 backend and 23 frontend tests. Ruff, strict mypy, Bandit,
+  frontend type-check/lint/build, package build, test-quality, structured-data,
+  diff, legacy-term, and source-size checks also passed. Direct `compact_self`
+  follows this bookkeeping commit as the required iteration boundary.
