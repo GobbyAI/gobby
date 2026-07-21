@@ -145,6 +145,7 @@ class TestTmuxTextInjection:
         monkeypatch: pytest.MonkeyPatch,
     ) -> None:
         commands: list[list[str]] = []
+        sleep = AsyncMock()
 
         async def fake_exec(*args: str, **_kwargs: object) -> MagicMock:
             commands.append(list(args))
@@ -157,13 +158,13 @@ class TestTmuxTextInjection:
             "gobby.agents.tmux.text_injection.asyncio.create_subprocess_exec",
             fake_exec,
         )
+        monkeypatch.setattr("gobby.agents.tmux.text_injection.asyncio.sleep", sleep)
 
         tmux_cmd = ["/opt/tmux", "-S", "/tmp/tmux-501/gobby", "-f", "/tmp/tmux.conf"]
         await send_literal_text_to_tmux_target(
             "%12",
             "-X message\n",
             tmux_cmd=tmux_cmd,
-            enter_delay_seconds=0,
         )
 
         assert len(commands) == 4
@@ -183,6 +184,98 @@ class TestTmuxTextInjection:
         assert commands[2] == [*tmux_cmd, "delete-buffer", "-b", buffer_name]
         assert commands[3] == [*tmux_cmd, "send-keys", "-t", "%12", "Enter"]
         assert not any("send-keys" in command and "-l" in command for command in commands)
+        sleep.assert_awaited_once_with(0.2)
+
+    @pytest.mark.asyncio
+    async def test_multiple_trailing_newlines_send_one_enter_after_one_delay(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        commands: list[list[str]] = []
+        sleep = AsyncMock()
+
+        async def fake_exec(*args: str, **_kwargs: object) -> MagicMock:
+            commands.append(list(args))
+            proc = MagicMock()
+            proc.returncode = 0
+            proc.communicate = AsyncMock(return_value=(b"", b""))
+            return proc
+
+        monkeypatch.setattr(
+            "gobby.agents.tmux.text_injection.asyncio.create_subprocess_exec",
+            fake_exec,
+        )
+        monkeypatch.setattr("gobby.agents.tmux.text_injection.asyncio.sleep", sleep)
+
+        await send_literal_text_to_tmux_target("%12", "hello\n\n")
+
+        assert [command[1] for command in commands] == [
+            "set-buffer",
+            "paste-buffer",
+            "delete-buffer",
+            "send-keys",
+        ]
+        assert commands[0][-1] == "hello"
+        assert commands[-1] == ["tmux", "send-keys", "-t", "%12", "Enter"]
+        sleep.assert_awaited_once_with(0.2)
+
+    @pytest.mark.asyncio
+    async def test_without_trailing_newline_preserves_internal_newline_without_enter(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        commands: list[list[str]] = []
+        sleep = AsyncMock()
+
+        async def fake_exec(*args: str, **_kwargs: object) -> MagicMock:
+            commands.append(list(args))
+            proc = MagicMock()
+            proc.returncode = 0
+            proc.communicate = AsyncMock(return_value=(b"", b""))
+            return proc
+
+        monkeypatch.setattr(
+            "gobby.agents.tmux.text_injection.asyncio.create_subprocess_exec",
+            fake_exec,
+        )
+        monkeypatch.setattr("gobby.agents.tmux.text_injection.asyncio.sleep", sleep)
+
+        await send_literal_text_to_tmux_target("%12", "alpha\nbeta")
+
+        assert [command[1] for command in commands] == [
+            "set-buffer",
+            "paste-buffer",
+            "delete-buffer",
+        ]
+        assert commands[0][-1] == "alpha\nbeta"
+        sleep.assert_not_awaited()
+
+    @pytest.mark.asyncio
+    async def test_newline_only_sends_one_enter_without_paste_delay(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        commands: list[list[str]] = []
+        sleep = AsyncMock()
+
+        async def fake_exec(*args: str, **_kwargs: object) -> MagicMock:
+            commands.append(list(args))
+            proc = MagicMock()
+            proc.returncode = 0
+            proc.communicate = AsyncMock(return_value=(b"", b""))
+            return proc
+
+        monkeypatch.setattr(
+            "gobby.agents.tmux.text_injection.asyncio.create_subprocess_exec",
+            fake_exec,
+        )
+        monkeypatch.setattr("gobby.agents.tmux.text_injection.asyncio.sleep", sleep)
+
+        await send_literal_text_to_tmux_target("%12", "\n")
+
+        assert commands == [["tmux", "send-keys", "-t", "%12", "Enter"]]
+        assert not any(command[1] in {"set-buffer", "paste-buffer"} for command in commands)
+        sleep.assert_not_awaited()
 
     @pytest.mark.asyncio
     async def test_submit_literal_text_uses_buffer_enter_without_extra_submit(
@@ -1878,9 +1971,9 @@ class TestTmuxSessionManagerExtended:
         mgr = TmuxSessionManager()
         with patch.object(mgr, "_run", new_callable=AsyncMock) as mock_run:
             mock_run.return_value = (0, "", "")
-            result = await mgr.send_keys("test", "C-c", literal=False)
+            result = await mgr.send_keys("test", "Enter", literal=False)
         assert result is True
-        mock_run.assert_awaited_once_with("send-keys", "-t", "=test:", "C-c")
+        mock_run.assert_awaited_once_with("send-keys", "-t", "=test:", "Enter")
 
     @pytest.mark.asyncio
     async def test_send_keys_raw_key_mode_preserves_pane_target(self) -> None:

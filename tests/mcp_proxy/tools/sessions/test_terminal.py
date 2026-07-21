@@ -176,7 +176,13 @@ class TestRegisterTerminalTools:
         ):
             register_terminal_tools(registry, session_manager, MagicMock())
 
-        send_keys = registry.get_tool("send_keys")
+        send_keys_metadata = registry.get_tool_metadata("send_keys")
+        assert send_keys_metadata is not None
+        assert (
+            "one or more trailing \\n characters produce exactly one Enter after the literal paste settles"
+            in send_keys_metadata.description
+        )
+        send_keys = send_keys_metadata.func
         assert send_keys is not None
 
         with (
@@ -189,11 +195,11 @@ class TestRegisterTerminalTools:
                 return_value="session-1",
             ),
         ):
-            result = asyncio.run(send_keys(session_id="session-1", keys="hello"))
+            result = asyncio.run(send_keys(session_id="session-1", keys="hello\n", literal=True))
 
         assert result == {"success": True}
         mock_get_tmux_manager.assert_called_once_with(session.terminal_context)
-        tmux_manager.send_keys.assert_awaited_once_with("%12", "hello", literal=True)
+        tmux_manager.send_keys.assert_awaited_once_with("%12", "hello\n", literal=True)
 
     def test_send_keys_rejects_target_outside_caller_scope(self) -> None:
         """Cross-project sessions outside the caller's agent tree cannot receive keys."""

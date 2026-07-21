@@ -359,7 +359,8 @@ def register_terminal_tools(
         description=(
             "Send keystrokes to a session's tmux terminal. "
             "Targets must be the caller, in the same project, or in the same agent tree. "
-            "Use literal=true (default) to type text — trailing \\n sends Enter. "
+            "Use literal=true (default) to paste text — one or more trailing \\n characters "
+            "produce exactly one Enter after the literal paste settles. "
             "Use literal=false for tmux key names: C-c, Escape, Enter, C-d."
         ),
     )

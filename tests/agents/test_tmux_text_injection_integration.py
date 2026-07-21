@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import json
 import shutil
 from pathlib import Path
 from uuid import uuid4
@@ -34,7 +35,7 @@ async def _wait_for_file(path: Path, timeout: float = 6) -> bytes:
 
 
 @pytest.mark.asyncio
-async def test_multiline_tmux_paste_uses_bracketed_paste(tmp_path: Path) -> None:
+async def test_trailing_newline_waits_past_paste_suppression_window(tmp_path: Path) -> None:
     if shutil.which("tmux") is None:
         pytest.skip("tmux binary is not installed")
 
@@ -47,6 +48,7 @@ async def test_multiline_tmux_paste_uses_bracketed_paste(tmp_path: Path) -> None
         """
 from __future__ import annotations
 
+import json
 import os
 import select
 import subprocess
@@ -58,6 +60,7 @@ import tty
 fd = sys.stdin.fileno()
 original = termios.tcgetattr(fd)
 data = bytearray()
+events = []
 
 try:
     tty.setraw(fd)
@@ -73,14 +76,18 @@ try:
         if not chunk:
             break
         data.extend(chunk)
-        if b"\\x1b[201~" in data:
+        events.append({"at": time.monotonic(), "hex": chunk.hex()})
+        paste_end = data.find(b"\\x1b[201~")
+        if paste_end >= 0 and len(data) > paste_end + len(b"\\x1b[201~"):
             break
 finally:
     sys.stdout.write("\\033[?2004l")
     sys.stdout.flush()
     termios.tcsetattr(fd, termios.TCSADRAIN, original)
-    with open(sys.argv[1], "wb") as output:
-        output.write(data)
+    temporary_path = f"{sys.argv[1]}.tmp"
+    with open(temporary_path, "w", encoding="utf-8") as output:
+        json.dump({"data_hex": data.hex(), "events": events}, output)
+    os.replace(temporary_path, sys.argv[1])
 """,
         encoding="utf-8",
     )
@@ -106,12 +113,31 @@ finally:
 
         await send_literal_text_to_tmux_target(
             f"{session_name}:0.0",
-            "alpha\nbeta",
+            "alpha\nbeta\n",
             tmux_cmd=tmux_cmd,
-            enter_delay_seconds=0,
         )
 
-        captured = await _wait_for_file(capture_path)
-        assert captured == b"\x1b[200~alpha\rbeta\x1b[201~"
+        captured = json.loads((await _wait_for_file(capture_path)).decode())
+        data = bytes.fromhex(captured["data_hex"])
+        paste = b"\x1b[200~alpha\rbeta\x1b[201~"
+        assert data == paste + b"\r"
+
+        cumulative = bytearray()
+        paste_end_at = None
+        enter_at = None
+        for event in captured["events"]:
+            chunk = bytes.fromhex(event["hex"])
+            before = len(cumulative)
+            cumulative.extend(chunk)
+            paste_end = cumulative.find(b"\x1b[201~")
+            if paste_end_at is None and paste_end >= 0:
+                paste_end_at = event["at"]
+            if paste_end >= 0 and before >= paste_end + len(b"\x1b[201~"):
+                enter_at = event["at"]
+                break
+
+        assert paste_end_at is not None
+        assert enter_at is not None
+        assert enter_at - paste_end_at >= 0.12
     finally:
         await _run(*tmux_cmd, "kill-server")
