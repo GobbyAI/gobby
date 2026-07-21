@@ -13,7 +13,12 @@ from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.projects import LocalProjectManager
 from gobby.storage.tasks import LocalTaskManager
 from gobby.sync.task_github_import import GitHubIssueImporter
-from gobby.sync.tasks import TaskBackupManager, TaskRestoreError, _compute_path_cache
+from gobby.sync.tasks import (
+    TaskBackupError,
+    TaskBackupManager,
+    TaskRestoreError,
+    _compute_path_cache,
+)
 from gobby.tasks.state_semantics import is_task_closed
 
 pytestmark = pytest.mark.unit
@@ -548,12 +553,12 @@ class TestTaskBackupManager:
         backup_manager.backup_path.write_bytes(original)
         task_manager.create_task(sample_project["id"], "Task 1")
 
-        with (
-            patch("gobby.sync.jsonl_io.os.replace", side_effect=OSError("interrupted")),
-            pytest.raises(OSError, match="interrupted"),
-        ):
-            backup_manager.backup()
+        with patch("gobby.sync.jsonl_io.os.replace", side_effect=OSError("interrupted")):
+            with pytest.raises(TaskBackupError, match="interrupted") as exc_info:
+                backup_manager.backup()
 
+        assert isinstance(exc_info.value.__cause__, OSError)
+        assert str(exc_info.value.__cause__) == "interrupted"
         assert backup_manager.backup_path.read_bytes() == original
         assert list(backup_manager.backup_path.parent.glob(".tasks.jsonl.*.tmp")) == []
 
@@ -1048,8 +1053,10 @@ class TestExportEdgeCases:
         backup_manager.backup_path.parent.mkdir(parents=True, exist_ok=True)
         backup_manager.backup_path.mkdir()
 
-        with pytest.raises(IsADirectoryError):
+        with pytest.raises(TaskBackupError) as exc_info:
             backup_manager.backup()
+
+        assert isinstance(exc_info.value.__cause__, IsADirectoryError)
 
     @pytest.mark.integration
     def test_export_empty_tasks(self, backup_manager) -> None:

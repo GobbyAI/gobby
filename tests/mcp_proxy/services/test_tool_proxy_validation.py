@@ -1288,8 +1288,8 @@ class TestWorkflowBeforeToolEnforcement:
             decision="allow",
             modified_input={
                 "server_name": "gobby-tasks",
-                "tool_name": "close_task",
-                "arguments": {"task_id": "#123", "skip_validation": False},
+                "tool_name": "get_task",
+                "arguments": {"task_id": "#456"},
             },
         )
         mock_internal_manager.is_internal.return_value = True
@@ -1299,15 +1299,15 @@ class TestWorkflowBeforeToolEnforcement:
 
         result = await tool_proxy_with_hooks.call_tool(
             server_name="gobby-tasks",
-            tool_name="close_task",
-            arguments={"task_id": "#123", "skip_validation": True},
+            tool_name="get_task",
+            arguments={"task_id": "#123"},
             session_id="session-123",
         )
 
         assert result == {}
         mock_registry.call.assert_called_once_with(
-            "close_task",
-            {"task_id": "#123", "skip_validation": False},
+            "get_task",
+            {"task_id": "#456"},
         )
 
     @pytest.mark.asyncio

@@ -139,30 +139,34 @@ async def test_hook_manager_instrumentation(tracer_provider):
     db = MagicMock()
     session_manager = MagicMock()
     session_manager.db = db
-    manager = HookManager(
-        daemon_host="localhost",
-        daemon_port=1234,
-        database=db,
-        session_manager=session_manager,
-    )
-    # Mock _handle_internal
-    with patch.object(manager, "_handle_internal", return_value=HookResponse(decision="allow")):
-        with patch.object(
-            manager, "_get_cached_daemon_status", return_value=(True, "ready", "ready", None)
-        ):
-            event = HookEvent(
-                event_type=HookEventType.SESSION_START,
-                session_id="sess-123",
-                source=SessionSource.CLAUDE,
-                timestamp=datetime.now(UTC),
-                data={},
-            )
-            await asyncio.to_thread(manager.handle, event)
+    with patch.object(HookManager, "_start_health_check_monitoring"):
+        manager = HookManager(
+            daemon_host="localhost",
+            daemon_port=1234,
+            database=db,
+            session_manager=session_manager,
+        )
+    try:
+        # Mock _handle_internal
+        with patch.object(manager, "_handle_internal", return_value=HookResponse(decision="allow")):
+            with patch.object(
+                manager, "_get_cached_daemon_status", return_value=(True, "ready", "ready", None)
+            ):
+                event = HookEvent(
+                    event_type=HookEventType.SESSION_START,
+                    session_id="sess-123",
+                    source=SessionSource.CLAUDE,
+                    timestamp=datetime.now(UTC),
+                    data={},
+                )
+                await asyncio.to_thread(manager.handle, event)
 
-    spans = exporter.get_finished_spans()
-    hook_span = next(s for s in spans if s.name == "hook.handle")
-    assert hook_span.attributes["event_type"] == "HookEventType.SESSION_START"
-    assert hook_span.attributes["decision"] == "allow"
+        spans = exporter.get_finished_spans()
+        hook_span = next(s for s in spans if s.name == "hook.handle")
+        assert hook_span.attributes["event_type"] == "HookEventType.SESSION_START"
+        assert hook_span.attributes["decision"] == "allow"
+    finally:
+        await manager.shutdown_async()
 
 
 @pytest.mark.asyncio

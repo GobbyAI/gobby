@@ -138,9 +138,12 @@ class TestDaemonClientCheckHealth:
 
         logger.warning.assert_not_called()
         logger.debug.assert_called_once_with(
-            "Daemon health check timed out (attempt %d): %s",
-            1,
-            timeout,
+            "Daemon health check timed out",
+            extra={
+                "daemon_url": "http://127.0.0.1:60887",
+                "timeout_streak": 1,
+                "error": "timed out",
+            },
         )
 
     def test_repeated_health_timeouts_warn_once(self) -> None:
@@ -155,8 +158,12 @@ class TestDaemonClientCheckHealth:
             assert client.check_health() == (False, "timed out")
 
         logger.warning.assert_called_once_with(
-            "Daemon health check timed out twice consecutively: %s",
-            timeout,
+            "Daemon health check timed out twice consecutively",
+            extra={
+                "daemon_url": "http://127.0.0.1:60887",
+                "timeout_streak": 2,
+                "error": "timed out",
+            },
         )
 
     def test_health_success_resets_timeout_streak(self) -> None:

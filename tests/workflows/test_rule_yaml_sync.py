@@ -87,8 +87,8 @@ rules:
         assert body["effects"][0]["type"] == "block"
         assert body["effects"][0]["tools"] == ["Edit"]
 
-    def test_rule_enabled_defaults_false(self, db, manager, rules_dir) -> None:
-        """Rules should be disabled by default (opt-in activation)."""
+    def test_rule_enabled_defaults_true(self, db, manager, rules_dir) -> None:
+        """Bundled rules are enabled by default."""
         (rules_dir / "simple.yaml").write_text(
             """
 rules:
@@ -102,7 +102,7 @@ rules:
         sync_bundled_rules(db, rules_dir)
 
         rows = manager.list_all(workflow_type="rule")
-        assert rows[0].enabled is False
+        assert rows[0].enabled is True
 
     def test_turn_end_rule_syncs(self, db, manager, rules_dir) -> None:
         """Semantic turn_end rules should sync like any other rule event."""
@@ -290,7 +290,7 @@ rules:
         assert body1["effects"][0]["reason"] == "Version 1."
         original_enabled = rows[0].enabled
 
-        manager.update(rows[0].id, enabled=True)
+        manager.update(rows[0].id, enabled=False)
 
         (rules_dir / "changing.yaml").write_text(
             """
@@ -309,8 +309,8 @@ rules:
         rows = manager.list_all(workflow_type="rule")
         body2 = json.loads(rows[0].definition_json)
         assert body2["effects"][0]["reason"] == "Version 2."
-        assert original_enabled is False
-        assert rows[0].enabled is True
+        assert original_enabled is True
+        assert rows[0].enabled is False
 
     def test_user_or_custom_rule_not_overwritten(self, db, manager, rules_dir) -> None:
         """Only bundled gobby rows should be refreshed on re-sync."""

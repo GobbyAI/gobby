@@ -8,6 +8,7 @@ import subprocess
 from pathlib import Path
 
 import pytest
+from cryptography.fernet import Fernet
 
 from gobby.code_index.models import IndexedFile, Symbol
 from gobby.code_index.storage import CodeIndexStorage
@@ -75,6 +76,7 @@ def _symbol_row(
 def test_real_gcode_writer_matches_python_model_contract(
     tmp_path: Path,
     postgres_database_url: str,
+    postgres_schema: str,
     request: pytest.FixtureRequest,
 ) -> None:
     """The production Rust writer and Python models share one storage contract."""
@@ -86,7 +88,8 @@ def test_real_gcode_writer_matches_python_model_contract(
     root.mkdir()
     _write_fixture(root, INITIAL_SOURCE)
 
-    code_db = PostgresHubDatabase(postgres_database_url)
+    scoped_database_url = postgres_database_url + f"?options=-csearch_path%3D{postgres_schema}"
+    code_db = PostgresHubDatabase(scoped_database_url)
     code_db.apply_migrations()
     request.addfinalizer(code_db.close)
     code_storage = CodeIndexStorage(code_db)
@@ -96,14 +99,17 @@ def test_real_gcode_writer_matches_python_model_contract(
     gobby_home.mkdir()
     bootstrap_path = gobby_home / "bootstrap.yaml"
     bootstrap_path.write_text(
-        f"hub_backend: postgres\ndatabase_url: {postgres_database_url}\n",
+        f"hub_backend: postgres\ndatabase_url: {scoped_database_url}\n",
         encoding="utf-8",
     )
     bootstrap_path.chmod(0o600)
+    kek_path = gobby_home / ".secret_kek"
+    kek_path.write_bytes(Fernet.generate_key())
+    kek_path.chmod(0o600)
     env["GOBBY_HOME"] = str(gobby_home)
-    env["DATABASE_URL"] = postgres_database_url
-    env["GCODE_DATABASE_URL"] = postgres_database_url
-    env["GOBBY_POSTGRES_DSN"] = postgres_database_url
+    env["DATABASE_URL"] = scoped_database_url
+    env["GCODE_DATABASE_URL"] = scoped_database_url
+    env["GOBBY_POSTGRES_DSN"] = scoped_database_url
     env.setdefault("GCODE_BROKER_TIMEOUT_MS", "1")
 
     _run_gcode(gcode_bin, root, env, "init", "--quiet")

@@ -135,8 +135,10 @@ def test_build_coordinator_orders_compaction_before_agent_waits() -> None:
     wait_idx = normalized.index("Use `gobby-agents:wait_for_agent` as the last idle action")
 
     assert monitor_idx < bugs_idx < compact_idx < wait_idx
-    assert "wait_for_agent as the last idle action only when agents are running" in normalized
-    assert "no actionable coordinator work remains" in normalized
+    assert (
+        "Use `gobby-agents:wait_for_agent` as the last idle action only when agents are running "
+        "and no actionable work remains" in normalized
+    )
 
 
 def test_build_coordinator_documents_compact_self_tool_path() -> None:
