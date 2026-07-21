@@ -77,3 +77,8 @@ Return ONLY valid JSON. No prose, no markdown, no code fences.
     the expansion-agent-selection heuristics. Use `backend-developer` as the default
     fallback and include `additional_skills` as an array.
 13. Do not emit discovery-stage leaves from an approved plan.
+14. When repository context includes `Related existing test files`, use those exact
+    paths in `test_intent.suggested_test_files` for behavior they already cover and make
+    the implementation leaf's validation require updating and running the named tests.
+    Suggest a new test file only for new behavior absent from the related existing tests;
+    identify that file as new in the test intent and validation criteria.

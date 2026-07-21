@@ -347,3 +347,12 @@ class TestBundledTemplates:
         result_with_flag = loader.render("expansion/system", {"tdd_mode": True})
         assert "TDD Mode Enabled" not in result_with_flag
         assert result == result_with_flag
+
+    def test_expansion_system_prefers_related_existing_tests(self, synced_db) -> None:
+        loader = PromptLoader(db=synced_db)
+
+        result = loader.render("expansion/system", {})
+
+        assert "Related existing test files" in result
+        assert "use those exact" in result
+        assert "Suggest a new test file only for new behavior" in result

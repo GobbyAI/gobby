@@ -85,6 +85,62 @@ def test_build_file_context_rejects_symlink_outside_repo(tmp_path: Path) -> None
     assert context == ""
 
 
+def test_build_file_context_includes_related_existing_tests(tmp_path: Path) -> None:
+    repo_path = tmp_path / "repo"
+    test_path = repo_path / "tests" / "tasks" / "test_widget_compiler.py"
+    test_path.parent.mkdir(parents=True)
+    test_path.write_text("def test_widget_compiles():\n    assert True\n", encoding="utf-8")
+    task = SimpleNamespace(
+        title="Compile widgets",
+        description="Improve widget compilation behavior",
+        validation_criteria="Widget compiler tests pass",
+    )
+
+    context = _build_file_context(None, task, repo_path)
+
+    assert "## Related existing test files" in context
+    assert "### tests/tasks/test_widget_compiler.py" in context
+    assert "def test_widget_compiles()" in context
+
+
+def test_build_file_context_omits_empty_related_test_section(tmp_path: Path) -> None:
+    repo_path = tmp_path / "repo"
+    unrelated_path = repo_path / "tests" / "test_unrelated.py"
+    unrelated_path.parent.mkdir(parents=True)
+    unrelated_path.write_text("def test_unrelated():\n    assert True\n", encoding="utf-8")
+    task = SimpleNamespace(
+        title="Compile widgets",
+        description="Improve widget compilation behavior",
+        validation_criteria="Widget compiler tests pass",
+    )
+
+    context = _build_file_context(None, task, repo_path)
+
+    assert context == ""
+
+
+def test_build_file_context_limits_related_tests_to_eight(tmp_path: Path) -> None:
+    repo_path = tmp_path / "repo"
+    tests_path = repo_path / "tests" / "tasks"
+    tests_path.mkdir(parents=True)
+    for index in range(10):
+        (tests_path / f"test_widget_compiler_{index}.py").write_text(
+            f"def test_widget_compiler_{index}():\n    assert True\n",
+            encoding="utf-8",
+        )
+    task = SimpleNamespace(
+        title="Compile widgets",
+        description="Improve widget compilation behavior",
+        validation_criteria="Widget compiler tests pass",
+    )
+
+    context = _build_file_context(None, task, repo_path)
+
+    assert context.count("### tests/tasks/test_widget_compiler_") == 8
+    assert "### tests/tasks/test_widget_compiler_7.py" in context
+    assert "### tests/tasks/test_widget_compiler_8.py" not in context
+
+
 def test_expansion_feature_config_resolves_structured_candidate_overrides() -> None:
     expansion_config = TaskExpansionConfig(
         candidates=[

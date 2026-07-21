@@ -30,6 +30,7 @@ from gobby.tasks.expansion._common import (
     list_agent_definitions,
 )
 from gobby.tasks.expansion._qa import run_expansion_qa
+from gobby.tasks.validation import derive_related_test_terms, find_related_test_files
 from gobby.utils.project_context import get_project_context
 
 logger = logging.getLogger(__name__)
@@ -487,7 +488,28 @@ def _build_file_context(self: Any, task: Task, repo_path: Path | None) -> str:
         if len(unique_files) >= 8:
             break
 
-    if not unique_files:
+    related_files: list[tuple[str, Path]] = []
+    if len(unique_files) < 8:
+        search_terms = derive_related_test_terms(
+            task.title,
+            task.validation_criteria,
+            task.description,
+        )
+        for related_path in find_related_test_files(search_terms, repo_root, max_files=8):
+            try:
+                normalized = related_path.relative_to(repo_root).as_posix()
+                absolute = related_path.resolve()
+            except (OSError, RuntimeError, ValueError):
+                continue
+            if normalized in seen or not absolute.is_relative_to(repo_root):
+                continue
+            if absolute.exists() and absolute.is_file():
+                related_files.append((normalized, absolute))
+                seen.add(normalized)
+            if len(unique_files) + len(related_files) >= 8:
+                break
+
+    if not unique_files and not related_files:
         return ""
 
     sections: list[str] = []
@@ -495,4 +517,15 @@ def _build_file_context(self: Any, task: Task, repo_path: Path | None) -> str:
         content = _read_text_if_exists(absolute, max_chars=3500)
         if content:
             sections.append(f"### {file_path}\n{content}")
+    related_sections: list[str] = []
+    for file_path, absolute in related_files:
+        content = _read_text_if_exists(absolute, max_chars=1500)
+        if content:
+            related_sections.append(f"### {file_path}\n{content}")
+    if related_sections:
+        sections.append(
+            "## Related existing test files\n"
+            "Update these tests when they already cover the changed behavior.\n\n"
+            + "\n\n".join(related_sections)
+        )
     return "\n\n".join(sections)
