@@ -27,6 +27,12 @@ def pytest_addoption(parser: pytest.Parser) -> None:
     )
 
 
+def pytest_xdist_auto_num_workers(config: pytest.Config) -> int:
+    """Bound auto workers to the local managed PostgreSQL lock capacity."""
+    del config
+    return min(os.cpu_count() or 1, 8)
+
+
 def pytest_collection_modifyitems(config: pytest.Config, items: list[pytest.Item]) -> None:
     """Sort e2e tests to run last, reducing port collision risk with production daemon."""
     run_sandbox = bool(config.getoption("--run-sandbox"))

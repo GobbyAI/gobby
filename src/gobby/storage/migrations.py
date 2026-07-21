@@ -84,7 +84,7 @@ class Migration:
 
 
 _NON_TRANSACTIONAL_DIRECTIVE = "-- gobby:non-transactional"
-_MIGRATION_LOCK_SQL = "hashtext('postgres_migrations_apply')"
+_MIGRATION_LOCK_SQL = "hashtext('postgres_migrations_apply'), hashtext(current_schema())"
 
 
 class MigrationRunner:

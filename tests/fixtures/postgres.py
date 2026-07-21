@@ -32,6 +32,7 @@ from gobby.storage.hub.postgres import (
 )
 
 _TEST_SCHEMA_PREFIX = "gobby_test_"
+_TEST_SCHEMA_DROP_LOCK = "gobby_test_schema_drop"
 
 
 def _schema_looks_test_only(schema: str) -> bool:
@@ -211,12 +212,22 @@ def postgres_schema(postgres_database_url: str, worker_id: str) -> Iterator[str]
         yield schema
     finally:
         with psycopg.connect(url, autocommit=True) as conn:
-            exists = conn.execute(
-                "SELECT 1 FROM information_schema.schemata WHERE schema_name = %s",
-                (schema,),
-            ).fetchone()
-            if exists:
-                conn.execute(sql.SQL("DROP SCHEMA {} CASCADE").format(sql.Identifier(schema)))
+            conn.execute(
+                "SELECT pg_advisory_lock(hashtext(%s))",
+                (_TEST_SCHEMA_DROP_LOCK,),
+            )
+            try:
+                exists = conn.execute(
+                    "SELECT 1 FROM information_schema.schemata WHERE schema_name = %s",
+                    (schema,),
+                ).fetchone()
+                if exists:
+                    conn.execute(sql.SQL("DROP SCHEMA {} CASCADE").format(sql.Identifier(schema)))
+            finally:
+                conn.execute(
+                    "SELECT pg_advisory_unlock(hashtext(%s))",
+                    (_TEST_SCHEMA_DROP_LOCK,),
+                )
 
 
 @pytest.fixture(scope="session")

@@ -126,6 +126,7 @@ class _ConcurrentMigrationTransaction:
             self._hub.initial_reads.wait()
             return _Result(rows)
         if "pg_advisory_xact_lock" in sql:
+            assert "hashtext(current_schema())" in sql
             self._hub.advisory_lock.acquire()
             self._locked = True
             self._hub.lock_acquisitions += 1
@@ -292,10 +293,12 @@ class _AutocommitMigrationConnection:
 
     def execute(self, sql: str, params: tuple[Any, ...] = ()) -> _Result:
         if "pg_advisory_lock" in sql and "unlock" not in sql:
+            assert "hashtext(current_schema())" in sql
             assert not self.state.locked
             self.state.locked = True
             return _Result()
         if "pg_advisory_unlock" in sql:
+            assert "hashtext(current_schema())" in sql
             assert self.state.locked
             self.state.locked = False
             self.state.unlocked += 1
