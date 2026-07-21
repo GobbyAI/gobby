@@ -1623,6 +1623,7 @@ class TestDetectVerificationEvidence:
                 [],
             ),
             ("cargo fmt --all -- --check", ["cargo", "fmt", "--all", "--", "--check"], []),
+            ("git diff HEAD~2..HEAD --check", ["git", "diff", "HEAD~2..HEAD", "--check"], []),
         ],
     )
     def test_successful_validation_records_evidence(
@@ -1748,6 +1749,37 @@ class TestDetectVerificationEvidence:
         assert evidence["success"] is True
         assert evidence["exit_code"] == 0
         assert "unknown outcome" not in caplog.text
+
+    def test_codex_git_diff_check_records_structured_validation_evidence(
+        self,
+        variables,
+    ) -> None:
+        event = CodexAdapter().translate_to_hook_event(
+            {
+                "method": "item/completed",
+                "params": {
+                    "threadId": AGENT_SESSION_ID,
+                    "item": {
+                        "id": "item-git-diff-check",
+                        "type": "commandExecution",
+                        "command": "git diff origin/main...HEAD --check",
+                        "aggregatedOutput": "",
+                        "exitCode": 0,
+                        "status": "completed",
+                    },
+                },
+            }
+        )
+        assert event is not None
+
+        detect_verification_evidence(event, variables, SESSION_ID)
+
+        evidence = variables["verification_evidence"][-1]
+        assert evidence["evidence_type"] == "validation_command"
+        assert evidence["command"] == "git diff origin/main...HEAD --check"
+        assert evidence["exit_code"] == 0
+        assert evidence["matcher_id"] == "git-diff-check"
+        assert evidence["success"] is True
 
     def test_codex_failed_validation_clears_readiness(self, variables) -> None:
         variables["verification_evidence_recorded"] = True

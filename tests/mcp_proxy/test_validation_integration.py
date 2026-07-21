@@ -500,6 +500,86 @@ async def test_close_task_includes_latest_thirty_verification_evidence(
     assert '"task_id":"#15763"' in validation_evidence
 
 
+@pytest.mark.integration
+@pytest.mark.asyncio
+async def test_close_task_accepts_git_diff_check_evidence_without_override(
+    mock_task_manager: MagicMock,
+    mock_task_validator: AsyncMock,
+    repo_path: str,
+) -> None:
+    task = _task(
+        id="t1",
+        title="Task requiring a whitespace check",
+        project_id="p1",
+        status="open",
+        description="Keep the patch free of whitespace errors",
+        validation_criteria="A successful git diff --check result is required",
+        commits=["abc123"],
+        priority=2,
+        task_type="bug",
+        category="code",
+        created_at="now",
+        updated_at="now",
+    )
+    mock_task_manager.get_task.return_value = task
+    mock_task_manager.list_tasks.return_value = []
+    mock_task_manager.close_task.return_value = task
+    mock_task_validator.validate_task.return_value = ValidationResult(
+        status="valid",
+        feedback="Required git diff --check evidence passed.",
+    )
+
+    with (
+        patch("gobby.mcp_proxy.tools.tasks._context.TaskDependencyManager"),
+        patch("gobby.mcp_proxy.tools.tasks._context.SessionTaskManager"),
+        patch("gobby.tasks.commits.collect_task_diff_text") as mock_diff,
+        patch("gobby.mcp_proxy.tools.tasks._context.LocalProjectManager") as mock_pm,
+        patch("gobby.mcp_proxy.tools.tasks._context.SessionManager") as mock_sm_cls,
+        patch("gobby.mcp_proxy.tools.tasks._context.SessionVariableManager") as mock_svm_cls,
+        patch("gobby.utils.git.normalize_commit_sha", side_effect=lambda sha, cwd=None: sha),
+    ):
+        mock_diff.return_value = _diff_result(
+            diff="diff content from commits",
+            commits=["abc123"],
+            has_uncommitted_changes=False,
+            file_count=1,
+        )
+        mock_pm.return_value.get.return_value = MagicMock(repo_path=repo_path)
+        mock_sm = MagicMock()
+        mock_sm.resolve_session_reference.return_value = "sess-uuid"
+        mock_sm.get.return_value = MagicMock(had_edits=True)
+        mock_sm_cls.return_value = mock_sm
+        mock_svm_cls.return_value.get_variables.return_value = {
+            VERIFICATION_EVIDENCE_VARIABLE: [
+                {
+                    "evidence_type": "validation_command",
+                    "success": True,
+                    "command": "git diff --check HEAD~1..HEAD",
+                    "exit_code": 0,
+                    "matcher_id": "git-diff-check",
+                    "matcher_label": "Git whitespace checks",
+                }
+            ]
+        }
+
+        registry = create_task_registry(
+            task_manager=mock_task_manager,
+            task_validator=mock_task_validator,
+        )
+        result = await registry.call(
+            "close_task",
+            {"task_id": "t1", "changes_summary": "Added Git validation classification"},
+        )
+
+    assert result == {"success": True}
+    validation_context = mock_task_validator.validate_task.call_args.kwargs["changes_summary"]
+    assert '"command":"git diff --check HEAD~1..HEAD"' in validation_context
+    assert '"exit_code":0' in validation_context
+    assert '"matcher_id":"git-diff-check"' in validation_context
+    close_kwargs = mock_task_manager.close_task.call_args.kwargs
+    assert close_kwargs["validation_override_reason"] is None
+
+
 @pytest.mark.asyncio
 async def test_close_task_preserves_oversized_test_definitions_with_focused_evidence(
     mock_task_manager: MagicMock,

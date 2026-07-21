@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import shlex
+from pathlib import Path
 
 import pytest
 
@@ -49,6 +50,9 @@ pytestmark = pytest.mark.unit
         ("jq empty .gobby/project.json", "json-jq-validation"),
         ("jq -e '.verification' .gobby/project.json", "json-jq-validation"),
         ("jq --exit-status '.verification' .gobby/project.json", "json-jq-validation"),
+        ("git diff --check", "git-diff-check"),
+        ("git diff HEAD~2..HEAD --check", "git-diff-check"),
+        ("git diff --check origin/main...HEAD -- src tests", "git-diff-check"),
     ],
 )
 def test_builtin_validation_detection_accepts_common_commands(
@@ -64,6 +68,12 @@ def test_builtin_validation_detection_accepts_common_commands(
     "command",
     [
         "git status",
+        "git diff",
+        "git diff --stat",
+        "git diff --check --output=whitespace.txt",
+        "git diff --check --ext-diff",
+        "git diff --check --textconv",
+        "git add --all",
         "cargo build",
         "npm install",
         "prettier . --write",
@@ -265,7 +275,7 @@ def test_custom_wrapper_rule_extends_detection() -> None:
     assert match.wrapper_chain == ("project-wrapper",)
 
 
-def test_project_validation_detection_round_trip(tmp_path) -> None:
+def test_project_validation_detection_round_trip(tmp_path: Path) -> None:
     project_file = tmp_path / ".gobby" / "project.json"
     project_file.parent.mkdir()
     project_file.write_text(json.dumps({"name": "demo"}), encoding="utf-8")

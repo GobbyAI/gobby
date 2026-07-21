@@ -468,6 +468,15 @@ def builtin_validation_matchers() -> list[ValidationCommandMatcher]:
             required_args_any=["--check", "--list-different"],
         ),
         _matcher(
+            "git-diff-check",
+            "Git whitespace checks",
+            [],
+            ["lint"],
+            ["git diff"],
+            required_args_any=["--check"],
+            forbidden_args_any=["--output", "--ext-diff", "--textconv"],
+        ),
+        _matcher(
             "make-validation",
             "Make validation targets",
             [],
