@@ -331,6 +331,17 @@ marked `handoff_ready`, and a successor reads `summary_markdown` through
 `get_handoff_context`. If `link_child_session_id` is provided, Gobby records the
 parent-child relationship.
 
+### Handoff Boundaries
+
+The successor model receives the generated or agent-authored `summary_markdown`
+as its continuation context. The full source transcript remains a separately
+stored session record that can be queried or restored from the source session.
+
+Provider-owned runtime state remains with the source tool. This includes prompt
+caches, native conversation state, and provider-private or encrypted
+reasoning/thinking artifacts. The successor reconstructs working context from
+the handoff summary and persisted project state.
+
 ## Lifecycle Events
 
 Rule authors should target semantic workflow events:
