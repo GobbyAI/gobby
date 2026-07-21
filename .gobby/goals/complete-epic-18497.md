@@ -90,3 +90,8 @@ so each iteration resumes from the durable goal document and live task state.
 - 2026-07-21 #9341 activation — user approved execution here; claimed #18497,
   set `auto_task_ref`, `goal_file`, and `additional_skills`, and reconciled 17
   remaining open descendants plus closed setup task #18667.
+- 2026-07-21 #9341 iteration 1 — closed #17654 with commit `b70f1aaca`;
+  42 focused and 101 lifecycle/integrity tests passed, Ruff and mypy passed,
+  and test-quality reported zero issues. Close validation passed after rerunning
+  gates with exit-code-correlated evidence; close-triggered compaction supplied
+  the required boundary.
