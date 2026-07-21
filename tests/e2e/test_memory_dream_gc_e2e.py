@@ -51,7 +51,7 @@ CURRENT_CONTENT = "Gobby is a local-first daemon that unifies AI coding tools."
 
 
 @pytest.fixture
-def e2e_pre_daemon_setup(e2e_config: tuple[Any, int, int]) -> None:
+def e2e_pre_daemon_setup(e2e_config: tuple[Any, int, int], monkeypatch: pytest.MonkeyPatch) -> None:
     """Enable the daemon's memory manager by configuring an embedding api_base.
 
     Overrides the conftest no-op hook (runs after DB reset, before daemon
@@ -60,9 +60,16 @@ def e2e_pre_daemon_setup(e2e_config: tuple[Any, int, int]) -> None:
     return 500. The base is never contacted — it only satisfies the config
     presence check guarding memory-manager construction.
     """
+    from gobby.config.bootstrap import load_bootstrap
+
     config_path, _http_port, _ws_port = e2e_config
+    monkeypatch.setenv("GOBBY_FALKORDB_PASSWORD", load_bootstrap().falkordb_password)
     with open(config_path, "a") as handle:
-        handle.write('\nembeddings:\n  api_base: "http://127.0.0.1:9/v1"\n')
+        handle.write(
+            '\nembeddings:\n  api_base: "http://127.0.0.1:9/v1"\n'
+            'databases:\n  qdrant:\n    url: "http://127.0.0.1:6333"\n'
+            '  falkordb:\n    password: "${GOBBY_FALKORDB_PASSWORD}"\n'
+        )
 
 
 def _sweep_config() -> MemoryDreamConfig:
