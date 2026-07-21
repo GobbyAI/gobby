@@ -82,6 +82,10 @@ class TestFalkorDBInstallFlags:
             patch("gobby.cli.install._run_embedding_install") as mock_embedding,
             patch("gobby.cli.install._run_qdrant_install") as mock_qdrant,
             patch("gobby.cli.install._run_voice_install") as mock_voice,
+            patch(
+                "gobby.cli.install.apply_managed_service_restart_policy",
+                return_value={"success": True},
+            ) as mock_restart_policy,
         ):
             result = runner.invoke(
                 install,
@@ -94,6 +98,10 @@ class TestFalkorDBInstallFlags:
         mock_falkordb.assert_called_once()
         assert mock_falkordb.call_args.args[0] is install_falkordb
         assert mock_falkordb.call_args.args[1] == "secret"
+        mock_restart_policy.assert_called_once_with(
+            enabled=True,
+            containers=("services-falkordb-1",),
+        )
         mock_summary.assert_called_once()
         mock_config.assert_not_called()
         mock_setup.assert_not_called()

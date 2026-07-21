@@ -90,6 +90,10 @@ from .installers import (
     uninstall_grok,
     uninstall_qwen,
 )
+from .installers.container_restart import (
+    FALKORDB_CONTAINER,
+    apply_managed_service_restart_policy,
+)
 from .utils import get_install_dir, load_full_config_from_db
 
 logger = logging.getLogger(__name__)
@@ -376,6 +380,12 @@ def _resolve_ide_settings_consent(
     help="Skip interactive prompts (for CI/automation)",
 )
 @click.option(
+    "--container-restarts/--no-container-restarts",
+    "container_restarts_flag",
+    default=True,
+    help="Apply unless-stopped restart policy to managed service containers (default: enabled).",
+)
+@click.option(
     "-C",
     "--path",
     "working_dir",
@@ -405,6 +415,7 @@ def install(
     auth_mode: str | None,
     ide_settings_flag: bool | None,
     no_interactive_flag: bool,
+    container_restarts_flag: bool,
     working_dir: Path | None,
 ) -> None:
     """Install Gobby hooks to AI coding CLIs and Git.
@@ -428,6 +439,10 @@ def install(
     if falkordb_flag:
         service_results: dict[str, dict[str, Any]] = {}
         _run_falkordb_install(install_falkordb, falkordb_password, service_results)
+        service_results["container-restarts"] = apply_managed_service_restart_policy(
+            enabled=container_restarts_flag,
+            containers=(FALKORDB_CONTAINER,),
+        )
         if not _echo_install_summary(service_results, no_interactive_flag):
             sys.exit(1)
         return
@@ -676,6 +691,9 @@ def install(
         if is_full_install:
             _run_qdrant_install(install_qdrant, results)
             _run_falkordb_install(install_falkordb, falkordb_password, results)
+            results["container-restarts"] = apply_managed_service_restart_policy(
+                enabled=container_restarts_flag,
+            )
 
         # Migration detection
         if mode == "global":

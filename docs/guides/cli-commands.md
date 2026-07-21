@@ -172,12 +172,16 @@ gobby uninstall [OPTIONS]
 | `--embedding-dim N` | Override the embedding dimension. |
 | `--secret-kek-posture [key-file|passphrase]` | Select daemon-local secret KEK storage. |
 | `--auth-mode [required|disabled]` | Persist daemon API authentication mode in `bootstrap.yaml`. |
+| `--container-restarts`, `--no-container-restarts` | Enable or disable `unless-stopped` restart policies for managed service containers (enabled by default). |
 | `--no-interactive` | Run without prompts. |
 | `-C`, `--path PATH` | Install against a specific path. |
 
 A full install requires a running Docker daemon and always provisions the
 managed PostgreSQL, Qdrant, and FalkorDB profiles. Those services are not tied
-to the embedding-provider choice.
+to the embedding-provider choice. The installer applies `unless-stopped` to new
+and existing managed containers. Use `--no-container-restarts` when another
+supervisor owns their lifecycle. Re-running `gobby install --all` repairs the
+selected policy with `docker update` and refreshes the managed Compose file.
 
 `gobby uninstall` options:
 

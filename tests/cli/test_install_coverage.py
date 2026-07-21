@@ -146,6 +146,10 @@ class TestInstallCommand:
             patch("gobby.cli.install.install_postgres", return_value=postgres_result),
             patch("gobby.cli.install.install_qdrant", return_value=qdrant_result),
             patch("gobby.cli.install.install_falkordb", return_value=falkordb_result),
+            patch(
+                "gobby.cli.install.apply_managed_service_restart_policy",
+                return_value={"success": True, "policy": "unless-stopped"},
+            ),
             patch("gobby.cli.install._resolve_ide_settings_consent", return_value=False),
         ):
             yield
@@ -306,9 +310,15 @@ class TestInstallCommand:
         mock_qdrant.assert_not_called()
         mock_falkordb.assert_not_called()
 
+    @pytest.mark.parametrize(
+        ("install_args", "restart_enabled"),
+        [([], True), (["--no-container-restarts"], False)],
+    )
     def test_install_default_runs_embedding_and_services(
         self,
         runner: CliRunner,
+        install_args: list[str],
+        restart_enabled: bool,
     ) -> None:
         """Default install configures embeddings and the required managed stack."""
         claude_result = {
@@ -337,8 +347,12 @@ class TestInstallCommand:
             ) as mock_embedding,
             patch("gobby.cli.install._run_qdrant_install") as mock_qdrant,
             patch("gobby.cli.install._run_falkordb_install") as mock_falkordb,
+            patch(
+                "gobby.cli.install.apply_managed_service_restart_policy",
+                return_value={"success": True},
+            ) as mock_restart_policy,
         ):
-            result = runner.invoke(install, [], catch_exceptions=False)
+            result = runner.invoke(install, install_args, catch_exceptions=False)
 
         assert result.exit_code == 0
         assert "Gobby Hooks Installation" in result.output
@@ -350,6 +364,7 @@ class TestInstallCommand:
         mock_embedding.assert_called_once()
         mock_qdrant.assert_called_once()
         mock_falkordb.assert_called_once()
+        mock_restart_policy.assert_called_once_with(enabled=restart_enabled)
 
     def test_install_default_includes_agy_when_detected(
         self,

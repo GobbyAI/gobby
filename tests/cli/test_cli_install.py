@@ -121,6 +121,10 @@ def _mock_ext_services_and_prompts():
         patch("gobby.cli.install.run_daemon_setup"),
         patch("gobby.cli.install._run_qdrant_install"),
         patch("gobby.cli.install._run_falkordb_install"),
+        patch(
+            "gobby.cli.install.apply_managed_service_restart_policy",
+            return_value={"success": True},
+        ),
         patch("gobby.cli.install._run_install_preflight", return_value=([], [])),
         patch("gobby.cli.install._maybe_start_daemon_after_install"),
         patch("gobby.storage.hub.runtime.runtime_hub_database", return_value=MagicMock()),
@@ -326,6 +330,8 @@ class TestInstallCommand:
         assert "compatible embedding APIs" in result.output
         assert "--ide-settings" in result.output
         assert "--no-ide-settings" in result.output
+        assert "--container-restarts" in result.output
+        assert "--no-container-restarts" in result.output
 
     def test_install_ide_settings_option_is_tri_state(self) -> None:
         install_command = cli.commands["install"]
