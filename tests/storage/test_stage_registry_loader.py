@@ -20,7 +20,7 @@ CANONICAL_STAGE_NAMES = [
     "planning",
     "expansion",
     "development",
-    "holistic_qa",
+    "epic_qa",
     "pr",
     "merge",
 ]

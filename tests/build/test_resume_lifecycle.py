@@ -58,7 +58,7 @@ def test_development_resume_only_needs_dispatcher_tick() -> None:
 
 
 def test_delivery_resume_refreshes_epic_workspace() -> None:
-    assert _resume_epic_workspace_refresh_required("holistic_qa") is True
+    assert _resume_epic_workspace_refresh_required("epic_qa") is True
     assert _resume_epic_workspace_refresh_required("pr") is True
     assert _resume_epic_workspace_refresh_required("merge") is True
 
@@ -86,7 +86,7 @@ async def test_development_resume_blocks_active_child_epic_integration_workspace
     )
     task_manager.initialize_task_manifest(
         root.id,
-        stage_names=["development", "holistic_qa", "merge"],
+        stage_names=["development", "epic_qa", "merge"],
     )
     child = task_manager.create_task(
         project_id=project.id,
@@ -204,7 +204,7 @@ async def test_development_resume_refreshes_invalid_child_epic_integration_artif
     )
     task_manager.initialize_task_manifest(
         root.id,
-        stage_names=["development", "holistic_qa", "merge"],
+        stage_names=["development", "epic_qa", "merge"],
     )
     child = task_manager.create_task(
         project_id=project.id,
@@ -316,7 +316,7 @@ def test_repair_expanded_epic_root_manifest_replaces_under_dispatch_mutex(
         [
             spec("planning", 0),
             spec("development", 1),
-            spec("holistic_qa", 2),
+            spec("epic_qa", 2),
             spec("pr", 3),
             spec("merge", 4),
         ],
@@ -365,7 +365,7 @@ def test_repair_expanded_epic_root_manifest_replaces_under_dispatch_mutex(
     rows = task_manager.stage_states.list_for_task(task.id)
     assert [(row.stage_name, row.position) for row in rows] == [
         ("development", 0),
-        ("holistic_qa", 1),
+        ("epic_qa", 1),
         ("pr", 2),
         ("merge", 3),
     ]

@@ -160,7 +160,7 @@ Do NOT create memories for bugs or errors — create tasks instead.
 
 Autonomous agents **must** use the review flow — they cannot close tasks directly. The same gates apply.
 Review tools live on `gobby-tasks-ops` and require the explicit `stage_name`
-being reviewed, such as `planning`, `expansion`, `development`, or `holistic_qa`.
+being reviewed, such as `planning`, `expansion`, `development`, or `epic_qa`.
 
 ### submit_for_review — submit work for review
 

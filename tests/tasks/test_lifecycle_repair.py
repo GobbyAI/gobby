@@ -19,7 +19,7 @@ def _full_plan_file_manifest() -> list[dict[str, object]]:
         {"stage_name": "planning", "position": 0},
         {"stage_name": "expansion", "position": 1},
         {"stage_name": "development", "position": 2},
-        {"stage_name": "holistic_qa", "position": 3},
+        {"stage_name": "epic_qa", "position": 3},
         {"stage_name": "merge", "position": 4},
     ]
 
@@ -84,7 +84,7 @@ def test_repair_reseeds_expansion_child_from_parent_scope(temp_db, sample_projec
         task_type="task",
         labels=["expansion-run:abc"],
     )
-    manager.initialize_task_manifest(child.id, stage_names=["holistic_qa", "pr", "merge"])
+    manager.initialize_task_manifest(child.id, stage_names=["epic_qa", "pr", "merge"])
 
     result = LifecycleRepair(manager).run(provenance="expansion-run:abc", apply=True)
 
@@ -132,7 +132,7 @@ def test_repair_reseeds_stunted_plan_file_root_from_build_history(
         "planning",
         "expansion",
         "development",
-        "holistic_qa",
+        "epic_qa",
         "merge",
     ]
     assert manager.lifecycle_events.list_events(root.id)[-1].reason == (
@@ -176,7 +176,7 @@ def test_repair_reseeds_stunted_plan_file_root_from_build_run_summary(
         "planning",
         "expansion",
         "development",
-        "holistic_qa",
+        "epic_qa",
         "merge",
     ]
 
@@ -220,7 +220,7 @@ def test_repair_does_not_remove_development_from_historical_leaf(
         task_type="epic",
         labels=["expansion-run:abc"],
     )
-    manager.initialize_task_manifest(phase.id, stage_names=["holistic_qa", "pr", "merge"])
+    manager.initialize_task_manifest(phase.id, stage_names=["epic_qa", "pr", "merge"])
     leaf = manager.create_task(
         project_id=sample_project["id"],
         title="Historical leaf",
@@ -252,12 +252,12 @@ def test_repair_reseeds_historical_phase_wrapper_to_development_first(
         task_type="epic",
         labels=["expansion-run:abc"],
     )
-    manager.initialize_task_manifest(phase.id, stage_names=["holistic_qa", "pr", "merge"])
+    manager.initialize_task_manifest(phase.id, stage_names=["epic_qa", "pr", "merge"])
 
     result = LifecycleRepair(manager).run(task_id=phase.id, apply=True)
 
     assert result.candidates[0].applied is True
-    assert _stage_names(manager, phase.id) == ["development", "holistic_qa", "pr", "merge"]
+    assert _stage_names(manager, phase.id) == ["development", "epic_qa", "pr", "merge"]
 
 
 def test_repair_skips_active_expansion_rows_without_force(temp_db, sample_project) -> None:
@@ -275,14 +275,14 @@ def test_repair_skips_active_expansion_rows_without_force(temp_db, sample_projec
         task_type="task",
         labels=["expansion-run:active"],
     )
-    manager.initialize_task_manifest(child.id, stage_names=["holistic_qa", "pr", "merge"])
-    manager.stage_states.start_stage(child.id, "holistic_qa", by_session_id=None)
+    manager.initialize_task_manifest(child.id, stage_names=["epic_qa", "pr", "merge"])
+    manager.stage_states.start_stage(child.id, "epic_qa", by_session_id=None)
 
     result = LifecycleRepair(manager).run(provenance="expansion-run:active", apply=True)
 
     assert result.candidates[0].skipped is True
     assert result.candidates[0].skip_reason == "active_lifecycle_rows"
-    assert _stage_names(manager, child.id) == ["holistic_qa", "pr", "merge"]
+    assert _stage_names(manager, child.id) == ["epic_qa", "pr", "merge"]
 
 
 def test_repair_force_reseeds_active_task_scope(temp_db, sample_project) -> None:
@@ -300,8 +300,8 @@ def test_repair_force_reseeds_active_task_scope(temp_db, sample_project) -> None
         task_type="task",
         labels=["expansion-run:active"],
     )
-    manager.initialize_task_manifest(child.id, stage_names=["holistic_qa"])
-    manager.stage_states.start_stage(child.id, "holistic_qa", by_session_id=None)
+    manager.initialize_task_manifest(child.id, stage_names=["epic_qa"])
+    manager.stage_states.start_stage(child.id, "epic_qa", by_session_id=None)
 
     result = LifecycleRepair(manager).run(task_id=child.id, apply=True, force=True)
 
@@ -327,8 +327,8 @@ def test_repair_force_preserves_terminal_task_manifest(
         task_type="task",
         labels=["expansion-run:active"],
     )
-    manager.initialize_task_manifest(child.id, stage_names=["holistic_qa"])
-    manager.stage_states.start_stage(child.id, "holistic_qa", by_session_id=None)
+    manager.initialize_task_manifest(child.id, stage_names=["epic_qa"])
+    manager.stage_states.start_stage(child.id, "epic_qa", by_session_id=None)
     if terminal_state == "closed":
         manager.close_task(child.id, reason="completed", force=True)
     else:
@@ -360,8 +360,8 @@ def test_repair_force_reseed_rolls_back_delete_when_initialize_fails(
         task_type="task",
         labels=["expansion-run:active"],
     )
-    manager.initialize_task_manifest(child.id, stage_names=["holistic_qa"])
-    manager.stage_states.start_stage(child.id, "holistic_qa", by_session_id=None)
+    manager.initialize_task_manifest(child.id, stage_names=["epic_qa"])
+    manager.stage_states.start_stage(child.id, "epic_qa", by_session_id=None)
 
     def fail_initialize(*_args: object, **_kwargs: object) -> None:
         raise RuntimeError("manifest initialization failed")
@@ -372,4 +372,4 @@ def test_repair_force_reseed_rolls_back_delete_when_initialize_fails(
         LifecycleRepair(manager).run(task_id=child.id, apply=True, force=True)
 
     rows = manager.stage_states.list_for_task(child.id)
-    assert [(row.stage_name, row.state) for row in rows] == [("holistic_qa", "in_progress")]
+    assert [(row.stage_name, row.state) for row in rows] == [("epic_qa", "in_progress")]

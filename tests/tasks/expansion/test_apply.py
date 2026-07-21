@@ -116,10 +116,10 @@ def test_contract_apply_stage_manifests_and_created_ids(temp_db, sample_project)
     )
     service.task_manager.initialize_task_manifest(
         parent.id,
-        stage_names=["development", "holistic_qa", "pr", "merge"],
+        stage_names=["development", "epic_qa", "pr", "merge"],
         stage_caps=[
             {"stage_name": "development", "max_review_rounds": 3},
-            {"stage_name": "holistic_qa", "max_review_rounds": 4},
+            {"stage_name": "epic_qa", "max_review_rounds": 4},
             {"stage_name": "pr", "max_work_attempts": 2},
         ],
     )
@@ -168,7 +168,7 @@ def test_contract_apply_stage_manifests_and_created_ids(temp_db, sample_project)
     leaf_rows = service.task_manager.stage_states.list_for_task(leaf_id)
     assert [row.stage_name for row in phase_rows] == [
         "development",
-        "holistic_qa",
+        "epic_qa",
         "pr",
         "merge",
     ]

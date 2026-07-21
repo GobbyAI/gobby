@@ -64,7 +64,7 @@ def test_review_learning_skill_documents_record_skip_and_ladder_rules() -> None:
 
 def test_review_producer_hooks_reference_review_learning() -> None:
     code_reviewer = (SKILLS_ROOT / "code-reviewer/SKILL.md").read_text(encoding="utf-8")
-    holistic = (SKILLS_ROOT / "holistic-review/SKILL.md").read_text(encoding="utf-8")
+    epic = (SKILLS_ROOT / "epic-review/SKILL.md").read_text(encoding="utf-8")
     qa_reviewer = (WORKFLOWS / "qa-reviewer.yaml").read_text(encoding="utf-8")
     nightly_linter = (WORKFLOWS / "nightly-linter.yaml").read_text(encoding="utf-8")
     nightly_test = (WORKFLOWS / "nightly-test-fixer.yaml").read_text(encoding="utf-8")
@@ -72,8 +72,8 @@ def test_review_producer_hooks_reference_review_learning() -> None:
     assert "REQUIRED SKILL: review-learning" in code_reviewer
     assert "recall_review_context" in code_reviewer
     assert "source_kind=agent_review" in code_reviewer
-    assert "REQUIRED SKILL: review-learning" in holistic
-    assert "source_kind=qa_rejection" in holistic
+    assert "REQUIRED SKILL: review-learning" in epic
+    assert "source_kind=qa_rejection" in epic
     assert "review-learning" in qa_reviewer
     assert "record_review_lesson" in qa_reviewer
     assert "source_kind=static_analysis" in nightly_linter

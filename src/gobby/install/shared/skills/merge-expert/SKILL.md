@@ -51,7 +51,7 @@ For each delivery unit:
    direct merge-worker path.
 3. If `requires_pr=true`, push the source branch with
    `gobby-worktrees:push_branch`, create or reuse a GitHub PR, and call
-   `record_pr_opened`. Post holistic QA notes to the PR with
+   `record_pr_opened`. Post epic QA notes to the PR with
    `github:create_pull_request_review(event="COMMENT")`; never use APPROVE.
 4. Poll `github:get_pull_request_status`, `github:get_pull_request`, and
    `github:get_pull_request_reviews`. Persist each gate snapshot with

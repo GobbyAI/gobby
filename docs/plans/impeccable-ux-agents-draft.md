@@ -8,7 +8,7 @@ This plan adds a parallel UX track that reuses every existing rail — `/gobby p
 
 **Scope: web only for v1.** SwiftUI / WinUI / desktop deferred to a follow-up "platformize impeccable" effort. Impeccable's reference files (CSS bans, OKLCH, container queries) are web-coded today; the discipline transfers but the references don't.
 
-**Outcome:** A user can run `/gobby plan` → pick the UX track → produce a UX brief that conforms to plan-coverage contract → adversary writes the manifest → expansion creates leaves → dispatch routes UX-categorized leaves to `ux-developer` (which loads impeccable and uses `craft`/`polish` steering commands) → after development completes, a holistic `ux-review` stage runs `impeccable audit` + `critique` and captures Chrome DevTools screenshots as visual evidence → holistic_qa → pr → merge.
+**Outcome:** A user can run `/gobby plan` → pick the UX track → produce a UX brief that conforms to plan-coverage contract → adversary writes the manifest → expansion creates leaves → dispatch routes UX-categorized leaves to `ux-developer` (which loads impeccable and uses `craft`/`polish` steering commands) → after development completes, an epic-level `ux-review` stage runs `impeccable audit` + `critique` and captures Chrome DevTools screenshots as visual evidence → epic_qa → pr → merge.
 
 ## Approach
 
@@ -51,7 +51,7 @@ Set two session vars from one answer: `planner_track` ∈ {engineering, ux}, `pl
 **File pattern:** `src/gobby/install/shared/workflows/agents/`
 
 **New: `ux-developer.yaml`** — base on `frontend-developer.yaml` (already has Playwright/Lighthouse/Storybook in tool_allowlist). Changes from base:
-- `instructions`: tailored for design-leaf work and holistic review (impeccable craft for new components, polish/audit/critique for review passes).
+- `instructions`: tailored for design-leaf work and epic review (impeccable craft for new components, polish/audit/critique for review passes).
 - `skills.baseline`: load `impeccable` at agent start; add design-system literacy, accessibility/WCAG, responsive patterns, motion design, UX writing.
 - `allowed_mcp_tools`: add `chrome-devtools:*` (server is already bundled — see §8).
 - `step_variables`: track `impeccable_mode` (craft vs polish vs audit) per spawn so the prompt builder knows which steering command to invoke.
@@ -65,7 +65,7 @@ Set two session vars from one answer: `planner_track` ∈ {engineering, ux}, `pl
 
 **File:** `src/gobby/install/shared/registry/stages.yaml`
 
-Insert between `development` (100) and `holistic_qa` (120):
+Insert between `development` (100) and `epic_qa` (120):
 
 ```yaml
 - name: ux-review
@@ -177,10 +177,10 @@ End-to-end test (manual, in a scratch project):
 2. **UX drafting:** Confirm Step 3 loads `plan-draft-ux` (not `plan-draft`). Draft a small UX brief (e.g., "redesign the settings panel") and run `gobby plans validate <plan-file>` — confirm new acceptance kinds (`surface`, `flow`, `token`, `motion`, `content`) parse without error.
 3. **UX adversary:** Confirm Step 7.4 spawns `plan-adversary-ux` (not `plan-adversary`). Confirm manifest writes successfully with UX entries.
 4. **Expansion:** Run expansion against the plan; confirm leaves are created with `category: design` and `assigned_agent: ux-developer` (or unset, with category override fallback).
-5. **Build dispatch:** `gobby build <epic>` with profile `review`. Confirm stages render with `ux-review` at position 110 between `development` and `holistic_qa` in `task_stage_states`.
+5. **Build dispatch:** `gobby build <epic>` with profile `review`. Confirm stages render with `ux-review` at position 110 between `development` and `epic_qa` in `task_stage_states`.
 6. **Development routing:** Confirm a UX-categorized leaf in development gets routed to `ux-developer` (not `backend-developer`) via the `_default_agent` override; confirm impeccable skill loads at agent start.
 7. **ux-review execution:** Confirm `ux-review` stage spawns `ux-developer` once against the epic root with `impeccable_mode=audit`, runs Chrome DevTools MCP for screenshots, attaches evidence to the task. Verify `chrome-devtools:*` tools are accessible to the agent.
-8. **Stage advancement:** Confirm `ux-review` advances on agent completion (no reviewer needed since `review_policy: none`); `holistic_qa` proceeds.
+8. **Stage advancement:** Confirm `ux-review` advances on agent completion (no reviewer needed since `review_policy: none`); `epic_qa` proceeds.
 9. **Coverage closure:** `gobby plans coverage --plan <file> --plan-id <id> --plan-hash <sha>` exits 0 with all rows `status: covered`.
 
 Automated tests:

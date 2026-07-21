@@ -275,7 +275,7 @@ def test_de_escalate_rolls_back_claim_release_when_attempt_reset_fails(
 
 @pytest.mark.parametrize(
     "escalation_reason",
-    ["holistic_qa_work_failed:max", "holistic_qa_max_work_attempts"],
+    ["epic_qa_work_failed:max", "epic_qa_max_work_attempts"],
 )
 def test_de_escalate_resets_exhausted_stage_named_by_escalation_reason(
     temp_db: HubDatabase,
@@ -299,7 +299,7 @@ def test_de_escalate_resets_exhausted_stage_named_by_escalation_reason(
         """,
         [
             (task.id, "development", 0, "ready", 1),
-            (task.id, "holistic_qa", 1, "ready", 4),
+            (task.id, "epic_qa", 1, "ready", 4),
             (task.id, "merge", 2, "ready", 0),
         ],
     )
@@ -323,5 +323,5 @@ def test_de_escalate_resets_exhausted_stage_named_by_escalation_reason(
         )
     }
     assert rows["development"] == 1
-    assert rows["holistic_qa"] == 0
+    assert rows["epic_qa"] == 0
     assert rows["merge"] == 0

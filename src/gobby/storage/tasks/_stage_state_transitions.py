@@ -21,14 +21,14 @@ from gobby.storage.tasks._stage_utils import _close_task_in_txn, _now
 
 logger = logging.getLogger(__name__)
 
-# Persistent bound on the holistic_qa cited retry-neutral dispatch cycle. Each
+# Persistent bound on the epic_qa cited retry-neutral dispatch cycle. Each
 # cited retry-neutral spawn failure (epic integration workspace could not be
-# built) increments retry_neutral_failure_count on the holistic_qa stage row.
+# built) increments retry_neutral_failure_count on the epic_qa stage row.
 # Unlike work_attempt_count, this counter is never reset or decremented by the
-# retry-neutral path (reset_holistic_failure_targets / decrement_work_attempt do
+# retry-neutral path (reset_epic_failure_targets / decrement_work_attempt do
 # not touch it), so a deterministic-persistent workspace failure escalates the
 # epic instead of looping forever.
-MAX_HOLISTIC_WORKSPACE_FAILURES = 3
+MAX_EPIC_WORKSPACE_FAILURES = 3
 
 
 def _session_uuid_or_none(session_id: str | None) -> str | None:
@@ -103,7 +103,7 @@ class StageStateTransitions:
                 validation_override_reason=validation_override_reason,
             )
             self.ensure_not_skipping(row, current, verb)
-            retry_neutral_cited_failure = self._is_retry_neutral_cited_holistic_failure(
+            retry_neutral_cited_failure = self._is_retry_neutral_cited_epic_failure(
                 stage_name,
                 verb,
                 reason=reason,
@@ -182,8 +182,8 @@ class StageStateTransitions:
                     by_actor=holder,
                     failure_category=(classify_failure(reason) if verb == "fail_stage" else None),
                 )
-                if verb == "fail_stage" and stage_name == "holistic_qa" and cited_subtasks:
-                    self.reset_holistic_failure_targets(
+                if verb == "fail_stage" and stage_name == "epic_qa" and cited_subtasks:
+                    self.reset_epic_failure_targets(
                         conn,
                         task_id,
                         tuple(cited_subtasks),
@@ -229,9 +229,9 @@ class StageStateTransitions:
                 self.escalate_stage_failure(task_id, f"{stage_name}_work_failed:max")
             if (
                 retry_neutral_cited_failure
-                and updated.retry_neutral_failure_count >= MAX_HOLISTIC_WORKSPACE_FAILURES
+                and updated.retry_neutral_failure_count >= MAX_EPIC_WORKSPACE_FAILURES
             ):
-                self.escalate_stage_failure(task_id, "holistic_workspace_failed:max")
+                self.escalate_stage_failure(task_id, "epic_workspace_failed:max")
             if verb == "fail_stage" and needs_human:
                 self.escalate_stage_failure(
                     task_id,
@@ -300,7 +300,7 @@ class StageStateTransitions:
             return updated
 
     @staticmethod
-    def _is_retry_neutral_cited_holistic_failure(
+    def _is_retry_neutral_cited_epic_failure(
         stage_name: str,
         verb: str,
         *,
@@ -309,7 +309,7 @@ class StageStateTransitions:
     ) -> bool:
         return (
             verb == "fail_stage"
-            and stage_name == "holistic_qa"
+            and stage_name == "epic_qa"
             and bool(cited_subtasks)
             and reason is not None
             and reason.startswith("dispatch_spawn_failed:")
@@ -325,7 +325,7 @@ class StageStateTransitions:
                 exc_info=True,
             )
 
-    def reset_holistic_failure_targets(
+    def reset_epic_failure_targets(
         self,
         conn: Transaction,
         task_id: str,
@@ -361,11 +361,11 @@ class StageStateTransitions:
         missing = [cited_id for cited_id in cited_ids if cited_id not in descendant_ids]
         if missing:
             raise ValueError(
-                "holistic_qa cited_subtasks must be descendants of the reviewed epic: "
+                "epic_qa cited_subtasks must be descendants of the reviewed epic: "
                 + ", ".join(missing)
             )
 
-        self.append_holistic_failure_comments(
+        self.append_epic_failure_comments(
             conn,
             task_id,
             cited_ids,
@@ -455,7 +455,7 @@ class StageStateTransitions:
             (now, list(cited_subtasks)),
         )
 
-    def append_holistic_failure_comments(
+    def append_epic_failure_comments(
         self,
         conn: Transaction,
         task_id: str,
@@ -465,8 +465,8 @@ class StageStateTransitions:
         now: datetime | str,
         holder: str,
     ) -> None:
-        body = reason or "Holistic QA requested follow-up work."
-        parent_body = f"## Holistic QA Failure\n\n{body}"
+        body = reason or "Epic QA requested follow-up work."
+        parent_body = f"## Epic QA Failure\n\n{body}"
         self.append_task_comment(
             conn,
             task_id,
@@ -474,7 +474,7 @@ class StageStateTransitions:
             now=now,
             holder=holder,
         )
-        follow_up_body = self._holistic_follow_up_body(body)
+        follow_up_body = self._epic_follow_up_body(body)
         for cited_id in cited_subtasks:
             self.append_task_comment(
                 conn,
@@ -484,10 +484,10 @@ class StageStateTransitions:
                 holder=holder,
             )
 
-    def _holistic_follow_up_body(self, body: str) -> str:
+    def _epic_follow_up_body(self, body: str) -> str:
         follow_up_body = (
-            "## Holistic QA Follow-Up\n\n"
-            "This task was reopened because parent holistic QA requested changes.\n\n"
+            "## Epic QA Follow-Up\n\n"
+            "This task was reopened because parent epic QA requested changes.\n\n"
         )
         if body.startswith("dispatch_spawn_failed:failed to refresh integration workspace"):
             follow_up_body += self._integration_refresh_follow_up_guidance(body)
@@ -501,7 +501,7 @@ class StageStateTransitions:
             else "the parent integration branch named after `from` in the failure below"
         )
         return (
-            "The parent epic integration workspace could not refresh before holistic QA. "
+            "The parent epic integration workspace could not refresh before epic QA. "
             f"Resolve this by merging {base_note} into this task branch/worktree, preserving "
             "the already-integrated parent modules, then commit and submit the task for review.\n\n"
         )
@@ -603,7 +603,7 @@ class StageStateTransitions:
                 task_id,
                 f"{row['stage_name']}:{row['state']}",
                 f"{row['stage_name']}:ready",
-                "holistic_qa_failed:cited_subtask",
+                "epic_qa_failed:cited_subtask",
                 by_actor=holder,
             )
 

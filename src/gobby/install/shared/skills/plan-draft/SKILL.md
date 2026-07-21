@@ -190,7 +190,7 @@ in manifest order, are:
 5. `planning`
 6. `expansion`
 7. `development`
-8. `holistic_qa`
+8. `epic_qa`
 9. `pr`
 10. `merge`
 

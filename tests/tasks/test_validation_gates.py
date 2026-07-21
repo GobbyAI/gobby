@@ -12,5 +12,5 @@ def test_gate_set_per_lifecycle_status_tuple() -> None:
 
     assert VALIDATION_GATES[("plan_review", "needs_review")] == "plan_review"
     assert VALIDATION_GATES[("in_development", "needs_review")] == "qa"
-    assert VALIDATION_GATES[("holistic_review", "needs_review")] == "holistic_review"
+    assert VALIDATION_GATES[("epic_review", "needs_review")] == "epic_review"
     assert VALIDATION_GATES[("pr", "needs_review")] == "pr"

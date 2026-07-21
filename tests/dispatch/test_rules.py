@@ -16,7 +16,7 @@ _STAGE_AGENTS = {
     "prd": "product-manager",
     "planning": "planner",
     "development": "backend-developer",
-    "holistic_qa": "holistic-reviewer",
+    "epic_qa": "epic-reviewer",
     "pr": "merge-orchestrator",
     "merge": "merge-orchestrator",
 }
@@ -739,32 +739,32 @@ def test_leaf_park_rule_completes_review_approved_development_stage() -> None:
     assert (action.stage_name, action.method) == ("development", "complete_stage")
 
 
-def test_all_leaves_holistic_rule_starts_epic_when_leaves_parked() -> None:
+def test_all_leaves_epic_rule_starts_epic_when_leaves_parked() -> None:
     from gobby.dispatch.actions import StartStageAction
 
     child = _task(stages=[_stage("development", "done")])
     action = _evaluate(
-        _task_at("holistic_qa", "ready", task_type="epic"),
+        _task_at("epic_qa", "ready", task_type="epic"),
         _context(children=[child]),
     )
 
     assert isinstance(action, StartStageAction)
-    assert action.stage_name == "holistic_qa"
+    assert action.stage_name == "epic_qa"
 
 
-def test_all_leaves_holistic_rule_holds_while_leaves_in_flight() -> None:
+def test_all_leaves_epic_rule_holds_while_leaves_in_flight() -> None:
     child = _task_at("development", "in_progress")
 
     assert (
         _evaluate(
-            _task_at("holistic_qa", "ready", task_type="epic"),
+            _task_at("epic_qa", "ready", task_type="epic"),
             _context(children=[child]),
         )
         is None
     )
 
 
-def test_holistic_descendant_gate_rule_appends_marker_once() -> None:
+def test_epic_descendant_gate_rule_appends_marker_once() -> None:
     from gobby.dispatch.actions import AppendAuditMarkerAction
 
     gate = SimpleNamespace(
@@ -782,20 +782,20 @@ def test_holistic_descendant_gate_rule_appends_marker_once() -> None:
     )
     context = _context(
         children=[_task(stages=[])],
-        holistic_descendant_gate=gate,
+        epic_descendant_gate=gate,
     )
-    task = _task_at("holistic_qa", "ready", task_type="epic")
+    task = _task_at("epic_qa", "ready", task_type="epic")
 
     action = _evaluate(task, context)
 
     assert isinstance(action, AppendAuditMarkerAction)
-    assert action.heading == "Holistic QA deferred"
+    assert action.heading == "Epic QA deferred"
     assert "#2" in action.body
     assert "stage=development:ready" in action.body
 
     description = f"\n\n### {action.heading}\n\n{action.body}"
     repeated_task = _task_at(
-        "holistic_qa",
+        "epic_qa",
         "ready",
         task_type="epic",
         description=description,
@@ -818,16 +818,16 @@ def test_holistic_descendant_gate_rule_appends_marker_once() -> None:
         )
         changed_context = _context(
             children=[_task(stages=[])],
-            holistic_descendant_gate=changed_gate,
+            epic_descendant_gate=changed_gate,
         )
         assert _evaluate(repeated_task, changed_context) is None
 
     assert description.count(f"### {action.heading}") == 1
 
 
-def test_all_leaves_holistic_rule_never_targets_merging_directly() -> None:
+def test_all_leaves_epic_rule_never_targets_merging_directly() -> None:
     action = _evaluate(
-        _task_at("holistic_qa", "ready", task_type="epic"),
+        _task_at("epic_qa", "ready", task_type="epic"),
         _context(children=[_task(stages=[_stage("development", "done")])]),
     )
 
@@ -861,16 +861,16 @@ def test_epic_development_completes_when_leaves_are_parked() -> None:
     assert action.validation_override_reason == "children_parked"
 
 
-def test_holistic_rule_fires_when_stage_is_in_progress() -> None:
+def test_epic_rule_fires_when_stage_is_in_progress() -> None:
     from gobby.dispatch.actions import SpawnAgentAction
 
     action = _evaluate(
-        _task_at("holistic_qa", "in_progress", task_type="epic"),
+        _task_at("epic_qa", "in_progress", task_type="epic"),
         _context(children=[_task(stages=[_stage("development", "done")])]),
     )
 
     assert isinstance(action, SpawnAgentAction)
-    assert action.agent_slug == "holistic-reviewer"
+    assert action.agent_slug == "epic-reviewer"
 
 
 def test_pr_rule_routes_to_merge_orchestrator() -> None:
@@ -890,8 +890,8 @@ def test_review_dispatch_remains_single_existing_agent_per_stage() -> None:
         (BASE_RULES, _task_at("development", "needs_review"), "qa-reviewer"),
         (
             BASE_RULES,
-            _task_at("holistic_qa", "in_progress", task_type="epic"),
-            "holistic-reviewer",
+            _task_at("epic_qa", "in_progress", task_type="epic"),
+            "epic-reviewer",
         ),
         (BASE_RULES, _task_at("pr", "in_progress", task_type="epic"), "merge-orchestrator"),
         (RULES, _task_at("merge", "in_progress", task_type="epic"), "merge-orchestrator"),
@@ -925,7 +925,7 @@ def test_pr_rule_escalates_when_merge_orchestrator_missing() -> None:
         "planning",
         "expansion",
         "development",
-        "holistic_qa",
+        "epic_qa",
         "pr",
     ],
 )
@@ -953,19 +953,19 @@ def test_attended_review_cap_escalates_with_reason() -> None:
     assert action.reason == "development_max_review_rounds"
 
 
-def test_holistic_qa_review_escalates_when_review_cap_reached() -> None:
+def test_epic_qa_review_escalates_when_review_cap_reached() -> None:
     from gobby.dispatch.actions import EscalateAction
 
     action = _evaluate(
         _task_at(
-            "holistic_qa",
+            "epic_qa",
             "needs_review",
             stage_overrides={"review_round_count": 2, "max_review_rounds": 2},
         )
     )
 
     assert isinstance(action, EscalateAction)
-    assert action.reason == "holistic_qa_max_review_rounds"
+    assert action.reason == "epic_qa_max_review_rounds"
 
 
 def test_base_rules_order_excludes_merge_rule() -> None:
@@ -975,8 +975,8 @@ def test_base_rules_order_excludes_merge_rule() -> None:
         "auto_advance_ready_rule",
         "disabled_agent_escalation_rule",
         "development_isolation_rule",
-        "holistic_descendant_gate_rule",
-        "all_leaves_holistic_rule",
+        "epic_descendant_gate_rule",
+        "all_leaves_epic_rule",
         "epic_development_start_rule",
         "epic_development_complete_rule",
         "discovery_artifact_complete_rule",
@@ -994,9 +994,9 @@ def test_base_rules_order_excludes_merge_rule() -> None:
         "development_rule",
         "development_review_rule",
         "development_advance_rule",
-        "holistic_qa_rule",
-        "holistic_qa_review_rule",
-        "holistic_qa_advance_rule",
+        "epic_qa_rule",
+        "epic_qa_review_rule",
+        "epic_qa_advance_rule",
         "pr_work_rule",
         "pr_review_rule",
         "pr_advance_rule",

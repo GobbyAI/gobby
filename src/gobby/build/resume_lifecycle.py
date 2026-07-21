@@ -41,7 +41,7 @@ _STAGE_CAP_UPDATE_ASSIGNMENTS = {
     "max_review_rounds": "max_review_rounds = %s",
 }
 
-_EPIC_WORKSPACE_REFRESH_STAGES = frozenset({"holistic_qa", "pr", "merge"})
+_EPIC_WORKSPACE_REFRESH_STAGES = frozenset({"epic_qa", "pr", "merge"})
 
 
 async def resume_existing_lifecycle(

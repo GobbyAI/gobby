@@ -49,7 +49,7 @@ def test_build_command_is_registered_with_phase_3_flags() -> None:
     assert "--max-expansion-attempts" not in result.output
     assert "--max-qa-rounds" not in result.output
     assert "--max-merge-attempts" not in result.output
-    assert "--max-holistic-rounds" not in result.output
+    assert "--max-epic-rounds" not in result.output
     assert "--max-review-rounds" not in result.output
     assert "--target-branch" in result.output
     assert "--agent" in result.output
@@ -444,7 +444,7 @@ def test_build_cli_prints_manifest_chain_when_present(tmp_path: Path) -> None:
             {"stage_name": "planning", "position": 0},
             {"stage_name": "expansion", "position": 1},
             {"stage_name": "development", "position": 2},
-            {"stage_name": "holistic_qa", "position": 3},
+            {"stage_name": "epic_qa", "position": 3},
             {"stage_name": "merge", "position": 4},
         ],
         dry_run=True,
@@ -458,9 +458,7 @@ def test_build_cli_prints_manifest_chain_when_present(tmp_path: Path) -> None:
         result = CliRunner().invoke(cli, ["build", str(plan_file), "--dry-run"])
 
     assert result.exit_code == 0
-    assert (
-        "Lifecycle: planning -> expansion -> development -> holistic_qa -> merge" in result.output
-    )
+    assert "Lifecycle: planning -> expansion -> development -> epic_qa -> merge" in result.output
     open_db.assert_not_called()
 
 

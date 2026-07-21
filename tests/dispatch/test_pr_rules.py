@@ -58,7 +58,7 @@ def _context(*, agents: dict[str, object] | None = None) -> SimpleNamespace:
 def test_three_pr_rules_in_correct_order() -> None:
     names = [rule.__name__ for rule in rules.RULES]
 
-    assert names[names.index("holistic_qa_advance_rule") + 1 : names.index("merge_rule")] == [
+    assert names[names.index("epic_qa_advance_rule") + 1 : names.index("merge_rule")] == [
         "pr_work_rule",
         "pr_review_rule",
         "pr_advance_rule",

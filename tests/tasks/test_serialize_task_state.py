@@ -33,7 +33,7 @@ def test_new_shape() -> None:
 
 
 def test_current_stage_prefers_live_stage_rows_over_serialized_projection() -> None:
-    live_stage = SimpleNamespace(name="holistic_qa", position=1, state="in_progress")
+    live_stage = SimpleNamespace(name="epic_qa", position=1, state="in_progress")
     task = SimpleNamespace(
         state={"current_stage": {"name": "development", "state": "ready"}},
         current_stage={"name": "planning", "state": "needs_review"},

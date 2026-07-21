@@ -50,7 +50,7 @@ def _context() -> SimpleNamespace:
     [
         (rules.expansion_review_rule, "expansion", "needs_review", "expansion_no_reviewer"),
         (rules.development_review_rule, "development", "needs_review", "development_no_reviewer"),
-        (rules.holistic_qa_rule, "holistic_qa", "in_progress", "holistic_qa_no_reviewer"),
+        (rules.epic_qa_rule, "epic_qa", "in_progress", "epic_qa_no_reviewer"),
     ],
 )
 def test_each_review_rule_escalates_specifically_when_reviewer_missing(

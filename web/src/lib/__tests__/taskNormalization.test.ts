@@ -94,8 +94,8 @@ describe('extractTaskPayload', () => {
 
 describe('normalizeStageRow display_name fallback', () => {
   it('preserves QA as an acronym when titleizing snake_case stage names', () => {
-    const stage = normalizeStageRow({ name: 'holistic_qa' })
-    expect(stage.display_name).toBe('Holistic QA')
+    const stage = normalizeStageRow({ name: 'epic_qa' })
+    expect(stage.display_name).toBe('Epic QA')
   })
 
   it('preserves PR as an acronym when titleizing snake_case stage names', () => {
@@ -122,17 +122,17 @@ describe('normalizeStageRow display_name fallback', () => {
 
   it('prefers display_label over the titleizer fallback', () => {
     const stage = normalizeStageRow({
-      name: 'holistic_qa',
-      display_label: 'Holistic QA Review',
+      name: 'epic_qa',
+      display_label: 'Epic QA Review',
     })
-    expect(stage.display_name).toBe('Holistic QA Review')
+    expect(stage.display_name).toBe('Epic QA Review')
   })
 
   it('prefers display_name over display_label when both are present', () => {
     const stage = normalizeStageRow({
-      name: 'holistic_qa',
+      name: 'epic_qa',
       display_name: 'Custom Name',
-      display_label: 'Holistic QA',
+      display_label: 'Epic QA',
     })
     expect(stage.display_name).toBe('Custom Name')
   })

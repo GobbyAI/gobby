@@ -24,7 +24,7 @@ LEGACY_CAP_COLUMNS = (
     "max_expansion_attempts",
     "max_qa_rounds",
     "max_merge_attempts",
-    "max_holistic_rounds",
+    "max_epic_qa_rounds",
     "max_review_rounds",
 )
 

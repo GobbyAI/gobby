@@ -1251,7 +1251,7 @@ async def test_restart_no_resume_rebuilds_plan_file_root_manifest_from_options(
         "planning",
         "expansion",
         "development",
-        "holistic_qa",
+        "epic_qa",
         "merge",
     ]
     assert [row.stage_name for row in child_rows] == ["development", "merge"]
@@ -1266,7 +1266,7 @@ async def test_restart_no_resume_rebuilds_plan_file_root_manifest_from_options(
         "planning",
         "expansion",
         "development",
-        "holistic_qa",
+        "epic_qa",
         "merge",
     ]
     assert result.manifest[0]["max_work_attempts"] == 99
@@ -1296,7 +1296,7 @@ async def test_restart_no_resume_rebuilds_plan_file_root_manifest_from_options(
         "planning",
         "expansion",
         "development",
-        "holistic_qa",
+        "epic_qa",
         "merge",
     ]
     assert event.payload["manifest"] == run.summary["manifest"]
@@ -1351,7 +1351,7 @@ async def test_restart_no_resume_resets_epic_tree_without_dispatch(
 
     epic_rows = task_manager.stage_states.list_for_task(epic.id)
     leaf_rows = task_manager.stage_states.list_for_task(leaf.id)
-    assert [row.stage_name for row in epic_rows] == ["development", "holistic_qa", "merge"]
+    assert [row.stage_name for row in epic_rows] == ["development", "epic_qa", "merge"]
     assert [row.stage_name for row in leaf_rows] == ["development", "merge"]
     assert {row.state for row in epic_rows + leaf_rows} == {"ready"}
     assert task_manager.get_task(epic.id).allow_automation is False

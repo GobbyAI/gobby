@@ -482,7 +482,7 @@ def test_close_task_completes_in_progress_merge_row_with_recorded_delivery_sha(
     assert closed.closed_commit_sha == "repair-commit-sha"
 
 
-def _closed_leaf_for_holistic_failure(temp_db, sample_project, parent_id: str, title: str):
+def _closed_leaf_for_epic_failure(temp_db, sample_project, parent_id: str, title: str):
     manager = LocalTaskManager(temp_db)
     leaf = manager.create_task(
         project_id=sample_project["id"],
@@ -508,7 +508,7 @@ def _closed_leaf_for_holistic_failure(temp_db, sample_project, parent_id: str, t
     return leaf
 
 
-def test_holistic_failure_reopens_single_cited_child_to_development(
+def test_epic_failure_reopens_single_cited_child_to_development(
     temp_db,
     sample_project,
 ) -> None:
@@ -521,23 +521,23 @@ def test_holistic_failure_reopens_single_cited_child_to_development(
     )
     manager.stage_states.initialize_manifest(
         parent.id,
-        [spec("development", 0), spec("holistic_qa", 1), spec("merge", 2)],
+        [spec("development", 0), spec("epic_qa", 1), spec("merge", 2)],
         by_session_id="test",
     )
     set_stage_state(temp_db, parent.id, "development", "done", work_attempt_count=2)
-    set_stage_state(temp_db, parent.id, "holistic_qa", "in_progress", work_attempt_count=1)
-    leaf = _closed_leaf_for_holistic_failure(temp_db, sample_project, parent.id, "Leaf")
+    set_stage_state(temp_db, parent.id, "epic_qa", "in_progress", work_attempt_count=1)
+    leaf = _closed_leaf_for_epic_failure(temp_db, sample_project, parent.id, "Leaf")
 
     manager.stage_states.fail_stage(
         parent.id,
-        "holistic_qa",
+        "epic_qa",
         reason="needs changes",
-        by_session_id="holistic-reviewer",
+        by_session_id="epic-reviewer",
         cited_subtasks=[leaf.id],
     )
 
     assert stage_row(temp_db, parent.id, "development")["state"] == "ready"
-    assert stage_row(temp_db, parent.id, "holistic_qa")["state"] == "ready"
+    assert stage_row(temp_db, parent.id, "epic_qa")["state"] == "ready"
     assert stage_row(temp_db, leaf.id, "development")["state"] == "ready"
     assert stage_row(temp_db, leaf.id, "merge")["state"] == "ready"
     reopened = task_row(temp_db, leaf.id)
@@ -554,15 +554,15 @@ def test_holistic_failure_reopens_single_cited_child_to_development(
     )
     assert parent_comment is not None
     assert child_comment is not None
-    assert parent_comment["body"].startswith("## Holistic QA Failure")
-    assert child_comment["body"].startswith("## Holistic QA Follow-Up")
+    assert parent_comment["body"].startswith("## Epic QA Failure")
+    assert child_comment["body"].startswith("## Epic QA Follow-Up")
     assert "needs changes" in parent_comment["body"]
     assert "needs changes" in child_comment["body"]
-    assert stage_row(temp_db, parent.id, "holistic_qa")["work_attempt_count"] == 1
+    assert stage_row(temp_db, parent.id, "epic_qa")["work_attempt_count"] == 1
     assert stage_row(temp_db, leaf.id, "development")["work_attempt_count"] == 1
 
 
-def test_retry_neutral_holistic_spawn_failure_resets_cited_child_attempts(
+def test_retry_neutral_epic_spawn_failure_resets_cited_child_attempts(
     temp_db,
     sample_project,
 ) -> None:
@@ -575,17 +575,17 @@ def test_retry_neutral_holistic_spawn_failure_resets_cited_child_attempts(
     )
     manager.stage_states.initialize_manifest(
         parent.id,
-        [spec("development", 0), spec("holistic_qa", 1), spec("merge", 2)],
+        [spec("development", 0), spec("epic_qa", 1), spec("merge", 2)],
         by_session_id="test",
     )
     set_stage_state(temp_db, parent.id, "development", "done", work_attempt_count=2)
-    set_stage_state(temp_db, parent.id, "holistic_qa", "in_progress", work_attempt_count=3)
-    leaf = _closed_leaf_for_holistic_failure(temp_db, sample_project, parent.id, "Leaf")
+    set_stage_state(temp_db, parent.id, "epic_qa", "in_progress", work_attempt_count=3)
+    leaf = _closed_leaf_for_epic_failure(temp_db, sample_project, parent.id, "Leaf")
     set_stage_state(temp_db, leaf.id, "development", "done", work_attempt_count=3)
 
     updated = manager.stage_states.fail_stage(
         parent.id,
-        "holistic_qa",
+        "epic_qa",
         reason=(
             "dispatch_spawn_failed:failed to refresh integration workspace "
             "/tmp/integration from gobby/integration/210-build: CONFLICT"
@@ -597,7 +597,7 @@ def test_retry_neutral_holistic_spawn_failure_resets_cited_child_attempts(
     reopened = task_row(temp_db, leaf.id)
     parent_row = task_row(temp_db, parent.id)
     assert updated.state == "ready"
-    assert stage_row(temp_db, parent.id, "holistic_qa")["work_attempt_count"] == 2
+    assert stage_row(temp_db, parent.id, "epic_qa")["work_attempt_count"] == 2
     assert stage_row(temp_db, leaf.id, "development")["state"] == "ready"
     assert stage_row(temp_db, leaf.id, "development")["work_attempt_count"] == 0
     assert reopened["closed_at"] is None
@@ -616,7 +616,7 @@ def test_retry_neutral_holistic_spawn_failure_resets_cited_child_attempts(
     )
 
 
-def test_holistic_failure_reactivates_merged_cited_child_worktree(
+def test_epic_failure_reactivates_merged_cited_child_worktree(
     temp_db,
     sample_project,
 ) -> None:
@@ -629,12 +629,12 @@ def test_holistic_failure_reactivates_merged_cited_child_worktree(
     )
     manager.stage_states.initialize_manifest(
         parent.id,
-        [spec("development", 0), spec("holistic_qa", 1), spec("merge", 2)],
+        [spec("development", 0), spec("epic_qa", 1), spec("merge", 2)],
         by_session_id="test",
     )
     set_stage_state(temp_db, parent.id, "development", "done", work_attempt_count=2)
-    set_stage_state(temp_db, parent.id, "holistic_qa", "in_progress", work_attempt_count=1)
-    leaf = _closed_leaf_for_holistic_failure(temp_db, sample_project, parent.id, "Leaf")
+    set_stage_state(temp_db, parent.id, "epic_qa", "in_progress", work_attempt_count=1)
+    leaf = _closed_leaf_for_epic_failure(temp_db, sample_project, parent.id, "Leaf")
     temp_db.execute(
         """
         INSERT INTO worktrees (
@@ -653,9 +653,9 @@ def test_holistic_failure_reactivates_merged_cited_child_worktree(
 
     manager.stage_states.fail_stage(
         parent.id,
-        "holistic_qa",
+        "epic_qa",
         reason="needs changes",
-        by_session_id="holistic-reviewer",
+        by_session_id="epic-reviewer",
         cited_subtasks=[leaf.id],
     )
 
@@ -668,7 +668,7 @@ def test_holistic_failure_reactivates_merged_cited_child_worktree(
     assert worktree["cleanup_after"] is None
 
 
-def test_holistic_failure_reopens_multiple_cited_children_only(
+def test_epic_failure_reopens_multiple_cited_children_only(
     temp_db,
     sample_project,
 ) -> None:
@@ -681,20 +681,20 @@ def test_holistic_failure_reopens_multiple_cited_children_only(
     )
     manager.stage_states.initialize_manifest(
         parent.id,
-        [spec("development", 0), spec("holistic_qa", 1), spec("merge", 2)],
+        [spec("development", 0), spec("epic_qa", 1), spec("merge", 2)],
         by_session_id="test",
     )
     set_stage_state(temp_db, parent.id, "development", "done", work_attempt_count=2)
-    set_stage_state(temp_db, parent.id, "holistic_qa", "in_progress", work_attempt_count=1)
-    first = _closed_leaf_for_holistic_failure(temp_db, sample_project, parent.id, "First")
-    second = _closed_leaf_for_holistic_failure(temp_db, sample_project, parent.id, "Second")
-    untouched = _closed_leaf_for_holistic_failure(temp_db, sample_project, parent.id, "Untouched")
+    set_stage_state(temp_db, parent.id, "epic_qa", "in_progress", work_attempt_count=1)
+    first = _closed_leaf_for_epic_failure(temp_db, sample_project, parent.id, "First")
+    second = _closed_leaf_for_epic_failure(temp_db, sample_project, parent.id, "Second")
+    untouched = _closed_leaf_for_epic_failure(temp_db, sample_project, parent.id, "Untouched")
 
     manager.stage_states.fail_stage(
         parent.id,
-        "holistic_qa",
+        "epic_qa",
         reason="needs changes",
-        by_session_id="holistic-reviewer",
+        by_session_id="epic-reviewer",
         cited_subtasks=[first.id, second.id],
     )
 
@@ -704,7 +704,7 @@ def test_holistic_failure_reopens_multiple_cited_children_only(
     assert stage_row(temp_db, untouched.id, "development")["state"] == "done"
 
 
-def test_holistic_failure_rejects_cited_non_descendant(temp_db, sample_project) -> None:
+def test_epic_failure_rejects_cited_non_descendant(temp_db, sample_project) -> None:
     manager = LocalTaskManager(temp_db)
     parent = manager.create_task(
         project_id=sample_project["id"],
@@ -720,7 +720,7 @@ def test_holistic_failure_rejects_cited_non_descendant(temp_db, sample_project) 
     )
     manager.stage_states.initialize_manifest(
         parent.id,
-        [spec("development", 0), spec("holistic_qa", 1), spec("merge", 2)],
+        [spec("development", 0), spec("epic_qa", 1), spec("merge", 2)],
         by_session_id="test",
     )
     manager.stage_states.initialize_manifest(
@@ -729,14 +729,14 @@ def test_holistic_failure_rejects_cited_non_descendant(temp_db, sample_project) 
         by_session_id="test",
     )
     set_stage_state(temp_db, parent.id, "development", "done")
-    set_stage_state(temp_db, parent.id, "holistic_qa", "in_progress", work_attempt_count=1)
+    set_stage_state(temp_db, parent.id, "epic_qa", "in_progress", work_attempt_count=1)
 
     with pytest.raises(ValueError, match="cited_subtasks must be descendants"):
         manager.stage_states.fail_stage(
             parent.id,
-            "holistic_qa",
+            "epic_qa",
             reason="needs changes",
-            by_session_id="holistic-reviewer",
+            by_session_id="epic-reviewer",
             cited_subtasks=[outsider.id],
         )
 

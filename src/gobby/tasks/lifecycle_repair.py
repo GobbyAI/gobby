@@ -18,11 +18,9 @@ RepairAction = Literal[
     "reseed_plan_file_manifest",
 ]
 
-_PLAN_FILE_REQUIRED_STAGES = frozenset(
-    {"planning", "expansion", "development", "holistic_qa", "merge"}
-)
+_PLAN_FILE_REQUIRED_STAGES = frozenset({"planning", "expansion", "development", "epic_qa", "merge"})
 _PLAN_FILE_KNOWN_STAGES = _PLAN_FILE_REQUIRED_STAGES | {"pr"}
-_PLAN_FILE_FORWARD_STAGES = frozenset({"expansion", "development", "holistic_qa"})
+_PLAN_FILE_FORWARD_STAGES = frozenset({"expansion", "development", "epic_qa"})
 
 
 @dataclass(slots=True)
@@ -277,7 +275,7 @@ class LifecycleRepair:
         rows = self.task_manager.stage_states.list_for_task(task.id)
         desired = derive_child_manifest_specs(
             parent_rows,
-            include_holistic_qa=task.task_type == "epic",
+            include_epic_qa=task.task_type == "epic",
         )
         if (
             desired
@@ -288,7 +286,7 @@ class LifecycleRepair:
         if not desired:
             desired = _historical_development_first_specs(
                 rows,
-                include_holistic_qa=task.task_type == "epic",
+                include_epic_qa=task.task_type == "epic",
             )
             if not desired:
                 return None
@@ -500,15 +498,15 @@ def _is_full_plan_file_manifest(rows: Sequence[StageState | StageManifestSpec]) 
 def _historical_development_first_specs(
     rows: list[StageState],
     *,
-    include_holistic_qa: bool,
+    include_epic_qa: bool,
 ) -> list[StageManifestSpec]:
     if _first_stage(rows) == "development":
         return []
     by_name = {row.stage_name: row for row in rows}
     inherited = [stage_name for stage_name in ("pr", "merge") if stage_name in by_name]
     stage_names = ["development"]
-    if include_holistic_qa and "holistic_qa" in by_name:
-        stage_names.append("holistic_qa")
+    if include_epic_qa and "epic_qa" in by_name:
+        stage_names.append("epic_qa")
     stage_names.extend(inherited)
     return [
         StageManifestSpec(

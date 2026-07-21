@@ -23,10 +23,10 @@ from gobby.dispatch._rule_state import (
     _current_stage,
     _default_agent,
     _development_agent,
+    _epic_descendant_gate,
+    _epic_descendant_gate_body,
     _field,
     _has_merge_agent,
-    _holistic_descendant_gate,
-    _holistic_descendant_gate_body,
     _is_closed,
     _is_epic,
     _is_leaf,
@@ -71,13 +71,13 @@ DISABLED_DISCOVERY_AGENT_ESCALATION_REASONS = {
 }
 
 _AUTO_ADVANCE_NON_AGENT_STAGES = {"expansion", "pr"}
-_AUTO_ADVANCE_DEDICATED_STAGES = {"development", "holistic_qa"}
-_HOLISTIC_DESCENDANT_GATE_HEADING = "Holistic QA deferred"
+_AUTO_ADVANCE_DEDICATED_STAGES = {"development", "epic_qa"}
+_EPIC_DESCENDANT_GATE_HEADING = "Epic QA deferred"
 _DISABLED_AGENT_EXCLUDED_STAGES = {
     "expansion",
     "pr",
     "development",
-    "holistic_qa",
+    "epic_qa",
 }
 
 _dispatch_inputs = _rule_dispatch_inputs
@@ -147,36 +147,36 @@ def development_isolation_rule(task: object, context: object) -> Action | None:
     return StartStageAction(task_id=_task_id(task), stage_name=_stage_name(stage))
 
 
-def holistic_descendant_gate_rule(task: object, context: object) -> Action | None:
-    gate = _holistic_descendant_gate(context)
+def epic_descendant_gate_rule(task: object, context: object) -> Action | None:
+    gate = _epic_descendant_gate(context)
     if gate is None:
         return None
     stage = _current_stage(task, context)
-    if _stage_name(stage) != "holistic_qa" or _stage_state(stage) not in {"ready", "in_progress"}:
+    if _stage_name(stage) != "epic_qa" or _stage_state(stage) not in {"ready", "in_progress"}:
         return None
     description = _field(task, "description", "") or ""
-    if has_audit_marker(description, _HOLISTIC_DESCENDANT_GATE_HEADING):
+    if has_audit_marker(description, _EPIC_DESCENDANT_GATE_HEADING):
         return None
-    body = _holistic_descendant_gate_body(gate)
+    body = _epic_descendant_gate_body(gate)
     return AppendAuditMarkerAction(
         task_id=_task_id(task),
-        heading=_HOLISTIC_DESCENDANT_GATE_HEADING,
+        heading=_EPIC_DESCENDANT_GATE_HEADING,
         body=body,
     )
 
 
-def all_leaves_holistic_rule(task: object, context: object) -> Action | None:
-    stage = _matching_current_stage(task, context, "holistic_qa", "ready")
+def all_leaves_epic_rule(task: object, context: object) -> Action | None:
+    stage = _matching_current_stage(task, context, "epic_qa", "ready")
     if stage is None or not _is_epic(task):
         return None
-    if _holistic_descendant_gate(context) is not None:
+    if _epic_descendant_gate(context) is not None:
         return None
     children = list(_children(task, context))
     if not children:
         return None
     if not all(is_child_parked(child) or _is_closed(child) for child in children):
         return None
-    return StartStageAction(task_id=_task_id(task), stage_name="holistic_qa")
+    return StartStageAction(task_id=_task_id(task), stage_name="epic_qa")
 
 
 def epic_development_start_rule(task: object, context: object) -> Action | None:
@@ -300,32 +300,32 @@ def development_advance_rule(task: object, context: object) -> Action | None:
     return _complete_stage_on_state(task, context, "development", "review_approved")
 
 
-def holistic_qa_rule(task: object, context: object) -> Action | None:
-    stage = _matching_current_stage(task, context, "holistic_qa", "in_progress")
+def epic_qa_rule(task: object, context: object) -> Action | None:
+    stage = _matching_current_stage(task, context, "epic_qa", "in_progress")
     if stage is None:
         return None
-    if _holistic_descendant_gate(context) is not None:
+    if _epic_descendant_gate(context) is not None:
         return None
     if _stage_work_exhausted(stage, context):
-        return EscalateAction(task_id=_task_id(task), reason="holistic_qa_max_work_attempts")
-    if not _agent_dispatchable(context, "holistic-reviewer"):
-        return EscalateAction(task_id=_task_id(task), reason="holistic_qa_no_reviewer")
-    return _spawn_stage_agent(task, stage, context, "holistic-reviewer")
+        return EscalateAction(task_id=_task_id(task), reason="epic_qa_max_work_attempts")
+    if not _agent_dispatchable(context, "epic-reviewer"):
+        return EscalateAction(task_id=_task_id(task), reason="epic_qa_no_reviewer")
+    return _spawn_stage_agent(task, stage, context, "epic-reviewer")
 
 
-def holistic_qa_review_rule(task: object, context: object) -> Action | None:
-    stage = _matching_current_stage(task, context, "holistic_qa", "needs_review")
+def epic_qa_review_rule(task: object, context: object) -> Action | None:
+    stage = _matching_current_stage(task, context, "epic_qa", "needs_review")
     if stage is None:
         return None
     if _stage_review_exhausted(stage, context):
-        return EscalateAction(task_id=_task_id(task), reason="holistic_qa_max_review_rounds")
-    if not _agent_dispatchable(context, "holistic-reviewer"):
-        return EscalateAction(task_id=_task_id(task), reason="holistic_qa_no_reviewer")
-    return _spawn_stage_agent(task, stage, context, "holistic-reviewer", resume_review=True)
+        return EscalateAction(task_id=_task_id(task), reason="epic_qa_max_review_rounds")
+    if not _agent_dispatchable(context, "epic-reviewer"):
+        return EscalateAction(task_id=_task_id(task), reason="epic_qa_no_reviewer")
+    return _spawn_stage_agent(task, stage, context, "epic-reviewer", resume_review=True)
 
 
-def holistic_qa_advance_rule(task: object, context: object) -> Action | None:
-    return _complete_review_approved_stage(task, context, "holistic_qa")
+def epic_qa_advance_rule(task: object, context: object) -> Action | None:
+    return _complete_review_approved_stage(task, context, "epic_qa")
 
 
 def pr_work_rule(task: object, context: object) -> Action | None:
@@ -375,8 +375,8 @@ BASE_RULES: list[Rule] = [
     auto_advance_ready_rule,
     disabled_agent_escalation_rule,
     development_isolation_rule,
-    holistic_descendant_gate_rule,
-    all_leaves_holistic_rule,
+    epic_descendant_gate_rule,
+    all_leaves_epic_rule,
     epic_development_start_rule,
     epic_development_complete_rule,
     discovery_artifact_complete_rule,
@@ -394,9 +394,9 @@ BASE_RULES: list[Rule] = [
     development_rule,
     development_review_rule,
     development_advance_rule,
-    holistic_qa_rule,
-    holistic_qa_review_rule,
-    holistic_qa_advance_rule,
+    epic_qa_rule,
+    epic_qa_review_rule,
+    epic_qa_advance_rule,
     pr_work_rule,
     pr_review_rule,
     pr_advance_rule,
@@ -411,7 +411,7 @@ __all__ = [
     "NON_MERGE_TERMINAL_MANIFEST_EXHAUSTION",
     "RULES",
     "Rule",
-    "all_leaves_holistic_rule",
+    "all_leaves_epic_rule",
     "architecture_rule",
     "auto_advance_ready_rule",
     "current_stage",
@@ -426,10 +426,10 @@ __all__ = [
     "expansion_advance_rule",
     "expansion_review_rule",
     "expansion_work_rule",
-    "holistic_descendant_gate_rule",
-    "holistic_qa_advance_rule",
-    "holistic_qa_review_rule",
-    "holistic_qa_rule",
+    "epic_descendant_gate_rule",
+    "epic_qa_advance_rule",
+    "epic_qa_review_rule",
+    "epic_qa_rule",
     "ideation_rule",
     "is_blocked_by_deps",
     "is_child_parked",

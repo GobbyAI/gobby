@@ -105,7 +105,7 @@ def test_fail_stage_resolves_and_forwards_cited_subtasks(
 
     result = tool(
         task_id=ctx.task_id,
-        stage_name="holistic_qa",
+        stage_name="epic_qa",
         reason="needs changes",
         cited_subtasks=[cited.id],
     )
@@ -113,7 +113,7 @@ def test_fail_stage_resolves_and_forwards_cited_subtasks(
     assert result["stage"]["state"] == "ready"
     ctx.task_manager.stage_states.fail_stage.assert_called_with(
         ctx.task_id,
-        "holistic_qa",
+        "epic_qa",
         reason="needs changes",
         needs_human=False,
         by_session_id=None,

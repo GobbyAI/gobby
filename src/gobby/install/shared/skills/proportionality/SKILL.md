@@ -14,7 +14,7 @@ metadata:
 # proportionality — Anti-Rube-Goldberg Review Methodology
 
 > Internal methodology skill; loaded with `get_skill(name="proportionality")` by
-> `plan-adversary` (plan altitude), `holistic-reviewer` (epic altitude), and
+> `plan-adversary` (plan altitude), `epic-reviewer` (epic altitude), and
 > `qa-reviewer` (leaf altitude). Not a user-facing command.
 >
 > `restraint` is the authoring-side counterpart: restraint disciplines work
@@ -136,11 +136,11 @@ The criterion is identical at every altitude; the unit under review changes.
   consumer named anywhere in the plan, or config/flags/profile fields with a
   single value. Feeds the `over-engineering` finding category in `plan-review`.
   Ambitious-but-justified epics produce zero proportionality findings.
-- **Epic altitude (`holistic-reviewer`).** Unit = the whole epic across its
+- **Epic altitude (`epic-reviewer`).** Unit = the whole epic across its
   leaves. Watch for cross-leaf duplication that should have been one shared
   thing, frameworks introduced by one leaf and used by none, and product
   behavior no plan section asked for. This is the same criterion the
-  holistic-review `proportionality` dimension carries.
+  epic-review `proportionality` dimension carries.
 - **Leaf altitude (`qa-reviewer`).** Unit = a single leaf's diff. Flag a leaf
   that introduces an abstraction, config knob, or indirection layer
   disproportionate to its single task, and name the simpler form. This is a
@@ -154,6 +154,6 @@ The criterion is identical at every altitude; the unit under review changes.
 - This skill judges *mechanism vs. goal*. It never judges ambition, size, or
   net-new scope, and it never weakens correctness, security, or required
   testing — those gates belong to the host review (`plan-review`,
-  `holistic-review`, the QA spec-compliance tier) and always win.
+  `epic-review`, the QA spec-compliance tier) and always win.
 - Default to *not* flagging when justification is plausible. Under-flagging
   protects creativity; over-flagging punishes it.

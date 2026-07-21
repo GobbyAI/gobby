@@ -98,7 +98,9 @@ class MiniBuildHarness:
 
     async def install(self) -> None:
         from gobby.agents.sync import sync_bundled_agents
+        from gobby.skills.sync import sync_bundled_skills
 
+        sync_bundled_skills(self.db)
         sync_bundled_agents(self.db)
         StageRegistryLoader().sync(self.db)
 
@@ -179,6 +181,15 @@ class MiniBuildHarness:
             description=f"{agent_name} {stage_name}:{stage_state} spawn",
         )
         assert run is not None
+        dispatch_idle = await wait_for_async_condition(
+            lambda: (
+                self.project_id not in self.loop._project_tasks
+                and self.project_id not in self.loop._pending_project_dispatches
+            ),
+            timeout=2.0,
+            description=f"{agent_name} dispatch handoff",
+        )
+        assert dispatch_idle
         task_id = cast(str, run["task_id"])
         session_id = cast(str, run["child_session_id"])
         with session_context_for_test(session_id):
@@ -249,7 +260,7 @@ class MiniBuildHarness:
             "planning",
             "expansion",
             "development",
-            "holistic_qa",
+            "epic_qa",
             "merge",
         ]
         assert "pr" not in {stage.stage_name for stage in root_stages}
@@ -398,13 +409,13 @@ async def test_mini_build_reaches_clean_merge_state_without_manual_dispatch_tick
         "qa-reviewer", stage_name="development", stage_state="needs_review"
     )
     await harness.complete_agent(
-        "holistic-reviewer",
-        stage_name="holistic_qa",
+        "epic-reviewer",
+        stage_name="epic_qa",
         stage_state="in_progress",
     )
     await harness.complete_agent(
-        "holistic-reviewer",
-        stage_name="holistic_qa",
+        "epic-reviewer",
+        stage_name="epic_qa",
         stage_state="needs_review",
     )
     await harness.complete_agent(

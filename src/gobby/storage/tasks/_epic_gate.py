@@ -1,4 +1,4 @@
-"""Holistic QA descendant gate detection."""
+"""Epic QA descendant gate detection."""
 
 from __future__ import annotations
 
@@ -9,13 +9,13 @@ from typing import Any, cast
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.tasks._models import Task
 
-HOLISTIC_QA_STAGE = "holistic_qa"
-HOLISTIC_QA_GATE_STATES = frozenset({"ready", "in_progress"})
-HOLISTIC_DESCENDANT_GATE_REASON = "holistic_descendants_nonterminal"
+EPIC_QA_STAGE = "epic_qa"
+EPIC_QA_GATE_STATES = frozenset({"ready", "in_progress"})
+EPIC_DESCENDANT_GATE_REASON = "epic_descendants_nonterminal"
 
 
 @dataclass(frozen=True)
-class HolisticDescendantBlocker:
+class EpicDescendantBlocker:
     task_id: str
     task_ref: str
     task_seq_num: int | None
@@ -28,25 +28,25 @@ class HolisticDescendantBlocker:
 
     @property
     def reason(self) -> str:
-        return HOLISTIC_DESCENDANT_GATE_REASON
+        return EPIC_DESCENDANT_GATE_REASON
 
     def to_dict(self) -> dict[str, object]:
         return {"reason": self.reason, **asdict(self)}
 
 
 @dataclass(frozen=True)
-class HolisticDescendantGate:
+class EpicDescendantGate:
     root_task_id: str
     root_ref: str
     root_seq_num: int | None
     root_path: str | None
     stage_name: str
     stage_state: str
-    blockers: tuple[HolisticDescendantBlocker, ...]
+    blockers: tuple[EpicDescendantBlocker, ...]
 
     @property
     def reason(self) -> str:
-        return HOLISTIC_DESCENDANT_GATE_REASON
+        return EPIC_DESCENDANT_GATE_REASON
 
     def to_dict(self) -> dict[str, object]:
         return {
@@ -61,19 +61,19 @@ class HolisticDescendantGate:
         }
 
 
-def find_holistic_descendant_gate(
+def find_epic_descendant_gate(
     db: HubDatabase,
     task: Task,
     *,
     current_stage: object | None = None,
-) -> HolisticDescendantGate | None:
-    """Return descendant blockers that prevent root holistic QA dispatch."""
+) -> EpicDescendantGate | None:
+    """Return descendant blockers that prevent root epic QA dispatch."""
     stage = current_stage or _current_stage(task)
     stage_name = _stage_name(stage)
     stage_state = _stage_state(stage)
     if task.task_type != "epic":
         return None
-    if stage_name != HOLISTIC_QA_STAGE or stage_state not in HOLISTIC_QA_GATE_STATES:
+    if stage_name != EPIC_QA_STAGE or stage_state not in EPIC_QA_GATE_STATES:
         return None
 
     rows = db.fetchall(
@@ -132,7 +132,7 @@ def find_holistic_descendant_gate(
     if not blockers:
         return None
     seq_num = task.seq_num
-    return HolisticDescendantGate(
+    return EpicDescendantGate(
         root_task_id=task.id,
         root_ref=f"#{seq_num}" if seq_num is not None else task.id,
         root_seq_num=seq_num,
@@ -143,18 +143,18 @@ def find_holistic_descendant_gate(
     )
 
 
-def has_holistic_ancestor_gate(
+def has_epic_ancestor_gate(
     db: HubDatabase,
     task: Task,
     *,
     current_stage: object | None = None,
 ) -> bool:
-    """Return whether an ancestor epic is currently waiting in holistic QA."""
+    """Return whether an ancestor epic is currently waiting in epic QA."""
     stage = current_stage or _current_stage(task)
     if _stage_state(stage) == "done" or not task.parent_task_id:
         return False
 
-    gate_states = tuple(sorted(HOLISTIC_QA_GATE_STATES))
+    gate_states = tuple(sorted(EPIC_QA_GATE_STATES))
     state_placeholders = ", ".join(["%s"] * len(gate_states))
     row = db.fetchone(
         f"""
@@ -188,15 +188,15 @@ def has_holistic_ancestor_gate(
            AND current_stage.state IN ({state_placeholders})
          LIMIT 1
         """,  # nosec B608 # placeholders are generated from an internal fixed-size state set.
-        (task.id, HOLISTIC_QA_STAGE, *gate_states),
+        (task.id, EPIC_QA_STAGE, *gate_states),
     )
     return row is not None
 
 
-def _blocker_from_row(row: Mapping[str, Any]) -> HolisticDescendantBlocker:
+def _blocker_from_row(row: Mapping[str, Any]) -> EpicDescendantBlocker:
     seq_num = row["seq_num"]
     task_id = str(row["task_id"])
-    return HolisticDescendantBlocker(
+    return EpicDescendantBlocker(
         task_id=task_id,
         task_ref=f"#{seq_num}" if seq_num is not None else task_id,
         task_seq_num=int(seq_num) if seq_num is not None else None,

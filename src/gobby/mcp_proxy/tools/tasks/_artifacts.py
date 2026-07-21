@@ -1,6 +1,6 @@
 """MCP artifact mutation tools for gobby-tasks-ops.
 
-These tools are intentionally scoped to merge, expansion-qa, and holistic-reviewer
+These tools are intentionally scoped to merge, expansion-qa, and epic-reviewer
 agents that need to record task artifact pointers or append audit sections.
 """
 
@@ -96,7 +96,7 @@ def create_ops_artifact_registry(ctx: RegistryContext) -> InternalToolRegistry:
 
     registry = InternalToolRegistry(
         name="gobby-tasks-artifacts-ops",
-        description="Task artifact mutation tools for merge, expansion-qa, and holistic-reviewer agents",
+        description="Task artifact mutation tools for merge, expansion-qa, and epic-reviewer agents",
     )
     artifact_manager = TaskArtifactManager(ctx.task_manager.db)
 
@@ -120,7 +120,7 @@ def create_ops_artifact_registry(ctx: RegistryContext) -> InternalToolRegistry:
         name="set_artifact",
         description=(
             "Set one task artifact pointer field. For merge, expansion-qa, and "
-            "holistic-reviewer agents only."
+            "epic-reviewer agents only."
         ),
         input_schema={
             "type": "object",
@@ -166,7 +166,7 @@ def create_ops_artifact_registry(ctx: RegistryContext) -> InternalToolRegistry:
         name="set_artifacts_atomic",
         description=(
             "Atomically set task artifact pointer fields. Constraint failures return "
-            "structured errors for merge, expansion-qa, and holistic-reviewer agents."
+            "structured errors for merge, expansion-qa, and epic-reviewer agents."
         ),
         input_schema={
             "type": "object",
@@ -202,7 +202,7 @@ def create_ops_artifact_registry(ctx: RegistryContext) -> InternalToolRegistry:
         name="clear_isolation_pair",
         description=(
             "Clear the worktree or clone artifact pair for merge, expansion-qa, "
-            "and holistic-reviewer agents."
+            "and epic-reviewer agents."
         ),
         input_schema={
             "type": "object",
@@ -264,7 +264,7 @@ def create_ops_artifact_registry(ctx: RegistryContext) -> InternalToolRegistry:
         name="append_description_section",
         description=(
             "Append an idempotent markdown section to tasks.description for merge, "
-            "expansion-qa, and holistic-reviewer agents."
+            "expansion-qa, and epic-reviewer agents."
         ),
         input_schema={
             "type": "object",
@@ -289,8 +289,7 @@ def create_ops_artifact_registry(ctx: RegistryContext) -> InternalToolRegistry:
     registry.register(
         name="get_artifacts",
         description=(
-            "Get task artifact pointer fields for merge, expansion-qa, and "
-            "holistic-reviewer agents."
+            "Get task artifact pointer fields for merge, expansion-qa, and epic-reviewer agents."
         ),
         input_schema={
             "type": "object",

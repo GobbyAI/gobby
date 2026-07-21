@@ -40,7 +40,7 @@ _STAGE_AGENT_SLUGS: dict[tuple[str, str], str] = {
     ("planning", "in_progress"): "planner",
     ("planning", "needs_review"): "plan-adversary",
     ("expansion", "needs_review"): "expansion-qa",
-    ("holistic_qa", "in_progress"): "holistic-reviewer",
+    ("epic_qa", "in_progress"): "epic-reviewer",
     ("merge", "in_progress"): "merge-orchestrator",
 }
 
@@ -204,7 +204,7 @@ def _spawn_stage_agent(
     prompt_context["stage_name"] = _stage_name(stage)
     prompt_context["stage_state"] = _stage_state(stage)
     if resume_review:
-        prompt_context["reason"] = "holistic_qa_resume_review"
+        prompt_context["reason"] = "epic_qa_resume_review"
         prompt_context["resume_review"] = True
     builder = PROMPT_BUILDERS.get(agent_slug) or PROMPT_BUILDERS["default"]
     initial_variables: dict[str, object] = {

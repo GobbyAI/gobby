@@ -605,7 +605,7 @@ dispatch_interval_seconds: 60
 
 `default_isolation` accepts `none`, `worktree`, or `clone`.
 `default_skip_stages` accepts lifecycle stage names such as `research`,
-`development`, `holistic_qa`, `pr`, and `merge`. Runtime flags on
+`development`, `epic_qa`, `pr`, and `merge`. Runtime flags on
 `uv run gobby build` and the `gobby-tasks-ops:build_task` tool override these
 file defaults for the requested build.
 

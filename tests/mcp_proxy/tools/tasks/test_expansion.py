@@ -415,7 +415,7 @@ def test_stage_pipeline_mutex_suppresses_expansion_terminal_event(
             spec("planning", 0),
             spec("expansion", 1),
             spec("development", 2),
-            spec("holistic_qa", 3),
+            spec("epic_qa", 3),
             spec("merge", 4),
         ],
     )

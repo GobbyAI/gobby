@@ -17,8 +17,8 @@ register_contract_tests(
         "test_inputschema_excludes_max_expansion_attempts": (
             "MCP build_task schema removes max_expansion_attempts"
         ),
-        "test_inputschema_excludes_max_holistic_rounds": (
-            "MCP build_task schema removes max_holistic_rounds"
+        "test_inputschema_excludes_max_epic_qa_rounds": (
+            "MCP build_task schema removes max_epic_qa_rounds"
         ),
         "test_inputschema_excludes_max_merge_attempts": (
             "MCP build_task schema removes max_merge_attempts"

@@ -29,8 +29,8 @@ register_contract_tests(
         "test_yaml_normalizer_translates_max_expansion_attempts_to_stage_caps": (
             "max_expansion_attempts normalizes to expansion.max_work_attempts"
         ),
-        "test_yaml_normalizer_translates_max_holistic_rounds_to_stage_caps": (
-            "max_holistic_rounds normalizes to holistic_qa.max_review_rounds"
+        "test_yaml_normalizer_translates_max_epic_qa_rounds_to_stage_caps": (
+            "max_epic_qa_rounds normalizes to epic_qa.max_review_rounds"
         ),
         "test_yaml_normalizer_translates_max_merge_attempts_to_stage_caps": (
             "max_merge_attempts normalizes to merge.max_work_attempts"

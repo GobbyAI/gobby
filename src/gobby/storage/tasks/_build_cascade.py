@@ -121,7 +121,7 @@ def cascade_build_state_to_subtree(
             try:
                 specs = derive_child_manifest_specs(
                     parent_specs,
-                    include_holistic_qa=cast(str, row["task_type"]) == "epic",
+                    include_epic_qa=cast(str, row["task_type"]) == "epic",
                     include_merge_stage=include_merge_stage,
                 )
                 if not specs:

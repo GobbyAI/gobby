@@ -25,7 +25,7 @@ strategy plan is checked in.
 
 ## Phase 1 — Epic 1: Plan-coverage contract
 
-Ships the structural fix to expansion / expansion-qa / holistic-review so
+Ships the structural fix to expansion / expansion-qa / epic-review so
 plan-section coverage cannot vanish silently.
 
 ### Deliverables
@@ -38,7 +38,7 @@ plan-section coverage cannot vanish silently.
 - **A3** — Expansion-QA computes the input-coverage matrix mechanically by
   parsing the plan and the leaf labels. Rejects on uncovered `deliverable`
   sections without explicit deferrals.
-- **A4** — Holistic-review consumes the same coverage matrix. `approve`
+- **A4** — Epic-review consumes the same coverage matrix. `approve`
   verdict is blocked if any deliverable section has no PR diff.
 - **A5** — Retro-conform `task-12725-lifecycle-dispatch.md` to the new format
   and generate `.gobby/plans/task-12725-compliance-matrix.md` from the merged
@@ -53,7 +53,7 @@ plan-section coverage cannot vanish silently.
 
 - `tests/build_pipeline/test_plan_coverage_matrix.py` — repo-wide gate.
 - Expansion-QA tests that confirm rejection on uncovered deliverable sections.
-- Holistic-review tests that confirm `approve` is blocked when coverage
+- Epic-review tests that confirm `approve` is blocked when coverage
   matrix has gaps.
 
 ### Bootstrap note
@@ -112,7 +112,7 @@ so its own coverage is provable.
 - `advance_lifecycle(db, task_id, to, reason, by_actor)` tool.
 - Lifecycle-aware `approve_review` (plan_review→test_arch, etc.).
 - Lifecycle-aware `reject_review` with `cited_subtasks` for
-  holistic; `expansion` clears `expansion_run_id` and increments attempts;
+  epic; `expansion` clears `expansion_run_id` and increments attempts;
   `merging` keeps lifecycle and resets status=open.
 - `de_escalate_task` extension with optional `lifecycle` and `reason`.
 - Mutex-clearing event handlers wired into `claimed_by_session_id` set and
@@ -137,7 +137,7 @@ so its own coverage is provable.
 
 ### Phase E — Agents and skills (plan §2.1–§2.10)
 
-- Holistic-review skill + holistic-reviewer agent.
+- Epic-review skill + epic-reviewer agent.
 - Test-architect prose update (R4.F4): structured prose recommendations,
   not new `### N.N` sections.
 - qa-reviewer gains `close_task` permission.
@@ -187,9 +187,9 @@ Run after Phase G. Acceptance gate for closing the recovery.
 3. `tests/build_pipeline/test_entry_point_parity.py` — CLI / MCP / HTTP
    identical `BuildResult` and DB state.
 4. `tests/dispatch/test_dispatcher.py` — primed epic advances through
-   `plan_review → test_arch → expanding → in_development → holistic_review →
+   `plan_review → test_arch → expanding → in_development → epic_review →
    pr → merging → merged` across simulated ticks.
-5. Holistic rejection with `cited_subtasks=[A, B]` reopens A and B and
+5. Epic rejection with `cited_subtasks=[A, B]` reopens A and B and
    rewinds to `in_development`.
 6. Yolo fallback test: `merge-attempts` cap triggers
    `append_description_section("## Yolo Fallbacks", ...)` and lifecycle

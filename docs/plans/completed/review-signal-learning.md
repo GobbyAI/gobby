@@ -3,7 +3,7 @@
 ## Context
 
 Gobby has several surfaces that produce verified findings — CodeRabbit triage, adversarial
-`code-reviewer`, `holistic-review`/`qa-reviewer` rejections, and the `nightly-fixes`
+`code-reviewer`, `epic-review`/`qa-reviewer` rejections, and the `nightly-fixes`
 linter/test-fixer — and today every one of them throws the knowledge away after the fix.
 The same class of problem gets re-discovered on the next PR with no memory, no sibling
 sweep, and no path to enforcement.
@@ -267,7 +267,7 @@ generalize `pattern_id`). No post-parsing of `reject_review` notes.
 | --- | --- | --- |
 | coderabbit | `skills/coderabbit/SKILL.md` | `REQUIRED SKILL: review-learning`; targeted recall before the finding table; record each confirmed / no-fix-policy pattern after triage |
 | code-reviewer | `skills/code-reviewer/SKILL.md` | targeted recall before deciding material findings; record confirmed reusable findings inline (`source_kind=agent_review`) |
-| holistic-review | `skills/holistic-review/SKILL.md` | targeted recall before `request_changes`; record reusable rejection patterns inline **before** the verdict (`source_kind=qa_rejection`) |
+| epic-review | `skills/epic-review/SKILL.md` | targeted recall before `request_changes`; record reusable rejection patterns inline **before** the verdict (`source_kind=qa_rejection`) |
 | qa-reviewer | `workflows/agents/qa-reviewer.yaml` | targeted recall before `reject_review`; record reusable rejection patterns inline **before** the verdict (`source_kind=qa_rejection`) |
 | nightly-linter | `workflows/agents/nightly-linter.yaml` | after a **verified** ruff/mypy/bandit fix, record (`source_kind=static_analysis`, fix commit in evidence) |
 | nightly-test-fixer | `workflows/agents/nightly-test-fixer.yaml` | after a **verified** pytest fix (never the raw failure), record (`source_kind=test_failure`, fix commit in evidence) |
@@ -286,7 +286,7 @@ generalize `pattern_id`). No post-parsing of `reject_review` notes.
 
 **Modified**
 - `src/gobby/mcp_proxy/registries.py` — register `gobby-review-learning`
-- `src/gobby/install/shared/skills/{coderabbit,code-reviewer,holistic-review}/SKILL.md` — hooks
+- `src/gobby/install/shared/skills/{coderabbit,code-reviewer,epic-review}/SKILL.md` — hooks
 - `src/gobby/install/shared/workflows/agents/{qa-reviewer,nightly-linter,nightly-test-fixer}.yaml` — hooks
 
 No new global injection rule. Existing recall covers ordinary prompt resurfacing; targeted
@@ -328,7 +328,7 @@ Prefix every run with `GOBBY_TEST_PROTECT=1`; never run the full suite.
   → 2 occurrences → promotes; same finding twice in 1 run → 1 (occurrence preflight); CodeRabbit
   recommends `$1` while memory says psycopg `%s` → triage rejects or rewrites the recommendation.
 - Producer hook contract tests — inline-record instruction present in code-reviewer /
-  holistic-review skills and qa-reviewer / nightly agent YAMLs; targeted recall instruction present
+  epic-review skills and qa-reviewer / nightly agent YAMLs; targeted recall instruction present
   in review producers.
 
 ---

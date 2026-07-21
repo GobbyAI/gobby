@@ -496,7 +496,7 @@ def test_epic_integration_workspace_blocks_active_run_for_pruned_metadata(
         parent_session_id="ac25647a-384a-5232-8d09-117e2043e20b",
         provider="codex",
         prompt="review",
-        agent_name="holistic-reviewer",
+        agent_name="epic-reviewer",
         task_id=parent.id,
         run_id="b3a0c54a-b2a1-590a-b615-abb42da4a56d",
     )
@@ -571,7 +571,7 @@ def test_epic_integration_workspace_blocks_active_run_for_invalid_git_path(
         parent_session_id="ac25647a-384a-5232-8d09-117e2043e20b",
         provider="codex",
         prompt="review",
-        agent_name="holistic-reviewer",
+        agent_name="epic-reviewer",
         task_id=parent.id,
         run_id="af0adb09-330c-55d2-9e8c-688e28ca4311",
     )
@@ -1123,7 +1123,7 @@ def test_epic_integration_workspace_blocks_active_run_for_task_worktree_promotio
         parent_session_id="565acf01-045f-5737-ad46-c4a57a113dee",
         provider="codex",
         prompt="review",
-        agent_name="holistic-reviewer",
+        agent_name="epic-reviewer",
         task_id=parent.id,
         run_id="a74fdb9c-fa5e-5a29-b3b2-8c7f24a60258",
     )
@@ -1197,7 +1197,7 @@ def test_epic_integration_workspace_blocks_active_run_for_task_clone_promotion(
         parent_session_id="958625ad-2cad-5175-bd8d-ac97ced1d681",
         provider="codex",
         prompt="review",
-        agent_name="holistic-reviewer",
+        agent_name="epic-reviewer",
         task_id=parent.id,
         run_id="9dae75b1-e795-5f8a-b287-cbf256abab62",
     )

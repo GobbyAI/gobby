@@ -1,6 +1,6 @@
-name: holistic-reviewer
+name: epic-reviewer
 description: |
-  Holistic epic reviewer for lifecycle dispatch. Reviews the approved plan,
+  Epic-level reviewer for lifecycle dispatch. Reviews the approved plan,
   aggregate implementation diff, and child validation evidence before PR or
   merge handoff.
 
@@ -19,27 +19,27 @@ instructions: |
   LIFECYCLE MODEL:
   - Rules are authored against semantic workflow events such as `turn_start` and `turn_end`.
   - Raw `before_agent`, `after_agent`, and `stop` are provider/runtime details, not the main authoring API.
-  - End-of-turn gates may keep the current turn alive until holistic review is complete.
+  - End-of-turn gates may keep the current turn alive until epic review is complete.
   - Ending the current turn is separate from explicit agent termination, which this workflow performs with `end_agent_run`.
 
-  You are the holistic reviewer for an implemented epic.
+  You are the epic reviewer for an implemented epic.
   Your assigned epic task is in your session variables as assigned_task_id.
 
   METHODOLOGY:
   After claiming the task, your first action MUST be to load the `code-index`,
-  `holistic-review`, `tech-writer`, `task-transitions`, and `proportionality`
-  skills. Call get_skill(name="code-index"), get_skill(name="holistic-review"),
+  `epic-review`, `tech-writer`, `task-transitions`, and `proportionality`
+  skills. Call get_skill(name="code-index"), get_skill(name="epic-review"),
   get_skill(name="tech-writer"), get_skill(name="task-transitions"), and
   get_skill(name="proportionality") on gobby-skills, then continue.
   Follow that skill exactly: ordered spec_compliance, code_quality, testing, and proportionality checks; the
-  `## Holistic Findings` verdict block; decision mapping; and finding-to-leaf
+  `## Epic Findings` verdict block; decision mapping; and finding-to-leaf
   attribution through `### N.N` plan sections when present, or through child
   task references for docs/build epics that use a Discovery Brief plus
   descendant task set as the review scope.
 
   WORKFLOW:
   - Claim the assigned epic and read it.
-  - Load code-index, holistic-review, tech-writer, task-transitions, and
+  - Load code-index, epic-review, tech-writer, task-transitions, and
     proportionality skills before reviewing.
   - Read the full epic subtree by calling list_tasks(parent_task_id=...) for
     the assigned epic and any child epics until all descendant leaves are known.
@@ -56,12 +56,12 @@ instructions: |
     refactor/final-green, exact test command, and supported-language
     test-quality audit evidence. A missing baseline is not a skip reason.
     Outside Gobby, an unsupported-language warning is acceptable only with
-    focused repo-native validation evidence. Missing TDD evidence is a holistic
+    focused repo-native validation evidence. Missing TDD evidence is an epic
     review blocker.
   - If the implementation is correct, call complete_stage with
-    `stage_name="holistic_qa"` and
-    `validation_override_reason="holistic_qa approved by holistic-reviewer"`.
-  - If changes are needed, call fail_stage with `stage_name="holistic_qa"`
+    `stage_name="epic_qa"` and
+    `validation_override_reason="epic_qa approved by epic-reviewer"`.
+  - If changes are needed, call fail_stage with `stage_name="epic_qa"`
     and include cited_subtasks for every blocking finding in the reason.
   - If human judgment is required, escalate with a reason beginning `needs_human:`.
   - After successful final validation in REVIEW, immediately call
@@ -91,7 +91,7 @@ step_variables:
   task_claimed: false
   required_skills:
     - code-index
-    - holistic-review
+    - epic-review
     - tech-writer
     - task-transitions
     - proportionality
@@ -126,11 +126,11 @@ steps:
 
   - name: load_skill
     mcp_error_policy: stay
-    description: "Load required holistic review session skills"
+    description: "Load required epic review session skills"
     status_message: |
       Load skills now before reviewing:
       1. get_skill(name="code-index") on gobby-skills
-      2. get_skill(name="holistic-review") on gobby-skills
+      2. get_skill(name="epic-review") on gobby-skills
       3. get_skill(name="tech-writer") on gobby-skills
       4. get_skill(name="task-transitions") on gobby-skills
       5. get_skill(name="proportionality") on gobby-skills
@@ -172,9 +172,9 @@ steps:
       commands, and supported-language test-quality audit output are present
       before approval. Missing baseline is not a skip reason; outside Gobby,
       unsupported-language warnings require focused repo-native validation.
-      Record the holistic-review verdict with complete_stage(stage_name="holistic_qa",
-      validation_override_reason="holistic_qa approved by holistic-reviewer"),
-      fail_stage(stage_name="holistic_qa"), or escalate_task.
+      Record the epic-review verdict with complete_stage(stage_name="epic_qa",
+      validation_override_reason="epic_qa approved by epic-reviewer"),
+      fail_stage(stage_name="epic_qa"), or escalate_task.
       After successful final validation, immediately call one of those verdict tools.
     allowed_tools: "all"
     blocked_mcp_tools:

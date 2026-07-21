@@ -95,11 +95,11 @@ def apply_run(
     parent_manifest = self.task_manager.stage_states.list_for_task(task.id)
     phase_manifest_specs = derive_child_manifest_specs(
         parent_manifest,
-        include_holistic_qa=True,
+        include_epic_qa=True,
     )
     leaf_manifest_specs = derive_child_manifest_specs(
         parent_manifest,
-        include_holistic_qa=False,
+        include_epic_qa=False,
     )
 
     spec = run.compiled_spec

@@ -585,7 +585,7 @@ async def test_build_plan_file_creates_planning_epic_artifacts_manifest_and_kick
         "planning",
         "expansion",
         "development",
-        "holistic_qa",
+        "epic_qa",
         "merge",
     ]
 
@@ -910,7 +910,7 @@ async def test_build_plan_file_dry_run_rolls_back_preview_side_effects(
         "planning",
         "expansion",
         "development",
-        "holistic_qa",
+        "epic_qa",
         "pr",
         "merge",
     ]
@@ -961,13 +961,13 @@ async def test_plan_file_dry_run_skip_pr_returns_full_manifest_chain(
         "planning",
         "expansion",
         "development",
-        "holistic_qa",
+        "epic_qa",
         "merge",
     ]
     manifest_by_stage = {row["stage_name"]: row for row in result.manifest}
     assert manifest_by_stage["planning"]["max_work_attempts"] == 99
     assert manifest_by_stage["planning"]["max_review_rounds"] == 99
-    for stage_name in ("expansion", "development", "holistic_qa", "merge"):
+    for stage_name in ("expansion", "development", "epic_qa", "merge"):
         assert manifest_by_stage[stage_name]["max_work_attempts"] is None
         assert manifest_by_stage[stage_name]["max_review_rounds"] is None
 
@@ -1000,7 +1000,7 @@ async def test_plan_file_bare_stage_overrides_do_not_select_manifest(
                 StageCapOverride("planning"),
                 StageCapOverride("expansion"),
                 StageCapOverride("development"),
-                StageCapOverride("holistic_qa"),
+                StageCapOverride("epic_qa"),
                 StageCapOverride("merge"),
             ],
         ),
@@ -1013,7 +1013,7 @@ async def test_plan_file_bare_stage_overrides_do_not_select_manifest(
         "planning",
         "expansion",
         "development",
-        "holistic_qa",
+        "epic_qa",
         "merge",
     ]
     assert all(row["max_work_attempts"] is None for row in result.manifest)
@@ -1063,7 +1063,7 @@ async def test_build_persists_stage_caps_on_manifest_rows(temp_db, tmp_path: Pat
                 StageCapOverride("expansion", max_work_attempts=4),
                 StageCapOverride("development", max_review_rounds=6),
                 StageCapOverride("merge", max_work_attempts=2),
-                StageCapOverride("holistic_qa", max_review_rounds=5),
+                StageCapOverride("epic_qa", max_review_rounds=5),
                 StageCapOverride("pr", max_review_rounds=7),
             ],
         ),
@@ -1078,7 +1078,7 @@ async def test_build_persists_stage_caps_on_manifest_rows(temp_db, tmp_path: Pat
     assert rows["expansion"].max_work_attempts == 4
     assert rows["development"].max_review_rounds == 6
     assert rows["merge"].max_work_attempts == 2
-    assert rows["holistic_qa"].max_review_rounds == 5
+    assert rows["epic_qa"].max_review_rounds == 5
     assert rows["pr"].max_review_rounds == 7
     assert result.manifest is not None
 
@@ -1949,9 +1949,11 @@ async def test_build_leaf_with_services_creates_agent_run_by_completion(
 
     from gobby.agents.sync import sync_bundled_agents
     from gobby.build.service import build
+    from gobby.skills.sync import sync_bundled_skills
     from gobby.storage.agents import LocalAgentRunManager
     from gobby.storage.sessions import SessionManager
 
+    sync_bundled_skills(temp_db)
     sync_bundled_agents(temp_db)
     task_manager = LocalTaskManager(temp_db)
     session_manager = SessionManager(temp_db)
@@ -2062,7 +2064,7 @@ async def test_build_task_ref_automates_existing_expansion_output(
     assert result.manifest is not None
     assert [row["stage_name"] for row in result.manifest] == [
         "development",
-        "holistic_qa",
+        "epic_qa",
         "pr",
         "merge",
     ]
@@ -2071,7 +2073,7 @@ async def test_build_task_ref_automates_existing_expansion_output(
     child_rows = task_manager.stage_states.list_for_task(child.id)
     assert [row.stage_name for row in parent_rows] == [
         "development",
-        "holistic_qa",
+        "epic_qa",
         "pr",
         "merge",
     ]
@@ -2114,7 +2116,7 @@ async def test_build_task_ref_repairs_legacy_expanded_epic_manifest_without_pr(
                     "planning",
                     "expansion",
                     "development",
-                    "holistic_qa",
+                    "epic_qa",
                     "pr",
                     "merge",
                 ]
@@ -2155,12 +2157,12 @@ async def test_build_task_ref_repairs_legacy_expanded_epic_manifest_without_pr(
     assert result.manifest is not None
     assert [row["stage_name"] for row in result.manifest] == [
         "development",
-        "holistic_qa",
+        "epic_qa",
         "merge",
     ]
     parent_rows = task_manager.stage_states.list_for_task(parent.id)
     child_rows = task_manager.stage_states.list_for_task(child.id)
-    assert [row.stage_name for row in parent_rows] == ["development", "holistic_qa", "merge"]
+    assert [row.stage_name for row in parent_rows] == ["development", "epic_qa", "merge"]
     assert [row.stage_name for row in child_rows] == ["development", "merge"]
 
 
@@ -2189,7 +2191,7 @@ async def test_build_task_ref_removes_skipped_pr_from_progressed_child_epic(
     )
     manifest = [
         StageManifestSpec(stage_name="development", position=0),
-        StageManifestSpec(stage_name="holistic_qa", position=1),
+        StageManifestSpec(stage_name="epic_qa", position=1),
         StageManifestSpec(stage_name="pr", position=2),
         StageManifestSpec(stage_name="merge", position=3),
     ]
@@ -2202,7 +2204,7 @@ async def test_build_task_ref_removes_skipped_pr_from_progressed_child_epic(
                entered_at = '2026-05-22T19:00:00+00:00',
                completed_at = '2026-05-22T19:01:00+00:00',
                updated_at = '2026-05-22T19:01:00+00:00'
-         WHERE task_id = %s AND stage_name IN ('development', 'holistic_qa')
+         WHERE task_id = %s AND stage_name IN ('development', 'epic_qa')
         """,
         (child.id,),
     )
@@ -2244,7 +2246,7 @@ async def test_build_task_ref_removes_skipped_pr_from_progressed_child_epic(
 
     assert result.applied_stages_skipped == ["pr"]
     child_rows = task_manager.stage_states.list_for_task(child.id)
-    assert [row.stage_name for row in child_rows] == ["development", "holistic_qa", "merge"]
+    assert [row.stage_name for row in child_rows] == ["development", "epic_qa", "merge"]
     assert task_manager.stage_states.current_stage(child.id).stage_name == "merge"
     updated_child = task_manager.get_task(child.id)
     assert updated_child.claimed_by_session_id is None
@@ -2276,7 +2278,7 @@ async def test_build_task_ref_removes_auto_started_skipped_pr_from_child_epic(
     )
     manifest = [
         StageManifestSpec(stage_name="development", position=0),
-        StageManifestSpec(stage_name="holistic_qa", position=1),
+        StageManifestSpec(stage_name="epic_qa", position=1),
         StageManifestSpec(stage_name="pr", position=2),
         StageManifestSpec(stage_name="merge", position=3),
     ]
@@ -2289,7 +2291,7 @@ async def test_build_task_ref_removes_auto_started_skipped_pr_from_child_epic(
                entered_at = '2026-05-22T19:00:00+00:00',
                completed_at = '2026-05-22T19:01:00+00:00',
                updated_at = '2026-05-22T19:01:00+00:00'
-         WHERE task_id = %s AND stage_name IN ('development', 'holistic_qa')
+         WHERE task_id = %s AND stage_name IN ('development', 'epic_qa')
         """,
         (child.id,),
     )
@@ -2323,7 +2325,7 @@ async def test_build_task_ref_removes_auto_started_skipped_pr_from_child_epic(
 
     assert result.applied_stages_skipped == ["pr"]
     child_rows = task_manager.stage_states.list_for_task(child.id)
-    assert [row.stage_name for row in child_rows] == ["development", "holistic_qa", "merge"]
+    assert [row.stage_name for row in child_rows] == ["development", "epic_qa", "merge"]
     assert task_manager.stage_states.current_stage(child.id).stage_name == "merge"
 
 
@@ -2352,7 +2354,7 @@ async def test_build_resume_cascades_skipped_pr_before_workspace_refresh(
     )
     manifest = [
         StageManifestSpec(stage_name="development", position=0),
-        StageManifestSpec(stage_name="holistic_qa", position=1),
+        StageManifestSpec(stage_name="epic_qa", position=1),
         StageManifestSpec(stage_name="pr", position=2),
         StageManifestSpec(stage_name="merge", position=3),
     ]
@@ -2365,7 +2367,7 @@ async def test_build_resume_cascades_skipped_pr_before_workspace_refresh(
                entered_at = '2026-05-22T19:00:00+00:00',
                completed_at = '2026-05-22T19:01:00+00:00',
                updated_at = '2026-05-22T19:01:00+00:00'
-         WHERE task_id = %s AND stage_name IN ('development', 'holistic_qa')
+         WHERE task_id = %s AND stage_name IN ('development', 'epic_qa')
         """,
         (child.id,),
     )
@@ -2402,7 +2404,7 @@ async def test_build_resume_cascades_skipped_pr_before_workspace_refresh(
                entered_by_actor = 'dispatcher',
                work_attempt_count = 1,
                updated_at = '2026-05-22T19:02:00+00:00'
-         WHERE task_id = %s AND stage_name = 'holistic_qa'
+         WHERE task_id = %s AND stage_name = 'epic_qa'
         """,
         (parent.id,),
     )
@@ -2432,7 +2434,7 @@ async def test_build_resume_cascades_skipped_pr_before_workspace_refresh(
         )
 
     child_rows = task_manager.stage_states.list_for_task(child.id)
-    assert [row.stage_name for row in child_rows] == ["development", "holistic_qa", "merge"]
+    assert [row.stage_name for row in child_rows] == ["development", "epic_qa", "merge"]
     assert task_manager.stage_states.current_stage(child.id).stage_name == "merge"
 
 
@@ -2461,7 +2463,7 @@ async def test_build_resume_development_epic_defers_workspace_refresh(
     )
     manifest = [
         StageManifestSpec(stage_name="development", position=0),
-        StageManifestSpec(stage_name="holistic_qa", position=1),
+        StageManifestSpec(stage_name="epic_qa", position=1),
         StageManifestSpec(stage_name="merge", position=2),
     ]
     task_manager.stage_states.initialize_manifest(parent.id, manifest, by_session_id=None)

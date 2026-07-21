@@ -20,7 +20,7 @@ SkippableStage = Literal[
     "planning",
     "expansion",
     "development",
-    "holistic_qa",
+    "epic_qa",
     "pr",
     "merge",
 ]
@@ -33,7 +33,7 @@ _SKIPPABLE_STAGE_VALUES: tuple[SkippableStage, ...] = (
     "planning",
     "expansion",
     "development",
-    "holistic_qa",
+    "epic_qa",
     "pr",
     "merge",
 )
@@ -54,7 +54,7 @@ _LEGACY_CAP_DESTINATIONS: Mapping[str, tuple[str, str]] = {
     "max_expansion_attempts": ("expansion", "max_work_attempts"),
     "max_qa_rounds": ("development", "max_review_rounds"),
     "max_merge_attempts": ("merge", "max_work_attempts"),
-    "max_holistic_rounds": ("holistic_qa", "max_review_rounds"),
+    "max_epic_qa_rounds": ("epic_qa", "max_review_rounds"),
     "max_review_rounds": ("pr", "max_review_rounds"),
     "default_max_review_rounds": ("pr", "max_review_rounds"),
 }

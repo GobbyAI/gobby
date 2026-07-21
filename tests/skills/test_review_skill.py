@@ -22,7 +22,7 @@ def test_id_opt_in_present() -> None:
         body,
         name="review",
         command="/gobby review",
-        agent="holistic-reviewer",
+        agent="epic-reviewer",
         workflow_path=WORKFLOW_PATH,
     )
     assert "approve / reject / escalate" in body

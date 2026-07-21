@@ -790,7 +790,7 @@ def _reset_restart_stage_manifests_from_options(
             if task.id == root.id
             else derive_child_manifest_specs(
                 root_specs,
-                include_holistic_qa=task.task_type == "epic",
+                include_epic_qa=task.task_type == "epic",
                 include_merge_stage=opts.isolation in {"worktree", "clone"} and not opts.no_merge,
             )
         )

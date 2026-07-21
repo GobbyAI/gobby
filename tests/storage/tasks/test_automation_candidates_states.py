@@ -81,7 +81,7 @@ def test_list_automation_candidates_excludes_done_and_null_current_stage(
     assert no_manifest.id not in candidate_ids
 
 
-def test_list_automation_candidates_precomputes_holistic_gate_once_per_task(
+def test_list_automation_candidates_precomputes_epic_gate_once_per_task(
     temp_db: HubDatabase,
     sample_project: dict[str, Any],
     monkeypatch: pytest.MonkeyPatch,
@@ -90,14 +90,14 @@ def test_list_automation_candidates_precomputes_holistic_gate_once_per_task(
     second = _task_at_stage(temp_db, sample_project, "ready")
     calls: list[str] = []
 
-    def fake_find_holistic_descendant_gate(db, task):
+    def fake_find_epic_descendant_gate(db, task):
         calls.append(task.id)
         return None
 
     monkeypatch.setattr(
         _automation,
-        "find_holistic_descendant_gate",
-        fake_find_holistic_descendant_gate,
+        "find_epic_descendant_gate",
+        fake_find_epic_descendant_gate,
     )
 
     candidate_ids = {
@@ -109,7 +109,7 @@ def test_list_automation_candidates_precomputes_holistic_gate_once_per_task(
     assert calls.count(second.id) == 1
 
 
-def test_list_automation_candidates_sorts_holistic_descendant_gates_first(
+def test_list_automation_candidates_sorts_epic_descendant_gates_first(
     temp_db: HubDatabase,
     sample_project: dict[str, Any],
     monkeypatch: pytest.MonkeyPatch,
@@ -117,13 +117,13 @@ def test_list_automation_candidates_sorts_holistic_descendant_gates_first(
     without_gate = _task_at_stage(temp_db, sample_project, "ready")
     with_gate = _task_at_stage(temp_db, sample_project, "ready")
 
-    def fake_find_holistic_descendant_gate(db, task):
+    def fake_find_epic_descendant_gate(db, task):
         return object() if task.id == with_gate.id else None
 
     monkeypatch.setattr(
         _automation,
-        "find_holistic_descendant_gate",
-        fake_find_holistic_descendant_gate,
+        "find_epic_descendant_gate",
+        fake_find_epic_descendant_gate,
     )
 
     ordered_candidate_ids = [
@@ -135,14 +135,14 @@ def test_list_automation_candidates_sorts_holistic_descendant_gates_first(
     assert ordered_candidate_ids == [with_gate.id, without_gate.id]
 
 
-def test_list_automation_candidates_allows_reopened_child_under_holistic_gate(
+def test_list_automation_candidates_allows_reopened_child_under_epic_gate(
     temp_db: HubDatabase,
     sample_project: dict[str, Any],
 ) -> None:
     root = create_task(
         temp_db,
         sample_project,
-        title="Root awaiting holistic follow-up",
+        title="Root awaiting epic follow-up",
         task_type="epic",
     )
     temp_db.execute(
@@ -152,10 +152,10 @@ def test_list_automation_candidates_allows_reopened_child_under_holistic_gate(
     initialize_manifest(
         temp_db,
         root.id,
-        [spec("development", 0), spec("holistic_qa", 1), spec("merge", 2)],
+        [spec("development", 0), spec("epic_qa", 1), spec("merge", 2)],
     )
     set_stage_state(temp_db, root.id, "development", "done")
-    set_stage_state(temp_db, root.id, "holistic_qa", "ready")
+    set_stage_state(temp_db, root.id, "epic_qa", "ready")
 
     child = create_task(
         temp_db,

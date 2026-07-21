@@ -1,4 +1,4 @@
-"""Phase 2 contract tests for the holistic-reviewer agent definition."""
+"""Phase 2 contract tests for the epic-reviewer agent definition."""
 
 from __future__ import annotations
 
@@ -13,7 +13,7 @@ pytestmark = pytest.mark.unit
 def _agent() -> dict:
     path = (
         Path(__file__).resolve().parents[2]
-        / "src/gobby/install/shared/workflows/agents/holistic-reviewer.yaml"
+        / "src/gobby/install/shared/workflows/agents/epic-reviewer.yaml"
     )
     return yaml.safe_load(path.read_text(encoding="utf-8"))
 
@@ -30,7 +30,7 @@ def test_three_outcomes() -> None:
     } <= success_tools
 
 
-def test_success_path_uses_complete_stage_for_in_progress_holistic_qa() -> None:
+def test_success_path_uses_complete_stage_for_in_progress_epic_qa() -> None:
     agent = _agent()
     review_step = next(step for step in agent["steps"] if step["name"] == "review")
     blocked = set(review_step["blocked_mcp_tools"])
@@ -38,12 +38,12 @@ def test_success_path_uses_complete_stage_for_in_progress_holistic_qa() -> None:
     status = review_step["status_message"]
 
     assert "complete_stage" in instructions
-    assert 'stage_name="holistic_qa"' in instructions
+    assert 'stage_name="epic_qa"' in instructions
     assert "validation_override_reason" in instructions
     assert "After successful final validation in REVIEW" in instructions
     assert "pending terminal-verdict obligation" in instructions
     assert "After successful final validation" in status
-    assert 'complete_stage(stage_name="holistic_qa"' in status
+    assert 'complete_stage(stage_name="epic_qa"' in status
     assert "gobby-tasks-ops:approve_review" in blocked
     assert "gobby-tasks-ops:reject_review" in blocked
     assert "gobby-agents:end_agent_run" in blocked
@@ -78,7 +78,7 @@ def test_docs_epics_can_use_discovery_brief_plan_substitute() -> None:
     assert "plan substitute" in status
 
 
-def test_holistic_review_order_is_spec_quality_testing_proportionality() -> None:
+def test_epic_review_order_is_spec_quality_testing_proportionality() -> None:
     agent = _agent()
     instructions = agent["instructions"]
     status = next(step for step in agent["steps"] if step["name"] == "review")["status_message"]
@@ -103,7 +103,7 @@ def test_loads_required_skills_before_review() -> None:
 
     assert agent["step_variables"]["required_skills"] == [
         "code-index",
-        "holistic-review",
+        "epic-review",
         "tech-writer",
         "task-transitions",
         "proportionality",

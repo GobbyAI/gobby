@@ -248,12 +248,12 @@ def _doc_reviewer(task: object, context: Mapping[str, object]) -> str:
     )
 
 
-def _holistic_reviewer(task: object, context: Mapping[str, object]) -> str:
+def _epic_reviewer(task: object, context: Mapping[str, object]) -> str:
     return _prompt(
         task,
         context,
-        role="Perform holistic review",
-        contract="holistic-reviewer.yaml agent",
+        role="Perform epic review",
+        contract="epic-reviewer.yaml agent",
     )
 
 
@@ -314,7 +314,7 @@ PROMPT_BUILDERS: dict[str, PromptBuilder] = {
     "expansion-qa": _expansion_qa,
     "frontend-developer": _developer,
     "fullstack-developer": _developer,
-    "holistic-reviewer": _holistic_reviewer,
+    "epic-reviewer": _epic_reviewer,
     "merge-orchestrator": _merge_runner,
     "merge-worker": _merge_runner,
     "plan-adversary": _plan_adversary,
@@ -327,7 +327,7 @@ PROMPT_BUILDERS: dict[str, PromptBuilder] = {
     "qa-dev": _qa_dev,
     "qa-reviewer": _qa_reviewer,
     "trajectory-monitor": _trajectory_monitor,
-    "reviewer": _holistic_reviewer,
+    "reviewer": _epic_reviewer,
     "researcher": _researcher,
     "tech-writer": _developer,
 }

@@ -99,7 +99,7 @@ async def test_compile_run_does_not_short_circuit_from_legacy_skip_labels(
             "stage-:plan_review",
             "stage-:expanding",
             "stage-:qa",
-            "stage-:holistic_review",
+            "stage-:epic_review",
             "stage-:pr",
         ],
     )

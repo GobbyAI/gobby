@@ -100,7 +100,7 @@ def test_current_stage_uses_leftmost_non_done_manifest_row() -> None:
     assert current.name == "development"
     assert current.position == 2
     assert rules.task_has_stage(task, "merge") is True
-    assert rules.task_has_stage(task, "holistic_qa") is False
+    assert rules.task_has_stage(task, "epic_qa") is False
 
 
 def test_task_has_stage_ignores_legacy_stage_skip_labels() -> None:

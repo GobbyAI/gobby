@@ -117,7 +117,7 @@ def initialize_task_manifest_for_task(
 def derive_child_manifest_specs(
     parent_rows: Sequence[Any],
     *,
-    include_holistic_qa: bool,
+    include_epic_qa: bool,
     include_merge_stage: bool = False,
 ) -> list[StageManifestSpec]:
     """Derive generated child stage rows from a resolved parent manifest."""
@@ -127,8 +127,8 @@ def derive_child_manifest_specs(
     stage_names: list[str] = []
     if "development" in by_name:
         stage_names.append("development")
-    if include_holistic_qa and "holistic_qa" in by_name:
-        stage_names.append("holistic_qa")
+    if include_epic_qa and "epic_qa" in by_name:
+        stage_names.append("epic_qa")
     if "pr" in by_name:
         stage_names.append("pr")
     if "merge" in by_name or include_merge_stage:

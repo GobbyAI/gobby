@@ -58,7 +58,7 @@ def test_record_lifecycle_event_appends_ordered_audit_rows(temp_db, sample_proje
         from_state="plan_review",
         to_state="expansion",
         reason="plan approved",
-        by_actor="holistic-reviewer",
+        by_actor="epic-reviewer",
     )
 
     events = manager.list_lifecycle_events(task.id)
@@ -70,7 +70,7 @@ def test_record_lifecycle_event_appends_ordered_audit_rows(temp_db, sample_proje
         "expansion",
     ]
     assert events[0].reason == "operator requested build"
-    assert events[1].by_actor == "holistic-reviewer"
+    assert events[1].by_actor == "epic-reviewer"
     assert not hasattr(manager, "update_lifecycle_event")
     assert not hasattr(manager, "delete_lifecycle_event")
 
@@ -179,7 +179,7 @@ def test_module_helpers_return_id_and_list_newest_first(temp_db, sample_project)
         from_state="plan_review",
         to_state="expansion",
         reason="plan approved",
-        by_actor="holistic-reviewer",
+        by_actor="epic-reviewer",
     )
 
     events = list_lifecycle_events(temp_db, task.id)

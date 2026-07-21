@@ -17,7 +17,7 @@ concerns. Use focused mutation testing when static checks pass but the risk is i
 behavioral coverage.
 
 For TDD-required Gobby tasks, developer agents run the audit on supported
-touched test paths after adding or heavily editing tests. QA and holistic QA
+touched test paths after adding or heavily editing tests. QA and epic QA
 treat missing supported-language test-quality evidence as a blocker when
 `tdd:required` or `test-driven-development` applies. Outside Gobby,
 unsupported-language warnings are evidence that the audit was attempted only

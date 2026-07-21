@@ -253,6 +253,7 @@ def test_postgres_migrations_limited_to_known_post_baseline() -> None:
         "327_failure_category_taxonomy.sql",
         "328_memory_global_visibility.sql",
         "329_memory_type_enum.sql",
+        "330_rename_epic_qa.sql",
     ]
 
 
@@ -367,7 +368,7 @@ def test_postgres_baseline_version_is_flattened_to_305() -> None:
     # The 0.5.0 pre-release flatten folded 295-305 into the baseline. Hubs below
     # 305 take the corrupt_partial backup/recreate path; later migrations replay.
     assert module.BASELINE_VERSION == 305
-    assert module.latest_known_version() == 329
+    assert module.latest_known_version() == 330
 
 
 def test_failure_category_taxonomy_is_closed_in_baseline_and_migration() -> None:
@@ -862,6 +863,38 @@ def test_memory_type_schema_and_migration_close_free_text_contract() -> None:
         assert f"('{legacy_type}', '{canonical_type}')" in migration
     assert "COALESCE(memory_type_mapping.canonical_type, 'fact')" in migration
     assert "UPDATE memories SET vector_needs_reindex = TRUE" in migration
+
+
+def test_epic_qa_schema_and_migration_contract() -> None:
+    baseline = _normalize_sql_whitespace(_baseline_text())
+    migration = _normalize_sql_whitespace(
+        (SRC_ROOT / "storage" / "migrations" / "330_rename_epic_qa.sql").read_text(encoding="utf-8")
+    )
+
+    _assert_contains_all(
+        "epic QA baseline",
+        baseline,
+        (
+            "epic_qa_attempts INTEGER NOT NULL DEFAULT 0",
+            "VALUES ('epic_qa', 'Epic QA', 'Whole-epic review after every leaf is parked.', "
+            "'verification', 'epic-reviewer', 'epic-reviewer'",
+            "VALUES ('epic', 'epic_qa', 7)",
+        ),
+    )
+    _assert_contains_all(
+        "epic QA migration",
+        migration,
+        (
+            "SET CONSTRAINTS ALL DEFERRED",
+            "RENAME COLUMN holistic_attempts TO epic_qa_attempts",
+            "UPDATE task_stage_states SET stage_name = 'epic_qa'",
+            "UPDATE task_type_default_stages SET stage_name = 'epic_qa'",
+            "UPDATE task_stages_registry SET name = 'epic_qa'",
+            "default_agent = 'epic-reviewer'",
+            "reviewer_agent = 'epic-reviewer'",
+            "UPDATE build_profiles AS profiles SET skip_stages_json = normalized.stages",
+        ),
+    )
 
 
 def test_memory_dream_baseline_and_runtime_define_invariants() -> None:

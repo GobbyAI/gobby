@@ -124,7 +124,7 @@ steps:
          list every commit in merge-base..HEAD, inspect the cumulative branch
          diff, and inspect any uncommitted state. Flag branch commits absent from
          the linked commit set and explain whether they are expected.
-      4. Find the latest completed development or holistic approval commit from
+      4. Find the latest completed development or epic approval commit from
          stage/artifact evidence and inspect the post-approval delta through HEAD.
       5. Compare all accumulated changes with the task description and plan scope.
          Reject missing requirements, unreviewed changes, scope drift, quality

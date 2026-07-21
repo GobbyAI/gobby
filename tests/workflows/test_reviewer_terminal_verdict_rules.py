@@ -169,7 +169,7 @@ def test_bundled_reviewer_terminal_verdict_rules_sync(
     for name in RULE_NAMES:
         body = _rule(manager, name)
         assert body.group == "reviewer-lifecycle"
-        assert body.agent_scope == ["qa-reviewer", "doc-reviewer", "holistic-reviewer"]
+        assert body.agent_scope == ["qa-reviewer", "doc-reviewer", "epic-reviewer"]
     track_body = _rule(manager, "reviewer-terminal-verdict-track-successful-validation")
     assert "is_validation_command" in (track_body.when or "")
 
@@ -247,20 +247,20 @@ async def test_doc_reviewer_successful_validation_uses_review_verdict_contract(
 
 
 @pytest.mark.asyncio
-async def test_holistic_reviewer_successful_validation_requires_stage_verdict(
+async def test_epic_reviewer_successful_validation_requires_stage_verdict(
     db: HubDatabase,
 ) -> None:
-    """Holistic reviewer validation success requests holistic QA stage verdict tools."""
+    """Epic reviewer validation success requests epic QA stage verdict tools."""
     engine = RuleEngine(db)
-    variables = _review_vars("holistic-reviewer")
+    variables = _review_vars("epic-reviewer")
     event = _validation_event("uv run mypy src/gobby/workflows")
 
     response = await engine.evaluate(event, str(uuid.uuid4()), variables)
 
     assert response.decision == "allow"
     assert variables["reviewer_terminal_verdict_pending"] is True
-    assert 'complete_stage(stage_name="holistic_qa")' in (response.context or "")
-    assert 'fail_stage(stage_name="holistic_qa")' in (response.context or "")
+    assert 'complete_stage(stage_name="epic_qa")' in (response.context or "")
+    assert 'fail_stage(stage_name="epic_qa")' in (response.context or "")
 
 
 @pytest.mark.asyncio
@@ -298,11 +298,11 @@ async def test_terminal_verdict_success_clears_pending(db: HubDatabase) -> None:
 
 
 @pytest.mark.asyncio
-async def test_holistic_terminal_verdict_success_clears_pending(db: HubDatabase) -> None:
-    """Holistic reviewer completion clears pending terminal-verdict variables."""
+async def test_epic_terminal_verdict_success_clears_pending(db: HubDatabase) -> None:
+    """Epic reviewer completion clears pending terminal-verdict variables."""
     engine = RuleEngine(db)
     variables = {
-        **_review_vars("holistic-reviewer"),
+        **_review_vars("epic-reviewer"),
         "reviewer_terminal_verdict_pending": True,
         "reviewer_terminal_verdict_validation_command": "uv run mypy src/gobby/workflows",
     }

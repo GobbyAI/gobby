@@ -48,7 +48,7 @@ def test_cli_stage_cap_overrides_propagate_to_dispatcher(
             "--stage",
             "merge:max_work_attempts=6",
             "--stage",
-            "holistic_qa:max_review_rounds=7",
+            "epic_qa:max_review_rounds=7",
             "--stage",
             "pr:max_review_rounds=8",
         ],
@@ -63,7 +63,7 @@ def test_cli_stage_cap_overrides_propagate_to_dispatcher(
         ("expansion", 4, None),
         ("development", None, 5),
         ("merge", 6, None),
-        ("holistic_qa", None, 7),
+        ("epic_qa", None, 7),
         ("pr", None, 8),
     ]
 

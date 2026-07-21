@@ -33,7 +33,7 @@ from gobby.storage.tasks._ancestor_gate import (
     find_child_development_ancestor_gate,
 )
 from gobby.storage.tasks._dispatch_mutex import TaskDispatchMutexManager
-from gobby.storage.tasks._holistic_gate import find_holistic_descendant_gate
+from gobby.storage.tasks._epic_gate import find_epic_descendant_gate
 from gobby.storage.worktrees import LocalWorktreeManager
 from gobby.utils.datetime import parse_stored_datetime
 from gobby.workflows.agent_resolver import resolve_agent
@@ -105,7 +105,7 @@ def explain_dispatch(
         candidate,
         current_stage=current_stage,
     )
-    holistic_descendant_gate = find_holistic_descendant_gate(
+    epic_descendant_gate = find_epic_descendant_gate(
         db,
         candidate,
         current_stage=current_stage,
@@ -145,8 +145,8 @@ def explain_dispatch(
         "inputs": _dispatch_inputs(candidate),
         "current_stage": _stage_summary(current_stage),
         "ancestor_gate": ancestor_gate.to_dict() if ancestor_gate is not None else None,
-        "holistic_descendant_gate": (
-            holistic_descendant_gate.to_dict() if holistic_descendant_gate is not None else None
+        "epic_descendant_gate": (
+            epic_descendant_gate.to_dict() if epic_descendant_gate is not None else None
         ),
         "mutex": mutex,
         "active_agents": active_agents,

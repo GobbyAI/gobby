@@ -32,7 +32,7 @@ _PRE_DEVELOPMENT_ISOLATION_STAGES = {
     "planning",
     "expansion",
 }
-_DEVELOPMENT_FORWARD_ISOLATION_STAGES = {"development", "holistic_qa", "pr", "merge"}
+_DEVELOPMENT_FORWARD_ISOLATION_STAGES = {"development", "epic_qa", "pr", "merge"}
 # Taskless plan review and enhancement coordinate the caller's current plan
 # workflow and have no build task isolation to inherit.
 _TASKLESS_MAIN_CONTEXT_AGENT_SLUGS = frozenset(
@@ -101,7 +101,7 @@ def _prepare_spawn_artifacts(
     except BuildWorkspaceError as exc:
         raise DispatchSpawnFailed(
             str(exc),
-            stage_failure_cited_subtasks=_holistic_workspace_failure_cited_subtasks(
+            stage_failure_cited_subtasks=_epic_workspace_failure_cited_subtasks(
                 action=action,
                 task=task,
                 task_manager=task_manager,
@@ -110,16 +110,16 @@ def _prepare_spawn_artifacts(
     return TaskArtifactManager(db).get_artifacts(action.task_id)
 
 
-def _holistic_workspace_failure_cited_subtasks(
+def _epic_workspace_failure_cited_subtasks(
     *,
     action: SpawnAgentAction,
     task: Task,
     task_manager: LocalTaskManager,
 ) -> tuple[str, ...]:
-    if action.agent_slug != "holistic-reviewer":
+    if action.agent_slug != "epic-reviewer":
         return ()
     initial_variables = action.initial_variables or {}
-    if initial_variables.get("stage_name") != "holistic_qa":
+    if initial_variables.get("stage_name") != "epic_qa":
         return ()
     if task.task_type != "epic":
         return ()
@@ -620,12 +620,12 @@ def _spawn_stage_name(action: SpawnAgentAction) -> str | None:
 
 
 def _uses_epic_integration_workspace(task: object, action: SpawnAgentAction) -> bool:
-    if action.agent_slug != "holistic-reviewer":
+    if action.agent_slug != "epic-reviewer":
         return False
     if getattr(task, "task_type", None) != "epic":
         return False
     stage_name = (action.initial_variables or {}).get("stage_name")
-    return stage_name in {None, "holistic_qa"}
+    return stage_name in {None, "epic_qa"}
 
 
 def _service_git_manager(services: object | None, project_id: str) -> object | None:

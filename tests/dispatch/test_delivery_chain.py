@@ -37,9 +37,9 @@ def _task_view(task_id: str, stages: object) -> SimpleNamespace:
 def _dispatch_context() -> SimpleNamespace:
     return SimpleNamespace(
         stage_registry={
-            "holistic_qa": SimpleNamespace(
-                name="holistic_qa",
-                default_agent="holistic-reviewer",
+            "epic_qa": SimpleNamespace(
+                name="epic_qa",
+                default_agent="epic-reviewer",
                 requires_human=False,
                 default_max_work_attempts=3,
                 default_max_review_rounds=1,
@@ -60,7 +60,7 @@ def _dispatch_context() -> SimpleNamespace:
             ),
         },
         agents={
-            "holistic-reviewer": {"enabled": True},
+            "epic-reviewer": {"enabled": True},
             "merge-orchestrator": {"enabled": True},
             "trajectory-monitor": {"enabled": True},
         },
@@ -95,29 +95,29 @@ def test_full_delivery_chain_5_state(temp_db, sample_project) -> None:
     task, manager = make_task_with_manifest(
         temp_db,
         sample_project,
-        [spec("holistic_qa", 0), spec("pr", 1), spec("merge", 2)],
+        [spec("epic_qa", 0), spec("pr", 1), spec("merge", 2)],
         task_type="feature",
     )
     set_stage_state(
         temp_db,
         task.id,
-        "holistic_qa",
+        "epic_qa",
         "review_approved",
         review_policy="required",
     )
     context = _dispatch_context()
 
-    holistic_done = rules.holistic_qa_advance_rule(
+    epic_done = rules.epic_qa_advance_rule(
         _task_view(task.id, manager.list_for_task(task.id)),
         context,
     )
-    assert isinstance(holistic_done, AdvanceStageAction)
+    assert isinstance(epic_done, AdvanceStageAction)
     manager.complete_stage(
-        holistic_done.task_id,
-        holistic_done.stage_name,
-        by_session_id=holistic_done.by_session_id,
+        epic_done.task_id,
+        epic_done.stage_name,
+        by_session_id=epic_done.by_session_id,
     )
-    assert stage_row(temp_db, task.id, "holistic_qa")["state"] == "done"
+    assert stage_row(temp_db, task.id, "epic_qa")["state"] == "done"
     assert stage_row(temp_db, task.id, "pr")["state"] == "ready"
 
     pr_start = rules.auto_advance_ready_rule(
@@ -197,7 +197,7 @@ def test_full_delivery_chain_5_state(temp_db, sample_project) -> None:
 
 
 @pytest.mark.asyncio
-async def test_parent_holistic_waits_for_in_flight_child_with_real_context(
+async def test_parent_epic_waits_for_in_flight_child_with_real_context(
     temp_db,
     sample_project,
 ) -> None:
@@ -218,18 +218,18 @@ async def test_parent_holistic_waits_for_in_flight_child_with_real_context(
         category="docs",
     )
     update_task(temp_db, parent.id, allow_automation=True, isolation="worktree")
-    initialize_manifest(temp_db, parent.id, [spec("holistic_qa", 0), spec("merge", 1)])
+    initialize_manifest(temp_db, parent.id, [spec("epic_qa", 0), spec("merge", 1)])
     initialize_manifest(temp_db, child.id, [spec("development", 0), spec("merge", 1)])
     set_stage_state(temp_db, child.id, "development", "in_progress")
 
     result = await dispatcher.run_heartbeat(db=temp_db, project_id=sample_project["id"])
 
     assert result.executed == 1
-    assert stage_row(temp_db, parent.id, "holistic_qa")["state"] == "ready"
+    assert stage_row(temp_db, parent.id, "epic_qa")["state"] == "ready"
 
 
 @pytest.mark.asyncio
-async def test_parent_holistic_pr_merge_closes_with_real_heartbeat(
+async def test_parent_epic_pr_merge_closes_with_real_heartbeat(
     monkeypatch: pytest.MonkeyPatch,
     temp_db,
     sample_project,
@@ -257,7 +257,7 @@ async def test_parent_holistic_pr_merge_closes_with_real_heartbeat(
     initialize_manifest(
         temp_db,
         parent.id,
-        [spec("holistic_qa", 0), spec("pr", 1), spec("merge", 2)],
+        [spec("epic_qa", 0), spec("pr", 1), spec("merge", 2)],
     )
     spawned: list[str] = []
     monkeypatch.setattr(
@@ -268,24 +268,24 @@ async def test_parent_holistic_pr_merge_closes_with_real_heartbeat(
     )
 
     await dispatcher.run_heartbeat(db=temp_db, project_id=sample_project["id"])
-    assert stage_row(temp_db, parent.id, "holistic_qa")["state"] == "in_progress"
+    assert stage_row(temp_db, parent.id, "epic_qa")["state"] == "in_progress"
 
     await dispatcher.run_heartbeat(db=temp_db, project_id=sample_project["id"])
-    assert spawned[-1] == "holistic-reviewer"
+    assert spawned[-1] == "epic-reviewer"
     TaskDispatchMutexManager(temp_db).force_release(parent.id)
     manager.stage_states.submit_for_review(
         parent.id,
-        "holistic_qa",
-        by_session_id="holistic-reviewer",
+        "epic_qa",
+        by_session_id="epic-reviewer",
     )
     manager.stage_states.approve_review(
         parent.id,
-        "holistic_qa",
-        by_session_id="holistic-reviewer",
+        "epic_qa",
+        by_session_id="epic-reviewer",
     )
 
     await dispatcher.run_heartbeat(db=temp_db, project_id=sample_project["id"])
-    assert stage_row(temp_db, parent.id, "holistic_qa")["state"] == "done"
+    assert stage_row(temp_db, parent.id, "epic_qa")["state"] == "done"
 
     await dispatcher.run_heartbeat(db=temp_db, project_id=sample_project["id"])
     assert stage_row(temp_db, parent.id, "pr")["state"] == "in_progress"

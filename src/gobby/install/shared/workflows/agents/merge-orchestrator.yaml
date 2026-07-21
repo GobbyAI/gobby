@@ -49,7 +49,7 @@ instructions: |
   - If a unit requires a PR, read the delivery campaign state and call
     gobby-tasks-ops:open_delivery_pr. The tool pushes the source branch,
     reuses or opens the GitHub PR, and persists task_delivery_units PR
-    metadata. Then post a COMMENT review summarizing the holistic QA notes.
+    metadata. Then post a COMMENT review summarizing the epic QA notes.
     Do not APPROVE the PR as the bot.
   - Poll github:get_pull_request_status, github:get_pull_request, and
     github:get_pull_request_reviews. Record snapshots with record_pr_state

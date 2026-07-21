@@ -26,7 +26,7 @@ def current_stage(task: object) -> object | None:
 
 
 def is_child_parked(child: object) -> bool:
-    """True when a leaf child is no longer blocking parent holistic QA."""
+    """True when a leaf child is no longer blocking parent epic QA."""
     return (
         _is_leaf(child)
         and not bool(_field(child, "is_escalated", False))
@@ -203,13 +203,13 @@ def _artifacts(task: object, context: object) -> object:
     return _field(context, "artifacts", _field(task, "artifacts", {}))
 
 
-def _holistic_descendant_gate(context: object) -> object | None:
-    return cast(object | None, _field(context, "holistic_descendant_gate", None))
+def _epic_descendant_gate(context: object) -> object | None:
+    return cast(object | None, _field(context, "epic_descendant_gate", None))
 
 
-def _holistic_descendant_gate_body(gate: object) -> str:
+def _epic_descendant_gate_body(gate: object) -> str:
     blockers = tuple(_field(gate, "blockers", ()) or ())
-    lines = ["Holistic QA is waiting for nonterminal descendants:"]
+    lines = ["Epic QA is waiting for nonterminal descendants:"]
     for blocker in blockers:
         ref = _field(blocker, "task_ref", _field(blocker, "task_id", "unknown"))
         path = _field(blocker, "task_path", "no-path") or "no-path"
@@ -321,8 +321,8 @@ __all__ = [
     "_field",
     "_has_agent",
     "_has_merge_agent",
-    "_holistic_descendant_gate",
-    "_holistic_descendant_gate_body",
+    "_epic_descendant_gate",
+    "_epic_descendant_gate_body",
     "_is_closed",
     "_is_epic",
     "_is_leaf",

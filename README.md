@@ -78,7 +78,7 @@ everything. That's the failure mode you've already lived through.
 Gobby splits the runtime in two. Dispatch is **deterministic**: a heartbeat
 scans tasks, reads the current stage manifest row (`ideation` → `research` →
 `architecture` → `prd` → `planning` → `expansion` → `development` →
-`holistic_qa` → `pr` → `merge`), evaluates ordered rules in
+`epic_qa` → `pr` → `merge`), evaluates ordered rules in
 `src/gobby/dispatch/rules.py`, acquires a per-task mutex, and executes one
 bounded action — start a stage, spawn an agent, create isolation, advance,
 escalate. No prompting, no model freelancing.

@@ -1,20 +1,20 @@
 ---
-name: holistic-review
+name: epic-review
 description: Review an implemented epic against its approved plan, aggregate diff, and child-task validation evidence before final PR or merge handoff.
 version: "1.0.0"
 category: methodology
 internal: true
-triggers: holistic review, epic review, implementation audit, intent vs diff
+triggers: epic review, epic review, implementation audit, intent vs diff
 metadata:
   gobby:
     audience: all
     depth: 0
 ---
 
-# holistic-review - Gobby Epic Implementation Review
+# epic-review - Gobby Epic Implementation Review
 
-> Internal methodology skill; loaded with `get_skill(name="holistic-review")`
-> by the `holistic-reviewer` agent before it reviews an implemented epic.
+> Internal methodology skill; loaded with `get_skill(name="epic-review")`
+> by the `epic-reviewer` agent before it reviews an implemented epic.
 
 REQUIRED SKILL: review-learning.
 REQUIRED SKILL: proportionality.
@@ -83,7 +83,7 @@ testing gap and blocks approval.
 Apply the shared `proportionality` criterion (anti-Rube-Goldberg) at epic
 altitude: flag mechanism with no concrete consumer or requirement in the plan —
 speculative abstractions, unnecessary rewrites, and indirection the plan never
-needed. Weigh the cross-leaf signals only a holistic view can see: duplicate
+needed. Weigh the cross-leaf signals only an epic-level view can see: duplicate
 frameworks built independently across leaves, a framework introduced by one leaf
 and used by none, and product behavior no plan section asked for. Size,
 ambition, and a large but justified epic are never findings on their own; name
@@ -102,12 +102,12 @@ If a finding cannot be attributed to a `### N.N` section, explain whether the
 plan omitted the requirement, the substitute scope omitted it, or the
 implementation drifted beyond the plan.
 
-## Holistic Findings
+## Epic Findings
 
 Return a structured verdict block in this shape:
 
 ```text
-## Holistic Findings
+## Epic Findings
 
 verdict: approve | request_changes | needs_discussion
 spec_compliance: OK | Drift | Gap - <citation and one-line rationale>
@@ -134,14 +134,14 @@ findings.
 
 Map the verdict to task lifecycle tools exactly:
 
-- `approve` means call `complete_stage(stage_name="holistic_qa")` on the epic
+- `approve` means call `complete_stage(stage_name="epic_qa")` on the epic
   with a validation override reason such as
-  `holistic_qa approved by holistic-reviewer`.
-- `request_changes` means call `fail_stage(stage_name="holistic_qa")` with the
+  `epic_qa approved by epic-reviewer`.
+- `request_changes` means call `fail_stage(stage_name="epic_qa")` with the
   verdict in the reason and `cited_subtasks` for every blocking finding. At
   least one cited subtask is required.
 - `needs_discussion` means call `escalate_task` with a reason that starts with
   `needs_human:` and names the concrete decision needed.
 
-Do not close tasks from holistic review. The dispatcher or merge/PR flow handles
+Do not close tasks from epic review. The dispatcher or merge/PR flow handles
 the next lifecycle move after the review decision is recorded.

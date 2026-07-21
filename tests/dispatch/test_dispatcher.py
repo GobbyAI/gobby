@@ -35,13 +35,13 @@ pytestmark = pytest.mark.unit
 
 SESSION_1 = "11111111-1111-4111-8111-111111111111"
 OWNER_SESSION_ID = "22222222-2222-4222-8222-222222222222"
-HOLISTIC_COMMENT_ID = "33333333-3333-4333-8333-333333333333"
+EPIC_COMMENT_ID = "33333333-3333-4333-8333-333333333333"
 UNKNOWN_TASK_ID = "44444444-4444-4444-8444-444444444444"
 
 
 _LEGACY_STAGE_MAP = {
     "expanding": "expansion",
-    "holistic_review": "holistic_qa",
+    "epic_review": "epic_qa",
     "in_development": "development",
     "merged": "merge",
 }
@@ -330,11 +330,11 @@ async def test_append_audit_marker_returns_false_on_db_failure(
     assert f"Failed to append dispatch audit marker for task {UNKNOWN_TASK_ID}" in caplog.text
 
 
-def test_development_prompt_includes_persisted_holistic_failure_context(
+def test_development_prompt_includes_persisted_epic_failure_context(
     temp_db: HubDatabase,
     sample_project: dict[str, Any],
 ) -> None:
-    """Development prompt includes persisted holistic failure context."""
+    """Development prompt includes persisted epic failure context."""
     from gobby.agents.sync import sync_bundled_agents
     from gobby.dispatch import rules
     from gobby.dispatch.dispatcher import build_context
@@ -353,12 +353,12 @@ def test_development_prompt_includes_persisted_holistic_failure_context(
             id, task_id, parent_comment_id, author, author_type, body, created_at, updated_at
         )
         VALUES (
-            %s, %s, NULL, 'holistic-reviewer', 'system',
-            '## Holistic QA Follow-Up\n\nFix the dialect parity suite.', CURRENT_TIMESTAMP,
+            %s, %s, NULL, 'epic-reviewer', 'system',
+            '## Epic QA Follow-Up\n\nFix the dialect parity suite.', CURRENT_TIMESTAMP,
             CURRENT_TIMESTAMP
         )
         """,
-        (HOLISTIC_COMMENT_ID, task.id),
+        (EPIC_COMMENT_ID, task.id),
     )
 
     action = rules.development_rule(task, build_context(temp_db, task))
@@ -975,7 +975,7 @@ async def test_heartbeat_allows_child_development_after_parent_expansion_done(
 
 
 @pytest.mark.asyncio
-async def test_heartbeat_records_gated_holistic_root_before_reopened_descendant(
+async def test_heartbeat_records_gated_epic_root_before_reopened_descendant(
     temp_db: HubDatabase,
     sample_project: dict[str, Any],
 ) -> None:
@@ -984,17 +984,17 @@ async def test_heartbeat_records_gated_holistic_root_before_reopened_descendant(
     manager = LocalTaskManager(temp_db)
     root = manager.create_task(
         project_id=sample_project["id"],
-        title="Holistic root",
+        title="Epic root",
         task_type="epic",
     )
     update_task(temp_db, root.id, allow_automation=True, isolation="none", task_type="epic")
     initialize_manifest(
         temp_db,
         root.id,
-        [spec("development", 0), spec("holistic_qa", 1), spec("merge", 2)],
+        [spec("development", 0), spec("epic_qa", 1), spec("merge", 2)],
     )
     set_stage_state(temp_db, root.id, "development", "done")
-    set_stage_state(temp_db, root.id, "holistic_qa", "ready")
+    set_stage_state(temp_db, root.id, "epic_qa", "ready")
     phase = manager.create_task(
         project_id=sample_project["id"],
         title="Integrated phase",
@@ -1017,13 +1017,13 @@ async def test_heartbeat_records_gated_holistic_root_before_reopened_descendant(
 
     assert result.executed == 1
     assert LocalTaskManager(temp_db).stage_states.get(child.id, "development").state == "ready"
-    assert LocalTaskManager(temp_db).stage_states.get(root.id, "holistic_qa").state == "ready"
+    assert LocalTaskManager(temp_db).stage_states.get(root.id, "epic_qa").state == "ready"
     root_description = get_task(temp_db, root.id).description or ""
-    assert "### Holistic QA deferred" in root_description
+    assert "### Epic QA deferred" in root_description
 
 
 @pytest.mark.asyncio
-async def test_heartbeat_dispatches_reopened_review_under_gated_holistic_root(
+async def test_heartbeat_dispatches_reopened_review_under_gated_epic_root(
     monkeypatch: pytest.MonkeyPatch,
     temp_db: HubDatabase,
     sample_project: dict[str, Any],
@@ -1035,17 +1035,17 @@ async def test_heartbeat_dispatches_reopened_review_under_gated_holistic_root(
     manager = LocalTaskManager(temp_db)
     root = manager.create_task(
         project_id=sample_project["id"],
-        title="Holistic root",
+        title="Epic root",
         task_type="epic",
     )
     update_task(temp_db, root.id, allow_automation=True, isolation="none", task_type="epic")
     initialize_manifest(
         temp_db,
         root.id,
-        [spec("development", 0), spec("holistic_qa", 1), spec("merge", 2)],
+        [spec("development", 0), spec("epic_qa", 1), spec("merge", 2)],
     )
     set_stage_state(temp_db, root.id, "development", "done")
-    set_stage_state(temp_db, root.id, "holistic_qa", "ready")
+    set_stage_state(temp_db, root.id, "epic_qa", "ready")
     child = _task(
         temp_db,
         sample_project,
@@ -1091,7 +1091,7 @@ async def test_heartbeat_dispatches_reopened_review_under_gated_holistic_root(
 
 
 @pytest.mark.asyncio
-async def test_heartbeat_escalates_exhausted_holistic_qa_review(
+async def test_heartbeat_escalates_exhausted_epic_qa_review(
     temp_db: HubDatabase,
     sample_project: dict[str, Any],
 ) -> None:
@@ -1100,7 +1100,7 @@ async def test_heartbeat_escalates_exhausted_holistic_qa_review(
     task = _task(
         temp_db,
         sample_project,
-        stage_name="holistic_qa",
+        stage_name="epic_qa",
         stage_state="needs_review",
     )
     temp_db.execute(
@@ -1109,7 +1109,7 @@ async def test_heartbeat_escalates_exhausted_holistic_qa_review(
         SET review_round_count = %s, max_review_rounds = %s
         WHERE task_id = %s AND stage_name = %s
         """,
-        (2, 2, task.id, "holistic_qa"),
+        (2, 2, task.id, "epic_qa"),
     )
 
     result = await dispatcher.run_heartbeat(
@@ -1121,7 +1121,7 @@ async def test_heartbeat_escalates_exhausted_holistic_qa_review(
     escalated = get_task(temp_db, task.id)
     assert result.executed == 1
     assert escalated.is_escalated is True
-    assert escalated.escalation_reason == "holistic_qa_max_review_rounds"
+    assert escalated.escalation_reason == "epic_qa_max_review_rounds"
 
 
 def test_count_active_agents_scopes_by_parent_session_project(temp_db, sample_project) -> None:
@@ -2587,7 +2587,7 @@ async def test_leaf_spawn_recovers_parent_integration_target_branch(
     spawn_kwargs: dict[str, object] = {}
 
     def unexpected_prepare(**_kwargs: object) -> None:
-        raise AssertionError("leaf spawn should not use holistic epic workspace preparation")
+        raise AssertionError("leaf spawn should not use epic QA workspace preparation")
 
     async def fake_spawn_agent_impl(**kwargs: object) -> dict[str, object]:
         spawn_kwargs.update(kwargs)
@@ -2809,10 +2809,10 @@ async def test_merge_ready_leaf_spawn_blocks_contaminated_task_branch(
 
 
 @pytest.mark.asyncio
-async def test_epic_holistic_spawn_refreshes_and_reuses_integration_workspace(
+async def test_epic_qa_spawn_refreshes_and_reuses_integration_workspace(
     monkeypatch: pytest.MonkeyPatch, temp_db, sample_project
 ) -> None:
-    """Epic holistic spawn refreshes and reuses integration workspace."""
+    """Epic QA spawn refreshes and reuses integration workspace."""
     from gobby.agents.sync import sync_bundled_agents
     from gobby.dispatch import dispatcher
     from gobby.storage.agents import LocalAgentRunManager
@@ -2824,11 +2824,11 @@ async def test_epic_holistic_spawn_refreshes_and_reuses_integration_workspace(
     task = _task(
         temp_db,
         sample_project,
-        stage_name="holistic_qa",
+        stage_name="epic_qa",
         stage_state="in_progress",
         task_type="epic",
         isolation="worktree",
-        assigned_agent="holistic-reviewer",
+        assigned_agent="epic-reviewer",
     )
     TaskArtifactManager(temp_db).set_artifacts_atomic(
         task.id,
@@ -2842,9 +2842,9 @@ async def test_epic_holistic_spawn_refreshes_and_reuses_integration_workspace(
     action = SpawnAgentAction(
         task_id=task.id,
         task_ref=f"#{task.seq_num}",
-        agent_slug="holistic-reviewer",
+        agent_slug="epic-reviewer",
         prompt="review",
-        initial_variables={"stage_name": "holistic_qa", "stage_state": "in_progress"},
+        initial_variables={"stage_name": "epic_qa", "stage_state": "in_progress"},
     )
     prepare_calls: list[dict[str, object]] = []
     spawn_kwargs: dict[str, object] = {}
@@ -2904,10 +2904,10 @@ async def test_epic_holistic_spawn_refreshes_and_reuses_integration_workspace(
 
 
 @pytest.mark.asyncio
-async def test_epic_holistic_spawn_promotes_existing_worktree_when_target_missing(
+async def test_epic_qa_spawn_promotes_existing_worktree_when_target_missing(
     monkeypatch: pytest.MonkeyPatch, temp_db, sample_project, tmp_path
 ) -> None:
-    """Epic holistic spawn promotes existing worktree when target missing."""
+    """Epic QA spawn promotes existing worktree when target missing."""
     from gobby.agents.sync import sync_bundled_agents
     from gobby.dispatch import dispatcher
     from gobby.storage.agents import LocalAgentRunManager
@@ -2920,11 +2920,11 @@ async def test_epic_holistic_spawn_promotes_existing_worktree_when_target_missin
     task = _task(
         temp_db,
         sample_project,
-        stage_name="holistic_qa",
+        stage_name="epic_qa",
         stage_state="in_progress",
         task_type="epic",
         isolation="worktree",
-        assigned_agent="holistic-reviewer",
+        assigned_agent="epic-reviewer",
     )
     worktree_path = tmp_path / "phase-worktree"
     worktree_path.mkdir()
@@ -2944,9 +2944,9 @@ async def test_epic_holistic_spawn_promotes_existing_worktree_when_target_missin
     action = SpawnAgentAction(
         task_id=task.id,
         task_ref=f"#{task.seq_num}",
-        agent_slug="holistic-reviewer",
+        agent_slug="epic-reviewer",
         prompt="review",
-        initial_variables={"stage_name": "holistic_qa", "stage_state": "in_progress"},
+        initial_variables={"stage_name": "epic_qa", "stage_state": "in_progress"},
     )
     prepare_calls: list[dict[str, object]] = []
     spawn_kwargs: dict[str, object] = {}
@@ -3009,10 +3009,10 @@ async def test_epic_holistic_spawn_promotes_existing_worktree_when_target_missin
 
 
 @pytest.mark.asyncio
-async def test_epic_holistic_spawn_recovers_missing_target_from_current_branch(
+async def test_epic_qa_spawn_recovers_missing_target_from_current_branch(
     monkeypatch: pytest.MonkeyPatch, temp_db, sample_git_project
 ) -> None:
-    """Epic holistic spawn recovers missing target from current branch."""
+    """Epic QA spawn recovers missing target from current branch."""
     from gobby.agents.sync import sync_bundled_agents
     from gobby.dispatch import dispatcher
     from gobby.storage.agents import LocalAgentRunManager
@@ -3025,18 +3025,18 @@ async def test_epic_holistic_spawn_recovers_missing_target_from_current_branch(
     task = _task(
         temp_db,
         sample_project,
-        stage_name="holistic_qa",
+        stage_name="epic_qa",
         stage_state="in_progress",
         task_type="epic",
         isolation="worktree",
-        assigned_agent="holistic-reviewer",
+        assigned_agent="epic-reviewer",
     )
     action = SpawnAgentAction(
         task_id=task.id,
         task_ref=f"#{task.seq_num}",
-        agent_slug="holistic-reviewer",
+        agent_slug="epic-reviewer",
         prompt="review",
-        initial_variables={"stage_name": "holistic_qa", "stage_state": "in_progress"},
+        initial_variables={"stage_name": "epic_qa", "stage_state": "in_progress"},
     )
     prepare_calls: list[dict[str, object]] = []
 
@@ -3083,13 +3083,13 @@ async def test_epic_holistic_spawn_recovers_missing_target_from_current_branch(
 
 
 @pytest.mark.asyncio
-async def test_epic_holistic_workspace_conflict_rolls_back_without_heartbeat_error(
+async def test_epic_qa_workspace_conflict_rolls_back_without_heartbeat_error(
     monkeypatch: pytest.MonkeyPatch,
     caplog: pytest.LogCaptureFixture,
     temp_db,
     sample_project,
 ) -> None:
-    """Epic holistic workspace conflict rolls back without heartbeat error."""
+    """Epic QA workspace conflict rolls back without heartbeat error."""
     from gobby.agents.sync import sync_bundled_agents
     from gobby.build.workspaces import BuildWorkspaceError
     from gobby.dispatch import dispatcher
@@ -3100,11 +3100,11 @@ async def test_epic_holistic_workspace_conflict_rolls_back_without_heartbeat_err
     task = _task(
         temp_db,
         sample_project,
-        stage_name="holistic_qa",
+        stage_name="epic_qa",
         stage_state="in_progress",
         task_type="epic",
         isolation="worktree",
-        assigned_agent="holistic-reviewer",
+        assigned_agent="epic-reviewer",
         dispatch_failure_count=2,
     )
     child = _task(
@@ -3119,7 +3119,7 @@ async def test_epic_holistic_workspace_conflict_rolls_back_without_heartbeat_err
         assigned_agent="backend-developer",
         status="closed",
     )
-    set_stage_state(temp_db, task.id, "holistic_qa", "in_progress", work_attempt_count=3)
+    set_stage_state(temp_db, task.id, "epic_qa", "in_progress", work_attempt_count=3)
     set_stage_state(temp_db, child.id, "development", "done", work_attempt_count=3)
     TaskArtifactManager(temp_db).set_artifacts_atomic(
         task.id,
@@ -3130,9 +3130,9 @@ async def test_epic_holistic_workspace_conflict_rolls_back_without_heartbeat_err
     action = SpawnAgentAction(
         task_id=task.id,
         task_ref=f"#{task.seq_num}",
-        agent_slug="holistic-reviewer",
+        agent_slug="epic-reviewer",
         prompt="review",
-        initial_variables={"stage_name": "holistic_qa", "stage_state": "in_progress"},
+        initial_variables={"stage_name": "epic_qa", "stage_state": "in_progress"},
     )
 
     def fail_prepare(**_kwargs: object) -> None:
@@ -3169,7 +3169,7 @@ async def test_epic_holistic_workspace_conflict_rolls_back_without_heartbeat_err
     reopened_child = get_task(temp_db, child.id)
     assert result.executed == 1
     assert storage.get_mutex(task.id) is None
-    parent_stage = task_manager.stage_states.get(task.id, "holistic_qa")
+    parent_stage = task_manager.stage_states.get(task.id, "epic_qa")
     child_stage = task_manager.stage_states.get(child.id, "development")
     assert parent_stage is not None
     assert child_stage is not None

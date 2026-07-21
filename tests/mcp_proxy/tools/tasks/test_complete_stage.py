@@ -267,13 +267,13 @@ def test_complete_stage_releases_completed_agent_task_claim(
     child_session_id = _register_session(
         temp_db,
         sample_project,
-        "holistic-child",
+        "epic-child",
         agent_depth=1,
     )
     manager = LocalTaskManager(temp_db)
     task = create_task(temp_db, sample_project, task_type="epic")
-    initialize_manifest(temp_db, task.id, [spec("holistic_qa", 0), spec("merge", 1)])
-    manager.stage_states.start_stage(task.id, "holistic_qa", by_session_id=child_session_id)
+    initialize_manifest(temp_db, task.id, [spec("epic_qa", 0), spec("merge", 1)])
+    manager.stage_states.start_stage(task.id, "epic_qa", by_session_id=child_session_id)
     claimed = manager.claim_task(task.id, child_session_id)
     session_vars = SessionVariableManager(temp_db)
     session_vars.merge_variables(
@@ -284,8 +284,8 @@ def test_complete_stage_releases_completed_agent_task_claim(
     with session_context_for_test(child_session_id):
         result = _complete_stage(_ops_context(temp_db))(
             task_id=task.id,
-            stage_name="holistic_qa",
-            validation_override_reason="holistic_qa approved",
+            stage_name="epic_qa",
+            validation_override_reason="epic_qa approved",
         )
 
     refreshed = manager.get_task(task.id)

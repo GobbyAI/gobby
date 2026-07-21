@@ -289,12 +289,12 @@ class TestAgentWorkflowCompletion:
         completion_registry.notify.assert_not_awaited()
 
     @pytest.mark.asyncio
-    async def test_holistic_review_complete_stage_success_transitions_to_terminate(
+    async def test_epic_review_complete_stage_success_transitions_to_terminate(
         self, db: HubDatabase
     ) -> None:
         instance_manager = _register_agent_workflow(
             db,
-            workflow_name="holistic-reviewer",
+            workflow_name="epic-reviewer",
             review_tool="complete_stage",
         )
         runner = MagicMock()
@@ -313,15 +313,15 @@ class TestAgentWorkflowCompletion:
             _after_tool_event(
                 mcp_tool="complete_stage",
                 tool_arguments={
-                    "stage_name": "holistic_qa",
-                    "validation_override_reason": "holistic_qa approved by holistic-reviewer",
+                    "stage_name": "epic_qa",
+                    "validation_override_reason": "epic_qa approved by epic-reviewer",
                 },
             ),
             session_id=AGENT_SESSION_ID,
             variables=variables,
         )
 
-        instance = instance_manager.get_instance(AGENT_SESSION_ID, "holistic-reviewer")
+        instance = instance_manager.get_instance(AGENT_SESSION_ID, "epic-reviewer")
         assert instance is None
         assert variables["review_complete"] is True
         assert variables["step_workflow_complete"] is True

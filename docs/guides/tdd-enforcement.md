@@ -60,8 +60,8 @@ supported-language test-quality audit output is a rejection. Outside Gobby, an
 unsupported-language warning plus focused repo-native validation satisfies the
 audit-attempt evidence.
 
-`holistic-reviewer` checks the aggregate subtree. If a descendant task was
-TDD-required, holistic QA verifies that QA and completion evidence covered the
+`epic-reviewer` checks the aggregate subtree. If a descendant task was
+TDD-required, epic QA verifies that QA and completion evidence covered the
 same TDD and test-quality requirements.
 
 ## Planning Rules
@@ -105,7 +105,7 @@ When auditing this guide, verify:
   command, and supported test-quality audit or unsupported-language fallback
   evidence.
 - Developer agents load `development-discipline`.
-- QA and holistic QA agent definitions mention TDD evidence and test-quality
+- QA and epic QA agent definitions mention TDD evidence and test-quality
   audit requirements.
 - Runtime rule paths still live under
   `src/gobby/install/shared/workflows/rules/tdd-enforcement/`.

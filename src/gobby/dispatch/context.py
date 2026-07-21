@@ -11,7 +11,7 @@ from gobby.dispatch import rules as dispatch_rules
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.tasks._artifacts import TaskArtifactManager
 from gobby.storage.tasks._blocking import hydrate_task_blocking_state
-from gobby.storage.tasks._holistic_gate import find_holistic_descendant_gate
+from gobby.storage.tasks._epic_gate import find_epic_descendant_gate
 from gobby.storage.tasks._models import Task
 from gobby.storage.tasks._stage_hydration import hydrate_task_stage_state
 from gobby.storage.tasks._stage_registry import StageRegistryEntry, StageRegistryManager
@@ -91,7 +91,7 @@ def build_context(
         current_stage=current_stage,
         db=db,
         failure_context=_latest_failure_context(db, task.id),
-        holistic_descendant_gate=find_holistic_descendant_gate(
+        epic_descendant_gate=find_epic_descendant_gate(
             db,
             task,
             current_stage=current_stage,
@@ -171,8 +171,8 @@ def _latest_failure_context(db: HubDatabase, task_id: str) -> str | None:
          WHERE task_id = %s
            AND author_type = 'system'
            AND (
-               body LIKE '## Holistic QA Failure%%'
-               OR body LIKE '## Holistic QA Follow-Up%%'
+               body LIKE '## Epic QA Failure%%'
+               OR body LIKE '## Epic QA Follow-Up%%'
            )
          ORDER BY created_at DESC
          LIMIT 1

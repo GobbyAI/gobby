@@ -80,7 +80,7 @@ async def test_default_build_skips_nothing(
         "planning",
         "expansion",
         "development",
-        "holistic_qa",
+        "epic_qa",
         "pr",
         "merge",
     ]

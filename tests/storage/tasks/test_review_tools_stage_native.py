@@ -170,7 +170,7 @@ def test_fresh_feature_task_planning_review_path_uses_registry_policy(
     assert rows["planning"]["reviewer_agent"] == "plan-adversary"
     assert rows["expansion"]["reviewer_agent"] == "expansion-qa"
     assert rows["development"]["reviewer_agent"] == "qa-reviewer"
-    assert rows["pr"]["reviewer_agent"] is None
+    assert rows["pr"]["reviewer_agent"] == "trajectory-monitor"
 
     manager.stage_states.start_stage(task.id, "planning", by_session_id=None)
     updated = manager.submit_for_review(task.id)

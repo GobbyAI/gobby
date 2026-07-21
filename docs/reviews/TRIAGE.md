@@ -37,7 +37,7 @@
 
 ### build
 
-- #15834 (U016, `docs/reviews/build.md`) — Align explain_dispatch holistic-gate behavior with the real dispatcher
+- #15834 (U016, `docs/reviews/build.md`) — Align explain_dispatch epic-gate behavior with the real dispatcher
 - #15835 (U017, `docs/reviews/build.md`) — Scope build control task resolution to the caller's project for UUID refs
 - #15836 (U018, `docs/reviews/build.md`) — Serialize agent-cap admission across concurrent dispatch heartbeats
 
@@ -543,11 +543,11 @@
 
 ### dispatch
 
-- #15895 (U364, `docs/reviews/dispatch.md`) — Stabilize holistic_descendant_gate marker idempotency to stop description growth
+- #15895 (U364, `docs/reviews/dispatch.md`) — Stabilize epic_descendant_gate marker idempotency to stop description growth
 - #15899 (U365, `docs/reviews/dispatch.md`) — Treat _persist_spawn_artifacts failure as spawn failure instead of swallowing
 - #16495 (U358, `docs/reviews/dispatch.md`) — Continue heartbeat scan past transient psycopg.Error on a single candidate
 - #16501 (U359, `docs/reviews/dispatch.md`) — Detect stale MERGE_HEAD before dispatch merges; sweep expired integration leases
-- #16503 (U360, `docs/reviews/dispatch.md`) — Escalate holistic_qa on review-round exhaustion instead of wedging the task
+- #16503 (U360, `docs/reviews/dispatch.md`) — Escalate epic_qa on review-round exhaustion instead of wedging the task
 - #16514 (U361, `docs/reviews/dispatch.md`) — Guard heartbeat candidate loop and spawn-attach window against cancellation
 - #16526 (U362, `docs/reviews/dispatch.md`) — Re-run clone merge sync-back on the _is_ancestor fast-path; harden the fetch
 - #16531 (U363, `docs/reviews/dispatch.md`) — Guard implementation-domain agent routing with _agent_dispatchable fallback

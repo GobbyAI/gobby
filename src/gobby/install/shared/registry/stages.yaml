@@ -62,12 +62,12 @@ stages:
       default: qa-reviewer
     review_policy: required
     position_hint: 100
-  - name: holistic_qa
-    display_label: Holistic QA
+  - name: epic_qa
+    display_label: Epic QA
     description: Whole-epic review after every leaf is parked.
     category: verification
-    default_agent: holistic-reviewer
-    reviewer_agent: holistic-reviewer
+    default_agent: epic-reviewer
+    reviewer_agent: epic-reviewer
     review_policy: required
     position_hint: 120
   - name: pr

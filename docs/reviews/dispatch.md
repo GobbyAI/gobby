@@ -13,7 +13,7 @@
   optimistic-concurrency leasing is sound (advisory-lock acquire, holder-guarded release,
   guarded orphan sweep). The gaps: the documented *global* agent cap is enforced *per-project*
   (the structural root of the build review's cap Blocker), the heartbeat candidate loop has no
-  `finally`/cancellation guard around the mutex, `holistic_qa` review-exhaustion silently wedges
+  `finally`/cancellation guard around the mutex, `epic_qa` review-exhaustion silently wedges
   the task, and the clone-backend merge can report success while never syncing the user's repo.
 
 ## Findings
@@ -31,10 +31,10 @@
 - **Minimal fix:** Wrap the candidate body in `try/.../finally` (or `with mutex:`) so cancellation always releases an un-attached lease; widen the spawn-attach cancellation guard to release + kill the just-created run if cancel lands after spawn but before attach.
 - **Confidence:** med (orphan sweep self-heals the bare lease within 30s; the attach window and loop level are real exposures).
 
-### [IMPORTANT] `holistic_qa` review-round exhaustion silently wedges the task — no escalation
-- **Where:** `rules.py:296-302` (`holistic_qa_review_rule`: `if stage is None or _stage_review_exhausted(stage, context): return None` — verified) with `default_max_review_rounds=5` (`storage/tasks/_stage_registry.py:283`). No later rule matches `holistic_qa`/`needs_review` (`holistic_qa_advance_rule` only matches `review_approved`).
-- **Failure mode:** After the holistic reviewer fails to approve N rounds, the rule returns None and no other rule fires — the task produces no action and no escalation on every subsequent heartbeat (permanent wedge). Every sibling review rule escalates on exhaustion (`development_review_rule:269-270`, `expansion_review_rule:242-243`, `_spawn_on_stage:512-513` for planning/discovery); `holistic_qa` is the only review stage that silently stalls. Untested.
-- **Minimal fix:** Escalate on exhaustion (`EscalateAction(reason="holistic_qa_max_review_rounds")`), mirroring development; add a test.
+### [IMPORTANT] `epic_qa` review-round exhaustion silently wedges the task — no escalation
+- **Where:** `rules.py:296-302` (`epic_qa_review_rule`: `if stage is None or _stage_review_exhausted(stage, context): return None` — verified) with `default_max_review_rounds=5` (`storage/tasks/_stage_registry.py:283`). No later rule matches `epic_qa`/`needs_review` (`epic_qa_advance_rule` only matches `review_approved`).
+- **Failure mode:** After the epic reviewer fails to approve N rounds, the rule returns None and no other rule fires — the task produces no action and no escalation on every subsequent heartbeat (permanent wedge). Every sibling review rule escalates on exhaustion (`development_review_rule:269-270`, `expansion_review_rule:242-243`, `_spawn_on_stage:512-513` for planning/discovery); `epic_qa` is the only review stage that silently stalls. Untested.
+- **Minimal fix:** Escalate on exhaustion (`EscalateAction(reason="epic_qa_max_review_rounds")`), mirroring development; add a test.
 - **Confidence:** high.
 
 ### [IMPORTANT] Clone-backend merge can "complete" while the user's main repo branch is never synced — lost integration result on retry
@@ -67,10 +67,10 @@
 - **Minimal fix:** Decide the contract: guard the domain branch with `_agent_dispatchable` (fall through to default), or document + test the deliberate escalation.
 - **Confidence:** med.
 
-### [IMPORTANT] `holistic_descendant_gate` marker re-appends on every descendant state change — unbounded description growth
-- **Where:** `rules.py:129-145` (`holistic_descendant_gate_rule`), body builder `:799-812` (idempotency compares the *exact* marker text, whose body embeds each blocker's `stage=<name>:<state>`).
+### [IMPORTANT] `epic_descendant_gate` marker re-appends on every descendant state change — unbounded description growth
+- **Where:** `rules.py:129-145` (`epic_descendant_gate_rule`), body builder `:799-812` (idempotency compares the *exact* marker text, whose body embeds each blocker's `stage=<name>:<state>`).
 - **Failure mode:** As descendants advance, the body changes, the prior marker no longer matches, and a new marker is appended — one per distinct descendant-composition over the epic's life, bloating the task description (a load-bearing, parsed field). Deterministic (not a determinism bug) but unbounded growth + noisy audit.
-- **Minimal fix:** Key idempotency on a stable identity (heading + sorted blocker task_ids), or replace-in-place the existing "Holistic QA deferred" marker.
+- **Minimal fix:** Key idempotency on a stable identity (heading + sorted blocker task_ids), or replace-in-place the existing "Epic QA deferred" marker.
 - **Confidence:** med-high.
 
 ### [NIT] Dead/latent code and timestamp hygiene
@@ -83,7 +83,7 @@
 
 1. **The cap/concurrency model is project-sharded but documented as global.** Per-project `count_active_agents` + per-project `run_heartbeat` + `asyncio.gather` fan-out collectively defeat the single documented cap — the structural root of the build-review Blocker.
 2. **Cancellation-safety is uneven.** Non-spawn action paths get `finally: mutex.release()`; the candidate loop (which manually `__enter__`s the mutex) and the spawn-attach step have no `BaseException`/`finally` coverage. The codebase intends cancel-safety (a dedicated test covers the spawn-*call* window) but missed the loop and attach windows.
-3. **Per-stage exhaustion handling is inconsistent** — development/expansion/planning/discovery escalate on review-cap; `holistic_qa` silently returns None and wedges. Routing all `needs_review`/`in_progress` exhaustion through one shared helper would prevent the drift.
+3. **Per-stage exhaustion handling is inconsistent** — development/expansion/planning/discovery escalate on review-cap; `epic_qa` silently returns None and wedges. Routing all `needs_review`/`in_progress` exhaustion through one shared helper would prevent the drift.
 4. **Idempotent-retry via `_is_ancestor` is the merge subsystem's safety net but also skips post-merge side effects** (the sync-back), which is the clone-merge data-divergence gap. Any post-merge side effect must be idempotent and replayed on the fast-path.
 5. **Error-swallowing at write seams** (`_persist_spawn_artifacts`, merge cleanup) trades a hard failure for a silent stall; the dispatcher's stall behavior is worse than an explicit failure because there's no automatic re-derivation of the missing pointer.
 6. **Worktree path is well-tested; the clone path (the only backend that writes the user's real repo) is not.**
@@ -93,7 +93,7 @@
 - **The dispatcher determinism contract holds** — no LLM/expansion/network/clock/random decision in `dispatcher.py` or `rules.py`; pipeline input rendering uses `StepRenderer` over task context only; expansion/prompting happen inside spawned agents, not inline.
 - **Per-task acquire is race-free** — `pg_advisory_xact_lock(hashtext('dispatch_mutex:<task_id>'))` inside `transaction_immediate` serializes the read-then-upsert; `release_mutex` is holder-guarded and idempotent; the orphan-sweep DELETE is guarded on exact `updated_at` so it can't free a lease a holder just refreshed.
 - **Attached leases are not swept while a run is active** (sweep LEFT-JOINs agent_runs, excludes pending/running); the spawn-attach failure window terminalizes the created run (`_cleanup_unattached_spawned_run`, tested); the unattached-window crash is reclaimed by `sweep_orphan_no_run_dispatch_mutexes` after grace.
-- **The holistic-gate RULE side is correct** — the dispatcher does NOT hard-block on the holistic descendant gate; it runs `evaluate()` and the rule appends a marker while the spawn rules decline. (The `explain_dispatch` divergence is an observability bug, filed in the build review — not a rules bug.) Rule ordering is first-match with `_AUTO_ADVANCE_DEDICATED_STAGES` deferral; no conflicting-action overlap found.
+- **The epic-gate RULE side is correct** — the dispatcher does NOT hard-block on the epic descendant gate; it runs `evaluate()` and the rule appends a marker while the spawn rules decline. (The `explain_dispatch` divergence is an observability bug, filed in the build review — not a rules bug.) Rule ordering is first-match with `_AUTO_ADVANCE_DEDICATED_STAGES` deferral; no conflicting-action overlap found.
 - **No force-release abuse** — all `force_release*` callers are legitimate (orphan sweep post-grace, terminal run events, operator build lifecycle).
 - **Merge safety holds for the common cases** — `_local_target_path_if_checked_out` + `_ensure_branch` guard wrong-target merge; `_ensure_target_merge_safe` blocks overlapping dirty work; conflict abort preserves the target; auto-resolution is scoped to exactly `.gobby/project.json`/`docs/guides/README.md`; the sync merge runs via `asyncio.to_thread` (no loop block in the dispatch merge path).
 - **Prompt structured-control is clean** — prompts carry only role/contract/title/ref/reason/failure_context; skills/rules/tools/model derive from `action`/`agent_body`, never from task content.

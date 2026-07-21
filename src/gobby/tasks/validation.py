@@ -66,8 +66,8 @@ def _bound_structured_evidence(text: str, *, max_chars: int) -> str:
 VALIDATION_GATES = {
     ("plan_review", "needs_review"): "plan_review",
     ("in_development", "needs_review"): "qa",
-    ("holistic_review", "needs_review"): "holistic_review",
-    ("holistic_review", "open"): "holistic_review",
+    ("epic_review", "needs_review"): "epic_review",
+    ("epic_review", "open"): "epic_review",
     ("pr", "needs_review"): "pr",
     ("merging", "open"): "merge_readiness",
 }

@@ -28,7 +28,6 @@ _SKIPPABLE_STAGE_ORDER = (
     "plan_review",
     "expanding",
     "qa",
-    "holistic_review",
     "pr",
 )
 _CANONICAL_STAGE_NAMES = {
@@ -39,14 +38,13 @@ _CANONICAL_STAGE_NAMES = {
     "planning",
     "expansion",
     "development",
-    "holistic_qa",
+    "epic_qa",
     "pr",
     "merge",
 }
 _LEGACY_STAGE_ALIASES: dict[str, str | None] = {
     "plan_review": "planning",
     "expanding": "expansion",
-    "holistic_review": "holistic_qa",
     "qa": None,
 }
 
@@ -123,13 +121,13 @@ def _initial_stage_names(
     elif input_kind == "plan_file" and opts.planning_seed_state == "approved" and opts.quick:
         manifest = ["expansion"]
     elif input_kind == "plan_file" and opts.planning_seed_state == "approved":
-        manifest = ["expansion", "development", "holistic_qa", "pr", "merge"]
+        manifest = ["expansion", "development", "epic_qa", "pr", "merge"]
     elif input_kind == "plan_file" and opts.quick:
         manifest = ["planning"]
     elif input_kind == "plan_file":
-        manifest = ["planning", "expansion", "development", "holistic_qa", "pr", "merge"]
+        manifest = ["planning", "expansion", "development", "epic_qa", "pr", "merge"]
     elif input_kind == "expanded_epic":
-        manifest = ["development", "holistic_qa", "pr", "merge"]
+        manifest = ["development", "epic_qa", "pr", "merge"]
     else:
         defaults = task_manager.stages_registry.list_default_stages(task.task_type)
         if not defaults and task.task_type != "task":

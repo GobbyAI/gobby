@@ -61,7 +61,7 @@ def test_build_smoke_agent_runtime_mappings() -> None:
         "doc-reviewer": ("claude", "fable", "high"),
         "goal-taskmaster": ("codex", "gpt-5.6-sol", "xhigh"),
         "nightly-test-fixer": ("codex", "gpt-5.6-sol", "xhigh"),
-        "holistic-reviewer": ("codex", "gpt-5.6-sol", "xhigh"),
+        "epic-reviewer": ("codex", "gpt-5.6-sol", "xhigh"),
         "plan-adversary": ("codex", "gpt-5.6-sol", "xhigh"),
         "plan-adversary-taskless": ("codex", "gpt-5.6-sol", "xhigh"),
         "plan-enhancer": ("codex", "gpt-5.6-sol", "xhigh"),
@@ -112,8 +112,8 @@ def test_restricted_skill_load_steps_use_gobby_proxy_guidance() -> None:
             assert "Computer Use tools" in status, label
 
 
-def test_holistic_review_skill_defines_methodology_and_verdict_block() -> None:
-    skill_text = (SKILLS_DIR / "holistic-review/SKILL.md").read_text()
+def test_epic_review_skill_defines_methodology_and_verdict_block() -> None:
+    skill_text = (SKILLS_DIR / "epic-review/SKILL.md").read_text()
 
     for heading in (
         "### spec_compliance",
@@ -127,7 +127,7 @@ def test_holistic_review_skill_defines_methodology_and_verdict_block() -> None:
     assert "### yagni" not in skill_text
     assert "proportionality` criterion" in skill_text
     assert "simpler form" in skill_text
-    assert "## Holistic Findings" in skill_text
+    assert "## Epic Findings" in skill_text
     assert "verdict: approve | request_changes | needs_discussion" in skill_text
     assert "spec_compliance: OK | Drift | Gap" in skill_text
     assert "code_quality: OK | Drift | Gap" in skill_text
@@ -137,20 +137,20 @@ def test_holistic_review_skill_defines_methodology_and_verdict_block() -> None:
     assert "operational_risk" not in skill_text
 
 
-def test_holistic_review_skill_allows_docs_epic_plan_substitute() -> None:
-    skill_text = (SKILLS_DIR / "holistic-review/SKILL.md").read_text()
+def test_epic_review_skill_allows_docs_epic_plan_substitute() -> None:
+    skill_text = (SKILLS_DIR / "epic-review/SKILL.md").read_text()
 
     assert "Discovery Brief" in skill_text
     assert "descendant task set" in skill_text
     assert "do not escalate solely" in skill_text
-    assert 'complete_stage(stage_name="holistic_qa")' in skill_text
-    assert 'fail_stage(stage_name="holistic_qa")' in skill_text
-    assert 'approve_review(stage_name="holistic_qa")' not in skill_text
-    assert 'reject_review(stage_name="holistic_qa")' not in skill_text
+    assert 'complete_stage(stage_name="epic_qa")' in skill_text
+    assert 'fail_stage(stage_name="epic_qa")' in skill_text
+    assert 'approve_review(stage_name="epic_qa")' not in skill_text
+    assert 'reject_review(stage_name="epic_qa")' not in skill_text
 
 
-def test_holistic_reviewer_loads_skill_reads_files_and_terminates_cleanly() -> None:
-    agent = _agent("holistic-reviewer")
+def test_epic_reviewer_loads_skill_reads_files_and_terminates_cleanly() -> None:
+    agent = _agent("epic-reviewer")
     load_skill = _step(agent, "load_skill")
     review = _step(agent, "review")
     terminate = _step(agent, "terminate")
@@ -158,7 +158,7 @@ def test_holistic_reviewer_loads_skill_reads_files_and_terminates_cleanly() -> N
     assert "gobby-skills:get_skill" in _allowed_mcp_tools(load_skill)
     assert {
         "code-index",
-        "holistic-review",
+        "epic-review",
         "tech-writer",
         "task-transitions",
     }.issubset(set(agent["step_variables"]["required_skills"]))
@@ -309,19 +309,19 @@ def test_tdd_discipline_skills_are_bundled() -> None:
     assert "unsupported-language warning" in discipline
 
 
-def test_qa_and_holistic_reviewers_check_tdd_required_evidence() -> None:
+def test_qa_and_epic_reviewers_check_tdd_required_evidence() -> None:
     qa = _agent("qa-reviewer")
-    holistic = _agent("holistic-reviewer")
+    epic = _agent("epic-reviewer")
     qa_skill = (SKILLS_DIR / "qa/SKILL.md").read_text()
-    holistic_skill = (SKILLS_DIR / "holistic-review/SKILL.md").read_text()
+    epic_skill = (SKILLS_DIR / "epic-review/SKILL.md").read_text()
 
     for text in (
         qa["instructions"],
         _step(qa, "review")["status_message"],
-        holistic["instructions"],
-        _step(holistic, "review")["status_message"],
+        epic["instructions"],
+        _step(epic, "review")["status_message"],
         qa_skill,
-        holistic_skill,
+        epic_skill,
     ):
         assert "tdd:required" in text
         assert "test-driven-development" in text

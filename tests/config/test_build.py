@@ -24,7 +24,7 @@ def test_build_config_defaults_include_dispatch_knobs() -> None:
             "planning",
             "expansion",
             "development",
-            "holistic_qa",
+            "epic_qa",
             "pr",
             "merge",
         }
@@ -64,7 +64,7 @@ def test_load_build_config_merges_defaults_global_project_and_flags(
     (project_root / ".gobby" / "build.yaml").write_text(
         yaml.safe_dump(
             {
-                "default_skip_stages": ["holistic_qa"],
+                "default_skip_stages": ["epic_qa"],
                 "cleanup_clones_on_merge": False,
                 "dispatch_interval_seconds": 15,
             }
@@ -81,7 +81,7 @@ def test_load_build_config_merges_defaults_global_project_and_flags(
         },
     )
 
-    assert cfg.default_skip_stages == ("holistic_qa",)
+    assert cfg.default_skip_stages == ("epic_qa",)
     assert cfg.default_isolation == "none"
     assert cfg.stage_caps["pr"].max_review_rounds == 5
     assert cfg.stage_caps["pr"].max_work_attempts is None

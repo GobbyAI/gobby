@@ -24,7 +24,7 @@ from gobby.tasks.categories import DEVELOPMENT_FORWARD_LEAF_CATEGORIES
 
 _DEFAULT_AGENT = "backend-developer"
 _DEFAULT_PHASE_ID = "phase-1"
-_EXPANSION_STAGES = frozenset({"planning", "expansion", "development", "holistic_qa", "pr"})
+_EXPANSION_STAGES = frozenset({"planning", "expansion", "development", "epic_qa", "pr"})
 _FRONTEND_SIGNALS = frozenset(
     {
         "accessibility",

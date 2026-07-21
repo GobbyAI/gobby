@@ -9,7 +9,7 @@ rules:
     agent_scope:
       - qa-reviewer
       - doc-reviewer
-      - holistic-reviewer
+      - epic-reviewer
     when: >-
       variables.get('current_step') == 'review'
       and not variables.get('review_complete')
@@ -26,7 +26,7 @@ rules:
       - type: inject_context
         template: |
           Reviewer validation succeeded. Emit the lifecycle verdict now before ending the turn.
-          {{ 'Call complete_stage(stage_name="holistic_qa"), fail_stage(stage_name="holistic_qa"), or escalate_task.' if variables.get('_agent_type') == 'holistic-reviewer' else 'Call approve_review(stage_name="development"), reject_review(stage_name="development"), or escalate_task.' }}
+          {{ 'Call complete_stage(stage_name="epic_qa"), fail_stage(stage_name="epic_qa"), or escalate_task.' if variables.get('_agent_type') == 'epic-reviewer' else 'Call approve_review(stage_name="development"), reject_review(stage_name="development"), or escalate_task.' }}
 
   reviewer-terminal-verdict-clear-on-verdict:
     description: "Clear reviewer terminal-verdict pending state after the matching verdict tool succeeds"
@@ -36,7 +36,7 @@ rules:
     agent_scope:
       - qa-reviewer
       - doc-reviewer
-      - holistic-reviewer
+      - epic-reviewer
     when: >-
       variables.get('reviewer_terminal_verdict_pending')
       and tool_call_succeeded()
@@ -55,7 +55,7 @@ rules:
           )
         )
         or (
-          variables.get('_agent_type') == 'holistic-reviewer'
+          variables.get('_agent_type') == 'epic-reviewer'
           and (
             (
               event.data.get('mcp_server') == 'gobby-tasks-ops'
@@ -84,7 +84,7 @@ rules:
     agent_scope:
       - qa-reviewer
       - doc-reviewer
-      - holistic-reviewer
+      - epic-reviewer
     when: >-
       variables.get('reviewer_terminal_verdict_pending')
     effects:
@@ -92,4 +92,4 @@ rules:
         reason: |
           Successful reviewer validation ran, but no lifecycle verdict has succeeded yet.
           Validation command: {{ variables.get('reviewer_terminal_verdict_validation_command') or '(unknown)' }}
-          {{ 'Call complete_stage(stage_name="holistic_qa"), fail_stage(stage_name="holistic_qa"), or escalate_task before ending the turn.' if variables.get('_agent_type') == 'holistic-reviewer' else 'Call approve_review(stage_name="development"), reject_review(stage_name="development"), or escalate_task before ending the turn.' }}
+          {{ 'Call complete_stage(stage_name="epic_qa"), fail_stage(stage_name="epic_qa"), or escalate_task before ending the turn.' if variables.get('_agent_type') == 'epic-reviewer' else 'Call approve_review(stage_name="development"), reject_review(stage_name="development"), or escalate_task before ending the turn.' }}

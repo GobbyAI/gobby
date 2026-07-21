@@ -32,7 +32,7 @@ def test_dispatch_prompt_builder_keys_present() -> None:
         "doc-reviewer",
         "expansion-qa",
         "fullstack-developer",
-        "holistic-reviewer",
+        "epic-reviewer",
         "merge-orchestrator",
         "plan-adversary",
         "plan-adversary-taskless",
@@ -142,10 +142,10 @@ def test_doc_reviewer_prompt_builder_registered() -> None:
     assert "#43" in prompt
 
 
-def test_holistic_reviewer_prompt_builder_registered() -> None:
+def test_epic_reviewer_prompt_builder_registered() -> None:
     from gobby.dispatch.prompts import PROMPT_BUILDERS
 
-    assert "holistic-reviewer" in PROMPT_BUILDERS
+    assert "epic-reviewer" in PROMPT_BUILDERS
 
 
 @pytest.mark.parametrize(
