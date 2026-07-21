@@ -153,3 +153,10 @@ so each iteration resumes from the durable goal document and live task state.
   tests; broader validation passed 251 session-storage and 102 hook tests. Ruff,
   strict mypy, configured Bandit, package build, test-quality, diff, and
   source-size checks passed.
+- 2026-07-21 #9341 iteration 11 — closed #18491 with commit `ad1702197`;
+  `gobby install` now exposes a default-on container restart-policy toggle,
+  persists the selected policy in managed Compose, and repairs existing
+  PostgreSQL, FalkorDB, and Qdrant containers through `docker update`. Final
+  focused validation passed 698 tests; Ruff format/check, strict mypy,
+  configured Bandit, package build, test-quality, diff, source-size, and wheel
+  content checks passed.
