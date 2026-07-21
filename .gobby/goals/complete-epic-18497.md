@@ -7,6 +7,8 @@ created: 2026-07-21
 sessions: ["#9341"]
 ---
 
+# Complete Epic #18497
+
 ## Objective
 
 Complete and close every task in epic #18497, preserving each task's contract,
@@ -111,3 +113,9 @@ so each iteration resumes from the durable goal document and live task state.
   Bandit, package build, test-quality, JSON, and diff checks passed. Expansion
   context now surfaces related existing tests and the prompt selects test updates
   for covered behavior; close-triggered compaction supplied the required boundary.
+- 2026-07-21 #9341 iteration 5 — closed #17673 with commits `4ce1b5917` and
+  `ad2180201`; 136 focused tests passed, and the bundled workflow corpus now
+  enforces exact MCP failure routes or an explicit stay policy plus satisfiable
+  ordering guards. Ruff format/check, strict mypy, Bandit, package build, YAML
+  schema, test-quality, and diff checks passed; close-triggered compaction supplied
+  the required boundary.
