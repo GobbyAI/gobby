@@ -146,3 +146,10 @@ so each iteration resumes from the durable goal document and live task state.
   automation policy and duplicate-review protection. Targeted validation passed
   44 tests with 1 skip; adjacent lifecycle validation passed 217 tests. Ruff,
   strict mypy, Bandit, test-quality, diff, and source-size checks also passed.
+- 2026-07-21 #9341 iteration 10 — closed #18656 with commit `faa673746`;
+  generic session updates now atomically merge filtered `terminal_context` JSONB
+  in the scalar transaction, and SESSION_START identity binding delegates context
+  persistence to backfill. Focused acceptance passed 110 tests plus 16 pruning
+  tests; broader validation passed 251 session-storage and 102 hook tests. Ruff,
+  strict mypy, configured Bandit, package build, test-quality, diff, and
+  source-size checks passed.
