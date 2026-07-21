@@ -114,6 +114,70 @@ def _register_session(db: HubDatabase, project_id: str, tmp_path: Path) -> str:
     )
 
 
+def test_gobby_session_id_binding_merges_terminal_context(
+    temp_db: HubDatabase,
+    tmp_path: Path,
+) -> None:
+    project_id = _make_project(temp_db, tmp_path)
+    session_manager = SessionManager(temp_db)
+    session = session_manager.register(
+        external_id="gobby-pre-created",
+        machine_id="machine-1",
+        source="codex",
+        project_id=project_id,
+        terminal_context={
+            "tmux_pane": "%42",
+            "tmux_socket_path": "/tmp/tmux.sock",
+            "cwd": "/work/old",
+            "gobby_agent_run_id": "run-existing",
+        },
+    )
+    handlers = _make_real_event_handlers(temp_db, project_id)
+    event = _make_hook_event(
+        {
+            "skip_default_agent_activation": True,
+            "terminal_context": {
+                "gobby_session_id": session.id,
+                "tmux_pane": None,
+                "cwd": "/work/new",
+                "parent_pid": 1234,
+            },
+        },
+        external_id="native-codex-session",
+    )
+
+    with (
+        patch.object(handlers, "_derive_transcript_path", return_value=None),
+        patch.object(handlers, "_setup_code_index"),
+        patch.object(
+            handlers,
+            "_compose_session_response",
+            return_value=HookResponse(decision="allow"),
+        ),
+        patch("gobby.hooks.event_handlers._session_start.flow._seed_memory_recall_vars"),
+        patch("gobby.hooks.event_handlers._session_start.flow._seed_wiki_overview_var"),
+        patch("gobby.hooks.event_handlers._session_start.flow.seed_user_profile_content"),
+        patch(
+            "gobby.hooks.event_handlers._session_start.flow."
+            "_schedule_tmux_window_rename_for_session"
+        ),
+    ):
+        response = handlers.handle_session_start(event)
+
+    assert response.decision == "allow"
+    updated = session_manager.get(session.id)
+    assert updated is not None
+    assert updated.external_id == "native-codex-session"
+    assert updated.terminal_context == {
+        "tmux_pane": "%42",
+        "tmux_socket_path": "/tmp/tmux.sock",
+        "cwd": "/work/new",
+        "gobby_agent_run_id": "run-existing",
+        "gobby_session_id": session.id,
+        "parent_pid": 1234,
+    }
+
+
 def test_event_handlers_round_trips_memory_recall_config() -> None:
     config = MemoryRecallConfig(enabled=False)
 

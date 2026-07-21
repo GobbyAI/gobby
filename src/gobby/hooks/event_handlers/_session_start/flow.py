@@ -401,7 +401,6 @@ def handle_session_start(handler: Any, event: HookEvent) -> HookResponse:
                     handler._session_manager.update(
                         gobby_session_id_from_env,
                         external_id=external_id,
-                        terminal_context=terminal_context,
                     )
                     if handler._session_manager:
                         handler._session_manager.cache_session_mapping(

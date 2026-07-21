@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+from datetime import datetime
 from typing import TYPE_CHECKING, Any, ClassVar, Protocol
 
 from gobby.storage.hub.protocol import SessionSeqMutation
@@ -14,7 +15,7 @@ from ._update_sentinel import UNSET, UnsetType, is_set
 from ._upsert import is_session_unique_conflict
 
 if TYPE_CHECKING:
-    from gobby.storage.hub.protocol import HubDatabase
+    from gobby.storage.hub.protocol import HubDatabase, Transaction
 
 
 class _ManagerState(Protocol):
@@ -26,6 +27,28 @@ class _ManagerState(Protocol):
     def get(self, session_id: str) -> Session | None: ...
 
     def _notify_session_change(self, event: str, session_id: str) -> None: ...
+
+
+def _apply_session_update(
+    manager: _ManagerState,
+    conn: Transaction,
+    session_id: str,
+    values: dict[str, Any],
+    terminal_context: dict[str, Any],
+    updated_at: datetime,
+) -> None:
+    if values:
+        manager.db.safe_update("sessions", values, "id = %s", (session_id,))
+    if terminal_context:
+        conn.execute(
+            """
+            UPDATE sessions
+            SET terminal_context = COALESCE(terminal_context, '{}'::jsonb) || %s::jsonb,
+                updated_at = %s
+            WHERE id = %s
+            """,
+            (json.dumps(terminal_context), updated_at, session_id),
+        )
 
 
 class _BulkUpdateMixin:
@@ -107,8 +130,11 @@ class _BulkUpdateMixin:
             values["title_source"] = title_source
         if is_set(git_branch):
             values["git_branch"] = git_branch
-        if terminal_context is not None:
-            values["terminal_context"] = json.dumps(terminal_context)
+        incoming_terminal_context = (
+            {key: value for key, value in terminal_context.items() if value is not None}
+            if terminal_context
+            else {}
+        )
         if project_id is not None:
             values["project_id"] = project_id
         if sandbox_enabled is not None:
@@ -116,10 +142,12 @@ class _BulkUpdateMixin:
         if sandbox_policy_hash is not None:
             values["sandbox_policy_hash"] = sandbox_policy_hash
 
-        if not values:
+        if not values and not incoming_terminal_context:
             return self.get(session_id)
 
-        values["updated_at"] = utc_now()
+        updated_at = utc_now()
+        if values:
+            values["updated_at"] = updated_at
 
         try:
             if current is not None and project_id is not None and current.project_id != project_id:
@@ -131,18 +159,39 @@ class _BulkUpdateMixin:
                         (project_id,),
                     ).fetchone()
                     values["seq_num"] = ((max_seq_row["max_seq"] if max_seq_row else None) or 0) + 1
-                    self.db.safe_update("sessions", values, "id = %s", (session_id,))
+                    _apply_session_update(
+                        self,
+                        conn,
+                        session_id,
+                        values,
+                        incoming_terminal_context,
+                        updated_at,
+                    )
             else:
-                with self.db.transaction():
-                    self.db.safe_update("sessions", values, "id = %s", (session_id,))
+                with self.db.transaction() as conn:
+                    _apply_session_update(
+                        self,
+                        conn,
+                        session_id,
+                        values,
+                        incoming_terminal_context,
+                        updated_at,
+                    )
         except Exception as exc:
             if current is None or not is_session_unique_conflict(exc):
                 raise
             conflicting = _conflicting_web_chat_session(self, current, values)
             if conflicting is None:
                 raise
-            with self.db.transaction():
-                self.db.safe_update("sessions", values, "id = %s", (conflicting.id,))
+            with self.db.transaction() as conn:
+                _apply_session_update(
+                    self,
+                    conn,
+                    conflicting.id,
+                    values,
+                    incoming_terminal_context,
+                    updated_at,
+                )
             updated = self.get(conflicting.id)
             if updated is not None:
                 self._notify_session_change("session_updated", conflicting.id)

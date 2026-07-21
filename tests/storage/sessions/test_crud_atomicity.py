@@ -207,3 +207,89 @@ def test_update_approved_tools_refreshes_updated_at(
     assert row is not None
     assert row["approved_tools_json"] == '["functions.exec_command"]'
     assert row["updated_at"] != stale_timestamp
+
+
+def test_update_terminal_context_merges_partial_context_and_notifies_once(
+    temp_db: HubDatabase,
+    sample_project: dict[str, str],
+) -> None:
+    manager = SessionManager(temp_db)
+    session = manager.register(
+        external_id="terminal-context-partial-update",
+        machine_id="machine-1",
+        source="codex",
+        project_id=sample_project["id"],
+        terminal_context={
+            "tmux_pane": "%7",
+            "tmux_socket_path": "/tmp/tmux.sock",
+            "cwd": "/work/old",
+        },
+    )
+    notifications: list[tuple[str, str]] = []
+    manager.register_session_change_listener(
+        lambda event, session_id: notifications.append((event, session_id))
+    )
+
+    updated = manager.update(
+        session.id,
+        title="Updated terminal",
+        terminal_context={
+            "tmux_pane": None,
+            "cwd": "/work/new",
+            "gobby_agent_run_id": "run-1",
+        },
+    )
+
+    assert updated is not None
+    assert updated.title == "Updated terminal"
+    assert updated.terminal_context == {
+        "tmux_pane": "%7",
+        "tmux_socket_path": "/tmp/tmux.sock",
+        "cwd": "/work/new",
+        "gobby_agent_run_id": "run-1",
+    }
+    assert notifications == [("session_updated", session.id)]
+
+
+def test_update_terminal_context_merges_concurrent_disjoint_keys(
+    temp_db: HubDatabase,
+    sample_project: dict[str, str],
+) -> None:
+    manager = SessionManager(temp_db)
+    session = manager.register(
+        external_id="terminal-context-concurrent-update",
+        machine_id="machine-1",
+        source="codex",
+        project_id=sample_project["id"],
+        terminal_context={"tmux_pane": "%9"},
+    )
+    barrier = threading.Barrier(2)
+    errors: list[BaseException] = []
+    lock = threading.Lock()
+
+    def _update(context: dict[str, object]) -> None:
+        thread_manager = SessionManager(temp_db)
+        try:
+            barrier.wait(timeout=5)
+            thread_manager.update(session.id, terminal_context=context)
+        except BaseException as exc:  # pragma: no cover - asserted below
+            with lock:
+                errors.append(exc)
+
+    threads = [
+        threading.Thread(target=_update, args=({"cwd": "/work/repo"},)),
+        threading.Thread(target=_update, args=({"gobby_agent_run_id": "run-2"},)),
+    ]
+    for thread in threads:
+        thread.start()
+    for thread in threads:
+        thread.join()
+
+    assert errors == []
+    updated = manager.get(session.id)
+    assert updated is not None
+    assert updated.terminal_context == {
+        "tmux_pane": "%9",
+        "cwd": "/work/repo",
+        "gobby_agent_run_id": "run-2",
+    }

@@ -372,7 +372,7 @@ class TestSessionManagerPruning:
             (
                 str(uuid4()),
                 sample_project["id"],
-                "note",
+                "context",
                 "Retained memory history",
                 memory_ref.id,
             ),
@@ -505,7 +505,7 @@ class TestSessionManagerPruning:
             (
                 str(uuid4()),
                 sample_project["id"],
-                "note",
+                "context",
                 "Retained memory history",
                 retained_memory.id,
             ),
