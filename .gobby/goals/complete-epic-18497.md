@@ -106,3 +106,8 @@ so each iteration resumes from the durable goal document and live task state.
   passed. Structured failure categories now distinguish retryable infrastructure
   failures from code/test verdicts and surface per-category build counts;
   close-triggered compaction supplied the required boundary.
+- 2026-07-21 #9341 iteration 4 — closed #17665 with commit `b1fb1841b`;
+  69 focused expansion and prompt tests passed; Ruff format/check, strict mypy,
+  Bandit, package build, test-quality, JSON, and diff checks passed. Expansion
+  context now surfaces related existing tests and the prompt selects test updates
+  for covered behavior; close-triggered compaction supplied the required boundary.
