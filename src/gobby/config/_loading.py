@@ -73,7 +73,6 @@ _LEGACY_LOGGING_PATH_FIELDS = (
 _BOOTSTRAP_PRE_DATABASE_KEYS = (
     "hub_backend",
     "database_url",
-    "postgres_install_mode",
     "postgres_pool",
 )
 
@@ -116,7 +115,7 @@ def expand_env_vars(
         if secret_resolver is not None:
             try:
                 secret_value = secret_resolver(var_name)
-                if secret_value is not None and secret_value != "":
+                if secret_value is not None and secret_value != "":  # nosec B105
                     return protect_value(secret_value)
             except Exception as e:
                 logger.debug("Secret resolver failed for '%s': %s", var_name, e)

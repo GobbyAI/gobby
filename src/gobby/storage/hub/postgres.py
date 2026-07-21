@@ -181,7 +181,7 @@ _GCORE_CODE_INDEX_TABLES = frozenset(_GCORE_CODE_INDEX_COLUMNS)
 _GWIKI_TABLES = frozenset(_GWIKI_COLUMNS)
 _PG_SEARCH_MISSING_MESSAGE = (
     "pg_search extension is not present on this database. Rebuild the Docker PostgreSQL "
-    "image with `gobby postgres install --mode docker`."
+    "image with `gobby postgres install`."
 )
 _BaselineState = Literal[
     "fresh",

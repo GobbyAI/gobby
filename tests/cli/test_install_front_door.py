@@ -8,6 +8,7 @@ from pathlib import Path
 from unittest.mock import MagicMock
 
 import pytest
+from click.testing import CliRunner
 
 install_module = importlib.import_module("gobby.cli.install")
 
@@ -52,7 +53,6 @@ def test_full_preflight_requires_docker_cli_tmux_and_source_uv(
         is_full_install=True,
         detected_clis=[],
         install_dir=Path("/repo/src/gobby/install"),
-        require_docker=True,
         embedding_url=None,
         embedding_provider=None,
     )
@@ -76,13 +76,38 @@ def test_targeted_preflight_skips_full_install_requirements(
         is_full_install=False,
         detected_clis=[],
         install_dir=Path("/repo/src/gobby/install"),
-        require_docker=True,
         embedding_url=None,
         embedding_provider=None,
     )
 
     assert errors == []
     assert any("git was not found" in warning for warning in warnings)
+
+
+def test_full_install_exits_before_provisioning_without_docker(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    install_postgres = MagicMock()
+    monkeypatch.setattr(install_module, "_docker_daemon_available", lambda: False)
+    monkeypatch.setattr(install_module, "get_install_dir", lambda: tmp_path)
+    monkeypatch.setattr(install_module, "_is_claude_code_installed", lambda: True)
+    for detector in (
+        "_is_grok_cli_installed",
+        "_is_agy_cli_installed",
+        "_is_qwen_cli_installed",
+        "_is_codex_cli_installed",
+        "_is_droid_cli_installed",
+    ):
+        monkeypatch.setattr(install_module, detector, lambda: False)
+    monkeypatch.setattr(install_module.shutil, "which", lambda _name: "/usr/bin/tool")
+    monkeypatch.setattr(install_module, "install_postgres", install_postgres)
+
+    result = CliRunner().invoke(install_module.install, ["--all"])
+
+    assert result.exit_code == 1
+    assert "Docker daemon is required for full install" in result.output
+    install_postgres.assert_not_called()
 
 
 def test_should_initialize_project_auto_yes_only_for_no_interactive(tmp_path: Path) -> None:

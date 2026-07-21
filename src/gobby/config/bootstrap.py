@@ -1,8 +1,8 @@
 """Bootstrap configuration for pre-database settings.
 
 These settings are needed before the PostgreSQL hub is available:
-daemon_port, bind_host, websocket_port, ui_port, falkordb_password, hub_backend,
-database_url, postgres_install_mode, and PostgreSQL client pool settings.
+daemon_port, bind_host, websocket_port, ui_port, hub_backend, database_url, and
+PostgreSQL client pool settings.
 
 All other configuration is managed via the PostgreSQL hub (config_store) +
 Pydantic defaults.
@@ -10,11 +10,13 @@ Pydantic defaults.
 
 from __future__ import annotations
 
+import ipaddress
 import logging
 import os
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Literal, cast
+from urllib.parse import urlparse
 
 from .bootstrap_io import bootstrap_path as default_bootstrap_path
 from .bootstrap_io import read_bootstrap_yaml
@@ -36,7 +38,6 @@ DEFAULT_UI_PORT = 60889
 
 AuthMode = Literal["required", "disabled"]
 HubBackend = Literal["postgres"]
-PostgresInstallMode = Literal["docker"]
 HUB_BACKEND_MIGRATION_DOCS = "docs/guides/configuration.md#bootstrap"
 HUB_BACKEND_POSTGRES_REQUIRED = (
     'hub_backend must be postgres (hub_backend (Literal["postgres"]) only supports '
@@ -68,7 +69,6 @@ class BootstrapConfig:
     auth_mode: AuthMode = "required"
     hub_backend: HubBackend = "postgres"
     database_url: str | None = None
-    postgres_install_mode: PostgresInstallMode | None = None
     postgres_pool: PostgresPoolConfig = DEFAULT_POSTGRES_POOL_CONFIG
     daemon_url: str | None = None
 
@@ -85,7 +85,6 @@ class BootstrapConfig:
             "auth_mode": self.auth_mode,
             "hub_backend": self.hub_backend,
             "database_url": self.database_url,
-            "postgres_install_mode": self.postgres_install_mode,
             "postgres_pool": self.postgres_pool.to_dict(),
         }
         return data
@@ -115,9 +114,13 @@ def load_bootstrap(
             bootstrap_path = candidate
         elif not bootstrap_path.exists():
             # Neither file exists — use defaults plus supported env overrides.
+            if resolve_database_url:
+                raise BootstrapConfigError(HUB_BACKEND_DATABASE_URL_REQUIRED)
             return _default_bootstrap_config()
 
     if not bootstrap_path.exists():
+        if resolve_database_url:
+            raise BootstrapConfigError(HUB_BACKEND_DATABASE_URL_REQUIRED)
         return _default_bootstrap_config()
 
     try:
@@ -126,6 +129,8 @@ def load_bootstrap(
         data = read_bootstrap_yaml(bootstrap_path)
 
         if not isinstance(data, dict):
+            if resolve_database_url:
+                raise BootstrapConfigError("bootstrap.yaml must contain a YAML mapping")
             return _default_bootstrap_config()
 
         explicit_hub_backend = "hub_backend" in data
@@ -135,11 +140,16 @@ def load_bootstrap(
             raise BootstrapConfigError(
                 "database_url_ref is no longer supported. Rewrite bootstrap.yaml with database_url."
             )
-        postgres_install_mode = _parse_postgres_install_mode(data.get("postgres_install_mode"))
+        if "postgres_install_mode" in data:
+            raise BootstrapConfigError(
+                "postgres_install_mode has been removed; PostgreSQL is always Docker-managed"
+            )
         postgres_pool = _parse_postgres_pool(data.get("postgres_pool"))
         auth_mode = _parse_auth_mode(data.get("auth_mode", BootstrapConfig.auth_mode))
         if explicit_hub_backend and resolve_database_url and not database_url:
             raise BootstrapConfigError(HUB_BACKEND_DATABASE_URL_REQUIRED)
+        if resolve_database_url and database_url:
+            _validate_managed_database_url(database_url)
 
         return BootstrapConfig(
             daemon_port=_parse_int(
@@ -154,7 +164,6 @@ def load_bootstrap(
             auth_mode=auth_mode,
             hub_backend=hub_backend,
             database_url=database_url,
-            postgres_install_mode=postgres_install_mode,
             postgres_pool=postgres_pool,
             daemon_url=_parse_optional_daemon_url(data.get("daemon_url")),
         )
@@ -189,12 +198,22 @@ def _parse_hub_backend(value: object) -> HubBackend:
     raise BootstrapConfigError(HUB_BACKEND_POSTGRES_REQUIRED)
 
 
-def _parse_postgres_install_mode(value: object) -> PostgresInstallMode | None:
-    if value is None:
-        return None
-    if value == "docker":
-        return cast(PostgresInstallMode, value)
-    raise BootstrapConfigError("postgres_install_mode must be: docker")
+def _validate_managed_database_url(database_url: str) -> None:
+    parsed = urlparse(database_url)
+    if parsed.scheme not in {"postgres", "postgresql"}:
+        raise BootstrapConfigError("database_url must use postgresql://")
+    hostname = parsed.hostname
+    if hostname == "localhost":
+        return
+    try:
+        is_loopback = bool(hostname and ipaddress.ip_address(hostname).is_loopback)
+    except ValueError:
+        is_loopback = False
+    if not is_loopback:
+        raise BootstrapConfigError(
+            "database_url must target local Docker-managed PostgreSQL "
+            "(localhost or a loopback address)"
+        )
 
 
 def _parse_postgres_pool(value: object) -> PostgresPoolConfig:

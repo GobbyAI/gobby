@@ -1,8 +1,8 @@
 # System Requirements
 
-Gobby runs as a local Python daemon with optional local services for semantic search and
-graph-augmented memory. The daemon is small; the optional stack is what drives most hardware
-and Docker requirements.
+Gobby runs as a local Python daemon backed by a required Docker Compose stack:
+PostgreSQL, Qdrant, and FalkorDB. The daemon is small; the managed datastore
+stack drives most hardware and Docker requirements.
 
 Use this guide to decide what has to be installed before running Gobby.
 
@@ -10,21 +10,13 @@ Use this guide to decide what has to be installed before running Gobby.
 
 | Setup | Required | Good default |
 |-------|----------|--------------|
-| Daemon only | Python 3.13+, `uv`, 1 GB free disk, localhost ports 60887 and 60888, PostgreSQL hub (installer-managed via Docker on port 60891, or an external `database_url`) | 4+ CPU cores, 8 GB RAM |
-| Daemon + web UI | Daemon requirements; installed UI is served on port 60887 | 8 GB RAM |
-| Full local search stack | Docker with Compose v2, Qdrant, FalkorDB, embedding endpoint | 16 GB RAM minimum, 32 GB RAM preferred, SSD/NVMe storage |
+| Gobby daemon | Python 3.13+, `uv`, Docker with Compose v2, the managed PostgreSQL/Qdrant/FalkorDB stack, and the listed local ports | 4+ CPU cores, 16 GB RAM, SSD/NVMe storage |
+| Daemon + web UI | Daemon requirements; installed UI is served on port 60887 | 16 GB RAM |
 | Local embedding model | LM Studio with `lms` or Ollama with `ollama` | 16 GB RAM, GPU or unified memory when also running a chat model |
 
-If you need the daemon and hooks without installer-managed Qdrant or FalkorDB, skip external
-services during install:
-
-```bash
-uv run gobby install --no-ext-services
-```
-
-Semantic search still needs an embedding provider and a reachable vector backend. Choosing
-`None` in the embedding provider prompt disables semantic search and also skips Qdrant/FalkorDB
-installation.
+An embedding provider remains optional. Choosing `None` disables semantic
+embedding work, but does not skip installation or startup of the managed
+datastore stack.
 
 ## Platform Notes
 
@@ -38,10 +30,9 @@ provider you choose.
 | Linux | Use Docker Engine plus the Docker Compose plugin. Linux avoids the Docker Desktop VM memory allocation step. |
 | Windows | Use Windows 10/11 with WSL2 for Docker-based services. Local shell tooling and filesystem paths should be verified in the target environment. |
 
-Docker is required for the installer-managed local PostgreSQL hub (Docker is
-the only supported install mode for it) as well as the optional Qdrant and
-FalkorDB services. The daemon itself runs without Docker only when
-`database_url` points at an externally provided PostgreSQL.
+Docker Compose v2 is a hard installation and startup requirement. Gobby does
+not support an external PostgreSQL server or a production daemon without the
+managed Qdrant and FalkorDB services.
 
 ## Daemon
 
@@ -65,35 +56,33 @@ Bootstrap settings live in `src/gobby/install/shared/config/bootstrap.yaml` and 
 the user configuration area during setup. Most runtime configuration then moves into the local
 database and is managed by the UI or `gobby-config` MCP tools.
 
-## Optional Services
+## Managed Datastore Stack
 
-Gobby ships a unified Docker Compose service template with three local
-datastore profiles (PostgreSQL, Qdrant, FalkorDB).
-The default interactive installer offers an embedding provider first. When the selected provider
-is not `none` and Docker is available, the installer configures Qdrant and
-FalkorDB; `--no-ext-services` skips this Docker step. FalkorDB is Docker-only;
-native local-install support is planned for a later release.
+Gobby ships a unified Docker Compose service template with three required local
+profiles: PostgreSQL, Qdrant, and FalkorDB. A full install provisions all three,
+independent of the selected embedding provider.
 
 | Service | Image | Default endpoint | Purpose |
 |---------|-------|------------------|---------|
 | Qdrant | `qdrant/qdrant:latest` | `http://localhost:6333` | Vector storage for semantic search and code-symbol embeddings |
 | FalkorDB | `falkordb/falkordb:latest` | Redis protocol `127.0.0.1:16379`, Browser `http://localhost:13000` | Graph storage for graph-augmented search and memory relationships |
 
-The installer writes the Compose file under `~/.gobby/services/docker-compose.yml`. `gobby start`
-uses Docker Compose profiles to start installed services.
+The installer writes the Compose file under `~/.gobby/services/docker-compose.yml`.
+`gobby start` starts all profiles and waits for their health checks before
+launching the daemon.
 
-Run the default installer to configure hooks, embedding provider, and optional services:
+Run the default installer to configure hooks, an embedding provider, and the
+required managed services:
 
 ```bash
 uv run gobby install
 ```
 
-Relevant installer flags:
+Targeted datastore repair commands remain available:
 
 ```bash
-uv run gobby install --no-ext-services
 uv run gobby install --falkordb
-uv run gobby install --falkordb-password 'your-password'
+printf '%s' 'your-password' | uv run gobby install --falkordb --falkordb-password-stdin
 uv run gobby qdrant install --port 6333
 ```
 
@@ -107,7 +96,7 @@ stores vectors in Qdrant when the local vector stack is enabled.
 | Ollama | `nomic-embed-text`, `http://localhost:11434/v1` | Uses the `ollama` CLI, 768 dimensions |
 | LM Studio | `text-embedding-nomic-embed-text-v1.5@f16`, `http://localhost:1234/v1` | Uses the `lms` CLI, 768 dimensions |
 | OpenAI | `text-embedding-3-small` with an OpenAI API key | Hosted embeddings, 1536 dimensions |
-| None | No embedding provider | Installer skips Qdrant/FalkorDB setup when embeddings are disabled |
+| None | No embedding provider | Managed datastores still install and start; semantic embedding work is disabled |
 
 The default configuration model is `nomic-embed-text` with 768 dimensions. Installer-selected
 OpenAI embeddings set dimensions to 1536. If you change models, make sure `embeddings.dim`
@@ -174,7 +163,8 @@ volumes:
 ### `uv run gobby install` Cannot Start Docker Services
 
 Verify Docker is installed, running, and provides the `docker compose` command. Re-run with
-`--no-ext-services` when you only need the daemon and cloud-hosted providers.
+the daemon stopped after resolving the Docker or Compose health error. The
+managed stack cannot be skipped.
 
 ### Qdrant Is Not Healthy
 
@@ -190,7 +180,7 @@ uv run gobby qdrant install --port 6333
 Set or rotate the password during install:
 
 ```bash
-uv run gobby install --falkordb-password 'your-password'
+printf '%s' 'your-password' | uv run gobby install --falkordb --falkordb-password-stdin
 ```
 
 The configured auth value is stored in Gobby configuration, and the Compose
@@ -209,4 +199,4 @@ more RAM or VRAM than the embedding model.
 - [memory.md](./memory.md) - Memory backend configuration
 - [CONTRIBUTING.md](../../CONTRIBUTING.md) - Development environment setup
 
-_Last verified: 2026-06-11_
+_Last verified: 2026-07-20_

@@ -300,12 +300,12 @@ class TestMemoryBackupConfigCustom:
 class TestQdrantConfigDefaults:
     """Test QdrantConfig default values."""
 
-    def test_qdrant_url_defaults_to_localhost(self) -> None:
-        """Test that QdrantConfig.url defaults to http://localhost:6333."""
+    def test_qdrant_url_requires_managed_install_config(self) -> None:
+        """QdrantConfig.url remains unset until the managed installer persists it."""
         from gobby.config.persistence import QdrantConfig
 
         config = QdrantConfig()
-        assert config.url == "http://localhost:6333"
+        assert config.url is None
 
     def test_qdrant_api_key_defaults_to_none(self) -> None:
         """Test that QdrantConfig.api_key defaults to None."""

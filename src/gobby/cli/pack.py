@@ -7,7 +7,7 @@ CLI commands for portable export/import of Gobby data.
 
 import json
 import os
-import subprocess
+import subprocess  # nosec B404 # fixed Docker and Python module invocations
 import sys
 import tarfile
 import tempfile
@@ -17,7 +17,6 @@ from pathlib import Path, PurePosixPath, PureWindowsPath
 import click
 
 from gobby.cli.installers.git_hooks import install_git_hooks
-from gobby.cli.installers.postgres import _active_install_mode
 from gobby.cli.postgres_backup import (
     POSTGRES_BACKUP_ARCHIVE_PREFIX,
     backup_payload_paths,
@@ -55,7 +54,7 @@ DOCKER_VOLUMES = [
 def _docker_available() -> bool:
     """Check if Docker CLI is available."""
     try:
-        result = subprocess.run(
+        result = subprocess.run(  # nosec B603 B607 # fixed Docker CLI command
             ["docker", "info"],
             capture_output=True,
             timeout=5,
@@ -68,7 +67,7 @@ def _docker_available() -> bool:
 def _volume_exists(volume_name: str) -> bool:
     """Check if a Docker volume exists."""
     try:
-        result = subprocess.run(
+        result = subprocess.run(  # nosec B603 B607 # fixed Docker CLI command
             ["docker", "volume", "inspect", volume_name],
             capture_output=True,
             timeout=5,
@@ -81,7 +80,7 @@ def _volume_exists(volume_name: str) -> bool:
 def _export_docker_volume(volume_name: str, output_path: Path) -> bool:
     """Export a Docker volume to a tar.gz file."""
     try:
-        result = subprocess.run(
+        result = subprocess.run(  # nosec B603 B607 # fixed Docker CLI command
             [
                 "docker",
                 "run",
@@ -110,12 +109,12 @@ def _import_docker_volume(volume_name: str, archive_path: Path) -> bool:
     """Import a tar.gz file into a Docker volume."""
     try:
         # Create volume if it doesn't exist
-        subprocess.run(
+        subprocess.run(  # nosec B603 B607 # fixed Docker CLI command
             ["docker", "volume", "create", volume_name],
             capture_output=True,
             timeout=10,
         )
-        result = subprocess.run(
+        result = subprocess.run(  # nosec B603 B607 # fixed Docker CLI command
             [
                 "docker",
                 "run",
@@ -127,7 +126,9 @@ def _import_docker_volume(volume_name: str, archive_path: Path) -> bool:
                 "alpine",
                 "sh",
                 "-c",
-                f"rm -rf /target/* && tar xzf /backup/{archive_path.name} -C /target",
+                'rm -rf /target/.[!.]* /target/..?* /target/* && tar xzf "/backup/$1" -C /target',
+                "gobby-volume-restore",
+                archive_path.name,
             ],
             capture_output=True,
             timeout=120,
@@ -151,38 +152,19 @@ def _daemon_is_running() -> bool:
 
 
 def _stop_services() -> bool:
-    """Stop Docker services (Qdrant, FalkorDB) for consistent snapshots."""
-    services_dir = get_gobby_home() / "services"
-    compose_file = services_dir / "docker-compose.yml"
-    if not compose_file.exists():
-        return False
+    """Stop the managed Docker stack for consistent snapshots."""
+    from gobby.cli.daemon import _services_stop
 
-    try:
-        result = subprocess.run(
-            [
-                "docker",
-                "compose",
-                "-f",
-                str(compose_file),
-                "--profile",
-                "all",
-                "down",
-            ],
-            capture_output=True,
-            text=True,
-            timeout=60,
-            cwd=str(services_dir),
-        )
-        return result.returncode == 0
-    except (FileNotFoundError, subprocess.TimeoutExpired):
-        return False
+    return _services_stop(get_gobby_home())
 
 
 def _start_services() -> None:
     """Start Docker services via daemon's lifecycle management."""
     from gobby.cli.daemon import _services_start
 
-    _services_start(get_gobby_home())
+    result = _services_start(get_gobby_home())
+    if result.outcome != "success":
+        raise click.ClickException(result.detail)
 
 
 # Aliases: _stop_services/_start_services handle all Docker services (Qdrant, FalkorDB).
@@ -200,7 +182,7 @@ def _start_daemon() -> None:
     else:
         # Fallback: direct process start
         try:
-            subprocess.Popen(
+            subprocess.Popen(  # nosec B603 # sys.executable launches a fixed module
                 [sys.executable, "-m", "gobby.runner"],
                 stdout=subprocess.DEVNULL,
                 stderr=subprocess.DEVNULL,
@@ -431,9 +413,6 @@ def _do_pack(
             "items": [name for name, _ in items],
             "docker_volumes": docker_volumes_to_export,
             "postgres_backup": include_postgres,
-            "postgres_install_mode": (
-                backup_result.get("mode") if isinstance(backup_result, dict) else None
-            ),
         }
         manifest_path = tmp / "manifest.json"
         manifest_path.write_text(json.dumps(manifest, indent=2))
@@ -692,7 +671,4 @@ def _human_size(size: int) -> str:
 
 
 def _postgres_restore_requires_docker_services() -> bool:
-    try:
-        return _active_install_mode(gobby_home=get_gobby_home()) == "docker"
-    except Exception:
-        return False
+    return True

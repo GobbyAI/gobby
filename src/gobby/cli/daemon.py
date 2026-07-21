@@ -16,6 +16,7 @@ from typing import Any, Literal
 import click
 import httpx
 import psutil
+import yaml
 
 from gobby.agents.spawners.auth_env import has_auth_env
 from gobby.config.logging import (
@@ -27,7 +28,12 @@ from gobby.config.logging import (
 from gobby.runner_pid_file import probe_daemon_lock
 from gobby.utils.status import fetch_rich_status, format_startup_summary, format_status_message
 
-from .installers.compose_env import ComposeEnvironmentError, resolve_compose_runtime
+from .installers.compose_env import (
+    MANAGED_SERVICE_PROFILES,
+    ComposeEnvironmentError,
+    ComposeRuntime,
+    resolve_compose_runtime,
+)
 from .installers.service import (
     get_service_status,
     service_start,
@@ -61,33 +67,58 @@ class ServiceStartResult:
 
 
 def _services_start(gobby_home: Path) -> ServiceStartResult:
-    """Start Docker services (Qdrant, FalkorDB) via unified compose file.
-
-    Uses Docker Compose profiles to start only installed services.
-    """
+    """Start the required managed Docker stack and wait for container health."""
     import shutil
 
     if not shutil.which("docker"):
-        return ServiceStartResult("skipped", "Docker executable is unavailable")
+        return ServiceStartResult(
+            "failed", "Docker executable is unavailable; install Docker and retry"
+        )
 
     services_dir = gobby_home / "services"
     compose_file = services_dir / "docker-compose.yml"
 
     if not compose_file.exists():
-        return ServiceStartResult("skipped", f"Compose file is missing: {compose_file}")
+        return ServiceStartResult(
+            "failed", f"Compose file is missing: {compose_file}; run `gobby install`"
+        )
+
+    compose_error = _validate_managed_compose_profiles(compose_file)
+    if compose_error:
+        return ServiceStartResult("failed", compose_error)
+
+    try:
+        postgres_runtime = resolve_compose_runtime(gobby_home, profiles=("postgres",))
+    except ComposeEnvironmentError as exc:
+        return ServiceStartResult("failed", f"Could not resolve Docker service config: {exc}")
+
+    postgres_result = _run_compose_up(compose_file, services_dir, postgres_runtime)
+    if postgres_result.outcome != "success":
+        return postgres_result
 
     try:
         runtime = resolve_compose_runtime(gobby_home)
     except ComposeEnvironmentError as exc:
         return ServiceStartResult("failed", f"Could not resolve Docker service config: {exc}")
 
-    if not runtime.profiles:
-        return ServiceStartResult("skipped", "No Docker service profiles are configured")
+    if runtime.profiles != MANAGED_SERVICE_PROFILES:
+        return ServiceStartResult(
+            "failed",
+            "Docker service config must enable postgres, qdrant, and falkordb profiles",
+        )
 
+    return _run_compose_up(compose_file, services_dir, runtime)
+
+
+def _run_compose_up(
+    compose_file: Path,
+    services_dir: Path,
+    runtime: ComposeRuntime,
+) -> ServiceStartResult:
     cmd = ["docker", "compose", "-f", str(compose_file)]
     for profile in runtime.profiles:
         cmd.extend(["--profile", profile])
-    cmd.extend(["up", "-d"])
+    cmd.extend(["up", "-d", "--remove-orphans", "--wait"])
 
     try:
         result = subprocess.run(  # nosec B603 # hardcoded docker command
@@ -110,29 +141,51 @@ def _services_start(gobby_home: Path) -> ServiceStartResult:
     return ServiceStartResult("success", "Docker services started")
 
 
-def _services_stop(gobby_home: Path) -> None:
+def _validate_managed_compose_profiles(compose_file: Path) -> str | None:
+    try:
+        payload = yaml.safe_load(compose_file.read_text(encoding="utf-8"))
+    except (OSError, yaml.YAMLError) as exc:
+        return f"Compose file is invalid: {exc}"
+    services = payload.get("services") if isinstance(payload, dict) else None
+    if not isinstance(services, dict):
+        return "Compose file must define a services mapping"
+    configured_profiles: set[str] = set()
+    for service in services.values():
+        service_profiles = service.get("profiles") if isinstance(service, dict) else None
+        if isinstance(service_profiles, list):
+            configured_profiles.update(
+                profile for profile in service_profiles if isinstance(profile, str)
+            )
+    missing = [
+        profile for profile in MANAGED_SERVICE_PROFILES if profile not in configured_profiles
+    ]
+    if missing:
+        return f"Compose file is missing required profiles: {', '.join(missing)}"
+    return None
+
+
+def _services_stop(gobby_home: Path) -> bool:
     """Stop all Docker services via unified compose file."""
     import shutil
 
     if not shutil.which("docker"):
-        return
+        return False
 
     services_dir = gobby_home / "services"
     compose_file = services_dir / "docker-compose.yml"
 
     if not compose_file.exists():
-        return
+        return False
 
     try:
-        runtime = resolve_compose_runtime(gobby_home)
-        result = subprocess.run(  # nosec B603 B607 # hardcoded docker command
-            [
-                "docker",
-                "compose",
-                "-f",
-                str(compose_file),
-                "down",
-            ],
+        # Docker shutdown must still work when PostgreSQL is already unhealthy.
+        runtime = resolve_compose_runtime(gobby_home, profiles=("postgres",))
+        command = ["docker", "compose", "-f", str(compose_file)]
+        for profile in MANAGED_SERVICE_PROFILES:
+            command.extend(["--profile", profile])
+        command.append("down")
+        result = subprocess.run(  # nosec B603 # hardcoded Docker command list
+            command,
             capture_output=True,
             text=True,
             timeout=60,
@@ -141,12 +194,15 @@ def _services_stop(gobby_home: Path) -> None:
         )
         if result.returncode != 0:
             logger.warning("Failed to stop services: %s", result.stderr or result.stdout)
+            return False
+        return True
     except ComposeEnvironmentError as exc:
         logger.warning("Could not resolve config for services; skipping Docker shutdown: %s", exc)
     except subprocess.TimeoutExpired:
         logger.warning("Timed out stopping Docker services")
     except Exception as e:
         logger.warning("Failed to stop Docker services: %s", e)
+    return False
 
 
 def _step(msg: str, *, error: bool = False, scheduled: bool = False) -> None:
@@ -352,29 +408,18 @@ def _wait_for_service_stop(
     is_flag=True,
     help="Disable auto-starting the web UI",
 )
-@click.option(
-    "--docker",
-    "docker_flag",
-    is_flag=True,
-    help="Also start Docker service containers (Qdrant, FalkorDB)",
-)
 @click.pass_context
-def start(ctx: click.Context, verbose: bool, no_ui: bool, docker_flag: bool) -> None:
+def start(ctx: click.Context, verbose: bool, no_ui: bool) -> None:
     """Start the Gobby daemon."""
     config = ctx.obj["config"]
     gobby_dir = get_gobby_home()
 
     # Revive managed dependencies before launchd/systemd starts the runner.
-    services_compose = gobby_dir / "services" / "docker-compose.yml"
-    if services_compose.exists() or docker_flag:
-        services_result = _services_start(gobby_dir)
-        if services_result.outcome == "success":
-            _step("Docker services started")
-        elif services_result.outcome == "failed":
-            _step(services_result.detail, error=True)
-            sys.exit(1)
-        else:
-            _step(f"Docker services skipped: {services_result.detail}")
+    services_result = _services_start(gobby_dir)
+    if services_result.outcome != "success":
+        _step(services_result.detail, error=True)
+        sys.exit(1)
+    _step("Docker services started")
 
     # If OS service is installed, delegate to it
     svc = get_service_status()
@@ -555,6 +600,7 @@ def _do_stop(
     shutdown_source = "cli_restart" if shutdown_intent == "restart" else "cli_stop"
     # If OS service is installed and running, delegate to it
     docker_stopped = False
+    docker_stop_succeeded = True
     svc = get_service_status()
     if svc.get("installed") and svc.get("running"):
         previous_pid = _get_running_daemon_pid(svc)
@@ -585,11 +631,11 @@ def _do_stop(
         # Stop Docker containers if requested
         if docker_flag:
             click.echo("Stopping Docker containers...")
-            _services_stop(get_gobby_home())
+            docker_stop_succeeded = _services_stop(get_gobby_home())
             docker_stopped = True
 
         if result.get("success"):
-            return True
+            return docker_stop_succeeded
 
     success = stop_daemon_util(
         quiet=False,
@@ -600,9 +646,9 @@ def _do_stop(
     # Stop Docker containers if requested (only if not already stopped above)
     if docker_flag and not docker_stopped:
         click.echo("Stopping Docker containers...")
-        _services_stop(get_gobby_home())
+        docker_stop_succeeded = _services_stop(get_gobby_home())
 
-    return bool(success)
+    return bool(success and docker_stop_succeeded)
 
 
 @click.command()
@@ -644,7 +690,7 @@ def restart(ctx: click.Context, verbose: bool, no_ui: bool, docker_flag: bool) -
     if not _do_stop(ctx, docker_flag, shutdown_intent="restart"):
         sys.exit(1)
 
-    ctx.invoke(start, verbose=verbose, no_ui=no_ui, docker_flag=docker_flag)
+    ctx.invoke(start, verbose=verbose, no_ui=no_ui)
 
 
 @click.command()

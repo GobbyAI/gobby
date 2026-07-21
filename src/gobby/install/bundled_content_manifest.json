@@ -2,8 +2,8 @@
   "files": {
     "CLAUDE.md": "8996e013ec09fad69e4ff2cc82415af0ac1adcb9f103fa3d8ffa71e2e16f7494",
     "config/.mcp-template.json": "2caff1d30e32212fdef58c54cce1e13c825ed3684cceba1ad2a5c5726a377c51",
-    "config/bootstrap.yaml": "f638fd623a8f4d5cb64714c634de5f235acba27b800596fbe666f33d87d4de02",
-    "config/config.yaml": "784d8aa1c2c99c9380894b49c721e0810c4428db3d7830d0fd43db6d8177dc74",
+    "config/bootstrap.yaml": "1bc74bcc2242cc8c8965c54fccceee9bdeee8d9dbec4ea930c5641f29f9169fd",
+    "config/config.yaml": "c03901784614dfbbb7382a5ab27e4cfd1ab7dacb31cf446064bdc3f74d026c6d",
     "config/tty_config.yaml": "3b70d450cc4cd2788308827cd2485b53d023009ff4e66b5ec4e65076f05a7fdb",
     "hooks/validate_settings.py": "e20121857eaae4ae86430513c174934727907fa9f95965acf656747445dfdba8",
     "prompts/agent/help-content.md": "79db2d2e74504abccab059d4ef17134a4d5b470341871a6347895fbcc37e971d",

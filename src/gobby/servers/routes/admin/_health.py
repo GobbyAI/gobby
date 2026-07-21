@@ -67,13 +67,6 @@ def _is_postgres_runtime(server: "HTTPServer", database_status: dict[str, Any]) 
     return isinstance(hub_backend, str) and hub_backend == "postgres"
 
 
-def _postgres_mode_from_server(server: "HTTPServer") -> str | None:
-    services = getattr(server, "services", None)
-    config = getattr(services, "config", None) if services is not None else None
-    mode = getattr(config, "postgres_install_mode", None) if config is not None else None
-    return mode if isinstance(mode, str) else None
-
-
 async def _get_postgres_dashboard_status(
     server: "HTTPServer", database_status: dict[str, Any]
 ) -> dict[str, Any] | None:
@@ -89,7 +82,6 @@ async def _get_postgres_dashboard_status(
         logger.warning("Failed to get PostgreSQL status: %s", type(exc).__name__)
         return {
             "available": False,
-            "mode": _postgres_mode_from_server(server),
             "healthy": False,
             "error": type(exc).__name__,
         }

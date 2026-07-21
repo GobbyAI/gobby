@@ -20,11 +20,9 @@ from gobby.cli import postgres_bootstrap as _bootstrap
 from gobby.cli.installers.postgres import (
     DEFAULT_POSTGRES_DB,
     DEFAULT_POSTGRES_USER,
-    _active_install_mode,
     _extension_present,
     _read_bootstrap_database_url,
 )
-from gobby.cli.postgres_bootstrap import InstallMode
 from gobby.cli.utils import _redact_dsn, get_gobby_home
 from gobby.config.bootstrap import BootstrapConfigError
 
@@ -60,12 +58,11 @@ def create_postgres_backup(
         raise click.ClickException(f"Backup directory is not empty: {backup_dir}")
     backup_dir.mkdir(parents=True, exist_ok=True)
 
-    mode = _active_install_mode(gobby_home=home)
     database_url = _resolve_database_url(home)
-    _require_managed_docker_postgres(database_url=database_url, mode=mode)
+    _require_managed_docker_postgres(database_url=database_url)
     dump_path = backup_dir / POSTGRES_DUMP_NAME
 
-    metadata = _collect_source_metadata(database_url=database_url, mode=mode)
+    metadata = _collect_source_metadata(database_url=database_url)
     _run_pg_dump(database_url=database_url, dump_path=dump_path)
     _verify_dump_with_pg_restore(dump_path=dump_path)
 
@@ -87,7 +84,6 @@ def create_postgres_backup(
         "sha256s_path": str(sha_path),
         "dump_sha256": dump_sha256,
         "database_url": _redact_dsn(database_url),
-        "mode": mode,
         "verified": True,
         "sha256_verified": True,
     }
@@ -102,9 +98,8 @@ def restore_postgres_backup(
 ) -> dict[str, Any]:
     """Verify and restore a PostgreSQL backup file or backup directory."""
     home = gobby_home or get_gobby_home()
-    mode = _active_install_mode(gobby_home=home)
     database_url = _resolve_database_url(home)
-    _require_managed_docker_postgres(database_url=database_url, mode=mode)
+    _require_managed_docker_postgres(database_url=database_url)
     dump_path = _resolve_dump_path(source.expanduser())
 
     metadata = _read_metadata_for_dump(dump_path)
@@ -133,7 +128,6 @@ def restore_postgres_backup(
         "source": str(source),
         "dump_path": str(dump_path),
         "database_url": _redact_dsn(database_url),
-        "mode": mode,
         "clean": clean,
         "verified": True,
         "dump_sha256": actual_sha256,
@@ -162,7 +156,7 @@ def _default_backup_dir(gobby_home: Path) -> Path:
     return gobby_home / "backups" / "postgres" / _utc_timestamp()
 
 
-def _collect_source_metadata(*, database_url: str, mode: InstallMode) -> dict[str, Any]:
+def _collect_source_metadata(*, database_url: str) -> dict[str, Any]:
     try:
         with psycopg.connect(database_url, connect_timeout=10) as conn:
             version_row = conn.execute("SHOW server_version").fetchone()
@@ -172,7 +166,6 @@ def _collect_source_metadata(*, database_url: str, mode: InstallMode) -> dict[st
                 "gobby_version": __version__,
                 "source_postgres_version": str(version_row[0]) if version_row else "unknown",
                 "source_dsn_redacted": _redact_dsn(database_url),
-                "install_mode": mode,
                 "database_name": _dsn_db(database_url),
                 "pg_search_present": _extension_present(conn, "pg_search"),
                 "pgaudit_present": _extension_present(conn, "pgaudit"),
@@ -202,7 +195,7 @@ def _run_pg_dump(*, database_url: str, dump_path: Path) -> None:
     ]
     try:
         with dump_path.open("wb") as output:
-            result = subprocess.run(  # nosec B603 B607
+            result = subprocess.run(  # nosec B603
                 command,
                 stdout=output,
                 stderr=subprocess.PIPE,
@@ -239,7 +232,7 @@ def _run_pg_restore(
     ]
     try:
         with dump_path.open("rb") as stdin:
-            result = subprocess.run(  # nosec B603 B607
+            result = subprocess.run(  # nosec B603
                 command,
                 stdin=stdin,
                 capture_output=True,
@@ -256,7 +249,7 @@ def _verify_dump_with_pg_restore(*, dump_path: Path) -> None:
     command = ["docker", "exec", "-i", _POSTGRES_CONTAINER, "pg_restore", "--list"]
     try:
         with dump_path.open("rb") as stdin:
-            result = subprocess.run(  # nosec B603 B607
+            result = subprocess.run(  # nosec B603
                 command,
                 stdin=stdin,
                 capture_output=True,
@@ -309,12 +302,7 @@ def _resolve_database_url(gobby_home: Path) -> str:
     return database_url
 
 
-def _require_managed_docker_postgres(*, database_url: str, mode: InstallMode | str) -> None:
-    if mode != "docker":
-        raise click.ClickException(
-            "PostgreSQL backup and restore require the Gobby-managed Docker database "
-            f"(postgres_install_mode=docker); got mode={mode!s}."
-        )
+def _require_managed_docker_postgres(*, database_url: str) -> None:
     parsed = urlparse(database_url)
     host = (parsed.hostname or "").lower()
     try:
@@ -331,9 +319,9 @@ def _require_managed_docker_postgres(*, database_url: str, mode: InstallMode | s
     ):
         raise click.ClickException(
             "PostgreSQL backup and restore require the Gobby-managed Docker database "
-            "(postgres_install_mode=docker, host=localhost/127.0.0.1/::1, "
+            "(host=localhost/127.0.0.1/::1, "
             f"port=60891, user={DEFAULT_POSTGRES_USER}, database={DEFAULT_POSTGRES_DB}); "
-            f"got mode={mode!s}, host={host or '<missing>'}, "
+            f"got host={host or '<missing>'}, "
             f"port={port if port is not None else '<missing or invalid>'}, "
             f"user={user or '<missing>'}, database={database or '<missing>'}."
         )

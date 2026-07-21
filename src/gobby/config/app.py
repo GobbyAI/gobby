@@ -160,7 +160,7 @@ class DaemonConfig(BaseModel):
     3. Pydantic defaults (lowest)
 
     Pre-DB bootstrap settings (daemon_port, bind_host, websocket_port, ui_port,
-    hub_backend, database_url, postgres_install_mode, and postgres_pool) are read from
+    hub_backend, database_url, and postgres_pool) are read from
     ~/.gobby/bootstrap.yaml.
 
     Note: machine_id is stored separately in ~/.gobby/machine_id
@@ -235,10 +235,6 @@ class DaemonConfig(BaseModel):
         default=None,
         description="PostgreSQL DSN selected by bootstrap.yaml when hub_backend is postgres.",
         exclude=True,
-    )
-    postgres_install_mode: Literal["docker"] | None = Field(
-        default=None,
-        description="PostgreSQL install mode recorded by gobby postgres install.",
     )
     postgres_pool: PostgresPoolConfig = Field(
         default_factory=PostgresPoolConfig,

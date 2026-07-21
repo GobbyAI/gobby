@@ -3,8 +3,6 @@
 from __future__ import annotations
 
 from gobby.config.postgres_bootstrap import (
-    InstallMode,
-    active_install_mode,
     bootstrap_path,
     clear_postgres_fields,
     read_bootstrap_database_url,
@@ -16,8 +14,6 @@ from gobby.config.postgres_bootstrap import (
 )
 
 __all__ = [
-    "InstallMode",
-    "active_install_mode",
     "bootstrap_path",
     "clear_postgres_fields",
     "read_bootstrap_database_url",

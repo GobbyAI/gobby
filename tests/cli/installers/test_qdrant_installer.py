@@ -210,7 +210,7 @@ class TestInstallQdrant:
             qdrant_port=7333,
             gobby_home=tmp_path,
         )
-        resolve.assert_called_once_with(tmp_path)
+        resolve.assert_called_once_with(tmp_path, profiles=("qdrant",))
         assert run.call_args.kwargs["env"]["GOBBY_QDRANT_HTTP_PORT"] == "7333"
         wait_for_health.assert_called_once_with("http://localhost:7333")
 
@@ -294,7 +294,7 @@ class TestConfigModels:
         from gobby.config.persistence import DatabasesConfig
 
         config = DatabasesConfig()
-        assert config.qdrant.url == "http://localhost:6333"
+        assert config.qdrant.url is None
         assert config.qdrant.port == 6333
         assert config.falkordb.host == "127.0.0.1"
         assert config.falkordb.port == 16379
@@ -309,12 +309,12 @@ class TestConfigModels:
         assert config.model == "nomic-embed-text"
         assert config.dim == 768
 
-    def test_qdrant_config_default_url(self) -> None:
-        """QdrantConfig defaults to localhost URL."""
+    def test_qdrant_config_requires_explicit_url(self) -> None:
+        """QdrantConfig leaves its required managed URL unset until install."""
         from gobby.config.persistence import QdrantConfig
 
         config = QdrantConfig()
-        assert config.url == "http://localhost:6333"
+        assert config.url is None
 
     def test_daemon_config_has_databases(self) -> None:
         """DaemonConfig includes databases and embeddings."""

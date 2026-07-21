@@ -80,22 +80,26 @@ Start it with `gobby start` and check it with `gobby status` or `gobby health`.
 Start the daemon.
 
 ```bash
-gobby start [--verbose] [--no-ui] [--docker]
+gobby start [--verbose] [--no-ui]
 ```
 
 | Option | Purpose |
 | --- | --- |
 | `--verbose` | Enable verbose startup output. |
 | `--no-ui` | Do not auto-start the web UI. |
-| `--docker` | Also start Docker service containers. |
+
+`gobby start` always starts PostgreSQL, Qdrant, and FalkorDB with Docker
+Compose and waits for container health before launching the daemon.
 
 ### `gobby stop`
 
 Stop the daemon.
 
 ```bash
-gobby stop
+gobby stop [--docker]
 ```
+
+Pass `--docker` to stop the managed datastore containers as well as the daemon.
 
 ### `gobby restart`
 
@@ -158,9 +162,8 @@ gobby uninstall [OPTIONS]
 | `--qwen` | Install QwenCode integration assets. |
 | `--hooks`, `--git-hooks` | Aliases for one flag: install repository git hooks (verification, JSONL export, code indexing). |
 | `--all` | Install all supported integrations. |
-| `--no-ext-services` | Skip external service setup. |
 | `--falkordb` | Install only the FalkorDB graph backend service. |
-| `--falkordb-password PASSWORD` | Configure FalkorDB with a specific password. |
+| `--falkordb-password-stdin` | Read the FalkorDB password from standard input. |
 | `--project` | Install project-scoped configuration. |
 | `--voice` | Install voice support assets. |
 | `--embedding-url URL` | Use a custom embedding API endpoint. |
@@ -171,6 +174,10 @@ gobby uninstall [OPTIONS]
 | `--auth-mode [required|disabled]` | Persist daemon API authentication mode in `bootstrap.yaml`. |
 | `--no-interactive` | Run without prompts. |
 | `-C`, `--path PATH` | Install against a specific path. |
+
+A full install requires a running Docker daemon and always provisions the
+managed PostgreSQL, Qdrant, and FalkorDB profiles. Those services are not tied
+to the embedding-provider choice.
 
 `gobby uninstall` options:
 
@@ -650,4 +657,4 @@ references where the task tree has a path cache.
 - [rules.md](rules.md) - rule engine guide
 - [worktrees.md](worktrees.md) - worktree guide
 
-_Last verified: 2026-07-10_
+_Last verified: 2026-07-20_

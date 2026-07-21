@@ -131,15 +131,19 @@ class TestDetectionHelpers:
 class TestInstallCommand:
     @pytest.fixture(autouse=True)
     def _mock_docker_services(self) -> Any:
-        """Mock Docker service and local embeddings installers — tests here focus on CLI-specific hooks."""
+        """Mock the managed stack — tests here focus on CLI-specific hooks."""
+        postgres_result = {"success": True, "database_url": "postgresql://localhost/gobby"}
         qdrant_result = {"success": True, "qdrant_url": "http://localhost:6333"}
         falkordb_result = {
             "success": True,
+            "url": "redis://localhost:6379",
             "browser_url": "http://localhost:13000",
             "password_source": "reused",
             "password": None,
         }
         with (
+            patch("gobby.cli.install._docker_daemon_available", return_value=True),
+            patch("gobby.cli.install.install_postgres", return_value=postgres_result),
             patch("gobby.cli.install.install_qdrant", return_value=qdrant_result),
             patch("gobby.cli.install.install_falkordb", return_value=falkordb_result),
             patch("gobby.cli.install._resolve_ide_settings_consent", return_value=False),
@@ -306,7 +310,7 @@ class TestInstallCommand:
         self,
         runner: CliRunner,
     ) -> None:
-        """Default install still configures embeddings and external services."""
+        """Default install configures embeddings and the required managed stack."""
         claude_result = {
             "success": True,
             "hooks_installed": ["PreToolUse"],
@@ -338,7 +342,10 @@ class TestInstallCommand:
 
         assert result.exit_code == 0
         assert "Gobby Hooks Installation" in result.output
-        assert "Components to configure: claude, git-hooks" in result.output
+        assert (
+            "Components to configure: claude, postgres, qdrant, falkordb, git-hooks"
+            in result.output
+        )
         mock_hooks.assert_called_once()
         mock_embedding.assert_called_once()
         mock_qdrant.assert_called_once()
@@ -376,56 +383,16 @@ class TestInstallCommand:
             result = runner.invoke(install, [], catch_exceptions=False)
 
         assert result.exit_code == 0
-        assert "Components to configure: agy" in result.output
+        assert "Components to configure: agy, postgres, qdrant, falkordb" in result.output
         assert "AGY CLI" in result.output
         mock_agy.assert_called_once()
         mock_hooks.assert_not_called()
 
-    def test_install_all_no_ext_services_runs_embedding_only(
-        self,
-        runner: CliRunner,
-    ) -> None:
-        """--all --no-ext-services still runs embedding setup and skips Docker services."""
-        claude_result = {
-            "success": True,
-            "hooks_installed": ["PreToolUse"],
-            "mcp_configured": True,
-        }
-        with (
-            patch("gobby.cli.install.run_daemon_setup"),
-            patch(
-                "gobby.cli.install._ensure_daemon_config",
-                return_value={"created": False, "path": "/fake"},
-            ),
-            patch("gobby.cli.install.get_install_dir", return_value=Path("/fake/install")),
-            patch("gobby.cli.install._is_claude_code_installed", return_value=True),
-            patch("gobby.cli.install._is_grok_cli_installed", return_value=False),
-            patch("gobby.cli.install._is_agy_cli_installed", return_value=False),
-            patch("gobby.cli.install._is_qwen_cli_installed", return_value=False),
-            patch("gobby.cli.install._is_codex_cli_installed", return_value=False),
-            patch("gobby.cli.install._is_droid_cli_installed", return_value=False),
-            patch("gobby.cli.install.install_claude", return_value=claude_result),
-            patch("gobby.cli.install.prepare_install_state", return_value=empty_install_state()),
-            patch("gobby.cli.install._run_git_hooks_install") as mock_hooks,
-            patch(
-                "gobby.cli.install._run_embedding_install", return_value="lmstudio"
-            ) as mock_embedding,
-            patch("gobby.cli.install._run_qdrant_install") as mock_qdrant,
-            patch("gobby.cli.install._run_falkordb_install") as mock_falkordb,
-        ):
-            result = runner.invoke(
-                install,
-                ["--all", "--no-ext-services"],
-                catch_exceptions=False,
-            )
+    def test_install_rejects_removed_no_ext_services(self, runner: CliRunner) -> None:
+        result = runner.invoke(install, ["--all", "--no-ext-services"])
 
-        assert result.exit_code == 0
-        assert "Gobby Hooks Installation" in result.output
-        assert "Components to configure: claude, git-hooks" in result.output
-        mock_hooks.assert_called_once()
-        mock_embedding.assert_called_once()
-        mock_qdrant.assert_not_called()
-        mock_falkordb.assert_not_called()
+        assert result.exit_code == 2
+        assert "No such option '--no-ext-services'" in result.output
 
     def test_repeat_noninteractive_install_preserves_optional_sections(
         self, runner: CliRunner
@@ -475,12 +442,10 @@ class TestInstallCommand:
         assert result.exit_code == 0
         assert "Change embedding provider/model/endpoint?" not in result.output
         assert "Change voice setting?" not in result.output
-        assert "Change Qdrant?" not in result.output
-        assert "Change FalkorDB?" not in result.output
         embedding.assert_not_called()
         voice.assert_not_called()
-        qdrant.assert_not_called()
-        falkordb.assert_not_called()
+        qdrant.assert_called_once()
+        falkordb.assert_called_once()
 
     def test_repeat_interactive_install_prompts_for_each_optional_section(
         self, runner: CliRunner
@@ -528,50 +493,18 @@ class TestInstallCommand:
             )
 
         assert result.exit_code == 0
-        for prompt in (
-            "Change embedding provider/model/endpoint?",
-            "Change voice setting?",
-            "Change Qdrant?",
-            "Change FalkorDB?",
-        ):
+        for prompt in ("Change embedding provider/model/endpoint?", "Change voice setting?"):
             assert prompt in result.output
         embedding.assert_not_called()
         voice.assert_not_called()
-        qdrant.assert_not_called()
-        falkordb.assert_not_called()
+        qdrant.assert_called_once()
+        falkordb.assert_called_once()
 
-    @patch("gobby.cli.install.run_daemon_setup")
-    @patch(
-        "gobby.cli.install._ensure_daemon_config", return_value={"created": False, "path": "/fake"}
-    )
-    @patch("gobby.cli.install.get_install_dir", return_value=Path("/fake/install"))
-    @patch("gobby.cli.install.install_falkordb")
-    @patch("gobby.cli.install.install_qdrant")
-    @patch("gobby.cli.install.install_claude")
-    def test_install_no_ext_services(
-        self,
-        mock_claude: MagicMock,
-        mock_qdrant: MagicMock,
-        mock_falkordb: MagicMock,
-        _install_dir: MagicMock,
-        _config: MagicMock,
-        _setup: MagicMock,
-        runner: CliRunner,
-    ) -> None:
-        """--no-ext-services skips both Qdrant and FalkorDB."""
-        mock_claude.return_value = {
-            "success": True,
-            "hooks_installed": ["PreToolUse"],
-            "mcp_configured": True,
-        }
-        result = runner.invoke(install, ["--claude", "--no-ext-services"], catch_exceptions=False)
+    def test_install_help_omits_removed_no_ext_services(self, runner: CliRunner) -> None:
+        result = runner.invoke(install, ["--help"])
+
         assert result.exit_code == 0
-        mock_qdrant.assert_not_called()
-        assert mock_qdrant.call_count == 0
-        assert not mock_qdrant.called
-        mock_falkordb.assert_not_called()
-        assert mock_falkordb.call_count == 0
-        assert not mock_falkordb.called
+        assert "--no-ext-services" not in result.output
 
     def test_install_all_no_clis_detected(
         self,

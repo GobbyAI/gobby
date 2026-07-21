@@ -9,7 +9,7 @@ from unittest.mock import MagicMock, patch
 import pytest
 from click.testing import CliRunner
 
-from gobby.cli.pack import _human_size, pack, unpack
+from gobby.cli.pack import _human_size, _import_docker_volume, pack, unpack
 
 pytestmark = pytest.mark.unit
 
@@ -27,6 +27,24 @@ class TestPackHelpers:
         assert _human_size(1073741824) == "1.0GB"
         assert _human_size(1099511627776) == "1.0TB"
         assert _human_size(1649267441664) == "1.5TB"
+
+    @patch("gobby.cli.pack.subprocess.run")
+    def test_volume_import_passes_archive_name_as_positional_argument(
+        self,
+        mock_run: MagicMock,
+        tmp_path: Path,
+    ) -> None:
+        mock_run.return_value = MagicMock(returncode=0)
+        archive = tmp_path / "backup;not-shell.tar.gz"
+
+        result = _import_docker_volume("gobby_data", archive)
+
+        assert result is True
+        assert mock_run.call_count == 2
+        command = mock_run.call_args.args[0]
+        assert "$1" in command[-3]
+        assert archive.name not in command[-3]
+        assert command[-1] == archive.name
 
 
 class TestPackCommand:
@@ -136,7 +154,7 @@ class TestPackCommand:
         assert "gobby/postgres/SHA256SUMS" in names
         assert "gobby/docker-volumes/gobby_postgres_data.tar.gz" not in names
         assert manifest["postgres_backup"] is True
-        assert manifest["postgres_install_mode"] == "docker"
+        assert "postgres_install_mode" not in manifest
 
     @patch("gobby.cli.pack.get_gobby_home")
     @patch("gobby.cli.pack._daemon_is_running", return_value=True)
@@ -372,7 +390,6 @@ class TestUnpackCommand:
 
         with (
             patch("gobby.cli.pack.restore_postgres_backup", side_effect=_restore),
-            patch("gobby.cli.pack._active_install_mode", return_value="docker"),
             patch("gobby.cli.pack._start_docker_services") as start_services,
         ):
             result = runner.invoke(unpack, [str(archive), "--force"])

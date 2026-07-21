@@ -43,10 +43,8 @@ def _patch_common(
     monkeypatch: pytest.MonkeyPatch,
     module: Any,
     *,
-    mode: str,
     database_url: str = "postgresql://gobby:secret@localhost:60891/gobby",
 ) -> None:
-    monkeypatch.setattr(module, "_active_install_mode", lambda **_kwargs: mode)
     monkeypatch.setattr(
         module,
         "_read_bootstrap_database_url",
@@ -61,7 +59,7 @@ def test_create_docker_backup_writes_verified_dump_metadata_and_sha(
 ) -> None:
     import gobby.cli.postgres_backup as backup
 
-    _patch_common(monkeypatch, backup, mode="docker")
+    _patch_common(monkeypatch, backup)
     commands: list[list[str]] = []
 
     def _run(args: list[str], **kwargs: Any) -> subprocess.CompletedProcess[bytes]:
@@ -87,7 +85,7 @@ def test_create_docker_backup_writes_verified_dump_metadata_and_sha(
     assert dump_path.read_bytes() == b"PGDMP"
     assert metadata["source_postgres_version"] == "17.6"
     assert metadata["source_dsn_redacted"] == "postgresql://gobby:****@localhost:60891/gobby"
-    assert metadata["install_mode"] == "docker"
+    assert "install_mode" not in metadata
     assert metadata["pg_search_present"] is True
     assert metadata["pgcrypto_present"] is True
     assert "migration_marker" not in metadata
@@ -105,7 +103,7 @@ def test_create_docker_backup_uses_configured_pg_dump_timeout(
 ) -> None:
     import gobby.cli.postgres_backup as backup
 
-    _patch_common(monkeypatch, backup, mode="docker")
+    _patch_common(monkeypatch, backup)
     monkeypatch.setenv("GOBBY_POSTGRES_DUMP_TIMEOUT_SECONDS", "17")
     timeouts: list[int] = []
 
@@ -124,22 +122,6 @@ def test_create_docker_backup_uses_configured_pg_dump_timeout(
     backup.create_postgres_backup(output_dir=tmp_path / "backup", gobby_home=tmp_path)
 
     assert timeouts == [17]
-
-
-def test_create_backup_rejects_non_docker_install_mode(
-    monkeypatch: pytest.MonkeyPatch,
-    tmp_path: Path,
-) -> None:
-    import gobby.cli.postgres_backup as backup
-
-    _patch_common(monkeypatch, backup, mode="bogus")
-
-    with pytest.raises(click.ClickException) as exc_info:
-        backup.create_postgres_backup(output_dir=tmp_path / "backup", gobby_home=tmp_path)
-
-    message = str(exc_info.value)
-    assert "postgres_install_mode=docker" in message
-    assert "mode=bogus" in message
 
 
 def test_postgres_backup_configured_only_swallows_bootstrap_read_errors(
@@ -172,7 +154,7 @@ def test_restore_docker_backup_verifies_checksum_and_runs_restore_probes(
 ) -> None:
     import gobby.cli.postgres_backup as backup
 
-    _patch_common(monkeypatch, backup, mode="docker")
+    _patch_common(monkeypatch, backup)
     backup_dir = tmp_path / "backup"
     backup_dir.mkdir()
     dump_path = backup_dir / backup.POSTGRES_DUMP_NAME
@@ -213,7 +195,7 @@ def test_restore_rejects_unverified_dump_without_sidecar_before_pg_restore(
 ) -> None:
     import gobby.cli.postgres_backup as backup
 
-    _patch_common(monkeypatch, backup, mode="docker")
+    _patch_common(monkeypatch, backup)
     dump_path = tmp_path / backup.POSTGRES_DUMP_NAME
     dump_path.write_bytes(b"PGDMP")
 
@@ -232,7 +214,7 @@ def test_restore_allows_explicit_unverified_dump_override(
 ) -> None:
     import gobby.cli.postgres_backup as backup
 
-    _patch_common(monkeypatch, backup, mode="docker")
+    _patch_common(monkeypatch, backup)
     dump_path = tmp_path / backup.POSTGRES_DUMP_NAME
     dump_path.write_bytes(b"PGDMP")
     commands: list[list[str]] = []
@@ -265,7 +247,6 @@ def test_restore_rejects_unmanaged_dsn(
     _patch_common(
         monkeypatch,
         backup,
-        mode="docker",
         database_url="postgresql://gobby:secret@db.example.test:5432/gobby",
     )
 
@@ -277,7 +258,6 @@ def test_restore_rejects_unmanaged_dsn(
     assert "port=5432" in message
     assert "user=gobby" in message
     assert "database=gobby" in message
-    assert "mode=docker" in message
 
 
 def test_restore_rejects_checksum_mismatch(
@@ -286,7 +266,7 @@ def test_restore_rejects_checksum_mismatch(
 ) -> None:
     import gobby.cli.postgres_backup as backup
 
-    _patch_common(monkeypatch, backup, mode="docker")
+    _patch_common(monkeypatch, backup)
     backup_dir = tmp_path / "backup"
     backup_dir.mkdir()
     (backup_dir / backup.POSTGRES_DUMP_NAME).write_bytes(b"PGDMP")

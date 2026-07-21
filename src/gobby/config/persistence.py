@@ -45,7 +45,7 @@ class QdrantConfig(BaseModel):
     model_config = {"extra": "ignore"}
 
     url: str | None = Field(
-        default="http://localhost:6333",
+        default=None,
         description="URL for Qdrant server (Docker-managed).",
     )
     api_key: str | None = Field(

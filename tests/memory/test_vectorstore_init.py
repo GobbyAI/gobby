@@ -165,9 +165,9 @@ class TestVectorStoreInitialization:
         assert vs.rebuild.call_count == 0
         assert not vs.rebuild.called
 
-    def test_default_qdrant_url_config(self) -> None:
-        """Config default for qdrant url should be http://localhost:6333."""
+    def test_qdrant_url_requires_managed_install_config(self) -> None:
+        """Qdrant URL remains unset until the managed installer persists it."""
         from gobby.config.persistence import QdrantConfig
 
         config = QdrantConfig()
-        assert config.url == "http://localhost:6333"
+        assert config.url is None

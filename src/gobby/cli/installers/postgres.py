@@ -19,7 +19,6 @@ import click
 import psycopg
 
 from gobby.cli import postgres_bootstrap as _bootstrap
-from gobby.cli.postgres_bootstrap import InstallMode
 from gobby.code_index.bm25_health import (
     render_bm25_status,
     unavailable_bm25_status,
@@ -43,16 +42,10 @@ DEFAULT_POSTGRES_USER = "gobby"
 
 def install_postgres(
     *,
-    mode: InstallMode | str = "docker",
-    dsn: str | None = None,
     gobby_home: Path | None = None,
     port: int = DEFAULT_POSTGRES_PORT,
 ) -> dict[str, Any]:
     """Install or configure PostgreSQL for the Gobby hub."""
-    if mode != "docker":
-        raise click.ClickException(
-            f"Unsupported PostgreSQL install mode: {mode}. Docker is the only supported mode."
-        )
     return _install_docker(gobby_home=gobby_home, port=port)
 
 
@@ -118,11 +111,10 @@ def _install_docker(*, gobby_home: Path | None, port: int) -> dict[str, Any]:
             dsn=database_url,
             sql=f"CREATE EXTENSION IF NOT EXISTS {extension}",
         )
-    _write_bootstrap_defaults(gobby_home=home, mode="docker", database_url=database_url)
+    _write_bootstrap_defaults(gobby_home=home, database_url=database_url)
 
     return {
         "success": True,
-        "mode": "docker",
         "database_url": database_url,
         "compose_file": str(compose_file),
         "message": "PostgreSQL installed via Docker Compose.",
@@ -132,14 +124,12 @@ def _install_docker(*, gobby_home: Path | None, port: int) -> dict[str, Any]:
 async def get_postgres_status(
     *,
     gobby_home: Path | None = None,
-    mode: InstallMode | None = None,
     dsn: str | None = None,
     readiness_timeout: float = 10.0,
     connect_timeout: int = 5,
 ) -> dict[str, Any]:
     """Return the stable PostgreSQL status payload used by runbooks."""
     home = gobby_home or get_gobby_home()
-    active_mode = mode or _active_install_mode(gobby_home=home)
     bootstrap_error: str | None = None
     try:
         bootstrap_database_url = _read_bootstrap_database_url(home)
@@ -150,7 +140,6 @@ async def get_postgres_status(
     if bootstrap_error and database_url is None:
         return {
             "available": False,
-            "mode": active_mode,
             "dsn_host": None,
             "dsn_db": None,
             "healthy": False,
@@ -163,7 +152,6 @@ async def get_postgres_status(
         error = f"{home / 'bootstrap.yaml'} does not define database_url"
         return {
             "available": False,
-            "mode": active_mode,
             "dsn_host": None,
             "dsn_db": None,
             "healthy": False,
@@ -174,7 +162,6 @@ async def get_postgres_status(
         }
 
     payload: dict[str, Any] = {
-        "mode": active_mode,
         "dsn_host": _dsn_host(database_url),
         "dsn_db": _dsn_db(database_url),
         "healthy": _pg_isready(
@@ -207,7 +194,6 @@ async def get_postgres_status(
 def render_postgres_status(payload: dict[str, Any]) -> str:
     """Render a concise human-readable PostgreSQL status."""
     lines = [
-        f"Mode:        {payload.get('mode')}",
         f"Host:        {payload.get('dsn_host') or 'unknown'}",
         f"Database:    {payload.get('dsn_db') or 'unknown'}",
         f"Healthy:     {'yes' if payload.get('healthy') else 'no'}",
@@ -279,7 +265,7 @@ def _resolve_postgres_install_database_url(
         runtime = resolve_compose_runtime(
             gobby_home,
             database_url=database_url,
-            include_services=False,
+            profiles=("postgres",),
         )
         return _database_url_from_compose_environment(runtime.environment), runtime
 
@@ -287,7 +273,7 @@ def _resolve_postgres_install_database_url(
     runtime = resolve_compose_runtime(
         gobby_home,
         database_url=_docker_database_url(port, password=password),
-        include_services=False,
+        profiles=("postgres",),
     )
     return _database_url_from_compose_environment(runtime.environment), runtime
 
@@ -295,13 +281,11 @@ def _resolve_postgres_install_database_url(
 def _write_bootstrap_defaults(
     *,
     gobby_home: Path,
-    mode: InstallMode,
     database_url: str,
 ) -> None:
     try:
         _bootstrap.write_postgres_defaults(
             gobby_home=gobby_home,
-            mode=mode,
             database_url=database_url,
         )
     except BootstrapConfigError as exc:
@@ -442,10 +426,6 @@ def _database_url_from_compose_environment(env: dict[str, str]) -> str:
 
 def _read_bootstrap_database_url(gobby_home: Path) -> str | None:
     return _bootstrap.read_bootstrap_database_url(gobby_home)
-
-
-def _active_install_mode(*, gobby_home: Path | None = None) -> InstallMode:
-    return _bootstrap.active_install_mode(_gobby_home=gobby_home)
 
 
 def _dsn_host(dsn: str) -> str | None:

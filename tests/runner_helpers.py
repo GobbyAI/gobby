@@ -25,7 +25,6 @@ def apply_safe_runner_config_defaults(config: MagicMock) -> MagicMock:
     config.bind_host = "localhost"
     config.hub_backend = "postgres"
     config.database_url = "postgresql://gobby:secret@localhost:60891/gobby"
-    config.postgres_install_mode = None
 
     if getattr(config, "websocket", None) is None:
         config.websocket = None
@@ -132,6 +131,10 @@ def create_base_patches(
         patch("gobby.storage.secrets.SecretStore"),
         patch("gobby.storage.config_store.ConfigStore"),
         patch("gobby.runner_init.storage.ensure_local_api_token"),
+        patch(
+            "gobby.runner_service_readiness.require_managed_services_ready",
+            new=AsyncMock(),
+        ),
         patch(
             "gobby.runner_init.orchestration.AgentLifecycleMonitor", return_value=mock_agent_monitor
         ),

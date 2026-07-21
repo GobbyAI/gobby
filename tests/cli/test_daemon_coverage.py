@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import subprocess
+from collections.abc import Iterator
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
@@ -29,6 +30,21 @@ def _runtime(*profiles: str) -> ComposeRuntime:
     )
 
 
+def _write_managed_compose(home: Path) -> None:
+    compose = home / "services" / "docker-compose.yml"
+    compose.parent.mkdir(parents=True)
+    compose.write_text(
+        "services:\n"
+        "  postgres:\n"
+        "    profiles: [postgres]\n"
+        "  qdrant:\n"
+        "    profiles: [qdrant]\n"
+        "  falkordb:\n"
+        "    profiles: [falkordb]\n",
+        encoding="utf-8",
+    )
+
+
 @pytest.fixture
 def runner() -> CliRunner:
     return CliRunner()
@@ -38,28 +54,38 @@ def runner() -> CliRunner:
 # _services_start / _services_stop
 # ---------------------------------------------------------------------------
 class TestServicesStart:
+    @pytest.fixture(autouse=True)
+    def _docker_available(self) -> Iterator[None]:
+        with patch("shutil.which", return_value="/usr/bin/docker"):
+            yield
+
     def test_no_compose_file(self, tmp_path: Path) -> None:
-        """No compose file → early return, no error."""
+        """A missing managed Compose asset is a startup failure."""
         result = _services_start(tmp_path)
-        assert result.outcome == "skipped"
+        assert result.outcome == "failed"
+        assert "Compose file is missing" in result.detail
         assert not (tmp_path / "services" / "docker-compose.yml").exists()
 
     @patch("gobby.cli.daemon.subprocess.run")
     def test_start_exports_persisted_qdrant_port(self, mock_run: MagicMock, tmp_path: Path) -> None:
-        compose = tmp_path / "services" / "docker-compose.yml"
-        compose.parent.mkdir(parents=True)
-        compose.write_text("version: '3'")
+        _write_managed_compose(tmp_path)
 
         mock_run.return_value = MagicMock(returncode=0)
-        runtime = ComposeRuntime(
-            environment={"GOBBY_QDRANT_HTTP_PORT": "7333"},
-            profiles=("qdrant",),
-        )
 
-        with patch("gobby.cli.daemon.resolve_compose_runtime", return_value=runtime):
+        def _resolve(
+            _home: Path,
+            *,
+            profiles: tuple[str, ...] = ("postgres", "qdrant", "falkordb"),
+        ) -> ComposeRuntime:
+            return ComposeRuntime(
+                environment={"GOBBY_QDRANT_HTTP_PORT": "7333"},
+                profiles=profiles,
+            )
+
+        with patch("gobby.cli.daemon.resolve_compose_runtime", side_effect=_resolve):
             result = _services_start(tmp_path)
         assert result == ServiceStartResult("success", "Docker services started")
-        mock_run.assert_called_once()
+        assert mock_run.call_count == 2
         assert mock_run.call_args is not None
         cmd = mock_run.call_args.args[0]
         assert "qdrant" in cmd
@@ -67,13 +93,14 @@ class TestServicesStart:
 
     @patch("gobby.cli.daemon.subprocess.run")
     def test_compose_exists_failure(self, mock_run: MagicMock, tmp_path: Path) -> None:
-        compose = tmp_path / "services" / "docker-compose.yml"
-        compose.parent.mkdir(parents=True)
-        compose.write_text("version: '3'")
+        _write_managed_compose(tmp_path)
 
         mock_run.return_value = MagicMock(returncode=1, stderr="err", stdout="")
 
-        with patch("gobby.cli.daemon.resolve_compose_runtime", return_value=_runtime("qdrant")):
+        with patch(
+            "gobby.cli.daemon.resolve_compose_runtime",
+            return_value=_runtime("postgres", "qdrant", "falkordb"),
+        ):
             result = _services_start(tmp_path)
         assert result.outcome == "failed"
         assert "Docker compose up failed" in result.detail
@@ -85,12 +112,13 @@ class TestServicesStart:
 
     @patch("gobby.cli.daemon.subprocess.run")
     def test_compose_timeout(self, mock_run: MagicMock, tmp_path: Path) -> None:
-        compose = tmp_path / "services" / "docker-compose.yml"
-        compose.parent.mkdir(parents=True)
-        compose.write_text("version: '3'")
+        _write_managed_compose(tmp_path)
 
         mock_run.side_effect = subprocess.TimeoutExpired(cmd="docker", timeout=120)
-        with patch("gobby.cli.daemon.resolve_compose_runtime", return_value=_runtime("qdrant")):
+        with patch(
+            "gobby.cli.daemon.resolve_compose_runtime",
+            return_value=_runtime("postgres", "qdrant", "falkordb"),
+        ):
             result = _services_start(tmp_path)
         assert result.outcome == "failed"
         assert "timed out" in result.detail
@@ -99,9 +127,7 @@ class TestServicesStart:
         assert mock_run.call_args is not None
 
     def test_config_error(self, tmp_path: Path) -> None:
-        compose = tmp_path / "services" / "docker-compose.yml"
-        compose.parent.mkdir(parents=True)
-        compose.write_text("version: '3'")
+        _write_managed_compose(tmp_path)
 
         # Without resolved service config there are no profiles to start.
         with patch("gobby.cli.daemon.subprocess.run") as mock_run:
@@ -113,13 +139,14 @@ class TestServicesStart:
                 result = _services_start(tmp_path)
             assert result.outcome == "failed"
             assert result.detail.endswith("config error")
-            assert compose.exists()
+            assert (tmp_path / "services" / "docker-compose.yml").exists()
             mock_run.assert_not_called()
 
 
 class TestServicesStop:
     def test_no_compose_file(self, tmp_path: Path) -> None:
-        _services_stop(tmp_path)
+        result = _services_stop(tmp_path)
+        assert result is False
         assert not (tmp_path / "services" / "docker-compose.yml").exists()
 
     @patch("gobby.cli.daemon.subprocess.run")
@@ -129,7 +156,8 @@ class TestServicesStop:
         compose.write_text("version: '3'")
         mock_run.return_value = MagicMock(returncode=0)
         with patch("gobby.cli.daemon.resolve_compose_runtime", return_value=_runtime()):
-            _services_stop(tmp_path)
+            result = _services_stop(tmp_path)
+        assert result is True
         mock_run.assert_called_once()
         assert mock_run.call_count == 1
         assert mock_run.call_args is not None
@@ -146,7 +174,8 @@ class TestServicesStop:
         compose.write_text("version: '3'")
         mock_run.side_effect = subprocess.TimeoutExpired(cmd="docker", timeout=60)
         with patch("gobby.cli.daemon.resolve_compose_runtime", return_value=_runtime()):
-            _services_stop(tmp_path)
+            result = _services_stop(tmp_path)
+        assert result is False
         assert "Timed out stopping Docker services" in caplog.text
         mock_run.assert_called_once()
 
@@ -162,7 +191,8 @@ class TestServicesStop:
         compose.write_text("version: '3'")
         mock_run.side_effect = FileNotFoundError("docker not found")
         with patch("gobby.cli.daemon.resolve_compose_runtime", return_value=_runtime()):
-            _services_stop(tmp_path)
+            result = _services_stop(tmp_path)
+        assert result is False
         assert "Failed to stop Docker services: docker not found" in caplog.text
         mock_run.assert_called_once()
 
@@ -192,7 +222,7 @@ class TestStopCommand:
         result = runner.invoke(stop, [], obj={"config": config}, catch_exceptions=False)
         assert result.exit_code == 1
 
-    @patch("gobby.cli.daemon._services_stop")
+    @patch("gobby.cli.daemon._services_stop", return_value=True)
     @patch("gobby.cli.daemon.get_gobby_home", return_value=Path("/fake"))
     @patch(
         "gobby.cli.daemon.get_service_status",
@@ -214,6 +244,29 @@ class TestStopCommand:
         mock_services.assert_called_once()
         assert mock_services.call_count == 1
         assert mock_services.call_args is not None
+
+    @patch("gobby.cli.daemon._services_stop", return_value=False)
+    @patch("gobby.cli.daemon.get_gobby_home", return_value=Path("/fake"))
+    @patch(
+        "gobby.cli.daemon.get_service_status",
+        return_value={"installed": False, "running": False},
+    )
+    @patch("gobby.cli.daemon.stop_daemon_util", return_value=True)
+    def test_stop_with_docker_reports_container_failure(
+        self,
+        _stop: MagicMock,
+        _svc: MagicMock,
+        _home: MagicMock,
+        _services: MagicMock,
+        runner: CliRunner,
+    ) -> None:
+        config = MagicMock(daemon_port=60887)
+
+        result = runner.invoke(stop, ["--docker"], obj={"config": config})
+
+        assert result.exit_code == 1
+        assert "Stopping Docker containers" in result.output
+        _services.assert_called_once_with(Path("/fake"))
 
 
 # ---------------------------------------------------------------------------

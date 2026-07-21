@@ -65,7 +65,7 @@ def install_qdrant(
     configured_url = f"http://localhost:{port}"
     try:
         _update_config(qdrant_url=configured_url, qdrant_port=port, gobby_home=home)
-        runtime = resolve_compose_runtime(home)
+        runtime = resolve_compose_runtime(home, profiles=("qdrant",))
     except (ComposeEnvironmentError, ImportError, OSError, RuntimeError, ValueError) as exc:
         return {"success": False, "error": f"Failed to resolve Qdrant config: {exc}"}
 

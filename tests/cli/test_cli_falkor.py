@@ -64,13 +64,13 @@ class TestInstallFalkorDBFlags:
 
 
 class TestDaemonDockerFlag:
-    """Tests for --docker flag on daemon start/stop/restart."""
+    """Tests for managed service lifecycle flags and helpers."""
 
-    def test_start_has_docker_flag(self) -> None:
+    def test_start_does_not_have_docker_flag(self) -> None:
         from gobby.cli.daemon import start
 
         param_names = [p.name for p in start.params]
-        assert "docker_flag" in param_names
+        assert "docker_flag" not in param_names
 
     def test_stop_has_docker_flag(self) -> None:
         from gobby.cli.daemon import stop
@@ -89,7 +89,15 @@ class TestDaemonDockerFlag:
 
         svc_dir = tmp_path / "services"
         svc_dir.mkdir(parents=True)
-        (svc_dir / "docker-compose.yml").write_text("services: {}")
+        (svc_dir / "docker-compose.yml").write_text(
+            "services:\n"
+            "  postgres:\n"
+            "    profiles: [postgres]\n"
+            "  qdrant:\n"
+            "    profiles: [qdrant]\n"
+            "  falkordb:\n"
+            "    profiles: [falkordb]\n"
+        )
 
         with (
             patch("gobby.cli.daemon.subprocess.run") as mock_run,
@@ -98,7 +106,7 @@ class TestDaemonDockerFlag:
                 "gobby.cli.daemon.resolve_compose_runtime",
                 return_value=ComposeRuntime(
                     environment={"GOBBY_FALKORDB_PASSWORD": "password"},
-                    profiles=("falkordb",),
+                    profiles=("postgres", "qdrant", "falkordb"),
                 ),
             ),
         ):
@@ -109,14 +117,14 @@ class TestDaemonDockerFlag:
         assert result.outcome == "success"
         assert compose_calls
 
-    def test_services_start_skips_when_no_docker(self, tmp_path: Path) -> None:
+    def test_services_start_fails_when_no_docker(self, tmp_path: Path) -> None:
         from gobby.cli.daemon import _services_start
 
         with patch("shutil.which", return_value=None):
             with patch("gobby.cli.daemon.subprocess.run") as mock_run:
                 result = _services_start(tmp_path)
 
-        assert result.outcome == "skipped"
+        assert result.outcome == "failed"
         mock_run.assert_not_called()
 
     def test_services_start_skips_when_config_unavailable(self, tmp_path: Path) -> None:
@@ -124,7 +132,16 @@ class TestDaemonDockerFlag:
 
         svc_dir = tmp_path / "services"
         svc_dir.mkdir(parents=True)
-        (svc_dir / "docker-compose.yml").write_text("services: {}", encoding="utf-8")
+        (svc_dir / "docker-compose.yml").write_text(
+            "services:\n"
+            "  postgres:\n"
+            "    profiles: [postgres]\n"
+            "  qdrant:\n"
+            "    profiles: [qdrant]\n"
+            "  falkordb:\n"
+            "    profiles: [falkordb]\n",
+            encoding="utf-8",
+        )
 
         with (
             patch("shutil.which", return_value="/usr/bin/docker"),
@@ -159,7 +176,13 @@ class TestDaemonDockerFlag:
 
         compose_calls = [call for call in mock_run.call_args_list if "down" in str(call)]
         assert compose_calls
-        assert mock_run.call_args.args[0][-1] == "down"
+        command = mock_run.call_args.args[0]
+        assert command[-1] == "down"
+        for profile in ("postgres", "qdrant", "falkordb"):
+            assert any(
+                command[index : index + 2] == ["--profile", profile]
+                for index in range(len(command) - 1)
+            )
         assert mock_run.call_args.kwargs["cwd"] == str(svc_dir)
         assert mock_run.call_args.kwargs["env"] == {"PATH": "test"}
 

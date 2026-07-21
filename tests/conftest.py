@@ -423,7 +423,6 @@ def protect_production_resources(
             # But simpler is to just return a safe config object
             config = DaemonConfig(
                 database_url="postgresql://test-safe-postgres.invalid/test-safe-postgres",
-                postgres_install_mode="docker",
                 logging={"dir": str(safe_logs_dir)},
             )
             # Apply overrides if present (logic from real load_config)

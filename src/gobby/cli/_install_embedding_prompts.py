@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import logging
-import subprocess
+import subprocess  # nosec B404 # fixed local provider CLI invocations
 from collections.abc import Callable
 from typing import Any
 from urllib.parse import urlparse
@@ -83,7 +83,7 @@ def _select_embedding_provider(
     if ollama_ok:
         options.append(("ollama", "Ollama (localhost:11434) - local"))
     options.append(("openai", "OpenAI (cloud, requires API key)"))
-    options.append(("none", "None (disables semantic search, skips Qdrant/FalkorDB)"))
+    options.append(("none", "None (disables semantic embedding work)"))
 
     default_idx = 1
     if not lmstudio_ok and not ollama_ok:

@@ -69,7 +69,6 @@ available:
 ```yaml
 hub_backend: postgres
 database_url: "postgresql://gobby:gobby_dev@localhost:60891/gobby"
-postgres_install_mode: docker
 postgres_pool:
   min_size: 2
   max_size: 20
@@ -80,13 +79,12 @@ bind_host: "localhost"
 websocket_port: 60888
 ui_port: 60889
 auth_mode: required
-falkordb_password: "gobbyfalkor"
 ```
 
-`database_url` is the required PostgreSQL DSN for the runtime hub. PostgreSQL is
-the only runtime hub. Startup fails when the PostgreSQL DSN is missing, so do not
-remove `database_url` or use `gobby postgres uninstall` as a runtime recovery
-path.
+`database_url` is the required connection string for Gobby's Docker-managed
+PostgreSQL container. PostgreSQL is the only runtime hub. The host must be a
+local or loopback address; external PostgreSQL servers are not supported.
+Startup fails when the DSN or managed service configuration is missing.
 
 `postgres_pool` configures the daemon's PostgreSQL client pool. All four values
 must be positive, and `min_size` cannot exceed `max_size`. These bootstrap values
@@ -107,11 +105,10 @@ with the install-scoped local token or a browser session. Persist an explicit
 choice with `gobby install --auth-mode required|disabled`. Use `disabled` only
 inside an explicitly trusted isolated environment.
 
-For a daemon and PostgreSQL hub shared across Tailscale, keep `bind_host` as the
-daemon listen address and configure remote clients with both the daemon endpoint
-(`daemon_url` or `GOBBY_DAEMON_URL`) and the hub `database_url`. Direct-hub
-access requires the database connection details as well; see
-[shared-stack.md](shared-stack.md).
+For a daemon shared across Tailscale, keep `bind_host` as the daemon listen
+address and configure remote clients with the daemon endpoint (`daemon_url` or
+`GOBBY_DAEMON_URL`). The managed PostgreSQL container stays local to the daemon
+host; see [shared-stack.md](shared-stack.md).
 
 ### Runtime Overrides
 
@@ -363,8 +360,9 @@ gobby install --embedding-url http://localhost:1234/v1 \
 ```
 
 `memory.backend` accepts `local` or `null`. Qdrant and FalkorDB connection
-settings are shared infrastructure; memory-specific behavior lives under
-`memory`.
+settings are required shared infrastructure even when embeddings are disabled;
+memory-specific behavior lives under `memory`. Production startup requires the
+managed Qdrant URL and FalkorDB credentials to be configured and healthy.
 
 ### Sessions
 
@@ -671,4 +669,4 @@ after changing server definitions.
 - [search.md](./search.md) - Search and embedding behavior
 - [webhooks-and-plugins.md](./webhooks-and-plugins.md) - Extension development
 
-_Last verified: 2026-07-17_
+_Last verified: 2026-07-20_

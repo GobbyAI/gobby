@@ -18,7 +18,6 @@ import psycopg
 
 from gobby import __version__
 from gobby.cli.installers.postgres import (
-    _active_install_mode,
     _extension_present,
     _preload_libraries,
     _read_bootstrap_database_url,
@@ -28,7 +27,7 @@ from gobby.cli.installers.postgres import (
 )
 from gobby.cli.installers.service import get_service_status
 from gobby.cli.postgres_backup import create_postgres_backup, restore_postgres_backup
-from gobby.cli.postgres_bootstrap import InstallMode, set_bootstrap_field
+from gobby.cli.postgres_bootstrap import set_bootstrap_field
 from gobby.cli.utils import _is_process_alive, _redact_dsn, get_gobby_home
 from gobby.code_index.bm25_health import render_bm25_status, repair_bm25_indexes
 from gobby.config.app import load_config
@@ -45,21 +44,9 @@ def postgres_cli() -> None:
 
 
 @postgres_cli.command("install")
-@click.option(
-    "--mode",
-    type=click.Choice(["docker"]),
-    default="docker",
-    show_default=True,
-    help="Install mode. Docker is the only supported mode.",
-)
-@click.option(
-    "--dsn",
-    default=None,
-    help="Ignored. PostgreSQL installs are Docker-only.",
-)
-def install_cmd(mode: str, dsn: str | None) -> None:
+def install_cmd() -> None:
     """Install or configure PostgreSQL."""
-    result = install_postgres(mode=_install_mode(mode), dsn=dsn)
+    result = install_postgres()
     _render_install_result(result)
 
 
@@ -178,14 +165,13 @@ def activate_cmd(capture_sink: str | None, accept_no_rollback_risk: bool) -> Non
     if _daemon_running():
         raise click.ClickException("Stop the daemon first: gobby stop")
 
-    mode = _active_install_mode(gobby_home=get_gobby_home())
     if capture_sink or accept_no_rollback_risk:
         raise click.ClickException(
             "Capture flags are not applicable in Docker mode; pgAudit is the gate."
         )
     probe = _probe_pgaudit_or_fail()
     ticket = _build_cutover_ticket(
-        mode=mode,
+        mode="docker",
         capture_kind="pgaudit-managed",
         capture_value=None,
         verification=_verification_ok(probe),
@@ -210,8 +196,6 @@ def activate_cmd(capture_sink: str | None, accept_no_rollback_risk: bool) -> Non
 def _render_install_result(result: dict[str, Any]) -> None:
     if result.get("success"):
         click.echo(result.get("message", "PostgreSQL configured"))
-        if result.get("mode"):
-            click.echo(f"  Mode: {result['mode']}")
         if result.get("database_url"):
             click.echo(f"  DSN:  {_redact_dsn(str(result['database_url']))}")
         if result.get("compose_file"):
@@ -256,12 +240,6 @@ def _render_restore_result(result: dict[str, Any]) -> None:
     click.echo(f"  pgcrypto:  {'yes' if probes.get('pgcrypto_present') else 'no'}")
 
 
-def _install_mode(value: str) -> InstallMode:
-    if value == "docker":
-        return "docker"
-    raise click.ClickException(f"Unknown install mode: {value}")
-
-
 def _daemon_running() -> bool:
     service_status = get_service_status()
     if service_status.get("running"):
@@ -294,11 +272,11 @@ def _probe_pgaudit_or_fail() -> dict[str, Any]:
             raise click.ClickException("pgAudit must be configured with pgaudit.log=write.")
 
         try:
-            row = conn.execute(
-                f"/* {probe_token} */ "
-                "UPDATE _pgaudit_probe SET last_probed_at = NOW() WHERE id = 1 "
-                "RETURNING last_probed_at"
-            ).fetchone()
+            probe_query = psycopg.sql.SQL(
+                "/* {} */ UPDATE _pgaudit_probe "
+                "SET last_probed_at = NOW() WHERE id = 1 RETURNING last_probed_at"
+            ).format(psycopg.sql.Identifier(probe_token))
+            row = conn.execute(probe_query).fetchone()
             conn.commit()
         except psycopg.Error as exc:
             raise click.ClickException(f"pgAudit write probe failed: {exc}") from exc
@@ -373,7 +351,7 @@ def _verification_ok(probe_detail: dict[str, Any]) -> dict[str, Any]:
 
 def _build_cutover_ticket(
     *,
-    mode: InstallMode,
+    mode: str,
     capture_kind: str,
     capture_value: str | None,
     verification: dict[str, Any],

@@ -15,10 +15,10 @@ pytestmark = pytest.mark.unit
 # ===========================================================================
 
 
-def test_qdrant_url_defaults_to_localhost() -> None:
-    """QdrantConfig.url should default to http://localhost:6333."""
+def test_qdrant_url_requires_managed_install_config() -> None:
+    """QdrantConfig.url remains unset until the managed installer persists it."""
     config = QdrantConfig()
-    assert config.url == "http://localhost:6333"
+    assert config.url is None
 
 
 def test_qdrant_api_key_defaults_to_none() -> None:

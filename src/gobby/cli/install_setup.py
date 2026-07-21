@@ -9,7 +9,7 @@ import os
 import platform
 import re
 import shutil
-import subprocess
+import subprocess  # nosec B404 # fixed npm and managed helper invocations
 import sys
 import tempfile
 from datetime import UTC, datetime
@@ -312,7 +312,6 @@ def ensure_daemon_config() -> dict[str, Any]:
     defaults = {
         "hub_backend": "postgres",
         "database_url": "postgresql://gobby:gobby_dev@localhost:60891/gobby",
-        "postgres_install_mode": "docker",
         "postgres_pool": DEFAULT_POSTGRES_POOL_CONFIG.to_dict(),
         "daemon_port": 60887,
         "bind_host": "localhost",
@@ -428,9 +427,13 @@ def run_daemon_setup(project_path: Path, *, configure_ide_settings: bool) -> Non
 
 
 def _run_npm_install(label: str, package: str, project_path: Path) -> None:
+    npm_executable = shutil.which("npm")
+    if npm_executable is None:
+        click.echo(f"Warning: npm not found — skipping {label} install")
+        return
     try:
-        npm_result = subprocess.run(
-            ["npm", "install", "-g", package],
+        npm_result = subprocess.run(  # nosec B603 # executable resolved with shutil.which
+            [npm_executable, "install", "-g", package],
             capture_output=True,
             text=True,
             timeout=120,
@@ -439,8 +442,6 @@ def _run_npm_install(label: str, package: str, project_path: Path) -> None:
             click.echo(f"Installed {label} ({package.removesuffix('@latest')})")
         else:
             click.echo(f"Warning: Failed to install {label}: {npm_result.stderr.strip()}")
-    except FileNotFoundError:
-        click.echo(f"Warning: npm not found — skipping {label} install")
     except OSError as e:
         click.echo(f"Warning: Failed to run npm for {label}: {e}")
     except subprocess.TimeoutExpired:

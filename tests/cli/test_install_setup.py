@@ -302,10 +302,26 @@ class TestRunDaemonSetup:
 
 
 class TestRunNpmInstall:
+    @patch("subprocess.run")
+    @patch("gobby.cli.install_setup.shutil.which", return_value=None)
+    def test_skips_when_npm_is_missing(
+        self,
+        _mock_which: MagicMock,
+        mock_run: MagicMock,
+        tmp_path: Path,
+        capsys: pytest.CaptureFixture[str],
+    ) -> None:
+        _run_npm_install("Playwright CLI", "@playwright/cli@latest", tmp_path)
+
+        mock_run.assert_not_called()
+        assert "npm not found" in capsys.readouterr().out
+
+    @patch("gobby.cli.install_setup.shutil.which", return_value="/usr/bin/npm")
     @patch("subprocess.run", side_effect=PermissionError("denied"))
     def test_warns_when_npm_cannot_execute(
         self,
         mock_run: MagicMock,
+        _mock_which: MagicMock,
         tmp_path: Path,
         capsys: pytest.CaptureFixture[str],
     ) -> None:
@@ -314,10 +330,12 @@ class TestRunNpmInstall:
         assert mock_run.call_count == 1
         assert "Warning: Failed to run npm for Playwright CLI: denied" in capsys.readouterr().out
 
+    @patch("gobby.cli.install_setup.shutil.which", return_value="/usr/bin/npm")
     @patch("subprocess.run", side_effect=OSError("exec format error"))
     def test_warns_on_os_error(
         self,
         mock_run: MagicMock,
+        _mock_which: MagicMock,
         tmp_path: Path,
         capsys: pytest.CaptureFixture[str],
     ) -> None:

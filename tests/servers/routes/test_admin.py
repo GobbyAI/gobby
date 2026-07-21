@@ -104,7 +104,6 @@ class TestAdminRoutes:
             config=SimpleNamespace(
                 databases=DatabasesConfig(),
                 hub_backend="postgres",
-                postgres_install_mode=None,
             ),
             database=MagicMock(),
             db_executor_stats=lambda: None,
@@ -503,9 +502,7 @@ class TestAdminRoutes:
         mock_server.services.database.dialect = "postgres"
         mock_server.services.database.connection_count = 2
         mock_server.services.config.hub_backend = "postgres"
-        mock_server.services.config.postgres_install_mode = "docker"
         mock_get_postgres_status.return_value = {
-            "mode": "docker",
             "dsn_host": "localhost",
             "dsn_db": "gobby",
             "healthy": True,
@@ -516,7 +513,7 @@ class TestAdminRoutes:
 
         data = response.json()
         assert data["database"]["backend"] == "postgres"
-        assert data["postgres"]["mode"] == "docker"
+        assert "mode" not in data["postgres"]
         assert data["postgres"]["healthy"] is True
         mock_get_postgres_status.assert_awaited_once_with(
             readiness_timeout=1.5,

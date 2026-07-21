@@ -10,7 +10,6 @@ from typing import TYPE_CHECKING, Any
 
 from gobby.config.bootstrap import DEFAULT_WEBSOCKET_PORT
 from gobby.config.logging import UI_LOG_FILENAME, resolved_log_path
-from gobby.config.persistence import is_falkordb_enabled
 from gobby.runner_lifecycle_agents import (
     _reconcile_agent_runs_after_restart,
 )
@@ -111,42 +110,6 @@ async def _connect_mcp_servers(runner: GobbyRunner, tracker: StartupTracker | No
         logger.error("MCP connection failed: %s", e)
         if tracker:
             tracker.error("MCP servers", str(e))
-
-
-async def _check_external_services(runner: GobbyRunner, tracker: StartupTracker | None) -> None:
-    db_cfg = runner.config.databases
-    if db_cfg.qdrant.url:
-        from gobby.cli.services import is_qdrant_healthy
-
-        if not await is_qdrant_healthy(db_cfg.qdrant.url):
-            logger.warning(
-                "Qdrant configured but unreachable at %s — vector features will retry lazily",
-                db_cfg.qdrant.url,
-            )
-            if tracker:
-                tracker.error("Qdrant", f"unreachable at {db_cfg.qdrant.url}")
-        elif tracker:
-            tracker.complete("Qdrant healthy")
-    else:
-        logger.debug("Qdrant URL is not configured; vector health check skipped")
-
-    if runner.memory_manager and is_falkordb_enabled(db_cfg):
-        falkor_cfg = db_cfg.falkordb
-        falkor_client = getattr(runner.memory_manager, "falkor_client", None)
-        is_healthy = bool(falkor_client and await falkor_client.ping())
-        endpoint = f"{falkor_cfg.host}:{falkor_cfg.port}"
-        if not is_healthy:
-            logger.warning(
-                "FalkorDB configured but unreachable at %s — memory graph features disabled",
-                endpoint,
-            )
-            runner.memory_manager.clear_graph_clients()
-            if tracker:
-                tracker.error("FalkorDB", f"unreachable at {endpoint}")
-        elif tracker:
-            tracker.complete("FalkorDB healthy")
-    elif runner.memory_manager:
-        logger.debug("FalkorDB is not configured; graph health check skipped")
 
 
 async def _repair_code_index_bm25(
@@ -807,7 +770,6 @@ async def init_subsystems(
         record_provider_model_refresh_result,
     )
     await _connect_mcp_servers(runner, tracker)
-    await _check_external_services(runner, tracker)
     code_index_bm25_ready = await _repair_code_index_bm25(runner, tracker)
     await _check_embedding_service(runner, tracker)
     await _cleanup_metrics_on_startup(runner)

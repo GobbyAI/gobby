@@ -18,6 +18,8 @@ pytestmark = pytest.mark.unit
 def _seed_falkordb_config(db: HubDatabase, password: str) -> None:
     config_store = ConfigStore(db)
     secret_store = SecretStore(db)
+    config_store.set("databases.qdrant.url", "http://localhost:6333", source="test")
+    config_store.set("databases.qdrant.port", 6333, source="test")
     config_store.set("databases.falkordb.host", "127.0.0.1", source="test")
     config_store.set("databases.falkordb.port", 16379, source="test")
     config_store.set_secret(
@@ -51,7 +53,16 @@ def test_services_start_uses_falkordb_config_store_password(
 ) -> None:
     services_dir = tmp_path / "services"
     services_dir.mkdir(parents=True)
-    (services_dir / "docker-compose.yml").write_text("services: {}\n", encoding="utf-8")
+    (services_dir / "docker-compose.yml").write_text(
+        "services:\n"
+        "  postgres:\n"
+        "    profiles: [postgres]\n"
+        "  qdrant:\n"
+        "    profiles: [qdrant]\n"
+        "  falkordb:\n"
+        "    profiles: [falkordb]\n",
+        encoding="utf-8",
+    )
     monkeypatch.setenv("GOBBY_HOME", str(tmp_path))
     _seed_falkordb_config(postgres_db, "config-secret")
 

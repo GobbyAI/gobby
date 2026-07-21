@@ -446,7 +446,6 @@ session_summary:
     bootstrap_content = f"""
 hub_backend: postgres
 database_url: {postgres_url}
-postgres_install_mode: docker
 daemon_port: {http_port}
 bind_host: localhost
 websocket_port: {ws_port}

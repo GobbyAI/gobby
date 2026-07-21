@@ -22,7 +22,6 @@ def test_bootstrap_defaults_to_postgres_backend_without_runtime_url(temp_dir: Pa
 
     assert bootstrap.hub_backend == "postgres"
     assert bootstrap.database_url is None
-    assert bootstrap.postgres_install_mode is None
     assert bootstrap.postgres_pool.min_size == 2
     assert bootstrap.postgres_pool.max_size == 20
     assert bootstrap.postgres_pool.acquire_timeout_seconds == 5.0
@@ -82,14 +81,13 @@ def test_bootstrap_loads_postgres_database_url(temp_dir: Path) -> None:
     database_url = "postgresql://gobby:secret@localhost:60891/gobby"
     _write_bootstrap(
         bootstrap_file,
-        f"hub_backend: postgres\ndatabase_url: {database_url}\npostgres_install_mode: docker\n",
+        f"hub_backend: postgres\ndatabase_url: {database_url}\n",
     )
 
     bootstrap = load_bootstrap(str(bootstrap_file), resolve_database_url=True)
 
     assert bootstrap.hub_backend == "postgres"
     assert bootstrap.database_url == database_url
-    assert bootstrap.postgres_install_mode == "docker"
 
     persisted = yaml.safe_load(bootstrap_file.read_text())
     assert persisted["database_url"] == database_url
@@ -104,7 +102,6 @@ def test_write_postgres_defaults_stores_database_url(temp_dir: Path) -> None:
 
     write_postgres_defaults(
         gobby_home=temp_dir,
-        mode="docker",
         database_url=database_url,
     )
 
@@ -113,7 +110,7 @@ def test_write_postgres_defaults_stores_database_url(temp_dir: Path) -> None:
     assert persisted["hub_backend"] == "postgres"
     assert persisted["database_url"] == database_url
     assert "database_url_ref" not in persisted
-    assert persisted["postgres_install_mode"] == "docker"
+    assert "postgres_install_mode" not in persisted
     assert persisted["postgres_pool"] == {
         "min_size": 2,
         "max_size": 20,
@@ -138,7 +135,6 @@ def test_postgres_defaults_follow_runtime_gobby_home_changes(
         resolved_home = bootstrap_path().parent
         write_postgres_defaults(
             gobby_home=resolved_home,
-            mode="docker",
             database_url=database_url,
         )
 
@@ -159,10 +155,7 @@ def test_load_bootstrap_without_resolution_reads_plain_database_url(temp_dir: Pa
     bootstrap_file = temp_dir / "bootstrap.yaml"
     _write_bootstrap(
         bootstrap_file,
-        "hub_backend: postgres\n"
-        f"database_url: {database_url}\n"
-        "postgres_install_mode: docker\n"
-        "daemon_port: 61234\n",
+        f"hub_backend: postgres\ndatabase_url: {database_url}\ndaemon_port: 61234\n",
     )
 
     bootstrap = load_bootstrap(str(bootstrap_file))
@@ -172,7 +165,7 @@ def test_load_bootstrap_without_resolution_reads_plain_database_url(temp_dir: Pa
     assert bootstrap.database_url == database_url
 
 
-def test_load_bootstrap_rejects_invalid_postgres_install_mode(temp_dir: Path) -> None:
+def test_load_bootstrap_rejects_removed_postgres_install_mode(temp_dir: Path) -> None:
     from gobby.config.bootstrap import BootstrapConfigError, load_bootstrap
 
     bootstrap_file = temp_dir / "bootstrap.yaml"
@@ -183,7 +176,7 @@ def test_load_bootstrap_rejects_invalid_postgres_install_mode(temp_dir: Path) ->
         "postgres_install_mode: bogus\n",
     )
 
-    with pytest.raises(BootstrapConfigError, match="postgres_install_mode must be: docker"):
+    with pytest.raises(BootstrapConfigError, match="postgres_install_mode has been removed"):
         load_bootstrap(str(bootstrap_file))
 
 
@@ -195,14 +188,12 @@ def test_write_postgres_defaults_refreshes_database_url(temp_dir: Path) -> None:
 
     write_postgres_defaults(
         gobby_home=temp_dir,
-        mode="docker",
         database_url=first_database_url,
     )
     assert read_bootstrap_database_url(temp_dir) == first_database_url
 
     write_postgres_defaults(
         gobby_home=temp_dir,
-        mode="docker",
         database_url=second_database_url,
     )
 
@@ -224,7 +215,7 @@ def test_clear_postgres_fields_preserves_postgres_runtime_bootstrap(temp_dir: Pa
     persisted = yaml.safe_load(bootstrap_file.read_text())
     assert persisted["hub_backend"] == "postgres"
     assert persisted["database_url"] == database_url
-    assert persisted["postgres_install_mode"] == "docker"
+    assert "postgres_install_mode" not in persisted
 
 
 def test_clear_postgres_fields_rejects_unsupported_database_url_ref(temp_dir: Path) -> None:
@@ -234,9 +225,7 @@ def test_clear_postgres_fields_rejects_unsupported_database_url_ref(temp_dir: Pa
     bootstrap_file = temp_dir / "bootstrap.yaml"
     _write_bootstrap(
         bootstrap_file,
-        "hub_backend: postgres\n"
-        "database_url_ref: unsupported:gobby:postgres_database_url\n"
-        "postgres_install_mode: docker\n",
+        "hub_backend: postgres\ndatabase_url_ref: unsupported:gobby:postgres_database_url\n",
     )
 
     with pytest.raises(BootstrapConfigError, match="requires database_url"):
@@ -245,7 +234,6 @@ def test_clear_postgres_fields_rejects_unsupported_database_url_ref(temp_dir: Pa
     persisted = yaml.safe_load(bootstrap_file.read_text())
     assert persisted["hub_backend"] == "postgres"
     assert persisted["database_url_ref"] == "unsupported:gobby:postgres_database_url"
-    assert persisted["postgres_install_mode"] == "docker"
 
 
 def test_clear_postgres_fields_rejects_invalid_runtime_backend(temp_dir: Path) -> None:
@@ -255,9 +243,7 @@ def test_clear_postgres_fields_rejects_invalid_runtime_backend(temp_dir: Path) -
     bootstrap_file = temp_dir / "bootstrap.yaml"
     _write_bootstrap(
         bootstrap_file,
-        "hub_backend: local\n"
-        "database_url: postgresql://gobby:secret@localhost:60891/gobby\n"
-        "postgres_install_mode: docker\n",
+        "hub_backend: local\ndatabase_url: postgresql://gobby:secret@localhost:60891/gobby\n",
     )
 
     with pytest.raises(BootstrapConfigError, match="requires hub_backend=postgres"):
@@ -274,9 +260,7 @@ def test_database_url_ref_is_rejected_for_runtime(temp_dir: Path) -> None:
     bootstrap_file = temp_dir / "bootstrap.yaml"
     _write_bootstrap(
         bootstrap_file,
-        "hub_backend: postgres\n"
-        "database_url_ref: unsupported:gobby:postgres_database_url\n"
-        "postgres_install_mode: docker\n",
+        "hub_backend: postgres\ndatabase_url_ref: unsupported:gobby:postgres_database_url\n",
     )
 
     with pytest.raises(BootstrapConfigError, match="database_url_ref is no longer supported"):
@@ -306,6 +290,27 @@ def test_postgres_backend_requires_database_url(temp_dir: Path) -> None:
 
     with pytest.raises(BootstrapConfigError, match="database_url"):
         load_bootstrap(str(bootstrap_file), resolve_database_url=True)
+
+
+def test_runtime_bootstrap_rejects_external_postgres_url(temp_dir: Path) -> None:
+    from gobby.config.bootstrap import BootstrapConfigError, load_bootstrap
+
+    bootstrap_file = temp_dir / "bootstrap.yaml"
+    _write_bootstrap(
+        bootstrap_file,
+        "hub_backend: postgres\n"
+        "database_url: postgresql://gobby:secret@db.example.com:60891/gobby\n",
+    )
+
+    with pytest.raises(BootstrapConfigError, match="local Docker-managed PostgreSQL"):
+        load_bootstrap(str(bootstrap_file), resolve_database_url=True)
+
+
+def test_runtime_bootstrap_requires_managed_config_file(temp_dir: Path) -> None:
+    from gobby.config.bootstrap import BootstrapConfigError, load_bootstrap
+
+    with pytest.raises(BootstrapConfigError, match="requires database_url"):
+        load_bootstrap(str(temp_dir / "missing.yaml"), resolve_database_url=True)
 
 
 @pytest.mark.parametrize(

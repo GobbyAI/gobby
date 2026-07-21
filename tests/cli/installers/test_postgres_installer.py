@@ -22,7 +22,7 @@ def _completed_process(args: list[str] | None = None) -> subprocess.CompletedPro
     return subprocess.CompletedProcess(args=args or [], returncode=0, stdout="", stderr="")
 
 
-def test_install_postgres_dispatches_modes(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+def test_install_postgres_uses_docker(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
     installer = _import_installer()
     calls: list[tuple[str, dict[str, Any]]] = []
 
@@ -36,10 +36,7 @@ def test_install_postgres_dispatches_modes(monkeypatch: pytest.MonkeyPatch, tmp_
         lambda **kwargs: _record("docker", **kwargs),
         raising=False,
     )
-    assert installer.install_postgres(mode="docker", gobby_home=tmp_path)["mode"] == "docker"
-
-    with pytest.raises(click.ClickException, match="Docker is the only supported mode"):
-        installer.install_postgres(mode="bogus")
+    assert installer.install_postgres(gobby_home=tmp_path)["mode"] == "docker"
 
     assert [mode for mode, _kwargs in calls] == ["docker"]
 
@@ -125,7 +122,6 @@ def test_docker_install_runs_postgres_profile_and_writes_bootstrap(
     assert "generated-password" in payload_text
     assert "localhost:60991" in payload_text
     assert "/gobby" in payload_text
-    assert "docker" in payload_text
 
 
 def test_postgres_database_url_matches_validated_compose_runtime(
@@ -238,7 +234,6 @@ def test_write_bootstrap_defaults_surfaces_bootstrap_errors_as_click_error(
     with pytest.raises(click.ClickException, match="bootstrap is invalid"):
         installer._write_bootstrap_defaults(
             gobby_home=tmp_path,
-            mode="docker",
             database_url="postgresql://gobby:secret@localhost:60891/gobby",
         )
 
@@ -349,11 +344,10 @@ async def test_get_postgres_status_returns_stable_payload(
 
     status = await installer.get_postgres_status(
         gobby_home=tmp_path,
-        mode="docker",
         dsn="postgresql://gobby:secret@example.com/gobby",
     )
 
-    assert status["mode"] == "docker"
+    assert "mode" not in status
     assert status["dsn_host"] == "example.com"
     assert status["dsn_db"] == "gobby"
     assert isinstance(status["healthy"], bool)
@@ -372,14 +366,12 @@ async def test_get_postgres_status_honors_gobby_home_environment(
     bootstrap_path = configured_home / "bootstrap.yaml"
     bootstrap_path.write_text(
         "hub_backend: postgres\n"
-        "postgres_install_mode: docker\n"
         "database_url: postgresql://invalid:invalid@127.0.0.1:1/custom_home_db\n"
     )
     bootstrap_path.chmod(0o600)
     monkeypatch.setenv("GOBBY_HOME", str(configured_home))
 
     status = await installer.get_postgres_status(
-        mode="docker",
         readiness_timeout=1,
         connect_timeout=1,
     )

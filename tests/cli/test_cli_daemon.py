@@ -23,6 +23,16 @@ from gobby.config.logging import RUNTIME_LOG_FILENAME, resolved_log_path
 pytestmark = pytest.mark.unit
 
 
+@pytest.fixture(autouse=True)
+def _mock_required_docker_stack(monkeypatch: pytest.MonkeyPatch) -> None:
+    from gobby.cli.daemon import ServiceStartResult
+
+    monkeypatch.setattr(
+        "gobby.cli.daemon._services_start",
+        lambda _home: ServiceStartResult("success", "Docker services started"),
+    )
+
+
 class TestDaemonHealthWait:
     """Tests for daemon health polling."""
 
@@ -236,8 +246,16 @@ class TestStartCommand:
         """Test start --help displays help text."""
         result = runner.invoke(cli, ["start", "--help"])
         assert result.exit_code == 0
+        assert "--docker" not in result.output
         assert "Start the Gobby daemon" in result.output
         assert "--verbose" in result.output
+
+    def test_start_rejects_removed_docker_option(self, runner: CliRunner) -> None:
+        """The removed start --docker option fails at the CLI boundary."""
+        result = runner.invoke(cli, ["start", "--docker"])
+
+        assert result.exit_code == 2
+        assert "No such option '--docker'" in result.output
 
     @patch("gobby.cli.daemon._poll_startup_progress", return_value=True)
     @patch("gobby.cli.daemon._wait_for_daemon_health", return_value=2.5)

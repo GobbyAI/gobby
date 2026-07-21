@@ -24,7 +24,6 @@ _COMPOSE_SRC = _DATA_DIR / "docker-compose.services.yml"
 DEFAULT_FALKORDB_HOST = "127.0.0.1"
 DEFAULT_FALKORDB_PORT = 16379
 DEFAULT_FALKORDB_BROWSER_URL = "http://localhost:13000"
-DEFAULT_FALKORDB_PASSWORD = "gobbyfalkor"
 
 
 @dataclass(frozen=True)
@@ -164,7 +163,7 @@ def install_falkordb(
         logger.warning("Failed to persist FalkorDB config: %s", exc)
         return {"success": False, "error": f"Failed to persist FalkorDB config: {exc}"}
     try:
-        runtime = resolve_compose_runtime(home)
+        runtime = resolve_compose_runtime(home, profiles=("falkordb",))
     except ComposeEnvironmentError as exc:
         return {"success": False, "error": f"Failed to resolve FalkorDB config: {exc}"}
 
@@ -233,7 +232,7 @@ def uninstall_falkordb(*, gobby_home: Path | None = None) -> dict[str, Any]:
             error = "Docker not found. Install Docker to remove the FalkorDB container."
         else:
             try:
-                runtime = resolve_compose_runtime(home)
+                runtime = resolve_compose_runtime(home, profiles=("falkordb",))
                 result = subprocess.run(  # nosec B603 B607
                     [
                         "docker",

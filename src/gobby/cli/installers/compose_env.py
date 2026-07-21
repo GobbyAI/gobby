@@ -18,17 +18,20 @@ class ComposeEnvironmentError(ValueError):
 
 @dataclass(frozen=True)
 class ComposeRuntime:
-    """Resolved subprocess environment and enabled optional service profiles."""
+    """Resolved subprocess environment and managed service profiles."""
 
     environment: dict[str, str]
     profiles: tuple[str, ...]
+
+
+MANAGED_SERVICE_PROFILES = ("postgres", "qdrant", "falkordb")
 
 
 def resolve_compose_runtime(
     gobby_home: Path,
     *,
     database_url: str | None = None,
-    include_services: bool = True,
+    profiles: tuple[str, ...] = MANAGED_SERVICE_PROFILES,
     overrides: dict[str, str] | None = None,
 ) -> ComposeRuntime:
     """Resolve the environment required by the unified managed-services Compose file.
@@ -41,9 +44,13 @@ def resolve_compose_runtime(
     canonical = _postgres_environment(home, database_url=database_url)
     canonical.update(_pgsearch_environment())
 
-    profiles: tuple[str, ...] = ()
-    if include_services:
-        service_values, profiles = _service_environment(home)
+    unknown_profiles = set(profiles) - set(MANAGED_SERVICE_PROFILES)
+    if unknown_profiles:
+        raise ComposeEnvironmentError(
+            f"Unknown managed-service profiles: {', '.join(sorted(unknown_profiles))}"
+        )
+    if "qdrant" in profiles or "falkordb" in profiles:
+        service_values = _service_environment(home, required_profiles=profiles)
         canonical.update(service_values)
 
     environment = canonical | dict(os.environ)
@@ -116,7 +123,11 @@ def _bootstrap_database_url(gobby_home: Path) -> str:
     return config.database_url
 
 
-def _service_environment(gobby_home: Path) -> tuple[dict[str, str], tuple[str, ...]]:
+def _service_environment(
+    gobby_home: Path,
+    *,
+    required_profiles: tuple[str, ...] = MANAGED_SERVICE_PROFILES,
+) -> dict[str, str]:
     from gobby.storage.config_store import ConfigStore
     from gobby.storage.hub.runtime import open_runtime_hub_database
     from gobby.storage.secrets import SecretStore
@@ -136,15 +147,14 @@ def _service_environment(gobby_home: Path) -> tuple[dict[str, str], tuple[str, .
         secret_store = SecretStore(db)
         keys = set(store.list_keys())
         values: dict[str, str] = {}
-        profiles: list[str] = []
 
         qdrant_keys = {"databases.qdrant.url", "databases.qdrant.port"}
         present_qdrant = keys & qdrant_keys
-        if present_qdrant:
+        if "qdrant" in required_profiles:
             if present_qdrant != qdrant_keys:
                 raise ComposeEnvironmentError(
-                    "Qdrant config is incomplete; databases.qdrant.url and "
-                    "databases.qdrant.port must both be set"
+                    "Qdrant config is required; databases.qdrant.url and "
+                    "databases.qdrant.port must both be set by `gobby install`"
                 )
             qdrant_port = _positive_port(
                 store.get("databases.qdrant.port"),
@@ -152,7 +162,6 @@ def _service_environment(gobby_home: Path) -> tuple[dict[str, str], tuple[str, .
             )
             values["GOBBY_QDRANT_HTTP_PORT"] = str(qdrant_port)
             values["GOBBY_QDRANT_GRPC_PORT"] = str(qdrant_port + 1)
-            profiles.append("qdrant")
 
         falkor_keys = {
             "databases.falkordb.host",
@@ -160,10 +169,11 @@ def _service_environment(gobby_home: Path) -> tuple[dict[str, str], tuple[str, .
             "databases.falkordb.password",
         }
         present_falkor = keys & falkor_keys
-        if present_falkor:
+        if "falkordb" in required_profiles:
             if present_falkor != falkor_keys:
                 raise ComposeEnvironmentError(
-                    "FalkorDB config is incomplete; host, port, and password must all be set"
+                    "FalkorDB config is required; host, port, and password must all be set "
+                    "by `gobby install`"
                 )
             falkor_port = _positive_port(
                 store.get("databases.falkordb.port"),
@@ -186,9 +196,8 @@ def _service_environment(gobby_home: Path) -> tuple[dict[str, str], tuple[str, .
                 )
             values["GOBBY_FALKORDB_PASSWORD"] = password
             values["GOBBY_FALKORDB_PORT"] = str(falkor_port)
-            profiles.append("falkordb")
 
-        return values, tuple(profiles)
+        return values
     finally:
         db.close()
 

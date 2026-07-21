@@ -20,6 +20,7 @@ import click
 from gobby.config.bootstrap import (
     DEFAULT_DAEMON_PORT,
     DEFAULT_WEBSOCKET_PORT,
+    BootstrapConfigError,
 )
 from gobby.config.bootstrap_io import update_bootstrap_yaml
 from gobby.storage.auth import ensure_local_api_token
@@ -83,6 +84,7 @@ from .installers import (
     install_falkordb,
     install_git_hooks,
     install_grok,
+    install_postgres,
     install_qdrant,
     install_qwen,
     uninstall_agy,
@@ -144,7 +146,7 @@ def _docker_daemon_available() -> bool:
     return result.returncode == 0
 
 
-def _port_available(port: int, host: str = "0.0.0.0") -> bool:
+def _port_available(port: int, host: str = "0.0.0.0") -> bool:  # nosec B104
     with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
         sock.settimeout(0.2)
         try:
@@ -159,7 +161,6 @@ def _run_install_preflight(
     is_full_install: bool,
     detected_clis: list[str],
     install_dir: Path,
-    require_docker: bool,
     embedding_url: str | None,
     embedding_provider: str | None,
 ) -> tuple[list[str], list[str]]:
@@ -168,7 +169,7 @@ def _run_install_preflight(
     warnings: list[str] = []
 
     if is_full_install:
-        if require_docker and not _docker_daemon_available():
+        if not _docker_daemon_available():
             errors.append("Docker daemon is required for full install. Start Docker and retry.")
         if not detected_clis:
             errors.append(
@@ -364,12 +365,6 @@ def _resolve_ide_settings_consent(
     help="Initialize daemon configuration and database without installing hooks or services",
 )
 @click.option(
-    "--no-ext-services",
-    "no_ext_services_flag",
-    is_flag=True,
-    help="Skip Docker service installation (Qdrant, FalkorDB)",
-)
-@click.option(
     "--falkordb",
     "falkordb_flag",
     is_flag=True,
@@ -486,7 +481,6 @@ def install(
     hooks_flag: bool,
     all_flag: bool,
     config_only_flag: bool,
-    no_ext_services_flag: bool,
     falkordb_flag: bool,
     falkordb_password_stdin: bool,
     voice_flag: bool,
@@ -607,7 +601,6 @@ def install(
         is_full_install=is_full_install,
         detected_clis=clis_to_install,
         install_dir=install_dir,
-        require_docker=is_full_install and not no_ext_services_flag,
         embedding_url=embedding_url,
         embedding_provider=embedding_provider,
     )
@@ -633,13 +626,25 @@ def install(
     if is_dev_mode:
         click.echo("Mode: Development (using source directory)")
 
-    # Phase 1: daemon config, database, bundled content, MCP servers, IDE config
+    # Track results before provisioning the required stack.
+    results: dict[str, dict[str, Any]] = {}
+
+    # Phase 1: managed PostgreSQL, daemon config, bundled content, MCP servers, IDE config
     config_result = _ensure_daemon_config()
     if config_result["created"]:
         click.echo(f"Created daemon config: {config_result['path']}")
     if auth_mode is not None:
         _set_bootstrap_auth_mode(Path(config_result["path"]), auth_mode)
         click.echo(f"Daemon API authentication mode: {auth_mode}")
+    if is_full_install:
+        postgres_result = install_postgres()
+        results["postgres"] = postgres_result
+        if not postgres_result.get("success"):
+            click.echo(
+                f"Error: PostgreSQL installation failed: {postgres_result.get('error', 'unknown error')}",
+                err=True,
+            )
+            sys.exit(1)
     configure_ide_settings = False
     if not config_only_flag:
         configure_ide_settings = _resolve_ide_settings_consent(
@@ -654,14 +659,14 @@ def install(
         return
 
     toggles = list(clis_to_install)
+    if is_full_install:
+        toggles.extend(["postgres", "qdrant", "falkordb"])
     if install_hooks:
         toggles.append("git-hooks")
 
     click.echo(f"Components to configure: {', '.join(toggles)}")
     click.echo("")
 
-    # Track results
-    results: dict[str, dict[str, Any]] = {}
     db: HubDatabase | None = None
     secret_store: SecretStore | None = None
     config_store: ConfigStore | None = None
@@ -673,7 +678,14 @@ def install(
         db = open_runtime_hub_database()
         secret_store = SecretStore(db)
         config_store = ConfigStore(db)
-    except (FileNotFoundError, PermissionError, OSError, RuntimeError, ValueError) as exc:
+    except (
+        BootstrapConfigError,
+        FileNotFoundError,
+        PermissionError,
+        OSError,
+        RuntimeError,
+        ValueError,
+    ) as exc:
         # Missing config file, unavailable hub, malformed config values.
         # The orchestration proceeds with db/secret_store=None — downstream
         # steps open their own DB via _ensure_db_and_secrets if they need it.
@@ -710,7 +722,6 @@ def install(
         if install_hooks:
             _run_git_hooks_install(install_git_hooks, project_path, results)
 
-        selected_embedding_provider = "none"
         embedding_override = any(
             value is not None
             for value in (embedding_url, embedding_provider, embedding_model, embedding_dim)
@@ -722,7 +733,7 @@ def install(
             explicit=embedding_override,
         )
         if configure_embedding:
-            selected_embedding_provider = _run_embedding_install(
+            _run_embedding_install(
                 install_embedding,
                 results,
                 no_interactive=no_interactive_flag,
@@ -731,8 +742,6 @@ def install(
                 dim_override=embedding_dim,
                 provider_override=embedding_provider,
             )
-        elif is_full_install:
-            selected_embedding_provider = install_state.embedding.provider
 
         configure_voice = not is_full_install or should_configure_section(
             install_state.voice,
@@ -751,32 +760,9 @@ def install(
                 current_enabled=install_state.voice.enabled,
             )
 
-        if is_full_install and not no_ext_services_flag:
-            services_enabled = selected_embedding_provider != "none"
-            if services_enabled or install_state.qdrant.configured:
-                if should_configure_section(
-                    install_state.qdrant,
-                    label="Qdrant",
-                    no_interactive=no_interactive_flag,
-                ):
-                    _run_qdrant_install(install_qdrant, results)
-            if (
-                services_enabled
-                or install_state.falkordb.configured
-                or falkordb_password is not None
-            ):
-                if should_configure_section(
-                    install_state.falkordb,
-                    label="FalkorDB",
-                    no_interactive=no_interactive_flag,
-                    explicit=falkordb_password is not None,
-                ):
-                    _run_falkordb_install(install_falkordb, falkordb_password, results)
-            if not services_enabled and not (
-                install_state.qdrant.configured or install_state.falkordb.configured
-            ):
-                click.echo("Skipping Qdrant/FalkorDB install (embeddings disabled)")
-                click.echo("")
+        if is_full_install:
+            _run_qdrant_install(install_qdrant, results)
+            _run_falkordb_install(install_falkordb, falkordb_password, results)
 
         # Migration detection
         if mode == "global":

@@ -69,7 +69,6 @@ async def test_init_subsystems_skips_code_index_workers_after_failed_repair(
     )
     async_steps = [
         "_connect_mcp_servers",
-        "_check_external_services",
         "_check_embedding_service",
         "_cleanup_metrics_on_startup",
         "_cleanup_stale_expansion_runs_on_startup",

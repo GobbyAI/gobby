@@ -182,6 +182,10 @@ async def run_daemon(runner: GobbyRunner, pid_claim: PidFileClaim | None = None)
         if pid_claim is not None:
             logger.info("Wrote PID file: %s (PID %s)", pid_file, os.getpid())
 
+        from gobby.runner_service_readiness import require_managed_services_ready
+
+        await require_managed_services_ready(runner)
+
         uvicorn_drain_timeout = 15
         config = uvicorn.Config(
             runner.http_server.app,

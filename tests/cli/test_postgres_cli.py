@@ -30,7 +30,7 @@ def test_postgres_group_is_registered_on_root_cli() -> None:
 @pytest.mark.parametrize(
     ("args", "expected"),
     [
-        (["postgres", "install", "--help"], ["--mode", "--dsn", "docker"]),
+        (["postgres", "install", "--help"], []),
         (["postgres", "status", "--help"], ["--json"]),
         (["postgres", "backup", "--help"], ["--output"]),
         (["postgres", "restore", "--help"], ["--clean", "--yes", "--allow-unverified"]),
@@ -59,39 +59,27 @@ def test_postgres_install_command_calls_installer_and_renders_success(
         calls.append(kwargs)
         return {
             "success": True,
-            "mode": kwargs["mode"],
-            "database_url": kwargs["dsn"],
+            "database_url": "postgresql://gobby:secret@localhost:60891/gobby",
             "message": "PostgreSQL configured",
         }
 
     monkeypatch.setattr(postgres_cli_module, "install_postgres", _install_postgres)
 
-    result = CliRunner().invoke(
-        postgres_cli,
-        [
-            "install",
-            "--mode",
-            "docker",
-        ],
-    )
+    result = CliRunner().invoke(postgres_cli, ["install"])
 
     assert result.exit_code == 0
-    assert calls == [
-        {
-            "mode": "docker",
-            "dsn": None,
-        }
-    ]
+    assert calls == [{}]
     assert "PostgreSQL configured" in result.output
 
 
-def test_postgres_install_command_rejects_invalid_mode() -> None:
+@pytest.mark.parametrize("removed_option", ["--mode", "--dsn"])
+def test_postgres_install_command_rejects_removed_options(removed_option: str) -> None:
     from gobby.cli.postgres import postgres_cli
 
-    result = CliRunner().invoke(postgres_cli, ["install", "--mode", "bogus"])
+    result = CliRunner().invoke(postgres_cli, ["install", removed_option, "value"])
 
     assert result.exit_code != 0
-    assert "Invalid value for '--mode'" in result.output
+    assert f"No such option '{removed_option}'" in result.output
 
 
 def test_postgres_status_json_emits_structured_payload(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -100,7 +88,6 @@ def test_postgres_status_json_emits_structured_payload(monkeypatch: pytest.Monke
 
     async def _status() -> dict[str, Any]:
         return {
-            "mode": "docker",
             "dsn_host": "localhost",
             "dsn_db": "gobby",
             "healthy": True,
@@ -263,7 +250,6 @@ def test_postgres_restore_rejects_missing_checksum_sidecar(
 
     dump = tmp_path / "gobby.dump"
     dump.write_bytes(b"dump")
-    monkeypatch.setattr(backup_module, "_active_install_mode", lambda *, gobby_home: "docker")
     monkeypatch.setattr(
         backup_module,
         "_resolve_database_url",
@@ -280,7 +266,7 @@ def test_postgres_uninstall_command_is_not_registered(
 ) -> None:
     from gobby.cli.postgres import postgres_cli
 
-    _write_postgres_bootstrap(tmp_path, mode="docker", hub_backend="postgres")
+    _write_postgres_bootstrap(tmp_path, hub_backend="postgres")
     monkeypatch.setenv("GOBBY_HOME", str(tmp_path))
 
     result = CliRunner().invoke(postgres_cli, ["uninstall"])
@@ -290,7 +276,7 @@ def test_postgres_uninstall_command_is_not_registered(
     bootstrap = _read_bootstrap(tmp_path)
     assert bootstrap["hub_backend"] == "postgres"
     assert bootstrap["database_url"] == "postgresql://gobby:secret@example.com/gobby"
-    assert bootstrap["postgres_install_mode"] == "docker"
+    assert "postgres_install_mode" not in bootstrap
 
 
 def test_postgres_activate_refuses_when_daemon_is_running(
@@ -314,8 +300,8 @@ def test_postgres_activate_docker_flips_bootstrap_and_writes_cutover_ticket(
     import gobby.cli.postgres as postgres_cli_module
     from gobby.cli.postgres import postgres_cli
 
-    _write_postgres_bootstrap(tmp_path, mode="docker", hub_backend="postgres")
-    _allow_activation(monkeypatch, postgres_cli_module, tmp_path=tmp_path, mode="docker")
+    _write_postgres_bootstrap(tmp_path, hub_backend="postgres")
+    _allow_activation(monkeypatch, postgres_cli_module, tmp_path=tmp_path)
 
     probe_calls: list[str] = []
 
@@ -362,8 +348,8 @@ def test_postgres_activate_rejects_deprecated_capture_flags(
     import gobby.cli.postgres as postgres_cli_module
     from gobby.cli.postgres import postgres_cli
 
-    _write_postgres_bootstrap(tmp_path, mode="docker", hub_backend="postgres")
-    _allow_activation(monkeypatch, postgres_cli_module, tmp_path=tmp_path, mode="docker")
+    _write_postgres_bootstrap(tmp_path, hub_backend="postgres")
+    _allow_activation(monkeypatch, postgres_cli_module, tmp_path=tmp_path)
 
     result = CliRunner().invoke(
         postgres_cli,
@@ -391,11 +377,12 @@ def test_probe_pgaudit_or_fail_reads_back_docker_audit_log(
         def __exit__(self, *_args: object) -> None:
             return None
 
-        def execute(self, query: str) -> SimpleNamespace:
-            self.queries.append(query)
-            if "pg_settings" in query:
+        def execute(self, query: object) -> SimpleNamespace:
+            query_text = str(query)
+            self.queries.append(query_text)
+            if "pg_settings" in query_text:
                 return SimpleNamespace(fetchone=lambda: ("write",))
-            if "UPDATE _pgaudit_probe" in query:
+            if "UPDATE _pgaudit_probe" in query_text:
                 return SimpleNamespace(fetchone=lambda: ("2026-05-21T00:00:00Z",))
             raise AssertionError(f"unexpected query: {query}")
 
@@ -429,7 +416,10 @@ def test_probe_pgaudit_or_fail_reads_back_docker_audit_log(
     result = postgres_cli_module._probe_pgaudit_or_fail()
 
     assert fake_conn.committed is True
-    assert any("/* gobby-pgaudit-probe-fixed */" in query for query in fake_conn.queries)
+    assert any(
+        "gobby-pgaudit-probe-fixed" in query and "UPDATE _pgaudit_probe" in query
+        for query in fake_conn.queries
+    )
     assert commands
     assert result["audit_file"] == "/var/log/pgaudit/pgaudit.log"
     assert "gobby-pgaudit-probe-fixed" in result["audit_readback"]
@@ -456,8 +446,8 @@ def test_postgres_activate_restores_bootstrap_when_ticket_publish_fails(
     import gobby.cli.postgres as postgres_cli_module
     from gobby.cli.postgres import postgres_cli
 
-    _write_postgres_bootstrap(tmp_path, mode="docker", hub_backend="postgres")
-    _allow_activation(monkeypatch, postgres_cli_module, tmp_path=tmp_path, mode="docker")
+    _write_postgres_bootstrap(tmp_path, hub_backend="postgres")
+    _allow_activation(monkeypatch, postgres_cli_module, tmp_path=tmp_path)
     monkeypatch.setattr(
         postgres_cli_module,
         "_probe_pgaudit_or_fail",
@@ -479,7 +469,6 @@ def test_postgres_activate_restores_bootstrap_when_ticket_publish_fails(
 def _write_postgres_bootstrap(
     home: Path,
     *,
-    mode: str,
     hub_backend: str,
 ) -> None:
     home.mkdir(parents=True, exist_ok=True)
@@ -488,7 +477,6 @@ def _write_postgres_bootstrap(
             {
                 "hub_backend": hub_backend,
                 "database_url": "postgresql://gobby:secret@example.com/gobby",
-                "postgres_install_mode": mode,
             }
         ),
         encoding="utf-8",
@@ -506,12 +494,6 @@ def _allow_activation(
     postgres_cli_module: Any,
     *,
     tmp_path: Path,
-    mode: str,
 ) -> None:
     monkeypatch.setenv("GOBBY_HOME", str(tmp_path))
     monkeypatch.setattr(postgres_cli_module, "_daemon_running", lambda: False)
-    monkeypatch.setattr(
-        postgres_cli_module,
-        "_active_install_mode",
-        lambda **_kwargs: mode,
-    )

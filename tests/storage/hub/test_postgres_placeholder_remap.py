@@ -366,6 +366,7 @@ def test_advisory_lock_connection_reuses_pool_session_options(
     )
     assert calls["kwargs"] == {
         "application_name": "gobby-advisory-test",
+        "autocommit": True,
         "prepare_threshold": None,
         "row_factory": module.dict_row,
     }

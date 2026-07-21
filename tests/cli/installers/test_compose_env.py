@@ -84,18 +84,16 @@ def test_runtime_process_and_explicit_values_override_canonical(
     monkeypatch.setattr(
         compose_env,
         "_service_environment",
-        lambda _home: (
-            {
-                "GOBBY_QDRANT_HTTP_PORT": "6333",
-                "GOBBY_QDRANT_GRPC_PORT": "6334",
-            },
-            ("qdrant",),
-        ),
+        lambda _home, **_kwargs: {
+            "GOBBY_QDRANT_HTTP_PORT": "6333",
+            "GOBBY_QDRANT_GRPC_PORT": "6334",
+        },
     )
     monkeypatch.setenv("GOBBY_POSTGRES_PASSWORD", "process")
 
     runtime = compose_env.resolve_compose_runtime(
         tmp_path,
+        profiles=("qdrant",),
         overrides={"GOBBY_POSTGRES_PASSWORD": "explicit"},
     )
 
@@ -123,7 +121,7 @@ def test_service_environment_restores_persisted_custom_qdrant_port(
     monkeypatch.setattr("gobby.storage.config_store.ConfigStore", _ConfigStore)
     monkeypatch.setattr("gobby.storage.secrets.SecretStore", _SecretStore)
 
-    env, profiles = compose_env._service_environment(tmp_path)
+    env = compose_env._service_environment(tmp_path)
 
     assert env == {
         "GOBBY_QDRANT_HTTP_PORT": "7333",
@@ -131,7 +129,6 @@ def test_service_environment_restores_persisted_custom_qdrant_port(
         "GOBBY_FALKORDB_PASSWORD": "falkor-secret",
         "GOBBY_FALKORDB_PORT": "17000",
     }
-    assert profiles == ("qdrant", "falkordb")
     assert db.closed is True
 
 
@@ -152,7 +149,7 @@ def test_missing_falkordb_secret_is_actionable_without_generating(
     monkeypatch.setattr("gobby.storage.secrets.SecretStore", _SecretStore)
 
     with pytest.raises(compose_env.ComposeEnvironmentError, match="missing"):
-        compose_env._service_environment(tmp_path)
+        compose_env._service_environment(tmp_path, required_profiles=("falkordb",))
 
 
 def test_missing_bootstrap_reports_postgres_install_command(tmp_path: Path) -> None:
@@ -184,4 +181,4 @@ def test_invalid_process_override_is_rejected(
     monkeypatch.setenv("GOBBY_POSTGRES_PORT", "invalid")
 
     with pytest.raises(compose_env.ComposeEnvironmentError, match="valid TCP port"):
-        compose_env.resolve_compose_runtime(tmp_path, include_services=False)
+        compose_env.resolve_compose_runtime(tmp_path, profiles=("postgres",))

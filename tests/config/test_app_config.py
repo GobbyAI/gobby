@@ -1420,12 +1420,12 @@ class TestLoadConfig:
 
         assert config.cron.check_interval_seconds == 60
 
-    def test_load_config_rejects_invalid_postgres_install_mode_from_config_file(
+    def test_load_config_rejects_removed_postgres_install_mode_from_config_file(
         self,
         temp_dir: Path,
     ) -> None:
         config_file = temp_dir / "config.yaml"
-        write_secure_bootstrap(config_file, "postgres_install_mode: bogus\n")
+        write_secure_bootstrap(config_file, "postgres_install_mode: docker\n")
 
         class DummyConfigStore:
             def get_all(self) -> dict[str, object]:
@@ -1447,7 +1447,6 @@ class TestLoadConfig:
             bootstrap_file,
             "hub_backend: postgres\n"
             "database_url: postgresql://gobby:secret@localhost:60891/gobby\n"
-            "postgres_install_mode: docker\n"
             "postgres_pool:\n"
             "  min_size: 4\n"
             "  max_size: 24\n"
@@ -1460,7 +1459,6 @@ class TestLoadConfig:
                 return {
                     "hub_backend": "local",
                     "database_url": None,
-                    "postgres_install_mode": "bogus",
                     "postgres_pool.min_size": 99,
                     "postgres_pool.max_size": 100,
                 }
@@ -1473,7 +1471,7 @@ class TestLoadConfig:
 
         assert config.hub_backend == "postgres"
         assert config.database_url == "postgresql://gobby:secret@localhost:60891/gobby"
-        assert config.postgres_install_mode == "docker"
+        assert not hasattr(config, "postgres_install_mode")
         assert config.postgres_pool.min_size == 4
         assert config.postgres_pool.max_size == 24
         assert config.postgres_pool.acquire_timeout_seconds == 7.5
@@ -1546,7 +1544,7 @@ class TestBootstrapConfig:
         assert d["bind_host"] == "localhost"
         assert d["hub_backend"] == "postgres"
         assert d["database_url"] is None
-        assert d["postgres_install_mode"] is None
+        assert "postgres_install_mode" not in d
 
     def test_partial_yaml(self, temp_dir: Path) -> None:
         """Test bootstrap fills defaults for missing fields."""
