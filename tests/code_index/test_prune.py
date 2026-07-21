@@ -181,8 +181,17 @@ async def test_global_prune_runs_once_and_clears_dirty_projects(tmp_path: Path) 
 
     result = await pruner.prune_all_projects()
 
-    assert result.startswith("Code index prune completed: run_id=")
-    assert result.endswith("global:pruned")
+    run_id = result["run_id"]
+    assert isinstance(run_id, str)
+    assert result == {
+        "success": True,
+        "status": "completed",
+        "run_id": run_id,
+        "message": f"Code index prune completed: run_id={run_id} global:pruned",
+        "stdout": "",
+        "stderr": "",
+        "retried_projects": 0,
+    }
     assert gateway.global_timeouts == [CODE_INDEX_PRUNE_TIMEOUT_SECONDS]
     assert gateway.targeted_roots == []
     assert storage.cleared_dirty == ["proj-1"]
@@ -215,7 +224,17 @@ async def test_global_prune_failure_retries_all_indexed_project_roots(
 
     result = await pruner.prune_all_projects()
 
-    assert "global:failed retries=2" in result
+    run_id = result["run_id"]
+    assert isinstance(run_id, str)
+    assert result == {
+        "success": False,
+        "status": "failed",
+        "run_id": run_id,
+        "message": f"Code index prune completed: run_id={run_id} global:failed retries=2",
+        "stdout": "",
+        "stderr": "projection prune failed",
+        "retried_projects": 2,
+    }
     assert storage.marked_dirty == [
         ("proj-1", str(root_one), "global_prune_failed"),
         ("proj-2", str(root_two), "global_prune_failed"),
@@ -248,7 +267,9 @@ async def test_global_prune_failure_retries_structured_failed_project_ids(
 
     result = await pruner.prune_all_projects()
 
-    assert "global:failed retries=1" in result
+    assert result["success"] is False
+    assert result["status"] == "failed"
+    assert result["retried_projects"] == 1
     assert storage.marked_dirty == [("proj-2", str(root_two), "global_prune_failed")]
     assert gateway.targeted_roots == [root_two]
 
@@ -270,7 +291,80 @@ async def test_global_prune_sigterm_with_no_stale_stdout_is_completed(
 
     result = await pruner.prune_all_projects()
 
-    assert result.endswith("global:pruned")
+    run_id = result["run_id"]
+    assert isinstance(run_id, str)
+    assert result == {
+        "success": True,
+        "status": "completed",
+        "run_id": run_id,
+        "message": f"Code index prune completed: run_id={run_id} global:pruned",
+        "stdout": "No stale projects found.",
+        "stderr": "",
+        "retried_projects": 0,
+    }
+
+
+@pytest.mark.asyncio
+async def test_global_prune_timeout_returns_failed_structured_result(tmp_path: Path) -> None:
+    storage = PruneStorage()
+    gateway = PruneGateway(
+        global_result=_gcode_result(
+            ("/tmp/gcode", "prune", "--force"),
+            stderr="prune exceeded deadline",
+            timed_out=True,
+        )
+    )
+    context = PruneContext(storage, gateway, tmp_path / "maintenance.log")
+    pruner = CodeIndexPruner(context)  # type: ignore[arg-type]
+
+    result = await pruner.prune_all_projects()
+
+    assert result["success"] is False
+    assert result["status"] == "timed_out"
+    assert result["stderr"] == "prune exceeded deadline"
+    assert result["retried_projects"] == 0
+
+
+@pytest.mark.asyncio
+async def test_global_prune_unavailable_gateway_returns_failed_structured_result(
+    tmp_path: Path,
+) -> None:
+    context = PruneContext(PruneStorage(), None, tmp_path / "maintenance.log")
+    pruner = CodeIndexPruner(context)  # type: ignore[arg-type]
+
+    result = await pruner.prune_all_projects()
+
+    assert result == {
+        "success": False,
+        "status": "unavailable",
+        "run_id": None,
+        "message": "Code index prune failed: gcode gateway unavailable",
+        "stdout": "",
+        "stderr": "",
+        "retried_projects": 0,
+    }
+
+
+@pytest.mark.asyncio
+async def test_global_prune_held_lock_returns_successful_skip(tmp_path: Path) -> None:
+    context = PruneContext(PruneStorage(), PruneGateway(), tmp_path / "maintenance.log")
+    pruner = CodeIndexPruner(context)  # type: ignore[arg-type]
+    await pruner._global_lock.acquire()
+
+    try:
+        result = await pruner.prune_all_projects()
+    finally:
+        pruner._global_lock.release()
+
+    assert result == {
+        "success": True,
+        "status": "skipped",
+        "run_id": None,
+        "message": "Code index prune skipped: global_locked",
+        "stdout": "",
+        "stderr": "",
+        "retried_projects": 0,
+    }
 
 
 @pytest.mark.asyncio
@@ -407,10 +501,11 @@ def test_register_code_index_prune_cron_creates_hourly_system_job() -> None:
     assert storage.created["interval_seconds"] == CODE_INDEX_PRUNE_INTERVAL_SECONDS
     assert storage.created["is_system"] is True
     assert storage.created["action_config"]["handler"] == CODE_INDEX_PRUNE_HANDLER
+    assert "orphan Qdrant collection cleanup" in storage.created["description"]
     assert "limit" not in storage.created["action_config"]
 
 
-def test_register_code_index_prune_cron_reactivates_disabled_job_with_next_run() -> None:
+def test_register_code_index_prune_cron_preserves_disabled_job() -> None:
     now = datetime.now(UTC)
     disabled_job = CronJob(
         id="prune-job",
@@ -429,19 +524,20 @@ def test_register_code_index_prune_cron_reactivates_disabled_job_with_next_run()
 
     class CronStorage:
         def __init__(self) -> None:
-            self.identity_update: dict[str, Any] | None = None
+            self.definition_update: dict[str, Any] | None = None
 
         def get_job_by_name(self, _name: str) -> CronJob:
             return disabled_job
 
-        def reconcile_system_job_definition(self, _job_id: str, **_fields: Any) -> CronJob:
+        def reconcile_system_job_definition(self, _job_id: str, **fields: Any) -> CronJob:
+            self.definition_update = fields
             return disabled_job
 
-        def reconcile_system_job_identity(self, _job_id: str, **fields: Any) -> None:
-            self.identity_update = fields
+        def reconcile_system_job_identity(self, _job_id: str, **_fields: Any) -> None:
+            pytest.fail("disabled jobs must retain their operator-controlled enabled state")
 
         def wake_system_job(self, _job_id: str) -> None:
-            pytest.fail("disabled jobs must be reconciled atomically")
+            pytest.fail("disabled jobs must not be woken")
 
     class CronExecutor:
         def register_handler(self, _name: str, _handler: Any) -> None:
@@ -458,6 +554,57 @@ def test_register_code_index_prune_cron_reactivates_disabled_job_with_next_run()
         project_id="personal",
     )
 
-    assert storage.identity_update is not None
-    assert storage.identity_update["enabled"] is True
-    assert datetime.fromisoformat(storage.identity_update["next_run_at"]) > now
+    assert disabled_job.enabled is False
+    assert storage.definition_update is not None
+    assert "orphan Qdrant collection cleanup" in storage.definition_update["description"]
+
+
+def test_register_code_index_prune_cron_wakes_enabled_job_without_next_run() -> None:
+    now = datetime.now(UTC)
+    enabled_job = CronJob(
+        id="prune-job",
+        project_id="personal",
+        name=CODE_INDEX_PRUNE_JOB_NAME,
+        schedule_type="interval",
+        action_type="handler",
+        action_config={"handler": CODE_INDEX_PRUNE_HANDLER},
+        created_at=now,
+        updated_at=now,
+        interval_seconds=CODE_INDEX_PRUNE_INTERVAL_SECONDS,
+        enabled=True,
+        is_system=True,
+        next_run_at=None,
+    )
+
+    class CronStorage:
+        def __init__(self) -> None:
+            self.woken: list[str] = []
+
+        def get_job_by_name(self, _name: str) -> CronJob:
+            return enabled_job
+
+        def reconcile_system_job_definition(self, _job_id: str, **_fields: Any) -> CronJob:
+            return enabled_job
+
+        def reconcile_system_job_identity(self, _job_id: str, **_fields: Any) -> None:
+            pytest.fail("enabled identity must not be rewritten")
+
+        def wake_system_job(self, job_id: str) -> None:
+            self.woken.append(job_id)
+
+    class CronExecutor:
+        def register_handler(self, _name: str, _handler: Any) -> None:
+            pass
+
+    storage = CronStorage()
+    context = PruneContext(PruneStorage(), PruneGateway(), Path("/tmp/maintenance.log"))
+    pruner = CodeIndexPruner(context)  # type: ignore[arg-type]
+
+    register_code_index_prune_cron(
+        cron_storage=storage,  # type: ignore[arg-type]
+        cron_executor=CronExecutor(),
+        pruner=pruner,
+        project_id="personal",
+    )
+
+    assert storage.woken == ["prune-job"]

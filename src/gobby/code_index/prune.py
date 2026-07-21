@@ -6,15 +6,14 @@ import asyncio
 import json
 import logging
 import signal
-from dataclasses import replace
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, Protocol
+from typing import TYPE_CHECKING, Any, Literal, Protocol, TypedDict
 from uuid import uuid4
 
 from gobby.code_index.gcode_gateway import GcodeCommandError, GcodeCommandResult
 from gobby.code_index.maintenance_log import log_gcode_maintenance_event
 from gobby.scheduler.executor import CronHandler
-from gobby.storage.cron import CronJobStorage, compute_next_run
+from gobby.storage.cron import CronJobStorage
 from gobby.storage.cron_models import CronJob
 
 if TYPE_CHECKING:
@@ -26,7 +25,9 @@ CODE_INDEX_PRUNE_JOB_NAME = "gobby:code-index-prune"
 CODE_INDEX_PRUNE_HANDLER = "code-index:prune"
 CODE_INDEX_PRUNE_INTERVAL_SECONDS = 3600
 CODE_INDEX_PRUNE_TIMEOUT_SECONDS = 120
-CODE_INDEX_PRUNE_DESCRIPTION = "Prune stale code-index graph and vector projections"
+CODE_INDEX_PRUNE_DESCRIPTION = (
+    "Prune stale code-index projections and perform orphan Qdrant collection cleanup"
+)
 _NO_STALE_PROJECTS = "No stale projects found."
 _DEFAULT_MAINTENANCE_LOG_FILE = "~/.gobby/logs/code-index-maintenance.log"
 
@@ -47,6 +48,16 @@ def _is_noop_shutdown_result(result: GcodeCommandResult) -> bool:
 
 class CronRegistrationProtocol(Protocol):
     def register_handler(self, name: str, handler: CronHandler) -> None: ...
+
+
+class CodeIndexPruneResult(TypedDict):
+    success: bool
+    status: Literal["completed", "skipped", "failed", "timed_out", "unavailable"]
+    run_id: str | None
+    message: str
+    stdout: str
+    stderr: str
+    retried_projects: int
 
 
 class CodeIndexPruner:
@@ -105,21 +116,37 @@ class CodeIndexPruner:
             return "Code index prune skipped: dirty=0"
         return "Code index prune completed: " + ", ".join(outcomes)
 
-    async def prune_all_projects(self) -> str:
+    async def prune_all_projects(self) -> CodeIndexPruneResult:
         """Run global gcode prune and retry targeted projects only on failure."""
         if self._global_lock.locked():
-            return "Code index prune skipped: global_locked"
+            return {
+                "success": True,
+                "status": "skipped",
+                "run_id": None,
+                "message": "Code index prune skipped: global_locked",
+                "stdout": "",
+                "stderr": "",
+                "retried_projects": 0,
+            }
 
         async with self._global_lock:
             projects = await self._context.run_db(self._context.storage.list_indexed_projects)
             gateway = self._context.gcode_gateway
             if gateway is None:
-                return "Code index prune failed: gcode gateway unavailable"
+                return {
+                    "success": False,
+                    "status": "unavailable",
+                    "run_id": None,
+                    "message": "Code index prune failed: gcode gateway unavailable",
+                    "stdout": "",
+                    "stderr": "",
+                    "retried_projects": 0,
+                }
 
             run_id = uuid4().hex
             result = await gateway.prune_all_projects(timeout=CODE_INDEX_PRUNE_TIMEOUT_SECONDS)
             if result.timed_out:
-                status = "timed_out"
+                status: Literal["completed", "failed", "timed_out"] = "timed_out"
             elif result.success or _is_noop_shutdown_result(result):
                 status = "completed"
             else:
@@ -137,7 +164,15 @@ class CodeIndexPruner:
 
             if status == "completed":
                 await self._clear_dirty_projects()
-                return f"Code index prune completed: run_id={run_id} global:pruned"
+                return {
+                    "success": True,
+                    "status": status,
+                    "run_id": run_id,
+                    "message": f"Code index prune completed: run_id={run_id} global:pruned",
+                    "stdout": result.stdout,
+                    "stderr": result.stderr,
+                    "retried_projects": 0,
+                }
 
             detail = result.stderr.strip() or result.stdout.strip() or "gcode prune failed"
             retry_projects = _retry_projects(projects, result)
@@ -168,10 +203,18 @@ class CodeIndexPruner:
                     )
                 )
 
-            return (
-                f"Code index prune completed: run_id={run_id} "
-                f"global:{status} retries={len(outcomes)}"
-            )
+            return {
+                "success": False,
+                "status": status,
+                "run_id": run_id,
+                "message": (
+                    f"Code index prune completed: run_id={run_id} "
+                    f"global:{status} retries={len(outcomes)}"
+                ),
+                "stdout": result.stdout,
+                "stderr": result.stderr,
+                "retried_projects": len(outcomes),
+            }
 
     async def prune_project(
         self,
@@ -280,7 +323,7 @@ class CodeIndexPruner:
 
 
 def create_code_index_prune_handler(pruner: CodeIndexPruner) -> CronHandler:
-    async def _handler(_job: CronJob) -> str:
+    async def _handler(_job: CronJob) -> CodeIndexPruneResult:
         return await pruner.prune_all_projects()
 
     return _handler
@@ -327,15 +370,7 @@ def register_code_index_prune_cron(
         schedule_type="interval",
         interval_seconds=CODE_INDEX_PRUNE_INTERVAL_SECONDS,
     )
-    if repaired is not None and not repaired.enabled:
-        enabled_job = replace(repaired, enabled=True)
-        next_run = compute_next_run(enabled_job)
-        cron_storage.reconcile_system_job_identity(
-            repaired.id,
-            enabled=True,
-            next_run_at=next_run.isoformat() if next_run is not None else None,
-        )
-    elif repaired is not None and repaired.next_run_at is None:
+    if repaired is not None and repaired.enabled and repaired.next_run_at is None:
         cron_storage.wake_system_job(repaired.id)
 
 
