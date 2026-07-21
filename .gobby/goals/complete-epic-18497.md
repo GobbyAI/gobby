@@ -100,3 +100,9 @@ so each iteration resumes from the durable goal document and live task state.
   Ruff format/check, mypy, Bandit, and test-quality passed. Close validation
   passed after rerunning the long suite with exit-code-correlated evidence;
   close-triggered compaction supplied the required boundary.
+- 2026-07-21 #9341 iteration 3 — closed #17662 with commit `c2a8402ce`;
+  388 focused classifier, lifecycle, storage, migration, merge, stage, and build
+  tests passed; Ruff format/check, mypy, Bandit, test-quality, and diff checks
+  passed. Structured failure categories now distinguish retryable infrastructure
+  failures from code/test verdicts and surface per-category build counts;
+  close-triggered compaction supplied the required boundary.
