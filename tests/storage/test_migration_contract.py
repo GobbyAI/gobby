@@ -249,6 +249,7 @@ def test_postgres_migrations_limited_to_known_post_baseline() -> None:
         "323_recall_usefulness_digest_shadow.sql",
         "324_drop_sync_tombstones.sql",
         "325_recall_usefulness_shadow_index.sql",
+        "326_validate_recall_usefulness_label_source.sql",
     ]
 
 
@@ -284,6 +285,17 @@ def test_recall_shadow_migration_defines_capture_and_gate_contract() -> None:
         ),
     )
     assert "DELETE FROM RECALL_USEFULNESS" not in migration.upper()
+    assert "VALIDATE CONSTRAINT recall_usefulness_label_source_check" not in migration
+
+
+def test_recall_usefulness_constraint_validation_is_non_transactional() -> None:
+    migration_path = (
+        SRC_ROOT / "storage" / "migrations" / "326_validate_recall_usefulness_label_source.sql"
+    )
+    migration = migration_path.read_text(encoding="utf-8")
+
+    assert migration.startswith("-- gobby:non-transactional\n")
+    assert "VALIDATE CONSTRAINT recall_usefulness_label_source_check" in migration
 
 
 def test_recall_shadow_index_migration_is_non_transactional() -> None:
@@ -352,7 +364,7 @@ def test_postgres_baseline_version_is_flattened_to_305() -> None:
     # The 0.5.0 pre-release flatten folded 295-305 into the baseline. Hubs below
     # 305 take the corrupt_partial backup/recreate path; later migrations replay.
     assert module.BASELINE_VERSION == 305
-    assert module.latest_known_version() == 325
+    assert module.latest_known_version() == 326
 
 
 def test_tombstone_cleanup_migration_and_baseline_remove_sync_objects() -> None:

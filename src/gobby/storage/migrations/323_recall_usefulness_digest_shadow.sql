@@ -11,9 +11,6 @@ ALTER TABLE recall_usefulness
         label_source IN ('llm_judge', 'ablation', 'digest', 'digest_shadow', 'human')
     ) NOT VALID;
 
-ALTER TABLE recall_usefulness
-    VALIDATE CONSTRAINT recall_usefulness_label_source_check;
-
 ALTER TABLE recall_signal_hits
     ADD COLUMN content_hash TEXT;
 

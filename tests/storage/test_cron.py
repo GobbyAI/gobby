@@ -8,7 +8,7 @@ from typing import Any
 import pytest
 
 from gobby.storage import cron as cron_module
-from gobby.storage.cron import CronJobStorage
+from gobby.storage.cron import CronJobStorage, SystemRowProtected
 from gobby.storage.cron_models import CronJob
 from gobby.storage.projects import LocalProjectManager
 
@@ -299,16 +299,11 @@ def test_reconcile_does_not_overwrite_schedule_fields(cron_storage: CronJobStora
     assert updated.interval_seconds == 300
 
 
-def test_toggle_job_on_system_row_recomputes_next_run_at(cron_storage: CronJobStorage) -> None:
+def test_toggle_job_refuses_system_row(cron_storage: CronJobStorage) -> None:
     job = _job(cron_storage, is_system=True)
-    cron_storage.update_job(job.id, enabled=False)
-    cron_storage.update_system_job_bookkeeping(job.id, next_run_at=None)
 
-    updated = cron_storage.toggle_job(job.id)
-
-    assert updated is not None
-    assert updated.enabled is True
-    assert updated.next_run_at is not None
+    with pytest.raises(SystemRowProtected, match="system-managed.*toggle_job"):
+        cron_storage.toggle_job(job.id)
 
 
 def test_system_row_constants_and_sentinel_exist() -> None:

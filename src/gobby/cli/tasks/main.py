@@ -87,13 +87,17 @@ tasks.add_command(repair_lifecycle_cmd)
 @click.option("--quiet", "-q", is_flag=True, help="Suppress output")
 def backup_tasks(output_path: Path | None, quiet: bool) -> None:
     """Write current project tasks to a deterministic JSONL backup."""
+    from gobby.sync.tasks import TaskBackupError
     from gobby.utils.project_context import get_project_context
 
     ctx = get_project_context(cwd=Path.cwd())
     raw_project_id = ctx.get("id") if ctx else None
     project_id = str(raw_project_id) if raw_project_id else None
     manager = get_backup_manager(output_path)
-    count = manager.backup(project_id=project_id)
+    try:
+        count = manager.backup(project_id=project_id)
+    except TaskBackupError as exc:
+        raise click.ClickException(str(exc)) from exc
     if not quiet:
         click.echo(f"Backed up {count} tasks")
 

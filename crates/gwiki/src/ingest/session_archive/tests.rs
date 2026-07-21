@@ -1,3 +1,4 @@
+use std::collections::BTreeMap;
 use std::io::Write;
 
 use flate2::Compression;
@@ -5,10 +6,65 @@ use flate2::write::GzEncoder;
 
 use super::*;
 use crate::sources::{CompileStatus, IngestionMethod, SourceDraftRef};
-use crate::store::MemoryWikiStore;
+use crate::store::{
+    MemoryWikiStore, StoreError, WikiChunk, WikiDocument, WikiIndexStore, WikiIngestion, WikiLink,
+    WikiSource,
+};
 use crate::support::text::slugify_with_options;
 
 mod summary;
+
+struct FailingDeletionStore {
+    inner: MemoryWikiStore,
+}
+
+impl WikiIndexStore for FailingDeletionStore {
+    fn indexed_hashes(&mut self) -> Result<BTreeMap<PathBuf, String>, StoreError> {
+        self.inner.indexed_hashes()
+    }
+
+    fn indexed_hash(&mut self, path: &Path) -> Result<Option<String>, StoreError> {
+        self.inner.indexed_hash(path)
+    }
+
+    fn upsert_document(&mut self, document: WikiDocument) -> Result<(), StoreError> {
+        self.inner.upsert_document(document)
+    }
+
+    fn replace_chunks(&mut self, path: &Path, chunks: Vec<WikiChunk>) -> Result<(), StoreError> {
+        self.inner.replace_chunks(path, chunks)
+    }
+
+    fn replace_links(&mut self, path: &Path, links: Vec<WikiLink>) -> Result<(), StoreError> {
+        self.inner.replace_links(path, links)
+    }
+
+    fn upsert_source(&mut self, source: WikiSource) -> Result<(), StoreError> {
+        self.inner.upsert_source(source)
+    }
+
+    fn record_ingestion(&mut self, ingestion: WikiIngestion) -> Result<(), StoreError> {
+        self.inner.record_ingestion(ingestion)
+    }
+
+    fn record_file_hash(&mut self, path: PathBuf, content_hash: String) -> Result<(), StoreError> {
+        self.inner.record_file_hash(path, content_hash)
+    }
+
+    fn delete_derived_rows(&mut self, path: &Path) -> Result<(), StoreError> {
+        self.inner.delete_derived_rows(path)
+    }
+
+    fn delete_derived_rows_and_record_ingestion(
+        &mut self,
+        _ingestion: WikiIngestion,
+    ) -> Result<(), StoreError> {
+        Err(StoreError::InvalidData {
+            field: "index",
+            message: "injected deletion failure".to_string(),
+        })
+    }
+}
 
 #[test]
 fn sync_session_archives_ingests_gzip_and_indexes_once() {
@@ -741,6 +797,77 @@ fn synthesis_supersedes_legacy_raw_location_page() {
     assert_eq!(
         sessions[0].canonical_location,
         format!("session:{external_id}")
+    );
+}
+
+#[test]
+fn failed_deletion_preserves_session_manifest_and_page() {
+    let temp = tempfile::tempdir().expect("tempdir");
+    let vault = temp.path();
+    let wiki_dir = vault.join("session_wiki");
+    fs::create_dir(&wiki_dir).expect("wiki dir");
+    let vanished_id = "11111111-2222-3333-4444-555555555555";
+    let survivor_id = "22222222-3333-4444-5555-666666666666";
+    write_session_wiki(&wiki_dir, vanished_id, "## Summary\n\nWill vanish later.\n");
+    write_session_wiki(&wiki_dir, survivor_id, "## Summary\n\nStays present.\n");
+
+    let mut store = MemoryWikiStore::default();
+    let first = sync_session_transcript_archives(
+        vault,
+        &mut store,
+        SessionArchiveSyncRequest {
+            archive_dir: &vault.join("missing-archives"),
+            wiki_dir: &wiki_dir,
+            limit: None,
+            raw_mode: RawArchiveMode::Skip,
+            enrich: true,
+            fetched_at: "2026-06-24T00:00:00Z",
+        },
+        &mut crate::progress::ProgressOptions::default(),
+    )
+    .expect("first sync");
+    let record_id = first
+        .accepted
+        .iter()
+        .find(|archive| {
+            archive.result.record.canonical_location == format!("session:{vanished_id}")
+        })
+        .expect("vanishing session accepted")
+        .result
+        .record
+        .id
+        .clone();
+    let derived = vault
+        .join("knowledge")
+        .join("sources")
+        .join(format!("{record_id}.md"));
+    fs::remove_file(wiki_dir.join(format!("{vanished_id}.md"))).expect("remove synthesis");
+    let mut failing_store = FailingDeletionStore { inner: store };
+
+    let error = sync_session_transcript_archives(
+        vault,
+        &mut failing_store,
+        SessionArchiveSyncRequest {
+            archive_dir: &vault.join("missing-archives"),
+            wiki_dir: &wiki_dir,
+            limit: None,
+            raw_mode: RawArchiveMode::Skip,
+            enrich: true,
+            fetched_at: "2026-06-24T01:00:00Z",
+        },
+        &mut crate::progress::ProgressOptions::default(),
+    )
+    .expect_err("deletion failure must propagate");
+
+    assert!(error.to_string().contains("injected deletion failure"));
+    assert!(derived.exists(), "derived page remains for a retry");
+    assert!(
+        SourceManifest::read(vault)
+            .expect("manifest")
+            .entries
+            .iter()
+            .any(|entry| entry.id == record_id),
+        "manifest entry remains for a retry"
     );
 }
 

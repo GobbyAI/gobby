@@ -24,6 +24,27 @@ from gobby.tasks.state_semantics import is_task_closed
 pytestmark = pytest.mark.unit
 
 
+def test_cli_backup_wraps_domain_error_as_click_exception(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from click.testing import CliRunner
+
+    from gobby.cli.tasks import main as task_cli
+
+    manager = MagicMock()
+    manager.backup.side_effect = TaskBackupError("backup destination is unavailable")
+    monkeypatch.setattr(task_cli, "get_backup_manager", lambda _path: manager)
+    monkeypatch.setattr(
+        "gobby.utils.project_context.get_project_context",
+        lambda **_kwargs: None,
+    )
+
+    result = CliRunner().invoke(task_cli.backup_tasks, [])
+
+    assert result.exit_code == 1
+    assert "Error: backup destination is unavailable" in result.output
+
+
 def _task_id(name: str) -> str:
     return str(uuid.uuid5(uuid.NAMESPACE_DNS, f"gobby-sync-test:{name}"))
 

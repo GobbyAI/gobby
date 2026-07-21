@@ -271,17 +271,17 @@ class RuleEngine(EvaluationMixin, EffectsMixin, TemplatingMixin, EnforcementMixi
                 if is_turn_end:
                     variables["stop_attempts"] = variables.get("stop_attempts", 0) + 1
                     logger.debug(
-                        "TURN_END gate diagnostics: session_id=%s, raw_event=%s, "
-                        "auto_task_ref=%r, stop_attempts=%s, task_claimed=%s, "
-                        "claimed_tasks=%s, edit_write_pending=%s, tool_block_pending=%s",
-                        session_id,
-                        raw_event_value,
-                        variables.get("auto_task_ref"),
-                        variables["stop_attempts"],
-                        variables.get("task_claimed"),
-                        variables.get("claimed_tasks"),
-                        variables.get("edit_write_pending"),
-                        variables.get("tool_block_pending"),
+                        "TURN_END gate diagnostics",
+                        extra={
+                            "session_id": session_id,
+                            "raw_event": raw_event_value,
+                            "auto_task_ref": variables.get("auto_task_ref"),
+                            "stop_attempts": variables["stop_attempts"],
+                            "task_claimed": variables.get("task_claimed"),
+                            "claimed_tasks": variables.get("claimed_tasks"),
+                            "edit_write_pending": variables.get("edit_write_pending"),
+                            "tool_block_pending": variables.get("tool_block_pending"),
+                        },
                     )
 
                 # 1. Load enabled rules for this event, sorted by priority

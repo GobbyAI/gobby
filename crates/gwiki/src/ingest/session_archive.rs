@@ -413,22 +413,19 @@ pub(crate) fn sync_session_transcript_archives(
             {
                 continue;
             }
+            let removed_path = PathBuf::from("knowledge/sources").join(format!("{}.md", entry.id));
+            store
+                .delete_derived_rows_and_record_ingestion(crate::store::WikiIngestion {
+                    path: removed_path,
+                    event: crate::store::WikiIngestionEvent::Deleted,
+                    content_hash: None,
+                })
+                .map_err(|error| WikiError::InvalidInput {
+                    field: "index",
+                    message: error.to_string(),
+                })?;
+
             if let Some(removed) = remove_session_page(vault_root, &entry.id)? {
-                let removed_path =
-                    PathBuf::from("knowledge/sources").join(format!("{}.md", removed.id));
-                store
-                    .delete_derived_rows(&removed_path)
-                    .and_then(|()| {
-                        store.record_ingestion(crate::store::WikiIngestion {
-                            path: removed_path,
-                            event: crate::store::WikiIngestionEvent::Deleted,
-                            content_hash: None,
-                        })
-                    })
-                    .map_err(|error| WikiError::InvalidInput {
-                        field: "index",
-                        message: error.to_string(),
-                    })?;
                 reconciled.push(ReconciledSessionArchive {
                     source_id: removed.id,
                     canonical_location: removed.canonical_location,

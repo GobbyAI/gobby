@@ -221,6 +221,31 @@ rules:
         rows = manager.list_all(workflow_type="rule")
         assert rows[0].tags is not None
 
+    def test_rule_without_tags_uses_empty_list(self) -> None:
+        from unittest.mock import MagicMock
+
+        from gobby.workflows.sync_rules import _sync_single_rule
+
+        manager = MagicMock()
+        manager.get_by_name.return_value = None
+        result = {"synced": 0, "updated": 0, "skipped": 0}
+        _sync_single_rule(
+            manager=manager,
+            rule_name="my-rule",
+            rule_data={
+                "event": "before_tool",
+                "effect": {"type": "block", "reason": "Blocked."},
+            },
+            file_group=None,
+            file_tags=None,
+            file_sources=None,
+            file_audience=None,
+            sync_tag="gobby",
+            result=result,
+        )
+
+        assert manager.create.call_args.kwargs["tags"] == []
+
     def test_rule_level_priority_overrides_default(self, db, manager, rules_dir) -> None:
         """Rule-level priority should override file-level default."""
         (rules_dir / "priority.yaml").write_text(

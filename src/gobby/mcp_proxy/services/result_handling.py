@@ -45,7 +45,7 @@ async def _reconcile_codex_close_transcript(
             extra={"session_id": platform_session_id},
         )
         return False
-    except Exception:
+    except OSError:
         logger.warning(
             "Failed to reconcile Codex transcript before task closure",
             extra={"session_id": platform_session_id},

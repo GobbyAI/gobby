@@ -39,6 +39,50 @@ class TestSyncBundledSkills:
 
         assert callable(sync_bundled_skills)
 
+    @pytest.mark.parametrize("root_kind", ["missing", "file"])
+    def test_invalid_bundled_skills_root_returns_failure_result(
+        self,
+        db: HubDatabase,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+        root_kind: str,
+    ) -> None:
+        from gobby.skills.sync import sync_bundled_skills
+
+        skills_path = tmp_path / "skills"
+        if root_kind == "file":
+            skills_path.write_text("not a directory")
+        monkeypatch.setattr("gobby.skills.sync.get_bundled_skills_path", lambda: skills_path)
+
+        result = sync_bundled_skills(db)
+
+        assert result["success"] is False
+        assert result["purged_project_overrides"] == 0
+        assert result["errors"]
+
+    def test_bundled_skills_root_enumeration_error_returns_failure_result(
+        self,
+        db: HubDatabase,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        from gobby.skills.sync import sync_bundled_skills
+
+        skills_path = tmp_path / "skills"
+        skills_path.mkdir()
+
+        def fail_iterdir(_path: Path) -> None:
+            raise OSError("permission denied")
+
+        monkeypatch.setattr(Path, "iterdir", fail_iterdir)
+        monkeypatch.setattr("gobby.skills.sync.get_bundled_skills_path", lambda: skills_path)
+
+        result = sync_bundled_skills(db)
+
+        assert result["success"] is False
+        assert result["purged_project_overrides"] == 0
+        assert "permission denied" in result["errors"][0]
+
     def test_sync_bundled_skills_creates_installed_rows(
         self, db: HubDatabase, skill_manager: LocalSkillManager
     ) -> None:
@@ -156,10 +200,9 @@ class TestSyncBundledSkills:
         assert retained is not None
         assert retained.deleted_at is None
 
-    def test_unexpected_load_error_is_reported_without_aborting_sync(
+    def test_unexpected_load_error_propagates(
         self,
         db: HubDatabase,
-        skill_manager: LocalSkillManager,
         tmp_path: Path,
         monkeypatch: pytest.MonkeyPatch,
     ) -> None:
@@ -169,11 +212,6 @@ class TestSyncBundledSkills:
         broken_dir = tmp_path / "broken-skill"
         broken_dir.mkdir()
         (broken_dir / "SKILL.md").write_text("unreadable")
-        valid_dir = tmp_path / "valid-skill"
-        valid_dir.mkdir()
-        (valid_dir / "SKILL.md").write_text(
-            "---\nname: valid-skill\ndescription: Valid bundled skill\n---\n\n# Valid\n"
-        )
         load_skill = SkillLoader.load_skill
 
         def load_with_error(self, path, *, validate=True):
@@ -184,12 +222,8 @@ class TestSyncBundledSkills:
         monkeypatch.setattr(SkillLoader, "load_skill", load_with_error)
         monkeypatch.setattr("gobby.skills.sync.get_bundled_skills_path", lambda: tmp_path)
 
-        result = sync_bundled_skills(db)
-
-        assert result["success"] is False
-        assert result["synced"] == 1
-        assert any("broken-skill" in error for error in result["errors"])
-        assert skill_manager.get_by_name("valid-skill") is not None
+        with pytest.raises(OSError, match="cannot read skill"):
+            sync_bundled_skills(db)
 
     def test_empty_bundled_skills_directory_does_not_orphan_existing_skills(
         self,

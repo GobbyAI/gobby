@@ -131,4 +131,4 @@ def _ensure_system_job(
         run_at=None,
     )
     if repaired and was_enabled and not repaired.enabled:
-        cron_storage.toggle_job(repaired.id)
+        cron_storage.wake_system_job(repaired.id)

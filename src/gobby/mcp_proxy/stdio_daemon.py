@@ -118,12 +118,14 @@ async def ensure_daemon_running(
         return
 
     if effective_deps.is_daemon_running():
+        last_health_response = None
         for attempt in range(DAEMON_HEALTH_ATTEMPTS):
-            if await effective_deps.check_daemon_http_health(
+            last_health_response = await effective_deps.check_daemon_http_health(
                 port,
                 timeout=DAEMON_HEALTH_CHECK_TIMEOUT_SECONDS,
                 base_url=dial_url,
-            ):
+            )
+            if last_health_response:
                 return
             if attempt < DAEMON_HEALTH_ATTEMPTS - 1:
                 effective_deps.logger.warning(
@@ -136,12 +138,14 @@ async def ensure_daemon_running(
 
         pid = effective_deps.get_daemon_pid()
         effective_deps.logger.error(
-            "Daemon is running but did not become healthy (pid=%s, port=%s) after %s "
-            "attempts. Refusing to restart it from a stdio MCP client because that can "
-            "interrupt active dispatch agents.",
-            pid,
-            port,
-            DAEMON_HEALTH_ATTEMPTS,
+            "Running daemon did not become healthy; refusing stdio restart",
+            extra={
+                "pid": pid,
+                "port": port,
+                "ws_port": ws_port,
+                "attempts": DAEMON_HEALTH_ATTEMPTS,
+                "last_health": last_health_response,
+            },
         )
         return
 
@@ -175,13 +179,14 @@ async def ensure_daemon_running(
 
     pid = effective_deps.get_daemon_pid()
     effective_deps.logger.error(
-        "Daemon failed to become healthy after %s attempts "
-        "(pid=%s, port=%s, ws_port=%s, last_health=%s)",
-        DAEMON_HEALTH_ATTEMPTS,
-        pid,
-        port,
-        ws_port,
-        last_health_response,
+        "Started daemon did not become healthy",
+        extra={
+            "pid": pid,
+            "port": port,
+            "ws_port": ws_port,
+            "attempts": DAEMON_HEALTH_ATTEMPTS,
+            "last_health": last_health_response,
+        },
     )
     return
 

@@ -2,8 +2,12 @@
 
 from __future__ import annotations
 
+from collections.abc import Callable
+from typing import Any
+
 import pytest
 
+from gobby.mcp_proxy.tools.internal import InternalToolRegistry
 from gobby.mcp_proxy.tools.tasks._ops_factory import create_task_ops_registry
 from gobby.storage.hub._ambient import ambient_transaction
 from gobby.storage.hub.protocol import HubDatabase, TaskLifecycleMutation
@@ -12,9 +16,15 @@ from gobby.storage.tasks import LocalTaskManager
 pytestmark = pytest.mark.unit
 
 
-def _registry(temp_db: HubDatabase) -> tuple[LocalTaskManager, object]:
+def _registry(temp_db: HubDatabase) -> tuple[LocalTaskManager, InternalToolRegistry]:
     task_manager = LocalTaskManager(temp_db)
     return task_manager, create_task_ops_registry(task_manager)
+
+
+def _tool(registry: InternalToolRegistry, name: str) -> Callable[..., Any]:
+    tool = registry.get_tool(name)
+    assert tool is not None
+    return tool
 
 
 def test_artifact_tools_are_registered_on_tasks_ops(temp_db: HubDatabase) -> None:
@@ -33,7 +43,7 @@ def test_artifact_tools_are_registered_on_tasks_ops(temp_db: HubDatabase) -> Non
 
 def test_append_description_section_is_idempotent_for_same_heading_and_body(
     temp_db: HubDatabase,
-    sample_project,
+    sample_project: dict[str, Any],
 ) -> None:
     task_manager, registry = _registry(temp_db)
     task = task_manager.create_task(
@@ -41,7 +51,7 @@ def test_append_description_section_is_idempotent_for_same_heading_and_body(
         title="Audit marker",
         description="Existing description.",
     )
-    append_section = registry.get_tool("append_description_section")
+    append_section = _tool(registry, "append_description_section")
 
     first = append_section(
         task_id=task.id,
@@ -55,6 +65,7 @@ def test_append_description_section_is_idempotent_for_same_heading_and_body(
     )
 
     updated = task_manager.get_task(task.id)
+    assert updated.description is not None
     assert first["appended"] is True
     assert second["appended"] is False
     assert updated.description.count("## Agent Selection") == 1
@@ -63,7 +74,7 @@ def test_append_description_section_is_idempotent_for_same_heading_and_body(
 
 def test_append_description_section_notifies_after_committed_state_is_visible(
     temp_db: HubDatabase,
-    sample_project,
+    sample_project: dict[str, Any],
 ) -> None:
     task_manager, registry = _registry(temp_db)
     task = task_manager.create_task(
@@ -83,7 +94,7 @@ def test_append_description_section_notifies_after_committed_state_is_visible(
 
     task_manager.add_change_listener(listener)
 
-    result = registry.get_tool("append_description_section")(
+    result = _tool(registry, "append_description_section")(
         task_id=task.id,
         heading="Committed",
         body="Visible to listeners.",
@@ -108,12 +119,14 @@ def test_after_commit_listener_is_discarded_when_transaction_rolls_back(
     assert listener_calls == []
 
 
-def test_artifact_tools_mutate_and_fetch_artifacts(temp_db: HubDatabase, sample_project) -> None:
+def test_artifact_tools_mutate_and_fetch_artifacts(
+    temp_db: HubDatabase, sample_project: dict[str, Any]
+) -> None:
     task_manager, registry = _registry(temp_db)
     task = task_manager.create_task(project_id=sample_project["id"], title="Artifacts")
-    set_artifacts_atomic = registry.get_tool("set_artifacts_atomic")
-    clear_isolation_pair = registry.get_tool("clear_isolation_pair")
-    get_artifacts = registry.get_tool("get_artifacts")
+    set_artifacts_atomic = _tool(registry, "set_artifacts_atomic")
+    clear_isolation_pair = _tool(registry, "clear_isolation_pair")
+    get_artifacts = _tool(registry, "get_artifacts")
 
     set_result = set_artifacts_atomic(
         task_id=task.id,
@@ -140,11 +153,13 @@ def test_artifact_tools_mutate_and_fetch_artifacts(temp_db: HubDatabase, sample_
     assert artifacts["target_branch"] == "release/0.4"
 
 
-def test_set_artifact_validates_field_allowlist(temp_db: HubDatabase, sample_project) -> None:
+def test_set_artifact_validates_field_allowlist(
+    temp_db: HubDatabase, sample_project: dict[str, Any]
+) -> None:
     task_manager, registry = _registry(temp_db)
     task = task_manager.create_task(project_id=sample_project["id"], title="Single artifact")
-    set_artifact = registry.get_tool("set_artifact")
-    get_artifacts = registry.get_tool("get_artifacts")
+    set_artifact = _tool(registry, "set_artifact")
+    get_artifacts = _tool(registry, "get_artifacts")
 
     set_result = set_artifact(task_id=task.id, field="target_branch", value="release/0.4")
     artifacts = get_artifacts(task_id=task.id)
@@ -159,11 +174,11 @@ def test_set_artifact_validates_field_allowlist(temp_db: HubDatabase, sample_pro
 
 def test_set_artifacts_atomic_returns_structured_constraint_errors(
     temp_db: HubDatabase,
-    sample_project,
+    sample_project: dict[str, Any],
 ) -> None:
     task_manager, registry = _registry(temp_db)
     task = task_manager.create_task(project_id=sample_project["id"], title="Bad artifacts")
-    set_artifacts_atomic = registry.get_tool("set_artifacts_atomic")
+    set_artifacts_atomic = _tool(registry, "set_artifacts_atomic")
 
     result = set_artifacts_atomic(
         task_id=task.id,

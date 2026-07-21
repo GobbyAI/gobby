@@ -287,7 +287,11 @@ class SessionCoordinator:
                     )
                     registered_count += 1
                 except Exception as e:
-                    self.logger.warning("Failed to re-register session %s: %s", session.id, e)
+                    self.logger.warning(
+                        "Failed to re-register session",
+                        extra={"session_id": session.id, "error": str(e)},
+                        exc_info=True,
+                    )
                     continue
 
             if registered_count > 0:

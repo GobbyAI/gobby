@@ -187,11 +187,12 @@ class SessionLivenessMonitor:
                 else:
                     if not self._is_pid_alive(record.parent_pid):
                         logger.debug(
-                            "Session %s has live tmux pane %s despite dead parent PID %s - "
-                            "refreshing",
-                            record.session_id,
-                            record.tmux_pane,
-                            record.parent_pid,
+                            "Refreshing session with live tmux pane and dead parent process",
+                            extra={
+                                "session_id": record.session_id,
+                                "tmux_pane": record.tmux_pane,
+                                "parent_pid": record.parent_pid,
+                            },
                         )
                         try:
                             await asyncio.to_thread(self._session_manager.touch, record.session_id)

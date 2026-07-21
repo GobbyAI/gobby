@@ -209,12 +209,7 @@ async def _check_embedding_service(runner: GobbyRunner, tracker: StartupTracker 
 
 async def _cleanup_metrics_on_startup(runner: GobbyRunner) -> None:
     try:
-        db_executor = getattr(runner, "db_executor", None)
-        run_db = getattr(db_executor, "run", None)
-        if run_db is None:
-            deleted = await asyncio.to_thread(runner.metrics_manager.cleanup_old_metrics)
-        else:
-            deleted = await run_db(runner.metrics_manager.cleanup_old_metrics)
+        deleted = await _run_db(runner, runner.metrics_manager.cleanup_old_metrics)
         if deleted > 0:
             logger.info("Startup metrics cleanup: removed %s old entries", deleted)
     except Exception as e:

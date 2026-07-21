@@ -327,7 +327,7 @@ def register_code_index_prune_cron(
         interval_seconds=CODE_INDEX_PRUNE_INTERVAL_SECONDS,
     )
     if repaired is not None and not repaired.enabled:
-        cron_storage.toggle_job(repaired.id)
+        cron_storage.wake_system_job(repaired.id)
     elif repaired is not None and repaired.next_run_at is None:
         cron_storage.wake_system_job(repaired.id)
 

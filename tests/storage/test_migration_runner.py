@@ -273,6 +273,7 @@ def test_postgres_migration_discovery_finds_all_post_baseline_migrations() -> No
         (323, "recall_usefulness_digest_shadow"),
         (324, "drop_sync_tombstones"),
         (325, "recall_usefulness_shadow_index"),
+        (326, "validate_recall_usefulness_label_source"),
     ]
 
 

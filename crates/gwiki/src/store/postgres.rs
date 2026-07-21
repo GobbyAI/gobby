@@ -1,6 +1,7 @@
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 
+use postgres::GenericClient;
 use serde_json::json;
 use uuid::Uuid;
 
@@ -96,6 +97,80 @@ fn wiki_scope_params(
         project_uuid(scope.project_id())?,
         scope.topic_name(),
     ))
+}
+
+fn record_ingestion_with_client(
+    conn: &mut impl GenericClient,
+    scope: &WikiStoreScope,
+    source_kind: &str,
+    ingestion: &WikiIngestion,
+) -> Result<(), StoreError> {
+    let content_hash = ingestion.content_hash.clone();
+    let status = ingestion_status(ingestion.event);
+    let id = scoped_text_id("ingestion", scope, &ingestion.path, &[status]);
+    let path = display_path(&ingestion.path);
+    let provenance = json!({ "event": status });
+    let frontmatter = json!({});
+    let (scope_kind, scope_id, project_id, topic_name) = wiki_scope_params(scope)?;
+
+    conn.execute(
+        "INSERT INTO gwiki_ingestions (
+            id, scope_kind, scope_id, project_id, topic_name, path, source_kind,
+            content_hash, frontmatter, provenance, status, ingested_at
+         )
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, NOW())
+         ON CONFLICT (id)
+         DO UPDATE SET
+            project_id = EXCLUDED.project_id,
+            topic_name = EXCLUDED.topic_name,
+            source_kind = EXCLUDED.source_kind,
+            content_hash = EXCLUDED.content_hash,
+            frontmatter = EXCLUDED.frontmatter,
+            provenance = EXCLUDED.provenance,
+            status = EXCLUDED.status,
+            ingested_at = NOW()",
+        &[
+            &id,
+            &scope_kind,
+            &scope_id,
+            &project_id,
+            &topic_name,
+            &path,
+            &source_kind,
+            &content_hash,
+            &frontmatter,
+            &provenance,
+            &status,
+        ],
+    )?;
+    Ok(())
+}
+
+fn delete_derived_rows_with_client(
+    conn: &mut impl GenericClient,
+    scope_kind: &str,
+    scope_id: &str,
+    path: &str,
+) -> Result<(), StoreError> {
+    let params: [&(dyn ::postgres::types::ToSql + Sync); 3] = [&scope_kind, &scope_id, &path];
+    conn.execute(
+        "DELETE FROM gwiki_chunks WHERE scope_kind = $1 AND scope_id = $2 AND path = $3",
+        &params,
+    )?;
+    conn.execute(
+        "DELETE FROM gwiki_links WHERE scope_kind = $1 AND scope_id = $2 AND path = $3",
+        &params,
+    )?;
+    conn.execute(
+        "DELETE FROM gwiki_sources
+         WHERE scope_kind = $1 AND scope_id = $2 AND document_path = $3",
+        &params,
+    )?;
+    conn.execute(
+        "DELETE FROM gwiki_documents WHERE scope_kind = $1 AND scope_id = $2 AND path = $3",
+        &params,
+    )?;
+    Ok(())
 }
 
 impl WikiIndexStore for PostgresWikiStore<'_> {
@@ -398,50 +473,12 @@ impl WikiIndexStore for PostgresWikiStore<'_> {
     }
 
     fn record_ingestion(&mut self, ingestion: WikiIngestion) -> Result<(), StoreError> {
-        let content_hash = ingestion.content_hash.clone();
-        let status = ingestion_status(ingestion.event);
-        let id = scoped_text_id("ingestion", &self.scope, &ingestion.path, &[status]);
-        let path = display_path(&ingestion.path);
         let source_kind = self
             .documents
             .get(&ingestion.path)
             .map(|document| document.source_kind.as_str())
             .unwrap_or("unknown");
-        let provenance = json!({ "event": status });
-        let frontmatter = json!({});
-        let (scope_kind, scope_id, project_id, topic_name) = self.scope_params()?;
-
-        self.conn.execute(
-            "INSERT INTO gwiki_ingestions (
-                id, scope_kind, scope_id, project_id, topic_name, path, source_kind,
-                content_hash, frontmatter, provenance, status, ingested_at
-             )
-             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, NOW())
-             ON CONFLICT (id)
-             DO UPDATE SET
-                project_id = EXCLUDED.project_id,
-                topic_name = EXCLUDED.topic_name,
-                source_kind = EXCLUDED.source_kind,
-                content_hash = EXCLUDED.content_hash,
-                frontmatter = EXCLUDED.frontmatter,
-                provenance = EXCLUDED.provenance,
-                status = EXCLUDED.status,
-                ingested_at = NOW()",
-            &[
-                &id,
-                &scope_kind,
-                &scope_id,
-                &project_id,
-                &topic_name,
-                &path,
-                &source_kind,
-                &content_hash,
-                &frontmatter,
-                &provenance,
-                &status,
-            ],
-        )?;
-        Ok(())
+        record_ingestion_with_client(self.conn, &self.scope, source_kind, &ingestion)
     }
 
     fn record_file_hash(
@@ -458,25 +495,31 @@ impl WikiIndexStore for PostgresWikiStore<'_> {
         let scope_kind = self.scope.scope_kind().to_string();
         let scope_id = self.scope.scope_id().to_string();
         let mut tx = self.conn.transaction()?;
-        let params: [&(dyn ::postgres::types::ToSql + Sync); 3] = [&scope_kind, &scope_id, &path];
-        tx.execute(
-            "DELETE FROM gwiki_chunks WHERE scope_kind = $1 AND scope_id = $2 AND path = $3",
-            &params,
-        )?;
-        tx.execute(
-            "DELETE FROM gwiki_links WHERE scope_kind = $1 AND scope_id = $2 AND path = $3",
-            &params,
-        )?;
-        tx.execute(
-			"DELETE FROM gwiki_sources WHERE scope_kind = $1 AND scope_id = $2 AND document_path = $3",
-			&params,
-		)?;
-        tx.execute(
-            "DELETE FROM gwiki_documents WHERE scope_kind = $1 AND scope_id = $2 AND path = $3",
-            &params,
-        )?;
+        delete_derived_rows_with_client(&mut tx, &scope_kind, &scope_id, &path)?;
         tx.commit()?;
         self.documents.remove(&platform_path_from_display(&path));
+        Ok(())
+    }
+
+    fn delete_derived_rows_and_record_ingestion(
+        &mut self,
+        ingestion: WikiIngestion,
+    ) -> Result<(), StoreError> {
+        let stored_path = ingestion.path.clone();
+        let path = display_path(&ingestion.path);
+        let scope = self.scope.clone();
+        let scope_kind = scope.scope_kind().to_string();
+        let scope_id = scope.scope_id().to_string();
+        let source_kind = self
+            .documents
+            .get(&ingestion.path)
+            .map(|document| document.source_kind.clone())
+            .unwrap_or_else(|| "unknown".to_string());
+        let mut tx = self.conn.transaction()?;
+        delete_derived_rows_with_client(&mut tx, &scope_kind, &scope_id, &path)?;
+        record_ingestion_with_client(&mut tx, &scope, &source_kind, &ingestion)?;
+        tx.commit()?;
+        self.documents.remove(&stored_path);
         Ok(())
     }
 }

@@ -936,6 +936,15 @@ mod tests {
             self.assert_raw_exists_before_index();
             self.inner.delete_derived_rows(path)
         }
+
+        fn delete_derived_rows_and_record_ingestion(
+            &mut self,
+            ingestion: WikiIngestion,
+        ) -> Result<(), StoreError> {
+            self.assert_raw_exists_before_index();
+            self.inner
+                .delete_derived_rows_and_record_ingestion(ingestion)
+        }
     }
 
     #[test]

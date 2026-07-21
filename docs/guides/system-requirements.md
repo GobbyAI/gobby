@@ -64,6 +64,7 @@ independent of the selected embedding provider.
 
 | Service | Image | Default endpoint | Purpose |
 |---------|-------|------------------|---------|
+| PostgreSQL | `gobby-postgres-local:18-pgsearch` | `127.0.0.1:60891` | Authoritative relational storage and `pg_search` indexing |
 | Qdrant | `qdrant/qdrant:latest` | `http://localhost:6333` | Vector storage for semantic search and code-symbol embeddings |
 | FalkorDB | `falkordb/falkordb:latest` | Redis protocol `127.0.0.1:16379`, Browser `http://localhost:13000` | Graph storage for graph-augmented search and memory relationships |
 

@@ -16,7 +16,7 @@ import logging
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
-from gobby.skills.loader import SkillLoader
+from gobby.skills.loader import SkillLoader, SkillLoadError
 from gobby.skills.parser import ParsedSkill
 
 if TYPE_CHECKING:
@@ -151,7 +151,10 @@ def _handle_existing_gobby_skill(
             always_apply=parsed.always_apply,
             injection_format=parsed.injection_format,
         )
-        logger.info("Restored soft-deleted bundled skill: %s", parsed.name)
+        logger.info(
+            "Restored soft-deleted bundled skill",
+            extra={"skill_name": parsed.name, "path": str(parsed.source_path)},
+        )
         _persist_skill_files(storage, existing.id, parsed.loaded_files)
         result["updated"] += 1
         return
@@ -212,13 +215,31 @@ def sync_bundled_skills(db: HubDatabase) -> dict[str, Any]:
         "updated": 0,
         "skipped": 0,
         "orphaned": 0,
+        "purged_project_overrides": 0,
         "errors": [],
     }
 
     if not skills_path.exists():
-        logger.warning("Bundled skills path not found: %s", skills_path)
+        logger.warning("Bundled skills path not found", extra={"path": str(skills_path)})
         result["success"] = False
         result["errors"].append(f"Skills path not found: {skills_path}")
+        return result
+    if not skills_path.is_dir():
+        logger.warning("Bundled skills path is not a directory", extra={"path": str(skills_path)})
+        result["success"] = False
+        result["errors"].append(f"Skills path is not a directory: {skills_path}")
+        return result
+
+    try:
+        skill_directories = list(skills_path.iterdir())
+    except OSError as e:
+        error_msg = f"Failed to enumerate bundled skills path '{skills_path}': {e}"
+        logger.error(
+            "Failed to enumerate bundled skills path",
+            extra={"path": str(skills_path), "error": str(e)},
+        )
+        result["success"] = False
+        result["errors"].append(error_msg)
         return result
 
     # Load skills using SkillLoader with 'filesystem' source type
@@ -227,16 +248,23 @@ def sync_bundled_skills(db: HubDatabase) -> dict[str, Any]:
 
     parsed_skills: list[ParsedSkill] = []
     load_errors: list[str] = []
-    for skill_dir in skills_path.iterdir():
+    for skill_dir in skill_directories:
         if not skill_dir.is_dir() or not (skill_dir / "SKILL.md").exists():
             continue
         try:
             # validate=False for bundled skills since they're trusted and may have
             # version formats like "2.0" instead of strict semver "2.0.0"
             parsed_skills.append(loader.load_skill(skill_dir, validate=False))
-        except Exception as e:
+        except SkillLoadError as e:
             error_msg = f"Failed to load bundled skill '{skill_dir.name}': {e}"
-            logger.error(error_msg)
+            logger.error(
+                "Failed to load bundled skill",
+                extra={
+                    "skill_name": skill_dir.name,
+                    "path": str(skill_dir),
+                    "error": str(e),
+                },
+            )
             load_errors.append(error_msg)
 
     if load_errors:
@@ -256,7 +284,14 @@ def sync_bundled_skills(db: HubDatabase) -> dict[str, Any]:
             _sync_single_skill(storage, parsed, result)
         except Exception as e:
             error_msg = f"Failed to sync skill '{parsed.name}': {e}"
-            logger.error(error_msg)
+            logger.error(
+                "Failed to sync bundled skill",
+                extra={
+                    "skill_name": parsed.name,
+                    "path": str(parsed.source_path),
+                    "error": str(e),
+                },
+            )
             result["errors"].append(error_msg)
 
     # Orphan cleanup: soft-delete gobby-owned installed skills whose
@@ -266,7 +301,10 @@ def sync_bundled_skills(db: HubDatabase) -> dict[str, Any]:
         for skill in all_installed:
             if _is_gobby_owned(skill) and skill.name not in on_disk:
                 storage.delete_skill(skill.id)
-                logger.info("Soft-deleted orphaned bundled skill: %s", skill.name)
+                logger.info(
+                    "Soft-deleted orphaned bundled skill",
+                    extra={"skill_name": skill.name, "path": str(skill.source_path)},
+                )
                 result["orphaned"] += 1
 
     # Heal project-scoped rows sourced from bundled template trees: they
@@ -277,20 +315,24 @@ def sync_bundled_skills(db: HubDatabase) -> dict[str, Any]:
         result["purged_project_overrides"] = len(purged)
     except Exception as e:
         error_msg = f"Failed to purge bundled template project skills: {e}"
-        logger.error(error_msg)
+        logger.error(
+            "Failed to purge bundled template project skills",
+            extra={"error": str(e)},
+        )
         result["success"] = False
         result["errors"].append(error_msg)
 
     total = result["synced"] + result["updated"] + result["skipped"]
     logger.info(
-        "Skill sync complete: %s synced, %s updated, %s skipped, %s orphaned, "
-        "%s project overrides purged, %s total",
-        result["synced"],
-        result["updated"],
-        result["skipped"],
-        result["orphaned"],
-        result["purged_project_overrides"],
-        total,
+        "Bundled skill sync complete",
+        extra={
+            "synced": result["synced"],
+            "updated": result["updated"],
+            "skipped": result["skipped"],
+            "orphaned": result["orphaned"],
+            "purged_project_overrides": result["purged_project_overrides"],
+            "total": total,
+        },
     )
 
     return result

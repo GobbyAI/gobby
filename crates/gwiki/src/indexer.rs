@@ -119,8 +119,7 @@ pub fn index_vault(
                 )?;
             }
             IndexEvent::Deleted(path) => {
-                store.delete_derived_rows(&path)?;
-                store.record_ingestion(WikiIngestion {
+                store.delete_derived_rows_and_record_ingestion(WikiIngestion {
                     path,
                     event: WikiIngestionEvent::Deleted,
                     content_hash: None,

@@ -722,6 +722,11 @@ class CronJobStorage(CronRunStorageMixin):
             if row is None:
                 return None
             job = CronJob.from_row(row)
+            if job.is_system:
+                raise SystemRowProtected(
+                    f"Cron row {job_id} is system-managed; toggle_job is operator-facing. "
+                    "Use park_system_job or wake_system_job instead."
+                )
             new_enabled = not job.enabled
             next_run = compute_next_run(replace(job, enabled=True)) if new_enabled else None
             conn.execute(

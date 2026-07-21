@@ -32,7 +32,7 @@ class _FakeCronStorage:
         self.updated_jobs: list[tuple[str, dict[str, Any]]] = []
         self.reconciled_jobs: list[tuple[str, dict[str, Any]]] = []
         self.system_job_ids: list[str] = []
-        self.toggled_job_ids: list[str] = []
+        self.woken_job_ids: list[str] = []
 
     def get_job_by_name(self, _name: str) -> Any | None:
         return self.existing
@@ -52,8 +52,8 @@ class _FakeCronStorage:
         self.reconciled_jobs.append((job_id, kwargs))
         return self.repaired
 
-    def toggle_job(self, job_id: str) -> Any:
-        self.toggled_job_ids.append(job_id)
+    def wake_system_job(self, job_id: str) -> Any:
+        self.woken_job_ids.append(job_id)
         return SimpleNamespace(id=job_id, enabled=True)
 
 
@@ -153,7 +153,7 @@ def test_register_memory_dream_cron_preserves_disabled_system_job() -> None:
     )
 
     assert cron_storage.reconciled_jobs[0][0] == "job-1"
-    assert cron_storage.toggled_job_ids == []
+    assert cron_storage.woken_job_ids == []
 
 
 def test_register_memory_dream_cron_restores_previously_enabled_system_job() -> None:
@@ -171,7 +171,7 @@ def test_register_memory_dream_cron_restores_previously_enabled_system_job() -> 
     )
 
     assert cron_storage.reconciled_jobs[0][0] == "job-1"
-    assert cron_storage.toggled_job_ids == ["job-1"]
+    assert cron_storage.woken_job_ids == ["job-1"]
 
 
 def _patch_dream_service(

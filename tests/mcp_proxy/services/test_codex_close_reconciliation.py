@@ -195,6 +195,47 @@ async def test_codex_close_reconciliation_timeout_remains_fail_closed(
 
 
 @pytest.mark.asyncio
+async def test_codex_close_reconciliation_os_error_remains_fail_closed() -> None:
+    async def _failed_reconcile(_session_id: str) -> SimpleNamespace:
+        raise OSError("transcript unavailable")
+
+    event = SimpleNamespace(source=SessionSource.CODEX, metadata={})
+    hook_manager = SimpleNamespace(
+        _message_processor=SimpleNamespace(reconcile_codex_transcript=_failed_reconcile)
+    )
+
+    reconciled = await result_handling._reconcile_codex_close_transcript(
+        hook_manager,
+        event,
+        server_name="gobby-tasks",
+        tool_name="close_task",
+        effective_session_id="session-1",
+    )
+
+    assert reconciled is False
+
+
+@pytest.mark.asyncio
+async def test_codex_close_reconciliation_unexpected_error_propagates() -> None:
+    async def _buggy_reconcile(_session_id: str) -> SimpleNamespace:
+        raise RuntimeError("implementation bug")
+
+    event = SimpleNamespace(source=SessionSource.CODEX, metadata={})
+    hook_manager = SimpleNamespace(
+        _message_processor=SimpleNamespace(reconcile_codex_transcript=_buggy_reconcile)
+    )
+
+    with pytest.raises(RuntimeError, match="implementation bug"):
+        await result_handling._reconcile_codex_close_transcript(
+            hook_manager,
+            event,
+            server_name="gobby-tasks",
+            tool_name="close_task",
+            effective_session_id="session-1",
+        )
+
+
+@pytest.mark.asyncio
 @pytest.mark.parametrize(
     ("source", "server_name", "tool_name"),
     [

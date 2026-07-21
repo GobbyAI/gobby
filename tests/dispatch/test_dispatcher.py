@@ -728,6 +728,137 @@ async def test_stage_pipeline_spawn_fails_when_target_loop_does_not_acknowledge(
     execution_manager.update_execution_status.assert_called_once()
 
 
+@pytest.mark.asyncio
+async def test_stage_pipeline_timeout_cancels_task_registered_late(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from gobby.dispatch import stage_pipeline
+
+    monkeypatch.setattr(
+        stage_pipeline, "reset_stage_pipeline_retry_neutral", lambda *_a, **_k: None
+    )
+    monkeypatch.setattr(stage_pipeline, "PIPELINE_START_ACK_TIMEOUT_SECONDS", 0.01)
+    target_loop = asyncio.new_event_loop()
+    loop_started = threading.Event()
+    registration_started = threading.Event()
+    release_registration = threading.Event()
+    task_cancelled = threading.Event()
+    executed = threading.Event()
+
+    def run_target_loop() -> None:
+        asyncio.set_event_loop(target_loop)
+        loop_started.set()
+        target_loop.run_forever()
+
+    target_thread = threading.Thread(target=run_target_loop, daemon=True)
+    target_thread.start()
+    assert loop_started.wait(timeout=2)
+
+    execution_manager = MagicMock()
+    services = SimpleNamespace(
+        pipeline_executor=SimpleNamespace(
+            loader=_EnabledPipelineLoader(),
+            execution_manager=execution_manager,
+        ),
+        main_loop=target_loop,
+        triggering_session_id=None,
+    )
+
+    async def fake_execute(*_args: object, **_kwargs: object) -> None:
+        executed.set()
+
+    def register_late(_execution_id: str, task: asyncio.Task[Any]) -> None:
+        task.add_done_callback(lambda done: task_cancelled.set() if done.cancelled() else None)
+        registration_started.set()
+        assert release_registration.wait(timeout=2)
+
+    try:
+        result = await stage_pipeline.start_pipeline_action(
+            _pipeline_action("7d34e462-6ba3-5a6c-b1c6-1584b855cb83"),
+            mutex=object(),
+            db=object(),
+            context=SimpleNamespace(project_id="0e27d5b7-167e-5a64-8bd9-6b980bd88f06"),
+            services=services,
+            field=lambda obj, key, default=None: getattr(obj, key, default),
+            escalate_pipeline_dispatch=lambda _action, _mutex, _db, reason: {
+                "success": False,
+                "error": reason,
+            },
+            retry_neutral_pipeline_dispatch=_unexpected_pipeline_call,
+            render_dispatch_inputs=lambda *_a, **_k: {},
+            create_stage_pipeline_execution=lambda *_a, **_k: "exec-late",
+            execute_pipeline_background=fake_execute,
+            register_background_task=register_late,
+        )
+        assert registration_started.is_set()
+        release_registration.set()
+        assert await asyncio.to_thread(task_cancelled.wait, 2)
+    finally:
+        release_registration.set()
+        target_loop.call_soon_threadsafe(target_loop.stop)
+        target_thread.join(timeout=2)
+        target_loop.close()
+
+    assert result == {
+        "success": False,
+        "error": "pipeline_start_registration_timeout",
+    }
+    assert executed.is_set() is False
+    execution_manager.update_execution_status.assert_called_once()
+
+
+@pytest.mark.asyncio
+async def test_stage_pipeline_handles_loop_closing_before_scheduling(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from gobby.dispatch import stage_pipeline
+
+    monkeypatch.setattr(
+        stage_pipeline, "reset_stage_pipeline_retry_neutral", lambda *_a, **_k: None
+    )
+
+    class ClosingLoop:
+        def is_closed(self) -> bool:
+            return False
+
+        def call_soon_threadsafe(self, _callback: object) -> None:
+            raise RuntimeError("event loop is closed")
+
+    execution_manager = MagicMock()
+    services = SimpleNamespace(
+        pipeline_executor=SimpleNamespace(
+            loader=_EnabledPipelineLoader(),
+            execution_manager=execution_manager,
+        ),
+        main_loop=ClosingLoop(),
+        triggering_session_id=None,
+    )
+
+    async def fake_execute(*_args: object, **_kwargs: object) -> None:
+        raise AssertionError("unscheduled pipeline must not execute")
+
+    result = await stage_pipeline.start_pipeline_action(
+        _pipeline_action("7d34e462-6ba3-5a6c-b1c6-1584b855cb83"),
+        mutex=object(),
+        db=object(),
+        context=SimpleNamespace(project_id="0e27d5b7-167e-5a64-8bd9-6b980bd88f06"),
+        services=services,
+        field=lambda obj, key, default=None: getattr(obj, key, default),
+        escalate_pipeline_dispatch=lambda _action, _mutex, _db, reason: {
+            "success": False,
+            "error": reason,
+        },
+        retry_neutral_pipeline_dispatch=_unexpected_pipeline_call,
+        render_dispatch_inputs=lambda *_a, **_k: {},
+        create_stage_pipeline_execution=lambda *_a, **_k: "exec-loop-close",
+        execute_pipeline_background=fake_execute,
+        register_background_task=lambda *_a, **_k: None,
+    )
+
+    assert result == {"success": False, "error": "pipeline_start_loop_closed"}
+    execution_manager.update_execution_status.assert_called_once()
+
+
 def test_candidate_filter_excludes_claimed_leased_blocked_terminal(temp_db, sample_project) -> None:
     """Candidate filter excludes claimed leased blocked terminal."""
     from gobby.storage.tasks import _automation

@@ -143,14 +143,12 @@ export function useChatPagePlans({
   }, [chat, onPlanReady]);
 
   const clearCurrentConversationPendingPlan = useCallback(() => {
-    setPlanState((previous) => {
-      const nextPlanState =
-        previous.switchKey === conversationSwitchKey
-          ? { ...previous, pendingPlanId: null }
-          : emptyConversationPlanState(conversationSwitchKey);
-      planStateRef.current = nextPlanState;
-      return nextPlanState;
-    });
+    const previous = planStateRef.current;
+    const nextPlanState =
+      previous.switchKey === conversationSwitchKey
+        ? { ...previous, pendingPlanId: null }
+        : emptyConversationPlanState(conversationSwitchKey);
+    setPlanState(nextPlanState);
   }, [conversationSwitchKey]);
 
   const handleApprovePlan = useCallback(

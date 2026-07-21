@@ -598,4 +598,12 @@ impl WikiIndexStore for CountingStore {
     fn delete_derived_rows(&mut self, path: &Path) -> Result<(), StoreError> {
         self.inner.delete_derived_rows(path)
     }
+
+    fn delete_derived_rows_and_record_ingestion(
+        &mut self,
+        ingestion: WikiIngestion,
+    ) -> Result<(), StoreError> {
+        self.inner
+            .delete_derived_rows_and_record_ingestion(ingestion)
+    }
 }

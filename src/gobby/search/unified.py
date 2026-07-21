@@ -356,10 +356,12 @@ class UnifiedSearcher:
         # Check for mode mismatch between fit and search
         if self._fitted_mode is not None and self._fitted_mode != mode:
             logger.warning(
-                "Search mode changed from %s to %s since last fit. Falling back to keyword "
-                "search. Call fit_async() to reindex.",
-                self._fitted_mode.value,
-                mode.value,
+                "Search mode changed since last fit. Falling back to keyword search. "
+                "Call fit_async() to reindex.",
+                extra={
+                    "fitted_mode": self._fitted_mode.value,
+                    "configured_mode": mode.value,
+                },
             )
             if self._keyword_backend is not None and not self._keyword_backend.needs_refit():
                 return await self._keyword_backend.search_async(query, top_k)

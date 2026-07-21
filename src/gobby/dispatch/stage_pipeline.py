@@ -9,6 +9,7 @@ import uuid
 from collections.abc import Callable, Coroutine
 from concurrent.futures import Future
 from datetime import UTC, datetime
+from threading import Event
 from typing import Any, cast
 
 import psycopg
@@ -137,8 +138,10 @@ async def start_pipeline_action(
     task_name = f"stage-pipeline-{action.pipeline_name}-{execution_id[:8]}"
     main_loop = getattr(services, "main_loop", None)
     current_loop = asyncio.get_running_loop()
+    startup_failed = Event()
 
     def fail_start(reason: str) -> dict[str, object]:
+        startup_failed.set()
         try:
             executor.execution_manager.update_execution_status(
                 execution_id,
@@ -146,7 +149,10 @@ async def start_pipeline_action(
                 outputs_json=json.dumps({"error": reason}),
             )
         except Exception:
-            logger.exception("Failed to mark pipeline execution %s failed", execution_id)
+            logger.exception(
+                "Failed to mark pipeline execution failed",
+                extra={"execution_id": execution_id},
+            )
         return escalate_pipeline_dispatch(action, mutex, db, reason)
 
     if main_loop is not None and main_loop is not current_loop:
@@ -160,14 +166,34 @@ async def start_pipeline_action(
         # daemon's main loop instead.
         registration: Future[asyncio.Task[Any]] = Future()
 
+        def _cancel_late_registration(future: Future[asyncio.Task[Any]]) -> None:
+            if not startup_failed.is_set() or future.cancelled():
+                return
+            try:
+                future.result().cancel()
+            except Exception:
+                pass
+
+        registration.add_done_callback(_cancel_late_registration)
+
         def _spawn_on_main_loop() -> None:
             if not registration.set_running_or_notify_cancel():
                 coro.close()
                 return
             spawned: asyncio.Task[Any] | None = None
             try:
+                if startup_failed.is_set():
+                    coro.close()
+                    registration.set_exception(RuntimeError("pipeline startup already failed"))
+                    return
                 spawned = asyncio.create_task(coro, name=task_name)
+                if startup_failed.is_set():
+                    spawned.cancel()
+                    registration.set_result(spawned)
+                    return
                 register_background_task(execution_id, spawned)
+                if startup_failed.is_set():
+                    spawned.cancel()
             except Exception as exc:
                 if spawned is not None:
                     spawned.cancel()
@@ -175,13 +201,19 @@ async def start_pipeline_action(
             else:
                 registration.set_result(spawned)
 
-        main_loop.call_soon_threadsafe(_spawn_on_main_loop)
+        try:
+            main_loop.call_soon_threadsafe(_spawn_on_main_loop)
+        except RuntimeError:
+            startup_failed.set()
+            coro.close()
+            return fail_start("pipeline_start_loop_closed")
         try:
             await asyncio.wait_for(
                 asyncio.shield(asyncio.wrap_future(registration)),
                 timeout=PIPELINE_START_ACK_TIMEOUT_SECONDS,
             )
         except TimeoutError:
+            startup_failed.set()
             if registration.cancel():
                 coro.close()
             if registration.done() and not registration.cancelled():

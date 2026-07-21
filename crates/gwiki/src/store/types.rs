@@ -153,4 +153,8 @@ pub trait WikiIndexStore {
     fn record_ingestion(&mut self, ingestion: WikiIngestion) -> Result<(), StoreError>;
     fn record_file_hash(&mut self, path: PathBuf, content_hash: String) -> Result<(), StoreError>;
     fn delete_derived_rows(&mut self, path: &Path) -> Result<(), StoreError>;
+    fn delete_derived_rows_and_record_ingestion(
+        &mut self,
+        ingestion: WikiIngestion,
+    ) -> Result<(), StoreError>;
 }

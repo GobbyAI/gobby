@@ -350,7 +350,7 @@ def _sync_single_rule(
         "description": rule_data.get("description"),
         "enabled": rule_data.get("enabled", True),
         "priority": rule_data.get("priority", 100),
-        "tags": file_tags,
+        "tags": file_tags if file_tags is not None else [],
     }
     try:
         body_dict, metadata = split_rule_definition_data(definition_data)

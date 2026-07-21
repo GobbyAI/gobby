@@ -172,6 +172,7 @@ async def test_dream_gc_soft_delete_lifecycle(
     assert hidden_rows[NEO4J_CONTENT]["dream_action"] == "delete"
     assert hidden_rows[MYSQL_CONTENT]["dream_action"] == "delete"
     assert hidden_rows[NEO4J_CONTENT]["deleted_at"] is not None
+    assert hidden_rows[MYSQL_CONTENT]["deleted_at"] is not None
 
     all_scope, _ = await _list_by_visibility(async_daemon_client, "all")
     assert all_scope == {NEO4J_CONTENT, MYSQL_CONTENT, CURRENT_CONTENT}

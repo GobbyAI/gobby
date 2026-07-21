@@ -232,8 +232,8 @@ Focused tests must prove:
 - retry workers re-read PostgreSQL rather than retaining backup payloads;
 - cross-reference rebuilding excludes hidden memories;
 - a crash after restore commit or during cross-reference rebuilding leaves a
-  durable due or lease-expired row that a restarted daemon completes exactly
-  once for the committed content hash;
+  durable due or lease-expired row that a restarted daemon processes at least
+  once; derived effects are idempotent when keyed by the committed content hash;
 - re-running an identical restore is a no-op;
 - daemon and session startup never invoke restore.
 

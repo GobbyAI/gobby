@@ -1530,7 +1530,7 @@ async def test_registration_wakes_parked_row_for_configured_scope(
 
 
 @pytest.mark.asyncio
-async def test_fully_disabled_other_project_scope_gets_no_handlers(
+async def test_parked_other_project_scope_keeps_handlers_registered(
     cron_storage: CronJobStorage,
     project_id: str,
 ) -> None:
@@ -1544,7 +1544,7 @@ async def test_fully_disabled_other_project_scope_gets_no_handlers(
     for command in WIKI_JOB_COMMANDS:
         job = cron_storage.get_job_by_name(f"gobby:wiki-{command}:project:idle-scope")
         assert job is not None
-        cron_storage.toggle_job(job.id)
+        cron_storage.park_system_job(job.id)
     executor = RecordingExecutor(handlers={})
 
     registered = await register_wiki_cron_jobs(
@@ -1555,10 +1555,13 @@ async def test_fully_disabled_other_project_scope_gets_no_handlers(
         gateway_factory=lambda _scope: RecordingGateway(),
     )
 
-    # Disabled rows never come due, so no handlers are swept for their scope.
-    assert registered == 7
+    # Parked system rows remain enabled but have no next run, so their handlers
+    # stay registered even though the scheduler will not claim them.
+    assert registered == 14
     assert set(executor.handlers) == {
-        f"wiki:{command}:project:{project_id}" for command in WIKI_JOB_COMMANDS
+        f"wiki:{command}:{scope}"
+        for command in WIKI_JOB_COMMANDS
+        for scope in ("project:idle-scope", f"project:{project_id}")
     }
 
 

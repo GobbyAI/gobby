@@ -82,4 +82,12 @@ impl WikiIndexStore for MemoryWikiStore {
         self.deleted_paths.push(path);
         Ok(())
     }
+
+    fn delete_derived_rows_and_record_ingestion(
+        &mut self,
+        ingestion: WikiIngestion,
+    ) -> Result<(), StoreError> {
+        self.delete_derived_rows(&ingestion.path)?;
+        self.record_ingestion(ingestion)
+    }
 }
