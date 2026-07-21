@@ -52,6 +52,9 @@ def schedule_dispatcher_tick_for_project(
     project_id: str | None,
     reason: str,
     services: Any | None = None,
+    max_ticks: int | None = None,
+    max_actions: int | None = None,
+    explicit_task_ids: tuple[str, ...] | None = None,
 ) -> bool:
     """Schedule an immediate dispatcher tick for dispatchable project work."""
     if db is None or not project_id:
@@ -69,6 +72,9 @@ def schedule_dispatcher_tick_for_project(
                 scheduler(
                     project_id=project_id,
                     reason=reason,
+                    max_ticks=max_ticks,
+                    max_actions=max_actions,
+                    explicit_task_ids=explicit_task_ids,
                 )
             )
 
@@ -83,6 +89,9 @@ def schedule_dispatcher_tick_for_project(
             project_id=project_id,
             reason=reason,
             services=dispatcher_services,
+            max_ticks=max_ticks,
+            max_actions=max_actions,
+            explicit_task_ids=explicit_task_ids,
         ),
         name=f"gobby-dispatcher-tick-{reason}",
         context=Context(),
@@ -109,6 +118,45 @@ def schedule_dispatcher_tick_for_task(
         project_id=project_id,
         reason=reason,
         services=dispatcher_services,
+    )
+
+
+def schedule_dispatcher_continuation_for_task(
+    db: HubDatabase | None,
+    *,
+    task_id: str | None,
+    reason: str,
+    services: Any | None = None,
+) -> bool:
+    """Dispatch one follow-up action for an already-authorized in-flight task."""
+    if db is None or not task_id:
+        return False
+    try:
+        row = db.fetchone(
+            "SELECT allow_automation FROM tasks WHERE id = %s",
+            (task_id,),
+        )
+    except Exception:
+        logger.warning(
+            "dispatcher_continuation_task_lookup_failed",
+            extra={"task_id": task_id},
+            exc_info=True,
+        )
+        return False
+    if row is None or bool(row["allow_automation"]):
+        return False
+    dispatcher_services = _dispatcher_services_for_db(db, services)
+    if dispatcher_services is None:
+        return False
+    project_id = _project_id_for_task(db, task_id)
+    return schedule_dispatcher_tick_for_project(
+        db,
+        project_id=project_id,
+        reason=reason,
+        services=dispatcher_services,
+        max_ticks=1,
+        max_actions=1,
+        explicit_task_ids=(task_id,),
     )
 
 
@@ -149,12 +197,18 @@ async def _run_scheduled_dispatcher_tick(
     project_id: str,
     reason: str,
     services: Any,
+    max_ticks: int | None,
+    max_actions: int | None,
+    explicit_task_ids: tuple[str, ...] | None,
 ) -> None:
     try:
         await kick_dispatcher_tick(
             db=db,
             project_id=project_id,
             services=services,
+            max_ticks=max_ticks,
+            max_actions=max_actions,
+            explicit_task_ids=explicit_task_ids,
         )
     except Exception:
         logger.warning(
@@ -173,6 +227,7 @@ async def kick_dispatcher_tick(
     max_ticks: int | None = None,
     max_actions: int | None = None,
     max_active_agents: int | None = None,
+    explicit_task_ids: tuple[str, ...] | None = None,
 ) -> DispatcherTickSummary:
     """Fire a bounded dispatcher heartbeat burst without cron bookkeeping."""
     if dispatcher_enabled is None:
@@ -210,6 +265,7 @@ async def kick_dispatcher_tick(
             services=services,
             max_actions=max_actions,
             max_active_agents=max_active_agents,
+            explicit_task_ids=explicit_task_ids,
         )
         reason = result.reason or ("cap_reached" if result.cap_reached else summary.reason)
         summary = DispatcherTickSummary(

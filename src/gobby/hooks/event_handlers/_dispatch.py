@@ -5,6 +5,7 @@ from __future__ import annotations
 from collections.abc import Mapping
 from typing import Any, cast
 
+from gobby.build.dispatch_tick import schedule_dispatcher_continuation_for_task
 from gobby.dispatch.mutex import RuntimeDispatchMutex
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.tasks import (
@@ -83,12 +84,18 @@ def _handle_stage_pipeline_terminal(
         if status == "completed":
             try:
                 if stage.review_policy == "required":
-                    return manager.submit_for_review(
+                    updated = manager.submit_for_review(
                         mutex.task_id,
                         stage_name,
                         by_session_id=None,
                         preheld_mutex_run_id=str(run_id),
                     )
+                    schedule_dispatcher_continuation_for_task(
+                        db,
+                        task_id=mutex.task_id,
+                        reason="stage_pipeline_review",
+                    )
+                    return updated
                 return manager.complete_stage(
                     mutex.task_id,
                     stage_name,

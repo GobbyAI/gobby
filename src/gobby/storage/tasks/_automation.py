@@ -29,10 +29,20 @@ def list_automation_candidates(
     db: HubDatabase,
     *,
     project_id: str | None = None,
+    explicit_task_ids: tuple[str, ...] | None = None,
 ) -> list[Task]:
     """List unclaimed, unleased, dependency-ready tasks eligible for dispatch."""
+    if explicit_task_ids == ():
+        return []
+
     now = utc_now()
-    params: list[Any] = [now]
+    params: list[Any] = []
+    if explicit_task_ids is None:
+        candidate_filter = "tasks.allow_automation IS TRUE"
+    else:
+        candidate_filter = "tasks.id = ANY(%s)"
+        params.append(list(explicit_task_ids))
+    params.append(now)
     project_filter = ""
     if project_id is not None:
         project_filter = "AND tasks.project_id = %s"
@@ -50,9 +60,9 @@ def list_automation_candidates(
                FROM task_stage_states stage_scan
               WHERE stage_scan.task_id = tasks.id
                 AND stage_scan.state != 'done'
-         )
+        )
         LEFT JOIN task_dispatch_mutex mutex ON mutex.task_id = tasks.id
-        WHERE tasks.allow_automation IS TRUE
+        WHERE {candidate_filter}
           AND tasks.claimed_by_session_id IS NULL
           AND tasks.closed_at IS NULL
           AND tasks.escalated_at IS NULL
@@ -65,7 +75,7 @@ def list_automation_candidates(
           )
           {project_filter}
         ORDER BY tasks.priority ASC, tasks.seq_num ASC, tasks.created_at ASC
-        """,  # nosec B608 # project_filter is static SQL selected above.
+        """,  # nosec B608 # filters are static SQL selected above.
         tuple(params),
     )
     tasks = [Task.from_row(row) for row in rows]

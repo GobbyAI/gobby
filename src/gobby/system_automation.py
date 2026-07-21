@@ -93,8 +93,19 @@ class _PendingProjectDispatch:
     max_ticks: int | None
     max_actions: int | None
     max_active_agents: int | None
+    explicit_task_ids: tuple[str, ...] | None
     waiters: tuple[asyncio.Future[DispatcherTickSummary], ...] = ()
     run_without_waiter: bool = False
+
+
+def _merge_explicit_task_ids(
+    current: tuple[str, ...] | None,
+    incoming: tuple[str, ...] | None,
+) -> tuple[str, ...] | None:
+    """Merge coalesced dispatch scopes; ``None`` means the whole project."""
+    if current is None or incoming is None:
+        return None
+    return tuple(dict.fromkeys((*current, *incoming)))
 
 
 class PipelineHeartbeatService(Protocol):
@@ -196,6 +207,7 @@ class SystemAutomationLoop:
         max_ticks: int | None = None,
         max_actions: int | None = None,
         max_active_agents: int | None = None,
+        explicit_task_ids: tuple[str, ...] | None = None,
     ) -> bool:
         """Schedule an in-memory dispatch tick for a project."""
         if not self._running:
@@ -217,6 +229,7 @@ class SystemAutomationLoop:
             max_ticks,
             max_actions,
             max_active_agents,
+            explicit_task_ids,
         )
         return True
 
@@ -292,6 +305,7 @@ class SystemAutomationLoop:
         max_ticks: int | None = None,
         max_actions: int | None = None,
         max_active_agents: int | None = None,
+        explicit_task_ids: tuple[str, ...] | None = None,
     ) -> DispatcherTickSummary:
         """Run a bounded project heartbeat burst without cron bookkeeping."""
         settings = await self.resolve_settings()
@@ -310,6 +324,7 @@ class SystemAutomationLoop:
                     max_ticks=max_ticks,
                     max_actions=max_actions,
                     max_active_agents=max_active_agents,
+                    explicit_task_ids=explicit_task_ids,
                 ),
                 timeout=timeout_seconds,
             )
@@ -334,6 +349,7 @@ class SystemAutomationLoop:
         max_ticks: int | None = None,
         max_actions: int | None = None,
         max_active_agents: int | None = None,
+        explicit_task_ids: tuple[str, ...] | None = None,
     ) -> DispatcherTickSummary:
         await self._run_db_call(recover_safe_build_claims, self.db, project_id)
         summary = DispatcherTickSummary()
@@ -344,6 +360,7 @@ class SystemAutomationLoop:
                 services=self.services,
                 max_actions=max_actions,
                 max_active_agents=max_active_agents,
+                explicit_task_ids=explicit_task_ids,
             )
             reason_value = result.reason or (
                 "cap_reached" if result.cap_reached else summary.reason
@@ -426,6 +443,7 @@ class SystemAutomationLoop:
         max_ticks: int | None,
         max_actions: int | None,
         max_active_agents: int | None,
+        explicit_task_ids: tuple[str, ...] | None = None,
     ) -> None:
         if not self._running:
             return
@@ -435,6 +453,7 @@ class SystemAutomationLoop:
             max_ticks=max_ticks,
             max_actions=max_actions,
             max_active_agents=max_active_agents,
+            explicit_task_ids=explicit_task_ids,
         )
 
     def _enqueue_project_dispatch(
@@ -445,6 +464,7 @@ class SystemAutomationLoop:
         max_ticks: int | None,
         max_actions: int | None,
         max_active_agents: int | None,
+        explicit_task_ids: tuple[str, ...] | None = None,
         waiter: asyncio.Future[DispatcherTickSummary] | None = None,
     ) -> None:
         existing = self._project_tasks.get(project_id)
@@ -459,6 +479,11 @@ class SystemAutomationLoop:
             pending = self._pending_project_dispatches.get(project_id)
             waiters = pending.waiters if pending is not None else ()
             run_without_waiter = pending.run_without_waiter if pending is not None else False
+            if pending is not None:
+                explicit_task_ids = _merge_explicit_task_ids(
+                    pending.explicit_task_ids,
+                    explicit_task_ids,
+                )
             if waiter is not None:
                 waiters = (*waiters, waiter)
             else:
@@ -468,6 +493,7 @@ class SystemAutomationLoop:
                 max_ticks=max_ticks,
                 max_actions=max_actions,
                 max_active_agents=max_active_agents,
+                explicit_task_ids=explicit_task_ids,
                 waiters=waiters,
                 run_without_waiter=run_without_waiter,
             )
@@ -478,6 +504,7 @@ class SystemAutomationLoop:
             max_ticks=max_ticks,
             max_actions=max_actions,
             max_active_agents=max_active_agents,
+            explicit_task_ids=explicit_task_ids,
             waiters=(waiter,) if waiter is not None else (),
             run_without_waiter=waiter is None,
         )
@@ -490,6 +517,7 @@ class SystemAutomationLoop:
         max_ticks: int | None,
         max_actions: int | None,
         max_active_agents: int | None,
+        explicit_task_ids: tuple[str, ...] | None,
         waiters: tuple[asyncio.Future[DispatcherTickSummary], ...] = (),
         run_without_waiter: bool = False,
     ) -> None:
@@ -500,6 +528,7 @@ class SystemAutomationLoop:
                 max_ticks=max_ticks,
                 max_actions=max_actions,
                 max_active_agents=max_active_agents,
+                explicit_task_ids=explicit_task_ids,
             ),
             name=f"system-automation-dispatch-{project_id}",
         )
@@ -547,6 +576,7 @@ class SystemAutomationLoop:
             max_ticks=pending.max_ticks,
             max_actions=pending.max_actions,
             max_active_agents=pending.max_active_agents,
+            explicit_task_ids=pending.explicit_task_ids,
             waiters=pending.waiters,
             run_without_waiter=pending.run_without_waiter,
         )
@@ -559,6 +589,7 @@ class SystemAutomationLoop:
         max_ticks: int | None,
         max_actions: int | None,
         max_active_agents: int | None,
+        explicit_task_ids: tuple[str, ...] | None,
     ) -> DispatcherTickSummary:
         try:
             return await self.dispatch_project_once(
@@ -567,6 +598,7 @@ class SystemAutomationLoop:
                 max_ticks=max_ticks,
                 max_actions=max_actions,
                 max_active_agents=max_active_agents,
+                explicit_task_ids=explicit_task_ids,
             )
         except asyncio.CancelledError:
             raise
@@ -592,6 +624,7 @@ class SystemAutomationLoop:
             max_ticks=max_ticks,
             max_actions=None,
             max_active_agents=None,
+            explicit_task_ids=None,
             waiter=waiter,
         )
         try:
@@ -614,6 +647,7 @@ class SystemAutomationLoop:
                     max_ticks=pending.max_ticks,
                     max_actions=pending.max_actions,
                     max_active_agents=pending.max_active_agents,
+                    explicit_task_ids=pending.explicit_task_ids,
                     waiters=remaining,
                     run_without_waiter=pending.run_without_waiter,
                 )

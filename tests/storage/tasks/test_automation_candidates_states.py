@@ -178,3 +178,31 @@ def test_list_automation_candidates_allows_reopened_child_under_epic_gate(
     ]
 
     assert ordered_candidate_ids == [root.id, child.id]
+
+
+def test_explicit_task_ids_select_disabled_continuation_only(
+    temp_db: HubDatabase,
+    sample_project: dict[str, Any],
+) -> None:
+    disabled = _task_at_stage(temp_db, sample_project, "needs_review")
+    enabled = _task_at_stage(temp_db, sample_project, "needs_review")
+    temp_db.execute(
+        "UPDATE tasks SET allow_automation = FALSE WHERE id = %s",
+        (disabled.id,),
+    )
+
+    regular_ids = {
+        task.id for task in list_automation_candidates(temp_db, project_id=sample_project["id"])
+    }
+    explicit_ids = [
+        task.id
+        for task in list_automation_candidates(
+            temp_db,
+            project_id=sample_project["id"],
+            explicit_task_ids=(disabled.id,),
+        )
+    ]
+
+    assert disabled.id not in regular_ids
+    assert enabled.id in regular_ids
+    assert explicit_ids == [disabled.id]

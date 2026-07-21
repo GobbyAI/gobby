@@ -171,11 +171,13 @@ async def test_final_worker_submit_for_review_dispatches_reviewer_without_manual
     from gobby.agents.sync import sync_bundled_agents
     from gobby.build.dispatch_tick import DispatcherTickSummary
     from gobby.config.app import DaemonConfig
+    from gobby.skills.sync import sync_bundled_skills
     from gobby.storage.agents import LocalAgentRunManager
     from gobby.storage.sessions import SessionManager
     from gobby.storage.tasks import LocalTaskManager, StageManifestSpec
     from gobby.system_automation import SystemAutomationLoop
 
+    sync_bundled_skills(temp_db)
     sync_bundled_agents(temp_db)
     manager = LocalTaskManager(temp_db)
     session_manager = SessionManager(temp_db)

@@ -88,6 +88,9 @@ class MiniBuildHarness:
         self.run_manager = LocalAgentRunManager(temp_db)
         self.mutexes = TaskDispatchMutexManager(temp_db)
         self.spawned: list[dict[str, object]] = []
+        self.pipeline_started: asyncio.Event | None = None
+        self.pipeline_release: asyncio.Event | None = None
+        self.pipeline_execution_ids: list[str] = []
         self.root_id = ""
         self.child_id = ""
         self.stage_registry = create_stage_ops_registry(
@@ -358,6 +361,11 @@ class MiniBuildHarness:
         session_id: str | None = None,
     ) -> None:
         del session_id
+        self.pipeline_execution_ids.append(execution_id)
+        if self.pipeline_started is not None:
+            self.pipeline_started.set()
+        if self.pipeline_release is not None:
+            await asyncio.wait_for(self.pipeline_release.wait(), timeout=2.0)
         self._create_child()
         from gobby.hooks.event_handlers import _dispatch
 
@@ -423,6 +431,64 @@ async def test_mini_build_reaches_clean_merge_state_without_manual_dispatch_tick
     )
 
     await harness.assert_clean_final_state()
+
+
+@pytest.mark.asyncio
+async def test_quick_expansion_completion_dispatches_one_reviewer(
+    temp_db: Any,
+    sample_project: dict[str, Any],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    harness = MiniBuildHarness(temp_db, sample_project, monkeypatch)
+    harness.pipeline_started = asyncio.Event()
+    harness.pipeline_release = asyncio.Event()
+    await harness.install()
+    harness.seed()
+    harness.launch()
+
+    await harness.complete_agent("planner", stage_name="planning", stage_state="in_progress")
+    await harness.complete_agent(
+        "plan-adversary",
+        stage_name="planning",
+        stage_state="needs_review",
+    )
+    await asyncio.wait_for(harness.pipeline_started.wait(), timeout=2.0)
+    harness.task_manager.update_task(harness.root_id, allow_automation=False)
+
+    assert harness._active_run("expansion-qa", "expansion", "needs_review") is None
+    harness.pipeline_release.set()
+    reviewer_run = await wait_for_async_condition(
+        lambda: harness._active_run("expansion-qa", "expansion", "needs_review"),
+        timeout=2.0,
+        description="quick-build expansion reviewer",
+    )
+    assert reviewer_run is not None
+
+    from gobby.hooks.event_handlers import _dispatch
+
+    execution_id = harness.pipeline_execution_ids[0]
+    assert (
+        _dispatch.on_pipeline_completed(
+            {"execution_id": execution_id},
+            db=harness.db,
+            storage=harness.mutexes,
+        )
+        is None
+    )
+    dispatch_idle = await wait_for_async_condition(
+        lambda: (
+            harness.project_id not in harness.loop._project_tasks
+            and harness.project_id not in harness.loop._pending_project_dispatches
+        ),
+        timeout=2.0,
+        description="quick-build continuation dispatch",
+    )
+    assert dispatch_idle
+
+    root = harness.task_manager.get_task(harness.root_id)
+    reviewer_spawns = [run for run in harness.spawned if run["agent_name"] == "expansion-qa"]
+    assert root is not None and root.allow_automation is False
+    assert len(reviewer_spawns) == 1
 
 
 @pytest.mark.slow

@@ -601,6 +601,63 @@ async def test_direct_project_dispatch_wake_queues_followup_when_dispatch_active
     )
 
 
+@pytest.mark.asyncio
+async def test_queued_targeted_dispatches_merge_task_scope(
+    temp_db: HubDatabase,
+) -> None:
+    """Coalesced continuations must retain every explicitly authorized task."""
+    started = asyncio.Event()
+    release_first = asyncio.Event()
+    calls: list[tuple[str, tuple[str, ...] | None]] = []
+
+    loop = SystemAutomationLoop(
+        db=temp_db,
+        config=DaemonConfig(),
+        services=SimpleNamespace(startup_ready=True, shutdown_in_progress=False),
+        run_db=_run_inline,
+    )
+
+    async def dispatch_project_once(**kwargs: Any) -> object:
+        reason = str(kwargs["reason"])
+        calls.append((reason, kwargs["explicit_task_ids"]))
+        if reason == "first":
+            started.set()
+            await release_first.wait()
+        return object()
+
+    loop.dispatch_project_once = dispatch_project_once  # type: ignore[method-assign]
+    loop._running = True
+    project_id = "11111111-1111-4111-8111-111111110001"
+
+    assert loop.schedule_project_dispatch(
+        project_id=project_id,
+        reason="first",
+        explicit_task_ids=("task-a",),
+    )
+    await asyncio.wait_for(started.wait(), timeout=1)
+
+    assert loop.schedule_project_dispatch(
+        project_id=project_id,
+        reason="second",
+        explicit_task_ids=("task-b",),
+    )
+    assert loop.schedule_project_dispatch(
+        project_id=project_id,
+        reason="third",
+        explicit_task_ids=("task-c", "task-b"),
+    )
+    release_first.set()
+
+    await wait_for_async_condition(
+        lambda: calls
+        == [
+            ("first", ("task-a",)),
+            ("third", ("task-b", "task-c")),
+        ],
+        description="merged targeted follow-up dispatch",
+    )
+
+
 async def test_project_dispatch_entrypoints_ignore_requests_after_stop(
     temp_db: HubDatabase,
 ) -> None:

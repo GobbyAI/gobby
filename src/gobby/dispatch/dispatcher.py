@@ -131,6 +131,7 @@ async def run_heartbeat(
     ttl_seconds: int = DISPATCH_TTL_SECONDS,
     services: object | None = None,
     max_actions: int | None = None,
+    explicit_task_ids: tuple[str, ...] | None = None,
 ) -> HeartbeatResult:
     """Serialize heartbeat entry points before scanning and dispatching tasks."""
     while not _HEARTBEAT_LOCK.acquire(blocking=False):
@@ -152,6 +153,7 @@ async def run_heartbeat(
                     ttl_seconds=ttl_seconds,
                     services=services,
                     max_actions=max_actions,
+                    explicit_task_ids=explicit_task_ids,
                 )
             finally:
                 await run_db(database_stack.close)
@@ -164,6 +166,7 @@ async def run_heartbeat(
             ttl_seconds=ttl_seconds,
             services=services,
             max_actions=max_actions,
+            explicit_task_ids=explicit_task_ids,
         )
     except Exception:
         record_automation_event("dispatcher", "failed")
@@ -182,6 +185,7 @@ async def _run_heartbeat_unlocked(
     ttl_seconds: int = DISPATCH_TTL_SECONDS,
     services: object | None = None,
     max_actions: int | None = None,
+    explicit_task_ids: tuple[str, ...] | None = None,
 ) -> HeartbeatResult:
     """Scan automation candidates, acquire per-task leases, and execute first-match actions."""
     from gobby.agents.readiness import spawn_readiness_blocker
@@ -221,7 +225,12 @@ async def _run_heartbeat_unlocked(
         logger.info("Dispatcher failed %d stale pending agent run(s)", pending_reaped)
 
     cap = MAX_ACTIVE_AGENTS if max_active_agents is None else max_active_agents
-    candidates = await run_db(list_automation_candidates, resolved_db, project_id=project_id)
+    candidates = await run_db(
+        list_automation_candidates,
+        resolved_db,
+        project_id=project_id,
+        explicit_task_ids=explicit_task_ids,
+    )
     write_set_guard = await run_db(DispatchWriteSetGuard.load, resolved_db, project_id=project_id)
     result = HeartbeatResult(scanned=len(candidates))
 
