@@ -285,7 +285,10 @@ class TestTaskValidationConfigDefaults:
         assert candidate_labels(config.candidates) == default_candidates_for_profile(
             FeatureProfile.MID
         )
-        assert config.cli_candidate_timeout_seconds == 180.0
+        assert "cli_candidate_timeout_seconds" not in TaskValidationConfig.model_fields
+        assert "tool_loop_enabled" not in TaskValidationConfig.model_fields
+        assert "tool_loop_preview_bytes" not in TaskValidationConfig.model_fields
+        assert "tool_loop_max_calls" not in TaskValidationConfig.model_fields
         assert config.prompt_path is None
         assert config.max_iterations == 10
         assert config.max_consecutive_errors == 3

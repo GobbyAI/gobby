@@ -91,7 +91,11 @@ class TestValidateCommandWithNewFlags:
 
         mock_validator_cls.return_value.validate_task.side_effect = async_result
 
-        with patch("gobby.cli.load_full_config_from_db", return_value=DaemonConfig()):
+        with (
+            patch("gobby.cli.runtime.get_cli_runtime") as cli_runtime,
+            patch("gobby.cli.runtime.require_cli_database", return_value=MagicMock()),
+        ):
+            cli_runtime.return_value.config = DaemonConfig()
             result = runner.invoke(
                 cli,
                 [
@@ -105,7 +109,7 @@ class TestValidateCommandWithNewFlags:
                 ],
             )
 
-        assert result.exit_code == 0
+        assert result.exit_code == 0, (result.output, result.exception)
         assert "Exceeded max retries" in result.output
         assert "Evidence error:" not in result.output
         assert "Bounded inspection:" not in result.output
@@ -146,13 +150,6 @@ class TestValidateCommandWithNewFlags:
                     "reason": "current_failure_evidence",
                     "evidence": ["pytest: 1 failed"],
                 },
-                evidence_error={"code": "unconsumed_evidence", "artifacts": []},
-                inspection_summary={
-                    "manifest_total": 4,
-                    "inspected_count": 2,
-                    "uninspected_count": 2,
-                    "uninspected_sample": ["src/c.py", "src/d.py"],
-                },
             )
         )
 
@@ -161,22 +158,21 @@ class TestValidateCommandWithNewFlags:
             return mock_validator_cls.return_value.validate_task.return_value
 
         mock_validator_cls.return_value.validate_task.side_effect = validate
-        with patch("gobby.cli.load_full_config_from_db", return_value=DaemonConfig()):
+        with (
+            patch("gobby.cli.runtime.get_cli_runtime") as cli_runtime,
+            patch("gobby.cli.runtime.require_cli_database", return_value=MagicMock()),
+        ):
+            cli_runtime.return_value.config = DaemonConfig()
             result = runner.invoke(
                 cli,
                 ["tasks", "validate", mock_task.id, "--summary", "test changes"],
             )
 
-        assert result.exit_code == 0
+        assert result.exit_code == 0, (result.output, result.exception)
         assert "Validation blocked: validation verdict 'invalid'" in result.output
         assert "verdict overridden: validator attested current failures: pytest: 1 failed" in (
             result.output
         )
-        assert 'Evidence error: {"code":"unconsumed_evidence","artifacts":[]}' in result.output
-        assert (
-            "Bounded inspection: 2 of 4 changed files inspected; "
-            "uninspected sample: src/c.py, src/d.py"
-        ) in result.output
 
     @patch("gobby.cli.tasks.ai.get_task_manager")
     @patch("gobby.cli.tasks.ai.resolve_task_id")
@@ -202,24 +198,22 @@ class TestValidateCommandWithNewFlags:
             return ValidationResult(
                 status="valid",
                 feedback="All checks passed.",
-                inspection_summary={
-                    "manifest_total": 3,
-                    "inspected_count": 2,
-                    "uninspected_count": 1,
-                },
             )
 
         mock_validator_cls.return_value.validate_task.side_effect = validate
-        with patch("gobby.cli.load_full_config_from_db", return_value=DaemonConfig()):
+        with (
+            patch("gobby.cli.runtime.get_cli_runtime") as cli_runtime,
+            patch("gobby.cli.runtime.require_cli_database", return_value=MagicMock()),
+        ):
+            cli_runtime.return_value.config = DaemonConfig()
             result = runner.invoke(
                 cli,
                 ["tasks", "validate", mock_task.id, "--summary", "test changes"],
             )
 
-        assert result.exit_code == 0
+        assert result.exit_code == 0, (result.output, result.exception)
         assert "Validation Status: VALID" in result.output
         assert "Feedback:\nAll checks passed." in result.output
-        assert "Bounded inspection: 2 of 3 changed files inspected" in result.output
         assert "blocked" not in result.output.casefold()
 
     @patch("gobby.cli.tasks.ai.get_task_manager")

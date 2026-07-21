@@ -32,7 +32,6 @@ from gobby.mcp_proxy.tools.tasks._verification_evidence_context import (
 from gobby.plans.bootstrap_ledger import BootstrapLedgerMismatchError
 from gobby.storage.tasks import TaskNotFoundError, TaskStaleStateError
 from gobby.tasks.state_semantics import get_claimed_session_id
-from gobby.tasks.validation_tool_loop import is_doc_only_manifest, prepare_validation_diff
 from gobby.workflows.condition_helpers import completion_evidence_ready
 from gobby.workflows.verification_evidence import VERIFICATION_EVIDENCE_VARIABLE
 
@@ -339,68 +338,28 @@ def register_close_task(registry: InternalToolRegistry, ctx: RegistryContext) ->
                 and ctx.task_validator
                 and (task.validation_criteria or task.category == "code")
             ):
-                prepared_diff = None
-                if task.commits and repo_path:
-                    try:
-                        prepared_diff = prepare_validation_diff(
-                            task.id,
-                            ctx.task_manager,
-                            repo_path=repo_path,
-                        )
-                    except Exception as exc:
-                        logger.warning(
-                            "Failed to prepare paged validation metadata for task %s: %s",
-                            task.id,
-                            exc,
-                        )
                 verification_items = _load_verification_items(ctx, resolved_session_id)
-                verification_evidence = _append_verification_evidence_context(
-                    None,
+                evidence = gather_validation_context(
+                    task,
+                    changes_summary,
+                    repo_path,
+                    ctx.task_manager,
+                )
+                validation_context = _append_verification_evidence_context(
+                    evidence.validation_context,
                     ctx,
                     resolved_session_id,
                     evidence_items=verification_items,
                 )
-
-                def load_static_evidence() -> tuple[str, str | None]:
-                    evidence = gather_validation_context(
-                        task, changes_summary, repo_path, ctx.task_manager
-                    )
-                    return (
-                        evidence.validation_context or changes_summary or "",
-                        evidence.file_context_text,
-                    )
-
                 llm_result = await validate_leaf_task_with_llm(
                     task=task,
                     task_validator=ctx.task_validator,
-                    validation_context=changes_summary or "",
-                    raw_diff=None,
+                    validation_context=validation_context or changes_summary or "",
                     ctx=ctx,
                     resolved_id=resolved_id,
                     validation_config=ctx.validation_config,
-                    is_documentation_only=(
-                        prepared_diff is not None
-                        and is_doc_only_manifest(prepared_diff.manifest_items)
-                    ),
-                    verification_evidence=verification_evidence,
-                    repo_path=repo_path,
-                    linked_commits=(
-                        prepared_diff.canonical_commits if prepared_diff is not None else ()
-                    ),
-                    first_commits_page=(
-                        prepared_diff.first_commits_page if prepared_diff is not None else None
-                    ),
-                    manifest_items=(
-                        prepared_diff.manifest_items if prepared_diff is not None else ()
-                    ),
-                    manifest_count=(
-                        prepared_diff.manifest_count if prepared_diff is not None else 0
-                    ),
-                    diff_total_bytes=(
-                        prepared_diff.diff_total_bytes if prepared_diff is not None else 0
-                    ),
-                    verification_items=verification_items,
-                    static_evidence_loader=load_static_evidence,
+                    file_context_text=evidence.file_context_text,
+                    is_documentation_only=evidence.is_documentation_only,
                 )
                 if not llm_result.can_close:
                     response = {
@@ -657,7 +616,7 @@ def _append_verification_evidence_context(
     *,
     evidence_items: Sequence[Mapping[str, object]] | None = None,
 ) -> str | None:
-    """Append successful validation command evidence to LLM validation context."""
+    """Append structured verification results to the LLM validation context."""
     if evidence_items is None:
         evidence_items = _load_verification_items(ctx, resolved_session_id)
     if not evidence_items:

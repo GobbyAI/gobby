@@ -57,6 +57,40 @@ def test_gather_validation_context_prefers_linked_commit_diff_over_prose_summary
     assert context.validation_context.find("diff --git a/a.py") < context.validation_context.find(
         "Agent Changes Summary"
     )
+    assert context.is_documentation_only is False
+
+
+def test_gather_validation_context_marks_documentation_only_manifest() -> None:
+    task = SimpleNamespace(
+        id="task-docs",
+        commits=["abc123"],
+        title="Update guide",
+        validation_criteria="Guide is current",
+        description=None,
+    )
+    raw_diff = (
+        "diff --git a/docs/guide.md b/docs/guide.md\n"
+        "index abc..def 100644\n"
+        "--- a/docs/guide.md\n"
+        "+++ b/docs/guide.md\n"
+        "@@ -1 +1 @@\n"
+        "-old\n"
+        "+current\n"
+    )
+    first_page = {"commits": {"total": 1}, "manifest": {"total": 1}}
+
+    with patch(
+        "gobby.tasks.commits.collect_task_diff_text",
+        return_value=(raw_diff, first_page),
+    ):
+        context = gather_validation_context(
+            task=task,
+            changes_summary="Updated the guide.",
+            repo_path="/repo",
+            task_manager=MagicMock(),
+        )
+
+    assert context.is_documentation_only is True
 
 
 def test_gather_validation_context_reads_mentioned_files_outside_linked_diff(tmp_path) -> None:

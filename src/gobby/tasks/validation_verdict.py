@@ -17,13 +17,7 @@ class ValidationResult:
     status: Literal["valid", "invalid", "pending", "error"]
     feedback: str | None = None
     blocking_reasons: list[str] = field(default_factory=list)
-    mode: Literal["static", "tool_loop"] = "static"
-    evidence_refs: tuple[str, ...] = ()
-    evidence_complete: bool = True
-    trace_summary: tuple[dict[str, object], ...] = ()
-    evidence_error: dict[str, object] | None = None
     verdict_override: dict[str, object] | None = None
-    inspection_summary: dict[str, object] | None = None
 
 
 def _coerce_blocking_reasons(value: object) -> list[str]:
@@ -107,16 +101,6 @@ def _validation_result_from_data(result_data: Mapping[str, object]) -> Validatio
     )
 
 
-def _is_unsupported_reject(result_data: Mapping[str, object]) -> bool:
-    """Return whether an invalid static verdict lacks structurally usable reasons."""
-    if str(result_data.get("status", "")).strip().lower() != "invalid":
-        return False
-    reasons = result_data.get("blocking_reasons")
-    if not isinstance(reasons, list | str):
-        return True
-    return not _coerce_blocking_reasons(reasons)
-
-
 def format_close_validation_message(
     status: str,
     narrative: str | None,
@@ -146,7 +130,6 @@ def format_close_validation_message(
 __all__ = [
     "ValidationResult",
     "_coerce_blocking_reasons",
-    "_is_unsupported_reject",
     "_validation_result_from_data",
     "contradiction_rejection_message",
     "demote_contradictory_valid",

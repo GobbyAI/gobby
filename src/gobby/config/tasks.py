@@ -165,28 +165,9 @@ class TaskExpansionConfig(FeatureDefaultConfig):
     )
 
 
-TOOL_LOOP_MAX_CALLS = 32
-
-
 class TaskValidationConfig(FeatureDefaultConfig):
     """Configuration for task validation (checking completion against criteria)."""
 
-    tool_loop_enabled: bool = Field(
-        default=True,
-        description="Use runtime-grounded paged diff tools for linked-commit validation.",
-    )
-    tool_loop_preview_bytes: int = Field(
-        default=16_384,
-        ge=4,
-        le=30_000,
-        description="Default byte window for tool-loop diff and file reads.",
-    )
-    tool_loop_max_calls: int = Field(
-        default=TOOL_LOOP_MAX_CALLS,
-        ge=8,
-        le=128,
-        description="Maximum evidence-tool calls available to one validation loop.",
-    )
     profile: FeatureProfile = Field(
         default=FeatureProfile.MID,
         description="Capability profile for task validation.",
@@ -199,15 +180,6 @@ class TaskValidationConfig(FeatureDefaultConfig):
         default="You are a QA validator. Output ONLY valid JSON. No markdown, no explanation, no code blocks. Just the raw JSON object.",
         description="System prompt for task validation",
     )
-    cli_candidate_timeout_seconds: float = Field(
-        default=180.0,
-        gt=0.0,
-        description=(
-            "Per-candidate timeout for spawn-cold CLI validation lanes. Close validation "
-            "prompts need more cold-start headroom than ordinary feature calls."
-        ),
-    )
-
     prompt_path: str | None = Field(
         default=None,
         description="Path to custom validation prompt template (e.g., 'validation/validate')",

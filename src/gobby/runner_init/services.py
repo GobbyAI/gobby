@@ -274,7 +274,6 @@ def _init_task_validator(runner: GobbyRunner) -> None:
             llm_service=runner.llm_service,
             config=gobby_tasks_config.validation,
             db=runner.database,
-            tool_chat_service=runner.tool_chat_service,
         )
     except Exception:
         mark_service_degraded(runner, "task_validator")

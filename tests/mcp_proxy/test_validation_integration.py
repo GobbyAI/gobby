@@ -39,38 +39,33 @@ def _diff_result(
     }
 
 
-def _prepared_diff(
-    *, commits: list[str], manifest_count: int, diff_total_bytes: int = 1_024
-) -> MagicMock:
-    prepared = MagicMock()
-    prepared.canonical_commits = tuple(commits)
-    prepared.first_commits_page = {"items": []}
-    prepared.manifest_items = ()
-    prepared.manifest_count = manifest_count
-    prepared.diff_total_bytes = diff_total_bytes
-    return prepared
-
-
 _TEST_TIMESTAMP = datetime(2026, 1, 1, tzinfo=UTC)
 _TEST_TIMESTAMP_TEXT = _TEST_TIMESTAMP.isoformat()
 _StageState = Literal["ready", "in_progress", "needs_review", "review_approved", "done"]
 
 
-def test_format_verification_evidence_context_includes_structured_successes() -> None:
+def test_format_verification_evidence_context_correlates_command_outcomes() -> None:
     context = format_verification_evidence_context(
         [
             {
                 "evidence_type": "validation_command",
-                "success": False,
+                "success": True,
                 "command": "uv run pytest tests/failing.py",
+                "exit_code": 7,
                 "matcher_id": "python-tests",
             },
             {
                 "evidence_type": "validation_command",
                 "success": True,
                 "command": "uv run pytest tests/tasks/test_validation.py -q",
+                "exit_code": 0,
                 "matcher_id": "python-tests",
                 "matcher_label": "Python tests",
+            },
+            {
+                "evidence_type": "validation_command",
+                "success": True,
+                "command": "uv run pytest tests/uncorrelated.py",
             },
             {
                 "evidence_type": "manual_diff_review",
@@ -81,19 +76,45 @@ def test_format_verification_evidence_context_includes_structured_successes() ->
                 "task_id": "#15763",
             },
         ],
-        limit=3,
+        limit=4,
     )
 
-    assert context == (
-        "Successful verification evidence:\n"
-        "- command: uv run pytest tests/tasks/test_validation.py -q\n"
-        "  matcher_id: python-tests\n"
-        "  matcher_label: Python tests\n"
-        "- summary: Verified touched source line counts are below 1000\n"
-        "  supports: source line-count gate\n"
-        "  scope: src/gobby/mcp_proxy/tools/tasks\n"
-        "  task_id: #15763"
+    assert context is not None
+    assert context.startswith("Structured verification results")
+    assert '"command":"uv run pytest tests/failing.py","exit_code":7,"success":false' in context
+    assert '"command_result_correlation":"correlated"' in context
+    assert '"command":"uv run pytest tests/tasks/test_validation.py -q","exit_code":0' in context
+    assert '"command":"uv run pytest tests/uncorrelated.py","success":null' in context
+    assert '"command_result_correlation":"missing"' in context
+    assert (
+        '"missing_evidence":"integer exit_code correlated to command: '
+        'uv run pytest tests/uncorrelated.py"' in context
     )
+    assert '"summary":"Verified touched source line counts are below 1000"' in context
+
+
+def test_format_verification_evidence_context_bounds_oversized_result() -> None:
+    context = format_verification_evidence_context(
+        [
+            {
+                "evidence_type": "manual_review",
+                "success": True,
+                "summary": '"' * 20_000,
+                "supports": '"' * 20_000,
+                "scope": '"' * 20_000,
+                "matcher_id": '"' * 20_000,
+                "matcher_label": '"' * 20_000,
+                "outcome_provenance": '"' * 20_000,
+                "task_id": '"' * 20_000,
+            }
+        ],
+        limit=1,
+    )
+
+    assert context is not None
+    assert len(context) <= 8_000
+    assert '"evidence_type":"validation_evidence_overflow"' in context
+    assert '"success":null' in context
 
 
 @pytest.fixture
@@ -200,7 +221,7 @@ async def _close_with_static_verdict(
     llm_service = MagicMock(spec=LLMService)
     llm_service.call_json_feature = AsyncMock(return_value=payload)
     validator = _task_validator(
-        TaskValidationConfig(enabled=True, tool_loop_enabled=False),
+        TaskValidationConfig(enabled=True),
         llm_service,
     )
     validator._loader = MagicMock()
@@ -213,16 +234,16 @@ async def _close_with_static_verdict(
             "gobby.tasks.commits.collect_task_diff_text",
             return_value=_diff_result(diff=diff, commits=["abc123"], file_count=1),
         ),
-        patch(
-            "gobby.mcp_proxy.tools.tasks._lifecycle_close.prepare_validation_diff",
-            return_value=_prepared_diff(commits=["abc123"], manifest_count=1),
-        ),
         patch("gobby.mcp_proxy.tools.tasks._context.LocalProjectManager") as project_manager,
         patch("gobby.utils.git.run_git_command", return_value="abc123"),
         patch("gobby.utils.git.normalize_commit_sha", side_effect=lambda sha, cwd=None: sha),
         patch(
             "gobby.mcp_proxy.tools.tasks._lifecycle_validation._record_validation_iteration"
         ) as record_iteration,
+        patch(
+            "gobby.ai._tool_chat_service.ToolChatService.chat_result",
+            new_callable=AsyncMock,
+        ) as tool_chat,
     ):
         project_manager.return_value.get.return_value = MagicMock(repo_path=repo_path)
         registry = create_task_registry(
@@ -234,6 +255,8 @@ async def _close_with_static_verdict(
             {"task_id": task.id, "changes_summary": "Implemented structured verdicts."},
         )
 
+    llm_service.call_json_feature.assert_awaited_once()
+    tool_chat.assert_not_awaited()
     return result, record_iteration, llm_service.call_json_feature
 
 
@@ -262,7 +285,7 @@ async def test_close_task_ignores_failure_vocabulary_when_structured_verdict_is_
 
 @pytest.mark.integration
 @pytest.mark.asyncio
-async def test_close_task_invalid_message_matches_persisted_history(
+async def test_missing_required_command_evidence_blocks_close_and_matches_history(
     mock_task_manager: MagicMock, repo_path: str
 ) -> None:
     result, record_iteration, _ = await _close_with_static_verdict(
@@ -270,15 +293,17 @@ async def test_close_task_invalid_message_matches_persisted_history(
         repo_path,
         {
             "status": "invalid",
-            "feedback": "A required regression remains unverified.",
-            "blocking_reasons": ["Missing close-task regression coverage."],
+            "feedback": "A required command result is absent.",
+            "blocking_reasons": [
+                "Missing result for required command: uv run pytest tests/close_task.py"
+            ],
             "current_failure_evidence": [],
         },
     )
 
     assert result["success"] is False
     assert result["message"].startswith("Close blocked: validation verdict 'invalid'")
-    assert "Missing close-task regression coverage." in result["message"]
+    assert "Missing result for required command" in result["message"]
     persisted = mock_task_manager.increment_validation_failure.call_args.kwargs[
         "validation_feedback"
     ]
@@ -344,10 +369,6 @@ async def test_close_task_uses_commit_diff_when_commits_linked(
         patch("gobby.mcp_proxy.tools.tasks._context.TaskDependencyManager"),
         patch("gobby.mcp_proxy.tools.tasks._context.SessionTaskManager"),
         patch("gobby.tasks.commits.collect_task_diff_text") as mock_diff,
-        patch(
-            "gobby.mcp_proxy.tools.tasks._lifecycle_close.prepare_validation_diff",
-            return_value=_prepared_diff(commits=["abc123", "def456"], manifest_count=3),
-        ),
         patch("gobby.mcp_proxy.tools.tasks._context.LocalProjectManager") as mock_pm,
         patch("gobby.utils.git.run_git_command", return_value="abc123"),
         patch(
@@ -373,7 +394,7 @@ async def test_close_task_uses_commit_diff_when_commits_linked(
         )
 
         validator_call = mock_task_validator.validate_task.call_args
-        changes_summary, _ = validator_call.kwargs["static_evidence_loader"]()
+        changes_summary = validator_call.kwargs["changes_summary"]
         mock_diff.assert_called_once()
         assert "Commit-based diff (2 commits, 3 manifest entries):" in changes_summary
         assert "diff content from commits" in changes_summary
@@ -404,16 +425,7 @@ async def test_close_task_includes_latest_thirty_verification_evidence(
     )
     mock_task_manager.get_task.return_value = task
     mock_task_manager.list_tasks.return_value = []
-    inspection_summary = {
-        "manifest_total": 5,
-        "inspected_count": 3,
-        "uninspected_count": 2,
-    }
-    mock_task_validator.validate_task.return_value = ValidationResult(
-        status="valid",
-        feedback="OK",
-        inspection_summary=inspection_summary,
-    )
+    mock_task_validator.validate_task.return_value = ValidationResult(status="valid", feedback="OK")
     mock_task_manager.close_task.return_value = task
 
     evidence = [
@@ -421,6 +433,7 @@ async def test_close_task_includes_latest_thirty_verification_evidence(
             "evidence_type": "validation_command",
             "success": True,
             "command": f"uv run pytest validation_suite_{index:03d}.py",
+            "exit_code": 0,
             "matcher_id": "python-tests",
             "matcher_label": "Python tests",
         }
@@ -441,10 +454,6 @@ async def test_close_task_includes_latest_thirty_verification_evidence(
         patch("gobby.mcp_proxy.tools.tasks._context.TaskDependencyManager"),
         patch("gobby.mcp_proxy.tools.tasks._context.SessionTaskManager"),
         patch("gobby.tasks.commits.collect_task_diff_text") as mock_diff,
-        patch(
-            "gobby.mcp_proxy.tools.tasks._lifecycle_close.prepare_validation_diff",
-            return_value=_prepared_diff(commits=["abc123"], manifest_count=1),
-        ),
         patch("gobby.mcp_proxy.tools.tasks._context.LocalProjectManager") as mock_pm,
         patch("gobby.mcp_proxy.tools.tasks._context.SessionManager") as mock_sm_cls,
         patch("gobby.mcp_proxy.tools.tasks._context.SessionVariableManager") as mock_svm_cls,
@@ -474,21 +483,21 @@ async def test_close_task_includes_latest_thirty_verification_evidence(
             "close_task", {"task_id": "t1", "changes_summary": "test changes"}
         )
 
-    assert result == {"success": True, "inspection_summary": inspection_summary}
+    assert result == {"success": True}
     validator_call = mock_task_validator.validate_task.call_args
-    assert validator_call.kwargs["verification_items"] == tuple(evidence)
-    verification_evidence = validator_call.kwargs["verification_evidence"]
-    assert "Successful verification evidence:" in verification_evidence
-    assert "command: uv run pytest validation_suite_001.py" not in verification_evidence
-    assert "command: uv run pytest validation_suite_002.py" not in verification_evidence
+    validation_evidence = validator_call.kwargs["changes_summary"]
+    assert "Structured verification results" in validation_evidence
+    assert '"command":"uv run pytest validation_suite_001.py"' not in validation_evidence
+    assert '"command":"uv run pytest validation_suite_002.py"' not in validation_evidence
     for index in range(3, CLOSE_VALIDATION_EVIDENCE_CONTEXT_LIMIT + 2):
-        assert f"- command: uv run pytest validation_suite_{index:03d}.py" in verification_evidence
-    assert "matcher_id: python-tests" in verification_evidence
-    assert "matcher_label: Python tests" in verification_evidence
-    assert "- summary: Verified touched source line counts are below 1000" in verification_evidence
-    assert "supports: source line-count gate for #15763" in verification_evidence
-    assert "scope: src/gobby/mcp_proxy/tools/tasks" in verification_evidence
-    assert "task_id: #15763" in verification_evidence
+        assert f'"command":"uv run pytest validation_suite_{index:03d}.py"' in validation_evidence
+    assert '"exit_code":0' in validation_evidence
+    assert '"matcher_id":"python-tests"' in validation_evidence
+    assert '"matcher_label":"Python tests"' in validation_evidence
+    assert '"summary":"Verified touched source line counts are below 1000"' in validation_evidence
+    assert '"supports":"source line-count gate for #15763"' in validation_evidence
+    assert '"scope":"src/gobby/mcp_proxy/tools/tasks"' in validation_evidence
+    assert '"task_id":"#15763"' in validation_evidence
 
 
 @pytest.mark.asyncio
@@ -545,10 +554,6 @@ async def test_close_task_preserves_oversized_test_definitions_with_focused_evid
         patch("gobby.mcp_proxy.tools.tasks._context.TaskDependencyManager"),
         patch("gobby.mcp_proxy.tools.tasks._context.SessionTaskManager"),
         patch("gobby.tasks.commits.collect_task_diff_text") as mock_diff,
-        patch(
-            "gobby.mcp_proxy.tools.tasks._lifecycle_close.prepare_validation_diff",
-            return_value=_prepared_diff(commits=["abc123"], manifest_count=2),
-        ),
         patch("gobby.mcp_proxy.tools.tasks._context.LocalProjectManager") as mock_pm,
         patch("gobby.mcp_proxy.tools.tasks._context.SessionManager") as mock_sm_cls,
         patch("gobby.mcp_proxy.tools.tasks._context.SessionVariableManager") as mock_svm_cls,
@@ -571,6 +576,7 @@ async def test_close_task_preserves_oversized_test_definitions_with_focused_evid
                     "evidence_type": "validation_command",
                     "success": True,
                     "command": focused_command,
+                    "exit_code": 0,
                     "matcher_id": "python-tests",
                     "matcher_label": "Python tests",
                 }
@@ -586,15 +592,14 @@ async def test_close_task_preserves_oversized_test_definitions_with_focused_evid
             "close_task", {"task_id": "t1", "changes_summary": "test changes"}
         )
         validator_call = mock_task_validator.validate_task.call_args
-        changes_summary, _ = validator_call.kwargs["static_evidence_loader"]()
-        verification_evidence = validator_call.kwargs["verification_evidence"]
+        changes_summary = validator_call.kwargs["changes_summary"]
 
     assert result == {"success": True}
     for name in test_names:
         assert name in changes_summary
     assert "hunk truncated for tests/test_acceptance.py" in changes_summary
-    assert f"- command: {focused_command}" in verification_evidence
-    assert "matcher_label: Python tests" in verification_evidence
+    assert f'"command":"{focused_command}"' in changes_summary
+    assert '"matcher_label":"Python tests"' in changes_summary
 
 
 @pytest.mark.integration
@@ -645,10 +650,6 @@ async def test_close_task_autolinks_claim_window_before_validation(
         patch("gobby.mcp_proxy.tools.tasks._context.SessionVariableManager") as mock_svm_cls,
         patch("gobby.tasks.commits.auto_link_commits") as mock_autolink,
         patch("gobby.tasks.commits.collect_task_diff_text") as mock_diff,
-        patch(
-            "gobby.mcp_proxy.tools.tasks._lifecycle_close.prepare_validation_diff",
-            return_value=_prepared_diff(commits=["a1", "a2", "a3"], manifest_count=3),
-        ),
         patch("gobby.utils.git.normalize_commit_sha", side_effect=lambda sha, cwd=None: sha),
     ):
         mock_pm.return_value.get.return_value = MagicMock(repo_path=repo_path)
@@ -707,7 +708,7 @@ async def test_close_task_autolinks_claim_window_before_validation(
             },
         )
         validator_call = mock_task_validator.validate_task.call_args
-        changes_summary, _ = validator_call.kwargs["static_evidence_loader"]()
+        changes_summary = validator_call.kwargs["changes_summary"]
 
     assert result == {"success": True}
     mock_autolink.assert_called_once()
@@ -946,10 +947,6 @@ async def test_close_task_commit_diff_excludes_uncommitted_changes(
         patch("gobby.mcp_proxy.tools.tasks._context.TaskDependencyManager"),
         patch("gobby.mcp_proxy.tools.tasks._context.SessionTaskManager"),
         patch("gobby.tasks.commits.collect_task_diff_text") as mock_diff,
-        patch(
-            "gobby.mcp_proxy.tools.tasks._lifecycle_close.prepare_validation_diff",
-            return_value=_prepared_diff(commits=["abc123"], manifest_count=5),
-        ),
         patch("gobby.mcp_proxy.tools.tasks._context.LocalProjectManager") as mock_pm,
         patch("gobby.utils.git.run_git_command", return_value="abc123"),
     ):
@@ -973,7 +970,7 @@ async def test_close_task_commit_diff_excludes_uncommitted_changes(
 
         assert result == {"success": True}
         validator_call = mock_task_validator.validate_task.call_args
-        changes_summary, _ = validator_call.kwargs["static_evidence_loader"]()
+        changes_summary = validator_call.kwargs["changes_summary"]
         assert "Commit-based diff (1 commits, 5 manifest entries):" in changes_summary
         mock_diff.assert_called_once_with(
             task_id="t1",
@@ -1016,10 +1013,6 @@ async def test_close_task_with_commits_does_not_fallback_to_smart_context(
         patch("gobby.mcp_proxy.tools.tasks._context.TaskDependencyManager"),
         patch("gobby.mcp_proxy.tools.tasks._context.SessionTaskManager"),
         patch("gobby.tasks.commits.collect_task_diff_text") as mock_diff,
-        patch(
-            "gobby.mcp_proxy.tools.tasks._lifecycle_close.prepare_validation_diff",
-            return_value=_prepared_diff(commits=["abc123"], manifest_count=0),
-        ),
         patch("gobby.tasks.validation.get_validation_context_smart") as mock_smart_context,
         patch("gobby.mcp_proxy.tools.tasks._context.LocalProjectManager") as mock_pm,
         patch("gobby.utils.git.run_git_command", return_value="abc123"),
@@ -1041,8 +1034,6 @@ async def test_close_task_with_commits_does_not_fallback_to_smart_context(
 
         await registry.call("close_task", {"task_id": "t1", "changes_summary": "test changes"})
 
-        validator_call = mock_task_validator.validate_task.call_args
-        validator_call.kwargs["static_evidence_loader"]()
         mock_diff.assert_called_once_with(
             task_id="t1",
             task_manager=mock_task_manager,

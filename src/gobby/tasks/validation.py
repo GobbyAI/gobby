@@ -14,16 +14,13 @@ Multi-strategy context gathering:
 import logging
 import re
 import subprocess  # nosec B404 # subprocess needed for validation commands
-from collections.abc import Callable, Mapping, Sequence
 from pathlib import Path
 
-from gobby.ai import CapabilityUnavailableError, ToolChatService
 from gobby.ai.text_generation import is_feature_generation_infrastructure_error
 from gobby.config.tasks import TaskValidationConfig
 from gobby.llm import LLMService
 from gobby.prompts import PromptLoader
 from gobby.storage.hub.protocol import HubDatabase
-from gobby.tasks.diff_manifest import ManifestItem
 from gobby.tasks.validation_evidence import (
     build_diff_validation_evidence,
     build_file_context_evidence,
@@ -31,7 +28,6 @@ from gobby.tasks.validation_evidence import (
 )
 from gobby.tasks.validation_verdict import (
     ValidationResult,
-    _is_unsupported_reject,
     _validation_result_from_data,
 )
 
@@ -45,8 +41,27 @@ RELATED_TEST_MAX_FILES = 5
 # Target char budget for shaped validation evidence. The manifest is authoritative
 # and may exceed this target in pathological diffs; raw details and prose summaries
 # are excerpted with explicit named omissions instead of being blindly clipped.
-VALIDATION_PROMPT_BUDGET_CHARS = 14000
+VALIDATION_PROMPT_BUDGET_CHARS = 32000
 VALIDATION_FILE_CONTEXT_BUDGET_CHARS = 3500
+
+
+def _bound_structured_evidence(text: str, *, max_chars: int) -> str:
+    """Bound a preassembled packet while retaining its manifest head and result tail."""
+    stripped = text.strip()
+    if len(stripped) <= max_chars:
+        return stripped
+    marker = (
+        "\n... [structured validation evidence shortened due to length; "
+        f"omitted {len(stripped) - max_chars} chars] ...\n"
+    )
+    if len(marker) >= max_chars:
+        return marker[:max_chars]
+    keep_chars = max_chars - len(marker)
+    head_chars = keep_chars * 2 // 3
+    tail_chars = keep_chars - head_chars
+    return stripped[:head_chars].rstrip() + marker + stripped[-tail_chars:].lstrip()
+
+
 VALIDATION_GATES = {
     ("plan_review", "needs_review"): "plan_review",
     ("in_development", "needs_review"): "qa",
@@ -611,12 +626,9 @@ class TaskValidator:
         config: TaskValidationConfig,
         llm_service: LLMService,
         db: HubDatabase,
-        project_dir: Path | None = None,
-        tool_chat_service: ToolChatService | None = None,
     ):
         self.config = config
         self.llm_service = llm_service
-        self.tool_chat_service = tool_chat_service
         self._loader = PromptLoader(db=db)
 
     async def gather_validation_context(self, file_paths: list[str]) -> str:
@@ -651,87 +663,8 @@ class TaskValidator:
         category: str | None = None,
         *,
         file_context_text: str | None = None,
-        verification_evidence: str | None = None,
-        repo_path: str | None = None,
-        linked_commits: Sequence[str] = (),
-        first_commits_page: Mapping[str, object] | None = None,
-        manifest_items: Sequence[ManifestItem] = (),
-        manifest_count: int = 0,
-        diff_total_bytes: int = 0,
-        verification_items: Sequence[Mapping[str, object]] = (),
-        static_evidence_loader: Callable[[], tuple[str, str | None]] | None = None,
     ) -> ValidationResult:
-        """Validate through the grounded tool loop when linked diff metadata is available."""
-        use_tool_loop = bool(
-            self.config.enabled
-            and self.config.tool_loop_enabled
-            and self.tool_chat_service is not None
-            and repo_path
-            and linked_commits
-            and first_commits_page is not None
-        )
-        if use_tool_loop:
-            from gobby.tasks.validation_tool_loop import validate_with_tool_loop
-
-            assert self.tool_chat_service is not None
-            assert repo_path is not None
-            assert first_commits_page is not None
-            try:
-                verdict = await validate_with_tool_loop(
-                    self.tool_chat_service,
-                    self.config,
-                    task_id=task_id,
-                    title=title,
-                    description=description,
-                    validation_criteria=validation_criteria,
-                    category=category,
-                    repo_path=repo_path,
-                    canonical_commits=linked_commits,
-                    first_commits_page=first_commits_page,
-                    manifest_items=manifest_items,
-                    manifest_count=manifest_count,
-                    diff_total_bytes=diff_total_bytes,
-                    verification_items=verification_items,
-                )
-            except CapabilityUnavailableError as exc:
-                logger.info(
-                    "Tool-loop validation unavailable for task %s; using static validation: %s",
-                    task_id,
-                    exc,
-                )
-            except Exception as exc:
-                if is_feature_generation_infrastructure_error(exc):
-                    return ValidationResult(
-                        status="error",
-                        feedback=f"Validation generation unavailable (infrastructure): {exc}",
-                        mode="tool_loop",
-                        evidence_complete=False,
-                    )
-                logger.exception("Tool-loop validation failed for task %s", task_id)
-                return ValidationResult(
-                    status="pending",
-                    feedback=f"Tool-loop validation failed: {exc}",
-                    mode="tool_loop",
-                    evidence_complete=False,
-                )
-            else:
-                return ValidationResult(
-                    status=verdict.status,
-                    feedback=verdict.feedback,
-                    blocking_reasons=list(verdict.blocking_reasons),
-                    mode="tool_loop",
-                    evidence_refs=verdict.evidence_refs,
-                    evidence_complete=verdict.evidence_complete,
-                    trace_summary=verdict.trace_summary,
-                    evidence_error=verdict.evidence_error,
-                    verdict_override=verdict.verdict_override,
-                    inspection_summary=verdict.inspection_summary,
-                )
-
-        if static_evidence_loader is not None:
-            changes_summary, file_context_text = static_evidence_loader()
-        if verification_evidence:
-            changes_summary = f"{changes_summary}\n\n{verification_evidence}"
+        """Validate one preassembled evidence packet with one JSON model request."""
         return await self._validate_task_static(
             task_id=task_id,
             title=title,
@@ -830,10 +763,14 @@ class TaskValidator:
                 f"{evidence.text}\n\n"
             )
         elif has_structured_manifest:
+            structured_evidence = _bound_structured_evidence(
+                changes_summary,
+                max_chars=evidence_budget,
+            )
             changes_section = (
                 "Code Changes (structured validation evidence):\n"
                 "Analyze this ACTUAL linked-commit evidence to verify the implementation.\n\n"
-                f"{changes_summary}\n\n"
+                f"{structured_evidence}\n\n"
             )
         elif looks_like_git_diff:
             summary = build_summary_validation_evidence(
@@ -892,33 +829,6 @@ class TaskValidator:
                 return ValidationResult(
                     status="pending", feedback="Validation failed: Empty response from LLM"
                 )
-
-            # Re-validate an ``invalid`` verdict that lacks usable structural reasons.
-            if _is_unsupported_reject(result_data):
-                logger.warning(
-                    "Task %s validation returned a contradictory 'invalid' verdict; "
-                    "re-validating once.",
-                    task_id,
-                )
-                reroll = await self.llm_service.call_json_feature(
-                    self.config,
-                    prompt,
-                    system_prompt=self.config.system_prompt,
-                    caller="tasks.validation",
-                )
-                if reroll:
-                    result_data = reroll
-                else:
-                    return ValidationResult(
-                        status="pending",
-                        feedback=(
-                            "Validation inconclusive: contradictory invalid verdict "
-                            "reroll returned no payload"
-                        ),
-                        blocking_reasons=[
-                            "Validation response did not name unmet criteria or failing gates"
-                        ],
-                    )
 
             return _validation_result_from_data(result_data)
 

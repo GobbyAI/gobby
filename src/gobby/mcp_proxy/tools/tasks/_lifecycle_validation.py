@@ -5,7 +5,6 @@ can be closed (commit checks, child completion, LLM validation).
 """
 
 import logging
-from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
@@ -15,7 +14,6 @@ from gobby.mcp_proxy.tools.tasks._escalation_coordinator import coordinate_task_
 from gobby.mcp_proxy.tools.tasks._helpers import SKIP_REASONS
 from gobby.storage.tasks import Task, TaskStaleStateError
 from gobby.storage.tasks._validation_backoff import TaskValidationBackoffStore
-from gobby.tasks.diff_manifest import ManifestItem
 from gobby.tasks.state_semantics import get_claimed_session_id, is_task_closed
 from gobby.tasks.validation_history import ValidationHistoryManager
 from gobby.tasks.validation_verdict import format_close_validation_message
@@ -59,6 +57,7 @@ class ValidationContext:
     validation_context: str | None
     raw_diff: str | None
     file_context_text: str | None = None
+    is_documentation_only: bool = False
 
 
 def _record_validation_iteration(
@@ -291,6 +290,7 @@ def gather_validation_context(
         and optional referenced-file context.
     """
     from gobby.tasks.commits import (
+        DOC_EXTENSIONS,
         changed_files_from_diff,
         collect_task_diff_text,
         extract_mentioned_files,
@@ -305,6 +305,7 @@ def gather_validation_context(
     raw_diff = None
     file_context_text = None
     changes_summary_included = False
+    is_documentation_only = False
     task_payload = {
         "title": task.title,
         "description": task.description,
@@ -339,6 +340,9 @@ def gather_validation_context(
                     max_chars=diff_budget,
                     priority_files=mentioned_files,
                     agent_summary=changes_summary,
+                )
+                is_documentation_only = bool(evidence.manifest) and all(
+                    Path(item.path).suffix.lower() in DOC_EXTENSIONS for item in evidence.manifest
                 )
                 changes_summary_included = evidence.agent_summary_included
                 logger.info(
@@ -385,6 +389,7 @@ def gather_validation_context(
         validation_context=validation_context,
         raw_diff=raw_diff,
         file_context_text=file_context_text,
+        is_documentation_only=is_documentation_only,
     )
 
 
@@ -392,22 +397,12 @@ async def validate_leaf_task_with_llm(
     task: Task,
     task_validator: "TaskValidator",
     validation_context: str,
-    raw_diff: str | None,
     ctx: "RegistryContext",
     resolved_id: str,
     validation_config: "TaskValidationConfig | None",
     file_context_text: str | None = None,
     *,
     is_documentation_only: bool = False,
-    verification_evidence: str | None = None,
-    repo_path: str | None = None,
-    linked_commits: Sequence[str] = (),
-    first_commits_page: Mapping[str, object] | None = None,
-    manifest_items: Sequence[ManifestItem] = (),
-    manifest_count: int = 0,
-    diff_total_bytes: int = 0,
-    verification_items: Sequence[Mapping[str, object]] = (),
-    static_evidence_loader: Callable[[], tuple[str, str | None]] | None = None,
 ) -> ValidationResult:
     """Run LLM validation on a leaf task.
 
@@ -478,15 +473,6 @@ async def validate_leaf_task_with_llm(
         validation_criteria=task.validation_criteria,
         category=task.category,
         file_context_text=file_context_text,
-        verification_evidence=verification_evidence,
-        repo_path=repo_path,
-        linked_commits=linked_commits,
-        first_commits_page=first_commits_page,
-        manifest_items=manifest_items,
-        manifest_count=manifest_count,
-        diff_total_bytes=diff_total_bytes,
-        verification_items=verification_items,
-        static_evidence_loader=static_evidence_loader,
     )
 
     # An LLM infrastructure failure (no candidate produced a usable result) is not a
@@ -504,7 +490,7 @@ async def validate_leaf_task_with_llm(
             ctx,
             status="error",
             feedback=result.feedback,
-            context_type=f"validation_{result.mode}",
+            context_type="validation_evidence_gate",
         )
         retry_at = state.next_retry_at.isoformat() if state.next_retry_at else "later"
         if state.should_escalate():
@@ -576,7 +562,7 @@ async def validate_leaf_task_with_llm(
             ctx,
             status=validation_status,
             feedback=message,
-            context_type=f"validation_{result.mode}",
+            context_type="validation_evidence_gate",
         )
         threshold = (
             validation_config.close_validation_escalation_threshold
@@ -608,10 +594,6 @@ async def validate_leaf_task_with_llm(
             "validation_status": validation_status,
             "validation_fail_count": fail_count,
         }
-        if result.evidence_error is not None:
-            extra["evidence_error"] = result.evidence_error
-        if result.inspection_summary is not None:
-            extra["inspection_summary"] = result.inspection_summary
         if result.verdict_override is not None:
             extra["verdict_override"] = result.verdict_override
         if escalated_now:
@@ -641,19 +623,13 @@ async def validate_leaf_task_with_llm(
         ctx,
         status=validation_status,
         feedback=original_feedback,
-        context_type=f"validation_{result.mode}",
-    )
-    success_extra = (
-        {"inspection_summary": result.inspection_summary}
-        if result.inspection_summary is not None
-        else None
+        context_type="validation_evidence_gate",
     )
     return ValidationResult(
         can_close=True,
         validation_status="valid",
         validation_feedback=original_feedback,
         reset_reason="llm_valid",
-        extra=success_extra,
     )
 
 

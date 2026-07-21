@@ -27,7 +27,6 @@ from gobby.tasks.validation import (
     VALIDATION_PROMPT_BUDGET_CHARS,
     TaskValidator,
     ValidationResult,
-    _is_unsupported_reject,
     extract_file_patterns_from_text,
     find_matching_files,
     get_commits_since,
@@ -332,43 +331,80 @@ class TestValidationPromptBudget:
         assert "agent changes summary shortened due to length" in prompt
 
     @pytest.mark.asyncio
-    async def test_large_raw_git_diff_is_structurally_summarized(self, config, mock_llm) -> None:
+    async def test_300kb_119_file_diff_has_complete_bounded_manifest(
+        self, config, mock_llm
+    ) -> None:
         validator = _task_validator(config, mock_llm)
         mock_llm.call_json_feature.return_value = {"status": "valid", "feedback": "OK"}
 
         def file_diff(path: str, token: str) -> str:
             body = "".join(
-                f"+{token}_{index:03d}_value_with_padding_payload\n" for index in range(250)
+                f"+{token}_{index:03d}_value_with_padding_payload\n" for index in range(60)
             )
             return (
                 f"diff --git a/{path} b/{path}\n"
                 "index abc..def 100644\n"
                 f"--- a/{path}\n"
                 f"+++ b/{path}\n"
-                "@@ -1,1 +1,250 @@\n"
+                "@@ -1,1 +1,60 @@\n"
                 f"{body}"
             )
 
-        await validator.validate_task(
+        raw_diff = "\n".join(
+            file_diff(f"src/file_{index:03d}.ts", f"token_{index:03d}") for index in range(119)
+        )
+        assert len(raw_diff.encode()) >= 300_000
+
+        result = await validator.validate_task(
             task_id="task-raw-diff",
             title="Big raw diff",
             description="d",
-            changes_summary="\n".join(
-                [
-                    file_diff("src/a.ts", "a"),
-                    file_diff("src/b.ts", "b"),
-                    file_diff("src/c.ts", "c"),
-                    file_diff("src/zz-later.ts", "z"),
-                ]
-            ),
+            changes_summary=raw_diff,
             validation_criteria="criteria",
         )
 
         prompt = mock_llm.call_json_feature.call_args.args[1]
         assert "Changed File Manifest (authoritative):" in prompt
-        assert "src/zz-later.ts" in prompt
+        assert all(f"src/file_{index:03d}.ts" in prompt for index in range(119))
         assert "Source/UI files changed:" in prompt
         assert "Omitted Evidence:" in prompt
+        assert len(prompt) < 50_000
+        assert result.status == "valid"
+        assert mock_llm.call_json_feature.call_count == 1
+
+    @pytest.mark.asyncio
+    async def test_preassembled_packet_keeps_manifest_and_command_results_when_bounded(
+        self, config, mock_llm
+    ) -> None:
+        validator = _task_validator(config, mock_llm)
+        mock_llm.call_json_feature.return_value = {"status": "valid", "feedback": "OK"}
+        command_result = (
+            "Structured verification results:\n"
+            '{"command":"uv run pytest tests/tasks/test_validation.py",'
+            '"exit_code":0,"command_result_correlation":"correlated"}'
+        )
+        evidence_packet = (
+            "Changed File Manifest (authoritative):\n"
+            "- src/gobby/tasks/validation.py (+10/-2) [source]\n"
+            "Source/UI files changed: src/gobby/tasks/validation.py\n\n"
+            + ("diff excerpt payload\n" * 4_000)
+            + command_result
+        )
+
+        await validator.validate_task(
+            task_id="task-preassembled",
+            title="Bound preassembled evidence",
+            description="d",
+            changes_summary=evidence_packet,
+            validation_criteria="Focused pytest must pass.",
+        )
+
+        prompt = mock_llm.call_json_feature.call_args.args[1]
+        assert "Changed File Manifest (authoritative):" in prompt
+        assert "src/gobby/tasks/validation.py" in prompt
+        assert command_result in prompt
+        assert "structured validation evidence shortened due to length" in prompt
+        assert len(prompt) < 50_000
 
     @pytest.mark.asyncio
     async def test_file_context_survives_oversized_changes(self, config, mock_llm) -> None:
@@ -468,61 +504,14 @@ class TestInconsistentVerdictReconciliation:
     def config(self) -> TaskValidationConfig:
         return TaskValidationConfig(enabled=True, candidates=["claude/test-model"])
 
-    @pytest.mark.parametrize(
-        ("result_data", "expected"),
-        [
-            ({"status": "invalid", "blocking_reasons": []}, True),
-            ({"status": "invalid"}, True),  # missing field treated as no reasons
-            ({"status": "invalid", "blocking_reasons": None}, True),
-            ({"status": "invalid", "blocking_reasons": ["   "]}, True),  # whitespace only
-            ({"status": "invalid", "blocking_reasons": [404]}, False),
-            ({"status": "INVALID", "blocking_reasons": []}, True),  # case-insensitive
-            ({"status": "invalid", "blocking_reasons": ["missing 404 test"]}, False),
-            (
-                {
-                    "status": "invalid",
-                    "feedback": "Verified all validation criteria are satisfied.",
-                    "blocking_reasons": ["missing 404 test"],
-                },
-                False,
-            ),
-            (
-                # The #17636 incident: approval phrased against the task's own
-                # criteria list ("all three criteria"), not the literal words
-                # "validation criteria", stamped with an invalid verdict.
-                {
-                    "status": "invalid",
-                    "feedback": (
-                        "All three criteria are addressed: (1) the fix landed, "
-                        "(2) regression tests cover it, and (3) the binary was "
-                        "reinstalled, which is sufficient corroborating evidence."
-                    ),
-                    "blocking_reasons": ["missing 404 test"],
-                },
-                False,
-            ),
-            ({"status": "valid", "blocking_reasons": []}, False),
-            ({"status": "pending", "blocking_reasons": []}, False),  # only invalid targeted
-        ],
-    )
-    def test_is_unsupported_reject(self, result_data, expected) -> None:
-        assert _is_unsupported_reject(result_data) is expected
-
     @pytest.mark.asyncio
-    async def test_unsupported_invalid_is_revalidated_once(self, config, mock_llm) -> None:
+    async def test_unsupported_invalid_is_pending_after_one_request(self, config, mock_llm) -> None:
         validator = _task_validator(config, mock_llm)
-        mock_llm.call_json_feature.side_effect = [
-            {
-                "status": "invalid",
-                "feedback": "The implementation is correct and all checks pass.",
-                "blocking_reasons": [],
-            },
-            {
-                "status": "valid",
-                "feedback": "Implementation complete; all gates green.",
-                "blocking_reasons": [],
-            },
-        ]
+        mock_llm.call_json_feature.return_value = {
+            "status": "invalid",
+            "feedback": "The implementation is correct and all checks pass.",
+            "blocking_reasons": [],
+        }
 
         result = await validator.validate_task(
             task_id="task-1",
@@ -532,8 +521,11 @@ class TestInconsistentVerdictReconciliation:
             validation_criteria="criteria",
         )
 
-        assert result.status == "valid"
-        assert mock_llm.call_json_feature.call_count == 2
+        assert result.status == "pending"
+        assert result.blocking_reasons == [
+            "Validation response did not name unmet criteria or failing gates"
+        ]
+        assert mock_llm.call_json_feature.call_count == 1
 
     @pytest.mark.asyncio
     async def test_positive_narrative_does_not_reroll_reasoned_invalid(
@@ -560,90 +552,6 @@ class TestInconsistentVerdictReconciliation:
         assert result.status == "invalid"
         assert result.feedback == "Verified all validation criteria are satisfied."
         assert mock_llm.call_json_feature.call_count == 1
-
-    @pytest.mark.asyncio
-    async def test_invalid_malformed_blocking_reasons_is_revalidated_once(
-        self,
-        config: TaskValidationConfig,
-        mock_llm: MagicMock,
-    ) -> None:
-        validator = _task_validator(config, mock_llm)
-        mock_llm.call_json_feature.side_effect = [
-            {
-                "status": "invalid",
-                "feedback": "A dict is not a valid blocking_reasons payload.",
-                "blocking_reasons": {"reason": "Missing regression coverage."},
-            },
-            {
-                "status": "valid",
-                "feedback": "Confirmed complete.",
-                "blocking_reasons": [],
-            },
-        ]
-
-        result = await validator.validate_task(
-            task_id="task-1",
-            title="t",
-            description="d",
-            changes_summary="changes",
-            validation_criteria="criteria",
-        )
-
-        assert result.status == "valid"
-        assert mock_llm.call_json_feature.call_count == 2
-
-    @pytest.mark.asyncio
-    async def test_consecutive_unsupported_invalid_stops_after_single_retry(
-        self,
-        config: TaskValidationConfig,
-        mock_llm: MagicMock,
-    ) -> None:
-        validator = _task_validator(config, mock_llm)
-        mock_llm.call_json_feature.side_effect = [
-            {
-                "status": "invalid",
-                "feedback": "Looks complete to me.",
-                "blocking_reasons": [],
-            },
-            {
-                "status": "invalid",
-                "feedback": "Still no actionable reason.",
-                "blocking_reasons": [],
-            },
-        ]
-
-        result = await validator.validate_task(
-            task_id="task-1",
-            title="t",
-            description="d",
-            changes_summary="changes",
-            validation_criteria="criteria",
-        )
-
-        assert result.status == "pending"
-        assert result.blocking_reasons == [
-            "Validation response did not name unmet criteria or failing gates"
-        ]
-        assert mock_llm.call_json_feature.call_count == 2
-
-    @pytest.mark.asyncio
-    async def test_missing_blocking_reasons_invalid_is_revalidated(self, config, mock_llm) -> None:
-        validator = _task_validator(config, mock_llm)
-        mock_llm.call_json_feature.side_effect = [
-            {"status": "invalid", "feedback": "Looks complete to me."},
-            {"status": "valid", "feedback": "Confirmed complete.", "blocking_reasons": []},
-        ]
-
-        result = await validator.validate_task(
-            task_id="task-1",
-            title="t",
-            description="d",
-            changes_summary="changes",
-            validation_criteria="criteria",
-        )
-
-        assert result.status == "valid"
-        assert mock_llm.call_json_feature.call_count == 2
 
     @pytest.mark.asyncio
     async def test_reasoned_invalid_is_not_revalidated(self, config, mock_llm) -> None:

@@ -46,7 +46,7 @@
     "prompts/merge/resolve_hunks.md": "2464140b767c5136b1a5b52d972ae3ae466a810d218ec64f71210883d93f7337",
     "prompts/research/step.md": "d295af7cf200365537b4f1bf43d6b581cefa7143c24897fa08b20bed49eae60e",
     "prompts/validation/criteria.md": "52719e65bcc3f221d3756d8b7a09e621008000f1f5e717a3f390049b64e43fde",
-    "prompts/validation/validate.md": "749168d08f01b27a3308dd7907491b94aa68b28a0e0fd2a21dc18bc81e3e2dca",
+    "prompts/validation/validate.md": "a6255ea1772b21ce3be51dd99b49cafef288aeb15e9acbb3d70f080f54b6387f",
     "registry/build_profiles.yaml": "55f31f9d8b9dc9e7469335f7adcfa6db9195136866a59baedabd88e69f22bb77",
     "registry/stages.yaml": "fa0f50c7e5248e04964dab6bd3b105cdd9fd8d6d2fc222d83e597a29ace06133",
     "rules/build/build-agent-safety.yaml": "f9145fe63ea4e286352ebc5d3c9834fa06ee1922fd31bf8a6ae4ee8b3b94eef7",

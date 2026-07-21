@@ -673,7 +673,6 @@ class TestCloseTask:
         task_validator.validate_task.return_value = MagicMock(
             status="valid",
             feedback="All criteria satisfied. Strict mypy and focused tests are clean.",
-            inspection_summary=None,
         )
 
         registry = _create_registry(mock_task_manager, task_validator)

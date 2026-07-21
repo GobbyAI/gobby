@@ -732,10 +732,11 @@ class TestGobbyRunnerInitialization:
             assert runner.task_validator == mock_task_validator
             assert runner.llm_service == mock_llm_service
             assert runner.text_generation_service == mock_text_generation
-            assert (
-                task_validator_factory.call_args.kwargs["tool_chat_service"]
-                is runner.tool_chat_service
-            )
+            validator_kwargs = task_validator_factory.call_args.kwargs
+            assert validator_kwargs["llm_service"] is mock_llm_service
+            assert validator_kwargs["config"] is mock_config.gobby_tasks.validation
+            assert validator_kwargs["db"] is runner.database
+            assert "tool_chat_service" not in validator_kwargs
 
     def test_init_task_validator_exception(self) -> None:
         """Test TaskValidator initialization exception is handled."""

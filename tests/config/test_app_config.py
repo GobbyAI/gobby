@@ -1878,8 +1878,10 @@ class TestTaskValidationConfig:
         assert config.enabled is True
         assert config.profile == FeatureProfile.MID
         assert "claude/sonnet" in candidate_labels(config.candidates)
-        assert config.cli_candidate_timeout_seconds == 180.0
-        assert config.tool_loop_max_calls == 32
+        assert "cli_candidate_timeout_seconds" not in TaskValidationConfig.model_fields
+        assert "tool_loop_enabled" not in TaskValidationConfig.model_fields
+        assert "tool_loop_preview_bytes" not in TaskValidationConfig.model_fields
+        assert "tool_loop_max_calls" not in TaskValidationConfig.model_fields
         assert config.prompt_path is None  # Uses default prompt from prompts/
 
 
