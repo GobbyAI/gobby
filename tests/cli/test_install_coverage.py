@@ -142,7 +142,7 @@ class TestInstallCommand:
             "password": None,
         }
         with (
-            patch("gobby.cli.install._docker_daemon_available", return_value=True),
+            patch("gobby.cli._install_daemon._docker_daemon_available", return_value=True),
             patch("gobby.cli.install.install_postgres", return_value=postgres_result),
             patch("gobby.cli.install.install_qdrant", return_value=qdrant_result),
             patch("gobby.cli.install.install_falkordb", return_value=falkordb_result),

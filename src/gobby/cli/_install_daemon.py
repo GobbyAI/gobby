@@ -1,17 +1,109 @@
 """Daemon startup helpers for the install command."""
 
 import os
+import platform
+import shutil
+import socket
 import subprocess  # nosec B404 # fixed daemon startup command
 import sys
 import time
 import webbrowser
 from collections.abc import Callable
+from pathlib import Path
 from typing import Any
 from urllib.parse import urlparse
 
 import click
 
-from gobby.config.bootstrap import DEFAULT_DAEMON_PORT, BootstrapConfigError
+from gobby.config.bootstrap import (
+    DEFAULT_DAEMON_PORT,
+    DEFAULT_WEBSOCKET_PORT,
+    BootstrapConfigError,
+)
+
+
+def _is_source_checkout_install(install_dir: Path) -> bool:
+    resolved = install_dir.expanduser().resolve()
+    for candidate in (resolved, *resolved.parents):
+        install_package = candidate / "src" / "gobby" / "install"
+        if install_package.is_dir() and (
+            (candidate / "pyproject.toml").is_file() or (candidate / ".git").exists()
+        ):
+            return True
+    return False
+
+
+def _docker_daemon_available() -> bool:
+    if shutil.which("docker") is None:
+        return False
+    try:
+        result = subprocess.run(  # nosec B603 B607
+            ["docker", "info"],
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            timeout=10,
+            check=False,
+        )
+    except (OSError, subprocess.SubprocessError):
+        return False
+    return result.returncode == 0
+
+
+def _port_available(port: int, host: str = "0.0.0.0") -> bool:  # nosec B104
+    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
+        sock.settimeout(0.2)
+        try:
+            sock.bind((host, port))
+        except OSError:
+            return False
+    return True
+
+
+def _run_install_preflight(
+    *,
+    is_full_install: bool,
+    detected_clis: list[str],
+    install_dir: Path,
+    embedding_url: str | None,
+    embedding_provider: str | None,
+) -> tuple[list[str], list[str]]:
+    """Return full-install preflight errors and optional warnings."""
+    errors: list[str] = []
+    warnings: list[str] = []
+
+    if is_full_install:
+        if not _docker_daemon_available():
+            errors.append("Docker daemon is required for full install. Start Docker and retry.")
+        if not detected_clis:
+            errors.append(
+                "At least one supported coding CLI is required for full install "
+                "(Claude Code, AGY, Codex, Grok, Qwen, or Droid)."
+            )
+        python_version = tuple(int(part) for part in platform.python_version_tuple()[:2])
+        if python_version < (3, 13):
+            current = platform.python_version()
+            errors.append(f"Python >= 3.13 is required; current Python is {current}.")
+        if os.name == "posix" and shutil.which("tmux") is None:
+            errors.append("tmux is required on POSIX systems. Install tmux and retry.")
+        if _is_source_checkout_install(install_dir) and shutil.which("uv") is None:
+            errors.append("uv is required when installing from a source checkout.")
+
+        if not embedding_url and not embedding_provider:
+            warnings.append(
+                "No embedding provider override supplied; install will prompt or keep "
+                "semantic features disabled."
+            )
+
+    if shutil.which("git") is None:
+        warnings.append(
+            "git was not found on PATH; project initialization and hooks may be limited."
+        )
+
+    for port in (DEFAULT_DAEMON_PORT, DEFAULT_WEBSOCKET_PORT):
+        if not _port_available(port):
+            warnings.append(f"Port {port} is already in use.")
+
+    return errors, warnings
 
 
 def _headless_or_remote() -> bool:

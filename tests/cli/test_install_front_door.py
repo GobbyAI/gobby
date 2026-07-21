@@ -10,6 +10,7 @@ from unittest.mock import MagicMock
 import pytest
 from click.testing import CliRunner
 
+daemon_module = importlib.import_module("gobby.cli._install_daemon")
 install_module = importlib.import_module("gobby.cli.install")
 
 pytestmark = pytest.mark.unit
@@ -19,14 +20,14 @@ def test_source_checkout_install_requires_repo_marker(tmp_path: Path) -> None:
     false_positive_install = tmp_path / "site-packages" / "src" / "gobby" / "install"
     false_positive_install.mkdir(parents=True)
 
-    assert install_module._is_source_checkout_install(false_positive_install) is False
+    assert daemon_module._is_source_checkout_install(false_positive_install) is False
 
     checkout = tmp_path / "checkout"
     source_install = checkout / "src" / "gobby" / "install"
     source_install.mkdir(parents=True)
     (checkout / "pyproject.toml").write_text("[project]\nname = 'gobby'\n", encoding="utf-8")
 
-    assert install_module._is_source_checkout_install(source_install) is True
+    assert daemon_module._is_source_checkout_install(source_install) is True
 
 
 def test_docker_daemon_available_handles_subprocess_errors(
@@ -35,21 +36,21 @@ def test_docker_daemon_available_handles_subprocess_errors(
     def raise_subprocess_error(*_args: object, **_kwargs: object) -> None:
         raise subprocess.SubprocessError("docker failed")
 
-    monkeypatch.setattr(install_module.shutil, "which", lambda _name: "/usr/bin/docker")
-    monkeypatch.setattr(install_module.subprocess, "run", raise_subprocess_error)
+    monkeypatch.setattr(daemon_module.shutil, "which", lambda _name: "/usr/bin/docker")
+    monkeypatch.setattr(daemon_module.subprocess, "run", raise_subprocess_error)
 
-    assert install_module._docker_daemon_available() is False
+    assert daemon_module._docker_daemon_available() is False
 
 
 def test_full_preflight_requires_docker_cli_tmux_and_source_uv(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    monkeypatch.setattr(install_module, "_docker_daemon_available", lambda: False)
-    monkeypatch.setattr(install_module, "_is_source_checkout_install", lambda _path: True)
-    monkeypatch.setattr(install_module, "_port_available", lambda _port: True)
-    monkeypatch.setattr(install_module.shutil, "which", lambda _name: None)
+    monkeypatch.setattr(daemon_module, "_docker_daemon_available", lambda: False)
+    monkeypatch.setattr(daemon_module, "_is_source_checkout_install", lambda _path: True)
+    monkeypatch.setattr(daemon_module, "_port_available", lambda _port: True)
+    monkeypatch.setattr(daemon_module.shutil, "which", lambda _name: None)
 
-    errors, warnings = install_module._run_install_preflight(
+    errors, warnings = daemon_module._run_install_preflight(
         is_full_install=True,
         detected_clis=[],
         install_dir=Path("/repo/src/gobby/install"),
@@ -68,11 +69,11 @@ def test_full_preflight_requires_docker_cli_tmux_and_source_uv(
 def test_targeted_preflight_skips_full_install_requirements(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    monkeypatch.setattr(install_module, "_docker_daemon_available", lambda: False)
-    monkeypatch.setattr(install_module, "_port_available", lambda _port: True)
-    monkeypatch.setattr(install_module.shutil, "which", lambda _name: None)
+    monkeypatch.setattr(daemon_module, "_docker_daemon_available", lambda: False)
+    monkeypatch.setattr(daemon_module, "_port_available", lambda _port: True)
+    monkeypatch.setattr(daemon_module.shutil, "which", lambda _name: None)
 
-    errors, warnings = install_module._run_install_preflight(
+    errors, warnings = daemon_module._run_install_preflight(
         is_full_install=False,
         detected_clis=[],
         install_dir=Path("/repo/src/gobby/install"),
@@ -89,7 +90,7 @@ def test_full_install_exits_before_provisioning_without_docker(
     tmp_path: Path,
 ) -> None:
     install_postgres = MagicMock()
-    monkeypatch.setattr(install_module, "_docker_daemon_available", lambda: False)
+    monkeypatch.setattr(daemon_module, "_docker_daemon_available", lambda: False)
     monkeypatch.setattr(install_module, "get_install_dir", lambda: tmp_path)
     monkeypatch.setattr(install_module, "_is_claude_code_installed", lambda: True)
     for detector in (
@@ -100,7 +101,7 @@ def test_full_install_exits_before_provisioning_without_docker(
         "_is_droid_cli_installed",
     ):
         monkeypatch.setattr(install_module, detector, lambda: False)
-    monkeypatch.setattr(install_module.shutil, "which", lambda _name: "/usr/bin/tool")
+    monkeypatch.setattr(daemon_module.shutil, "which", lambda _name: "/usr/bin/tool")
     monkeypatch.setattr(install_module, "install_postgres", install_postgres)
 
     result = CliRunner().invoke(install_module.install, ["--all"])
