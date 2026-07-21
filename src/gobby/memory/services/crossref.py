@@ -7,17 +7,10 @@ import logging
 from collections.abc import Awaitable, Callable
 from typing import TYPE_CHECKING, Any
 
-from qdrant_client.models import (
-    FieldCondition,
-    Filter,
-    IsEmptyCondition,
-    IsNullCondition,
-    MatchValue,
-    PayloadField,
-)
+from qdrant_client.models import Filter
 
-from gobby.memory.vectorstore import memory_project_scope_filter
-from gobby.storage.memories import LocalMemoryManager, Memory
+from gobby.memory.vectorstore import memory_scope_filter
+from gobby.storage.memories import ALL_MEMORIES, LocalMemoryManager, Memory, MemoryScope
 
 if TYPE_CHECKING:
     from gobby.config.persistence import MemoryConfig
@@ -28,22 +21,13 @@ logger = logging.getLogger(__name__)
 DEFAULT_SEARCH_LIMIT = 10
 
 
-def _crossref_scope_filter(project_id: str | None) -> Filter:
+def _crossref_scope_filter(project_id: str, is_global: bool) -> Filter:
     """Limit candidate edges to memories visible from the source scope."""
-    if project_id:
-        scope_filter = memory_project_scope_filter(project_id)
-        if scope_filter is None:
-            raise RuntimeError("project-scoped crossref filter was not created")
-        return scope_filter
-
-    field = PayloadField(key="project_id")
-    return Filter(
-        should=[
-            FieldCondition(key="project_id", match=MatchValue(value="")),
-            IsNullCondition(is_null=field),
-            IsEmptyCondition(is_empty=field),
-        ]
-    )
+    scope = MemoryScope.global_only() if is_global else MemoryScope.project_visible(project_id)
+    scope_filter = memory_scope_filter(scope)
+    if scope_filter is None:
+        raise RuntimeError("scoped crossref filter was not created")
+    return scope_filter
 
 
 class CrossrefRebuildError(RuntimeError):
@@ -102,7 +86,7 @@ class CrossrefService:
         results = await self._vector_store.search(
             embedding,
             limit=max_links + 1,
-            filters=_crossref_scope_filter(memory.project_id),
+            filters=_crossref_scope_filter(memory.project_id, memory.is_global),
         )
 
         count = 0
@@ -133,10 +117,11 @@ class CrossrefService:
             memory_id, limit=limit, min_similarity=min_similarity
         )
         memories: list[Memory] = []
+        scope = ALL_MEMORIES if project_id is None else MemoryScope.project_visible(project_id)
         for ref in crossrefs:
             other_id = ref.target_id if ref.source_id == memory_id else ref.source_id
             try:
-                mem = self._storage.get_memory(other_id, project_id=project_id)
+                mem = self._storage.get_memory(other_id, scope=scope)
             except ValueError:
                 continue
             memories.append(mem)

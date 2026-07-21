@@ -19,8 +19,10 @@ import pytest
 from gobby.config.persistence import MemoryConfig
 from gobby.memory.manager import DEFAULT_LIST_LIMIT, MemoryManager
 from gobby.memory.protocol import MemoryBackendProtocol
+from gobby.memory.services.projection_repair import ProjectionScopeRepairResult
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.memories import LocalMemoryManager, Memory
+from gobby.storage.projects import PERSONAL_PROJECT_ID
 
 pytestmark = pytest.mark.unit
 
@@ -202,7 +204,8 @@ class TestCreateMemory:
 
         global_memory = await memory_manager.create_memory(
             content="Facade visible global",
-            project_id=None,
+            project_id=PERSONAL_PROJECT_ID,
+            is_global=True,
         )
         visible_result = await memory_manager.create_memory(
             content="Facade visible global",
@@ -222,15 +225,18 @@ class TestCreateMemory:
         )
         new_global = await memory_manager.create_memory(
             content="Facade project isolated",
-            project_id=None,
+            project_id=PERSONAL_PROJECT_ID,
+            is_global=True,
         )
 
         assert visible_result.id == global_memory.id
-        assert visible_result.project_id is None
+        assert visible_result.project_id == PERSONAL_PROJECT_ID
+        assert visible_result.is_global is True
         assert same_project.id == first_project.id
         assert first_project.id != second_project.id
         assert new_global.id not in {first_project.id, second_project.id}
-        assert new_global.project_id is None
+        assert new_global.project_id == PERSONAL_PROJECT_ID
+        assert new_global.is_global is True
 
     def test_create_memory_with_restore_metadata_uses_lww(
         self, memory_manager: MemoryManager
@@ -241,18 +247,21 @@ class TestCreateMemory:
 
         initial = memory_manager.storage.create_memory(
             content="initial restored memory",
+            project_id=PERSONAL_PROJECT_ID,
             memory_id=memory_id,
             created_at=created_at,
             updated_at=initial_updated_at,
         )
         stale = memory_manager.storage.create_memory(
             content="stale restored memory",
+            project_id=PERSONAL_PROJECT_ID,
             memory_id=memory_id,
             created_at=datetime(2023, 1, 3, tzinfo=UTC),
             updated_at=datetime(2023, 1, 1, tzinfo=UTC),
         )
         fresh = memory_manager.storage.create_memory(
             content="fresh restored memory",
+            project_id=PERSONAL_PROJECT_ID,
             memory_id=memory_id,
             created_at=datetime(2023, 1, 4, tzinfo=UTC),
             updated_at=datetime(2023, 1, 5, tzinfo=UTC),
@@ -266,98 +275,26 @@ class TestCreateMemory:
         assert fresh.updated_at == datetime(2023, 1, 5, tzinfo=UTC)
 
 
-class TestFixNullProjectIds:
-    """Tests for repairing NULL memory project assignments."""
+class TestProjectionScopeRepair:
+    """Tests for startup repair of explicit scope projections."""
 
     @pytest.mark.asyncio
-    async def test_fix_null_project_ids_routes_through_storage_and_invalidates(
-        self,
-        mock_db,
-        memory_config,
-    ):
-        """The manager repair path routes updates through storage and invalidation hooks."""
-        mock_db.fetchall.side_effect = [
-            [{"id": "mem-1", "content": "Needs project assignment", "source_session_id": "sess-1"}],
-            [{"id": "sess-1", "project_id": "proj-1"}],
-        ]
+    async def test_manager_delegates_projection_scope_repair(self, mock_db, memory_config) -> None:
         manager = MemoryManager(db=mock_db, config=memory_config)
-        updated = Memory(
-            id="mem-1",
-            memory_type="fact",
-            content="Needs project assignment",
-            created_at="2026-01-01T00:00:00+00:00",
-            updated_at="2026-01-01T00:00:00+00:00",
-            project_id="proj-1",
-        )
-        manager.storage = MagicMock(spec=LocalMemoryManager)
-        manager.storage.update_memory_project.return_value = updated
+        expected = ProjectionScopeRepairResult(vectors_repaired=2, graph_entities_repaired=3)
+        manager._projection_repair_service.repair = AsyncMock(return_value=expected)
 
-        with patch.object(manager, "_embed_and_upsert", new=AsyncMock()) as embed:
-            result = await manager.fix_null_project_ids_from_sessions()
+        result = await manager.repair_secondary_scope_projections()
 
-        assert result.total == 1
-        assert result.fixable == 1
-        assert result.fixed == 1
-        manager.storage.update_memory_project.assert_called_once_with("mem-1", "proj-1")
-        manager.storage.mark_pending_graph.assert_called_once_with("mem-1")
-        embed.assert_awaited_once_with(
-            "mem-1",
-            "Needs project assignment",
-            payload={"project_id": "proj-1"},
-        )
+        assert result is expected
+        manager._projection_repair_service.repair.assert_awaited_once_with()
+
+
+class TestMemoryScopeChanges:
+    """Tests for explicit visibility changes and secondary-store sync."""
 
     @pytest.mark.asyncio
-    async def test_fix_null_project_ids_updates_and_invalidates(self, db, memory_config):
-        """Repairing project IDs notifies storage and refreshes secondary indexes."""
-        db.execute(
-            "INSERT INTO projects (id, name, repo_path) VALUES (%s, %s, %s)",
-            (PROJECT_ID, "test-project", "/tmp/test"),
-        )
-        now = datetime.now(UTC).isoformat()
-        db.execute(
-            """INSERT INTO sessions (id, external_id, machine_id, source, project_id, created_at)
-               VALUES (%s, %s, %s, %s, %s, %s)""",
-            (SESSION_ID, "ext-123", "machine-123", "claude", PROJECT_ID, now),
-        )
-
-        manager = MemoryManager(db=db, config=memory_config)
-        memory = manager.storage.create_memory(
-            content="Needs project assignment",
-            project_id=None,
-            source_type="agent",
-            source_session_id=SESSION_ID,
-        )
-        listener_calls: list[str] = []
-        manager.storage.add_change_listener(lambda: listener_calls.append("changed"))
-
-        with patch.object(manager, "_embed_and_upsert", new=AsyncMock()) as embed:
-            result = await manager.fix_null_project_ids_from_sessions()
-
-        updated = manager.get_memory(memory.id)
-        graph_row = db.fetchone(
-            "SELECT graph_processed FROM memories WHERE id = %s",
-            (memory.id,),
-        )
-
-        assert result.total == 1
-        assert result.fixable == 1
-        assert result.fixed == 1
-        assert updated is not None
-        assert updated.project_id == PROJECT_ID
-        assert listener_calls == ["changed"]
-        embed.assert_awaited_once_with(
-            memory.id,
-            "Needs project assignment",
-            payload={"project_id": PROJECT_ID},
-        )
-        assert graph_row["graph_processed"] in (False, 0)
-
-
-class TestRescopeMemory:
-    """Tests for changing memory scope and syncing secondary stores."""
-
-    @pytest.mark.asyncio
-    async def test_rescope_memory_updates_vector_payload_and_marks_graph_pending(
+    async def test_promote_memory_updates_vector_payload_and_marks_graph_pending(
         self,
         mock_db,
         memory_config,
@@ -371,16 +308,19 @@ class TestRescopeMemory:
             content="Universal",
             created_at="2026-01-01T00:00:00+00:00",
             updated_at="2026-01-01T00:00:00+00:00",
-            project_id=None,
+            project_id="proj-1",
+            is_global=True,
         )
         manager.storage = MagicMock(spec=LocalMemoryManager)
-        manager.storage.rescope_memory.return_value = updated
+        manager.storage.set_memory_global.return_value = updated
 
-        result = await manager.rescope_memory("mem-1", None)
+        result = await manager.promote_memory("mem-1")
 
         assert result is updated
-        manager.storage.rescope_memory.assert_called_once_with("mem-1", None)
-        vector_store.set_payload.assert_awaited_once_with("mem-1", {"project_id": None})
+        manager.storage.set_memory_global.assert_called_once_with("mem-1", True)
+        vector_store.set_payload.assert_awaited_once_with(
+            "mem-1", {"project_id": "proj-1", "is_global": True}
+        )
         manager.storage.mark_pending_graph.assert_called_once_with("mem-1")
 
 
@@ -518,7 +458,9 @@ class TestAccessStats:
         """Test _update_access_stats handles timestamps without timezone."""
         manager = MemoryManager(db=db, config=memory_config)
 
-        real_memory = manager.storage.create_memory(content="Test timezone")
+        real_memory = manager.storage.create_memory(
+            content="Test timezone", project_id=PERSONAL_PROJECT_ID
+        )
 
         memory = MagicMock(spec=Memory)
         memory.id = real_memory.id
@@ -960,7 +902,7 @@ class TestVectorStoreIntegration:
         mock_vs.upsert.assert_awaited_once_with(
             memory.id,
             [0.1, 0.2],
-            {"project_id": None},
+            {"project_id": PERSONAL_PROJECT_ID, "is_global": False},
         )
         embedding_records = [
             record
@@ -986,7 +928,7 @@ class TestVectorStoreIntegration:
             embed_fn=AsyncMock(return_value=[0.1, 0.2]),
         )
         manager._dedup_service = None
-        memory = manager.storage.create_memory("Old indexed content")
+        memory = manager.storage.create_memory("Old indexed content", PERSONAL_PROJECT_ID)
 
         updated = await manager.update_memory(memory.id, content="New current content")
 
@@ -1020,12 +962,12 @@ class TestLifecycleService:
         )
         manager.storage.mark_graph_processed(memory.id)
 
-        await manager.restore_memory_indices(memory.id, memory.content, PROJECT_ID)
+        await manager.restore_memory_indices(memory.id, memory.content, PROJECT_ID, False)
 
         mock_vs.upsert.assert_awaited_once_with(
             memory.id,
             [0.1, 0.2],
-            {"project_id": PROJECT_ID},
+            {"project_id": PROJECT_ID, "is_global": False},
         )
         row = db.fetchone("SELECT graph_processed FROM memories WHERE id = %s", (memory.id,))
         assert row is not None
@@ -1103,11 +1045,12 @@ class TestLifecycleService:
         mock_vs.upsert.assert_awaited_once_with(
             memory.id,
             [0.1, 0.2],
-            {"project_id": PROJECT_ID},
+            {"project_id": PROJECT_ID, "is_global": False},
         )
         kg_service.remove_memory_from_graph.assert_awaited_once_with(
             memory.id,
             project_id=PROJECT_ID,
+            is_global=False,
         )
         graph_row = db.fetchone("SELECT graph_processed FROM memories WHERE id = %s", (memory.id,))
         assert graph_row["graph_processed"] is False

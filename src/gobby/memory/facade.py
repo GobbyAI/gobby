@@ -13,7 +13,8 @@ from gobby.memory.services.maintenance import export_markdown as _export_markdow
 from gobby.memory.services.maintenance import get_stats as _get_stats
 from gobby.memory.services.repository import DEFAULT_LIST_LIMIT, MemoryRepository
 from gobby.memory.services.search import DEFAULT_SEARCH_LIMIT, SearchService
-from gobby.storage.memories import Memory, Visibility
+from gobby.storage.memories import ALL_MEMORIES, Memory, MemoryScope, Visibility
+from gobby.storage.projects import PERSONAL_PROJECT_ID
 
 logger = logging.getLogger(__name__)
 _PURGE_SECONDARY_BATCH_SIZE = 64
@@ -24,9 +25,9 @@ if TYPE_CHECKING:
     from gobby.memory.services.keyword import MemoryKeywordSearchService
     from gobby.memory.services.knowledge_graph import KnowledgeGraphRebuildService
     from gobby.memory.services.lifecycle import MemoryLifecycleService
-    from gobby.memory.services.project_repair import (
-        NullProjectMemoryRepairResult,
-        NullProjectMemoryRepairService,
+    from gobby.memory.services.projection_repair import (
+        ProjectionScopeRepairResult,
+        ProjectionScopeRepairService,
     )
     from gobby.memory.services.repository import MemoryRepository as _MemoryRepository
     from gobby.memory.services.search import SearchService as _SearchService
@@ -35,6 +36,15 @@ if TYPE_CHECKING:
 
 DEFAULT_GRAPH_LIMIT = 500
 MAX_REINDEX_LIMIT = 100_000
+
+
+def _memory_scope(project_id: str | None, *, include_global: bool = True) -> MemoryScope:
+    if project_id is None:
+        return ALL_MEMORIES
+    if include_global:
+        return MemoryScope.project_visible(project_id)
+    return MemoryScope.project_only(project_id)
+
 
 __all__ = [
     "DEFAULT_GRAPH_LIMIT",
@@ -55,7 +65,7 @@ class MemoryManagerFacadeMethods:
     _keyword_service: MemoryKeywordSearchService
     _kg_rebuild_service: KnowledgeGraphRebuildService
     _lifecycle_service: MemoryLifecycleService
-    _project_repair_service: NullProjectMemoryRepairService
+    _projection_repair_service: ProjectionScopeRepairService
     _repository: _MemoryRepository
     _search_service: _SearchService
     _vector_store: Any | None
@@ -95,7 +105,8 @@ class MemoryManagerFacadeMethods:
     def _fire_background_dedup(
         self,
         content: str,
-        project_id: str | None,
+        project_id: str,
+        is_global: bool,
         memory_type: str,
         tags: list[str] | None,
         source_type: str,
@@ -103,16 +114,21 @@ class MemoryManagerFacadeMethods:
     ) -> None:
         """Fire a background dedup task."""
         self._lifecycle_service.fire_background_dedup(
-            content, project_id, memory_type, tags, source_type, source_session_id
+            content,
+            project_id,
+            is_global,
+            memory_type,
+            tags,
+            source_type,
+            source_session_id,
         )
 
     async def _enqueue_for_graph(
         self,
         memory_id: str,
-        project_id: str | None = None,
     ) -> None:
         """Queue memory for background KG processing."""
-        await self._lifecycle_service.enqueue_for_graph(memory_id, project_id)
+        await self._lifecycle_service.enqueue_for_graph(memory_id)
 
     def get_pending_graph_memories(self, limit: int = 20) -> list[Memory]:
         return self._lifecycle_service.get_pending_graph_memories(limit=limit)
@@ -141,9 +157,17 @@ class MemoryManagerFacadeMethods:
         source_type: str = "agent",
         source_session_id: str | None = None,
         tags: list[str] | None = None,
+        *,
+        is_global: bool = False,
     ) -> Memory:
         return await self._lifecycle_service.create_memory(
-            content, memory_type, project_id, source_type, source_session_id, tags
+            content=content,
+            project_id=project_id or PERSONAL_PROJECT_ID,
+            memory_type=memory_type,
+            source_type=source_type,
+            source_session_id=source_session_id,
+            tags=tags,
+            is_global=is_global,
         )
 
     @staticmethod
@@ -241,7 +265,7 @@ class MemoryManagerFacadeMethods:
     async def delete_memory(self, memory_id: str) -> bool:
         return await self._lifecycle_service.delete_memory(memory_id)
 
-    async def delete_memory_scoped(self, memory_id: str, project_id: str | None) -> bool:
+    async def delete_memory_scoped(self, memory_id: str, project_id: str) -> bool:
         return await self._lifecycle_service.delete_memory_scoped(memory_id, project_id)
 
     async def adelete_memory(self, memory_id: str) -> bool:
@@ -258,7 +282,7 @@ class MemoryManagerFacadeMethods:
         visibility: Visibility = "active",
     ) -> int:
         return self._repository.count_memories(
-            project_id=project_id,
+            scope=_memory_scope(project_id),
             memory_type=memory_type,
             visibility=visibility,
         )
@@ -268,24 +292,20 @@ class MemoryManagerFacadeMethods:
         *,
         limit: int,
         redream_cutoff: str,
-        project_id: str | None = None,
+        scope: MemoryScope,
         memory_type: str | None = None,
-        include_global: bool = True,
-        global_only: bool = False,
     ) -> list[Memory]:
         """Delegate to storage for the nightly dream sweep candidate page."""
         return self.storage.list_dream_candidates(
             limit=limit,
             redream_cutoff=redream_cutoff,
-            project_id=project_id,
+            scope=scope,
             memory_type=memory_type,
-            include_global=include_global,
-            global_only=global_only,
         )
 
-    def list_dream_project_ids(self, *, redream_cutoff: str) -> list[str | None]:
-        """Delegate to storage for due dream sweep project scopes."""
-        return self.storage.list_dream_project_ids(redream_cutoff=redream_cutoff)
+    def list_dream_scopes(self, *, redream_cutoff: str) -> list[MemoryScope]:
+        """Delegate to storage for due dream sweep scopes."""
+        return self.storage.list_dream_scopes(redream_cutoff=redream_cutoff)
 
     def mark_project_memories_due(self, project_id: str) -> int:
         """Delegate to storage: clear the dream cooldown for a project's memories."""
@@ -356,7 +376,7 @@ class MemoryManagerFacadeMethods:
         include_global: bool = True,
     ) -> list[Memory]:
         return self._repository.list_memories(
-            project_id,
+            _memory_scope(project_id, include_global=include_global),
             memory_type,
             limit,
             offset,
@@ -364,7 +384,6 @@ class MemoryManagerFacadeMethods:
             tags_any,
             tags_none,
             visibility=visibility,
-            include_global=include_global,
         )
 
     async def alist_memories(
@@ -379,24 +398,25 @@ class MemoryManagerFacadeMethods:
         include_global: bool = True,
     ) -> list[Memory]:
         return await self._repository.alist_memories(
-            project_id=project_id,
+            scope=_memory_scope(project_id, include_global=include_global),
             memory_type=memory_type,
             limit=limit,
             offset=offset,
             tags_all=tags_all,
             visibility=visibility,
-            include_global=include_global,
         )
 
     def content_exists(
         self, content: str, project_id: str | None = None, *, visibility: Visibility = "active"
     ) -> bool:
-        return self._repository.content_exists(content, project_id, visibility=visibility)
+        scope = MemoryScope.project_visible(project_id or PERSONAL_PROJECT_ID)
+        return self._repository.content_exists(content, scope, visibility=visibility)
 
     async def acontent_exists(
         self, content: str, project_id: str | None = None, *, visibility: Visibility = "active"
     ) -> bool:
-        return await self._repository.acontent_exists(content, project_id, visibility=visibility)
+        scope = MemoryScope.project_visible(project_id or PERSONAL_PROJECT_ID)
+        return await self._repository.acontent_exists(content, scope, visibility=visibility)
 
     def get_memory(
         self,
@@ -405,7 +425,11 @@ class MemoryManagerFacadeMethods:
         *,
         visibility: Visibility = "active",
     ) -> Memory | None:
-        return self._repository.get_memory(memory_id, project_id=project_id, visibility=visibility)
+        return self._repository.get_memory(
+            memory_id,
+            scope=_memory_scope(project_id),
+            visibility=visibility,
+        )
 
     async def aget_memory(
         self,
@@ -415,7 +439,9 @@ class MemoryManagerFacadeMethods:
         visibility: Visibility = "active",
     ) -> Memory | None:
         return await self._repository.aget_memory(
-            memory_id, project_id=project_id, visibility=visibility
+            memory_id,
+            scope=_memory_scope(project_id),
+            visibility=visibility,
         )
 
     def find_by_prefix(
@@ -424,7 +450,7 @@ class MemoryManagerFacadeMethods:
         limit: int = 5,
         project_id: str | None = None,
     ) -> list[Memory]:
-        return self._repository.find_by_prefix(prefix, limit, project_id)
+        return self._repository.find_by_prefix(prefix, limit, _memory_scope(project_id))
 
     async def update_memory(
         self,
@@ -443,7 +469,7 @@ class MemoryManagerFacadeMethods:
     async def update_memory_scoped(
         self,
         memory_id: str,
-        project_id: str | None,
+        project_id: str,
         content: str | None = None,
         tags: list[str] | None = None,
         memory_type: str | None = None,
@@ -456,32 +482,37 @@ class MemoryManagerFacadeMethods:
             memory_type=memory_type,
         )
 
-    async def rescope_memory(self, memory_id: str, new_project_id: str | None) -> Memory:
-        return await self._lifecycle_service.rescope_memory(memory_id, new_project_id)
+    async def move_memory(self, memory_id: str, new_project_id: str) -> Memory:
+        return await self._lifecycle_service.move_memory(memory_id, new_project_id)
+
+    async def promote_memory(self, memory_id: str) -> Memory:
+        return await self._lifecycle_service.set_memory_global(memory_id, True)
+
+    async def demote_memory(self, memory_id: str) -> Memory:
+        return await self._lifecycle_service.set_memory_global(memory_id, False)
 
     async def sync_memory_scope_indices(
         self,
-        memory_id: str,
-        project_id: str | None,
+        memory: Memory,
     ) -> list[dict[str, str]]:
-        return await self._lifecycle_service.sync_memory_scope_indices(memory_id, project_id)
+        return await self._lifecycle_service.sync_memory_scope_indices(memory)
 
     async def restore_memory_indices(
         self,
         memory_id: str,
         content: str,
-        project_id: str | None,
-    ) -> None:
-        await self._lifecycle_service.restore_memory_indices(memory_id, content, project_id)
-
-    async def fix_null_project_ids_from_sessions(
-        self,
-        *,
-        dry_run: bool = False,
-    ) -> NullProjectMemoryRepairResult:
-        return await self._project_repair_service.fix_null_project_ids_from_sessions(
-            dry_run=dry_run
+        project_id: str,
+        is_global: bool,
+    ) -> bool:
+        return await self._lifecycle_service.restore_memory_indices(
+            memory_id,
+            content,
+            project_id,
+            is_global,
         )
+
+    async def repair_secondary_scope_projections(self) -> ProjectionScopeRepairResult:
+        return await self._projection_repair_service.repair()
 
     async def aupdate_memory(
         self,

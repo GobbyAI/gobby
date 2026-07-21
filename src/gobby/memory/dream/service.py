@@ -32,6 +32,7 @@ from gobby.memory.dream.truth_digest import (
     build_project_truth_digest,
     build_project_truth_digest_async,
 )
+from gobby.storage.memories_scope import ALL_MEMORIES, MemoryScope, MemoryScopeKind
 from gobby.storage.projects import LocalProjectManager
 
 logger = logging.getLogger(__name__)
@@ -56,7 +57,7 @@ MAX_ERROR_DETAILS = 50
 MAX_PLANNER_ERRORS = 50
 
 # A cutoff past every possible ``last_dreamed_at`` makes the due predicate match
-# every live memory, so ``list_dream_project_ids`` returns every project that has
+# every live memory, so ``list_dream_scopes`` returns every scope that has
 # memories — including ones fully within the cooldown window. The truth-change
 # trigger needs that full set so a digest change on a cooled project is caught.
 _ALL_MEMORIES_CUTOFF = "9999-12-31T23:59:59+00:00"
@@ -93,6 +94,16 @@ class DreamRunOptions:
             "include_global": self.include_global,
             "full_sweep": self.full_sweep,
         }
+
+    def memory_scope(self, *, include_global: bool) -> MemoryScope:
+        """Resolve transport options to the typed storage scope contract."""
+        if self.global_only:
+            return MemoryScope.global_only()
+        if self.project_id is None:
+            return ALL_MEMORIES
+        if include_global:
+            return MemoryScope.project_visible(self.project_id)
+        return MemoryScope.project_only(self.project_id)
 
 
 @dataclass
@@ -225,7 +236,7 @@ class MemoryDreamService:
         changed, so a stack shift is re-judged on this sweep even inside the
         cooldown window. Enumerates
         targets via the cooldown-due predicate, then runs one sweep per target:
-        the NULL/global bucket runs ``global_only`` and real projects run scoped
+        the explicit global scope runs ``global_only`` and project scopes run
         with ``include_global=False`` so the global bucket is swept exactly once.
         Per-target failures are isolated. Returns an aggregate; the caller
         decides whether an all-failed batch is an error.
@@ -254,7 +265,7 @@ class MemoryDreamService:
         truth_triggered_targets: list[str] = []
         if dry_run:
             targets = await asyncio.to_thread(
-                self.memory_manager.list_dream_project_ids, redream_cutoff=cutoff
+                self.memory_manager.list_dream_scopes, redream_cutoff=cutoff
             )
             truth_triggered_targets = await self._truth_changed_project_ids(targets)
         else:
@@ -262,19 +273,21 @@ class MemoryDreamService:
             # skipped for preview-only dry runs (which must write nothing).
             await self._apply_truth_change_triggers()
             targets = await asyncio.to_thread(
-                self.memory_manager.list_dream_project_ids, redream_cutoff=cutoff
+                self.memory_manager.list_dream_scopes, redream_cutoff=cutoff
             )
-        for target in truth_triggered_targets:
-            if target not in targets:
-                targets.append(target)
+        for target_project_id in truth_triggered_targets:
+            target_scope = MemoryScope.project_only(target_project_id)
+            if target_scope not in targets:
+                targets.append(target_scope)
 
         runs: list[dict[str, Any]] = []
         completed = 0
         failed = 0
         mutations = 0
-        for target_project_id in targets:
+        for target_scope in targets:
+            scope_project_id = target_scope.project_id
             try:
-                if target_project_id is None:
+                if target_scope.kind is MemoryScopeKind.GLOBAL_ONLY:
                     options = DreamRunOptions(
                         dry_run=dry_run,
                         skip_consolidation=skip_consolidation,
@@ -287,7 +300,7 @@ class MemoryDreamService:
                         dry_run=dry_run,
                         skip_consolidation=skip_consolidation,
                         memory_type=memory_type,
-                        project_id=target_project_id,
+                        project_id=scope_project_id,
                         include_global=False,
                         full_sweep=full_sweep,
                     )
@@ -297,16 +310,24 @@ class MemoryDreamService:
                 completed += 1
                 runs.append(
                     {
-                        "project_id": target_project_id,
+                        "project_id": scope_project_id,
+                        "is_global": target_scope.kind is MemoryScopeKind.GLOBAL_ONLY,
                         "success": True,
                         "run_id": _result_run_id(result),
                         "mutations": target_mutations,
                     }
                 )
             except Exception as exc:
-                logger.exception("memory dream failed for target %s", target_project_id)
+                logger.exception("memory dream failed for target %s", target_scope.kind.value)
                 failed += 1
-                runs.append({"project_id": target_project_id, "success": False, "error": str(exc)})
+                runs.append(
+                    {
+                        "project_id": scope_project_id,
+                        "is_global": target_scope.kind is MemoryScopeKind.GLOBAL_ONLY,
+                        "success": False,
+                        "error": str(exc),
+                    }
+                )
 
         all_failed = failed > 0 and completed == 0
         return {
@@ -319,16 +340,21 @@ class MemoryDreamService:
         }
 
     async def _truth_changed_project_ids(
-        self, project_ids: list[str | None] | None = None
+        self, scopes: list[MemoryScope] | None = None
     ) -> list[str]:
-        if project_ids is None:
-            project_ids = await asyncio.to_thread(
-                self.memory_manager.list_dream_project_ids,
+        if scopes is None:
+            scopes = await asyncio.to_thread(
+                self.memory_manager.list_dream_scopes,
                 redream_cutoff=_ALL_MEMORIES_CUTOFF,
             )
         changed: list[str] = []
-        for project_id in project_ids:
-            if project_id is None or self._is_current_daemon_project(project_id):
+        for scope in scopes:
+            project_id = scope.project_id
+            if (
+                scope.kind is not MemoryScopeKind.PROJECT_ONLY
+                or project_id is None
+                or self._is_current_daemon_project(project_id)
+            ):
                 continue
             try:
                 repo_path = self._resolve_repo_path(project_id)
@@ -699,10 +725,8 @@ class MemoryDreamService:
                 self.memory_manager,
                 limit=page_size,
                 redream_cutoff=redream_cutoff,
-                project_id=options.project_id,
+                scope=options.memory_scope(include_global=include_global),
                 memory_type=options.memory_type,
-                include_global=include_global,
-                global_only=options.global_only,
                 now=run_started,
             )
             if not candidates:
@@ -762,10 +786,8 @@ class MemoryDreamService:
             self.memory_manager,
             limit=page_size,
             redream_cutoff=redream_cutoff,
-            project_id=options.project_id,
+            scope=options.memory_scope(include_global=include_global),
             memory_type=options.memory_type,
-            include_global=include_global,
-            global_only=options.global_only,
             now=run_started,
         )
         raw_plan = await build_raw_plan(

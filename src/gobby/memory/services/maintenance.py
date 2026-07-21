@@ -12,12 +12,22 @@ from collections.abc import Callable
 from datetime import UTC, datetime, timedelta
 from typing import TYPE_CHECKING, Any
 
+from gobby.memory.vectorstore import memory_scope_filter
+from gobby.storage.memories import Memory
+from gobby.storage.memories_scope import ALL_MEMORIES, MemoryScope
+
 if TYPE_CHECKING:
     from gobby.memory.vectorstore import VectorStore
     from gobby.storage.hub.protocol import HubDatabase
-    from gobby.storage.memories import LocalMemoryManager, Memory
+    from gobby.storage.memories import LocalMemoryManager
 
 logger = logging.getLogger(__name__)
+
+
+def _maintenance_scope(project_id: str | None) -> MemoryScope:
+    if project_id is None:
+        return ALL_MEMORIES
+    return MemoryScope.project_visible(project_id)
 
 
 def get_stats(
@@ -37,7 +47,7 @@ def get_stats(
     Returns:
         Dictionary with memory statistics.
     """
-    memories = storage.list_memories(project_id=project_id, limit=10000)
+    memories = storage.list_memories(scope=_maintenance_scope(project_id), limit=10000)
 
     if not memories:
         return {
@@ -90,7 +100,7 @@ def export_markdown(
     Returns:
         Formatted markdown string with all memories.
     """
-    memories = storage.list_memories(project_id=project_id, limit=10000)
+    memories = storage.list_memories(scope=_maintenance_scope(project_id), limit=10000)
 
     lines: list[str] = []
 
@@ -214,7 +224,8 @@ async def find_duplicate_memories(
         List of dicts: {keep_id, delete_id, score, delete_content_preview}.
     """
 
-    memories = storage.list_memories(project_id=project_id, limit=limit)
+    scope = _maintenance_scope(project_id)
+    memories = storage.list_memories(scope=scope, limit=limit)
     if not memories:
         return []
 
@@ -227,7 +238,7 @@ async def find_duplicate_memories(
 
         try:
             embedding = await embed_fn(memory.content)
-            filters = {"project_id": project_id} if project_id else None
+            filters = memory_scope_filter(scope)
             results = await vector_store.search(
                 query_embedding=embedding,
                 limit=5,
@@ -295,7 +306,7 @@ def find_code_derivable_memories(
     Returns:
         List of code-derivable Memory objects.
     """
-    memories = storage.list_memories(project_id=project_id, limit=limit)
+    memories = storage.list_memories(scope=_maintenance_scope(project_id), limit=limit)
     results: list[Memory] = []
 
     for memory in memories:
@@ -336,7 +347,7 @@ def find_orphaned_memories(
     params: list[Any] = [cutoff]
     project_clause = ""
     if project_id:
-        project_clause = "AND (m.project_id = %s OR m.project_id IS NULL)"
+        project_clause = "AND ((m.project_id = %s AND m.is_global IS FALSE) OR m.is_global IS TRUE)"
         params.append(project_id)
     params.append(limit)
 

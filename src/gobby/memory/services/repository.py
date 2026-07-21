@@ -6,7 +6,15 @@ from collections.abc import Callable
 from typing import TYPE_CHECKING, Literal, cast
 
 from gobby.memory.protocol import MemoryBackendProtocol, MemoryRecord
-from gobby.storage.memories import LocalMemoryManager, Memory, Visibility
+from gobby.storage.memories import (
+    ALL_MEMORIES,
+    LocalMemoryManager,
+    Memory,
+    MemoryScope,
+    Visibility,
+    memory_matches_scope,
+    memory_scope_predicate,
+)
 from gobby.utils.datetime import utc_now
 
 if TYPE_CHECKING:
@@ -50,6 +58,7 @@ class MemoryRepository:
             created_at=record.created_at or utc_now(),
             updated_at=record.updated_at or utc_now(),
             project_id=record.project_id,
+            is_global=record.is_global,
             source_type=cast(Literal["user", "agent"], record.source_type or "agent"),
             source_session_id=record.source_session_id,
             access_count=record.access_count,
@@ -63,21 +72,21 @@ class MemoryRepository:
 
     def count_memories(
         self,
-        project_id: str | None = None,
+        scope: MemoryScope = ALL_MEMORIES,
         memory_type: str | None = None,
         *,
         visibility: Visibility = "active",
     ) -> int:
         """Return the total number of memories using COUNT(*)."""
         return self.storage.count_memories(
-            project_id=project_id,
+            scope=scope,
             memory_type=memory_type,
             visibility=visibility,
         )
 
     def list_memories(
         self,
-        project_id: str | None = None,
+        scope: MemoryScope = ALL_MEMORIES,
         memory_type: str | None = None,
         limit: int = DEFAULT_LIST_LIMIT,
         offset: int = 0,
@@ -85,11 +94,10 @@ class MemoryRepository:
         tags_any: list[str] | None = None,
         tags_none: list[str] | None = None,
         visibility: Visibility = "active",
-        include_global: bool = True,
     ) -> list[Memory]:
         """List memories with optional filtering."""
         return self.storage.list_memories(
-            project_id=project_id,
+            scope=scope,
             memory_type=memory_type,
             limit=limit,
             offset=offset,
@@ -97,62 +105,67 @@ class MemoryRepository:
             tags_any=tags_any,
             tags_none=tags_none,
             visibility=visibility,
-            include_global=include_global,
         )
 
     async def alist_memories(
         self,
         *,
-        project_id: str | None = None,
+        scope: MemoryScope = ALL_MEMORIES,
         memory_type: str | None = None,
         limit: int | None = DEFAULT_LIST_LIMIT,
         offset: int = 0,
         tags_all: list[str] | None = None,
         visibility: Visibility = "active",
-        include_global: bool = True,
     ) -> list[Memory]:
         """List memories via backend."""
         resolved_limit = DEFAULT_LIST_LIMIT if limit is None else limit
         records = await self.backend.list_memories(
-            project_id=project_id,
+            scope=scope,
             memory_type=memory_type,
             limit=resolved_limit,
             offset=offset,
             tags_all=tags_all,
             visibility=visibility,
-            include_global=include_global,
         )
         return [self.record_to_memory(record) for record in records]
 
     def content_exists(
-        self, content: str, project_id: str | None = None, *, visibility: Visibility = "active"
+        self,
+        content: str,
+        scope: MemoryScope,
+        *,
+        visibility: Visibility = "active",
     ) -> bool:
         """Check if a memory with identical content already exists."""
-        return self.storage.content_exists(content, project_id, visibility=visibility)
+        return self.storage.content_exists(content, scope, visibility=visibility)
 
     async def acontent_exists(
-        self, content: str, project_id: str | None = None, *, visibility: Visibility = "active"
+        self,
+        content: str,
+        scope: MemoryScope,
+        *,
+        visibility: Visibility = "active",
     ) -> bool:
         """Check if a memory with identical content already exists via backend."""
-        return await self.backend.content_exists(content, project_id, visibility=visibility)
+        return await self.backend.content_exists(content, scope, visibility=visibility)
 
     def get_memory(
         self,
         memory_id: str,
-        project_id: str | None = None,
+        scope: MemoryScope = ALL_MEMORIES,
         *,
         visibility: Visibility = "active",
     ) -> Memory | None:
-        """Get a specific memory by ID, optionally scoped to a project."""
+        """Get a specific memory by ID in an explicit scope."""
         try:
-            return self.storage.get_memory(memory_id, project_id=project_id, visibility=visibility)
+            return self.storage.get_memory(memory_id, scope=scope, visibility=visibility)
         except ValueError:
             return None
 
     async def aget_memory(
         self,
         memory_id: str,
-        project_id: str | None = None,
+        scope: MemoryScope = ALL_MEMORIES,
         *,
         visibility: Visibility = "active",
     ) -> Memory | None:
@@ -160,7 +173,7 @@ class MemoryRepository:
         record = await self.backend.get(memory_id, visibility=visibility)
         if record is None:
             return None
-        if project_id and record.project_id and record.project_id != project_id:
+        if not memory_matches_scope(record.project_id, record.is_global, scope):
             return None
         return self.record_to_memory(record)
 
@@ -168,7 +181,7 @@ class MemoryRepository:
         self,
         prefix: str,
         limit: int = 5,
-        project_id: str | None = None,
+        scope: MemoryScope = ALL_MEMORIES,
     ) -> list[Memory]:
         """Find memories whose IDs start with the given prefix."""
         backslash = chr(92)
@@ -181,14 +194,13 @@ class MemoryRepository:
         )
         like_value = f"{escaped}%"
         escape_clause = " ESCAPE '" + backslash + "'"
-        if project_id:
-            sql = (
-                "SELECT * FROM memories WHERE id::text LIKE %s"
-                + escape_clause
-                + " AND (project_id = %s OR project_id IS NULL) LIMIT %s"
-            )
-            rows = self._db.fetchall(sql, (like_value, project_id, limit))
-        else:
-            sql = "SELECT * FROM memories WHERE id::text LIKE %s" + escape_clause + " LIMIT %s"
-            rows = self._db.fetchall(sql, (like_value, limit))
+        scope_predicate, scope_params = memory_scope_predicate(scope)
+        scope_clause = f" AND {scope_predicate}" if scope_predicate else ""
+        sql = (
+            "SELECT * FROM memories WHERE id::text LIKE %s"
+            + escape_clause
+            + scope_clause
+            + " LIMIT %s"
+        )
+        rows = self._db.fetchall(sql, (like_value, *scope_params, limit))
         return [Memory.from_row(row) for row in rows]

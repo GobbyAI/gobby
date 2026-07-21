@@ -22,6 +22,7 @@ from gobby.memory.services.knowledge_graph import (
 )
 from gobby.memory.services.knowledge_graph.extraction import ENTITY_EXTRACTION_SYSTEM_PROMPT
 from gobby.memory.services.knowledge_graph.reader import KnowledgeGraphReader
+from gobby.storage.projects import PERSONAL_PROJECT_ID
 
 pytestmark = pytest.mark.unit
 
@@ -399,8 +400,8 @@ class TestAddToGraph:
 
         mock_falkor.merge_relationship.assert_called_once()
         call_kwargs = mock_falkor.merge_relationship.call_args.kwargs
-        assert call_kwargs["source_key"] == entity_key(None, "Josh")
-        assert call_kwargs["target_key"] == entity_key(None, "Python")
+        assert call_kwargs["source_key"] == entity_key(PERSONAL_PROJECT_ID, "Josh")
+        assert call_kwargs["target_key"] == entity_key(PERSONAL_PROJECT_ID, "Python")
         assert call_kwargs["rel_type"] == "uses"
 
     @pytest.mark.asyncio
@@ -429,7 +430,7 @@ class TestAddToGraph:
         assert mock_falkor.set_node_vector.call_count == 1
         assert mock_falkor.set_node_vector.call_args is not None
         vector_call_kwargs = mock_falkor.set_node_vector.call_args.kwargs
-        assert vector_call_kwargs["entity_key"] == entity_key(None, "Josh")
+        assert vector_call_kwargs["entity_key"] == entity_key(PERSONAL_PROJECT_ID, "Josh")
         assert "node_key" not in vector_call_kwargs
 
     @pytest.mark.asyncio
@@ -675,6 +676,7 @@ class TestAddToGraph:
             entities = service._normalize_entities(
                 [Entity(name=" \t ", entity_type="concept")],
                 project_id="proj-1",
+                is_global=False,
             )
 
         assert entities == []
@@ -1081,20 +1083,21 @@ class TestRelatesToCode:
         assert len(relates_calls) == 0
 
     @pytest.mark.asyncio
-    async def test_skips_when_no_project_id(
+    async def test_missing_project_id_uses_personal_project(
         self,
         service_with_vector_store: KnowledgeGraphService,
         mock_llm: AsyncMock,
         mock_vector_store: AsyncMock,
     ) -> None:
-        """Step 9 is skipped entirely when project_id is None."""
+        """Missing creation context falls back to the personal project scope."""
         _stub_llm_for_entities(mock_llm, [{"entity": "auth", "entity_type": "concept"}])
 
         await service_with_vector_store.add_to_graph("auth module", memory_id="mem-1")
 
-        mock_vector_store.search.assert_not_called()
-        assert mock_vector_store.search.call_count == 0
-        assert not mock_vector_store.search.called
+        mock_vector_store.search.assert_called_once()
+        assert mock_vector_store.search.call_args.kwargs["collection_name"] == (
+            f"code_symbols_{PERSONAL_PROJECT_ID}"
+        )
 
     @pytest.mark.asyncio
     async def test_skips_when_no_vector_store(
@@ -1171,35 +1174,47 @@ class TestMemoryNodeProjectIdScoping:
         entities = service._normalize_entities(
             [Entity(name="Auth", entity_type="concept")],
             project_id="proj-A",
+            is_global=False,
         )
-        await service._link_entities_to_memory(entities, "mem-1", project_id="proj-A")
+        await service._link_entities_to_memory(
+            entities,
+            "mem-1",
+            project_id="proj-A",
+            is_global=False,
+        )
 
         # First query call is the MERGE for Memory node
         merge_call = mock_falkor.query.call_args_list[0]
         cypher = merge_call.args[0]
         params = merge_call.args[1]
-        assert "ON CREATE SET m.project_id" in cypher
-        assert "ON MATCH SET m.project_id = coalesce($project_id, m.project_id)" in cypher
+        assert "SET m.project_id = $project_id, m.is_global = $is_global" in cypher
         assert params["project_id"] == "proj-A"
+        assert params["is_global"] is False
         assert params["memory_id"] == "mem-1"
 
     @pytest.mark.asyncio
-    async def test_link_entities_with_none_project_id(
+    async def test_link_entities_with_personal_project_scope(
         self,
         service: KnowledgeGraphService,
         mock_falkor: AsyncMock,
     ) -> None:
-        """_link_entities_to_memory with project_id=None doesn't overwrite existing value."""
+        """_link_entities_to_memory records the concrete personal project scope."""
         entities = service._normalize_entities(
             [Entity(name="Auth", entity_type="concept")],
-            project_id=None,
+            project_id=PERSONAL_PROJECT_ID,
+            is_global=False,
         )
-        await service._link_entities_to_memory(entities, "mem-1", project_id=None)
+        await service._link_entities_to_memory(
+            entities,
+            "mem-1",
+            project_id=PERSONAL_PROJECT_ID,
+            is_global=False,
+        )
 
         merge_call = mock_falkor.query.call_args_list[0]
         params = merge_call.args[1]
-        # coalesce(NULL, m.project_id) preserves existing value
-        assert params["project_id"] is None
+        assert params["project_id"] == PERSONAL_PROJECT_ID
+        assert params["is_global"] is False
 
     @pytest.mark.asyncio
     async def test_add_to_graph_passes_project_id_to_link(
@@ -1219,12 +1234,11 @@ class TestMemoryNodeProjectIdScoping:
 
         await service.add_to_graph("auth module", memory_id="mem-1", project_id="proj-B")
 
-        # Find the Memory MERGE query (has ON CREATE SET m.project_id)
-        memory_merges = [
-            c for c in mock_falkor.query.call_args_list if "ON CREATE SET m.project_id" in str(c)
-        ]
+        # Find the Memory MERGE query.
+        memory_merges = [c for c in mock_falkor.query.call_args_list if "MERGE (m:Memory" in str(c)]
         assert len(memory_merges) == 1
         assert memory_merges[0].args[1]["project_id"] == "proj-B"
+        assert memory_merges[0].args[1]["is_global"] is False
 
     @pytest.mark.asyncio
     async def test_search_entities_by_vector_filters_by_project_id(
@@ -1263,8 +1277,8 @@ class TestMemoryNodeProjectIdScoping:
         cypher = mem_queries[0].args[0]
         params = mem_queries[0].args[1]
         assert "m.project_id = $project_id" in cypher
-        assert "OR ($include_global AND m.project_id IS NULL)" in cypher
-        assert "OR ($include_global AND e.project_id IS NULL)" in cypher
+        assert "OR ($include_global AND m.is_global = true)" in cypher
+        assert "OR ($include_global AND e.is_global = true)" in cypher
         assert params["project_id"] == "proj-A"
         assert params["include_global"] is False
 
@@ -1293,8 +1307,8 @@ class TestMemoryNodeProjectIdScoping:
         neighbor_params = neighbor_call.args[1]
         assert "start.project_id = $project_id" in neighbor_cypher
         assert "neighbor.project_id = $project_id" in neighbor_cypher
-        assert "OR ($include_global AND start.project_id IS NULL)" in neighbor_cypher
-        assert "OR ($include_global AND neighbor.project_id IS NULL)" in neighbor_cypher
+        assert "OR ($include_global AND start.is_global = true)" in neighbor_cypher
+        assert "OR ($include_global AND neighbor.is_global = true)" in neighbor_cypher
         assert neighbor_params["project_id"] == "proj-A"
         assert neighbor_params["include_global"] is True
 
@@ -1302,8 +1316,8 @@ class TestMemoryNodeProjectIdScoping:
         memory_cypher = memory_call.args[0]
         memory_params = memory_call.args[1]
         assert "m.project_id = $project_id" in memory_cypher
-        assert "OR ($include_global AND m.project_id IS NULL)" in memory_cypher
-        assert "OR ($include_global AND e.project_id IS NULL)" in memory_cypher
+        assert "OR ($include_global AND m.is_global = true)" in memory_cypher
+        assert "OR ($include_global AND e.is_global = true)" in memory_cypher
         assert memory_params["project_id"] == "proj-A"
         assert memory_params["include_global"] is True
 

@@ -14,6 +14,8 @@ from typing import TYPE_CHECKING, Any
 from uuid import uuid4
 
 from gobby.memory.protocol import MemoryCapability, MemoryQuery, MemoryRecord
+from gobby.storage.memories_scope import ALL_MEMORIES, MemoryScope
+from gobby.storage.projects import PERSONAL_PROJECT_ID
 
 if TYPE_CHECKING:
     from gobby.storage.memories import Visibility
@@ -40,8 +42,9 @@ class NullBackend:
     async def create(
         self,
         content: str,
+        project_id: str = PERSONAL_PROJECT_ID,
         memory_type: str = "fact",
-        project_id: str | None = None,
+        is_global: bool = False,
         user_id: str | None = None,
         tags: list[str] | None = None,
         source_type: str = "agent",
@@ -56,6 +59,7 @@ class NullBackend:
             created_at=now,
             memory_type=memory_type,
             project_id=project_id,
+            is_global=is_global,
             user_id=user_id,
             tags=tags or [],
             source_type=source_type,
@@ -81,6 +85,7 @@ class NullBackend:
             id=memory_id,
             content=content or "",
             created_at=now,
+            project_id=PERSONAL_PROJECT_ID,
             updated_at=now,
             tags=tags or [],
         )
@@ -95,7 +100,7 @@ class NullBackend:
 
     async def list_memories(
         self,
-        project_id: str | None = None,
+        scope: MemoryScope = ALL_MEMORIES,
         user_id: str | None = None,
         memory_type: str | None = None,
         limit: int = 50,
@@ -103,19 +108,26 @@ class NullBackend:
         tags_all: list[str] | None = None,
         *,
         visibility: Visibility = "active",
-        include_global: bool = True,
     ) -> list[MemoryRecord]:
         """List memories (always returns empty list)."""
         return []
 
     async def content_exists(
-        self, content: str, project_id: str | None = None, *, visibility: Visibility = "active"
+        self,
+        content: str,
+        scope: MemoryScope,
+        *,
+        visibility: Visibility = "active",
     ) -> bool:
         """Check if content exists (always returns False)."""
         return False
 
     async def get_memory_by_content(
-        self, content: str, project_id: str | None = None, *, visibility: Visibility = "active"
+        self,
+        content: str,
+        scope: MemoryScope,
+        *,
+        visibility: Visibility = "active",
     ) -> MemoryRecord | None:
         """Get memory by content (always returns None)."""
         return None

@@ -7,7 +7,7 @@ from typing import Any
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
-from qdrant_client.models import FieldCondition, IsEmptyCondition, IsNullCondition
+from qdrant_client.models import FieldCondition
 
 from gobby.memory.services.dedup import (
     NEAR_EXACT_THRESHOLD,
@@ -407,8 +407,8 @@ class TestProcess:
         """Transient VectorStore upsert failures should not disable future embeddings."""
         mock_vector_store.upsert.side_effect = VectorStoreUnavailableError()
 
-        await dedup_service._embed_and_upsert("mem-1", "content", "proj-1")
-        await dedup_service._embed_and_upsert("mem-2", "content", "proj-1")
+        await dedup_service._embed_and_upsert("mem-1", "content", "proj-1", False)
+        await dedup_service._embed_and_upsert("mem-2", "content", "proj-1", False)
 
         assert mock_embed_fn.call_count == 2
         assert mock_vector_store.upsert.call_count == 2
@@ -429,9 +429,7 @@ class TestProcess:
             condition.match.value
             for condition in filters.should
             if isinstance(condition, FieldCondition)
-        ] == ["proj-42", ""]
-        assert any(isinstance(condition, IsNullCondition) for condition in filters.should)
-        assert any(isinstance(condition, IsEmptyCondition) for condition in filters.should)
+        ] == ["proj-42", True]
 
     @pytest.mark.asyncio
     async def test_process_global_scope_excludes_project_memories(
@@ -439,18 +437,16 @@ class TestProcess:
     ) -> None:
         mock_vector_store.search.return_value = []
 
-        await dedup_service.process(content="Test", project_id=None)
+        await dedup_service.process(content="Test", project_id="global-owner", is_global=True)
 
         filters = mock_vector_store.search.call_args.kwargs["filters"]
-        assert filters.must is None
-        assert filters.should is not None
+        assert filters.should is None
+        assert filters.must is not None
         assert [
             condition.match.value
-            for condition in filters.should
+            for condition in filters.must
             if isinstance(condition, FieldCondition)
-        ] == [""]
-        assert any(isinstance(condition, IsNullCondition) for condition in filters.should)
-        assert any(isinstance(condition, IsEmptyCondition) for condition in filters.should)
+        ] == [True]
 
 
 class TestThresholds:

@@ -1,5 +1,6 @@
 from gobby.storage.memories_base import MemoryStoreBase
 from gobby.storage.memories_models import Memory
+from gobby.storage.memories_scope import ALL_MEMORIES, MemoryScope, memory_scope_predicate
 
 
 class MemoryGraphMixin(MemoryStoreBase):
@@ -17,29 +18,17 @@ class MemoryGraphMixin(MemoryStoreBase):
             if cursor.rowcount == 0:
                 raise ValueError(f"Memory not found: {memory_id}")
 
-    def mark_pending_graphs(self, project_id: str | None = None) -> int:
-        """Mark multiple memories as pending KG graph processing.
-
-        When ``project_id`` is provided, only memories in that project are reset.
-        When omitted, all memories are reset.
-        """
+    def mark_pending_graphs(self, scope: MemoryScope = ALL_MEMORIES) -> int:
+        """Mark memories in an explicit scope as pending graph processing."""
+        predicate, params = memory_scope_predicate(scope)
+        where = f" WHERE {predicate}" if predicate else ""
         with self.db.transaction() as conn:
-            if project_id is None:
-                cursor = conn.execute(
-                    """
-                    UPDATE memories
-                    SET graph_processed = FALSE, graph_attempts = 0, graph_status = 'pending'
-                    """
-                )
-            else:
-                cursor = conn.execute(
-                    """
-                    UPDATE memories
-                    SET graph_processed = FALSE, graph_attempts = 0, graph_status = 'pending'
-                    WHERE project_id = %s
-                    """,
-                    (project_id,),
-                )
+            cursor = conn.execute(
+                "UPDATE memories "
+                "SET graph_processed = FALSE, graph_attempts = 0, graph_status = 'pending'"
+                f"{where}",  # nosec B608
+                params,
+            )
             return cursor.rowcount
 
     def mark_graph_processed(self, memory_id: str) -> None:

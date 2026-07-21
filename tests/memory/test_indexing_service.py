@@ -10,6 +10,7 @@ import pytest
 
 from gobby.memory.services.indexing import REINDEX_PAGE_SIZE, IndexingService
 from gobby.storage.memories import Memory
+from gobby.storage.memories_scope import ALL_MEMORIES, MemoryScope, memory_matches_scope
 
 pytestmark = pytest.mark.unit
 
@@ -30,13 +31,13 @@ class _MemoryStorage:
         self.memories = memories
         self.stale_ids = {memory.id for memory in memories if memory.vector_needs_reindex}
         self.reindexed_content: dict[str, str] = {}
-        self.list_calls: list[tuple[str | None, int | None, int]] = []
+        self.list_calls: list[tuple[MemoryScope, int | None, int]] = []
         self.db = MagicMock()
         self.db.execute.return_value.rowcount = 0
 
     def list_memories(
         self,
-        project_id: str | None = None,
+        scope: MemoryScope = ALL_MEMORIES,
         memory_type: str | None = None,
         limit: int | None = None,
         offset: int = 0,
@@ -44,11 +45,11 @@ class _MemoryStorage:
         tags_any: list[str] | None = None,
         tags_none: list[str] | None = None,
     ) -> list[Memory]:
-        self.list_calls.append((project_id, limit, offset))
+        self.list_calls.append((scope, limit, offset))
         memories = [
             memory
             for memory in self.memories
-            if (project_id is None or memory.project_id == project_id)
+            if memory_matches_scope(memory.project_id, memory.is_global, scope)
             and (memory_type is None or memory.memory_type == memory_type)
         ]
         end = None if limit is None else offset + limit
@@ -182,7 +183,11 @@ async def test_reconcile_backfills_missing_vectors_and_deletes_orphans() -> None
     assert set(vector_store.ids) == {"present", "missing"}
     embed_fn.assert_awaited_once_with("Missing")
     assert vector_store.batch_upsert.await_args.args[0] == [
-        ("missing", [0.4, 0.5], {"content": "Missing", "project_id": "project-1"})
+        (
+            "missing",
+            [0.4, 0.5],
+            {"content": "Missing", "project_id": "project-1", "is_global": False},
+        )
     ]
 
 
@@ -320,9 +325,9 @@ async def test_project_reindex_pages_all_memories_then_deletes_only_stale_ids(
     assert result["success"] is True
     assert result["embeddings_generated"] == 5
     assert storage.list_calls == [
-        ("project-1", 2, 0),
-        ("project-1", 2, 2),
-        ("project-1", 2, 4),
+        (MemoryScope.owner("project-1"), 2, 0),
+        (MemoryScope.owner("project-1"), 2, 2),
+        (MemoryScope.owner("project-1"), 2, 4),
     ]
     vector_store.scroll_ids.assert_awaited_once_with(filters={"project_id": "project-1"})
     assert [len(call.args[0]) for call in vector_store.batch_upsert.await_args_list] == [2, 2, 1]
@@ -410,7 +415,11 @@ async def test_global_reindex_pages_every_memory(monkeypatch: pytest.MonkeyPatch
     assert result["success"] is True
     assert result["embeddings_generated"] == 5
     assert vector_store.ids == [f"mem-{index}" for index in range(5)]
-    assert storage.list_calls == [(None, 2, 0), (None, 2, 2), (None, 2, 4)]
+    assert storage.list_calls == [
+        (ALL_MEMORIES, 2, 0),
+        (ALL_MEMORIES, 2, 2),
+        (ALL_MEMORIES, 2, 4),
+    ]
 
 
 @pytest.mark.asyncio
@@ -427,12 +436,12 @@ async def test_global_index_rebuild_pages_every_crossref_memory(
     assert report["crossrefs"] == {"memories_processed": 5, "crossrefs_created": 5}
     assert service._crossref_service.rebuild_for_memory.await_count == 5
     assert storage.list_calls == [
-        (None, 2, 0),
-        (None, 2, 2),
-        (None, 2, 4),
-        (None, 2, 0),
-        (None, 2, 2),
-        (None, 2, 4),
+        (ALL_MEMORIES, 2, 0),
+        (ALL_MEMORIES, 2, 2),
+        (ALL_MEMORIES, 2, 4),
+        (ALL_MEMORIES, 2, 0),
+        (ALL_MEMORIES, 2, 2),
+        (ALL_MEMORIES, 2, 4),
     ]
 
 
@@ -455,7 +464,7 @@ async def test_global_reindex_reads_storage_through_run_storage() -> None:
     assert getattr(func, "__self__", None) is storage
     assert getattr(func, "__func__", None) is _MemoryStorage.list_memories
     assert args == ()
-    assert kwargs == {"limit": REINDEX_PAGE_SIZE, "offset": 0}
+    assert kwargs == {"scope": ALL_MEMORIES, "limit": REINDEX_PAGE_SIZE, "offset": 0}
 
 
 @pytest.mark.asyncio

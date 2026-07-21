@@ -212,7 +212,7 @@ export const MemoryTab = memo(function MemoryTab({
 
   const handlePromoteToGlobal = useCallback(
     async (memory: GobbyMemory) => {
-      if (memory.project_id === null) return;
+      if (memory.is_global) return;
       setBusyId(memory.id);
       setError(null);
       try {
@@ -235,7 +235,7 @@ export const MemoryTab = memo(function MemoryTab({
 
   const detailActions = (
     <>
-      {selectedMemory && selectedMemory.project_id !== null && (
+          {selectedMemory && !selectedMemory.is_global && (
         <DetailActionButton
           label={busyId === selectedMemory.id ? "Promoting..." : "Promote to global"}
           variant="secondary"

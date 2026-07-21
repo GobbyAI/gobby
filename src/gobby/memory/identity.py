@@ -24,9 +24,9 @@ def _encode_component(value: str) -> str:
     return f"{len(value)}:{value}"
 
 
-def entity_key(project_id: str | None, name: str) -> str:
+def entity_key(project_id: str, name: str, *, is_global: bool = False) -> str:
     """Build a stable entity key from scope plus normalized name."""
-    scope_kind = "g" if project_id is None else "p"
-    scope_value = _GLOBAL_SCOPE if project_id is None else project_id
+    scope_kind = "g" if is_global else "p"
+    scope_value = _GLOBAL_SCOPE if is_global else project_id
     normalized_name = normalize_entity_name(name)
     return f"{scope_kind}:{_encode_component(scope_value)}|n:{_encode_component(normalized_name)}"

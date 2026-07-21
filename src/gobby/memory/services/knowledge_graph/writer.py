@@ -47,8 +47,11 @@ def cooccurrence_weight(cosine: float, support: int, *, alpha: float, cap: int) 
 
 
 def _project_scope(var: str) -> str:
-    """Cypher predicate scoping ``var`` to ``$project_id`` (null-safe for globals)."""
-    return f"({var}.project_id = $project_id OR ($project_id IS NULL AND {var}.project_id IS NULL))"
+    """Cypher predicate scoping ``var`` by explicit ownership and visibility."""
+    return (
+        f"(($is_global AND {var}.is_global = true) OR "
+        f"(NOT $is_global AND {var}.project_id = $project_id AND {var}.is_global = false))"
+    )
 
 
 class KnowledgeGraphWriter:
@@ -108,6 +111,7 @@ class KnowledgeGraphWriter:
             properties={
                 "entity_type": entity.entity_type,
                 "project_id": entity.project_id,
+                "is_global": entity.is_global,
             },
         )
 
@@ -191,7 +195,8 @@ class KnowledgeGraphWriter:
     async def delete_relations(
         self,
         relations: list[dict[str, Any]],
-        project_id: str | None,
+        project_id: str,
+        is_global: bool,
     ) -> list[dict[str, Any]]:
         """Delete selected relationships from FalkorDB and return failed entries."""
         failures: list[dict[str, Any]] = []
@@ -211,8 +216,8 @@ class KnowledgeGraphWriter:
                     "(b:_Entity {entity_key: $target_key}) "
                     "WHERE type(r) = $rel_type DELETE r",
                     {
-                        "source_key": entity_key(project_id, source),
-                        "target_key": entity_key(project_id, destination),
+                        "source_key": entity_key(project_id, source, is_global=is_global),
+                        "target_key": entity_key(project_id, destination, is_global=is_global),
                         "rel_type": relationship,
                     },
                 )
@@ -228,16 +233,16 @@ class KnowledgeGraphWriter:
         self,
         entities: list[_GraphEntity],
         memory_id: str,
-        project_id: str | None = None,
+        project_id: str,
+        is_global: bool,
     ) -> None:
         """Create Memory node and MENTIONED_IN relationships from entities."""
         await self._falkor.query(
             "MERGE (m:Memory {memory_id: $memory_id}) "
-            "ON CREATE SET m.project_id = $project_id, "
-            "m.created_at = timestamp(), m.updated_at = timestamp() "
-            "ON MATCH SET m.project_id = coalesce($project_id, m.project_id), "
+            "ON CREATE SET m.created_at = timestamp() "
+            "SET m.project_id = $project_id, m.is_global = $is_global, "
             "m.updated_at = timestamp()",
-            {"memory_id": memory_id, "project_id": project_id},
+            {"memory_id": memory_id, "project_id": project_id, "is_global": is_global},
         )
         entity_keys = [entity.entity_key for entity in entities]
         if not entity_keys:
@@ -253,7 +258,8 @@ class KnowledgeGraphWriter:
     async def merge_cooccurrence_edges(
         self,
         pairs: list[tuple[str, str]],
-        project_id: str | None,
+        project_id: str,
+        is_global: bool,
         embeddings: dict[str, list[float]],
         *,
         weighted: bool = True,
@@ -284,7 +290,7 @@ class KnowledgeGraphWriter:
             "OPTIONAL MATCH (a)-[:MENTIONED_IN]->(m:Memory)<-[:MENTIONED_IN]-(b) "
             "RETURN p.a AS a, p.b AS b, "
             f"count(DISTINCT CASE WHEN m IS NOT NULL AND {proj_m} THEN m END) AS support",
-            {"pairs": pair_params, "project_id": project_id},
+            {"pairs": pair_params, "project_id": project_id, "is_global": is_global},
         )
 
         alpha = self._cooccur_alpha if self._cooccur_alpha is not None else COOCCUR_ALPHA
@@ -320,7 +326,7 @@ class KnowledgeGraphWriter:
                 f"WHERE {proj_a} AND {proj_b} "
                 "MERGE (a)-[r:CO_OCCURS]->(b) "
                 f"SET r.support = p.support{weight_clause}, r.updated_at = timestamp()",
-                {"rows": write_rows, "project_id": project_id},
+                {"rows": write_rows, "project_id": project_id, "is_global": is_global},
             )
         if delete_rows:
             await self._falkor.query(
@@ -329,5 +335,5 @@ class KnowledgeGraphWriter:
                 "(b:_Entity {entity_key: p.b}) "
                 f"WHERE {proj_a} AND {proj_b} "
                 "DELETE r",
-                {"rows": delete_rows, "project_id": project_id},
+                {"rows": delete_rows, "project_id": project_id, "is_global": is_global},
             )

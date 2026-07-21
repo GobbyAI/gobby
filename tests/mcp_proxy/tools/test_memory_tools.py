@@ -18,6 +18,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 
 from gobby.mcp_proxy.tools.memory import create_memory_registry, get_current_project_id
+from gobby.storage.projects import PERSONAL_PROJECT_ID
 
 pytestmark = pytest.mark.unit
 
@@ -32,7 +33,8 @@ class MockMemory:
         memory_type: str = "fact",
         created_at: str = "2024-01-01T00:00:00",
         updated_at: str | None = None,
-        project_id: str | None = None,
+        project_id: str = PERSONAL_PROJECT_ID,
+        is_global: bool = False,
         source_type: str = "agent",
         source_session_id: str | None = None,
         access_count: int = 0,
@@ -50,6 +52,7 @@ class MockMemory:
         self.created_at = created_at
         self.updated_at = updated_at or created_at
         self.project_id = project_id
+        self.is_global = is_global
         self.source_type = source_type
         self.source_session_id = source_session_id
         self.access_count = access_count
@@ -81,7 +84,7 @@ def mock_memory_manager():
     manager.get_related = AsyncMock(return_value=[MockMemory()])
     manager.update_memory = AsyncMock(return_value=MockMemory())
     manager.update_memory_scoped = AsyncMock(return_value=MockMemory())
-    manager.rescope_memory = AsyncMock(return_value=MockMemory(project_id=None))
+    manager.promote_memory = AsyncMock(return_value=MockMemory(is_global=True))
     manager.get_stats = MagicMock(return_value={"total": 10, "by_type": {"fact": 5}})
     manager.db = MagicMock()
     manager.content_exists = MagicMock(return_value=False)
@@ -575,8 +578,8 @@ class TestPromoteMemoryToGlobal:
         memory_registry,
         mock_memory_manager,
     ) -> None:
-        promoted = MockMemory(id="mem-123", project_id=None)
-        mock_memory_manager.rescope_memory.return_value = promoted
+        promoted = MockMemory(id="mem-123", is_global=True)
+        mock_memory_manager.promote_memory.return_value = promoted
 
         result = await memory_registry.call(
             "promote_memory_to_global",
@@ -587,26 +590,29 @@ class TestPromoteMemoryToGlobal:
             "success": True,
             "memory": {
                 "id": "mem-123",
-                "project_id": None,
+                "project_id": PERSONAL_PROJECT_ID,
+                "is_global": True,
                 "updated_at": promoted.updated_at,
             },
         }
-        mock_memory_manager.rescope_memory.assert_awaited_once_with("mem-123", None)
+        mock_memory_manager.promote_memory.assert_awaited_once_with("mem-123")
 
     @pytest.mark.asyncio
-    async def test_promote_memory_to_global_rejects_non_global_target(
+    async def test_promote_memory_to_global_has_no_target_argument(
         self,
         memory_registry,
         mock_memory_manager,
     ) -> None:
-        result = await memory_registry.call(
-            "promote_memory_to_global",
-            {"memory_id": "mem-123", "target_project_id": "11111111-1111-4111-8111-111111110002"},
-        )
+        with pytest.raises(ValueError, match="Unknown argument.*target_project_id"):
+            await memory_registry.call(
+                "promote_memory_to_global",
+                {
+                    "memory_id": "mem-123",
+                    "target_project_id": "11111111-1111-4111-8111-111111110002",
+                },
+            )
 
-        assert result["success"] is False
-        assert "Only promote-to-global" in result["error"]
-        mock_memory_manager.rescope_memory.assert_not_awaited()
+        mock_memory_manager.promote_memory.assert_not_awaited()
 
 
 class TestListMemories:

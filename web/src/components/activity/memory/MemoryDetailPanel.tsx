@@ -169,13 +169,13 @@ export function MemoryDetailPanel({
             <span
               className={cn(
                 "activity-chip",
-                memory.project_id === null && "activity-chip--accent",
+                memory.is_global && "activity-chip--accent",
               )}
             >
               {memoryScopeLabel(memory)}
             </span>
             <span className="truncate">
-              {memory.project_id === null ? "Available across projects" : "Current project"}
+              {memory.is_global ? "Available across projects" : "Current project"}
             </span>
           </dd>
           <dt className="text-muted-foreground">Created</dt>

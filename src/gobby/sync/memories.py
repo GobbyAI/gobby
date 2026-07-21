@@ -14,6 +14,7 @@ from uuid import UUID
 from gobby.config.persistence import MemoryBackupConfig
 from gobby.memory.manager import MemoryManager
 from gobby.storage.hub.protocol import HubDatabase
+from gobby.storage.memories import ALL_MEMORIES, MemoryScope
 from gobby.sync.jsonl_io import atomic_write_text, export_file_lock
 from gobby.utils.datetime import datetime_to_iso, parse_stored_datetime
 from gobby.utils.json_helpers import json_dumps
@@ -124,7 +125,9 @@ def _validate_memory_record(data: dict[str, Any], line_num: int) -> dict[str, An
     if source not in ("user", "agent"):
         raise MemoryRestoreError(f"Memory backup line {line_num}: source must be 'user' or 'agent'")
 
-    _validate_uuid(data.get("project_id"), field="project_id", line_num=line_num)
+    _validate_uuid(data.get("project_id"), field="project_id", line_num=line_num, required=True)
+    if not isinstance(data.get("is_global"), bool):
+        raise MemoryRestoreError(f"Memory backup line {line_num}: is_global must be a boolean")
     _validate_uuid(data.get("source_id"), field="source_id", line_num=line_num)
     return data
 
@@ -238,7 +241,14 @@ class MemoryBackupManager:
             existing_session_ids = {
                 row["id"] for row in conn.execute("SELECT id FROM sessions").fetchall()
             }
+            existing_project_ids = {
+                row["id"] for row in conn.execute("SELECT id FROM projects").fetchall()
+            }
             for record in records:
+                if record["project_id"] not in existing_project_ids:
+                    raise MemoryRestoreError(
+                        f"Memory {record['id']}: owner project {record['project_id']} does not exist"
+                    )
                 existing = conn.execute(
                     "SELECT updated_at FROM memories WHERE id = %s",
                     (record["id"],),
@@ -256,7 +266,8 @@ class MemoryBackupManager:
                 memory_manager.storage.create_memory(
                     content=record["content"],
                     memory_type=record["type"],
-                    project_id=record.get("project_id"),
+                    project_id=record["project_id"],
+                    is_global=record["is_global"],
                     tags=record.get("tags") or [],
                     source_type=record.get("source", "agent"),
                     source_session_id=source_session_id,
@@ -277,10 +288,11 @@ class MemoryBackupManager:
         page_size = 1000
         offset = 0
         while True:
-            page = memory_manager.list_memories(
+            scope = MemoryScope.owner(project_id) if project_id is not None else ALL_MEMORIES
+            page = memory_manager.storage.list_memories(
+                scope=scope,
                 limit=page_size,
                 offset=offset,
-                project_id=project_id,
             )
             memories.extend(page)
             if len(page) < page_size:
@@ -299,6 +311,7 @@ class MemoryBackupManager:
                     "source": memory.source_type,
                     "source_id": memory.source_session_id,
                     "project_id": memory.project_id,
+                    "is_global": memory.is_global,
                 }
                 for memory in memories
             ),

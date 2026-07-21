@@ -8,6 +8,7 @@ import unicodedata
 
 from gobby.memory.falkor_client import normalize_relationship_type
 from gobby.memory.identity import entity_key, normalize_entity_name
+from gobby.storage.projects import GLOBAL_PROJECT_ID
 
 from .models import Entity, Relationship, _GraphEntity
 
@@ -25,7 +26,8 @@ def display_entity_name(name: str) -> str:
 def normalize_entities(
     entities: list[Entity],
     *,
-    project_id: str | None,
+    project_id: str,
+    is_global: bool,
 ) -> list[_GraphEntity]:
     """Normalize and deduplicate extracted entities by stable key."""
     deduped: dict[str, _GraphEntity] = {}
@@ -38,14 +40,16 @@ def normalize_entities(
         if not normalized_name:
             logger.debug("Dropped entity with empty normalized name: %r", entity.name)
             continue
-        key = entity_key(project_id, display_name)
+        entity_project_id = GLOBAL_PROJECT_ID if is_global else project_id
+        key = entity_key(entity_project_id, display_name, is_global=is_global)
         if key in deduped:
             continue
         deduped[key] = _GraphEntity(
             entity_key=key,
             name=display_name,
             entity_type=entity.entity_type,
-            project_id=project_id,
+            project_id=entity_project_id,
+            is_global=is_global,
             normalized_name=normalized_name,
         )
     return list(deduped.values())
@@ -55,14 +59,24 @@ def normalize_relationships(
     relationships: list[Relationship],
     *,
     entities: list[_GraphEntity],
-    project_id: str | None,
+    project_id: str,
+    is_global: bool,
 ) -> list[Relationship]:
     """Normalize relationships to stable entity keys and stored Cypher types."""
     entity_map = {entity.entity_key: entity for entity in entities}
     deduped: dict[tuple[str, str, str], Relationship] = {}
     for relationship in relationships:
-        source_key = entity_key(project_id, relationship.source)
-        target_key = entity_key(project_id, relationship.target)
+        entity_project_id = GLOBAL_PROJECT_ID if is_global else project_id
+        source_key = entity_key(
+            entity_project_id,
+            relationship.source,
+            is_global=is_global,
+        )
+        target_key = entity_key(
+            entity_project_id,
+            relationship.target,
+            is_global=is_global,
+        )
         relationship_type = normalize_relationship_type(relationship.relationship)
         if source_key not in entity_map or target_key not in entity_map:
             logger.debug(

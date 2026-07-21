@@ -15,6 +15,7 @@ from datetime import datetime
 from typing import Any, Protocol
 
 from gobby.memory.dream.models import DreamCandidate
+from gobby.storage.memories_scope import MemoryScope
 from gobby.utils.datetime import parse_stored_datetime, require_stored_datetime, utc_now
 
 logger = logging.getLogger(__name__)
@@ -26,10 +27,8 @@ class SweepCandidateSource(Protocol):
         *,
         limit: int,
         redream_cutoff: str,
-        project_id: str | None = None,
+        scope: MemoryScope,
         memory_type: str | None = None,
-        include_global: bool = True,
-        global_only: bool = False,
     ) -> list[Any]: ...
 
 
@@ -38,10 +37,8 @@ async def list_sweep_candidates(
     *,
     limit: int,
     redream_cutoff: str,
-    project_id: str | None = None,
+    scope: MemoryScope,
     memory_type: str | None = None,
-    include_global: bool = True,
-    global_only: bool = False,
     now: datetime | None = None,
 ) -> list[DreamCandidate]:
     """Fetch one page of active sweep candidates and adapt them for planning.
@@ -55,10 +52,8 @@ async def list_sweep_candidates(
         memory_manager.list_dream_candidates,
         limit=limit,
         redream_cutoff=redream_cutoff,
-        project_id=project_id,
+        scope=scope,
         memory_type=memory_type,
-        include_global=include_global,
-        global_only=global_only,
     )
     return [memory_to_candidate(row, now) for row in rows]
 
@@ -71,13 +66,14 @@ def memory_to_candidate(memory: Any, now: datetime) -> DreamCandidate:
         reasons.append("re-dream cooldown elapsed")
     else:
         reasons.append("never dreamed")
-    if getattr(memory, "project_id", None) is None:
+    if bool(getattr(memory, "is_global", False)):
         reasons.append("global memory")
     return DreamCandidate(
         id=str(memory.id),
         content=str(memory.content),
         memory_type=str(memory.memory_type),
-        project_id=getattr(memory, "project_id", None),
+        project_id=str(memory.project_id),
+        is_global=bool(memory.is_global),
         source_type=getattr(memory, "source_type", None),
         source_session_id=getattr(memory, "source_session_id", None),
         tags=list(getattr(memory, "tags", None) or []),

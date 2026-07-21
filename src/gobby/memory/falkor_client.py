@@ -392,12 +392,12 @@ class FalkorClient:
         """Get entities and relationships for visualization."""
         entity_rows = await self.query(
             "MATCH (n:_Entity) "
-            "WHERE n.project_id = $project_id "
-            "OR ($project_id IS NULL AND n.project_id IS NULL) "
+            "WHERE (($is_global AND n.is_global = true) "
+            "OR (NOT $is_global AND n.project_id = $project_id AND n.is_global = false)) "
             "RETURN n.entity_key AS entity_key, n.name AS name, n.entity_type AS entity_type, "
             "n.project_id AS project_id, properties(n) AS props "
             "ORDER BY n.updated_at DESC LIMIT $limit",
-            {"limit": limit, "project_id": project_id},
+            {"limit": limit, "project_id": project_id, "is_global": project_id is None},
         )
 
         entities: list[dict[str, Any]] = []
@@ -456,15 +456,19 @@ class FalkorClient:
         """Expand a single entity's connections."""
         rows = await self.query(
             "MATCH (a:_Entity {entity_key: $entity_key})-[r]-(b:_Entity) "
-            "WHERE a.project_id = $project_id "
-            "OR ($project_id IS NULL AND a.project_id IS NULL) "
+            "WHERE (($is_global AND a.is_global = true) "
+            "OR (NOT $is_global AND a.project_id = $project_id AND a.is_global = false)) "
             "RETURN a.entity_key AS source_key, a.name AS source_name, "
             "properties(a) AS source_props, "
             "b.entity_key AS target_key, b.name AS target_name, properties(b) AS target_props, "
             "type(r) AS rel_type, properties(r) AS rel_props, "
             "startNode(r) = a AS is_outgoing "
             "LIMIT 50",
-            {"entity_key": entity_key, "project_id": project_id},
+            {
+                "entity_key": entity_key,
+                "project_id": project_id,
+                "is_global": project_id is None,
+            },
         )
 
         entities: list[dict[str, Any]] = []
@@ -505,10 +509,14 @@ class FalkorClient:
         if entity_key not in seen:
             center_rows = await self.query(
                 "MATCH (n:_Entity {entity_key: $entity_key}) "
-                "WHERE n.project_id = $project_id "
-                "OR ($project_id IS NULL AND n.project_id IS NULL) "
+                "WHERE (($is_global AND n.is_global = true) "
+                "OR (NOT $is_global AND n.project_id = $project_id AND n.is_global = false)) "
                 "RETURN n.name AS name, properties(n) AS props LIMIT 1",
-                {"entity_key": entity_key, "project_id": project_id},
+                {
+                    "entity_key": entity_key,
+                    "project_id": project_id,
+                    "is_global": project_id is None,
+                },
             )
             props: dict[str, Any] = {}
             name = entity_key
@@ -704,8 +712,8 @@ class FalkorClient:
         # displace an in-scope match from the candidate window.
         cypher = (
             "MATCH (node:_Entity) "
-            "WHERE (node.project_id = $project_id "
-            "OR ($include_global AND node.project_id IS NULL)) "
+            "WHERE ((node.project_id = $project_id AND node.is_global = false) "
+            "OR ($include_global AND node.is_global = true)) "
             "AND node.embedding IS NOT NULL "
             "WITH node, vec.cosineDistance(node.embedding, vecf32($embedding)) AS distance "
             "WHERE (1.0 - distance) >= $min_score "

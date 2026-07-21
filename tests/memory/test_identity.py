@@ -11,7 +11,9 @@ pytestmark = pytest.mark.unit
 
 def test_entity_key_distinguishes_global_scope_from_matching_project_id() -> None:
     """A real project_id matching the global marker should not collide."""
-    assert entity_key(None, "Python") != entity_key("__global__", "Python")
+    assert entity_key("__global__", "Python", is_global=True) != entity_key(
+        "__global__", "Python", is_global=False
+    )
 
 
 def test_entity_key_is_unambiguous_when_components_contain_separators() -> None:

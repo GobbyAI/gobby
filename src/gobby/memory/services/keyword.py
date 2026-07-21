@@ -33,7 +33,11 @@ class MemoryKeywordSearchService:
             hits = backend.search(
                 query,
                 limit,
-                filters={"project_id": project_id, "include_global": include_global},
+                filters={
+                    "project_id": project_id,
+                    "include_global": include_global,
+                    **({"is_global": False} if project_id and not include_global else {}),
+                },
             )
         except Exception as exc:
             if is_pg_search_parse_error(exc):

@@ -12,6 +12,7 @@ import pytest
 from gobby.config.persistence import MemoryBackupConfig, MemoryConfig
 from gobby.memory.manager import MemoryManager
 from gobby.storage.hub.protocol import HubDatabase
+from gobby.storage.projects import PERSONAL_PROJECT_ID
 from gobby.sync.memories import MemoryBackupError, MemoryBackupManager, MemoryRestoreError
 
 pytestmark = pytest.mark.integration
@@ -60,6 +61,7 @@ def _create_memory(
         content=content,
         memory_type="fact",
         source_type="agent",
+        project_id=PERSONAL_PROJECT_ID,
         memory_id=memory_id,
         created_at=OLD_TIME,
         updated_at=updated_at,
@@ -81,7 +83,8 @@ def _record(
         "updated_at": updated_at.isoformat(),
         "source": "agent",
         "source_id": None,
-        "project_id": None,
+        "project_id": PERSONAL_PROJECT_ID,
+        "is_global": False,
     }
 
 

@@ -19,6 +19,7 @@ _DREAM_SOFT_DELETE_COLUMNS = ("deleted_at", "dream_action", "last_dreamed_at")
 _MEMORY_COLUMNS = (
     "id",
     "project_id",
+    "is_global",
     "memory_type",
     "content",
     "source_type",

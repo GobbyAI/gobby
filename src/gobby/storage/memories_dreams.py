@@ -3,6 +3,7 @@ from typing import Any, Literal
 
 from gobby.storage.memories_base import MemoryStoreBase
 from gobby.storage.memories_models import Memory
+from gobby.storage.memories_scope import MemoryScope, memory_scope_predicate
 from gobby.storage.sql_dialect import (
     json_array_contains_condition,
     json_empty_array_coalesce_expr,
@@ -62,7 +63,7 @@ class MemoryDreamMixin(MemoryStoreBase):
         with self.db.transaction() as conn:
             cursor = conn.execute(
                 "UPDATE memories SET last_dreamed_at = NULL "
-                "WHERE project_id = %s AND deleted_at IS NULL "
+                "WHERE project_id = %s AND is_global IS FALSE AND deleted_at IS NULL "
                 "AND last_dreamed_at IS NOT NULL",
                 (project_id,),
             )
@@ -76,7 +77,7 @@ class MemoryDreamMixin(MemoryStoreBase):
         with self.db.transaction() as conn:
             cursor = conn.execute(
                 "UPDATE memories SET last_dreamed_at = NULL "
-                "WHERE project_id IS NULL AND deleted_at IS NULL "
+                "WHERE is_global IS TRUE AND deleted_at IS NULL "
                 "AND last_dreamed_at IS NOT NULL"
             )
             affected = cursor.rowcount
@@ -128,10 +129,8 @@ class MemoryDreamMixin(MemoryStoreBase):
         *,
         limit: int,
         redream_cutoff: datetime | str,
-        project_id: str | None = None,
+        scope: MemoryScope,
         memory_type: str | None = None,
-        include_global: bool = True,
-        global_only: bool = False,
     ) -> list[Memory]:
         """Return the next page of active memories due for a dream sweep.
 
@@ -139,13 +138,8 @@ class MemoryDreamMixin(MemoryStoreBase):
         dreamed or were last dreamed before ``redream_cutoff`` (the cooldown
         boundary, ``run_started_at - redream_after_hours``). Review-lesson
         memories are protected from dream mutations and excluded before paging.
-        Project/global and memory-type scoping is applied in SQL, mirroring
-        ``_in_scope``: a
-        global-only run matches only NULL-scoped rows; otherwise, a ``project_id``
-        with ``include_global`` also matches global rows; without it only that
-        project's rows match; a ``None`` ``project_id`` sweeps every row. Ordered
-        oldest-dreamed first so the sweep drains deterministically as each
-        returned page is stamped out of the next page's window.
+        Ownership/visibility and memory-type scoping is applied in SQL. Ordered
+        oldest-dreamed first so the sweep drains deterministically.
         """
         clauses = [
             "deleted_at IS NULL",
@@ -162,14 +156,10 @@ class MemoryDreamMixin(MemoryStoreBase):
         )
         clauses.append(f"NOT ({review_lesson_condition})")
         params.extend(review_lesson_params)
-        if global_only:
-            clauses.append("project_id IS NULL")
-        elif project_id is not None:
-            if include_global:
-                clauses.append("(project_id = %s OR project_id IS NULL)")
-            else:
-                clauses.append("project_id = %s")
-            params.append(project_id)
+        scope_predicate, scope_params = memory_scope_predicate(scope)
+        if scope_predicate:
+            clauses.append(scope_predicate)
+            params.extend(scope_params)
         if memory_type is not None:
             clauses.append("memory_type = %s")
             params.append(memory_type)
@@ -182,16 +172,21 @@ class MemoryDreamMixin(MemoryStoreBase):
         )
         return [Memory.from_row(row) for row in rows]
 
-    def list_dream_project_ids(self, *, redream_cutoff: datetime | str) -> list[str | None]:
-        """Return distinct project scopes that have due memory dream work."""
+    def list_dream_scopes(self, *, redream_cutoff: datetime | str) -> list[MemoryScope]:
+        """Return distinct explicit scopes that have due memory dream work."""
         cutoff = parse_stored_datetime(redream_cutoff)
         if cutoff is None:
             raise ValueError("redream_cutoff is required")
         rows = self.db.fetchall(
-            "SELECT DISTINCT project_id FROM memories "
+            "SELECT DISTINCT project_id, is_global FROM memories "
             "WHERE deleted_at IS NULL "
             "AND (last_dreamed_at IS NULL OR last_dreamed_at < %s) "
-            "ORDER BY project_id ASC NULLS LAST",
+            "ORDER BY is_global ASC, project_id ASC",
             (cutoff,),
         )
-        return [row["project_id"] for row in rows]
+        scopes = [
+            MemoryScope.project_only(str(row["project_id"])) for row in rows if not row["is_global"]
+        ]
+        if any(row["is_global"] for row in rows):
+            scopes.append(MemoryScope.global_only())
+        return scopes

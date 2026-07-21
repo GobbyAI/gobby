@@ -16,6 +16,7 @@ from gobby.config.persistence import MemoryConfig
 from gobby.memory.manager import MemoryManager
 from gobby.memory.vectorstore import VectorStore
 from gobby.storage.hub.protocol import HubDatabase
+from gobby.storage.projects import PERSONAL_PROJECT_ID
 
 pytestmark = pytest.mark.unit
 
@@ -202,7 +203,11 @@ async def test_delete_memory_removes_from_graph(
     memory = await manager.create_memory(content="to delete from graph")
     await manager.delete_memory(memory.id)
 
-    mock_kg.remove_memory_from_graph.assert_awaited_once_with(memory.id, project_id=None)
+    mock_kg.remove_memory_from_graph.assert_awaited_once_with(
+        memory.id,
+        project_id=PERSONAL_PROJECT_ID,
+        is_global=False,
+    )
     assert mock_kg.remove_memory_from_graph.await_count == 1
     assert mock_kg.remove_memory_from_graph.await_args is not None
 
@@ -236,7 +241,7 @@ async def test_update_memory_content_reembeds_same_id(
     mock_vector_store.upsert.assert_awaited_once_with(
         memory.id,
         [0.1, 0.2, 0.3, 0.4] * 384,
-        {"project_id": None},
+        {"project_id": PERSONAL_PROJECT_ID, "is_global": False},
     )
 
 
@@ -311,7 +316,11 @@ async def test_purge_dream_hidden_reconciles_qdrant_and_graph(
     assert result["memory_ids"] == [aged.id]
     # Only the aged row is reconciled out of Qdrant and the graph.
     mock_vector_store.delete.assert_awaited_once_with(aged.id)
-    mock_kg.remove_memory_from_graph.assert_awaited_once_with(aged.id, project_id=None)
+    mock_kg.remove_memory_from_graph.assert_awaited_once_with(
+        aged.id,
+        project_id=None,
+        is_global=None,
+    )
     # The fresh soft-hidden row survives purge (still recoverable).
     assert manager.get_memory(fresh.id, visibility="hidden") is not None
     assert manager.get_memory(aged.id, visibility="all") is None

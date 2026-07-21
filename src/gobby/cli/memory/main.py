@@ -7,7 +7,7 @@ from .dream import memory_dream
 from .export import backup_memories, export_memories, restore_memories
 from .graph import clear_graph, graph_counts, invalidate, rebuild_graph
 from .indices import rebuild_crossrefs, reconcile, reindex_embeddings
-from .maintenance import dedupe_memories, fix_null_project
+from .maintenance import dedupe_memories
 from .signals import recall_signals
 
 
@@ -27,7 +27,6 @@ memory.add_command(memory_stats)
 memory.add_command(memory_dream)
 memory.add_command(export_memories)
 memory.add_command(dedupe_memories)
-memory.add_command(fix_null_project)
 memory.add_command(backup_memories)
 memory.add_command(restore_memories)
 memory.add_command(reindex_embeddings)

@@ -17,8 +17,8 @@ from gobby.memory.services._search_models import SearchDebugHit, SearchDebugSnap
 from gobby.memory.services._search_paths import search_qdrant_keyword, search_with_graph
 from gobby.memory.services._search_results import build_results
 from gobby.memory.services._search_rrf import rrf_merge, rrf_scores
-from gobby.memory.vectorstore import memory_project_scope_filter
-from gobby.storage.memories import LocalMemoryManager, Memory
+from gobby.memory.vectorstore import memory_scope_filter
+from gobby.storage.memories import ALL_MEMORIES, LocalMemoryManager, Memory, MemoryScope
 
 if TYPE_CHECKING:
     from gobby.config.persistence import MemoryConfig
@@ -122,6 +122,13 @@ class SearchService:
         include_global: bool = True,
     ) -> list[Memory]:
         """Retrieve memories via VectorStore + optional FalkorDB graph search."""
+        scope = ALL_MEMORIES
+        if project_id is not None:
+            scope = (
+                MemoryScope.project_visible(project_id)
+                if include_global
+                else MemoryScope.project_only(project_id)
+            )
         if query and self._vector_store and self._embed_fn:
             from gobby.search.keywords import extract_keywords
 
@@ -129,7 +136,7 @@ class SearchService:
             query_embedding = await self._embed_fn(embed_query, is_query=True)
             half_life = self._recall_constants.half_life_days
             effective_min_score = min_score if min_score is not None else 0.0
-            filters = memory_project_scope_filter(project_id, include_global=include_global)
+            filters = memory_scope_filter(scope)
             use_graph = self._kg_service is not None and self._falkordb_graph_search
 
             if use_graph:
@@ -185,13 +192,12 @@ class SearchService:
         else:
             memories = await self._run_storage(
                 self._storage.list_memories,
-                project_id=project_id,
+                scope=scope,
                 memory_type=memory_type,
                 limit=limit,
                 tags_all=tags_all,
                 tags_any=tags_any,
                 tags_none=tags_none,
-                include_global=include_global,
             )
 
         await self.update_access_stats(memories)

@@ -50,5 +50,6 @@ class _GraphEntity:
     entity_key: str
     name: str
     entity_type: str
-    project_id: str | None
+    project_id: str
+    is_global: bool
     normalized_name: str

@@ -225,7 +225,7 @@ async def test_vector_search_uses_project_filtered_exact_cosine_query() -> None:
     compact = _compact(cypher)
     assert "MATCH (node:_Entity)" in compact
     assert "node.project_id = $project_id" in compact
-    assert "$include_global AND node.project_id IS NULL" in compact
+    assert "$include_global AND node.is_global = true" in compact
     assert "vec.cosineDistance(node.embedding, vecf32($embedding))" in compact
     assert "ORDER BY distance ASC LIMIT $limit" in compact
     assert "vecf32(" in compact
@@ -243,7 +243,9 @@ async def test_memory_link_timestamps_use_unix_epoch_ms() -> None:
     client = AsyncMock()
     writer = KnowledgeGraphWriter(client)
 
-    await writer.link_entities_to_memory([], memory_id="mem-1", project_id="proj-1")
+    await writer.link_entities_to_memory(
+        [], memory_id="mem-1", project_id="proj-1", is_global=False
+    )
 
     cypher = _compact(client.query.await_args.args[0])
     assert "timestamp()" in cypher
@@ -267,6 +269,7 @@ async def test_code_link_timestamps_use_unix_epoch_ms() -> None:
         name="Python",
         entity_type="tool",
         project_id="proj-1",
+        is_global=False,
         normalized_name="python",
     )
 

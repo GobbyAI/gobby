@@ -134,7 +134,7 @@ class TestVectorSearch:
         cypher, params = client.query.call_args.args
         assert "MATCH (node:_Entity)" in cypher
         assert "node.project_id = $project_id" in cypher
-        assert "$include_global AND node.project_id IS NULL" in cypher
+        assert "$include_global AND node.is_global = true" in cypher
         assert cypher.index("node.project_id = $project_id") < cypher.index("vec.cosineDistance")
         assert "CALL db.idx.vector.queryNodes" not in cypher
         assert "vecf32($embedding)" in cypher
@@ -211,7 +211,7 @@ class TestVectorSearch:
         assert [row["entity_key"] for row in results] == ["wanted"]
         cypher, params = client.query.call_args.args
         assert "node.project_id = $project_id" in cypher
-        assert "$include_global AND node.project_id IS NULL" in cypher
+        assert "$include_global AND node.is_global = true" in cypher
         assert "CALL db.idx.vector.queryNodes" not in cypher
         assert params["project_id"] == "proj-1"
         assert params["include_global"] is True

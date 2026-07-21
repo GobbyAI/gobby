@@ -44,7 +44,8 @@ from gobby.memory.dream.truth_digest import (
 )
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.memories import LocalMemoryManager
-from gobby.storage.projects import LocalProjectManager
+from gobby.storage.memories_scope import MemoryScope, MemoryScopeKind
+from gobby.storage.projects import PERSONAL_PROJECT_ID, LocalProjectManager
 
 pytestmark = pytest.mark.unit
 
@@ -54,7 +55,8 @@ def _memory(
     *,
     days_old: int = 90,
     access_count: int = 0,
-    project_id: str | None = "proj-1",
+    project_id: str = "proj-1",
+    is_global: bool = False,
     last_dreamed_at: str | None = None,
 ) -> SimpleNamespace:
     when = (datetime.now(UTC) - timedelta(days=days_old)).isoformat()
@@ -63,6 +65,7 @@ def _memory(
         content=f"Memory {memory_id}",
         memory_type="fact",
         project_id=project_id,
+        is_global=is_global,
         source_type="agent",
         source_session_id=None,
         tags=[],
@@ -82,6 +85,7 @@ def _candidate(memory_id: str) -> DreamCandidate:
         content=f"content {memory_id}",
         memory_type="fact",
         project_id="proj-1",
+        is_global=False,
         source_type="agent",
         source_session_id=None,
         tags=[],
@@ -114,19 +118,15 @@ class _RecordingSweepSource:
         *,
         limit: int,
         redream_cutoff: str,
-        project_id: str | None = None,
+        scope: MemoryScope,
         memory_type: str | None = None,
-        include_global: bool = True,
-        global_only: bool = False,
     ) -> list[Any]:
         self.calls.append(
             {
                 "limit": limit,
                 "redream_cutoff": redream_cutoff,
-                "project_id": project_id,
+                "scope": scope,
                 "memory_type": memory_type,
-                "include_global": include_global,
-                "global_only": global_only,
             }
         )
         return list(self.rows)
@@ -140,10 +140,8 @@ async def test_list_sweep_candidates_adapts_rows_and_forwards_scope() -> None:
         source,
         limit=50,
         redream_cutoff="2026-06-14T00:00:00+00:00",
-        project_id="proj-1",
+        scope=MemoryScope.global_only(),
         memory_type="fact",
-        include_global=False,
-        global_only=True,
         now=datetime(2026, 6, 15, tzinfo=UTC),
     )
 
@@ -152,10 +150,8 @@ async def test_list_sweep_candidates_adapts_rows_and_forwards_scope() -> None:
         {
             "limit": 50,
             "redream_cutoff": "2026-06-14T00:00:00+00:00",
-            "project_id": "proj-1",
+            "scope": MemoryScope.global_only(),
             "memory_type": "fact",
-            "include_global": False,
-            "global_only": True,
         }
     ]
     assert "re-dream cooldown elapsed" in result[0].reasons
@@ -163,15 +159,19 @@ async def test_list_sweep_candidates_adapts_rows_and_forwards_scope() -> None:
 
 @pytest.mark.asyncio
 async def test_list_sweep_candidates_flags_never_dreamed_and_global() -> None:
-    source = _RecordingSweepSource([_memory("g1", project_id=None, last_dreamed_at=None)])
+    source = _RecordingSweepSource(
+        [_memory("g1", project_id=PERSONAL_PROJECT_ID, is_global=True, last_dreamed_at=None)]
+    )
 
     result = await list_sweep_candidates(
         source,
         limit=10,
         redream_cutoff="2026-06-14T00:00:00+00:00",
+        scope=MemoryScope.global_only(),
     )
 
-    assert result[0].project_id is None
+    assert result[0].project_id == PERSONAL_PROJECT_ID
+    assert result[0].is_global is True
     assert result[0].reasons == ["never dreamed", "global memory"]
 
 
@@ -537,7 +537,8 @@ def test_duplicate_groups_never_cross_project_scope() -> None:
     global_memory = replace(
         _candidate("global-memory"),
         content="same",
-        project_id=None,
+        project_id=PERSONAL_PROJECT_ID,
+        is_global=True,
     )
 
     assert find_duplicate_groups([project_memory, other_project_memory, global_memory]) == []
@@ -624,9 +625,10 @@ async def test_apply_and_revert_soft_hide_refresh_and_keep() -> None:
     async def restore_graph_only(
         memory_id: str,
         content: str,
-        project_id: str | None,
+        project_id: str,
+        is_global: bool,
     ) -> None:
-        del content, project_id
+        del content, project_id, is_global
         manager.graph_ids.add(memory_id)
 
     async def reconcile_missing_vectors(dry_run: bool = False) -> dict[str, Any]:
@@ -681,25 +683,33 @@ async def test_apply_and_revert_promote_rescopes_without_updated_at_bump() -> No
     )
 
     assert summary["mutations"] == 1
-    assert db.memories["promote-me"]["project_id"] is None
+    assert db.memories["promote-me"]["project_id"] == "proj-1"
+    assert db.memories["promote-me"]["is_global"] is True
     assert db.memories["promote-me"]["updated_at"] == before_updated_at
     assert db.memories["promote-me"]["last_dreamed_at"] == "2026-01-01T00:00:00+00:00"
     assert {row["action"] for row in db.snapshots} == {"promote"}
-    manager.sync_memory_scope_indices.assert_any_await("promote-me", None)
+    assert any(
+        call.args[0].id == "promote-me" and call.args[0].is_global is True
+        for call in manager.sync_memory_scope_indices.await_args_list
+    )
 
     result = await revert_dream_run(store=store, run_id=run_id, memory_manager=manager)
 
     assert result["success"] is True
     assert db.memories["promote-me"]["project_id"] == "proj-1"
+    assert db.memories["promote-me"]["is_global"] is False
     assert db.memories["promote-me"]["updated_at"] == before_updated_at
-    manager.sync_memory_scope_indices.assert_any_await("promote-me", "proj-1")
+    assert any(
+        call.args[0].id == "promote-me" and call.args[0].is_global is False
+        for call in manager.sync_memory_scope_indices.await_args_list
+    )
 
 
 @pytest.mark.asyncio
 async def test_promote_already_global_stamps_cooldown_without_snapshot() -> None:
     db = _FakeDreamDB()
     db.memories = {"global": _row("global", "universal")}
-    db.memories["global"]["project_id"] = None
+    db.memories["global"]["is_global"] = True
     manager = _FakeMemoryManager(db)
     store = MemoryDreamStore(db)
     run_id = store.create_run(project_id="proj-1", dry_run=False, options={})
@@ -718,7 +728,7 @@ async def test_promote_already_global_stamps_cooldown_without_snapshot() -> None
     assert summary["mutations"] == 0
     assert db.memories["global"]["last_dreamed_at"] == "2026-01-01T00:00:00+00:00"
     assert store.list_snapshots(run_id) == []
-    manager.rescope_memory.assert_not_awaited()
+    manager.promote_memory.assert_not_awaited()
 
 
 @pytest.mark.asyncio
@@ -743,8 +753,13 @@ async def test_failed_promote_rolls_back_scope_and_resyncs_secondary_scope() -> 
     assert result["errors"] == 1
     assert result["error_details"][0]["error"] == "stamp failed"
     assert db.memories["promote-me"]["project_id"] == "proj-1"
-    manager.sync_memory_scope_indices.assert_any_await("promote-me", None)
-    manager.sync_memory_scope_indices.assert_any_await("promote-me", "proj-1")
+    assert db.memories["promote-me"]["is_global"] is False
+    assert [
+        call.args[0].is_global for call in manager.sync_memory_scope_indices.await_args_list
+    ] == [
+        True,
+        False,
+    ]
 
 
 @pytest.mark.asyncio
@@ -859,9 +874,9 @@ async def test_apply_and_revert_legacy_merge_and_supersede() -> None:
 
 def test_dream_store_transfers_and_restores_crossrefs_in_postgres(temp_db: Any) -> None:
     memory_storage = LocalMemoryManager(temp_db)
-    keeper = memory_storage.create_memory(content="keeper")
-    duplicate = memory_storage.create_memory(content="duplicate")
-    related = memory_storage.create_memory(content="related")
+    keeper = memory_storage.create_memory(content="keeper", project_id=PERSONAL_PROJECT_ID)
+    duplicate = memory_storage.create_memory(content="duplicate", project_id=PERSONAL_PROJECT_ID)
+    related = memory_storage.create_memory(content="related", project_id=PERSONAL_PROJECT_ID)
     memory_storage.create_crossref(duplicate.id, related.id, 0.93)
     memory_storage.create_crossref(related.id, keeper.id, 0.81)
     store = MemoryDreamStore(temp_db)
@@ -1253,7 +1268,7 @@ async def test_dream_execution_lock_covers_aggregate_cron_entrypoint() -> None:
         return await manual_service.execute_run(manual_run_id, options)
 
     aggregate_service._apply_truth_change_triggers = AsyncMock(side_effect=blocked_truth_trigger)
-    aggregate_service.memory_manager.list_dream_project_ids = MagicMock(return_value=[])
+    aggregate_service.memory_manager.list_dream_scopes = MagicMock(return_value=[])
     manual_service._stream_sweep = AsyncMock(side_effect=manual_sweep)
     manual_run_id = manual_service.store.create_run(project_id="proj-1", dry_run=False, options={})
     options = DreamRunOptions(dry_run=False, project_id="proj-1")
@@ -1329,6 +1344,7 @@ def _row(memory_id: str, content: str) -> dict[str, Any]:
     return {
         "id": memory_id,
         "project_id": "proj-1",
+        "is_global": False,
         "memory_type": "fact",
         "content": content,
         "source_type": "agent",
@@ -1509,6 +1525,7 @@ class _FakeDreamDB:
             columns = (
                 "id",
                 "project_id",
+                "is_global",
                 "memory_type",
                 "content",
                 "source_type",
@@ -1685,7 +1702,8 @@ class _FakeMemoryManager:
         self.delete_memory = AsyncMock(side_effect=self._delete)
         self.update_memory = AsyncMock(side_effect=self._update)
         self.create_memory = AsyncMock(side_effect=self._create)
-        self.rescope_memory = AsyncMock(side_effect=self._rescope)
+        self.promote_memory = AsyncMock(side_effect=self._promote)
+        self.demote_memory = AsyncMock(side_effect=self._demote)
         self.sync_memory_scope_indices = AsyncMock(return_value=[])
         self.restore_memory_indices = AsyncMock(side_effect=self._restore_indices)
         self.reconcile_stores = AsyncMock(return_value={"success": True})
@@ -1716,6 +1734,8 @@ class _FakeMemoryManager:
     async def _create(self, **kwargs: Any) -> Any:
         memory_id = f"created-{len(self.db.memories)}"
         self.db.memories[memory_id] = _row(memory_id, kwargs["content"])
+        self.db.memories[memory_id]["project_id"] = kwargs.get("project_id", PERSONAL_PROJECT_ID)
+        self.db.memories[memory_id]["is_global"] = kwargs.get("is_global", False)
         self.vector_ids.add(memory_id)
         self.graph_ids.add(memory_id)
         return SimpleNamespace(id=memory_id)
@@ -1724,24 +1744,42 @@ class _FakeMemoryManager:
         self,
         memory_id: str,
         content: str,
-        project_id: str | None,
+        project_id: str,
+        is_global: bool,
     ) -> None:
-        del content, project_id
+        del content, project_id, is_global
         self.vector_ids.add(memory_id)
         self.graph_ids.add(memory_id)
 
-    async def _rescope(self, memory_id: str, new_project_id: str | None) -> Any:
+    async def _promote(self, memory_id: str) -> Any:
         row = self.db.memories.get(memory_id)
         if row is None:
             raise ValueError(f"Memory {memory_id} not found")
-        row["project_id"] = new_project_id
-        await self.sync_memory_scope_indices(memory_id, new_project_id)
-        return SimpleNamespace(
+        row["is_global"] = True
+        memory = SimpleNamespace(
             id=memory_id,
-            project_id=new_project_id,
+            project_id=row["project_id"],
+            is_global=True,
             updated_at=row["updated_at"],
             content=row["content"],
         )
+        await self.sync_memory_scope_indices(memory)
+        return memory
+
+    async def _demote(self, memory_id: str) -> Any:
+        row = self.db.memories.get(memory_id)
+        if row is None:
+            raise ValueError(f"Memory {memory_id} not found")
+        row["is_global"] = False
+        memory = SimpleNamespace(
+            id=memory_id,
+            project_id=row["project_id"],
+            is_global=False,
+            updated_at=row["updated_at"],
+            content=row["content"],
+        )
+        await self.sync_memory_scope_indices(memory)
+        return memory
 
     def mark_dreamed(
         self,
@@ -1772,10 +1810,8 @@ class _FakeSweepManager:
         *,
         limit: int,
         redream_cutoff: str,
-        project_id: str | None = None,
+        scope: MemoryScope,
         memory_type: str | None = None,
-        include_global: bool = True,
-        global_only: bool = False,
     ) -> list[Any]:
         matches: list[dict[str, Any]] = []
         for row in self.db.memories.values():
@@ -1784,12 +1820,17 @@ class _FakeSweepManager:
             last_dreamed = row.get("last_dreamed_at")
             if last_dreamed is not None and last_dreamed >= redream_cutoff:
                 continue
-            if global_only:
-                if row.get("project_id") is not None:
+            if scope.kind is MemoryScopeKind.GLOBAL_ONLY:
+                if not row["is_global"]:
                     continue
-            elif project_id is not None:
-                row_project = row.get("project_id")
-                in_scope = row_project == project_id or (include_global and row_project is None)
+            elif scope.kind is MemoryScopeKind.PROJECT_ONLY:
+                in_scope = row["project_id"] == scope.project_id and not row["is_global"]
+                if not in_scope:
+                    continue
+            elif scope.kind is MemoryScopeKind.PROJECT_VISIBLE:
+                in_scope = (row["project_id"] == scope.project_id and not row["is_global"]) or row[
+                    "is_global"
+                ]
                 if not in_scope:
                     continue
             if memory_type is not None and row.get("memory_type") != memory_type:
@@ -1942,7 +1983,7 @@ async def test_global_only_run_persists_null_scope_and_selects_only_global() -> 
         "global": _row("global", "global content"),
         "project": _row("project", "project content"),
     }
-    db.memories["global"]["project_id"] = None
+    db.memories["global"]["is_global"] = True
     manager = _FakeSweepManager(db)
     service = MemoryDreamService(
         memory_manager=manager, dream_config=_sweep_config(page_size=10), llm_service=None
@@ -2118,7 +2159,7 @@ async def test_service_uses_platform_truth_for_global_and_current_daemon_project
     )
     db.projects["current-project"] = _project_row("current-project", current_repo)
     db.memories = {
-        "global": {**_row("global", "Global memory"), "project_id": None},
+        "global": {**_row("global", "Global memory"), "is_global": True},
         "current": {**_row("current", "Current project memory"), "project_id": "current-project"},
     }
 
@@ -2267,7 +2308,7 @@ async def test_full_sweep_cutoff_is_run_start_not_cooldown_window() -> None:
 
 
 class _FakeDueProjectsManager:
-    """Manager exposing only list_dream_project_ids (+ a stub db) so the
+    """Manager exposing only list_dream_scopes (+ a stub db) so the
     run_all_due_projects loop can be tested with a patched per-target run()."""
 
     def __init__(self, targets: list[str | None]) -> None:
@@ -2275,9 +2316,12 @@ class _FakeDueProjectsManager:
         self.cutoffs: list[str] = []
         self.db = _FakeDreamDB()
 
-    def list_dream_project_ids(self, *, redream_cutoff: str) -> list[str | None]:
+    def list_dream_scopes(self, *, redream_cutoff: str) -> list[MemoryScope]:
         self.cutoffs.append(redream_cutoff)
-        return list(self.targets)
+        return [
+            MemoryScope.global_only() if target is None else MemoryScope.project_only(target)
+            for target in self.targets
+        ]
 
     def mark_global_memories_due(self) -> int:
         return 0
@@ -2432,19 +2476,25 @@ async def test_truth_change_trigger_rejudges_cooled_memory_on_digest_change(
     await service._apply_truth_change_triggers()
     recool()
     assert manager.get_memory(memory.id).last_dreamed_at is not None
-    assert project.id not in manager.list_dream_project_ids(redream_cutoff=cooldown_cutoff)
+    assert MemoryScope.project_only(project.id) not in manager.list_dream_scopes(
+        redream_cutoff=cooldown_cutoff
+    )
 
     # Unchanged digest: the trigger is a no-op, the memory stays cooled.
     await service._apply_truth_change_triggers()
     assert manager.get_memory(memory.id).last_dreamed_at is not None
-    assert project.id not in manager.list_dream_project_ids(redream_cutoff=cooldown_cutoff)
+    assert MemoryScope.project_only(project.id) not in manager.list_dream_scopes(
+        redream_cutoff=cooldown_cutoff
+    )
 
     # Changed digest: the cooldown is cleared, so the cooled memory is due again
     # and would be swept on the next run despite still being inside the window.
     _write_truth_digest(repo, _complete_digest_payload(service="FalkorDB graph"))
     await service._apply_truth_change_triggers()
     assert manager.get_memory(memory.id).last_dreamed_at is None
-    assert project.id in manager.list_dream_project_ids(redream_cutoff=cooldown_cutoff)
+    assert MemoryScope.project_only(project.id) in manager.list_dream_scopes(
+        redream_cutoff=cooldown_cutoff
+    )
 
 
 @pytest.mark.asyncio
@@ -2463,7 +2513,11 @@ async def test_platform_truth_change_rejudges_global_and_current_project_memorie
     await service._ensure_schema_async()
 
     just_now = datetime.now(UTC).isoformat()
-    global_memory = manager.create_memory(content="global platform fact", project_id=None)
+    global_memory = manager.create_memory(
+        content="global platform fact",
+        project_id=PERSONAL_PROJECT_ID,
+        is_global=True,
+    )
     current_memory = manager.create_memory(
         content="current platform fact", project_id=current_project.id
     )

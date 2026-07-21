@@ -11,7 +11,7 @@ from typing import TYPE_CHECKING, Any, cast
 from gobby.memory.protocol import MemoryBackendProtocol, MemoryRecord
 from gobby.memory.services.crossref import CrossrefService
 from gobby.memory.vectorstore import is_recoverable_vector_store_error
-from gobby.storage.memories import LocalMemoryManager, Memory
+from gobby.storage.memories import LocalMemoryManager, Memory, MemoryScope
 
 if TYPE_CHECKING:
     from gobby.config.persistence import MemoryConfig
@@ -111,7 +111,8 @@ class MemoryLifecycleService:
     def fire_background_dedup(
         self,
         content: str,
-        project_id: str | None,
+        project_id: str,
+        is_global: bool,
         memory_type: str,
         tags: list[str] | None,
         source_type: str,
@@ -128,6 +129,7 @@ class MemoryLifecycleService:
                 await dedup_service.process(
                     content=content,
                     project_id=project_id,
+                    is_global=is_global,
                     memory_type=memory_type,
                     tags=tags,
                     source_type=source_type,
@@ -144,10 +146,8 @@ class MemoryLifecycleService:
     async def enqueue_for_graph(
         self,
         memory_id: str,
-        project_id: str | None = None,
     ) -> None:
         """Queue memory for background KG processing."""
-        _ = project_id
         try:
             await self._run_storage(self.storage.mark_pending_graph, memory_id)
             logger.debug("Queued memory %s for graph processing", memory_id)
@@ -179,18 +179,19 @@ class MemoryLifecycleService:
     async def create_memory(
         self,
         content: str,
+        project_id: str,
         memory_type: str = "fact",
-        project_id: str | None = None,
         source_type: str = "agent",
         source_session_id: str | None = None,
         tags: list[str] | None = None,
+        *,
+        is_global: bool = False,
     ) -> Memory:
         """Store a new memory in storage and secondary indices."""
         normalized_content = content.strip()
-        if await self.backend.content_exists(normalized_content, project_id):
-            existing_record = await self.backend.get_memory_by_content(
-                normalized_content, project_id
-            )
+        scope = MemoryScope.global_only() if is_global else MemoryScope.project_visible(project_id)
+        if await self.backend.content_exists(normalized_content, scope):
+            existing_record = await self.backend.get_memory_by_content(normalized_content, scope)
             if existing_record:
                 logger.debug("Memory already exists: %s", existing_record.id)
                 return self._record_to_memory(existing_record)
@@ -203,8 +204,9 @@ class MemoryLifecycleService:
         # service precheck entirely.
         record = await self.backend.create(
             content=content,
-            memory_type=memory_type,
             project_id=project_id,
+            memory_type=memory_type,
+            is_global=is_global,
             source_type=source_type,
             source_session_id=source_session_id,
             tags=tags,
@@ -214,7 +216,7 @@ class MemoryLifecycleService:
         await self._embed_and_upsert(
             memory.id,
             content,
-            payload={"project_id": project_id},
+            payload={"project_id": project_id, "is_global": is_global},
         )
 
         if getattr(self._config, "auto_crossref", False):
@@ -227,6 +229,7 @@ class MemoryLifecycleService:
             self.fire_background_dedup(
                 content=content,
                 project_id=project_id,
+                is_global=is_global,
                 memory_type=memory_type,
                 tags=tags,
                 source_type=source_type,
@@ -235,7 +238,7 @@ class MemoryLifecycleService:
             )
 
         if self._kg_service_provider():
-            await self.enqueue_for_graph(memory_id=memory.id, project_id=project_id)
+            await self.enqueue_for_graph(memory_id=memory.id)
 
         return memory
 
@@ -246,7 +249,7 @@ class MemoryLifecycleService:
         await self._delete_secondary_indices(memory_id, existing_memory, result)
         return result
 
-    async def delete_memory_scoped(self, memory_id: str, project_id: str | None) -> bool:
+    async def delete_memory_scoped(self, memory_id: str, project_id: str) -> bool:
         """Delete a memory only when visible to a project, then reconcile its indices."""
         existing_memory = await self._run_storage(self._get_memory, memory_id)
         result = await self._run_storage(self.storage.delete_memory_scoped, memory_id, project_id)
@@ -271,12 +274,14 @@ class MemoryLifecycleService:
         await self.purge_secondary_indices(
             memory_id,
             project_id=existing_memory.project_id if existing_memory else None,
+            is_global=existing_memory.is_global if existing_memory else None,
         )
 
     async def purge_secondary_indices(
         self,
         memory_id: str,
         project_id: str | None = None,
+        is_global: bool | None = None,
     ) -> None:
         """Drop a removed memory's VectorStore vector and FalkorDB graph artifacts.
 
@@ -293,54 +298,95 @@ class MemoryLifecycleService:
         kg_service = self._kg_service_provider()
         if kg_service:
             try:
-                await kg_service.remove_memory_from_graph(memory_id, project_id=project_id)
+                await kg_service.remove_memory_from_graph(
+                    memory_id,
+                    project_id=project_id,
+                    is_global=is_global,
+                )
             except Exception as e:
                 logger.warning("Graph delete failed for %s: %s", memory_id, e)
 
     async def sync_memory_scope_indices(
         self,
-        memory_id: str,
-        project_id: str | None,
+        memory: Memory,
     ) -> list[dict[str, str]]:
         """Best-effort secondary sync after a primary-store scope change."""
         failures: list[dict[str, str]] = []
+        kg_service = self._kg_service_provider()
+        if kg_service is not None:
+            try:
+                await kg_service.remove_memory_from_graph(memory.id)
+            except Exception as exc:
+                logger.warning("Graph scope cleanup failed for %s: %s", memory.id, exc)
+                failures.append(
+                    {"memory_id": memory.id, "index": "knowledge_graph", "error": str(exc)}
+                )
         try:
-            await self._run_storage(self.storage.mark_pending_graph, memory_id)
+            await self._run_storage(self.storage.mark_pending_graph, memory.id)
         except Exception as exc:
-            logger.warning("Graph scope sync failed for %s: %s", memory_id, exc)
-            failures.append({"memory_id": memory_id, "index": "knowledge_graph", "error": str(exc)})
+            logger.warning("Graph scope sync failed for %s: %s", memory.id, exc)
+            failures.append({"memory_id": memory.id, "index": "knowledge_graph", "error": str(exc)})
         if self._vector_store:
             try:
-                await self._vector_store.set_payload(memory_id, {"project_id": project_id})
+                await self._vector_store.set_payload(
+                    memory.id,
+                    {"project_id": memory.project_id, "is_global": memory.is_global},
+                )
             except Exception as exc:
-                logger.warning("VectorStore scope sync failed for %s: %s", memory_id, exc)
-                failures.append({"memory_id": memory_id, "index": "embedding", "error": str(exc)})
+                logger.warning("VectorStore scope sync failed for %s: %s", memory.id, exc)
+                await self._run_storage(self.storage.mark_vector_reindex_needed, memory.id)
+                failures.append({"memory_id": memory.id, "index": "embedding", "error": str(exc)})
         return failures
 
     async def restore_memory_indices(
         self,
         memory_id: str,
         content: str,
-        project_id: str | None,
-    ) -> None:
+        project_id: str,
+        is_global: bool,
+    ) -> bool:
         """Recreate vector and graph-index state for a restored memory row."""
-        await self._embed_and_upsert(
+        indexed = await self._embed_and_upsert(
             memory_id,
             content,
-            payload={"project_id": project_id},
+            payload={"project_id": project_id, "is_global": is_global},
         )
+        if indexed:
+            await self._run_storage(
+                self.storage.mark_vectors_reindexed,
+                {memory_id: content},
+            )
+        else:
+            await self._run_storage(self.storage.mark_vector_reindex_needed, memory_id)
         try:
             await self._run_storage(self.storage.mark_pending_graph, memory_id)
         except Exception as exc:
             logger.warning("Graph restore sync failed for %s: %s", memory_id, exc)
+        return indexed
 
-    async def rescope_memory(self, memory_id: str, new_project_id: str | None) -> Memory:
-        """Update a memory's scope, then best-effort sync secondary stores."""
-        result = await self._run_storage(self.storage.rescope_memory, memory_id, new_project_id)
-        failures = await self.sync_memory_scope_indices(memory_id, result.project_id)
+    async def move_memory(self, memory_id: str, new_project_id: str) -> Memory:
+        """Move memory ownership, then rebuild secondary projections."""
+        result = await self._run_storage(self.storage.move_memory, memory_id, new_project_id)
+        failures = await self.sync_memory_scope_indices(result)
         if failures:
             logger.warning(
-                "Memory rescope completed with secondary sync failures for %s: %s",
+                "Memory move completed with secondary sync failures for %s: %s",
+                memory_id,
+                failures,
+            )
+        return result
+
+    async def set_memory_global(self, memory_id: str, is_global: bool) -> Memory:
+        """Change visibility, then rebuild secondary projections."""
+        result = await self._run_storage(
+            self.storage.set_memory_global,
+            memory_id,
+            is_global,
+        )
+        failures = await self.sync_memory_scope_indices(result)
+        if failures:
+            logger.warning(
+                "Memory visibility change completed with secondary sync failures for %s: %s",
                 memory_id,
                 failures,
             )
@@ -356,7 +402,7 @@ class MemoryLifecycleService:
         indexed = await self._embed_and_upsert(
             memory.id,
             memory.content,
-            payload={"project_id": memory.project_id},
+            payload={"project_id": memory.project_id, "is_global": memory.is_global},
         )
         if indexed:
             cleared = await self._run_storage(
@@ -372,6 +418,7 @@ class MemoryLifecycleService:
                 await kg_service.remove_memory_from_graph(
                     memory.id,
                     project_id=old_memory.project_id if old_memory else memory.project_id,
+                    is_global=old_memory.is_global if old_memory else memory.is_global,
                 )
             except Exception as exc:
                 logger.warning("Graph content refresh failed for %s: %s", memory.id, exc)
@@ -419,7 +466,7 @@ class MemoryLifecycleService:
     async def update_memory_scoped(
         self,
         memory_id: str,
-        project_id: str | None,
+        project_id: str,
         content: str | None = None,
         tags: list[str] | None = None,
         memory_type: str | None = None,
@@ -429,7 +476,7 @@ class MemoryLifecycleService:
             await self._run_storage(
                 self.storage.get_memory,
                 memory_id,
-                project_id=project_id,
+                scope=MemoryScope.project_visible(project_id),
                 visibility="all",
             )
             if content is not None

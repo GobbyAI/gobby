@@ -20,7 +20,8 @@ from gobby.memory.protocol import (
     MemoryQuery,
     MemoryRecord,
 )
-from gobby.storage.memories import LocalMemoryManager, Visibility
+from gobby.storage.memories import ALL_MEMORIES, LocalMemoryManager, MemoryScope, Visibility
+from gobby.storage.projects import PERSONAL_PROJECT_ID
 from gobby.utils.datetime import parse_stored_datetime, utc_now
 
 
@@ -58,8 +59,9 @@ class StorageAdapter:
     async def create(
         self,
         content: str,
+        project_id: str = PERSONAL_PROJECT_ID,
         memory_type: str = "fact",
-        project_id: str | None = None,
+        is_global: bool = False,
         user_id: str | None = None,
         tags: list[str] | None = None,
         source_type: str = "agent",
@@ -71,6 +73,7 @@ class StorageAdapter:
             content=content,
             memory_type=memory_type,
             project_id=project_id,
+            is_global=is_global,
             source_type=source_type,
             source_session_id=source_session_id,
             tags=tags,
@@ -111,13 +114,12 @@ class StorageAdapter:
         memories = await self._run_storage(
             self._storage.search_memories,
             query_text=query.text,
-            project_id=query.project_id,
+            scope=query.scope,
             limit=query.limit,
             tags_all=query.tags_all,
             tags_any=query.tags_any,
             tags_none=query.tags_none,
             visibility=query.visibility,
-            include_global=query.include_global,
         )
         if query.memory_type is not None:
             memories = [m for m in memories if m.memory_type == query.memory_type]
@@ -125,7 +127,7 @@ class StorageAdapter:
 
     async def list_memories(
         self,
-        project_id: str | None = None,
+        scope: MemoryScope = ALL_MEMORIES,
         user_id: str | None = None,
         memory_type: str | None = None,
         limit: int = 50,
@@ -133,35 +135,41 @@ class StorageAdapter:
         tags_all: list[str] | None = None,
         *,
         visibility: Visibility = "active",
-        include_global: bool = True,
     ) -> list[MemoryRecord]:
         memories = await self._run_storage(
             self._storage.list_memories,
-            project_id=project_id,
+            scope=scope,
             memory_type=memory_type,
             limit=limit,
             offset=offset,
             tags_all=tags_all,
             visibility=visibility,
-            include_global=include_global,
         )
         return [self._to_record(m) for m in memories]
 
     async def content_exists(
-        self, content: str, project_id: str | None = None, *, visibility: Visibility = "active"
+        self,
+        content: str,
+        scope: MemoryScope,
+        *,
+        visibility: Visibility = "active",
     ) -> bool:
         return cast(
             bool,
             await self._run_storage(
-                self._storage.content_exists, content, project_id, visibility=visibility
+                self._storage.content_exists, content, scope, visibility=visibility
             ),
         )
 
     async def get_memory_by_content(
-        self, content: str, project_id: str | None = None, *, visibility: Visibility = "active"
+        self,
+        content: str,
+        scope: MemoryScope,
+        *,
+        visibility: Visibility = "active",
     ) -> MemoryRecord | None:
         memory = await self._run_storage(
-            self._storage.get_memory_by_content, content, project_id, visibility=visibility
+            self._storage.get_memory_by_content, content, scope, visibility=visibility
         )
         if memory:
             return self._to_record(memory)
@@ -186,6 +194,7 @@ class StorageAdapter:
             memory_type=memory.memory_type,
             updated_at=updated_at,
             project_id=memory.project_id,
+            is_global=memory.is_global,
             user_id=user_id,
             tags=memory.tags or [],
             source_type=memory.source_type,

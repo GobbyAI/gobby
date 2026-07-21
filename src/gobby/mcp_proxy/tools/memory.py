@@ -30,6 +30,7 @@ from gobby.memory.digest import (
     build_turn_and_digest as _build_turn_and_digest,
 )
 from gobby.memory.manager import MemoryManager
+from gobby.storage.projects import PERSONAL_PROJECT_ID
 from gobby.sync.memories import is_ephemeral_implementation_note
 
 if TYPE_CHECKING:
@@ -61,11 +62,10 @@ def get_current_project_id() -> str | None:
 
 
 def _memory_allowed_in_current_project(memory: Any) -> bool:
-    memory_project_id = getattr(memory, "project_id", None)
-    current_project_id = get_current_project_id()
-    return memory_project_id is None or (
-        current_project_id is not None and memory_project_id == current_project_id
-    )
+    if memory is None:
+        return False
+    current_project_id = get_current_project_id() or PERSONAL_PROJECT_ID
+    return bool(memory.is_global or memory.project_id == current_project_id)
 
 
 def _speculative_memory_task_title(content: str) -> str | None:
@@ -173,6 +173,7 @@ def create_memory_registry(
         memory_type: str = "fact",
         tags: list[str] | None = None,
         session_id: str | None = None,
+        is_global: bool = False,
     ) -> dict[str, Any]:
         """
         Create a new memory.
@@ -193,7 +194,7 @@ def create_memory_registry(
                     "reason": "ephemeral_implementation_note",
                 }
 
-            project_id = get_current_project_id()
+            project_id = get_current_project_id() or PERSONAL_PROJECT_ID
 
             # Resolve session_id to UUID before passing to storage layer
             # (memories.source_session_id has FK constraint on sessions.id)
@@ -239,6 +240,7 @@ def create_memory_registry(
                 tags=tags,
                 source_type="agent",
                 source_session_id=resolved_session_id,
+                is_global=is_global,
             )
 
             # Search for similar existing memories to surface potential duplicates
@@ -273,6 +275,8 @@ def create_memory_registry(
                 "success": True,
                 "memory": {
                     "id": memory.id,
+                    "project_id": memory.project_id,
+                    "is_global": memory.is_global,
                 },
                 "similar_existing": similar_existing,
             }
@@ -311,7 +315,7 @@ def create_memory_registry(
             # Joinable correlation id (contract §2): threads the signal event,
             # the returned payload, and any downstream injection outcome.
             recall_request_id = str(uuid4())
-            current_project_id = get_current_project_id()
+            current_project_id = get_current_project_id() or PERSONAL_PROJECT_ID
 
             # Fetch extra candidates so we can report diagnostics when
             # nothing passes the threshold.
@@ -347,6 +351,8 @@ def create_memory_registry(
                             "type": m.memory_type,
                             "created_at": m.created_at,
                             "tags": m.tags,
+                            "project_id": m.project_id,
+                            "is_global": m.is_global,
                             "similarity": similarity,
                             "search_via": getattr(m, "search_via", None),
                             "ranking_score": getattr(m, "ranking_score", None),
@@ -385,7 +391,7 @@ def create_memory_registry(
         try:
             success = await memory_manager.delete_memory_scoped(
                 memory_id,
-                get_current_project_id(),
+                get_current_project_id() or PERSONAL_PROJECT_ID,
             )
             if success:
                 return {"success": True}
@@ -421,35 +427,55 @@ def create_memory_registry(
         name="promote_memory_to_global",
         description="Promote a project-scoped memory to global memory scope.",
     )
-    async def promote_memory_to_global(
-        memory_id: str,
-        target_project_id: str | None = None,
-    ) -> dict[str, Any]:
+    async def promote_memory_to_global(memory_id: str) -> dict[str, Any]:
         """
         Promote a memory to global scope.
 
         Args:
             memory_id: The ID of the memory to promote
-            target_project_id: Reserved for future rescope support; must be null
         """
-        if target_project_id is not None:
-            return {
-                "success": False,
-                "error": "Only promote-to-global is supported.",
-            }
         try:
             existing = memory_manager.get_memory(memory_id, visibility="all")
             if not _memory_allowed_in_current_project(existing):
                 return {"success": False, "error": f"Memory {memory_id} not found"}
-            memory = await memory_manager.rescope_memory(memory_id, None)
+            memory = await memory_manager.promote_memory(memory_id)
             return {
                 "success": True,
                 "memory": {
                     "id": memory.id,
                     "project_id": memory.project_id,
+                    "is_global": memory.is_global,
                     "updated_at": memory.updated_at,
                 },
             }
+        except Exception as e:
+            return {"success": False, "error": str(e)}
+
+    @registry.tool(
+        name="demote_memory_from_global",
+        description="Restrict a globally visible memory to its owning project.",
+    )
+    async def demote_memory_from_global(memory_id: str) -> dict[str, Any]:
+        try:
+            existing = memory_manager.get_memory(memory_id, visibility="all")
+            if not _memory_allowed_in_current_project(existing):
+                return {"success": False, "error": f"Memory {memory_id} not found"}
+            memory = await memory_manager.demote_memory(memory_id)
+            return {"success": True, "memory": memory.to_dict()}
+        except Exception as e:
+            return {"success": False, "error": str(e)}
+
+    @registry.tool(
+        name="move_memory",
+        description="Move memory ownership to another concrete project.",
+    )
+    async def move_memory(memory_id: str, new_project_id: str) -> dict[str, Any]:
+        try:
+            existing = memory_manager.get_memory(memory_id, visibility="all")
+            if not _memory_allowed_in_current_project(existing):
+                return {"success": False, "error": f"Memory {memory_id} not found"}
+            memory = await memory_manager.move_memory(memory_id, new_project_id)
+            return {"success": True, "memory": memory.to_dict()}
         except Exception as e:
             return {"success": False, "error": str(e)}
 
@@ -476,7 +502,7 @@ def create_memory_registry(
         """
         try:
             memories = memory_manager.list_memories(
-                project_id=get_current_project_id(),
+                project_id=get_current_project_id() or PERSONAL_PROJECT_ID,
                 memory_type=memory_type,
                 limit=limit,
                 tags_all=tags_all,
@@ -492,6 +518,8 @@ def create_memory_registry(
                         "type": m.memory_type,
                         "created_at": m.created_at,
                         "tags": m.tags,
+                        "project_id": m.project_id,
+                        "is_global": m.is_global,
                     }
                     for m in memories
                 ],
@@ -523,6 +551,7 @@ def create_memory_registry(
                         "created_at": memory.created_at,
                         "updated_at": memory.updated_at,
                         "project_id": memory.project_id,
+                        "is_global": memory.is_global,
                         "source_type": memory.source_type,
                         "access_count": memory.access_count,
                         "tags": memory.tags,
@@ -598,7 +627,7 @@ def create_memory_registry(
         try:
             memory = await memory_manager.update_memory_scoped(
                 memory_id=memory_id,
-                project_id=get_current_project_id(),
+                project_id=get_current_project_id() or PERSONAL_PROJECT_ID,
                 content=content,
                 tags=tags,
             )
@@ -607,6 +636,8 @@ def create_memory_registry(
                 "memory": {
                     "id": memory.id,
                     "updated_at": memory.updated_at,
+                    "project_id": memory.project_id,
+                    "is_global": memory.is_global,
                 },
             }
         except Exception as e:

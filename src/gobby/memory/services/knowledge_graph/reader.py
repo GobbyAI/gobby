@@ -181,10 +181,10 @@ class KnowledgeGraphReader:
                     mem_rows = await self._falkor.query(
                         "UNWIND $entity_keys AS entity_key "
                         "MATCH (e:_Entity {entity_key: entity_key})-[:MENTIONED_IN]->(m:Memory) "
-                        "WHERE (e.project_id = $project_id "
-                        "OR ($include_global AND e.project_id IS NULL)) "
-                        "AND (m.project_id = $project_id "
-                        "OR ($include_global AND m.project_id IS NULL)) "
+                        "WHERE ((e.project_id = $project_id AND e.is_global = false) "
+                        "OR ($include_global AND e.is_global = true)) "
+                        "AND ((m.project_id = $project_id AND m.is_global = false) "
+                        "OR ($include_global AND m.is_global = true)) "
                         "RETURN entity_key, m.memory_id AS memory_id "
                         "ORDER BY m.updated_at DESC LIMIT $memory_link_limit",
                         {
@@ -360,10 +360,10 @@ class KnowledgeGraphReader:
             for source_key, source_score in frontier:
                 rows = await self._falkor.query(
                     "MATCH (start:_Entity {entity_key: $entity_key})-[r]-(neighbor:_Entity) "
-                    "WHERE (start.project_id = $project_id "
-                    "OR ($include_global AND start.project_id IS NULL)) "
-                    "AND (neighbor.project_id = $project_id "
-                    "OR ($include_global AND neighbor.project_id IS NULL)) "
+                    "WHERE ((start.project_id = $project_id AND start.is_global = false) "
+                    "OR ($include_global AND start.is_global = true)) "
+                    "AND ((neighbor.project_id = $project_id AND neighbor.is_global = false) "
+                    "OR ($include_global AND neighbor.is_global = true)) "
                     "AND NOT (type(r) IN $excluded_relationship_types) "
                     "RETURN neighbor.entity_key AS related_entity_key, "
                     "coalesce(r.weight, 1.0) AS edge_weight, r.weight AS raw_weight, "
@@ -429,8 +429,8 @@ class KnowledgeGraphReader:
         """Fetch project-scoped entity embeddings for offline clustering."""
         rows = await self._falkor.query(
             "MATCH (e:_Entity) "
-            "WHERE (e.project_id = $project_id "
-            "OR e.project_id IS NULL) "
+            "WHERE (e.project_id = $project_id AND e.is_global = false) "
+            "OR e.is_global = true "
             "RETURN e.entity_key AS entity_key, e.name AS name, e.embedding AS embedding "
             "ORDER BY e.entity_key",
             {"project_id": project_id},
@@ -470,12 +470,12 @@ class KnowledgeGraphReader:
             rows = await self._falkor.query(
                 "UNWIND $source_keys AS source_key "
                 "MATCH (source:_Entity {entity_key: source_key}) "
-                "WHERE (source.project_id = $project_id "
-                "OR ($include_global AND source.project_id IS NULL)) "
+                "WHERE ((source.project_id = $project_id AND source.is_global = false) "
+                "OR ($include_global AND source.is_global = true)) "
                 "AND source.cluster_id IS NOT NULL AND source.cluster_id >= 0 "
                 "MATCH (candidate:_Entity {cluster_id: source.cluster_id}) "
-                "WHERE (candidate.project_id = $project_id "
-                "OR ($include_global AND candidate.project_id IS NULL)) "
+                "WHERE ((candidate.project_id = $project_id AND candidate.is_global = false) "
+                "OR ($include_global AND candidate.is_global = true)) "
                 "AND candidate.cluster_id IS NOT NULL AND candidate.cluster_id >= 0 "
                 "AND NOT (candidate.entity_key IN $excluded_keys) "
                 "RETURN DISTINCT candidate.entity_key AS entity_key, "
@@ -559,10 +559,10 @@ class KnowledgeGraphReader:
                 "UNWIND $entity_keys AS entity_key "
                 "MATCH (e:_Entity {entity_key: entity_key})"
                 "-[:MENTIONED_IN]->(m:Memory) "
-                "WHERE (e.project_id = $project_id "
-                "OR ($include_global AND e.project_id IS NULL)) "
-                "AND (m.project_id = $project_id "
-                "OR ($include_global AND m.project_id IS NULL)) "
+                "WHERE ((e.project_id = $project_id AND e.is_global = false) "
+                "OR ($include_global AND e.is_global = true)) "
+                "AND ((m.project_id = $project_id AND m.is_global = false) "
+                "OR ($include_global AND m.is_global = true)) "
                 "RETURN DISTINCT m.memory_id AS memory_id, m.updated_at AS updated_at "
                 "ORDER BY updated_at DESC LIMIT $limit",
                 {
@@ -626,8 +626,8 @@ class KnowledgeGraphReader:
             "UNWIND $entity_keys AS entity_key "
             "MATCH (e:_Entity {entity_key: entity_key})-[:MENTIONED_IN]->(m:Memory) "
             "WHERE m.memory_id IN $memory_ids "
-            "AND (e.project_id = $project_id "
-            "OR ($include_global AND e.project_id IS NULL)) "
+            "AND ((e.project_id = $project_id AND e.is_global = false) "
+            "OR ($include_global AND e.is_global = true)) "
             "RETURN e.entity_key AS entity_key, m.memory_id AS memory_id",
             {
                 "entity_keys": entity_keys,
@@ -749,10 +749,10 @@ class KnowledgeGraphReader:
             rows = await self._falkor.query(
                 "UNWIND $entity_keys AS entity_key "
                 "MATCH (e:_Entity {entity_key: entity_key})-[:MENTIONED_IN]->(m:Memory) "
-                "WHERE (e.project_id = $project_id "
-                "OR ($include_global AND e.project_id IS NULL)) "
-                "AND (m.project_id = $project_id "
-                "OR ($include_global AND m.project_id IS NULL)) "
+                "WHERE ((e.project_id = $project_id AND e.is_global = false) "
+                "OR ($include_global AND e.is_global = true)) "
+                "AND ((m.project_id = $project_id AND m.is_global = false) "
+                "OR ($include_global AND m.is_global = true)) "
                 "RETURN e.entity_key AS entity_key, "
                 "collect(DISTINCT m.memory_id) AS memory_ids",
                 {
@@ -812,8 +812,8 @@ class KnowledgeGraphReader:
         try:
             rows = await self._falkor.query(
                 "MATCH (n:_Entity) WHERE toLower(n.name) CONTAINS toLower($query) "
-                "AND (n.project_id = $project_id "
-                "OR ($include_global AND n.project_id IS NULL)) "
+                "AND ((n.project_id = $project_id AND n.is_global = false) "
+                "OR ($include_global AND n.is_global = true)) "
                 "RETURN n.entity_key AS entity_key, n.name AS name, "
                 "n.entity_type AS entity_type, n.project_id AS project_id, "
                 "labels(n) AS labels, properties(n) AS props "

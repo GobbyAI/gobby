@@ -177,7 +177,7 @@ async def test_merge_cooccurrence_edges_writes_canonical_weighted_edge() -> None
     writer = KnowledgeGraphWriter(falkor)  # type: ignore[arg-type]
     embeddings = {"a": [1.0, 0.0], "b": [1.0, 0.0]}  # cosine = 1.0
 
-    await writer.merge_cooccurrence_edges([("a", "b")], None, embeddings)
+    await writer.merge_cooccurrence_edges([("a", "b")], "proj-1", False, embeddings)
 
     # Support query pins the FalkorDB dialect form (scoped DISTINCT CASE count).
     support_q = falkor.find("count(DISTINCT")
@@ -208,7 +208,7 @@ async def test_merge_cooccurrence_edges_idempotent_support_no_inflation() -> Non
     for _ in range(2):
         falkor = RecordingFalkor(_support_responder(2))
         writer = KnowledgeGraphWriter(falkor)  # type: ignore[arg-type]
-        await writer.merge_cooccurrence_edges([("a", "b")], None, embeddings)
+        await writer.merge_cooccurrence_edges([("a", "b")], "proj-1", False, embeddings)
         row = falkor.find("MERGE (a)-[r:CO_OCCURS]->(b)")[0][1]["rows"][0]  # type: ignore[index]
         weights.append(row["weight"])
         supports.append(row["support"])
@@ -224,7 +224,7 @@ async def test_merge_cooccurrence_edges_unweighted_omits_weight_property() -> No
     falkor = RecordingFalkor(_support_responder(2))
     writer = KnowledgeGraphWriter(falkor)  # type: ignore[arg-type]
 
-    await writer.merge_cooccurrence_edges([("a", "b")], None, {}, weighted=False)
+    await writer.merge_cooccurrence_edges([("a", "b")], "proj-1", False, {}, weighted=False)
 
     write_cypher, write_params = falkor.find("MERGE (a)-[r:CO_OCCURS]->(b)")[0]
     assert "SET r.support = p.support, r.updated_at = timestamp()" in write_cypher
@@ -237,7 +237,7 @@ async def test_merge_cooccurrence_edges_zero_support_deletes_and_skips_write() -
     falkor = RecordingFalkor(_support_responder(0))
     writer = KnowledgeGraphWriter(falkor)  # type: ignore[arg-type]
 
-    await writer.merge_cooccurrence_edges([("a", "b")], None, {"a": [1.0], "b": [1.0]})
+    await writer.merge_cooccurrence_edges([("a", "b")], "proj-1", False, {"a": [1.0], "b": [1.0]})
 
     # Zero in-scope shared memory -> no edge written...
     assert not falkor.find("MERGE (a)-[r:CO_OCCURS]->(b)")

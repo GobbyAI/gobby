@@ -22,6 +22,7 @@ from gobby.memory.protocol import (
     MemoryQuery,
     MemoryRecord,
 )
+from gobby.storage.memories_scope import ALL_MEMORIES, MemoryScope
 
 pytestmark = pytest.mark.unit
 
@@ -81,7 +82,7 @@ class TestMemoryQuery:
         """Test creating a query with all parameters."""
         query = MemoryQuery(
             text="search term",
-            project_id="proj-123",
+            scope=MemoryScope.project_visible("proj-123"),
             user_id="user-456",
             limit=20,
             memory_type="fact",
@@ -91,7 +92,7 @@ class TestMemoryQuery:
             search_mode="semantic",
         )
         assert query.text == "search term"
-        assert query.project_id == "proj-123"
+        assert query.scope == MemoryScope.project_visible("proj-123")
         assert query.user_id == "user-456"
         assert query.limit == 20
         assert query.memory_type == "fact"
@@ -103,7 +104,7 @@ class TestMemoryQuery:
     def test_default_values(self) -> None:
         """Test that optional fields have sensible defaults."""
         query = MemoryQuery(text="test")
-        assert query.project_id is None
+        assert query.scope == ALL_MEMORIES
         assert query.user_id is None
         assert query.limit == 10  # Default limit
         assert query.memory_type is None
@@ -192,10 +193,12 @@ class TestMemoryRecord:
             "content": "From dict content",
             "created_at": datetime.now(UTC).isoformat(),
             "memory_type": "preference",
+            "project_id": "proj-123",
         }
         record = MemoryRecord.from_dict(data)
         assert record.id == "mem-from-dict"
         assert record.memory_type == "preference"
+        assert record.project_id == "proj-123"
 
 
 # =============================================================================

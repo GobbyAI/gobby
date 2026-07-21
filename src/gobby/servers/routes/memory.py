@@ -15,6 +15,7 @@ from pydantic import BaseModel, Field
 
 from gobby.servers.responses import JSONResponse
 from gobby.storage.memories import Memory, Visibility
+from gobby.storage.projects import PERSONAL_PROJECT_ID
 
 if TYPE_CHECKING:
     from gobby.servers.http import HTTPServer
@@ -61,6 +62,7 @@ class MemoryCreateRequest(BaseModel):
         default="fact", description="Memory type (fact, preference, pattern, context)"
     )
     project_id: str | None = Field(default=None, description="Project ID to associate with")
+    is_global: bool = Field(default=False, description="Whether the memory is globally visible")
     source_type: str = Field(
         default="user",
         description="Source type: 'user' (human-requested) or 'agent' (agent-captured)",
@@ -77,13 +79,10 @@ class MemoryUpdateRequest(BaseModel):
     memory_type: str | None = Field(default=None, description="New memory type")
 
 
-class MemoryPromoteRequest(BaseModel):
-    """Request body for promoting a memory to global scope."""
+class MemoryMoveRequest(BaseModel):
+    """Request body for moving a memory to another owning project."""
 
-    target_project_id: str | None = Field(
-        default=None,
-        description="Reserved for future rescope support; only null/global is accepted.",
-    )
+    new_project_id: str = Field(..., description="New owning project ID")
 
 
 def _current_project_id(server: "HTTPServer") -> str | None:
@@ -103,8 +102,8 @@ def _ensure_memory_in_current_project(server: "HTTPServer", memory_id: str) -> N
     memory = server.memory_manager.get_memory(memory_id, visibility="all")
     if memory is None:
         raise ValueError(f"Memory {memory_id} not found")
-    current_project_id = _current_project_id(server)
-    if memory.project_id is not None and memory.project_id != current_project_id:
+    current_project_id = _current_project_id(server) or PERSONAL_PROJECT_ID
+    if not memory.is_global and memory.project_id != current_project_id:
         raise ValueError(f"Memory {memory_id} not found")
 
 
@@ -276,6 +275,7 @@ def create_memory_router(server: "HTTPServer") -> APIRouter:
                 content=request_data.content,
                 memory_type=request_data.memory_type,
                 project_id=request_data.project_id,
+                is_global=request_data.is_global,
                 source_type=request_data.source_type,
                 source_session_id=request_data.source_session_id,
                 tags=request_data.tags,
@@ -610,25 +610,45 @@ def create_memory_router(server: "HTTPServer") -> APIRouter:
         return memory.to_dict()
 
     @router.post("/{memory_id}/promote")
-    async def promote_memory(
-        memory_id: str,
-        request_data: MemoryPromoteRequest | None = None,
-    ) -> Any:
+    async def promote_memory(memory_id: str) -> Any:
         """Promote a project memory to global scope."""
-        request_data = request_data or MemoryPromoteRequest()
-        if request_data.target_project_id is not None:
-            raise HTTPException(
-                status_code=422,
-                detail="Only promote-to-global is supported.",
-            )
         try:
             _ensure_memory_in_current_project(server, memory_id)
-            memory = await server.memory_manager.rescope_memory(memory_id, None)
+            memory = await server.memory_manager.promote_memory(memory_id)
             return memory.to_dict()
         except ValueError as e:
             raise HTTPException(status_code=404, detail=str(e)) from e
         except Exception as e:
             logger.exception("Failed to promote memory %s", memory_id)
+            raise HTTPException(status_code=500, detail=str(e)) from e
+
+    @router.post("/{memory_id}/demote")
+    async def demote_memory(memory_id: str) -> Any:
+        """Remove global visibility without changing memory ownership."""
+        try:
+            _ensure_memory_in_current_project(server, memory_id)
+            memory = await server.memory_manager.demote_memory(memory_id)
+            return memory.to_dict()
+        except ValueError as e:
+            raise HTTPException(status_code=404, detail=str(e)) from e
+        except Exception as e:
+            logger.exception("Failed to demote memory %s", memory_id)
+            raise HTTPException(status_code=500, detail=str(e)) from e
+
+    @router.post("/{memory_id}/move")
+    async def move_memory(memory_id: str, request_data: MemoryMoveRequest) -> Any:
+        """Move a memory to a new owning project without changing visibility."""
+        try:
+            _ensure_memory_in_current_project(server, memory_id)
+            memory = await server.memory_manager.move_memory(
+                memory_id,
+                request_data.new_project_id,
+            )
+            return memory.to_dict()
+        except ValueError as e:
+            raise HTTPException(status_code=404, detail=str(e)) from e
+        except Exception as e:
+            logger.exception("Failed to move memory %s", memory_id)
             raise HTTPException(status_code=500, detail=str(e)) from e
 
     @router.delete("/{memory_id}")

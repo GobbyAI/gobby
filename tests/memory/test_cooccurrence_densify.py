@@ -230,7 +230,7 @@ async def test_queries_are_project_scoped() -> None:
 
     enum_cypher, enum_params = falkor.find("collect(DISTINCT e.entity_key)")[0]
     assert "e.project_id" in enum_cypher and "m.project_id" in enum_cypher
-    assert enum_params == {"project_id": "proj-1"}
+    assert enum_params == {"project_id": "proj-1", "is_global": False}
     emb_cypher, emb_params = falkor.find("e.embedding AS embedding")[0]
     assert "e.project_id" in emb_cypher
-    assert emb_params == {"project_id": "proj-1"}
+    assert emb_params == {"project_id": "proj-1", "is_global": False}

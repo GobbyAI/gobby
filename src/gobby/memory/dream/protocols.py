@@ -6,6 +6,7 @@ from typing import Any, Literal, Protocol
 
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.memories import Memory
+from gobby.storage.memories_scope import MemoryScope
 
 
 class MemoryDreamManagerProtocol(Protocol):
@@ -18,13 +19,11 @@ class MemoryDreamManagerProtocol(Protocol):
         *,
         limit: int,
         redream_cutoff: str,
-        project_id: str | None = None,
+        scope: MemoryScope,
         memory_type: str | None = None,
-        include_global: bool = True,
-        global_only: bool = False,
     ) -> list[Any]: ...
 
-    def list_dream_project_ids(self, *, redream_cutoff: str) -> list[str | None]: ...
+    def list_dream_scopes(self, *, redream_cutoff: str) -> list[MemoryScope]: ...
 
     def mark_project_memories_due(self, project_id: str) -> int: ...
 
@@ -46,6 +45,8 @@ class MemoryDreamManagerProtocol(Protocol):
         source_type: str = "agent",
         source_session_id: str | None = None,
         tags: list[str] | None = None,
+        *,
+        is_global: bool = False,
     ) -> Any: ...
 
     async def update_memory(
@@ -55,20 +56,24 @@ class MemoryDreamManagerProtocol(Protocol):
         tags: list[str] | None = None,
     ) -> Any: ...
 
-    async def rescope_memory(self, memory_id: str, new_project_id: str | None) -> Memory: ...
+    async def move_memory(self, memory_id: str, new_project_id: str) -> Memory: ...
+
+    async def promote_memory(self, memory_id: str) -> Memory: ...
+
+    async def demote_memory(self, memory_id: str) -> Memory: ...
 
     async def sync_memory_scope_indices(
         self,
-        memory_id: str,
-        project_id: str | None,
+        memory: Memory,
     ) -> list[dict[str, str]]: ...
 
     async def restore_memory_indices(
         self,
         memory_id: str,
         content: str,
-        project_id: str | None,
-    ) -> None: ...
+        project_id: str,
+        is_global: bool,
+    ) -> bool: ...
 
     async def delete_memory(self, memory_id: str) -> bool: ...
 

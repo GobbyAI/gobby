@@ -37,10 +37,10 @@ class _Storage:
             tags=[],
         )
 
-    def get_memories(self, memory_ids: list[str], project_id: str | None = None) -> list[Memory]:
+    def get_memories(self, memory_ids: list[str], scope: Any = None) -> list[Memory]:
         return [self._memory(memory_id) for memory_id in memory_ids]
 
-    def get_memory(self, memory_id: str, project_id: str | None = None) -> Memory:
+    def get_memory(self, memory_id: str, scope: Any = None) -> Memory:
         return self._memory(memory_id)
 
     def update_access_stats(self, memory_id: str, accessed_at: str) -> None:
@@ -85,10 +85,10 @@ class _FilteringStorage:
             tags=[],
         )
 
-    def get_memories(self, memory_ids: list[str], project_id: str | None = None) -> list[Memory]:
+    def get_memories(self, memory_ids: list[str], scope: Any = None) -> list[Memory]:
         return [self._memory(mid) for mid in memory_ids if mid in self._active]
 
-    def get_memory(self, memory_id: str, project_id: str | None = None) -> Memory:
+    def get_memory(self, memory_id: str, scope: Any = None) -> Memory:
         return self._memory(memory_id)
 
     def update_access_stats(self, memory_id: str, accessed_at: str) -> None:

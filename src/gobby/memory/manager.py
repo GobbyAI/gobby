@@ -27,10 +27,9 @@ from gobby.memory.services.knowledge_graph import (
     KnowledgeGraphService,
 )
 from gobby.memory.services.lifecycle import MemoryLifecycleService
-from gobby.memory.services.project_repair import (
-    NullProjectMemoryRepair,
-    NullProjectMemoryRepairResult,
-    NullProjectMemoryRepairService,
+from gobby.memory.services.projection_repair import (
+    ProjectionScopeRepairResult,
+    ProjectionScopeRepairService,
 )
 from gobby.memory.services.repository import DEFAULT_LIST_LIMIT, MemoryRepository
 from gobby.memory.services.search import SearchService
@@ -39,7 +38,7 @@ from gobby.memory.vectorstore_logging import (
     log_rate_limited_warning,
 )
 from gobby.storage.hub.protocol import HubDatabase
-from gobby.storage.memories import LocalMemoryManager
+from gobby.storage.memories import ALL_MEMORIES, LocalMemoryManager, MemoryScope
 
 if TYPE_CHECKING:
     from gobby.llm.service import LLMService
@@ -53,8 +52,7 @@ __all__ = [
     "DEFAULT_SEARCH_LIMIT",
     "MAX_REINDEX_LIMIT",
     "MemoryManager",
-    "NullProjectMemoryRepair",
-    "NullProjectMemoryRepairResult",
+    "ProjectionScopeRepairResult",
 ]
 
 logger = logging.getLogger(__name__)
@@ -185,11 +183,18 @@ class MemoryManager(MemoryManagerFacadeMethods):
             max_rebuild_concurrency=config.kg.max_rebuild_concurrency,
             max_deterministic_attempts=max_graph_deterministic_attempts,
         )
-        self._project_repair_service = NullProjectMemoryRepairService(
-            db=db,
+        self._projection_repair_service = ProjectionScopeRepairService(
             storage_provider=lambda: self.storage,
             run_db=self.run_db,
-            embed_and_upsert=lambda *args, **kwargs: self._embed_and_upsert(*args, **kwargs),
+            restore_memory_indices=self._lifecycle_service.restore_memory_indices,
+            falkor_client_provider=lambda: self._falkor_client,
+        )
+
+    def start_projection_scope_repair(self) -> asyncio.Task[Any]:
+        """Start the daemon-owned secondary scope repair pass."""
+        return self.schedule_background_task(
+            self.repair_secondary_scope_projections(),
+            name="memory-projection-scope-repair",
         )
 
     def _build_falkor_client(
@@ -260,7 +265,14 @@ class MemoryManager(MemoryManagerFacadeMethods):
                 if not ids:
                     return set()
                 active = await asyncio.to_thread(
-                    self.storage.get_memories, ids, project_id, visibility="active"
+                    self.storage.get_memories,
+                    ids,
+                    (
+                        ALL_MEMORIES
+                        if project_id is None
+                        else MemoryScope.project_visible(project_id)
+                    ),
+                    visibility="active",
                 )
                 return {memory.id for memory in active}
 

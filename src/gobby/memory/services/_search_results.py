@@ -8,6 +8,7 @@ from gobby.memory.services._search_constants import (
     _USER_SOURCE_BOOST,
 )
 from gobby.storage.memories import LocalMemoryManager, Memory
+from gobby.storage.memories_scope import ALL_MEMORIES, MemoryScope
 
 
 def build_results(
@@ -33,15 +34,14 @@ def build_results(
 ) -> list[Memory]:
     """Hydrate ranked IDs into active memories and apply search metadata."""
     scored: list[tuple[Memory, float, float | None]] = []
-    memories_by_id = {
-        mem.id: mem for mem in storage.get_memories(merged_ids, project_id=project_id)
-    }
+    scope = ALL_MEMORIES if project_id is None else MemoryScope.project_visible(project_id)
+    memories_by_id = {mem.id: mem for mem in storage.get_memories(merged_ids, scope=scope)}
 
     for memory_id in merged_ids:
         mem = memories_by_id.get(memory_id)
         if mem is None:
             try:
-                mem = storage.get_memory(memory_id, project_id=project_id)
+                mem = storage.get_memory(memory_id, scope=scope)
             except ValueError:
                 continue
 

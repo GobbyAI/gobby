@@ -23,23 +23,27 @@ class KnowledgeGraphMaintenance:
         self,
         memory_id: str,
         project_id: str | None = None,
+        is_global: bool | None = None,
     ) -> None:
         """Remove a Memory node and all its MENTIONED_IN edges from FalkorDB."""
         try:
             memory_scope = project_id
-            if memory_scope is None:
+            global_scope = is_global
+            if memory_scope is None or global_scope is None:
                 scope_rows = await self._falkor.query(
-                    "MATCH (m:Memory {memory_id: $memory_id}) RETURN m.project_id AS project_id",
+                    "MATCH (m:Memory {memory_id: $memory_id}) "
+                    "RETURN m.project_id AS project_id, m.is_global AS is_global",
                     {"memory_id": memory_id},
                 )
                 if scope_rows:
                     memory_scope = scope_rows[0].get("project_id")
+                    global_scope = bool(scope_rows[0].get("is_global"))
             await self._falkor.query(
                 "MATCH (m:Memory {memory_id: $memory_id}) DETACH DELETE m",
                 {"memory_id": memory_id},
             )
             await self.remove_orphaned_entities(
-                scope="project" if memory_scope is not None else "global",
+                scope="global" if global_scope else "project",
                 project_id=memory_scope,
             )
         except FalkorConnectionError as e:
@@ -108,10 +112,12 @@ class KnowledgeGraphMaintenance:
         if scope == "project":
             if project_id is None:
                 raise ValueError("project_id is required when scope='project'")
-            where_clause = f"e.project_id = $project_id AND {orphan_predicate}"
+            where_clause = (
+                f"e.project_id = $project_id AND e.is_global = false AND {orphan_predicate}"
+            )
             params: dict[str, Any] = {"project_id": project_id}
         elif scope == "global":
-            where_clause = f"e.project_id IS NULL AND {orphan_predicate}"
+            where_clause = f"e.is_global = true AND {orphan_predicate}"
             params = {}
         elif scope == "all":
             where_clause = orphan_predicate

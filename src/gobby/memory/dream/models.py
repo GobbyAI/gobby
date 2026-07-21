@@ -29,7 +29,8 @@ class DreamCandidate:
     id: str
     content: str
     memory_type: str
-    project_id: str | None
+    project_id: str
+    is_global: bool
     source_type: str | None
     source_session_id: str | None
     tags: list[str]

@@ -457,6 +457,7 @@ class TestKnowledgeGraphRebuildService:
             "Python memory",
             memory_id="mem-1",
             project_id="proj-1",
+            is_global=False,
         )
 
     @pytest.mark.asyncio
@@ -555,11 +556,13 @@ class TestKnowledgeGraphRebuildService:
             _content: str,
             *,
             memory_id: str,
-            project_id: str | None,
+            project_id: str,
+            is_global: bool,
         ) -> KnowledgeGraphResult:
             nonlocal active, max_active
             assert memory_id.startswith("mem-")
             assert project_id == "proj-1"
+            assert is_global is False
             async with lock:
                 active += 1
                 max_active = max(max_active, active)

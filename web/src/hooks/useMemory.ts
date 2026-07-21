@@ -18,6 +18,10 @@ function normalizeString(value: unknown): string {
   return typeof value === 'string' ? value : ''
 }
 
+function normalizeBoolean(value: unknown): boolean {
+  return value === true
+}
+
 function normalizeNullableString(value: unknown): string | null {
   return typeof value === 'string' ? value : null
 }
@@ -29,7 +33,8 @@ function normalizeMemory(record: Record<string, unknown>): GobbyMemory {
     content: normalizeString(record.content),
     created_at: normalizeString(record.created_at),
     updated_at: normalizeString(record.updated_at),
-    project_id: normalizeNullableString(record.project_id),
+    project_id: normalizeString(record.project_id),
+    is_global: normalizeBoolean(record.is_global),
     source_type: normalizeNullableString(record.source_type),
     source_session_id: normalizeNullableString(record.source_session_id),
     importance: normalizeImportance(record.importance),
@@ -65,7 +70,8 @@ export interface GobbyMemory {
   content: string
   created_at: string
   updated_at: string
-  project_id: string | null
+  project_id: string
+  is_global: boolean
   source_type: string | null
   source_session_id: string | null
   importance: number
@@ -120,7 +126,8 @@ interface CreateMemoryParams {
   content: string
   memory_type?: string
   importance?: number
-  project_id?: string | null
+  project_id?: string
+  is_global?: boolean
   tags?: string[]
 }
 

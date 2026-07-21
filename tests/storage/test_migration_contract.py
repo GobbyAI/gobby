@@ -251,6 +251,7 @@ def test_postgres_migrations_limited_to_known_post_baseline() -> None:
         "325_recall_usefulness_shadow_index.sql",
         "326_validate_recall_usefulness_label_source.sql",
         "327_failure_category_taxonomy.sql",
+        "328_memory_global_visibility.sql",
     ]
 
 
@@ -365,7 +366,7 @@ def test_postgres_baseline_version_is_flattened_to_305() -> None:
     # The 0.5.0 pre-release flatten folded 295-305 into the baseline. Hubs below
     # 305 take the corrupt_partial backup/recreate path; later migrations replay.
     assert module.BASELINE_VERSION == 305
-    assert module.latest_known_version() == 327
+    assert module.latest_known_version() == 328
 
 
 def test_failure_category_taxonomy_is_closed_in_baseline_and_migration() -> None:
@@ -792,6 +793,47 @@ def test_tasks_baseline_and_migration_define_merge_flags_without_dead_columns() 
             "ALTER COLUMN merge_in_progress SET NOT NULL",
             "ALTER COLUMN blocked_by_merge SET DEFAULT FALSE",
             "ALTER COLUMN blocked_by_merge SET NOT NULL",
+        ),
+    )
+
+
+def test_memory_global_visibility_schema_and_migration_contract() -> None:
+    baseline = _normalize_sql_whitespace(_baseline_text())
+    migration = _normalize_sql_whitespace(
+        (SRC_ROOT / "storage" / "migrations" / "328_memory_global_visibility.sql").read_text(
+            encoding="utf-8"
+        )
+    )
+
+    _assert_contains_all(
+        "memory global visibility baseline",
+        baseline,
+        (
+            "project_id UUID NOT NULL REFERENCES projects(id) ON DELETE RESTRICT "
+            "DEFERRABLE INITIALLY IMMEDIATE",
+            "is_global BOOLEAN NOT NULL DEFAULT FALSE",
+            "CREATE INDEX idx_memories_project_live ON memories(project_id, updated_at DESC) "
+            "WHERE deleted_at IS NULL",
+            "CREATE INDEX idx_memories_global_live ON memories(updated_at DESC) "
+            "WHERE is_global IS TRUE AND deleted_at IS NULL",
+        ),
+    )
+    _assert_contains_all(
+        "memory global visibility migration",
+        migration,
+        (
+            "ADD COLUMN IF NOT EXISTS is_global BOOLEAN NOT NULL DEFAULT FALSE",
+            "SET project_id = '00000000-0000-0000-0000-000000060887'::uuid, "
+            "is_global = TRUE WHERE project_id IS NULL",
+            "ALTER COLUMN project_id SET NOT NULL",
+            "FOREIGN KEY (project_id) REFERENCES projects(id) ON DELETE RESTRICT "
+            "DEFERRABLE INITIALLY IMMEDIATE",
+            "SET vector_needs_reindex = TRUE",
+            "graph_status = 'pending'",
+            "CREATE INDEX idx_memories_project_live ON memories(project_id, updated_at DESC) "
+            "WHERE deleted_at IS NULL",
+            "CREATE INDEX idx_memories_global_live ON memories(updated_at DESC) "
+            "WHERE is_global IS TRUE AND deleted_at IS NULL",
         ),
     )
 

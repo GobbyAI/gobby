@@ -16,6 +16,8 @@ from collections.abc import Sequence
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
 
+from gobby.storage.projects import GLOBAL_PROJECT_ID
+
 from .writer import COOCCUR_MAX_ENTITIES, KnowledgeGraphWriter, _project_scope
 
 if TYPE_CHECKING:
@@ -65,7 +67,10 @@ async def _count_cooccurs_edges(falkor: FalkorClient, project_id: str | None) ->
         "MATCH (a:_Entity)-[r:CO_OCCURS]->(b:_Entity) "
         f"WHERE {proj_a} AND {proj_b} "
         "RETURN count(r) AS edges",
-        {"project_id": project_id},
+        {
+            "project_id": GLOBAL_PROJECT_ID if project_id is None else project_id,
+            "is_global": project_id is None,
+        },
     )
     return int(rows[0].get("edges") or 0) if rows else 0
 
@@ -78,7 +83,10 @@ async def _fetch_entity_embeddings(
         "MATCH (e:_Entity) "
         f"WHERE {proj_e} AND e.embedding IS NOT NULL "
         "RETURN e.entity_key AS entity_key, e.embedding AS embedding",
-        {"project_id": project_id},
+        {
+            "project_id": GLOBAL_PROJECT_ID if project_id is None else project_id,
+            "is_global": project_id is None,
+        },
     )
     embeddings: dict[str, list[float]] = {}
     for row in rows:
@@ -118,7 +126,10 @@ async def densify_cooccurrence(
         "MATCH (e:_Entity)-[:MENTIONED_IN]->(m:Memory) "
         f"WHERE {proj_e} AND {proj_m} "
         "RETURN id(m) AS memory_id, collect(DISTINCT e.entity_key) AS keys",
-        {"project_id": project_id},
+        {
+            "project_id": GLOBAL_PROJECT_ID if project_id is None else project_id,
+            "is_global": project_id is None,
+        },
     )
 
     pairs: set[tuple[str, str]] = set()
@@ -140,7 +151,8 @@ async def densify_cooccurrence(
     for start in range(0, len(mergeable), safe_batch):
         await writer.merge_cooccurrence_edges(
             list(mergeable[start : start + safe_batch]),
-            project_id,
+            GLOBAL_PROJECT_ID if project_id is None else project_id,
+            project_id is None,
             embeddings,
             weighted=weighted,
         )

@@ -762,7 +762,8 @@ CREATE TABLE session_variables (
 
 CREATE TABLE memories (
     id UUID PRIMARY KEY,
-    project_id UUID REFERENCES projects(id) DEFERRABLE INITIALLY IMMEDIATE,
+    project_id UUID NOT NULL REFERENCES projects(id) ON DELETE RESTRICT DEFERRABLE INITIALLY IMMEDIATE,
+    is_global BOOLEAN NOT NULL DEFAULT FALSE,
     memory_type TEXT NOT NULL,
     content TEXT NOT NULL,
     source_type TEXT,
@@ -787,7 +788,11 @@ CONSTRAINT memories_dream_action_requires_deleted
     CHECK (dream_action IS NULL OR deleted_at IS NOT NULL)
 );
 
-CREATE INDEX idx_memories_project ON memories(project_id);
+CREATE INDEX idx_memories_project_live ON memories(project_id, updated_at DESC)
+WHERE deleted_at IS NULL;
+
+CREATE INDEX idx_memories_global_live ON memories(updated_at DESC)
+WHERE is_global IS TRUE AND deleted_at IS NULL;
 
 CREATE INDEX idx_memories_type ON memories(memory_type);
 

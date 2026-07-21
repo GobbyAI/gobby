@@ -240,6 +240,7 @@ class SessionLifecycleManager(TranscriptProcessingMixin):
                     memory.content,
                     memory_id=memory.id,
                     project_id=memory.project_id,
+                    is_global=memory.is_global,
                 )
             except Exception as e:
                 logger.warning("KG processing failed for memory %s: %s", memory.id, e)

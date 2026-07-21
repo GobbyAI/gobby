@@ -5,6 +5,7 @@ from dataclasses import dataclass
 from datetime import datetime
 from typing import Any, Literal, cast
 
+from gobby.storage.projects import PERSONAL_PROJECT_ID
 from gobby.utils.datetime import normalize_datetime_model
 
 # Stable namespace for deterministic memory UUIDs (uuid5)
@@ -80,7 +81,8 @@ class Memory:
     content: str
     created_at: datetime
     updated_at: datetime
-    project_id: str | None = None
+    project_id: str = PERSONAL_PROJECT_ID
+    is_global: bool = False
     source_type: Literal["user", "agent"] = "agent"
     source_session_id: str | None = None
     access_count: int = 0
@@ -123,6 +125,7 @@ class Memory:
             created_at=row["created_at"],
             updated_at=row["updated_at"],
             project_id=row["project_id"],
+            is_global=bool(row.get("is_global", False)),
             source_type=source_type,
             source_session_id=row["source_session_id"],
             access_count=row["access_count"],
@@ -148,6 +151,7 @@ class Memory:
             "created_at": self.created_at,
             "updated_at": self.updated_at,
             "project_id": self.project_id,
+            "is_global": self.is_global,
             "source_type": self.source_type,
             "source_session_id": self.source_session_id,
             "access_count": self.access_count,

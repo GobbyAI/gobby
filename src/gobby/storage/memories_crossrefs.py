@@ -1,5 +1,6 @@
 from gobby.storage.memories_base import MemoryStoreBase
 from gobby.storage.memories_models import MemoryCrossRef
+from gobby.storage.memories_scope import ALL_MEMORIES, MemoryScope, memory_scope_predicate
 from gobby.utils.datetime import utc_now
 
 
@@ -131,45 +132,39 @@ class MemoryCrossRefMixin(MemoryStoreBase):
 
     def get_all_crossrefs(
         self,
-        project_id: str | None = None,
+        scope: MemoryScope = ALL_MEMORIES,
         limit: int = 1000,
     ) -> list[MemoryCrossRef]:
         """
-        Get all cross-references, optionally filtered by project.
+        Get all cross-references with visibility applied to both endpoints.
 
         Useful for building memory graphs.
 
         Args:
-            project_id: Filter to project and global memories visible to this project
+            scope: Explicit endpoint visibility scope
             limit: Maximum number of results
 
         Returns:
             List of MemoryCrossRef objects
         """
-        if project_id:
-            # Join with memories to filter by project
-            rows = self.db.fetchall(
-                """
-                SELECT DISTINCT mc.source_id, mc.target_id, mc.similarity, mc.created_at
-                FROM memory_crossrefs mc
-                JOIN memories m1 ON mc.source_id = m1.id
-                JOIN memories m2 ON mc.target_id = m2.id
-                WHERE (m1.project_id = %s OR m1.project_id IS NULL)
-                  AND (m2.project_id = %s OR m2.project_id IS NULL)
-                ORDER BY mc.similarity DESC
-                LIMIT %s
-                """,
-                (project_id, project_id, limit),
-            )
-        else:
-            rows = self.db.fetchall(
-                """
-                SELECT source_id, target_id, similarity, created_at
-                FROM memory_crossrefs
-                ORDER BY similarity DESC
-                LIMIT %s
-                """,
-                (limit,),
-            )
+        source_predicate, source_params = memory_scope_predicate(scope, table_alias="m1")
+        target_predicate, target_params = memory_scope_predicate(scope, table_alias="m2")
+        where = (
+            f"WHERE {source_predicate} AND {target_predicate}"
+            if source_predicate and target_predicate
+            else ""
+        )
+        rows = self.db.fetchall(
+            f"""
+            SELECT DISTINCT mc.source_id, mc.target_id, mc.similarity, mc.created_at
+            FROM memory_crossrefs mc
+            JOIN memories m1 ON mc.source_id = m1.id
+            JOIN memories m2 ON mc.target_id = m2.id
+            {where}
+            ORDER BY mc.similarity DESC
+            LIMIT %s
+            """,  # nosec B608
+            (*source_params, *target_params, limit),
+        )
 
         return [MemoryCrossRef.from_row(row) for row in rows]

@@ -11,6 +11,7 @@ from typing import TYPE_CHECKING, Any, Protocol, cast
 
 from gobby.memory.services.crossref import CrossrefRebuildError, CrossrefService
 from gobby.storage.memories import Memory, Visibility
+from gobby.storage.memories_scope import ALL_MEMORIES, MemoryScope
 
 if TYPE_CHECKING:
     from gobby.memory.services.knowledge_graph import KnowledgeGraphService
@@ -29,20 +30,22 @@ class MemoryStorageProtocol(Protocol):
     def get_memories(
         self,
         memory_ids: list[str],
-        project_id: str | None = None,
+        scope: MemoryScope = ALL_MEMORIES,
         *,
         visibility: Visibility = "active",
     ) -> list[Memory]: ...
 
     def list_memories(
         self,
-        project_id: str | None = None,
+        scope: MemoryScope = ALL_MEMORIES,
         memory_type: str | None = None,
         limit: int = 50,
         offset: int = 0,
         tags_all: list[str] | None = None,
         tags_any: list[str] | None = None,
         tags_none: list[str] | None = None,
+        *,
+        visibility: Visibility = "active",
     ) -> list[Memory]: ...
 
     def delete_project_crossrefs(self, project_id: str) -> int: ...
@@ -125,7 +128,13 @@ class IndexingService:
     @staticmethod
     def _memory_dicts(memories: list[Memory]) -> list[dict[str, Any]]:
         return [
-            {"id": mem.id, "content": mem.content, "project_id": mem.project_id} for mem in memories
+            {
+                "id": mem.id,
+                "content": mem.content,
+                "project_id": mem.project_id,
+                "is_global": mem.is_global,
+            }
+            for mem in memories
         ]
 
     @staticmethod
@@ -137,6 +146,7 @@ class IndexingService:
                     {
                         "id": mem["id"],
                         "project_id": mem.get("project_id"),
+                        "is_global": mem.get("is_global"),
                     },
                     sort_keys=True,
                     separators=(",", ":"),
@@ -156,6 +166,7 @@ class IndexingService:
                         "id": mem["id"],
                         "content": mem["content"],
                         "project_id": mem.get("project_id"),
+                        "is_global": mem.get("is_global"),
                     },
                     sort_keys=True,
                     separators=(",", ":"),
@@ -369,7 +380,11 @@ class IndexingService:
                 (
                     memory.id,
                     embedding,
-                    {"content": memory.content, "project_id": memory.project_id},
+                    {
+                        "content": memory.content,
+                        "project_id": memory.project_id,
+                        "is_global": memory.is_global,
+                    },
                 )
             )
             if len(batch) >= REINDEX_PAGE_SIZE:
@@ -593,10 +608,11 @@ class IndexingService:
         """Fetch all active memories using bounded storage pages."""
         all_memories: list[Memory] = []
         offset = 0
+        scope = MemoryScope.owner(project_id) if project_id is not None else ALL_MEMORIES
         while True:
             batch = await self._run_storage(
                 self._storage.list_memories,
-                **({"project_id": project_id} if project_id is not None else {}),
+                scope=scope,
                 limit=REINDEX_PAGE_SIZE,
                 offset=offset,
             )

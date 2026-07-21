@@ -48,8 +48,8 @@ export function memoryTypeLabel(type: string): string {
   return MEMORY_TYPE_OPTIONS.find((option) => option.value === type)?.label ?? type;
 }
 
-export function memoryScopeLabel(memory: Pick<GobbyMemory, "project_id">): "Global" | "Project" {
-  return memory.project_id === null ? "Global" : "Project";
+export function memoryScopeLabel(memory: Pick<GobbyMemory, "is_global">): "Global" | "Project" {
+  return memory.is_global ? "Global" : "Project";
 }
 
 export function memoryTypeCount(stats: MemoryStats | null, type: string): number {

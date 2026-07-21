@@ -88,7 +88,7 @@ _TABLE_CONFIGS: dict[str, _TableConfig] = {
         table="memories",
         aliases=("memories_fts",),
         postgres_columns=("content", "tags_text"),
-        filters={"project_id": "project_id"},
+        filters={"project_id": "project_id", "is_global": "is_global"},
         active_clause="deleted_at IS NULL",
         tie_break_columns=("created_at", "id"),
     ),
@@ -372,7 +372,7 @@ def _filter_clauses(
             include_global = bool(filters.get("include_global", True))
             if include_global:
                 clauses.append(
-                    f"({alias}.{column} = {placeholder_token} OR {alias}.{column} IS NULL)"
+                    f"({alias}.{column} = {placeholder_token} OR {alias}.is_global IS TRUE)"
                 )
             else:
                 clauses.append(f"{alias}.{column} = {placeholder_token}")

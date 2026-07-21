@@ -133,6 +133,7 @@ def _memory(
         content=content,
         created_at=datetime(2026, 1, 1, tzinfo=UTC),
         updated_at=datetime(2026, 1, 1, tzinfo=UTC),
+        project_id=PROJECT_ID,
         tags=tags if tags is not None else ["test"],
         similarity=similarity,
         search_via="semantic",

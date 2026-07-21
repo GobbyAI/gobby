@@ -137,6 +137,7 @@ class KnowledgeGraphRebuildService:
                     mem.content,
                     memory_id=mem.id,
                     project_id=mem.project_id,
+                    is_global=mem.is_global,
                 )
             except LLMProviderCancellation as e:
                 logger.info("KG extraction cancelled for memory %s: %s", mem.id, e)

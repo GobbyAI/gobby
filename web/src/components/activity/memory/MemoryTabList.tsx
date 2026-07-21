@@ -170,7 +170,7 @@ export function MemoryTabList({
               <span
                 className={cn(
                   "activity-chip",
-                  memory.project_id === null && "activity-chip--accent",
+                  memory.is_global && "activity-chip--accent",
                 )}
               >
                 {memoryScopeLabel(memory)}

@@ -11,6 +11,8 @@ from gobby.config.persistence import MemoryConfig
 from gobby.memory.identity import entity_key
 from gobby.memory.manager import MemoryManager
 from gobby.memory.services.knowledge_graph.reader import RelatedMemoryTraversal
+from gobby.storage.memories_scope import MemoryScope, memory_matches_scope
+from gobby.storage.projects import GLOBAL_PROJECT_ID, PERSONAL_PROJECT_ID
 
 pytestmark = pytest.mark.unit
 
@@ -69,6 +71,8 @@ def _mock_memory(
     m.id = memory_id
     m.content = content
     m.memory_type = memory_type
+    m.project_id = PERSONAL_PROJECT_ID
+    m.is_global = False
     m.source_type = "user"
     m.tags = []
     m.last_accessed_at = None
@@ -160,7 +164,7 @@ class TestSearchGraphForMemories:
         manager._kg_service.search_entities_by_vector = AsyncMock(
             return_value=[
                 {
-                    "entity_key": entity_key(None, "Python"),
+                    "entity_key": entity_key(GLOBAL_PROJECT_ID, "Python", is_global=True),
                     "name": "Python",
                     "entity_type": "tool",
                     "labels": ["Tool"],
@@ -168,7 +172,7 @@ class TestSearchGraphForMemories:
                     "memory_ids": ["mem-1", "mem-2"],
                 },
                 {
-                    "entity_key": entity_key(None, "FastAPI"),
+                    "entity_key": entity_key(GLOBAL_PROJECT_ID, "FastAPI", is_global=True),
                     "name": "FastAPI",
                     "entity_type": "framework",
                     "labels": ["Framework"],
@@ -188,8 +192,8 @@ class TestSearchGraphForMemories:
 
         assert result == ["mem-1", "mem-2", "mem-3", "mem-4"]
         assert manager._kg_service.find_related_memory_ids.await_args.kwargs["entity_keys"] == [
-            entity_key(None, "Python"),
-            entity_key(None, "FastAPI"),
+            entity_key(GLOBAL_PROJECT_ID, "Python", is_global=True),
+            entity_key(GLOBAL_PROJECT_ID, "FastAPI", is_global=True),
         ]
         assert manager._kg_service.find_related_memory_ids.await_args.kwargs["max_hops"] == 1
 
@@ -206,7 +210,7 @@ class TestSearchGraphForMemories:
 
         entity_results = [
             {
-                "entity_key": entity_key(None, f"Entity{i}"),
+                "entity_key": entity_key(GLOBAL_PROJECT_ID, f"Entity{i}", is_global=True),
                 "name": f"Entity{i}",
                 "entity_type": "entity",
                 "labels": [],
@@ -227,7 +231,7 @@ class TestSearchGraphForMemories:
 
         assert result == [*(f"mem-{i}" for i in range(10)), "mem-related"]
         assert manager._kg_service.find_related_memory_ids.await_args.kwargs["entity_keys"] == [
-            entity_key(None, f"Entity{i}") for i in range(8)
+            entity_key(GLOBAL_PROJECT_ID, f"Entity{i}", is_global=True) for i in range(8)
         ]
 
     @pytest.mark.parametrize("error", [TimeoutError("slow traversal"), RuntimeError("boom")])
@@ -248,7 +252,7 @@ class TestSearchGraphForMemories:
         manager._kg_service.search_entities_by_vector = AsyncMock(
             return_value=[
                 {
-                    "entity_key": entity_key(None, "Python"),
+                    "entity_key": entity_key(GLOBAL_PROJECT_ID, "Python", is_global=True),
                     "name": "Python",
                     "entity_type": "tool",
                     "labels": [],
@@ -268,7 +272,7 @@ class TestSearchGraphForMemories:
         manager._kg_service.search_entities_by_vector.assert_awaited_once()
         manager._kg_service.find_related_memory_ids.assert_awaited_once()
         assert manager._kg_service.find_related_memory_ids.await_args.kwargs["entity_keys"] == [
-            entity_key(None, "Python")
+            entity_key(GLOBAL_PROJECT_ID, "Python", is_global=True)
         ]
         assert manager._kg_service.find_related_memory_ids.await_args.kwargs["max_hops"] == 1
 
@@ -286,7 +290,7 @@ class TestSearchGraphForMemories:
         manager._kg_service.search_entities_by_vector = AsyncMock(
             return_value=[
                 {
-                    "entity_key": entity_key(None, "A"),
+                    "entity_key": entity_key(GLOBAL_PROJECT_ID, "A", is_global=True),
                     "name": "A",
                     "entity_type": "entity",
                     "labels": [],
@@ -356,7 +360,7 @@ class TestSearchMemoriesGraphIntegration:
         manager._kg_service.search_entities_by_vector = AsyncMock(
             return_value=[
                 {
-                    "entity_key": entity_key(None, "A"),
+                    "entity_key": entity_key(GLOBAL_PROJECT_ID, "A", is_global=True),
                     "name": "A",
                     "entity_type": "entity",
                     "labels": [],
@@ -371,7 +375,7 @@ class TestSearchMemoriesGraphIntegration:
 
         # Mock storage
         manager.storage.get_memory = MagicMock(
-            side_effect=lambda mid, project_id=None: _mock_memory(mid, f"content of {mid}")
+            side_effect=lambda mid, scope=None: _mock_memory(mid, f"content of {mid}")
         )
 
         result = await manager.search_memories(query="test query", limit=10)
@@ -405,7 +409,7 @@ class TestSearchMemoriesGraphIntegration:
         )
 
         manager.storage.get_memory = MagicMock(
-            side_effect=lambda mid, project_id=None: _mock_memory(mid, f"content of {mid}")
+            side_effect=lambda mid, scope=None: _mock_memory(mid, f"content of {mid}")
         )
 
         result = await manager.search_memories(query="test query", limit=10)
@@ -431,7 +435,7 @@ class TestSearchMemoriesGraphIntegration:
 
         vs.search = AsyncMock(return_value=[("mem-1", 0.9)])
         manager.storage.get_memory = MagicMock(
-            side_effect=lambda mid, project_id=None: _mock_memory(mid, f"content of {mid}")
+            side_effect=lambda mid, scope=None: _mock_memory(mid, f"content of {mid}")
         )
 
         # Mock the kg_service method to verify it's not called
@@ -460,7 +464,7 @@ class TestSearchMemoriesGraphIntegration:
 
         vs.search = AsyncMock(return_value=[("mem-1", 0.8)])
         manager.storage.get_memory = MagicMock(
-            side_effect=lambda mid, project_id=None: _mock_memory(mid, f"content of {mid}")
+            side_effect=lambda mid, scope=None: _mock_memory(mid, f"content of {mid}")
         )
 
         result = await manager.search_memories(query="test query", limit=10)
@@ -495,7 +499,7 @@ class TestSearchMemoriesGraphIntegration:
         system_mem.source_type = "agent"
 
         manager.storage.get_memory = MagicMock(
-            side_effect=lambda mid, project_id=None: user_mem if mid == "mem-2" else system_mem
+            side_effect=lambda mid, scope=None: user_mem if mid == "mem-2" else system_mem
         )
 
         result = await manager.search_memories(query="test", limit=10)
@@ -578,17 +582,17 @@ class TestGraphSearchProjectIdScoping:
         mem_b = _mock_memory("mem-2", "content B")
         mem_b.project_id = "proj-B"
 
-        def _scoped_get_memory(mid: str, project_id: str | None = None):
+        def _scoped_get_memory(mid: str, scope: MemoryScope | None = None):
             mem = mem_a if mid == "mem-1" else mem_b
-            if project_id and mem.project_id and mem.project_id != project_id:
+            if scope is not None and not memory_matches_scope(mem.project_id, mem.is_global, scope):
                 raise ValueError(f"Memory {mid} not found")
             return mem
 
-        def _scoped_get_memories(ids, project_id=None):
+        def _scoped_get_memories(ids, scope: MemoryScope | None = None):
             out = []
             for mid in ids:
                 try:
-                    out.append(_scoped_get_memory(mid, project_id))
+                    out.append(_scoped_get_memory(mid, scope))
                 except ValueError:
                     continue
             return out
@@ -602,8 +606,8 @@ class TestGraphSearchProjectIdScoping:
         assert "mem-1" in result_ids
         assert "mem-2" not in result_ids  # Cross-project memory filtered out
 
-    async def test_defense_in_depth_allows_null_project_memories(self) -> None:
-        """search_memories does NOT skip memories with null project_id (global memories)."""
+    async def test_defense_in_depth_allows_explicit_global_memories(self) -> None:
+        """Project-visible search retains explicitly global memories."""
         llm_service = _mock_llm_service()
 
         vs = AsyncMock()
@@ -625,10 +629,11 @@ class TestGraphSearchProjectIdScoping:
         mem_a = _mock_memory("mem-1", "content A")
         mem_a.project_id = "proj-A"
         mem_global = _mock_memory("mem-2", "global content")
-        mem_global.project_id = None  # Global memory
+        mem_global.project_id = PERSONAL_PROJECT_ID
+        mem_global.is_global = True
 
         manager.storage.get_memory = MagicMock(
-            side_effect=lambda mid, project_id=None: mem_a if mid == "mem-1" else mem_global
+            side_effect=lambda mid, scope=None: mem_a if mid == "mem-1" else mem_global
         )
 
         result = await manager.search_memories(query="test", project_id="proj-A", limit=10)
@@ -664,7 +669,7 @@ class TestCreateMemoryPassesMemoryId:
             content="test content",
             created_at=datetime(2026, 1, 1, tzinfo=UTC),
             updated_at=datetime(2026, 1, 1, tzinfo=UTC),
-            project_id=None,
+            project_id=PERSONAL_PROJECT_ID,
             source_type="user",
             source_session_id=None,
             access_count=0,
@@ -754,7 +759,7 @@ class TestTemporalDecayIntegration:
         mem_old = _mock_memory("mem-old", "old content", updated_at=old.isoformat())
 
         manager.storage.get_memory = MagicMock(
-            side_effect=lambda mid, project_id=None: mem_recent if mid == "mem-recent" else mem_old
+            side_effect=lambda mid, scope=None: mem_recent if mid == "mem-recent" else mem_old
         )
 
         result = await manager.search_memories(query="test", limit=10)
@@ -811,7 +816,7 @@ class TestTemporalDecayIntegration:
         mem_old = _mock_memory("mem-old", "old content", updated_at=old.isoformat())
 
         manager.storage.get_memory = MagicMock(
-            side_effect=lambda mid, project_id=None: mem_recent if mid == "mem-recent" else mem_old
+            side_effect=lambda mid, scope=None: mem_recent if mid == "mem-recent" else mem_old
         )
 
         result = await manager.search_memories(query="test", limit=10)
@@ -844,7 +849,7 @@ class TestTemporalDecayIntegration:
         mem_old = _mock_memory("mem-old", "old", updated_at=old.isoformat())
 
         manager.storage.get_memory = MagicMock(
-            side_effect=lambda mid, project_id=None: mem_recent if mid == "mem-recent" else mem_old
+            side_effect=lambda mid, scope=None: mem_recent if mid == "mem-recent" else mem_old
         )
 
         result = await manager.search_memories(query="test", limit=10)

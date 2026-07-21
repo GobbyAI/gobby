@@ -16,19 +16,13 @@ from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any
 
-from qdrant_client.models import (
-    FieldCondition,
-    Filter,
-    IsEmptyCondition,
-    IsNullCondition,
-    MatchValue,
-    PayloadField,
-)
+from qdrant_client.models import Filter
 
 from gobby.memory.vectorstore import (
     is_recoverable_vector_store_error,
-    memory_project_scope_filter,
+    memory_scope_filter,
 )
+from gobby.storage.memories import MemoryScope
 
 if TYPE_CHECKING:
     from gobby.memory.vectorstore import VectorStore
@@ -49,22 +43,13 @@ _SENTENCE_BOUNDARY_RE = re.compile(r"[.!?]+(?:\s+|$)")
 _WORD_RE = re.compile(r"[A-Za-z0-9_'-]+")
 
 
-def _dedup_scope_filter(project_id: str | None) -> Filter:
+def _dedup_scope_filter(project_id: str, is_global: bool) -> Filter:
     """Limit dedup candidates to memories visible from the source scope."""
-    if project_id:
-        project_filter = memory_project_scope_filter(project_id)
-        if project_filter is None:
-            raise RuntimeError("project-scoped dedup filter was not created")
-        return project_filter
-
-    field = PayloadField(key="project_id")
-    return Filter(
-        should=[
-            FieldCondition(key="project_id", match=MatchValue(value="")),
-            IsNullCondition(is_null=field),
-            IsEmptyCondition(is_empty=field),
-        ]
-    )
+    scope = MemoryScope.global_only() if is_global else MemoryScope.project_visible(project_id)
+    result = memory_scope_filter(scope)
+    if result is None:
+        raise RuntimeError("scoped dedup filter was not created")
+    return result
 
 
 @dataclass
@@ -130,7 +115,8 @@ class DedupService:
     async def process(
         self,
         content: str,
-        project_id: str | None = None,
+        project_id: str,
+        is_global: bool = False,
         memory_type: str = "fact",
         tags: list[str] | None = None,
         source_type: str = "agent",
@@ -161,7 +147,13 @@ class DedupService:
         except Exception as e:
             self._log_embedding_failure("Embedding failed, falling back to simple store", e)
             return await self._fallback_store(
-                content, project_id, memory_type, tags, source_type, source_session_id
+                content,
+                project_id,
+                is_global,
+                memory_type,
+                tags,
+                source_type,
+                source_session_id,
             )
 
         # Search for similar existing memories
@@ -169,7 +161,7 @@ class DedupService:
             search_results = await self.vector_store.search(
                 query_embedding=embedding,
                 limit=5,
-                filters=_dedup_scope_filter(project_id),
+                filters=_dedup_scope_filter(project_id, is_global),
             )
         except Exception as e:
             if is_recoverable_vector_store_error(e):
@@ -179,7 +171,13 @@ class DedupService:
             else:
                 logger.warning("Vector search failed, falling back to simple store: %s", e)
             return await self._fallback_store(
-                content, project_id, memory_type, tags, source_type, source_session_id
+                content,
+                project_id,
+                is_global,
+                memory_type,
+                tags,
+                source_type,
+                source_session_id,
             )
 
         # Deterministic threshold decisions
@@ -208,7 +206,7 @@ class DedupService:
                     updated = await self._run_storage(
                         self.storage.update_memory, memory_id, content=content
                     )
-                    await self._embed_and_upsert(memory_id, content, project_id)
+                    await self._embed_and_upsert(memory_id, content, project_id, is_global)
                     result.updated.append(updated)
                     return result
                 # Existing content is sufficient
@@ -221,7 +219,8 @@ class DedupService:
         self,
         memory_id: str,
         content: str,
-        project_id: str | None = None,
+        project_id: str,
+        is_global: bool,
     ) -> None:
         """Embed content and upsert to VectorStore."""
         try:
@@ -237,6 +236,7 @@ class DedupService:
                 payload={
                     "content": content,
                     "project_id": project_id,
+                    "is_global": is_global,
                 },
             )
         except Exception as e:
@@ -266,7 +266,8 @@ class DedupService:
     async def _fallback_store(
         self,
         content: str,
-        project_id: str | None,
+        project_id: str,
+        is_global: bool,
         memory_type: str,
         tags: list[str] | None,
         source_type: str,
@@ -279,9 +280,10 @@ class DedupService:
             content=content,
             memory_type=memory_type,
             project_id=project_id,
+            is_global=is_global,
             source_type=source_type,
             source_session_id=source_session_id,
             tags=tags,
         )
-        await self._embed_and_upsert(memory.id, content, project_id)
+        await self._embed_and_upsert(memory.id, content, project_id, is_global)
         return DedupResult(added=[memory])

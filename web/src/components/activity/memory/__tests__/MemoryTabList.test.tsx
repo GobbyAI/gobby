@@ -12,6 +12,7 @@ function makeMemory(overrides: Partial<GobbyMemory> = {}): GobbyMemory {
     created_at: "2026-06-14T00:00:00Z",
     updated_at: "2026-06-14T00:00:00Z",
     project_id: "proj-1",
+    is_global: false,
     source_type: "agent",
     source_session_id: null,
     importance: 0.5,

@@ -26,10 +26,7 @@ from qdrant_client.models import (
     FieldCondition,
     Filter,
     FilterSelector,
-    IsEmptyCondition,
-    IsNullCondition,
     MatchValue,
-    PayloadField,
     PointIdsList,
     PointStruct,
     VectorParams,
@@ -37,6 +34,7 @@ from qdrant_client.models import (
 
 from gobby.memory.vectorstore_rebuild import RebuildCollectionPlan
 from gobby.memory.vectorstore_status import VectorStoreStatus
+from gobby.storage.memories_scope import MemoryScope, MemoryScopeKind
 
 logger = logging.getLogger(__name__)
 
@@ -78,29 +76,33 @@ def is_recoverable_vector_store_error(error: BaseException) -> bool:
     return isinstance(error, httpx.TransportError)
 
 
-def memory_project_scope_filter(
-    project_id: str | None,
-    *,
-    include_global: bool = True,
-) -> Filter | None:
-    """Return Qdrant scope filter for project recall, including global memories."""
-    if not project_id:
+def memory_scope_filter(scope: MemoryScope) -> Filter | None:
+    """Return a Qdrant filter for an explicit memory scope."""
+    if scope.kind is MemoryScopeKind.ALL:
         return None
-    if not include_global:
+    if scope.kind is MemoryScopeKind.GLOBAL_ONLY:
         return Filter(
             must=[
-                FieldCondition(key="project_id", match=MatchValue(value=project_id)),
+                FieldCondition(key="is_global", match=MatchValue(value=True)),
             ]
         )
-    field = PayloadField(key="project_id")
+    project_condition = FieldCondition(
+        key="project_id",
+        match=MatchValue(value=scope.project_id),
+    )
+    if scope.kind is MemoryScopeKind.OWNER:
+        return Filter(must=[project_condition])
+    if scope.kind is MemoryScopeKind.PROJECT_ONLY:
+        return Filter(
+            must=[
+                project_condition,
+                FieldCondition(key="is_global", match=MatchValue(value=False)),
+            ]
+        )
     return Filter(
         should=[
-            FieldCondition(key="project_id", match=MatchValue(value=project_id)),
-            # MatchValue("") kept to defensively match legacy empty-string payloads
-            # (project_ids are never ""); cheaper/safer than a blanket migration.
-            FieldCondition(key="project_id", match=MatchValue(value="")),
-            IsNullCondition(is_null=field),
-            IsEmptyCondition(is_empty=field),
+            project_condition,
+            FieldCondition(key="is_global", match=MatchValue(value=True)),
         ]
     )
 

@@ -10,6 +10,7 @@ from gobby.memory.identity import entity_key
 from gobby.memory.services.knowledge_graph.clustering import EntityVector
 from gobby.memory.services.knowledge_graph.models import Entity, Relationship
 from gobby.memory.services.knowledge_graph.normalization import display_entity_name
+from gobby.storage.projects import PERSONAL_PROJECT_ID
 
 DIM = 16
 NUM_CLUSTERS = 5
@@ -123,7 +124,7 @@ async def direct_clustering_vectors(dim: int = DIM) -> list[EntityVector]:
     embed = make_embed_fn(dim)
     return [
         EntityVector(
-            entity_key=entity_key(None, display_entity_name(name)),
+            entity_key=entity_key(PERSONAL_PROJECT_ID, display_entity_name(name)),
             name=display_entity_name(name),
             embedding=await embed(name),
         )
@@ -132,7 +133,7 @@ async def direct_clustering_vectors(dim: int = DIM) -> list[EntityVector]:
 
 
 def _seed_keys(mem: MemoryDef) -> list[str]:
-    return [entity_key(None, display_entity_name(name)) for name in mem.entities]
+    return [entity_key(PERSONAL_PROJECT_ID, display_entity_name(name)) for name in mem.entities]
 
 
 class _StubExtractor:

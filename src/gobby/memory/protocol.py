@@ -28,6 +28,9 @@ from datetime import UTC, datetime
 from enum import Enum
 from typing import TYPE_CHECKING, Any, Protocol, runtime_checkable
 
+from gobby.storage.memories_scope import ALL_MEMORIES, MemoryScope
+from gobby.storage.projects import PERSONAL_PROJECT_ID
+
 if TYPE_CHECKING:
     from gobby.storage.memories import Visibility
 
@@ -102,34 +105,32 @@ class MemoryQuery:
 
     Attributes:
         text: Search query text (required for search operations)
-        project_id: Filter by project ID
+        scope: Explicit ownership/visibility scope
         user_id: Filter by user ID (for multi-tenant backends)
         limit: Maximum number of results to return
         memory_type: Filter by memory type (fact, preference, etc.)
         tags_all: Memory must have ALL of these tags
         tags_any: Memory must have at least ONE of these tags
         tags_none: Memory must have NONE of these tags
-        include_global: Include global memories when project_id is provided
         search_mode: Search mode - "auto", "text", "semantic", "hybrid"
 
     Example:
         query = MemoryQuery(
             text="authentication",
-            project_id="proj-123",
+            scope=MemoryScope.project_visible("proj-123"),
             tags_all=["security"],
             search_mode="semantic"
         )
     """
 
     text: str
-    project_id: str | None = None
+    scope: MemoryScope = ALL_MEMORIES
     user_id: str | None = None
     limit: int = 10
     memory_type: str | None = None
     tags_all: list[str] | None = None
     tags_any: list[str] | None = None
     tags_none: list[str] | None = None
-    include_global: bool = True
     search_mode: str = "auto"
     visibility: Visibility = "active"
 
@@ -169,9 +170,10 @@ class MemoryRecord:
     id: str
     content: str
     created_at: datetime
+    project_id: str = PERSONAL_PROJECT_ID
     memory_type: str = "fact"
     updated_at: datetime | None = None
-    project_id: str | None = None
+    is_global: bool = False
     user_id: str | None = None
     tags: list[str] = field(default_factory=list)
     source_type: str = "agent"
@@ -193,6 +195,7 @@ class MemoryRecord:
             "memory_type": self.memory_type,
             "updated_at": self.updated_at.isoformat() if self.updated_at else None,
             "project_id": self.project_id,
+            "is_global": self.is_global,
             "user_id": self.user_id,
             "tags": self.tags,
             "source_type": self.source_type,
@@ -240,7 +243,8 @@ class MemoryRecord:
             created_at=created_at,
             memory_type=data.get("memory_type", "fact"),
             updated_at=updated_at,
-            project_id=data.get("project_id"),
+            project_id=data["project_id"],
+            is_global=bool(data.get("is_global", False)),
             user_id=data.get("user_id"),
             tags=data.get("tags", []),
             source_type=data.get("source_type", "agent"),
@@ -291,8 +295,9 @@ class MemoryBackendProtocol(Protocol):
     async def create(
         self,
         content: str,
+        project_id: str = PERSONAL_PROJECT_ID,
         memory_type: str = "fact",
-        project_id: str | None = None,
+        is_global: bool = False,
         user_id: str | None = None,
         tags: list[str] | None = None,
         source_type: str = "agent",
@@ -374,7 +379,7 @@ class MemoryBackendProtocol(Protocol):
 
     async def list_memories(
         self,
-        project_id: str | None = None,
+        scope: MemoryScope = ALL_MEMORIES,
         user_id: str | None = None,
         memory_type: str | None = None,
         limit: int = 50,
@@ -382,12 +387,11 @@ class MemoryBackendProtocol(Protocol):
         tags_all: list[str] | None = None,
         *,
         visibility: Visibility = "active",
-        include_global: bool = True,
     ) -> list[MemoryRecord]:
         """List memories with optional filtering.
 
         Args:
-            project_id: Filter by project ID
+            scope: Explicit ownership/visibility scope
             user_id: Filter by user ID
             memory_type: Filter by memory type
             limit: Maximum number of results
@@ -399,13 +403,17 @@ class MemoryBackendProtocol(Protocol):
         ...
 
     async def content_exists(
-        self, content: str, project_id: str | None = None, *, visibility: Visibility = "active"
+        self,
+        content: str,
+        scope: MemoryScope,
+        *,
+        visibility: Visibility = "active",
     ) -> bool:
         """Check if a memory with identical content already exists.
 
         Args:
             content: The content to check for
-            project_id: Project scope plus visible globals. ``None`` checks globals only.
+            scope: Explicit ownership/visibility scope
 
         Returns:
             True if a memory with identical content exists
@@ -413,13 +421,17 @@ class MemoryBackendProtocol(Protocol):
         ...
 
     async def get_memory_by_content(
-        self, content: str, project_id: str | None = None, *, visibility: Visibility = "active"
+        self,
+        content: str,
+        scope: MemoryScope,
+        *,
+        visibility: Visibility = "active",
     ) -> MemoryRecord | None:
         """Get a memory by its exact content.
 
         Args:
             content: The exact content to look up
-            project_id: Project scope plus visible globals. ``None`` checks globals only.
+            scope: Explicit ownership/visibility scope
 
         Returns:
             The MemoryRecord if found, None otherwise

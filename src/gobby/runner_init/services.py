@@ -167,6 +167,7 @@ def _init_memory_stack(runner: GobbyRunner) -> None:
                     runner.config.knowledge_graph_queue.max_deterministic_attempts
                 ),
             )
+            runner.memory_manager.start_projection_scope_repair()
         except Exception:
             mark_service_degraded(runner, "memory_manager")
             logger.exception("Failed to initialize MemoryManager")

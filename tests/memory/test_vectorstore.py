@@ -22,9 +22,10 @@ from gobby.memory.vectorstore import (
     VectorStoreCollectionDimensionError,
     VectorStoreUnavailableError,
     is_recoverable_vector_store_error,
-    memory_project_scope_filter,
+    memory_scope_filter,
 )
 from gobby.storage.memories import LocalMemoryManager
+from gobby.storage.memories_scope import MemoryScope
 
 pytestmark = pytest.mark.unit
 
@@ -323,8 +324,8 @@ async def test_scroll_ids_with_project_filter(vector_store: VectorStore) -> None
     assert result == [MEM_1]
 
 
-def test_memory_project_scope_filter_includes_global_and_legacy_empty_payloads() -> None:
-    scope_filter = memory_project_scope_filter("proj-A")
+def test_memory_scope_filter_includes_project_and_explicit_global_payloads() -> None:
+    scope_filter = memory_scope_filter(MemoryScope.project_visible("proj-A"))
 
     assert scope_filter is not None
     dumped = scope_filter.model_dump(mode="python")
@@ -341,8 +342,8 @@ def test_memory_project_scope_filter_includes_global_and_legacy_empty_payloads()
             "is_null": None,
         },
         {
-            "key": "project_id",
-            "match": {"value": ""},
+            "key": "is_global",
+            "match": {"value": True},
             "range": None,
             "geo_bounding_box": None,
             "geo_radius": None,
@@ -351,42 +352,41 @@ def test_memory_project_scope_filter_includes_global_and_legacy_empty_payloads()
             "is_empty": None,
             "is_null": None,
         },
-        {"is_null": {"key": "project_id"}},
-        {"is_empty": {"key": "project_id"}},
     ]
 
 
 @pytest.mark.asyncio
-async def test_search_with_memory_project_scope_filter_includes_globals(
+async def test_search_with_memory_scope_filter_includes_explicit_globals(
     vector_store: VectorStore,
 ) -> None:
-    """Behavioral test for global memory inclusion via memory_project_scope_filter.
+    """Project-visible Qdrant scope includes explicit globals and excludes other projects.
 
-    Upserts globals (explicit project_id=None and absent key) + a proj-B memory,
-    then searches with scope filter for "proj-A". Verifies globals are returned
-    (null-inclusion) and cross-project (proj-B) is excluded. This hardens the
-    Qdrant path that was previously only covered structurally (model_dump) or
-    via MagicMock (see #17167).
+    Every payload carries concrete ownership and an explicit visibility bit.
     """
-    # Global via explicit None
     await vector_store.upsert(
-        MEM_1, _make_embedding(1.0), {"content": "universal fact", "project_id": None}
+        MEM_1,
+        _make_embedding(1.0),
+        {"content": "universal fact", "project_id": "owner-A", "is_global": True},
     )
-    # Global via absent project_id key (legacy/optional path)
-    await vector_store.upsert(MEM_2, _make_embedding(1.1), {"content": "another universal fact"})
-    # Project-scoped (should be excluded for proj-A scope)
     await vector_store.upsert(
-        MEM_3, _make_embedding(1.2), {"content": "proj-B specific", "project_id": "proj-B"}
+        MEM_2,
+        _make_embedding(1.1),
+        {"content": "proj-A specific", "project_id": "proj-A", "is_global": False},
+    )
+    await vector_store.upsert(
+        MEM_3,
+        _make_embedding(1.2),
+        {"content": "proj-B specific", "project_id": "proj-B", "is_global": False},
     )
 
-    scope_filter = memory_project_scope_filter("proj-A")
+    scope_filter = memory_scope_filter(MemoryScope.project_visible("proj-A"))
     assert scope_filter is not None
 
     results = await vector_store.search(_make_embedding(1.0), limit=10, filters=scope_filter)
     result_ids = [rid for rid, _score in results]
 
-    assert MEM_1 in result_ids, "explicit project_id=None global must be returned"
-    assert MEM_2 in result_ids, "absent project_id key global must be returned"
+    assert MEM_1 in result_ids, "explicit global must be returned"
+    assert MEM_2 in result_ids, "owner-project memory must be returned"
     assert MEM_3 not in result_ids, "other project's memory must be excluded (no leak)"
 
 
@@ -403,14 +403,22 @@ async def test_crossref_create_fills_links_from_project_and_global_only(
     storage = LocalMemoryManager(db)
     source = storage.create_memory(content="source", project_id=project_a)
     same_project = storage.create_memory(content="same project", project_id=project_a)
-    global_memory = storage.create_memory(content="global", project_id=None)
+    global_memory = storage.create_memory(content="global", project_id=project_a, is_global=True)
     foreign = storage.create_memory(content="foreign", project_id=project_b)
     query = _make_embedding(1.0)
 
-    await vector_store.upsert(source.id, query, {"project_id": project_a})
-    await vector_store.upsert(foreign.id, query, {"project_id": project_b})
-    await vector_store.upsert(same_project.id, _make_embedding(1.01), {"project_id": project_a})
-    await vector_store.upsert(global_memory.id, _make_embedding(1.02), {"project_id": None})
+    await vector_store.upsert(source.id, query, {"project_id": project_a, "is_global": False})
+    await vector_store.upsert(foreign.id, query, {"project_id": project_b, "is_global": False})
+    await vector_store.upsert(
+        same_project.id,
+        _make_embedding(1.01),
+        {"project_id": project_a, "is_global": False},
+    )
+    await vector_store.upsert(
+        global_memory.id,
+        _make_embedding(1.02),
+        {"project_id": project_a, "is_global": True},
+    )
 
     service = CrossrefService(
         storage=storage,
@@ -441,14 +449,24 @@ async def test_crossref_create_for_global_source_links_global_candidates_only(
     project_a = "11111111-1111-4111-8111-111111111111"
     db.execute("INSERT INTO projects (id, name) VALUES (%s, %s)", (project_a, "Project A"))
     storage = LocalMemoryManager(db)
-    source = storage.create_memory(content="global source", project_id=None)
-    global_target = storage.create_memory(content="global target", project_id=None)
+    source = storage.create_memory(content="global source", project_id=project_a, is_global=True)
+    global_target = storage.create_memory(
+        content="global target", project_id=project_a, is_global=True
+    )
     project_target = storage.create_memory(content="project target", project_id=project_a)
     query = _make_embedding(2.0)
 
-    await vector_store.upsert(source.id, query, {"project_id": None})
-    await vector_store.upsert(project_target.id, query, {"project_id": project_a})
-    await vector_store.upsert(global_target.id, _make_embedding(2.01), {})
+    await vector_store.upsert(source.id, query, {"project_id": project_a, "is_global": True})
+    await vector_store.upsert(
+        project_target.id,
+        query,
+        {"project_id": project_a, "is_global": False},
+    )
+    await vector_store.upsert(
+        global_target.id,
+        _make_embedding(2.01),
+        {"project_id": project_a, "is_global": True},
+    )
 
     service = CrossrefService(
         storage=storage,

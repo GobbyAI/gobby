@@ -467,35 +467,34 @@ class TestPromoteMemory:
     def test_promote_returns_global_memory(self, client, mock_server) -> None:
         """POST /memories/{id}/promote moves a row to global scope and returns it."""
         mock_server.memory_manager.get_memory.return_value = _make_memory(id="mm-promoted")
-        promoted = _make_memory(id="mm-promoted", project_id=None)
-        mock_server.memory_manager.rescope_memory = AsyncMock(return_value=promoted)
+        promoted = _make_memory(id="mm-promoted", is_global=True)
+        mock_server.memory_manager.promote_memory = AsyncMock(return_value=promoted)
 
         response = client.post("/api/memories/mm-promoted/promote")
 
         assert response.status_code == 200
         assert response.json()["id"] == "mm-promoted"
-        assert response.json()["project_id"] is None
-        mock_server.memory_manager.rescope_memory.assert_awaited_once_with(
-            "mm-promoted",
-            None,
-        )
+        assert response.json()["project_id"] == "test-project"
+        assert response.json()["is_global"] is True
+        mock_server.memory_manager.promote_memory.assert_awaited_once_with("mm-promoted")
 
-    def test_promote_rejects_non_global_target(self, client, mock_server) -> None:
-        """Only promote-to-global is exposed."""
-        mock_server.memory_manager.rescope_memory = AsyncMock()
+    def test_promote_calls_explicit_operation(self, client, mock_server) -> None:
+        """Promotion is a dedicated operation with no nullable target scope."""
+        promoted = _make_memory(id="mm-promoted", is_global=True)
+        mock_server.memory_manager.promote_memory = AsyncMock(return_value=promoted)
 
         response = client.post(
             "/api/memories/mm-promoted/promote",
             json={"target_project_id": "other-project"},
         )
 
-        assert response.status_code == 422
-        mock_server.memory_manager.rescope_memory.assert_not_called()
+        assert response.status_code == 200
+        mock_server.memory_manager.promote_memory.assert_awaited_once_with("mm-promoted")
 
     def test_promote_not_found(self, client, mock_server) -> None:
         """A missing memory raises ValueError in storage and surfaces as 404."""
         mock_server.memory_manager.get_memory.return_value = _make_memory(id="nope")
-        mock_server.memory_manager.rescope_memory = AsyncMock(
+        mock_server.memory_manager.promote_memory = AsyncMock(
             side_effect=ValueError("Memory nope not found")
         )
 

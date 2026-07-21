@@ -3,6 +3,7 @@ from typing import Any
 
 from gobby.storage.memories_base import MemoryStoreBase
 from gobby.storage.memories_models import Memory, Visibility, visibility_predicate
+from gobby.storage.memories_scope import ALL_MEMORIES, MemoryScope, memory_scope_predicate
 from gobby.storage.sql_dialect import json_array_contains_condition, json_empty_array_coalesce_expr
 from gobby.utils.datetime import parse_stored_datetime
 
@@ -10,22 +11,18 @@ from gobby.utils.datetime import parse_stored_datetime
 class MemoryQueryMixin(MemoryStoreBase):
     def count_memories(
         self,
-        project_id: str | None = None,
+        scope: MemoryScope = ALL_MEMORIES,
         memory_type: str | None = None,
         *,
         visibility: Visibility = "active",
     ) -> int:
-        """Return the total number of memories using COUNT(*).
-
-        When project_id is provided, includes both project-specific memories
-        and global memories (project_id IS NULL) since global memories are
-        accessible from any project context.
-        """
+        """Return the total number of memories in an explicit scope."""
         clauses: list[str] = []
         params: list[Any] = []
-        if project_id:
-            clauses.append("(project_id = %s OR project_id IS NULL)")
-            params.append(project_id)
+        scope_predicate, scope_params = memory_scope_predicate(scope)
+        if scope_predicate:
+            clauses.append(scope_predicate)
+            params.extend(scope_params)
         if memory_type:
             clauses.append("memory_type = %s")
             params.append(memory_type)
@@ -41,7 +38,7 @@ class MemoryQueryMixin(MemoryStoreBase):
 
     def list_memories(
         self,
-        project_id: str | None = None,
+        scope: MemoryScope = ALL_MEMORIES,
         memory_type: str | None = None,
         limit: int = 50,
         offset: int = 0,
@@ -50,13 +47,12 @@ class MemoryQueryMixin(MemoryStoreBase):
         tags_none: list[str] | None = None,
         *,
         visibility: Visibility = "active",
-        include_global: bool = True,
     ) -> list[Memory]:
         """
         List memories with optional filtering.
 
         Args:
-            project_id: Filter by project ID (or None for global)
+            scope: Explicit ownership/visibility scope
             memory_type: Filter by memory type
             limit: Maximum number of results
             offset: Number of results to skip
@@ -73,13 +69,10 @@ class MemoryQueryMixin(MemoryStoreBase):
         query = "SELECT * FROM memories WHERE 1=1"
         params: list[Any] = []
 
-        if project_id:
-            query += (
-                " AND (project_id = %s OR project_id IS NULL)"
-                if include_global
-                else " AND project_id = %s"
-            )
-            params.append(project_id)
+        scope_predicate, scope_params = memory_scope_predicate(scope)
+        if scope_predicate:
+            query += f" AND {scope_predicate}"
+            params.extend(scope_params)
 
         if memory_type:
             query += " AND memory_type = %s"
@@ -93,7 +86,7 @@ class MemoryQueryMixin(MemoryStoreBase):
         query += tag_clause
         params.extend(tag_params)
 
-        query += " ORDER BY updated_at DESC"
+        query += " ORDER BY is_global ASC, updated_at DESC"
 
         rows = self.db.fetchall(
             f"{query} LIMIT %s OFFSET %s",
@@ -128,21 +121,20 @@ class MemoryQueryMixin(MemoryStoreBase):
     def search_memories(
         self,
         query_text: str,
-        project_id: str | None = None,
+        scope: MemoryScope = ALL_MEMORIES,
         limit: int = 20,
         tags_all: list[str] | None = None,
         tags_any: list[str] | None = None,
         tags_none: list[str] | None = None,
         *,
         visibility: Visibility = "active",
-        include_global: bool = True,
     ) -> list[Memory]:
         """
         Search memories by content with optional tag filtering.
 
         Args:
             query_text: Text to search for in memory content
-            project_id: Optional project ID to filter by
+            scope: Explicit ownership/visibility scope
             limit: Maximum number of results
             tags_all: Memory must have ALL of these tags
             tags_any: Memory must have at least ONE of these tags
@@ -156,13 +148,10 @@ class MemoryQueryMixin(MemoryStoreBase):
         sql = "SELECT * FROM memories WHERE content LIKE %s ESCAPE '\\'"
         params: list[Any] = [f"%{escaped_query}%"]
 
-        if project_id:
-            sql += (
-                " AND (project_id = %s OR project_id IS NULL)"
-                if include_global
-                else " AND project_id = %s"
-            )
-            params.append(project_id)
+        scope_predicate, scope_params = memory_scope_predicate(scope)
+        if scope_predicate:
+            sql += f" AND {scope_predicate}"
+            params.extend(scope_params)
 
         vis = visibility_predicate(visibility)
         if vis:
@@ -172,7 +161,7 @@ class MemoryQueryMixin(MemoryStoreBase):
         sql += tag_clause
         params.extend(tag_params)
 
-        sql += " ORDER BY updated_at DESC LIMIT %s"
+        sql += " ORDER BY is_global ASC, updated_at DESC LIMIT %s"
         params.append(limit)
 
         rows = self.db.fetchall(sql, tuple(params))

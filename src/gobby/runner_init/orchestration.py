@@ -428,7 +428,7 @@ def init_orchestration(runner: GobbyRunner) -> None:
                     # — the exact set the per-project sweep will judge.
                     all_memories_cutoff = "9999-12-31T23:59:59+00:00"
                     try:
-                        memory_project_ids = runner.memory_manager.list_dream_project_ids(
+                        memory_scopes = runner.memory_manager.list_dream_scopes(
                             redream_cutoff=all_memories_cutoff
                         )
                     except Exception as enum_err:
@@ -437,8 +437,9 @@ def init_orchestration(runner: GobbyRunner) -> None:
                             enum_err,
                             exc_info=True,
                         )
-                        memory_project_ids = []
-                    for memory_project_id in memory_project_ids:
+                        memory_scopes = []
+                    for memory_scope in memory_scopes:
+                        memory_project_id = memory_scope.project_id
                         if memory_project_id is None or memory_project_id in codewiki_targets:
                             continue
                         memory_project = pm.get(memory_project_id)

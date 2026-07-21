@@ -23,6 +23,7 @@ import psycopg
 from gobby.memory.dream.models import DreamAction, DreamCandidate
 from gobby.memory.dream.protocols import MemoryDreamManagerProtocol
 from gobby.memory.dream.storage import MemoryDreamStore
+from gobby.storage.memories import Memory
 
 logger = logging.getLogger(__name__)
 _EXPECTED_ACTION_ERRORS = (ValueError, OSError, psycopg.Error)
@@ -135,15 +136,13 @@ async def revert_dream_run(
                 if memory_manager is not None:
                     if snapshot.get("action") == "promote":
                         secondary_failures.extend(
-                            await memory_manager.sync_memory_scope_indices(
-                                memory_id,
-                                before.get("project_id"),
-                            )
+                            await memory_manager.sync_memory_scope_indices(Memory.from_row(before))
                         )
                     await memory_manager.restore_memory_indices(
                         memory_id,
                         str(before["content"]),
-                        before.get("project_id"),
+                        str(before["project_id"]),
+                        bool(before["is_global"]),
                     )
                 restored += 1
         except Exception as exc:
@@ -291,7 +290,7 @@ async def _promote(
     before = await asyncio.to_thread(store.get_memory_row, memory_id)
     if before is None:
         return 0
-    if before.get("project_id") is None:
+    if bool(before["is_global"]):
         await _advance_cursor(memory_manager, memory_id, stamp)
         return 0
 
@@ -305,7 +304,7 @@ async def _promote(
     db_mutated = False
     try:
         db_mutated = True
-        await memory_manager.rescope_memory(memory_id, None)
+        await memory_manager.promote_memory(memory_id)
         await asyncio.to_thread(memory_manager.mark_dreamed, memory_id, hidden_as=None, when=stamp)
         after = await asyncio.to_thread(store.get_memory_row, memory_id)
         await asyncio.to_thread(store.complete_snapshot, snapshot_id, after_data=after)
@@ -314,7 +313,7 @@ async def _promote(
         if db_mutated:
             try:
                 current = await asyncio.to_thread(store.get_memory_row, memory_id)
-                if current is not None and current.get("project_id") != before.get("project_id"):
+                if current is not None and bool(current["is_global"]) != bool(before["is_global"]):
                     await _restore_promote_row(memory_manager, store, before)
             except Exception as rollback_exc:
                 logger.warning(
@@ -492,6 +491,7 @@ async def _supersede(
                 content=action.content,
                 memory_type=action.memory_type or (candidate.memory_type if candidate else "fact"),
                 project_id=candidate.project_id if candidate else None,
+                is_global=candidate.is_global if candidate else False,
                 source_type="agent",
                 tags=action.tags or (candidate.tags if candidate else None),
             )
@@ -589,12 +589,12 @@ async def _restore_promote_row(
     row: dict[str, Any],
 ) -> None:
     await asyncio.to_thread(store.restore_memory_row, row)
-    memory_id = str(row["id"])
-    failures = await memory_manager.sync_memory_scope_indices(memory_id, row.get("project_id"))
+    memory = Memory.from_row(row)
+    failures = await memory_manager.sync_memory_scope_indices(memory)
     if failures:
         logger.warning(
             "Memory dream promote rollback secondary sync failed for %s: %s",
-            memory_id,
+            memory.id,
             failures,
         )
 

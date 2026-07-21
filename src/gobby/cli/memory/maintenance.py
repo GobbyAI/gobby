@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import importlib
-from collections.abc import Awaitable, Coroutine
+from collections.abc import Awaitable
 from types import ModuleType
 from typing import Any, Protocol
 
@@ -17,12 +17,6 @@ class _MemoryDeleteManager(Protocol):
 
 class _MemoryListManager(_MemoryDeleteManager, Protocol):
     def list_memories(self, **kwargs: Any) -> list[Any]: ...
-
-
-class _MemoryProjectRepairManager(_MemoryListManager, Protocol):
-    def fix_null_project_ids_from_sessions(
-        self, *, dry_run: bool = False
-    ) -> Coroutine[Any, Any, Any]: ...
 
 
 def _facade() -> ModuleType:
@@ -129,47 +123,3 @@ def dedupe_memories(ctx: click.Context, dry_run: bool, yes: bool) -> None:
         deleted = asyncio.run(_delete_memories(manager, duplicates_to_delete))
 
         click.echo(f"Deleted {deleted} duplicate memories.")
-
-
-@click.command("fix-null-project")
-@click.option("--dry-run", is_flag=True, help="Show affected memories without updating")
-@click.pass_context
-def fix_null_project(ctx: click.Context, dry_run: bool) -> None:
-    """Fix memories with NULL project_id from their source session.
-
-    Finds memories with source_type='session' and NULL project_id, then
-    looks up the source session to get the correct project_id.
-
-    Examples:
-
-        gobby memory fix-null-project --dry-run   # Preview changes
-
-        gobby memory fix-null-project             # Apply fixes
-    """
-    memory_module = _facade()
-    manager: _MemoryProjectRepairManager = memory_module.get_memory_manager(ctx)
-    result: Any = asyncio.run(manager.fix_null_project_ids_from_sessions(dry_run=dry_run))
-
-    if result.total == 0:
-        click.echo("No memories with NULL project_id from sessions found.")
-        return
-
-    click.echo(f"Found {result.total} memories with NULL project_id from sessions/agents.")
-
-    if dry_run:
-        for repair in result.repairs:
-            content_preview = repair.content[:50] if repair.content else ""
-            if repair.project_id:
-                click.echo(
-                    f"  Would fix {repair.memory_id[:12]}: set project_id={repair.project_id[:12]}"
-                )
-                click.echo(f"    Content: {content_preview}...")
-            else:
-                click.echo(
-                    f"  Cannot fix {repair.memory_id[:12]}: "
-                    f"session {repair.source_session_id} not found or has no project_id"
-                )
-
-        click.echo(f"\nWould fix {result.fixable} memories. Run without --dry-run to apply.")
-    else:
-        click.echo(f"Fixed {result.fixed} memories with project_id from their source sessions.")

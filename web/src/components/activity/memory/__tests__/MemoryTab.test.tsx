@@ -17,7 +17,8 @@ type MemoryRecord = {
   content: string;
   created_at: string;
   updated_at: string;
-  project_id: string | null;
+  project_id: string;
+  is_global: boolean;
   source_type: string | null;
   source_session_id: string | null;
   importance: number;
@@ -40,6 +41,7 @@ function makeMemory(overrides: Partial<MemoryRecord>): MemoryRecord {
     created_at: recentIso,
     updated_at: recentIso,
     project_id: "project-1",
+    is_global: false,
     source_type: "agent",
     source_session_id: null,
     importance: 0.5,
@@ -121,7 +123,7 @@ function setupFetch(initialMemories: MemoryRecord[], options: FetchRouteOptions 
       const index = memories.findIndex((memory) => memory.id === memoryId);
       if (index === -1) return jsonResponse({ error: "not found" }, 404);
       memories = memories.map((memory, memoryIndex) =>
-        memoryIndex === index ? { ...memory, project_id: null } : memory,
+        memoryIndex === index ? { ...memory, is_global: true } : memory,
       );
       return jsonResponse(memories[index]);
     }

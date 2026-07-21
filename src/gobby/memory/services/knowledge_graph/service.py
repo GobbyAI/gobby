@@ -10,6 +10,7 @@ from typing import TYPE_CHECKING, Any
 from gobby.llm.base import LLMProviderCancellation
 from gobby.memory.falkor_client import FalkorConnectionError, FalkorQueryError
 from gobby.search.similarity import cosine_similarity as _cosine_similarity
+from gobby.storage.projects import GLOBAL_PROJECT_ID, PERSONAL_PROJECT_ID
 
 from .clustering import ClusterRunResult, recluster_project_entities
 from .code_linker import KnowledgeGraphCodeLinker
@@ -144,7 +145,8 @@ class KnowledgeGraphService:
         self,
         content: str,
         memory_id: str | None = None,
-        project_id: str | None = None,
+        project_id: str = PERSONAL_PROJECT_ID,
+        is_global: bool = False,
     ) -> KnowledgeGraphResult:
         """Extract entities and relationships from content and merge into FalkorDB.
 
@@ -178,7 +180,11 @@ class KnowledgeGraphService:
             logger.warning("Entity extraction failed for memory %s: %s", memory_ref, e)
             return self._failure_result(e)
 
-        entities = self._normalize_entities(extracted_entities, project_id=project_id)
+        entities = self._normalize_entities(
+            extracted_entities,
+            project_id=project_id,
+            is_global=is_global,
+        )
         if not entities:
             return KnowledgeGraphResult(status=KnowledgeGraphStatus.NOOP_NO_ENTITIES)
 
@@ -199,13 +205,15 @@ class KnowledgeGraphService:
             extracted_relationships,
             entities=entities,
             project_id=project_id,
+            is_global=is_global,
         )
 
         try:
             await self._delete_outdated_relations(
                 entities=entities,
                 new_relations=relationships,
-                project_id=project_id,
+                project_id=GLOBAL_PROJECT_ID if is_global else project_id,
+                is_global=is_global,
             )
         except LLMProviderCancellation as e:
             logger.info("Relation cleanup cancelled for memory %s: %s", memory_ref, e)
@@ -310,7 +318,12 @@ class KnowledgeGraphService:
 
         if memory_id:
             try:
-                await self._link_entities_to_memory(entities, memory_id, project_id=project_id)
+                await self._link_entities_to_memory(
+                    entities,
+                    memory_id,
+                    project_id=project_id,
+                    is_global=is_global,
+                )
                 made_progress = True
             except FalkorConnectionError as e:
                 logger.warning(
@@ -333,7 +346,12 @@ class KnowledgeGraphService:
         # the just-written bipartite structure for the current memory.
         if memory_id and self._materialize_cooccurrence:
             try:
-                await self._merge_cooccurrence_edges(entities, entity_embeddings, project_id)
+                await self._merge_cooccurrence_edges(
+                    entities,
+                    entity_embeddings,
+                    GLOBAL_PROJECT_ID if is_global else project_id,
+                    is_global,
+                )
                 made_progress = True
             except FalkorConnectionError as e:
                 logger.warning(
@@ -354,7 +372,12 @@ class KnowledgeGraphService:
                 )
                 partial_errors.append(f"co_occurs:{memory_id}:{e}")
 
-        if project_id and self._vector_store and self._embed_fn is not None and entity_embeddings:
+        if (
+            not is_global
+            and self._vector_store
+            and self._embed_fn is not None
+            and entity_embeddings
+        ):
             try:
                 await self._link_entities_to_code(entities, entity_embeddings, project_id)
                 made_progress = True
@@ -402,7 +425,8 @@ class KnowledgeGraphService:
         self,
         entities: list[_GraphEntity],
         entity_embeddings: dict[str, list[float]],
-        project_id: str | None,
+        project_id: str,
+        is_global: bool,
     ) -> None:
         """Write canonical co-occurrence edges over the memory's salient entities.
 
@@ -421,6 +445,7 @@ class KnowledgeGraphService:
         await self._writer.merge_cooccurrence_edges(
             pairs,
             project_id,
+            is_global,
             entity_embeddings,
             weighted=self._graph_edge_weighting,
         )
@@ -438,23 +463,26 @@ class KnowledgeGraphService:
         self,
         entities: list[Entity],
         *,
-        project_id: str | None,
+        project_id: str,
+        is_global: bool,
     ) -> list[_GraphEntity]:
         """Normalize and deduplicate extracted entities by stable key."""
-        return normalize_entities(entities, project_id=project_id)
+        return normalize_entities(entities, project_id=project_id, is_global=is_global)
 
     def _normalize_relationships(
         self,
         relationships: list[Relationship],
         *,
         entities: list[_GraphEntity],
-        project_id: str | None,
+        project_id: str,
+        is_global: bool,
     ) -> list[Relationship]:
         """Normalize relationships to stable entity keys."""
         return normalize_relationships(
             relationships,
             entities=entities,
             project_id=project_id,
+            is_global=is_global,
         )
 
     @staticmethod
@@ -520,7 +548,8 @@ class KnowledgeGraphService:
         self,
         entities: list[_GraphEntity],
         new_relations: list[Relationship],
-        project_id: str | None,
+        project_id: str,
+        is_global: bool,
     ) -> None:
         """Find and delete outdated relationships from FalkorDB."""
         entity_keys = [e.entity_key for e in entities]
@@ -540,7 +569,7 @@ class KnowledgeGraphService:
             new_relations=new_relations,
             existing_relations=existing,
         )
-        await self._writer.delete_relations(to_delete, project_id)
+        await self._writer.delete_relations(to_delete, project_id, is_global)
 
     async def _fetch_existing_relations(self, entity_keys: list[str]) -> list[dict[str, str]]:
         """Fetch existing relationships involving the given entities."""
@@ -550,18 +579,29 @@ class KnowledgeGraphService:
         self,
         entities: list[_GraphEntity],
         memory_id: str,
-        project_id: str | None = None,
+        project_id: str,
+        is_global: bool,
     ) -> None:
         """Create Memory node and MENTIONED_IN relationships from entities."""
-        await self._writer.link_entities_to_memory(entities, memory_id, project_id=project_id)
+        await self._writer.link_entities_to_memory(
+            entities,
+            memory_id,
+            project_id=project_id,
+            is_global=is_global,
+        )
 
     async def remove_memory_from_graph(
         self,
         memory_id: str,
         project_id: str | None = None,
+        is_global: bool | None = None,
     ) -> None:
         """Remove a Memory node and all its MENTIONED_IN edges from FalkorDB."""
-        await self._maintenance.remove_memory_from_graph(memory_id, project_id=project_id)
+        await self._maintenance.remove_memory_from_graph(
+            memory_id,
+            project_id=project_id,
+            is_global=is_global,
+        )
 
     async def remove_memories_from_graph(self, memory_ids: set[str]) -> int:
         """Batch-remove Memory nodes and their MENTIONED_IN edges from FalkorDB."""
