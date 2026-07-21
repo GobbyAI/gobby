@@ -194,8 +194,14 @@ def validate_task_cmd(
                 )
             )
         # Apply validation updates
+        persisted_status = (
+            "error"
+            if result.status == "invalid"
+            and result.failure_category in INFRASTRUCTURE_FAILURE_CATEGORIES
+            else result.status
+        )
         validation_updates: dict[str, Any] = {
-            "validation_status": result.status,
+            "validation_status": persisted_status,
             "validation_feedback": result.feedback,
         }
         escalation_reason: str | None = None

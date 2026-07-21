@@ -169,7 +169,9 @@ steps:
          branch as target_branch. If merge_start rejects a stale/reused
          resolution or reports that source_branch does not match the worktree
          branch, retry once with the corrected source/target pair from the
-         worktree metadata before recording failure.
+         worktree metadata. If the corrected retry fails, call
+         gobby-tasks-ops:record_merge_result with the task_id and the
+         failure_reason reported by merge_start.
          (this sets merge_resolve_attempts=[])
       2. Check merge_status for the resolution_id to see conflict details
       3. Resolve conflicts sequentially: call merge_resolve with use_ai=true
@@ -250,11 +252,6 @@ steps:
         variable: merge_worker_ready_to_terminate
         value: true
     on_mcp_error:
-      - server: gobby-merge
-        tool: merge_start
-        action: set_variable
-        variable: merge_worker_ready_to_terminate
-        value: true
       - server: gobby-merge
         tool: merge_resolve
         when: "not bool(tool_output.get('retry_later'))"

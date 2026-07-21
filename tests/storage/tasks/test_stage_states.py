@@ -3,11 +3,13 @@
 from __future__ import annotations
 
 import inspect
+from typing import Any
 
 import pytest
 
 from gobby.failure_categories import FailureCategory
 from gobby.storage.delivery import TaskDeliveryStateManager
+from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.sessions import SessionManager
 from gobby.storage.tasks import LocalTaskManager
 from tests.phase2_stage_contract_helpers import register_contract_tests
@@ -448,8 +450,8 @@ def test_invalid_transition_error_carries_full_payload(temp_db, sample_project) 
 
 
 def test_close_task_completes_in_progress_merge_row_with_recorded_delivery_sha(
-    temp_db,
-    sample_project,
+    temp_db: HubDatabase,
+    sample_project: dict[str, Any],
 ) -> None:
     task, _manager = make_task_with_manifest(
         temp_db,

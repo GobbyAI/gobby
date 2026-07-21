@@ -13,11 +13,14 @@ from gobby.failure_categories import FailureCategory
 from gobby.mcp_proxy.tools.tasks._lifecycle_validation import validate_leaf_task_with_llm
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.tasks import LocalTaskManager
-from gobby.storage.tasks._validation_backoff import TaskValidationBackoffStore
+from gobby.storage.tasks._validation_backoff import (
+    MAX_CONSECUTIVE_INFRA_FAILURES,
+    TaskValidationBackoffStore,
+)
 from gobby.tasks.validation import ValidationResult as TaskValidationResult
 from gobby.tasks.validation_history import ValidationHistoryManager
 
-pytestmark = pytest.mark.unit
+pytestmark = pytest.mark.integration
 
 
 class _StubValidator:
@@ -159,3 +162,99 @@ async def test_environment_verdict_is_retryable_and_does_not_increment_fail_coun
     history = ValidationHistoryManager(temp_db).get_iteration_history(task.id)
     assert history[-1].status == "error"
     assert history[-1].failure_category is FailureCategory.ENVIRONMENT
+
+
+@pytest.mark.asyncio
+async def test_environment_verdict_escalates_at_infrastructure_failure_threshold(
+    temp_db: HubDatabase,
+    sample_project: dict[str, Any],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    manager = LocalTaskManager(temp_db)
+    task = _make_leaf_task(manager, sample_project["id"])
+    validator = _StubValidator(
+        [
+            TaskValidationResult(
+                status="invalid",
+                feedback="PostgreSQL connection refused",
+                blocking_reasons=["worktree database unavailable"],
+                failure_category=FailureCategory.ENVIRONMENT,
+            )
+        ]
+    )
+    _Clock.current = datetime(2026, 1, 1, tzinfo=UTC)
+    monkeypatch.setattr(lifecycle, "utc_now", lambda: _Clock.current)
+
+    prior_message: str | None = None
+    result = None
+    for attempt in range(MAX_CONSECUTIVE_INFRA_FAILURES):
+        result = await validate_leaf_task_with_llm(
+            task,
+            validator,
+            "context",
+            SimpleNamespace(task_manager=manager),
+            task.id,
+            None,
+        )
+        if attempt == MAX_CONSECUTIVE_INFRA_FAILURES - 2:
+            prior_message = result.message
+        _Clock.current += timedelta(hours=2)
+
+    assert result is not None
+    assert result.error_type == "validation_infrastructure_failure"
+    assert result.message == prior_message
+    assert result.failure_category is FailureCategory.ENVIRONMENT
+    assert result.extra == {
+        "validation_status": "error",
+        "failure_category": "environment",
+        "retryable": False,
+        "escalated": True,
+        "consecutive_failures": MAX_CONSECUTIVE_INFRA_FAILURES,
+    }
+    refreshed = manager.get_task(task.id)
+    assert refreshed is not None
+    assert refreshed.escalated_at is not None
+    assert refreshed.is_escalated is True
+    assert refreshed.validation_fail_count == 0
+    assert refreshed.escalation_reason == (
+        "validation generation unavailable after "
+        f"{MAX_CONSECUTIVE_INFRA_FAILURES} consecutive infrastructure failures"
+    )
+
+
+@pytest.mark.asyncio
+async def test_error_verdict_escalates_with_authoritative_task_transition(
+    temp_db: HubDatabase,
+    sample_project: dict[str, Any],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    manager = LocalTaskManager(temp_db)
+    task = _make_leaf_task(manager, sample_project["id"])
+    validator = _StubValidator(
+        [TaskValidationResult(status="error", feedback="provider unavailable")]
+    )
+    _Clock.current = datetime(2026, 1, 1, tzinfo=UTC)
+    monkeypatch.setattr(lifecycle, "utc_now", lambda: _Clock.current)
+
+    result = None
+    for _attempt in range(MAX_CONSECUTIVE_INFRA_FAILURES):
+        result = await validate_leaf_task_with_llm(
+            task,
+            validator,
+            "context",
+            SimpleNamespace(task_manager=manager),
+            task.id,
+            None,
+        )
+        _Clock.current += timedelta(hours=2)
+
+    assert result is not None
+    assert result.error_type == "validation_infrastructure_unavailable"
+    assert result.failure_category is FailureCategory.PROVIDER
+    assert result.extra is not None
+    assert result.extra["retryable"] is False
+    assert result.extra["escalated"] is True
+    assert result.extra["consecutive_failures"] == MAX_CONSECUTIVE_INFRA_FAILURES
+    refreshed = manager.get_task(task.id)
+    assert refreshed is not None
+    assert refreshed.is_escalated is True

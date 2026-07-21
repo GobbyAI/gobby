@@ -510,13 +510,13 @@ async def validate_leaf_task_with_llm(
         )
         retry_at = state.next_retry_at.isoformat() if state.next_retry_at else "later"
         if state.should_escalate():
-            ctx.task_manager.update_task(
+            escalation_reason = (
+                "validation generation unavailable after "
+                f"{state.consecutive_failures} consecutive infrastructure failures"
+            )
+            ctx.task_manager.escalate_task(
                 resolved_id,
-                escalated_at=now,
-                escalation_reason=(
-                    "validation generation unavailable after "
-                    f"{state.consecutive_failures} consecutive infrastructure failures"
-                ),
+                reason=escalation_reason,
             )
             logger.error(
                 "Escalating task %s: validation generation unavailable after %d consecutive "
@@ -591,6 +591,34 @@ async def validate_leaf_task_with_llm(
                 failure_category=failure_category,
             )
             retry_at = state.next_retry_at.isoformat() if state.next_retry_at else "later"
+            if state.should_escalate():
+                escalation_reason = (
+                    "validation generation unavailable after "
+                    f"{state.consecutive_failures} consecutive infrastructure failures"
+                )
+                ctx.task_manager.escalate_task(
+                    resolved_id,
+                    reason=escalation_reason,
+                )
+                logger.error(
+                    "Escalating task %s: validation generation unavailable after %d consecutive "
+                    "infrastructure failures",
+                    resolved_id,
+                    state.consecutive_failures,
+                )
+                return ValidationResult(
+                    can_close=False,
+                    error_type="validation_infrastructure_failure",
+                    message=message,
+                    extra={
+                        "validation_status": "error",
+                        "failure_category": failure_category.value,
+                        "retryable": False,
+                        "escalated": True,
+                        "consecutive_failures": state.consecutive_failures,
+                    },
+                    failure_category=failure_category,
+                )
             return ValidationResult(
                 can_close=False,
                 error_type="validation_infrastructure_failure",

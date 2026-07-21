@@ -113,11 +113,17 @@ async def spawn_agent(
     from gobby.workflows.agent_resolver import AgentResolutionError, resolve_agent
 
     try:
-        agent_body = resolve_agent(action.agent_slug, db, project_id=project_id)
+        agent_body = await asyncio.to_thread(
+            resolve_agent,
+            action.agent_slug,
+            db,
+            project_id=project_id,
+        )
     except AgentResolutionError as exc:
         raise DispatchSpawnFailed(f"agent_definition_missing:{action.agent_slug}") from exc
 
-    skill_composition = inspect_skill_composition(
+    skill_composition = await asyncio.to_thread(
+        inspect_skill_composition,
         db,
         project_id=project_id,
         agent_body=agent_body,

@@ -1,6 +1,8 @@
 """Pre-dispatch skill-composition validation tests."""
 
+from collections.abc import Callable
 from types import SimpleNamespace
+from typing import Any
 from unittest.mock import AsyncMock
 
 import pytest
@@ -93,6 +95,62 @@ def test_skill_composition_clean_pass_through_reports_allowed_tools_union(temp_d
     assert report.failure_reason is None
 
 
+def test_skill_composition_uses_single_visible_skill_query(
+    temp_db,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _skill(temp_db, "required-skill")
+    _skill(temp_db, "optional-skill")
+    calls: list[tuple[str | None, int | None]] = []
+    original = LocalSkillManager.list_skills
+
+    def tracked_list_skills(
+        manager: LocalSkillManager,
+        *args: Any,
+        **kwargs: Any,
+    ) -> Any:
+        calls.append((kwargs.get("project_id"), kwargs.get("limit")))
+        return original(manager, *args, **kwargs)
+
+    monkeypatch.setattr(LocalSkillManager, "list_skills", tracked_list_skills)
+    monkeypatch.setattr(
+        LocalSkillManager,
+        "get_by_name",
+        lambda *_args, **_kwargs: pytest.fail("composition must use the visible-skill query"),
+    )
+
+    report = inspect_skill_composition(
+        temp_db,
+        project_id=TEST_PROJECT_ID,
+        agent_body=_agent(),
+        additional_skills=("optional-skill",),
+    )
+
+    assert report.valid is True
+    assert calls == [(TEST_PROJECT_ID, -1)]
+
+
+def test_skill_composition_skips_query_when_no_skills_are_checked(
+    temp_db,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(
+        LocalSkillManager,
+        "list_skills",
+        lambda *_args, **_kwargs: pytest.fail("empty composition must not query skills"),
+    )
+
+    report = inspect_skill_composition(
+        temp_db,
+        project_id=TEST_PROJECT_ID,
+        agent_body=None,
+        additional_skills=(),
+    )
+
+    assert report.valid is True
+    assert report.checked_skills == ()
+
+
 @pytest.mark.asyncio
 async def test_spawn_and_explain_share_unknown_skill_failure(
     temp_db,
@@ -135,6 +193,18 @@ async def test_spawn_and_explain_share_unknown_skill_failure(
         session_manager=SessionManager(temp_db),
         agent_runner=SimpleNamespace(),
     )
+    offloaded: list[str] = []
+
+    async def record_to_thread(
+        func: Callable[..., Any],
+        /,
+        *args: Any,
+        **kwargs: Any,
+    ) -> Any:
+        offloaded.append(func.__name__)
+        return func(*args, **kwargs)
+
+    monkeypatch.setattr("gobby.dispatch.spawn.asyncio.to_thread", record_to_thread)
 
     with pytest.raises(
         DispatchSpawnFailed,
@@ -142,6 +212,7 @@ async def test_spawn_and_explain_share_unknown_skill_failure(
     ):
         await spawn_agent(action, db=temp_db, services=services)
 
+    assert offloaded == ["resolve_agent", "inspect_skill_composition"]
     monkeypatch.setattr("gobby.build.observability._dispatch_block_reason", lambda *_args: None)
     monkeypatch.setattr("gobby.build.observability.dispatch_rules.evaluate", lambda *_args: action)
     explanation = explain_dispatch(task.id, db=temp_db, project_id=project.id)

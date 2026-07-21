@@ -312,6 +312,21 @@ async def test_merge_worker_failure_result_transitions_to_terminate(temp_db: Hub
     engine = RuleEngine(db)
     variables: dict[str, Any] = {}
 
+    await engine.evaluate(
+        _mcp_event(
+            "gobby-merge:merge_start",
+            event_type=HookEventType.AFTER_TOOL,
+            is_error=True,
+        ),
+        session_id="aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaa3002",
+        variables=variables,
+    )
+
+    instance = instance_manager.get_instance("aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaa3002", "merge-worker")
+    assert instance is not None
+    assert instance.current_step == "merge"
+    assert instance.variables["merge_worker_ready_to_terminate"] is False
+
     response = await engine.evaluate(
         _mcp_event(
             "gobby-tasks-ops:record_merge_result",
@@ -336,7 +351,6 @@ async def test_merge_worker_failure_result_transitions_to_terminate(temp_db: Hub
 @pytest.mark.parametrize(
     "mcp_key",
     [
-        "gobby-merge:merge_start",
         "gobby-tasks-ops:record_merge_result",
         "gobby-tasks-ops:close_linked_github_issue",
     ],

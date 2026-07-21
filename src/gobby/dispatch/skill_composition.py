@@ -87,10 +87,13 @@ def inspect_skill_composition(
     unknown: list[str] = []
     disabled: list[str] = []
     allowed_tools: set[str] = set()
-    manager = LocalSkillManager(db)
+    visible_skills = (
+        LocalSkillManager(db).list_skills(project_id=project_id, limit=-1) if checked else []
+    )
+    skills_by_name = {skill.name: skill for skill in visible_skills}
 
     for name in checked:
-        skill = manager.get_by_name(name, project_id=project_id)
+        skill = skills_by_name.get(name)
         if skill is None:
             unknown.append(name)
             continue

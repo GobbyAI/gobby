@@ -216,6 +216,7 @@ class TestValidateCommandWithNewFlags:
 
         assert result.exit_code == 0, (result.output, result.exception)
         update_kwargs = mock_manager.update_task.call_args.kwargs
+        assert update_kwargs["validation_status"] == "error"
         assert "validation_fail_count" not in update_kwargs
         mock_manager.create_task.assert_not_called()
         mock_manager.escalate_task.assert_not_called()

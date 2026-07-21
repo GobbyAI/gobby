@@ -3,11 +3,13 @@
 from __future__ import annotations
 
 from types import SimpleNamespace
+from unittest.mock import MagicMock
 
 import pytest
 
 from tests.fixtures.postgres import (
     _adapt_seed_rows,
+    _cleanup_orphaned_schemas,
     _configured_postgres_database_url,
     _enforce_safe_test_schema,
     _schema_looks_test_only,
@@ -71,3 +73,39 @@ def test_adapt_seed_rows_wraps_json_values() -> None:
     assert adapted[0][2] == "plain"
     assert adapted[0][0].obj == {"mode": "auto"}
     assert adapted[0][1].obj == ["fast"]
+
+
+def test_orphan_cleanup_holds_drop_lock_through_scan_and_drop(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import tests.fixtures.postgres as postgres_fixture
+
+    events: list[str] = []
+    connection = MagicMock()
+    connection.__enter__.return_value = connection
+
+    def execute(query: object, params: object | None = None) -> MagicMock:
+        del params
+        rendered = str(query)
+        result = MagicMock()
+        if "pg_advisory_unlock" in rendered:
+            events.append("unlock")
+        elif "pg_advisory_lock" in rendered:
+            events.append("lock")
+        elif "information_schema.schemata" in rendered:
+            events.append("scan")
+            result.fetchall.return_value = [("gobby_test_0_1_master_abc",)]
+        elif "DROP SCHEMA" in rendered:
+            events.append("drop")
+        return result
+
+    connection.execute.side_effect = execute
+    monkeypatch.setattr(
+        postgres_fixture.psycopg,
+        "connect",
+        lambda *_args, **_kwargs: connection,
+    )
+
+    _cleanup_orphaned_schemas("postgresql://test")
+
+    assert events == ["lock", "scan", "drop", "unlock"]

@@ -66,7 +66,6 @@ _ENVIRONMENT_MARKERS = (
     "worktree not found",
     "bootstrap_accounting_stall",
 )
-_ENVIRONMENT_COMMAND_MARKERS = ("git ",)
 _TEST_COMMAND_MARKERS = ("pytest", "unittest", "npm test", "pnpm test", "vitest")
 _CODE_COMMAND_MARKERS = ("ruff", "mypy", "pyright", "tsc", "eslint")
 
@@ -90,8 +89,6 @@ def classify_failure(
     if any(marker in combined for marker in _DEPENDENCY_MARKERS):
         return FailureCategory.DEPENDENCY
     if any(marker in combined for marker in _ENVIRONMENT_MARKERS):
-        return FailureCategory.ENVIRONMENT
-    if command and any(marker in command.lower() for marker in _ENVIRONMENT_COMMAND_MARKERS):
         return FailureCategory.ENVIRONMENT
     if command and any(marker in command.lower() for marker in _TEST_COMMAND_MARKERS):
         return FailureCategory.TEST

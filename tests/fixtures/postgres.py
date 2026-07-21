@@ -86,28 +86,40 @@ def _cleanup_orphaned_schemas(url: str, age_hours: int = 24) -> None:
     """Drop only aged `gobby_test_*` schemas from abandoned test runs."""
     cutoff_epoch = int(time.time()) - age_hours * 3600
     with psycopg.connect(url, autocommit=True) as conn:
-        rows = conn.execute(
-            """
-            SELECT schema_name
-            FROM information_schema.schemata
-            WHERE schema_name LIKE 'gobby_test_%%'
-            """
-        ).fetchall()
-        for (schema_name,) in rows:
-            parts = schema_name.split("_", 5)
-            if len(parts) != 6:
-                continue
-            try:
-                created_epoch = int(parts[2])
-            except ValueError:
-                continue
-            if created_epoch > cutoff_epoch:
-                continue
-            logger.warning("Dropping orphaned Postgres test schema %s", schema_name)
-            try:
-                conn.execute(sql.SQL("DROP SCHEMA {} CASCADE").format(sql.Identifier(schema_name)))
-            except psycopg.Error:
-                logger.exception("Failed to drop orphaned schema %s", schema_name)
+        conn.execute(
+            "SELECT pg_advisory_lock(hashtext(%s))",
+            (_TEST_SCHEMA_DROP_LOCK,),
+        )
+        try:
+            rows = conn.execute(
+                """
+                SELECT schema_name
+                FROM information_schema.schemata
+                WHERE schema_name LIKE 'gobby_test_%%'
+                """
+            ).fetchall()
+            for (schema_name,) in rows:
+                parts = schema_name.split("_", 5)
+                if len(parts) != 6:
+                    continue
+                try:
+                    created_epoch = int(parts[2])
+                except ValueError:
+                    continue
+                if created_epoch > cutoff_epoch:
+                    continue
+                logger.warning("Dropping orphaned Postgres test schema %s", schema_name)
+                try:
+                    conn.execute(
+                        sql.SQL("DROP SCHEMA {} CASCADE").format(sql.Identifier(schema_name))
+                    )
+                except psycopg.Error:
+                    logger.exception("Failed to drop orphaned schema %s", schema_name)
+        finally:
+            conn.execute(
+                "SELECT pg_advisory_unlock(hashtext(%s))",
+                (_TEST_SCHEMA_DROP_LOCK,),
+            )
 
 
 def _capture_canonical_seed(
