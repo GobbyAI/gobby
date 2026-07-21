@@ -9,6 +9,7 @@ from typing import Any
 import pytest
 
 from gobby.adapters.codex_impl.app_server_adapter import CodexAdapter
+from gobby.adapters.codex_impl.item_normalization import extract_yielded_cell_id
 from gobby.adapters.grok import GrokAdapter
 from gobby.hooks.events import HookEventType, SessionSource
 from gobby.servers.websocket.chat.backends.droid_stream import parse_droid_stream_line
@@ -171,3 +172,40 @@ def test_codex_functions_exec_contract_correlates_yielded_final_outcome() -> Non
     assert failed["tool_outcome"]["status"] == "failed"
     assert failed["tool_outcome"]["exit_code"] == 7
     assert unknown["tool_outcome"]["status"] == "unknown"
+
+
+@pytest.mark.parametrize(
+    "tool_output",
+    [
+        "\nScript running with cell ID 52\nWall time: 10.01 seconds\nOutput:\nstill running",
+        {
+            "content": [
+                {
+                    "type": "input_text",
+                    "text": (
+                        "\nScript running with cell ID 52\n"
+                        "Wall time: 10.01 seconds\nOutput:\nstill running"
+                    ),
+                }
+            ]
+        },
+    ],
+)
+def test_codex_yielded_cell_sentinel_accepts_raw_and_structured_output(
+    tool_output: object,
+) -> None:
+    assert extract_yielded_cell_id({"tool_output": tool_output}) == "52"
+
+
+@pytest.mark.parametrize(
+    "tool_output",
+    [
+        "Wrapper status: running\nScript running with cell ID 52",
+        "Script running with cell ID 52 plus commentary",
+        {"content": [{"type": "input_text", "text": "still running"}]},
+    ],
+)
+def test_codex_yielded_cell_sentinel_rejects_prose_and_unstructured_output(
+    tool_output: object,
+) -> None:
+    assert extract_yielded_cell_id({"tool_output": tool_output}) is None

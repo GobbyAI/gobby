@@ -85,27 +85,35 @@ def extract_functions_exec_command(arguments: Any) -> str | None:
     return command if isinstance(command, str) and command else None
 
 
-def _iter_content_text(value: Any) -> list[str]:
-    if not isinstance(value, list):
-        return []
+def _iter_wrapper_output_text(value: Any) -> list[str]:
+    if isinstance(value, str):
+        return [value]
     result: list[str] = []
-    for block in value:
-        if not isinstance(block, dict):
-            continue
-        text = block.get("text")
-        if isinstance(text, str):
-            result.append(text)
+    if isinstance(value, list):
+        for block in value:
+            if isinstance(block, dict) and isinstance(block.get("text"), str):
+                result.append(block["text"])
+            elif isinstance(block, (dict, list, str)):
+                result.extend(_iter_wrapper_output_text(block))
+        return result
+    if isinstance(value, dict):
+        for key in ("content", "output"):
+            nested = value.get(key)
+            if isinstance(nested, (dict, list, str)):
+                result.extend(_iter_wrapper_output_text(nested))
     return result
 
 
 def extract_yielded_cell_id(data: dict[str, Any]) -> str | None:
     """Read the functions wrapper's correlation token without inferring outcome."""
     output = data.get("tool_output")
-    content = output.get("content") if isinstance(output, dict) else None
-    for text in _iter_content_text(content):
-        match = _YIELDED_CELL_RE.fullmatch(text.strip())
-        if match:
-            return match.group(1)
+    for text in _iter_wrapper_output_text(output):
+        for line in text.splitlines():
+            first_nonblank = line.strip()
+            if not first_nonblank:
+                continue
+            match = _YIELDED_CELL_RE.fullmatch(first_nonblank)
+            return match.group(1) if match else None
     return None
 
 

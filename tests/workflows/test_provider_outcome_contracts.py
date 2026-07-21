@@ -135,26 +135,40 @@ def _agy_event(status: str) -> HookEvent:
     return AgyAdapter().translate_to_hook_event(payload)
 
 
+INTERACTIVE_SESSION_SOURCES = frozenset(
+    {
+        SessionSource.AGY,
+        SessionSource.CLAUDE,
+        SessionSource.DROID,
+        SessionSource.GROK,
+        SessionSource.QWEN,
+        SessionSource.CODEX,
+    }
+)
+EXCLUDED_SESSION_SOURCES = frozenset({SessionSource.PIPELINE, SessionSource.UNKNOWN})
+PROVIDER_OUTCOME_CASES = (
+    ("claude-success", _hook_event(ClaudeCodeAdapter(), "PostToolUse"), "succeeded"),
+    ("claude-failure", _hook_event(ClaudeCodeAdapter(), "PostToolUseFailure"), "failed"),
+    ("qwen-success", _hook_event(QwenAdapter(), "PostToolUse"), "succeeded"),
+    ("qwen-failure", _hook_event(QwenAdapter(), "PostToolUseFailure"), "failed"),
+    ("codex-success", _codex_native_event(0), "succeeded"),
+    ("codex-failure", _codex_native_event(7), "failed"),
+    ("codex-outcome-free", _codex_unknown_event(), "unknown"),
+    ("grok-success", _grok_events()["succeeded"], "succeeded"),
+    ("grok-failure", _grok_events()["failed"], "failed"),
+    ("grok-outcome-free", _grok_events()["unknown"], "unknown"),
+    ("droid-success-hook", _hook_event(DroidAdapter(), "PostToolUse"), "succeeded"),
+    ("droid-success-stream", _droid_stream_event(False), "succeeded"),
+    ("droid-failure-stream", _droid_stream_event(True), "failed"),
+    ("agy-completed", _agy_event("completed"), "unknown"),
+    ("agy-unproven-success", _agy_event("success"), "unknown"),
+    ("agy-unproven-failure", _agy_event("failed"), "unknown"),
+)
+
+
 @pytest.mark.parametrize(
     ("provider", "event", "expected_outcome"),
-    [
-        ("claude-success", _hook_event(ClaudeCodeAdapter(), "PostToolUse"), "succeeded"),
-        ("claude-failure", _hook_event(ClaudeCodeAdapter(), "PostToolUseFailure"), "failed"),
-        ("qwen-success", _hook_event(QwenAdapter(), "PostToolUse"), "succeeded"),
-        ("qwen-failure", _hook_event(QwenAdapter(), "PostToolUseFailure"), "failed"),
-        ("codex-success", _codex_native_event(0), "succeeded"),
-        ("codex-failure", _codex_native_event(7), "failed"),
-        ("codex-outcome-free", _codex_unknown_event(), "unknown"),
-        ("grok-success", _grok_events()["succeeded"], "succeeded"),
-        ("grok-failure", _grok_events()["failed"], "failed"),
-        ("grok-outcome-free", _grok_events()["unknown"], "unknown"),
-        ("droid-success-hook", _hook_event(DroidAdapter(), "PostToolUse"), "succeeded"),
-        ("droid-success-stream", _droid_stream_event(False), "succeeded"),
-        ("droid-failure-stream", _droid_stream_event(True), "failed"),
-        ("agy-completed", _agy_event("completed"), "unknown"),
-        ("agy-unproven-success", _agy_event("success"), "unknown"),
-        ("agy-unproven-failure", _agy_event("failed"), "unknown"),
-    ],
+    PROVIDER_OUTCOME_CASES,
 )
 def test_provider_outcome_drives_evidence_and_readiness(
     provider: str,
@@ -170,3 +184,11 @@ def test_provider_outcome_drives_evidence_and_readiness(
     assert event.data["tool_outcome"]["status"] == expected_outcome, provider
     assert evidence["success"] is expected_success[expected_outcome]
     assert completion_evidence_ready(variables) is (expected_outcome == "succeeded")
+
+
+def test_provider_outcome_matrix_covers_every_interactive_session_source() -> None:
+    represented_sources = {event.source for _, event, _ in PROVIDER_OUTCOME_CASES}
+
+    assert set(SessionSource) == INTERACTIVE_SESSION_SOURCES | EXCLUDED_SESSION_SOURCES
+    assert represented_sources == INTERACTIVE_SESSION_SOURCES
+    assert represented_sources.isdisjoint(EXCLUDED_SESSION_SOURCES)

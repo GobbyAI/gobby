@@ -43,6 +43,27 @@ def _output(call_id: str, *texts: str) -> str:
     )
 
 
+def _function_call(call_id: str, name: str, arguments: str) -> str:
+    return _response_item(
+        {
+            "type": "function_call",
+            "call_id": call_id,
+            "name": name,
+            "arguments": arguments,
+        }
+    )
+
+
+def _raw_output(call_id: str, output: Any, *, payload_type: str) -> str:
+    return _response_item(
+        {
+            "type": payload_type,
+            "call_id": call_id,
+            "output": output,
+        }
+    )
+
+
 def _outcomes(parser: CodexTranscriptParser, lines: Iterable[str]) -> list[CodexNestedExecOutcome]:
     outcomes: list[CodexNestedExecOutcome] = []
     for event in parser.iter_parse_events(raw_lines_from_texts(lines)):
@@ -173,6 +194,81 @@ def test_hydrates_pending_exec_call_before_output() -> None:
 
     assert [(item.identity, item.command, item.result["exit_code"]) for item in outcomes] == [
         ("exec-before-output:0", "ruff check src", 0)
+    ]
+
+
+def test_function_call_wait_survives_repeated_yields_and_hydration() -> None:
+    first_parser = CodexTranscriptParser()
+    initial_outcomes = _outcomes(
+        first_parser,
+        [
+            _call(
+                "exec-batched-yield",
+                "exec",
+                "const rs = await Promise.all(commands.map(cmd => tools.exec_command({cmd})));",
+            ),
+            _raw_output(
+                "exec-batched-yield",
+                "\nScript running with cell ID 52\nWall time: 10.01 seconds\nOutput:\nstill running",
+                payload_type="custom_tool_call_output",
+            ),
+        ],
+    )
+    resumed_parser = CodexTranscriptParser()
+    resumed_parser.hydrate_state(first_parser.snapshot_state())
+
+    repeated_wait_outcomes = _outcomes(
+        resumed_parser,
+        [
+            _function_call("wait-52-1", "wait", json.dumps({"cell_id": "52"})),
+            _raw_output(
+                "wait-52-1",
+                "Script running with cell ID 52\nWall time: 10.00 seconds\nOutput:\nstill running",
+                payload_type="function_call_output",
+            ),
+        ],
+    )
+    final_parser = CodexTranscriptParser()
+    final_parser.hydrate_state(resumed_parser.snapshot_state())
+
+    final_outcomes = _outcomes(
+        final_parser,
+        [
+            _function_call("wait-52-2", "wait", json.dumps({"cell_id": 52})),
+            _raw_output(
+                "wait-52-2",
+                [
+                    {
+                        "type": "input_text",
+                        "text": json.dumps(
+                            {"cmd": "pytest focused", "exit_code": 7, "output": "failed"}
+                        ),
+                    },
+                    {
+                        "type": "input_text",
+                        "text": json.dumps(
+                            {"command": "ruff check", "exitCode": 0, "output": "passed"}
+                        ),
+                    },
+                ],
+                payload_type="function_call_output",
+            ),
+        ],
+    )
+
+    assert initial_outcomes == []
+    assert repeated_wait_outcomes == []
+    assert [(item.identity, item.command, item.result) for item in final_outcomes] == [
+        (
+            "exec-batched-yield:0",
+            "pytest focused",
+            {"cmd": "pytest focused", "exit_code": 7, "output": "failed"},
+        ),
+        (
+            "exec-batched-yield:1",
+            "ruff check",
+            {"command": "ruff check", "exitCode": 0, "output": "passed"},
+        ),
     ]
 
 

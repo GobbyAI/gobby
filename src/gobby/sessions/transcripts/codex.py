@@ -27,7 +27,7 @@ from collections import deque
 from collections.abc import Iterable, Iterator, Mapping
 from dataclasses import dataclass
 from datetime import UTC, datetime
-from typing import Any
+from typing import Any, Literal
 
 from gobby.adapters.codex_impl.item_normalization import (
     extract_functions_exec_command,
@@ -54,6 +54,12 @@ _ROLE_MAP = {
 _NESTED_EXEC_NAMES = frozenset({"exec", "functions.exec"})
 _NESTED_WAIT_NAMES = frozenset({"wait", "functions.wait"})
 _MAX_PENDING_NESTED_EXEC = 64
+_TOOL_CALL_PAYLOAD_TYPES = frozenset(
+    {"function_call", "custom_tool_call", "web_search_call", "tool_search_call"}
+)
+_TOOL_OUTPUT_PAYLOAD_TYPES = frozenset(
+    {"function_call_output", "custom_tool_call_output", "tool_search_output"}
+)
 
 
 @dataclass(frozen=True)
@@ -145,6 +151,19 @@ def _parse_tool_payload(value: Any) -> dict[str, Any]:
             return parsed
         return {"value": parsed}
     return {}
+
+
+def _tool_call_arguments(payload: dict[str, Any]) -> Any:
+    tool_input = payload.get("input")
+    return tool_input if tool_input is not None else payload.get("arguments")
+
+
+def _classify_tool_envelope(payload_type: Any) -> Literal["call", "output"] | None:
+    if payload_type in _TOOL_CALL_PAYLOAD_TYPES:
+        return "call"
+    if payload_type in _TOOL_OUTPUT_PAYLOAD_TYPES:
+        return "output"
+    return None
 
 
 def _normalize_tool_output(output: Any) -> tuple[str, dict[str, Any]]:
@@ -277,19 +296,16 @@ def _explicit_result_command(result: dict[str, Any]) -> str | None:
 
 
 def _yielded_cell_id(output: Any) -> str | None:
-    if isinstance(output, list):
-        tool_output: dict[str, Any] = {"content": output}
-    elif isinstance(output, dict):
-        tool_output = output
-    elif isinstance(output, str):
-        try:
-            decoded = json.loads(output)
-        except json.JSONDecodeError:
-            return None
-        tool_output = decoded if isinstance(decoded, dict) else {"content": decoded}
-    else:
+    yielded_cell_id = extract_yielded_cell_id({"tool_output": output})
+    if yielded_cell_id is not None or not isinstance(output, str):
+        return yielded_cell_id
+    try:
+        decoded = json.loads(output)
+    except json.JSONDecodeError:
         return None
-    return extract_yielded_cell_id({"tool_output": tool_output})
+    if isinstance(decoded, (dict, list, str)):
+        return extract_yielded_cell_id({"tool_output": decoded})
+    return None
 
 
 class CodexTranscriptParser(BaseTranscriptParser):
@@ -419,9 +435,10 @@ class CodexTranscriptParser(BaseTranscriptParser):
         outcomes: list[CodexNestedExecOutcome] = []
         if line_type == "response_item":
             payload_type = payload.get("type")
-            if payload_type == "custom_tool_call":
+            envelope = _classify_tool_envelope(payload_type)
+            if envelope == "call":
                 self._remember_nested_exec_call(payload)
-            elif payload_type == "custom_tool_call_output":
+            elif envelope == "output":
                 outcomes = self._resolve_nested_exec_output(data, payload, timestamp)
 
         return self._parse_decoded_line(data, payload, index, timestamp), outcomes
@@ -444,18 +461,10 @@ class CodexTranscriptParser(BaseTranscriptParser):
 
         if payload_type == "message":
             return self._parse_message(data, payload, index, timestamp)
-        if payload_type in {
-            "function_call",
-            "custom_tool_call",
-            "web_search_call",
-            "tool_search_call",
-        }:
+        envelope = _classify_tool_envelope(payload_type)
+        if envelope == "call":
             return self._parse_tool_call(data, payload, index, timestamp)
-        if payload_type in {
-            "function_call_output",
-            "custom_tool_call_output",
-            "tool_search_output",
-        }:
+        if envelope == "output":
             return self._parse_tool_call_output(data, payload, index, timestamp)
         if payload_type == "reasoning":
             return None
@@ -478,14 +487,14 @@ class CodexTranscriptParser(BaseTranscriptParser):
         if name in _NESTED_EXEC_NAMES:
             pending = _PendingNestedExec(
                 outer_call_id=call_id,
-                literal_command=extract_functions_exec_command(payload.get("input")),
+                literal_command=extract_functions_exec_command(_tool_call_arguments(payload)),
             )
             self._set_pending(self._pending_nested_exec_calls, call_id, pending)
             return
 
         if name not in _NESTED_WAIT_NAMES:
             return
-        tool_input = _parse_tool_payload(payload.get("input"))
+        tool_input = _parse_tool_payload(_tool_call_arguments(payload))
         cell_id = extract_wait_cell_id({"tool_input": tool_input})
         if cell_id is None:
             return
@@ -615,13 +624,13 @@ class CodexTranscriptParser(BaseTranscriptParser):
             name = "WebSearch"
         elif payload_type == "custom_tool_call":
             name = str(payload.get("name") or "unknown")
-            tool_input = _parse_tool_payload(payload.get("input"))
+            tool_input = _parse_tool_payload(_tool_call_arguments(payload))
             status = payload.get("status")
             if status is not None:
                 tool_input.setdefault("status", status)
         else:
             name = str(payload.get("name") or "unknown")
-            tool_input = _parse_tool_payload(payload.get("arguments"))
+            tool_input = _parse_tool_payload(_tool_call_arguments(payload))
 
         return ParsedMessage(
             index=index,

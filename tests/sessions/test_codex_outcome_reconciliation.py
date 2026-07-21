@@ -34,14 +34,14 @@ async def test_processor_reconciles_exact_exit_codes_without_replaying_generic_m
 ) -> None:
     fixture_lines = _FIXTURE.read_text().splitlines(keepends=True)
     transcript = tmp_path / "rollout.jsonl"
-    transcript.write_text("".join(fixture_lines[:4]))
+    transcript.write_text("".join(fixture_lines[:8]))
     hook_manager = _ObserverHookManager()
     processor = SessionMessageProcessor(MagicMock(), hook_manager=hook_manager)
     processor._process_parsed_batch = AsyncMock(
         return_value=MessageStats(
-            message_count=4,
+            message_count=8,
             turn_count=0,
-            tool_call_count=1,
+            tool_call_count=3,
             last_assistant_content=None,
         )
     )
@@ -49,21 +49,6 @@ async def test_processor_reconciles_exact_exit_codes_without_replaying_generic_m
 
     await processor._process_session("platform-session", str(transcript))
 
-    assert hook_manager.variables["verification_evidence_recorded"] is False
-    assert [event.data["tool_outcome"]["exit_code"] for event in hook_manager.events] == [
-        1,
-        0,
-    ]
-    assert [event.data["call_id"] for event in hook_manager.events] == [
-        "call_batch:0",
-        "call_batch:1",
-    ]
-
-    with transcript.open("a") as stream:
-        stream.write("".join(fixture_lines[4:]))
-    result = await processor.reconcile_codex_transcript("platform-session")
-
-    assert result.flushed is True
     assert hook_manager.variables["verification_evidence_recorded"] is True
     assert [event.data["tool_outcome"]["exit_code"] for event in hook_manager.events] == [
         1,
@@ -75,6 +60,53 @@ async def test_processor_reconciles_exact_exit_codes_without_replaying_generic_m
         "call_batch:1",
         "call_rerun:0",
     ]
+    evidence = hook_manager.variables["verification_evidence"]
+    assert isinstance(evidence, list)
+    evidence_count_before_final_wait = len(evidence)
+
+    with transcript.open("a") as stream:
+        stream.write("".join(fixture_lines[8:10]))
+    yielded_result = await processor.reconcile_codex_transcript("platform-session")
+
+    assert yielded_result.flushed is True
+    assert [event.data["tool_outcome"]["exit_code"] for event in hook_manager.events] == [
+        1,
+        0,
+        0,
+    ]
+
+    with transcript.open("a") as stream:
+        stream.write("".join(fixture_lines[10:]))
+    final_result = await processor.reconcile_codex_transcript("platform-session")
+
+    assert final_result.flushed is True
+    assert [event.data["tool_outcome"]["exit_code"] for event in hook_manager.events] == [
+        1,
+        0,
+        0,
+        7,
+        0,
+    ]
+    assert [event.data["call_id"] for event in hook_manager.events] == [
+        "call_batch:0",
+        "call_batch:1",
+        "call_rerun:0",
+        "call_yielded_batch:0",
+        "call_yielded_batch:1",
+    ]
+    assert [event.data["tool_input"]["command"] for event in hook_manager.events[-2:]] == [
+        "sh -c 'exit 7'",
+        "GOBBY_TEST_PROTECT=1 uv run pytest tests/workflows/test_provider_outcome_contracts.py -q",
+    ]
+    evidence = hook_manager.variables["verification_evidence"]
+    assert isinstance(evidence, list)
+    assert len(evidence) == evidence_count_before_final_wait + 1
+
+    replay_result = await processor.reconcile_codex_transcript("platform-session")
+
+    assert replay_result.flushed is True
+    assert len(hook_manager.events) == 5
+    assert len(evidence) == evidence_count_before_final_wait + 1
     assert all(event.event_type == HookEventType.AFTER_TOOL for event in hook_manager.events)
     assert all(event.data["tool_name"] == "Bash" for event in hook_manager.events)
 
