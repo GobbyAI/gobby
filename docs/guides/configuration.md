@@ -552,7 +552,7 @@ repository-local verification and hook settings:
   "created_at": "2026-01-15T10:30:00Z",
   "verification": {
     "unit_tests": "uv run pytest tests/ -v",
-    "type_check": "uv run mypy src/ --no-incremental --strict",
+    "type_check": "uv run mypy src/ --no-incremental",
     "lint": "uv run ruff check src/",
     "format": "uv run ruff format --check src/",
     "integration": null,

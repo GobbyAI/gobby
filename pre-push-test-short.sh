@@ -53,9 +53,9 @@ else
 fi
 echo ""
 
-# Mypy - strict mode
-echo ">>> Running mypy (strict)..."
-uv_run mypy src/ --strict 2>&1 | tee "$REPORTS_DIR/mypy-$TIMESTAMP.txt"
+# Mypy - strict via [tool.mypy] in pyproject.toml
+echo ">>> Running mypy (strict via pyproject)..."
+uv_run mypy src/ 2>&1 | tee "$REPORTS_DIR/mypy-$TIMESTAMP.txt"
 mypy_status=${PIPESTATUS[0]}
 if [ "$mypy_status" -eq 0 ]; then
     echo "✓ Mypy passed"

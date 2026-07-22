@@ -258,7 +258,7 @@ warn_unused_configs = true
 # causing type: ignore comments needed for partial context to be flagged as unused
 warn_unused_ignores = false
 disallow_untyped_defs = true
-disallow_any_generics = false
+disallow_any_generics = true
 ignore_missing_imports = true
 exclude = ["^build/"]
 
