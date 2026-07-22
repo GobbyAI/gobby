@@ -362,11 +362,17 @@ mod tests {
     #[test]
     fn graph_linked_pages_enter_search_results() {
         let scope = SearchScope::project("project-1");
-        let mut bm25 = bm25::MemoryBm25Backend::new(vec![search_result(
-            "document:knowledge/topics/seed.md",
-            scope.clone(),
-            "knowledge/topics/seed.md",
-        )]);
+        let bm25_results = (0..5)
+            .map(|index| {
+                let path = if index == 0 {
+                    "knowledge/topics/seed.md".to_string()
+                } else {
+                    format!("knowledge/topics/seed-{index}.md")
+                };
+                search_result(&format!("document:{path}"), scope.clone(), &path)
+            })
+            .collect();
+        let mut bm25 = bm25::MemoryBm25Backend::new(bm25_results);
         let mut semantic = semantic::UnavailableSemanticBackend;
         let mut graph = graph_boost::MemoryGraphBoostBackend::new(memory_graph(scope.clone()));
 
@@ -377,7 +383,7 @@ mod tests {
             SearchRequest {
                 query: "seed".to_string(),
                 scope,
-                limit: 10,
+                limit: 5,
                 include_semantic: false,
             },
         )
@@ -391,6 +397,14 @@ mod tests {
             })
             .expect("linked page is included");
         assert!(linked.sources.contains(&SearchSource::Graph));
+        assert_eq!(linked.title.as_deref(), Some("linked"));
+        assert!(
+            response
+                .results
+                .iter()
+                .all(|result| result.path != std::path::Path::new("code/INDEX.md")),
+            "high-outdegree hub must stay out of unrelated top results"
+        );
     }
 
     #[test]
@@ -463,30 +477,60 @@ mod tests {
 
     fn memory_graph(scope: SearchScope) -> crate::graph::MemoryWikiGraph {
         let mut graph = crate::graph::MemoryWikiGraph::default();
+        let mut documents = Vec::new();
+        let mut links = Vec::new();
+        for index in 0..5 {
+            let seed_path = if index == 0 {
+                "knowledge/topics/seed.md".to_string()
+            } else {
+                format!("knowledge/topics/seed-{index}.md")
+            };
+            let linked_path = if index == 0 {
+                "knowledge/topics/linked.md".to_string()
+            } else {
+                format!("knowledge/topics/linked-{index}.md")
+            };
+            documents.push(graph_doc(scope.clone(), &seed_path));
+            documents.push(graph_doc(scope.clone(), &linked_path));
+            links.push(graph_link(scope.clone(), &seed_path, &linked_path));
+            links.push(graph_link(scope.clone(), "code/INDEX.md", &seed_path));
+        }
+        documents.push(graph_doc(scope.clone(), "code/INDEX.md"));
+        for index in 0..15 {
+            let path = format!("code/hub-only-{index}.md");
+            documents.push(graph_doc(scope.clone(), &path));
+            links.push(graph_link(scope.clone(), "code/INDEX.md", &path));
+        }
         graph.replace_facts(crate::graph::WikiGraphFacts {
-            documents: vec![
-                graph_doc(scope.clone(), "knowledge/topics/seed.md"),
-                graph_doc(scope.clone(), "knowledge/topics/linked.md"),
-            ],
-            links: vec![crate::graph::WikiGraphLink {
-                scope,
-                source_path: PathBuf::from("knowledge/topics/seed.md"),
-                raw_target: "knowledge/topics/linked.md".to_string(),
-                target: crate::graph::WikiGraphLinkTarget::Resolved(PathBuf::from(
-                    "knowledge/topics/linked.md",
-                )),
-            }],
+            documents,
+            links,
             sources: Vec::new(),
             code_edges: Vec::new(),
         });
         graph
     }
 
+    fn graph_link(
+        scope: SearchScope,
+        source_path: &str,
+        target_path: &str,
+    ) -> crate::graph::WikiGraphLink {
+        crate::graph::WikiGraphLink {
+            scope,
+            source_path: PathBuf::from(source_path),
+            raw_target: target_path.to_string(),
+            target: crate::graph::WikiGraphLinkTarget::Resolved(PathBuf::from(target_path)),
+        }
+    }
+
     fn graph_doc(scope: SearchScope, path: &str) -> crate::graph::WikiGraphDocument {
         crate::graph::WikiGraphDocument {
             scope,
             path: PathBuf::from(path),
-            title: None,
+            title: std::path::Path::new(path)
+                .file_stem()
+                .and_then(|stem| stem.to_str())
+                .map(str::to_string),
         }
     }
 

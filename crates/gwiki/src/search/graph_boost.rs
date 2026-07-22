@@ -114,11 +114,12 @@ impl GraphBoostBackend for MemoryGraphBoostBackend {
         &mut self,
         request: GraphBoostRequest,
     ) -> Result<GraphBoostOutcome, SearchError> {
+        let titles = self.graph.document_titles(&request.scope);
         let ranked_paths =
             self.graph
                 .related_paths(&request.scope, &request.seed_paths, request.limit);
         Ok(GraphBoostOutcome {
-            hits: graph_boost_hits(request.scope, ranked_paths, request.limit),
+            hits: graph_boost_hits(request.scope, ranked_paths, &titles, request.limit),
             degradation: None,
         })
     }
@@ -178,8 +179,18 @@ impl GraphBoostBackend for FalkorGraphBoostBackend {
             &request.seed_paths,
             request.limit,
         );
+        let titles = data
+            .documents
+            .iter()
+            .filter_map(|document| {
+                document
+                    .title
+                    .as_ref()
+                    .map(|title| (document.path.clone(), title.clone()))
+            })
+            .collect::<BTreeMap<_, _>>();
         Ok(GraphBoostOutcome {
-            hits: graph_boost_hits(request.scope, ranked_paths, request.limit),
+            hits: graph_boost_hits(request.scope, ranked_paths, &titles, request.limit),
             degradation: data.degradation,
         })
     }
@@ -215,31 +226,39 @@ pub fn rank_link_neighborhood(
     let slug_targets = slug_target_map(documents);
     let seed_set = seed_paths.iter().cloned().collect::<BTreeSet<_>>();
     let mut scores = BTreeMap::<PathBuf, f64>::new();
+    let resolved_links = links
+        .iter()
+        .filter_map(|link| {
+            if !document_paths.contains(&link.source_path) {
+                return None;
+            }
+            resolve_graph_target(
+                &link.source_path,
+                &link.target_path,
+                &document_targets,
+                &slug_targets,
+            )
+            .map(|target_path| (link, target_path))
+        })
+        .collect::<Vec<_>>();
+    let mut outdegrees = BTreeMap::<PathBuf, usize>::new();
+    for (link, _) in &resolved_links {
+        *outdegrees.entry(link.source_path.clone()).or_default() += 1;
+    }
 
     for (rank, seed_path) in seed_paths.iter().enumerate() {
         if !document_paths.contains(seed_path) {
             continue;
         }
         let seed_score = 1.0 / (rank + 1) as f64;
-        for link in links {
-            if !document_paths.contains(&link.source_path) {
-                continue;
-            }
-            let Some(target_path) = resolve_graph_target(
-                &link.source_path,
-                &link.target_path,
-                &document_targets,
-                &slug_targets,
-            ) else {
-                continue;
-            };
-
+        for (link, target_path) in &resolved_links {
             let candidate = if &link.source_path == seed_path {
-                Some((target_path, seed_score))
-            } else if target_path == *seed_path {
+                Some((target_path.clone(), seed_score))
+            } else if target_path == seed_path {
                 // Backlinks are useful context, but direct outbound neighbors
                 // usually better express the user's starting point.
-                Some((link.source_path.clone(), seed_score * 0.8))
+                let outdegree = outdegrees.get(&link.source_path).copied().unwrap_or(1) as f64;
+                Some((link.source_path.clone(), seed_score * 0.8 / outdegree))
             } else {
                 None
             };
@@ -268,17 +287,26 @@ pub fn rank_link_neighborhood(
 pub fn graph_boost_hits(
     scope: SearchScope,
     ranked_paths: Vec<(PathBuf, f64)>,
+    titles: &BTreeMap<PathBuf, String>,
     limit: usize,
 ) -> Vec<WikiSearchResult> {
     ranked_paths
         .into_iter()
         .filter(|(path, _)| is_keyword_searchable_path(&path.to_string_lossy()))
         .take(limit)
-        .map(|(path, score)| graph_result(&scope, path, score))
+        .map(|(path, score)| {
+            let title = titles.get(&path).cloned();
+            graph_result(&scope, path, title, score)
+        })
         .collect()
 }
 
-fn graph_result(scope: &SearchScope, path: PathBuf, score: f64) -> WikiSearchResult {
+fn graph_result(
+    scope: &SearchScope,
+    path: PathBuf,
+    title: Option<String>,
+    score: f64,
+) -> WikiSearchResult {
     let id = format!("document:{}", path.to_string_lossy().replace('\\', "/"));
     let provenance = SearchProvenance {
         document_path: path.clone(),
@@ -288,7 +316,7 @@ fn graph_result(scope: &SearchScope, path: PathBuf, score: f64) -> WikiSearchRes
     };
     WikiSearchResult {
         id,
-        title: None,
+        title,
         scope: scope.clone(),
         source_path: path.clone(),
         path,
@@ -430,6 +458,43 @@ mod tests {
     }
 
     #[test]
+    fn hub_backlink_source_is_downweighted_by_outdegree() {
+        let mut documents = vec![
+            document("knowledge/topics/seed.md", Some("Seed")),
+            document("knowledge/topics/single.md", Some("Single")),
+            document("code/INDEX.md", Some("Code Index")),
+        ];
+        let mut links = vec![
+            link("knowledge/topics/single.md", "knowledge/topics/seed.md"),
+            link("code/INDEX.md", "knowledge/topics/seed.md"),
+        ];
+        for index in 0..19 {
+            let path = format!("code/page-{index}.md");
+            documents.push(document(&path, None));
+            links.push(link("code/INDEX.md", &path));
+        }
+
+        let ranked = rank_link_neighborhood(
+            &documents,
+            &links,
+            &[PathBuf::from("knowledge/topics/seed.md")],
+            10,
+        );
+
+        let single = ranked
+            .iter()
+            .find(|(path, _)| path == Path::new("knowledge/topics/single.md"))
+            .expect("single-link backlink is ranked");
+        let hub = ranked
+            .iter()
+            .find(|(path, _)| path == Path::new("code/INDEX.md"))
+            .expect("hub backlink is ranked");
+        assert_eq!(single.1, 0.8);
+        assert_eq!(hub.1, 0.04);
+        assert!(single.1 > hub.1);
+    }
+
+    #[test]
     fn rank_link_neighborhood_filters_non_searchable_before_truncating() {
         let documents = vec![
             document("knowledge/topics/seed.md", Some("Seed")),
@@ -480,6 +545,7 @@ mod tests {
         let hits = graph_boost_hits(
             SearchScope::topic("docs"),
             vec![(PathBuf::from("knowledge/topics/linked.md"), 1.0)],
+            &BTreeMap::new(),
             10,
         );
 
@@ -489,6 +555,16 @@ mod tests {
             hits[0].provenance.document_path,
             PathBuf::from("knowledge/topics/linked.md")
         );
+    }
+
+    #[test]
+    fn graph_hits_carry_document_titles() {
+        let path = PathBuf::from("knowledge/topics/linked.md");
+        let titles = BTreeMap::from([(path.clone(), "Linked Topic".to_string())]);
+
+        let hits = graph_boost_hits(SearchScope::topic("docs"), vec![(path, 1.0)], &titles, 10);
+
+        assert_eq!(hits[0].title.as_deref(), Some("Linked Topic"));
     }
 
     #[test]

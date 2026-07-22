@@ -312,6 +312,20 @@ impl MemoryWikiGraph {
         self.facts = facts;
     }
 
+    pub fn document_titles(&self, scope: &SearchScope) -> BTreeMap<PathBuf, String> {
+        self.facts
+            .documents
+            .iter()
+            .filter(|document| &document.scope == scope)
+            .filter_map(|document| {
+                document
+                    .title
+                    .as_ref()
+                    .map(|title| (document.path.clone(), title.clone()))
+            })
+            .collect()
+    }
+
     #[cfg(test)]
     pub(crate) fn graph_facts_for_tests(&self) -> &WikiGraphFacts {
         &self.facts
@@ -443,28 +457,43 @@ impl MemoryWikiGraph {
         let documents = self.document_keys();
         let seed_set = seed_paths.iter().cloned().collect::<BTreeSet<_>>();
         let mut scores = BTreeMap::<PathBuf, f64>::new();
+        let resolved_links = self
+            .facts
+            .links
+            .iter()
+            .filter_map(|link| {
+                if &link.scope != scope
+                    || !documents.contains(&(scope.clone(), link.source_path.clone()))
+                {
+                    return None;
+                }
+                let WikiGraphLinkTarget::Resolved(target_path) = &link.target else {
+                    return None;
+                };
+                if !documents.contains(&(scope.clone(), target_path.clone())) {
+                    return None;
+                }
+                Some((link, target_path))
+            })
+            .collect::<Vec<_>>();
+        let mut outdegrees = BTreeMap::<PathBuf, usize>::new();
+        for (link, _) in &resolved_links {
+            *outdegrees.entry(link.source_path.clone()).or_default() += 1;
+        }
         for (rank, seed_path) in seed_paths.iter().enumerate() {
             if !documents.contains(&(scope.clone(), seed_path.clone())) {
                 continue;
             }
             let seed_score = 1.0 / (rank + 1) as f64;
-            for link in &self.facts.links {
-                if &link.scope != scope
-                    || !documents.contains(&(scope.clone(), link.source_path.clone()))
-                {
-                    continue;
-                }
-                let WikiGraphLinkTarget::Resolved(target_path) = &link.target else {
-                    continue;
-                };
-                if !documents.contains(&(scope.clone(), target_path.clone())) {
-                    continue;
-                }
-
+            for &(link, target_path) in &resolved_links {
                 let candidate = if &link.source_path == seed_path {
                     Some((target_path, seed_score))
                 } else if target_path == seed_path {
-                    Some((&link.source_path, seed_score * options.backward_link_weight))
+                    let outdegree = outdegrees.get(&link.source_path).copied().unwrap_or(1) as f64;
+                    Some((
+                        &link.source_path,
+                        seed_score * options.backward_link_weight / outdegree,
+                    ))
                 } else {
                     None
                 };
