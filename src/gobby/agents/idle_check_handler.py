@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import os
 import re
 from collections.abc import Awaitable, Callable
 from datetime import UTC, datetime
@@ -21,6 +22,7 @@ from gobby.agents.watchdog.models import (
     WatchdogTranscriptSnapshot,
 )
 from gobby.servers.routes.sessions.statusline_activity import last_session_activity
+from gobby.sessions.transcript_paths import _find_transcript_on_disk
 from gobby.storage.attention import run_attention_entry_id
 from gobby.utils.datetime import parse_stored_datetime
 from gobby.workflows.step_context import get_active_step_workflow_context
@@ -33,6 +35,7 @@ if TYPE_CHECKING:
     from gobby.storage.agents import AgentRun, LocalAgentRunManager, TerminalAction
     from gobby.storage.attention import AttentionKind, AttentionStateManager
     from gobby.storage.hub.protocol import HubDatabase
+    from gobby.storage.session_models import Session
     from gobby.storage.sessions import SessionManager
     from gobby.storage.tasks import LocalTaskManager
 
@@ -82,6 +85,7 @@ class IdleCheckHandler:
         self._stall_classifier = stall_classifier
         self._watchdog_readers = watchdog_readers
         self._capacity_recovery: dict[str, CapacityRecoveryState] = {}
+        self._transcript_path_cache: dict[tuple[str, str, str], str] = {}
 
     async def _run_db(self, func: Callable[..., Any], *args: Any, **kwargs: Any) -> Any:
         if self._run_db_callback is None:
@@ -208,6 +212,7 @@ class IdleCheckHandler:
         """Check for idle agents and reprompt or fail them."""
         if not self._tmux_config.idle_check_enabled:
             self._capacity_recovery.clear()
+            self._transcript_path_cache.clear()
             return 0
 
         runs = await self._run_db(self._get_active_terminal_runs)
@@ -216,6 +221,11 @@ class IdleCheckHandler:
             run_id: state
             for run_id, state in self._capacity_recovery.items()
             if run_id in active_run_ids
+        }
+        self._transcript_path_cache = {
+            key: transcript_path
+            for key, transcript_path in self._transcript_path_cache.items()
+            if key[0] in active_run_ids
         }
 
         handled = 0
@@ -231,6 +241,45 @@ class IdleCheckHandler:
                 )
 
         return handled
+
+    async def _resolve_transcript_path(
+        self,
+        session: Session,
+        *,
+        run_id: str,
+    ) -> str | None:
+        """Resolve a readable transcript path without mutating the session row."""
+        source = session.source or ""
+        external_id = session.external_id or ""
+        cache_key = (run_id, source, external_id)
+
+        stale_keys = [
+            key for key in self._transcript_path_cache if key[0] == run_id and key != cache_key
+        ]
+        for key in stale_keys:
+            del self._transcript_path_cache[key]
+
+        stored_path = session.transcript_path
+        if stored_path and stored_path != "missing_transcript" and os.path.isfile(stored_path):
+            return stored_path
+
+        cached_path = self._transcript_path_cache.get(cache_key)
+        if cached_path and os.path.isfile(cached_path):
+            return cached_path
+        self._transcript_path_cache.pop(cache_key, None)
+
+        if not source or not external_id:
+            return None
+        discovered_path = await asyncio.to_thread(
+            _find_transcript_on_disk,
+            source,
+            external_id,
+        )
+        if not discovered_path or not os.path.isfile(discovered_path):
+            return None
+
+        self._transcript_path_cache[cache_key] = discovered_path
+        return discovered_path
 
     async def check_attention_agents(self) -> int:
         """Scan active panes for attention without waiting for idle eligibility."""
@@ -377,13 +426,10 @@ class IdleCheckHandler:
             return 0
 
         transcript_snapshot: WatchdogTranscriptSnapshot | None = None
-        transcript_path = getattr(session, "transcript_path", None)
-        if (
-            reader is not None
-            and isinstance(transcript_path, str)
-            and transcript_path
-            and (session_stale or capacity_candidate)
-        ):
+        transcript_path: str | None = None
+        if reader is not None and session is not None and (session_stale or capacity_candidate):
+            transcript_path = await self._resolve_transcript_path(session, run_id=run.id)
+        if reader is not None and transcript_path is not None:
             try:
                 transcript_snapshot = await reader.read(transcript_path)
             except OSError:
@@ -395,6 +441,7 @@ class IdleCheckHandler:
 
         if (
             capacity_candidate
+            and transcript_path is not None
             and transcript_snapshot is not None
             and transcript_snapshot.has_conclusive_capacity_error
         ):
@@ -402,7 +449,7 @@ class IdleCheckHandler:
                 run,
                 tmux_name=tmux_name,
                 session_id=session_id,
-                transcript_path=cast(str, transcript_path),
+                transcript_path=transcript_path,
                 snapshot=transcript_snapshot,
             )
 

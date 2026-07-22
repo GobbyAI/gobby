@@ -418,6 +418,96 @@ async def test_fresh_capacity_error_immediately_sends_workflow_aware_reprompt(
 
 
 @pytest.mark.asyncio
+async def test_stale_session_discovers_transcript_without_updating_session_row(
+    temp_db: HubDatabase,
+    session_manager: SessionManager,
+    sample_project: dict[str, Any],
+    agent_run_manager: LocalAgentRunManager,
+    tmp_path: Path,
+) -> None:
+    transcript_path = tmp_path / "codex-discovered-capacity.jsonl"
+    _append_codex_capacity_turn(transcript_path)
+    run_id = "dddddddd-dddd-4ddd-8ddd-dddddddd1021"
+    monitor, run = _make_idle_monitor_run(
+        temp_db=temp_db,
+        session_manager=session_manager,
+        sample_project=sample_project,
+        agent_run_manager=agent_run_manager,
+        run_id=run_id,
+        transcript_path=None,
+    )
+    assert run.child_session_id is not None
+    session_before = session_manager.get(run.child_session_id)
+    assert session_before is not None
+
+    with (
+        patch(
+            "gobby.agents.idle_check_handler._find_transcript_on_disk",
+            return_value=str(transcript_path),
+        ) as mock_discover,
+        patch.object(
+            monitor._tmux, "capture_pane", new_callable=AsyncMock, return_value=_CAPACITY_PANE
+        ),
+        patch.object(monitor._tmux, "send_keys", new_callable=AsyncMock, return_value=True),
+        patch.object(
+            monitor._idle_check_handler,
+            "_idle_reprompt_message",
+            new_callable=AsyncMock,
+            return_value="workflow-aware continuation",
+        ),
+        patch.object(
+            monitor._idle_check_handler,
+            "_record_watchdog_task_event",
+            new_callable=AsyncMock,
+        ),
+    ):
+        handled = await monitor.check_idle_agents()
+
+    session_after = session_manager.get(run.child_session_id)
+    assert session_after is not None
+    assert handled == 1
+    assert session_after.transcript_path is None
+    assert session_after.updated_at == session_before.updated_at
+    mock_discover.assert_called_once_with("codex", f"child-{run_id}")
+
+
+@pytest.mark.asyncio
+async def test_fresh_non_capacity_session_skips_transcript_resolution(
+    temp_db: HubDatabase,
+    session_manager: SessionManager,
+    sample_project: dict[str, Any],
+    agent_run_manager: LocalAgentRunManager,
+) -> None:
+    monitor, _run = _make_idle_monitor_run(
+        temp_db=temp_db,
+        session_manager=session_manager,
+        sample_project=sample_project,
+        agent_run_manager=agent_run_manager,
+        run_id="dddddddd-dddd-4ddd-8ddd-dddddddd1022",
+        transcript_path=None,
+        session_age_seconds=1,
+    )
+
+    with (
+        patch.object(
+            monitor._tmux,
+            "capture_pane",
+            new_callable=AsyncMock,
+            return_value="active output\n",
+        ),
+        patch.object(
+            monitor._idle_check_handler,
+            "_resolve_transcript_path",
+            new_callable=AsyncMock,
+        ) as mock_resolve,
+    ):
+        handled = await monitor.check_idle_agents()
+
+    assert handled == 0
+    mock_resolve.assert_not_awaited()
+
+
+@pytest.mark.asyncio
 async def test_capacity_pane_text_requires_structured_transcript_confirmation(
     temp_db: HubDatabase,
     session_manager: SessionManager,
