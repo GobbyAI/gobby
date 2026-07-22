@@ -1,0 +1,14 @@
+historical approval marker
+Earlier work completed successfully.
+
+Do you want to proceed?
+❯ 1. Yes
+  2. No
+
+╭──────────────────────────────────────╮
+│ Do you trust the files in this folder?│
+│                                      │
+│ 1. Trust Folder                      │
+│ 2. Trust parent Folder               │
+│ 3. Don't Trust                       │
+╰──────────────────────────────────────╯

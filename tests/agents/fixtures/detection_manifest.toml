@@ -1,0 +1,29 @@
+id = "claude"
+version = "1"
+engine = 1
+
+[[rules]]
+id = "trust_prompt"
+state = "blocked"
+reason = "trust"
+priority = 900
+region = "prompt_box"
+contains = ["do you trust the files in this folder?"]
+line_regex = ['^\s*│\s*1\.\s*Trust Folder']
+
+[[rules]]
+id = "approval_prompt"
+state = "blocked"
+reason = "approval"
+priority = 800
+region = "bottom_non_empty_lines(4)"
+contains = ["do you want to proceed?"]
+line_regex = ['^\s*❯?\s*1\.\s*[Yy]es\b']
+not = [{ contains = ["esc to interrupt"] }]
+
+[[rules]]
+id = "historical_stall"
+state = "stall"
+priority = 100
+region = "whole_recent"
+contains = ["historical approval marker"]
