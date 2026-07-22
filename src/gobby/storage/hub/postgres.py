@@ -2,51 +2,31 @@
 
 from __future__ import annotations
 
-import asyncio
 import atexit
 import importlib.resources
-import json
 import logging
 import os
 import re
 import threading
-import uuid
 from collections.abc import AsyncIterator, Callable, Iterable, Iterator, Mapping, Sequence
-from contextlib import ExitStack, asynccontextmanager, contextmanager
-from datetime import date, datetime
+from contextlib import asynccontextmanager, contextmanager
 from typing import Any, Literal, cast
 
 import psycopg
-from psycopg.conninfo import conninfo_to_dict, make_conninfo
 from psycopg.rows import dict_row
-from psycopg_pool import ConnectionPool, PoolTimeout
+from psycopg_pool import ConnectionPool
 
 from gobby.config.postgres_pool import DEFAULT_POSTGRES_POOL_CONFIG, PostgresPoolConfig
-from gobby.storage.hub._ambient import ambient_transaction, enter_transaction
+from gobby.storage.hub import postgres_pool as _postgres_pool
+from gobby.storage.hub._ambient import ambient_transaction
 from gobby.storage.hub.protocol import (
-    AgentCapAdmission,
-    BuildDryRunMutation,
-    ChatAttachmentMutation,
-    CronRunAdmission,
+    AgentCapAdmission as AgentCapAdmission,
+)
+from gobby.storage.hub.protocol import (
     Cursor,
-    DispatchMutexRow,
-    GitHubIssueTriageMutation,
-    IntegrationWorkspaceMutex,
-    LockAcquisitionOrderError,
     LockTarget,
-    ReviewLearningPatternMutation,
     Row,
-    Savepoint,
-    SessionLineageMutation,
-    SessionRecoveryByProject,
-    SessionRegistration,
-    SessionSeqMutation,
-    SystemSessionBootstrap,
-    TaskLifecycleMutation,
-    TaskSeqAllocation,
-    TaskSubtreeCascade,
     Transaction,
-    WebChatSessionBootstrap,
 )
 from gobby.storage.migrations import (
     BASELINE_VERSION,
@@ -54,10 +34,10 @@ from gobby.storage.migrations import (
     MigrationUnsupportedError,
     _split_statements_respecting_dollar_quotes,
 )
-from gobby.utils.datetime import to_aware_utc, to_json_safe
 
 logger = logging.getLogger(__name__)
 
+_advisory_lock_keys = _postgres_pool._advisory_lock_keys
 _OPEN_DATABASES: set[PostgresHubDatabase] = set()
 _POOL_CLOSE_TIMEOUT_SECONDS = 2.0
 
@@ -79,7 +59,6 @@ def _close_open_databases_at_exit() -> None:
 
 atexit.register(_close_open_databases_at_exit)
 
-_SQL_IDENTIFIER_PATTERN = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
 _PRE_BASELINE_INFRA_TABLES: frozenset[str] = frozenset(
     {
         "gobby_install_ownership",
@@ -203,7 +182,7 @@ class PostgresHubDatabase:
         *,
         pool_config: PostgresPoolConfig = DEFAULT_POSTGRES_POOL_CONFIG,
     ) -> None:
-        self._conninfo = _conninfo_with_utc_session_timezone(dsn)
+        self._conninfo = _postgres_pool._conninfo_with_utc_session_timezone(dsn)
         self._application_name = os.getenv("PGAPPNAME", "gobby")
         self._pool = ConnectionPool(
             conninfo=self._conninfo,
@@ -259,80 +238,37 @@ class PostgresHubDatabase:
 
     @contextmanager
     def _pool_connection(self) -> Iterator[psycopg.Connection[Any]]:
-        with ExitStack() as stack:
-            try:
-                conn = stack.enter_context(self._pool.connection())
-            except PoolTimeout:
-                logger.warning(
-                    "PostgreSQL hub pool acquisition timed out; checking pool before retry: "
-                    "pool_stats=%s",
-                    self.pool_stats(),
-                )
-                try:
-                    self._pool.check()
-                except Exception:
-                    logger.warning(
-                        "PostgreSQL hub pool check failed after acquisition timeout: pool_stats=%s",
-                        self.pool_stats(),
-                        exc_info=True,
-                    )
-                try:
-                    conn = stack.enter_context(self._pool.connection())
-                except PoolTimeout:
-                    logger.warning(
-                        "PostgreSQL hub pool acquisition retry failed: pool_stats=%s",
-                        self.pool_stats(),
-                        exc_info=True,
-                    )
-                    raise
+        with _postgres_pool.pool_connection(self._pool, self.pool_stats) as conn:
             yield conn
 
     @contextmanager
     def transaction(self) -> Iterator[Transaction]:
-        with enter_transaction(self, self._native_transaction) as txn:
+        with _postgres_pool.transaction(self, self._native_transaction) as txn:
             yield txn
 
     @contextmanager
     def transaction_immediate(self, lock: LockTarget) -> Iterator[Transaction]:
-        with enter_transaction(self, self._native_transaction, immediate=True, lock=lock) as txn:
+        with _postgres_pool.transaction(
+            self,
+            self._native_transaction,
+            immediate=True,
+            lock=lock,
+        ) as txn:
             yield txn
 
     @asynccontextmanager
     async def advisory_lock(self, lock: LockTarget) -> AsyncIterator[None]:
-        """Hold typed PostgreSQL session locks without an idle transaction."""
-        lock_keys = _advisory_lock_keys(lock)
-        raw_conn, cancellation = await _await_task_completion(
-            asyncio.create_task(asyncio.to_thread(self._open_advisory_lock_connection))
-        )
-        conn = cast(psycopg.Connection[Any], raw_conn)
-        acquired = False
-
-        try:
-            if cancellation is not None:
-                raise cancellation
-            while not acquired:
-                acquired_result, lock_cancellation = await _await_task_completion(
-                    asyncio.create_task(
-                        asyncio.to_thread(_try_session_advisory_locks, conn, lock_keys)
-                    )
-                )
-                acquired = bool(acquired_result)
-                if lock_cancellation is not None:
-                    raise lock_cancellation
-                if not acquired:
-                    await asyncio.sleep(0.05)
+        async with _postgres_pool.advisory_lock(
+            self._conninfo,
+            self._application_name,
+            lock,
+        ):
             yield
-        finally:
-            await _close_advisory_lock_connection(conn, lock_keys if acquired else ())
 
     def _open_advisory_lock_connection(self) -> psycopg.Connection[Any]:
-        """Open lock ownership outside the worker pool used by the protected body."""
-        return psycopg.connect(
+        return _postgres_pool.open_advisory_lock_connection(
             self._conninfo,
-            application_name=self._application_name,
-            prepare_threshold=None,
-            autocommit=True,
-            row_factory=dict_row,
+            self._application_name,
         )
 
     @contextmanager
@@ -342,7 +278,11 @@ class PostgresHubDatabase:
         immediate: bool,
         lock: LockTarget | None,
     ) -> Iterator[Transaction]:
-        with self._transaction_context(is_immediate=immediate, initial_lock=lock) as txn:
+        with _postgres_pool.native_transaction(
+            self._transaction_context,
+            immediate=immediate,
+            lock=lock,
+        ) as txn:
             yield txn
 
     @contextmanager
@@ -352,25 +292,13 @@ class PostgresHubDatabase:
         is_immediate: bool,
         initial_lock: LockTarget | None = None,
     ) -> Iterator[Transaction]:
-        self.open()
-        with self._pool_connection() as conn, conn.transaction():
-            txn = _PostgresTransaction(
-                conn,
-                is_immediate=is_immediate,
-                initial_lock=initial_lock,
-            )
-            if initial_lock is not None:
-                txn._acquire_lock_target(initial_lock)
-            try:
-                yield txn
-            finally:
-                txn.closed = True
-
-        for callback in txn._after_commit_callbacks:
-            try:
-                callback()
-            except Exception:
-                logger.exception("PostgreSQL after-commit callback failed")
+        with _postgres_pool.transaction_context(
+            self.open,
+            self._pool_connection,
+            is_immediate=is_immediate,
+            initial_lock=initial_lock,
+        ) as txn:
+            yield txn
 
     def execute(
         self,
@@ -381,7 +309,7 @@ class PostgresHubDatabase:
         if ambient is not None:
             return ambient.execute(sql, params)
         with self.transaction() as txn:
-            cursor = cast(_PostgresCursor, txn.execute(sql, params))
+            cursor = cast(_postgres_pool._PostgresCursor, txn.execute(sql, params))
             return cursor.materialize()
 
     def executemany(self, sql: str, rows: Iterable[Sequence[Any]]) -> Cursor:
@@ -423,7 +351,7 @@ class PostgresHubDatabase:
     ) -> Cursor:
         built = _build_safe_update(table, values, where, where_params)
         if built is None:
-            return _PostgresCursor(None, rowcount=0)
+            return _postgres_pool._PostgresCursor(None, rowcount=0)
         sql, params = built
         return self.execute(sql, params)
 
@@ -490,178 +418,6 @@ class PostgresHubDatabase:
         self._pool_opened = False
         self._pool_closed = True
         _OPEN_DATABASES.discard(self)
-
-
-class _PostgresTransaction:
-    def __init__(
-        self,
-        conn: psycopg.Connection[Any],
-        *,
-        is_immediate: bool = False,
-        initial_lock: LockTarget | None = None,
-    ) -> None:
-        self._conn = conn
-        self.is_immediate = is_immediate
-        self.closed = False
-        self._locks = [initial_lock] if initial_lock is not None else []
-        self._after_commit_callbacks: list[Callable[[], Any]] = []
-
-    def execute(
-        self,
-        sql: str,
-        params: Sequence[Any] | Mapping[str, Any] = (),
-    ) -> Cursor:
-        result = self._conn.execute(sql, params) if params else self._conn.execute(sql)
-        return _PostgresCursor(result)
-
-    def executemany(self, sql: str, rows: Iterable[Sequence[Any]]) -> Cursor:
-        materialized = [tuple(row) for row in rows]
-        if not materialized:
-            return _PostgresCursor(None, rowcount=0)
-
-        driver_executemany = getattr(self._conn, "executemany", None)
-        if callable(driver_executemany):
-            driver_executemany(sql, materialized)
-            return _PostgresCursor(None)
-        with self._conn.cursor() as cursor:
-            cursor.executemany(sql, materialized)
-            return _PostgresCursor(None, rowcount=cursor.rowcount)
-
-    def savepoint(self, name: str) -> Savepoint:
-        quoted_name = _quote_identifier(name)
-        self._conn.execute(f"SAVEPOINT {quoted_name}")
-        return _PostgresSavepoint(self._conn, quoted_name)
-
-    def after_commit(self, callback: Callable[[], None]) -> None:
-        if self.closed:
-            callback()
-            return
-        self._after_commit_callbacks.append(callback)
-
-    def acquire_additional_lock(self, lock: LockTarget) -> None:
-        if not self.is_immediate:
-            raise RuntimeError("additional locks require an immediate transaction")
-        if lock in self._locks:
-            return
-
-        _acquire_lock(self._locks, lock)
-        try:
-            self._acquire_lock_target(lock)
-        except Exception:
-            self._locks.pop()
-            raise
-
-    def _acquire_lock_target(self, lock: LockTarget) -> None:
-        if isinstance(lock, TaskSeqAllocation):
-            self._acquire_advisory_lock(f"task_seq:{lock.project_id}")
-            return
-
-        for lock_key in _advisory_lock_keys(lock):
-            self._acquire_advisory_lock(lock_key)
-
-    def _acquire_advisory_lock(self, lock_key: str) -> None:
-        self.execute("SELECT pg_advisory_xact_lock(hashtext(%s))", (lock_key,))
-
-
-class _PostgresCursor:
-    """Cursor adapter whose buffered rows survive returning a connection to the pool.
-
-    It retains normal sequential ``fetchone`` and ``fetchall`` behavior.
-    """
-
-    def __init__(self, cursor: Any | None, *, rowcount: int = -1) -> None:
-        self._cursor = cursor
-        self._rowcount = rowcount
-        self._rows: list[Row] | None = None
-        self._position = 0
-
-    def materialize(self) -> _PostgresCursor:
-        if self._cursor is None:
-            return self
-        rows = self.fetchall() if getattr(self._cursor, "description", None) is not None else []
-        self._rowcount = self.rowcount
-        self._cursor = None
-        self._rows = rows
-        self._position = 0
-        return self
-
-    def fetchone(self) -> Row | None:
-        if self._rows is not None:
-            if self._position >= len(self._rows):
-                return None
-            row = self._rows[self._position]
-            self._position += 1
-            return row
-        if self._cursor is None:
-            return None
-        return _normalize_row(cast(Row | None, self._cursor.fetchone()))
-
-    def fetchall(self) -> list[Row]:
-        if self._rows is not None:
-            rows = self._rows[self._position :]
-            self._position = len(self._rows)
-            return rows
-        if self._cursor is None:
-            return []
-        return [
-            row
-            for row in (_normalize_row(row) for row in cast(Sequence[Row], self._cursor.fetchall()))
-            if row is not None
-        ]
-
-    @property
-    def rowcount(self) -> int:
-        if self._cursor is None:
-            return self._rowcount
-        return int(getattr(self._cursor, "rowcount", self._rowcount))
-
-    @property
-    def lastrowid(self) -> int | None:
-        return None
-
-
-def _normalize_row(row: Row | None) -> Row | None:
-    if row is None:
-        return None
-    if isinstance(row, Mapping):
-        return cast(Row, {str(key): _normalize_value(value) for key, value in row.items()})
-    return row
-
-
-def _normalize_value(value: Any) -> Any:
-    if isinstance(value, uuid.UUID):
-        return str(value)
-    if isinstance(value, datetime):
-        return to_aware_utc(value)
-    if isinstance(value, date):
-        return value
-    if isinstance(value, dict | list):
-        # Storage model decoders consume serialized JSON for both JSONB and text columns.
-        # Keep that row boundary uniform rather than exposing driver-specific value types.
-        return json.dumps(to_json_safe(value), sort_keys=True, separators=(",", ":"))
-    return value
-
-
-def _conninfo_with_utc_session_timezone(conninfo: str) -> str:
-    parsed = conninfo_to_dict(conninfo)
-    raw_options = parsed.get("options")
-    options = raw_options if isinstance(raw_options, str) else ""
-    lower_options = options.lower()
-    if "-ctimezone=" not in lower_options and "-c timezone=" not in lower_options:
-        parsed["options"] = " ".join(part for part in (options, "-ctimezone=UTC") if part)
-    return make_conninfo("", **parsed)
-
-
-class _PostgresSavepoint:
-    def __init__(self, conn: psycopg.Connection[Any], quoted_name: str) -> None:
-        self._conn = conn
-        self._quoted_name = quoted_name
-
-    def release(self) -> None:
-        self._conn.execute(f"RELEASE SAVEPOINT {self._quoted_name}")
-
-    def rollback(self) -> None:
-        self._conn.execute(f"ROLLBACK TO SAVEPOINT {self._quoted_name}")
 
 
 def _classify_baseline_state(conn: Any) -> _BaselineState:
@@ -832,12 +588,6 @@ def _row_value(row: Any, key: str, index: int = 0) -> Any:
         return row[index]
 
 
-def _quote_identifier(identifier: str) -> str:
-    if not _SQL_IDENTIFIER_PATTERN.fullmatch(identifier):
-        raise ValueError(f"invalid SQL identifier: {identifier!r}")
-    return f'"{identifier}"'
-
-
 def _build_safe_update(
     table: str,
     values: Mapping[str, Any],
@@ -861,138 +611,4 @@ def _build_safe_update(
 
 
 def _validate_identifier(identifier: str) -> None:
-    if not _SQL_IDENTIFIER_PATTERN.fullmatch(identifier):
-        raise ValueError(f"invalid SQL identifier: {identifier!r}")
-
-
-async def _await_task_completion(
-    task: asyncio.Task[Any],
-) -> tuple[Any, asyncio.CancelledError | None]:
-    """Finish a thread-backed operation before propagating repeated cancellation."""
-    cancellation: asyncio.CancelledError | None = None
-    while True:
-        try:
-            return await asyncio.shield(task), cancellation
-        except asyncio.CancelledError as exc:
-            if task.cancelled():
-                raise
-            cancellation = exc
-
-
-def _try_session_advisory_locks(
-    conn: psycopg.Connection[Any],
-    lock_keys: tuple[str, ...],
-) -> bool:
-    acquired: list[str] = []
-    try:
-        for lock_key in lock_keys:
-            row = conn.execute(
-                "SELECT pg_try_advisory_lock(hashtext(%s)) AS acquired",
-                (lock_key,),
-            ).fetchone()
-            if row is not None and bool(row["acquired"]):
-                acquired.append(lock_key)
-                continue
-            if acquired:
-                _release_session_advisory_locks(conn, tuple(acquired))
-            else:
-                conn.commit()
-            return False
-        conn.commit()
-        return True
-    except Exception:
-        conn.rollback()
-        if acquired:
-            _release_session_advisory_locks(conn, tuple(acquired))
-        raise
-
-
-def _release_session_advisory_locks(
-    conn: psycopg.Connection[Any],
-    lock_keys: tuple[str, ...],
-) -> None:
-    try:
-        for lock_key in reversed(lock_keys):
-            row = conn.execute(
-                "SELECT pg_advisory_unlock(hashtext(%s)) AS released",
-                (lock_key,),
-            ).fetchone()
-            if row is None or not bool(row["released"]):
-                raise RuntimeError(f"PostgreSQL session advisory lock was not held: {lock_key}")
-        conn.commit()
-    except Exception:
-        conn.rollback()
-        conn.close()
-        raise
-
-
-async def _close_advisory_lock_connection(
-    conn: psycopg.Connection[Any],
-    lock_keys: tuple[str, ...],
-) -> None:
-    def close() -> None:
-        try:
-            if lock_keys:
-                _release_session_advisory_locks(conn, lock_keys)
-        finally:
-            conn.close()
-
-    _, cancellation = await _await_task_completion(asyncio.create_task(asyncio.to_thread(close)))
-    if cancellation is not None:
-        raise cancellation
-
-
-def _advisory_lock_keys(lock: LockTarget) -> tuple[str, ...]:
-    if isinstance(lock, BuildDryRunMutation):
-        return (f"build_dry_run:{lock.project_id}",)
-    if isinstance(lock, CronRunAdmission):
-        return ("cron_run_admission",)
-    if isinstance(lock, AgentCapAdmission):
-        return (f"agent_cap_admission:{lock.project_id or '*'}",)
-    if isinstance(lock, DispatchMutexRow):
-        return (f"dispatch_mutex:{lock.task_id}",)
-    if isinstance(lock, GitHubIssueTriageMutation):
-        return (f"github_issue_triage:{lock.project_id}:{lock.repo}#{lock.issue_number}",)
-    if isinstance(lock, ReviewLearningPatternMutation):
-        return (f"review_learning_pattern:{lock.project_id}:{lock.pattern_key}",)
-    if isinstance(lock, IntegrationWorkspaceMutex):
-        return (f"integration_workspace_mutex:{lock.integration_key}",)
-    if isinstance(lock, SessionRegistration):
-        return (
-            "session_register:"
-            f"{lock.external_id}|{lock.machine_id}|{lock.source}|{lock.session_type}",
-        )
-    if isinstance(lock, SessionLineageMutation):
-        return ("session_lineage_mutation",)
-    if isinstance(lock, SessionSeqMutation):
-        return (f"session_seq:{lock.project_id}",)
-    if isinstance(lock, SessionRecoveryByProject):
-        return (f"session_recovery:{lock.project_id}",)
-    if isinstance(lock, WebChatSessionBootstrap):
-        return (
-            "web_chat_session:"
-            f"{lock.external_id}|{lock.machine_id}|{lock.source}|"
-            f"{lock.project_id or ''}|{lock.session_type}",
-        )
-    if isinstance(lock, TaskSubtreeCascade):
-        return (f"task_subtree_cascade:{lock.project_id}",)
-    if isinstance(lock, SystemSessionBootstrap):
-        return ("system_session_bootstrap",)
-    if isinstance(lock, TaskLifecycleMutation):
-        return (f"task_lifecycle:{lock.task_id}",)
-    if isinstance(lock, ChatAttachmentMutation):
-        return ("chat_attachment_mutation",)
-
-    lock_type = type(lock)
-    return (f"{lock_type.__module__}.{lock_type.__qualname__}:{lock}",)
-
-
-def _acquire_lock(stack: list[LockTarget], lock: LockTarget) -> None:
-    if stack:
-        current = stack[-1]
-        if lock.PRIORITY <= current.PRIORITY:
-            raise LockAcquisitionOrderError(
-                "nested lock priority must increase: "
-                f"{current.PRIORITY} ({current}) -> {lock.PRIORITY} ({lock})"
-            )
-    stack.append(lock)
+    _postgres_pool._validate_identifier(identifier)

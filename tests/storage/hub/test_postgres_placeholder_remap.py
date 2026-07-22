@@ -24,6 +24,10 @@ def _postgres_module():
     return importlib.import_module("gobby.storage.hub.postgres")
 
 
+def _postgres_pool_module():
+    return importlib.import_module("gobby.storage.hub.postgres_pool")
+
+
 def test_postgres_transaction_is_closed_when_context_exits(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -54,6 +58,7 @@ def test_postgres_execute_materializes_results_before_transaction_exits(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     module = _postgres_module()
+    pool_module = _postgres_pool_module()
     checkout_active = True
 
     class Result:
@@ -74,7 +79,7 @@ def test_postgres_execute_materializes_results_before_transaction_exits(
 
     class Transaction:
         def execute(self, sql: str, params: object = ()):
-            return module._PostgresCursor(Result())
+            return pool_module._PostgresCursor(Result())
 
     @contextmanager
     def transaction() -> Iterator[Transaction]:
@@ -99,6 +104,7 @@ def test_postgres_after_commit_callback_failures_are_isolated(
     caplog: pytest.LogCaptureFixture,
 ) -> None:
     module = _postgres_module()
+    pool_module = _postgres_pool_module()
 
     class Connection:
         @contextmanager
@@ -122,7 +128,7 @@ def test_postgres_after_commit_callback_failures_are_isolated(
     def succeeding_callback() -> None:
         callbacks_run.append("succeeding")
 
-    with caplog.at_level(logging.ERROR, logger=module.__name__):
+    with caplog.at_level(logging.ERROR, logger=pool_module.__name__):
         with database._transaction_context(is_immediate=False) as transaction:
             transaction.after_commit(failing_callback)
             transaction.after_commit(succeeding_callback)
@@ -285,7 +291,7 @@ async def test_build_dry_run_interleaving_keeps_transaction_locks_task_local(
 async def test_await_task_completion_propagates_inner_cancellation_without_spinning(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    module = _postgres_module()
+    module = _postgres_pool_module()
     shield_calls = 0
 
     async def cancelled_operation() -> None:
@@ -338,6 +344,7 @@ def test_advisory_lock_connection_reuses_pool_session_options(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     module = _postgres_module()
+    pool_module = _postgres_pool_module()
     calls: dict[str, object] = {}
     connection = object()
     monkeypatch.setenv("PGAPPNAME", "gobby-advisory-test")
@@ -347,7 +354,7 @@ def test_advisory_lock_connection_reuses_pool_session_options(
         calls["kwargs"] = kwargs
         return connection
 
-    monkeypatch.setattr(module.psycopg, "connect", fake_connect)
+    monkeypatch.setattr(pool_module.psycopg, "connect", fake_connect)
     db = module.PostgresHubDatabase(
         "postgresql://gobby:secret@localhost/gobby?options=-cstatement_timeout%3D5000",
         pool_config=PostgresPoolConfig(min_size=1, max_size=1),
@@ -361,14 +368,14 @@ def test_advisory_lock_connection_reuses_pool_session_options(
     assert result is connection
     conninfo = calls["conninfo"]
     assert isinstance(conninfo, str)
-    assert module.conninfo_to_dict(conninfo)["options"] == (
+    assert pool_module.conninfo_to_dict(conninfo)["options"] == (
         "-cstatement_timeout=5000 -ctimezone=UTC"
     )
     assert calls["kwargs"] == {
         "application_name": "gobby-advisory-test",
         "autocommit": True,
         "prepare_threshold": None,
-        "row_factory": module.dict_row,
+        "row_factory": pool_module.dict_row,
     }
 
 
@@ -419,7 +426,7 @@ class _FakePostgresConnection:
 
 
 def test_postgres_transaction_execute_passes_sql_and_params_directly() -> None:
-    module = _postgres_module()
+    module = _postgres_pool_module()
     conn = _FakePostgresConnection()
     tx = module._PostgresTransaction(conn)
 
@@ -429,7 +436,7 @@ def test_postgres_transaction_execute_passes_sql_and_params_directly() -> None:
 
 
 def test_postgres_transaction_execute_preserves_mapping_params() -> None:
-    module = _postgres_module()
+    module = _postgres_pool_module()
     conn = _FakePostgresConnection()
     tx = module._PostgresTransaction(conn)
     params = {"value": 1, "title": "demo"}
@@ -440,7 +447,7 @@ def test_postgres_transaction_execute_preserves_mapping_params() -> None:
 
 
 def test_postgres_transaction_executemany_passes_rows_directly() -> None:
-    module = _postgres_module()
+    module = _postgres_pool_module()
     conn = _FakePostgresConnection()
     tx = module._PostgresTransaction(conn)
 
@@ -458,7 +465,7 @@ def test_postgres_transaction_executemany_passes_rows_directly() -> None:
 
 
 def test_postgres_transaction_executemany_empty_rows_skips_driver() -> None:
-    module = _postgres_module()
+    module = _postgres_pool_module()
     conn = _FakePostgresConnection()
     tx = module._PostgresTransaction(conn)
 
@@ -503,7 +510,7 @@ class _FakeResult:
 
 
 def test_postgres_cursor_normalizes_jsonb_values_to_storage_json_text() -> None:
-    module = _postgres_module()
+    module = _postgres_pool_module()
     cursor = module._PostgresCursor(
         _FakeResult(
             [
@@ -524,7 +531,7 @@ def test_postgres_cursor_normalizes_jsonb_values_to_storage_json_text() -> None:
 
 
 def test_postgres_cursor_preserves_datetime_values_as_aware_utc() -> None:
-    module = _postgres_module()
+    module = _postgres_pool_module()
     cursor = module._PostgresCursor(
         _FakeResult(
             [
@@ -554,7 +561,7 @@ def test_postgres_cursor_preserves_datetime_values_as_aware_utc() -> None:
 
 
 def test_postgres_cursor_preserves_date_values_as_dates() -> None:
-    module = _postgres_module()
+    module = _postgres_pool_module()
     due_date = date(2026, 5, 21)
     cursor = module._PostgresCursor(_FakeResult([{"id": "task", "due_date": due_date}]))
 
@@ -566,7 +573,7 @@ def test_postgres_cursor_preserves_date_values_as_dates() -> None:
 
 
 def test_postgres_conninfo_preserves_options_and_forces_utc_timezone() -> None:
-    module = _postgres_module()
+    module = _postgres_pool_module()
     conninfo = module._conninfo_with_utc_session_timezone(
         "postgresql://user:pass@localhost:5432/gobby?options=-cstatement_timeout%3D5000"
     )
