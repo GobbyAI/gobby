@@ -166,3 +166,9 @@ so each iteration resumes from the durable goal document and live task state.
   Final focused validation passed 359 tests; Ruff format/check, strict mypy,
   configured Bandit, package wheel build, test-quality, diff, dead-name, and
   source-size checks passed.
+- 2026-07-21 #9341 iteration 13 — closed #18519 as an out-of-repo wiki-vault
+  update; recorded two durable reviewed-distinct verdicts for separate Hacker
+  News research batches in `wiki/meta/librarian/distinct-pairs.json`. `jq`
+  validated both #18519 entries, and a live `gwiki librarian` run confirmed
+  neither reported pair remains. The intentionally ignored wiki vault has no
+  Git commit.
