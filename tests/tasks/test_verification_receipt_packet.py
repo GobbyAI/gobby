@@ -80,6 +80,7 @@ def test_packet_is_bounded_complete_and_keeps_high_risk_receipts_visible() -> No
     payload = _payload(packet.text)
     catalog_ids = {row["receipt_id"] for row in payload["receipt_catalog"]}
     assert {"receipt-0300", "receipt-0301", "receipt-0302"} <= catalog_ids
+    assert payload["canonical_outcome_projection"] == packet.projection.to_dict()
     assert payload["evidence_completeness"] == packet.disclosure.to_dict()
     assert payload["aggregated_tail"][0]["count"] == packet.disclosure.aggregated
 
@@ -99,6 +100,16 @@ def test_explicit_receipt_is_first_detailed_before_high_risk_receipts() -> None:
     assert packet.text is not None
     details = _payload(packet.text)["detailed_receipts"]
     assert details[0]["receipt_id"] == "receipt-0002"
+
+
+def test_detailed_receipt_preserves_full_command_for_semantic_verification() -> None:
+    receipt = _receipt(1, command_chars=700)
+
+    packet = build_verification_receipt_packet([receipt], explicit_receipt_ids=[receipt.id])
+
+    assert packet.text is not None
+    payload = _payload(packet.text)
+    assert payload["detailed_receipts"][0]["command"] == receipt.command
 
 
 @pytest.mark.parametrize("outcome", ["failure", "conflicting", "unknown"])

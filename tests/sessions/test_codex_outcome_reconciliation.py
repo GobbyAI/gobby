@@ -100,13 +100,15 @@ async def test_processor_reconciles_exact_exit_codes_without_replaying_generic_m
     ]
     evidence = hook_manager.variables["verification_evidence"]
     assert isinstance(evidence, list)
-    assert len(evidence) == evidence_count_before_final_wait + 1
+    assert len(evidence) == evidence_count_before_final_wait + 2
+    assert [item["success"] for item in evidence[-2:]] == [False, True]
+    assert all(item["evidence_type"] == "shell_command" for item in evidence[-2:])
 
     replay_result = await processor.reconcile_codex_transcript("platform-session")
 
     assert replay_result.flushed is True
     assert len(hook_manager.events) == 5
-    assert len(evidence) == evidence_count_before_final_wait + 1
+    assert len(evidence) == evidence_count_before_final_wait + 2
     assert all(event.event_type == HookEventType.AFTER_TOOL for event in hook_manager.events)
     assert all(event.data["tool_name"] == "Bash" for event in hook_manager.events)
 

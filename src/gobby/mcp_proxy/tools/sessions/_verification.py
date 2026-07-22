@@ -13,14 +13,15 @@ from gobby.storage.verification_receipts import (
     VerificationReceiptStore,
     VerificationReceiptWrite,
 )
+from gobby.tasks.verification_outcome_projection import project_verification_outcomes
 from gobby.workflows.state_manager import SessionVariableManager
 from gobby.workflows.verification_evidence import (
     MAX_VERIFICATION_EVIDENCE_ITEMS,
     VERIFICATION_EVIDENCE_RECORDED_VARIABLE,
     VERIFICATION_EVIDENCE_TYPE_MANUAL_DIFF_REVIEW,
-    VERIFICATION_EVIDENCE_TYPE_VALIDATION_COMMAND,
     VERIFICATION_EVIDENCE_VARIABLE,
     append_verification_evidence,
+    receipt_projection_evidence,
     validate_verification_evidence,
 )
 
@@ -73,12 +74,11 @@ def register_verification_tools(
                 "success": False,
                 "error": "summary, evidence_type, and supports must be non-empty",
             }
-        if evidence_type == VERIFICATION_EVIDENCE_TYPE_VALIDATION_COMMAND:
+        if evidence_type != VERIFICATION_EVIDENCE_TYPE_MANUAL_DIFF_REVIEW:
             return {
                 "success": False,
-                "error": "validation_command evidence must come from a captured shell result",
+                "error": "record_verification_evidence only accepts manual_diff_review evidence",
             }
-
         if not session_id:
             from gobby.utils.session_context import get_current_session_id
 
@@ -167,6 +167,17 @@ def register_verification_tools(
                 VERIFICATION_EVIDENCE_RECORDED_VARIABLE: True,
             },
         )
+        if attributed_task_id is not None:
+            projection = project_verification_outcomes(
+                receipt_store.list_for_task(session.project_id, attributed_task_id)
+            )
+            evidence_count = manager.append_to_bounded_list_variable(
+                resolved_session_id,
+                VERIFICATION_EVIDENCE_VARIABLE,
+                receipt_projection_evidence(projection, task_id=attributed_task_id),
+                max_items=MAX_VERIFICATION_EVIDENCE_ITEMS,
+                updates={VERIFICATION_EVIDENCE_RECORDED_VARIABLE: projection.ready},
+            )
         logger.info(
             "record_verification_evidence merged variables resolved_session_id=%s task_id=%s "
             "evidence_type=%s supports=%s evidence_count=%s",

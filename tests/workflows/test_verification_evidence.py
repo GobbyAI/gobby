@@ -38,21 +38,18 @@ def test_append_verification_evidence_warns_for_malformed_existing_value(
 def test_append_verification_evidence_preserves_supported_metadata_fields() -> None:
     """Supported evidence metadata remains available to downstream observers."""
     evidence = {
-        "categories": ["tests"],
         "command": "GOBBY_TEST_PROTECT=1 uv run pytest tests/workflows/test_x.py",
         "cwd": "/repo",
-        "evidence_type": "validation_command",
+        "evidence_type": "shell_command",
         "exit_code": 0,
-        "languages": ["python"],
-        "matcher_id": "pytest",
-        "matcher_label": "pytest",
+        "latest_receipt_id": "receipt-1",
+        "outcome_counts": {"success": 1},
+        "outcome_provenance": "tool_output.exitCode",
+        "output": "1 passed",
         "project_path": "/repo",
-        "segment_count": 2,
-        "segment_index": 0,
-        "shell_operators": ["||"],
-        "evidence_requires_confirmation": False,
+        "receipt_count": 1,
         "success": True,
-        "tool_name": "pytest",
+        "tool_name": "Bash",
     }
 
     result = append_verification_evidence([], evidence)

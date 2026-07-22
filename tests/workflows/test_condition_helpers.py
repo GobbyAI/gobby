@@ -160,64 +160,45 @@ class TestCompletionEvidenceReady:
         )
 
     @pytest.mark.parametrize(
-        ("evidence", "expected"),
+        ("success", "expected"),
         [
-            (
-                {
-                    "command": "uv run pytest provider.py",
-                    "success": True,
-                    "outcome_provenance": "claude.hook:PostToolUse",
-                },
-                True,
-            ),
-            ({"command": "uv run pytest missing.py", "success": True}, False),
-            (
-                {
-                    "command": "uv run pytest contradictory.py",
-                    "success": True,
-                    "exit_code": 7,
-                    "outcome_provenance": "tool_output.json.exit_code",
-                },
-                False,
-            ),
-            (
-                {
-                    "command": "uv run pytest textual.py",
-                    "success": True,
-                    "outcome_provenance": "validation_summary.pytest",
-                },
-                False,
-            ),
+            (True, True),
+            (False, False),
+            (None, False),
         ],
     )
-    def test_validation_readiness_uses_shared_command_correlation(
+    def test_readiness_uses_canonical_outcome_without_command_interpretation(
         self,
-        evidence: dict[str, object],
+        success: bool | None,
         expected: bool,
     ) -> None:
-        evidence["evidence_type"] = "validation_command"
+        evidence = {
+            "evidence_type": "shell_command",
+            "command": "custom verifier --selector value",
+            "success": success,
+        }
 
         assert completion_evidence_ready({"verification_evidence": [evidence]}) is expected
 
-    def test_failed_validation_blocks_until_later_validation_success(self) -> None:
+    def test_receipt_projection_overrides_legacy_evidence_stream(self) -> None:
         assert (
             completion_evidence_ready(
                 {
                     "verification_evidence": [
                         {
-                            "evidence_type": "validation_command",
-                            "command": "uv run pytest old.py",
+                            "evidence_type": "shell_command",
+                            "command": "custom verifier",
                             "success": True,
-                            "outcome_provenance": "tool_outcome.status",
                         },
                         {
-                            "evidence_type": "validation_command",
-                            "command": "uv run pytest failing.py",
+                            "evidence_type": "receipt_projection",
+                            "task_id": "#42",
                             "success": False,
-                            "outcome_provenance": "tool_outcome.status",
+                            "summary": "Durable verification receipt outcomes: failure=1",
                         },
                     ]
-                }
+                },
+                "#42",
             )
             is False
         )
@@ -226,41 +207,43 @@ class TestCompletionEvidenceReady:
                 {
                     "verification_evidence": [
                         {
-                            "evidence_type": "validation_command",
-                            "command": "uv run pytest failing.py",
+                            "evidence_type": "shell_command",
+                            "command": "custom verifier",
                             "success": False,
-                            "outcome_provenance": "tool_outcome.status",
                         },
                         {
-                            "evidence_type": "validation_command",
-                            "command": "uv run pytest fixed.py",
+                            "evidence_type": "receipt_projection",
+                            "task_id": "#42",
                             "success": True,
-                            "outcome_provenance": "tool_outcome.status",
+                            "summary": "Durable verification receipt outcomes: success=1",
                         },
                     ]
-                }
+                },
+                "#42",
             )
             is True
         )
 
-    def test_manual_evidence_cannot_clear_failed_validation(self) -> None:
+    def test_manual_evidence_cannot_override_failed_receipt_projection(self) -> None:
         assert (
             completion_evidence_ready(
                 {
                     "verification_evidence": [
                         {
-                            "evidence_type": "validation_command",
-                            "command": "uv run pytest failing.py",
+                            "evidence_type": "receipt_projection",
+                            "task_id": "#42",
                             "success": False,
-                            "outcome_provenance": "tool_outcome.status",
+                            "summary": "Durable verification receipt outcomes: failure=1",
                         },
                         {
                             "evidence_type": "manual_diff_review",
+                            "task_id": "#42",
                             "summary": "Reviewed diff",
                             "success": True,
                         },
                     ]
-                }
+                },
+                "#42",
             )
             is False
         )
@@ -327,18 +310,17 @@ class TestCompletionEvidenceReady:
         assert completion_evidence_ready(variables, "#42") is True
         assert completion_evidence_ready(variables, "#99") is False
 
-    def test_same_task_failure_still_blocks_scoped_success(self) -> None:
+    def test_same_task_receipt_projection_controls_scoped_readiness(self) -> None:
         variables = {
             "verification_evidence": [
                 {
-                    "evidence_type": "validation_command",
+                    "evidence_type": "receipt_projection",
                     "task_id": "#42",
-                    "command": "uv run pytest task-42.py",
+                    "summary": "Durable verification receipt outcomes: success=1, failure=1",
                     "success": True,
-                    "outcome_provenance": "tool_outcome.status",
                 },
                 {
-                    "evidence_type": "validation_command",
+                    "evidence_type": "shell_command",
                     "supports": "task_id:42",
                     "command": "uv run pytest task-42.py",
                     "success": False,
@@ -347,7 +329,7 @@ class TestCompletionEvidenceReady:
             ]
         }
 
-        assert completion_evidence_ready(variables, 42) is False
+        assert completion_evidence_ready(variables, 42) is True
 
     def test_target_task_uses_legacy_unscoped_evidence_as_fallback(self) -> None:
         variables = {

@@ -6,15 +6,13 @@ import json
 from collections.abc import Sequence
 from typing import Any
 
-from gobby.workflows.verification_evidence import correlate_validation_command_result
-
 _EVIDENCE_FIELDS: tuple[str, ...] = (
     "evidence_type",
     "command",
     "exit_code",
     "success",
-    "matcher_id",
-    "matcher_label",
+    "outcome_provenance",
+    "output",
     "summary",
     "supports",
     "scope",
@@ -29,7 +27,7 @@ def format_verification_evidence_context(
     *,
     limit: int,
 ) -> str | None:
-    """Return bounded, command-correlated verification evidence for validation."""
+    """Return bounded canonical verification evidence for validation."""
     if limit <= 0:
         return None
 
@@ -65,7 +63,10 @@ def format_verification_evidence_context(
 
 
 def _structured_evidence_item(item: dict[str, Any]) -> dict[str, object]:
-    command = _text(item.get("command"))
+    command_value = item.get("command")
+    command = command_value.strip() if isinstance(command_value, str) else None
+    if command == "":
+        command = None
     summary = _text(item.get("summary"))
     if command is None and summary is None:
         return {}
@@ -74,26 +75,16 @@ def _structured_evidence_item(item: dict[str, Any]) -> dict[str, object]:
     for key in _EVIDENCE_FIELDS:
         value = item.get(key)
         if isinstance(value, str):
-            text = _text(value)
+            text = value.strip() if key == "command" else _text(value)
             if text is not None:
                 payload[key] = text
         elif isinstance(value, bool):
             payload[key] = value
         elif isinstance(value, int):
             payload[key] = value
+        elif key == "success" and value is None:
+            payload[key] = None
 
-    if command is not None:
-        correlated = correlate_validation_command_result(item)
-        payload["command_result_correlation"] = "correlated" if correlated else "missing"
-        if correlated is not None:
-            payload["success"] = correlated.success
-            payload["command_result_signal"] = correlated.signal
-        else:
-            payload["success"] = None
-            payload["missing_evidence"] = (
-                "trusted terminal provider status or consistent integer exit_code correlated "
-                f"to command: {command}"
-            )
     return payload
 
 

@@ -141,7 +141,7 @@ async def test_record_verification_evidence_sets_readiness(
     assert variables["verification_evidence"][0]["tool_name"] == "record_verification_evidence"
 
 
-async def test_record_verification_evidence_rejects_validation_command(
+async def test_record_verification_evidence_rejects_non_manual_evidence_type(
     temp_db, session_manager, sample_project
 ) -> None:
     session = session_manager.register(
@@ -158,7 +158,7 @@ async def test_record_verification_evidence_rejects_validation_command(
         {
             "session_id": session.id,
             "summary": "pytest passed",
-            "evidence_type": "validation_command",
+            "evidence_type": "shell_command",
             "supports": "completion readiness",
             "command": "uv run pytest tests/workflows/test_condition_helpers.py -q",
         },
@@ -166,7 +166,7 @@ async def test_record_verification_evidence_rejects_validation_command(
 
     assert result == {
         "success": False,
-        "error": "validation_command evidence must come from a captured shell result",
+        "error": "record_verification_evidence only accepts manual_diff_review evidence",
     }
     variables = SessionVariableManager(temp_db).get_variables(session.id)
     assert "verification_evidence" not in variables

@@ -26,14 +26,11 @@ SELECTOR_COMMAND = "GOBBY_TEST_PROTECT=1 uv run pytest -k critical_early_regress
 def _validation_item(
     command: str,
     success: bool | None,
-    *,
-    category: str = "test",
 ) -> dict[str, Any]:
     item: dict[str, Any] = {
-        "evidence_type": "validation_command",
+        "evidence_type": "shell_command",
         "command": command,
         "success": success,
-        "categories": [category],
     }
     if success is not None:
         item["exit_code"] = 0 if success else 1
@@ -98,7 +95,7 @@ def test_literal_functions_exec_exit_zero_does_not_reproduce_correlation_failure
     }
 
 
-def test_trusted_selector_success_is_weakened_to_unknown() -> None:
+def test_trusted_selector_success_remains_canonical_success() -> None:
     event = _codex_success_event(SELECTOR_COMMAND)
     variables: dict[str, Any] = {}
 
@@ -110,10 +107,10 @@ def test_trusted_selector_success_is_weakened_to_unknown() -> None:
         "exit_code": 0,
         "provenance": "event.exitCode",
     }
-    assert evidence["evidence_requires_confirmation"] is True
     assert evidence["exit_code"] == 0
-    assert evidence["success"] is None
-    assert completion_evidence_ready(variables) is False
+    assert evidence["command"] == SELECTOR_COMMAND
+    assert evidence["success"] is True
+    assert completion_evidence_ready(variables) is True
 
 
 def test_durable_packet_keeps_early_success_that_makes_readiness_true() -> None:
@@ -161,5 +158,7 @@ def test_durable_packet_keeps_early_success_that_makes_readiness_true() -> None:
     assert packet.error is None
     assert packet.text is not None
     assert EARLY_COMMAND in packet.text
+    assert packet.projection.ready is True
+    assert packet.projection.per_outcome == {"success": 1, "unknown": 30}
     assert packet.disclosure.total == len(evidence)
     assert packet.disclosure.catalogued + packet.disclosure.aggregated == packet.disclosure.total

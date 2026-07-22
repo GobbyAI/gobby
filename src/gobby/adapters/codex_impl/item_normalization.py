@@ -48,6 +48,9 @@ _EXEC_COMMAND_LITERAL_RE = re.compile(
     r'(?:^|[{,])\s*cmd\s*:\s*("(?:\\.|[^"\\])*")',
     re.DOTALL,
 )
+_REPEATED_EXEC_SCAFFOLD_RE = re.compile(
+    r"\b(?:do|for|while)\b|\.(?:forEach|map|reduce)\s*\(|\bPromise\.all\s*\("
+)
 _WRITE_STDIN_CALL_RE = re.compile(r"\btools\.write_stdin\s*\(")
 _WRITE_STDIN_SESSION_RE = re.compile(r"\bsession_id\s*:\s*(\"(?:\\.|[^\"\\])*\"|-?\d+)")
 _YIELDED_CELL_RE = re.compile(r"^Script running with cell ID ([A-Za-z0-9._:-]+)\s*$")
@@ -79,6 +82,9 @@ def extract_functions_exec_command(arguments: Any) -> str | None:
         return None
     matches = _EXEC_COMMAND_LITERAL_RE.findall(arguments)
     if len(matches) != 1:
+        return None
+    scaffold = arguments.replace(matches[0], '""', 1)
+    if _REPEATED_EXEC_SCAFFOLD_RE.search(scaffold):
         return None
     try:
         command = json.loads(matches[0])
@@ -121,6 +127,33 @@ def _iter_wrapper_output_text(value: Any) -> list[str]:
             if isinstance(nested, (dict, list, str)):
                 result.extend(_iter_wrapper_output_text(nested))
     return result
+
+
+def _terminal_exec_results(data: dict[str, Any]) -> list[dict[str, Any]]:
+    value = data.get("contentItems")
+    if value is None:
+        value = data.get("tool_output", data.get("tool_response"))
+    results: list[dict[str, Any]] = []
+    for text in _iter_wrapper_output_text(value):
+        try:
+            decoded = json.loads(text)
+        except (TypeError, ValueError):
+            continue
+        candidates = decoded if isinstance(decoded, list) else [decoded]
+        for candidate in candidates:
+            if not isinstance(candidate, dict):
+                continue
+            has_exit = any(
+                isinstance(candidate.get(field), int) and not isinstance(candidate.get(field), bool)
+                for field in ("exit_code", "exitCode", "returncode")
+            )
+            has_boolean = any(
+                isinstance(candidate.get(field), bool)
+                for field in ("success", "isError", "is_error")
+            )
+            if has_exit or has_boolean:
+                results.append(candidate)
+    return results
 
 
 def _normalize_session_id(value: Any) -> str | None:
@@ -183,6 +216,8 @@ class DynamicExecCorrelator:
         self._max_pending = max_pending
         self._pending_cells: dict[str, dict[str, Any]] = {}
         self._pending_sessions: dict[str, dict[str, Any]] = {}
+        self._ambiguous_cells: set[str] = set()
+        self._ambiguous_sessions: set[str] = set()
 
     def correlate(self, data: dict[str, Any]) -> dict[str, Any]:
         """Attach the original shell command throughout a correlated wrapper chain."""
@@ -192,36 +227,58 @@ class DynamicExecCorrelator:
         polled_session_id: str | None = None
 
         if original_tool in _FUNCTIONS_EXEC_NAMES:
-            tool_input = data.get("tool_input")
-            if isinstance(tool_input, dict) and isinstance(tool_input.get("command"), str):
-                pending_input = dict(tool_input)
+            command = data.pop("_dynamic_exec_command", None)
+            if isinstance(command, str) and command:
+                pending_input = {"command": command}
             else:
                 polled_session_id = extract_functions_write_stdin_session_id(data.get("arguments"))
-                if polled_session_id is not None:
+                if (
+                    polled_session_id is not None
+                    and polled_session_id not in self._ambiguous_sessions
+                ):
                     pending_input = self._pending_sessions.get(polled_session_id)
         elif original_tool in {"wait", "functions.wait"}:
             waited_cell_id = extract_wait_cell_id(data)
-            if waited_cell_id is not None:
+            if waited_cell_id is not None and waited_cell_id not in self._ambiguous_cells:
                 pending_input = self._pending_cells.get(waited_cell_id)
 
         if pending_input is None:
             return data
 
-        data["_original_tool_name"] = str(original_tool)
-        data["tool_name"] = "Bash"
-        data["tool_input"] = dict(pending_input)
-
         yielded_cell_id = extract_yielded_cell_id(data)
         if yielded_cell_id is not None:
-            self._set_pending(self._pending_cells, yielded_cell_id, pending_input)
+            self._set_pending(
+                self._pending_cells,
+                yielded_cell_id,
+                pending_input,
+                self._ambiguous_cells,
+            )
             return data
 
         if waited_cell_id is not None:
             self._pending_cells.pop(waited_cell_id, None)
 
         result_session_id = extract_exec_session_id(data)
+        terminal_results = _terminal_exec_results(data)
+        if len(terminal_results) == 1:
+            data["_original_tool_name"] = str(original_tool)
+            data["tool_name"] = "Bash"
+            data["tool_input"] = dict(pending_input)
+            if polled_session_id is not None:
+                self._pending_sessions.pop(polled_session_id, None)
+            return data
+        if len(terminal_results) > 1:
+            if polled_session_id is not None:
+                self._pending_sessions.pop(polled_session_id, None)
+            return data
+
         if result_session_id is not None:
-            self._set_pending(self._pending_sessions, result_session_id, pending_input)
+            self._set_pending(
+                self._pending_sessions,
+                result_session_id,
+                pending_input,
+                self._ambiguous_sessions,
+            )
         elif polled_session_id is not None:
             self._pending_sessions.pop(polled_session_id, None)
         return data
@@ -231,10 +288,23 @@ class DynamicExecCorrelator:
         pending: dict[str, dict[str, Any]],
         key: str,
         tool_input: dict[str, Any],
+        ambiguous: set[str],
     ) -> None:
+        existing = pending.get(key)
+        if existing is not None and existing != tool_input:
+            pending.pop(key, None)
+            self._mark_ambiguous(ambiguous, key)
+            return
+        if key in ambiguous:
+            return
         if len(pending) >= self._max_pending and key not in pending:
             pending.pop(next(iter(pending)))
         pending[key] = dict(tool_input)
+
+    def _mark_ambiguous(self, ambiguous: set[str], key: str) -> None:
+        if len(ambiguous) >= self._max_pending and key not in ambiguous:
+            ambiguous.pop()
+        ambiguous.add(key)
 
 
 def extract_completed_item_payload(params: dict[str, Any]) -> dict[str, Any]:
@@ -313,8 +383,7 @@ def build_tool_event_data(
             command = extract_functions_exec_command(item_data.get("arguments"))
             if command is not None:
                 item_data["_original_tool_name"] = dynamic_name
-                item_data["tool_name"] = "Bash"
-                item_data["tool_input"] = {"command": command}
+                item_data["_dynamic_exec_command"] = command
 
     if "tool_response" not in item_data and "tool_result" not in item_data:
         if "output" in item_data:

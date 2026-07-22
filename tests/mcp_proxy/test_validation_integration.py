@@ -44,7 +44,6 @@ def _verification_receipt(
     command: str,
     *,
     index: int = 1,
-    details: dict[str, object] | None = None,
 ) -> VerificationReceipt:
     timestamp = utc_now() + timedelta(seconds=index)
     return VerificationReceipt(
@@ -55,7 +54,7 @@ def _verification_receipt(
         provider="codex",
         execution_id=f"execution-{index:03d}",
         source_event_id=f"event-{index:03d}",
-        evidence_type="validation_command",
+        evidence_type="shell_command",
         command=command,
         cwd="/repo",
         normalized_outcome="success",
@@ -67,7 +66,7 @@ def _verification_receipt(
         output_last_4k="passed",
         output_sha256=None,
         output_bytes=6,
-        details=details or {},
+        details={},
         attribution_source="sole_claim",
         attribution_actor="sess-uuid",
         attributed_at=timestamp,
@@ -81,45 +80,42 @@ _TEST_TIMESTAMP_TEXT = _TEST_TIMESTAMP.isoformat()
 _StageState = Literal["ready", "in_progress", "needs_review", "review_approved", "done"]
 
 
-def test_format_verification_evidence_context_correlates_command_outcomes() -> None:
+def test_format_verification_evidence_context_preserves_canonical_outcomes() -> None:
     context = format_verification_evidence_context(
         [
             {
-                "evidence_type": "validation_command",
+                "evidence_type": "shell_command",
                 "success": True,
                 "command": "uv run pytest tests/failing.py",
                 "exit_code": 7,
                 "outcome_provenance": "tool_output.json.exit_code",
-                "matcher_id": "python-tests",
             },
             {
-                "evidence_type": "validation_command",
+                "evidence_type": "shell_command",
                 "success": True,
                 "command": "uv run pytest tests/tasks/test_validation.py -q",
                 "exit_code": 0,
                 "outcome_provenance": "tool_output.json.exit_code",
-                "matcher_id": "python-tests",
-                "matcher_label": "Python tests",
             },
             {
-                "evidence_type": "validation_command",
+                "evidence_type": "shell_command",
                 "success": True,
                 "command": "uv run pytest tests/uncorrelated.py",
             },
             {
-                "evidence_type": "validation_command",
+                "evidence_type": "shell_command",
                 "success": True,
                 "command": "uv run ruff check src/gobby",
                 "outcome_provenance": "claude.hook:PostToolUse",
             },
             {
-                "evidence_type": "validation_command",
+                "evidence_type": "shell_command",
                 "success": False,
                 "command": "uv run mypy src/gobby",
                 "outcome_provenance": "qwen.hook:PostToolUseFailure",
             },
             {
-                "evidence_type": "validation_command",
+                "evidence_type": "shell_command",
                 "success": True,
                 "command": "uv run pytest tests/textual.py",
                 "outcome_provenance": "validation_summary.pytest",
@@ -142,27 +138,24 @@ def test_format_verification_evidence_context_correlates_command_outcomes() -> N
     by_command = {item["command"]: item for item in results if "command" in item}
 
     contradictory = by_command["uv run pytest tests/failing.py"]
-    assert contradictory["command_result_correlation"] == "missing"
-    assert contradictory["success"] is None
+    assert contradictory["exit_code"] == 7
+    assert contradictory["success"] is True
 
     exit_code = by_command["uv run pytest tests/tasks/test_validation.py -q"]
-    assert exit_code["command_result_correlation"] == "correlated"
-    assert exit_code["command_result_signal"] == "exit_code"
+    assert exit_code["exit_code"] == 0
     assert exit_code["success"] is True
 
     provider_success = by_command["uv run ruff check src/gobby"]
-    assert provider_success["command_result_correlation"] == "correlated"
-    assert provider_success["command_result_signal"] == "provider_status"
     assert provider_success["success"] is True
 
     provider_failure = by_command["uv run mypy src/gobby"]
-    assert provider_failure["command_result_correlation"] == "correlated"
-    assert provider_failure["command_result_signal"] == "provider_status"
     assert provider_failure["success"] is False
 
     for command in ("uv run pytest tests/textual.py", "uv run pytest tests/uncorrelated.py"):
-        assert by_command[command]["command_result_correlation"] == "missing"
-        assert by_command[command]["success"] is None
+        assert by_command[command]["success"] is True
+
+    assert all("command_result_correlation" not in item for item in results)
+    assert all("command_result_signal" not in item for item in results)
 
     assert any(
         item.get("summary") == "Verified touched source line counts are below 1000"
@@ -519,7 +512,7 @@ async def test_close_task_includes_durable_receipt_packet_and_completeness(
             provider="codex",
             execution_id=f"execution-{index:03d}",
             source_event_id=f"event-{index:03d}",
-            evidence_type="validation_command",
+            evidence_type="shell_command",
             command=f"uv run pytest validation_suite_{index:03d}.py",
             cwd=repo_path,
             normalized_outcome="success",
@@ -531,7 +524,7 @@ async def test_close_task_includes_durable_receipt_packet_and_completeness(
             output_last_4k="passed",
             output_sha256=None,
             output_bytes=6,
-            details={"matcher_id": "python-tests"},
+            details={},
             attribution_source="sole_claim",
             attribution_actor="sess-uuid",
             attributed_at=timestamp + timedelta(seconds=index),
@@ -599,6 +592,12 @@ async def test_close_task_includes_durable_receipt_packet_and_completeness(
     assert '"total":303' in validation_evidence
     packet_payload = json.loads(validation_evidence.removeprefix("Verification receipt packet:\n"))
     assert packet_payload["detailed_receipts"][0]["receipt_id"] == "receipt-001"
+    projection = packet_payload["canonical_outcome_projection"]
+    assert projection["total"] == 303
+    assert projection["per_outcome"] == {"success": 303}
+    assert projection["ready"] is True
+    assert projection["latest_receipt_id"] == "receipt-303"
+    assert projection["latest_timestamp"] is not None
 
 
 @pytest.mark.integration
@@ -631,13 +630,7 @@ async def test_close_task_accepts_git_diff_check_evidence_without_override(
     )
     receipt_store = MagicMock()
     receipt_store.list_for_task.return_value = [
-        _verification_receipt(
-            "git diff --check HEAD~1..HEAD",
-            details={
-                "matcher_id": "git-diff-check",
-                "matcher_label": "Git whitespace checks",
-            },
-        )
+        _verification_receipt("git diff --check HEAD~1..HEAD")
     ]
     receipt_store.count_unassigned.return_value = 0
 
@@ -682,7 +675,8 @@ async def test_close_task_accepts_git_diff_check_evidence_without_override(
     ]
     assert '"command":"git diff --check HEAD~1..HEAD"' in validation_context
     assert '"exit_code":0' in validation_context
-    assert "git-diff-check" in validation_context
+    assert '"ready":true' in validation_context
+    assert "matcher_id" not in validation_context
     close_kwargs = mock_task_manager.close_task.call_args.kwargs
     assert close_kwargs["validation_override_reason"] is None
 
@@ -737,12 +731,7 @@ async def test_close_task_preserves_oversized_test_definitions_with_focused_evid
     )
     focused_command = "GOBBY_TEST_PROTECT=1 uv run pytest tests/test_acceptance.py -k acceptance -q"
     receipt_store = MagicMock()
-    receipt_store.list_for_task.return_value = [
-        _verification_receipt(
-            focused_command,
-            details={"matcher_id": "python-tests", "matcher_label": "Python tests"},
-        )
-    ]
+    receipt_store.list_for_task.return_value = [_verification_receipt(focused_command)]
     receipt_store.count_unassigned.return_value = 0
 
     with (
@@ -788,7 +777,7 @@ async def test_close_task_preserves_oversized_test_definitions_with_focused_evid
         assert name in changes_summary
     assert "hunk truncated for tests/test_acceptance.py" in changes_summary
     assert f'"command":"{focused_command}"' in receipt_text
-    assert "Python tests" in receipt_text
+    assert '"ready":true' in receipt_text
 
 
 @pytest.mark.integration

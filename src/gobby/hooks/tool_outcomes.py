@@ -10,7 +10,7 @@ from __future__ import annotations
 import json
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
-from enum import StrEnum
+from enum import IntEnum, StrEnum
 from typing import Any
 
 
@@ -51,7 +51,14 @@ class ToolOutcome:
 class _OutcomeSignal:
     succeeded: bool
     provenance: str
+    trust: _OutcomeTrust
     exit_code: int | None = None
+
+
+class _OutcomeTrust(IntEnum):
+    PROVIDER_CONTRACT = 0
+    DIRECT_RESULT = 1
+    NESTED_RESULT = 2
 
 
 _EXIT_CODE_FIELDS = ("exitCode", "exit_code", "returncode")
@@ -100,7 +107,11 @@ def _parse_json_container(value: Any) -> Mapping[str, Any] | Sequence[Any] | Non
     return None
 
 
-def _canonical_outcome_signal(value: Any, path: str) -> _OutcomeSignal | None:
+def _canonical_outcome_signal(
+    value: Any,
+    path: str,
+    trust: _OutcomeTrust,
+) -> _OutcomeSignal | None:
     if not isinstance(value, Mapping):
         return None
     status = value.get("status")
@@ -108,9 +119,9 @@ def _canonical_outcome_signal(value: Any, path: str) -> _OutcomeSignal | None:
         return None
     normalized = status.strip().lower()
     if normalized == ToolOutcomeStatus.SUCCEEDED.value:
-        return _OutcomeSignal(True, str(value.get("provenance") or f"{path}.status"))
+        return _OutcomeSignal(True, str(value.get("provenance") or f"{path}.status"), trust)
     if normalized == ToolOutcomeStatus.FAILED.value:
-        return _OutcomeSignal(False, str(value.get("provenance") or f"{path}.status"))
+        return _OutcomeSignal(False, str(value.get("provenance") or f"{path}.status"), trust)
     return None
 
 
@@ -119,36 +130,42 @@ def _collect_mapping_signals(
     path: str,
     signals: list[_OutcomeSignal],
     unknown_provenance: list[str],
+    trust: _OutcomeTrust,
 ) -> None:
-    canonical = _canonical_outcome_signal(value, path)
+    canonical = _canonical_outcome_signal(value, path, trust)
     if canonical is not None:
         exit_code = value.get("exit_code")
         if isinstance(exit_code, int) and not isinstance(exit_code, bool):
-            canonical = _OutcomeSignal(canonical.succeeded, canonical.provenance, exit_code)
+            canonical = _OutcomeSignal(
+                canonical.succeeded,
+                canonical.provenance,
+                trust,
+                exit_code,
+            )
         signals.append(canonical)
 
     for field in _EXIT_CODE_FIELDS:
         exit_code = value.get(field)
         if isinstance(exit_code, int) and not isinstance(exit_code, bool):
-            signals.append(_OutcomeSignal(exit_code == 0, f"{path}.{field}", exit_code))
+            signals.append(_OutcomeSignal(exit_code == 0, f"{path}.{field}", trust, exit_code))
             break
 
     is_error = value.get("isError", value.get("is_error"))
     if isinstance(is_error, bool):
         field = "isError" if "isError" in value else "is_error"
-        signals.append(_OutcomeSignal(not is_error, f"{path}.{field}"))
+        signals.append(_OutcomeSignal(not is_error, f"{path}.{field}", trust))
 
     success = value.get("success")
     if isinstance(success, bool):
-        signals.append(_OutcomeSignal(success, f"{path}.success"))
+        signals.append(_OutcomeSignal(success, f"{path}.success", trust))
 
     status = value.get("status")
     if isinstance(status, str):
         normalized = status.strip().lower()
         if normalized in _FAILURE_STATUSES:
-            signals.append(_OutcomeSignal(False, f"{path}.status"))
+            signals.append(_OutcomeSignal(False, f"{path}.status", trust))
         elif normalized in _SUCCESS_STATUSES:
-            signals.append(_OutcomeSignal(True, f"{path}.status"))
+            signals.append(_OutcomeSignal(True, f"{path}.status", trust))
         elif normalized in _TERMINAL_ONLY_STATUSES and not unknown_provenance:
             unknown_provenance.append(f"{path}.status:{normalized}")
 
@@ -159,6 +176,7 @@ def _collect_output_signals(
     signals: list[_OutcomeSignal],
     unknown_provenance: list[str],
     *,
+    trust: _OutcomeTrust,
     depth: int = 0,
 ) -> None:
     if depth >= _MAX_OUTCOME_DEPTH:
@@ -171,12 +189,13 @@ def _collect_output_signals(
             f"{path}.json",
             signals,
             unknown_provenance,
+            trust=trust,
             depth=depth + 1,
         )
         return
 
     if isinstance(value, Mapping):
-        _collect_mapping_signals(value, path, signals, unknown_provenance)
+        _collect_mapping_signals(value, path, signals, unknown_provenance, trust)
         for field in _OUTPUT_WRAPPER_FIELDS:
             nested = value.get(field)
             if nested is None:
@@ -186,6 +205,7 @@ def _collect_output_signals(
                 f"{path}.{field}",
                 signals,
                 unknown_provenance,
+                trust=_OutcomeTrust.NESTED_RESULT,
                 depth=depth + 1,
             )
         block_type = value.get("type")
@@ -201,6 +221,7 @@ def _collect_output_signals(
                         f"{path}.{field}",
                         signals,
                         unknown_provenance,
+                        trust=_OutcomeTrust.NESTED_RESULT,
                         depth=depth + 1,
                     )
                     break
@@ -213,6 +234,7 @@ def _collect_output_signals(
                 f"{path}[{index}]",
                 signals,
                 unknown_provenance,
+                trust=_OutcomeTrust.NESTED_RESULT,
                 depth=depth + 1,
             )
 
@@ -221,12 +243,18 @@ def _resolve_outcome(
     signals: Sequence[_OutcomeSignal],
     unknown_provenance: Sequence[str],
 ) -> ToolOutcome:
-    failed_signals = [signal for signal in signals if not signal.succeeded]
+    if not signals:
+        provenance = unknown_provenance[0] if unknown_provenance else None
+        return ToolOutcome(ToolOutcomeStatus.UNKNOWN, provenance=provenance)
+
+    strongest_trust = min(signal.trust for signal in signals)
+    strongest = [signal for signal in signals if signal.trust == strongest_trust]
+    failed_signals = [signal for signal in strongest if not signal.succeeded]
     failed = next(
         (signal for signal in failed_signals if signal.exit_code is not None),
         failed_signals[0] if failed_signals else None,
     )
-    succeeded_signals = [signal for signal in signals if signal.succeeded]
+    succeeded_signals = [signal for signal in strongest if signal.succeeded]
     succeeded = next(
         (signal for signal in succeeded_signals if signal.exit_code is not None),
         succeeded_signals[0] if succeeded_signals else None,
@@ -248,8 +276,7 @@ def _resolve_outcome(
             exit_code=succeeded.exit_code,
             provenance=succeeded.provenance,
         )
-    provenance = unknown_provenance[0] if unknown_provenance else None
-    return ToolOutcome(ToolOutcomeStatus.UNKNOWN, provenance=provenance)
+    raise AssertionError("strongest outcome signals unexpectedly empty")
 
 
 def normalize_tool_outcome(
@@ -266,15 +293,38 @@ def normalize_tool_outcome(
     if isinstance(existing, Mapping):
         if data.get("_tool_outcome_locked") is True:
             return tool_outcome_from_data(data)
-        _collect_mapping_signals(existing, "tool_outcome", signals, unknown_provenance)
+        existing_trust = (
+            _OutcomeTrust.PROVIDER_CONTRACT
+            if data.get("_tool_outcome_trust") == "provider_contract"
+            else _OutcomeTrust.DIRECT_RESULT
+        )
+        _collect_mapping_signals(
+            existing,
+            "tool_outcome",
+            signals,
+            unknown_provenance,
+            existing_trust,
+        )
 
     wrapper_tool = _normalized_tool_name(data) in _WRAPPER_TOOL_NAMES
     if wrapper_tool:
         wrapper_signals: list[_OutcomeSignal] = []
-        _collect_mapping_signals(data, "event", wrapper_signals, unknown_provenance)
+        _collect_mapping_signals(
+            data,
+            "event",
+            wrapper_signals,
+            unknown_provenance,
+            _OutcomeTrust.DIRECT_RESULT,
+        )
         signals.extend(signal for signal in wrapper_signals if not signal.succeeded)
     else:
-        _collect_mapping_signals(data, "event", signals, unknown_provenance)
+        _collect_mapping_signals(
+            data,
+            "event",
+            signals,
+            unknown_provenance,
+            _OutcomeTrust.DIRECT_RESULT,
+        )
 
     for field in ("tool_output", "tool_result", "tool_response", "contentItems"):
         if field in data:
@@ -283,13 +333,12 @@ def normalize_tool_outcome(
                 field,
                 signals,
                 unknown_provenance,
+                trust=(
+                    _OutcomeTrust.NESTED_RESULT if wrapper_tool else _OutcomeTrust.DIRECT_RESULT
+                ),
             )
 
     if explicit_success is not None:
-        conflicting_signal = next(
-            (signal for signal in signals if signal.succeeded is not explicit_success),
-            None,
-        )
         matching_exit = next(
             (
                 signal.exit_code
@@ -299,21 +348,16 @@ def normalize_tool_outcome(
             None,
         )
         explicit_provenance = provenance or "adapter.explicit_tool_outcome"
-        if conflicting_signal is not None:
-            outcome = ToolOutcome(
-                ToolOutcomeStatus.UNKNOWN,
-                provenance=(
-                    f"conflicting_outcomes:{explicit_provenance}|{conflicting_signal.provenance}"
-                ),
+        signals.append(
+            _OutcomeSignal(
+                explicit_success,
+                explicit_provenance,
+                _OutcomeTrust.PROVIDER_CONTRACT,
+                matching_exit,
             )
-        else:
-            outcome = ToolOutcome(
-                ToolOutcomeStatus.SUCCEEDED if explicit_success else ToolOutcomeStatus.FAILED,
-                exit_code=matching_exit,
-                provenance=explicit_provenance,
-            )
-    else:
-        outcome = _resolve_outcome(signals, unknown_provenance)
+        )
+        data["_tool_outcome_trust"] = "provider_contract"
+    outcome = _resolve_outcome(signals, unknown_provenance)
     data["tool_outcome"] = outcome.to_dict()
     return outcome
 

@@ -21,6 +21,7 @@ from gobby.hooks.normalization import normalize_tool_fields
 from gobby.mcp_proxy.tools.tasks._verification_evidence_context import (
     format_verification_evidence_context,
 )
+from gobby.servers.routes.mcp.hooks import SUPPORTED_HOOK_SOURCES
 from gobby.workflows.condition_helpers import completion_evidence_ready
 from gobby.workflows.observer_verification import detect_verification_evidence
 
@@ -205,9 +206,14 @@ def test_provider_outcome_drives_evidence_and_readiness(
 
     detect_verification_evidence(event, variables, SESSION_ID)
 
-    evidence = variables["verification_evidence"][-1]  # type: ignore[index]
     expected_success = {"succeeded": True, "failed": False, "unknown": None}
     assert event.data["tool_outcome"]["status"] == expected_outcome, provider
+    if "verification_evidence" not in variables:
+        assert provider == "codex-outcome-free"
+        assert completion_evidence_ready(variables) is False
+        return
+
+    evidence = variables["verification_evidence"][-1]  # type: ignore[index]
     assert evidence["command"] == COMMAND
     assert evidence.get("exit_code") == event.data["tool_outcome"].get("exit_code")
     assert evidence["success"] is expected_success[expected_outcome]
@@ -216,23 +222,19 @@ def test_provider_outcome_drives_evidence_and_readiness(
     context = format_verification_evidence_context([evidence], limit=1)
     assert context is not None
     structured = json.loads(context.splitlines()[1])
-    if expected_outcome == "unknown":
-        assert structured["command_result_correlation"] == "missing", provider
-        assert structured["success"] is None
-    else:
-        expected_signal = (
-            "exit_code" if evidence.get("exit_code") is not None else "provider_status"
-        )
-        assert structured["command_result_correlation"] == "correlated", provider
-        assert structured["command_result_signal"] == expected_signal
-        assert structured["success"] is expected_success[expected_outcome]
+    assert structured["evidence_type"] == "shell_command"
+    assert structured["command"] == COMMAND
+    assert structured["success"] is expected_success[expected_outcome]
+    assert "command_result_correlation" not in structured
+    assert "matcher_id" not in structured
 
 
 def test_provider_outcome_matrix_covers_every_interactive_session_source() -> None:
     represented_sources = {event.source for _, event, _ in PROVIDER_OUTCOME_CASES}
+    registered_sources = {SessionSource(source) for source in SUPPORTED_HOOK_SOURCES}
 
     assert set(SessionSource) == INTERACTIVE_SESSION_SOURCES | EXCLUDED_SESSION_SOURCES
-    assert represented_sources == INTERACTIVE_SESSION_SOURCES
+    assert represented_sources == INTERACTIVE_SESSION_SOURCES == registered_sources
     assert represented_sources.isdisjoint(EXCLUDED_SESSION_SOURCES)
 
 
@@ -262,4 +264,7 @@ def test_conflicting_machine_signals_remain_unknown_end_to_end() -> None:
     assert completion_evidence_ready(variables) is False
     context = format_verification_evidence_context([evidence], limit=1)
     assert context is not None
-    assert json.loads(context.splitlines()[1])["command_result_correlation"] == "missing"
+    structured = json.loads(context.splitlines()[1])
+    assert structured["command"] == COMMAND
+    assert structured["success"] is None
+    assert "command_result_correlation" not in structured

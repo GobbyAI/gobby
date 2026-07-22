@@ -14,10 +14,16 @@ from gobby.storage.verification_receipts import (
     VerificationReceiptStore,
     VerificationReceiptWrite,
 )
+from gobby.tasks.verification_outcome_projection import project_verification_outcomes
 from gobby.workflows.observer_utils import (
     _extract_shell_command,
     _extract_shell_output_text,
     _shell_tool_outcome,
+)
+from gobby.workflows.verification_evidence import (
+    VERIFICATION_EVIDENCE_RECORDED_VARIABLE,
+    VERIFICATION_EVIDENCE_VARIABLE,
+    merge_receipt_projection_evidence,
 )
 
 _NATIVE_EXECUTION_ID_KEYS = (
@@ -136,7 +142,7 @@ def persist_verification_receipt(
             provider=event.source.value,
             execution_id=execution_id,
             source_event_id=source_event_id,
-            evidence_type="validation_command",
+            evidence_type="shell_command",
             command=command,
             cwd=event.cwd,
             normalized_outcome=normalized_outcome,
@@ -151,3 +157,12 @@ def persist_verification_receipt(
             attributed_at=event.timestamp if task_id else None,
         )
     )
+    if task_id is not None:
+        projection = project_verification_outcomes(store.list_for_task(project_id, task_id))
+        variables[VERIFICATION_EVIDENCE_VARIABLE] = merge_receipt_projection_evidence(
+            variables.get(VERIFICATION_EVIDENCE_VARIABLE),
+            projection,
+            task_id=task_id,
+            session_id=session_id,
+        )
+        variables[VERIFICATION_EVIDENCE_RECORDED_VARIABLE] = projection.ready

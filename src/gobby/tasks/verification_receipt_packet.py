@@ -3,13 +3,16 @@
 from __future__ import annotations
 
 import json
-from collections import Counter
-from collections.abc import Iterable, Sequence
+from collections.abc import Sequence
 from dataclasses import dataclass
 from datetime import datetime
 from typing import Any
 
 from gobby.storage.verification_receipts import VerificationReceipt
+from gobby.tasks.verification_outcome_projection import (
+    VerificationOutcomeProjection,
+    project_verification_outcomes,
+)
 
 VERIFICATION_RECEIPT_PACKET_BUDGET_CHARS = 32_000
 _DETAIL_LIMIT = 12
@@ -56,11 +59,6 @@ def _priority(
     )
 
 
-def _outcome_tally(receipts: Iterable[VerificationReceipt]) -> dict[str, int]:
-    counts = Counter(receipt.normalized_outcome for receipt in receipts)
-    return {key: counts[key] for key in sorted(counts)}
-
-
 @dataclass(frozen=True)
 class EvidenceCompleteness:
     total: int
@@ -85,6 +83,7 @@ class EvidenceCompleteness:
 class VerificationReceiptPacket:
     text: str | None
     disclosure: EvidenceCompleteness
+    projection: VerificationOutcomeProjection
     error: str | None = None
 
 
@@ -96,7 +95,7 @@ def _detail(receipt: VerificationReceipt) -> dict[str, Any]:
         "outcome": receipt.normalized_outcome,
         "outcome_provenance": receipt.outcome_provenance,
         "exit_code": receipt.exit_code,
-        "command": _middle_elide(receipt.command, 512),
+        "command": receipt.command,
         "cwd": _middle_elide(receipt.cwd, 256),
         "started_at": receipt.started_at.isoformat(),
         "completed_at": receipt.completed_at.isoformat() if receipt.completed_at else None,
@@ -125,12 +124,13 @@ def _aggregate(receipts: Sequence[VerificationReceipt]) -> dict[str, Any] | None
     return {
         "count": len(receipts),
         "receipt_id_range": {"first": receipts[0].id, "last": receipts[-1].id},
-        "outcomes": _outcome_tally(receipts),
+        "outcomes": project_verification_outcomes(receipts).per_outcome,
     }
 
 
 def _render(
     *,
+    projection: VerificationOutcomeProjection,
     total: int,
     unassigned: int,
     per_outcome: dict[str, int],
@@ -147,6 +147,7 @@ def _render(
         per_outcome=per_outcome,
     )
     payload: dict[str, Any] = {
+        "canonical_outcome_projection": projection.to_dict(),
         "evidence_completeness": disclosure.to_dict(),
         "detailed_receipts": list(details),
         "receipt_catalog": list(catalog),
@@ -167,9 +168,10 @@ def build_verification_receipt_packet(
     """Build a bounded packet or refuse only when high-risk rows exceed the floor."""
     if budget_chars <= 0:
         raise ValueError("budget_chars must be positive")
+    projection = project_verification_outcomes(receipts)
     explicit_ids = frozenset(explicit_receipt_ids)
-    ordered = sorted(receipts, key=lambda receipt: _priority(receipt, explicit_ids))
-    per_outcome = _outcome_tally(ordered)
+    ordered = sorted(projection.receipts, key=lambda receipt: _priority(receipt, explicit_ids))
+    per_outcome = projection.per_outcome
     mandatory = [
         receipt for receipt in ordered if receipt.normalized_outcome in _HIGH_RISK_OUTCOMES
     ]
@@ -178,6 +180,7 @@ def build_verification_receipt_packet(
     catalog = [_catalog(receipt, command_chars=48) for receipt in catalog_receipts]
     tail = [receipt for receipt in ordered if receipt.id not in mandatory_ids]
     floor_text, floor_disclosure = _render(
+        projection=projection,
         total=len(ordered),
         unassigned=unassigned_count,
         per_outcome=per_outcome,
@@ -189,6 +192,7 @@ def build_verification_receipt_packet(
         return VerificationReceiptPacket(
             text=None,
             disclosure=floor_disclosure,
+            projection=projection,
             error="evidence_budget_exceeded",
         )
 
@@ -198,6 +202,7 @@ def build_verification_receipt_packet(
             break
         candidate_details = [*details, _detail(receipt)]
         candidate_text, _ = _render(
+            projection=projection,
             total=len(ordered),
             unassigned=unassigned_count,
             per_outcome=per_outcome,
@@ -217,6 +222,7 @@ def build_verification_receipt_packet(
             for item in candidate_receipts
         ]
         candidate_text, _ = _render(
+            projection=projection,
             total=len(ordered),
             unassigned=unassigned_count,
             per_outcome=per_outcome,
@@ -231,6 +237,7 @@ def build_verification_receipt_packet(
         tail = candidate_tail
 
     text, disclosure = _render(
+        projection=projection,
         total=len(ordered),
         unassigned=unassigned_count,
         per_outcome=per_outcome,
@@ -238,4 +245,8 @@ def build_verification_receipt_packet(
         catalog=catalog,
         aggregated_receipts=tail,
     )
-    return VerificationReceiptPacket(text=text, disclosure=disclosure)
+    return VerificationReceiptPacket(
+        text=text,
+        disclosure=disclosure,
+        projection=projection,
+    )

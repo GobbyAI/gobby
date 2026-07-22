@@ -382,7 +382,7 @@ class TestValidationPromptBudget:
         command_result = (
             "Structured verification results:\n"
             '{"command":"uv run pytest tests/tasks/test_validation.py",'
-            '"exit_code":0,"command_result_correlation":"correlated"}'
+            '"exit_code":0,"success":true,"outcome_provenance":"provider-contract"}'
         )
         evidence_packet = (
             "Changed File Manifest (authoritative):\n"

@@ -174,9 +174,9 @@ def test_codex_functions_exec_contract_correlates_yielded_final_outcome() -> Non
     assert succeeded["tool_input"] == {"command": expected_command}
     assert succeeded["tool_outcome"]["status"] == "succeeded"
     assert succeeded["tool_outcome"]["exit_code"] == 0
+    assert yielded["tool_name"] == "functions.exec"
     assert yielded["tool_outcome"]["status"] == "unknown"
     assert failed["tool_name"] == "Bash"
-    assert failed["tool_input"] == yielded["tool_input"]
     assert failed["tool_input"] == {"command": expected_command}
     assert failed["tool_outcome"]["status"] == "failed"
     assert failed["tool_outcome"]["exit_code"] == 7
@@ -202,11 +202,11 @@ def test_codex_functions_exec_contract_correlates_pty_write_stdin_chain(
     expected_command = (
         "GOBBY_TEST_PROTECT=1 uv run pytest tests/sessions/test_codex_outcome_reconciliation.py -q"
     )
-    assert results[1]["tool_name"] == "Bash"
-    assert results[1]["tool_input"] == {"command": expected_command}
+    assert results[0]["tool_name"] == "functions.exec"
+    assert results[1]["tool_name"] == "functions.wait"
     assert results[1]["tool_outcome"]["status"] == "unknown"
-    assert results[3]["tool_name"] == "Bash"
-    assert results[3]["tool_input"] == {"command": expected_command}
+    assert results[2]["tool_name"] == "functions.exec"
+    assert results[3]["tool_name"] == "functions.wait"
     assert results[-1]["tool_name"] == "Bash"
     assert results[-1]["tool_input"] == {"command": expected_command}
     assert results[-1]["tool_outcome"]["status"] == expected_status
@@ -221,12 +221,122 @@ def test_codex_functions_exec_contract_correlates_pty_write_stdin_chain(
             "await Promise.all(commands.map(cmd => tools.exec_command({cmd})));"
         ),
         'const cmd = "uv run pytest tests/a.py"; await tools.exec_command({cmd});',
+        ('for (const path of paths) await tools.exec_command({cmd:"uv run pytest tests/a.py"});'),
+        (
+            'await tools.exec_command({cmd:"uv run pytest tests/a.py"}); '
+            'await tools.exec_command({cmd:"uv run pytest tests/b.py"});'
+        ),
     ],
 )
 def test_codex_functions_exec_contract_fails_closed_for_unsupported_shapes(
     arguments: str,
 ) -> None:
     assert extract_functions_exec_command(arguments) is None
+
+
+def _dynamic_exec_item(
+    *,
+    arguments: str,
+    content_texts: list[str],
+    tool: str = "exec",
+) -> dict[str, Any]:
+    return {
+        "id": "item",
+        "type": "dynamicToolCall",
+        "namespace": "functions",
+        "tool": tool,
+        "arguments": arguments,
+        "contentItems": [
+            {"type": "inputText", "text": content_text} for content_text in content_texts
+        ],
+        "status": "completed",
+        "success": None,
+    }
+
+
+def test_codex_functions_exec_does_not_promote_multiple_terminal_results() -> None:
+    item = _dynamic_exec_item(
+        arguments=(
+            'const r = await tools.exec_command({cmd:"uv run pytest tests/a.py"}); text(r);'
+        ),
+        content_texts=[
+            json.dumps({"exit_code": 0, "output": "first"}),
+            json.dumps({"exit_code": 0, "output": "second"}),
+        ],
+    )
+
+    result = CodexAdapter()._build_completed_tool_data(item)
+
+    assert result["tool_name"] == "functions.exec"
+    assert result["tool_input"] == item["arguments"]
+
+
+def test_codex_functions_exec_cell_collision_fails_closed() -> None:
+    command_a = 'await tools.exec_command({cmd:"uv run pytest tests/a.py"});'
+    command_b = 'await tools.exec_command({cmd:"uv run pytest tests/b.py"});'
+    adapter = CodexAdapter()
+
+    adapter._build_completed_tool_data(
+        _dynamic_exec_item(arguments=command_a, content_texts=["Script running with cell ID 77"])
+    )
+    adapter._build_completed_tool_data(
+        _dynamic_exec_item(arguments=command_b, content_texts=["Script running with cell ID 77"])
+    )
+    result = adapter._build_completed_tool_data(
+        _dynamic_exec_item(
+            tool="wait",
+            arguments='{"cell_id":"77"}',
+            content_texts=[json.dumps({"exit_code": 0, "output": "terminal"})],
+        )
+    )
+
+    assert result["tool_name"] == "functions.wait"
+
+
+def test_codex_functions_exec_stable_replay_preserves_literal_command() -> None:
+    arguments = 'await tools.exec_command({cmd:"uv run pytest tests/a.py"});'
+    adapter = CodexAdapter()
+    yielded = _dynamic_exec_item(
+        arguments=arguments,
+        content_texts=["Script running with cell ID stable-77"],
+    )
+
+    adapter._build_completed_tool_data(copy.deepcopy(yielded))
+    adapter._build_completed_tool_data(copy.deepcopy(yielded))
+    result = adapter._build_completed_tool_data(
+        _dynamic_exec_item(
+            tool="wait",
+            arguments='{"cell_id":"stable-77"}',
+            content_texts=[json.dumps({"exit_code": 0, "output": "terminal"})],
+        )
+    )
+
+    assert result["tool_name"] == "Bash"
+    assert result["tool_input"] == {"command": "uv run pytest tests/a.py"}
+
+
+def test_codex_functions_exec_session_collision_fails_closed() -> None:
+    adapter = CodexAdapter()
+    adapter._build_completed_tool_data(
+        _dynamic_exec_item(
+            arguments='await tools.exec_command({cmd:"uv run pytest tests/a.py"});',
+            content_texts=[json.dumps({"session_id": 901, "output": "running"})],
+        )
+    )
+    adapter._build_completed_tool_data(
+        _dynamic_exec_item(
+            arguments='await tools.exec_command({cmd:"uv run pytest tests/b.py"});',
+            content_texts=[json.dumps({"session_id": 901, "output": "running"})],
+        )
+    )
+    result = adapter._build_completed_tool_data(
+        _dynamic_exec_item(
+            arguments="await tools.write_stdin({session_id:901});",
+            content_texts=[json.dumps({"exit_code": 0, "output": "terminal"})],
+        )
+    )
+
+    assert result["tool_name"] == "functions.exec"
 
 
 @pytest.mark.parametrize(

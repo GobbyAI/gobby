@@ -5,15 +5,12 @@ import json
 import logging
 from dataclasses import dataclass
 from datetime import UTC, datetime
-from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
 from unittest.mock import MagicMock, patch
 
 import pytest
 
-from gobby.adapters.codex_impl.app_server_adapter import CodexAdapter
-from gobby.adapters.grok import GrokAdapter
 from gobby.hooks.events import HookEvent, HookEventType, SessionSource
 from gobby.hooks.normalization import normalize_tool_fields
 from gobby.storage.hub.protocol import HubDatabase
@@ -38,23 +35,6 @@ pytestmark = pytest.mark.unit
 # with `invalid input syntax for type uuid` where tests hit the real DB.
 SESSION_ID = "11111111-1111-4111-8111-111111111111"
 AGENT_SESSION_ID = "22222222-2222-4222-8222-222222222222"
-CODEX_COMMAND_EXECUTION_FIXTURE = (
-    Path(__file__).parents[1]
-    / "fixtures"
-    / "provider_contracts"
-    / "codex"
-    / "command-execution-items.json"
-)
-GROK_CONTRACT_ROOT = Path(__file__).parents[1] / "fixtures" / "provider_contracts" / "grok"
-GROK_SHELL_OUTCOMES_FIXTURE = GROK_CONTRACT_ROOT / "shell-outcomes-0.2.67.jsonl"
-GROK_LEGACY_HOOK_FIXTURE = GROK_CONTRACT_ROOT / "hook-payloads.jsonl"
-DROID_COMMAND_OUTCOMES_FIXTURE = (
-    Path(__file__).parents[1]
-    / "fixtures"
-    / "provider_contracts"
-    / "droid"
-    / "command-outcomes-0.174.0.json"
-)
 
 
 @pytest.fixture
@@ -1587,662 +1567,146 @@ class TestDetectBashCommit:
 
 
 class TestDetectVerificationEvidence:
-    """Verify validation commands record completion-readiness evidence."""
-
-    @pytest.fixture(autouse=True)
-    def _isolate_codex_machine_id(self, monkeypatch) -> None:
-        monkeypatch.setattr(
-            "gobby.adapters.codex_impl.app_server_adapter._get_daemon_machine_id",
-            lambda: "test-machine-id",
-        )
-
     @pytest.mark.parametrize(
-        "command,normalized_argv,wrapper_chain",
+        ("command", "is_error", "expected_success"),
         [
-            (
-                "uv run pytest tests/workflows/test_hooks.py -v",
-                ["pytest", "tests/workflows/test_hooks.py", "-v"],
-                ["uv-run"],
-            ),
-            (
-                "uv run ruff check src/gobby/workflows/observers.py",
-                ["ruff", "check", "src/gobby/workflows/observers.py"],
-                ["uv-run"],
-            ),
-            (
-                "uv run mypy src/gobby/workflows/observers.py",
-                ["mypy", "src/gobby/workflows/observers.py"],
-                ["uv-run"],
-            ),
-            ("npm test", ["npm", "test"], []),
-            (
-                "cargo check --no-default-features",
-                ["cargo", "check", "--no-default-features"],
-                [],
-            ),
-            (
-                "cargo clippy --no-default-features -- -D warnings",
-                ["cargo", "clippy", "--no-default-features", "--", "-D", "warnings"],
-                [],
-            ),
-            ("cargo fmt --all -- --check", ["cargo", "fmt", "--all", "--", "--check"], []),
-            ("git diff HEAD~2..HEAD --check", ["git", "diff", "HEAD~2..HEAD", "--check"], []),
+            ("custom verifier --selector value", False, True),
+            ("custom verifier --selector value", True, False),
+            ("custom verifier --selector value", None, None),
         ],
     )
-    def test_successful_validation_records_evidence(
+    def test_shell_command_records_canonical_outcome(
         self,
-        variables,
+        variables: dict[str, Any],
         command: str,
-        normalized_argv: list[str],
-        wrapper_chain: list[str],
+        is_error: bool | None,
+        expected_success: bool | None,
     ) -> None:
-        event = _make_bash_event("passed", command=command, cwd="/repo")
-
-        detect_verification_evidence(event, variables, SESSION_ID)
-
-        assert variables["verification_evidence_recorded"] is True
-        evidence = variables["verification_evidence"][-1]
-        assert evidence["command"] == command
-        assert evidence["cwd"] == "/repo"
-        assert evidence["evidence_type"] == "validation_command"
-        assert evidence["tool_name"] == "Bash"
-        assert evidence["success"] is True
-        assert evidence["matcher_id"]
-        assert evidence["normalized_argv"] == normalized_argv
-        assert evidence["wrapper_chain"] == wrapper_chain
-        assert evidence["normalized_command"]
-
-    def test_successful_validation_log_omits_raw_command(
-        self,
-        variables,
-        caplog: pytest.LogCaptureFixture,
-    ) -> None:
-        command = "uv run pytest tests/workflows/test_hooks.py -v"
-        event = _make_bash_event("passed", command=command, cwd="/repo")
-
-        with caplog.at_level(logging.DEBUG, logger="gobby.workflows.observers"):
-            detect_verification_evidence(event, variables, SESSION_ID)
-
-        assert command not in caplog.text
-        assert any(
-            record.levelno == logging.DEBUG
-            and "verification_evidence_recorded=true via validation command" in record.message
-            for record in caplog.records
-        )
-
-    def test_validation_evidence_keeps_latest_50_items(self, variables) -> None:
-        variables["verification_evidence"] = [
-            {"command": f"uv run pytest old_{index}.py", "success": True} for index in range(55)
-        ]
         event = _make_bash_event(
-            "passed",
-            command="uv run pytest tests/workflows/test_hooks.py -v",
+            "machine output",
+            command=command,
+            is_error=is_error,
             cwd="/repo",
         )
 
         detect_verification_evidence(event, variables, SESSION_ID)
 
-        evidence = variables["verification_evidence"]
-        assert len(evidence) == 50
-        assert evidence[0]["command"] == "uv run pytest old_6.py"
-        assert evidence[-1]["command"] == "uv run pytest tests/workflows/test_hooks.py -v"
+        evidence = variables["verification_evidence"][-1]
+        assert evidence["evidence_type"] == "shell_command"
+        assert evidence["command"] == command
+        assert evidence["cwd"] == "/repo"
+        assert evidence["output"] == "machine output"
+        assert evidence["success"] is expected_success
+        assert variables["verification_evidence_recorded"] is (expected_success is True)
+        assert "matcher_id" not in evidence
+        assert "categories" not in evidence
+        assert "evidence_requires_confirmation" not in evidence
 
-    def test_failed_validation_clears_recorded_readiness(self, variables) -> None:
-        variables["verification_evidence_recorded"] = True
-        variables["verification_evidence"] = [{"command": "uv run pytest old.py", "success": True}]
-        event = _make_bash_event(
-            "failed",
-            command="uv run pytest tests/workflows/test_hooks.py -v",
-            is_error=True,
-        )
+    def test_selector_arguments_do_not_weaken_trusted_success(
+        self,
+        variables: dict[str, Any],
+    ) -> None:
+        command = "uv run pytest tests/workflows -k selector --maxfail=1"
+        event = _make_bash_event("1 passed", command=command, is_error=False)
 
         detect_verification_evidence(event, variables, SESSION_ID)
 
-        assert variables["verification_evidence_recorded"] is False
-        assert variables["verification_evidence"][-1]["evidence_type"] == "validation_command"
-        assert variables["verification_evidence"][-1]["success"] is False
-
-    def test_failed_then_successful_validation_recovers_readiness(self, variables) -> None:
-        failed = _make_bash_event(
-            "formatting required",
-            command="uv run ruff format --check src/gobby/workflows/observer_utils.py",
-            is_error=True,
-        )
-        succeeded = _make_bash_event(
-            "All checks passed!",
-            command="uv run ruff check src/gobby/workflows/observer_utils.py",
-        )
-
-        detect_verification_evidence(failed, variables, SESSION_ID)
-        assert variables["verification_evidence_recorded"] is False
-
-        detect_verification_evidence(succeeded, variables, SESSION_ID)
-
-        assert variables["verification_evidence_recorded"] is True
-        assert variables["verification_evidence"][-1]["success"] is True
-
-    def test_codex_completed_validation_records_success_without_unknown_log(
-        self,
-        variables,
-        caplog: pytest.LogCaptureFixture,
-    ) -> None:
-        event = CodexAdapter().translate_to_hook_event(
-            {
-                "method": "item/completed",
-                "params": {
-                    "threadId": AGENT_SESSION_ID,
-                    "item": {
-                        "id": "item-command-1",
-                        "type": "commandExecution",
-                        "command": "uv run pytest tests/workflows/test_hooks.py -v",
-                        "aggregatedOutput": "1 passed",
-                        "exitCode": 0,
-                        "status": "completed",
-                    },
-                },
-            }
-        )
-        assert event is not None
-
-        with caplog.at_level(logging.INFO, logger="gobby.workflows.observers"):
-            detect_verification_evidence(event, variables, SESSION_ID)
-
-        assert variables["verification_evidence_recorded"] is True
         evidence = variables["verification_evidence"][-1]
+        assert evidence["command"] == command
         assert evidence["success"] is True
-        assert evidence["exit_code"] == 0
-        assert "unknown outcome" not in caplog.text
+        assert variables["verification_evidence_recorded"] is True
 
-    def test_codex_git_diff_check_records_structured_validation_evidence(
+    def test_shell_output_is_bounded_while_command_remains_complete(
         self,
-        variables,
+        variables: dict[str, Any],
     ) -> None:
-        event = CodexAdapter().translate_to_hook_event(
-            {
-                "method": "item/completed",
-                "params": {
-                    "threadId": AGENT_SESSION_ID,
-                    "item": {
-                        "id": "item-git-diff-check",
-                        "type": "commandExecution",
-                        "command": "git diff origin/main...HEAD --check",
-                        "aggregatedOutput": "",
-                        "exitCode": 0,
-                        "status": "completed",
-                    },
-                },
-            }
-        )
-        assert event is not None
+        command = "custom verifier " + ("--selector exact-value " * 100)
+        output = "first-" + ("x" * 10_000) + "-last"
+        event = _make_bash_event(output, command=command)
 
         detect_verification_evidence(event, variables, SESSION_ID)
 
         evidence = variables["verification_evidence"][-1]
-        assert evidence["evidence_type"] == "validation_command"
-        assert evidence["command"] == "git diff origin/main...HEAD --check"
-        assert evidence["exit_code"] == 0
-        assert evidence["matcher_id"] == "git-diff-check"
-        assert evidence["success"] is True
+        assert evidence["command"] == command
+        assert evidence["output"].startswith("first-")
+        assert evidence["output"].endswith("-last")
+        assert len(evidence["output"]) < len(output)
 
-    def test_codex_failed_validation_clears_readiness(self, variables) -> None:
-        variables["verification_evidence_recorded"] = True
-        event = CodexAdapter().translate_to_hook_event(
-            {
-                "method": "item/completed",
-                "params": {
-                    "threadId": AGENT_SESSION_ID,
-                    "item": {
-                        "id": "item-command-1",
-                        "type": "commandExecution",
-                        "command": "uv run pytest tests/workflows/test_hooks.py -v",
-                        "aggregatedOutput": "1 failed",
-                        "exitCode": 1,
-                        "status": "failed",
-                    },
-                },
-            }
-        )
-        assert event is not None
-
-        detect_verification_evidence(event, variables, SESSION_ID)
-
-        assert variables["verification_evidence_recorded"] is False
-        evidence = variables["verification_evidence"][-1]
-        assert evidence["success"] is False
-        assert evidence["exit_code"] == 1
-
-    def test_live_codex_exit_codes_drive_readiness_recovery(self, variables) -> None:
-        payload = json.loads(CODEX_COMMAND_EXECUTION_FIXTURE.read_text())
-        assert payload["capture_status"] == "live_proven"
-        native_by_exit_code = {event["item"]["exitCode"]: event for event in payload["events"]}
-
-        failed_native = native_by_exit_code[7]
-        failed_native["item"]["command"] = (
-            "GOBBY_TEST_PROTECT=1 uv run pytest tests/workflows/test_hooks.py -q"
-        )
-        failed = CodexAdapter().translate_to_hook_event(
-            {"method": failed_native["type"], "params": failed_native}
-        )
-        assert failed is not None
-
-        succeeded_native = native_by_exit_code[0]
-        succeeded_native["item"]["command"] = (
-            "GOBBY_TEST_PROTECT=1 uv run pytest tests/workflows/test_hooks.py -q "
-            "&& uv run ruff check src/gobby/workflows/observer_utils.py"
-        )
-        succeeded = CodexAdapter().translate_to_hook_event(
-            {"method": succeeded_native["type"], "params": succeeded_native}
-        )
-        assert succeeded is not None
-
-        detect_verification_evidence(failed, variables, SESSION_ID)
-        assert variables["verification_evidence_recorded"] is False
-        assert variables["verification_evidence"][-1]["success"] is False
-        assert variables["verification_evidence"][-1]["exit_code"] == 7
-
-        detect_verification_evidence(succeeded, variables, SESSION_ID)
-        assert variables["verification_evidence_recorded"] is True
-        assert variables["verification_evidence"][-1]["success"] is True
-        assert variables["verification_evidence"][-1]["exit_code"] == 0
-
-    def test_live_grok_exit_codes_drive_readiness_recovery(self, variables) -> None:
-        records = [
-            json.loads(line) for line in GROK_SHELL_OUTCOMES_FIXTURE.read_text().splitlines()
-        ]
-        assert all(record["capture_status"] == "live_proven" for record in records)
-        payload_by_exit_code = {
-            record["payload"]["toolResult"]["exit_code"]: record["payload"] for record in records
-        }
-
-        failed_payload = payload_by_exit_code[7]
-        failed_payload["toolInput"]["command"] = (
-            "GOBBY_TEST_PROTECT=1 uv run pytest tests/workflows/test_hooks.py -q"
-        )
-        failed = GrokAdapter().translate_to_hook_event(failed_payload)
-
-        succeeded_payload = payload_by_exit_code[0]
-        succeeded_payload["toolInput"]["command"] = (
-            "GOBBY_TEST_PROTECT=1 uv run pytest tests/workflows/test_hooks.py -q"
-        )
-        succeeded = GrokAdapter().translate_to_hook_event(succeeded_payload)
-
-        detect_verification_evidence(failed, variables, SESSION_ID)
-        assert variables["verification_evidence_recorded"] is False
-        assert variables["verification_evidence"][-1]["success"] is False
-        assert variables["verification_evidence"][-1]["exit_code"] == 7
-
-        detect_verification_evidence(succeeded, variables, SESSION_ID)
-        assert variables["verification_evidence_recorded"] is True
-        assert variables["verification_evidence"][-1]["success"] is True
-        assert variables["verification_evidence"][-1]["exit_code"] == 0
-
-    def test_live_droid_error_flags_drive_readiness_recovery(self, variables) -> None:
-        payload = json.loads(DROID_COMMAND_OUTCOMES_FIXTURE.read_text())
-        assert payload["capture_status"] == "live_proven"
-        results = {
-            record["isError"]: record
-            for record in payload["events"]
-            if record["type"] == "tool_result"
-        }
-
-        def event_for(is_error: bool) -> HookEvent:
-            result = results[is_error]
-            tool_response = result.get("value")
-            if tool_response is None:
-                tool_response = result["error"]["message"]
-            data = {
-                "tool_name": "Bash",
-                "tool_input": {
-                    "command": "GOBBY_TEST_PROTECT=1 uv run pytest tests/workflows/test_hooks.py -q"
-                },
-                "tool_response": tool_response,
-                "is_error": result["isError"],
-            }
-            normalize_tool_fields(data)
-            return HookEvent(
-                event_type=HookEventType.AFTER_TOOL,
-                source=SessionSource.DROID,
-                session_id=AGENT_SESSION_ID,
-                timestamp=datetime.now(UTC),
-                data=data,
-                metadata={"_platform_session_id": SESSION_ID},
-            )
-
-        detect_verification_evidence(event_for(True), variables, SESSION_ID)
-        assert variables["verification_evidence_recorded"] is False
-        assert variables["verification_evidence"][-1]["success"] is False
-
-        detect_verification_evidence(event_for(False), variables, SESSION_ID)
-        assert variables["verification_evidence_recorded"] is True
-        assert variables["verification_evidence"][-1]["success"] is True
-
-    def test_legacy_grok_ambiguous_result_requires_manual_readiness_evidence(
-        self, variables
-    ) -> None:
-        records = [json.loads(line) for line in GROK_LEGACY_HOOK_FIXTURE.read_text().splitlines()]
-        native = next(
-            record["payload"]
-            for record in records
-            if record["event"] == "post_tool_use_nonzero_exit"
-        )
-        native["toolInput"]["command"] = (
-            "GOBBY_TEST_PROTECT=1 uv run pytest tests/workflows/test_hooks.py -q"
-        )
-        event = GrokAdapter().translate_to_hook_event(native)
-
-        detect_verification_evidence(event, variables, SESSION_ID)
-
-        assert "verification_evidence_recorded" not in variables
-        evidence = variables["verification_evidence"][-1]
-        assert evidence["success"] is None
-        assert "exit_code" not in evidence
-
-    @pytest.mark.parametrize(
-        "outcome",
-        [{"status": "complete"}, {"status": "completed"}, {"status": "declined"}, {}],
-    )
-    def test_codex_unknown_validation_outcome_preserves_readiness(
-        self,
-        variables,
-        caplog: pytest.LogCaptureFixture,
-        outcome: dict[str, object],
-    ) -> None:
-        variables["verification_evidence_recorded"] = True
-        item = {
-            "id": "item-command-1",
-            "type": "commandExecution",
-            "command": "uv run pytest tests/workflows/test_hooks.py -v",
-            **outcome,
-        }
-        event = CodexAdapter().translate_to_hook_event(
-            {
-                "method": "item/completed",
-                "params": {"threadId": AGENT_SESSION_ID, "item": item},
-            }
-        )
-        assert event is not None
-
-        with caplog.at_level(logging.DEBUG, logger="gobby.workflows.observers"):
-            detect_verification_evidence(event, variables, SESSION_ID)
-
-        assert variables["verification_evidence_recorded"] is True
-        assert variables["verification_evidence"][-1]["success"] is None
-        assert "verification readiness unchanged" in caplog.text
-
-    def test_unknown_dict_tool_response_does_not_record_readiness(self, variables) -> None:
-        raw_data: dict[str, object] = {
-            "tool_name": "Bash",
-            "tool_input": {"command": "uv run pytest tests/workflows/test_hooks.py -v"},
-            "tool_response": {"output": "a test failed without an exit-code signal"},
-        }
-        normalize_tool_fields(raw_data)
+    def test_provider_output_wrapper_is_preserved(self, variables: dict[str, Any]) -> None:
         event = HookEvent(
             event_type=HookEventType.AFTER_TOOL,
-            source=SessionSource.UNKNOWN,
+            source=SessionSource.DROID,
             session_id=AGENT_SESSION_ID,
             timestamp=datetime.now(UTC),
-            data=raw_data,
-            metadata={"_platform_session_id": SESSION_ID},
-        )
-
-        detect_verification_evidence(event, variables, SESSION_ID)
-
-        assert "verification_evidence_recorded" not in variables
-        assert variables["verification_evidence"][-1]["success"] is None
-
-    def test_environment_prefixed_validation_records_success(self, variables) -> None:
-        command = "GOBBY_TEST_PROTECT=1 uv run pytest tests/workflows/test_hooks.py -v"
-        event = _make_bash_event("passed", command=command)
-
-        detect_verification_evidence(event, variables, SESSION_ID)
-
-        assert variables["verification_evidence_recorded"] is True
-        assert variables["verification_evidence"][-1]["success"] is True
-
-    def test_pure_and_aggregate_success_records_readiness(self, variables) -> None:
-        command = "uv run pytest tests/workflows/test_hooks.py && uv run ruff check src/gobby"
-        event = _make_bash_event("passed", command=command)
-
-        detect_verification_evidence(event, variables, SESSION_ID)
-
-        assert variables["verification_evidence_recorded"] is True
-        assert variables["verification_evidence"][-1]["success"] is True
-
-    def test_pure_and_aggregate_failure_preserves_readiness(self, variables) -> None:
-        variables["verification_evidence_recorded"] = True
-        command = "uv run pytest tests/workflows/test_hooks.py && uv run ruff check src/gobby"
-        event = _make_bash_event("failed", command=command, is_error=True)
-
-        detect_verification_evidence(event, variables, SESSION_ID)
-
-        assert variables["verification_evidence_recorded"] is True
-        assert variables["verification_evidence"][-1]["success"] is None
-
-    @pytest.mark.parametrize(
-        "command,output,_expected_summary_success,provenance",
-        [
-            (
-                "pytest tests/workflows 2>&1 | tail -5",
-                "progress\n\x1b[32m===== 2 passed in 0.12s =====\x1b[0m",
-                True,
-                "validation_summary.pytest",
-            ),
-            (
-                "pytest tests/workflows | head -5",
-                "===== 1 skipped in 0.03s =====",
-                True,
-                "validation_summary.pytest",
-            ),
-            (
-                "python -m pytest tests/workflows | tail -5",
-                "===== 1 passed in 0.02s =====",
-                True,
-                "validation_summary.pytest",
-            ),
-            (
-                "pytest tests/workflows | tee pytest.log | tail -5",
-                "===== 2 xfailed, 1 xpassed in 0.08s =====",
-                True,
-                "validation_summary.pytest",
-            ),
-            (
-                "pytest tests/workflows | cat",
-                "===== 1 passed in 0.02s =====",
-                True,
-                "validation_summary.pytest",
-            ),
-            (
-                "pytest tests/workflows | tail -5",
-                "===== 1 failed, 2 passed in 0.14s =====",
-                False,
-                "validation_summary.pytest",
-            ),
-            (
-                "pytest tests/workflows | tail -5",
-                "===== no tests ran in 0.01s =====",
-                False,
-                "validation_summary.pytest",
-            ),
-            (
-                "ruff check src | tail -1",
-                "All checks passed!",
-                True,
-                "validation_summary.ruff",
-            ),
-            (
-                "ruff check src | tail -1",
-                "Found 2 errors.",
-                False,
-                "validation_summary.ruff",
-            ),
-            (
-                "ruff format --check src | tail -1",
-                "12 files already formatted",
-                True,
-                "validation_summary.ruff",
-            ),
-            (
-                "ruff format --check src | tail -1",
-                "2 files would be reformatted, 10 files already formatted",
-                False,
-                "validation_summary.ruff",
-            ),
-            (
-                "mypy src | tail -1",
-                "Success: no issues found in 4 source files",
-                True,
-                "validation_summary.mypy",
-            ),
-            (
-                "mypy src | tail -1",
-                "Found 2 errors in 1 file (checked 4 source files)",
-                False,
-                "validation_summary.mypy",
-            ),
-        ],
-    )
-    def test_safe_pipeline_summary_is_not_terminal_machine_outcome(
-        self,
-        variables,
-        command: str,
-        output: str,
-        _expected_summary_success: bool,
-        provenance: str,
-    ) -> None:
-        event = _make_bash_event(output, command=command)
-
-        detect_verification_evidence(event, variables, SESSION_ID)
-
-        evidence = variables["verification_evidence"][-1]
-        assert evidence["success"] is None
-        assert evidence["outcome_provenance"] == provenance
-        assert "verification_evidence_recorded" not in variables
-
-    @pytest.mark.parametrize(
-        "command,output",
-        [
-            ("pytest tests/workflows | tail -5", "truncated provider output"),
-            (
-                "pytest tests/workflows | tail -5",
-                "===== no tests ran, 1 passed in 0.02s =====",
-            ),
-            (
-                "pytest tests/workflows | tail -5 && true",
-                "===== 1 passed in 0.02s =====",
-            ),
-            (
-                "bash -lc 'pytest tests/workflows | tail -5'",
-                "===== 1 passed in 0.02s =====",
-            ),
-            (
-                "bash -lc 'pytest tests/workflows' | tail -5",
-                "===== 1 passed in 0.02s =====",
-            ),
-            (
-                "pytest tests/workflows | tail -5 pyproject.toml",
-                "===== 1 passed in 0.02s =====",
-            ),
-            (
-                "pytest tests/workflows | head -5 pyproject.toml",
-                "===== 1 passed in 0.02s =====",
-            ),
-            (
-                "pytest tests/workflows | cat pyproject.toml",
-                "===== 1 passed in 0.02s =====",
-            ),
-            ("pytest tests/workflows | wc -l", "1 passed in 0.02s"),
-            (
-                "pytest tests/workflows | sed 's/.*/1 passed in 0.02s/'",
-                "1 passed in 0.02s",
-            ),
-            (
-                "pytest -m slow tests/workflows | tail -5",
-                "===== 1 passed in 0.02s =====",
-            ),
-            ("black --check ruff | tail -1", "All checks passed!"),
-            (
-                "coverage run script.py | tail -1",
-                "===== 1 passed in 0.02s =====",
-            ),
-        ],
-    )
-    def test_ambiguous_pipeline_summary_preserves_readiness(
-        self,
-        variables,
-        command: str,
-        output: str,
-    ) -> None:
-        variables["verification_evidence_recorded"] = True
-        event = _make_bash_event(output, command=command)
-
-        detect_verification_evidence(event, variables, SESSION_ID)
-
-        assert variables["verification_evidence_recorded"] is True
-        assert variables["verification_evidence"][-1]["success"] is None
-
-    def test_summary_provenance_keeps_aggregate_pipeline_exit_code(self, variables) -> None:
-        event = _make_bash_event_dict(
-            {
-                "output": "===== 1 failed, 2 passed in 0.14s =====",
-                "exitCode": 0,
+            data={
+                "tool_name": "Bash",
+                "tool_input": {"command": "custom verifier"},
+                "tool_response": {"stdout": "provider output"},
+                "is_error": False,
             },
-            command="pytest tests/workflows | tail -5",
         )
 
         detect_verification_evidence(event, variables, SESSION_ID)
 
-        evidence = variables["verification_evidence"][-1]
-        assert evidence["success"] is None
-        assert evidence["exit_code"] == 0
-        assert evidence["outcome_provenance"] == "validation_summary.pytest"
+        assert variables["verification_evidence"][-1]["output"] == "provider output"
 
-    @pytest.mark.parametrize(
-        "command",
-        [
-            "pytest || echo ok",
-            "pytest; true",
-            "bash -lc 'pytest || echo ok'",
-            "bash -lc 'echo ok; pytest'",
-            "pytest -k nonexistent",
-        ],
-    )
-    def test_ambiguous_validation_success_does_not_record_readiness(
-        self,
-        variables,
-        command: str,
-    ) -> None:
-        variables["verification_evidence_recorded"] = True
-        event = _make_bash_event("passed", command=command)
+    def test_non_shell_tool_is_ignored(self, variables: dict[str, Any]) -> None:
+        event = _make_bash_event(
+            "content",
+            tool_name="Read",
+            command="custom verifier",
+        )
 
         detect_verification_evidence(event, variables, SESSION_ID)
 
-        assert variables["verification_evidence_recorded"] is True
-        evidence = variables["verification_evidence"][-1]
-        assert evidence["success"] is None
-        if "nonexistent" in command:
-            assert evidence["evidence_requires_confirmation"] is True
-        else:
-            assert evidence["segment_count"] == 2
+        assert "verification_evidence" not in variables
 
-    def test_non_validation_command_is_ignored(self, variables) -> None:
-        event = _make_bash_event("ok", command="git status")
+    def test_shell_without_command_is_ignored(self, variables: dict[str, Any]) -> None:
+        event = _make_bash_event("content", command="")
 
         detect_verification_evidence(event, variables, SESSION_ID)
 
-        assert "verification_evidence_recorded" not in variables
+        assert "verification_evidence" not in variables
 
-    def test_git_commit_does_not_clear_recorded_evidence(self, variables) -> None:
-        variables["verification_evidence_recorded"] = True
-        variables["verification_evidence"] = [{"command": "uv run pytest old.py", "success": True}]
-        event = _make_bash_event("[main abc1234] Fix\n 1 file changed")
-
-        detect_bash_commit(event, variables, SESSION_ID)
-
-        assert variables["task_has_commits"] is True
-        assert variables["verification_evidence_recorded"] is True
-        assert variables["verification_evidence"] == [
-            {"command": "uv run pytest old.py", "success": True}
+    def test_evidence_keeps_latest_fifty_items(self, variables: dict[str, Any]) -> None:
+        variables["verification_evidence"] = [
+            {
+                "evidence_type": "shell_command",
+                "command": f"custom verifier old-{index}",
+                "success": True,
+            }
+            for index in range(55)
         ]
+        event = _make_bash_event("passed", command="custom verifier latest")
+
+        detect_verification_evidence(event, variables, SESSION_ID)
+
+        evidence = variables["verification_evidence"]
+        assert len(evidence) == 50
+        assert evidence[0]["command"] == "custom verifier old-6"
+        assert evidence[-1]["command"] == "custom verifier latest"
+
+    def test_durable_success_semantics_survive_later_failure(
+        self,
+        variables: dict[str, Any],
+    ) -> None:
+        detect_verification_evidence(
+            _make_bash_event("passed", command="custom verifier first"),
+            variables,
+            SESSION_ID,
+        )
+        detect_verification_evidence(
+            _make_bash_event(
+                "failed",
+                command="custom verifier second",
+                is_error=True,
+            ),
+            variables,
+            SESSION_ID,
+        )
+
+        assert variables["verification_evidence"][-1]["success"] is False
+        assert variables["verification_evidence_recorded"] is True
 
 
 def _make_bash_event_dict(

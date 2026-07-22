@@ -87,15 +87,16 @@ def test_native_before_after_pair_is_one_terminal_receipt_for_each_provider(
         exit_code=0,
     )
 
+    variables = {"active_task_id": task.id}
     persist_verification_receipt(
         before,
-        {"active_task_id": task.id},
+        variables,
         session.id,
         db=temp_db,
     )
     persist_verification_receipt(
         after,
-        {"active_task_id": task.id},
+        variables,
         session.id,
         db=temp_db,
     )
@@ -109,6 +110,11 @@ def test_native_before_after_pair_is_one_terminal_receipt_for_each_provider(
     assert receipt.command == "echo ordinary-command"
     assert receipt.output_first_4k == "ordinary output"
     assert receipt.attribution_source == "active_task"
+    projection = variables["verification_evidence"][-1]
+    assert projection["evidence_type"] == "receipt_projection"
+    assert projection["task_id"] == task.id
+    assert projection["outcome_counts"] == {"success": 1}
+    assert projection["success"] is True
 
 
 def test_fallback_identity_is_repeatable_per_event_but_distinguishes_repeated_commands() -> None:

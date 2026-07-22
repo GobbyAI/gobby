@@ -23,9 +23,8 @@ from gobby.config.validation_detection import (
 )
 from gobby.tasks.state_semantics import projected_task_state
 from gobby.workflows.verification_evidence import (
-    VERIFICATION_EVIDENCE_TYPE_VALIDATION_COMMAND,
+    VERIFICATION_EVIDENCE_TYPE_RECEIPT_PROJECTION,
     VERIFICATION_EVIDENCE_VARIABLE,
-    correlate_validation_command_result,
 )
 
 logger = logging.getLogger(__name__)
@@ -447,6 +446,11 @@ class TaskProvider(Protocol):
     def list_tasks(self, *, parent_task_id: str) -> Sequence[Any]: ...
 
 
+def is_validation_command(command: Any) -> bool:
+    """Retain reviewer-rule command classification outside completion readiness."""
+    return _config_is_validation_command(command)
+
+
 def is_task_complete(task: Any) -> bool:
     """Check if a task counts as complete for workflow purposes.
 
@@ -455,73 +459,12 @@ def is_task_complete(task: Any) -> bool:
     return projected_task_state(task) == "closed"
 
 
-def is_validation_command(command: Any) -> bool:
-    """Return whether a shell command invokes a validation tool."""
-    return _config_is_validation_command(command)
-
-
-def _validation_evidence_categories(item: Mapping[str, Any]) -> frozenset[str]:
-    """Return structured validation categories, classifying legacy commands if needed."""
-    categories = item.get("categories")
-    if isinstance(categories, (list, tuple, set, frozenset)):
-        normalized = frozenset(
-            category.strip()
-            for category in categories
-            if isinstance(category, str) and category.strip()
-        )
-        if normalized:
-            return normalized
-
-    matcher_id = item.get("matcher_id")
-    if isinstance(matcher_id, str) and matcher_id.strip():
-        return frozenset({f"matcher:{matcher_id.strip()}"})
-
-    from gobby.config.validation_detection import classify_validation_command
-
-    match = classify_validation_command(item.get("command"))
-    if match is None:
-        return frozenset()
-    if match.categories:
-        return frozenset(match.categories)
-    return frozenset({f"matcher:{match.matcher_id}"})
-
-
 def is_gobby_build_command(command: Any) -> bool:
     """Return whether a shell command directly invokes ``gobby build``."""
     if not isinstance(command, str) or not command.strip():
         return False
 
     return any(_segment_invokes_gobby_build(segment) for segment in shell_command_segments(command))
-
-
-def _segment_invokes_validation(tokens: list[str]) -> bool:
-    tokens = _strip_env_assignments(tokens)
-    if not tokens:
-        return False
-
-    executable = _executable_name(tokens[0])
-    if executable == "uv" and len(tokens) > 1 and tokens[1] == "run":
-        return _segment_invokes_validation(_strip_uv_run_options(tokens[2:]))
-    if executable in {"python", "python3"} or executable.startswith("python3."):
-        module_tokens = _python_module_tokens(tokens[1:])
-        return module_tokens is not None and _python_module_invokes_validation(module_tokens)
-    if executable in {"pytest", "tox", "nox", "vitest", "jest"}:
-        return True
-    if executable in {"mypy", "pyright", "basedpyright"}:
-        return True
-    if executable == "coverage":
-        return len(tokens) > 1 and tokens[1] == "run"
-    if executable == "ruff":
-        return len(tokens) > 1 and (
-            tokens[1] == "check" or (tokens[1] == "format" and "--check" in tokens[2:])
-        )
-    if executable in {"npm", "pnpm", "yarn", "bun"}:
-        return _package_manager_invokes_validation(tokens[1:])
-    if executable in {"cargo", "go", "mix"}:
-        return len(tokens) > 1 and tokens[1] == "test"
-    if executable == "make":
-        return len(tokens) > 1 and tokens[1] in {"test", "tests"}
-    return False
 
 
 def _segment_invokes_gobby_build(tokens: list[str]) -> bool:
@@ -621,13 +564,19 @@ def _completion_evidence_state(
     task_ref: Any = None,
 ) -> _CompletionEvidenceState:
     evidence_items = _completion_evidence_items(variables, task_ref)
+    projection_items = [
+        item
+        for item in evidence_items
+        if isinstance(item, Mapping)
+        and item.get("evidence_type") == VERIFICATION_EVIDENCE_TYPE_RECEIPT_PROJECTION
+    ]
+    if projection_items:
+        evidence_items = projection_items
 
     successful_evidence_seen = False
     evidence_seen = False
     unknown_outcome_seen = False
     failed_outcome_seen = False
-    failed_validation_categories: set[str] = set()
-    uncategorized_validation_failed = False
 
     for item in evidence_items:
         if not isinstance(item, Mapping):
@@ -638,36 +587,15 @@ def _completion_evidence_state(
         evidence_seen = True
 
         success = item.get("success")
-        if evidence_type == VERIFICATION_EVIDENCE_TYPE_VALIDATION_COMMAND:
-            correlated = correlate_validation_command_result(item)
-            success = correlated.success if correlated is not None else None
         if success is None:
             unknown_outcome_seen = True
         elif success is False:
             failed_outcome_seen = True
-        if evidence_type == VERIFICATION_EVIDENCE_TYPE_VALIDATION_COMMAND:
-            categories = _validation_evidence_categories(item)
-            if success is True:
-                successful_evidence_seen = True
-                if categories:
-                    failed_validation_categories.difference_update(categories)
-                else:
-                    uncategorized_validation_failed = False
-            elif success is False:
-                if categories:
-                    failed_validation_categories.update(categories)
-                else:
-                    uncategorized_validation_failed = True
-            continue
-
         if success is True:
             successful_evidence_seen = True
 
-    failed_validation_unresolved = bool(
-        failed_validation_categories or uncategorized_validation_failed
-    )
     return _CompletionEvidenceState(
-        ready=successful_evidence_seen and not failed_validation_unresolved,
+        ready=successful_evidence_seen,
         evidence_seen=evidence_seen,
         unknown_outcome_seen=unknown_outcome_seen,
         failed_outcome_seen=failed_outcome_seen,
@@ -761,29 +689,6 @@ def _python_module_tokens(tokens: list[str]) -> list[str] | None:
             continue
         return None
     return None
-
-
-def _python_module_invokes_validation(tokens: list[str]) -> bool:
-    if len(tokens) < 1:
-        return False
-    module = tokens[0]
-    if module in {"pytest", "mypy", "pyright", "basedpyright", "tox", "nox"}:
-        return True
-    if module in {"coverage"}:
-        return len(tokens) > 1 and tokens[1] == "run"
-    return (
-        module == "ruff"
-        and len(tokens) > 1
-        and (tokens[1] == "check" or (tokens[1] == "format" and "--check" in tokens[2:]))
-    )
-
-
-def _package_manager_invokes_validation(tokens: list[str]) -> bool:
-    if not tokens:
-        return False
-    if tokens[0] in {"test", "lint"}:
-        return True
-    return len(tokens) > 1 and tokens[0] == "run" and tokens[1] in {"test", "lint"}
 
 
 def _executable_name(executable: str) -> str:

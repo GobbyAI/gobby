@@ -296,10 +296,9 @@ async def test_later_successful_validation_clears_failed_validation_block(
 
 
 @pytest.mark.asyncio
-async def test_different_validation_category_does_not_clear_failure(
+async def test_successful_shell_evidence_is_not_partitioned_by_command_category(
     db: HubDatabase,
 ) -> None:
-    """A lint success cannot resolve an earlier test failure."""
     _sync_bundled(db)
 
     response = await RuleEngine(db).evaluate(
@@ -308,31 +307,27 @@ async def test_different_validation_category_does_not_clear_failure(
         variables=_ready_variables(
             verification_evidence=[
                 {
-                    "evidence_type": "validation_command",
+                    "evidence_type": "shell_command",
                     "command": "uv run pytest tests/workflows/test_hooks.py",
-                    "categories": ["test"],
                     "success": False,
                     "outcome_provenance": "tool_outcome.status",
                 },
                 {
-                    "evidence_type": "validation_command",
+                    "evidence_type": "shell_command",
                     "command": "uv run ruff check src/gobby",
-                    "categories": ["lint"],
                     "success": True,
                 },
             ],
         ),
     )
 
-    assert response.decision == "block"
-    assert "require-completion-readiness-evidence" in (response.reason or "")
+    assert response.decision == "allow"
 
 
 @pytest.mark.asyncio
-async def test_same_validation_category_clears_failure(
+async def test_any_canonical_success_makes_legacy_stream_ready(
     db: HubDatabase,
 ) -> None:
-    """A later test success resolves an earlier test failure."""
     _sync_bundled(db)
 
     response = await RuleEngine(db).evaluate(
@@ -341,15 +336,13 @@ async def test_same_validation_category_clears_failure(
         variables=_ready_variables(
             verification_evidence=[
                 {
-                    "evidence_type": "validation_command",
+                    "evidence_type": "shell_command",
                     "command": "uv run pytest tests/workflows/test_hooks.py",
-                    "categories": ["test"],
                     "success": False,
                 },
                 {
-                    "evidence_type": "validation_command",
+                    "evidence_type": "shell_command",
                     "command": "uv run pytest tests/workflows/test_rules.py",
-                    "categories": ["test"],
                     "success": True,
                     "outcome_provenance": "tool_outcome.status",
                 },
@@ -385,10 +378,9 @@ async def test_manual_evidence_satisfies_readiness_without_failed_validation(
 
 
 @pytest.mark.asyncio
-async def test_manual_evidence_cannot_clear_failed_validation(
+async def test_manual_evidence_cannot_override_failed_receipt_projection(
     db: HubDatabase,
 ) -> None:
-    """Manual evidence does not resolve a failed validation command."""
     _sync_bundled(db)
 
     response = await RuleEngine(db).evaluate(
@@ -397,10 +389,9 @@ async def test_manual_evidence_cannot_clear_failed_validation(
         variables=_ready_variables(
             verification_evidence=[
                 {
-                    "evidence_type": "validation_command",
-                    "command": "uv run pytest old.py",
+                    "evidence_type": "receipt_projection",
+                    "summary": "Durable verification receipt outcomes: failure=1",
                     "success": False,
-                    "outcome_provenance": "tool_outcome.status",
                 },
                 {
                     "evidence_type": "manual_diff_review",
