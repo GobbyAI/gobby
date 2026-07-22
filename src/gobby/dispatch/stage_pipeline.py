@@ -363,7 +363,9 @@ def render_dispatch_inputs(
 ) -> dict[str, Any]:
     render_context = pipeline_render_context(action, context, services, field=field)
     renderer = StepRenderer(TemplateEngine())
-    return renderer.render_mcp_arguments(dict(action.dispatch_inputs or {}), render_context)
+    return renderer.render_mcp_arguments(
+        dict(action.dispatch_inputs or {}), render_context, drop_none=True
+    )
 
 
 def pipeline_render_context(

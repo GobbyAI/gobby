@@ -331,7 +331,7 @@
     "workflows/pipelines/spawn-qa.yaml": "59a71e3b8cec9e6ef41df372c1e46bc5ffd3d1f2e3b75f84e8f6fc33d76d8435",
     "workflows/pipelines/wiki-research.yaml": "9d29f97ff40a09a4cdfba767e27c078732a2aa3f802b0aeccea648cb421795ba",
     "workflows/qa.yaml": "55acbc85b42555b411418680948e6557a5132dc89380391826e348ab55deca7b",
-    "workflows/review.yaml": "2d4e89051db013dba69e0ffe6a8ccfdd4414164efbcd125654e42b0ad82e0ea0",
+    "workflows/review.yaml": "3f10f9bbc2802e906a24155dd4bc4cfb6db88691f9b8d016dac47a3006994e0a",
     "workflows/rules/CLAUDE.md": "ecab33193b7e601c77a05c2e15c434de3eba15598a507634f4aa4ac7133b4a54",
     "workflows/rules/auto-task/guide-task-continuation.yaml": "a4944ed0361d4f39944bc0d917a052e87aa10993834f80ae98ba9372a6af85bf",
     "workflows/rules/auto-task/inject-autonomous-mode.yaml": "2981f19ecea1b5c367e3f9da549fd3768c7e9a885def21a92243ebaa8661a99a",

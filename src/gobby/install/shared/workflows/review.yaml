@@ -38,7 +38,6 @@ steps:
       arguments:
         agent: epic-reviewer
         task_id: "${{ inputs.task_id }}"
-        assigned_task_id: "${{ inputs.task_id }}"
         provider: "${{ inputs.provider }}"
         model: "${{ inputs.model }}"
         worktree_id: "${{ inputs.worktree_id }}"

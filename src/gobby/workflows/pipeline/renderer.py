@@ -158,7 +158,7 @@ class StepRenderer:
 
             if rendered_step.mcp and rendered_step.mcp.arguments:
                 rendered_step.mcp.arguments = self.render_mcp_arguments(
-                    rendered_step.mcp.arguments, render_context
+                    rendered_step.mcp.arguments, render_context, drop_none=True
                 )
 
             if rendered_step.invoke_pipeline and isinstance(rendered_step.invoke_pipeline, dict):
@@ -175,10 +175,13 @@ class StepRenderer:
                         rendered_step.invoke_pipeline["arguments"],
                         render_context,
                         coerce_strings=False,
+                        drop_none=True,
                     )
 
             if rendered_step.wait and isinstance(rendered_step.wait, dict):
-                rendered_step.wait = self.render_mcp_arguments(rendered_step.wait, render_context)
+                rendered_step.wait = self.render_mcp_arguments(
+                    rendered_step.wait, render_context, drop_none=True
+                )
 
         except Exception as e:
             raise ValueError(f"Failed to render step {step.id}: {e}") from e
@@ -259,15 +262,25 @@ class StepRenderer:
         context: dict[str, Any],
         *,
         coerce_strings: bool = True,
+        drop_none: bool = False,
     ) -> dict[str, Any]:
-        """Render nested tool arguments, optionally coercing string scalars."""
+        """Render nested tool arguments, optionally coercing string scalars.
+
+        With drop_none, keys whose rendered value is None are omitted rather
+        than sent as null — unset optional inputs must not reach a tool whose
+        schema rejects null. Only the top level is stripped; nested dict
+        payloads keep their nulls as data.
+        """
         rendered: dict[str, Any] = {}
         for key, value in args.items():
-            rendered[key] = self._render_argument_value(
+            rendered_value = self._render_argument_value(
                 value,
                 context,
                 coerce_strings=coerce_strings,
             )
+            if drop_none and rendered_value is None:
+                continue
+            rendered[key] = rendered_value
         return rendered
 
     def _render_list(
