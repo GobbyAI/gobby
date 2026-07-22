@@ -44,7 +44,19 @@ pub(crate) fn invalidate_project(ctx: &Context) -> anyhow::Result<()> {
         )
     })?;
 
-    run_projection_first(
+    invalidate_project_locked(ctx).map(|_| ())
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) struct ProjectInvalidationResult {
+    pub(crate) graph_cleared: bool,
+    pub(crate) qdrant_deleted: Option<usize>,
+}
+
+pub(crate) fn invalidate_project_locked(
+    ctx: &Context,
+) -> anyhow::Result<ProjectInvalidationResult> {
+    let qdrant_deleted = run_projection_first(
         ctx.falkordb.is_some(),
         ctx.qdrant.is_some(),
         || {
@@ -53,38 +65,40 @@ pub(crate) fn invalidate_project(ctx: &Context) -> anyhow::Result<()> {
         },
         || {
             let Some(qdrant) = &ctx.qdrant else {
-                return Ok(());
+                return Ok(0);
             };
             code_symbols::delete_project_collection(qdrant, &ctx.project_id)
-                .map(|_| ())
                 .map_err(|err| anyhow::anyhow!("failed to delete Qdrant projection: {err}"))
         },
         || {
             let mut conn = db::connect_readwrite(&ctx.database_url)?;
             indexer::invalidate(&mut conn, &ctx.project_id, ctx.daemon_url.as_deref())
         },
-    )
+    )?;
+    Ok(ProjectInvalidationResult {
+        graph_cleared: ctx.falkordb.is_some(),
+        qdrant_deleted,
+    })
 }
 
-fn run_projection_first<Falkor, Qdrant, Sql>(
+fn run_projection_first<Falkor, Qdrant, Sql, QdrantOutput>(
     has_falkor_config: bool,
     has_qdrant_config: bool,
     clear_falkor: Falkor,
     clear_qdrant: Qdrant,
     invalidate_sql: Sql,
-) -> anyhow::Result<()>
+) -> anyhow::Result<Option<QdrantOutput>>
 where
     Falkor: FnOnce() -> anyhow::Result<()>,
-    Qdrant: FnOnce() -> anyhow::Result<()>,
+    Qdrant: FnOnce() -> anyhow::Result<QdrantOutput>,
     Sql: FnOnce() -> anyhow::Result<()>,
 {
     if has_falkor_config {
         clear_falkor()?;
     }
-    if has_qdrant_config {
-        clear_qdrant()?;
-    }
-    invalidate_sql()
+    let qdrant_output = has_qdrant_config.then(clear_qdrant).transpose()?;
+    invalidate_sql()?;
+    Ok(qdrant_output)
 }
 
 #[cfg(test)]
@@ -234,7 +248,7 @@ mod tests {
                 events.borrow_mut().push("falkor");
                 Ok(())
             },
-            || {
+            || -> anyhow::Result<()> {
                 events.borrow_mut().push("qdrant");
                 anyhow::bail!("Qdrant unavailable")
             },

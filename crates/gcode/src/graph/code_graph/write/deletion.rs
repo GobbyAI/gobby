@@ -199,6 +199,16 @@ pub(crate) fn clear_project_query(project_id: &str) -> anyhow::Result<TypedQuery
     )
 }
 
+pub(crate) fn project_scopes_query() -> TypedQuery {
+    TypedQuery::new(format!(
+        "MATCH (n)
+         WHERE {PROJECT_NODE_PREDICATE}
+           AND n.project IS NOT NULL
+         RETURN DISTINCT n.project AS project
+         ORDER BY project"
+    ))
+}
+
 pub(crate) fn clear_all_code_index_query() -> anyhow::Result<TypedQuery> {
     typed_query(
         format!(

@@ -621,3 +621,25 @@ fn clear_all_code_index_targets_only_code_index_labels() {
     assert!(!query.cypher.contains("MATCH (n {project: $project})"));
     assert!(query.params.is_empty());
 }
+
+#[test]
+fn global_prune_scope_discovery_query_reads_distinct_code_projects() {
+    let query = project_scopes_query();
+
+    assert!(
+        query
+            .cypher
+            .contains("RETURN DISTINCT n.project AS project")
+    );
+    assert!(query.cypher.contains("n.project IS NOT NULL"));
+    for code_label in [
+        "n:CodeFile",
+        "n:CodeSymbol",
+        "n:CodeModule",
+        "n:UnresolvedCallee",
+        "n:ExternalSymbol",
+    ] {
+        assert!(query.cypher.contains(code_label), "missing {code_label}");
+    }
+    assert!(query.params.is_empty());
+}

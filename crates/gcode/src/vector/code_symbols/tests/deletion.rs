@@ -251,3 +251,59 @@ fn delete_prefixed_collections_deletes_only_code_symbol_collections() {
             .all(|request| !request.contains("DELETE /collections/memory_vectors"))
     );
 }
+
+#[test]
+fn global_prune_collection_discovery_lists_without_deleting() {
+    let (qdrant_url, handle) = spawn_http_responses(vec![(
+        200,
+        json!({
+            "result": {
+                "collections": [
+                    {"name": "code_symbols_11111111-1111-1111-1111-111111111111"},
+                    {"name": "code_symbols_invalid"},
+                    {"name": "memory_vectors"}
+                ]
+            }
+        }),
+    )]);
+
+    let collections = list_code_symbol_collections(&QdrantConfig {
+        url: Some(qdrant_url),
+        api_key: None,
+    })
+    .expect("list code-symbol collections");
+    let requests = handle.join().expect("qdrant requests");
+
+    assert_eq!(
+        collections,
+        vec![
+            "code_symbols_11111111-1111-1111-1111-111111111111".to_string(),
+            "code_symbols_invalid".to_string(),
+        ]
+    );
+    assert_eq!(requests.len(), 1);
+    assert!(requests[0].contains("GET /collections HTTP/1.1"));
+    assert!(!requests[0].contains("DELETE "));
+}
+
+#[test]
+fn global_prune_collection_delete_404_is_already_missing() {
+    let project_id = "11111111-1111-1111-1111-111111111111";
+    let (qdrant_url, handle) = spawn_http_responses(vec![(404, json!({"status": "not found"}))]);
+
+    let deleted = delete_project_collection(
+        &QdrantConfig {
+            url: Some(qdrant_url),
+            api_key: None,
+        },
+        project_id,
+    )
+    .expect("404 is idempotent");
+    let requests = handle.join().expect("qdrant requests");
+
+    assert_eq!(deleted, 0);
+    assert_eq!(requests.len(), 1);
+    assert!(requests[0].contains(&format!(
+        "DELETE /collections/code_symbols_{project_id} HTTP/1.1"
+    )));
+}

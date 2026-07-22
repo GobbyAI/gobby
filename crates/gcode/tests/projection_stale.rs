@@ -1,5 +1,9 @@
 #[cfg(test)]
+mod common;
+
+#[cfg(test)]
 mod serial_db {
+    use super::common::http::spawn_http_responses;
     use postgres::{Client, NoTls};
     use serde_json::Value;
     use std::process::Command;
@@ -172,6 +176,90 @@ mod serial_db {
         assert_eq!(project_child_row_count(&mut conn, orphan_project_id), 0);
         assert_eq!(project_child_row_count(&mut conn, valid_project_id), 2);
         assert_eq!(indexed_project_count(&mut conn, valid_project_id), 1);
+    }
+
+    #[test]
+    fn prune_unreachable_falkor_aborts_before_stale_sql_mutation() {
+        let database_url = test_env::postgres_test_database_url("projection stale tests");
+        let mut conn = Client::connect(&database_url, NoTls).expect("connect PostgreSQL");
+        let stale_project_id = "bbbbbbbb-cccc-4ddd-8eee-ffffffffffff";
+        cleanup_project(&mut conn, stale_project_id).expect("pre-clean stale project rows");
+        let _cleanup = ProjectCleanup {
+            database_url: database_url.clone(),
+            project_id: stale_project_id.to_string(),
+        };
+        seed_project_with_root(
+            &mut conn,
+            stale_project_id,
+            "/definitely/missing/gcode-prune-stale-project",
+        );
+
+        let cwd = tempfile::tempdir().expect("temp cwd");
+        let output = Command::new(env!("CARGO_BIN_EXE_gcode"))
+            .current_dir(cwd.path())
+            .env("GCODE_DATABASE_URL", &database_url)
+            .env("GOBBY_FALKORDB_HOST", "127.0.0.1")
+            .env("GOBBY_FALKORDB_PORT", "1")
+            .env_remove("GOBBY_FALKORDB_PASSWORD")
+            .env_remove("GOBBY_QDRANT_URL")
+            .env_remove("GOBBY_QDRANT_API_KEY")
+            .arg("--no-freshness")
+            .args(["prune", "--force"])
+            .output()
+            .expect("run gcode prune");
+
+        assert!(
+            !output.status.success(),
+            "configured unreachable Falkor must fail discovery"
+        );
+        assert_eq!(indexed_project_count(&mut conn, stale_project_id), 1);
+    }
+
+    #[test]
+    fn prune_qdrant_enumeration_failure_aborts_before_stale_sql_mutation() {
+        let database_url = test_env::postgres_test_database_url("projection stale tests");
+        let mut conn = Client::connect(&database_url, NoTls).expect("connect PostgreSQL");
+        let stale_project_id = "aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee";
+        cleanup_project(&mut conn, stale_project_id).expect("pre-clean stale project rows");
+        let _cleanup = ProjectCleanup {
+            database_url: database_url.clone(),
+            project_id: stale_project_id.to_string(),
+        };
+        seed_project_with_root(
+            &mut conn,
+            stale_project_id,
+            "/definitely/missing/gcode-prune-qdrant-stale-project",
+        );
+        let (qdrant_url, requests) = spawn_http_responses(vec![(
+            500,
+            serde_json::json!({"status": "enumeration failed"}),
+        )]);
+
+        let cwd = tempfile::tempdir().expect("temp cwd");
+        let output = Command::new(env!("CARGO_BIN_EXE_gcode"))
+            .current_dir(cwd.path())
+            .env("GCODE_DATABASE_URL", &database_url)
+            .env_remove("GOBBY_FALKORDB_HOST")
+            .env_remove("GOBBY_FALKORDB_PORT")
+            .env_remove("GOBBY_FALKORDB_PASSWORD")
+            .env("GOBBY_QDRANT_URL", qdrant_url)
+            .env_remove("GOBBY_QDRANT_API_KEY")
+            .arg("--no-freshness")
+            .args(["prune", "--force"])
+            .output()
+            .expect("run gcode prune");
+        let requests = requests
+            .join()
+            .expect("join Qdrant server")
+            .expect("read Qdrant request");
+
+        assert!(
+            !output.status.success(),
+            "Qdrant enumeration failure must fail discovery"
+        );
+        assert_eq!(requests.len(), 1);
+        assert!(requests[0].contains("GET /collections HTTP/1.1"));
+        assert_eq!(indexed_project_count(&mut conn, stale_project_id), 1);
     }
 
     struct ProjectCleanup {

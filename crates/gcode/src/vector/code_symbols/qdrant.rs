@@ -165,6 +165,21 @@ fn collect_file_paths_from_scroll_page(
 pub fn delete_code_symbol_collections_with_prefix(
     qdrant: &QdrantConfig,
 ) -> Result<Vec<String>, VectorLifecycleError> {
+    let collections = list_code_symbol_collections(qdrant)?;
+    let client = qdrant_http_client()?;
+
+    let mut deleted = Vec::new();
+    for collection in collections {
+        if delete_qdrant_collection(&client, qdrant, &collection)? > 0 {
+            deleted.push(collection);
+        }
+    }
+    Ok(deleted)
+}
+
+pub fn list_code_symbol_collections(
+    qdrant: &QdrantConfig,
+) -> Result<Vec<String>, VectorLifecycleError> {
     let client = qdrant_http_client()?;
     let resp = qdrant_request_for_config(&client, qdrant, reqwest::Method::GET, "/collections")?
         .send()
@@ -177,18 +192,10 @@ pub fn delete_code_symbol_collections_with_prefix(
     let data: Value = resp
         .json()
         .map_err(|err| VectorLifecycleError::QdrantOperation(err.to_string()))?;
-    let collections = parse_collection_names(&data)
+    Ok(parse_collection_names(&data)
         .into_iter()
         .filter(|name| name.starts_with(CODE_SYMBOL_COLLECTION_PREFIX))
-        .collect::<Vec<_>>();
-
-    let mut deleted = Vec::new();
-    for collection in collections {
-        if delete_qdrant_collection(&client, qdrant, &collection)? > 0 {
-            deleted.push(collection);
-        }
-    }
-    Ok(deleted)
+        .collect())
 }
 
 pub fn vector_search(

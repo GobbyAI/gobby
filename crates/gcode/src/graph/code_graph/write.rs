@@ -22,7 +22,7 @@ mod sync_plan;
 pub(crate) use deletion::{
     cleanup_orphans_queries, clear_all_code_index_query, clear_project_query,
     count_file_projection_nodes_query, delete_file_graph_queries, delete_file_node_query,
-    project_file_path_queries,
+    project_file_path_queries, project_scopes_query,
 };
 pub use mutation::call_target_id;
 pub(in crate::graph::code_graph) use mutation::{import_graph_items, partition_call_graph_items};
@@ -348,6 +348,44 @@ pub fn clear_project(ctx: &Context) -> anyhow::Result<()> {
     with_required_core_graph(ctx, |client| {
         CodeGraph::new(&ctx.project_id, client).clear_project()
     })
+}
+
+pub fn list_project_scopes(config: &crate::config::FalkorConfig) -> anyhow::Result<Vec<String>> {
+    let connection_config = config.connection_config();
+    match gobby_core::falkor::with_graph(
+        Some(&connection_config),
+        &config.graph_name,
+        None,
+        |client| {
+            let query = project_scopes_query();
+            let rows = client.query(&query.cypher, Some(query.params))?;
+            let scopes = rows
+                .into_iter()
+                .filter_map(|row| {
+                    row.get("project")
+                        .and_then(Value::as_str)
+                        .map(str::to_string)
+                })
+                .collect::<BTreeSet<_>>()
+                .into_iter()
+                .collect();
+            Ok(Some(scopes))
+        },
+    ) {
+        Ok((Some(scopes), ServiceState::Available)) => Ok(scopes),
+        Ok((_, ServiceState::NotConfigured)) => Err(GraphReadError::NotConfigured.into()),
+        Ok((_, ServiceState::Unreachable { message })) => {
+            Err(GraphReadError::Unreachable { message }.into())
+        }
+        Ok((None, ServiceState::Available)) => Err(GraphReadError::QueryFailed {
+            message: "graph project-scope discovery returned no value".to_string(),
+        }
+        .into()),
+        Err(error) => Err(GraphReadError::QueryFailed {
+            message: format!("{error:#}"),
+        }
+        .into()),
+    }
 }
 
 pub fn clear_all_code_index(config: &crate::config::FalkorConfig) -> anyhow::Result<()> {
