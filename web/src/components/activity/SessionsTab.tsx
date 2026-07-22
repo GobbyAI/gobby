@@ -35,7 +35,7 @@ import {
   SessionsContextMenu,
   SessionsInteractionModalHost,
 } from "./SessionsTabMenu";
-import { useAcpSessionDiscovery } from "./useAcpSessionDiscovery";
+import { useSessionProviderOptions } from "./useSessionProviderOptions";
 
 function resolveSessionSummaryMarkdown(
   ...sessions: Array<
@@ -158,10 +158,7 @@ export const SessionsTab = memo(function SessionsTab({
   const [showFilterDropdown, setShowFilterDropdown] = useState(false);
 
   const activeFilterCount = countActiveFilters(filters);
-  const providerOptions = useMemo(
-    () => Array.from(new Set(sessions.map((session) => session.source))),
-    [sessions],
-  );
+  const { providerOptions, registryLoaded } = useSessionProviderOptions();
   const [modalEntry, setModalEntry] = useState<WatchingSessionEntry | null>(null);
   const initialSelectionAppliedRef = useRef(false);
   const selectionClearedRef = useRef(false);
@@ -189,16 +186,26 @@ export const SessionsTab = memo(function SessionsTab({
     return () => window.clearTimeout(timeout);
   }, [sessions]);
 
+  useEffect(() => {
+    if (!registryLoaded || filters.providers.size === 0) return;
+    const registeredProviders = new Set(providerOptions);
+    const providers = new Set(
+      Array.from(filters.providers).filter((provider) =>
+        registeredProviders.has(provider),
+      ),
+    );
+    if (providers.size === filters.providers.size) return;
+    const timeout = window.setTimeout(() => {
+      setFilters({ ...filters, providers });
+    }, 0);
+    return () => window.clearTimeout(timeout);
+  }, [filters, providerOptions, registryLoaded, setFilters]);
+
   // Status (Live | Expired) is part of SessionsFilters now; the SegmentedControl
   // writes filters.statuses and matchesSessionsFilters runs the predicate. The
   // agent-entries block below also gates on this — agents are by definition
   // live, so hide them when the user is looking at Expired only.
   const statusMode = resolveSessionStatusMode(filters);
-
-  // §C5: reconcile agent-side ACP sessions when the panel opens and on each
-  // Live | Expired change; discovered rows flow back through the canonical
-  // session list + WebSocket feed (no separate discover button or data path).
-  useAcpSessionDiscovery(statusMode);
 
   const setStatusMode = useCallback(
     (mode: typeof statusMode) => {

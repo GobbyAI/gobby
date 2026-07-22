@@ -1,24 +1,18 @@
-"""ACP session discovery + lifecycle as canonical Gobby sessions.
+"""ACP lifecycle operations for canonical Gobby sessions.
 
-``ACPSessionLifecycleService`` reconciles agent-side ACP sessions into the
-canonical ``sessions`` table and drives ``session/close`` / ``session/delete``
-through the same store, so ACP-backed sessions live in the existing Sessions
-panel alongside TMUX and WEB rows. All ACP protocol vocabulary is translated by
-``acp_session_mapping`` before it reaches this layer; this service only
-orchestrates the warm ACP backend, the ``SessionManager`` CRUD seam, and the
-status transitions ACP lifecycle outcomes map onto.
+``ACPSessionLifecycleService`` drives ``session/close`` / ``session/delete``
+for ACP-backed sessions already created through Gobby. Provider-native history
+is intentionally not materialized as canonical Gobby sessions.
 
-Broadcasts are never emitted here: ``register()``, ``update_title()``,
-``update_status()`` and ``delete()`` each fire their own
-``session_created`` / ``session_updated`` / ``session_expired`` /
-``session_deleted`` notifications. Emitting our own would double-fire.
+Broadcasts are never emitted here: ``update_status()`` and ``delete()`` fire
+their own ``session_expired`` / ``session_deleted`` notifications. Emitting our
+own would double-fire.
 """
 
 from __future__ import annotations
 
-import asyncio
 import logging
-from collections.abc import Callable, Mapping
+from collections.abc import Mapping
 from typing import TYPE_CHECKING, Any
 
 import psycopg
@@ -27,14 +21,11 @@ from gobby.adapters.acp_client import UnsupportedACPMethodError
 from gobby.sessions.acp_session_mapping import (
     ACP_PROVIDERS,
     SESSION_TYPE_WEB_CHAT,
-    MappedSessionInfo,
     build_acp_block,
     disposition_for_delete,
-    map_session_info,
     normalize_additional_directories,
     status_for_close,
 )
-from gobby.storage.sessions._title_defaults import PROVISIONAL_TITLE_SOURCE
 
 if TYPE_CHECKING:
     from gobby.servers.websocket.chat.runtime_manager import WebChatRuntimeManager
@@ -42,14 +33,6 @@ if TYPE_CHECKING:
     from gobby.storage.sessions import SessionManager
 
 logger = logging.getLogger(__name__)
-
-# Bound the ``session/list`` pagination walk so a misbehaving agent cannot pin
-# the discover loop indefinitely.
-ACP_DISCOVER_PAGE_CAP = 20
-
-# Title source recorded when an ACP-provided title upgrades a provisional row.
-# ACP session/list titles are provider-native; "manual" is reserved for user renames.
-_ACP_TITLE_SOURCE = "native"
 
 
 class ACPLifecycleError(Exception):
@@ -126,249 +109,16 @@ def attach_acp_block(
 
 
 class ACPSessionLifecycleService:
-    """Discover, close, and delete ACP sessions as canonical Gobby rows."""
+    """Close and delete ACP sessions already registered as canonical Gobby rows."""
 
     def __init__(
         self,
         *,
         session_manager: SessionManager,
         runtime_manager: WebChatRuntimeManager | None,
-        resolve_project_id: Callable[[str | None], str | None],
-        page_cap: int = ACP_DISCOVER_PAGE_CAP,
     ) -> None:
         self._session_manager = session_manager
         self._runtime_manager = runtime_manager
-        self._resolve_project_id = resolve_project_id
-        self._page_cap = max(1, page_cap)
-        # Per-provider/cwd/machine in-flight scan tasks. Concurrent discover calls
-        # join the matching scan instead of hammering the ACP subprocess again.
-        self._inflight: dict[tuple[str, str | None, str], asyncio.Task[dict[str, Any]]] = {}
-
-    # -- discovery ---------------------------------------------------------
-
-    async def discover(self, *, machine_id: str, cwd: str | None = None) -> dict[str, Any]:
-        """Reconcile agent-side ACP sessions into canonical rows.
-
-        Returns a discovery summary: ``{sessions, skipped, providers}``. Per-row
-        and per-provider failures are collected into ``skipped`` / surfaced via
-        the ``providers`` summary rather than failing the whole call.
-        """
-        sessions: list[dict[str, Any]] = []
-        skipped: list[dict[str, Any]] = []
-        providers: list[dict[str, Any]] = []
-
-        runtime_manager = self._runtime_manager
-        if runtime_manager is None:
-            return {"sessions": sessions, "skipped": skipped, "providers": providers}
-
-        for provider, backend in runtime_manager.acp_backends().items():
-            scan = await self._scan_provider(provider, backend, cwd, machine_id)
-            sessions.extend(scan["sessions"])
-            skipped.extend(scan["skipped"])
-            providers.append(
-                {
-                    "provider": provider,
-                    "available": scan["available"],
-                    "supports_list": scan["supports_list"],
-                    "truncated": scan.get("truncated", False),
-                }
-            )
-        return {"sessions": sessions, "skipped": skipped, "providers": providers}
-
-    async def _scan_provider(
-        self,
-        provider: str,
-        backend: Any,
-        cwd: str | None,
-        machine_id: str,
-    ) -> dict[str, Any]:
-        """Coalesce concurrent scans of one provider onto a single in-flight task."""
-        key = (provider, cwd, machine_id)
-        existing = self._inflight.get(key)
-        if existing is not None and not existing.done():
-            return await asyncio.shield(existing)
-        task: asyncio.Task[dict[str, Any]] = asyncio.create_task(
-            self._scan_provider_inner(provider, backend, cwd, machine_id)
-        )
-        self._inflight[key] = task
-        task.add_done_callback(lambda done_task: self._clear_inflight_task(key, done_task))
-        return await asyncio.shield(task)
-
-    def _clear_inflight_task(
-        self,
-        key: tuple[str, str | None, str],
-        task: asyncio.Task[dict[str, Any]],
-    ) -> None:
-        if self._inflight.get(key) is task:
-            del self._inflight[key]
-
-    async def _scan_provider_inner(
-        self,
-        provider: str,
-        backend: Any,
-        cwd: str | None,
-        machine_id: str,
-    ) -> dict[str, Any]:
-        sessions: list[dict[str, Any]] = []
-        skipped: list[dict[str, Any]] = []
-
-        try:
-            await backend.start()
-        except Exception as exc:
-            logger.warning("ACP %s backend start failed during discovery: %s", provider, exc)
-            skipped.append({"provider": provider, "reason": "provider_start_failed"})
-            return {
-                "sessions": sessions,
-                "skipped": skipped,
-                "available": False,
-                "supports_list": False,
-                "truncated": False,
-            }
-
-        if not backend.health().available:
-            skipped.append({"provider": provider, "reason": "provider_unavailable"})
-            return {
-                "sessions": sessions,
-                "skipped": skipped,
-                "available": False,
-                "supports_list": False,
-                "truncated": False,
-            }
-
-        capabilities = self._capabilities(provider)
-        if not capabilities.get("list"):
-            return {
-                "sessions": sessions,
-                "skipped": skipped,
-                "available": True,
-                "supports_list": False,
-                "truncated": False,
-            }
-
-        cursor: str | None = None
-        pages = 0
-        truncated = False
-        while pages < self._page_cap:
-            pages += 1
-            try:
-                result = await backend.list_sessions(cwd=cwd, cursor=cursor)
-            except UnsupportedACPMethodError:
-                return {
-                    "sessions": sessions,
-                    "skipped": skipped,
-                    "available": True,
-                    "supports_list": False,
-                    "truncated": False,
-                }
-            except Exception as exc:
-                logger.warning("ACP %s session/list failed: %s", provider, exc)
-                skipped.append({"provider": provider, "reason": "list_failed"})
-                break
-
-            for info in result.get("sessions") or []:
-                self._process_info(provider, info, machine_id, sessions, skipped)
-
-            cursor = result.get("nextCursor")
-            if not cursor:
-                break
-            if pages >= self._page_cap:
-                truncated = True
-                skipped.append({"provider": provider, "reason": "page_cap_reached"})
-                break
-
-        return {
-            "sessions": sessions,
-            "skipped": skipped,
-            "available": True,
-            "supports_list": True,
-            "truncated": truncated,
-        }
-
-    def _process_info(
-        self,
-        provider: str,
-        info: Any,
-        machine_id: str,
-        sessions: list[dict[str, Any]],
-        skipped: list[dict[str, Any]],
-    ) -> None:
-        """Map and upsert one ``SessionInfo``, applying per-row resilience."""
-        mapped = map_session_info(
-            info, provider=provider, resolve_project_id=self._resolve_project_id
-        )
-        raw_session_id = info.get("sessionId") if isinstance(info, Mapping) else None
-        if mapped is None:
-            skipped.append(
-                {
-                    "provider": provider,
-                    "session_id": raw_session_id,
-                    "reason": "invalid_session_info",
-                }
-            )
-            return
-        if mapped.project_id is None:
-            skipped.append(
-                {
-                    "provider": provider,
-                    "session_id": mapped.external_id,
-                    "reason": "unresolved_cwd",
-                }
-            )
-            return
-
-        if self._runtime_manager is not None and isinstance(info, Mapping):
-            self._runtime_manager.cache_acp_session_info(provider, mapped.external_id, dict(info))
-        try:
-            session = self._upsert(provider, mapped, machine_id)
-        except Exception as exc:
-            logger.warning(
-                "ACP %s upsert failed for session %s: %s", provider, mapped.external_id, exc
-            )
-            skipped.append(
-                {
-                    "provider": provider,
-                    "session_id": mapped.external_id,
-                    "reason": "upsert_failed",
-                }
-            )
-            return
-        sessions.append(self._serialize(session))
-
-    def _upsert(self, provider: str, mapped: MappedSessionInfo, machine_id: str) -> Session:
-        """Conservative upsert: never move an existing row; only refresh provisional titles."""
-        existing = self._session_manager.find_by_external_id(
-            mapped.external_id,
-            machine_id,
-            mapped.project_id,
-            provider,
-            session_type=SESSION_TYPE_WEB_CHAT,
-        )
-        if existing is not None:
-            if (
-                mapped.title
-                and self._title_is_provisional(existing)
-                and existing.title != mapped.title
-            ):
-                updated = self._session_manager.update_title(
-                    existing.id, mapped.title, title_source=_ACP_TITLE_SOURCE
-                )
-                return updated or existing
-            return existing
-        return self._session_manager.register(
-            external_id=mapped.external_id,
-            machine_id=machine_id,
-            source=provider,
-            project_id=mapped.project_id,
-            title=mapped.title,
-            session_type=SESSION_TYPE_WEB_CHAT,
-            title_source=_ACP_TITLE_SOURCE if mapped.title else None,
-        )
-
-    @staticmethod
-    def _title_is_provisional(session: Session) -> bool:
-        if (session.title_source or "") == PROVISIONAL_TITLE_SOURCE:
-            return True
-        return not (session.title or "").strip()
 
     # -- close / delete ----------------------------------------------------
 
@@ -454,7 +204,6 @@ class ACPSessionLifecycleService:
 
 
 __all__ = [
-    "ACP_DISCOVER_PAGE_CAP",
     "ACPCapabilityUnsupportedError",
     "ACPLifecycleError",
     "ACPProviderUnavailableError",

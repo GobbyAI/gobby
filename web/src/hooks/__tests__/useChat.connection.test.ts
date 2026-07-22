@@ -26,6 +26,20 @@ async function loadModule() {
 }
 
 describe("useChat connection lifecycle", () => {
+  it("waits for authentication before connecting", async () => {
+    await loadModule();
+    const { rerender } = renderHook(
+      ({ enabled }) => useChat({ connectionEnabled: enabled }),
+      { initialProps: { enabled: false } },
+    );
+
+    expect(mockWs.instances).toHaveLength(0);
+
+    rerender({ enabled: true });
+
+    expect(mockWs.instances).toHaveLength(1);
+  });
+
   it("connects to WebSocket on mount", async () => {
     await loadModule();
     renderHook(() => useChat());

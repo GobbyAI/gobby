@@ -14,7 +14,7 @@ import httpx
 import pytest
 import websockets
 from websockets.asyncio.client import ClientConnection
-from websockets.exceptions import ConnectionClosed, InvalidStatus
+from websockets.exceptions import InvalidStatus
 
 from gobby.storage.auth import PASSWORD_HASH_KEY, USERNAME_KEY, hash_password
 from gobby.storage.config_store import ConfigStore
@@ -194,25 +194,6 @@ async def _assert_handshake_rejected(
     assert raised.value.response.status_code == status_code
 
 
-async def _assert_proxy_closes_unauthenticated(instance: DaemonInstance) -> None:
-    try:
-        async with websockets.connect(
-            f"ws://localhost:{instance.http_port}/ws",
-            open_timeout=5.0,
-            close_timeout=2.0,
-        ) as websocket:
-            await asyncio.wait_for(websocket.recv(), timeout=5.0)
-    except ConnectionClosed as exc:
-        assert exc.rcvd is not None
-        assert exc.rcvd.code == 4401
-    except InvalidStatus as exc:
-        pytest.fail(
-            f"/ws rejected the handshake with HTTP {exc.response.status_code}; expected 4401"
-        )
-    else:
-        pytest.fail("/ws accepted an unauthenticated connection")
-
-
 def _rotate_isolated_token(instance: DaemonInstance) -> tuple[str, str]:
     old_token = daemon_token(instance.gobby_home)
     env = prepare_daemon_env(home_dir=instance.gobby_home)
@@ -301,7 +282,10 @@ async def test_ws_auth(daemon_instance: DaemonInstance) -> None:
         headers=[("Authorization", f"Bearer {token}")],
     )
 
-    await _assert_proxy_closes_unauthenticated(daemon_instance)
+    await _assert_handshake_rejected(
+        f"ws://localhost:{daemon_instance.http_port}/ws",
+        status_code=403,
+    )
     cookie = _browser_session_cookie(daemon_instance)
     await _assert_websocket_frames(
         f"ws://localhost:{daemon_instance.http_port}/ws",

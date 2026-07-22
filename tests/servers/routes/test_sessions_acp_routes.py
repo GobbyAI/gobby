@@ -1,6 +1,6 @@
-"""Tests for ACP session discovery + lifecycle REST routes.
+"""Tests for ACP lifecycle REST routes.
 
-Exercises ``register_acp_routes`` (discover/close/delete) and the ``acp``
+Exercises ``register_acp_routes`` (close/delete) and the ``acp``
 enrichment attached by ``GET /api/sessions``, asserting the locked status codes
 and single-broadcast behavior through a TestClient with in-memory fakes.
 """
@@ -145,11 +145,13 @@ class _Backend:
         self._available = available
         self.capabilities = capabilities or {}
         self._pages = pages or []
+        self.start_calls = 0
+        self.list_calls = 0
         self.closed: list[str] = []
         self.deleted: list[str] = []
 
     async def start(self) -> None:
-        return None
+        self.start_calls += 1
 
     def health(self) -> SimpleNamespace:
         return SimpleNamespace(available=self._available)
@@ -157,6 +159,7 @@ class _Backend:
     async def list_sessions(
         self, *, cwd: str | None = None, cursor: str | None = None
     ) -> dict[str, Any]:
+        self.list_calls += 1
         index = 0 if cursor is None else int(cursor)
         if index >= len(self._pages):
             return {"sessions": [], "nextCursor": None}
@@ -223,11 +226,11 @@ def _acp_row(source: str = "qwen") -> _Session:
 
 
 # ---------------------------------------------------------------------------
-# discover
+# removed discovery surface
 # ---------------------------------------------------------------------------
 
 
-def test_discover_returns_summary_shape() -> None:
+def test_discovery_route_is_absent_and_listing_does_not_start_provider() -> None:
     sm = _SM()
     backend = _Backend(
         capabilities={"list": True},
@@ -237,57 +240,10 @@ def test_discover_returns_summary_shape() -> None:
     )
     client = _client(sm, _RM({"qwen": backend}))
 
-    resp = client.post(
-        "/api/sessions/acp/discover",
-        json={"machine_id": "browser-machine"},
-    )
-
-    assert resp.status_code == 200
-    body = resp.json()
-    assert set(body) == {"sessions", "skipped", "providers"}
-    assert len(body["sessions"]) == 1
-    assert body["sessions"][0]["machine_id"] == "browser-machine"
-    assert body["providers"] == [
-        {
-            "provider": "qwen",
-            "available": True,
-            "supports_list": True,
-            "truncated": False,
-        }
-    ]
-
-
-def test_discover_without_runtime_manager_is_empty() -> None:
-    client = _client(_SM(), None)
-
-    resp = client.post(
-        "/api/sessions/acp/discover",
-        json={"machine_id": "browser-machine"},
-    )
-
-    assert resp.status_code == 200
-    assert resp.json() == {"sessions": [], "skipped": [], "providers": []}
-
-
-def test_discover_requires_client_machine_id() -> None:
-    client = _client(_SM(), None)
-
-    resp = client.post("/api/sessions/acp/discover", json={})
-
-    assert resp.status_code == 400
-    assert resp.json() == {"detail": "Required field: machine_id"}
-
-
-def test_discover_rejects_blank_client_machine_id() -> None:
-    client = _client(_SM(), None)
-
-    resp = client.post(
-        "/api/sessions/acp/discover",
-        json={"machine_id": "   "},
-    )
-
-    assert resp.status_code == 400
-    assert resp.json() == {"detail": "Required field: machine_id"}
+    assert client.post("/api/sessions/acp/discover", json={}).status_code == 404
+    assert client.get("/api/sessions").status_code == 200
+    assert backend.start_calls == 0
+    assert backend.list_calls == 0
 
 
 # ---------------------------------------------------------------------------

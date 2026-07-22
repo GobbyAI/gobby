@@ -4,6 +4,7 @@ import asyncio
 import logging
 from collections.abc import AsyncGenerator
 from typing import TYPE_CHECKING, Any, Protocol
+from uuid import uuid4
 
 import httpx
 from fastapi import FastAPI, HTTPException, Request, WebSocket, WebSocketDisconnect
@@ -12,7 +13,7 @@ from starlette.datastructures import Headers
 from starlette.requests import ClientDisconnect
 from websockets.typing import Subprotocol
 
-from gobby.config.bootstrap import DEFAULT_WEBSOCKET_PORT
+from gobby.servers.websocket.asgi_adapter import ASGIWebSocketAdapter
 
 if TYPE_CHECKING:
     from gobby.servers.http import HTTPServer
@@ -44,44 +45,38 @@ _HOP_BY_HOP_HEADERS = frozenset(
 )
 
 
-def _mount_ws_proxy(app: FastAPI, server: "HTTPServer") -> None:
-    """Mount a WebSocket proxy that forwards /ws/* to the standalone WebSocket server.
-
-    In production mode the frontend connects WebSocket to the HTTP server's
-    host (window.location.host), but the actual WebSocket server runs on a
-    separate port. This proxy bridges the two so that clients only need to
-    know about the HTTP port.
-    """
-    ws_port = DEFAULT_WEBSOCKET_PORT
-    cfg = server.services.config
-    if cfg and hasattr(cfg, "websocket") and cfg.websocket:
-        ws_port = cfg.websocket.port
+def _mount_ws_endpoint(app: FastAPI, server: "HTTPServer") -> None:
+    """Mount /ws directly on the daemon's shared WebSocket server."""
 
     @app.websocket("/ws/{path:path}")
-    async def ws_proxy(websocket: WebSocket, path: str) -> None:
-        query = str(websocket.query_params) if websocket.query_params else ""
-        target = f"ws://localhost:{ws_port}/{path}"
-        if query:
-            target += f"?{query}"
+    async def websocket_endpoint(websocket: WebSocket, path: str) -> None:
+        del path
+        websocket_server = server.services.websocket_server or server.websocket_server
+        if websocket_server is None:
+            await websocket.close(code=1013, reason="WebSocket server unavailable")
+            return
 
-        bearer_token: str | None = None
         if server.auth_service.enabled:
-            if not server.auth_service.is_request_authenticated(websocket):
-                await websocket.accept()
-                await websocket.close(code=4401)
-                return
-            bearer_token = server.auth_service.local_token()
-            if bearer_token is None:
-                await websocket.close(code=1011)
+            authenticated = await websocket_server.run_db(
+                server.auth_service.is_request_authenticated,
+                websocket,
+            )
+            if not authenticated:
+                await websocket.close(code=4401, reason="Authentication required")
                 return
 
-        await _proxy_websocket(websocket, target, bearer_token=bearer_token)
+        user_prefix = "local-web" if server.auth_service.enabled else "local"
+        adapter = ASGIWebSocketAdapter(websocket, user_id=f"{user_prefix}-{uuid4().hex[:8]}")
+        await adapter.accept()
+        await websocket_server._handle_connection(adapter)
+        if not adapter.closed and not adapter.disconnected:
+            await adapter.close(code=1011, reason="WebSocket handler exited unexpectedly")
 
     @app.websocket("/ws")
-    async def ws_proxy_root(websocket: WebSocket) -> None:
-        await ws_proxy(websocket, "")
+    async def websocket_endpoint_root(websocket: WebSocket) -> None:
+        await websocket_endpoint(websocket, "")
 
-    logger.debug("WebSocket proxy mounted at /ws -> localhost:%s", ws_port)
+    logger.debug("ASGI WebSocket endpoint mounted at /ws")
 
 
 async def _proxy_websocket(

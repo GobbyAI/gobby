@@ -45,6 +45,32 @@ class TestProviderRoutes:
         names = [p["name"] for p in data["providers"]]
         assert names == ["claude", "codex", "droid", "grok", "qwen", "agy"]
 
+    def test_list_providers_includes_configured_local_endpoints(self) -> None:
+        config = DaemonConfig(
+            ai=AIConfig(
+                generation=GenerationConfig(
+                    local=LocalGenerationConfig(
+                        endpoints={
+                            "studio": {
+                                "provider": "lmstudio",
+                                "api_base": "http://localhost:1234/v1",
+                                "model": "local-model",
+                            }
+                        }
+                    )
+                )
+            )
+        )
+        app = FastAPI()
+        app.include_router(create_providers_router(_server_stub(config=config)))
+
+        with patch("gobby.servers.routes.providers.shutil.which", return_value=None):
+            response = TestClient(app).get("/api/providers")
+
+        providers = {entry["name"]: entry for entry in response.json()["providers"]}
+        assert providers["local:studio"]["available"] is True
+        assert providers["local:studio"]["supports_web_chat"] is True
+
     def test_provider_available_when_binary_found(self, client: TestClient) -> None:
         """Provider is marked available when shutil.which finds the binary."""
         with patch("gobby.servers.routes.providers.shutil.which") as mock_which:

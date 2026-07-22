@@ -38,7 +38,11 @@ interface TransportErrorNotice {
   message: string;
 }
 
-export function useChat() {
+interface UseChatOptions {
+  connectionEnabled?: boolean;
+}
+
+export function useChat({ connectionEnabled = true }: UseChatOptions = {}) {
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const messagesRef = useRef(messages);
   const [isConnected, setIsConnected] = useState(false);
@@ -663,11 +667,14 @@ export function useChat() {
     applyMainSessionMeta,
     bindActiveSession,
     connect,
+    connectionEnabled,
     conversationIdRef,
     dbSessionIdRef,
     initialViewingSessionIdRef,
     lastSeqRef,
     reconnectTimeoutRef,
+    setIsConnected,
+    setIsReconnecting,
     setIsLoadingMessages,
     setMessages,
     wsRef,

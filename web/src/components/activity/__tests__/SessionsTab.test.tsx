@@ -9,6 +9,7 @@ import {
 } from "@testing-library/react";
 
 import { SessionsTab } from "../SessionsTab";
+import { defaultSessionsFilters } from "../sessionsFilters";
 import { useActivityPanel } from "../useActivityPanel";
 import { TerminalTab } from "../terminal/TerminalTab";
 import {
@@ -445,12 +446,66 @@ describe("SessionsTab", () => {
     });
     mockFetch = createMockFetch();
     mockFetch.mockJsonResponse("/api/agents/running", { agents: [] });
+    mockFetch.mockJsonResponse("/api/providers", {
+      providers: [
+        { name: "claude", available: true },
+        { name: "codex", available: true },
+      ],
+    });
   });
 
   afterEach(() => {
     vi.useRealTimers();
     mockFetch.restore();
     vi.restoreAllMocks();
+  });
+
+  it("keeps registry providers on empty filtered pages and prunes stale selections", async () => {
+    mockFetch.resetRoutes();
+    mockFetch.mockJsonResponse("/api/agents/running", { agents: [] });
+    mockFetch.mockJsonResponse("/api/providers", {
+      providers: [
+        { name: "qwen", available: false },
+        { name: "codex", available: true },
+        { name: "cron", available: true },
+        { name: "pipeline", available: true },
+        { name: "system", available: true },
+      ],
+    });
+    const filters = defaultSessionsFilters();
+    filters.providers = new Set(["codex", "removed-provider"]);
+    const onFiltersChange = vi.fn();
+    const { rerender } = render(
+      <SessionsTab
+        sessions={[]}
+        filters={filters}
+        onFiltersChange={onFiltersChange}
+      />,
+    );
+
+    await waitFor(() => {
+      expect(onFiltersChange).toHaveBeenCalled();
+    });
+    const lastFilterChange =
+      onFiltersChange.mock.calls[onFiltersChange.mock.calls.length - 1][0];
+    expect(Array.from(lastFilterChange.providers)).toEqual(["codex"]);
+
+    fireEvent.click(screen.getByRole("button", { name: "Filter sessions" }));
+    expect(screen.getByLabelText("Codex")).toBeInTheDocument();
+    expect(screen.getByLabelText("Qwen")).toBeInTheDocument();
+    expect(screen.queryByLabelText("Cron")).toBeNull();
+    expect(screen.queryByLabelText("Pipeline")).toBeNull();
+    expect(screen.queryByLabelText("System")).toBeNull();
+
+    rerender(
+      <SessionsTab
+        sessions={[]}
+        filters={filters}
+        onFiltersChange={onFiltersChange}
+      />,
+    );
+    expect(screen.getByLabelText("Codex")).toBeInTheDocument();
+    expect(screen.getByLabelText("Qwen")).toBeInTheDocument();
   });
 
   it("preserves running agents and surfaces polling errors until recovery", async () => {

@@ -15,6 +15,7 @@ from gobby.servers.local_provider_models import (
     NO_COMPLETION_MODELS_ERROR,
     LocalEndpointModelGroup,
     discover_local_endpoint_model_group,
+    local_provider_display_label,
 )
 from gobby.servers.provider_models import (
     AGY_MODEL_CATALOG,
@@ -307,6 +308,41 @@ def _provider_metadata_fields(name: str, path: str | None) -> dict[str, Any]:
     }
 
 
+def _configured_local_provider_entries(server: HTTPServer | None) -> list[dict[str, Any]]:
+    """Return provider-registry rows for configured local generation endpoints."""
+    config = getattr(getattr(server, "services", None), "config", None)
+    endpoints = getattr(
+        getattr(getattr(getattr(config, "ai", None), "generation", None), "local", None),
+        "endpoints",
+        {},
+    )
+    if not isinstance(endpoints, dict):
+        return []
+
+    entries: list[dict[str, Any]] = []
+    for endpoint_name, endpoint in endpoints.items():
+        provider_type = str(getattr(endpoint, "provider", "openai-compatible"))
+        supports_web_chat = provider_type in _CODEX_LOCAL_PROVIDER_TYPES
+        entries.append(
+            {
+                "name": f"local:{endpoint_name}",
+                "available": supports_web_chat,
+                "path": None,
+                "startup_error": None,
+                "display_name": f"Local: {local_provider_display_label(provider_type)}",
+                "installed": True,
+                "deprecated": False,
+                "deprecation_message": None,
+                "supports_web_chat": supports_web_chat,
+                "supports_agent_spawn": False,
+                "unavailable_reason": (
+                    None if supports_web_chat else _GENERIC_LOCAL_UNAVAILABLE_REASON
+                ),
+            }
+        )
+    return entries
+
+
 def create_providers_router(server: HTTPServer | None = None) -> APIRouter:
     """Create providers API router.
 
@@ -331,6 +367,7 @@ def create_providers_router(server: HTTPServer | None = None) -> APIRouter:
                     **_provider_metadata_fields(name, path),
                 }
             )
+        providers.extend(_configured_local_provider_entries(server))
         return {"providers": providers}
 
     @router.get("/models")

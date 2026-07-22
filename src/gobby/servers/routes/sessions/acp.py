@@ -1,19 +1,16 @@
-"""ACP session discovery + lifecycle REST routes.
+"""ACP lifecycle REST routes.
 
-Thin HTTP surface over ``ACPSessionLifecycleService``. The service is built once
-per router and cached so its per-provider in-flight discover lock survives across
-requests. Lifecycle errors map to the locked status codes:
+Thin HTTP surface over ``ACPSessionLifecycleService``. Lifecycle errors map to:
 unsupported capability → 409, provider unavailable → 503, unknown id → 404,
 non-ACP target → 400.
 """
 
 from __future__ import annotations
 
-import json
 import logging
 from typing import TYPE_CHECKING, Any, NoReturn
 
-from fastapi import APIRouter, HTTPException, Request
+from fastapi import APIRouter, HTTPException
 
 from gobby.sessions.acp_lifecycle import (
     ACPCapabilityUnsupportedError,
@@ -52,14 +49,8 @@ def register_acp_routes(
     server: HTTPServer,
     get_session_manager: Callable[[], Any],
 ) -> None:
-    """Register ACP discovery + lifecycle routes on the sessions router."""
+    """Register ACP lifecycle routes on the sessions router."""
     service_box: dict[str, ACPSessionLifecycleService] = {}
-
-    def _resolve_project_id(cwd: str | None) -> str | None:
-        try:
-            return server.resolve_project_id(None, cwd)
-        except ValueError:
-            return None
 
     def _service() -> ACPSessionLifecycleService:
         service = service_box.get("service")
@@ -67,39 +58,9 @@ def register_acp_routes(
             service = ACPSessionLifecycleService(
                 session_manager=get_session_manager(),
                 runtime_manager=getattr(server.services, "web_chat_runtime_manager", None),
-                resolve_project_id=_resolve_project_id,
             )
             service_box["service"] = service
         return service
-
-    async def _read_discovery_request(request: Request) -> tuple[str | None, str]:
-        try:
-            body = await request.json()
-        except (json.JSONDecodeError, UnicodeDecodeError):
-            raise HTTPException(status_code=400, detail="Required field: machine_id") from None
-        if not isinstance(body, dict):
-            raise HTTPException(status_code=400, detail="Required field: machine_id")
-        machine_id = body.get("machine_id")
-        machine_id = machine_id.strip() if isinstance(machine_id, str) else None
-        if not machine_id:
-            raise HTTPException(status_code=400, detail="Required field: machine_id")
-        cwd = body.get("cwd")
-        cwd = cwd if isinstance(cwd, str) and cwd else None
-        return cwd, machine_id
-
-    @router.post("/acp/discover")
-    async def discover_acp_sessions(request: Request) -> dict[str, Any]:
-        """Reconcile agent-side ACP sessions into canonical rows."""
-        cwd, machine_id = await _read_discovery_request(request)
-        try:
-            return await _service().discover(machine_id=machine_id, cwd=cwd)
-        except ACPLifecycleError as exc:
-            _raise_for_lifecycle_error(exc)
-        except HTTPException:
-            raise
-        except Exception as exc:
-            logger.exception("ACP discover failed: %s", exc)
-            raise HTTPException(status_code=500, detail="Internal server error") from exc
 
     @router.post("/{session_id}/acp/close")
     async def close_acp_session(session_id: str) -> dict[str, Any]:

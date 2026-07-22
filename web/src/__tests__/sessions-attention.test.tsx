@@ -68,10 +68,6 @@ vi.mock("../components/activity/SessionsTabMenu", () => ({
   SessionsInteractionModalHost: () => null,
 }));
 
-vi.mock("../components/activity/useAcpSessionDiscovery", () => ({
-  useAcpSessionDiscovery: () => undefined,
-}));
-
 vi.mock("../hooks/useIsMobile", () => ({
   useIsMobile: () => false,
 }));
@@ -145,6 +141,9 @@ describe("session attention", () => {
               ],
             }),
           );
+        }
+        if (url === "/api/providers") {
+          return Promise.resolve(jsonResponse({ providers: [] }));
         }
         throw new Error(`Unexpected request: ${url}`);
       }),

@@ -73,6 +73,9 @@ async def _check_managed_services_ready_once(
 
 async def require_managed_services_ready(runner: GobbyRunner) -> None:
     """Require PostgreSQL, Qdrant, and FalkorDB before the HTTP server binds."""
+    if getattr(runner.config, "test_mode", False) is True:
+        return
+
     qdrant_url = runner.config.databases.qdrant.url
     if not qdrant_url:
         raise ManagedServiceReadinessError("Qdrant configuration is missing; run `gobby install`")

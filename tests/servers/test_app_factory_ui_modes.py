@@ -112,7 +112,7 @@ def test_hmr_proxy_uses_dedicated_route_and_ws_remains_gobby_owned() -> None:
     config = DaemonConfig(ui={"enabled": True, "mode": "dev", "port": 5173})
     app = FastAPI()
 
-    app_factory._mount_ws_proxy(app, _server(config))
+    app_factory._mount_ws_endpoint(app, _server(config))
     app_factory._mount_vite_hmr_proxy(app, _server(config))
 
     websocket_paths = {route.path for route in app.routes if isinstance(route, WebSocketRoute)}

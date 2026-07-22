@@ -94,6 +94,20 @@ async def test_missing_qdrant_configuration_blocks_startup() -> None:
         )
 
 
+async def test_test_mode_skips_managed_service_readiness() -> None:
+    managed_services = object()
+    runner = cast(
+        "GobbyRunner",
+        SimpleNamespace(
+            config=SimpleNamespace(test_mode=True, databases=managed_services),
+        ),
+    )
+
+    await readiness.require_managed_services_ready(runner)
+
+    assert runner.config.databases is managed_services
+
+
 @pytest.mark.asyncio
 async def test_unhealthy_qdrant_blocks_startup(monkeypatch: pytest.MonkeyPatch) -> None:
     health = FakeHealthCheck(False)

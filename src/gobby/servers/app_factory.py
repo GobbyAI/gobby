@@ -28,7 +28,7 @@ from gobby.servers._app_ui import (
     _mount_production_ui,
     _mount_vite_dev_ui,
     _mount_vite_hmr_proxy,
-    _mount_ws_proxy,
+    _mount_ws_endpoint,
     _proxied_request_headers,
     _proxied_response_headers,
     _proxy_websocket,
@@ -51,7 +51,7 @@ __all__ = [
     "_mount_production_ui",
     "_mount_vite_dev_ui",
     "_mount_vite_hmr_proxy",
-    "_mount_ws_proxy",
+    "_mount_ws_endpoint",
     "_proxied_request_headers",
     "_proxied_response_headers",
     "_proxy_websocket",
@@ -143,7 +143,7 @@ def create_app(server: "HTTPServer") -> FastAPI:
         _register_mcp_http_route(app, mcp_app)
         logger.debug("MCP server registered at /mcp")
 
-    _mount_ws_proxy(app, server)
+    _mount_ws_endpoint(app, server)
 
     if server.services.config and server.services.config.ui.enabled:
         from gobby.cli.ui_mode import resolve_ui_mode

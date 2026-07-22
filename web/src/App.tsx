@@ -131,7 +131,9 @@ export default function App() {
     sendAgentChange,
     selectedProvider,
     setSelectedProvider,
-  } = useChat();
+  } = useChat({
+    connectionEnabled: !authLoading && (!authRequired || authenticated),
+  });
   const clientSettings = useSettings();
   const {
     settings,

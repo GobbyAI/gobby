@@ -17,11 +17,14 @@ export function useChatLifecycle(params: UseChatLifecycleParams) {
     applyMainSessionMeta,
     bindActiveSession,
     connect,
+    connectionEnabled,
     conversationIdRef,
     dbSessionIdRef,
     initialViewingSessionIdRef,
     lastSeqRef,
     reconnectTimeoutRef,
+    setIsConnected,
+    setIsReconnecting,
     setIsLoadingMessages,
     setMessages,
     wsRef,
@@ -29,6 +32,12 @@ export function useChatLifecycle(params: UseChatLifecycleParams) {
 
 // Connect on mount, handle page lifecycle and heartbeat
 useEffect(() => {
+  if (!connectionEnabled) {
+    setIsConnected(false);
+    setIsReconnecting(false);
+    return;
+  }
+
   let cancelled = false;
   const persistedMainSessionId = loadDbSessionId();
 
@@ -165,5 +174,5 @@ useEffect(() => {
       ws.close();
     }
   };
-}, [applyMainSessionMeta, bindActiveSession, connect]);
+}, [applyMainSessionMeta, bindActiveSession, connect, connectionEnabled]);
 }
