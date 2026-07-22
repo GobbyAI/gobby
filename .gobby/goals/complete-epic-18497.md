@@ -178,3 +178,11 @@ so each iteration resumes from the durable goal document and live task state.
   lockfile, and removed the `GHSA-rrmf-rvhw-rf47` audit exception. Frozen
   resolution, exception-free audit, direct runtime imports, 37 focused voice
   tests, package build, and diff checks passed.
+- 2026-07-21 #9341 iteration 15 — closed #14844 with commit `af1908b3e`;
+  adopted pinned SRT 0.0.66 as the fail-closed default sandbox backend for
+  managed CLI agents, with Gobby-managed checksum verification, canonical
+  policy generation, pre-tmux wrapping, lifecycle preservation, and persisted
+  sandbox metadata. Final validation passed 194 focused sandbox tests, 2 real
+  host-runtime tests, and 191 lifecycle tests; Ruff, strict mypy, Bandit,
+  package build, test-quality, diff, wheel-content, and source-size checks also
+  passed.
