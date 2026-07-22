@@ -131,7 +131,7 @@ def _register_project(
     job_name = github_triage_job_name(project.id)
     existing = cron_storage.get_job_by_name(job_name)
 
-    if not config.enabled or not config.repositories_with_fallback(project.github_repo):
+    if not config.triage_enabled or not config.repositories_with_fallback(project.github_repo):
         if existing and existing.enabled:
             cron_storage.update_job(existing.id, enabled=False)
             cron_storage.update_system_job_bookkeeping(existing.id, next_run_at=None)

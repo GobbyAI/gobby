@@ -279,58 +279,6 @@ def init_orchestration(runner: GobbyRunner) -> None:
 
         pm = LocalProjectManager(runner.database)
 
-        try:
-            from gobby.sync.linear import create_linear_sync_handler
-
-            for project in pm.list():
-                if project.linear_team_id:
-                    handler = create_linear_sync_handler(
-                        mcp_manager=runner.mcp_proxy,
-                        task_manager=runner.task_manager,
-                        project_id=project.id,
-                        team_id=project.linear_team_id,
-                        linear_project_id=project.linear_project_id,
-                    )
-                    handler_name = f"linear_sync:{project.id}"
-                    cron_executor.register_handler(handler_name, handler)
-
-                    job_name = f"gobby:linear-sync:{project.id}"
-                    existing = runner.cron_storage.get_job_by_name(job_name)
-                    if not existing:
-                        runner.cron_storage.create_job(
-                            project_id=project.id,
-                            name=job_name,
-                            description=f"Bidirectional Linear sync for project {project.name}",
-                            schedule_type="interval",
-                            interval_seconds=300,
-                            action_type="handler",
-                            action_config={"handler": handler_name},
-                            enabled=True,
-                        )
-                        logger.info("Created system cron job: %s", job_name)
-            logger.debug("Linear sync handlers registered")
-        except Exception:
-            mark_service_degraded(runner, "linear_sync")
-            logger.exception("Failed to register Linear sync handlers")
-
-        try:
-            from gobby.github_triage.cron import register_github_triage_cron
-
-            registered = register_github_triage_cron(
-                cron_storage=runner.cron_storage,
-                cron_executor=cron_executor,
-                db=runner.database,
-                mcp_manager=runner.mcp_proxy,
-                task_manager=runner.task_manager,
-                project_manager=pm,
-                memory_manager=runner.memory_manager,
-                secret_store=runner.secret_store,
-            )
-            logger.debug("GitHub issue triage cron handlers registered: %s", registered)
-        except Exception:
-            mark_service_degraded(runner, "github_triage_cron")
-            logger.exception("Failed to register GitHub issue triage cron handlers")
-
         memory_dream_config = getattr(getattr(runner.config, "memory", None), "dream", None)
         if memory_dream_config is None:
             logger.debug("Skipping memory dream cron registration; memory.dream config missing")

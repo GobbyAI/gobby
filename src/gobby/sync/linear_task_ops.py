@@ -526,17 +526,29 @@ class LinearTaskOpsMixin(LinearProjectOpsMixin):
                 return issue
         return None
 
-    async def create_missing_issues(self, team_id: str | None = None) -> list[dict[str, Any]]:
+    async def create_missing_issues(
+        self,
+        team_id: str | None = None,
+        *,
+        limit: int | None = None,
+    ) -> list[dict[str, Any]]:
         """Create Linear issues for active non-closed Gobby tasks not linked yet."""
+        if limit is not None and limit <= 0:
+            raise ValueError("limit must be greater than zero")
         effective_team_id = team_id or self.linear_team_id
         if not effective_team_id:
             raise ValueError("No team_id provided and no default linear_team_id configured.")
 
-        rows = self.task_manager.db.fetchall(
+        sql = (
             "SELECT id FROM tasks "
-            "WHERE project_id = %s AND linear_issue_id IS NULL AND closed_at IS NULL",
-            (self.project_id,),
+            "WHERE project_id = %s AND linear_issue_id IS NULL AND closed_at IS NULL "
+            "ORDER BY seq_num NULLS LAST, created_at, id"
         )
+        params: tuple[Any, ...] = (self.project_id,)
+        if limit is not None:
+            sql += " LIMIT %s"
+            params += (limit,)
+        rows = self.task_manager.db.fetchall(sql, params)
 
         created: list[dict[str, Any]] = []
         for row in rows:

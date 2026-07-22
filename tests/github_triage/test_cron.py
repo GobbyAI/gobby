@@ -39,7 +39,8 @@ def test_register_github_triage_cron_creates_project_system_job(
     GitHubTriageStore(temp_db).upsert_config(
         GitHubTriageConfig(
             project_id=sample_project["id"],
-            enabled=True,
+            sync_enabled=True,
+            triage_enabled=True,
             repositories=("owner/repo",),
             reconcile_interval_seconds=1200,
         )
@@ -65,7 +66,8 @@ def test_register_github_triage_cron_disables_existing_job_when_config_disabled(
     store.upsert_config(
         GitHubTriageConfig(
             project_id=sample_project["id"],
-            enabled=True,
+            sync_enabled=True,
+            triage_enabled=True,
             repositories=("owner/repo",),
         )
     )
@@ -77,7 +79,8 @@ def test_register_github_triage_cron_disables_existing_job_when_config_disabled(
     store.upsert_config(
         GitHubTriageConfig(
             project_id=sample_project["id"],
-            enabled=False,
+            sync_enabled=False,
+            triage_enabled=False,
             repositories=("owner/repo",),
         )
     )
@@ -97,7 +100,8 @@ def test_handler_registration_failure_does_not_create_enabled_job(
     GitHubTriageStore(temp_db).upsert_config(
         GitHubTriageConfig(
             project_id=sample_project["id"],
-            enabled=True,
+            sync_enabled=True,
+            triage_enabled=True,
             repositories=("owner/repo",),
         )
     )
@@ -130,7 +134,8 @@ def test_handler_registration_failure_disables_existing_enabled_job(
     GitHubTriageStore(temp_db).upsert_config(
         GitHubTriageConfig(
             project_id=sample_project["id"],
-            enabled=True,
+            sync_enabled=True,
+            triage_enabled=True,
             repositories=("owner/repo",),
         )
     )
@@ -172,7 +177,8 @@ def test_registration_failure_for_one_project_does_not_abort_later_projects(
         store.upsert_config(
             GitHubTriageConfig(
                 project_id=project_id,
-                enabled=True,
+                sync_enabled=True,
+                triage_enabled=True,
                 repositories=("owner/repo",),
             )
         )

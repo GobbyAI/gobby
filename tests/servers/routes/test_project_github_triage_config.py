@@ -1,12 +1,24 @@
 from __future__ import annotations
 
+from unittest.mock import AsyncMock, MagicMock
+
 import pytest
 from fastapi.testclient import TestClient
 
 from gobby.storage.github_triage import GitHubTriageStore
+from gobby.sync.github_issue_sync import GitHubIssueSyncService
 from tests.servers.conftest import create_http_server
 
 pytestmark = pytest.mark.unit
+
+
+@pytest.fixture(autouse=True)
+def github_accessible(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(
+        GitHubIssueSyncService,
+        "check_access",
+        AsyncMock(return_value=("owner/repo",)),
+    )
 
 
 def test_project_github_triage_config_round_trip(
@@ -18,12 +30,14 @@ def test_project_github_triage_config_round_trip(
         session_manager=session_manager,
         database=temp_db,
     )
+    server.services.mcp_manager = MagicMock()
     client = TestClient(server.app)
 
     response = client.put(
         f"/api/projects/{sample_project['id']}/github-triage",
         json={
-            "enabled": True,
+            "sync_enabled": True,
+            "triage_enabled": True,
             "webhook_enabled": True,
             "repositories": ["owner/repo"],
             "reconcile_interval_seconds": 1800,
@@ -35,7 +49,8 @@ def test_project_github_triage_config_round_trip(
     fetched = client.get(f"/api/projects/{sample_project['id']}/github-triage")
     assert fetched.status_code == 200
     data = fetched.json()
-    assert data["enabled"] is True
+    assert data["sync_enabled"] is True
+    assert data["triage_enabled"] is True
     assert data["webhook_enabled"] is True
     assert data["repositories"] == ["owner/repo"]
     assert data["reconcile_interval_seconds"] == 1800
@@ -50,7 +65,7 @@ def test_project_github_triage_config_round_trip(
 
     round_trip = client.put(
         f"/api/projects/{sample_project['id']}/github-triage",
-        json={"enabled": False},
+        json={"sync_enabled": False, "triage_enabled": False},
     )
     assert round_trip.status_code == 200
     assert "$secret:github_triage_webhook" not in round_trip.text
@@ -67,7 +82,8 @@ def test_project_github_triage_config_round_trip(
 @pytest.mark.parametrize(
     "field",
     [
-        "enabled",
+        "sync_enabled",
+        "triage_enabled",
         "webhook_enabled",
         "repositories",
         "reconcile_interval_seconds",

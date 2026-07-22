@@ -117,7 +117,8 @@ def _enable_config(
     GitHubTriageStore(temp_db).upsert_config(
         GitHubTriageConfig(
             project_id=project_id,
-            enabled=True,
+            sync_enabled=True,
+            triage_enabled=True,
             webhook_enabled=True,
             repositories=(repo,),
             webhook_secret_ref=secret,
@@ -183,7 +184,8 @@ def test_webhook_rejects_empty_repository_allowlist(temp_db) -> None:
     GitHubTriageStore(temp_db).upsert_config(
         GitHubTriageConfig(
             project_id=project.id,
-            enabled=True,
+            sync_enabled=True,
+            triage_enabled=True,
             webhook_enabled=True,
             repositories=(),
             webhook_secret_ref="webhook-secret",

@@ -12,6 +12,8 @@ CREATE TABLE projects (
     linear_team_id TEXT,
     linear_project_id TEXT,
     linear_synced_at TIMESTAMPTZ,
+    linear_sync_enabled BOOLEAN NOT NULL DEFAULT FALSE
+        CHECK (linear_sync_enabled IN (FALSE, TRUE)),
     deleted_at TIMESTAMPTZ,
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
@@ -1132,8 +1134,10 @@ CREATE INDEX idx_cron_runs_scheduler_owner_active ON cron_runs(scheduler_owner) 
 CREATE UNIQUE INDEX idx_cron_runs_one_active_per_job ON cron_runs(cron_job_id) WHERE status IN ('pending', 'running');
 
 CREATE TABLE project_github_triage_configs (
-    project_id UUID PRIMARY KEY REFERENCES projects(id) ON DELETE CASCADE DEFERRABLE INITIALLY IMMEDIATE,
-    enabled BOOLEAN NOT NULL DEFAULT FALSE CHECK (enabled IN (FALSE, TRUE)),
+    project_id UUID PRIMARY KEY REFERENCES projects(id) ON DELETE CASCADE
+        DEFERRABLE INITIALLY IMMEDIATE,
+    sync_enabled BOOLEAN NOT NULL DEFAULT FALSE CHECK (sync_enabled IN (FALSE, TRUE)),
+    triage_enabled BOOLEAN NOT NULL DEFAULT FALSE CHECK (triage_enabled IN (FALSE, TRUE)),
     webhook_enabled BOOLEAN NOT NULL DEFAULT FALSE CHECK (webhook_enabled IN (FALSE, TRUE)),
     repositories_json JSONB NOT NULL DEFAULT '[]'::jsonb,
     reconcile_interval_seconds INTEGER NOT NULL DEFAULT 3600
@@ -1142,6 +1146,29 @@ CREATE TABLE project_github_triage_configs (
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
+
+CREATE TABLE external_issue_sync_status (
+    project_id UUID NOT NULL REFERENCES projects(id) ON DELETE CASCADE
+        DEFERRABLE INITIALLY IMMEDIATE,
+    provider TEXT NOT NULL CHECK (provider IN ('linear', 'github')),
+    state TEXT NOT NULL DEFAULT 'disabled'
+        CHECK (state IN (
+            'disabled', 'pending', 'running', 'healthy', 'degraded', 'rate_limited', 'unready'
+        )),
+    last_attempt_at TIMESTAMPTZ,
+    last_success_at TIMESTAMPTZ,
+    linked_count INTEGER NOT NULL DEFAULT 0 CHECK (linked_count >= 0),
+    pending_count INTEGER NOT NULL DEFAULT 0 CHECK (pending_count >= 0),
+    consecutive_failures INTEGER NOT NULL DEFAULT 0 CHECK (consecutive_failures >= 0),
+    retry_at TIMESTAMPTZ,
+    last_statistics JSONB NOT NULL DEFAULT '{}'::jsonb,
+    last_error TEXT,
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    PRIMARY KEY (project_id, provider)
+);
+
+CREATE INDEX idx_external_issue_sync_status_state
+    ON external_issue_sync_status(provider, state, updated_at);
 
 CREATE TABLE gh_triage_deliveries (
     id TEXT PRIMARY KEY,

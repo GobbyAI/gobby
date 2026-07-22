@@ -353,6 +353,27 @@ def start_periodic_tasks(
         name="tmux-window-repair",
     )
 
+    runner.external_issue_sync_coordinator = None
+    runner._external_issue_sync_shutdown = None
+    runner._external_issue_sync_task = None
+    mcp_proxy = getattr(runner, "mcp_proxy", None)
+    task_manager = getattr(runner, "task_manager", None)
+    if mcp_proxy is not None and task_manager is not None:
+        from gobby.sync.external_coordinator import ExternalIssueSyncCoordinator
+
+        runner.external_issue_sync_coordinator = ExternalIssueSyncCoordinator(
+            db=runner.database,
+            mcp_manager=mcp_proxy,
+            task_manager=task_manager,
+            memory_manager=runner.memory_manager,
+            secret_store=runner.secret_store,
+        )
+        runner._external_issue_sync_shutdown = asyncio.Event()
+        runner._external_issue_sync_task = asyncio.create_task(
+            runner.external_issue_sync_coordinator.run(runner._external_issue_sync_shutdown),
+            name="external-issue-sync",
+        )
+
     runner._wiki_watcher = None
     runner._wiki_watcher_task = None
     wiki_config = getattr(runner.config, "wiki", None)
@@ -401,6 +422,7 @@ def start_periodic_tasks(
             runner._bin_freshness_task,
             runner._approval_timeout_task,
             runner._tmux_window_repair_task,
+            runner._external_issue_sync_task,
             runner._wiki_watcher_task,
         )
         if task is not None

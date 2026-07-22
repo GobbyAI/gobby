@@ -39,6 +39,7 @@ from gobby.storage.github_triage import (
 from gobby.storage.hub.protocol import GitHubIssueTriageMutation
 from gobby.storage.projects import LocalProjectManager
 from gobby.storage.tasks import LocalTaskManager, Task
+from gobby.sync.github_issue_sync import GitHubIssueDeliveryHandler
 
 if TYPE_CHECKING:
     from gobby.storage.cron_models import CronJob
@@ -56,8 +57,7 @@ AUTO_CLOSE_DUPLICATE_SCORE = 0.97
 BuildFunc = Callable[[str, BuildOptions], Awaitable[Any]]
 
 
-class TriageError(ValueError):
-    """Base error for rejected triage intake."""
+class TriageError(ValueError): ...
 
 
 class TriageWebhookError(TriageError):
@@ -245,7 +245,7 @@ class GitHubIssueTriageService:
             self._validate_signature(config.webhook_secret_ref, normalized_headers, raw_body)
         except TriageWebhookError:
             raise WebhookAuthenticationError from None
-        if not config.enabled or not config.webhook_enabled:
+        if not (config.sync_enabled or config.triage_enabled) or not config.webhook_enabled:
             raise WebhookAuthenticationError
 
         event = _required_header(normalized_headers, "x-github-event")
@@ -289,7 +289,7 @@ class GitHubIssueTriageService:
         return await self._delivery_processor().recover(project_id)
 
     def _delivery_processor(self) -> DeliveryProcessor:
-        return DeliveryProcessor(self.store, self.triage_issue, TriageWebhookError)
+        return DeliveryProcessor(self.store, GitHubIssueDeliveryHandler(self), TriageWebhookError)
 
     async def reconcile_project_repos(self, project_id: str) -> dict[str, int]:
         """Reconcile all configured repositories as a webhook recovery path."""
@@ -297,7 +297,7 @@ class GitHubIssueTriageService:
         if not project or project.deleted_at:
             raise ValueError(f"Unknown project: {project_id}")
         config = self.store.get_config(project_id, fallback_repo=project.github_repo)
-        if not config.enabled:
+        if not config.triage_enabled:
             return {"scanned": 0, "triaged": 0, "errors": 0}
 
         scanned = triaged = errors = 0
@@ -392,7 +392,7 @@ class GitHubIssueTriageService:
         if not project or project.deleted_at:
             raise ValueError(f"Unknown project: {project_id}")
         config = self.store.get_config(project_id, fallback_repo=project.github_repo)
-        if not config.enabled:
+        if not config.triage_enabled:
             raise TriageDisabledError("GitHub issue triage is disabled")
         issue_data = issue_data or await self._fetch_issue(repo, issue_number)
         if issue_data.get("pull_request"):

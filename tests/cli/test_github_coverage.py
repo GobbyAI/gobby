@@ -2,12 +2,14 @@
 
 from __future__ import annotations
 
-from unittest.mock import MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 from click.testing import CliRunner
 
 from gobby.cli.github import github
+from gobby.storage.github_triage import GitHubTriageConfig
+from gobby.sync.github_issue_sync import GitHubRepositoryReadinessError
 
 pytestmark = pytest.mark.unit
 
@@ -26,7 +28,10 @@ def _mock_github_deps(
     task_manager.db = db
     project_manager = MagicMock()
     project = MagicMock()
+    project.id = project_id
+    project.name = "gobby"
     project.github_repo = github_repo
+    project.deleted_at = None
     project_manager.get.return_value = project
     mcp_manager = MagicMock()
     return task_manager, mcp_manager, project_manager, project_id
@@ -36,25 +41,54 @@ def _mock_github_deps(
 # github status
 # ---------------------------------------------------------------------------
 class TestGithubStatus:
-    @patch("gobby.cli.github.GitHubIntegration")
+    @patch("gobby.cli.github.GitHubIssueSyncService")
+    @patch("gobby.cli.github.ExternalIssueSyncStatusStore")
+    @patch("gobby.cli.github.GitHubTriageStore")
     @patch("gobby.cli.github.get_github_deps")
-    def test_status_text(self, mock_deps: MagicMock, mock_gh: MagicMock, runner: CliRunner) -> None:
+    def test_status_text(
+        self,
+        mock_deps: MagicMock,
+        mock_config_store: MagicMock,
+        mock_status_store: MagicMock,
+        mock_sync: MagicMock,
+        runner: CliRunner,
+    ) -> None:
         tm, mcp, pm, pid = _mock_github_deps(github_repo="owner/repo")
         mock_deps.return_value = (tm, mcp, pm, pid)
-        tm.db.fetchone.return_value = {"count": 3}
-        mock_gh.return_value.is_available.return_value = True
+        config = MagicMock()
+        config.repositories = ("owner/repo",)
+        config.to_dict.return_value = {"sync_enabled": True, "triage_enabled": False}
+        mock_config_store.return_value.get_config.return_value = config
+        mock_status_store.return_value.counts.return_value = (3, 0)
+        mock_status_store.return_value.get.return_value = None
+        mock_sync.return_value.check_access = AsyncMock(return_value=("owner/repo",))
         result = runner.invoke(github, ["status"], catch_exceptions=False)
         assert result.exit_code == 0
         assert "owner/repo" in result.output
 
-    @patch("gobby.cli.github.GitHubIntegration")
+    @patch("gobby.cli.github.GitHubIssueSyncService")
+    @patch("gobby.cli.github.ExternalIssueSyncStatusStore")
+    @patch("gobby.cli.github.GitHubTriageStore")
     @patch("gobby.cli.github.get_github_deps")
-    def test_status_json(self, mock_deps: MagicMock, mock_gh: MagicMock, runner: CliRunner) -> None:
+    def test_status_json(
+        self,
+        mock_deps: MagicMock,
+        mock_config_store: MagicMock,
+        mock_status_store: MagicMock,
+        mock_sync: MagicMock,
+        runner: CliRunner,
+    ) -> None:
         tm, mcp, pm, pid = _mock_github_deps()
         mock_deps.return_value = (tm, mcp, pm, pid)
-        tm.db.fetchone.return_value = {"count": 0}
-        mock_gh.return_value.is_available.return_value = False
-        mock_gh.return_value.get_unavailable_reason.return_value = "No token"
+        config = MagicMock()
+        config.repositories = ()
+        config.to_dict.return_value = {"sync_enabled": True, "triage_enabled": False}
+        mock_config_store.return_value.get_config.return_value = config
+        mock_status_store.return_value.counts.return_value = (0, 0)
+        mock_status_store.return_value.get.return_value = None
+        mock_sync.return_value.check_access = AsyncMock(
+            side_effect=GitHubRepositoryReadinessError("No token")
+        )
         result = runner.invoke(github, ["status", "--json"], catch_exceptions=False)
         assert result.exit_code == 0
         assert "No token" in result.output
@@ -68,6 +102,71 @@ class TestGithubStatus:
 # ---------------------------------------------------------------------------
 # github link / unlink
 # ---------------------------------------------------------------------------
+class TestGithubSetup:
+    @patch("gobby.cli.github.GitHubIssueSyncService")
+    @patch("gobby.cli.github.GitHubTriageStore")
+    @patch("gobby.cli.github.get_github_deps")
+    def test_setup_controls_sync_and_triage_independently(
+        self,
+        mock_deps: MagicMock,
+        mock_store_type: MagicMock,
+        mock_sync_type: MagicMock,
+        runner: CliRunner,
+    ) -> None:
+        tm, mcp, pm, pid = _mock_github_deps()
+        mock_deps.return_value = (tm, mcp, pm, pid)
+        store = mock_store_type.return_value
+        store.get_config.return_value = GitHubTriageConfig(project_id=pid)
+        store.upsert_config.side_effect = lambda config: config
+        mock_sync_type.return_value.check_access = AsyncMock(return_value=("owner/repo",))
+
+        result = runner.invoke(
+            github,
+            [
+                "setup",
+                "--project",
+                "gobby",
+                "--repo",
+                "owner/repo",
+                "--sync",
+                "--no-triage",
+                "--json",
+            ],
+            catch_exceptions=False,
+        )
+
+        assert result.exit_code == 0
+        saved = store.upsert_config.call_args.args[0]
+        assert saved.sync_enabled is True
+        assert saved.triage_enabled is False
+        assert saved.repositories == ("owner/repo",)
+        mock_deps.assert_called_once_with("gobby")
+
+    @patch("gobby.cli.github.GitHubIssueSyncService")
+    @patch("gobby.cli.github.GitHubTriageStore")
+    @patch("gobby.cli.github.get_github_deps")
+    def test_setup_fails_when_repository_is_inaccessible(
+        self,
+        mock_deps: MagicMock,
+        mock_store_type: MagicMock,
+        mock_sync_type: MagicMock,
+        runner: CliRunner,
+    ) -> None:
+        tm, mcp, pm, pid = _mock_github_deps(github_repo="private/repo")
+        mock_deps.return_value = (tm, mcp, pm, pid)
+        store = mock_store_type.return_value
+        store.get_config.return_value = GitHubTriageConfig(project_id=pid)
+        mock_sync_type.return_value.check_access = AsyncMock(
+            side_effect=GitHubRepositoryReadinessError("Cannot access private/repo: 404")
+        )
+
+        result = runner.invoke(github, ["setup", "--sync"])
+
+        assert result.exit_code != 0
+        assert "Cannot access private/repo" in result.output
+        store.upsert_config.assert_not_called()
+
+
 class TestGithubLink:
     @patch("gobby.cli.github.get_github_deps")
     def test_link_valid(self, mock_deps: MagicMock, runner: CliRunner) -> None:

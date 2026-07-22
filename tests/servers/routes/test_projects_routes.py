@@ -309,6 +309,57 @@ class TestProjectRoutes:
         data = response.json()
         assert data["linear_project_id"] == "LIN-PROJ"
 
+    def test_enable_linear_sync_requires_complete_binding(
+        self, client: TestClient, real_project: dict
+    ) -> None:
+        response = client.patch(
+            f"/api/projects/{real_project['id']}",
+            json={"linear_sync_enabled": True},
+        )
+
+        assert response.status_code == 400
+        assert "linear_team_id and linear_project_id" in response.json()["detail"]
+
+    def test_enable_linear_sync_with_binding(self, client: TestClient, real_project: dict) -> None:
+        response = client.patch(
+            f"/api/projects/{real_project['id']}",
+            json={
+                "linear_team_id": "team-1",
+                "linear_project_id": "linear-project-1",
+                "linear_sync_enabled": True,
+            },
+        )
+
+        assert response.status_code == 200
+        assert response.json()["linear_sync_enabled"] is True
+
+    def test_integrations_status_reports_live_counts_before_first_run(
+        self,
+        client: TestClient,
+        real_project: dict,
+        session_manager: SessionManager,
+    ) -> None:
+        task_manager = LocalTaskManager(session_manager.db)
+        task_manager.create_task(project_id=real_project["id"], title="Pending")
+        task_manager.create_task(
+            project_id=real_project["id"],
+            title="Linked",
+            linear_issue_id="linear-1",
+            github_repo="test/my-project",
+            github_issue_number=1,
+        )
+
+        response = client.get(f"/api/projects/{real_project['id']}/integrations/status")
+
+        assert response.status_code == 200
+        payload = response.json()
+        assert payload["linear"]["state"] == "pending"
+        assert payload["linear"]["linked_count"] == 1
+        assert payload["linear"]["pending_count"] == 1
+        assert payload["github"]["linked_count"] == 1
+        assert payload["github"]["pending_count"] == 0
+        assert payload["github"]["readiness_error"] == "GitHub connector is unavailable"
+
     def test_update_project_empty_body(self, client: TestClient, real_project: dict) -> None:
         """Empty update body returns current project data unchanged."""
         response = client.put(

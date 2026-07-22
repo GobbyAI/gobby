@@ -31,8 +31,11 @@ def _mock_linear_deps(
     project = MagicMock()
     project.linear_team_id = linear_team_id
     project.linear_project_id = linear_project_id
+    project.linear_sync_enabled = bool(linear_team_id and linear_project_id)
+    project.id = project_id
     project.name = "gobby"
     project.repo_path = "/tmp/gobby"
+    project.deleted_at = None
     project_manager.get.return_value = project
     mcp_manager = MagicMock()
     mcp_manager.has_server.return_value = True
@@ -44,35 +47,44 @@ def _mock_linear_deps(
 # linear status
 # ---------------------------------------------------------------------------
 class TestLinearStatus:
-    @patch("gobby.cli.linear.LinearIntegration")
+    @patch("gobby.cli.linear.LinearSyncService")
+    @patch("gobby.cli.linear.ExternalIssueSyncStatusStore")
     @patch("gobby.cli.linear.get_linear_deps")
     def test_status_text(
-        self, mock_deps: MagicMock, mock_integration: MagicMock, runner: CliRunner
+        self,
+        mock_deps: MagicMock,
+        mock_status_store: MagicMock,
+        mock_service: MagicMock,
+        runner: CliRunner,
     ) -> None:
         tm, mcp, pm, pid = _mock_linear_deps(linear_team_id="TEAM-1")
         mock_deps.return_value = (tm, mcp, pm, pid)
-        tm.db.fetchone.return_value = {"count": 5}
-
-        mock_li = mock_integration.return_value
-        mock_li.is_available.return_value = True
+        mock_status_store.return_value.counts.return_value = (5, 2)
+        mock_status_store.return_value.get.return_value = None
+        mock_service.return_value.is_available.return_value = True
 
         result = runner.invoke(linear, ["status"], catch_exceptions=False)
         assert result.exit_code == 0
         assert "TEAM-1" in result.output
         assert "5" in result.output
+        assert "2" in result.output
 
-    @patch("gobby.cli.linear.LinearIntegration")
+    @patch("gobby.cli.linear.LinearSyncService")
+    @patch("gobby.cli.linear.ExternalIssueSyncStatusStore")
     @patch("gobby.cli.linear.get_linear_deps")
     def test_status_json(
-        self, mock_deps: MagicMock, mock_integration: MagicMock, runner: CliRunner
+        self,
+        mock_deps: MagicMock,
+        mock_status_store: MagicMock,
+        mock_service: MagicMock,
+        runner: CliRunner,
     ) -> None:
         tm, mcp, pm, pid = _mock_linear_deps()
         mock_deps.return_value = (tm, mcp, pm, pid)
-        tm.db.fetchone.return_value = {"count": 0}
-
-        mock_li = mock_integration.return_value
-        mock_li.is_available.return_value = False
-        mock_li.get_unavailable_reason.return_value = "No API key"
+        mock_status_store.return_value.counts.return_value = (0, 3)
+        mock_status_store.return_value.get.return_value = None
+        mock_service.return_value.is_available.return_value = False
+        mock_service.return_value.get_unavailable_reason.return_value = "No API key"
 
         result = runner.invoke(linear, ["status", "--json"], catch_exceptions=False)
         assert result.exit_code == 0
@@ -156,16 +168,19 @@ class TestLinearSetup:
             team_id=None,
             linear_project_id=None,
             project_name=None,
-            import_issues=False,
-            create_missing=False,
         )
 
         assert result["linear_team_id"] == "team-1"
         assert result["linear_project_id"] == "lin-proj"
-        pm.update.assert_any_call(pid, linear_team_id="team-1", linear_project_id="lin-proj")
+        pm.update.assert_any_call(
+            pid,
+            linear_team_id="team-1",
+            linear_project_id="lin-proj",
+            linear_sync_enabled=True,
+        )
 
     @pytest.mark.asyncio
-    async def test_setup_create_missing_uses_forward_active_sync(self) -> None:
+    async def test_setup_defers_backfill_to_daemon_coordinator(self) -> None:
         tm, mcp, pm, pid = _mock_linear_deps()
         tm.db.fetchall.return_value = []
         mcp.call_tool = AsyncMock(
@@ -184,12 +199,11 @@ class TestLinearSetup:
             team_id=None,
             linear_project_id=None,
             project_name=None,
-            import_issues=False,
-            create_missing=True,
         )
 
-        assert result["sync"]["mode"] == "forward_active"
-        assert result["created_missing_count"] == 0
+        assert result["linear_sync_enabled"] is True
+        assert "sync" not in result
+        assert mcp.call_tool.await_count == 2
 
     @pytest.mark.asyncio
     async def test_setup_multiple_teams_requires_team_id(self) -> None:
@@ -213,8 +227,6 @@ class TestLinearSetup:
                 team_id=None,
                 linear_project_id=None,
                 project_name=None,
-                import_issues=False,
-                create_missing=False,
             )
 
     @pytest.mark.asyncio
@@ -232,8 +244,6 @@ class TestLinearSetup:
                 team_id=None,
                 linear_project_id=None,
                 project_name=None,
-                import_issues=False,
-                create_missing=False,
             )
 
     @patch("gobby.cli.linear.asyncio.run")

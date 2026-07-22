@@ -36,7 +36,8 @@ def test_github_triage_webhook_persists_delivery_and_returns_202(
     GitHubTriageStore(temp_db).upsert_config(
         GitHubTriageConfig(
             project_id=sample_project["id"],
-            enabled=True,
+            sync_enabled=True,
+            triage_enabled=True,
             webhook_enabled=True,
             repositories=("owner/repo",),
             webhook_secret_ref=secret,
@@ -83,7 +84,8 @@ def test_github_triage_webhook_rejects_missing_or_bad_signature(
     GitHubTriageStore(temp_db).upsert_config(
         GitHubTriageConfig(
             project_id=sample_project["id"],
-            enabled=True,
+            sync_enabled=True,
+            triage_enabled=True,
             webhook_enabled=True,
             repositories=("owner/repo",),
             webhook_secret_ref=secret,
@@ -110,7 +112,8 @@ def test_github_triage_webhook_authentication_failures_are_indistinguishable(
     store = GitHubTriageStore(temp_db)
     config = GitHubTriageConfig(
         project_id=sample_project["id"],
-        enabled=True,
+        sync_enabled=True,
+        triage_enabled=True,
         webhook_enabled=True,
         repositories=("owner/repo",),
         webhook_secret_ref=secret,
@@ -144,7 +147,8 @@ def test_github_triage_webhook_authentication_failures_are_indistinguishable(
     store.upsert_config(
         GitHubTriageConfig(
             project_id=config.project_id,
-            enabled=False,
+            sync_enabled=False,
+            triage_enabled=False,
             webhook_enabled=True,
             repositories=config.repositories,
             webhook_secret_ref=secret,

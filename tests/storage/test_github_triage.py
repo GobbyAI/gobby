@@ -15,7 +15,8 @@ def test_config_uses_legacy_github_repo_fallback(temp_db, sample_project) -> Non
 
     config = store.get_config(sample_project["id"], fallback_repo="owner/repo")
 
-    assert config.enabled is False
+    assert config.sync_enabled is False
+    assert config.triage_enabled is False
     assert config.repositories == ("owner/repo",)
 
 
@@ -25,7 +26,8 @@ def test_upsert_config_persists_repositories_and_secret_ref(temp_db, sample_proj
     saved = store.upsert_config(
         GitHubTriageConfig(
             project_id=sample_project["id"],
-            enabled=True,
+            sync_enabled=True,
+            triage_enabled=True,
             webhook_enabled=True,
             repositories=("owner/repo", "owner/other"),
             reconcile_interval_seconds=900,
@@ -33,7 +35,8 @@ def test_upsert_config_persists_repositories_and_secret_ref(temp_db, sample_proj
         )
     )
 
-    assert saved.enabled is True
+    assert saved.sync_enabled is True
+    assert saved.triage_enabled is True
     assert saved.webhook_enabled is True
     assert saved.repositories == ("owner/repo", "owner/other")
     assert saved.reconcile_interval_seconds == 900

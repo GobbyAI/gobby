@@ -12,8 +12,8 @@ import click
 
 from gobby.cli.runtime import require_cli_database
 from gobby.cli.tasks._utils import resolve_task_id
-from gobby.integrations.linear import LinearIntegration
 from gobby.mcp_proxy.manager import MCPClientManager
+from gobby.storage.external_issue_sync import ExternalIssueSyncStatusStore
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.mcp import LocalMCPManager
 from gobby.storage.projects import LocalProjectManager
@@ -30,17 +30,28 @@ def _optional_str(value: object) -> str | None:
     return value if isinstance(value, str) else None
 
 
-def get_linear_deps() -> tuple[LocalTaskManager, MCPClientManager, LocalProjectManager, str]:
+def get_linear_deps(
+    project_ref: str | None = None,
+    *,
+    require_project: bool = True,
+) -> tuple[LocalTaskManager, MCPClientManager, LocalProjectManager, str]:
     """Get dependencies for Linear commands."""
     db = require_cli_database()
     task_manager = LocalTaskManager(db)
     project_manager = LocalProjectManager(db)
 
-    ctx = get_project_context(cwd=Path.cwd())
-    if not ctx or not ctx.get("id"):
-        raise click.ClickException("Not in a gobby project directory. Run 'gobby init' first.")
-
-    project_id: str = ctx["id"]
+    if project_ref:
+        project = project_manager.resolve_ref(project_ref)
+        if not project or project.deleted_at:
+            raise click.ClickException(f"Project not found: {project_ref}")
+        project_id = project.id
+    elif require_project:
+        ctx = get_project_context(cwd=Path.cwd())
+        if not ctx or not ctx.get("id"):
+            raise click.ClickException("Not in a gobby project directory. Run 'gobby init' first.")
+        project_id = str(ctx["id"])
+    else:
+        project_id = ""
     mcp_manager = _create_linear_mcp_manager(db, project_id)
     return task_manager, mcp_manager, project_manager, project_id
 
@@ -106,60 +117,19 @@ def _persist_linear_binding(
     project_id: str,
     team_id: str | None,
     linear_project_id: str | None,
+    *,
+    enabled: bool | None = None,
 ) -> None:
-    updated = project_manager.update(
-        project_id,
-        linear_team_id=team_id,
-        linear_project_id=linear_project_id,
-    )
+    fields: dict[str, object] = {
+        "linear_team_id": team_id,
+        "linear_project_id": linear_project_id,
+    }
+    if enabled is not None:
+        fields["linear_sync_enabled"] = enabled
+    updated = project_manager.update(project_id, **fields)
     if updated and updated.repo_path:
-        update_project_json_fields(
-            Path(updated.repo_path),
-            linear_team_id=team_id,
-            linear_project_id=linear_project_id,
-        )
-
-
-def _linear_sync_job_name(project_id: str) -> str:
-    return f"gobby:linear-sync:{project_id}"
-
-
-def _linear_sync_handler_name(project_id: str) -> str:
-    return f"linear_sync:{project_id}"
-
-
-def _enable_linear_auto_sync(
-    task_manager: LocalTaskManager,
-    project_id: str,
-    interval: int,
-) -> str:
-    from gobby.storage.cron import CronJobStorage
-
-    cron_storage = CronJobStorage(task_manager.db)
-    job_name = _linear_sync_job_name(project_id)
-    handler_name = _linear_sync_handler_name(project_id)
-    existing = cron_storage.get_job_by_name(job_name)
-
-    if existing:
-        cron_storage.update_job(
-            existing.id,
-            interval_seconds=interval,
-            action_config={"handler": handler_name},
-            enabled=True,
-        )
-        return existing.id
-
-    job = cron_storage.create_job(
-        project_id=project_id,
-        name=job_name,
-        description="Periodic bidirectional sync with Linear",
-        schedule_type="interval",
-        interval_seconds=interval,
-        action_type="handler",
-        action_config={"handler": handler_name},
-        enabled=True,
-    )
-    return job.id
+        json_fields = dict(fields)
+        update_project_json_fields(Path(updated.repo_path), **json_fields)
 
 
 async def _run_linear_setup(
@@ -171,8 +141,6 @@ async def _run_linear_setup(
     team_id: str | None,
     linear_project_id: str | None,
     project_name: str | None,
-    import_issues: bool,
-    create_missing: bool,
 ) -> dict[str, object]:
     project = project_manager.get(project_id)
     if not project:
@@ -213,15 +181,8 @@ async def _run_linear_setup(
         project_id,
         selected_team_id,
         resolved_linear_project_id,
+        enabled=True,
     )
-
-    imported = await service.import_linear_issues(team_id=selected_team_id) if import_issues else []
-    if create_missing:
-        sync_result = await service.sync_active_forward(team_id=selected_team_id)
-        created_missing_count = int(sync_result["created_count"])
-    else:
-        sync_result = await service.sync_all(team_id=selected_team_id)
-        created_missing_count = 0
 
     return {
         "project_id": project_id,
@@ -229,9 +190,7 @@ async def _run_linear_setup(
         "linear_project_id": resolved_linear_project_id,
         "linear_project_name": linear_project.get("name") or resolved_project_name,
         "created_linear_project": created_project,
-        "imported_count": len(imported),
-        "created_missing_count": created_missing_count,
-        "sync": sync_result,
+        "linear_sync_enabled": True,
     }
 
 
@@ -280,53 +239,78 @@ def linear_teams(json_format: bool) -> None:
 
 
 @linear.command("status")
+@click.option("--project", "project_ref", help="Gobby project name or UUID")
+@click.option("--all", "all_projects", is_flag=True, help="Show every registered project")
 @click.option("--json", "json_format", is_flag=True, help="Output as JSON")
-def linear_status(json_format: bool) -> None:
+def linear_status(project_ref: str | None, all_projects: bool, json_format: bool) -> None:
     """Show Linear integration status."""
     try:
-        task_manager, mcp_manager, project_manager, project_id = get_linear_deps()
-
-        # Get project info
-        project = project_manager.get(project_id)
-        linear_team_id = _optional_str(project.linear_team_id) if project else None
-        linear_project_id = _optional_str(project.linear_project_id) if project else None
-
-        # Check Linear MCP availability
-        linear = LinearIntegration(mcp_manager)
-        available = linear.is_available()
-        unavailable_reason = linear.get_unavailable_reason() if not available else None
-
-        # Count linked tasks
-        row = task_manager.db.fetchone(
-            "SELECT COUNT(*) as count FROM tasks WHERE project_id = %s AND linear_issue_id IS NOT NULL",
-            (project_id,),
+        if project_ref and all_projects:
+            raise click.ClickException("Use either --project or --all, not both.")
+        task_manager, _, project_manager, default_project_id = get_linear_deps(
+            project_ref,
+            require_project=not all_projects,
         )
-        linked_count = row["count"] if row else 0
+        selected = project_manager.get(default_project_id) if default_project_id else None
+        projects = project_manager.list() if all_projects else ([selected] if selected else [])
+        status_store = ExternalIssueSyncStatusStore(task_manager.db)
+        payloads: list[dict[str, object]] = []
+        for project in projects:
+            if project is None or project.deleted_at:
+                continue
+            mcp_manager = _create_linear_mcp_manager(task_manager.db, project.id)
+            service = LinearSyncService(
+                mcp_manager=mcp_manager,
+                task_manager=task_manager,
+                project_id=project.id,
+                linear_team_id=project.linear_team_id,
+                linear_project_id=project.linear_project_id,
+                project_manager=project_manager,
+            )
+            status = status_store.get(project.id, "linear")
+            linked, pending = status_store.counts(project.id, "linear")
+            available = service.is_available()
+            payloads.append(
+                {
+                    "project_id": project.id,
+                    "project_name": project.name,
+                    "enabled": project.linear_sync_enabled,
+                    "linear_team_id": project.linear_team_id,
+                    "linear_project_id": project.linear_project_id,
+                    "ready": bool(
+                        project.linear_team_id and project.linear_project_id and available
+                    ),
+                    "unavailable_reason": (
+                        service.get_unavailable_reason() if not available else None
+                    ),
+                    "state": status.state if status else "pending",
+                    "linked_count": linked,
+                    "pending_count": pending,
+                    "last_attempt_at": status.last_attempt_at if status else None,
+                    "last_success_at": status.last_success_at if status else None,
+                    "last_statistics": status.last_statistics if status else {},
+                    "consecutive_failures": status.consecutive_failures if status else 0,
+                    "last_error": status.last_error if status else None,
+                }
+            )
 
         if json_format:
-            click.echo(
-                json_dumps(
-                    {
-                        "project_id": project_id,
-                        "linear_team_id": linear_team_id,
-                        "linear_project_id": linear_project_id,
-                        "linear_available": available,
-                        "unavailable_reason": unavailable_reason,
-                        "linked_tasks_count": linked_count,
-                    },
-                    indent=2,
-                )
-            )
+            click.echo(json_dumps(payloads if all_projects else payloads[0], indent=2, default=str))
         else:
-            click.echo("Linear Integration Status")
-            click.echo("=" * 40)
-            click.echo(f"Project ID: {project_id}")
-            click.echo(f"Linked team: {linear_team_id or '(not linked)'}")
-            click.echo(f"Linked project: {linear_project_id or '(not linked)'}")
-            click.echo(f"Linear MCP available: {'✓' if available else '✗'}")
-            if not available:
-                click.echo(f"  Reason: {unavailable_reason}")
-            click.echo(f"Linked tasks: {linked_count}")
+            for index, payload in enumerate(payloads):
+                if index:
+                    click.echo()
+                click.echo(f"Linear: {payload['project_name']} ({payload['project_id']})")
+                click.echo(f"Enabled: {'✓' if payload['enabled'] else '✗'}")
+                click.echo(f"Ready: {'✓' if payload['ready'] else '✗'}")
+                click.echo(f"State: {payload['state']}")
+                click.echo(f"Team: {payload['linear_team_id'] or '-'}")
+                click.echo(f"Linear project: {payload['linear_project_id'] or '-'}")
+                click.echo(
+                    f"Linked: {payload['linked_count']}  Pending: {payload['pending_count']}"
+                )
+                if payload["last_error"]:
+                    click.echo(f"Error: {payload['last_error']}")
 
     except click.ClickException:
         raise
@@ -369,29 +353,23 @@ def linear_unlink() -> None:
 
 
 @linear.command("setup")
+@click.option("--project", "project_ref", help="Gobby project name or UUID")
 @click.option("--bootstrap", is_flag=True, help="Create or reuse a Linear project by name")
 @click.option("--team-id", help="Linear team ID")
 @click.option("--project-id", "linear_project_id", help="Existing Linear project ID")
 @click.option("--project-name", help="Linear project name to create or reuse")
-@click.option("--import", "import_issues", is_flag=True, help="Import Linear project issues")
-@click.option("--create-missing", is_flag=True, help="Create Linear issues for unlinked tasks")
-@click.option("--auto-sync", is_flag=True, help="Enable periodic Linear sync")
-@click.option("--interval", default=300, show_default=True, help="Auto-sync interval in seconds")
 @click.option("--json", "json_format", is_flag=True, help="Output as JSON")
 def linear_setup(
+    project_ref: str | None,
     bootstrap: bool,
     team_id: str | None,
     linear_project_id: str | None,
     project_name: str | None,
-    import_issues: bool,
-    create_missing: bool,
-    auto_sync: bool,
-    interval: int,
     json_format: bool,
 ) -> None:
-    """Set up this Gobby project for project-scoped Linear sync."""
+    """Configure and enable project-scoped Linear synchronization."""
     try:
-        task_manager, mcp_manager, project_manager, project_id = get_linear_deps()
+        task_manager, mcp_manager, project_manager, project_id = get_linear_deps(project_ref)
         result = asyncio.run(
             _run_linear_setup(
                 task_manager=task_manager,
@@ -402,16 +380,8 @@ def linear_setup(
                 team_id=team_id,
                 linear_project_id=linear_project_id,
                 project_name=project_name,
-                import_issues=import_issues,
-                create_missing=create_missing,
             )
         )
-
-        auto_sync_job_id = None
-        if auto_sync:
-            auto_sync_job_id = _enable_linear_auto_sync(task_manager, project_id, interval)
-            result["auto_sync_job_id"] = auto_sync_job_id
-            result["auto_sync_interval"] = interval
 
         if json_format:
             click.echo(json_dumps(result, indent=2, default=str))
@@ -420,10 +390,7 @@ def linear_setup(
         click.echo("✓ Linear setup complete")
         click.echo(f"  Team: {result['linear_team_id']}")
         click.echo(f"  Project: {result['linear_project_name']} ({result['linear_project_id']})")
-        click.echo(f"  Imported issues: {result['imported_count']}")
-        click.echo(f"  Created missing issues: {result['created_missing_count']}")
-        if auto_sync_job_id:
-            click.echo(f"  Auto-sync: enabled every {interval}s ({auto_sync_job_id})")
+        click.echo("  Daemon sync: enabled")
 
     except click.ClickException:
         raise
@@ -591,50 +558,6 @@ def linear_sync_all(team_id: str | None, json_format: bool, forward: bool) -> No
                 f"{push['skipped']} skipped, "
                 f"{push['errors']} errors"
             )
-
-    except click.ClickException:
-        raise
-    except Exception as e:
-        raise click.ClickException(str(e)) from None
-
-
-@linear.command("auto-sync")
-@click.option("--interval", default=300, show_default=True, help="Sync interval in seconds")
-@click.option("--disable", is_flag=True, help="Disable the existing auto-sync job")
-def linear_auto_sync(interval: int, disable: bool) -> None:
-    """Create or manage a cron job for periodic Linear sync.
-
-    Creates an interval-based project cron job that triggers bidirectional sync
-    on the given interval. Use --disable to turn it off.
-    """
-    try:
-        task_manager, _, project_manager, project_id = get_linear_deps()
-        project = project_manager.get(project_id)
-        if not project or not _optional_str(project.linear_team_id):
-            raise click.ClickException(
-                "Project is not linked to Linear. Run 'gobby linear setup --bootstrap' first."
-            )
-
-        from gobby.storage.cron import CronJobStorage
-
-        cron_storage = CronJobStorage(task_manager.db)
-
-        job_name = _linear_sync_job_name(project_id)
-        existing = cron_storage.get_job_by_name(job_name)
-
-        if disable:
-            if not existing:
-                raise click.ClickException("No auto-sync job found to disable.")
-            cron_storage.update_job(existing.id, enabled=False)
-            click.echo("✓ Disabled Linear auto-sync job")
-            return
-
-        if existing:
-            _enable_linear_auto_sync(task_manager, project_id, interval)
-            click.echo(f"✓ Updated Linear auto-sync job: interval={interval}s (id={existing.id})")
-        else:
-            job_id = _enable_linear_auto_sync(task_manager, project_id, interval)
-            click.echo(f"✓ Created Linear auto-sync job: interval={interval}s (id={job_id})")
 
     except click.ClickException:
         raise

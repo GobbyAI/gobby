@@ -1555,6 +1555,18 @@ class TestLinearSyncServiceCreate:
         assert "linear_issue_id IS NULL" in sql
         assert "closed_at IS NULL" in sql
 
+    async def test_create_missing_issues_applies_ordered_batch_limit(
+        self, sync_service, mock_task_manager
+    ):
+        mock_task_manager.db.fetchall.return_value = []
+
+        await sync_service.create_missing_issues(limit=25)
+
+        sql, params = mock_task_manager.db.fetchall.call_args.args
+        assert "ORDER BY seq_num NULLS LAST, created_at, id" in sql
+        assert sql.endswith("LIMIT %s")
+        assert params == (sync_service.project_id, 25)
+
     @pytest.mark.asyncio
     async def test_sync_active_forward_creates_missing_and_pushes_active(
         self, sync_service, mock_task_manager

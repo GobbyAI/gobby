@@ -37,7 +37,8 @@ class GitHubTriageConfig:
     """Per-project GitHub issue triage configuration."""
 
     project_id: str
-    enabled: bool = False
+    sync_enabled: bool = False
+    triage_enabled: bool = False
     webhook_enabled: bool = False
     repositories: tuple[str, ...] = ()
     reconcile_interval_seconds: int = 3600
@@ -50,7 +51,8 @@ class GitHubTriageConfig:
         repositories = json.loads(row["repositories_json"] or "[]")
         return cls(
             project_id=row["project_id"],
-            enabled=bool(row["enabled"]),
+            sync_enabled=bool(row["sync_enabled"]),
+            triage_enabled=bool(row["triage_enabled"]),
             webhook_enabled=bool(row["webhook_enabled"]),
             repositories=tuple(str(repo) for repo in repositories),
             reconcile_interval_seconds=int(row["reconcile_interval_seconds"]),
@@ -72,7 +74,8 @@ class GitHubTriageConfig:
     def to_dict(self) -> dict[str, Any]:
         return {
             "project_id": self.project_id,
-            "enabled": self.enabled,
+            "sync_enabled": self.sync_enabled,
+            "triage_enabled": self.triage_enabled,
             "webhook_enabled": self.webhook_enabled,
             "repositories": list(self.repositories),
             "reconcile_interval_seconds": self.reconcile_interval_seconds,
@@ -208,7 +211,8 @@ class GitHubTriageStore:
             if not config.repositories and fallback_repo:
                 return GitHubTriageConfig(
                     project_id=config.project_id,
-                    enabled=config.enabled,
+                    sync_enabled=config.sync_enabled,
+                    triage_enabled=config.triage_enabled,
                     webhook_enabled=config.webhook_enabled,
                     repositories=(fallback_repo,),
                     reconcile_interval_seconds=config.reconcile_interval_seconds,
@@ -230,12 +234,13 @@ class GitHubTriageStore:
             conn.execute(
                 """
                 INSERT INTO project_github_triage_configs (
-                    project_id, enabled, webhook_enabled, repositories_json,
+                    project_id, sync_enabled, triage_enabled, webhook_enabled, repositories_json,
                     reconcile_interval_seconds, webhook_secret_ref, created_at, updated_at
                 )
-                VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
+                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)
                 ON CONFLICT(project_id) DO UPDATE SET
-                    enabled = excluded.enabled,
+                    sync_enabled = excluded.sync_enabled,
+                    triage_enabled = excluded.triage_enabled,
                     webhook_enabled = excluded.webhook_enabled,
                     repositories_json = excluded.repositories_json,
                     reconcile_interval_seconds = excluded.reconcile_interval_seconds,
@@ -244,7 +249,8 @@ class GitHubTriageStore:
                 """,
                 (
                     config.project_id,
-                    bool(config.enabled),
+                    bool(config.sync_enabled),
+                    bool(config.triage_enabled),
                     bool(config.webhook_enabled),
                     _json_dumps(list(config.repositories)),
                     config.reconcile_interval_seconds,

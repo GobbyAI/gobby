@@ -112,6 +112,7 @@ class Project:
     linear_team_id: str | None = None  # Linear team ID for project sync
     linear_project_id: str | None = None  # Linear project ID for scoped sync
     linear_synced_at: datetime | None = None  # Last bidirectional Linear sync timestamp
+    linear_sync_enabled: bool = False  # Daemon-managed Linear reconciliation
     deleted_at: datetime | None = None
 
     @classmethod
@@ -129,6 +130,9 @@ class Project:
             linear_team_id=row["linear_team_id"] if "linear_team_id" in keys else None,
             linear_project_id=row["linear_project_id"] if "linear_project_id" in keys else None,
             linear_synced_at=row["linear_synced_at"] if "linear_synced_at" in keys else None,
+            linear_sync_enabled=(
+                bool(row["linear_sync_enabled"]) if "linear_sync_enabled" in keys else False
+            ),
             deleted_at=row["deleted_at"] if "deleted_at" in keys else None,
         )
 
@@ -143,6 +147,7 @@ class Project:
             "linear_team_id": self.linear_team_id,
             "linear_project_id": self.linear_project_id,
             "linear_synced_at": self.linear_synced_at,
+            "linear_sync_enabled": self.linear_sync_enabled,
             "created_at": self.created_at,
             "updated_at": self.updated_at,
         }
@@ -339,6 +344,7 @@ class LocalProjectManager:
             "linear_team_id",
             "linear_project_id",
             "linear_synced_at",
+            "linear_sync_enabled",
         }
         fields = {k: v for k, v in fields.items() if k in allowed}
         if not fields:

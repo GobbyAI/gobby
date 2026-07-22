@@ -384,6 +384,10 @@ async def _cancel_periodic_tasks(runner: GobbyRunner) -> None:
     if sync_worker_shutdown is not None:
         sync_worker_shutdown.set()
 
+    external_issue_sync_shutdown = getattr(runner, "_external_issue_sync_shutdown", None)
+    if external_issue_sync_shutdown is not None:
+        external_issue_sync_shutdown.set()
+
     cancellations = [(attr, _cancel_runner_task(runner, attr)) for attr in periodic_task_attrs]
     cancellations.extend(
         (
@@ -391,6 +395,10 @@ async def _cancel_periodic_tasks(runner: GobbyRunner) -> None:
             (
                 "_sync_worker_task",
                 _cancel_runner_task(runner, "_sync_worker_task", timeout=5.0),
+            ),
+            (
+                "_external_issue_sync_task",
+                _cancel_runner_task(runner, "_external_issue_sync_task", timeout=10.0),
             ),
         )
     )

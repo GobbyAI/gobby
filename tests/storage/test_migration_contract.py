@@ -254,6 +254,7 @@ def test_postgres_migrations_limited_to_known_post_baseline() -> None:
         "328_memory_global_visibility.sql",
         "329_memory_type_enum.sql",
         "330_rename_epic_qa.sql",
+        "331_external_issue_sync_coordinator.sql",
     ]
 
 
@@ -368,7 +369,22 @@ def test_postgres_baseline_version_is_flattened_to_305() -> None:
     # The 0.5.0 pre-release flatten folded 295-305 into the baseline. Hubs below
     # 305 take the corrupt_partial backup/recreate path; later migrations replay.
     assert module.BASELINE_VERSION == 305
-    assert module.latest_known_version() == 330
+    assert module.latest_known_version() == 331
+
+
+def test_external_issue_sync_migration_preserves_legacy_enablement() -> None:
+    sql = (
+        SRC_ROOT / "storage" / "migrations" / "331_external_issue_sync_coordinator.sql"
+    ).read_text()
+
+    assert "ADD COLUMN IF NOT EXISTS linear_sync_enabled BOOLEAN NOT NULL DEFAULT FALSE" in sql
+    assert "gobby:linear-sync:" in sql
+    assert "SET enabled = FALSE" in sql
+    assert "ADD COLUMN IF NOT EXISTS sync_enabled BOOLEAN NOT NULL DEFAULT FALSE" in sql
+    assert "ADD COLUMN IF NOT EXISTS triage_enabled BOOLEAN NOT NULL DEFAULT FALSE" in sql
+    assert "sync_enabled = enabled" in sql
+    assert "triage_enabled = enabled" in sql
+    assert "CREATE TABLE IF NOT EXISTS external_issue_sync_status" in sql
 
 
 def test_failure_category_taxonomy_is_closed_in_baseline_and_migration() -> None:

@@ -152,7 +152,10 @@ def test_start_periodic_tasks_registers_resource_monitor() -> None:
         metrics_manager=object(),
         metrics_event_store=object(),
         database=object(),
+        mcp_proxy=object(),
+        task_manager=object(),
         memory_manager=None,
+        secret_store=None,
         http_server=SimpleNamespace(app=object()),
         pipeline_execution_manager=None,
         degraded_services=set(),
@@ -185,6 +188,8 @@ def test_start_periodic_tasks_registers_resource_monitor() -> None:
         start_periodic_tasks(runner, tracker=None, resource_monitor_loop=resource_monitor_loop)
 
     assert runner._resource_monitor_task is not None
+    assert runner._external_issue_sync_task is not None
+    assert runner.external_issue_sync_coordinator is not None
     assert monitor_args[0][0] is logging_config
     set_runtime_output_over_limit = monitor_args[0][2]
     set_runtime_output_over_limit(True)
