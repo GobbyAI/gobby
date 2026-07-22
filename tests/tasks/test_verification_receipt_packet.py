@@ -113,18 +113,49 @@ def test_detailed_receipt_preserves_full_command_for_semantic_verification() -> 
 
 
 @pytest.mark.parametrize("outcome", ["failure", "conflicting", "unknown"])
-def test_packet_refuses_when_high_risk_floor_exceeds_budget(
+def test_large_high_risk_history_is_aggregated_without_hiding_outcomes(
     outcome: VerificationOutcome,
 ) -> None:
     receipts = [_receipt(index, outcome=outcome, command_chars=4_000) for index in range(400)]
 
     packet = build_verification_receipt_packet(receipts)
 
+    assert packet.error is None
+    assert packet.text is not None
+    assert len(packet.text) <= 32_000
+    assert packet.disclosure.total == 400
+    assert packet.disclosure.catalogued == 1
+    assert packet.disclosure.aggregated == 399
+    assert packet.disclosure.per_outcome == {outcome: 400}
+    payload = _payload(packet.text)
+    catalog = payload["receipt_catalog"]
+    assert len(catalog) == 1
+    assert catalog[0]["receipt_id"] == "receipt-0399"
+    assert catalog[0]["outcome"] == outcome
+    assert catalog[0]["exit_code"] == (1 if outcome == "failure" else None)
+    assert len(catalog[0]["command"]) == 48
+    assert catalog[0]["command"].endswith(" 399")
+    assert catalog[0]["completed_at"] == receipts[-1].completed_at.isoformat()
+    assert payload["aggregated_tail"][0]["outcomes"] == {outcome: 399}
+
+
+def test_latest_success_is_detailed_before_historical_failures() -> None:
+    receipts = [_receipt(index, outcome="failure") for index in range(30)]
+    receipts.append(_receipt(30))
+
+    packet = build_verification_receipt_packet(receipts)
+
+    assert packet.text is not None
+    details = _payload(packet.text)["detailed_receipts"]
+    assert details[0]["receipt_id"] == "receipt-0030"
+    assert details[0]["outcome"] == "success"
+
+
+def test_packet_refuses_when_minimal_disclosure_exceeds_budget() -> None:
+    packet = build_verification_receipt_packet([_receipt(1)], budget_chars=1)
+
     assert packet.text is None
     assert packet.error == "evidence_budget_exceeded"
-    assert packet.disclosure.total == 400
-    assert packet.disclosure.catalogued == 400
-    assert packet.disclosure.aggregated == 0
 
 
 def test_empty_packet_reports_zero_completeness() -> None:

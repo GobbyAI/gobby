@@ -43,9 +43,9 @@ def _priority(
 ) -> tuple[int, int, float, str]:
     if receipt.id in explicit_ids:
         group = 0
-    elif receipt.normalized_outcome in {"failure", "conflicting"}:
-        group = 1
     elif receipt.normalized_outcome == "success":
+        group = 1
+    elif receipt.normalized_outcome in {"failure", "conflicting"}:
         group = 2
     elif receipt.normalized_outcome == "unknown":
         group = 3
@@ -165,16 +165,20 @@ def build_verification_receipt_packet(
     unassigned_count: int = 0,
     budget_chars: int = VERIFICATION_RECEIPT_PACKET_BUDGET_CHARS,
 ) -> VerificationReceiptPacket:
-    """Build a bounded packet or refuse only when high-risk rows exceed the floor."""
+    """Build a bounded packet or refuse only when its minimal disclosure cannot fit."""
     if budget_chars <= 0:
         raise ValueError("budget_chars must be positive")
     projection = project_verification_outcomes(receipts)
     explicit_ids = frozenset(explicit_receipt_ids)
     ordered = sorted(projection.receipts, key=lambda receipt: _priority(receipt, explicit_ids))
     per_outcome = projection.per_outcome
-    mandatory = [
-        receipt for receipt in ordered if receipt.normalized_outcome in _HIGH_RISK_OUTCOMES
-    ]
+    mandatory: list[VerificationReceipt] = []
+    represented_high_risk: set[str] = set()
+    for receipt in ordered:
+        outcome = receipt.normalized_outcome
+        if outcome in _HIGH_RISK_OUTCOMES and outcome not in represented_high_risk:
+            mandatory.append(receipt)
+            represented_high_risk.add(outcome)
     mandatory_ids = {receipt.id for receipt in mandatory}
     catalog_receipts = list(mandatory)
     catalog = [_catalog(receipt, command_chars=48) for receipt in catalog_receipts]
@@ -213,7 +217,7 @@ def build_verification_receipt_packet(
         if len(candidate_text) <= budget_chars:
             details = candidate_details
 
-    for receipt in list(tail):
+    for receipt in [item for item in tail if item.normalized_outcome not in _HIGH_RISK_OUTCOMES]:
         candidate_receipts = [*catalog_receipts, receipt]
         candidate_ids = {item.id for item in candidate_receipts}
         candidate_tail = [item for item in ordered if item.id not in candidate_ids]
