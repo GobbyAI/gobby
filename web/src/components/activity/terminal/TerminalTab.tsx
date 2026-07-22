@@ -1,0 +1,459 @@
+import {
+  type ReactNode,
+  useCallback,
+  useEffect,
+  useLayoutEffect,
+  useMemo,
+  useRef,
+  useState,
+} from "react";
+
+import { useTmuxSessions } from "../../../hooks/useTmuxSessions";
+import type { GobbySession } from "../../../types/sessions";
+import { TerminalKeysBar } from "./TerminalKeysBar";
+import { TerminalSessionPicker } from "./TerminalSessionPicker";
+import {
+  findByGobbySessionId,
+  joinTmuxSessions,
+  sessionKey,
+} from "./terminalSessions";
+import { TerminalView, type TerminalViewHandle } from "./TerminalView";
+
+export interface TerminalTabProps {
+  sessions?: GobbySession[];
+  focusSessionId?: string | null;
+  onFocusHandled?: () => void;
+}
+
+interface StatePanelProps {
+  title: string;
+  body: string;
+  action?: ReactNode;
+  busy?: boolean;
+}
+
+interface TerminalContext {
+  connected: boolean;
+  streamingId: string | null;
+}
+
+function StatePanel({ title, body, action, busy = false }: StatePanelProps) {
+  return (
+    <div className="grid h-full min-h-44 place-items-center p-4">
+      <div className="flex max-w-sm flex-col items-center gap-3 text-center">
+        {busy ? (
+          <span
+            className="size-4 animate-spin rounded-full border-2 border-muted-foreground/30 border-t-accent"
+            aria-hidden="true"
+          />
+        ) : null}
+        <div className="space-y-1">
+          <p className="text-sm font-semibold text-foreground">{title}</p>
+          <p className="text-xs leading-relaxed text-muted-foreground">{body}</p>
+        </div>
+        {action}
+      </div>
+    </div>
+  );
+}
+
+function targetKey(target: { name: string; socket: string } | null): string | null {
+  return target ? `${target.socket}:${target.name}` : null;
+}
+
+export function TerminalTab({
+  sessions,
+  focusSessionId = null,
+  onFocusHandled,
+}: TerminalTabProps) {
+  const {
+    sessions: tmuxSessions,
+    connected,
+    sessionsLoaded,
+    attachedTarget,
+    streamingId,
+    sessionEnded: hookSessionEnded,
+    requestPending,
+    attachError,
+    attachSession,
+    detachSession,
+    clearAttachError,
+    refreshTerminal,
+    createSession,
+    dismissEndedSession,
+    sendInput,
+    resizeTerminal,
+    onOutput,
+  } = useTmuxSessions();
+  const [selectedKey, setSelectedKey] = useState<string | null>(null);
+  const [composerContext, setComposerContext] = useState<TerminalContext | null>(null);
+  const [endedKey, setEndedKey] = useState<string | null>(null);
+  const [readyContext, setReadyContext] = useState<TerminalContext | null>(null);
+  const [focusNotice, setFocusNotice] = useState<string | null>(null);
+  const viewRef = useRef<TerminalViewHandle>(null);
+  const streamingIdRef = useRef<string | null>(streamingId);
+  const lastAttachedKeyRef = useRef<string | null>(null);
+  const consumedFocusIdRef = useRef<string | null>(null);
+
+  const joinedSessions = useMemo(
+    () => joinTmuxSessions(tmuxSessions, sessions),
+    [sessions, tmuxSessions],
+  );
+  const selected =
+    joinedSessions.find((session) => sessionKey(session.tmux) === selectedKey) ?? null;
+  const attachedKey = targetKey(attachedTarget);
+  const terminalContext = useMemo<TerminalContext>(
+    () => ({ connected, streamingId }),
+    [connected, streamingId],
+  );
+  const controlMode = composerContext === terminalContext;
+
+  useLayoutEffect(() => {
+    streamingIdRef.current = streamingId;
+  }, [streamingId]);
+
+  useEffect(() => {
+    onOutput((runId, data) => {
+      if (runId === streamingIdRef.current) viewRef.current?.write(data);
+    });
+    return () => onOutput(() => undefined);
+  }, [onOutput]);
+
+  useEffect(() => () => detachSession(), [detachSession]);
+
+  useEffect(() => {
+    if (streamingId !== null && attachedKey !== null) {
+      lastAttachedKeyRef.current = attachedKey;
+    }
+  }, [attachedKey, streamingId]);
+
+  const chooseSession = useCallback(
+    (nextKey: string) => {
+      if (nextKey === selectedKey) return;
+      lastAttachedKeyRef.current = null;
+      setEndedKey(null);
+      setReadyContext(null);
+      setComposerContext(null);
+      setSelectedKey(nextKey);
+      clearAttachError();
+      dismissEndedSession();
+    },
+    [clearAttachError, dismissEndedSession, selectedKey],
+  );
+
+  useEffect(() => {
+    if (focusSessionId === null) {
+      consumedFocusIdRef.current = null;
+      return;
+    }
+    if (!sessionsLoaded || consumedFocusIdRef.current === focusSessionId) return;
+
+    const timer = window.setTimeout(() => {
+      if (consumedFocusIdRef.current === focusSessionId) return;
+      consumedFocusIdRef.current = focusSessionId;
+      const focused = findByGobbySessionId(joinedSessions, focusSessionId);
+      if (focused) {
+        chooseSession(sessionKey(focused.tmux));
+        setFocusNotice(null);
+      } else {
+        setFocusNotice("No live terminal for this session");
+        const fallback = joinedSessions.find((session) => !session.dead) ?? joinedSessions[0];
+        if (fallback) chooseSession(sessionKey(fallback.tmux));
+      }
+      onFocusHandled?.();
+    }, 0);
+    return () => window.clearTimeout(timer);
+  }, [
+    chooseSession,
+    focusSessionId,
+    joinedSessions,
+    onFocusHandled,
+    sessionsLoaded,
+  ]);
+
+  useEffect(() => {
+    if (focusNotice === null) return;
+    const timer = window.setTimeout(() => setFocusNotice(null), 3000);
+    return () => window.clearTimeout(timer);
+  }, [focusNotice]);
+
+  useEffect(() => {
+    if (!sessionsLoaded || endedKey !== null) return;
+    const availableKeys = new Set(joinedSessions.map((session) => sessionKey(session.tmux)));
+    const lastAttachedKey = lastAttachedKeyRef.current;
+    const vanishedKey =
+      lastAttachedKey !== null && !availableKeys.has(lastAttachedKey)
+        ? lastAttachedKey
+        : selectedKey !== null && !availableKeys.has(selectedKey)
+          ? selectedKey
+          : null;
+    if (hookSessionEnded || vanishedKey !== null) {
+      const timer = window.setTimeout(() => {
+        setEndedKey(vanishedKey ?? lastAttachedKey ?? selectedKey ?? "ended");
+        setComposerContext(null);
+      }, 0);
+      return () => window.clearTimeout(timer);
+    }
+  }, [endedKey, hookSessionEnded, joinedSessions, selectedKey, sessionsLoaded]);
+
+  useEffect(() => {
+    if (
+      !sessionsLoaded ||
+      endedKey !== null ||
+      selectedKey !== null ||
+      joinedSessions.length === 0 ||
+      focusSessionId !== null
+    ) {
+      return;
+    }
+    const fallback = joinedSessions.find((session) => !session.dead) ?? joinedSessions[0];
+    const timer = window.setTimeout(() => setSelectedKey(sessionKey(fallback.tmux)), 0);
+    return () => window.clearTimeout(timer);
+  }, [endedKey, focusSessionId, joinedSessions, selectedKey, sessionsLoaded]);
+
+  useEffect(() => {
+    if (
+      !connected ||
+      !sessionsLoaded ||
+      requestPending ||
+      attachError !== null ||
+      endedKey !== null ||
+      selected === null ||
+      sessionKey(selected.tmux) !== selectedKey ||
+      attachedKey === selectedKey
+    ) {
+      return;
+    }
+    const availableKeys = new Set(joinedSessions.map((session) => sessionKey(session.tmux)));
+    const lastAttachedKey = lastAttachedKeyRef.current;
+    if (
+      (lastAttachedKey !== null && !availableKeys.has(lastAttachedKey)) ||
+      !availableKeys.has(selectedKey)
+    ) {
+      return;
+    }
+    if (streamingId !== null) {
+      detachSession();
+    } else {
+      attachSession(selected.tmux.name, selected.tmux.socket);
+    }
+  }, [
+    attachError,
+    attachSession,
+    attachedKey,
+    connected,
+    detachSession,
+    endedKey,
+    joinedSessions,
+    requestPending,
+    selected,
+    selectedKey,
+    sessionsLoaded,
+    streamingId,
+  ]);
+
+  const handleViewReady = useCallback(
+    (rows: number, cols: number) => {
+      const activeStreamingId = streamingIdRef.current;
+      if (
+        activeStreamingId === null ||
+        selected === null ||
+        attachedKey !== selectedKey
+      ) {
+        return;
+      }
+      const reportedSize = rows > 0 && cols > 0 ? { rows, cols } : viewRef.current?.getSize();
+      if (reportedSize) {
+        resizeTerminal(reportedSize.rows, reportedSize.cols);
+      } else {
+        refreshTerminal(selected.tmux.name, selected.tmux.socket);
+      }
+      setReadyContext(terminalContext);
+    },
+    [
+      attachedKey,
+      refreshTerminal,
+      resizeTerminal,
+      selected,
+      selectedKey,
+      terminalContext,
+    ],
+  );
+
+  const dismissVanishedSession = useCallback(() => {
+    lastAttachedKeyRef.current = null;
+    setSelectedKey(null);
+    setEndedKey(null);
+    setReadyContext(null);
+    setComposerContext(null);
+    clearAttachError();
+    dismissEndedSession();
+  }, [clearAttachError, dismissEndedSession]);
+
+  const isAttaching =
+    selected !== null &&
+    attachError === null &&
+    endedKey === null &&
+    (streamingId === null ||
+      attachedKey !== selectedKey ||
+      readyContext !== terminalContext);
+  const composerDisabled = selected?.dead ?? false;
+
+  if (!sessionsLoaded && selectedKey === null) {
+    return (
+      <StatePanel
+        title="Loading terminal sessions…"
+        body="Waiting for the daemon’s first tmux session list."
+        busy
+      />
+    );
+  }
+
+  if (endedKey !== null) {
+    return (
+      <StatePanel
+        title="Terminal session ended"
+        body="The selected socket and tmux session disappeared. Dismiss this notice to choose another live session."
+        action={
+          <button
+            className="min-h-9 rounded-md border border-border bg-[var(--bg-secondary)] px-3 text-xs font-medium text-foreground transition-colors hover:bg-muted focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent pointer-coarse:min-h-11"
+            type="button"
+            onClick={dismissVanishedSession}
+          >
+            Dismiss ended session
+          </button>
+        }
+      />
+    );
+  }
+
+  if (sessionsLoaded && joinedSessions.length === 0) {
+    return (
+      <StatePanel
+        title="No terminal sessions"
+        body="Create one to start a live, read-only terminal view. Input stays behind the explicit composer."
+        action={
+          <button
+            className="min-h-9 rounded-md bg-accent px-3 text-xs font-semibold text-accent-foreground transition-colors hover:bg-accent-hover focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent pointer-coarse:min-h-11"
+            type="button"
+            onClick={() => createSession()}
+          >
+            Create terminal session
+          </button>
+        }
+      />
+    );
+  }
+
+  return (
+    <div className="relative flex h-full min-h-0 flex-col gap-3">
+      {focusNotice ? (
+        <div
+          className="absolute end-3 top-12 z-30 rounded-md border border-warning/40 bg-[var(--bg-secondary)] px-3 py-2 text-xs text-warning shadow-sm"
+          role="status"
+        >
+          {focusNotice}
+        </div>
+      ) : null}
+
+      <div className="flex min-w-0 flex-col gap-2 sm:flex-row sm:items-center">
+        <div className="min-w-0 flex-1">
+          <TerminalSessionPicker
+            sessions={joinedSessions}
+            value={selectedKey}
+            onChange={chooseSession}
+          />
+        </div>
+        <div className="flex shrink-0 items-center gap-2">
+          <span
+            className="inline-flex min-h-8 items-center rounded-md border border-border bg-[var(--bg-secondary)] px-2.5 text-xs font-medium text-muted-foreground"
+            aria-live="polite"
+          >
+            {controlMode ? "Composer open" : "Viewing"}
+          </span>
+          <button
+            className="min-h-8 rounded-md border border-border bg-[var(--bg-secondary)] px-2.5 text-xs font-medium text-foreground transition-colors hover:bg-muted focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent disabled:cursor-not-allowed disabled:opacity-45 pointer-coarse:min-h-11"
+            type="button"
+            aria-label={controlMode ? "Close terminal composer" : "Open terminal composer"}
+            title={
+              composerDisabled
+                ? "This pane has exited. Terminal input is unavailable."
+                : undefined
+            }
+            disabled={composerDisabled}
+            onClick={() =>
+              setComposerContext((context) =>
+                context === terminalContext ? null : terminalContext,
+              )
+            }
+          >
+            {controlMode ? "Close composer" : "Compose"}
+          </button>
+        </div>
+      </div>
+
+      <div
+        className={`relative min-h-0 flex-1 overflow-hidden rounded-lg border bg-[var(--bg-primary)] transition-colors ${
+          controlMode ? "border-accent" : "border-border"
+        }`}
+      >
+        <TerminalView
+          key={streamingId ?? "pending"}
+          ref={viewRef}
+          onReady={handleViewReady}
+          onSizeChange={resizeTerminal}
+          onProtocolResponse={sendInput}
+        />
+
+        {isAttaching ? (
+          <div className="absolute inset-0 z-10 grid place-items-center bg-[var(--bg-primary)]/88 backdrop-blur-[1px]">
+            <div className="flex items-center gap-2 text-xs font-medium text-muted-foreground">
+              <span
+                className="size-3.5 animate-spin rounded-full border-2 border-muted-foreground/30 border-t-accent"
+                aria-hidden="true"
+              />
+              Attaching terminal…
+            </div>
+          </div>
+        ) : null}
+
+        {!connected ? (
+          <div className="absolute inset-0 z-20 grid place-items-center bg-[var(--bg-primary)]/90">
+            <div className="max-w-xs space-y-1 text-center">
+              <p className="text-sm font-semibold text-foreground">Reconnecting</p>
+              <p className="text-xs text-muted-foreground">
+                Waiting for the daemon before confirming this terminal still exists.
+              </p>
+            </div>
+          </div>
+        ) : null}
+
+        {attachError ? (
+          <div className="absolute inset-0 z-30 grid place-items-center bg-[var(--bg-primary)]/92 p-4">
+            <div
+              className="flex max-w-sm flex-col items-center gap-3 rounded-lg border border-destructive/40 bg-[var(--bg-secondary)] p-4 text-center"
+              role="alert"
+            >
+              <p className="text-sm font-semibold text-foreground">
+                Couldn’t attach to this terminal. {attachError}
+              </p>
+              <button
+                className="min-h-9 rounded-md border border-border px-3 text-xs font-medium text-foreground transition-colors hover:bg-muted focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent pointer-coarse:min-h-11"
+                type="button"
+                onClick={clearAttachError}
+              >
+                Retry terminal attach
+              </button>
+            </div>
+          </div>
+        ) : null}
+      </div>
+
+      {controlMode && selected && !selected.dead ? (
+        <div className="rounded-lg border border-accent/45 bg-accent/5 p-3">
+          <TerminalKeysBar sendInput={sendInput} />
+        </div>
+      ) : null}
+    </div>
+  );
+}
