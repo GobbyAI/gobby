@@ -7,6 +7,7 @@ import pytest
 from gobby.mcp_proxy.tools.internal import InternalToolRegistry
 from gobby.mcp_proxy.tools.sessions import create_session_messages_registry
 from gobby.mcp_proxy.tools.sessions._verification import register_verification_tools
+from gobby.mcp_proxy.wait_tools import MCP_WRAPPER_WAIT_TOOL_TIMEOUT_SECONDS
 from gobby.sessions.transcript_reader import TranscriptReader
 from gobby.sessions.transcript_renderer import ContentBlock, RenderedMessage
 from gobby.sessions.transcript_window import WindowResult
@@ -714,6 +715,32 @@ async def test_wait_for_summary_times_out(mock_session_manager, full_sessions_re
         "session_id": "sess-empty",
         "timeout_seconds": 0.0,
     }
+
+
+@pytest.mark.asyncio
+async def test_wait_for_summary_clamps_timeout_to_wrapper_limit(
+    mock_session_manager, full_sessions_registry
+) -> None:
+    session = _make_mock_session("sess-empty")
+    session.summary_markdown = ""
+    mock_session_manager.resolve_session_reference.return_value = "sess-empty"
+    mock_session_manager.get.return_value = session
+    loop = MagicMock()
+    loop.time.side_effect = [0.0, MCP_WRAPPER_WAIT_TOOL_TIMEOUT_SECONDS]
+
+    with patch(
+        "gobby.mcp_proxy.tools.sessions._handoff.asyncio.get_running_loop",
+        return_value=loop,
+    ):
+        result = await full_sessions_registry.call(
+            "wait_for_summary",
+            {
+                "session_id": "sess-empty",
+                "timeout_seconds": MCP_WRAPPER_WAIT_TOOL_TIMEOUT_SECONDS + 1,
+            },
+        )
+
+    assert result["timeout_seconds"] == MCP_WRAPPER_WAIT_TOOL_TIMEOUT_SECONDS
 
 
 @pytest.mark.asyncio

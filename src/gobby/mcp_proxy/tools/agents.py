@@ -36,13 +36,11 @@ from gobby.storage.agents import AgentRunStatus, LocalAgentRunManager
 logger = logging.getLogger(__name__)
 
 _TERMINAL_AGENT_STATUSES = {"success", "error", "timeout", "cancelled"}
-_WAIT_FOR_AGENT_MAX_TIMEOUT_SECONDS = 1800.0
 
 __all__ = [
     "AgentRunStatus",
     "InternalToolRegistry",
     "LocalAgentRunManager",
-    "_WAIT_FOR_AGENT_MAX_TIMEOUT_SECONDS",
     "_TERMINAL_AGENT_STATUSES",
     "_agent_result_payload",
     "_cleanup_terminal_artifacts",

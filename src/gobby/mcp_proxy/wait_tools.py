@@ -10,16 +10,10 @@ from typing import Any
 
 from mcp.server.fastmcp import Context
 
-WAIT_TOOL_NAMES = (
-    "wait_for_task",
-    "wait_for_any_task",
-    "wait_for_all_tasks",
-    "wait_for_agent",
-    "wait_for_summary",
-)
 WAIT_TOOL_HEARTBEAT_INTERVAL_SECONDS = 15.0
 WAIT_TOOL_HTTP_TIMEOUT_BUFFER_SECONDS = 30.0
 MCP_WRAPPER_WAIT_TOOL_TIMEOUT_SECONDS = 300.0
+WAIT_TOOL_NAMES = ("wait_for_agent", "wait_for_summary")
 MCP_WRAPPER_EXTENDED_TOOL_TIMEOUT_SECONDS = 300.0
 MCP_WRAPPER_FINGERPRINT_HEADER = "X-Gobby-MCP-Wrapper-Fingerprint"
 MCP_WRAPPER_STALE_ERROR_CODE = "GOBBY_MCP_WRAPPER_STALE"
@@ -49,6 +43,29 @@ EXTENDED_TIMEOUT_TOOL_NAMES = (
     # for the authoritative run record instead of losing the result envelope.
     "spawn_agent",
 )
+
+
+def clamp_wait_tool_timeout(
+    tool_name: str,
+    timeout_seconds: float | int | str,
+    *,
+    default: float,
+) -> float:
+    """Clamp a wait tool's requested timeout to its wrapper-level ceiling."""
+    try:
+        requested_timeout = float(timeout_seconds)
+    except (TypeError, ValueError):
+        requested_timeout = default
+    return max(0.0, min(requested_timeout, wait_tool_timeout_limit(tool_name)))
+
+
+def wait_tool_timeout_limit(tool_name: str) -> float:
+    """Return the shared wrapper ceiling for a registered wait tool."""
+    if tool_name not in WAIT_TOOL_NAMES:
+        raise KeyError(tool_name)
+    return MCP_WRAPPER_WAIT_TOOL_TIMEOUT_SECONDS
+
+
 CLIENT_GUARDED_TOOL_NAMES = (*WAIT_TOOL_NAMES, *EXTENDED_TIMEOUT_TOOL_NAMES)
 HEARTBEAT_TOOL_NAMES = (*WAIT_TOOL_NAMES, *EXTENDED_TIMEOUT_TOOL_NAMES)
 MCP_WRAPPER_SOURCE_PATHS = (
@@ -165,6 +182,7 @@ def prepare_client_guard(
     final_args = arguments
 
     if tool_name in WAIT_TOOL_NAMES:
+        timeout_limit = wait_tool_timeout_limit(tool_name)
         raw_timeout = None
         timeout_key = "timeout_seconds"
         if isinstance(final_args, dict):
@@ -174,18 +192,15 @@ def prepare_client_guard(
             elif "timeout_seconds" in final_args:
                 raw_timeout = final_args["timeout_seconds"]
         if raw_timeout is None:
-            raw_timeout = 300.0
+            raw_timeout = timeout_limit
         try:
             requested_timeout = float(raw_timeout)
         except (TypeError, ValueError):
             requested_timeout = None
 
-        if (
-            requested_timeout is not None
-            and requested_timeout > MCP_WRAPPER_WAIT_TOOL_TIMEOUT_SECONDS
-        ):
+        if requested_timeout is not None and requested_timeout > timeout_limit:
             original_wait_timeout = requested_timeout
-            requested_timeout = MCP_WRAPPER_WAIT_TOOL_TIMEOUT_SECONDS
+            requested_timeout = timeout_limit
             final_args = dict(final_args) if isinstance(final_args, dict) else {}
             final_args[timeout_key] = requested_timeout
             wait_timeout_capped = True

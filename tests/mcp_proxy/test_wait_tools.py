@@ -7,9 +7,32 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from gobby.mcp_proxy.wait_tools import call_with_wait_heartbeat
+from gobby.mcp_proxy.wait_tools import (
+    MCP_WRAPPER_WAIT_TOOL_TIMEOUT_SECONDS,
+    WAIT_TOOL_NAMES,
+    call_with_wait_heartbeat,
+    clamp_wait_tool_timeout,
+    wait_tool_timeout_limit,
+)
 
 pytestmark = pytest.mark.unit
+
+
+def test_wait_tool_names_only_include_implemented_tools() -> None:
+    assert WAIT_TOOL_NAMES == ("wait_for_agent", "wait_for_summary")
+
+
+@pytest.mark.parametrize("tool_name", WAIT_TOOL_NAMES)
+def test_wait_tool_timeout_caps_match_wrapper(tool_name: str) -> None:
+    assert wait_tool_timeout_limit(tool_name) == MCP_WRAPPER_WAIT_TOOL_TIMEOUT_SECONDS
+    assert (
+        clamp_wait_tool_timeout(
+            tool_name,
+            MCP_WRAPPER_WAIT_TOOL_TIMEOUT_SECONDS + 1,
+            default=0.0,
+        )
+        == MCP_WRAPPER_WAIT_TOOL_TIMEOUT_SECONDS
+    )
 
 
 def _failing_progress_context(attempted: asyncio.Event) -> MagicMock:

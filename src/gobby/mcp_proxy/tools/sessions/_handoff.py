@@ -8,6 +8,7 @@ from __future__ import annotations
 import asyncio
 from typing import TYPE_CHECKING, Any
 
+from gobby.mcp_proxy.wait_tools import clamp_wait_tool_timeout
 from gobby.utils.injected_context import strip_injected_context
 from gobby.utils.project_context import get_project_context
 
@@ -397,10 +398,11 @@ def register_handoff_tools(
                 "error": str(e),
             }
 
-        try:
-            timeout = max(0.0, float(timeout_seconds))
-        except (TypeError, ValueError):
-            timeout = 60.0
+        timeout = clamp_wait_tool_timeout(
+            "wait_for_summary",
+            timeout_seconds,
+            default=60.0,
+        )
         try:
             poll_interval = max(0.1, float(poll_interval_seconds))
         except (TypeError, ValueError):

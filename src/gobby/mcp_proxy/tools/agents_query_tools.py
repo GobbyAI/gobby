@@ -15,6 +15,10 @@ from gobby.mcp_proxy.tools.agents_context import AgentsRegistryContext
 from gobby.mcp_proxy.tools.agents_payloads import _agent_result_payload
 from gobby.mcp_proxy.tools.agents_runtime import facade
 from gobby.mcp_proxy.tools.internal import InternalToolRegistry
+from gobby.mcp_proxy.wait_tools import (
+    MCP_WRAPPER_WAIT_TOOL_TIMEOUT_SECONDS,
+    clamp_wait_tool_timeout,
+)
 from gobby.storage.agents import AgentRunStatus
 
 
@@ -90,12 +94,14 @@ def register_agent_query_tools(
     )
     async def wait_for_agent(
         run_id: str,
-        timeout_seconds: float = 300.0,
+        timeout_seconds: float = MCP_WRAPPER_WAIT_TOOL_TIMEOUT_SECONDS,
         poll_interval_seconds: float = 2.0,
     ) -> dict[str, Any]:
         agents = facade()
-        requested_timeout = max(
-            0.0, min(float(timeout_seconds), agents._WAIT_FOR_AGENT_MAX_TIMEOUT_SECONDS)
+        requested_timeout = clamp_wait_tool_timeout(
+            "wait_for_agent",
+            timeout_seconds,
+            default=MCP_WRAPPER_WAIT_TOOL_TIMEOUT_SECONDS,
         )
         timeout = requested_timeout
         interval = max(0.1, min(float(poll_interval_seconds), 30.0))

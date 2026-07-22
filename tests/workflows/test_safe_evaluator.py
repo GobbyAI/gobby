@@ -412,22 +412,25 @@ class TestMcpResultHas:
         ctx: dict[str, Any] = {
             "variables": {
                 "mcp_results": {
-                    "gobby-tasks": {"wait_for_task": {"timed_out": True, "result": "ok"}}
+                    "gobby-sessions": {"wait_for_summary": {"completed": True, "result": "ok"}}
                 }
             }
         }
         ev = _build_evaluator(ctx)
         assert (
-            ev.evaluate("mcp_result_has('gobby-tasks', 'wait_for_task', 'timed_out', True)") is True
+            ev.evaluate("mcp_result_has('gobby-sessions', 'wait_for_summary', 'completed', True)")
+            is True
         )
 
     def test_returns_false_when_field_doesnt_match(self) -> None:
         ctx: dict[str, Any] = {
-            "variables": {"mcp_results": {"gobby-tasks": {"wait_for_task": {"timed_out": False}}}}
+            "variables": {
+                "mcp_results": {"gobby-sessions": {"wait_for_summary": {"completed": False}}}
+            }
         }
         ev = _build_evaluator(ctx)
         assert (
-            ev.evaluate("mcp_result_has('gobby-tasks', 'wait_for_task', 'timed_out', True)")
+            ev.evaluate("mcp_result_has('gobby-sessions', 'wait_for_summary', 'completed', True)")
             is False
         )
 
@@ -435,7 +438,7 @@ class TestMcpResultHas:
         ctx: dict[str, Any] = {"variables": {}}
         ev = _build_evaluator(ctx)
         assert (
-            ev.evaluate("mcp_result_has('gobby-tasks', 'wait_for_task', 'timed_out', True)")
+            ev.evaluate("mcp_result_has('gobby-sessions', 'wait_for_summary', 'completed', True)")
             is False
         )
 
