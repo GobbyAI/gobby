@@ -960,13 +960,18 @@ class TestSingletons:
         """Reset module-level singletons before and after each test."""
         import gobby.agents.tmux as mod
 
+        original_config = mod._configured_tmux_config
+        original_session_manager = mod._session_manager
+        original_output_reader = mod._output_reader
         mod._configured_tmux_config = None
         mod._session_manager = None
         mod._output_reader = None
-        yield
-        mod._configured_tmux_config = None
-        mod._session_manager = None
-        mod._output_reader = None
+        try:
+            yield
+        finally:
+            mod._configured_tmux_config = original_config
+            mod._session_manager = original_session_manager
+            mod._output_reader = original_output_reader
 
     def test_get_tmux_session_manager_returns_same(self) -> None:
         import gobby.agents.tmux as mod
