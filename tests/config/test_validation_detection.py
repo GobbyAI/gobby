@@ -28,6 +28,7 @@ pytestmark = pytest.mark.unit
         ("python -m coverage run -m pytest tests/foo.py", "python-tests"),
         ("python -m flake8 src tests", "python-lint-type-format"),
         ("npm run test -- --watch=false", "js-ts-tests"),
+        ("npx playwright test tests/terminal-colors.spec.ts --workers=1", "js-ts-tests"),
         ("deno lint", "js-ts-lint-type-format"),
         ("pnpm run lint", "js-ts-lint-type-format"),
         ("cargo check --no-default-features", "rust-validation"),

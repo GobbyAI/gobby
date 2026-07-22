@@ -277,6 +277,7 @@ def builtin_validation_matchers() -> list[ValidationCommandMatcher]:
             [
                 "vitest",
                 "jest",
+                "playwright test",
                 "npm test",
                 "npm run test",
                 "pnpm test",
