@@ -8,11 +8,31 @@ from typing import Any, Literal
 
 from gobby.utils.datetime import normalize_datetime_model
 
-# Planner prompt content budget per candidate; keep prompts bounded and deterministic.
-CONTENT_TRUNCATE_LIMIT = 1600
-CONTENT_TRUNCATION_MARKER = "\n... [truncated]"
-
 DreamActionName = Literal["keep", "delete", "refresh", "merge", "supersede", "review", "promote"]
+
+
+@normalize_datetime_model(required=("created_at",))
+@dataclass(frozen=True)
+class RelatedMemoryEvidence:
+    """A newer memory related to a dream candidate."""
+
+    id: str
+    memory_type: str
+    created_at: datetime
+    newer_by_days: float
+    content: str
+    matched_via: str
+
+    def to_prompt_dict(self) -> dict[str, Any]:
+        """Return full JSON-safe evidence for the planner prompt."""
+        return {
+            "id": self.id,
+            "memory_type": self.memory_type,
+            "created_at": self.created_at,
+            "newer_by_days": self.newer_by_days,
+            "content": self.content,
+            "matched_via": self.matched_via,
+        }
 
 
 @normalize_datetime_model(
@@ -40,12 +60,13 @@ class DreamCandidate:
     updated_at: datetime
     last_accessed_at: datetime | None
     reasons: list[str] = field(default_factory=list)
+    related: tuple[RelatedMemoryEvidence, ...] = ()
 
     def to_prompt_dict(self) -> dict[str, Any]:
         """Return compact JSON-safe context for the planner prompt."""
-        return {
+        prompt: dict[str, Any] = {
             "id": self.id,
-            "content": _truncate_content(self.content),
+            "content": self.content,
             "memory_type": self.memory_type,
             "project_id": self.project_id,
             "source_type": self.source_type,
@@ -58,6 +79,9 @@ class DreamCandidate:
             "last_accessed_at": self.last_accessed_at,
             "reasons": self.reasons,
         }
+        if self.related:
+            prompt["related_newer_memories"] = [item.to_prompt_dict() for item in self.related]
+        return prompt
 
 
 @dataclass(frozen=True)
@@ -108,10 +132,3 @@ class DreamAction:
             "reason": self.reason,
             "confidence": self.confidence,
         }
-
-
-def _truncate_content(content: str | None) -> str | None:
-    if content is None or len(content) <= CONTENT_TRUNCATE_LIMIT:
-        return content
-    limit = CONTENT_TRUNCATE_LIMIT - len(CONTENT_TRUNCATION_MARKER)
-    return f"{content[:limit]}{CONTENT_TRUNCATION_MARKER}"

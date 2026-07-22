@@ -18,6 +18,7 @@ DEFAULT_MIN_DELETE_CONFIDENCE = 0.85
 DEFAULT_MIN_PROMOTE_CONFIDENCE = 0.85
 DEFAULT_PLANNER_BATCH_SIZE = 25
 DEFAULT_PLANNER_MAX_CONCURRENCY = 3
+DEFAULT_PLANNER_BATCH_MAX_CHARS = 100_000
 _EXPECTED_PLANNER_ERRORS = (
     json.JSONDecodeError,
     ValueError,
@@ -71,7 +72,20 @@ async def build_raw_plan(
             ),
             DEFAULT_PLANNER_MAX_CONCURRENCY,
         )
+        batch_max_chars = _positive_int(
+            getattr(
+                dream_config,
+                "planner_batch_max_chars",
+                DEFAULT_PLANNER_BATCH_MAX_CHARS,
+            ),
+            DEFAULT_PLANNER_BATCH_MAX_CHARS,
+        )
         semaphore = asyncio.Semaphore(max_concurrency)
+        planner_pages = [
+            split_page
+            for page in _chunk(llm_candidates, batch_size)
+            for split_page in _split_oversized_planner_page(page, batch_max_chars)
+        ]
         page_results = await asyncio.gather(
             *(
                 _run_planner_page(
@@ -83,7 +97,7 @@ async def build_raw_plan(
                     semaphore=semaphore,
                     truth_digest=truth_digest,
                 )
-                for page in _chunk(llm_candidates, batch_size)
+                for page in planner_pages
             )
         )
         for page_actions, error in page_results:
@@ -164,6 +178,39 @@ def _chunk(items: list[DreamCandidate], size: int) -> list[list[DreamCandidate]]
     return [items[index : index + size] for index in range(0, len(items), size)]
 
 
+def _render_candidates_json(candidates: list[DreamCandidate]) -> str:
+    """Render planner candidates once with the prompt's stable JSON format."""
+    return json.dumps(
+        [candidate.to_prompt_dict() for candidate in candidates],
+        indent=2,
+        sort_keys=True,
+    )
+
+
+def _split_oversized_planner_page(
+    page: list[DreamCandidate],
+    max_chars: int,
+) -> list[list[DreamCandidate]]:
+    """Recursively split a page until each batch fits the soft character limit."""
+    rendered_size = len(_render_candidates_json(page))
+    if rendered_size <= max_chars:
+        return [page]
+    if len(page) == 1:
+        logger.warning(
+            "Memory dream planner candidate %s renders to %d chars, exceeding "
+            "planner_batch_max_chars=%d; dispatching intact",
+            page[0].id,
+            rendered_size,
+            max_chars,
+        )
+        return [page]
+
+    midpoint = len(page) // 2
+    return _split_oversized_planner_page(
+        page[:midpoint], max_chars
+    ) + _split_oversized_planner_page(page[midpoint:], max_chars)
+
+
 def _positive_int(value: Any, default: int) -> int:
     """Coerce a config value to a positive int, falling back to ``default``."""
     try:
@@ -186,11 +233,7 @@ async def _call_llm_planner(
     prompt = loader.render(
         getattr(dream_config, "prompt_path", "memory/dream"),
         {
-            "candidates": json.dumps(
-                [candidate.to_prompt_dict() for candidate in candidates],
-                indent=2,
-                sort_keys=True,
-            ),
+            "candidates": _render_candidates_json(candidates),
             "truth_digest": truth_digest or "(no current-truth digest available)",
             "min_action_confidence": getattr(
                 dream_config,

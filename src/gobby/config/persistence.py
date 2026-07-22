@@ -295,6 +295,10 @@ class MemoryDreamConfig(FeatureDefaultConfig):
         default=25,
         description="Maximum stale candidates sent to the planner in one LLM call",
     )
+    planner_batch_max_chars: int = Field(
+        default=100_000,
+        description="Soft maximum rendered candidate characters per planner LLM call",
+    )
     planner_max_concurrency: int = Field(
         default=3,
         description="Maximum concurrent planner LLM calls per dream run",
@@ -372,6 +376,7 @@ class MemoryDreamConfig(FeatureDefaultConfig):
     @field_validator(
         "scan_limit",
         "planner_batch_size",
+        "planner_batch_max_chars",
         "planner_max_concurrency",
         "max_scan_rows",
         "stale_age_days",

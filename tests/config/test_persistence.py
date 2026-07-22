@@ -178,6 +178,7 @@ class TestMemoryDreamConfig:
 
         config = MemoryDreamConfig()
         assert config.allow_unattended_mutations is False
+        assert config.planner_batch_max_chars == 100_000
         assert config.page_size == 200
         assert config.redream_after_hours == 20
         assert config.purge_delete_after_days == 30
@@ -188,6 +189,7 @@ class TestMemoryDreamConfig:
     @pytest.mark.parametrize(
         "field",
         [
+            "planner_batch_max_chars",
             "page_size",
             "redream_after_hours",
             "purge_delete_after_days",

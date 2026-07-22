@@ -15,8 +15,6 @@ from gobby.memory.dream.apply import apply_dream_plan, revert_dream_run
 from gobby.memory.dream.candidates import list_sweep_candidates, memory_to_candidate
 from gobby.memory.dream.duplicates import find_duplicate_groups
 from gobby.memory.dream.models import (
-    CONTENT_TRUNCATE_LIMIT,
-    CONTENT_TRUNCATION_MARKER,
     DreamAction,
     DreamCandidate,
     DuplicateGroup,
@@ -97,13 +95,44 @@ def _candidate(memory_id: str) -> DreamCandidate:
     )
 
 
-def test_candidate_prompt_content_marks_truncation() -> None:
-    candidate = replace(_candidate("long"), content="x" * (CONTENT_TRUNCATE_LIMIT + 1))
+def test_prompt_renders_full_content() -> None:
+    content = "full candidate content " * 200
+    candidate = replace(_candidate("long"), content=content)
 
     prompt = candidate.to_prompt_dict()
 
-    assert prompt["content"].endswith(CONTENT_TRUNCATION_MARKER)
-    assert len(prompt["content"]) == CONTENT_TRUNCATE_LIMIT
+    assert prompt["content"] == content
+
+
+def test_prompt_dict_related_evidence() -> None:
+    from gobby.memory.dream.models import RelatedMemoryEvidence
+
+    evidence_content = "complete newer memory " * 200
+    evidence_created_at = datetime(2026, 1, 2, 3, 4, 5, tzinfo=UTC)
+    evidence = RelatedMemoryEvidence(
+        id="newer-memory",
+        memory_type="fact",
+        created_at=evidence_created_at,
+        newer_by_days=12.5,
+        content=evidence_content,
+        matched_via="semantic",
+    )
+
+    empty_prompt = _candidate("old-memory").to_prompt_dict()
+    related_prompt = replace(_candidate("old-memory"), related=(evidence,)).to_prompt_dict()
+
+    assert "related_newer_memories" not in empty_prompt
+    assert related_prompt["related_newer_memories"] == [
+        {
+            "id": "newer-memory",
+            "memory_type": "fact",
+            "created_at": evidence_created_at.isoformat(),
+            "newer_by_days": 12.5,
+            "content": evidence_content,
+            "matched_via": "semantic",
+        }
+    ]
+    json.dumps(related_prompt)
 
 
 class _RecordingSweepSource:
@@ -247,6 +276,86 @@ async def test_build_raw_plan_batches_candidates_into_pages() -> None:
     assert seen == {f"m{i}" for i in range(5)}
     assert plan["planner_errors"] == []
     assert {action["memory_id"] for action in plan["actions"]} == {"p0", "p1", "p2"}
+
+
+@pytest.mark.asyncio
+async def test_batch_split_guard() -> None:
+    candidates = [
+        replace(_candidate(f"m{i}"), content=f"complete content {i} " * 20) for i in range(4)
+    ]
+    single_item_size = len(json.dumps([candidates[0].to_prompt_dict()], indent=2, sort_keys=True))
+    planner = AsyncMock(return_value={"actions": []})
+
+    with patch("gobby.memory.dream.planner._call_llm_planner", planner):
+        plan = await build_raw_plan(
+            candidates=candidates,
+            duplicate_groups=[],
+            dream_config=SimpleNamespace(
+                planner_batch_size=4,
+                planner_batch_max_chars=single_item_size,
+            ),
+            llm_service=MagicMock(),
+            db=None,
+            project_id="proj-1",
+            skip_consolidation=False,
+        )
+
+    assert planner.call_count == 4
+    assert [
+        [candidate.id for candidate in call.kwargs["candidates"]] for call in planner.call_args_list
+    ] == [["m0"], ["m1"], ["m2"], ["m3"]]
+    assert {
+        candidate.id: candidate.content
+        for call in planner.call_args_list
+        for candidate in call.kwargs["candidates"]
+    } == {candidate.id: candidate.content for candidate in candidates}
+    assert plan["planner_errors"] == []
+
+
+@pytest.mark.asyncio
+async def test_single_item_oversize_dispatches_intact(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    from gobby.memory.dream.models import RelatedMemoryEvidence
+
+    candidate_content = "complete candidate " * 300
+    evidence_content = "complete evidence " * 300
+    evidence = RelatedMemoryEvidence(
+        id="newer-memory",
+        memory_type="fact",
+        created_at=datetime(2026, 1, 2, tzinfo=UTC),
+        newer_by_days=1.0,
+        content=evidence_content,
+        matched_via="semantic",
+    )
+    candidate = replace(
+        _candidate("oversize-memory"),
+        content=candidate_content,
+        related=(evidence,),
+    )
+    rendered_size = len(json.dumps([candidate.to_prompt_dict()], indent=2, sort_keys=True))
+    planner = AsyncMock(return_value={"actions": []})
+
+    with patch("gobby.memory.dream.planner._call_llm_planner", planner):
+        await build_raw_plan(
+            candidates=[candidate],
+            duplicate_groups=[],
+            dream_config=SimpleNamespace(
+                planner_batch_size=1,
+                planner_batch_max_chars=rendered_size - 1,
+            ),
+            llm_service=MagicMock(),
+            db=None,
+            project_id="proj-1",
+            skip_consolidation=False,
+        )
+
+    planner.assert_awaited_once()
+    dispatched = planner.call_args.kwargs["candidates"]
+    assert dispatched[0].content == candidate_content
+    assert dispatched[0].related[0].content == evidence_content
+    assert "oversize-memory" in caplog.text
+    assert str(rendered_size) in caplog.text
 
 
 @pytest.mark.asyncio
