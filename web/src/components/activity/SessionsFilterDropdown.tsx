@@ -192,6 +192,14 @@ export function SessionsFilterDropdown({
               ))}
             </FilterSection>
 
+            <FilterSection label="Attention">
+              <FilterCheckboxRow
+                label="Blocked"
+                checked={filters.blockedOnly}
+                onToggle={() => update({ blockedOnly: !filters.blockedOnly })}
+              />
+            </FilterSection>
+
             <FilterSection label="Provider">
               {sortedProviderOptions.length === 0 ? (
                 <EmptyHint>No providers available</EmptyHint>

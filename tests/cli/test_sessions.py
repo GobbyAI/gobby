@@ -61,6 +61,25 @@ def test_list_sessions_populated(mock_session_manager) -> None:
     assert "Test Session" in result.output
 
 
+def test_list_sessions_renders_attention_separately_from_lifecycle(
+    mock_session_manager,
+) -> None:
+    """Blocked roster entries render in their own column without changing lifecycle icons."""
+    mock_session_manager.list.return_value = [MOCK_SESSION]
+
+    with patch(
+        "gobby.cli.sessions._blocked_attention_by_session",
+        return_value={MOCK_SESSION.id: (2, "Approval required")},
+    ):
+        result = CliRunner().invoke(sessions, ["list"])
+
+    assert result.exit_code == 0
+    assert result.output.lstrip().startswith("Found 1 sessions:")
+    session_row = result.output.splitlines()[-1]
+    assert session_row.startswith("●")
+    assert "!2 Approval required" in session_row
+
+
 def test_list_sessions_filters_by_machine_id(mock_session_manager) -> None:
     """Test 'sessions list --machine-id' forwards the filter."""
     mock_session_manager.list.return_value = []
@@ -112,7 +131,8 @@ def test_delete_session_success(mock_session_manager) -> None:
     assert result.exit_code == 0
     assert f"Deleted session: {MOCK_SESSION.id}" in result.output
     mock_session_manager.delete.assert_called_once_with(MOCK_SESSION.id)
-    mock_session_manager.db.close.assert_called_once_with()
+    # The CLI runtime owns this shared database handle; the command only borrows it.
+    mock_session_manager.db.close.assert_not_called()
 
 
 def test_session_stats(mock_session_manager) -> None:

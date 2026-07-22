@@ -30,6 +30,8 @@ export interface WatchingSessionEntry {
   hasTmux: boolean;
   sandboxEnabled: boolean;
   isLocal: boolean;
+  blockedCount?: number;
+  attentionReasons?: readonly string[];
   // Present only on ACP-backed rows; drives the leading "ACP" kind chip and
   // (in later tasks) the capability-gated row actions. Detect via Boolean(acp).
   acp?: AcpSessionInfo | null;
@@ -146,6 +148,16 @@ export function renderBadges(entry: WatchingSessionEntry) {
   return (
     <>
       <span className={kindBadge.className}>{kindBadge.label}</span>
+      {(entry.blockedCount ?? 0) > 0 && (
+        <span
+          className="chip gap-1 border border-[color-mix(in_srgb,var(--color-warning-foreground)_35%,transparent)] bg-[var(--color-warning-soft)] text-[var(--color-warning-foreground)]"
+          aria-label={`Blocked attention: ${entry.blockedCount}`}
+          title={entry.attentionReasons?.join("; ")}
+        >
+          <span aria-hidden="true">!</span>
+          blocked {entry.blockedCount}
+        </span>
+      )}
       {modeBadges.map((badge) => (
         <span
           key={`${badge.className}:${badge.label}`}

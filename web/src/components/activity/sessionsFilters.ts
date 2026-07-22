@@ -33,6 +33,7 @@ export interface SessionsFilters {
   dateCustomFrom: string | null; // YYYY-MM-DD
   dateCustomTo: string | null;
   statuses: Set<SessionStatus>;
+  blockedOnly: boolean;
 }
 
 export function defaultSessionsFilters(): SessionsFilters {
@@ -48,6 +49,7 @@ export function defaultSessionsFilters(): SessionsFilters {
     dateCustomFrom: null,
     dateCustomTo: null,
     statuses: new Set<SessionStatus>(DEFAULT_LIVE_STATUSES),
+    blockedOnly: false,
   };
 }
 
@@ -59,6 +61,7 @@ export function countActiveFilters(filters: SessionsFilters): number {
   if (filters.sessionRefMin !== null || filters.sessionRefMax !== null) count += 1;
   if (filters.taskRefMin !== null || filters.taskRefMax !== null) count += 1;
   if (filters.datePreset !== "all") count += 1;
+  if (filters.blockedOnly) count += 1;
   return count;
 }
 
@@ -135,6 +138,7 @@ interface FilterableSession {
   claimed_task_refs?: number[];
   created_task_refs?: number[];
   closed_task_refs?: number[];
+  blockedCount?: number;
 }
 
 /**
@@ -148,6 +152,10 @@ export function matchesSessionsFilters(
   filters: SessionsFilters,
   now: Date,
 ): boolean {
+  if (filters.blockedOnly && (session.blockedCount ?? 0) === 0) {
+    return false;
+  }
+
   if (filters.statuses.size > 0 && !filters.statuses.has(session.status as SessionStatus)) {
     return false;
   }
@@ -239,6 +247,7 @@ interface StoredSessionsFilters {
   dateCustomFrom: string | null;
   dateCustomTo: string | null;
   statuses: SessionStatus[];
+  blockedOnly: boolean;
 }
 
 /** Round-trip through arrays for JSON.stringify-friendly localStorage payloads. */
@@ -255,6 +264,7 @@ export function serializeForStorage(filters: SessionsFilters): StoredSessionsFil
     dateCustomFrom: filters.dateCustomFrom,
     dateCustomTo: filters.dateCustomTo,
     statuses: [...filters.statuses],
+    blockedOnly: filters.blockedOnly,
   };
 }
 
@@ -305,6 +315,7 @@ export function deserializeFromStorage(raw: string | null): SessionsFilters {
       dateCustomFrom: isValidLocalDate(parsed.dateCustomFrom) ? parsed.dateCustomFrom : null,
       dateCustomTo: isValidLocalDate(parsed.dateCustomTo) ? parsed.dateCustomTo : null,
       statuses,
+      blockedOnly: parsed.blockedOnly === true,
     };
   } catch {
     return defaultSessionsFilters();

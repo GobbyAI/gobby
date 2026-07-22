@@ -1,6 +1,7 @@
 import { memo, useState, useEffect, useCallback, useRef, useMemo } from "react";
 
 import { useSessionDetail } from "../../hooks/useSessionDetail";
+import { useAgentRuns } from "../../hooks/useAgentRuns";
 import type { GobbySession } from "../../types/sessions";
 import type { SwappedSessionTarget } from "../../types/chat";
 import {
@@ -122,6 +123,7 @@ export const SessionsTab = memo(function SessionsTab({
   onSwapSession,
 }: SessionsTabProps) {
   const { agents, agentsLoading, fetchError } = useRunningAgents();
+  const { attentionBySession } = useAgentRuns();
   const [search, setSearch] = useState("");
   const [searchInput, setSearchInput] = useState("");
   const [contentMode, setContentMode] = useState<WatchingContentMode>("transcript");
@@ -208,15 +210,38 @@ export const SessionsTab = memo(function SessionsTab({
     [filters, setFilters],
   );
 
-  const entries = useWatchingSessionEntries({
+  const sessionsWithAttention = useMemo(
+    () =>
+      sessions.map((session) => ({
+        ...session,
+        blockedCount: attentionBySession.get(session.id)?.count ?? 0,
+      })),
+    [attentionBySession, sessions],
+  );
+
+  const baseEntries = useWatchingSessionEntries({
     agents,
     chatSessionId,
     expiringIds,
     filters,
     search,
-    sessions,
+    sessions: sessionsWithAttention,
     statusMode,
   });
+  const entries = useMemo(
+    () =>
+      baseEntries
+        .map((entry) => {
+          const attention = attentionBySession.get(entry.id);
+          return {
+            ...entry,
+            blockedCount: attention?.count ?? 0,
+            attentionReasons: attention?.reasons ?? [],
+          };
+        })
+        .filter((entry) => !filters.blockedOnly || entry.blockedCount > 0),
+    [attentionBySession, baseEntries, filters.blockedOnly],
+  );
 
   const isLoading = isLoadingSessions || agentsLoading;
 

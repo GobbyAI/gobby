@@ -13,6 +13,7 @@ import click
 
 from gobby.cli.runtime import require_cli_database
 from gobby.cli.utils import resolve_project_ref, resolve_session_id
+from gobby.storage.attention import AttentionStateManager
 from gobby.storage.projects import LocalProjectManager
 from gobby.storage.sessions import SessionManager
 from gobby.utils.json_helpers import json_dumps
@@ -61,6 +62,30 @@ def _format_seq_range(values: Sequence[int | None]) -> str:
     low = min(seq_nums)
     high = max(seq_nums)
     return f"#{low}" if low == high else f"#{low}..#{high}"
+
+
+def _blocked_attention_by_session(manager: SessionManager) -> dict[str, tuple[int, str]]:
+    """Aggregate blocked roster entries without conflating them with lifecycle state."""
+    snapshot = AttentionStateManager(manager.db).snapshot()
+    reasons_by_session: dict[str, list[str]] = {}
+    for state in snapshot.states:
+        if state.state != "blocked" or state.session_id is None:
+            continue
+        reasons_by_session.setdefault(state.session_id, []).append(
+            state.reason or "Attention required"
+        )
+    return {
+        session_id: (len(reasons), sorted(reasons)[0])
+        for session_id, reasons in reasons_by_session.items()
+    }
+
+
+def _format_attention(summary: tuple[int, str] | None) -> str:
+    if summary is None:
+        return ""
+    count, reason = summary
+    glyph = f"!{count}" if count > 1 else "!"
+    return f"{glyph} {reason}"
 
 
 def _format_turns_for_llm(turns: list[dict[str, Any]]) -> str:
@@ -147,6 +172,7 @@ def list_sessions(
         click.echo("No sessions found.")
         return
 
+    attention_by_session = _blocked_attention_by_session(manager)
     click.echo(f"Found {len(sessions_list)} sessions:\n")
     for session in sessions_list:
         status_icon = {
@@ -171,8 +197,10 @@ def list_sessions(
                 tokens_str = str(total_tokens)
 
         seq_str = f"#{session.seq_num}" if session.seq_num else ""
+        attention_str = _format_attention(attention_by_session.get(session.id))
         click.echo(
-            f"{status_icon} {seq_str:<5} {session.id[:8]}  {session.source:<12} {title:<40} {tokens_str}"
+            f"{status_icon} {seq_str:<5} {session.id[:8]}  {session.source:<12} "
+            f"{attention_str:<28} {title:<40} {tokens_str}"
         )
 
 
