@@ -224,6 +224,32 @@ class TestSessionLifecycleTransitions:
         assert count == 2
         assert mock_message_processor.register_session.call_count == 2
 
+    def test_reregister_active_session_with_processed_transcript(self) -> None:
+        """Active transcripts remain live after their last completed processing pass."""
+        active_session = MagicMock(
+            id="session-1",
+            transcript_path="/path/to/1.jsonl",
+            source="codex",
+            transcript_processed=True,
+        )
+        mock_session_storage = MagicMock()
+        mock_session_storage.list.side_effect = lambda status, limit: {
+            "active": [active_session],
+            "paused": [],
+        }[status]
+        mock_message_processor = MagicMock()
+        coordinator = SessionCoordinator(
+            session_storage=mock_session_storage,
+            message_processor=mock_message_processor,
+        )
+
+        count = coordinator.reregister_active_sessions()
+
+        assert count == 1
+        mock_message_processor.register_session.assert_called_once_with(
+            "session-1", "/path/to/1.jsonl", source="codex"
+        )
+
     def test_reregister_includes_paused_sessions(self) -> None:
         """Test re-registration includes paused sessions."""
         mock_session_storage = MagicMock()

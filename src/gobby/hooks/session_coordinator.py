@@ -272,9 +272,6 @@ class SessionCoordinator:
             registered_count = 0
 
             for session in all_sessions:
-                if getattr(session, "transcript_processed", False):
-                    continue
-
                 transcript_path = getattr(session, "transcript_path", None)
                 if not transcript_path or transcript_path == "missing_transcript":
                     continue
