@@ -258,3 +258,124 @@ async def test_error_verdict_escalates_with_authoritative_task_transition(
     refreshed = manager.get_task(task.id)
     assert refreshed is not None
     assert refreshed.is_escalated is True
+
+
+@pytest.mark.parametrize(
+    ("status", "failure_category"),
+    [
+        ("invalid", FailureCategory.CODE),
+        ("pending", FailureCategory.TEST),
+    ],
+)
+async def test_semantic_verdicts_increment_live_failure_count_and_history(
+    temp_db: HubDatabase,
+    sample_project: dict[str, Any],
+    status: str,
+    failure_category: FailureCategory,
+) -> None:
+    manager = LocalTaskManager(temp_db)
+    task = _make_leaf_task(manager, sample_project["id"])
+    validator = _StubValidator(
+        [
+            TaskValidationResult(
+                status=status,
+                feedback="semantic validation failed",
+                failure_category=failure_category,
+            )
+        ]
+    )
+
+    result = await validate_leaf_task_with_llm(
+        task,
+        validator,
+        "context",
+        SimpleNamespace(task_manager=manager),
+        task.id,
+        None,
+    )
+
+    assert result.error_type == "validation_failed"
+    assert manager.get_task(task.id).validation_fail_count == 1
+    assert TaskValidationBackoffStore(temp_db).get(task.id) is None
+    history = ValidationHistoryManager(temp_db).get_iteration_history(task.id)
+    assert [(item.status, item.failure_category) for item in history] == [
+        (status, failure_category)
+    ]
+
+
+@pytest.mark.parametrize(
+    "failure_category",
+    [
+        FailureCategory.ENVIRONMENT,
+        FailureCategory.DEPENDENCY,
+        FailureCategory.PROVIDER,
+        FailureCategory.TIMEOUT,
+    ],
+)
+async def test_infrastructure_verdicts_use_backoff_without_incrementing_live_count(
+    temp_db: HubDatabase,
+    sample_project: dict[str, Any],
+    failure_category: FailureCategory,
+) -> None:
+    manager = LocalTaskManager(temp_db)
+    task = _make_leaf_task(manager, sample_project["id"])
+    validator = _StubValidator(
+        [
+            TaskValidationResult(
+                status="invalid",
+                feedback="validation infrastructure unavailable",
+                failure_category=failure_category,
+            )
+        ]
+    )
+
+    result = await validate_leaf_task_with_llm(
+        task,
+        validator,
+        "context",
+        SimpleNamespace(task_manager=manager),
+        task.id,
+        None,
+    )
+
+    assert result.error_type == "validation_infrastructure_failure"
+    assert manager.get_task(task.id).validation_fail_count == 0
+    backoff = TaskValidationBackoffStore(temp_db).get(task.id)
+    assert backoff is not None and backoff.consecutive_failures == 1
+    history = ValidationHistoryManager(temp_db).get_iteration_history(task.id)
+    assert [(item.status, item.failure_category) for item in history] == [
+        ("error", failure_category)
+    ]
+
+
+@pytest.mark.parametrize(
+    "validation_override_reason", [None, "audited override after three attempts"]
+)
+def test_successful_and_override_closes_reset_live_count_and_retain_history(
+    temp_db: HubDatabase,
+    sample_project: dict[str, Any],
+    validation_override_reason: str | None,
+) -> None:
+    manager = LocalTaskManager(temp_db)
+    task = _make_leaf_task(manager, sample_project["id"])
+    manager.update_task(task.id, validation_fail_count=2)
+    history_manager = ValidationHistoryManager(temp_db)
+    history_manager.record_iteration(
+        task_id=task.id,
+        iteration=1,
+        status="invalid",
+        feedback="captured before close",
+        failure_category=FailureCategory.CODE,
+    )
+
+    closed = manager.close_task(
+        task.id,
+        validation_override_reason=validation_override_reason,
+        reset_validation_fail_count=True,
+        validation_status="valid",
+        validation_feedback="accepted",
+    )
+
+    assert closed.validation_fail_count == 0
+    history = history_manager.get_iteration_history(task.id)
+    assert [(item.iteration, item.status) for item in history] == [(1, "invalid")]

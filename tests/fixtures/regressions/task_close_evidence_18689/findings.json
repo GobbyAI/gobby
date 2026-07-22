@@ -1,0 +1,25 @@
+{
+  "source_session": "#9397",
+  "hypotheses": {
+    "bounded_session_evidence_loss": {
+      "reproduced": true,
+      "downstream_scope": true,
+      "finding": "Appending more than 50 results drops relevant early commands; an oversized retained command also evicts older close-packet rows."
+    },
+    "literal_functions_exec_correlation": {
+      "reproduced": false,
+      "downstream_scope": false,
+      "finding": "One literal nested exec_command with explicit exit_code 0 remains correlated."
+    },
+    "selector_outcome_weakening": {
+      "reproduced": true,
+      "downstream_scope": true,
+      "finding": "A trusted successful selector-like command is weakened to unknown evidence."
+    },
+    "readiness_close_projection_divergence": {
+      "reproduced": true,
+      "downstream_scope": true,
+      "finding": "Readiness sees an early success that the 30-item close packet omits."
+    }
+  }
+}
