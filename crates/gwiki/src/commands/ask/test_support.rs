@@ -1,7 +1,7 @@
 use std::path::PathBuf;
 
 use crate::ScopeIdentity;
-use crate::commands::search::SearchRetrieval;
+use crate::commands::search::{SearchEvidence, SearchRetrieval};
 use crate::output::{SearchOutput, SearchResultOutput, SearchResultType};
 
 pub(super) fn retrieval_with_hooks_hit() -> SearchRetrieval {
@@ -24,8 +24,11 @@ pub(super) fn retrieval_with_hooks_hit() -> SearchRetrieval {
             }],
             Vec::new(),
         ),
-        evidence: vec![
-            "Hooks run at turn boundaries and dispatch envelopes to the daemon.".to_string(),
-        ],
+        evidence: vec![SearchEvidence {
+            fusion_key: "topic:docs:wiki/hooks.md".to_string(),
+            wiki_page: PathBuf::from("wiki/hooks.md"),
+            source_path: PathBuf::from("raw/hooks.md"),
+            body: "Hooks run at turn boundaries and dispatch envelopes to the daemon.".to_string(),
+        }],
     }
 }

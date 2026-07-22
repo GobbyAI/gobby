@@ -1,7 +1,10 @@
+use std::path::PathBuf;
+
 use gobby_core::ai_context::{AiConfigSource, AiContext};
 #[cfg(test)]
 use gobby_core::config::QdrantConfig;
 use gobby_core::config::{resolve_falkordb_config, resolve_qdrant_config};
+use gobby_core::markdown::frontmatter_body_start;
 use gobby_core::token_budget;
 
 use crate::output::{SearchOutput, SearchResultOutput, SearchResultType};
@@ -16,13 +19,18 @@ use crate::support::search as search_support;
 use crate::support::text::degradation_label;
 use crate::{CommandOutcome, ScopeIdentity, ScopeSelection, WikiError};
 
-/// Retrieval result pairing the command output with the raw per-hit content
-/// the snippets were derived from. `evidence[i]` belongs to
-/// `output.results[i]`; `ask` consumes it to build its bounded prompt while
-/// search output itself only ever carries bounded snippets.
+/// Retrieval result pairing command output with provenance-bearing raw content.
 pub(crate) struct SearchRetrieval {
     pub(crate) output: SearchOutput,
-    pub(crate) evidence: Vec<String>,
+    pub(crate) evidence: Vec<SearchEvidence>,
+}
+
+#[derive(Debug)]
+pub(crate) struct SearchEvidence {
+    pub(crate) fusion_key: String,
+    pub(crate) wiki_page: PathBuf,
+    pub(crate) source_path: PathBuf,
+    pub(crate) body: String,
 }
 
 /// Narrowing levers suggested when `--token-budget` trims the result set.
@@ -256,8 +264,15 @@ where
             continue;
         }
         let fusion_key = result.fusion_key()?;
-        let snippet = bounded_snippet(&result.snippet, &input.query);
-        evidence.push(result.snippet);
+        let body_start = frontmatter_body_start(&result.snippet).unwrap_or(0);
+        let evidence_body = &result.snippet[body_start..];
+        let snippet = bounded_snippet(evidence_body, &input.query);
+        evidence.push(SearchEvidence {
+            fusion_key: fusion_key.clone(),
+            wiki_page: result.path.clone(),
+            source_path: result.source_path.clone(),
+            body: evidence_body.to_string(),
+        });
         results.push(SearchResultOutput {
             title: result.title,
             fusion_key,
@@ -288,7 +303,7 @@ where
         .map(degradation_label)
         .collect::<Vec<_>>();
     // Trim the ranked hits to the caller's token budget via the shared
-    // gobby-core helper, then keep `evidence[i]` aligned with the kept prefix.
+    // gobby-core helper, then keep evidence for the kept prefix only.
     let budgeted = token_budget::trim_results(
         results,
         input.token_budget,
@@ -458,6 +473,46 @@ mod tests {
 
         assert!(snippet.chars().count() <= SNIPPET_BEFORE_CHARS + SNIPPET_AFTER_CHARS);
         assert!(snippet.starts_with("word"));
+    }
+
+    #[test]
+    fn document_hit_evidence_strips_frontmatter() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let path = "knowledge/concepts/evidence.md";
+        let document = temp.path().join(path);
+        std::fs::create_dir_all(document.parent().expect("parent")).expect("dirs");
+        let body = "Body evidence explains retrieval.";
+        let markdown = format!("---\ntitle: Hidden metadata\nlifecycle: verified\n---\n\n{body}\n");
+        std::fs::write(&document, &markdown).expect("document");
+
+        let mut hit = store_hit(path);
+        hit.snippet = markdown;
+        let mut bm25_backend = search_support::StoreBm25Backend {
+            hits: vec![hit].into(),
+        };
+        let mut semantic_backend = search_support::UnavailableSemanticBackend;
+        let graph = crate::graph::MemoryWikiGraph::default();
+        let mut graph_backend = wiki_search::graph_boost::MemoryGraphBoostBackend::new(graph);
+
+        let retrieval = run_search_with_backends(
+            &mut bm25_backend,
+            &mut semantic_backend,
+            &mut graph_backend,
+            SearchExecutionInput {
+                output_scope: ScopeIdentity::project("project-1"),
+                search_scope: wiki_search::SearchScope::project("project-1"),
+                vault_root: temp.path().to_path_buf(),
+                query: "retrieval".to_string(),
+                limit: 10,
+                include_semantic: false,
+                include_candidates: false,
+                token_budget: None,
+            },
+        )
+        .expect("search runs");
+
+        assert_eq!(retrieval.output.results[0].snippet.trim(), body);
+        assert_eq!(retrieval.evidence[0].body.trim(), body);
     }
 
     #[test]

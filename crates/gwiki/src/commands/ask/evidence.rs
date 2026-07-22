@@ -42,12 +42,20 @@ pub(super) fn plan_evidence(retrieval: &SearchRetrieval) -> EvidencePlan {
     for (index, hit) in retrieval.output.results.iter().enumerate() {
         let raw = retrieval
             .evidence
-            .get(index)
-            .map(String::as_str)
+            .iter()
+            .find(|evidence| {
+                evidence.fusion_key == hit.fusion_key
+                    && evidence.wiki_page == hit.wiki_page
+                    && evidence.source_path == hit.source_path
+            })
+            .map(|evidence| evidence.body.as_str())
             .unwrap_or(hit.snippet.as_str());
         let excerpt = query_window(raw, query, EVIDENCE_BEFORE_CHARS, EVIDENCE_AFTER_CHARS)
             .trim()
             .to_string();
+        if excerpt.is_empty() {
+            continue;
+        }
         let entry = format!(
             "{}. {} (wiki: {}, source: {})\n{}\n\n",
             items.len() + 1,
@@ -87,12 +95,13 @@ mod tests {
     use std::path::PathBuf;
 
     use crate::ScopeIdentity;
-    use crate::commands::search::SearchRetrieval;
+    use crate::commands::search::{SearchEvidence, SearchRetrieval};
     use crate::output::{SearchOutput, SearchResultOutput, SearchResultType};
 
     use super::*;
 
     fn retrieval_with_bodies(bodies: Vec<String>) -> SearchRetrieval {
+        let result_count = bodies.len();
         let results = bodies
             .iter()
             .enumerate()
@@ -108,15 +117,25 @@ mod tests {
                 explanations: Vec::new(),
             })
             .collect();
+        let evidence = bodies
+            .into_iter()
+            .enumerate()
+            .map(|(index, body)| SearchEvidence {
+                fusion_key: format!("topic:docs:wiki/hit-{index}.md"),
+                wiki_page: PathBuf::from(format!("wiki/hit-{index}.md")),
+                source_path: PathBuf::from(format!("raw/hit-{index}.md")),
+                body,
+            })
+            .collect();
         SearchRetrieval {
             output: SearchOutput::new(
                 ScopeIdentity::topic("docs"),
                 "enqueue failure handling",
-                bodies.len(),
+                result_count,
                 results,
                 Vec::new(),
             ),
-            evidence: bodies,
+            evidence,
         }
     }
 
@@ -146,6 +165,45 @@ mod tests {
         assert!(plan.items[0].excerpt_chars <= EVIDENCE_BEFORE_CHARS + EVIDENCE_AFTER_CHARS);
         assert!(plan.items[0].excerpt_chars < body_chars);
         assert!(plan.excerpts[0].contains("enqueue failure"));
+    }
+
+    #[test]
+    fn empty_excerpts_are_skipped_without_consuming_budget() {
+        let plan = plan_evidence(&retrieval_with_bodies(vec![
+            String::new(),
+            "Later document evidence.".to_string(),
+        ]));
+
+        assert_eq!(plan.items.len(), 1);
+        assert_eq!(plan.items[0].wiki_page, PathBuf::from("wiki/hit-1.md"));
+        assert_eq!(plan.excerpts, vec!["Later document evidence."]);
+        assert!(plan.prompt.contains("1. Hit 1"));
+        assert!(!plan.prompt.contains("Hit 0"));
+        assert_eq!(plan.dropped_hits, 0);
+    }
+
+    #[test]
+    fn empty_graph_hit_followed_by_document_keeps_document_provenance() {
+        let mut retrieval = retrieval_with_bodies(vec![
+            String::new(),
+            "Document evidence survives.".to_string(),
+        ]);
+        retrieval.output.results[0].wiki_page = PathBuf::from("graph/entity");
+        retrieval.output.results[0].source_path = PathBuf::from("graph/entity");
+        retrieval.output.results[1].wiki_page = PathBuf::from("wiki/document.md");
+        retrieval.output.results[1].source_path = PathBuf::from("raw/document.md");
+        retrieval.evidence[0].wiki_page = PathBuf::from("graph/entity");
+        retrieval.evidence[0].source_path = PathBuf::from("graph/entity");
+        retrieval.evidence[1].wiki_page = PathBuf::from("wiki/document.md");
+        retrieval.evidence[1].source_path = PathBuf::from("raw/document.md");
+        retrieval.evidence.swap(0, 1);
+
+        let plan = plan_evidence(&retrieval);
+
+        assert_eq!(plan.items.len(), 1);
+        assert_eq!(plan.items[0].wiki_page, PathBuf::from("wiki/document.md"));
+        assert_eq!(plan.items[0].source_path, PathBuf::from("raw/document.md"));
+        assert_eq!(plan.excerpts, vec!["Document evidence survives."]);
     }
 
     #[test]

@@ -64,7 +64,7 @@ mod tests {
 
     use crate::ScopeIdentity;
     use crate::commands::ask::evidence::plan_evidence;
-    use crate::commands::search::SearchRetrieval;
+    use crate::commands::search::{SearchEvidence, SearchRetrieval};
     use crate::output::{SearchResultOutput, SearchResultType};
 
     use super::*;
@@ -92,7 +92,12 @@ mod tests {
                     "semantic_unavailable".to_string(),
                 ],
             ),
-            evidence: vec!["Hooks run at turn boundaries and dispatch envelopes.".to_string()],
+            evidence: vec![SearchEvidence {
+                fusion_key: "topic:docs:wiki/hooks.md".to_string(),
+                wiki_page: PathBuf::from("wiki/hooks.md"),
+                source_path: PathBuf::from("raw/hooks.md"),
+                body: "Hooks run at turn boundaries and dispatch envelopes.".to_string(),
+            }],
         };
         let plan = plan_evidence(&retrieval);
         let output = ask_output_from_retrieval(retrieval.output, &plan);
