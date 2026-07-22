@@ -118,6 +118,7 @@ async def stream_codex_turn(
     tool_calls_count = 0
     started_tool_call_ids: set[str] = set()
     completed_tool_call_ids: set[str] = set()
+    lifecycle_completed_tool_call_ids: set[str] = set()
     latest_transcript_usage: dict[str, int | None] | None = None
     latest_transcript_context_window: int | None = None
     dynamic_exec_correlator = DynamicExecCorrelator()
@@ -257,16 +258,18 @@ async def stream_codex_turn(
                 )
                 if tool_event_data is not None:
                     tool_call_id = str(tool_event_data["tool_call_id"])
+                    if tool_call_id not in lifecycle_completed_tool_call_ids:
+                        await session._apply_post_tool_lifecycle(
+                            str(tool_event_data["tool_name"]),
+                            tool_event_data["arguments"],
+                            tool_event_data["lifecycle_response"],
+                            is_error=tool_event_data["is_error"],
+                        )
+                        lifecycle_completed_tool_call_ids.add(tool_call_id)
+
                     if tool_call_id in completed_tool_call_ids:
                         continue
                     completed_tool_call_ids.add(tool_call_id)
-
-                    await session._apply_post_tool_lifecycle(
-                        str(tool_event_data["tool_name"]),
-                        tool_event_data["arguments"],
-                        tool_event_data["lifecycle_response"],
-                        is_error=tool_event_data["is_error"],
-                    )
 
                     if tool_call_id not in started_tool_call_ids:
                         start_event = _start_tool_event(tool_event_data)

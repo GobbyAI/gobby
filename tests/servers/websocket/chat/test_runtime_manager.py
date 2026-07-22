@@ -1646,12 +1646,35 @@ class TestCodexBackend:
             handlers.setdefault(method, []).append(handler)
 
         async def start_turn(*args: Any, **kwargs: Any) -> SimpleNamespace:
+            response_items = [
+                {
+                    "type": "function_call",
+                    "name": "call_tool",
+                    "arguments": json.dumps(
+                        {
+                            "server_name": "gobby-tasks",
+                            "tool_name": "close_task",
+                            "arguments": {"task_id": "#42"},
+                        }
+                    ),
+                    "call_id": "call-lifecycle-1",
+                },
+                {
+                    "type": "function_call_output",
+                    "call_id": "call-lifecycle-1",
+                    "output": json.dumps({"success": True}),
+                },
+            ]
+            for params in response_items:
+                for handler in handlers.get("response_item", []):
+                    handler("response_item", params)
             for handler in handlers.get("item/completed", []):
                 handler(
                     "item/completed",
                     {
                         "threadId": "thread-1",
                         "item": {
+                            "id": "call-lifecycle-1",
                             "type": "mcpToolCall",
                             "server": "gobby-tasks",
                             "tool": "close_task",
