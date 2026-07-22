@@ -9,7 +9,8 @@ from typing import TYPE_CHECKING, Any
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 
-from gobby.memory.dream.service import DreamRunOptions, MemoryDreamService
+from gobby.memory.dream.options import DreamRunOptions
+from gobby.memory.dream.service import MemoryDreamService
 from gobby.servers.responses import JSONResponse
 
 if TYPE_CHECKING:

@@ -484,6 +484,8 @@ def _managed_embedding_collections_exist(config_store: Any) -> bool:
     """Prove whether any managed active or staged vector collection already exists."""
     import asyncio
 
+    from qdrant_client import AsyncQdrantClient
+
     from gobby.config.app import load_config
     from gobby.memory.collection_names import CollectionNameResolver
     from gobby.memory.vectorstore import VectorStore
@@ -498,7 +500,10 @@ def _managed_embedding_collections_exist(config_store: Any) -> bool:
         )
         try:
             client = await vector_store._ensure_initialized()
-            response = await asyncio.to_thread(client.get_collections)
+            if isinstance(client, AsyncQdrantClient):
+                response = await client.get_collections()
+            else:
+                response = await asyncio.to_thread(client.get_collections)
             names = CollectionNameResolver()
             for item in response.collections:
                 collection_name = str(item.name)

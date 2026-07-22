@@ -9,7 +9,8 @@ from typing import TYPE_CHECKING, Any
 
 from gobby.app_context import get_app_context
 from gobby.mcp_proxy.tools.internal import InternalToolRegistry
-from gobby.memory.dream.service import DreamRunOptions, MemoryDreamService
+from gobby.memory.dream.options import DreamRunOptions
+from gobby.memory.dream.service import MemoryDreamService
 from gobby.memory.manager import MemoryManager
 
 if TYPE_CHECKING:

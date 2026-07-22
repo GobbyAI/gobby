@@ -14,6 +14,9 @@ logger = logging.getLogger(__name__)
 class _TerminalRunClassifier:
     """Classify explicit terminalization as a non-provider failure."""
 
+    def for_provider(self, _provider_id: str) -> _TerminalRunClassifier:
+        return self
+
     def is_provider_error(self, error_string: str | None) -> bool:
         return False
 
