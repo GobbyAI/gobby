@@ -147,6 +147,9 @@ class GobbyRunner:
     tool_chat_service: ToolChatService | None
     llm_service: LLMService | None
     vector_store: VectorStore | None
+    project_write_fence: Any
+    project_purge_service: Any | None
+    embedding_switch_coordinator: Any | None
     memory_manager: MemoryManager | None
     code_indexer: Any | None
     code_index_pruner: CodeIndexPruner | None

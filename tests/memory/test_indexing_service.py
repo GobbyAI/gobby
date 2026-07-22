@@ -2,13 +2,16 @@ from __future__ import annotations
 
 import asyncio
 import logging
-from collections.abc import Awaitable, Callable
+from collections.abc import AsyncIterator, Awaitable, Callable
+from contextlib import asynccontextmanager
 from typing import Any
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
 from gobby.memory.services.indexing import REINDEX_PAGE_SIZE, IndexingService
+from gobby.projects.fenced_vector_store import ProjectFencedVectorStore
+from gobby.projects.write_fence import ProjectWriteFence
 from gobby.storage.memories import Memory
 from gobby.storage.memories_scope import ALL_MEMORIES, MemoryScope, memory_matches_scope
 
@@ -108,7 +111,12 @@ class _VectorStore:
         self.events.append("scroll")
         return list(self.ids)
 
-    async def _batch_upsert(self, batch: list[tuple[str, list[float], dict[str, Any]]]) -> None:
+    async def _batch_upsert(
+        self,
+        batch: list[tuple[str, list[float], dict[str, Any]]],
+        collection_name: str | None = None,
+    ) -> None:
+        del collection_name
         self.events.append("upsert")
         self.ids.extend(memory_id for memory_id, _embedding, _payload in batch)
 
@@ -393,6 +401,45 @@ async def test_global_reindex_skips_unchanged_memory_snapshot() -> None:
 
 
 @pytest.mark.asyncio
+async def test_global_reindex_acquires_admission_before_source_snapshot() -> None:
+    events: list[str] = []
+
+    class FencedVectorStore(_VectorStore):
+        @asynccontextmanager
+        async def global_write_context(self) -> AsyncIterator[None]:
+            events.append("admission:enter")
+            try:
+                yield
+            finally:
+                events.append("admission:exit")
+
+    storage = _MemoryStorage([_memory("mem-1", "alpha")])
+    vector_store = FencedVectorStore()
+
+    async def rebuild(
+        memory_dicts: list[dict[str, Any]],
+        embed_fn: Callable[[str], Awaitable[list[float]]],
+    ) -> None:
+        events.append("rebuild")
+        await vector_store._rebuild(memory_dicts, embed_fn)
+
+    vector_store.rebuild = AsyncMock(side_effect=rebuild)
+    service = _service(storage, vector_store)
+    original_fetch = service.fetch_all_memories
+
+    async def fetch() -> list[Memory]:
+        events.append("snapshot")
+        return await original_fetch()
+
+    service.fetch_all_memories = fetch  # type: ignore[method-assign]
+
+    result = await service.reindex_embeddings()
+
+    assert result["success"] is True
+    assert events == ["admission:enter", "snapshot", "rebuild", "admission:exit"]
+
+
+@pytest.mark.asyncio
 async def test_global_reindex_does_not_skip_durable_stale_marker() -> None:
     storage = _MemoryStorage([_memory("mem-1", "alpha")])
     vector_store = _VectorStore()
@@ -618,3 +665,77 @@ async def test_clear_indices_uses_vector_store_collection_name_method() -> None:
 
     vector_store.delete_collection.assert_awaited_once_with("memories")
     assert result["vectors_cleared"] is True
+
+
+@pytest.mark.asyncio
+async def test_project_reindex_holds_writer_admission_across_embedding_and_batch() -> None:
+    project = MagicMock(deleted_at=None)
+    fence = ProjectWriteFence(lambda _project_id: project)
+    inner = _VectorStore()
+    vector_store = ProjectFencedVectorStore(inner, fence)  # type: ignore[arg-type]
+    embed_started = asyncio.Event()
+    release_embed = asyncio.Event()
+
+    async def embed(_content: str) -> list[float]:
+        embed_started.set()
+        await release_embed.wait()
+        return [0.1]
+
+    service = _service(_MemoryStorage([_memory("mem-1", "alpha")]), vector_store, embed_fn=embed)  # type: ignore[arg-type]
+    reindex_task = asyncio.create_task(service.reindex_embeddings("project-1"))
+    await embed_started.wait()
+    project.deleted_at = object()
+    exclusive_entered = asyncio.Event()
+
+    async def purge() -> None:
+        async with fence.exclusive("project-1", timeout=1.0):
+            exclusive_entered.set()
+
+    purge_task = asyncio.create_task(purge())
+    async with fence._condition:
+        await fence._condition.wait_for(lambda: "project-1" in fence._exclusive)
+    assert not exclusive_entered.is_set()
+
+    release_embed.set()
+    result = await reindex_task
+    await purge_task
+    assert result["success"] is True
+    assert inner.ids == ["mem-1"]
+    assert exclusive_entered.is_set()
+
+
+@pytest.mark.asyncio
+async def test_reconcile_backfill_holds_global_admission_across_embedding_and_batch() -> None:
+    project = MagicMock(deleted_at=None)
+    fence = ProjectWriteFence(lambda _project_id: project)
+    inner = _VectorStore()
+    vector_store = ProjectFencedVectorStore(inner, fence)  # type: ignore[arg-type]
+    embed_started = asyncio.Event()
+    release_embed = asyncio.Event()
+
+    async def embed(_content: str) -> list[float]:
+        embed_started.set()
+        await release_embed.wait()
+        return [0.1]
+
+    service = _service(_MemoryStorage([_memory("missing", "alpha")]), vector_store, embed_fn=embed)  # type: ignore[arg-type]
+    reconcile_task = asyncio.create_task(service.reconcile_stores())
+    await embed_started.wait()
+    project.deleted_at = object()
+    exclusive_entered = asyncio.Event()
+
+    async def purge() -> None:
+        async with fence.exclusive("project-1", timeout=1.0):
+            exclusive_entered.set()
+
+    purge_task = asyncio.create_task(purge())
+    async with fence._condition:
+        await fence._condition.wait_for(lambda: "project-1" in fence._exclusive)
+    assert not exclusive_entered.is_set()
+
+    release_embed.set()
+    result = await reconcile_task
+    await purge_task
+    assert result["qdrant"]["missing_embedded"] == 1
+    assert inner.ids == ["missing"]
+    assert exclusive_entered.is_set()

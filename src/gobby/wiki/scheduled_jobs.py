@@ -13,6 +13,7 @@ from gobby.storage.cron import CronJobStorage, compute_next_run
 from gobby.storage.cron_models import CronJob
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.projects import LocalProjectManager
+from gobby.wiki.prune_job import guard_project_cron_handler
 from gobby.wiki.scheduled_jobs_history import (
     _health_history_output,
     _history_output,
@@ -381,6 +382,7 @@ async def register_wiki_cron_jobs_for_projects(
 
         task_manager = LocalTaskManager(db)
     registered = 0
+    project_lookup = LocalProjectManager(cron_storage.db).get
     for scope, project_id in sorted(scope_projects.items()):
         gateway = await _create_gateway(scope, db, gateway_factory)
         coordinator = WikiUpdateCoordinator(gateway)
@@ -393,7 +395,10 @@ async def register_wiki_cron_jobs_for_projects(
             fallback_project_id=project_id,
         ):
             handler_name = wiki_handler_name(command, scope)
-            cron_executor.register_handler(handler_name, handler)
+            cron_executor.register_handler(
+                handler_name,
+                guard_project_cron_handler(handler, project_lookup),
+            )
             await _run_sync(
                 run_sync,
                 _ensure_wiki_cron_job,
@@ -634,7 +639,13 @@ async def _register_enabled_wiki_row_handlers(
             task_manager=task_manager,
             fallback_project_id=row_project_id,
         ):
-            cron_executor.register_handler(wiki_handler_name(command, scope), handler)
+            cron_executor.register_handler(
+                wiki_handler_name(command, scope),
+                guard_project_cron_handler(
+                    handler,
+                    LocalProjectManager(cron_storage.db).get,
+                ),
+            )
             registered += 1
         for job in scope_rows:
             if job.next_run_at is None:

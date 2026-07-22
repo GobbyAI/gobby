@@ -4,8 +4,10 @@ from __future__ import annotations
 
 import asyncio
 import logging
+from collections.abc import AsyncIterator
+from contextlib import AbstractAsyncContextManager, asynccontextmanager
 from dataclasses import dataclass, field
-from typing import Any
+from typing import Any, Protocol
 
 from gobby.ai.embedding_switch import (
     PHASE_ABORTED,
@@ -14,16 +16,14 @@ from gobby.ai.embedding_switch import (
     PHASE_FLIPPING,
     PHASE_GC,
     PHASE_STAGING,
-    SwitchAlreadyActiveError,
     SwitchJournal,
     active_alias_names,
     advance_phase,
     build_physical_names,
+    complete_aborted_switch,
     complete_switch,
-    get_switch_status,
     persist_journal,
     record_switch_error,
-    start_switch,
 )
 from gobby.ai.embeddings import EmbeddingService
 from gobby.cli.installers.embedding import (
@@ -45,6 +45,7 @@ from gobby.github_triage.issue_index import issue_point_id
 from gobby.mcp_proxy.registries import setup_internal_registries
 from gobby.mcp_proxy.semantic_search import SemanticToolSearch
 from gobby.memory.vectorstore import VectorStore
+from gobby.projects.write_fence import ProjectWriteRejected
 from gobby.storage.github_triage import GitHubIssueTriageRecord, GitHubTriageStore
 from gobby.storage.mcp import LocalMCPManager
 from gobby.storage.memories import LocalMemoryManager
@@ -63,6 +64,30 @@ class MissingGitHubIssueSourceTextError(EmbeddingSwitchRunError):
     """Raised when legacy GitHub issue rows cannot be re-embedded safely."""
 
 
+class EmbeddingSwitchAbortRequested(Exception):
+    """Internal cooperative checkpoint used before alias flipping begins."""
+
+
+class SwitchControlProtocol(Protocol):
+    abort_requested: asyncio.Event
+    flipping_started: bool
+
+    def mark_flipping_started(self) -> None: ...
+
+
+class ProjectFenceProtocol(Protocol):
+    def writer(self, project_id: str) -> AbstractAsyncContextManager[None]: ...
+
+
+class _NoopSwitchControl:
+    def __init__(self) -> None:
+        self.abort_requested = asyncio.Event()
+        self.flipping_started = False
+
+    def mark_flipping_started(self) -> None:
+        self.flipping_started = True
+
+
 @dataclass(frozen=True)
 class PhaseResult:
     """Short summary for a completed switch phase."""
@@ -74,7 +99,7 @@ class PhaseResult:
 
 @dataclass
 class SwitchRunReport:
-    """Result returned to the sync CLI after running or resuming phases."""
+    """Result returned to the daemon coordinator after running switch phases."""
 
     journal: SwitchJournal | None
     phase_results: list[PhaseResult] = field(default_factory=list)
@@ -97,54 +122,28 @@ def detect_provider_from_config(config_store: Any) -> str:
     return "ollama"
 
 
-async def start_embedding_switch(
-    config_store: Any,
-    db: Any,
-    catalog_key: str,
-    provider: str | None = None,
-) -> SwitchRunReport:
-    """Start a new switch and run phases until completion or a recorded error."""
-    provider_name = provider or detect_provider_from_config(config_store)
-    target_api_base = _provider_api_base(provider_name)
-    current_dim = config_store.get(AI_EMBEDDING_DIM_KEY)
-    current_catalog_id = config_store.get(AI_EMBEDDING_CATALOG_KEY)
-    current_api_base = config_store.get(AI_EMBEDDING_API_BASE_KEY)
-
-    try:
-        journal, _spec = start_switch(
-            config_store,
-            catalog_key,
-            provider_name,
-            current_dim=current_dim if isinstance(current_dim, int) else None,
-            current_catalog_id=current_catalog_id if isinstance(current_catalog_id, str) else None,
-            current_api_base=current_api_base if isinstance(current_api_base, str) else None,
-            target_api_base=target_api_base,
-        )
-    except SwitchAlreadyActiveError:
-        raise
-
-    return await EmbeddingSwitchRunner(config_store, db).run(journal)
-
-
-async def resume_embedding_switch(config_store: Any, db: Any) -> SwitchRunReport:
-    """Resume the current journal from its recorded phase."""
-    journal = get_switch_status(config_store)
-    if journal is None:
-        return SwitchRunReport(journal=None)
-    return await EmbeddingSwitchRunner(config_store, db).run(journal)
-
-
 class EmbeddingSwitchRunner:
     """Run switch phases with journaled failure and resume semantics."""
 
-    def __init__(self, config_store: Any, db: Any) -> None:
+    def __init__(
+        self,
+        config_store: Any,
+        db: Any,
+        *,
+        control: SwitchControlProtocol | None = None,
+        fence: ProjectFenceProtocol | None = None,
+    ) -> None:
         self.config_store = config_store
         self.db = db
+        self.control = control or _NoopSwitchControl()
+        self.fence = fence
 
     async def run(self, journal: SwitchJournal) -> SwitchRunReport:
         report = SwitchRunReport(journal=journal)
         while True:
             try:
+                if journal.phase in (PHASE_STAGING, PHASE_BUILDING):
+                    self._check_abort()
                 if journal.phase == PHASE_STAGING:
                     result, journal = await self.stage(journal)
                     report.phase_results.append(result)
@@ -156,6 +155,7 @@ class EmbeddingSwitchRunner:
                     report.journal = journal
                     continue
                 if journal.phase == PHASE_FLIPPING:
+                    self.control.mark_flipping_started()
                     result, journal = await self.flip(journal)
                     report.phase_results.append(result)
                     report.journal = journal
@@ -171,10 +171,18 @@ class EmbeddingSwitchRunner:
                     report.journal = journal
                     continue
                 if journal.phase == PHASE_ABORTED:
-                    report.error = journal.error or "Embedding switch is aborted."
-                    return report
+                    return await self._finish_aborted_cleanup(journal, report)
                 report.error = f"Unsupported embedding switch phase: {journal.phase}"
                 return report
+            except EmbeddingSwitchAbortRequested:
+                try:
+                    journal = advance_phase(self.config_store, journal, PHASE_ABORTED)
+                except Exception as exc:
+                    report.error = str(exc)
+                    report.journal = self._record_phase_error(journal, exc)
+                    return report
+                report.journal = journal
+                return await self._finish_aborted_cleanup(journal, report)
             except Exception as exc:
                 report.error = str(exc)
                 report.journal = self._record_phase_error(journal, exc)
@@ -226,6 +234,7 @@ class EmbeddingSwitchRunner:
         if not smoke_ok:
             raise EmbeddingSwitchRunError("Target embedding model failed semantic smoke test")
 
+        self._check_abort()
         journal = advance_phase(self.config_store, journal, PHASE_BUILDING)
         return PhaseResult(PHASE_STAGING, "target provider staged and validated"), journal
 
@@ -236,6 +245,7 @@ class EmbeddingSwitchRunner:
         physical_names = build_physical_names(journal)
 
         for collection_name in physical_names.values():
+            self._check_abort()
             await vector_store.ensure_collection(
                 collection_name,
                 journal.target_dim,
@@ -247,6 +257,7 @@ class EmbeddingSwitchRunner:
         count += await self._build_tool_collection(journal, vector_store)
         count += await self._build_github_issue_collection(journal, service, vector_store)
 
+        self._check_abort()
         journal = advance_phase(self.config_store, journal, PHASE_FLIPPING)
         return PhaseResult(PHASE_BUILDING, "target physical collections built", count), journal
 
@@ -271,16 +282,14 @@ class EmbeddingSwitchRunner:
             if old_name == alias_name:
                 await _delete_collection_if_present(vector_store, old_name)
 
-        self.config_store.set_many(
-            {
-                AI_EMBEDDING_MODEL_KEY: journal.target_model,
-                AI_EMBEDDING_DIM_KEY: journal.target_dim,
-                AI_EMBEDDING_CATALOG_KEY: journal.catalog_key,
-                AI_EMBEDDING_QUERY_PREFIX_KEY: journal.target_query_prefix,
-                AI_EMBEDDING_API_BASE_KEY: journal.target_api_base,
-            },
-            source="embedding_switch",
-        )
+        embedding_values = {
+            AI_EMBEDDING_MODEL_KEY: journal.target_model,
+            AI_EMBEDDING_DIM_KEY: journal.target_dim,
+            AI_EMBEDDING_CATALOG_KEY: journal.catalog_key,
+            AI_EMBEDDING_QUERY_PREFIX_KEY: journal.target_query_prefix,
+            AI_EMBEDDING_API_BASE_KEY: journal.target_api_base,
+        }
+        self.config_store.set_embedding_switch_values(journal.run_id, embedding_values)
 
         journal = advance_phase(self.config_store, journal, PHASE_ACTIVE)
         return PhaseResult(PHASE_FLIPPING, "aliases flipped and embedding config written"), journal
@@ -323,21 +332,34 @@ class EmbeddingSwitchRunner:
 
             texts = [memory.content for memory in memories]
             embeddings = await service.generate_embeddings(texts)
-            items = [
-                (
-                    memory.id,
-                    embedding,
-                    {
-                        "project_id": memory.project_id,
-                        "memory_type": memory.memory_type,
-                        "source_type": memory.source_type,
-                        "tags": list(memory.tags or []),
-                    },
+            items_by_project: dict[str, list[tuple[str, list[float], dict[str, Any]]]] = {}
+            for memory, embedding in zip(memories, embeddings, strict=True):
+                items_by_project.setdefault(memory.project_id, []).append(
+                    (
+                        memory.id,
+                        embedding,
+                        {
+                            "project_id": memory.project_id,
+                            "memory_type": memory.memory_type,
+                            "source_type": memory.source_type,
+                            "tags": list(memory.tags or []),
+                        },
+                    )
                 )
-                for memory, embedding in zip(memories, embeddings, strict=True)
-            ]
-            await vector_store.batch_upsert(items, collection_name=collection_name)
-            total += len(memories)
+            embedded_count = 0
+            for project_id, items in items_by_project.items():
+                self._check_abort()
+                try:
+                    async with self._writer(project_id):
+                        await vector_store.batch_upsert(items, collection_name=collection_name)
+                except ProjectWriteRejected:
+                    logger.info(
+                        "Skipping embedding-switch memory build for unavailable project %s",
+                        project_id,
+                    )
+                    continue
+                embedded_count += len(items)
+            total += embedded_count
             offset += len(memories)
 
     async def _build_tool_collection(
@@ -358,17 +380,26 @@ class EmbeddingSwitchRunner:
 
         count = 0
         for project in LocalProjectManager(self.db).list():
+            self._check_abort()
             internal_manager = setup_internal_registries(
                 config,
                 db=self.db,
                 project_id=project.id,
                 mcp_manager=mcp_manager,
             )
-            stats = await search.embed_all_tools(
-                project.id,
-                mcp_manager,
-                internal_manager=internal_manager,
-            )
+            try:
+                async with self._writer(project.id):
+                    stats = await search.embed_all_tools(
+                        project.id,
+                        mcp_manager,
+                        internal_manager=internal_manager,
+                    )
+            except ProjectWriteRejected:
+                logger.info(
+                    "Skipping embedding-switch tool build for unavailable project %s",
+                    project.id,
+                )
+                continue
             embedded = stats.get("embedded")
             if isinstance(embedded, int):
                 count += embedded
@@ -391,10 +422,19 @@ class EmbeddingSwitchRunner:
                 return total
 
             for record in records:
-                await self._upsert_github_issue_record(
-                    record, service, vector_store, collection_name
-                )
-            total += len(records)
+                self._check_abort()
+                try:
+                    async with self._writer(record.project_id):
+                        await self._upsert_github_issue_record(
+                            record, service, vector_store, collection_name
+                        )
+                except ProjectWriteRejected:
+                    logger.info(
+                        "Skipping embedding-switch issue build for unavailable project %s",
+                        record.project_id,
+                    )
+                    continue
+                total += 1
             offset += len(records)
 
     async def _upsert_github_issue_record(
@@ -451,6 +491,48 @@ class EmbeddingSwitchRunner:
 
     def _record_phase_error(self, journal: SwitchJournal, exc: Exception) -> SwitchJournal:
         return record_switch_error(self.config_store, journal, str(exc), phase=journal.phase)
+
+    def _check_abort(self) -> None:
+        if self.control.abort_requested.is_set() and not self.control.flipping_started:
+            raise EmbeddingSwitchAbortRequested
+
+    async def _cleanup_staged_collections(self, journal: SwitchJournal) -> None:
+        vector_store = self._vector_store(journal)
+        for collection_name in build_physical_names(journal).values():
+            await _delete_collection_if_present(vector_store, collection_name)
+
+    async def _finish_aborted_cleanup(
+        self,
+        journal: SwitchJournal,
+        report: SwitchRunReport,
+    ) -> SwitchRunReport:
+        try:
+            await self._cleanup_staged_collections(journal)
+            complete_aborted_switch(self.config_store, journal)
+        except Exception as exc:
+            report.error = str(exc)
+            report.journal = record_switch_error(
+                self.config_store,
+                journal,
+                str(exc),
+                phase=PHASE_ABORTED,
+            )
+            return report
+        report.phase_results.append(
+            PhaseResult(PHASE_ABORTED, "staged collections cleaned and switch aborted")
+        )
+        report.journal = None
+        return report
+
+    def _writer(self, project_id: str) -> AbstractAsyncContextManager[None]:
+        if self.fence is not None:
+            return self.fence.writer(project_id)
+        return _noop_writer()
+
+
+@asynccontextmanager
+async def _noop_writer() -> AsyncIterator[None]:
+    yield
 
 
 def _provider_api_base(provider: str) -> str | None:

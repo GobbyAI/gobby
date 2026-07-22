@@ -4,11 +4,13 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
+from types import SimpleNamespace
 from typing import TYPE_CHECKING
 
 import pytest
 from fastapi.testclient import TestClient
 
+from gobby.projects.purge import PurgeOutcome
 from gobby.servers.routes import projects as projects_routes
 from gobby.storage.tasks import LocalTaskManager
 from tests.servers.conftest import create_http_server
@@ -665,6 +667,30 @@ class TestProjectRoutes:
         project_manager.soft_delete(real_project["id"])
         response = client.delete(f"/api/projects/{real_project['id']}")
         assert response.status_code == 404
+
+    def test_purge_project_uses_runner_service(
+        self,
+        session_manager: SessionManager,
+        real_project: dict,
+    ) -> None:
+        calls: list[str] = []
+
+        class PurgeService:
+            async def purge_project(self, project_id: str) -> PurgeOutcome:
+                calls.append(project_id)
+                return PurgeOutcome.purged(project_id)
+
+        server = create_http_server(
+            session_manager=session_manager,
+            database=session_manager.db,
+        )
+        server._runner = SimpleNamespace(project_purge_service=PurgeService())
+
+        response = TestClient(server.app).post(f"/api/projects/{real_project['id']}/purge")
+
+        assert response.status_code == 200
+        assert response.json()["status"] == "purged"
+        assert calls == [real_project["id"]]
 
     def test_delete_protected_personal(self, client: TestClient, personal_project: dict) -> None:
         """Cannot delete _personal (system project)."""

@@ -11,6 +11,7 @@ from typing import TYPE_CHECKING, Any, cast
 from gobby.memory.protocol import MemoryBackendProtocol, MemoryRecord
 from gobby.memory.services.crossref import CrossrefService
 from gobby.memory.vectorstore import is_recoverable_vector_store_error
+from gobby.projects.fenced_vector_store import global_write_context, project_write_context
 from gobby.storage.memories import (
     LocalMemoryManager,
     Memory,
@@ -88,14 +89,37 @@ class MemoryLifecycleService:
         """Embed content and upsert to VectorStore when available."""
         if not self._vector_store or not self._embed_fn:
             return False
+        project_id = payload.get("project_id") if payload else None
+        write_context = (
+            project_write_context(self._vector_store, str(project_id))
+            if project_id is not None
+            else global_write_context(self._vector_store)
+        )
         try:
-            embedding = await self._embed_fn(content)
+            async with write_context:
+                return await self._embed_and_upsert_admitted(memory_id, content, payload)
+        except Exception as e:
+            logger.warning("VectorStore writer admission failed for %s: %s", memory_id, e)
+            return False
+
+    async def _embed_and_upsert_admitted(
+        self,
+        memory_id: str,
+        content: str,
+        payload: dict[str, Any] | None,
+    ) -> bool:
+        vector_store = self._vector_store
+        embed_fn = self._embed_fn
+        assert vector_store is not None
+        assert embed_fn is not None
+        try:
+            embedding = await embed_fn(content)
         except Exception as e:
             self._log_embedding_failure(memory_id, e)
             return False
 
         try:
-            await self._vector_store.upsert(memory_id, embedding, payload or {})
+            await vector_store.upsert(memory_id, embedding, payload or {})
             return True
         except Exception as e:
             if is_recoverable_vector_store_error(e):

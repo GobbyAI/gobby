@@ -3,7 +3,7 @@ from __future__ import annotations
 import logging
 from types import SimpleNamespace
 from typing import Any
-from unittest.mock import Mock
+from unittest.mock import AsyncMock, Mock
 
 import pytest
 
@@ -102,3 +102,35 @@ async def test_global_wiki_prune_registers_before_empty_project_return(
     assert registrations[0]["cron_storage"] is runner.cron_storage
     assert registrations[0]["cron_executor"] is runner.cron_scheduler.executor
     assert registrations[0]["project_id"] == "project-id"
+
+
+@pytest.mark.asyncio
+async def test_startup_vector_rebuild_includes_project_id_payload() -> None:
+    vector_store = SimpleNamespace(
+        initialize=AsyncMock(),
+        ensure_collection=AsyncMock(),
+        count=AsyncMock(return_value=0),
+    )
+    memory = SimpleNamespace(id="memory-1", content="content", project_id="project-1")
+    runner = SimpleNamespace(
+        vector_store=vector_store,
+        memory_manager=SimpleNamespace(
+            storage=SimpleNamespace(list_memories=lambda **_kwargs: [memory]),
+            embed_fn=object(),
+        ),
+        config=SimpleNamespace(embeddings=SimpleNamespace(dim=768)),
+        _vector_rebuild_task=None,
+    )
+    captured: list[dict[str, str]] = []
+
+    async def rebuild(
+        _vector_store: object,
+        memory_dicts: Any,
+        _embed_fn: object,
+    ) -> None:
+        captured.extend(memory_dicts())
+
+    await lifecycle_subsystems._initialize_vector_store(runner, rebuild, tracker=None)
+    await runner._vector_rebuild_task
+
+    assert captured == [{"id": "memory-1", "content": "content", "project_id": "project-1"}]

@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import asyncio
 import hashlib
 import logging
 from typing import Any
@@ -64,29 +63,36 @@ def switch(
         gobby embeddings switch --resume      # Resume an interrupted run
         gobby embeddings switch --abort       # Abort the current run
     """
-    from contextlib import nullcontext
-
-    from gobby.cli.runtime import require_cli_database
-    from gobby.storage.config_store import ConfigStore
+    from gobby.cli.utils_config import get_daemon_client
 
     try:
-        with nullcontext(require_cli_database(ctx)) as db:
-            store = ConfigStore(db)
-
-            if status:
-                _switch_status(store)
-                return
-            if abort:
-                _switch_abort(store)
-                return
-            if resume:
-                _switch_resume(store, db)
-                return
+        selected_actions = sum((status, resume, abort))
+        if selected_actions > 1:
+            raise click.UsageError("Choose only one of --status, --resume, or --abort")
+        client = get_daemon_client(timeout=30.0)
+        if status:
+            response = client.call_http_api("/api/embeddings/switch/status", method="GET")
+        elif abort:
+            response = client.call_http_api("/api/embeddings/switch/abort")
+        elif resume:
+            response = client.call_http_api("/api/embeddings/switch/resume")
+        else:
             if catalog_key is None:
                 click.echo("Error: catalog_key is required to start a switch.", err=True)
                 click.echo("Available keys: gobby embeddings catalog")
                 raise click.exceptions.Exit(1)
-            _switch_start(store, db, catalog_key, provider)
+            response = client.call_http_api(
+                "/api/embeddings/switch/start",
+                json_data={"catalog_key": catalog_key, "provider": provider},
+            )
+        if response.status_code >= 400:
+            detail = response.json().get("detail", response.text)
+            click.echo(f"Error: {detail}", err=True)
+            raise click.exceptions.Exit(1)
+        payload = response.json()
+        click.echo(json_dumps(payload, indent=2, sort_keys=True))
+        if payload.get("status") == "failed":
+            raise click.exceptions.Exit(1)
 
     except click.exceptions.Exit:
         raise
@@ -104,124 +110,6 @@ def catalog(ctx: click.Context) -> None:
 
     entries = catalog_summary()
     click.echo(json_dumps(entries, indent=2, sort_keys=True))
-
-
-def _switch_status(store: Any) -> None:
-    """Print the current switch run status."""
-    from gobby.ai.embedding_switch import get_switch_status
-
-    journal = get_switch_status(store)
-    if journal is None:
-        click.echo("No active embedding switch.")
-        return
-    click.echo(
-        json_dumps(
-            {
-                "run_id": journal.run_id,
-                "catalog_key": journal.catalog_key,
-                "target_dim": journal.target_dim,
-                "target_model": journal.target_model,
-                "target_api_base": journal.target_api_base,
-                "provider": journal.provider,
-                "phase": journal.phase,
-                "started_at": journal.started_at,
-                "updated_at": journal.updated_at,
-                "old_catalog_id": journal.old_catalog_id,
-                "old_dim": journal.old_dim,
-                "old_physical_names": journal.old_physical_names,
-                "error": journal.error,
-            },
-            indent=2,
-            sort_keys=True,
-        )
-    )
-
-
-def _switch_abort(store: Any) -> None:
-    """Abort the current switch run."""
-    from gobby.ai.embedding_switch import abort_switch
-
-    journal = abort_switch(store)
-    if journal is None:
-        click.echo("No active embedding switch to abort.")
-        return
-    click.echo(f"Aborted switch run {journal.run_id} (was at phase: {journal.phase}).")
-    click.echo("Note: staged artifacts (physical collections) may need manual cleanup.")
-
-
-def _switch_resume(store: Any, db: Any) -> None:
-    """Resume an interrupted switch run."""
-    from gobby.ai.embedding_switch_runner import resume_embedding_switch
-
-    report = asyncio.run(resume_embedding_switch(store, db))
-    _echo_switch_report(report)
-
-
-def _switch_start(store: Any, db: Any, catalog_key: str, provider: str | None) -> None:
-    """Start a new embedding switch run."""
-    from gobby.ai.embedding_catalog import get_spec
-    from gobby.ai.embedding_switch import SwitchAlreadyActiveError
-    from gobby.ai.embedding_switch_runner import (
-        detect_provider_from_config,
-        start_embedding_switch,
-    )
-
-    spec = get_spec(catalog_key)
-    if spec is None:
-        click.echo(f"Error: unknown embedding catalog key: {catalog_key}", err=True)
-        raise click.exceptions.Exit(1)
-
-    provider_name = provider or detect_provider_from_config(store)
-
-    # Warn about experimental providers
-    if provider_name == "lmstudio" and spec.compatibility.lmstudio == "experimental":
-        click.echo("WARNING: This model is experimental on LM Studio (issue #965).", err=True)
-
-    # Warn about nomic quant not being real on Ollama
-    if provider_name == "ollama" and not spec.ollama_quant_real:
-        click.echo(
-            f"WARNING: {spec.label} on Ollama uses F16 only (quant choice is not real on Ollama).",
-            err=True,
-        )
-
-    try:
-        report = asyncio.run(start_embedding_switch(store, db, catalog_key, provider_name))
-    except SwitchAlreadyActiveError as exc:
-        click.echo(f"Error: {exc}", err=True)
-        raise click.exceptions.Exit(1) from exc
-    except ValueError as exc:
-        click.echo(f"Error: {exc}", err=True)
-        raise click.exceptions.Exit(1) from exc
-
-    click.echo(f"Switch run: {catalog_key} (dim={spec.dim}, provider={provider_name})")
-    _echo_switch_report(report)
-
-
-def _echo_switch_report(report: Any) -> None:
-    """Print a switch runner report and fail the CLI when a phase recorded an error."""
-    if report.journal is None and not report.completed:
-        click.echo("No active embedding switch.")
-        return
-
-    for phase_result in report.phase_results:
-        suffix = f" ({phase_result.count} items)" if phase_result.count is not None else ""
-        click.echo(f"{phase_result.phase}: {phase_result.message}{suffix}")
-
-    if report.failed:
-        if report.journal is not None:
-            click.echo(
-                f"Switch paused at phase {report.journal.phase}; run "
-                "`gobby embeddings switch --resume` after resolving the error.",
-                err=True,
-            )
-        click.echo(f"Error: {report.error}", err=True)
-        raise click.exceptions.Exit(1)
-
-    if report.completed:
-        click.echo("Switch complete.")
-        click.echo("Restart the daemon to apply the new embedding model.")
-    elif report.journal is not None:
-        click.echo(f"Switch paused at phase {report.journal.phase}.")
 
 
 def _doctor_payload(config: Any) -> dict[str, Any]:

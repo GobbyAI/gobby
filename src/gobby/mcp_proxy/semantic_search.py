@@ -15,6 +15,7 @@ from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, TypeVar
 
 from gobby.ai.embeddings import EmbeddingService
+from gobby.projects.fenced_vector_store import project_write_context
 from gobby.search.similarity import cosine_similarity
 from gobby.storage.hub.protocol import HubDatabase
 
@@ -221,6 +222,26 @@ class SemanticToolSearch:
         tool_name: str = "",
         description: str | None = None,
     ) -> None:
+        """Store a tool embedding while holding project writer admission."""
+        async with project_write_context(self._vector_store, project_id):
+            await self._store_embedding_admitted(
+                tool_id=tool_id,
+                server_name=server_name,
+                project_id=project_id,
+                embedding=embedding,
+                tool_name=tool_name,
+                description=description,
+            )
+
+    async def _store_embedding_admitted(
+        self,
+        tool_id: str,
+        server_name: str,
+        project_id: str,
+        embedding: list[float],
+        tool_name: str = "",
+        description: str | None = None,
+    ) -> None:
         """
         Store a tool embedding in Qdrant.
 
@@ -367,6 +388,26 @@ class SemanticToolSearch:
         server_name: str,
         project_id: str,
     ) -> bool:
+        """Generate and store one tool embedding under project admission."""
+        async with project_write_context(self._vector_store, project_id):
+            return await self._embed_tool_admitted(
+                tool_id=tool_id,
+                name=name,
+                description=description,
+                input_schema=input_schema,
+                server_name=server_name,
+                project_id=project_id,
+            )
+
+    async def _embed_tool_admitted(
+        self,
+        tool_id: str,
+        name: str,
+        description: str | None,
+        input_schema: dict[str, Any] | None,
+        server_name: str,
+        project_id: str,
+    ) -> bool:
         """
         Generate and store embedding for a tool.
 
@@ -398,6 +439,20 @@ class SemanticToolSearch:
         return True
 
     async def embed_all_tools(
+        self,
+        project_id: str,
+        mcp_manager: Any,
+        internal_manager: Any | None = None,
+    ) -> dict[str, Any]:
+        """Generate all project tool embeddings under one writer admission."""
+        async with project_write_context(self._vector_store, project_id):
+            return await self._embed_all_tools_admitted(
+                project_id=project_id,
+                mcp_manager=mcp_manager,
+                internal_manager=internal_manager,
+            )
+
+    async def _embed_all_tools_admitted(
         self,
         project_id: str,
         mcp_manager: Any,

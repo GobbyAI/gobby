@@ -39,6 +39,7 @@ from gobby.servers.routes.configuration_secrets import (
 )
 from gobby.storage.config_store import (
     ConfigStore,
+    embedding_mutation_context,
     flatten_config,
     is_secret_key_name,
     unflatten_config,
@@ -285,7 +286,7 @@ def persist_imported_config(
     storage_secret_values = runtime_embedding_config_entries_to_storage(validated_secret_values)
     storage_plain_values = runtime_embedding_config_entries_to_storage(plain_values)
     secret_store = secret_store_provider()
-    with config_store.db.transaction():
+    with embedding_mutation_context(config_store.db):
         config_store.delete_all(
             secret_store,
             preserved_secret_keys=storage_secret_references,
@@ -370,7 +371,7 @@ def register_import_export_routes(
                 default_project_id=context.server.services.project_id,
             )
 
-            with config_store.db.transaction():
+            with embedding_mutation_context(config_store.db):
                 if request.config_store is not None:
                     count = persist_imported_config(
                         flat_config=request.config_store,

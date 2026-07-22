@@ -34,6 +34,7 @@ from gobby.servers.routes.configuration_secrets import (
 )
 from gobby.storage.config_store import (
     config_key_to_secret_name,
+    embedding_mutation_context,
     flatten_config,
     is_secret_key_name,
     unflatten_config,
@@ -191,7 +192,7 @@ def register_value_routes(router: APIRouter, context: ConfigurationRouteContext)
                 raise HTTPException(status_code=400, detail="Invalid configuration values") from e
 
             count = 0
-            with config_store.db.transaction():
+            with embedding_mutation_context(config_store.db):
                 if normal_entries:
                     count = config_store.set_many(normal_entries, source="user")
 

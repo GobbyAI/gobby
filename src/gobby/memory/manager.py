@@ -81,6 +81,7 @@ class MemoryManager(MemoryManagerFacadeMethods):
         collection_prefix: str = "code_symbols_",
         run_db: Callable[..., Awaitable[Any]] | None = None,
         max_graph_deterministic_attempts: int = 3,
+        project_write_fence: Any | None = None,
     ):
         self.db = db
         self.config = config
@@ -88,6 +89,7 @@ class MemoryManager(MemoryManagerFacadeMethods):
         self._llm_service = llm_service
         self._vector_store = vector_store
         self._embed_fn = embed_fn
+        self._project_write_fence = project_write_fence
 
         self.storage = LocalMemoryManager(db)
         self._backend: MemoryBackendProtocol = StorageAdapter(self.storage, run_db=run_db)
@@ -305,6 +307,7 @@ class MemoryManager(MemoryManagerFacadeMethods):
                     else None
                 ),
                 active_memory_filter=_active_memory_filter,
+                write_fence=self._project_write_fence,
             )
             logger.debug("KnowledgeGraphService initialized")
             return kg_service

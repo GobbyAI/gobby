@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
-from typing import Literal, Protocol, TypedDict
+import asyncio
+from collections.abc import Awaitable, Callable
+from typing import Any, Literal, Protocol, TypedDict, cast
 
 from gobby.gwiki_gateway import GwikiCommandResult, GwikiUnavailableError
 from gobby.scheduler.executor import CronHandler
@@ -38,6 +40,31 @@ class WikiPruneGateway(Protocol):
 
 class CronRegistrationProtocol(Protocol):
     def register_handler(self, name: str, handler: CronHandler) -> None: ...
+
+
+def guard_project_cron_handler[HandlerResult](
+    handler: Callable[[CronJob], Awaitable[HandlerResult]],
+    project_lookup: Callable[[str], Any | None],
+) -> Callable[[CronJob], Awaitable[HandlerResult]]:
+    """Skip a handler when its project disappeared or was soft-deleted."""
+
+    async def _guarded(job: CronJob) -> HandlerResult:
+        project = await asyncio.to_thread(project_lookup, job.project_id)
+        if project is None or project.deleted_at is not None:
+            return cast(
+                HandlerResult,
+                {
+                    "success": True,
+                    "status": "skipped",
+                    "message": (
+                        f"project {job.project_id} is absent or deleted; scheduled write skipped"
+                    ),
+                    "skipped": True,
+                },
+            )
+        return await handler(job)
+
+    return _guarded
 
 
 def create_wiki_prune_handler(gateway: WikiPruneGateway) -> CronHandler:

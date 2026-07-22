@@ -34,7 +34,12 @@ from gobby.servers.routes.configuration_secrets import (
     mask_secret_values,
     validate_falkordb_secret,
 )
-from gobby.storage.config_store import flatten_config, is_secret_key_name, unflatten_config
+from gobby.storage.config_store import (
+    embedding_mutation_context,
+    flatten_config,
+    is_secret_key_name,
+    unflatten_config,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -87,7 +92,7 @@ def _apply_transactional_changes(
     storage_plain_entries = runtime_embedding_config_entries_to_storage(plain_entries)
     count = 0
     secret_store = context.get_secret_store()
-    with config_store.db.transaction():
+    with embedding_mutation_context(config_store.db):
         deleted_count = delete_all_except(config_store, secret_store, masked_secret_keys)
         if storage_secret_reference_entries:
             count += config_store.set_many(storage_secret_reference_entries, source="user")

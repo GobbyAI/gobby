@@ -10,6 +10,7 @@ from collections.abc import Awaitable, Callable
 from typing import TYPE_CHECKING, Any, Protocol, cast
 
 from gobby.memory.services.crossref import CrossrefRebuildError, CrossrefService
+from gobby.projects.fenced_vector_store import global_write_context, project_write_context
 from gobby.storage.memories import Memory, Visibility
 from gobby.storage.memories_scope import ALL_MEMORIES, MemoryScope
 
@@ -225,6 +226,12 @@ class IndexingService:
 
     async def reconcile_stores(self, dry_run: bool = False) -> dict[str, Any]:
         """Reconcile Qdrant and FalkorDB with the memory storage source of truth."""
+        if not dry_run:
+            async with global_write_context(self._vector_store):
+                return await self._reconcile_stores_admitted(dry_run=False)
+        return await self._reconcile_stores_admitted(dry_run=True)
+
+    async def _reconcile_stores_admitted(self, dry_run: bool) -> dict[str, Any]:
         storage_ids = set(await self._run_storage(self._storage.list_all_ids))
         report: dict[str, Any] = {
             "dry_run": dry_run,
@@ -403,10 +410,16 @@ class IndexingService:
         if project_id is None:
             return await self._reindex_global_embeddings()
 
+        async with project_write_context(self._vector_store, project_id):
+            return await self._reindex_project_embeddings_admitted(project_id)
+
+    async def _reindex_project_embeddings_admitted(self, project_id: str) -> dict[str, Any]:
         total = 0
         try:
             vector_store = self._vector_store
             embed_fn = self._embed_fn
+            assert vector_store is not None
+            assert embed_fn is not None
             existing_ids = set(await vector_store.scroll_ids(filters={"project_id": project_id}))
             memories = await self.fetch_all_project_memories(project_id)
             total = len(memories)
@@ -464,6 +477,10 @@ class IndexingService:
                         self._global_reindex_task = None
 
     async def _run_global_embedding_reindex(self) -> dict[str, Any]:
+        async with global_write_context(self._vector_store):
+            return await self._run_global_embedding_reindex_admitted()
+
+    async def _run_global_embedding_reindex_admitted(self) -> dict[str, Any]:
         total = 0
         try:
             memories = await self.fetch_all_memories()

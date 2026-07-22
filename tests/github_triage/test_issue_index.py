@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import asyncio
+from types import SimpleNamespace
 from unittest.mock import AsyncMock
 
 import pytest
@@ -12,6 +14,8 @@ from gobby.github_triage.issue_index import (
     content_hash,
     issue_point_id,
 )
+from gobby.projects.fenced_vector_store import ProjectFencedVectorStore
+from gobby.projects.write_fence import ProjectWriteFence
 
 pytestmark = pytest.mark.unit
 
@@ -170,3 +174,38 @@ async def test_find_duplicates_warns_and_degrades_when_vector_search_fails(
     assert duplicates == []
     assert "vector duplicate search failed" in caplog.text
     assert "owner/repo#42" in caplog.text
+
+
+@pytest.mark.asyncio
+async def test_issue_index_holds_project_admission_from_embedding_through_upsert() -> None:
+    project = SimpleNamespace(deleted_at=None)
+    fence = ProjectWriteFence(lambda _project_id: project)
+    inner = AsyncMock()
+    embed_started = asyncio.Event()
+    release_embed = asyncio.Event()
+
+    async def embed(_content: str) -> list[float]:
+        embed_started.set()
+        await release_embed.wait()
+        return [0.1, 0.2]
+
+    vector_store = ProjectFencedVectorStore(inner, fence)  # type: ignore[arg-type]
+    indexer = GitHubIssueIndexer(vector_store=vector_store, embed_fn=embed)
+    write_task = asyncio.create_task(indexer.upsert(_issue()))
+    await embed_started.wait()
+    project.deleted_at = object()
+    exclusive_entered = asyncio.Event()
+
+    async def purge() -> None:
+        async with fence.exclusive("project-1", timeout=1.0):
+            exclusive_entered.set()
+
+    purge_task = asyncio.create_task(purge())
+    async with fence._condition:
+        await fence._condition.wait_for(lambda: "project-1" in fence._exclusive)
+    assert not exclusive_entered.is_set()
+
+    release_embed.set()
+    assert await write_task == issue_point_id("project-1", "owner/repo", 42)
+    await purge_task
+    assert exclusive_entered.is_set()

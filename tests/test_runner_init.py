@@ -255,7 +255,10 @@ class TestGobbyRunnerInit:
             embedding_dim=1536,
         )
         runner.secret_store.get.assert_called_once_with("embeddings_api_key")
-        assert runner.vector_store is mock_vector_store.return_value
+        from gobby.projects.fenced_vector_store import ProjectFencedVectorStore
+
+        assert isinstance(runner.vector_store, ProjectFencedVectorStore)
+        assert runner.vector_store._inner is mock_vector_store.return_value
         assert runner.memory_manager is mock_memory_manager.return_value
         mock_memory_manager.assert_called_once()
         embed_fn = mock_memory_manager.call_args.kwargs["embed_fn"]

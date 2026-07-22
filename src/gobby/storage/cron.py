@@ -616,6 +616,41 @@ class CronJobStorage(CronRunStorageMixin):
             cursor = conn.execute("DELETE FROM cron_jobs WHERE id = %s", (job_id,))
         return cursor.rowcount > 0
 
+    def disable_project_jobs(self, project_id: str) -> list[CronJob]:
+        """Park every cron row for a project before its runs are drained."""
+        if not project_id:
+            raise ValueError("project_id must not be empty")
+        with self.db.transaction() as conn:
+            rows = conn.execute(
+                "SELECT * FROM cron_jobs WHERE project_id = %s FOR UPDATE",
+                (project_id,),
+            ).fetchall()
+            conn.execute(
+                """
+                UPDATE cron_jobs
+                   SET enabled = FALSE, next_run_at = NULL, updated_at = %s
+                 WHERE project_id = %s
+                """,
+                (utc_now(), project_id),
+            )
+        return [CronJob.from_row(row) for row in rows]
+
+    def delete_project_jobs(self, job_ids: list[str]) -> int:
+        """Delete drained project cron rows and their run history."""
+        if not job_ids:
+            return 0
+        placeholders = ", ".join(["%s"] * len(job_ids))
+        with self.db.transaction() as conn:
+            conn.execute(
+                f"DELETE FROM cron_runs WHERE cron_job_id IN ({placeholders})",  # nosec B608
+                tuple(job_ids),
+            )
+            cursor = conn.execute(
+                f"DELETE FROM cron_jobs WHERE id IN ({placeholders})",  # nosec B608
+                tuple(job_ids),
+            )
+        return cursor.rowcount
+
     def delete_removed_automation_jobs(self) -> int:
         """Delete stale bundled automation cron rows that no longer have executors."""
         names = tuple(REMOVED_AUTOMATION_JOB_NAMES)

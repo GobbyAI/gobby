@@ -449,6 +449,20 @@ class GcodeGateway:
             timeout=timeout,
         )
 
+    async def invalidate_project_by_id(
+        self,
+        project_id: str,
+        *,
+        timeout: float | None = None,
+    ) -> GcodeCommandResult:
+        """Invalidate one indexed project without requiring its former repo root."""
+        project_id = _validate_user_gcode_value("project_id", project_id)
+        binary = await self._ensure_version()
+        return await self._run_command_result(
+            [binary, "invalidate", "--project-id", project_id, "--force"],
+            timeout=timeout,
+        )
+
     async def codewiki(
         self,
         project_root: Path,

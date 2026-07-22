@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import logging
 from collections.abc import Mapping
+from dataclasses import asdict
 from typing import TYPE_CHECKING, Any
 
 from fastapi import APIRouter, HTTPException
@@ -15,6 +16,8 @@ from gobby.ai import (
     CapabilityStatus,
     build_daemon_ai_capability_registry,
 )
+from gobby.ai.embedding_switch import SwitchAlreadyActiveError
+from gobby.ai.embedding_switch_service import EmbeddingSwitchTaskActive
 from gobby.ai.embeddings import EmbeddingGenerationError, EmbeddingService
 from gobby.servers.responses import JSONResponse
 
@@ -50,6 +53,13 @@ class EmbeddingsPayload(BaseModel):
         if isinstance(self.input, str):
             return [self.input]
         return self.input
+
+
+class EmbeddingSwitchPayload(BaseModel):
+    """Request body for starting a daemon-owned embedding switch."""
+
+    catalog_key: str
+    provider: str | None = None
 
 
 def create_embeddings_router(server: HTTPServer) -> APIRouter:
@@ -108,7 +118,45 @@ def create_embeddings_router(server: HTTPServer) -> APIRouter:
             "dim": config.embeddings.dim,
         }
 
+    @router.get("/switch/status")
+    async def embedding_switch_status() -> dict[str, object]:
+        return asdict(_embedding_switch_coordinator(server).status())
+
+    @router.post("/switch/start")
+    async def embedding_switch_start(payload: EmbeddingSwitchPayload) -> dict[str, object]:
+        coordinator = _embedding_switch_coordinator(server)
+        try:
+            result = await coordinator.start(payload.catalog_key, payload.provider)
+        except (EmbeddingSwitchTaskActive, SwitchAlreadyActiveError) as exc:
+            raise HTTPException(status_code=409, detail=str(exc)) from exc
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+        return asdict(result)
+
+    @router.post("/switch/resume")
+    async def embedding_switch_resume() -> dict[str, object]:
+        try:
+            result = await _embedding_switch_coordinator(server).resume()
+        except EmbeddingSwitchTaskActive as exc:
+            raise HTTPException(status_code=409, detail=str(exc)) from exc
+        return asdict(result)
+
+    @router.post("/switch/abort")
+    async def embedding_switch_abort() -> dict[str, object]:
+        result = await _embedding_switch_coordinator(server).abort()
+        if result.status == "too_late":
+            raise HTTPException(status_code=409, detail=asdict(result))
+        return asdict(result)
+
     return router
+
+
+def _embedding_switch_coordinator(server: HTTPServer) -> Any:
+    runner = server.get_runner()
+    coordinator = getattr(runner, "embedding_switch_coordinator", None)
+    if coordinator is None:
+        raise HTTPException(status_code=503, detail="Embedding switch service is unavailable")
+    return coordinator
 
 
 def _embedding_status_payload(config: DaemonConfig | None) -> dict[str, object]:

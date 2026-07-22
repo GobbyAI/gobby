@@ -207,12 +207,17 @@ async def unmodeled_observation_cleanup_loop(
 
 async def rebuild_vector_store(
     vector_store: VectorStore,
-    memory_dicts: list[dict[str, str]],
+    memory_dicts: list[dict[str, str]] | Callable[[], list[dict[str, str]]],
     embed_fn: Any,
 ) -> None:
     """Rebuild VectorStore index in the background."""
     try:
-        await vector_store.rebuild(memory_dicts, embed_fn)
+        rebuild_from_supplier = getattr(vector_store, "rebuild_from_supplier", None)
+        if callable(memory_dicts) and callable(rebuild_from_supplier):
+            await rebuild_from_supplier(memory_dicts, embed_fn)
+        else:
+            resolved_memories = memory_dicts() if callable(memory_dicts) else memory_dicts
+            await vector_store.rebuild(resolved_memories, embed_fn)
         logger.info("VectorStore rebuild complete")
     except asyncio.CancelledError:
         logger.info("VectorStore rebuild cancelled")

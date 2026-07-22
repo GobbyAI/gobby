@@ -1789,7 +1789,12 @@ async def test_multi_scope_registration_files_per_scope_tasks(
     )
 
     for scope in ("project:alpha", "topic:sessions"):
-        output = json.loads(await executor.handlers[f"wiki:librarian:{scope}"](_job("librarian")))
+        librarian_job = next(
+            job
+            for job in cron_storage.list_jobs(project_id=project_id)
+            if job.name == f"gobby:wiki-librarian:{scope}"
+        )
+        output = json.loads(await executor.handlers[f"wiki:librarian:{scope}"](librarian_job))
         assert output["scope"] == scope
         assert output["result"]["task_filing"]["filed"] >= 1
 

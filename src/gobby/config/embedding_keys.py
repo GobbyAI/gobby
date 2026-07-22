@@ -34,6 +34,8 @@ AI_EMBEDDING_API_KEY_KEY = f"{AI_EMBEDDINGS_CONFIG_PREFIX}.{EMBEDDING_API_KEY_FI
 AI_EMBEDDING_DIM_KEY = f"{AI_EMBEDDINGS_CONFIG_PREFIX}.{EMBEDDING_DIM_FIELD}"
 AI_EMBEDDING_QUERY_PREFIX_KEY = f"{AI_EMBEDDINGS_CONFIG_PREFIX}.{EMBEDDING_QUERY_PREFIX_FIELD}"
 AI_EMBEDDING_CATALOG_KEY = f"{AI_EMBEDDINGS_CONFIG_PREFIX}.{EMBEDDING_CATALOG_KEY_FIELD}"
+EMBEDDING_SWITCH_JOURNAL_KEY = f"{AI_EMBEDDINGS_CONFIG_PREFIX}.switch_run"
+EMBEDDING_INTERNAL_LIFECYCLE_KEYS = frozenset({EMBEDDING_SWITCH_JOURNAL_KEY})
 
 AI_EMBEDDING_CONFIG_KEYS = (
     AI_EMBEDDING_API_BASE_KEY,
@@ -110,6 +112,8 @@ def _embedding_key_error(key: str) -> str:
 
 def validate_embedding_storage_config_key(key: str) -> None:
     """Validate a key before writing it directly to config_store."""
+    if key in EMBEDDING_INTERNAL_LIFECYCLE_KEYS:
+        raise ValueError(f"Embedding key '{key}' is internal lifecycle state")
     if key == RUNTIME_EMBEDDINGS_CONFIG_PREFIX or key.startswith(
         f"{RUNTIME_EMBEDDINGS_CONFIG_PREFIX}."
     ):
@@ -171,7 +175,9 @@ def runtime_embedding_config_keys_to_storage(keys: Iterable[str]) -> set[str]:
 
 def storage_embedding_config_entries_to_runtime(entries: Mapping[str, Any]) -> dict[str, Any]:
     return {
-        storage_embedding_config_key_to_runtime_key(key): value for key, value in entries.items()
+        storage_embedding_config_key_to_runtime_key(key): value
+        for key, value in entries.items()
+        if key not in EMBEDDING_INTERNAL_LIFECYCLE_KEYS
     }
 
 

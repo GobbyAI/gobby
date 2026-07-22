@@ -115,6 +115,19 @@ def _init_pipeline_heartbeat(runner: GobbyRunner) -> PipelineHeartbeatService | 
 
 def init_orchestration(runner: GobbyRunner) -> None:
     """Initialize workflows, pipelines, agents, cron, and communications."""
+    runner.project_purge_service = None
+    runner.embedding_switch_coordinator = None
+    try:
+        from gobby.ai.embedding_switch_service import EmbeddingSwitchCoordinator
+
+        runner.embedding_switch_coordinator = EmbeddingSwitchCoordinator(
+            config_store=runner.config_store,
+            db=runner.database,
+            fence=runner.project_write_fence,
+        )
+    except Exception:
+        mark_service_degraded(runner, "embedding_switch_coordinator")
+        logger.exception("Failed to initialize embedding switch coordinator")
     runner.workflow_loader = None
     runner.pipeline_execution_manager = None
     runner.pipeline_executor = None
@@ -329,6 +342,63 @@ def init_orchestration(runner: GobbyRunner) -> None:
         from gobby.storage.projects import LocalProjectManager
 
         pm = LocalProjectManager(runner.database)
+
+        try:
+            from gobby.code_index.gcode_gateway import GcodeGateway
+            from gobby.config.persistence import is_falkordb_enabled
+            from gobby.gwiki_gateway import GwikiGateway
+            from gobby.memory.vectorstore import VectorStore
+            from gobby.projects.gwiki_lock import GwikiProjectDrainBarrier
+            from gobby.projects.purge import (
+                NoopProjectGraphCleaner,
+                NoopProjectVectorCleaner,
+                ProjectPurgeService,
+                register_project_purge_cron,
+            )
+            from gobby.projects.vector_cleanup import ProjectVectorCleaner
+            from gobby.storage.projects import GLOBAL_PROJECT_ID
+
+            cleanup_vector_store = runner.vector_store
+            qdrant_config = getattr(runner.config.databases, "qdrant", None)
+            if cleanup_vector_store is None and qdrant_config is not None:
+                cleanup_vector_store = VectorStore(
+                    url=qdrant_config.url,
+                    api_key=qdrant_config.api_key,
+                    embedding_dim=runner.config.embeddings.dim,
+                )
+            vector_cleaner = (
+                ProjectVectorCleaner(cleanup_vector_store)
+                if cleanup_vector_store is not None
+                else NoopProjectVectorCleaner()
+            )
+            kg_service = (
+                runner.memory_manager.kg_service if runner.memory_manager is not None else None
+            )
+            if kg_service is None and is_falkordb_enabled(runner.config.databases):
+                raise RuntimeError("FalkorDB is configured but graph cleanup is unavailable")
+            graph_cleaner = kg_service or NoopProjectGraphCleaner()
+            runner.project_purge_service = ProjectPurgeService(
+                db=runner.database,
+                projects=pm,
+                cron=runner.cron_storage,
+                fence=runner.project_write_fence,
+                gwiki_barrier=GwikiProjectDrainBarrier(runner.database),
+                wiki_gateway=GwikiGateway(),
+                code_gateway=GcodeGateway(),
+                vector_cleaner=vector_cleaner,
+                graph_cleaner=graph_cleaner,
+            )
+            register_project_purge_cron(
+                runner.cron_storage,
+                cron_executor,
+                runner.project_purge_service,
+                project_id=GLOBAL_PROJECT_ID,
+            )
+            logger.debug("Project purge cron handler registered")
+        except Exception:
+            runner.project_purge_service = None
+            mark_service_degraded(runner, "project_purge_service")
+            logger.exception("Failed to initialize project purge service")
 
         memory_dream_config = getattr(getattr(runner.config, "memory", None), "dream", None)
         if memory_dream_config is None:

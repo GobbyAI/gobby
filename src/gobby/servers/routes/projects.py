@@ -488,4 +488,28 @@ def create_projects_router(server: HTTPServer) -> APIRouter:
 
         return {"status": "deleted", "id": project_id}
 
+    @router.post("/{project_id}/purge")
+    async def purge_project(project_id: str) -> dict[str, Any]:
+        """Run the shared lifecycle-safe hard purge service immediately."""
+        runner = server.get_runner()
+        service = getattr(runner, "project_purge_service", None)
+        if service is None:
+            raise HTTPException(503, "Project purge service is unavailable")
+        outcome = await service.purge_project(project_id)
+        status_codes = {"not_found": 404, "protected": 403, "failed": 500}
+        if not outcome.success:
+            raise HTTPException(
+                status_codes.get(outcome.status, 500),
+                {
+                    "project_id": outcome.project_id,
+                    "status": outcome.status,
+                    "message": outcome.message,
+                },
+            )
+        return {
+            "project_id": outcome.project_id,
+            "status": outcome.status,
+            "message": outcome.message,
+        }
+
     return router

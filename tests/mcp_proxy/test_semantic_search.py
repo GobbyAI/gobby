@@ -1,6 +1,8 @@
 """Tests for the SemanticToolSearch module."""
 
+import asyncio
 import logging
+from types import SimpleNamespace
 from typing import Any, TypedDict, cast
 from unittest.mock import AsyncMock, MagicMock, call, patch
 
@@ -15,6 +17,8 @@ from gobby.mcp_proxy.semantic_search import (
     _compute_text_hash,
     _cosine_similarity,
 )
+from gobby.projects.fenced_vector_store import ProjectFencedVectorStore
+from gobby.projects.write_fence import ProjectWriteFence
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.mcp import LocalMCPManager
 
@@ -911,3 +915,51 @@ class TestSearchTools:
 
         assert result is None
         assert "Failed to read semantic tool collection dimension" in caplog.text
+
+
+@pytest.mark.asyncio
+async def test_tool_embedding_holds_project_admission_from_embedding_through_upsert(
+    temp_db: HubDatabase,
+) -> None:
+    project = SimpleNamespace(deleted_at=None)
+    fence = ProjectWriteFence(lambda _project_id: project)
+    inner = AsyncMock()
+    inner.get_collection_dimension.return_value = DEFAULT_EMBEDDING_DIM
+    upsert_started = asyncio.Event()
+    release_upsert = asyncio.Event()
+
+    async def upsert(*_args: object, **_kwargs: object) -> None:
+        upsert_started.set()
+        await release_upsert.wait()
+
+    inner.upsert.side_effect = upsert
+    vector_store = ProjectFencedVectorStore(inner, fence)  # type: ignore[arg-type]
+    search = SemanticToolSearch(temp_db, vector_store=vector_store)
+    search.embed_text = AsyncMock(return_value=[0.1] * DEFAULT_EMBEDDING_DIM)
+    write_task = asyncio.create_task(
+        search.embed_tool(
+            tool_id="tool-1",
+            name="tool",
+            description="description",
+            input_schema={},
+            server_name="server",
+            project_id="project-1",
+        )
+    )
+    await upsert_started.wait()
+    project.deleted_at = object()
+    exclusive_entered = asyncio.Event()
+
+    async def purge() -> None:
+        async with fence.exclusive("project-1", timeout=1.0):
+            exclusive_entered.set()
+
+    purge_task = asyncio.create_task(purge())
+    async with fence._condition:
+        await fence._condition.wait_for(lambda: "project-1" in fence._exclusive)
+    assert not exclusive_entered.is_set()
+
+    release_upsert.set()
+    assert await write_task is True
+    await purge_task
+    assert exclusive_entered.is_set()

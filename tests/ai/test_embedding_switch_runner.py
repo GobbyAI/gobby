@@ -7,13 +7,16 @@ from typing import Any
 import pytest
 
 from gobby.ai.embedding_switch import (
+    PHASE_ABORTED,
     PHASE_ACTIVE,
     PHASE_BUILDING,
     PHASE_FLIPPING,
     PHASE_STAGING,
     SwitchJournal,
+    get_switch_status,
 )
 from gobby.ai.embedding_switch_runner import EmbeddingSwitchRunner
+from gobby.ai.embedding_switch_service import EmbeddingSwitchControl
 from gobby.config.embedding_keys import AI_EMBEDDING_API_BASE_KEY
 from gobby.storage.github_triage import GitHubIssueTriageRecord, GitHubTriageStore
 
@@ -35,6 +38,11 @@ class FakeConfigStore:
     def set_many(self, entries: dict[str, Any], source: str = "user") -> int:
         self.values.update(entries)
         self.operations.append(("set_many", dict(entries), source))
+        return len(entries)
+
+    def set_embedding_switch_values(self, run_id: str, entries: dict[str, Any]) -> int:
+        self.values.update(entries)
+        self.operations.append(("owner_set", run_id, dict(entries)))
         return len(entries)
 
     def delete(self, key: str) -> None:
@@ -152,9 +160,10 @@ async def test_flip_records_old_targets_before_config_write(
 
     assert journal.phase == PHASE_ACTIVE
     assert store.operations[0][0] == "set"
-    assert store.operations[1][0] == "set_many"
+    assert store.operations[1][0] == "owner_set"
     config_entries = store.operations[1][1]
-    assert config_entries[AI_EMBEDDING_API_BASE_KEY] is None
+    assert config_entries == journal.run_id
+    assert store.operations[1][2][AI_EMBEDDING_API_BASE_KEY] is None
     assert journal.old_physical_names["memories"] == "memories@old"
     assert ("alias", "memories@4096-run", "memories") in vector_store.operations
     assert not any(operation[0] == "delete" for operation in vector_store.operations)
@@ -251,3 +260,45 @@ async def test_legacy_github_issue_without_source_text_leaves_building_error(
     assert report.journal is not None
     assert report.journal.phase == PHASE_BUILDING
     assert "run GitHub triage reconcile/reprocessing" in (report.journal.error or "")
+
+
+@pytest.mark.asyncio
+async def test_abort_cleanup_failure_keeps_durable_aborted_journal_for_retry(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    store = FakeConfigStore()
+    vector_store = FakeVectorStore()
+    control = EmbeddingSwitchControl()
+    control.abort_requested.set()
+    runner = EmbeddingSwitchRunner(store, db=object(), control=control)
+    monkeypatch.setattr(runner, "_vector_store", lambda _journal: vector_store)
+    cleanup_attempts = 0
+
+    async def fail_first_cleanup(collection_name: str) -> None:
+        nonlocal cleanup_attempts
+        cleanup_attempts += 1
+        if cleanup_attempts == 1:
+            raise RuntimeError("qdrant cleanup failed")
+        vector_store.operations.append(("delete", collection_name, None))
+
+    monkeypatch.setattr(vector_store, "delete_collection", fail_first_cleanup)
+    failed = await runner.run(_journal(PHASE_BUILDING))
+
+    assert failed.failed is True
+    assert failed.journal is not None
+    assert failed.journal.phase == PHASE_ABORTED
+    assert get_switch_status(store).phase == PHASE_ABORTED  # type: ignore[union-attr]
+
+    resumed = await runner.run(failed.journal)
+
+    assert resumed.failed is False
+    assert resumed.journal is None
+    assert get_switch_status(store) is None
+    deleted_names = {
+        name for operation, name, _alias in vector_store.operations if operation == "delete"
+    }
+    assert deleted_names == {
+        "memories@4096-run",
+        "tool_embeddings@4096-run",
+        "gobby_github_issues@4096-run",
+    }

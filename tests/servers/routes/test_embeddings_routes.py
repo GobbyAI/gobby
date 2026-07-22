@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+from types import SimpleNamespace
 from typing import Any
 from unittest.mock import MagicMock
 
@@ -9,6 +10,7 @@ from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
 import gobby.servers.routes.embeddings as embeddings_routes
+from gobby.ai.embedding_switch_service import SwitchOperationStatus
 from gobby.config.app import DaemonConfig
 from gobby.config.persistence import EmbeddingsConfig
 from gobby.servers.routes.embeddings import create_embeddings_router
@@ -220,3 +222,40 @@ def test_embeddings_doctor_returns_endpoint_model_and_dim() -> None:
         "model": "bge-m3",
         "dim": 1024,
     }
+
+
+def test_embedding_switch_routes_delegate_to_daemon_coordinator() -> None:
+    calls: list[tuple[str, object]] = []
+
+    class Coordinator:
+        def status(self) -> SwitchOperationStatus:
+            return SwitchOperationStatus("run-1", "running", "in progress")
+
+        async def start(self, catalog_key: str, provider: str | None) -> SwitchOperationStatus:
+            calls.append((catalog_key, provider))
+            return SwitchOperationStatus("run-1", "started", "started")
+
+        async def resume(self) -> SwitchOperationStatus:
+            return SwitchOperationStatus("run-1", "resumed", "resumed")
+
+        async def abort(self) -> SwitchOperationStatus:
+            return SwitchOperationStatus("run-1", "aborted", "aborted")
+
+    server = MagicMock()
+    server.config = _config()
+    server.get_runner.return_value = SimpleNamespace(embedding_switch_coordinator=Coordinator())
+    app = FastAPI()
+    app.include_router(create_embeddings_router(server))
+    client = TestClient(app)
+
+    start = client.post(
+        "/api/embeddings/switch/start",
+        json={"catalog_key": "qwen3-8b-q8", "provider": "ollama"},
+    )
+    status = client.get("/api/embeddings/switch/status")
+    abort = client.post("/api/embeddings/switch/abort")
+
+    assert start.json()["status"] == "started"
+    assert status.json()["status"] == "running"
+    assert abort.json()["status"] == "aborted"
+    assert calls == [("qwen3-8b-q8", "ollama")]

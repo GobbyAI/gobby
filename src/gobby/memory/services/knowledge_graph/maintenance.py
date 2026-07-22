@@ -201,3 +201,22 @@ class KnowledgeGraphMaintenance:
         except Exception as e:
             logger.warning("Failed to clear project graph: %s", e)
             return {"memories_deleted": 0, "entities_deleted": 0}
+
+    async def clear_project_graph_strict(self, project_id: str) -> dict[str, int]:
+        """Delete project graph state and expose failures to retrying callers."""
+        records = await self._falkor.query(
+            "MATCH (m:Memory {project_id: $project_id}) "
+            "WITH count(m) AS total, collect(m) AS nodes "
+            "UNWIND nodes AS n DETACH DELETE n "
+            "RETURN total AS deleted",
+            {"project_id": project_id},
+        )
+        memories_deleted = int(records[0]["deleted"]) if records else 0
+        entities_deleted = await self.remove_orphaned_entities(
+            scope="project",
+            project_id=project_id,
+        )
+        return {
+            "memories_deleted": memories_deleted,
+            "entities_deleted": entities_deleted,
+        }

@@ -5,7 +5,7 @@ from __future__ import annotations
 import logging
 from collections.abc import Callable
 from pathlib import Path
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, cast
 
 from gobby.ai import (
     build_daemon_text_generation_service,
@@ -114,6 +114,11 @@ def _embedding_query_prefix(emb_cfg: EmbeddingsConfig) -> str | None:
 
 
 def _init_memory_stack(runner: GobbyRunner) -> None:
+    from gobby.projects.fenced_vector_store import ProjectFencedVectorStore
+    from gobby.projects.write_fence import ProjectWriteFence
+    from gobby.storage.projects import LocalProjectManager
+
+    runner.project_write_fence = ProjectWriteFence(LocalProjectManager(runner.database).get)
     runner.vector_store = None
     runner.memory_manager = None
     if hasattr(runner.config, "memory"):
@@ -130,10 +135,14 @@ def _init_memory_stack(runner: GobbyRunner) -> None:
                     logger.warning("Memory embeddings disabled: %s", e, exc_info=True)
                 else:
                     embeddings_enabled = True
-            runner.vector_store = VectorStore(
+            raw_vector_store = VectorStore(
                 url=db_cfg.qdrant.url,
                 api_key=db_cfg.qdrant.api_key,
                 embedding_dim=emb_cfg.dim,
+            )
+            runner.vector_store = cast(
+                VectorStore,
+                ProjectFencedVectorStore(raw_vector_store, runner.project_write_fence),
             )
             embed_fn: Callable[..., Any] | None = None
             if embeddings_enabled:
@@ -166,6 +175,7 @@ def _init_memory_stack(runner: GobbyRunner) -> None:
                 max_graph_deterministic_attempts=(
                     runner.config.knowledge_graph_queue.max_deterministic_attempts
                 ),
+                project_write_fence=runner.project_write_fence,
             )
             runner.memory_manager.start_projection_scope_repair()
         except Exception:

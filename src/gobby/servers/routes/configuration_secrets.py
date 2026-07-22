@@ -71,16 +71,7 @@ def delete_all_except(
     )
     if not preserved_keys:
         return config_store.delete_all(secret_store)
-    with config_store.db.transaction():
-        for key in config_store.get_secret_keys():
-            if key not in preserved_keys:
-                config_store.clear_secret(key, secret_store)
-        placeholders = ",".join("%s" for _ in preserved_keys)
-        cursor = config_store.db.execute(
-            f"DELETE FROM config_store WHERE key NOT IN ({placeholders})",
-            tuple(sorted(preserved_keys)),
-        )
-    return cursor.rowcount or 0
+    return config_store.delete_all_except(secret_store, preserved_keys)
 
 
 def partition_config_entries(
@@ -155,7 +146,8 @@ def register_secret_routes(router: APIRouter, context: ConfigurationRouteContext
         """Create or update a secret."""
         try:
             store = context.get_secret_store()
-            info = store.set(
+            info = context.get_config_store().set_named_secret(
+                store,
                 name=request.name,
                 plaintext_value=request.value,
                 category=request.category,
@@ -175,7 +167,7 @@ def register_secret_routes(router: APIRouter, context: ConfigurationRouteContext
         """Delete a secret by name."""
         try:
             store = context.get_secret_store()
-            if not store.delete(name):
+            if not context.get_config_store().delete_named_secret(store, name):
                 raise HTTPException(status_code=404, detail=f"Secret '{name}' not found")
             return JSONResponse(content={"ok": True})
         except HTTPException:

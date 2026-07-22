@@ -182,6 +182,35 @@ def delete_project(project_ref: str, confirm: str) -> None:
         raise SystemExit(1)
 
 
+@projects.command("purge")
+@click.argument("project_ref")
+@click.option("--yes", is_flag=True, help="Confirm permanent deletion.")
+def purge_project(project_ref: str, yes: bool) -> None:
+    """Permanently purge a project through the running daemon."""
+    if not yes:
+        click.echo("Permanent purge requires --yes.", err=True)
+        raise SystemExit(1)
+
+    manager = get_project_manager()
+    project = manager.get(project_ref) or manager.get_by_name(project_ref, include_deleted=True)
+    if project is None:
+        click.echo(f"Project not found: {project_ref}", err=True)
+        raise SystemExit(1)
+
+    from gobby.cli.utils_config import get_daemon_client
+
+    response = get_daemon_client(timeout=300.0).call_http_api(
+        f"/api/projects/{project.id}/purge",
+        method="POST",
+        timeout=300.0,
+    )
+    payload = response.json()
+    if response.status_code >= 400:
+        click.echo(f"Purge failed: {payload.get('detail', response.text)}", err=True)
+        raise SystemExit(1)
+    click.echo(json_dumps(payload, indent=2, sort_keys=True))
+
+
 @projects.command("update")
 @click.argument("project_ref")
 @click.option("--repo-path", help="Local repository path")

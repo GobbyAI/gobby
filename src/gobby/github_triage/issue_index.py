@@ -14,6 +14,7 @@ import httpx
 from qdrant_client.http.exceptions import ResponseHandlingException
 
 from gobby.memory.vectorstore import VectorStoreUnavailableError
+from gobby.projects.fenced_vector_store import project_write_context
 
 GITHUB_ISSUE_COLLECTION = "gobby_github_issues"
 _POINT_NAMESPACE = uuid.UUID("75c10517-1a5d-4d31-a102-0e8694f09cc0")
@@ -182,6 +183,19 @@ class GitHubIssueIndexer:
         """Embed and upsert an issue. Returns point id when indexed."""
         if self.vector_store is None or self.embed_fn is None:
             return None
+
+        async with project_write_context(self.vector_store, issue.project_id):
+            return await self._upsert_admitted(issue, task_id=task_id)
+
+    async def _upsert_admitted(
+        self,
+        issue: IssueSnapshot,
+        *,
+        task_id: str | None = None,
+    ) -> str:
+        """Perform an issue index write after project admission."""
+        assert self.vector_store is not None
+        assert self.embed_fn is not None
 
         point_id = issue_point_id(issue.project_id, issue.repo, issue.issue_number)
         await self.vector_store.ensure_collection(

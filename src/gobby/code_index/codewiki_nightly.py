@@ -23,6 +23,8 @@ from gobby.scheduler.executor import CronHandler
 from gobby.shutdown_intent import read_active_shutdown_intent
 from gobby.storage.cron import CronJobStorage, compute_next_run
 from gobby.storage.cron_models import CronJob
+from gobby.storage.projects import LocalProjectManager
+from gobby.wiki.prune_job import guard_project_cron_handler
 
 logger = logging.getLogger(__name__)
 
@@ -157,13 +159,16 @@ def register_codewiki_nightly_cron(
 
     cron_executor.register_handler(
         handler_name,
-        create_codewiki_nightly_handler(
-            project_id=project_id,
-            root_path=root,
-            out_dir=out_dir,
-            ai=CODEWIKI_NIGHTLY_AI,
-            scopes=scopes,
-            refresh_service=service,
+        guard_project_cron_handler(
+            create_codewiki_nightly_handler(
+                project_id=project_id,
+                root_path=root,
+                out_dir=out_dir,
+                ai=CODEWIKI_NIGHTLY_AI,
+                scopes=scopes,
+                refresh_service=service,
+            ),
+            LocalProjectManager(cron_storage.db).get,
         ),
     )
 

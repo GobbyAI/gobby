@@ -11,10 +11,17 @@ from __future__ import annotations
 
 import json
 import logging
-from collections.abc import Collection
-from typing import TYPE_CHECKING, Any
+from collections.abc import Callable, Collection
+from contextlib import AbstractContextManager
+from dataclasses import dataclass
+from typing import TYPE_CHECKING, Any, ClassVar, cast
 
 from gobby.config.embedding_keys import (
+    AI_EMBEDDING_API_KEY_KEY,
+    AI_EMBEDDING_CONFIG_KEY_SET,
+    EMBEDDING_API_KEY_SECRET_NAME,
+    EMBEDDING_INTERNAL_LIFECYCLE_KEYS,
+    EMBEDDING_SWITCH_JOURNAL_KEY,
     embedding_config_secret_name,
     validate_embedding_storage_config_key,
 )
@@ -103,6 +110,41 @@ def _reject_plaintext_secret_value(key: str, value: Any) -> None:
     )
 
 
+def _journal_run_id(value: Any) -> str | None:
+    payload = value
+    if isinstance(value, str):
+        try:
+            payload = json.loads(value)
+        except (TypeError, ValueError):
+            return "unknown"
+    if payload is None:
+        return None
+    run_id = payload.get("run_id") if isinstance(payload, dict) else None
+    return str(run_id) if run_id else "unknown"
+
+
+class EmbeddingConfigMutationBlocked(RuntimeError):
+    """Raised when public embedding config mutation races a live switch."""
+
+
+@dataclass(frozen=True)
+class EmbeddingSwitchJournalMutation:
+    """Serialize switch admission with every canonical embedding mutation."""
+
+    PRIORITY: ClassVar[int] = 800
+
+
+def embedding_mutation_context(db: Any) -> AbstractContextManager[Any]:
+    """Open the shared switch/mutation lock with a backend-neutral fallback."""
+    transaction_immediate = getattr(db, "transaction_immediate", None)
+    if callable(transaction_immediate):
+        return cast(
+            AbstractContextManager[Any],
+            transaction_immediate(EmbeddingSwitchJournalMutation()),
+        )
+    return cast(AbstractContextManager[Any], db.transaction())
+
+
 class ConfigStore:
     """Key-value config storage backed by the hub database.
 
@@ -115,11 +157,16 @@ class ConfigStore:
     def __init__(self, db: HubDatabase):
         self.db = db
 
+    def _mutation_context(self) -> AbstractContextManager[Any]:
+        return embedding_mutation_context(self.db)
+
     def get(self, key: str) -> Any | None:
         """Get a single config value, deserialized from JSON.
 
         Returns None if key doesn't exist.
         """
+        if key in EMBEDDING_INTERNAL_LIFECYCLE_KEYS:
+            return None
         row = self.db.fetchone("SELECT value FROM config_store WHERE key = %s", (key,))
         if not row:
             return None
@@ -128,46 +175,43 @@ class ConfigStore:
     def get_all(self) -> dict[str, Any]:
         """Get all config entries as flat key-value pairs."""
         rows = self.db.fetchall("SELECT key, value FROM config_store")
-        return {row["key"]: _decode_value(row["key"], row["value"]) for row in rows}
+        return {
+            row["key"]: _decode_value(row["key"], row["value"])
+            for row in rows
+            if row["key"] not in EMBEDDING_INTERNAL_LIFECYCLE_KEYS
+        }
 
     def set(self, key: str, value: Any, source: str = "user") -> None:
         """Upsert a single config value (JSON-encoded)."""
         _validate_storage_config_key(key)
         _reject_plaintext_secret_value(key, value)
-        now = utc_now()
-        json_value = json.dumps(value)
-        is_secret = _is_canonical_secret_reference(key, value)
-        self.db.execute(
-            """INSERT INTO config_store (key, value, source, is_secret, updated_at)
-               VALUES (%s, %s, %s, %s, %s)
-               ON CONFLICT(key) DO UPDATE SET
-                   value = excluded.value,
-                   source = excluded.source,
-                   is_secret = excluded.is_secret,
-                   updated_at = excluded.updated_at""",
-            (key, json_value, source, is_secret, now),
-        )
+        with self._mutation_context():
+            transaction = self.db
+            self._assert_embedding_mutation_allowed((key,), transaction)
+            self._upsert_value(
+                key,
+                value,
+                source=source,
+                is_secret=_is_canonical_secret_reference(key, value),
+                executor=transaction,
+            )
 
     def set_many(self, entries: dict[str, Any], source: str = "user") -> int:
         """Bulk upsert config entries. Returns count of entries written."""
         for key, value in entries.items():
             _validate_storage_config_key(key)
             _reject_plaintext_secret_value(key, value)
-        now = utc_now()
         count = 0
-        with self.db.transaction():
+        with self._mutation_context():
+            transaction = self.db
+            self._assert_embedding_mutation_allowed(entries, transaction)
             for key, value in entries.items():
-                json_value = json.dumps(value)
-                is_secret = _is_canonical_secret_reference(key, value)
-                self.db.execute(
-                    """INSERT INTO config_store (key, value, source, is_secret, updated_at)
-                       VALUES (%s, %s, %s, %s, %s)
-                       ON CONFLICT(key) DO UPDATE SET
-                           value = excluded.value,
-                           source = excluded.source,
-                           is_secret = excluded.is_secret,
-                           updated_at = excluded.updated_at""",
-                    (key, json_value, source, is_secret, now),
+                self._upsert_value(
+                    key,
+                    value,
+                    source=source,
+                    is_secret=_is_canonical_secret_reference(key, value),
+                    executor=transaction,
                 )
                 count += 1
         return count
@@ -177,21 +221,24 @@ class ConfigStore:
 
         Secret keys must use ``clear_secret`` so the encrypted value is also removed.
         """
-        with self.db.transaction():
-            row = self.db.fetchone(
+        _validate_storage_config_key(key)
+        with self._mutation_context():
+            transaction = self.db
+            self._assert_embedding_mutation_allowed((key,), transaction)
+            row = transaction.execute(
                 "SELECT is_secret FROM config_store WHERE key = %s FOR UPDATE",
                 (key,),
-            )
+            ).fetchone()
             if not row:
                 return False
             if row["is_secret"]:
                 raise ValueError(f"Config key {key!r} is secret; use clear_secret")
-            cursor = self.db.execute("DELETE FROM config_store WHERE key = %s", (key,))
+            cursor = transaction.execute("DELETE FROM config_store WHERE key = %s", (key,))
         return bool(cursor.rowcount and cursor.rowcount > 0)
 
     def delete_all(
         self,
-        secret_store: SecretStore,
+        secret_store: SecretStore | None = None,
         *,
         preserved_secret_keys: Collection[str] = (),
     ) -> int:
@@ -201,12 +248,44 @@ class ConfigStore:
         references will immediately reattach to new config rows.
         """
         preserved = set(preserved_secret_keys)
-        with self.db.transaction():
-            secret_keys = self.get_secret_keys()
-            cursor = self.db.execute("DELETE FROM config_store")
+        with self._mutation_context():
+            transaction = self.db
+            self._assert_embedding_mutation_allowed(AI_EMBEDDING_CONFIG_KEY_SET, transaction)
+            secret_rows = transaction.execute(
+                "SELECT key FROM config_store WHERE is_secret = %s ORDER BY key",
+                (True,),
+            ).fetchall()
+            secret_keys = [str(row["key"]) for row in secret_rows]
+            cursor = transaction.execute("DELETE FROM config_store")
             for key in secret_keys:
-                if key not in preserved:
+                if secret_store is not None and key not in preserved:
                     secret_store.delete(config_key_to_secret_name(key))
+        return cursor.rowcount or 0
+
+    def delete_all_except(
+        self,
+        secret_store: SecretStore,
+        preserved_keys: Collection[str],
+    ) -> int:
+        """Delete public rows except an allowlist while always preserving lifecycle state."""
+        preserved = set(preserved_keys) | set(EMBEDDING_INTERNAL_LIFECYCLE_KEYS)
+        with self._mutation_context():
+            transaction = self.db
+            rows = transaction.execute(
+                "SELECT key, is_secret FROM config_store FOR UPDATE"
+            ).fetchall()
+            delete_keys = [str(row["key"]) for row in rows if row["key"] not in preserved]
+            self._assert_embedding_mutation_allowed(delete_keys, transaction)
+            if not delete_keys:
+                return 0
+            for row in rows:
+                if row["key"] in delete_keys and row["is_secret"]:
+                    secret_store.delete(config_key_to_secret_name(str(row["key"])))
+            placeholders = ",".join("%s" for _ in delete_keys)
+            cursor = transaction.execute(
+                f"DELETE FROM config_store WHERE key IN ({placeholders})",  # nosec B608
+                tuple(delete_keys),
+            )
         return cursor.rowcount or 0
 
     def list_keys(self, prefix: str | None = None) -> list[str]:
@@ -218,7 +297,208 @@ class ConfigStore:
             )
         else:
             rows = self.db.fetchall("SELECT key FROM config_store ORDER BY key")
-        return [row["key"] for row in rows]
+        return [row["key"] for row in rows if row["key"] not in EMBEDDING_INTERNAL_LIFECYCLE_KEYS]
+
+    def get_internal_lifecycle(self, key: str) -> Any | None:
+        """Read lifecycle state through the daemon-owner-only surface."""
+        self._validate_internal_lifecycle_key(key)
+        row = self.db.fetchone("SELECT value FROM config_store WHERE key = %s", (key,))
+        return _decode_value(key, row["value"]) if row else None
+
+    def set_internal_lifecycle(self, key: str, value: Any) -> None:
+        """Persist daemon-owned lifecycle state outside public config surfaces."""
+        self._validate_internal_lifecycle_key(key)
+        new_run_id = _journal_run_id(value)
+        if new_run_id in (None, "unknown"):
+            raise ValueError("Embedding lifecycle journal must contain a run_id")
+        with self._mutation_context():
+            transaction = self.db
+            active_run_id = self._active_switch_run_id(transaction)
+            if active_run_id is not None and active_run_id != new_run_id:
+                raise EmbeddingConfigMutationBlocked(
+                    f"Embedding switch {active_run_id} already owns the lifecycle journal"
+                )
+            self._upsert_value(
+                key,
+                value,
+                source="embedding_switch",
+                executor=transaction,
+            )
+
+    def delete_internal_lifecycle(self, key: str, run_id: str) -> bool:
+        """Delete daemon-owned lifecycle state after safe cleanup/completion."""
+        self._validate_internal_lifecycle_key(key)
+        with self._mutation_context():
+            transaction = self.db
+            active_run_id = self._active_switch_run_id(transaction)
+            if active_run_id != run_id:
+                raise EmbeddingConfigMutationBlocked(
+                    f"Embedding switch owner mismatch: expected {active_run_id or 'none'}, "
+                    f"got {run_id}"
+                )
+            cursor = transaction.execute("DELETE FROM config_store WHERE key = %s", (key,))
+        return bool(cursor.rowcount and cursor.rowcount > 0)
+
+    def set_embedding_switch_values(self, run_id: str, entries: dict[str, Any]) -> int:
+        """Write canonical embedding values for the journal-owning switch only."""
+        if not entries or not set(entries).issubset(AI_EMBEDDING_CONFIG_KEY_SET):
+            raise ValueError("Embedding switch owner may write only canonical embedding values")
+        with self._mutation_context():
+            transaction = self.db
+            active_run_id = self._active_switch_run_id(transaction)
+            if active_run_id != run_id:
+                raise EmbeddingConfigMutationBlocked(
+                    f"Embedding switch owner mismatch: expected {active_run_id or 'none'}, "
+                    f"got {run_id}"
+                )
+            for key, value in entries.items():
+                _reject_plaintext_secret_value(key, value)
+                self._upsert_value(
+                    key,
+                    value,
+                    source="embedding_switch",
+                    executor=transaction,
+                )
+        return len(entries)
+
+    def set_embedding_bootstrap_values(
+        self,
+        entries: dict[str, Any],
+        *,
+        secret_store: SecretStore,
+        plaintext_api_key: str | None,
+        managed_collections_exist: Callable[[], bool],
+    ) -> int:
+        """Persist a provably fresh installer bootstrap under switch admission lock."""
+        public_value_keys = AI_EMBEDDING_CONFIG_KEY_SET - {AI_EMBEDDING_API_KEY_KEY}
+        if not entries or not set(entries).issubset(public_value_keys):
+            raise ValueError("Embedding bootstrap contains unsupported configuration keys")
+        for key, value in entries.items():
+            _validate_storage_config_key(key)
+            _reject_plaintext_secret_value(key, value)
+
+        with self._mutation_context():
+            transaction = self.db
+            active_run_id = self._active_switch_run_id(transaction)
+            if active_run_id is not None:
+                raise EmbeddingConfigMutationBlocked(
+                    f"Embedding switch {active_run_id} is active; installer mutation is blocked"
+                )
+            rows = transaction.execute("SELECT key FROM config_store").fetchall()
+            existing_keys = {str(row["key"]) for row in rows}
+            if existing_keys.intersection(AI_EMBEDDING_CONFIG_KEY_SET) or secret_store.exists(
+                EMBEDDING_API_KEY_SECRET_NAME
+            ):
+                raise EmbeddingConfigMutationBlocked(
+                    "Embedding configuration already exists; use the daemon switch lifecycle"
+                )
+            if managed_collections_exist():
+                raise EmbeddingConfigMutationBlocked(
+                    "Managed embedding collections already exist; use the daemon switch lifecycle"
+                )
+
+            for key, value in entries.items():
+                self._upsert_value(
+                    key,
+                    value,
+                    source="install",
+                    is_secret=False,
+                    executor=transaction,
+                )
+            if plaintext_api_key:
+                secret_store.set(
+                    name=EMBEDDING_API_KEY_SECRET_NAME,
+                    plaintext_value=plaintext_api_key,
+                    category="general",
+                    description=f"Config secret for {AI_EMBEDDING_API_KEY_KEY}",
+                )
+                self._upsert_value(
+                    AI_EMBEDDING_API_KEY_KEY,
+                    f"$secret:{EMBEDDING_API_KEY_SECRET_NAME}",
+                    source="install",
+                    is_secret=True,
+                    executor=transaction,
+                )
+        return len(entries) + int(bool(plaintext_api_key))
+
+    def set_named_secret(
+        self,
+        secret_store: SecretStore,
+        name: str,
+        plaintext_value: str,
+        *,
+        category: str,
+        description: str | None,
+    ) -> Any:
+        """Mutate a generic secret under embedding-switch admission control."""
+        with self._mutation_context():
+            transaction = self.db
+            if name == EMBEDDING_API_KEY_SECRET_NAME:
+                self._assert_embedding_mutation_allowed(AI_EMBEDDING_CONFIG_KEY_SET, transaction)
+            return secret_store.set(
+                name=name,
+                plaintext_value=plaintext_value,
+                category=category,
+                description=description,
+            )
+
+    def delete_named_secret(self, secret_store: SecretStore, name: str) -> bool:
+        """Delete a generic secret under embedding-switch admission control."""
+        with self._mutation_context():
+            transaction = self.db
+            if name == EMBEDDING_API_KEY_SECRET_NAME:
+                self._assert_embedding_mutation_allowed(AI_EMBEDDING_CONFIG_KEY_SET, transaction)
+            return bool(secret_store.delete(name))
+
+    @staticmethod
+    def _validate_internal_lifecycle_key(key: str) -> None:
+        if key not in EMBEDDING_INTERNAL_LIFECYCLE_KEYS:
+            raise ValueError(f"Unsupported internal lifecycle key: {key}")
+
+    def _upsert_value(
+        self,
+        key: str,
+        value: Any,
+        *,
+        source: str,
+        is_secret: bool = False,
+        executor: Any | None = None,
+    ) -> None:
+        target = executor or self.db
+        target.execute(
+            """INSERT INTO config_store (key, value, source, is_secret, updated_at)
+               VALUES (%s, %s, %s, %s, %s)
+               ON CONFLICT(key) DO UPDATE SET
+                   value = excluded.value,
+                   source = excluded.source,
+                   is_secret = excluded.is_secret,
+                   updated_at = excluded.updated_at""",
+            (key, json.dumps(value), source, is_secret, utc_now()),
+        )
+
+    def _assert_embedding_mutation_allowed(
+        self,
+        keys: Collection[str],
+        transaction: Any,
+    ) -> None:
+        if not set(keys).intersection(AI_EMBEDDING_CONFIG_KEY_SET):
+            return
+        run_id = self._active_switch_run_id(transaction)
+        if run_id is not None:
+            raise EmbeddingConfigMutationBlocked(
+                f"Embedding switch {run_id} is active; config mutation is blocked"
+            )
+
+    @staticmethod
+    def _active_switch_run_id(transaction: Any) -> str | None:
+        row = transaction.execute(
+            "SELECT value FROM config_store WHERE key = %s FOR UPDATE",
+            (EMBEDDING_SWITCH_JOURNAL_KEY,),
+        ).fetchone()
+        if row is None:
+            return None
+        raw = _decode_value(EMBEDDING_SWITCH_JOURNAL_KEY, row["value"])
+        return _journal_run_id(raw)
 
     # -----------------------------------------------------------------
     # Secret-aware methods
@@ -238,25 +518,23 @@ class ConfigStore:
         Both writes happen in a single transaction for consistency.
         """
         _validate_storage_config_key(key)
-        secret_name = config_key_to_secret_name(key)
-        ref = f"$secret:{secret_name}"
-        now = utc_now()
-        with self.db.transaction():
+        with self._mutation_context():
+            transaction = self.db
+            self._assert_embedding_mutation_allowed((key,), transaction)
+            secret_name = config_key_to_secret_name(key)
+            ref = f"$secret:{secret_name}"
             secret_store.set(
                 name=secret_name,
                 plaintext_value=plaintext_value,
                 category="general",
                 description=f"Config secret for {key}",
             )
-            self.db.execute(
-                """INSERT INTO config_store (key, value, source, is_secret, updated_at)
-                   VALUES (%s, %s, %s, %s, %s)
-                   ON CONFLICT(key) DO UPDATE SET
-                       value = excluded.value,
-                       source = excluded.source,
-                       is_secret = excluded.is_secret,
-                       updated_at = excluded.updated_at""",
-                (key, json.dumps(ref), source, True, now),
+            self._upsert_value(
+                key,
+                ref,
+                source=source,
+                is_secret=True,
+                executor=transaction,
             )
 
     def get_secret_keys(self) -> list[str]:
@@ -285,8 +563,10 @@ class ConfigStore:
         """
         _validate_storage_config_key(key)
         secret_name = config_key_to_secret_name(key)
-        with self.db.transaction():
-            self.db.execute("DELETE FROM config_store WHERE key = %s", (key,))
+        with self._mutation_context():
+            transaction = self.db
+            self._assert_embedding_mutation_allowed((key,), transaction)
+            transaction.execute("DELETE FROM config_store WHERE key = %s", (key,))
             secret_store.delete(secret_name)
 
 

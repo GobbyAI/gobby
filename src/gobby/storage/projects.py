@@ -292,6 +292,20 @@ class LocalProjectManager:
             rows = self.db.fetchall("SELECT * FROM projects WHERE deleted_at IS NULL ORDER BY name")
         return [Project.from_row(row) for row in rows]
 
+    def list_purge_candidates(self, cutoff: datetime) -> Sequence[Project]:
+        """List soft-deleted, non-system projects whose retention window elapsed."""
+        rows = self.db.fetchall(
+            """
+            SELECT * FROM projects
+            WHERE deleted_at IS NOT NULL
+              AND deleted_at <= %s
+              AND name <> ALL(%s)
+            ORDER BY deleted_at, id
+            """,
+            (cutoff, list(SYSTEM_PROJECT_NAMES)),
+        )
+        return [Project.from_row(row) for row in rows]
+
     def list_page(
         self,
         *,

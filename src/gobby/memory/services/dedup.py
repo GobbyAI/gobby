@@ -22,6 +22,7 @@ from gobby.memory.vectorstore import (
     is_recoverable_vector_store_error,
     memory_scope_filter,
 )
+from gobby.projects.fenced_vector_store import project_write_context
 from gobby.storage.memories import MemoryScope, validate_memory_type
 
 if TYPE_CHECKING:
@@ -113,6 +114,30 @@ class DedupService:
         return await self._run_db(func, *args, **kwargs)
 
     async def process(
+        self,
+        content: str,
+        project_id: str,
+        is_global: bool = False,
+        memory_type: str = "fact",
+        tags: list[str] | None = None,
+        source_type: str = "agent",
+        source_session_id: str | None = None,
+        exclude_memory_id: str | None = None,
+    ) -> DedupResult:
+        """Hold writer admission for the detached dedup task's complete lifetime."""
+        async with project_write_context(self.vector_store, project_id):
+            return await self._process_admitted(
+                content=content,
+                project_id=project_id,
+                is_global=is_global,
+                memory_type=memory_type,
+                tags=tags,
+                source_type=source_type,
+                source_session_id=source_session_id,
+                exclude_memory_id=exclude_memory_id,
+            )
+
+    async def _process_admitted(
         self,
         content: str,
         project_id: str,

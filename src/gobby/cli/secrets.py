@@ -100,7 +100,15 @@ def set_secret(name: str, category: str, description: str | None, from_stdin: bo
 
     click.echo(f"Received {len(value)} characters.")
     with _SecretStoreContext() as store:
-        info = store.set(name, value, category=category, description=description)
+        from gobby.storage.config_store import ConfigStore
+
+        info = ConfigStore(store.db).set_named_secret(
+            store,
+            name,
+            value,
+            category=category,
+            description=description,
+        )
     click.echo(f"Stored secret '{info.name}' (category={info.category}).")
 
 
@@ -136,7 +144,9 @@ def delete_secret(name: str, yes: bool) -> None:
         if not yes:
             click.confirm(f"Delete secret '{name}'?", abort=True)
 
-        store.delete(name)
+        from gobby.storage.config_store import ConfigStore
+
+        ConfigStore(store.db).delete_named_secret(store, name)
     click.echo(f"Deleted secret '{name}'.")
 
 

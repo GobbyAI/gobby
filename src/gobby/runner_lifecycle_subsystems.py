@@ -256,15 +256,23 @@ async def _initialize_vector_store(
         )
         qdrant_count = await runner.vector_store.count()
         if qdrant_count == 0 and runner.memory_manager:
-            hub_memories = runner.memory_manager.storage.list_memories(limit=10000)
+            memory_manager = runner.memory_manager
+            hub_memories = memory_manager.storage.list_memories(limit=10000)
             if hub_memories:
-                embed_fn = runner.memory_manager.embed_fn
+                embed_fn = memory_manager.embed_fn
                 if embed_fn:
                     logger.info(
                         "Qdrant empty, scheduling background rebuild from %s hub memories...",
                         len(hub_memories),
                     )
-                    memory_dicts = [{"id": m.id, "content": m.content} for m in hub_memories]
+
+                    def memory_dicts() -> list[dict[str, str]]:
+                        current_memories = memory_manager.storage.list_memories(limit=10000)
+                        return [
+                            {"id": m.id, "content": m.content, "project_id": m.project_id}
+                            for m in current_memories
+                        ]
+
                     runner._vector_rebuild_task = asyncio.create_task(
                         rebuild_vector_store(runner.vector_store, memory_dicts, embed_fn),
                         name="vector-store-rebuild",

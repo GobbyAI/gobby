@@ -74,6 +74,7 @@ class KnowledgeGraphService:
         cooccur_alpha: float | None = None,
         cooccur_support_cap: int | None = None,
         active_memory_filter: ActiveMemoryFilter | None = None,
+        write_fence: Any | None = None,
     ) -> None:
         self._falkor = falkor_client
         self._embed_fn = embed_fn
@@ -86,6 +87,7 @@ class KnowledgeGraphService:
         self._materialize_cooccurrence = materialize_cooccurrence
         self._cluster_min_cluster_size = cluster_min_cluster_size
         self._cluster_min_samples = cluster_min_samples
+        self._write_fence = write_fence
 
         self._writer = KnowledgeGraphWriter(
             falkor_client,
@@ -142,6 +144,20 @@ class KnowledgeGraphService:
     # -----------------------------------------------------------------------
 
     async def add_to_graph(
+        self,
+        content: str,
+        memory_id: str | None = None,
+        project_id: str = PERSONAL_PROJECT_ID,
+        is_global: bool = False,
+    ) -> KnowledgeGraphResult:
+        """Fence the project while applying derived knowledge-graph writes."""
+        if self._write_fence is None:
+            return await self._add_to_graph_unfenced(content, memory_id, project_id, is_global)
+        write_project_id = GLOBAL_PROJECT_ID if is_global else project_id
+        async with self._write_fence.writer(write_project_id):
+            return await self._add_to_graph_unfenced(content, memory_id, project_id, is_global)
+
+    async def _add_to_graph_unfenced(
         self,
         content: str,
         memory_id: str | None = None,
@@ -629,17 +645,33 @@ class KnowledgeGraphService:
 
     async def recluster_entities(self, project_id: str | None = None) -> ClusterRunResult:
         """Recompute and persist deterministic HDBSCAN entity cluster IDs."""
-        return await recluster_project_entities(
-            self._reader,
-            self._writer,
-            project_id,
-            min_cluster_size=self._cluster_min_cluster_size,
-            min_samples=self._cluster_min_samples,
+
+        async def _recluster() -> ClusterRunResult:
+            return await recluster_project_entities(
+                self._reader,
+                self._writer,
+                project_id,
+                min_cluster_size=self._cluster_min_cluster_size,
+                min_samples=self._cluster_min_samples,
+            )
+
+        if self._write_fence is None:
+            return await _recluster()
+        writer = (
+            self._write_fence.writer(project_id)
+            if project_id is not None
+            else self._write_fence.global_writer()
         )
+        async with writer:
+            return await _recluster()
 
     async def clear_project_graph(self, project_id: str) -> dict[str, int]:
         """Delete all Memory nodes for a project, then clean orphaned entities."""
         return await self._maintenance.clear_project_graph(project_id)
+
+    async def clear_project_graph_strict(self, project_id: str) -> dict[str, int]:
+        """Delete project graph state while exposing connection failures."""
+        return await self._maintenance.clear_project_graph_strict(project_id)
 
     async def densify_cooccurrence(
         self, project_id: str | None = None
@@ -649,13 +681,25 @@ class KnowledgeGraphService:
         Weighting follows the same ``graph_edge_weighting`` gate as the per-memory
         write path, so densified edges match what the write path would produce.
         """
-        await self._ensure_graph_schema()
-        return await densify_cooccurrence(
-            self._falkor,
-            self._writer,
-            project_id,
-            weighted=self._graph_edge_weighting,
+
+        async def _densify() -> CooccurrenceDensifyResult:
+            await self._ensure_graph_schema()
+            return await densify_cooccurrence(
+                self._falkor,
+                self._writer,
+                project_id,
+                weighted=self._graph_edge_weighting,
+            )
+
+        if self._write_fence is None:
+            return await _densify()
+        writer = (
+            self._write_fence.writer(project_id)
+            if project_id is not None
+            else self._write_fence.global_writer()
         )
+        async with writer:
+            return await _densify()
 
     async def _link_entities_to_code(
         self,

@@ -678,8 +678,8 @@ class TestPersistEmbeddingConfig:
             provider="lmstudio",
         )
 
-        mock_store.set_many.assert_called_once()
-        entries = mock_store.set_many.call_args.args[0]
+        mock_store.set_embedding_bootstrap_values.assert_called_once()
+        entries = mock_store.set_embedding_bootstrap_values.call_args.args[0]
         assert entries == {
             AI_EMBEDDING_MODEL_KEY: "text-embedding-nomic-embed-text-v1.5@f16",
             AI_EMBEDDING_API_BASE_KEY: "http://localhost:1234/v1",
@@ -718,7 +718,7 @@ class TestPersistEmbeddingConfig:
 
         _persist_embedding_config(model=None, api_base=None, dim=0, provider="none")
 
-        entries = mock_store.set_many.call_args.args[0]
+        entries = mock_store.set_embedding_bootstrap_values.call_args.args[0]
         assert entries == {
             AI_EMBEDDING_MODEL_KEY: None,
             AI_EMBEDDING_API_BASE_KEY: None,
@@ -726,6 +726,13 @@ class TestPersistEmbeddingConfig:
             AI_EMBEDDING_QUERY_PREFIX_KEY: None,
             AI_EMBEDDING_CATALOG_KEY: None,
         }
+        assert (
+            mock_store.set_embedding_bootstrap_values.call_args.kwargs["secret_store"]
+            is mock_secret_class.return_value
+        )
+        assert (
+            mock_store.set_embedding_bootstrap_values.call_args.kwargs["plaintext_api_key"] is None
+        )
         mock_db.__exit__.assert_called_once()
         mock_db.close.assert_not_called()
 
@@ -746,6 +753,10 @@ class TestPersistEmbeddingConfig:
                 return_value=nullcontext(temp_db),
             ),
             patch("gobby.storage.secrets.get_machine_id", return_value="test-machine"),
+            patch(
+                "gobby.cli.installers.embedding._managed_embedding_collections_exist",
+                return_value=False,
+            ),
         ):
             _persist_embedding_config(
                 model="text-embedding-3-small",
@@ -785,6 +796,10 @@ class TestPersistEmbeddingConfig:
                 return_value=nullcontext(temp_db),
             ),
             patch("gobby.storage.secrets.get_machine_id", return_value="test-machine"),
+            patch(
+                "gobby.cli.installers.embedding._managed_embedding_collections_exist",
+                return_value=False,
+            ),
         ):
             store = ConfigStore(temp_db)
             secret_store = SecretStore(temp_db)
@@ -795,15 +810,18 @@ class TestPersistEmbeddingConfig:
                 source="test",
             )
 
-            _persist_embedding_config(
-                model="text-embedding-nomic-embed-text-v1.5@f16",
-                api_base="http://localhost:1234/v1",
-                dim=768,
-                provider="lmstudio",
-            )
+            from gobby.storage.config_store import EmbeddingConfigMutationBlocked
 
-            assert store.get(AI_EMBEDDING_API_KEY_KEY) is None
-            assert secret_store.get(EMBEDDING_API_KEY_SECRET_NAME) is None
+            with pytest.raises(EmbeddingConfigMutationBlocked, match="already exists"):
+                _persist_embedding_config(
+                    model="text-embedding-nomic-embed-text-v1.5@f16",
+                    api_base="http://localhost:1234/v1",
+                    dim=768,
+                    provider="lmstudio",
+                )
+
+            assert store.get(AI_EMBEDDING_API_KEY_KEY) == "$secret:embeddings_api_key"
+            assert secret_store.get(EMBEDDING_API_KEY_SECRET_NAME) == "sk-stale"
 
     @patch("gobby.storage.secrets.SecretStore")
     @patch("gobby.storage.config_store.ConfigStore")
@@ -836,7 +854,7 @@ class TestPersistEmbeddingConfig:
             embedding_api_key="sk-xxx",
         )
 
-        entries = mock_store.set_many.call_args.args[0]
+        entries = mock_store.set_embedding_bootstrap_values.call_args.args[0]
         assert entries == {
             AI_EMBEDDING_MODEL_KEY: "text-embedding-3-small",
             AI_EMBEDDING_API_BASE_KEY: None,
@@ -844,8 +862,76 @@ class TestPersistEmbeddingConfig:
             AI_EMBEDDING_QUERY_PREFIX_KEY: None,
             AI_EMBEDDING_CATALOG_KEY: None,
         }
+        assert (
+            mock_store.set_embedding_bootstrap_values.call_args.kwargs["secret_store"]
+            is mock_secret_class.return_value
+        )
+        assert (
+            mock_store.set_embedding_bootstrap_values.call_args.kwargs["plaintext_api_key"]
+            == "sk-xxx"
+        )
         mock_db.__exit__.assert_called_once()
         mock_db.close.assert_not_called()
+
+    def test_managed_collections_refuse_direct_reconfiguration(
+        self,
+        temp_db: HubDatabase,
+    ) -> None:
+        from gobby.cli.installers.embedding import _persist_embedding_config
+        from gobby.storage.config_store import ConfigStore, EmbeddingConfigMutationBlocked
+
+        with (
+            patch(
+                "gobby.storage.hub.runtime.runtime_hub_database",
+                return_value=nullcontext(temp_db),
+            ),
+            patch(
+                "gobby.cli.installers.embedding._managed_embedding_collections_exist",
+                return_value=True,
+            ),
+        ):
+            with pytest.raises(EmbeddingConfigMutationBlocked, match="collections already exist"):
+                _persist_embedding_config(
+                    model="text-embedding-3-small",
+                    api_base=None,
+                    dim=1536,
+                    provider="openai",
+                )
+
+        assert ConfigStore(temp_db).list_keys() == []
+
+    def test_live_switch_refuses_installer_with_zero_writes(
+        self,
+        temp_db: HubDatabase,
+    ) -> None:
+        from gobby.cli.installers.embedding import _persist_embedding_config
+        from gobby.config.embedding_keys import EMBEDDING_SWITCH_JOURNAL_KEY
+        from gobby.storage.config_store import ConfigStore, EmbeddingConfigMutationBlocked
+
+        store = ConfigStore(temp_db)
+        store.set_internal_lifecycle(EMBEDDING_SWITCH_JOURNAL_KEY, '{"run_id":"run-1"}')
+        collection_probe = MagicMock(return_value=False)
+        with (
+            patch(
+                "gobby.storage.hub.runtime.runtime_hub_database",
+                return_value=nullcontext(temp_db),
+            ),
+            patch(
+                "gobby.cli.installers.embedding._managed_embedding_collections_exist",
+                collection_probe,
+            ),
+        ):
+            with pytest.raises(EmbeddingConfigMutationBlocked, match="run-1"):
+                _persist_embedding_config(
+                    model="text-embedding-3-small",
+                    api_base=None,
+                    dim=1536,
+                    provider="openai",
+                )
+
+        collection_probe.assert_not_called()
+        assert store.get_all() == {}
+        assert store.get_internal_lifecycle(EMBEDDING_SWITCH_JOURNAL_KEY) is not None
 
 
 class TestHealthCheck:
