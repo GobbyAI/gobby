@@ -364,7 +364,7 @@ mod tests {
                 envelope_type: "turn_context".to_string(),
                 timestamp: Some("2026-06-16T20:00:00Z".to_string()),
                 payload: serde_json::json!({
-                    "model": "gpt-5.5"
+                    "model": "gpt-5.6-sol"
                 }),
             },
             SessionArchiveEnvelope {
@@ -437,7 +437,7 @@ mod tests {
         assert_eq!(parsed.title, "Codex session");
         assert_eq!(parsed.session_type, "codex-tui");
         assert_eq!(parsed.started_at.as_deref(), Some("2026-06-16T20:00:00Z"));
-        assert_eq!(parsed.metadata.model.as_deref(), Some("gpt-5.5"));
+        assert_eq!(parsed.metadata.model.as_deref(), Some("gpt-5.6-sol"));
         assert_eq!(parsed.metadata.git_branch.as_deref(), Some("dev"));
         assert_eq!(parsed.metadata.token_totals.get("input_tokens"), Some(&100));
         assert_eq!(parsed.metadata.token_totals.get("output_tokens"), Some(&7));

@@ -425,7 +425,7 @@ pub(crate) enum Command {
         #[arg(long, value_enum, default_value_t = AiDepthArg::Files)]
         ai_depth: AiDepthArg,
         /// Daemon feature profile for aggregate docs (architecture/modules/repo)
-        /// [default: feature_high — daemon chain codex/gpt-5.5@xhigh, then claude/opus@high]
+        /// [default: feature_high — daemon chain codex/gpt-5.6-sol@xhigh, then claude/opus@high]
         #[arg(long, value_name = "PROFILE")]
         ai_aggregate_profile: Option<String>,
         /// Pin the aggregate writer to an explicit provider/model candidate

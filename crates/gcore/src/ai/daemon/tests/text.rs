@@ -163,7 +163,7 @@ fn pinned_one_shot_forwards_explicit_candidates_and_omits_profile() {
             reasoning_effort: Some("xhigh".to_string()),
         },
         FeatureCandidate {
-            candidate: "codex/gpt-5.5".to_string(),
+            candidate: "codex/gpt-5.6-sol".to_string(),
             reasoning_effort: None,
         },
     ];
@@ -186,7 +186,7 @@ fn pinned_one_shot_forwards_explicit_candidates_and_omits_profile() {
         body["candidates"],
         serde_json::json!([
             {"candidate":"claude/sonnet","reasoning_effort":"xhigh"},
-            {"candidate":"codex/gpt-5.5"}
+            {"candidate":"codex/gpt-5.6-sol"}
         ])
     );
     assert!(body.get("profile").is_none());
@@ -217,7 +217,7 @@ fn daemon_profile_request_ignores_incidental_candidates_and_reasoning_pin() {
     cfg.bindings.text_generate.model = None;
     cfg.bindings.text_generate.candidates = Some(vec![
         FeatureCandidate {
-            candidate: "codex/gpt-5.5".to_string(),
+            candidate: "codex/gpt-5.6-sol".to_string(),
             reasoning_effort: Some("high".to_string()),
         },
         FeatureCandidate {

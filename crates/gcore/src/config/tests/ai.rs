@@ -71,7 +71,7 @@ fn text_generate_resolves_candidates_and_reasoning_effort() {
         (
             ai_keys::TEXT_GENERATE_CANDIDATES,
             r#"[
-                {"candidate":"codex/gpt-5.5","reasoning_effort":"high"},
+                {"candidate":"codex/gpt-5.6-sol","reasoning_effort":"high"},
                 "droid/qwen3.6"
             ]"#,
         ),
@@ -81,7 +81,7 @@ fn text_generate_resolves_candidates_and_reasoning_effort() {
     let binding = resolve_capability_binding(&mut source, AiCapability::TextGenerate);
     let candidates = binding.candidates.expect("candidates resolved");
     assert_eq!(candidates.len(), 2);
-    assert_eq!(candidates[0].candidate, "codex/gpt-5.5");
+    assert_eq!(candidates[0].candidate, "codex/gpt-5.6-sol");
     assert_eq!(candidates[0].reasoning_effort.as_deref(), Some("high"));
     assert_eq!(candidates[1].candidate, "droid/qwen3.6");
     assert_eq!(candidates[1].reasoning_effort, None);
@@ -479,8 +479,8 @@ fn feature_candidate_parses_cli_labels() {
     // Whitespace is trimmed and effort matches case-insensitively, stored
     // lowercase.
     let padded =
-        FeatureCandidate::parse_cli_label("  codex / gpt-5.5 @ XHIGH ").expect("padded parses");
-    assert_eq!(padded.candidate, "codex/gpt-5.5");
+        FeatureCandidate::parse_cli_label("  codex / gpt-5.6-sol @ XHIGH ").expect("padded parses");
+    assert_eq!(padded.candidate, "codex/gpt-5.6-sol");
     assert_eq!(padded.reasoning_effort.as_deref(), Some("xhigh"));
 }
 
@@ -519,7 +519,7 @@ fn feature_candidate_cli_label_round_trips_parsed_labels() {
     for (input, canonical) in [
         ("claude/sonnet", "claude/sonnet"),
         ("claude/sonnet@xhigh", "claude/sonnet@xhigh"),
-        ("  codex / gpt-5.5 @ XHIGH ", "codex/gpt-5.5@xhigh"),
+        ("  codex / gpt-5.6-sol @ XHIGH ", "codex/gpt-5.6-sol@xhigh"),
     ] {
         let parsed = FeatureCandidate::parse_cli_label(input).expect("label parses");
         assert_eq!(parsed.cli_label(), canonical, "{input}");

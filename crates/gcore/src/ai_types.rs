@@ -426,7 +426,7 @@ mod tests {
     fn text_result_deserializes_applied_reasoning_effort_as_typed_field() {
         let result = TextResult::from_wire_json(serde_json::json!({
             "text": "ok",
-            "model": "codex/gpt-5.5",
+            "model": "codex/gpt-5.6-sol",
             "applied_reasoning_effort": "high",
             "metadata": {
                 "provider": "codex"
@@ -435,7 +435,7 @@ mod tests {
         .expect("text result");
 
         assert_eq!(result.text, "ok");
-        assert_eq!(result.model.as_deref(), Some("codex/gpt-5.5"));
+        assert_eq!(result.model.as_deref(), Some("codex/gpt-5.6-sol"));
         assert_eq!(result.applied_reasoning_effort.as_deref(), Some("high"));
         assert_eq!(
             result.metadata.get("provider").map(String::as_str),

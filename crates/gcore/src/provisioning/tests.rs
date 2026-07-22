@@ -130,7 +130,7 @@ fn gcore_yaml_text_generate_candidates_resolve_from_json_string() {
 ai:
   text_generate:
     routing: daemon
-    candidates: '[{"candidate":"codex/gpt-5.5","reasoning_effort":"high"}]'
+    candidates: '[{"candidate":"codex/gpt-5.6-sol","reasoning_effort":"high"}]'
     reasoning_effort: medium
 "#,
     )
@@ -138,14 +138,14 @@ ai:
 
     assert_eq!(
         config.get(ai_keys::TEXT_GENERATE_CANDIDATES),
-        Some(r#"[{"candidate":"codex/gpt-5.5","reasoning_effort":"high"}]"#)
+        Some(r#"[{"candidate":"codex/gpt-5.6-sol","reasoning_effort":"high"}]"#)
     );
 
     let binding = resolve_capability_binding(&mut config, AiCapability::TextGenerate);
     assert_eq!(
         binding.candidates,
         Some(vec![FeatureCandidate {
-            candidate: "codex/gpt-5.5".to_string(),
+            candidate: "codex/gpt-5.6-sol".to_string(),
             reasoning_effort: Some("high".to_string()),
         }])
     );

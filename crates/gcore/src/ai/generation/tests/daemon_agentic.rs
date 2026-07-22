@@ -239,7 +239,7 @@ fn daemon_agentic_chat_pinned_candidates_supersede_profile() {
             reasoning_effort: Some("xhigh".to_string()),
         },
         FeatureCandidate {
-            candidate: "codex/gpt-5.5".to_string(),
+            candidate: "codex/gpt-5.6-sol".to_string(),
             reasoning_effort: None,
         },
     ];
@@ -263,7 +263,7 @@ fn daemon_agentic_chat_pinned_candidates_supersede_profile() {
         body["candidates"],
         serde_json::json!([
             {"candidate":"claude/sonnet","reasoning_effort":"xhigh"},
-            {"candidate":"codex/gpt-5.5"}
+            {"candidate":"codex/gpt-5.6-sol"}
         ])
     );
     assert_eq!(result.content.as_deref(), Some("pinned narrative"));
