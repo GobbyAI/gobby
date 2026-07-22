@@ -13,7 +13,7 @@
     "lint:css": "stylelint \"src/**/*.css\"",
     "lint:tokens": "node scripts/lint-tokens.mjs",
     "patch:tailwind-node-dep0205": "node scripts/patch-tailwind-node-dep0205.mjs",
-    "postinstall": "node scripts/patch-tailwind-node-dep0205.mjs && node scripts/copy-vad-assets.cjs",
+    "postinstall": "node scripts/patch-tailwind-node-dep0205.mjs && node scripts/copy-vad-assets.cjs && node scripts/copy-ghostty-wasm.cjs",
     "setup": "tsx src/setup/cli.tsx",
     "build:setup": "node scripts/build-setup.mjs",
     "test": "vitest run",
@@ -46,6 +46,8 @@
     "@tailwindcss/typography": "^0.5.19",
     "@types/he": "^1.2.3",
     "@types/react-syntax-highlighter": "^15.5.13",
+    "@wterm/dom": "^0.3.0",
+    "@wterm/ghostty": "^0.3.0",
     "class-variance-authority": "^0.7.1",
     "clsx": "^2.1.1",
     "he": "^1.2.0",
@@ -114,5 +116,12 @@
     "typescript-eslint": "^8.58.1",
     "vite": "^6.4.3",
     "vitest": "^4.1.8"
+  },
+  "allowScripts": {
+    "esbuild@0.25.12": true,
+    "esbuild@0.28.1": true,
+    "fsevents@2.3.3": true,
+    "fsevents@2.3.2": true,
+    "protobufjs@7.6.5": true
   }
 }
