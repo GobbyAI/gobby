@@ -39,9 +39,15 @@ def _infer_auth_cli(command: list[str]) -> str | None:
     """Infer the provider CLI from a command argv list."""
     if not command:
         return None
-    cli = Path(command[0]).name.lower()
-    if cli in _SUPPORTED_AUTH_CLIS:
-        return cli
+    candidates = [command[0]]
+    if "--" in command:
+        separator = command.index("--")
+        if separator + 1 < len(command):
+            candidates.append(command[separator + 1])
+    for candidate in candidates:
+        cli = Path(candidate).name.lower()
+        if cli in _SUPPORTED_AUTH_CLIS:
+            return cli
     return None
 
 

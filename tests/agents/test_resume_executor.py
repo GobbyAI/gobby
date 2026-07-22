@@ -106,7 +106,7 @@ async def test_resume_agent_run_persists_only_safe_cache_env(
     assert "PERSISTED" not in spawner.env
     assert spawner.env[CARGO_HOME] == "/old/cargo"
     assert spawner.env[UV_CACHE_DIR] == "/new/uv"
-    assert spawner.env["SANDBOX"] == "enabled"
+    assert "SANDBOX" not in spawner.env
     assert spawner.env["GOBBY_SESSION_ID"] == "child-new"
     assert spawner.env["GOBBY_AGENT_RUN_ID"] == result.run_id
     assert spawner.env["GOBBY_MACHINE_ID"] == "machine-1"
@@ -467,7 +467,7 @@ async def test_resume_agent_run_uses_workspace_mcp_config_for_claude(
         "machine_id": "machine-1",
         "model": "opus",
         "effective_reasoning_effort": "xhigh",
-        "sandbox_args": ["--settings", "{}"],
+        "sandbox_config": {"enabled": True, "backend": "provider-native"},
     }
 
     def fake_prepare_terminal_spawn(**kwargs: Any) -> SimpleNamespace:
@@ -554,7 +554,7 @@ async def test_resume_agent_run_reuses_persisted_claude_mcp_config(
         "machine_id": "machine-1",
         "mcp_path": str(persisted_mcp_path),
         "strict_mcp": True,
-        "sandbox_args": ["--settings", "{}"],
+        "sandbox_config": {"enabled": True, "backend": "provider-native"},
     }
     persisted_metadata: list[tuple[str, dict[str, Any]]] = []
 

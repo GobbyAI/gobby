@@ -822,8 +822,8 @@ class TestComputeSandboxPaths:
         assert paths.gobby_daemon_port == 60887
         assert paths.allow_external_network is False
         assert "/project" in paths.write_paths
-        assert "/tmp/output" in paths.write_paths
-        assert "/opt/data" in paths.read_paths
+        assert str(Path("/tmp/output").resolve()) in paths.write_paths
+        assert str(Path("/opt/data").resolve()) in paths.read_paths
 
     def test_workspace_always_in_write_paths(self) -> None:
         """Test that workspace is always included in write_paths."""
@@ -835,6 +835,45 @@ class TestComputeSandboxPaths:
         )
 
         assert "/my/workspace" in paths.write_paths
+
+    def test_canonicalizes_workspace_symlink_before_granting_access(self, tmp_path: Path) -> None:
+        real_workspace = tmp_path / "real-workspace"
+        real_workspace.mkdir()
+        linked_workspace = tmp_path / "linked-workspace"
+        linked_workspace.symlink_to(real_workspace, target_is_directory=True)
+
+        paths = compute_sandbox_paths(
+            config=SandboxConfig(enabled=True, backend="srt", allow_network=False),
+            workspace_path=str(linked_workspace),
+        )
+
+        assert paths.workspace_path == str(real_workspace)
+        assert str(real_workspace) in paths.write_paths
+        assert str(linked_workspace) not in paths.write_paths
+
+    def test_srt_policy_denies_sensitive_home_without_blanket_gobby_read(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+        tmp_path: Path,
+    ) -> None:
+        gobby_home = tmp_path / "gobby-home"
+        workspace = tmp_path / "workspace"
+        workspace.mkdir()
+        monkeypatch.setenv("GOBBY_HOME", str(gobby_home))
+
+        paths = compute_sandbox_paths(
+            config=SandboxConfig(enabled=True, backend="srt", allow_network=False),
+            workspace_path=str(workspace),
+            provider="codex",
+            env={"PATH": ""},
+        )
+
+        assert str(gobby_home.resolve()) in paths.deny_read_paths
+        assert str(gobby_home.resolve()) not in paths.write_paths
+        assert str((gobby_home / "hooks" / "inbox").resolve()) in paths.write_paths
+        assert str(gobby_home.resolve()) not in paths.read_paths
+        assert str(Path.home().resolve()) in paths.deny_read_paths
+        assert str(workspace.resolve()) in paths.write_paths
 
     def test_normalize_sandbox_path_tolerates_value_error(
         self, monkeypatch: pytest.MonkeyPatch

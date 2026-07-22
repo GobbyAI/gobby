@@ -13,6 +13,7 @@ import os
 import subprocess
 import uuid
 from abc import ABC, abstractmethod
+from collections.abc import Mapping
 from pathlib import Path
 from typing import Any, Literal, cast
 
@@ -43,14 +44,21 @@ class SandboxConfig(BaseModel):
     """
 
     enabled: bool = False
+    backend: Literal["srt", "provider-native"] = "provider-native"
     mode: Literal["permissive", "restrictive"] = "permissive"
     allow_network: bool = True
     extra_read_paths: list[str] = Field(default_factory=list)
     extra_write_paths: list[str] = Field(default_factory=list)
+    extra_deny_read_paths: list[str] = Field(default_factory=list)
+    extra_deny_write_paths: list[str] = Field(default_factory=list)
+    allowed_domains: list[str] = Field(default_factory=list)
+    denied_domains: list[str] = Field(default_factory=list)
+    allow_git_network: bool = False
+    allow_package_registries: bool = False
+    allow_unix_sockets: list[str] = Field(default_factory=list)
 
 
 _DAEMON_OWNED_SANDBOX_MODE: Literal["permissive", "restrictive"] = "permissive"
-_DAEMON_OWNED_ALLOW_NETWORK = True
 _DAEMON_SANDBOX_POLICY_VERSION = 1
 _WEB_CHAT_POLICY_MISMATCH_MESSAGE = (
     "This chat was created under a different sandbox policy. Continue it in a new chat."
@@ -69,6 +77,11 @@ def coerce_sandbox_config(config: Any | None) -> SandboxConfig | None:
     if isinstance(config, dict):
         return SandboxConfig(**config)
 
+    raw_backend = str(getattr(config, "backend", "provider-native"))
+    backend = cast(
+        Literal["srt", "provider-native"],
+        raw_backend if raw_backend in {"srt", "provider-native"} else "provider-native",
+    )
     raw_mode = str(getattr(config, "mode", "permissive"))
     mode = cast(
         Literal["permissive", "restrictive"],
@@ -77,10 +90,18 @@ def coerce_sandbox_config(config: Any | None) -> SandboxConfig | None:
 
     return SandboxConfig(
         enabled=bool(getattr(config, "enabled", False)),
+        backend=backend,
         mode=mode,
         allow_network=bool(getattr(config, "allow_network", True)),
         extra_read_paths=list(getattr(config, "extra_read_paths", []) or []),
         extra_write_paths=list(getattr(config, "extra_write_paths", []) or []),
+        extra_deny_read_paths=list(getattr(config, "extra_deny_read_paths", []) or []),
+        extra_deny_write_paths=list(getattr(config, "extra_deny_write_paths", []) or []),
+        allowed_domains=list(getattr(config, "allowed_domains", []) or []),
+        denied_domains=list(getattr(config, "denied_domains", []) or []),
+        allow_git_network=bool(getattr(config, "allow_git_network", False)),
+        allow_package_registries=bool(getattr(config, "allow_package_registries", False)),
+        allow_unix_sockets=list(getattr(config, "allow_unix_sockets", []) or []),
     )
 
 
@@ -88,15 +109,23 @@ def daemon_owned_sandbox_config(
     config: Any | None,
     *,
     default_enabled: bool = True,
+    default_backend: Literal["srt", "provider-native"] = "provider-native",
+    default_allow_network: bool = True,
 ) -> SandboxConfig:
     """Resolve daemon-owned sandbox config into the internal runtime model."""
     if config is None:
         return SandboxConfig(
             enabled=default_enabled,
+            backend=default_backend,
             mode=_DAEMON_OWNED_SANDBOX_MODE,
-            allow_network=_DAEMON_OWNED_ALLOW_NETWORK,
+            allow_network=default_allow_network,
         )
 
+    raw_backend = getattr(config, "backend", default_backend)
+    backend = cast(
+        Literal["srt", "provider-native"],
+        raw_backend if raw_backend in {"srt", "provider-native"} else default_backend,
+    )
     raw_mode = getattr(config, "mode", _DAEMON_OWNED_SANDBOX_MODE)
     mode = cast(
         Literal["permissive", "restrictive"],
@@ -104,31 +133,47 @@ def daemon_owned_sandbox_config(
         if isinstance(raw_mode, str) and raw_mode in {"permissive", "restrictive"}
         else _DAEMON_OWNED_SANDBOX_MODE,
     )
-    raw_allow_network = getattr(config, "allow_network", _DAEMON_OWNED_ALLOW_NETWORK)
+    raw_allow_network = getattr(config, "allow_network", default_allow_network)
 
     return SandboxConfig(
         enabled=bool(getattr(config, "enabled", default_enabled)),
+        backend=backend,
         mode=mode,
         allow_network=(
-            raw_allow_network
-            if isinstance(raw_allow_network, bool)
-            else _DAEMON_OWNED_ALLOW_NETWORK
+            raw_allow_network if isinstance(raw_allow_network, bool) else default_allow_network
         ),
         extra_read_paths=list(getattr(config, "extra_read_paths", []) or []),
         extra_write_paths=list(getattr(config, "extra_write_paths", []) or []),
+        extra_deny_read_paths=list(getattr(config, "extra_deny_read_paths", []) or []),
+        extra_deny_write_paths=list(getattr(config, "extra_deny_write_paths", []) or []),
+        allowed_domains=list(getattr(config, "allowed_domains", []) or []),
+        denied_domains=list(getattr(config, "denied_domains", []) or []),
+        allow_git_network=bool(getattr(config, "allow_git_network", False)),
+        allow_package_registries=bool(getattr(config, "allow_package_registries", False)),
+        allow_unix_sockets=list(getattr(config, "allow_unix_sockets", []) or []),
     )
 
 
 def web_chat_sandbox_config(daemon_config: Any | None) -> SandboxConfig:
     """Return the daemon-owned web-chat sandbox config."""
     raw_config = getattr(daemon_config, "web_chat_sandbox", None) if daemon_config else None
-    return daemon_owned_sandbox_config(raw_config, default_enabled=True)
+    return daemon_owned_sandbox_config(
+        raw_config,
+        default_enabled=True,
+        default_backend="provider-native",
+        default_allow_network=True,
+    )
 
 
 def agent_sandbox_config(daemon_config: Any | None) -> SandboxConfig:
     """Return the daemon-owned spawned-agent sandbox config."""
     raw_config = getattr(daemon_config, "agent_sandbox", None) if daemon_config else None
-    return daemon_owned_sandbox_config(raw_config, default_enabled=True)
+    return daemon_owned_sandbox_config(
+        raw_config,
+        default_enabled=True,
+        default_backend="srt",
+        default_allow_network=False,
+    )
 
 
 def daemon_owned_sandbox_policy_hash(
@@ -163,6 +208,14 @@ def web_chat_policy_mismatch_message() -> str:
     return _WEB_CHAT_POLICY_MISMATCH_MESSAGE
 
 
+class SandboxCredentialEnv(BaseModel):
+    """Credential environment variable handled by the host sandbox."""
+
+    name: str
+    mode: Literal["deny", "mask"] = "mask"
+    inject_hosts: list[str] = Field(default_factory=list)
+
+
 class ResolvedSandboxPaths(BaseModel):
     """
     Resolved paths and settings for sandbox execution.
@@ -184,6 +237,14 @@ class ResolvedSandboxPaths(BaseModel):
     read_paths: list[str]
     write_paths: list[str]
     allow_external_network: bool
+    deny_read_paths: list[str] = Field(default_factory=list)
+    deny_write_paths: list[str] = Field(default_factory=list)
+    allowed_domains: list[str] = Field(default_factory=list)
+    denied_domains: list[str] = Field(default_factory=list)
+    loopback_ports: list[int] = Field(default_factory=list)
+    allow_unix_sockets: list[str] = Field(default_factory=list)
+    credential_env_vars: list[SandboxCredentialEnv] = Field(default_factory=list)
+    provider: str | None = None
 
 
 class SandboxResolver(ABC):
@@ -513,6 +574,11 @@ def compute_sandbox_paths(
     config: SandboxConfig,
     workspace_path: str,
     gobby_daemon_port: int = 60887,
+    *,
+    gobby_websocket_port: int = 60888,
+    provider: str | None = None,
+    api_base: str | None = None,
+    env: Mapping[str, str] | None = None,
 ) -> ResolvedSandboxPaths:
     """
     Compute resolved sandbox paths from a SandboxConfig.
@@ -528,30 +594,65 @@ def compute_sandbox_paths(
     Returns:
         ResolvedSandboxPaths with all paths computed.
     """
-    workspace = Path(workspace_path).expanduser()
+    from gobby.agents.sandbox_policy import (
+        allowed_domains,
+        canonical_path,
+        canonical_paths,
+        credential_env_vars,
+        default_write_paths,
+        gobby_read_exceptions,
+        gobby_write_exceptions,
+        provider_read_exceptions,
+        sensitive_home_roots,
+        sensitive_write_roots,
+    )
 
-    # Start with workspace in write paths.
-    write_paths = [workspace_path]
-
-    for path in _git_metadata_write_paths(workspace):
-        if path not in write_paths:
-            write_paths.append(path)
-
-    # Add extra write paths
-    for path in config.extra_write_paths:
-        if path not in write_paths:
-            write_paths.append(path)
-
-    # Collect read paths - always include ~/.gobby/ for machine_id access
-    gobby_home = str(Path("~/.gobby").expanduser())
-    read_paths = [gobby_home] + list(config.extra_read_paths)
+    workspace = Path(canonical_path(workspace_path))
+    policy_env = os.environ if env is None else env
+    git_paths = _git_metadata_write_paths(workspace)
+    write_paths = canonical_paths(
+        [*default_write_paths(config, workspace), *git_paths, *gobby_write_exceptions()]
+    )
+    read_paths = canonical_paths(
+        [
+            str(workspace),
+            *write_paths,
+            *gobby_read_exceptions(policy_env),
+            *(provider_read_exceptions(provider, policy_env) if provider else []),
+            *config.extra_read_paths,
+        ],
+        base=workspace,
+    )
+    deny_read_paths = canonical_paths(
+        [*sensitive_home_roots(), *config.extra_deny_read_paths],
+        base=workspace,
+    )
+    deny_write_paths = canonical_paths(
+        [*sensitive_write_roots(), *config.extra_deny_write_paths],
+        base=workspace,
+    )
+    domains = allowed_domains(config, provider, api_base) if provider else []
 
     return ResolvedSandboxPaths(
-        workspace_path=workspace_path,
+        workspace_path=str(workspace),
         gobby_daemon_port=gobby_daemon_port,
         read_paths=read_paths,
         write_paths=write_paths,
         allow_external_network=config.allow_network,
+        deny_read_paths=deny_read_paths,
+        deny_write_paths=deny_write_paths,
+        allowed_domains=domains,
+        denied_domains=list(
+            dict.fromkeys(domain.lower() for domain in config.denied_domains if domain)
+        ),
+        loopback_ports=list(dict.fromkeys((gobby_daemon_port, gobby_websocket_port))),
+        allow_unix_sockets=canonical_paths(config.allow_unix_sockets, base=workspace),
+        credential_env_vars=(
+            [item for item in credential_env_vars(provider, api_base) if item.name in policy_env]
+            if provider
+            else []
+        ),
+        provider=provider,
     )
 
 

@@ -14,6 +14,10 @@ class DaemonOwnedSandboxConfig(BaseModel):
         default=True,
         description="Enable sandboxing for daemon-owned runtimes in this category.",
     )
+    backend: Literal["srt", "provider-native"] = Field(
+        default="provider-native",
+        description="Host sandbox backend. Managed agents default this field to SRT.",
+    )
     mode: Literal["permissive", "restrictive"] = Field(
         default="permissive",
         description="Sandbox strictness level for daemon-owned runtimes.",
@@ -29,4 +33,32 @@ class DaemonOwnedSandboxConfig(BaseModel):
     extra_write_paths: list[str] = Field(
         default_factory=list,
         description="Additional filesystem paths to allow write access inside the sandbox.",
+    )
+    extra_deny_read_paths: list[str] = Field(
+        default_factory=list,
+        description="Additional filesystem paths hidden from sandboxed processes.",
+    )
+    extra_deny_write_paths: list[str] = Field(
+        default_factory=list,
+        description="Additional write-deny paths inside otherwise writable roots.",
+    )
+    allowed_domains: list[str] = Field(
+        default_factory=list,
+        description="Additional outbound domains allowed by the SRT backend.",
+    )
+    denied_domains: list[str] = Field(
+        default_factory=list,
+        description="Outbound domains denied by the SRT backend.",
+    )
+    allow_git_network: bool = Field(
+        default=False,
+        description="Allow Git forge network endpoints for push, pull, and fetch.",
+    )
+    allow_package_registries: bool = Field(
+        default=False,
+        description="Allow package-registry endpoints and their local caches.",
+    )
+    allow_unix_sockets: list[str] = Field(
+        default_factory=list,
+        description="Exact Unix socket paths allowed by the SRT backend.",
     )

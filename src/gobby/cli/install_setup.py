@@ -362,6 +362,17 @@ def run_daemon_setup(project_path: Path, *, configure_ide_settings: bool) -> Non
     else:
         click.echo(f"Warning: Failed to configure MCP servers: {mcp_result['error']}")
 
+    from gobby.agents.srt_runtime import SrtRuntimeError
+
+    from .install_setup_srt import install_srt_runtime
+
+    try:
+        srt_result = install_srt_runtime()
+    except SrtRuntimeError as exc:
+        raise click.ClickException(f"Failed to install managed Sandbox Runtime: {exc}") from exc
+    action = "Installed" if srt_result.installed else "Verified"
+    click.echo(f"{action} managed Sandbox Runtime {srt_result.version}: {srt_result.path}")
+
     homebrew_mode = is_homebrew_distribution()
     if homebrew_mode:
         try:

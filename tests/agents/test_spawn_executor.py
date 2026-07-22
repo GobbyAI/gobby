@@ -663,7 +663,7 @@ class TestExecuteSpawn:
             result = await execute_spawn(request)
 
         assert result.success is True
-        assert call_order == ["prepare", "command", "env", "preapprove", "spawn"]
+        assert call_order == ["prepare", "env", "command", "preapprove", "spawn"]
 
     @pytest.mark.asyncio
     async def test_codex_terminal_spawn_with_sandbox_config(self) -> None:
@@ -728,7 +728,9 @@ class TestExecuteSpawn:
         assert "-c" in command
         assert "sandbox_workspace_write.network_access=true" in command
         assert "--add-dir" in command
-        assert command[command.index("--add-dir") + 1] == "/tmp/gobby/uv-cache/gobby-sess-123"
+        assert command[command.index("--add-dir") + 1] == str(
+            Path("/tmp/gobby/uv-cache/gobby-sess-123").resolve()
+        )
         assert "--full-auto" not in command
         prompt_arg = command[-1]
         # Sandbox args must appear before the final prompt argv entry, which
@@ -1011,10 +1013,7 @@ class TestExecuteSpawnSandbox:
                 "gobby.agents.spawn_executor.TmuxSpawner",
                 return_value=mock_spawner,
             ),
-            patch(
-                "gobby.agents.spawn_executor.ClaudeSandboxResolver",
-                return_value=mock_resolver,
-            ),
+            patch("gobby.agents.spawn_executor.get_sandbox_resolver", return_value=mock_resolver),
             patch("gobby.agents.spawn_executor.pre_approve_directory"),
         ):
             result = await execute_spawn(request)
@@ -1305,8 +1304,8 @@ class TestExecuteSpawnSandbox:
         with (
             patch("gobby.agents.spawn_executor.prepare_terminal_spawn", mock_prepare),
             patch(
-                "gobby.agents.spawn_executor.QwenSandboxResolver", return_value=mock_resolver
-            ) as mock_resolver_class,
+                "gobby.agents.spawn_executor.get_sandbox_resolver", return_value=mock_resolver
+            ) as mock_get_resolver,
             patch(
                 "gobby.agents.spawn_executor.TmuxSpawner",
                 return_value=mock_spawner,
@@ -1314,7 +1313,7 @@ class TestExecuteSpawnSandbox:
         ):
             result = await execute_spawn(request)
 
-        mock_resolver_class.assert_called_once()
+        mock_get_resolver.assert_called_once_with("qwen")
         mock_resolver.resolve.assert_called_once()
         mock_session_manager.update_sandbox_enabled.assert_called_once_with(
             "gobby-sess-123",

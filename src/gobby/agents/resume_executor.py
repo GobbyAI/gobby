@@ -15,8 +15,14 @@ import psycopg
 
 from gobby.agents.capture import CaptureStorage, capture_then_kill_async
 from gobby.agents.resume_metadata import merge_resume_metadata_env
+from gobby.agents.sandbox import coerce_sandbox_config, get_sandbox_resolver
 from gobby.agents.spawn import prepare_terminal_spawn
 from gobby.agents.spawners.command_builder import build_cli_command
+from gobby.agents.srt_runtime import (
+    SandboxLaunch,
+    SrtRuntimeError,
+    prepare_sandbox_launch,
+)
 from gobby.agents.tmux.spawner import TmuxSpawner
 from gobby.agents.trust import pre_approve_directory
 from gobby.config.tmux import TmuxConfig
@@ -184,7 +190,52 @@ async def resume_agent_run(
         _fail_run(runner, run_id, error)
         return ResumeAgentResult(False, run_id=run_id, error=error)
 
-    sandbox_args = _str_list(resume_metadata.get("sandbox_args"))
+    env = merge_resume_metadata_env(resume_metadata.get("env"))
+    env.update(spawn_context.env_vars)
+    env["GOBBY_MACHINE_ID"] = _metadata_str(resume_metadata, "machine_id") or "unknown"
+    sandbox_config = coerce_sandbox_config(resume_metadata.get("sandbox_config"))
+    launch = SandboxLaunch(backend="provider-native", enforced=False)
+    if sandbox_config is not None:
+        resolver = None
+        if sandbox_config.enabled and sandbox_config.backend == "provider-native":
+            try:
+                resolver = get_sandbox_resolver(provider)
+            except ValueError:
+                error = f"resume_sandbox_unsupported:{provider}"
+                _fail_run(runner, run_id, error)
+                return ResumeAgentResult(False, run_id=run_id, error=error)
+        daemon_port = int(getattr(daemon_config, "daemon_port", 60887))
+        websocket = getattr(daemon_config, "websocket", None)
+        websocket_port = int(getattr(websocket, "port", 60888))
+        try:
+            launch = await prepare_sandbox_launch(
+                config=sandbox_config,
+                provider=provider,
+                workspace_path=cwd,
+                run_id=run_id,
+                resolver=resolver,
+                daemon_port=daemon_port,
+                websocket_port=websocket_port,
+                api_base=_resume_api_base(provider, env),
+                env=env,
+            )
+        except (OSError, ValueError, SrtRuntimeError) as exc:
+            error = f"resume_sandbox_failed_closed:{type(exc).__name__}:{exc}"
+            _fail_run(runner, run_id, error)
+            return ResumeAgentResult(False, run_id=run_id, error=error)
+    env.update(launch.provider_env)
+    update_sandbox_enabled = getattr(runner.child_session_manager, "update_sandbox_enabled", None)
+    if callable(update_sandbox_enabled):
+        update_sandbox_enabled(spawn_context.session_id, launch.enforced)
+    update_policy_hash = getattr(
+        runner.child_session_manager,
+        "update_sandbox_policy_hash",
+        None,
+    )
+    if launch.policy_hash and callable(update_policy_hash):
+        update_policy_hash(spawn_context.session_id, launch.policy_hash)
+
+    sandbox_args = launch.provider_args
     command, _cmd_env = build_cli_command(
         cli=provider,
         prompt=None if provider == "claude" else prompt,
@@ -212,12 +263,11 @@ async def resume_agent_run(
                 command.append("--strict-mcp-config")
         command.extend(sandbox_args)
         command.append(prompt)
-
-    env = merge_resume_metadata_env(resume_metadata.get("env"))
-    env.update(spawn_context.env_vars)
-    env.update(_str_dict(resume_metadata.get("sandbox_env")))
-    env["GOBBY_MACHINE_ID"] = _metadata_str(resume_metadata, "machine_id") or "unknown"
+    command = launch.wrap(command)
     metadata["env"] = merge_resume_metadata_env(env)
+    metadata["sandbox_args"] = list(launch.provider_args)
+    metadata["sandbox_env"] = dict(launch.provider_env)
+    metadata["sandbox"] = launch.metadata()
     try:
         update_resume_metadata = getattr(runner.run_storage, "update_resume_metadata", None)
         if callable(update_resume_metadata):
@@ -496,10 +546,15 @@ def _str_list(value: Any) -> list[str]:
     return [item for item in value if isinstance(item, str)]
 
 
-def _str_dict(value: Any) -> dict[str, str]:
-    if not isinstance(value, dict):
-        return {}
-    return {str(key): str(item) for key, item in value.items()}
+def _resume_api_base(provider: str, env: dict[str, str]) -> str | None:
+    key = {
+        "claude": "ANTHROPIC_BASE_URL",
+        "codex": "OPENAI_BASE_URL",
+        "droid": "FACTORY_API_BASE_URL",
+        "grok": "GROK_API_BASE",
+        "qwen": "QWEN_API_BASE",
+    }.get(provider)
+    return env.get(key) if key else None
 
 
 def _sandbox_enabled(metadata: dict[str, Any]) -> bool:

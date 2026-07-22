@@ -11,7 +11,7 @@ import psycopg
 
 from gobby.agents.constants import ALL_TERMINAL_ENV_VARS
 from gobby.agents.resume_metadata import merge_resume_metadata_env
-from gobby.agents.sandbox import get_sandbox_resolver
+from gobby.agents.sandbox import coerce_sandbox_config, get_sandbox_resolver
 from gobby.agents.spawn import PreparedSpawn
 from gobby.agents.spawn_cache_policy import (
     PATH_ENV_VAR,
@@ -20,6 +20,7 @@ from gobby.agents.spawn_cache_policy import (
 )
 from gobby.agents.spawn_models import SpawnRequest, SpawnResult
 from gobby.agents.spawners.base import SpawnResult as TerminalSpawnResult
+from gobby.agents.srt_runtime import SandboxLaunch
 from gobby.config.tmux import TmuxConfig
 
 if TYPE_CHECKING:
@@ -98,6 +99,7 @@ def _record_resume_launch_details(
     config_overrides: list[str] | None = None,
     mcp_path: str | None = None,
     strict_mcp: bool | None = None,
+    sandbox_launch: SandboxLaunch | None = None,
 ) -> None:
     """Persist post-resolution CLI launch details for daemon-stop resume."""
     if request.resume_metadata_json is None:
@@ -109,6 +111,8 @@ def _record_resume_launch_details(
     metadata = dict(request.resume_metadata_json)
     metadata["sandbox_args"] = list(sandbox_args or [])
     metadata["sandbox_env"] = dict(sandbox_env or {})
+    if sandbox_launch is not None:
+        metadata["sandbox"] = sandbox_launch.metadata()
     final_env = merge_resume_metadata_env(
         metadata.get("env") if isinstance(metadata.get("env"), Mapping) else None,
         request.extra_env,
@@ -179,6 +183,9 @@ def _unsupported_sandbox_request_error(request: SpawnRequest) -> SpawnResult | N
     if not _sandbox_requested(request):
         return None
 
+    config = coerce_sandbox_config(request.sandbox_config)
+    if config is not None and config.backend == "srt":
+        return None
     try:
         get_sandbox_resolver(request.provider)
     except ValueError:
@@ -195,26 +202,23 @@ def _unsupported_sandbox_request_error(request: SpawnRequest) -> SpawnResult | N
     return None
 
 
-def _sandbox_was_enforced(
-    sandbox_args: list[str],
-    sandbox_env: Mapping[str, str] | None = None,
-) -> bool:
-    return bool(sandbox_args or sandbox_env)
-
-
 def _record_actual_sandbox_enforcement(
     request: SpawnRequest,
     spawn_context: PreparedSpawn,
-    sandbox_args: list[str],
-    sandbox_env: Mapping[str, str] | None = None,
+    sandbox_launch: SandboxLaunch,
 ) -> None:
     manager = request.session_manager
     if manager is None:
         return
     manager.update_sandbox_enabled(
         spawn_context.session_id,
-        _sandbox_was_enforced(sandbox_args, sandbox_env),
+        sandbox_launch.enforced,
     )
+    if sandbox_launch.policy_hash:
+        manager.update_sandbox_policy_hash(
+            spawn_context.session_id,
+            sandbox_launch.policy_hash,
+        )
 
 
 def _codex_mcp_config_overrides(project_path: str | None) -> list[str]:

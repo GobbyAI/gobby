@@ -158,11 +158,13 @@ where = ["src"]
 
 [tool.setuptools.package-data]
 gobby = [
+    "agents/*.mjs",
     "install/agy/**/*",
     "install/claude/**/*",
     "install/codex/**/*",
     "install/qwen/**/*",
     "install/bundled_content_manifest.json",
+    "install/srt-package-lock.json",
     "install/shared/**/*",
     "storage/*.sql",
     "storage/migrations/*",

@@ -283,7 +283,10 @@ class DaemonConfig(BaseModel):
         description="Daemon-owned sandbox defaults for web chat runtimes.",
     )
     agent_sandbox: DaemonOwnedSandboxConfig = Field(
-        default_factory=DaemonOwnedSandboxConfig,
+        default_factory=lambda: DaemonOwnedSandboxConfig(
+            backend="srt",
+            allow_network=False,
+        ),
         description="Daemon-owned sandbox defaults for spawned agent runtimes.",
     )
     communications: CommunicationsConfig = Field(

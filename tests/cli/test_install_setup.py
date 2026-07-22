@@ -131,6 +131,7 @@ class TestEnsureDaemonConfig:
 
 
 class TestRunDaemonSetup:
+    @patch("gobby.cli.install_setup_srt.install_srt_runtime")
     @patch("gobby.storage.hub.runtime.runtime_hub_database")
     @patch("gobby.cli.installers.shared.sync_bundled_content_to_db")
     @patch("gobby.cli.installers.install_default_mcp_servers")
@@ -147,6 +148,7 @@ class TestRunDaemonSetup:
         mock_mcp,
         mock_sync,
         mock_init,
+        mock_srt,
         tmp_path,
         capsys: pytest.CaptureFixture[str],
     ):
@@ -154,6 +156,11 @@ class TestRunDaemonSetup:
         mock_context = MagicMock()
         mock_context.__enter__.return_value = mock_db
         mock_init.return_value = mock_context
+        mock_srt.return_value = MagicMock(
+            installed=False,
+            version="0.0.66",
+            path=tmp_path / ".gobby" / "runtime" / "srt" / "0.0.66",
+        )
         mock_sync.return_value = {"total_synced": 5, "errors": []}
         mock_mcp.return_value = {"success": True, "servers_added": ["gh"], "servers_skipped": []}
         mock_gcode.return_value = {"installed": True, "version": "1.0", "method": "github"}
@@ -181,6 +188,7 @@ class TestRunDaemonSetup:
         mock_mcp.assert_called_once()
         assert mock_mcp.call_count == 1
         assert mock_mcp.call_args is not None
+        mock_srt.assert_called_once_with()
         mock_gcode.assert_called_once()
         assert mock_gcode.call_count == 1
         assert mock_gcode.call_args is not None
@@ -201,6 +209,7 @@ class TestRunDaemonSetup:
             "Failed to parse settings.json"
         ) in output
 
+    @patch("gobby.cli.install_setup_srt.install_srt_runtime")
     @patch("gobby.storage.hub.runtime.runtime_hub_database")
     @patch("gobby.cli.installers.shared.sync_bundled_content_to_db")
     @patch("gobby.cli.installers.install_default_mcp_servers")
@@ -217,10 +226,16 @@ class TestRunDaemonSetup:
         mock_mcp,
         mock_sync,
         mock_init,
+        mock_srt,
         tmp_path,
     ):
         mock_db = MagicMock()
         mock_init.return_value = mock_db
+        mock_srt.return_value = MagicMock(
+            installed=False,
+            version="0.0.66",
+            path=tmp_path / ".gobby" / "runtime" / "srt" / "0.0.66",
+        )
         mock_sync.return_value = {"total_synced": 0, "errors": []}
         mock_mcp.return_value = {"success": True, "servers_added": [], "servers_skipped": []}
         mock_gcode.return_value = {"skipped": True}
@@ -248,7 +263,9 @@ class TestRunDaemonSetup:
 
         assert str(tmp_path / ".gobby" / "bin" / "ghook") in command
         assert "--gobby-owned" in command
+        mock_srt.assert_called_once_with()
 
+    @patch("gobby.cli.install_setup_srt.install_srt_runtime")
     @patch("gobby.storage.hub.runtime.runtime_hub_database")
     @patch("gobby.cli.installers.shared.sync_bundled_content_to_db")
     @patch("gobby.cli.installers.install_default_mcp_servers")
@@ -257,7 +274,7 @@ class TestRunDaemonSetup:
     @patch("gobby.cli.install_setup._install_ghook")
     @patch("gobby.cli.installers.ide_config.configure_vscode_family_terminal_integration")
     @patch("gobby.cli.install_setup.verify_homebrew_managed_bins")
-    def test_homebrew_mode_skips_npm_and_managed_helper_installs(
+    def test_homebrew_mode_installs_srt_but_skips_managed_helper_installs(
         self,
         mock_verify: MagicMock,
         mock_ide: MagicMock,
@@ -267,12 +284,18 @@ class TestRunDaemonSetup:
         mock_mcp: MagicMock,
         mock_sync: MagicMock,
         mock_init: MagicMock,
+        mock_srt: MagicMock,
         tmp_path: Path,
         monkeypatch: pytest.MonkeyPatch,
     ) -> None:
         monkeypatch.setenv("GOBBY_DISTRIBUTION", "homebrew")
         mock_db = MagicMock()
         mock_init.return_value = mock_db
+        mock_srt.return_value = MagicMock(
+            installed=True,
+            version="0.0.66",
+            path=tmp_path / ".gobby" / "runtime" / "srt" / "0.0.66",
+        )
         mock_sync.return_value = {"total_synced": 0, "errors": []}
         mock_mcp.return_value = {"success": True, "servers_added": [], "servers_skipped": []}
         mock_ide.return_value = {"Code": {"added": False}}
@@ -294,6 +317,7 @@ class TestRunDaemonSetup:
 
         assert mock_sync.return_value == {"total_synced": 0, "errors": []}
         assert mock_mcp.return_value["success"] is True
+        mock_srt.assert_called_once_with()
         mock_verify.assert_called_once_with()
         mock_run.assert_not_called()
         mock_gcode.assert_not_called()

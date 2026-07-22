@@ -1,212 +1,189 @@
 # Sandbox Configuration
 
-This guide explains Gobby's daemon-owned sandbox configuration for web chat and
-spawned agents. For the compatibility test matrix and public `ghook` artifact
-validation, see [sandbox-compatibility.md](./sandbox-compatibility.md).
+Gobby owns sandbox selection and policy for daemon-managed runtimes. Managed
+terminal agents use Anthropic Sandbox Runtime (SRT) by default. Web chat keeps
+its provider-native sandbox because those runtimes use SDK, app-server, or ACP
+process models rather than the managed terminal launch path.
 
-## Overview
+For the test and lifecycle matrix, see
+[sandbox-compatibility.md](./sandbox-compatibility.md).
 
-Gobby resolves sandbox policy at the daemon layer, then translates that policy
-to the provider-specific runtime surface. Two daemon config fields own the
-operator-facing defaults:
+## Backends
 
-- `web_chat_sandbox`
-- `agent_sandbox`
+Two explicit backends are supported:
 
-Both fields default to enabled. The daemon-owned resolver fixes the effective
-mode to `permissive`, enables external network access, preserves explicit extra
-read/write paths, and computes the concrete paths that each runtime needs.
+- `srt` wraps the complete provider command in one host-native process-tree
+  sandbox before tmux starts. It is the `agent_sandbox` default.
+- `provider-native` renders the provider's own sandbox flags. It is the
+  `web_chat_sandbox` default and an explicit rollout/debug option for managed
+  agents.
 
-For every sandboxed runtime, Gobby keeps the launched workspace writable and
-keeps `~/.gobby` readable so the runtime can resolve daemon state such as
-`machine_id`. Worktree launches also add the resolved Git metadata directories
-to the writable set so commits from a sandboxed worktree can update the real
-repository metadata.
-Daemon-owned spawned agents also permit local Gobby services on loopback,
-including the HTTP daemon, WebSocket daemon, and local Postgres hub, while
-still using each provider's filesystem sandbox.
+Backend selection never falls back. If SRT installation, policy validation, or
+preflight fails, the agent run fails before tmux creation. If a provider has no
+provider-native renderer, selecting `provider-native` also fails closed.
 
-Web chat stores a `sandbox_policy_hash` with each conversation. If the daemon
-policy changes after a chat was created, Gobby blocks resume and asks the user
-to continue in a new chat under the current policy.
+## Managed SRT Installation
 
-## Config Shape
+`gobby install` installs `@anthropic-ai/sandbox-runtime` 0.0.66 under
+`~/.gobby/tools/srt/0.0.66` (or the configured `GOBBY_HOME`). Gobby verifies:
 
-Configure daemon-owned sandbox defaults in Gobby's daemon config:
+- the fixed npm tarball URL and SHA-256 checksum;
+- npm's published integrity value;
+- a checked-in lockfile and its SHA-256 checksum;
+- the installed package name and version;
+- the Gobby runner checksum recorded in the installation receipt.
+
+The package is Apache-2.0 licensed and requires Node.js 20.11 or newer. The
+installer runs `npm ci` against the checked-in dependency graph with lifecycle
+scripts disabled. Launches use absolute paths to the verified Node executable
+and Gobby-managed runner; they never run `npx` or resolve an SRT executable from
+`PATH` per spawn.
+
+An invalid existing installation is replaced atomically. Installation failure
+is fatal to `gobby install`, and selecting SRT remains fail-closed until the
+runtime is repaired.
+
+## Configuration
 
 ```yaml
 web_chat_sandbox:
   enabled: true
+  backend: provider-native
+  mode: permissive
+  allow_network: true
   extra_read_paths: []
   extra_write_paths: []
 
 agent_sandbox:
   enabled: true
+  backend: srt
+  mode: permissive
+  allow_network: false
   extra_read_paths: []
   extra_write_paths: []
+  extra_deny_read_paths: []
+  extra_deny_write_paths: []
+  allowed_domains: []
+  denied_domains: []
+  allow_git_network: false
+  allow_package_registries: false
+  allow_unix_sockets: []
 ```
 
-### Parameters
-
-| Parameter | Type | Default | Description |
+| Parameter | Type | Default | Meaning |
 | --- | --- | --- | --- |
-| `enabled` | bool | `true` | Enables daemon-owned sandboxing for this surface |
-| `extra_read_paths` | list | `[]` | Additional paths included in the resolved read set |
-| `extra_write_paths` | list | `[]` | Additional paths included in the resolved write set |
+| `enabled` | bool | `true` | Enables the selected backend |
+| `backend` | `srt` or `provider-native` | agents: `srt`; web chat: `provider-native` | Host sandbox implementation |
+| `mode` | `permissive` or `restrictive` | `permissive` | Provider-native renderer mode; SRT uses its canonical path policy |
+| `allow_network` | bool | agents: `false`; web chat: `true` | Provider-native network switch; SRT rejects `true` because unrestricted network is not supported |
+| `extra_read_paths` | list of paths | `[]` | Additional readable roots |
+| `extra_write_paths` | list of paths | `[]` | Additional writable roots |
+| `extra_deny_read_paths` | list of paths | `[]` | Additional hidden roots |
+| `extra_deny_write_paths` | list of paths | `[]` | Write-deny exceptions inside writable roots |
+| `allowed_domains` | list of domains | `[]` | Additional SRT outbound domains |
+| `denied_domains` | list of domains | `[]` | SRT outbound denials; denial wins over allowance |
+| `allow_git_network` | bool | `false` | Adds common Git-forge domains for fetch, pull, and push |
+| `allow_package_registries` | bool | `false` | Adds common registry domains and local package-cache write roots |
+| `allow_unix_sockets` | list of paths | `[]` | Unix socket paths allowed by SRT |
 
-The daemon config surface does not expose `mode` or `allow_network`. Those are
-fixed by the daemon-owned resolver. The lower-level `SandboxConfig` model still
-supports restrictive mode and network toggling for provider translation tests
-and direct resolver use.
+Paths are expanded and canonicalized outside the workspace before policy
+generation. Relative operator paths resolve from the workspace. Symlinked
+workspace paths resolve to their real target, and linked-worktree Git metadata
+from `git rev-parse --git-dir --git-common-dir` is added deliberately so local
+commits work.
 
-## Runtime Mapping
+## Default Filesystem Policy
 
-| Surface | Provider | Mapping |
-| --- | --- | --- |
-| Web chat | Claude | Materialized Claude settings file passed through the SDK |
-| Web chat | Codex | Codex app-server `thread/start` sandbox policy |
-| Web chat | Qwen | Shared ACP backend; Gobby does not wrap ACP startup in Seatbelt |
-| Spawned agents | Claude | CLI `--settings <json>` |
-| Spawned agents | Codex | CLI `--sandbox <mode>` plus `--add-dir` for extra write paths |
-| Spawned agents | Qwen | CLI `-s`, `SEATBELT_PROFILE`, and `--include-directories` for external write paths |
+SRT read access is broad unless denied, so Gobby uses SRT's deny-then-allow
+model:
 
-## Provider Details
+1. Deny the user's home and the configured Gobby home.
+2. Re-allow the canonical workspace, declared writable/readable roots, provider
+   authentication directories, the selected provider and Node installations,
+   Git configuration, and only these Gobby resources: `machine_id`, `bin`,
+   `hooks`, and an explicit `GOBBY_PROMPT_FILE`.
+3. Allow writes to the workspace, linked Git metadata, the exact Gobby hook
+   inbox, explicit extra roots, and package caches only when the package
+   capability is enabled. SRT provides its own isolated runtime temporary path.
+4. Deny writes to SSH/AWS/GPG/Kubernetes/Google Cloud credential roots and
+   `extra_deny_write_paths` after write grants. SRT write denials win over
+   overlapping allowances and symlink paths.
 
-### Claude Code
+Gobby does not grant blanket read or write access to `~/.gobby`. The exact
+`hooks/inbox` write exception preserves spool-first lifecycle delivery. Provider
+authentication directories are readable because browser/file-based login must
+continue to work; API-key environment variables use the credential handling
+described below.
 
-Claude receives a sandbox settings payload. Spawned agents get it through
-`--settings`; web chat materializes the same overlay into the settings file
-passed to the Claude SDK.
+## Network And Credentials
 
-```json
-{
-  "allowManagedPermissionRulesOnly": true,
-  "sandbox": {
-    "enabled": true,
-    "autoAllowBashIfSandboxed": false,
-    "allowUnsandboxedCommands": false,
-    "excludedCommands": [],
-    "network": {
-      "allowUnixSockets": [],
-      "allowAllUnixSockets": false,
-      "allowLocalBinding": true,
-      "allowedDomains": ["localhost", "127.0.0.1", "::1"]
-    },
-    "enableWeakerNestedSandbox": false
-  }
-}
-```
+The SRT policy is a strict allowlist. It contains:
 
-Gobby enables the sandbox, uses managed permission rules only, disables
-unsandboxed command fallback, allows loopback domains and local binding for
-local Gobby services, and leaves undocumented outbound-network wildcard settings
-unset.
+- the selected provider's model API domains;
+- the hostname from an explicit provider API base;
+- `localhost` and `127.0.0.1` for Gobby's daemon and WebSocket services;
+- operator `allowed_domains`;
+- Git-forge or package-registry domains only when their separate capability is
+  enabled.
 
-`allowLocalBinding` mirrors the daemon network policy used by
-`SandboxConfig.allow_network`. The `true` value shown above is the default when
-network is enabled; it will be `true` only when network is enabled or the
-daemon's network policy otherwise permits local binding.
+SRT 0.0.66 expresses loopback policy by host, not by destination port. Gobby
+records the configured daemon and WebSocket ports in its canonical policy, but
+the rendered SRT grant permits the two loopback hosts. Do not treat this release
+as exact loopback-port isolation.
 
-### Codex
+Known provider API-key variables are masked inside the sandbox and injected by
+SRT only for the provider's API hosts or the configured API-base host. Operator
+domains, Git forges, and package registries do not receive those credentials.
+SRT's plaintext credential injection fallback is disabled.
 
-Spawned Codex agents use the CLI sandbox flag:
+Local Git commits need filesystem access only. Network Git operations require
+`allow_git_network: true`. Package downloads require
+`allow_package_registries: true`; enabling the latter also makes the supported
+local package caches writable.
 
-```bash
-codex --sandbox workspace-write
-codex --sandbox read-only
-codex --sandbox workspace-write -c sandbox_workspace_write.network_access=true
-codex --sandbox workspace-write -c sandbox_workspace_write.network_access=true --add-dir /extra/path
-```
+## Launch And Lifecycle
 
-Daemon-owned permissive mode maps to `workspace-write`; restrictive mode in the
-lower-level resolver maps to `read-only`. For `workspace-write`, Gobby also
-passes `sandbox_workspace_write.network_access=true` or `false` explicitly so
-spawned agents can reach local Gobby services when daemon policy allows network
-access and user-level Codex config cannot override the daemon policy. Gobby does
-not emit `danger-full-access` for daemon-owned sandboxes. Extra writable paths
-become additional `--add-dir` arguments.
+Gobby constructs the complete Claude, Codex, Qwen, Grok, or Droid command first,
+preflights SRT, and then wraps that argv exactly once before tmux creation.
+Provider-native OS sandbox flags are omitted in SRT mode, while provider approval
+policies, tool permissions, MCP/browser/computer-use controls, authentication,
+worktree/clone isolation, resource limits, and hooks remain independent.
 
-Codex web chat is different because it uses the app server. Gobby starts the
-thread with the app-server sandbox policy string derived from the same daemon
-config instead of launching a CLI process with `--sandbox`.
+The Gobby runner inherits stdin/stdout/stderr and forwards `SIGINT`, `SIGTERM`,
+`SIGHUP`, and `SIGWINCH` to the provider process. Tmux remains responsible for
+detach/reattach, pane capture, resize delivery, provider/PID verification, and
+process-group cleanup. The SRT policy explicitly enables pseudo-terminal
+operations so host-native confinement does not block the active tmux PTY.
+Each launch also gets a mode-`0700` private temporary directory under its
+sandbox run directory; Gobby passes it through `CLAUDE_CODE_TMPDIR`, which SRT
+maps to the child's `TMPDIR`. Daemon-stop resume regenerates and preflights a
+fresh policy before launching the provider resume command.
 
-### Qwen
+Generated files live outside the workspace at
+`~/.gobby/run/sandbox/<agent-run-id>/`:
 
-Spawned Qwen agents use the CLI `-s` flag, the `SEATBELT_PROFILE`
-environment variable on macOS, and `--include-directories` for writable paths
-outside the launched workspace:
+- `settings.json` is mode `0600` and its canonical bytes determine the effective
+  policy hash.
+- `violations.jsonl` is mode `0600` and receives SRT violation events.
 
-```bash
-SEATBELT_PROFILE=permissive-open qwen -s
-SEATBELT_PROFILE=restrictive-open qwen -s
-SEATBELT_PROFILE=permissive-open qwen -s --include-directories /repo/.git/worktrees/task
-```
+Agent-run records expose the backend, enforcement state, SRT version, policy
+hash, violation count, and up to the 100 most recent violation events. They do
+not expose arbitrary paths supplied through persisted metadata; violation files
+are read only when they resolve to a regular, non-symlink file under Gobby's
+sandbox run directory.
 
-The lower-level resolver chooses `permissive` or `restrictive` from sandbox
-mode, then chooses `open` or `proxied` from network policy. Daemon-owned config
-currently resolves to `permissive-open`. The resolver dedupes external write
-paths and omits the workspace root and workspace-internal paths. Qwen's shipped
-Seatbelt profiles support five include directories, so Gobby fails
-early if more external write paths are required.
+## Provider-Native Rollout Backend
 
-Daemon-owned Qwen ACP web chat does not launch the shared ACP subprocess with
-Gobby-managed Seatbelt flags because full-process Seatbelt blocked ACP startup
-on macOS. Those sessions still use ACP's proxied filesystem model and the
-upstream CLI's tool-level sandboxing, which is separate from wrapping the entire
-ACP process.
+Explicit `provider-native` agent mode retains the existing renderers for Claude,
+Codex, Qwen, and Grok. Droid has no Gobby provider-native renderer, so that
+combination is rejected. Web chat continues to use its established SDK,
+app-server, ACP, or per-session backend behavior and policy-hash resume checks.
 
-## Path Resolution
+## Security Boundary
 
-`compute_sandbox_paths()` builds a concrete path policy before provider
-translation:
+SRT uses Seatbelt on macOS and bubblewrap on Linux. It is a pre-1.0 runtime and
+reduces host exposure for managed agents, but it is not the future microVM
+boundary for hostile repositories. Higher-risk unattended execution remains a
+separate microVM follow-up.
 
-- `write_paths` starts with the workspace, worktree, or clone root.
-- Git metadata directories from `git rev-parse --git-dir --git-common-dir` are
-  added when they can be resolved.
-- `extra_write_paths` are appended if they are not already present.
-- `read_paths` starts with `~/.gobby`, then appends `extra_read_paths`.
-- The daemon port defaults to `60887` for local daemon communication.
-
-Provider support for these resolved paths is CLI-dependent. Codex currently
-uses extra write paths as `--add-dir`; spawned Qwen agents pass external
-write paths as repeated `--include-directories` arguments.
-
-## Example: Spawning A Sandboxed Agent
-
-```python
-result = spawn_agent(
-    prompt="Refactor the authentication module",
-    isolation="worktree",
-)
-```
-
-`spawn_agent` inherits `agent_sandbox` from the daemon config. The current MCP
-schema does not accept per-call sandbox parameters; the exposed parameters are
-for the prompt, agent selection, isolation, branch/workspace selection,
-workflow, provider/model overrides, reasoning, timeout, parent session,
-project path, task linkage (`task_id`), and
-completion notification (`notify_parent_on_completion`).
-
-Sandbox policy is independent from agent lifecycle. A spawned agent that has
-finished its workflow must still call `gobby-agents:end_agent_run` to release
-its agent-run resources.
-
-## Limitations And Caveats
-
-1. **Provider support varies**: Gobby has resolvers for Claude, Codex, Qwen,
-   and Grok. Each provider exposes different sandbox knobs (Grok maps
-   restrictive/no-network policies to `--sandbox strict`, otherwise
-   `--sandbox workspace`).
-
-2. **Platform behavior varies**: Qwen Seatbelt profiles are macOS behavior.
-   Other platforms depend on the upstream CLI's sandbox support.
-
-3. **Extra paths are provider-dependent**: The daemon computes extra read and
-   write paths, but each provider decides which path categories can be
-   represented in its runtime API.
-
-4. **Sandboxing is not a hard security boundary**: CLI sandboxes reduce
-   accidental damage. They are not a complete defense against malicious code or
-   hostile prompts.
-
-_Last verified: 2026-06-11_
+_Last verified: 2026-07-21_

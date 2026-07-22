@@ -1,185 +1,139 @@
 # Sandbox Compatibility
 
-This guide is the internal compatibility reference for Gobby's daemon-owned
-sandbox model and `ghook --diagnose` contract. It stays separate from
-[sandboxing.md](./sandboxing.md) because that guide explains operator-facing
-configuration, while this guide owns the test matrix that proves runtime
-translation and installed hook binaries still agree.
-
-The compatibility surface has two layers:
-
-1. Runtime behavior that Gobby owns directly for web chat and spawned agents.
-2. Local and public-artifact checks for the installed `ghook` and CLI binaries.
-
-The hook runner names below use provider/runtime hook labels because they test
-installed binary compatibility. Workflow rules are authored against semantic
-events such as `turn_start` and `turn_end`; raw lifecycle labels such as
-`before_agent`, `after_agent`, and `stop` are normalized runtime details, not
-the primary rule-authoring API.
-
-The local runner suite assumes the relevant CLI binaries and a compatible
-`ghook` are already installed on the machine. The public-artifact validator is
-opt-in: it installs a named released `ghook` from GitHub Releases or crates.io
-inside a temporary `HOME`, then runs the same diagnose contract against that
-installed binary.
+This is the verification reference for Gobby's daemon-owned sandbox contract.
+Operator configuration is documented in [sandboxing.md](./sandboxing.md).
 
 ## Current Contract
 
-Gobby owns sandbox policy at the daemon layer. The provider-specific CLI flags
-are implementation details produced from the daemon model.
-
-- `web_chat_sandbox` controls daemon-owned web chat runtimes and defaults to
-  enabled.
-- `agent_sandbox` controls daemon-owned spawned agent runtimes and defaults to
-  enabled.
-- Both config fields expose only `enabled`, `extra_read_paths`, and
-  `extra_write_paths`. The daemon-owned resolver fixes `mode` to `permissive`,
-  enables network access, and preserves explicit extra read/write paths.
-- Web chat policy is snapshotted at runtime-manager startup and tracked by
-  `sandbox_policy_hash`; a mismatch forces continue-in-new-chat instead of SDK
-  resume.
-- `compute_sandbox_paths()` always keeps the active workspace writable and
-  always grants read access to `~/.gobby` so sandboxed runtimes can resolve
-  required daemon state such as `machine_id`.
-- Linked worktree Git metadata directories from `git rev-parse --git-dir` and
-  `--git-common-dir` are writable so sandboxed agents can commit from worktree
-  isolation.
-- Repo, worktree, and clone sessions inherit the same path rule: the launched
-  workspace root is writable; extra paths must be explicitly added.
-- Spawned Qwen agents pass writable paths outside the workspace as
-  repeated `--include-directories` arguments alongside `-s` and
-  `SEATBELT_PROFILE`.
-- Agent process termination is separate from sandbox compatibility. Spawned
-  automation must still call `end_agent_run` to release agent-run resources.
-
-## Coverage Map
-
-These tests cover daemon-owned runtime behavior:
-
-- `tests/config/test_daemon_sandbox.py`
-  Verifies daemon config defaults and the supported override shape for
-  `web_chat_sandbox` and `agent_sandbox`.
-- `tests/servers/websocket/chat/test_runtime_manager.py`
-  Verifies daemon-owned web chat defaults, provider translation layers, Codex
-  app-server thread sandboxing, and the Qwen ACP startup caveat.
-- `tests/servers/test_session_control.py`
-  Verifies policy-hash mismatch behavior during continue-in-chat.
-- `tests/agents/test_sandbox.py`
-  Verifies resolved sandbox paths, including workspace write access and
-  required `~/.gobby` readability, plus linked-worktree Git metadata write
-  access.
-
-These tests cover the local hook binary contract:
-
-- `tests/integration/sandbox/test_runner_infrastructure.py`
-  Verifies the shared runner wiring and schema location.
-- `tests/integration/sandbox/test_diagnose_schema.py`
-  Validates live `ghook --diagnose` output against the mirrored schema.
-- `tests/integration/sandbox/run_{claude,codex,qwen}_sandbox.py`
-  Verifies the installed Gobby-managed hook command rewrites cleanly into the
-  current `ghook --diagnose` branch for each supported CLI.
-- `tests/integration/sandbox/test_public_ghook_install.py`
-  Installs a released public `ghook` artifact in a temporary home directory and
-  runs the same diagnose matrix against it.
+- Managed terminal agents default to the pinned SRT 0.0.66 backend.
+- Web chat defaults to `provider-native` and retains policy-hash resume checks.
+- Backend selection is explicit and never downgrades on failure.
+- SRT policy and violation files are generated under Gobby's private run
+  directory, outside the workspace.
+- The workspace and linked-worktree Git metadata are writable. The user's home
+  and Gobby home are read-denied before narrow exceptions are applied.
+- Provider model APIs and Gobby loopback hosts are allowed explicitly. Git
+  network and package registry access are separate capabilities.
+- Provider credentials are masked and scoped to provider/API-base hosts.
+- Every supported terminal provider command is wrapped once after command
+  construction and before tmux creation.
+- Daemon-stop resume creates a fresh policy and fails closed before spawning.
+- Agent-run serialization exposes backend, SRT version, effective policy hash,
+  and trusted violation data.
 
 ## Runtime Matrix
 
-| Surface | CLI | Current mapping | Key invariant |
+| Surface | Provider | Default mapping | Compatibility invariant |
 | --- | --- | --- | --- |
-| Web chat | Claude | `--settings` sandbox JSON | Resume blocked on policy-hash mismatch |
-| Web chat | Codex | Codex app-server sandbox policy derived from daemon config | Default daemon-owned sandbox stays enabled |
-| Web chat | Qwen | Shared ACP backend; daemon policy is tracked, but the ACP process is not wrapped in Gobby Seatbelt | ACP startup remains reliable on macOS |
-| Web chat | Grok | Shared ACP backend; same caveat as Qwen | ACP startup remains reliable on macOS |
-| Web chat | Droid | Per-session stream-jsonrpc backend; daemon policy is tracked, but no Gobby sandbox translation is applied | Droid availability and session metadata stay consistent |
-| Spawned agents | Claude | `--settings` sandbox JSON | Sandbox stays enabled without unsandboxed fallback |
-| Spawned agents | Codex | `--sandbox <mode>`, `sandbox_workspace_write.network_access`, plus `--add-dir` for extra write paths | Workspace boundary follows repo/worktree/clone root and loopback services stay reachable when network is enabled |
-| Spawned agents | Qwen | `-s` plus `SEATBELT_PROFILE`; external write paths use repeated `--include-directories` | Workspace boundary follows repo/worktree/clone root |
-| Spawned agents | Grok | `--sandbox strict` for restrictive/no-network policies, otherwise `--sandbox workspace` | Workspace boundary follows repo/worktree/clone root |
-| Spawned agents | Droid | No daemon sandbox resolver; Droid uses its own `droid exec --auto high` permission path | Sandbox state is recorded, but no provider sandbox flags are emitted |
+| Web chat | Claude | Provider-native SDK settings | Resume is blocked on policy-hash mismatch |
+| Web chat | Codex | App-server thread sandbox policy | Daemon-owned policy remains enabled |
+| Web chat | Qwen/Grok | Shared ACP backend | ACP startup is not wrapped in full-process SRT |
+| Web chat | Droid | Per-session stream-jsonrpc backend | Availability and session metadata remain consistent |
+| Managed agent | Claude | SRT wraps complete `claude` argv | Claude approval/tool settings and MCP flags remain inside the wrapped argv |
+| Managed agent | Codex | SRT wraps complete `codex` argv | No nested Codex OS sandbox; approval/config flags remain active |
+| Managed agent | Qwen | SRT wraps complete `qwen` argv | No nested Seatbelt profile; Qwen flags and hooks remain active |
+| Managed agent | Grok | SRT wraps complete `grok` argv | No nested Grok OS sandbox; headless/approval flags remain active |
+| Managed agent | Droid | SRT wraps complete `droid` argv | SRT supplies the host boundary even though Droid has no provider-native renderer |
+| Managed agent | AGY/Gemini | Provider is currently unavailable for managed spawn | Gobby rejects the spawn; it does not launch an unsandboxed substitute |
 
-Claude's sandbox payload is intentionally conservative: Gobby enables the
-sandbox, uses managed permission rules only, disables unsandboxed command
-fallback, allows loopback domains and local binding for local Gobby services,
-and does not invent undocumented outbound-network wildcard settings.
-Codex maps permissive daemon mode to `workspace-write` and restrictive mode to
-`read-only`; spawned Codex agents also force workspace-write network access from
-daemon policy so local Gobby services, including Postgres, are reachable when
-network is enabled. Qwen uses the Seatbelt profile naming contract:
-`permissive-open`, `permissive-proxied`, `restrictive-open`, or
-`restrictive-proxied`. That Seatbelt contract applies to spawned Qwen agents
-and hook-binary diagnostics; daemon-owned Qwen web chat does not launch ACP
-under full-process Seatbelt. Spawned Qwen agents also pass
-the external subset of resolved write paths through `--include-directories`;
-the built-in Seatbelt profiles support up to five include directories.
+Explicit `provider-native` managed-agent mode is covered for Claude, Codex,
+Qwen, and Grok. Selecting it for Droid fails closed. SRT supports both macOS
+Seatbelt and Linux bubblewrap; Windows support in the pinned upstream release is
+alpha and is not part of Gobby's supported compatibility gate.
 
-## Running The Local Compatibility Suite
+## Policy Coverage
 
-Run the sandbox package explicitly:
+| Contract | Focused coverage |
+| --- | --- |
+| Backend defaults and explicit overrides | `tests/config/test_daemon_sandbox.py` |
+| Canonical paths, home/Gobby denials, symlinks, linked Git metadata | `tests/agents/test_sandbox.py` |
+| SRT settings schema, credential host scoping, private policy files, fail-closed network validation, installation verification | `tests/agents/test_srt_runtime.py` |
+| Immutable tarball/lock installation flow | `tests/cli/test_install_setup_srt.py` |
+| Once-only wrapping, Droid support, pre-tmux failure, wrapper-aware auth inference | `tests/agents/test_srt_spawn.py` |
+| All managed provider command builders and native rollout renderers | `tests/agents/test_spawn_executor.py` |
+| Fresh policy on daemon-stop resume and legacy sandbox-field non-replay | `tests/agents/test_resume_executor.py` |
+| Run-record policy metadata and trusted violation projection | `tests/storage/test_agent_sandbox_records.py` |
+| Web-chat translation and policy-hash resume behavior | `tests/servers/websocket/chat/test_runtime_manager.py`, `tests/servers/test_session_control.py` |
+
+## Tmux And Process-Tree Invariants
+
+SRT changes the pane's top-level argv, not Gobby's lifecycle ownership. The
+following established suites remain part of the compatibility gate:
+
+| Invariant | Coverage |
+| --- | --- |
+| Interactive tmux creation, pane PID capture, resize, detach/reattach, and process-group cleanup | `tests/agents/test_tmux.py`, `tests/agents/test_tmux_integration.py` |
+| Capture-before-kill and terminalization ordering | `tests/agents/test_capture.py`, `tests/agents/test_capture_consumers.py`, `tests/agents/test_agent_cleanup.py` |
+| Daemon lifecycle reconciliation and descendant cleanup | `tests/agents/test_lifecycle_monitor.py` |
+| Process-tree and aggregate memory accounting | `tests/agents/test_memory_watchdog.py` |
+| Wrapper signal forwarding and inherited stdio | `src/gobby/agents/srt_runner.mjs`, validated by the SRT runner checks and host integration run |
+
+The runner forwards `SIGINT`, `SIGTERM`, `SIGHUP`, and `SIGWINCH`; it resets SRT
+after the provider exits and then preserves signal-style termination. The
+provider command remains after the wrapper's `--` separator, so auth forwarding
+continues to identify the real CLI rather than Node.
+
+## Hook Binary Compatibility
+
+The existing opt-in sandbox package validates installed `ghook` behavior. These
+tests are separate from the SRT process wrapper because they prove the public
+hook protocol and installed binary contract:
+
+- `tests/integration/sandbox/test_runner_infrastructure.py`
+- `tests/integration/sandbox/test_diagnose_schema.py`
+- `tests/integration/sandbox/run_{claude,codex,qwen}_sandbox.py`
+- `tests/integration/sandbox/test_public_ghook_install.py`
+
+Run it explicitly:
 
 ```bash
-uv run pytest tests/integration/sandbox/ -v --run-sandbox
+GOBBY_TEST_PROTECT=1 uv run pytest tests/integration/sandbox/ -v --run-sandbox
 ```
 
-Without `--run-sandbox`, pytest skips the entire package so the suite never
-bleeds into normal validation or pre-push flows.
+Without `--run-sandbox`, pytest skips the package so local validation does not
+invoke installed provider CLIs or public artifact downloads accidentally.
 
 Useful focused commands:
 
 ```bash
-uv run pytest tests/integration/sandbox/test_runner_infrastructure.py -v --run-sandbox
-uv run pytest tests/integration/sandbox/run_codex_sandbox.py --collect-only
+GOBBY_TEST_PROTECT=1 uv run pytest tests/integration/sandbox/test_runner_infrastructure.py -v --run-sandbox
+GOBBY_TEST_PROTECT=1 uv run pytest tests/integration/sandbox/run_codex_sandbox.py --collect-only
 uv run mypy tests/integration/sandbox
 ```
 
-## Running Public `ghook` Artifact Validation
+## Public `ghook` Artifact Validation
 
-Use the public-artifact validator when you want to prove the released
-`gobby-hooks` package installs and behaves correctly through Gobby's own
-installer path. The version is intentionally supplied by the caller so this
-test can validate any released artifact without editing the test.
-
-GitHub Releases:
+The public-artifact validator installs a requested `gobby-hooks` release into a
+temporary home and runs the same diagnose contract. The caller supplies both
+version and installation source. For example:
 
 ```bash
 GOBBY_INSTALL_GHOOK_VERSION=0.1.1 \
 GOBBY_INSTALL_GHOOK_METHOD=github \
-uv run pytest tests/integration/sandbox/test_public_ghook_install.py -v --run-sandbox
+GOBBY_TEST_PROTECT=1 uv run pytest \
+  tests/integration/sandbox/test_public_ghook_install.py -v --run-sandbox
 ```
 
-crates.io via `cargo-binstall`:
+Supported methods are `github`, `cargo-binstall`, and `cargo-install`. The test
+checks the isolated `~/.gobby/bin/ghook`, installation stamps, and live diagnose
+matrix for Claude, Codex, and Qwen.
 
-```bash
-GOBBY_INSTALL_GHOOK_VERSION=0.1.1 \
-GOBBY_INSTALL_GHOOK_METHOD=cargo-binstall \
-uv run pytest tests/integration/sandbox/test_public_ghook_install.py -v --run-sandbox
-```
+## Compatibility Gate
 
-crates.io via `cargo install`:
+Before changing the SRT version, generated policy, runner, or provider command
+boundary:
 
-```bash
-GOBBY_INSTALL_GHOOK_VERSION=0.1.1 \
-GOBBY_INSTALL_GHOOK_METHOD=cargo-install \
-uv run pytest tests/integration/sandbox/test_public_ghook_install.py -v --run-sandbox
-```
+1. Update the pinned tarball checksum, npm integrity, generated lockfile, and
+   Gobby receipt expectations together.
+2. Run the focused policy, installer, spawn, resume, storage, tmux, capture,
+   lifecycle, and memory tests above on macOS and Linux.
+3. Run the opt-in host sandbox integration package where provider binaries are
+   available.
+4. Verify Ruff and mypy are clean and the packaged wheel contains
+   `agents/srt_runner.mjs` and `install/srt-package-lock.json`.
 
-The validator installs into an isolated temporary `HOME`, checks the
-resulting `~/.gobby/bin/ghook` and stamp files, and then runs the live
-`ghook --diagnose` matrix for Claude, Codex, and Qwen.
+SRT 0.0.66 cannot restrict loopback by destination port. A future pin must keep
+that limitation documented or add a test proving exact port enforcement before
+claiming it.
 
-## Regenerating Observations
-
-The runner suite uses the same Gobby-managed hook command that installers
-prefer locally today, then rewrites the `--gobby-owned` branch into
-`--diagnose`. That keeps the check aligned to the currently installed `ghook`
-binary and the mirrored `schemas/diagnose-output.v2.schema.json` contract.
-The provider hook names in these runners are compatibility inputs only; rule
-templates should continue to target semantic workflow events.
-
-If the Rust-side diagnose schema changes:
-
-1. Mirror the new active schema into `schemas/` and keep older versioned schemas
-   frozen for compatibility.
-2. Update the runner expectations in `tests/integration/sandbox/runner.py`.
-3. Re-run `uv run pytest tests/integration/sandbox/ -v --run-sandbox`.
-
-_Last verified: 2026-06-11_
+_Last verified: 2026-07-21_

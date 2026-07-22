@@ -9,13 +9,8 @@ import shutil
 from pathlib import Path
 from typing import TYPE_CHECKING, cast
 
-from gobby.agents.sandbox import (
-    ClaudeSandboxResolver,
-    QwenSandboxResolver,
-    compute_sandbox_paths,
-    get_sandbox_resolver,
-)
-from gobby.agents.spawn import build_cli_command, prepare_terminal_spawn
+from gobby.agents.sandbox import get_sandbox_resolver
+from gobby.agents.spawn import PreparedSpawn, build_cli_command, prepare_terminal_spawn
 from gobby.agents.spawn_cache_policy import (
     sandbox_config_for_spawn as _sandbox_config_for_spawn,
 )
@@ -31,6 +26,11 @@ from gobby.agents.spawn_executor_support import (
     _unsupported_sandbox_request_error,
 )
 from gobby.agents.spawn_models import SpawnRequest, SpawnResult
+from gobby.agents.srt_runtime import (
+    SandboxLaunch,
+    SrtRuntimeError,
+    prepare_sandbox_launch,
+)
 from gobby.agents.trust import pre_approve_directory
 from gobby.providers import AGY_UNAVAILABLE_REASON
 
@@ -62,6 +62,55 @@ def _tmux_spawner_for_request(request: SpawnRequest) -> TmuxSpawner:
         tmux_config = TmuxConfig()
 
     return TmuxSpawner(config=tmux_config)
+
+
+async def _prepare_provider_sandbox(
+    request: SpawnRequest,
+    spawn_context: PreparedSpawn,
+    provider: str,
+    env: dict[str, str],
+) -> tuple[SandboxLaunch | None, SpawnResult | None]:
+    config = _sandbox_config_for_spawn(request.sandbox_config, env)
+    if config is None:
+        launch = SandboxLaunch(backend="provider-native", enforced=False)
+        _record_actual_sandbox_enforcement(request, spawn_context, launch)
+        return launch, None
+    resolver = None
+    if config.enabled and config.backend == "provider-native":
+        resolver = get_sandbox_resolver(provider)
+    daemon_port = int(getattr(request.daemon_config, "daemon_port", 60887))
+    websocket = getattr(request.daemon_config, "websocket", None)
+    websocket_port = int(getattr(websocket, "port", 60888))
+    try:
+        launch = await prepare_sandbox_launch(
+            config=config,
+            provider=provider,
+            workspace_path=request.cwd,
+            run_id=spawn_context.agent_run_id,
+            resolver=resolver,
+            daemon_port=daemon_port,
+            websocket_port=websocket_port,
+            api_base=request.api_base,
+            env=env,
+        )
+    except (OSError, ValueError, SrtRuntimeError) as exc:
+        error = f"Sandbox startup failed closed for {provider}: {exc}"
+        storage = getattr(request.session_manager, "_storage", None)
+        db = getattr(storage, "db", None)
+        if db is not None:
+            from gobby.storage.agents import LocalAgentRunManager
+
+            LocalAgentRunManager(db).fail(spawn_context.agent_run_id, error)
+        return None, SpawnResult(
+            success=False,
+            run_id=spawn_context.agent_run_id,
+            child_session_id=spawn_context.session_id,
+            status="failed",
+            error=error,
+        )
+    env.update(launch.provider_env)
+    _record_actual_sandbox_enforcement(request, spawn_context, launch)
+    return launch, None
 
 
 async def execute_spawn(request: SpawnRequest) -> SpawnResult:
@@ -170,47 +219,33 @@ async def _spawn_claude_terminal(request: SpawnRequest) -> SpawnResult:
         strict_mcp = True
         cmd.extend(["--mcp-config", claude_mcp_config_arg, "--strict-mcp-config"])
 
-    # Resolve sandbox config if provided
-    sandbox_config = _sandbox_config_for_spawn(request.sandbox_config, spawn_context.env_vars)
-    sandbox_args: list[str] = []
-    sandbox_env: dict[str, str] = {}
-    if sandbox_config and sandbox_config.enabled:
-        resolver = ClaudeSandboxResolver()
-        paths = compute_sandbox_paths(
-            config=sandbox_config,
-            workspace_path=request.cwd,
-        )
-        sandbox_args, sandbox_env = resolver.resolve(sandbox_config, paths)
-        cmd.extend(sandbox_args)
-    _record_actual_sandbox_enforcement(request, spawn_context, sandbox_args, sandbox_env)
-
-    if request.prompt:
-        cmd.append(request.prompt)
-
-    # Merge env vars: spawn context + sandbox
     env = spawn_context.env_vars.copy()
-    if sandbox_env:
-        env.update(sandbox_env)
     _apply_extra_env(env, request)
-
-    # Map api_base/api_token to Claude-specific env vars
     if request.api_base:
         env["ANTHROPIC_BASE_URL"] = request.api_base
     if request.api_token:
         env["ANTHROPIC_AUTH_TOKEN"] = request.api_token
-
-    # Pass machine_id as env var for sandboxed agents
     if request.machine_id:
         env["GOBBY_MACHINE_ID"] = request.machine_id
+
+    launch, sandbox_failure = await _prepare_provider_sandbox(request, spawn_context, "claude", env)
+    if sandbox_failure is not None:
+        return sandbox_failure
+    assert launch is not None
+    cmd.extend(launch.provider_args)
+    if request.prompt:
+        cmd.append(request.prompt)
+    cmd = launch.wrap(cmd)
 
     _record_resume_launch_details(
         request,
         agent_run_id=spawn_context.agent_run_id,
-        sandbox_args=sandbox_args,
-        sandbox_env=sandbox_env,
+        sandbox_args=launch.provider_args,
+        sandbox_env=launch.provider_env,
         env=env,
         mcp_path=claude_mcp_config_arg,
         strict_mcp=strict_mcp,
+        sandbox_launch=launch,
     )
 
     # Pre-approve workspace trust so the CLI doesn't show an interactive prompt
@@ -294,17 +329,19 @@ async def _spawn_qwen_terminal(request: SpawnRequest) -> SpawnResult:
 
     gobby_session_id = spawn_context.session_id
 
-    sandbox_config = _sandbox_config_for_spawn(request.sandbox_config, spawn_context.env_vars)
-    sandbox_args: list[str] = []
-    sandbox_env: dict[str, str] = {}
-    if sandbox_config and sandbox_config.enabled:
-        resolver = QwenSandboxResolver()
-        paths = compute_sandbox_paths(
-            config=sandbox_config,
-            workspace_path=request.cwd,
-        )
-        sandbox_args, sandbox_env = resolver.resolve(sandbox_config, paths)
-    _record_actual_sandbox_enforcement(request, spawn_context, sandbox_args, sandbox_env)
+    env = spawn_context.env_vars.copy()
+    _apply_extra_env(env, request)
+    if request.api_base:
+        env["QWEN_API_BASE"] = request.api_base
+    if request.api_token:
+        env["QWEN_API_KEY"] = request.api_token
+    if request.machine_id:
+        env["GOBBY_MACHINE_ID"] = request.machine_id
+
+    launch, sandbox_failure = await _prepare_provider_sandbox(request, spawn_context, "qwen", env)
+    if sandbox_failure is not None:
+        return sandbox_failure
+    assert launch is not None
 
     cmd, _cmd_env = build_cli_command(
         cli="qwen",
@@ -312,28 +349,17 @@ async def _spawn_qwen_terminal(request: SpawnRequest) -> SpawnResult:
         auto_approve=True,
         model=request.model,
         reasoning_effort=request.effective_reasoning_effort,
-        sandbox_args=sandbox_args or None,
+        sandbox_args=launch.provider_args or None,
     )
-
-    env = spawn_context.env_vars.copy()
-    if sandbox_env:
-        env.update(sandbox_env)
-    _apply_extra_env(env, request)
-
-    if request.api_base:
-        env["QWEN_API_BASE"] = request.api_base
-    if request.api_token:
-        env["QWEN_API_KEY"] = request.api_token
-
-    if request.machine_id:
-        env["GOBBY_MACHINE_ID"] = request.machine_id
+    cmd = launch.wrap(cmd)
 
     _record_resume_launch_details(
         request,
         agent_run_id=spawn_context.agent_run_id,
-        sandbox_args=sandbox_args,
-        sandbox_env=sandbox_env,
+        sandbox_args=launch.provider_args,
+        sandbox_env=launch.provider_env,
         env=env,
+        sandbox_launch=launch,
     )
 
     pre_approve_directory("qwen", request.cwd)
@@ -403,17 +429,19 @@ async def _spawn_grok_terminal(request: SpawnRequest) -> SpawnResult:
     )
 
     gobby_session_id = spawn_context.session_id
-    sandbox_config = _sandbox_config_for_spawn(request.sandbox_config, spawn_context.env_vars)
-    sandbox_args: list[str] = []
-    sandbox_env: dict[str, str] = {}
-    if sandbox_config and sandbox_config.enabled:
-        resolver = get_sandbox_resolver("grok")
-        paths = compute_sandbox_paths(
-            config=sandbox_config,
-            workspace_path=request.cwd,
-        )
-        sandbox_args, sandbox_env = resolver.resolve(sandbox_config, paths)
-    _record_actual_sandbox_enforcement(request, spawn_context, sandbox_args, sandbox_env)
+    env = spawn_context.env_vars.copy()
+    _apply_extra_env(env, request)
+    if request.api_base:
+        env["GROK_API_BASE"] = request.api_base
+    if request.api_token:
+        env["XAI_API_KEY"] = request.api_token
+    if request.machine_id:
+        env["GOBBY_MACHINE_ID"] = request.machine_id
+
+    launch, sandbox_failure = await _prepare_provider_sandbox(request, spawn_context, "grok", env)
+    if sandbox_failure is not None:
+        return sandbox_failure
+    assert launch is not None
 
     cmd, _cmd_env = build_cli_command(
         cli="grok",
@@ -422,27 +450,17 @@ async def _spawn_grok_terminal(request: SpawnRequest) -> SpawnResult:
         working_directory=request.cwd,
         model=request.model,
         reasoning_effort=request.effective_reasoning_effort,
-        sandbox_args=sandbox_args or None,
+        sandbox_args=launch.provider_args or None,
     )
-
-    env = spawn_context.env_vars.copy()
-    if sandbox_env:
-        env.update(sandbox_env)
-    _apply_extra_env(env, request)
-
-    if request.api_base:
-        env["GROK_API_BASE"] = request.api_base
-    if request.api_token:
-        env["XAI_API_KEY"] = request.api_token
-    if request.machine_id:
-        env["GOBBY_MACHINE_ID"] = request.machine_id
+    cmd = launch.wrap(cmd)
 
     _record_resume_launch_details(
         request,
         agent_run_id=spawn_context.agent_run_id,
-        sandbox_args=sandbox_args,
-        sandbox_env=sandbox_env,
+        sandbox_args=launch.provider_args,
+        sandbox_env=launch.provider_env,
         env=env,
+        sandbox_launch=launch,
     )
 
     pre_approve_directory("grok", request.cwd)
@@ -524,17 +542,19 @@ async def _spawn_codex_terminal(request: SpawnRequest) -> SpawnResult:
     )
 
     gobby_session_id = spawn_context.session_id
+    env = spawn_context.env_vars.copy()
+    _apply_extra_env(env, request)
+    if request.api_base:
+        env["OPENAI_BASE_URL"] = request.api_base
+    if request.api_token:
+        env["OPENAI_API_KEY"] = request.api_token
+    if request.machine_id:
+        env["GOBBY_MACHINE_ID"] = request.machine_id
 
-    sandbox_config = _sandbox_config_for_spawn(request.sandbox_config, spawn_context.env_vars)
-    sandbox_args: list[str] = []
-    if sandbox_config and sandbox_config.enabled:
-        resolver = get_sandbox_resolver("codex")
-        paths = compute_sandbox_paths(
-            config=sandbox_config,
-            workspace_path=request.cwd,
-        )
-        sandbox_args, _ = resolver.resolve(sandbox_config, paths)
-    _record_actual_sandbox_enforcement(request, spawn_context, sandbox_args)
+    launch, sandbox_failure = await _prepare_provider_sandbox(request, spawn_context, "codex", env)
+    if sandbox_failure is not None:
+        return sandbox_failure
+    assert launch is not None
 
     config_overrides = _codex_mcp_config_overrides(request.project_path)
     cmd, _cmd_env = build_cli_command(
@@ -545,22 +565,19 @@ async def _spawn_codex_terminal(request: SpawnRequest) -> SpawnResult:
         model=request.model,
         codex_oss_provider=request.codex_oss_provider,
         reasoning_effort=request.effective_reasoning_effort,
-        sandbox_args=sandbox_args or None,
+        sandbox_args=launch.provider_args or None,
         config_overrides=config_overrides,
     )
-
-    env = spawn_context.env_vars.copy()
-    _apply_extra_env(env, request)
-
-    if request.machine_id:
-        env["GOBBY_MACHINE_ID"] = request.machine_id
+    cmd = launch.wrap(cmd)
 
     _record_resume_launch_details(
         request,
         agent_run_id=spawn_context.agent_run_id,
-        sandbox_args=sandbox_args,
+        sandbox_args=launch.provider_args,
+        sandbox_env=launch.provider_env,
         env=env,
         config_overrides=config_overrides,
+        sandbox_launch=launch,
     )
 
     pre_approve_directory("codex", request.cwd)
@@ -638,16 +655,6 @@ async def _spawn_droid_terminal(request: SpawnRequest) -> SpawnResult:
     )
 
     gobby_session_id = spawn_context.session_id
-    _record_actual_sandbox_enforcement(request, spawn_context, [])
-    cmd, _cmd_env = build_cli_command(
-        cli="droid",
-        prompt=request.prompt,
-        auto_approve=True,
-        working_directory=request.cwd,
-        model=request.model,
-        reasoning_effort=request.effective_reasoning_effort,
-    )
-
     env = spawn_context.env_vars.copy()
     _apply_extra_env(env, request)
     if request.api_token:
@@ -657,7 +664,29 @@ async def _spawn_droid_terminal(request: SpawnRequest) -> SpawnResult:
     if request.machine_id:
         env["GOBBY_MACHINE_ID"] = request.machine_id
 
-    _record_resume_launch_details(request, agent_run_id=spawn_context.agent_run_id, env=env)
+    launch, sandbox_failure = await _prepare_provider_sandbox(request, spawn_context, "droid", env)
+    if sandbox_failure is not None:
+        return sandbox_failure
+    assert launch is not None
+    cmd, _cmd_env = build_cli_command(
+        cli="droid",
+        prompt=request.prompt,
+        auto_approve=True,
+        working_directory=request.cwd,
+        model=request.model,
+        reasoning_effort=request.effective_reasoning_effort,
+        sandbox_args=launch.provider_args or None,
+    )
+    cmd = launch.wrap(cmd)
+
+    _record_resume_launch_details(
+        request,
+        agent_run_id=spawn_context.agent_run_id,
+        sandbox_args=launch.provider_args,
+        sandbox_env=launch.provider_env,
+        env=env,
+        sandbox_launch=launch,
+    )
 
     pre_approve_directory("droid", request.cwd)
 

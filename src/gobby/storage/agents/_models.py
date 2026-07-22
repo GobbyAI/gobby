@@ -151,6 +151,8 @@ class AgentRun:
 
     def to_dict(self) -> dict[str, Any]:
         """Convert to dictionary."""
+        from gobby.storage.agents._sandbox_records import sandbox_record
+
         return {
             "run_id": self.id,
             "id": self.id,
@@ -192,10 +194,13 @@ class AgentRun:
             "pending_terminal_action": self.pending_terminal_action,
             "pending_terminal_reason": self.pending_terminal_reason,
             "termination_requested_at": self.termination_requested_at,
+            "sandbox": sandbox_record(self.resume_metadata_json, include_events=True),
         }
 
     def to_brief(self) -> dict[str, Any]:
         """Slim representation for list operations."""
+        from gobby.storage.agents._sandbox_records import sandbox_record
+
         return {
             "run_id": self.id,
             "session_id": self.child_session_id,
@@ -213,4 +218,5 @@ class AgentRun:
             "tool_calls_count": self.tool_calls_count,
             "turns_used": self.turns_used,
             "resume_metadata_json": self.resume_metadata_json,
+            "sandbox": sandbox_record(self.resume_metadata_json, include_events=False),
         }

@@ -243,6 +243,10 @@ class ChildSessionManager:
         """Persist the actual sandbox enforcement state for a child session."""
         return self._storage.update(session_id=session_id, sandbox_enabled=sandbox_enabled)
 
+    def update_sandbox_policy_hash(self, session_id: str, policy_hash: str) -> Any:
+        """Persist the canonical policy identity after backend preflight."""
+        return self._storage.update(session_id=session_id, sandbox_policy_hash=policy_hash)
+
     def get_child_sessions(self, parent_session_id: str) -> list[Session]:
         """
         Get all child sessions of a parent.
