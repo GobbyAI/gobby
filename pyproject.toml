@@ -125,10 +125,12 @@ constraint-dependencies = [
 # 2026-06-09 and resolves with chatterbox-tts==0.1.7, so keep the override on
 # the stable audit floor while chatterbox keeps its exact pin.
 override-dependencies = [
-    "torch==2.11.0",
+    # TorchAudio 2.11 explicitly supports PyTorch 2.11 and future releases, so
+    # this remains a supported pair while TorchAudio is in maintenance mode.
+    "torch==2.13.0",
     "torchaudio==2.11.0",
-    # torch 2.11 pins setuptools<82, but the exercised Gobby voice paths do not use
-    # the removed pkg_resources API. Force the security-fixed release.
+    # The exercised Gobby voice paths do not use the removed pkg_resources API.
+    # Force the security-fixed release over stale transitive pins.
     "setuptools>=83.0.0",
     # chatterbox-tts==0.1.7 pins vulnerable voice-stack transitive versions.
     "onnx>=1.22.0",
@@ -142,13 +144,6 @@ override-dependencies = [
     # chatterbox-tts==0.1.7 pins safetensors==0.5.3.
     "safetensors>=0.8.0",
 ]
-
-[tool.uv.audit]
-# GHSA-rrmf-rvhw-rf47 / CVE-2025-3000 requires a local caller to exercise
-# torch.jit.script, which Gobby does not invoke. PyTorch 2.13.0 is fixed, but
-# torchaudio currently ends at 2.11.0 and must match torch for the voice stack.
-# Remove this ignore when a compatible torchaudio release is available.
-ignore = ["GHSA-rrmf-rvhw-rf47"]
 
 [build-system]
 requires = [
