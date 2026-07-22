@@ -2,11 +2,19 @@
 
 from __future__ import annotations
 
+import asyncio
+import math
 import re
 from collections.abc import Mapping
 from typing import Any, cast
 from uuid import UUID
 
+from gobby.agents.detection.safe_regex import (
+    InvalidPatternError,
+    RegexOutcome,
+    compile_safe_regex,
+)
+from gobby.agents.tmux import get_tmux_session_manager
 from gobby.mcp_proxy.tools.agent_live_activity import (
     overlay_live_activity,
     overlay_runs_live_activity,
@@ -20,6 +28,9 @@ from gobby.mcp_proxy.wait_tools import (
     clamp_wait_tool_timeout,
 )
 from gobby.storage.agents import AgentRunStatus
+
+_WAIT_OUTPUT_CAPTURE_LINES = 200
+_WAIT_OUTPUT_CAPTURE_FAILURE_LIMIT = 3
 
 
 def _clamp_limit(limit: int) -> int:
@@ -68,6 +79,20 @@ def _invalid_run_ref(error: str, **details: Any) -> dict[str, Any]:
         "error_code": "INVALID_ARGUMENTS",
         **details,
     }
+
+
+def _wait_for_output_error(code: str, message: str) -> dict[str, Any]:
+    return {"success": False, "error": code, "message": message}
+
+
+def _finite_number(value: float, *, name: str) -> tuple[float | None, dict[str, Any] | None]:
+    try:
+        number = float(value)
+    except (TypeError, ValueError):
+        return None, _wait_for_output_error("invalid_argument", f"{name} must be numeric")
+    if not math.isfinite(number):
+        return None, _wait_for_output_error("invalid_argument", f"{name} must be finite")
+    return number, None
 
 
 def register_agent_query_tools(
@@ -129,6 +154,125 @@ def register_agent_query_tools(
                 }
 
             await agents.asyncio.sleep(min(interval, remaining))
+
+    @registry.tool(
+        name="wait_for_output",
+        description="Block until an agent's terminal output matches a bounded regular expression.",
+    )
+    async def wait_for_output(
+        run_id: str,
+        pattern: str,
+        timeout_seconds: float = MCP_WRAPPER_WAIT_TOOL_TIMEOUT_SECONDS,
+        poll_interval_seconds: float = 2.0,
+    ) -> dict[str, Any]:
+        agents = facade()
+        run = ctx.runner.get_run(run_id)
+        if run is None:
+            return _wait_for_output_error("invalid_run", f"Agent run {run_id} not found")
+        if not run.tmux_session_name:
+            return _wait_for_output_error("no_terminal", f"Agent run {run_id} has no terminal")
+
+        try:
+            compiled_pattern = compile_safe_regex(pattern)
+        except InvalidPatternError as exc:
+            return _wait_for_output_error("invalid_pattern", str(exc))
+
+        timeout_value, error = _finite_number(timeout_seconds, name="timeout_seconds")
+        if error is not None:
+            return error
+        interval_value, error = _finite_number(
+            poll_interval_seconds,
+            name="poll_interval_seconds",
+        )
+        if error is not None:
+            return error
+        assert timeout_value is not None
+        assert interval_value is not None
+
+        timeout = clamp_wait_tool_timeout(
+            "wait_for_output",
+            timeout_value,
+            default=MCP_WRAPPER_WAIT_TOOL_TIMEOUT_SECONDS,
+        )
+        interval = max(0.01, min(interval_value, 30.0))
+        deadline = agents.time.monotonic() + timeout
+        consecutive_capture_failures = 0
+        tmux = get_tmux_session_manager()
+
+        while True:
+            pane_output: str | None = None
+            capture_failed = False
+            try:
+                pane_output = await tmux.capture_pane(
+                    run.tmux_session_name,
+                    lines=_WAIT_OUTPUT_CAPTURE_LINES,
+                )
+                capture_failed = pane_output is None
+            except asyncio.CancelledError:
+                raise
+            except Exception:
+                capture_failed = True
+
+            if pane_output is not None:
+                consecutive_capture_failures = 0
+                match = compiled_pattern.search(pane_output)
+                if match.outcome is RegexOutcome.PATTERN_TIMEOUT:
+                    return _wait_for_output_error(
+                        "pattern_timeout",
+                        "pattern execution exceeded its time budget",
+                    )
+                if match.matched:
+                    return {"success": True, "matched": True, "excerpt": pane_output}
+
+            if run.status in agents._TERMINAL_AGENT_STATUSES:
+                return {
+                    "success": True,
+                    "matched": False,
+                    "reason": "terminal",
+                    "status": run.status,
+                }
+
+            if capture_failed:
+                try:
+                    pane_exists = await tmux.has_session(run.tmux_session_name)
+                except asyncio.CancelledError:
+                    raise
+                except Exception:
+                    pane_exists = True
+                if not pane_exists:
+                    return {
+                        "success": True,
+                        "matched": False,
+                        "reason": "pane_lost",
+                        "status": run.status,
+                    }
+                consecutive_capture_failures += 1
+                if consecutive_capture_failures >= _WAIT_OUTPUT_CAPTURE_FAILURE_LIMIT:
+                    return _wait_for_output_error(
+                        "capture_failed",
+                        "terminal capture failed three consecutive times",
+                    )
+
+            remaining = deadline - agents.time.monotonic()
+            if remaining <= 0:
+                return {
+                    "success": True,
+                    "matched": False,
+                    "reason": "timeout",
+                    "status": run.status,
+                }
+
+            await agents.asyncio.sleep(min(interval, remaining))
+            run = ctx.runner.get_run(run_id)
+            if run is None:
+                return _wait_for_output_error("invalid_run", f"Agent run {run_id} not found")
+            if not run.tmux_session_name:
+                return {
+                    "success": True,
+                    "matched": False,
+                    "reason": "pane_lost",
+                    "status": run.status,
+                }
 
     @registry.tool(
         name="list_agent_runs",

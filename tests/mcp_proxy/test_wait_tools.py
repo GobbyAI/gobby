@@ -19,7 +19,7 @@ pytestmark = pytest.mark.unit
 
 
 def test_wait_tool_names_only_include_implemented_tools() -> None:
-    assert WAIT_TOOL_NAMES == ("wait_for_agent", "wait_for_summary")
+    assert WAIT_TOOL_NAMES == ("wait_for_agent", "wait_for_output", "wait_for_summary")
 
 
 @pytest.mark.parametrize("tool_name", WAIT_TOOL_NAMES)

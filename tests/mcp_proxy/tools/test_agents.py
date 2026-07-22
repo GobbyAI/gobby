@@ -5,6 +5,7 @@ This file tests the agent-related MCP tools:
 - spawn_agent: Spawn a subagent with isolation support
 - get_agent_result: Get agent run result
 - wait_for_agent: Wait for agent run completion
+- wait_for_output: Wait for a terminal-output regex match
 - list_agent_runs: List agent runs for a session
 - stop_agent: Stop a running agent (DB only)
 - end_agent_run: Complete the caller's own agent run
@@ -129,6 +130,7 @@ class TestCreateAgentsRegistry:
             "spawn_agent",  # Unified spawn with isolation support
             "get_agent_result",
             "wait_for_agent",
+            "wait_for_output",
             "list_agent_runs",
             "stop_agent",
             "cancel_stale_helpers",
