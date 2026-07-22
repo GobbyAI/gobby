@@ -23,9 +23,9 @@ pytestmark = pytest.mark.unit
 
 class TestFeatureProfile:
     def test_enum_values(self) -> None:
-        assert FeatureProfile.LOW == "feature_low"
-        assert FeatureProfile.MID == "feature_mid"
-        assert FeatureProfile.HIGH == "feature_high"
+        assert FeatureProfile.LOW.value == "feature_low"
+        assert FeatureProfile.MID.value == "feature_mid"
+        assert FeatureProfile.HIGH.value == "feature_high"
 
     def test_is_str_enum(self) -> None:
         assert isinstance(FeatureProfile.LOW, str)
@@ -118,7 +118,13 @@ class TestFeatureDefaultConfig:
         )
 
         assert candidate_labels(cfg.candidates) == ("codex/gpt-5.6-sol", "claude/opus")
-        assert [candidate.reasoning_effort for candidate in cfg.candidates] == ["xhigh", "high"]
+        first_candidate, second_candidate = cfg.candidates
+        assert isinstance(first_candidate, FeatureCandidateConfig)
+        assert isinstance(second_candidate, FeatureCandidateConfig)
+        assert [first_candidate.reasoning_effort, second_candidate.reasoning_effort] == [
+            "xhigh",
+            "high",
+        ]
 
     @pytest.mark.parametrize("reasoning_effort", ["auto", "", "  AUTO  ", None])
     def test_auto_reasoning_effort_maps_to_unset(self, reasoning_effort: str | None) -> None:
@@ -128,7 +134,9 @@ class TestFeatureDefaultConfig:
             ],
         )
 
-        assert cfg.candidates[0].reasoning_effort is None
+        candidate = cfg.candidates[0]
+        assert isinstance(candidate, FeatureCandidateConfig)
+        assert candidate.reasoning_effort is None
 
     def test_unknown_reasoning_effort_is_accepted_at_config_load(self) -> None:
         cfg = FeatureDefaultConfig(
@@ -137,7 +145,9 @@ class TestFeatureDefaultConfig:
             ],
         )
 
-        assert cfg.candidates[0].reasoning_effort == "banana"
+        candidate = cfg.candidates[0]
+        assert isinstance(candidate, FeatureCandidateConfig)
+        assert candidate.reasoning_effort == "banana"
 
     def test_explicit_candidate_reasoning_overrides_profile_default(self) -> None:
         entries = candidate_runtime_entries(

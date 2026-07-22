@@ -15,7 +15,7 @@ import logging
 from collections.abc import AsyncIterator
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import Any
+from typing import Any, Literal, cast
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -35,6 +35,7 @@ from gobby.adapters.droid import DroidAdapter
 from gobby.adapters.qwen import QwenAdapter
 from gobby.hooks.event_handlers import EventHandlers
 from gobby.hooks.events import HookEvent, HookEventType, HookResponse, SessionSource
+from gobby.hooks.hook_manager import HookManager
 from gobby.llm.sdk_utils import ADDITIONAL_CONTEXT_LIMIT
 from tests._timing import wait_forever
 
@@ -50,10 +51,18 @@ CODEX_COMMAND_EXECUTION_FIXTURE = (
 
 
 def _load_live_codex_command_events() -> list[dict[str, Any]]:
-    payload = json.loads(CODEX_COMMAND_EXECUTION_FIXTURE.read_text())
+    payload: object = json.loads(CODEX_COMMAND_EXECUTION_FIXTURE.read_text())
+    assert isinstance(payload, dict)
     assert payload["capture_status"] == "live_proven"
     assert payload["codex_version"] == "0.144.5"
-    return payload["events"]
+    events = payload["events"]
+    assert isinstance(events, list)
+    normalized_events: list[dict[str, Any]] = []
+    for event in events:
+        assert isinstance(event, dict)
+        assert all(isinstance(key, str) for key in event)
+        normalized_events.append({str(key): value for key, value in event.items()})
+    return normalized_events
 
 
 @pytest.mark.parametrize(
@@ -166,6 +175,7 @@ class TestCodexTurn:
         assert turn.status == "completed"
         assert len(turn.items) == 1
         assert turn.error == "Some error"
+        assert turn.usage is not None
         assert turn.usage["input_tokens"] == 100
 
 
@@ -207,7 +217,7 @@ class TestGetMachineId:
         assert len(machine_id) > 0
 
     @patch("gobby.utils.machine_id.get_machine_id")
-    def test_returns_stable_id(self, mock_get_machine_id) -> None:
+    def test_returns_stable_id(self, mock_get_machine_id: MagicMock) -> None:
         """Returns stable ID from utils.machine_id."""
         mock_get_machine_id.return_value = "test-machine-id-12345"
 
@@ -219,7 +229,7 @@ class TestGetMachineId:
         assert id1 == "test-machine-id-12345"
 
     @patch("gobby.utils.machine_id.get_machine_id")
-    def test_fallback_when_no_hostname(self, mock_get_machine_id) -> None:
+    def test_fallback_when_no_hostname(self, mock_get_machine_id: MagicMock) -> None:
         """Returns valid ID from utils.machine_id (may be UUID or machineid format)."""
         # machineid returns 32-char hex, uuid4 returns 36-char UUID
         mock_get_machine_id.return_value = "a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4"
@@ -257,7 +267,7 @@ class TestCodexAppServerClientInit:
     def test_with_notification_handler(self) -> None:
         """Initialize with notification handler."""
 
-        def handler(method: str, params: dict) -> None:
+        def handler(method: str, params: dict[str, Any]) -> None:
             pass
 
         client = CodexAppServerClient(on_notification=handler)
@@ -523,7 +533,7 @@ class TestCodexAppServerClientStop:
     """Tests for CodexAppServerClient.stop()."""
 
     @pytest.mark.asyncio
-    async def test_stop_terminates_process(self):
+    async def test_stop_terminates_process(self) -> None:
         """Stop terminates the subprocess."""
         client = CodexAppServerClient()
 
@@ -539,12 +549,12 @@ class TestCodexAppServerClientStop:
         assert client.state == CodexConnectionState.DISCONNECTED
 
     @pytest.mark.asyncio
-    async def test_stop_cancels_reader_task(self):
+    async def test_stop_cancels_reader_task(self) -> None:
         """Stop cancels the reader task."""
         client = CodexAppServerClient()
 
         # Create an actual asyncio task that we can cancel
-        async def long_running():
+        async def long_running() -> None:
             await wait_forever()
 
         mock_task = asyncio.create_task(long_running())
@@ -561,7 +571,7 @@ class TestCodexAppServerClientStop:
         assert mock_task.cancelled()
 
     @pytest.mark.asyncio
-    async def test_stop_cancels_pending_requests(self):
+    async def test_stop_cancels_pending_requests(self) -> None:
         """Stop cancels all pending requests."""
         client = CodexAppServerClient()
 
@@ -603,7 +613,7 @@ class TestCodexAppServerClientContextManager:
     """Tests for async context manager support."""
 
     @pytest.mark.asyncio
-    async def test_context_manager_start_stop(self):
+    async def test_context_manager_start_stop(self) -> None:
         """Context manager starts and stops client."""
         client = CodexAppServerClient()
 
@@ -639,7 +649,7 @@ class TestCodexAppServerClientSendRequest:
     """Tests for _send_request method."""
 
     @pytest.mark.asyncio
-    async def test_send_request_not_connected(self):
+    async def test_send_request_not_connected(self) -> None:
         """send_request raises when not connected."""
         client = CodexAppServerClient()
 
@@ -658,7 +668,7 @@ class TestCodexAppServerClientSendRequest:
             await client._send_request("test", {})
 
     @pytest.mark.asyncio
-    async def test_send_request_formats_jsonrpc(self):
+    async def test_send_request_formats_jsonrpc(self) -> None:
         """send_request sends properly formatted JSON-RPC."""
         client = CodexAppServerClient()
 
@@ -697,7 +707,7 @@ class TestCodexAppServerClientSendNotification:
     """Tests for _send_notification method."""
 
     @pytest.mark.asyncio
-    async def test_send_notification_not_connected(self):
+    async def test_send_notification_not_connected(self) -> None:
         """send_notification raises when not connected."""
         client = CodexAppServerClient()
 
@@ -705,7 +715,7 @@ class TestCodexAppServerClientSendNotification:
             await client._send_notification("test", {})
 
     @pytest.mark.asyncio
-    async def test_send_notification_formats_message(self):
+    async def test_send_notification_formats_message(self) -> None:
         """send_notification sends proper notification format (no id)."""
         client = CodexAppServerClient()
 
@@ -731,7 +741,7 @@ class TestCodexAppServerClientThreadManagement:
     """Tests for thread management methods."""
 
     @pytest.mark.asyncio
-    async def test_start_thread(self):
+    async def test_start_thread(self) -> None:
         """start_thread sends request and returns thread."""
         client = CodexAppServerClient()
 
@@ -762,7 +772,7 @@ class TestCodexAppServerClientThreadManagement:
         assert client._thread_cwds["thr-new"] == "/project"
 
     @pytest.mark.asyncio
-    async def test_start_thread_sends_ephemeral_when_requested(self):
+    async def test_start_thread_sends_ephemeral_when_requested(self) -> None:
         """start_thread sends ephemeral only when requested."""
         client = CodexAppServerClient()
 
@@ -793,7 +803,7 @@ class TestCodexAppServerClientThreadManagement:
         assert thread.ephemeral is False
 
     @pytest.mark.asyncio
-    async def test_start_thread_tracks_web_chat_terminal_context(self):
+    async def test_start_thread_tracks_web_chat_terminal_context(self) -> None:
         """Daemon-owned web chats should tag Codex thread-start notifications."""
         client = CodexAppServerClient()
 
@@ -860,7 +870,7 @@ class TestCodexAppServerClientThreadManagement:
         assert client._thread_terminal_contexts["thr-web"] == params["terminal_context"]
 
     @pytest.mark.asyncio
-    async def test_resume_thread(self):
+    async def test_resume_thread(self) -> None:
         """resume_thread sends request and returns thread."""
         client = CodexAppServerClient()
 
@@ -883,7 +893,7 @@ class TestCodexAppServerClientThreadManagement:
         assert "thr-existing" in client._threads
 
     @pytest.mark.asyncio
-    async def test_list_threads(self):
+    async def test_list_threads(self) -> None:
         """list_threads returns paginated thread list."""
         client = CodexAppServerClient()
 
@@ -907,7 +917,7 @@ class TestCodexAppServerClientThreadManagement:
         assert cursor == "cursor-abc"
 
     @pytest.mark.asyncio
-    async def test_archive_thread(self):
+    async def test_archive_thread(self) -> None:
         """archive_thread sends request and removes from cache."""
         client = CodexAppServerClient()
         client._threads["thr-delete"] = CodexThread(id="thr-delete")
@@ -959,7 +969,7 @@ class TestCodexAppServerClientTurnManagement:
     """Tests for turn management methods."""
 
     @pytest.mark.asyncio
-    async def test_start_turn(self):
+    async def test_start_turn(self) -> None:
         """start_turn sends request and returns turn."""
         client = CodexAppServerClient()
 
@@ -1005,7 +1015,7 @@ class TestCodexAppServerClientTurnManagement:
         assert "thr-1" not in client._pending_turn_prompts_by_thread
 
     @pytest.mark.asyncio
-    async def test_start_turn_with_images(self):
+    async def test_start_turn_with_images(self) -> None:
         """start_turn handles image inputs."""
         client = CodexAppServerClient()
 
@@ -1028,7 +1038,7 @@ class TestCodexAppServerClientTurnManagement:
             assert params["input"][2]["path"] == "/local/path.jpg"
 
     @pytest.mark.asyncio
-    async def test_start_turn_with_effort(self):
+    async def test_start_turn_with_effort(self) -> None:
         """start_turn sends effort for per-turn reasoning overrides."""
         client = CodexAppServerClient()
 
@@ -1050,7 +1060,7 @@ class TestCodexAppServerClientTurnManagement:
             assert "reasoningEffort" not in params
 
     @pytest.mark.asyncio
-    async def test_start_turn_maps_legacy_reasoning_effort_override(self):
+    async def test_start_turn_maps_legacy_reasoning_effort_override(self) -> None:
         """start_turn keeps legacy callers working by mapping reasoningEffort."""
         client = CodexAppServerClient()
 
@@ -1072,7 +1082,7 @@ class TestCodexAppServerClientTurnManagement:
             assert "reasoningEffort" not in params
 
     @pytest.mark.asyncio
-    async def test_interrupt_turn(self):
+    async def test_interrupt_turn(self) -> None:
         """interrupt_turn sends request."""
         client = CodexAppServerClient()
 
@@ -1093,7 +1103,7 @@ class TestCodexAppServerClientRunTurn:
     """Tests for run_turn streaming method."""
 
     @pytest.mark.asyncio
-    async def test_run_turn_yields_events(self):
+    async def test_run_turn_yields_events(self) -> None:
         """run_turn yields streaming events."""
         client = CodexAppServerClient()
 
@@ -1102,11 +1112,11 @@ class TestCodexAppServerClientRunTurn:
         with patch.object(
             client, "_send_request", new_callable=AsyncMock, return_value=mock_result
         ):
-            events = []
+            events: list[dict[str, Any]] = []
             # Simulate notification that ends the turn
             client._notification_handlers["turn/completed"] = []
 
-            async def collect_events():
+            async def collect_events() -> None:
                 async for event in client.run_turn("thr-1", "Test"):
                     events.append(event)
                     if event["type"] == "turn/created":
@@ -1124,7 +1134,7 @@ class TestCodexAppServerClientRunTurn:
             assert events[0]["type"] == "turn/created"
 
     @pytest.mark.asyncio
-    async def test_run_turn_filters_concurrent_thread_events(self):
+    async def test_run_turn_filters_concurrent_thread_events(self) -> None:
         """Concurrent run_turn streams ignore events from other turns."""
         client = CodexAppServerClient()
 
@@ -1161,7 +1171,7 @@ class TestCodexAppServerClientRunTurn:
         assert [event["threadId"] for event in second_events] == ["second", "second"]
 
     @pytest.mark.asyncio
-    async def test_run_turn_interrupts_unfinished_turn_when_cancelled(self):
+    async def test_run_turn_interrupts_unfinished_turn_when_cancelled(self) -> None:
         """Cancelled streams interrupt the in-progress app-server turn."""
         client = CodexAppServerClient()
         event_methods = [
@@ -1182,7 +1192,7 @@ class TestCodexAppServerClientRunTurn:
             stream = client.run_turn("thr-1", "Test")
 
             assert (await anext(stream))["type"] == "turn/created"
-            pending_event = asyncio.create_task(anext(stream))
+            pending_event: asyncio.Future[dict[str, Any]] = asyncio.ensure_future(anext(stream))
             await asyncio.wait({pending_event}, timeout=0)
 
             pending_event.cancel()
@@ -1198,7 +1208,7 @@ class TestCodexAppServerClientRunTurn:
         assert all(client._notification_handlers.get(method) == [] for method in event_methods)
 
     @pytest.mark.asyncio
-    async def test_run_turn_does_not_interrupt_after_terminal_event(self):
+    async def test_run_turn_does_not_interrupt_after_terminal_event(self) -> None:
         """Completed streams do not send a redundant app-server interrupt."""
         client = CodexAppServerClient()
 
@@ -1225,7 +1235,7 @@ class TestCodexAppServerClientRunTurn:
         assert send_request.await_count == 1
 
     @pytest.mark.asyncio
-    async def test_run_turn_raises_on_turn_failed(self):
+    async def test_run_turn_raises_on_turn_failed(self) -> None:
         """run_turn raises when the app-server reports a failed turn."""
         client = CodexAppServerClient()
 
@@ -1255,7 +1265,7 @@ class TestCodexAppServerClientRunTurn:
             assert [event["type"] for event in events] == ["turn/created", "turn/failed"]
 
     @pytest.mark.asyncio
-    async def test_run_turn_raises_on_thread_closed_before_completion(self):
+    async def test_run_turn_raises_on_thread_closed_before_completion(self) -> None:
         """run_turn raises when the active thread closes before turn completion."""
         client = CodexAppServerClient()
 
@@ -1280,7 +1290,7 @@ class TestCodexAppServerClientAuthentication:
     """Tests for authentication methods."""
 
     @pytest.mark.asyncio
-    async def test_login_with_api_key(self):
+    async def test_login_with_api_key(self) -> None:
         """login_with_api_key sends request."""
         client = CodexAppServerClient()
 
@@ -1297,7 +1307,7 @@ class TestCodexAppServerClientAuthentication:
         assert result["success"] is True
 
     @pytest.mark.asyncio
-    async def test_get_account_status(self):
+    async def test_get_account_status(self) -> None:
         """get_account_status sends request."""
         client = CodexAppServerClient()
 
@@ -1343,7 +1353,7 @@ class TestCodexAdapterIsAvailable:
     """Tests for is_codex_available static method."""
 
     @patch("shutil.which")
-    def test_codex_available(self, mock_which) -> None:
+    def test_codex_available(self, mock_which: MagicMock) -> None:
         """Returns True when codex is in PATH."""
         mock_which.return_value = "/usr/local/bin/codex"
 
@@ -1351,7 +1361,7 @@ class TestCodexAdapterIsAvailable:
         mock_which.assert_called_once_with("codex")
 
     @patch("shutil.which")
-    def test_codex_not_available(self, mock_which) -> None:
+    def test_codex_not_available(self, mock_which: MagicMock) -> None:
         """Returns False when codex is not in PATH."""
         mock_which.return_value = None
 
@@ -2065,7 +2075,12 @@ class TestCodexAdapterTranslateFromHookResponse:
         """Non-deny/block decisions map to accept."""
         adapter = CodexAdapter()
 
-        for decision in ["allow", "ask", "modify"]:
+        decisions: tuple[Literal["allow", "ask", "modify"], ...] = (
+            "allow",
+            "ask",
+            "modify",
+        )
+        for decision in decisions:
             response = HookResponse(decision=decision)
             result = adapter.translate_from_hook_response(response)
             assert result["decision"] == "accept"
@@ -2144,8 +2159,8 @@ class TestCodexAdapterHandleNotification:
 
         hook_manager = BlockingHookManager()
         client = RecordingClient()
-        adapter = CodexAdapter(hook_manager=hook_manager)
-        adapter._codex_client = client
+        adapter = CodexAdapter(hook_manager=cast(HookManager, hook_manager))
+        adapter._codex_client = cast(CodexAppServerClient, client)
 
         adapter._handle_notification(
             "turn/started",
@@ -2209,7 +2224,7 @@ class TestCodexAdapterDispatchHookEvent:
             def handle_async(self, _event: HookEvent) -> HookResponse:
                 return HookResponse(decision="allow")
 
-        adapter = CodexAdapter(hook_manager=NonAsyncOnlyHookManager())
+        adapter = CodexAdapter(hook_manager=cast(HookManager, NonAsyncOnlyHookManager()))
 
         with pytest.raises(RuntimeError, match="hook manager has no handle method"):
             await adapter._dispatch_hook_event(self._event())
@@ -2219,7 +2234,7 @@ class TestCodexAdapterSyncExistingSessions:
     """Tests for sync_existing_sessions method."""
 
     @pytest.mark.asyncio
-    async def test_sync_without_hook_manager(self):
+    async def test_sync_without_hook_manager(self) -> None:
         """Sync without hook manager returns 0."""
         adapter = CodexAdapter()
 
@@ -2228,7 +2243,7 @@ class TestCodexAdapterSyncExistingSessions:
         assert result == 0
 
     @pytest.mark.asyncio
-    async def test_sync_without_client(self):
+    async def test_sync_without_client(self) -> None:
         """Sync without client returns 0."""
         adapter = CodexAdapter(hook_manager=MagicMock())
 
@@ -2237,7 +2252,7 @@ class TestCodexAdapterSyncExistingSessions:
         assert result == 0
 
     @pytest.mark.asyncio
-    async def test_sync_when_client_not_connected(self):
+    async def test_sync_when_client_not_connected(self) -> None:
         """Sync when client not connected returns 0."""
         adapter = CodexAdapter(hook_manager=MagicMock())
         mock_client = MagicMock()
@@ -2249,7 +2264,7 @@ class TestCodexAdapterSyncExistingSessions:
         assert result == 0
 
     @pytest.mark.asyncio
-    async def test_sync_existing_sessions_success(self):
+    async def test_sync_existing_sessions_success(self) -> None:
         """Sync processes threads through hook manager."""
         mock_hook_manager = MagicMock()
         adapter = CodexAdapter(hook_manager=mock_hook_manager)
@@ -2274,7 +2289,7 @@ class TestCodexAdapterSyncExistingSessions:
         assert mock_hook_manager.handle.call_count == 2
 
     @pytest.mark.asyncio
-    async def test_sync_handles_pagination(self):
+    async def test_sync_handles_pagination(self) -> None:
         """Sync handles multiple pages of threads."""
         mock_hook_manager = MagicMock()
         adapter = CodexAdapter(hook_manager=mock_hook_manager)
@@ -3150,7 +3165,7 @@ class TestCodexClientApprovalHandlerRegistration:
         """Register an approval handler."""
         client = CodexAppServerClient()
 
-        async def handler(method: str, params: dict) -> dict:
+        async def handler(method: str, params: dict[str, Any]) -> dict[str, Any]:
             return {"decision": "accept"}
 
         client.register_approval_handler(handler)
@@ -3160,10 +3175,10 @@ class TestCodexClientApprovalHandlerRegistration:
         """Registering a new handler replaces the previous one."""
         client = CodexAppServerClient()
 
-        async def handler1(method: str, params: dict) -> dict:
+        async def handler1(method: str, params: dict[str, Any]) -> dict[str, Any]:
             return {"decision": "accept"}
 
-        async def handler2(method: str, params: dict) -> dict:
+        async def handler2(method: str, params: dict[str, Any]) -> dict[str, Any]:
             return {"decision": "decline"}
 
         client.register_approval_handler(handler1)
@@ -3174,7 +3189,7 @@ class TestCodexClientApprovalHandlerRegistration:
         """Registering None clears the handler."""
         client = CodexAppServerClient()
 
-        async def handler(method: str, params: dict) -> dict:
+        async def handler(method: str, params: dict[str, Any]) -> dict[str, Any]:
             return {"decision": "accept"}
 
         client.register_approval_handler(handler)
@@ -3194,9 +3209,9 @@ class TestCodexClientApprovalRequestDetection:
     async def test_detects_command_execution_approval(self) -> None:
         """Reader detects commandExecution approval and calls handler."""
         client = CodexAppServerClient()
-        received: dict = {}
+        received: dict[str, Any] = {}
 
-        async def handler(method: str, params: dict) -> dict:
+        async def handler(method: str, params: dict[str, Any]) -> dict[str, Any]:
             received["method"] = method
             received["params"] = params
             return {"decision": "accept"}
@@ -3219,7 +3234,7 @@ class TestCodexClientApprovalRequestDetection:
         lines = [json.dumps(approval_msg) + "\n"]
         read_idx = 0
 
-        def mock_readline():
+        def mock_readline() -> str:
             nonlocal read_idx
             if read_idx < len(lines):
                 line = lines[read_idx]
@@ -3246,9 +3261,9 @@ class TestCodexClientApprovalRequestDetection:
     async def test_detects_file_change_approval(self) -> None:
         """Reader detects fileChange approval request."""
         client = CodexAppServerClient()
-        received: dict = {}
+        received: dict[str, Any] = {}
 
-        async def handler(method: str, params: dict) -> dict:
+        async def handler(method: str, params: dict[str, Any]) -> dict[str, Any]:
             received["method"] = method
             received["params"] = params
             return {"decision": "accept"}
@@ -3269,7 +3284,7 @@ class TestCodexClientApprovalRequestDetection:
         lines = [json.dumps(approval_msg) + "\n"]
         read_idx = 0
 
-        def mock_readline():
+        def mock_readline() -> str:
             nonlocal read_idx
             if read_idx < len(lines):
                 line = lines[read_idx]
@@ -3295,9 +3310,9 @@ class TestCodexClientApprovalRequestDetection:
     async def test_detects_mcp_tool_call_approval(self) -> None:
         """Reader detects mcpToolCall approval requests."""
         client = CodexAppServerClient()
-        received: dict = {}
+        received: dict[str, Any] = {}
 
-        async def handler(method: str, params: dict) -> dict:
+        async def handler(method: str, params: dict[str, Any]) -> dict[str, Any]:
             received["method"] = method
             received["params"] = params
             return {"decision": "accept"}
@@ -3320,7 +3335,7 @@ class TestCodexClientApprovalRequestDetection:
         lines = [json.dumps(approval_msg) + "\n"]
         read_idx = 0
 
-        def mock_readline():
+        def mock_readline() -> str:
             nonlocal read_idx
             if read_idx < len(lines):
                 line = lines[read_idx]
@@ -3347,9 +3362,9 @@ class TestCodexClientApprovalRequestDetection:
     async def test_detects_mcp_elicitation_request(self) -> None:
         """Reader routes MCP elicitation requests to the approval handler."""
         client = CodexAppServerClient()
-        received: dict = {}
+        received: dict[str, Any] = {}
 
-        async def handler(method: str, params: dict) -> dict:
+        async def handler(method: str, params: dict[str, Any]) -> dict[str, Any]:
             received["method"] = method
             received["params"] = params
             return {"action": "accept", "content": None, "_meta": None}
@@ -3375,7 +3390,7 @@ class TestCodexClientApprovalRequestDetection:
         lines = [json.dumps(approval_msg) + "\n"]
         read_idx = 0
 
-        def mock_readline():
+        def mock_readline() -> str:
             nonlocal read_idx
             if read_idx < len(lines):
                 line = lines[read_idx]
@@ -3402,9 +3417,9 @@ class TestCodexClientApprovalRequestDetection:
     async def test_turn_started_notification_is_enriched_with_prompt(self) -> None:
         """turn/started notifications should carry the original prompt when available."""
         client = CodexAppServerClient()
-        received: dict = {}
+        received: dict[str, Any] = {}
 
-        def handler(method: str, params: dict) -> None:
+        def handler(method: str, params: dict[str, Any]) -> None:
             received["method"] = method
             received["params"] = params
 
@@ -3424,7 +3439,7 @@ class TestCodexClientApprovalRequestDetection:
         lines = [json.dumps(notification_msg) + "\n"]
         read_idx = 0
 
-        def mock_readline():
+        def mock_readline() -> str:
             nonlocal read_idx
             if read_idx < len(lines):
                 line = lines[read_idx]
@@ -3452,7 +3467,7 @@ class TestCodexClientApprovalRequestDetection:
         client = CodexAppServerClient()
         handler_called = False
 
-        async def handler(method: str, params: dict) -> dict:
+        async def handler(method: str, params: dict[str, Any]) -> dict[str, Any]:
             nonlocal handler_called
             handler_called = True
             return {"decision": "accept"}
@@ -3477,7 +3492,7 @@ class TestCodexClientApprovalRequestDetection:
         lines = [json.dumps(response_msg) + "\n", json.dumps(approval_msg) + "\n"]
         read_idx = 0
 
-        def mock_readline():
+        def mock_readline() -> str:
             nonlocal read_idx
             if read_idx < len(lines):
                 line = lines[read_idx]
@@ -3519,7 +3534,7 @@ class TestCodexClientApprovalRequestDetection:
         lines = [json.dumps(approval_msg) + "\n"]
         read_idx = 0
 
-        def mock_readline():
+        def mock_readline() -> str:
             nonlocal read_idx
             if read_idx < len(lines):
                 line = lines[read_idx]
@@ -3559,7 +3574,7 @@ class TestCodexClientApprovalResponseRouting:
         client = CodexAppServerClient()
         written_lines: list[str] = []
 
-        async def handler(method: str, params: dict) -> dict:
+        async def handler(method: str, params: dict[str, Any]) -> dict[str, Any]:
             return {"decision": "accept"}
 
         client.register_approval_handler(handler)
@@ -3575,7 +3590,7 @@ class TestCodexClientApprovalResponseRouting:
         lines = [json.dumps(approval_msg) + "\n"]
         read_idx = 0
 
-        def mock_readline():
+        def mock_readline() -> str:
             nonlocal read_idx
             if read_idx < len(lines):
                 line = lines[read_idx]
@@ -3606,7 +3621,7 @@ class TestCodexClientApprovalResponseRouting:
         client = CodexAppServerClient()
         written_lines: list[str] = []
 
-        async def handler(method: str, params: dict) -> dict:
+        async def handler(method: str, params: dict[str, Any]) -> dict[str, Any]:
             return {"decision": "decline"}
 
         client.register_approval_handler(handler)
@@ -3622,7 +3637,7 @@ class TestCodexClientApprovalResponseRouting:
         lines = [json.dumps(approval_msg) + "\n"]
         read_idx = 0
 
-        def mock_readline():
+        def mock_readline() -> str:
             nonlocal read_idx
             if read_idx < len(lines):
                 line = lines[read_idx]
@@ -3653,7 +3668,7 @@ class TestCodexClientApprovalResponseRouting:
         client = CodexAppServerClient()
         written_lines: list[str] = []
 
-        async def handler(method: str, params: dict) -> dict:
+        async def handler(method: str, params: dict[str, Any]) -> dict[str, Any]:
             raise RuntimeError("Hook processing failed")
 
         client.register_approval_handler(handler)
@@ -3669,7 +3684,7 @@ class TestCodexClientApprovalResponseRouting:
         lines = [json.dumps(approval_msg) + "\n"]
         read_idx = 0
 
-        def mock_readline():
+        def mock_readline() -> str:
             nonlocal read_idx
             if read_idx < len(lines):
                 line = lines[read_idx]
@@ -3702,7 +3717,7 @@ class TestCodexClientApprovalResponseRouting:
         written_lines: list[str] = []
         handler_called = False
 
-        async def handler(method: str, params: dict[str, Any]) -> dict[str, str]:
+        async def handler(method: str, params: dict[str, Any]) -> dict[str, Any]:
             nonlocal handler_called
             handler_called = True
             return {"decision": "accept"}
@@ -3767,7 +3782,7 @@ class TestCodexClientApprovalResponseRouting:
 
         client = CodexAppServerClient(on_notification=on_notification)
 
-        async def handler(method: str, params: dict[str, Any]) -> dict[str, str]:
+        async def handler(method: str, params: dict[str, Any]) -> dict[str, Any]:
             approval_started.set()
             await release_approval.wait()
             return {"decision": "accept"}
@@ -3848,7 +3863,7 @@ class TestCodexClientApprovalResponseRouting:
         client = CodexAppServerClient()
         written_lines: list[str] = []
 
-        async def handler(method: str, params: dict) -> dict:
+        async def handler(method: str, params: dict[str, Any]) -> dict[str, Any]:
             return {"decision": "accept"}
 
         client.register_approval_handler(handler)
@@ -3864,7 +3879,7 @@ class TestCodexClientApprovalResponseRouting:
         lines = [json.dumps(approval_msg) + "\n"]
         read_idx = 0
 
-        def mock_readline():
+        def mock_readline() -> str:
             nonlocal read_idx
             if read_idx < len(lines):
                 line = lines[read_idx]

@@ -24,6 +24,7 @@ from gobby.sessions.transcript_index import (
     persist_index_sidecar,
 )
 from gobby.sessions.transcripts.base import ParsedMessage, TokenUsage
+from gobby.storage.token_events import TokenEvent
 from tests._timing import wait_for_async_condition
 
 pytestmark = pytest.mark.unit
@@ -41,7 +42,7 @@ def processor(mock_db: MagicMock) -> SessionMessageProcessor:
     return SessionMessageProcessor(mock_db, poll_interval=0.1)
 
 
-def test_usage_has_tokens_rejects_bool_counts(processor) -> None:
+def test_usage_has_tokens_rejects_bool_counts(processor: SessionMessageProcessor) -> None:
     usage = MagicMock()
     usage.input_tokens = True
     usage.output_tokens = 0
@@ -92,7 +93,7 @@ class TestProcessorLifecycle:
     """Tests for start/stop lifecycle methods."""
 
     @pytest.mark.asyncio
-    async def test_start_when_already_running(self, processor):
+    async def test_start_when_already_running(self, processor: SessionMessageProcessor) -> None:
         """Start should be a no-op when already running."""
         # Start once
         await processor.start()
@@ -107,7 +108,7 @@ class TestProcessorLifecycle:
         await processor.stop()
 
     @pytest.mark.asyncio
-    async def test_stop_when_not_running(self, processor):
+    async def test_stop_when_not_running(self, processor: SessionMessageProcessor) -> None:
         """Stop should handle the case when not running."""
         # Processor never started
         assert processor._running is False
@@ -119,7 +120,7 @@ class TestProcessorLifecycle:
         assert processor._task is None
 
     @pytest.mark.asyncio
-    async def test_stop_when_running(self, processor):
+    async def test_stop_when_running(self, processor: SessionMessageProcessor) -> None:
         """Stop should cancel the task and clean up."""
         await processor.start()
         assert processor._running is True
@@ -130,7 +131,7 @@ class TestProcessorLifecycle:
         assert processor._task is None
 
     @pytest.mark.asyncio
-    async def test_stop_handles_cancelled_error(self, processor):
+    async def test_stop_handles_cancelled_error(self, processor: SessionMessageProcessor) -> None:
         """Stop should gracefully handle CancelledError from task."""
         await processor.start()
 
@@ -142,7 +143,9 @@ class TestProcessorLifecycle:
 class TestSessionRegistration:
     """Tests for session registration and unregistration."""
 
-    def test_register_session_already_registered(self, processor, tmp_path) -> None:
+    def test_register_session_already_registered(
+        self, processor: SessionMessageProcessor, tmp_path: Path
+    ) -> None:
         """Registering the same session twice should be a no-op."""
         transcript = tmp_path / "transcript.jsonl"
         transcript.touch()
@@ -158,7 +161,9 @@ class TestSessionRegistration:
         processor.register_session("session-1", str(transcript))
         assert processor._parsers["session-1"] is original_parser  # Not replaced
 
-    def test_register_session_replaces_changed_transcript_path(self, processor, tmp_path) -> None:
+    def test_register_session_replaces_changed_transcript_path(
+        self, processor: SessionMessageProcessor, tmp_path: Path
+    ) -> None:
         first_transcript = tmp_path / "first.jsonl"
         second_transcript = tmp_path / "second.jsonl"
         first_transcript.touch()
@@ -173,7 +178,9 @@ class TestSessionRegistration:
         assert processor._parsers["session-1"] is not original_parser
         assert "session-1" not in processor._byte_offsets
 
-    def test_register_session_transcript_not_found(self, mock_db, tmp_path, caplog) -> None:
+    def test_register_session_transcript_not_found(
+        self, mock_db: MagicMock, tmp_path: Path, caplog: pytest.LogCaptureFixture
+    ) -> None:
         """Register when the file doesn't exist yet (Codex writes rollout
         shortly after session_start). Must still register — the poll loop's
         existence check handles missing files and picks the file up on its
@@ -195,7 +202,9 @@ class TestSessionRegistration:
         mock_session_manager.update.assert_not_called()
         mock_session_manager.mark_transcript_processed.assert_not_called()
 
-    def test_register_session_with_different_sources(self, processor, tmp_path) -> None:
+    def test_register_session_with_different_sources(
+        self, processor: SessionMessageProcessor, tmp_path: Path
+    ) -> None:
         """Register should use appropriate parser for each source."""
         transcript = tmp_path / "transcript.jsonl"
         transcript.touch()
@@ -210,7 +219,7 @@ class TestSessionRegistration:
         assert "codex-session" in processor._parsers
 
     def test_register_qwen_json_creates_incremental_index_appender(
-        self, processor, tmp_path
+        self, processor: SessionMessageProcessor, tmp_path: Path
     ) -> None:
         transcript = tmp_path / "session.json"
         transcript.write_text(
@@ -229,7 +238,9 @@ class TestSessionRegistration:
 
         assert "qwen-session" in processor._index_appenders
 
-    def test_register_session_hydrates_matching_sidecar(self, mock_db, tmp_path) -> None:
+    def test_register_session_hydrates_matching_sidecar(
+        self, mock_db: MagicMock, tmp_path: Path
+    ) -> None:
         """Registration should resume byte offset, message index, stats, and appender."""
         session_manager = MagicMock()
         processor = SessionMessageProcessor(mock_db, session_manager=session_manager)
@@ -272,7 +283,7 @@ class TestSessionRegistration:
         )
 
     def test_register_session_with_legacy_sidecar_skips_stats_update(
-        self, mock_db, tmp_path
+        self, mock_db: MagicMock, tmp_path: Path
     ) -> None:
         session_manager = MagicMock()
         processor = SessionMessageProcessor(mock_db, session_manager=session_manager)
@@ -302,7 +313,7 @@ class TestSessionRegistration:
 
     @pytest.mark.asyncio
     async def test_append_after_sidecar_hydration_continues_assistant_group(
-        self, mock_db, tmp_path
+        self, mock_db: MagicMock, tmp_path: Path
     ) -> None:
         session_manager = MagicMock()
         processor = SessionMessageProcessor(mock_db, session_manager=session_manager)
@@ -348,7 +359,9 @@ class TestSessionRegistration:
         assert latest.total_groups == initial_groups
         assert latest.session_stats == stats
 
-    def test_unregister_session_existing(self, processor, tmp_path) -> None:
+    def test_unregister_session_existing(
+        self, processor: SessionMessageProcessor, tmp_path: Path
+    ) -> None:
         """Unregister should remove session and parser."""
         transcript = tmp_path / "transcript.jsonl"
         transcript.touch()
@@ -361,13 +374,15 @@ class TestSessionRegistration:
         assert "session-1" not in processor._active_sessions
         assert "session-1" not in processor._parsers
 
-    def test_unregister_session_not_registered(self, processor) -> None:
+    def test_unregister_session_not_registered(self, processor: SessionMessageProcessor) -> None:
         """Unregister should be a no-op for non-existent session."""
         # Should not raise
         processor.unregister_session("nonexistent")
         assert "nonexistent" not in processor._active_sessions
 
-    def test_unregister_session_missing_parser(self, processor, tmp_path) -> None:
+    def test_unregister_session_missing_parser(
+        self, processor: SessionMessageProcessor, tmp_path: Path
+    ) -> None:
         """Unregister should handle case where parser is missing."""
         transcript = tmp_path / "transcript.jsonl"
         transcript.touch()
@@ -386,25 +401,35 @@ class TestProcessingLoop:
     """Tests for the main processing loop."""
 
     @pytest.mark.asyncio
-    async def test_loop_handles_exception(self, processor, caplog):
+    async def test_loop_handles_exception(
+        self, processor: SessionMessageProcessor, caplog: pytest.LogCaptureFixture
+    ) -> None:
         """Loop should continue after exception in _process_all_sessions."""
-        # Make _process_all_sessions raise an exception
-        processor._process_all_sessions = AsyncMock(side_effect=Exception("Test error"))
+        with patch.object(
+            processor,
+            "_process_all_sessions",
+            new_callable=AsyncMock,
+            side_effect=Exception("Test error"),
+        ):
+            await processor.start()
 
-        await processor.start()
+            await wait_for_async_condition(
+                lambda: "Error in SessionMessageProcessor loop" in caplog.text,
+                description="processor loop error log",
+            )
 
-        await wait_for_async_condition(
-            lambda: "Error in SessionMessageProcessor loop" in caplog.text,
-            description="processor loop error log",
-        )
+            assert "Error in SessionMessageProcessor loop" in caplog.text
+            assert processor._running  # Loop should continue
 
-        assert "Error in SessionMessageProcessor loop" in caplog.text
-        assert processor._running  # Loop should continue
-
-        await processor.stop()
+            await processor.stop()
 
     @pytest.mark.asyncio
-    async def test_process_all_sessions_handles_session_error(self, processor, tmp_path, caplog):
+    async def test_process_all_sessions_handles_session_error(
+        self,
+        processor: SessionMessageProcessor,
+        tmp_path: Path,
+        caplog: pytest.LogCaptureFixture,
+    ) -> None:
         """_process_all_sessions should continue processing other sessions on error."""
         transcript1 = tmp_path / "t1.jsonl"
         transcript2 = tmp_path / "t2.jsonl"
@@ -417,14 +442,15 @@ class TestProcessingLoop:
         # Mock _process_session to fail for session-1 but succeed for session-2
         original_process = processor._process_session
 
-        async def mock_process(session_id, path):
+        async def mock_process(session_id: str, path: str) -> None:
             if session_id == "session-1":
                 raise Exception("Session 1 error")
             return await original_process(session_id, path)
 
-        processor._process_session = mock_process
-
-        with caplog.at_level("ERROR"):
+        with (
+            patch.object(processor, "_process_session", side_effect=mock_process),
+            caplog.at_level("ERROR"),
+        ):
             await processor._process_all_sessions()
 
         assert "Failed to process session session-1" in caplog.text
@@ -434,40 +460,35 @@ class TestProcessSession:
     """Tests for _process_session method."""
 
     @pytest.mark.asyncio
-    async def test_process_session_transcript_not_exists(self, processor):
+    async def test_process_session_transcript_not_exists(
+        self, processor: SessionMessageProcessor
+    ) -> None:
         """Should return early if transcript file doesn't exist."""
         processor._active_sessions["session-1"] = "/nonexistent/path.jsonl"
         processor._parsers["session-1"] = MagicMock()
-        processor.message_manager = AsyncMock()
-
         await processor._process_session("session-1", "/nonexistent/path.jsonl")
 
-        # get_state should not be called since we returned early
-        processor.message_manager.get_state.assert_not_called()
-        assert processor.message_manager.get_state.call_count == 0
-        assert not processor.message_manager.get_state.called
+        assert "session-1" not in processor._byte_offsets
+        assert "session-1" not in processor._stats
 
     @pytest.mark.asyncio
-    async def test_process_session_no_parser(self, processor, tmp_path):
+    async def test_process_session_no_parser(
+        self, processor: SessionMessageProcessor, tmp_path: Path
+    ) -> None:
         """Should return early if parser is missing."""
         transcript = tmp_path / "transcript.jsonl"
         transcript.write_text('{"type": "user", "message": {"content": "test"}}\n')
 
         processor._active_sessions["session-1"] = str(transcript)
         # No parser registered
-        processor.message_manager = AsyncMock()
-        processor.message_manager.get_state = AsyncMock(return_value=None)
-
         await processor._process_session("session-1", str(transcript))
 
-        # store_messages should not be called since we returned early (no parser)
-        processor.message_manager.store_messages.assert_not_called()
-        assert processor.message_manager.store_messages.call_count == 0
-        assert not processor.message_manager.store_messages.called
+        assert "session-1" not in processor._byte_offsets
+        assert "session-1" not in processor._stats
 
     @pytest.mark.asyncio
     async def test_process_session_revives_expired_terminal_on_new_lines(
-        self, mock_db, tmp_path
+        self, mock_db: MagicMock, tmp_path: Path
     ) -> None:
         """Transcript activity revives a false-expired terminal session."""
         session_manager = MagicMock()
@@ -486,16 +507,18 @@ class TestProcessSession:
         session_manager.revive_expired_terminal_session.assert_called_once_with("session-1")
 
     @pytest.mark.asyncio
-    async def test_process_session_read_error(self, processor, tmp_path, caplog):
+    async def test_process_session_read_error(
+        self,
+        processor: SessionMessageProcessor,
+        tmp_path: Path,
+        caplog: pytest.LogCaptureFixture,
+    ) -> None:
         """Should handle file read errors gracefully."""
         transcript = tmp_path / "transcript.jsonl"
         transcript.touch()
 
         processor._active_sessions["session-1"] = str(transcript)
         processor._parsers["session-1"] = MagicMock()
-        processor.message_manager = AsyncMock()
-        processor.message_manager.get_state = AsyncMock(return_value=None)
-
         # Make the file unreadable by patching aiofiles.open.
         with patch(
             "gobby.sessions.processor_transcripts.aiofiles.open",
@@ -505,10 +528,11 @@ class TestProcessSession:
                 await processor._process_session("session-1", str(transcript))
 
         assert "Error reading transcript" in caplog.text
-        assert processor.message_manager.store_messages.call_count == 0
 
     @pytest.mark.asyncio
-    async def test_process_session_incomplete_line(self, processor, tmp_path):
+    async def test_process_session_incomplete_line(
+        self, processor: SessionMessageProcessor, tmp_path: Path
+    ) -> None:
         """Should not process incomplete lines (without newline)."""
         transcript = tmp_path / "transcript.jsonl"
         # Write an incomplete line (no trailing newline)
@@ -516,20 +540,15 @@ class TestProcessSession:
             f.write('{"type": "user", "message": {"content": "test"}}')  # No \n
 
         processor.register_session("session-1", str(transcript))
-        processor.message_manager = AsyncMock()
-        processor.message_manager.get_state = AsyncMock(return_value=None)
-        processor.message_manager.store_messages = AsyncMock()
-        processor.message_manager.update_state = AsyncMock()
-
         await processor._process_session("session-1", str(transcript))
 
-        # Should not store any messages (line is incomplete)
-        processor.message_manager.store_messages.assert_not_called()
-        assert processor.message_manager.store_messages.call_count == 0
-        assert not processor.message_manager.store_messages.called
+        assert processor._byte_offsets.get("session-1", 0) == 0
+        assert "session-1" not in processor._stats
 
     @pytest.mark.asyncio
-    async def test_flush_session_processes_unterminated_final_line(self, processor, tmp_path):
+    async def test_flush_session_processes_unterminated_final_line(
+        self, processor: SessionMessageProcessor, tmp_path: Path
+    ) -> None:
         transcript = tmp_path / "transcript.jsonl"
         transcript.write_text(_codex_response_message("user", "test").rstrip("\n"))
         processor.register_session("session-1", str(transcript), source="codex")
@@ -542,35 +561,45 @@ class TestProcessSession:
         assert processor._byte_offsets["session-1"] == transcript.stat().st_size
 
     @pytest.mark.asyncio
-    async def test_flush_session_reports_unregistered_session(self, processor):
-        processor._process_session = AsyncMock()
-
-        result = await processor.flush_session("unknown-session")
+    async def test_flush_session_reports_unregistered_session(
+        self, processor: SessionMessageProcessor
+    ) -> None:
+        with patch.object(processor, "_process_session", new_callable=AsyncMock) as process_session:
+            result = await processor.flush_session("unknown-session")
 
         assert result.flushed is False
         assert result.error == "session is not registered"
-        processor._process_session.assert_not_awaited()
+        process_session.assert_not_awaited()
 
     @pytest.mark.asyncio
-    async def test_flush_session_contains_processing_errors(self, processor, tmp_path, caplog):
+    async def test_flush_session_contains_processing_errors(
+        self,
+        processor: SessionMessageProcessor,
+        tmp_path: Path,
+        caplog: pytest.LogCaptureFixture,
+    ) -> None:
         transcript = tmp_path / "transcript.jsonl"
         transcript.touch()
         processor.register_session("session-1", str(transcript))
-        processor._process_session = AsyncMock(side_effect=RuntimeError("boom"))
-
-        with caplog.at_level("ERROR"):
+        with (
+            patch.object(
+                processor,
+                "_process_session",
+                new_callable=AsyncMock,
+                side_effect=RuntimeError("boom"),
+            ) as process_session,
+            caplog.at_level("ERROR"),
+        ):
             result = await processor.flush_session("session-1")
 
         assert result.flushed is False
         assert result.error == "boom"
-        processor._process_session.assert_awaited_once_with(
-            "session-1", str(transcript), at_eof=True
-        )
+        process_session.assert_awaited_once_with("session-1", str(transcript), at_eof=True)
         assert "Failed to flush session transcript" in caplog.text
 
     @pytest.mark.asyncio
     async def test_concurrent_poll_and_flush_do_not_double_process_jsonl(
-        self, processor, tmp_path
+        self, processor: SessionMessageProcessor, tmp_path: Path
     ) -> None:
         transcript = tmp_path / "transcript.jsonl"
         transcript.write_text(_codex_response_message("user", "test"))
@@ -592,15 +621,14 @@ class TestProcessSession:
             await asyncio.wait_for(release_batch.wait(), timeout=1)
             return await original_process_batch(session_id, messages)
 
-        processor._process_parsed_batch = blocked_process_batch
-
-        async with asyncio.TaskGroup() as tasks:
-            poll_task = tasks.create_task(processor._process_all_sessions())
-            await asyncio.wait_for(batch_entered.wait(), timeout=1)
-            flush_task = tasks.create_task(processor.flush_session("session-1"))
-            with pytest.raises(TimeoutError):
-                await asyncio.wait_for(second_batch_entered.wait(), timeout=0.05)
-            release_batch.set()
+        with patch.object(processor, "_process_parsed_batch", side_effect=blocked_process_batch):
+            async with asyncio.TaskGroup() as tasks:
+                poll_task = tasks.create_task(processor._process_all_sessions())
+                await asyncio.wait_for(batch_entered.wait(), timeout=1)
+                flush_task = tasks.create_task(processor.flush_session("session-1"))
+                with pytest.raises(TimeoutError):
+                    await asyncio.wait_for(second_batch_entered.wait(), timeout=0.05)
+                release_batch.set()
 
         assert poll_task.result() is None
         assert flush_task.result().flushed is True
@@ -611,7 +639,7 @@ class TestProcessSession:
 
     @pytest.mark.asyncio
     async def test_qwen_json_processes_appended_envelopes_incrementally(
-        self, processor, tmp_path
+        self, processor: SessionMessageProcessor, tmp_path: Path
     ) -> None:
         transcript = tmp_path / "session.json"
         first = json.dumps(
@@ -654,7 +682,7 @@ class TestProcessSession:
 
     @pytest.mark.asyncio
     async def test_concurrent_poll_and_flush_do_not_double_process_json(
-        self, processor, tmp_path
+        self, processor: SessionMessageProcessor, tmp_path: Path
     ) -> None:
         transcript = tmp_path / "session.json"
         transcript.write_text(
@@ -686,15 +714,14 @@ class TestProcessSession:
             await asyncio.wait_for(release_batch.wait(), timeout=1)
             return await original_process_batch(session_id, messages)
 
-        processor._process_parsed_batch = blocked_process_batch
-
-        async with asyncio.TaskGroup() as tasks:
-            poll_task = tasks.create_task(processor._process_all_sessions())
-            await asyncio.wait_for(batch_entered.wait(), timeout=1)
-            flush_task = tasks.create_task(processor.flush_session("session-1"))
-            with pytest.raises(TimeoutError):
-                await asyncio.wait_for(second_batch_entered.wait(), timeout=0.05)
-            release_batch.set()
+        with patch.object(processor, "_process_parsed_batch", side_effect=blocked_process_batch):
+            async with asyncio.TaskGroup() as tasks:
+                poll_task = tasks.create_task(processor._process_all_sessions())
+                await asyncio.wait_for(batch_entered.wait(), timeout=1)
+                flush_task = tasks.create_task(processor.flush_session("session-1"))
+                with pytest.raises(TimeoutError):
+                    await asyncio.wait_for(second_batch_entered.wait(), timeout=0.05)
+                release_batch.set()
 
         assert poll_task.result() is None
         assert flush_task.result().flushed is True
@@ -704,7 +731,7 @@ class TestProcessSession:
 
     @pytest.mark.asyncio
     async def test_unregister_during_processing_does_not_resurrect_state(
-        self, processor, tmp_path
+        self, processor: SessionMessageProcessor, tmp_path: Path
     ) -> None:
         transcript = tmp_path / "transcript.jsonl"
         transcript.write_text(_codex_response_message("user", "test"))
@@ -720,13 +747,12 @@ class TestProcessSession:
             await asyncio.wait_for(release_batch.wait(), timeout=1)
             return await original_process_batch(session_id, messages)
 
-        processor._process_parsed_batch = blocked_process_batch
-
-        processing_task = asyncio.create_task(processor._process_all_sessions())
-        await asyncio.wait_for(batch_entered.wait(), timeout=1)
-        processor.unregister_session("session-1")
-        release_batch.set()
-        await asyncio.wait_for(processing_task, timeout=1)
+        with patch.object(processor, "_process_parsed_batch", side_effect=blocked_process_batch):
+            processing_task = asyncio.create_task(processor._process_all_sessions())
+            await asyncio.wait_for(batch_entered.wait(), timeout=1)
+            processor.unregister_session("session-1")
+            release_batch.set()
+            await asyncio.wait_for(processing_task, timeout=1)
 
         state_maps = (
             processor._active_sessions,
@@ -741,25 +767,23 @@ class TestProcessSession:
         assert all("session-1" not in state for state in state_maps)
 
     @pytest.mark.asyncio
-    async def test_process_session_no_new_lines(self, processor, tmp_path):
+    async def test_process_session_no_new_lines(
+        self, processor: SessionMessageProcessor, tmp_path: Path
+    ) -> None:
         """Should return early when no new lines to process."""
         transcript = tmp_path / "transcript.jsonl"
         transcript.touch()  # Empty file
 
         processor.register_session("session-1", str(transcript))
-        processor.message_manager = AsyncMock()
-        processor.message_manager.get_state = AsyncMock(return_value=None)
-        processor.message_manager.store_messages = AsyncMock()
-
         await processor._process_session("session-1", str(transcript))
 
-        # Should not call store_messages
-        processor.message_manager.store_messages.assert_not_called()
-        assert processor.message_manager.store_messages.call_count == 0
-        assert not processor.message_manager.store_messages.called
+        assert processor._byte_offsets.get("session-1", 0) == 0
+        assert "session-1" not in processor._stats
 
     @pytest.mark.asyncio
-    async def test_process_session_no_parsed_messages(self, processor, tmp_path):
+    async def test_process_session_no_parsed_messages(
+        self, processor: SessionMessageProcessor, tmp_path: Path
+    ) -> None:
         """Should update byte offset even when parser returns no messages."""
         transcript = tmp_path / "transcript.jsonl"
         # Write a line that will be parsed but might not produce a message
@@ -822,8 +846,6 @@ class TestProcessSession:
             session_manager=session_manager,
             run_db=run_db,
         )
-        processor._persist_usage_events = AsyncMock()
-        processor._render_and_broadcast_messages = AsyncMock()
         message = ParsedMessage(
             index=0,
             role="user",
@@ -836,7 +858,11 @@ class TestProcessSession:
             raw_json={},
         )
 
-        await processor._process_parsed_batch("session-1", [message])
+        with (
+            patch.object(processor, "_persist_usage_events", new_callable=AsyncMock),
+            patch.object(processor, "_render_and_broadcast_messages", new_callable=AsyncMock),
+        ):
+            await processor._process_parsed_batch("session-1", [message])
 
         assert processor._accumulate_stats in db_calls
         assert session_manager.touch in db_calls
@@ -875,7 +901,9 @@ class TestProcessSession:
         assert db_calls == ["render_incremental"]
 
     @pytest.mark.asyncio
-    async def test_process_session_advances_past_malformed_timestamp(self, processor, tmp_path):
+    async def test_process_session_advances_past_malformed_timestamp(
+        self, processor: SessionMessageProcessor, tmp_path: Path
+    ) -> None:
         transcript = tmp_path / "transcript.jsonl"
         transcript.write_text(
             json.dumps(
@@ -897,7 +925,9 @@ class TestProcessSession:
         assert processor._stats["session-1"] == first_stats
 
     @pytest.mark.asyncio
-    async def test_process_session_with_existing_state(self, processor, tmp_path):
+    async def test_process_session_with_existing_state(
+        self, processor: SessionMessageProcessor, tmp_path: Path
+    ) -> None:
         """Should resume from last byte offset."""
         transcript = tmp_path / "transcript.jsonl"
         msg1 = '{"type": "user", "message": {"content": "msg1"}, "timestamp": "2024-01-01T10:00:00Z"}\n'
@@ -938,7 +968,7 @@ class TestProcessSession:
 
     @pytest.mark.asyncio
     async def test_process_session_resets_state_when_transcript_shrinks(
-        self, processor, tmp_path
+        self, processor: SessionMessageProcessor, tmp_path: Path
     ) -> None:
         transcript = tmp_path / "shrinking.jsonl"
         transcript.write_text(
@@ -973,7 +1003,7 @@ class TestProcessSession:
 
     @pytest.mark.asyncio
     async def test_process_session_resets_sidecar_when_transcript_is_replaced(
-        self, processor, tmp_path
+        self, processor: SessionMessageProcessor, tmp_path: Path
     ) -> None:
         transcript = tmp_path / "replaced.jsonl"
         transcript.write_text(_codex_response_message("user", "old"), encoding="utf-8")
@@ -1008,7 +1038,7 @@ class TestProcessSession:
 
     @pytest.mark.asyncio
     async def test_process_session_records_plain_transcript_observations(
-        self, processor, tmp_path
+        self, processor: SessionMessageProcessor, tmp_path: Path
     ) -> None:
         transcript = tmp_path / "transcript.jsonl"
         line = (
@@ -1032,11 +1062,12 @@ class TestProcessSession:
         mock_parser = MagicMock()
         mock_parser.parse_lines = MagicMock(return_value=[parsed_msg])
         processor._parsers["session-1"] = mock_parser
-        processor._render_and_broadcast_messages = AsyncMock()
+        with patch.object(
+            processor, "_render_and_broadcast_messages", new_callable=AsyncMock
+        ) as render_messages:
+            await processor._process_session("session-1", str(transcript))
 
-        await processor._process_session("session-1", str(transcript))
-
-        processor._render_and_broadcast_messages.assert_awaited_once_with(
+        render_messages.assert_awaited_once_with(
             "session-1",
             [parsed_msg],
             record_observations=True,
@@ -1051,9 +1082,10 @@ class TestProcessSession:
     )
     async def test_process_session_retries_failed_batch_without_desync(
         self,
-        processor,
-        tmp_path,
+        processor: SessionMessageProcessor,
+        tmp_path: Path,
         failure_method: str,
+        request: pytest.FixtureRequest,
     ) -> None:
         transcript = tmp_path / "transcript.jsonl"
         first_line = '{"type": "unknown", "value": 1}\n'
@@ -1083,9 +1115,19 @@ class TestProcessSession:
         parser = MagicMock()
         parser.parse_lines.side_effect = parse_lines
         processor._parsers["session-1"] = parser
-        processor._persist_usage_events = AsyncMock()
-        processor._render_and_broadcast_messages = AsyncMock()
-        failed_call = getattr(processor, failure_method)
+        persist_patcher = patch.object(processor, "_persist_usage_events", new_callable=AsyncMock)
+        render_patcher = patch.object(
+            processor, "_render_and_broadcast_messages", new_callable=AsyncMock
+        )
+        persist_usage_events: AsyncMock = persist_patcher.start()
+        render_messages: AsyncMock = render_patcher.start()
+        request.addfinalizer(render_patcher.stop)
+        request.addfinalizer(persist_patcher.stop)
+        patched_calls = {
+            "_persist_usage_events": persist_usage_events,
+            "_render_and_broadcast_messages": render_messages,
+        }
+        failed_call = patched_calls[failure_method]
         failed_call.side_effect = RuntimeError("mid-batch failure")
 
         with pytest.raises(RuntimeError, match="mid-batch failure"):
@@ -1114,7 +1156,7 @@ class TestProcessSession:
             0,
             2,
         ]
-        persisted_batches = processor._persist_usage_events.await_args_list[-2:]
+        persisted_batches = persist_usage_events.await_args_list[-2:]
         assert [[message.index for message in call.args[1]] for call in persisted_batches] == [
             [0, 1],
             [2],
@@ -1123,7 +1165,9 @@ class TestProcessSession:
         assert processor._stats["session-1"]["message_count"] == 3
 
     @pytest.mark.asyncio
-    async def test_render_failure_does_not_commit_render_state(self, processor) -> None:
+    async def test_render_failure_does_not_commit_render_state(
+        self, processor: SessionMessageProcessor
+    ) -> None:
         message = ParsedMessage(
             index=0,
             role="user",
@@ -1136,17 +1180,19 @@ class TestProcessSession:
             raw_json={},
         )
         processor.websocket_server = MagicMock()
-        processor._broadcast_rendered_session_message = AsyncMock(
-            side_effect=RuntimeError("broadcast failed")
-        )
+        with patch.object(
+            processor,
+            "_broadcast_rendered_session_message",
+            new_callable=AsyncMock,
+            side_effect=RuntimeError("broadcast failed"),
+        ) as broadcast_message:
+            with pytest.raises(RuntimeError, match="broadcast failed"):
+                await processor._render_and_broadcast_messages("session-1", [message])
 
-        with pytest.raises(RuntimeError, match="broadcast failed"):
+            assert "session-1" not in processor._render_states
+
+            broadcast_message.side_effect = None
             await processor._render_and_broadcast_messages("session-1", [message])
-
-        assert "session-1" not in processor._render_states
-
-        processor._broadcast_rendered_session_message.side_effect = None
-        await processor._render_and_broadcast_messages("session-1", [message])
 
         assert "session-1" in processor._render_states
 
@@ -1155,7 +1201,9 @@ class TestWebSocketBroadcast:
     """Tests for WebSocket broadcasting functionality."""
 
     @pytest.mark.asyncio
-    async def test_broadcast_messages_to_websocket(self, mock_db, tmp_path):
+    async def test_broadcast_messages_to_websocket(
+        self, mock_db: MagicMock, tmp_path: Path
+    ) -> None:
         """Should broadcast parsed messages to WebSocket server."""
         mock_ws_server = MagicMock()
         mock_ws_server.broadcast = AsyncMock()
@@ -1167,12 +1215,6 @@ class TestWebSocketBroadcast:
         )
 
         processor.register_session("session-1", str(transcript))
-
-        # Mock message manager
-        processor.message_manager = AsyncMock()
-        processor.message_manager.get_state = AsyncMock(return_value=None)
-        processor.message_manager.store_messages = AsyncMock()
-        processor.message_manager.update_state = AsyncMock()
 
         # Mock parser
         timestamp = datetime(2024, 1, 1, 10, 0, 0)
@@ -1202,7 +1244,9 @@ class TestWebSocketBroadcast:
         assert call_args["message"]["role"] == "user"
 
     @pytest.mark.asyncio
-    async def test_tts_feed_failure_does_not_block_websocket_broadcast(self, mock_db, tmp_path):
+    async def test_tts_feed_failure_does_not_block_websocket_broadcast(
+        self, mock_db: MagicMock, tmp_path: Path
+    ) -> None:
         """Attached TTS failures should not stop transcript message broadcasts."""
         mock_ws_server = MagicMock()
         mock_ws_server.broadcast = AsyncMock()
@@ -1242,7 +1286,9 @@ class TestWebSocketBroadcast:
         inc_counter.assert_called_once_with("tts_feed_failures_total")
 
     @pytest.mark.asyncio
-    async def test_no_broadcast_without_websocket_server(self, mock_db, tmp_path):
+    async def test_no_broadcast_without_websocket_server(
+        self, mock_db: MagicMock, tmp_path: Path
+    ) -> None:
         """Should skip broadcast when no WebSocket server is configured."""
         processor = SessionMessageProcessor(mock_db, websocket_server=None)
         transcript = tmp_path / "transcript.jsonl"
@@ -1280,7 +1326,9 @@ class TestMultipleMessages:
     """Tests for processing multiple messages."""
 
     @pytest.mark.asyncio
-    async def test_process_multiple_messages_updates_last_index(self, mock_db, tmp_path):
+    async def test_process_multiple_messages_updates_last_index(
+        self, mock_db: MagicMock, tmp_path: Path
+    ) -> None:
         """Should update in-memory state with the last message index."""
         processor = SessionMessageProcessor(mock_db)
         transcript = tmp_path / "transcript.jsonl"
@@ -1323,7 +1371,7 @@ class TestModelExtraction:
     """Tests for extracting and storing model from parsed messages."""
 
     @pytest.mark.asyncio
-    async def test_process_session_captures_model(self, mock_db, tmp_path) -> None:
+    async def test_process_session_captures_model(self, mock_db: MagicMock, tmp_path: Path) -> None:
         """Should extract model from parsed messages and update session."""
         mock_session_manager = MagicMock()
         mock_session_manager.update_model = MagicMock()
@@ -1335,12 +1383,6 @@ class TestModelExtraction:
         )
 
         processor.register_session("session-1", str(transcript))
-
-        # Mock message manager
-        processor.message_manager = AsyncMock()
-        processor.message_manager.get_state = AsyncMock(return_value=None)
-        processor.message_manager.store_messages = AsyncMock()
-        processor.message_manager.update_state = AsyncMock()
 
         # Create a parsed message with model
         parsed_msg = ParsedMessage(
@@ -1370,11 +1412,11 @@ class TestModelExtraction:
 
     @pytest.mark.asyncio
     async def test_live_claude_usage_preserves_one_million_session_model(
-        self, mock_db, monkeypatch
+        self, mock_db: MagicMock, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         class FakeTokenEventStore:
             def __init__(self, _db: object) -> None:
-                self.records: list[object] = []
+                self.records: list[TokenEvent] = []
 
             def get_session_totals(self, _session_id: str) -> dict[str, int]:
                 return {
@@ -1384,7 +1426,7 @@ class TestModelExtraction:
                     "cache_read_tokens": 0,
                 }
 
-            def record(self, event: object) -> bool:
+            def record(self, event: TokenEvent) -> bool:
                 self.records.append(event)
                 return True
 
@@ -1442,13 +1484,16 @@ class TestModelExtraction:
 
     @pytest.mark.asyncio
     async def test_process_session_persists_codex_token_usage(
-        self, mock_db, tmp_path, monkeypatch
+        self,
+        mock_db: MagicMock,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
     ) -> None:
         """Codex token_count records should update the context pie source fields."""
 
         class FakeTokenEventStore:
             def __init__(self, _db: object) -> None:
-                self.records: list[object] = []
+                self.records: list[TokenEvent] = []
 
             def get_session_totals(self, _session_id: str) -> dict[str, int]:
                 return {
@@ -1458,7 +1503,7 @@ class TestModelExtraction:
                     "cache_read_tokens": 0,
                 }
 
-            def record(self, event: object) -> bool:
+            def record(self, event: TokenEvent) -> bool:
                 self.records.append(event)
                 return True
 
@@ -1545,7 +1590,7 @@ class TestModelExtraction:
 
     @pytest.mark.asyncio
     async def test_duplicate_token_usage_refreshes_session_without_token_broadcast(
-        self, mock_db, monkeypatch
+        self, mock_db: MagicMock, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         """Duplicate token events still refresh session totals and context snapshots."""
 
@@ -1561,7 +1606,7 @@ class TestModelExtraction:
                     "cache_read_tokens": 93568,
                 }
 
-            def record(self, _event: object) -> bool:
+            def record(self, _event: TokenEvent) -> bool:
                 return False
 
         monkeypatch.setattr(
@@ -1626,7 +1671,7 @@ class TestModelExtraction:
     @pytest.mark.asyncio
     async def test_persist_usage_events_ignores_session_lookup_db_errors(
         self,
-        mock_db,
+        mock_db: MagicMock,
         caplog: pytest.LogCaptureFixture,
     ) -> None:
         mock_session_manager = MagicMock()
@@ -1671,7 +1716,7 @@ class TestModelExtraction:
                     "cache_read_tokens": 0,
                 }
 
-            def record(self, _event: object) -> bool:
+            def record(self, _event: TokenEvent) -> bool:
                 return True
 
         db_calls: list[object] = []
@@ -1693,7 +1738,6 @@ class TestModelExtraction:
             session_manager=session_manager,
             run_db=run_db,
         )
-        processor._new_token_event_store = MagicMock(return_value=store)
         message = ParsedMessage(
             index=0,
             role="assistant",
@@ -1708,7 +1752,8 @@ class TestModelExtraction:
             model="gpt-5",
         )
 
-        await processor._persist_usage_events("session-1", [message])
+        with patch.object(processor, "_new_token_event_store", return_value=store):
+            await processor._persist_usage_events("session-1", [message])
 
         assert session_manager.get in db_calls
         assert store.get_session_totals in db_calls
@@ -1719,9 +1764,9 @@ class TestModelExtraction:
     @pytest.mark.asyncio
     async def test_process_session_records_grok_window_only_snapshot(
         self,
-        mock_db,
-        tmp_path,
-        monkeypatch,
+        mock_db: MagicMock,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
     ) -> None:
         """Window-only providers should update normalized metadata without token events."""
 
@@ -1737,7 +1782,7 @@ class TestModelExtraction:
                     "cache_read_tokens": 0,
                 }
 
-            def record(self, _event: object) -> bool:
+            def record(self, _event: TokenEvent) -> bool:
                 raise AssertionError("window-only snapshots must not write token events")
 
         monkeypatch.setattr(
@@ -1797,9 +1842,9 @@ class TestModelExtraction:
     @pytest.mark.asyncio
     async def test_process_session_records_grok_token_snapshot(
         self,
-        mock_db,
-        tmp_path,
-        monkeypatch,
+        mock_db: MagicMock,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
     ) -> None:
         """Grok messages with real usage select snapshot_from_token_usage, not window-only."""
 
@@ -1815,7 +1860,7 @@ class TestModelExtraction:
                     "cache_read_tokens": 0,
                 }
 
-            def record(self, _event: object) -> bool:
+            def record(self, _event: TokenEvent) -> bool:
                 return True
 
         monkeypatch.setattr(
@@ -1887,7 +1932,9 @@ class TestModelExtraction:
         assert snapshot.confidence == "reported"
 
     @pytest.mark.asyncio
-    async def test_process_session_skips_model_update_when_none(self, mock_db, tmp_path) -> None:
+    async def test_process_session_skips_model_update_when_none(
+        self, mock_db: MagicMock, tmp_path: Path
+    ) -> None:
         """Should not update model when parsed message has no model."""
         mock_session_manager = MagicMock()
         mock_session_manager.update_model = MagicMock()
@@ -1899,12 +1946,6 @@ class TestModelExtraction:
         )
 
         processor.register_session("session-1", str(transcript))
-
-        # Mock message manager
-        processor.message_manager = AsyncMock()
-        processor.message_manager.get_state = AsyncMock(return_value=None)
-        processor.message_manager.store_messages = AsyncMock()
-        processor.message_manager.update_state = AsyncMock()
 
         # Create a parsed message without model
         parsed_msg = ParsedMessage(
@@ -1934,17 +1975,17 @@ class TestModelExtraction:
 class TestInitialization:
     """Tests for processor initialization."""
 
-    def test_default_poll_interval(self, mock_db) -> None:
+    def test_default_poll_interval(self, mock_db: MagicMock) -> None:
         """Should use default poll interval of 2.0 seconds."""
         processor = SessionMessageProcessor(mock_db)
         assert processor.poll_interval == 2.0
 
-    def test_custom_poll_interval(self, mock_db) -> None:
+    def test_custom_poll_interval(self, mock_db: MagicMock) -> None:
         """Should accept custom poll interval."""
         processor = SessionMessageProcessor(mock_db, poll_interval=5.0)
         assert processor.poll_interval == 5.0
 
-    def test_initial_state(self, mock_db) -> None:
+    def test_initial_state(self, mock_db: MagicMock) -> None:
         """Should initialize with empty state."""
         processor = SessionMessageProcessor(mock_db)
         assert processor._active_sessions == {}
@@ -1952,7 +1993,7 @@ class TestInitialization:
         assert processor._running is False
         assert processor._task is None
 
-    def test_websocket_server_optional(self, mock_db) -> None:
+    def test_websocket_server_optional(self, mock_db: MagicMock) -> None:
         """Should accept optional WebSocket server."""
         mock_ws = MagicMock()
         processor = SessionMessageProcessor(mock_db, websocket_server=mock_ws)
@@ -1962,7 +2003,7 @@ class TestInitialization:
         assert processor_no_ws.websocket_server is None
 
 
-def _codex_event_msg(payload_type: str, **payload_extra) -> str:
+def _codex_event_msg(payload_type: str, **payload_extra: Any) -> str:
     """Build a Codex event_msg envelope line."""
     payload = {"type": payload_type, **payload_extra}
     return (
@@ -1982,7 +2023,7 @@ class TestCodexMcpTranscriptProcessing:
 
     @pytest.mark.asyncio
     async def test_mcp_begin_and_end_do_not_dispatch_workflow_hooks(
-        self, mock_db, tmp_path
+        self, mock_db: MagicMock, tmp_path: Path
     ) -> None:
         hook_manager = MagicMock()
         processor = SessionMessageProcessor(mock_db, hook_manager=hook_manager)
@@ -2017,7 +2058,7 @@ class TestCodexMcpTranscriptProcessing:
 
     @pytest.mark.asyncio
     async def test_byte_offset_prevents_reprocessing_mcp_lifecycle_lines(
-        self, mock_db, tmp_path
+        self, mock_db: MagicMock, tmp_path: Path
     ) -> None:
         hook_manager = MagicMock()
         processor = SessionMessageProcessor(mock_db, hook_manager=hook_manager)
@@ -2044,7 +2085,7 @@ class TestCodexMcpTranscriptProcessing:
 
     @pytest.mark.asyncio
     async def test_registration_survives_missing_transcript_then_picks_up(
-        self, mock_db, tmp_path
+        self, mock_db: MagicMock, tmp_path: Path
     ) -> None:
         """Codex writes its rollout slightly after session_start fires."""
         hook_manager = MagicMock()
@@ -2077,7 +2118,9 @@ class TestCodexMcpTranscriptProcessing:
         assert processor._byte_offsets["sid"] == transcript.stat().st_size
 
     @pytest.mark.asyncio
-    async def test_mcp_end_error_does_not_dispatch_workflow_hooks(self, mock_db, tmp_path) -> None:
+    async def test_mcp_end_error_does_not_dispatch_workflow_hooks(
+        self, mock_db: MagicMock, tmp_path: Path
+    ) -> None:
         hook_manager = MagicMock()
         processor = SessionMessageProcessor(mock_db, hook_manager=hook_manager)
 
@@ -2140,7 +2183,7 @@ class TestExtractNativeTitles:
             raw_json={},
         )
 
-    def test_extracts_title_and_returns_non_title_messages(self, mock_db) -> None:
+    def test_extracts_title_and_returns_non_title_messages(self, mock_db: MagicMock) -> None:
         processor = SessionMessageProcessor(mock_db)
         session_manager = MagicMock()
         session = MagicMock()
@@ -2161,7 +2204,7 @@ class TestExtractNativeTitles:
             "sid", "Fix auth bug", title_source="native"
         )
 
-    def test_claude_title_slug_dashes_become_spaces(self, mock_db) -> None:
+    def test_claude_title_slug_dashes_become_spaces(self, mock_db: MagicMock) -> None:
         processor = SessionMessageProcessor(mock_db)
         session_manager = MagicMock()
         session = MagicMock()
@@ -2183,7 +2226,7 @@ class TestExtractNativeTitles:
             "sid", "check gobby logs for tmux warnings", title_source="native"
         )
 
-    def test_title_without_message_source_uses_parser_source(self, mock_db) -> None:
+    def test_title_without_message_source_uses_parser_source(self, mock_db: MagicMock) -> None:
         processor = SessionMessageProcessor(mock_db)
         session_manager = MagicMock()
         session = MagicMock()
@@ -2203,7 +2246,7 @@ class TestExtractNativeTitles:
             "sid", "check gobby logs for tmux warnings", title_source="native"
         )
 
-    def test_skips_when_session_manager_is_none(self, mock_db) -> None:
+    def test_skips_when_session_manager_is_none(self, mock_db: MagicMock) -> None:
         processor = SessionMessageProcessor(mock_db)
         processor.session_manager = None
 
@@ -2212,7 +2255,7 @@ class TestExtractNativeTitles:
 
         assert len(result) == 0
 
-    def test_skips_when_title_is_manual(self, mock_db) -> None:
+    def test_skips_when_title_is_manual(self, mock_db: MagicMock) -> None:
         processor = SessionMessageProcessor(mock_db)
         session_manager = MagicMock()
         session = MagicMock()
@@ -2227,7 +2270,7 @@ class TestExtractNativeTitles:
         assert len(result) == 0
         session_manager.update_title.assert_not_called()
 
-    def test_skips_when_title_is_llm(self, mock_db) -> None:
+    def test_skips_when_title_is_llm(self, mock_db: MagicMock) -> None:
         processor = SessionMessageProcessor(mock_db)
         session_manager = MagicMock()
         session = MagicMock()
@@ -2242,7 +2285,7 @@ class TestExtractNativeTitles:
         assert len(result) == 0
         session_manager.update_title.assert_not_called()
 
-    def test_rejects_garbage_native_title(self, mock_db) -> None:
+    def test_rejects_garbage_native_title(self, mock_db: MagicMock) -> None:
         """Droid sessionTitle that's a response dump is rejected by normalize_native_title."""
         processor = SessionMessageProcessor(mock_db)
         session_manager = MagicMock()
@@ -2259,7 +2302,7 @@ class TestExtractNativeTitles:
         assert len(result) == 0
         session_manager.update_title.assert_not_called()
 
-    def test_no_title_messages_returns_unchanged(self, mock_db) -> None:
+    def test_no_title_messages_returns_unchanged(self, mock_db: MagicMock) -> None:
         processor = SessionMessageProcessor(mock_db)
         processor.session_manager = MagicMock()
 
@@ -2268,12 +2311,12 @@ class TestExtractNativeTitles:
 
         assert result == messages
 
-    def test_empty_messages_returns_empty(self, mock_db) -> None:
+    def test_empty_messages_returns_empty(self, mock_db: MagicMock) -> None:
         processor = SessionMessageProcessor(mock_db)
         result = processor._extract_native_titles("sid", [])
         assert result == []
 
-    def test_latest_title_wins_for_multiple_title_messages(self, mock_db) -> None:
+    def test_latest_title_wins_for_multiple_title_messages(self, mock_db: MagicMock) -> None:
         """Claude may emit multiple ai-title updates; the last one wins."""
         processor = SessionMessageProcessor(mock_db)
         session_manager = MagicMock()
@@ -2295,7 +2338,9 @@ class TestExtractNativeTitles:
         )
 
     @pytest.mark.asyncio
-    async def test_native_title_db_error_preserves_retry_state(self, mock_db, tmp_path) -> None:
+    async def test_native_title_db_error_preserves_retry_state(
+        self, mock_db: MagicMock, tmp_path: Path
+    ) -> None:
         processor = SessionMessageProcessor(mock_db)
         transcript = tmp_path / "transcript.jsonl"
         line = (

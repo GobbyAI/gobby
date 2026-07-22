@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from types import SimpleNamespace
+from typing import cast
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -11,11 +12,17 @@ from fastapi.testclient import TestClient
 
 from gobby.config.ai import AIConfig, GenerationConfig, LocalGenerationConfig
 from gobby.config.app import DaemonConfig
+from gobby.servers.http import HTTPServer
 from gobby.servers.local_provider_models import LocalEndpointModelGroup
 from gobby.servers.provider_model_defaults import AGY_MODELS
 from gobby.servers.routes.providers import create_providers_router
 
 pytestmark = pytest.mark.unit
+
+
+def _server_stub(**services: object) -> HTTPServer:
+    services.setdefault("config", DaemonConfig())
+    return cast(HTTPServer, SimpleNamespace(services=SimpleNamespace(**services)))
 
 
 @pytest.fixture
@@ -101,11 +108,7 @@ class TestProviderRoutes:
             if provider == "qwen"
             else None,
         )
-        server = SimpleNamespace(
-            services=SimpleNamespace(
-                config=DaemonConfig(), web_chat_runtime_manager=runtime_manager
-            )
-        )
+        server = _server_stub(web_chat_runtime_manager=runtime_manager)
         app.include_router(create_providers_router(server))
         client = TestClient(app)
 
@@ -279,11 +282,7 @@ class TestProviderModelsRoute:
             available=False if provider == "codex" else True,
             startup_error="codex failed" if provider == "codex" else None,
         )
-        server = SimpleNamespace(
-            services=SimpleNamespace(
-                config=DaemonConfig(), web_chat_runtime_manager=runtime_manager
-            )
-        )
+        server = _server_stub(web_chat_runtime_manager=runtime_manager)
         app.include_router(create_providers_router(server))
         client = TestClient(app)
 
@@ -306,11 +305,7 @@ class TestProviderModelsRoute:
             if provider == "grok"
             else None,
         )
-        server = SimpleNamespace(
-            services=SimpleNamespace(
-                config=DaemonConfig(), web_chat_runtime_manager=runtime_manager
-            )
-        )
+        server = _server_stub(web_chat_runtime_manager=runtime_manager)
         app.include_router(create_providers_router(server))
         client = TestClient(app)
 
@@ -340,12 +335,7 @@ class TestProviderModelsRoute:
                 else [{"value": f"{provider}-model", "label": f"{provider}-label"}]
             ),
         }
-        server = SimpleNamespace(
-            services=SimpleNamespace(
-                config=DaemonConfig(),
-                provider_model_catalog=provider_model_catalog,
-            )
-        )
+        server = _server_stub(provider_model_catalog=provider_model_catalog)
         app.include_router(create_providers_router(server))
         client = TestClient(app)
 
@@ -376,12 +366,7 @@ class TestProviderModelsRoute:
             "source": "live",
             "models": [{"value": "gemini-3.5-flash"}] if provider == "droid" else [],
         }
-        server = SimpleNamespace(
-            services=SimpleNamespace(
-                config=DaemonConfig(),
-                provider_model_catalog=provider_model_catalog,
-            )
-        )
+        server = _server_stub(provider_model_catalog=provider_model_catalog)
         app.include_router(create_providers_router(server))
         client = TestClient(app)
 
@@ -405,12 +390,7 @@ class TestProviderModelsRoute:
             "source": "failed",
             "models": [],
         }
-        server = SimpleNamespace(
-            services=SimpleNamespace(
-                config=DaemonConfig(),
-                provider_model_catalog=provider_model_catalog,
-            )
-        )
+        server = _server_stub(provider_model_catalog=provider_model_catalog)
         app.include_router(create_providers_router(server))
         client = TestClient(app)
 
@@ -439,7 +419,7 @@ class TestProviderModelsRoute:
                 )
             ),
         )
-        server = SimpleNamespace(services=SimpleNamespace(config=config))
+        server = _server_stub(config=config)
         app.include_router(create_providers_router(server))
         client = TestClient(app)
 
@@ -505,7 +485,7 @@ class TestProviderModelsRoute:
                 )
             ),
         )
-        server = SimpleNamespace(services=SimpleNamespace(config=config))
+        server = _server_stub(config=config)
         app.include_router(create_providers_router(server))
         client = TestClient(app)
 
@@ -576,7 +556,7 @@ class TestProviderModelsRoute:
                 )
             ),
         )
-        server = SimpleNamespace(services=SimpleNamespace(config=config))
+        server = _server_stub(config=config)
         app.include_router(create_providers_router(server))
         client = TestClient(app)
 
@@ -632,7 +612,7 @@ class TestProviderModelsRoute:
                 )
             ),
         )
-        server = SimpleNamespace(services=SimpleNamespace(config=config))
+        server = _server_stub(config=config)
         app.include_router(create_providers_router(server))
         client = TestClient(app)
 
@@ -667,7 +647,7 @@ class TestProviderModelsRoute:
         """Provider model lists come from the catalog without daemon provider config."""
         app = FastAPI()
         config = DaemonConfig()
-        server = SimpleNamespace(services=SimpleNamespace(config=config))
+        server = _server_stub(config=config)
         app.include_router(create_providers_router(server))
         client = TestClient(app)
 
@@ -708,7 +688,7 @@ class TestProviderModelsRoute:
         """Codex model rows come from provider discovery/static catalog."""
         app = FastAPI()
         config = DaemonConfig()
-        server = SimpleNamespace(services=SimpleNamespace(config=config))
+        server = _server_stub(config=config)
         app.include_router(create_providers_router(server))
         client = TestClient(app)
 
@@ -721,7 +701,7 @@ class TestProviderModelsRoute:
         """Gemini-family models remain as Droid catalog model-family data."""
         app = FastAPI()
         config = DaemonConfig()
-        server = SimpleNamespace(services=SimpleNamespace(config=config))
+        server = _server_stub(config=config)
         app.include_router(create_providers_router(server))
         client = TestClient(app)
 
@@ -764,12 +744,7 @@ class TestProviderModelsRoute:
             }
 
         provider_model_catalog.get_provider_snapshot.side_effect = snapshot
-        server = SimpleNamespace(
-            services=SimpleNamespace(
-                config=DaemonConfig(),
-                provider_model_catalog=provider_model_catalog,
-            )
-        )
+        server = _server_stub(provider_model_catalog=provider_model_catalog)
         app.include_router(create_providers_router(server))
         client = TestClient(app)
 

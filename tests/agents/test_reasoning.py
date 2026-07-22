@@ -1,3 +1,5 @@
+from typing import cast
+
 import pytest
 
 import gobby.agents.reasoning as reasoning
@@ -198,7 +200,8 @@ def test_new_fallback_catalog_uses_no_arg_constructor(
 
     monkeypatch.setattr("gobby.servers.provider_models.ProviderModelCatalog", FakeCatalog)
 
-    assert reasoning._new_fallback_catalog().__class__ is FakeCatalog
+    catalog = cast(FakeCatalog, reasoning._new_fallback_catalog())
+    assert catalog.__class__ is FakeCatalog
     assert created_for == [None]
 
 
@@ -214,7 +217,8 @@ def test_new_fallback_catalog_supports_no_arg_constructor(
 
     monkeypatch.setattr("gobby.servers.provider_models.ProviderModelCatalog", FakeCatalog)
 
-    assert reasoning._new_fallback_catalog().__class__ is FakeCatalog
+    catalog = cast(FakeCatalog, reasoning._new_fallback_catalog())
+    assert catalog.__class__ is FakeCatalog
     assert created == 1
 
 

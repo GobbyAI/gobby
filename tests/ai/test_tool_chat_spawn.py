@@ -32,6 +32,7 @@ from gobby.ai._tool_chat_spawn import (
     parse_qwen_stream,
 )
 from gobby.ai._tool_chat_tools import ToolPolicyError
+from gobby.config.app import DaemonConfig
 
 pytestmark = pytest.mark.unit
 
@@ -884,15 +885,7 @@ async def test_acp_adapter_dispatches_to_grok(monkeypatch: pytest.MonkeyPatch) -
 
     monkeypatch.setattr(spawn, "_run_cli_text_generation_command", fake_run)
 
-    class FakeConfig:
-        class ai:
-            class generation:
-                timeout_seconds = 300.0
-
-                class local:
-                    endpoints = {}
-
-    adapter = ACPSpawnToolChatAdapter(FakeConfig())  # type: ignore[arg-type]
+    adapter = ACPSpawnToolChatAdapter(DaemonConfig())
     result = await adapter.chat(_request(), _grok_binding())
 
     assert result.text == "Grok narrative."
@@ -913,15 +906,7 @@ async def test_acp_adapter_dispatches_to_qwen(monkeypatch: pytest.MonkeyPatch) -
 
     monkeypatch.setattr(spawn, "_run_cli_text_generation_command", fake_run)
 
-    class FakeConfig:
-        class ai:
-            class generation:
-                timeout_seconds = 300.0
-
-                class local:
-                    endpoints = {}
-
-    adapter = ACPSpawnToolChatAdapter(FakeConfig())  # type: ignore[arg-type]
+    adapter = ACPSpawnToolChatAdapter(DaemonConfig())
     result = await adapter.chat(_request(), _qwen_binding())
 
     assert result.text == "Qwen narrative."
@@ -930,15 +915,7 @@ async def test_acp_adapter_dispatches_to_qwen(monkeypatch: pytest.MonkeyPatch) -
 
 @pytest.mark.asyncio
 async def test_acp_adapter_rejects_unknown_provider() -> None:
-    class FakeConfig:
-        class ai:
-            class generation:
-                timeout_seconds = 300.0
-
-                class local:
-                    endpoints = {}
-
-    adapter = ACPSpawnToolChatAdapter(FakeConfig())  # type: ignore[arg-type]
+    adapter = ACPSpawnToolChatAdapter(DaemonConfig())
     bad_binding = _binding(provider="unknown", style=AIAdapterStyle.ACP)
 
     with pytest.raises(ValueError, match="No ACP tool_chat adapter"):

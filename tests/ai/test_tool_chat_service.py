@@ -3,19 +3,26 @@
 from __future__ import annotations
 
 import asyncio
+from dataclasses import replace
+from typing import Any
 
 import pytest
 
 from gobby.ai import (
     AIAdapterStyle,
     AICapability,
+    AICapabilityRegistry,
     CapabilityBinding,
     CapabilityUnavailableError,
     build_daemon_ai_capability_registry,
     build_daemon_tool_chat_service,
 )
 from gobby.ai._text_generation_helpers import _CandidateTimeoutError
-from gobby.ai._tool_chat_builtins import BuiltinToolSpec
+from gobby.ai._tool_chat_builtins import (
+    BuiltinExecutionContext,
+    BuiltinToolResult,
+    BuiltinToolSpec,
+)
 from gobby.ai._tool_chat_contracts import ToolChatRequest, ToolChatResult, ToolPolicy
 from gobby.ai._tool_chat_service import ToolChatService
 from gobby.config.ai import AIConfig, GenerationConfig, LocalGenerationConfig
@@ -38,7 +45,7 @@ class _RecordingAdapter:
         return ToolChatResult(text=f"narrative::{self.label}", tool_use_count=2, turns=1)
 
 
-def _registry() -> object:
+def _registry() -> AICapabilityRegistry:
     return build_daemon_ai_capability_registry(
         DaemonConfig(
             ai=AIConfig(
@@ -72,14 +79,15 @@ def _service() -> tuple[ToolChatService, _RecordingAdapter, _RecordingAdapter]:
     return service, llm, openai
 
 
-def _request(**overrides: object) -> ToolChatRequest:
-    base: dict[str, object] = {
-        "prompt": "Document the auth module.",
-        "tool_policy": _POLICY,
-        "project_path": "/repo",
-    }
-    base.update(overrides)
-    return ToolChatRequest(**base)  # type: ignore[arg-type]
+def _request(**overrides: Any) -> ToolChatRequest:
+    return replace(
+        ToolChatRequest(
+            prompt="Document the auth module.",
+            tool_policy=_POLICY,
+            project_path="/repo",
+        ),
+        **overrides,
+    )
 
 
 @pytest.mark.asyncio
@@ -121,14 +129,16 @@ async def test_disallowed_adapter_style_is_capability_unavailable() -> None:
 async def test_builtins_on_spawn_style_binding_is_capability_unavailable() -> None:
     service, _, _ = _service()
 
-    async def handler(arguments: object, context: object) -> object:
+    async def handler(
+        arguments: dict[str, Any], context: BuiltinExecutionContext
+    ) -> BuiltinToolResult:
         raise AssertionError("builtin handler must never run on a spawn-style binding")
 
     builtin = BuiltinToolSpec(
         name="read_page",
         description="Read a page.",
         input_schema={"type": "object", "properties": {}, "additionalProperties": False},
-        handler=handler,  # type: ignore[arg-type]
+        handler=handler,
     )
 
     with pytest.raises(CapabilityUnavailableError, match="cannot execute builtin tools"):
