@@ -15,6 +15,7 @@ from gobby.agents.attention_metadata import AttentionMetadataStore
 from gobby.agents.idle_check_handler import IdleCheckHandler
 from gobby.agents.prompt_detector import PromptDetector
 from gobby.agents.stall_classifier import StallClassifier
+from gobby.agents.watchdog import WatchdogReaderRegistry
 from gobby.hooks.event_handlers import EventHandlers
 from gobby.hooks.events import HookEvent, HookEventType, SessionSource
 from gobby.servers.routes.attention import create_attention_router
@@ -248,6 +249,7 @@ async def test_idle_handler_sets_stall_and_dismissal_metadata(
         idle_detector=MagicMock(),
         prompt_detector=prompt_detector,
         stall_classifier=stall_classifier,
+        watchdog_readers=WatchdogReaderRegistry(),
         cleanup_handler=MagicMock(),
         tmux_config=config,
         attention_manager=attention_manager,

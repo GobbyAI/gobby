@@ -64,4 +64,4 @@ def test_idle_diagnostics_live_in_idle_check_handler() -> None:
     source = _idle_source()
 
     assert "class IdleCheckHandler" in source
-    assert "Codex idle diagnostic" in source
+    assert "Watchdog idle diagnostic" in source

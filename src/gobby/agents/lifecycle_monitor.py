@@ -29,6 +29,7 @@ from gobby.agents.stall_classifier import StallClassifier
 from gobby.agents.task_recovery import TaskRecoveryHandler
 from gobby.agents.terminal_prompt_monitor import TerminalPromptMonitor
 from gobby.agents.tmux.session_manager import TmuxSessionManager
+from gobby.agents.watchdog import WatchdogReaderRegistry
 from gobby.config.tmux import TmuxConfig
 from gobby.storage.tasks import TaskDispatchMutexManager
 from gobby.telemetry.instruments import inc_counter, observe_histogram
@@ -135,6 +136,7 @@ class AgentLifecycleMonitor:
         self._idle_detector = IdleDetector(detection_registry)
         self._prompt_detector = PromptDetector(detection_registry)
         self._stall_classifier = StallClassifier(detection_registry)
+        self._watchdog_readers = WatchdogReaderRegistry()
         self._loop_tracker = LoopTracker(threshold=3)
         # In-memory tracking for inherently non-persistable state
         self._master_fds: dict[str, int] = {}
@@ -216,6 +218,7 @@ class AgentLifecycleMonitor:
             attention_metadata_store=attention_metadata_store,
             prompt_detector=self._prompt_detector,
             stall_classifier=self._stall_classifier,
+            watchdog_readers=self._watchdog_readers,
         )
 
         self._checkpoint_manager = (

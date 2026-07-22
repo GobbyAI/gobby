@@ -12,6 +12,7 @@ from gobby.agents.idle_detector import IdleDetector
 from gobby.agents.lifecycle_monitor import AgentLifecycleMonitor
 from gobby.agents.prompt_detector import PromptDetector
 from gobby.agents.tmux import configure_tmux
+from gobby.agents.watchdog import WatchdogReaderRegistry
 from gobby.config.tmux import TmuxConfig as ConfiguredTmuxConfig
 from gobby.storage.agents import AgentRun, LocalAgentRunManager
 from gobby.storage.hub.protocol import HubDatabase
@@ -454,6 +455,7 @@ class TestRecoverTaskFromFailedAgent:
             idle_detector=idle_detector,
             prompt_detector=PromptDetector(DETECTION_REGISTRY, "codex"),
             stall_classifier=MagicMock(),
+            watchdog_readers=WatchdogReaderRegistry(),
             cleanup_handler=cleanup_handler,
             tmux_config=SimpleNamespace(
                 idle_timeout_seconds=60,

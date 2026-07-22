@@ -13,6 +13,7 @@ from gobby.agents.idle_check_handler import IdleCheckHandler
 from gobby.agents.prompt_detector import PromptDetector
 from gobby.agents.stall_classifier import StallClassifier
 from gobby.agents.tmux.pane_monitor import TmuxPaneMonitor
+from gobby.agents.watchdog import WatchdogReaderRegistry
 from gobby.storage.agents import AgentRun
 from gobby.storage.hub.protocol import HubDatabase
 
@@ -266,6 +267,7 @@ async def test_idle_handler_tracks_prompts_stalls_and_injection_clear(
         attention_manager=manager,
         prompt_detector=prompt_detector,
         stall_classifier=stall_classifier,
+        watchdog_readers=WatchdogReaderRegistry(),
     )
     run = _agent_run()
     approval = "Permission required: press Enter to approve this command"
@@ -332,6 +334,7 @@ async def test_idle_handler_checks_attention_without_waiting_for_idle(
         idle_detector=MagicMock(),
         prompt_detector=PromptDetector(DETECTION_REGISTRY, "claude"),
         stall_classifier=StallClassifier(DETECTION_REGISTRY, "claude"),
+        watchdog_readers=WatchdogReaderRegistry(),
         cleanup_handler=MagicMock(),
         tmux_config=config,
         run_db=run_db,

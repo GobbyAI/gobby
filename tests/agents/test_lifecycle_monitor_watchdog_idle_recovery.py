@@ -10,7 +10,6 @@ from unittest.mock import AsyncMock, call, patch
 import pytest
 
 from gobby.agents.detection.registry import DetectionManifestRegistry
-from gobby.agents.idle_check_handler import REASONING_WATCHDOG_CONTINUATION
 from gobby.agents.idle_detector import IdleDetector
 from gobby.agents.lifecycle_monitor import AgentLifecycleMonitor
 from gobby.config.tmux import TmuxConfig
@@ -84,39 +83,6 @@ def _write_codex_transcript(path: Path) -> None:
                     "call_id": "call_1",
                     "name": "apply_patch",
                     "input": "*** Begin Patch\n*** End Patch\n",
-                },
-            }
-        ),
-    ]
-    path.write_text("\n".join(lines) + "\n", encoding="utf-8")
-
-
-def _write_codex_reasoning_transcript(path: Path) -> None:
-    lines = [
-        json.dumps(
-            {
-                "timestamp": "2026-04-25T03:48:20.004Z",
-                "type": "response_item",
-                "payload": {
-                    "type": "custom_tool_call_output",
-                    "call_id": "call_diff",
-                    "output": '{"success": true}',
-                },
-            }
-        ),
-        json.dumps(
-            {
-                "timestamp": "2026-04-25T03:56:20.004Z",
-                "type": "response_item",
-                "payload": {
-                    "type": "reasoning",
-                    "encrypted_content": "encrypted-reasoning-secret",
-                    "summary": [
-                        {
-                            "type": "summary_text",
-                            "text": "Reviewing evidence before approving.",
-                        }
-                    ],
                 },
             }
         ),
@@ -294,7 +260,7 @@ def _make_idle_monitor_run(
 
 
 @pytest.mark.asyncio
-async def test_task_complete_reprompts_after_base_timeout_before_semantic_delay(
+async def test_completed_turn_reprompts_after_base_timeout_before_semantic_delay(
     temp_db: HubDatabase,
     session_manager: SessionManager,
     sample_project: dict[str, Any],
@@ -348,9 +314,9 @@ async def test_task_complete_reprompts_after_base_timeout_before_semantic_delay(
     assert monitor._idle_detector.get_state(run.id).reprompt_count == 1
     mock_audit.assert_awaited_once_with(
         run,
-        action="task_complete_reprompt",
+        action="completed_turn_reprompt",
         session_id=run.child_session_id,
-        detail="latest_lifecycle_event=task_complete",
+        detail="latest_turn_kind=completed",
     )
 
 
@@ -434,7 +400,7 @@ async def test_fresh_capacity_error_immediately_sends_workflow_aware_reprompt(
 
     assert handled == 1
     assert monitor._idle_detector.get_state(run.id).reprompt_count == 1
-    state = monitor._idle_check_handler._codex_capacity_recovery[run.id]
+    state = monitor._idle_check_handler._capacity_recovery[run.id]
     assert state.successful_reprompts == 1
     mock_send.assert_has_awaits(
         [
@@ -447,7 +413,7 @@ async def test_fresh_capacity_error_immediately_sends_workflow_aware_reprompt(
         run,
         action="capacity_reprompt",
         session_id=run.child_session_id,
-        detail="codex_error_info=server_overloaded;attempt=1/2",
+        detail="capacity_error=server_overloaded;attempt=1/2",
     )
 
 
@@ -534,7 +500,7 @@ async def test_capacity_reprompt_retries_failed_send_and_deduplicates_success(
     assert (first, second, duplicate) == (0, 1, 0)
     assert mock_send.await_count == 5
     mock_audit.assert_awaited_once()
-    state = monitor._idle_check_handler._codex_capacity_recovery[run.id]
+    state = monitor._idle_check_handler._capacity_recovery[run.id]
     assert state.successful_reprompts == 1
 
 
@@ -631,7 +597,7 @@ async def test_capacity_retry_budget_resets_after_model_output(
     assert recovered == 1
     assert mock_send.await_count == 9
     mock_kill.assert_not_awaited()
-    state = monitor._idle_check_handler._codex_capacity_recovery[run.id]
+    state = monitor._idle_check_handler._capacity_recovery[run.id]
     assert state.successful_reprompts == 1
 
 
@@ -894,236 +860,52 @@ async def test_idle_reprompt_falls_back_when_step_context_lookup_fails(
 
 
 @pytest.mark.asyncio
-async def test_idle_reprompt_logs_codex_response_items(
+async def test_no_reader_provider_uses_shared_idle_path_without_transcript_read(
     temp_db: HubDatabase,
     session_manager: SessionManager,
     sample_project: dict[str, Any],
     agent_run_manager: LocalAgentRunManager,
     tmp_path: Path,
 ) -> None:
-    config = TmuxConfig(
-        idle_check_enabled=True,
-        idle_timeout_seconds=10,
-        max_reprompt_attempts=2,
-        reasoning_watchdog_settle_seconds=0,
-    )
-    monitor = AgentLifecycleMonitor(
-        detection_registry=DETECTION_REGISTRY,
-        agent_run_manager=agent_run_manager,
-        db=temp_db,
-        session_manager=session_manager,
-        check_interval_seconds=1.0,
-        tmux_config=config,
-    )
-
-    parent = session_manager.register(
-        external_id="parent-session",
-        machine_id="machine-1",
-        source="claude",
-        project_id=sample_project["id"],
-    )
-    transcript_path = tmp_path / "codex-rollout.jsonl"
+    transcript_path = tmp_path / "agy-unread.jsonl"
     _write_codex_transcript(transcript_path)
-    child = session_manager.register(
-        external_id="codex-child",
-        machine_id="machine-1",
-        source="codex",
-        project_id=sample_project["id"],
-        transcript_path=str(transcript_path),
-    )
-    stale_time = (datetime.now(UTC) - timedelta(seconds=120)).isoformat()
-    temp_db.execute("UPDATE sessions SET updated_at = %s WHERE id = %s", (stale_time, child.id))
-
-    run = _make_terminal_run(
-        agent_run_manager,
-        parent.to_dict(),
-        child_session_id=child.id,
-        run_id="dddddddd-dddd-4ddd-8ddd-dddddddd1002",
-        tmux_session_name="gobby-codex-idle",
+    monitor, run = _make_idle_monitor_run(
+        temp_db=temp_db,
+        session_manager=session_manager,
+        sample_project=sample_project,
+        agent_run_manager=agent_run_manager,
+        run_id="dddddddd-dddd-4ddd-8ddd-dddddddd1005",
+        transcript_path=transcript_path,
+        child_source="agy",
     )
     state = monitor._idle_detector.get_state(run.id)
     state.first_idle_at = time.monotonic() - 360
 
     with (
         patch.object(monitor._tmux, "capture_pane", new_callable=AsyncMock, return_value="❯\n"),
-        patch.object(monitor._tmux, "send_keys", new_callable=AsyncMock, return_value=True),
-        patch("gobby.agents.idle_check_handler.logger.warning") as mock_warning,
-    ):
-        handled = await monitor.check_idle_agents()
-
-    assert handled == 1
-    diagnostics = [
-        str(log_call.args[4])
-        for log_call in mock_warning.call_args_list
-        if log_call.args
-        and log_call.args[0] == "Codex idle diagnostic for run %s (%s) session %s: %s"
-    ]
-    assert len(diagnostics) == 1
-    diagnostic = diagnostics[0]
-    assert "web_search_call" in diagnostic
-    assert "custom_tool_call" in diagnostic
-    assert "event_type" in diagnostic
-    assert "timestamp" in diagnostic
-    assert "pg_search docs" not in diagnostic
-    assert "apply_patch" not in diagnostic
-    assert "*** Begin Patch" not in diagnostic
-
-
-@pytest.mark.asyncio
-async def test_idle_reasoning_watchdog_interrupts_codex_and_records_task_event(
-    temp_db: HubDatabase,
-    session_manager: SessionManager,
-    sample_project: dict[str, Any],
-    agent_run_manager: LocalAgentRunManager,
-    tmp_path: Path,
-) -> None:
-    task_manager = LocalTaskManager(temp_db)
-    task = task_manager.create_task(
-        project_id=sample_project["id"],
-        title="Review watchdog target",
-        task_type="bug",
-    )
-    task_manager.initialize_task_manifest(task.id)
-    task_manager.stage_states.start_stage(task.id, "development", by_session_id="worker")
-    task_manager.submit_for_review(task.id, "development", by_session_id="worker")
-
-    config = TmuxConfig(idle_check_enabled=True, idle_timeout_seconds=10, max_reprompt_attempts=2)
-    monitor = AgentLifecycleMonitor(
-        detection_registry=DETECTION_REGISTRY,
-        agent_run_manager=agent_run_manager,
-        db=temp_db,
-        session_manager=session_manager,
-        task_manager=task_manager,
-        check_interval_seconds=1.0,
-        tmux_config=config,
-    )
-
-    parent = session_manager.register(
-        external_id="parent-session-reasoning",
-        machine_id="machine-1",
-        source="claude",
-        project_id=sample_project["id"],
-    )
-    transcript_path = tmp_path / "codex-reasoning.jsonl"
-    _write_codex_reasoning_transcript(transcript_path)
-    child = session_manager.register(
-        external_id="codex-child-reasoning",
-        machine_id="machine-1",
-        source="codex",
-        project_id=sample_project["id"],
-        transcript_path=str(transcript_path),
-    )
-    stale_time = (datetime.now(UTC) - timedelta(seconds=120)).isoformat()
-    temp_db.execute("UPDATE sessions SET updated_at = %s WHERE id = %s", (stale_time, child.id))
-
-    run = _make_terminal_run(
-        agent_run_manager,
-        parent.to_dict(),
-        child_session_id=child.id,
-        run_id="dddddddd-dddd-4ddd-8ddd-dddddddd1003",
-        tmux_session_name="gobby-codex-reasoning",
-        task_id=task.id,
-        agent_name="qa-reviewer",
-    )
-    state = monitor._idle_detector.get_state(run.id)
-    state.first_idle_at = time.monotonic() - 360
-
-    with (
-        patch.object(monitor._tmux, "capture_pane", new_callable=AsyncMock, return_value=""),
         patch.object(
             monitor._tmux, "send_keys", new_callable=AsyncMock, return_value=True
         ) as mock_send,
-        patch("gobby.agents.idle_check_handler.logger.warning") as mock_warning,
+        patch.object(
+            monitor._idle_check_handler,
+            "_idle_reprompt_message",
+            new_callable=AsyncMock,
+            return_value="shared continuation",
+        ),
+        patch(
+            "gobby.agents.watchdog.codex.CodexTranscriptWatchdogReader.read",
+            new_callable=AsyncMock,
+        ) as mock_read,
     ):
         handled = await monitor.check_idle_agents()
 
     assert handled == 1
+    mock_read.assert_not_awaited()
     mock_send.assert_has_awaits(
         [
-            call("gobby-codex-reasoning", "C-c", literal=False),
-            call("gobby-codex-reasoning", REASONING_WATCHDOG_CONTINUATION),
-            call("gobby-codex-reasoning", "Enter", literal=False),
+            call(run.tmux_session_name, "Escape", literal=False),
+            call(run.tmux_session_name, "shared continuation"),
+            call(run.tmux_session_name, "Enter", literal=False),
         ]
     )
     assert monitor._idle_detector.get_state(run.id).reprompt_count == 1
-    watchdog_diagnostics = [
-        str(log_call.args[3])
-        for log_call in mock_warning.call_args_list
-        if log_call.args
-        and log_call.args[0] == "Codex reasoning watchdog interrupting run %s session %s: %s"
-    ]
-    assert len(watchdog_diagnostics) == 1
-    assert "reasoning" in watchdog_diagnostics[0]
-    assert "event_type" in watchdog_diagnostics[0]
-    assert "encrypted-reasoning-secret" not in watchdog_diagnostics[0]
-    assert "Reviewing evidence before approving" not in watchdog_diagnostics[0]
-
-    events = task_manager.lifecycle_events.list_lifecycle_events(task.id, newest_first=True)
-    assert any(
-        event.by_actor == "agent_idle_watchdog"
-        and event.reason.startswith("agent_idle_watchdog:reasoning_interrupt")
-        and "run_id=dddddddd-dddd-4ddd-8ddd-dddddddd1003" in event.reason
-        for event in events
-    )
-
-
-@pytest.mark.asyncio
-async def test_idle_failure_logs_codex_response_items(
-    temp_db: HubDatabase,
-    session_manager: SessionManager,
-    sample_project: dict[str, Any],
-    agent_run_manager: LocalAgentRunManager,
-    tmp_path: Path,
-) -> None:
-    config = TmuxConfig(idle_check_enabled=True, idle_timeout_seconds=10, max_reprompt_attempts=2)
-    monitor = AgentLifecycleMonitor(
-        detection_registry=DETECTION_REGISTRY,
-        agent_run_manager=agent_run_manager,
-        db=temp_db,
-        session_manager=session_manager,
-        check_interval_seconds=1.0,
-        tmux_config=config,
-    )
-
-    parent = session_manager.register(
-        external_id="parent-session-fail",
-        machine_id="machine-1",
-        source="claude",
-        project_id=sample_project["id"],
-    )
-    transcript_path = tmp_path / "codex-rollout-fail.jsonl"
-    _write_codex_transcript(transcript_path)
-    child = session_manager.register(
-        external_id="codex-child-fail",
-        machine_id="machine-1",
-        source="codex",
-        project_id=sample_project["id"],
-        transcript_path=str(transcript_path),
-    )
-    stale_time = (datetime.now(UTC) - timedelta(seconds=120)).isoformat()
-    temp_db.execute("UPDATE sessions SET updated_at = %s WHERE id = %s", (stale_time, child.id))
-
-    run = _make_terminal_run(
-        agent_run_manager,
-        parent.to_dict(),
-        child_session_id=child.id,
-        run_id="dddddddd-dddd-4ddd-8ddd-dddddddd1004",
-        tmux_session_name="gobby-codex-fail",
-    )
-    state = monitor._idle_detector.get_state(run.id)
-    state.reprompt_count = 2
-
-    with (
-        patch.object(monitor._tmux, "capture_pane", new_callable=AsyncMock, return_value="❯\n"),
-        patch.object(monitor._tmux, "kill_session", new_callable=AsyncMock, return_value=True),
-        patch("gobby.agents.idle_check_handler.logger.warning") as mock_warning,
-    ):
-        handled = await monitor.check_idle_agents()
-
-    assert handled == 1
-    assert any(
-        call.args
-        and call.args[0] == "Codex idle diagnostic for run %s (%s) session %s: %s"
-        and "custom_tool_call" in str(call.args[4])
-        for call in mock_warning.call_args_list
-    )

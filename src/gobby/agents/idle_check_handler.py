@@ -15,10 +15,7 @@ from gobby.agents.capture import terminate_managed_tmux_async
 from gobby.agents.idle_detector import IdleDetector
 from gobby.agents.prompt_detector import PromptDetector, PromptKind
 from gobby.agents.stall_classifier import StallClassifier, StallStatus
-from gobby.agents.watchdog.codex import (
-    CODEX_MODEL_CAPACITY_MESSAGE,
-    read_codex_transcript_snapshot,
-)
+from gobby.agents.watchdog import TranscriptWatchdogReader, WatchdogReaderRegistry
 from gobby.agents.watchdog.models import (
     CapacityRecoveryState,
     WatchdogTranscriptSnapshot,
@@ -62,6 +59,7 @@ class IdleCheckHandler:
         idle_detector: IdleDetector,
         prompt_detector: PromptDetector,
         stall_classifier: StallClassifier,
+        watchdog_readers: WatchdogReaderRegistry,
         cleanup_handler: AgentCleanupHandler,
         tmux_config: TmuxConfig,
         task_manager: LocalTaskManager | None = None,
@@ -82,7 +80,8 @@ class IdleCheckHandler:
         self._attention_metadata_store = attention_metadata_store
         self._prompt_detector = prompt_detector
         self._stall_classifier = stall_classifier
-        self._codex_capacity_recovery: dict[str, CapacityRecoveryState] = {}
+        self._watchdog_readers = watchdog_readers
+        self._capacity_recovery: dict[str, CapacityRecoveryState] = {}
 
     async def _run_db(self, func: Callable[..., Any], *args: Any, **kwargs: Any) -> Any:
         if self._run_db_callback is None:
@@ -208,14 +207,14 @@ class IdleCheckHandler:
     async def check_idle_agents(self) -> int:
         """Check for idle agents and reprompt or fail them."""
         if not self._tmux_config.idle_check_enabled:
-            self._codex_capacity_recovery.clear()
+            self._capacity_recovery.clear()
             return 0
 
         runs = await self._run_db(self._get_active_terminal_runs)
         active_run_ids = {run.id for run in runs}
-        self._codex_capacity_recovery = {
+        self._capacity_recovery = {
             run_id: state
-            for run_id, state in self._codex_capacity_recovery.items()
+            for run_id, state in self._capacity_recovery.items()
             if run_id in active_run_ids
         }
 
@@ -339,8 +338,10 @@ class IdleCheckHandler:
                 if elapsed < idle_timeout_seconds:
                     session_recent = True
 
-        is_codex = session is not None and getattr(session, "source", None) == "codex"
-        if session_recent and not is_codex:
+        session_source = getattr(session, "source", None)
+        reader = self._watchdog_readers.for_provider(session_source or run.provider)
+        has_capacity_probe = reader is not None and reader.capacity_pane_message is not None
+        if session_recent and not has_capacity_probe:
             idle_detector.reset_idle(run.id)
             return 0
 
@@ -348,7 +349,7 @@ class IdleCheckHandler:
         if pane_output is None:
             return 0
         await self.sync_attention(run, pane_output)
-        capacity_candidate = is_codex and self._pane_has_codex_capacity_message(pane_output)
+        capacity_candidate = self._pane_has_capacity_message(pane_output, reader)
 
         status = idle_detector.detect(pane_output)
         queued_message_prompt_visible = prompt_detector.detect_queued_message_prompt(pane_output)
@@ -376,18 +377,19 @@ class IdleCheckHandler:
             return 0
 
         transcript_snapshot: WatchdogTranscriptSnapshot | None = None
-        transcript_path = getattr(session, "transcript_path", None) if is_codex else None
+        transcript_path = getattr(session, "transcript_path", None)
         if (
-            is_codex
+            reader is not None
             and isinstance(transcript_path, str)
             and transcript_path
             and (session_stale or capacity_candidate)
         ):
             try:
-                transcript_snapshot = await self._read_codex_transcript_snapshot(transcript_path)
+                transcript_snapshot = await reader.read(transcript_path)
             except OSError:
                 logger.warning(
-                    "Failed to read Codex transcript for idle recovery on run %s",
+                    "Failed to read %s transcript for idle recovery on run %s",
+                    reader.provider_id,
                     run.id,
                 )
 
@@ -396,7 +398,7 @@ class IdleCheckHandler:
             and transcript_snapshot is not None
             and transcript_snapshot.has_conclusive_capacity_error
         ):
-            return await self._recover_codex_capacity_error(
+            return await self._recover_capacity_error(
                 run,
                 tmux_name=tmux_name,
                 session_id=session_id,
@@ -420,7 +422,7 @@ class IdleCheckHandler:
                 run.id,
                 self._tmux_config.max_reprompt_attempts,
             )
-            await self._log_codex_transcript_snapshot(
+            await self._log_transcript_snapshot(
                 run,
                 reason="failing after max idle reprompts",
             )
@@ -429,26 +431,26 @@ class IdleCheckHandler:
 
         completed_turn_recovery_due: bool | None = None
         if transcript_snapshot is not None:
-            completed_turn_recovery_due = self._completed_codex_turn_recovery_due(
+            completed_turn_recovery_due = self._completed_turn_recovery_due(
                 transcript_snapshot,
                 idle_timeout_seconds=idle_timeout_seconds,
             )
         if completed_turn_recovery_due is False:
             return 0
         if completed_turn_recovery_due is True:
-            logger.info("Recovering completed Codex turn for idle agent %s", run.id)
-            await self._log_codex_transcript_snapshot(
+            logger.info("Recovering completed turn for idle agent %s", run.id)
+            await self._log_transcript_snapshot(
                 run,
-                reason="recovering completed Codex turn",
+                reason="recovering completed turn",
                 snapshot=transcript_snapshot,
             )
             if not await self._send_idle_reprompt(run, tmux_name=tmux_name):
                 return 0
             await self._record_watchdog_task_event(
                 run,
-                action="task_complete_reprompt",
+                action="completed_turn_reprompt",
                 session_id=session_id,
-                detail="latest_lifecycle_event=task_complete",
+                detail="latest_turn_kind=completed",
             )
             return 1
 
@@ -462,12 +464,13 @@ class IdleCheckHandler:
                 tmux_name=tmux_name,
                 session=session,
                 session_id=session_id,
+                reader=reader,
                 snapshot=transcript_snapshot,
             ):
                 return 1
 
             logger.info("Reprompting idle agent %s", run.id)
-            await self._log_codex_transcript_snapshot(
+            await self._log_transcript_snapshot(
                 run,
                 reason="reprompting apparently idle agent",
                 snapshot=transcript_snapshot,
@@ -477,13 +480,19 @@ class IdleCheckHandler:
         return 0
 
     @staticmethod
-    def _pane_has_codex_capacity_message(pane_output: str) -> bool:
+    def _pane_has_capacity_message(
+        pane_output: str,
+        reader: TranscriptWatchdogReader | None,
+    ) -> bool:
+        capacity_message = reader.capacity_pane_message if reader is not None else None
+        if capacity_message is None:
+            return False
         visible = _ANSI_ESCAPE_RE.sub("", pane_output)
         visible = _TERMINAL_CONTROL_RE.sub("", visible)
         normalized = " ".join(visible.split())
-        return CODEX_MODEL_CAPACITY_MESSAGE in normalized
+        return capacity_message in normalized
 
-    async def _recover_codex_capacity_error(
+    async def _recover_capacity_error(
         self,
         run: AgentRun,
         *,
@@ -496,10 +505,10 @@ class IdleCheckHandler:
         if error_event is None:
             return 0
 
-        state = self._codex_capacity_recovery.get(run.id)
+        state = self._capacity_recovery.get(run.id)
         if state is None or state.transcript_path != transcript_path:
             state = CapacityRecoveryState(transcript_path=transcript_path)
-            self._codex_capacity_recovery[run.id] = state
+            self._capacity_recovery[run.id] = state
 
         if state.last_error_line_num == error_event.line_num:
             return 0
@@ -516,31 +525,31 @@ class IdleCheckHandler:
         if state.successful_reprompts >= max_attempts:
             state.last_error_line_num = error_event.line_num
             logger.info(
-                "Codex agent %s remained at capacity after %s reprompts — failing",
+                "Agent %s remained at provider capacity after %s reprompts — failing",
                 run.id,
                 max_attempts,
             )
-            await self._log_codex_transcript_snapshot(
+            await self._log_transcript_snapshot(
                 run,
-                reason="failing after max Codex capacity reprompts",
+                reason="failing after max provider-capacity reprompts",
                 snapshot=snapshot,
             )
             await self._fail_idle_agent(
                 run,
-                reason="Codex model capacity after max reprompt attempts",
+                reason="provider capacity after max reprompt attempts",
             )
             return 1
 
         attempt = state.successful_reprompts + 1
         logger.info(
-            "Reprompting Codex agent %s after model capacity error (%s/%s)",
+            "Reprompting agent %s after provider-capacity error (%s/%s)",
             run.id,
             attempt,
             max_attempts,
         )
-        await self._log_codex_transcript_snapshot(
+        await self._log_transcript_snapshot(
             run,
-            reason="recovering Codex model capacity error",
+            reason="recovering provider-capacity error",
             snapshot=snapshot,
         )
         if not await self._send_idle_reprompt(run, tmux_name=tmux_name):
@@ -552,7 +561,9 @@ class IdleCheckHandler:
             run,
             action="capacity_reprompt",
             session_id=session_id,
-            detail=f"codex_error_info=server_overloaded;attempt={attempt}/{max_attempts}",
+            detail=(
+                f"capacity_error={snapshot.provider_error_reason};attempt={attempt}/{max_attempts}"
+            ),
         )
         return 1
 
@@ -621,7 +632,7 @@ class IdleCheckHandler:
         )
 
     @staticmethod
-    def _completed_codex_turn_recovery_due(
+    def _completed_turn_recovery_due(
         snapshot: WatchdogTranscriptSnapshot,
         *,
         idle_timeout_seconds: int,
@@ -642,23 +653,27 @@ class IdleCheckHandler:
         tmux_name: str,
         session: Any | None,
         session_id: str | None,
+        reader: TranscriptWatchdogReader | None,
         snapshot: WatchdogTranscriptSnapshot | None = None,
     ) -> bool:
-        """Interrupt a stale Codex reasoning turn and send a focused continuation."""
+        """Interrupt a stale reasoning turn and send a focused continuation."""
         if not self._tmux_config.reasoning_watchdog_interrupt_enabled:
             return False
-        if session is None or getattr(session, "source", None) != "codex":
+        if reader is None or not reader.supports_reasoning_interrupt:
             return False
 
         if snapshot is None:
+            if session is None:
+                return False
             transcript_path = getattr(session, "transcript_path", None)
             if not isinstance(transcript_path, str) or not transcript_path:
                 return False
             try:
-                snapshot = await self._read_codex_transcript_snapshot(transcript_path)
+                snapshot = await reader.read(transcript_path)
             except OSError:
                 logger.warning(
-                    "Failed to read Codex transcript for reasoning watchdog on run %s",
+                    "Failed to read %s transcript for reasoning watchdog on run %s",
+                    reader.provider_id,
                     run.id,
                 )
                 return False
@@ -667,7 +682,8 @@ class IdleCheckHandler:
             return False
 
         logger.warning(
-            "Codex reasoning watchdog interrupting run %s session %s: %s",
+            "Reasoning watchdog interrupting %s run %s session %s: %s",
+            reader.provider_id,
             run.id,
             session_id,
             json.dumps(snapshot.to_log_dict(), ensure_ascii=True),
@@ -693,7 +709,7 @@ class IdleCheckHandler:
             run,
             action="reasoning_interrupt",
             session_id=session_id,
-            detail="latest_response_item=reasoning",
+            detail="latest_activity_kind=reasoning",
         )
         return True
 
@@ -791,13 +807,7 @@ class IdleCheckHandler:
         self._idle_detector.clear_state(run.id)
         await self._cleanup_handler.cleanup_agent(run, terminal_payload=f"Agent idle: {reason}")
 
-    @staticmethod
-    async def _read_codex_transcript_snapshot(
-        transcript_path: str,
-    ) -> WatchdogTranscriptSnapshot:
-        return await read_codex_transcript_snapshot(transcript_path)
-
-    async def _log_codex_transcript_snapshot(
+    async def _log_transcript_snapshot(
         self,
         run: AgentRun,
         *,
@@ -817,19 +827,25 @@ class IdleCheckHandler:
                 session = await self._run_db(session_manager.get, session_id)
             except Exception:
                 logger.warning(
-                    "Failed to load session %s for Codex idle diagnostics on run %s",
+                    "Failed to load session %s for watchdog idle diagnostics on run %s",
                     session_id,
                     run.id,
                 )
                 return
 
-            if session is None or getattr(session, "source", None) != "codex":
+            if session is None:
                 return
 
+            provider_id = getattr(session, "source", None) or run.provider
+            reader = self._watchdog_readers.for_provider(provider_id)
+            if reader is None:
+                return
             transcript_path = getattr(session, "transcript_path", None)
             if not isinstance(transcript_path, str) or not transcript_path:
                 logger.warning(
-                    "Codex idle diagnostic for run %s (%s): session %s has no transcript path",
+                    "Watchdog idle diagnostic for %s run %s (%s): "
+                    "session %s has no transcript path",
+                    reader.provider_id,
                     run.id,
                     reason,
                     session_id,
@@ -837,10 +853,11 @@ class IdleCheckHandler:
                 return
 
             try:
-                snapshot = await self._read_codex_transcript_snapshot(transcript_path)
+                snapshot = await reader.read(transcript_path)
             except OSError:
                 logger.warning(
-                    "Failed to read Codex transcript for idle diagnostic on run %s (%s)",
+                    "Failed to read %s transcript for idle diagnostic on run %s (%s)",
+                    reader.provider_id,
                     run.id,
                     reason,
                 )
@@ -848,7 +865,9 @@ class IdleCheckHandler:
 
         if not snapshot.tail and snapshot.latest_turn_event is None:
             logger.warning(
-                "Codex idle diagnostic for run %s (%s): no transcript summaries for session %s",
+                "Watchdog idle diagnostic for %s run %s (%s): "
+                "no transcript summaries for session %s",
+                snapshot.provider,
                 run.id,
                 reason,
                 session_id,
@@ -856,7 +875,8 @@ class IdleCheckHandler:
             return
 
         logger.warning(
-            "Codex idle diagnostic for run %s (%s) session %s: %s",
+            "Watchdog idle diagnostic for %s run %s (%s) session %s: %s",
+            snapshot.provider,
             run.id,
             reason,
             session_id,
