@@ -172,3 +172,9 @@ so each iteration resumes from the durable goal document and live task state.
   validated both #18519 entries, and a live `gwiki librarian` run confirmed
   neither reported pair remains. The intentionally ignored wiki vault has no
   Git commit.
+- 2026-07-21 #9341 iteration 14 — closed #18638 with commit `3fc7e1060`;
+  upgraded the supported voice pair to Torch 2.13.0 and TorchAudio 2.11.0 under
+  TorchAudio's official future-version compatibility guarantee, regenerated the
+  lockfile, and removed the `GHSA-rrmf-rvhw-rf47` audit exception. Frozen
+  resolution, exception-free audit, direct runtime imports, 37 focused voice
+  tests, package build, and diff checks passed.
