@@ -63,6 +63,7 @@ def _default_loops() -> dict[str, Any]:
     )
     from gobby.runner_maintenance_audit import workflow_audit_cleanup_loop
     from gobby.runner_maintenance_resources import resource_monitor_loop
+    from gobby.runner_model_metadata_refresh import model_metadata_refresh_loop
 
     return {
         "metrics_cleanup_loop": metrics_cleanup_loop,
@@ -83,6 +84,7 @@ def _default_loops() -> dict[str, Any]:
         "expire_approval_timeouts_loop": expire_approval_timeouts_loop,
         "tmux_window_name_repair_loop": tmux_window_name_repair_loop,
         "resource_monitor_loop": resource_monitor_loop,
+        "model_metadata_refresh_loop": model_metadata_refresh_loop,
     }
 
 
@@ -197,6 +199,13 @@ def start_periodic_tasks(
             run_db=getattr(db_executor, "run", None),
         ),
         name="metrics-archive",
+    )
+    runner._model_metadata_refresh_task = asyncio.create_task(
+        loops["model_metadata_refresh_loop"](
+            runner.database,
+            lambda: runner._shutdown_requested,
+        ),
+        name="model-metadata-refresh",
     )
 
     retention_days = 7
@@ -407,6 +416,7 @@ def start_periodic_tasks(
             runner._metrics_cleanup_task,
             runner._workflow_audit_cleanup_task,
             runner._metrics_archive_task,
+            runner._model_metadata_refresh_task,
             runner._span_cleanup_task,
             runner._unmodeled_observations_cleanup_task,
             getattr(runner, "_memory_reconcile_task", None),

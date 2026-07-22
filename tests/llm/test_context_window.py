@@ -4,8 +4,8 @@ Verifies the priority order:
 1. Config overrides (model substring -> context window)
 2. Provider-reported runtime metadata
 3. Provider-reported/provider-owned catalog metadata
-4. Registry lookup (OpenRouter data via model_costs cache)
-5. Static fallback defaults
+4. Registry lookup (OpenRouter data via model_metadata cache)
+5. Explicit unknown result
 
 Note: SDK-reported contextWindow (2nd arg) is deprecated and ignored.
 """
@@ -24,7 +24,6 @@ from gobby.llm.context_windows import (
     reconcile_model_context,
     resolve_context_window,
     resolve_context_window_with_source,
-    static_context_length_for_model,
 )
 from gobby.servers.provider_models import ProviderModelCatalog
 from gobby.storage.context_usage_snapshot import ContextUsageSnapshot
@@ -33,17 +32,18 @@ pytestmark = pytest.mark.unit
 
 
 @pytest.mark.parametrize(
-    ("existing_model", "observed_model", "observed_window"),
+    ("existing_model", "observed_model", "observed_window", "expected_window"),
     [
-        ("claude-opus-4-8[1m]", "claude-opus-4-8", 200_000),
-        ("claude-sonnet-4-6[1m]", "anthropic/claude-sonnet-4-6", 0),
-        ("claude-haiku-4-5[1m]", "claude-haiku-4-5", 200_000),
+        ("claude-opus-4-8[1m]", "claude-opus-4-8", 200_000, 1_000_000),
+        ("claude-sonnet-4-6[1m]", "anthropic/claude-sonnet-4-6", 0, None),
+        ("claude-haiku-4-5[1m]", "claude-haiku-4-5", 200_000, 1_000_000),
     ],
 )
 def test_equivalent_observation_preserves_one_million_context_tier(
     existing_model: str,
     observed_model: str,
     observed_window: int,
+    expected_window: int | None,
 ) -> None:
     reconciled = reconcile_model_context(
         existing_model,
@@ -53,7 +53,7 @@ def test_equivalent_observation_preserves_one_million_context_tier(
     )
 
     assert reconciled.model == existing_model
-    assert reconciled.context_window == 1_000_000
+    assert reconciled.context_window == expected_window
 
 
 def test_genuine_model_switch_accepts_observed_model_and_window() -> None:
@@ -68,36 +68,16 @@ def test_genuine_model_switch_accepts_observed_model_and_window() -> None:
     assert reconciled.context_window == 200_000
 
 
-@pytest.mark.parametrize(
-    ("model", "provider", "expected"),
-    [
-        ("sonnet", None, 1_000_000),
-        ("sonnet", "claude", 1_000_000),
-        ("claude-sonnet-4-6", None, 1_000_000),
-        ("claude-sonnet-4-6-20260410", "claude", 1_000_000),
-        ("anthropic/claude-sonnet-4-6", "claude", 1_000_000),
-        ("claude/claude-sonnet-4-6", "claude", 1_000_000),
-        ("claude-sonnet-4-5", "claude", 200_000),
-        ("anthropic/claude-sonnet-4-5-20250929", "claude", 200_000),
-    ],
-)
-def test_sonnet_static_context_windows(
-    model: str,
-    provider: str | None,
-    expected: int,
-) -> None:
-    assert static_context_length_for_model(provider, model) == expected
-
-
 def test_droid_sonnet_context_window_remains_provider_owned() -> None:
     assert provider_catalog_context_length_for_model("droid", "claude-sonnet-4-6") == 200_000
 
 
-def test_sonnet_static_window_drives_context_pressure_ratio_with_empty_registry() -> None:
+def test_unknown_window_consumers_guard() -> None:
     with patch("gobby.llm.model_registry.lookup_context_window", return_value=None):
-        context_window = resolve_context_window("claude-sonnet-4-6", provider="claude")
+        context_window = resolve_context_window("future-model", provider="codex")
 
-    assert ContextUsageSnapshot.calculate_ratio(200_000, context_window) == 0.2
+    assert context_window is None
+    assert ContextUsageSnapshot.calculate_ratio(200_000, context_window) is None
 
 
 def _mock_lookup(model: str) -> int | None:
@@ -106,8 +86,15 @@ def _mock_lookup(model: str) -> int | None:
         "claude-opus-4-6": 1_000_000,
         "claude-sonnet-4-6": 200_000,
         "claude-haiku-4-5": 200_000,
+        "claude-fable-5": 1_000_000,
         "gpt-4o": 128_000,
         "gpt-5.4": 300_000,
+        "gpt-5.3-codex": 258_400,
+        "gpt-5.6-sol": 258_400,
+        "gpt-5.6-terra": 258_400,
+        "gpt-5.6-luna": 258_400,
+        "gemini-3.5-flash": 1_048_576,
+        "grok-composer-2.5-fast": 200_000,
         "qwen3-coder": 262_144,
     }
     # Strip provider prefix
@@ -126,7 +113,7 @@ def _mock_lookup(model: str) -> int | None:
     return best_val
 
 
-def test_db_failure_degrades_to_static_context_window() -> None:
+def test_db_failure_degrades_to_explicit_unknown() -> None:
     db = MagicMock()
     db.fetchone.side_effect = psycopg.OperationalError("database unavailable")
     app_context = SimpleNamespace(database=db, provider_model_catalog=None)
@@ -135,8 +122,8 @@ def test_db_failure_degrades_to_static_context_window() -> None:
         result = resolve_context_window_with_source("gpt-5.4")
 
     assert result is not None
-    assert result.value == 258_400
-    assert result.source == "static_default"
+    assert result.value is None
+    assert result.source == "unknown"
 
 
 @pytest.mark.parametrize(
@@ -190,6 +177,10 @@ class _BareSourceCatalog:
 class TestResolveContextWindow:
     """Tests for resolve_context_window()."""
 
+    @pytest.mark.parametrize("model", [None, "", "   "])
+    def test_absent_model_returns_bare_none(self, model: str | None) -> None:
+        assert resolve_context_window_with_source(model) is None
+
     def test_rejects_invalid_model(self) -> None:
         with pytest.raises(TypeError, match="model must be a string or None"):
             resolve_context_window(123)  # type: ignore[arg-type]
@@ -219,41 +210,10 @@ class TestResolveContextWindow:
             # Prefix match: claude-sonnet-4-6-20241022 matches claude-sonnet-4-6
             assert resolve_context_window("claude-sonnet-4-6-20241022", None) == 200_000
 
-    @pytest.mark.parametrize(
-        ("model", "provider", "expected"),
-        [
-            # Bare aliases resolve through their current family defaults.
-            ("opus", None, 1_000_000),
-            ("opus", "claude", 1_000_000),
-            ("sonnet", None, 1_000_000),
-            ("haiku", None, 200_000),
-            ("fable", None, 1_000_000),
-            ("fable", "claude", 1_000_000),
-            ("claude-fable-5", None, 1_000_000),
-            ("claude-fable-5", "claude", 1_000_000),
-            ("claude-fable-5", "droid", 1_000_000),
-            # Long-form Opus not enumerated in the static table — the
-            # claude-opus-4-8 regression — resolves via the family-substring
-            # fallback rather than falling through to a smaller default.
-            ("claude-opus-4-8", None, 1_000_000),
-            ("claude-opus-4-8", "claude", 1_000_000),
-            # 1M-context marker suffixes normalize to the same family window.
-            ("claude-opus-4-8[1m]", None, 1_000_000),
-            ("claude-opus-4-8[1m]", "claude", 1_000_000),
-            ("claude-opus-4-8-context-1m", "claude", 1_000_000),
-            # Future dated Opus versions resolve without a per-version table.
-            ("claude-opus-4-9", "claude", 1_000_000),
-            # Current Sonnet is 1M; Haiku stays at 200k.
-            ("claude-sonnet-4-6", "claude", 1_000_000),
-            ("claude-haiku-4-5", "claude", 200_000),
-        ],
-    )
-    def test_claude_family_substring_fallback(
-        self, model: str, provider: str | None, expected: int
-    ) -> None:
-        """Long-form Claude IDs resolve to their family window via static fallback."""
+    @pytest.mark.parametrize("model", ["opus", "claude-opus-4-9", "claude-haiku-4-5"])
+    def test_registry_miss_has_no_family_sentinel(self, model: str) -> None:
         with patch("gobby.llm.model_registry.lookup_context_window", return_value=None):
-            assert resolve_context_window(model, provider=provider) == expected
+            assert resolve_context_window(model, provider="claude") is None
 
     @pytest.mark.parametrize(
         ("model", "provider", "expected"),
@@ -263,16 +223,16 @@ class TestResolveContextWindow:
             ("claude-sonnet-4-6[1m]", "claude", 1_000_000),
             ("anthropic/claude-haiku-4-5[1m]", "claude", 1_000_000),
             ("claude-opus-4-8[1m]", "claude", 1_000_000),
-            ("sonnet", None, 1_000_000),
+            ("sonnet", None, 200_000),
             ("haiku", "claude", 200_000),
-            ("anthropic/claude-sonnet-4-6", "claude", 1_000_000),
+            ("anthropic/claude-sonnet-4-6", "claude", 200_000),
         ],
     )
     def test_one_million_marker_floors_base_window_only(
         self, model: str, provider: str | None, expected: int
     ) -> None:
         """The marker raises sub-1M aliases and prefixes without changing unmarked models."""
-        with patch("gobby.llm.model_registry.lookup_context_window", return_value=None):
+        with patch("gobby.llm.model_registry.lookup_context_window", return_value=200_000):
             assert resolve_context_window(model, provider=provider) == expected
 
     @pytest.mark.parametrize(
@@ -290,7 +250,6 @@ class TestResolveContextWindow:
                 "provider_catalog",
             ),
             ({"catalog": _FakeCatalog({})}, 200_000, "registry"),
-            ({"catalog": _FakeCatalog({})}, None, "static_default"),
         ],
     )
     def test_one_million_marker_floors_all_sources_without_changing_attribution(
@@ -307,10 +266,15 @@ class TestResolveContextWindow:
         assert result.value == 1_000_000
         assert result.source == expected_source
 
-    def test_grok_composer_static_fallback_uses_current_window(self) -> None:
-        """Grok Composer 2.5 Fast has a 200k static fallback."""
+    def test_one_million_marker_does_not_invent_unknown_window(self) -> None:
         with patch("gobby.llm.model_registry.lookup_context_window", return_value=None):
-            assert resolve_context_window("grok-composer-2.5-fast", provider="grok") == 200_000
+            result = resolve_context_window_with_source(
+                "claude-future-model[1m]", provider="claude"
+            )
+
+        assert result is not None
+        assert result.value is None
+        assert result.source == "unknown"
 
     @pytest.mark.parametrize(
         "registry_value",
@@ -323,7 +287,7 @@ class TestResolveContextWindow:
             pytest.param(128000.0, id="float"),
         ],
     )
-    def test_invalid_registry_window_defers_to_static_fallback(
+    def test_invalid_registry_window_returns_explicit_unknown(
         self,
         registry_value: object,
     ) -> None:
@@ -337,8 +301,8 @@ class TestResolveContextWindow:
             )
 
         assert result is not None
-        assert result.value == 200_000
-        assert result.source == "static_default"
+        assert result.value is None
+        assert result.source == "unknown"
 
     def test_positive_registry_window_keeps_registry_source(self) -> None:
         with patch("gobby.llm.model_registry.lookup_context_window", return_value=300_000):
@@ -368,8 +332,8 @@ class TestResolveContextWindow:
             )
 
         assert result is not None
-        assert result.value == 200_000
-        assert result.source == "static_default"
+        assert result.value is None
+        assert result.source == "unknown"
 
     def test_family_fallback_ignores_unknown_claude_model(self) -> None:
         """A Claude id with no family token still returns None (no false 200k)."""
@@ -387,6 +351,24 @@ class TestResolveContextWindow:
         with patch("gobby.llm.model_registry.lookup_context_window", return_value=None):
             result = resolve_context_window("unknown-model-xyz", None)
         assert result is None
+
+    def test_unknown_model_returns_explicit_unknown_once(
+        self, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        model = "codex/future-unknown-context-window-model"
+        with (
+            caplog.at_level("WARNING", logger="gobby.llm.context_windows"),
+            patch("gobby.llm.model_registry.lookup_context_window", return_value=None),
+        ):
+            first = resolve_context_window_with_source(model, provider="codex", catalog=None)
+            second = resolve_context_window_with_source(model, provider="codex", catalog=None)
+
+        assert first is not None
+        assert first.value is None
+        assert first.source == "unknown"
+        assert second == first
+        warnings = [record for record in caplog.records if model in record.getMessage()]
+        assert len(warnings) == 1
 
     def test_registry_miss_claude_returns_none_without_catalog(self) -> None:
         """Claude no longer has a hardcoded resolver fallback."""
@@ -428,7 +410,7 @@ class TestResolveContextWindow:
 
     def test_provider_reported_runtime_metadata_wins(self) -> None:
         """Provider-reported runtime metadata wins over catalog and registry data."""
-        catalog = _SourceCatalog({("codex", "gpt-5.4"): (200_000, "static_default")})
+        catalog = _SourceCatalog({("codex", "gpt-5.4"): (200_000, "provider_catalog")})
         with patch("gobby.llm.model_registry.lookup_context_window", side_effect=_mock_lookup):
             result = resolve_context_window(
                 "gpt-5.4",
@@ -441,7 +423,7 @@ class TestResolveContextWindow:
 
     def test_provider_reported_runtime_metadata_accepts_camel_alias(self) -> None:
         """Runtime metadata accepts modelContextWindow alias."""
-        catalog = _SourceCatalog({("codex", "gpt-5.4"): (200_000, "static_default")})
+        catalog = _SourceCatalog({("codex", "gpt-5.4"): (200_000, "provider_catalog")})
         with patch("gobby.llm.model_registry.lookup_context_window", side_effect=_mock_lookup):
             result = resolve_context_window(
                 "gpt-5.4",
@@ -452,13 +434,12 @@ class TestResolveContextWindow:
 
         assert result == 258_400
 
-    def test_legacy_catalog_defers_to_registry(self) -> None:
-        """Source-less legacy catalog data is a fallback, not provider metadata."""
+    def test_source_less_catalog_is_provider_catalog(self) -> None:
         catalog = _FakeCatalog({("codex", "gpt-4o"): 256_000})
         with patch("gobby.llm.model_registry.lookup_context_window", side_effect=_mock_lookup):
             result = resolve_context_window("gpt-4o", None, provider="codex", catalog=catalog)
 
-        assert result == 128_000
+        assert result == 256_000
 
     def test_bare_catalog_int_must_be_positive(self) -> None:
         with patch("gobby.llm.model_registry.lookup_context_window", return_value=None):
@@ -481,8 +462,7 @@ class TestResolveContextWindow:
                 is None
             )
 
-    def test_static_catalog_source_defers_to_registry(self) -> None:
-        """Static catalog values are fallbacks, not authoritative provider metadata."""
+    def test_retired_static_catalog_source_is_rejected(self) -> None:
         catalog = _SourceCatalog({("codex", "gpt-4o"): (200_000, "static_default")})
         with patch("gobby.llm.model_registry.lookup_context_window", side_effect=_mock_lookup):
             result = resolve_context_window("gpt-4o", None, provider="codex", catalog=catalog)
@@ -502,7 +482,7 @@ class TestResolveContextWindow:
         assert result.value == 200_000
         assert result.source == "registry"
 
-    def test_legacy_catalog_value_defers_to_registry(self) -> None:
+    def test_source_less_catalog_value_precedes_registry(self) -> None:
         catalog = _FakeCatalog({("codex", "gpt-4o"): 200_000})
         with patch("gobby.llm.model_registry.lookup_context_window", return_value=128_000):
             result = resolve_context_window_with_source(
@@ -512,8 +492,8 @@ class TestResolveContextWindow:
             )
 
         assert result is not None
-        assert result.value == 128_000
-        assert result.source == "registry"
+        assert result.value == 200_000
+        assert result.source == "provider_catalog"
 
     def test_provider_catalog_source_wins_over_registry(self) -> None:
         """Provider-owned catalog values outrank generic registry data."""
@@ -524,7 +504,7 @@ class TestResolveContextWindow:
         assert result == 200_000
 
     def test_registry_fills_catalog_gap(self) -> None:
-        """OpenRouter/model_costs fills gaps when catalog data is absent."""
+        """OpenRouter/model_metadata fills gaps when catalog data is absent."""
         catalog = _FakeCatalog({})
         with patch("gobby.llm.model_registry.lookup_context_window", side_effect=_mock_lookup):
             result = resolve_context_window("gpt-4o", None, provider="codex", catalog=catalog)
@@ -550,6 +530,12 @@ class TestResolveContextWindow:
             assert resolve_context_window("claude-opus-4-6", None, overrides=overrides) == 500_000
             assert resolve_context_window("claude-sonnet-4-6", None, overrides=overrides) == 200_000
 
+    @pytest.mark.parametrize("model", ["gpt-5.6-sol", "gpt-5.6-terra", "gpt-5.6-luna"])
+    @pytest.mark.parametrize("provider", [None, "codex"])
+    def test_gpt_5_6_family_resolves_from_registry(self, model: str, provider: str | None) -> None:
+        with patch("gobby.llm.model_registry.lookup_context_window", side_effect=_mock_lookup):
+            assert resolve_context_window(model, provider=provider) == 258_400
+
     def test_overrides_win_sdk_ignored(self) -> None:
         """Config overrides win; SDK-reported contextWindow (2nd arg) is ignored."""
         overrides = {"opus": 500_000}
@@ -568,7 +554,7 @@ class TestResolveContextWindow:
         ],
     )
     def test_provider_prefix_handled(self, model: str, expected: int) -> None:
-        """Provider-prefixed model names work via registry and static lookup."""
+        """Provider-prefixed model names work through registry lookup."""
         with patch("gobby.llm.model_registry.lookup_context_window", side_effect=_mock_lookup):
             result = resolve_context_window(model, None)
         assert result == expected
@@ -579,11 +565,11 @@ class TestResolveContextWindow:
             result = resolve_context_window("qwen3-coder(openai)", None, provider="qwen")
         assert result == 262_144
 
-    def test_legacy_cached_codex_static_value_does_not_block_registry(
+    def test_source_less_cached_codex_value_is_provider_catalog(
         self,
         temp_dir,
     ) -> None:
-        """Legacy source-less cached Codex 200k is treated as a static fallback."""
+        """Source-less cached Codex metadata is provider-catalog data."""
         cache_path = temp_dir / "provider-model-catalog.json"
         cache_path.write_text(
             """
@@ -606,4 +592,4 @@ class TestResolveContextWindow:
         with patch("gobby.llm.model_registry.lookup_context_window", side_effect=_mock_lookup):
             result = resolve_context_window("gpt-5.4", None, provider="codex", catalog=catalog)
 
-        assert result == 300_000
+        assert result == 200_000

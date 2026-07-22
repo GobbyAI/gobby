@@ -755,10 +755,16 @@ def backfill_context_windows(dry_run: bool) -> None:
     under-sized window (e.g. a 1M-context Opus stored at 200k) upward,
     recomputing the usage ratio. Larger windows are never shrunk.
     """
+    from gobby.config.app import load_config
     from gobby.sessions.context_usage import backfill_session_context_windows
 
+    overrides = load_config().context_window_overrides
     with session_manager_context() as manager:
-        result = backfill_session_context_windows(manager.db, dry_run=dry_run)
+        result = backfill_session_context_windows(
+            manager.db,
+            dry_run=dry_run,
+            overrides=overrides,
+        )
 
     verb = "Would update" if dry_run else "Updated"
     click.echo(

@@ -95,7 +95,7 @@ function isProviderModelOption(value: unknown): value is ProviderModelOption {
       value.context_length === null ||
       typeof value.context_length === "number") &&
     (value.context_length_source === undefined ||
-      ["provider_reported", "provider_catalog", "registry", "static_default"].includes(
+      ["override", "provider_reported", "provider_catalog", "registry", "unknown"].includes(
         value.context_length_source as string,
       )) &&
     (value.reasoning === undefined || isProviderModelReasoning(value.reasoning))

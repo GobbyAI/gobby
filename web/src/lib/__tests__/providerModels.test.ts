@@ -489,6 +489,44 @@ describe("providerModels", () => {
     expect(fetchSpy).toHaveBeenCalledTimes(1);
   });
 
+  it("keeps explicit unknown context metadata and rejects retired sources", async () => {
+    const unknownEntry = {
+      provider: "codex",
+      available: true,
+      source: "live",
+      models: [
+        {
+          value: "future-model",
+          label: "Future Model",
+          context_length: null,
+          context_length_source: "unknown",
+        },
+      ],
+    };
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue({
+      ok: true,
+      json: async () => ({
+        providers: [
+          unknownEntry,
+          {
+            ...unknownEntry,
+            provider: "legacy",
+            models: [
+              {
+                value: "legacy-model",
+                label: "Legacy Model",
+                context_length: 200_000,
+                context_length_source: "static_default",
+              },
+            ],
+          },
+        ],
+      }),
+    }));
+
+    await expect(fetchProviderModelCatalog()).resolves.toEqual([unknownEntry]);
+  });
+
   it("preserves nonblank execution-provider metadata and catalog identity", async () => {
     const validEntry: ProviderModelEntry = {
       provider: "local:lm-studio",

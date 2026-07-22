@@ -259,6 +259,7 @@ def test_postgres_migrations_preserve_known_contiguous_post_baseline_prefix() ->
         "333_detection_manifests.sql",
         "334_verification_receipts.sql",
         "335_memories_dream_due_version.sql",
+        "336_model_metadata_rename.sql",
     ]
     migration_names = _tracked_migration_names(migrations_dir)
 
@@ -1053,17 +1054,23 @@ def test_migration_helpers_are_not_imported_by_runtime_storage_paths() -> None:
     assert violations == []
 
 
-def test_model_costs_uses_provider_scoped_primary_key_in_baseline_and_migration() -> None:
+def test_model_metadata_uses_provider_scoped_primary_key_in_baseline_and_migrations() -> None:
     baseline = _baseline_text()
-    migration = (
+    provider_key_migration = (
         SRC_ROOT / "storage" / "migrations" / "311_model_costs_provider_key.sql"
     ).read_text(encoding="utf-8")
+    rename_migration = (
+        SRC_ROOT / "storage" / "migrations" / "336_model_metadata_rename.sql"
+    ).read_text(encoding="utf-8")
 
-    model_costs = _table_definition(baseline, "model_costs")
-    assert "provider TEXT NOT NULL" in model_costs
-    assert "PRIMARY KEY (provider, model)" in model_costs
-    assert "DROP CONSTRAINT IF EXISTS model_costs_pkey" in migration
-    assert "PRIMARY KEY (provider, model)" in migration
+    model_metadata = _table_definition(baseline, "model_metadata")
+    assert "provider TEXT NOT NULL" in model_metadata
+    assert "CONSTRAINT model_metadata_pkey PRIMARY KEY (provider, model)" in model_metadata
+    assert "DROP CONSTRAINT IF EXISTS model_costs_pkey" in provider_key_migration
+    assert "PRIMARY KEY (provider, model)" in provider_key_migration
+    assert "ALTER TABLE model_costs RENAME TO model_metadata" in rename_migration
+    assert "RENAME CONSTRAINT model_costs_pkey TO model_metadata_pkey" in rename_migration
+    assert "pg_constraint" in rename_migration
 
 
 def test_memory_source_session_fk_sets_null_in_baseline_and_upgrade_migration() -> None:

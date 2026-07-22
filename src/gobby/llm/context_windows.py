@@ -6,22 +6,25 @@ import logging
 import re
 from collections.abc import Mapping
 from dataclasses import dataclass
-from typing import Any, Literal, cast
+from typing import TYPE_CHECKING, Any, Literal, cast
 
 from gobby.llm.context_window_values import positive_context_window
+
+if TYPE_CHECKING:
+    from gobby.storage.hub.protocol import HubDatabase
 
 ContextLengthSource = Literal[
     "provider_reported",
     "provider_catalog",
     "registry",
-    "static_default",
+    "unknown",
 ]
 ContextWindowSource = Literal[
     "override",
     "provider_reported",
     "provider_catalog",
     "registry",
-    "static_default",
+    "unknown",
 ]
 
 CONTEXT_LENGTH_SOURCE_KEY = "context_length_source"
@@ -70,47 +73,13 @@ _CONTEXT_WINDOW_MARKER_RE = re.compile(
 )
 _ONE_MILLION_CONTEXT_WINDOW = 1_000_000
 _VALID_CONTEXT_LENGTH_SOURCES: frozenset[str] = frozenset(
-    {"provider_reported", "provider_catalog", "registry", "static_default"}
+    {"provider_reported", "provider_catalog", "registry", "unknown"}
 )
 _AUTHORITATIVE_CATALOG_SOURCES: frozenset[str] = frozenset(
     {"provider_reported", "provider_catalog"}
 )
 logger = logging.getLogger(__name__)
-
-# Generic fallback defaults. These are intentionally last-resort values.
-_STATIC_CONTEXT_LENGTHS: dict[str, int] = {
-    "opus": 1_000_000,
-    "sonnet": 1_000_000,
-    "haiku": 200_000,
-    "fable": 1_000_000,
-    "claude-fable-5": 1_000_000,
-    "claude-opus-4-7": 1_000_000,
-    "claude-opus-4-6": 1_000_000,
-    "claude-opus-4-6-fast": 1_000_000,
-    "claude-opus-4-5": 1_000_000,
-    "claude-sonnet-4-6": 1_000_000,
-    "claude-sonnet-4-5": 200_000,
-    "claude-haiku-4-5": 200_000,
-    "gpt-5.5": 258_400,
-    "gpt-5.4": 258_400,
-    "gpt-5.4-fast": 258_400,
-    "gpt-5.4-mini": 258_400,
-    "gpt-5.3-codex": 258_400,
-    "gpt-5.3-codex-fast": 258_400,
-    "gpt-5.3-codex-spark": 258_400,
-    "gpt-5.2": 258_400,
-    "gpt-5.2-codex": 258_400,
-    "gpt-5.1-codex-max": 258_400,
-    "gemini-3.5-flash": 1_048_576,
-    "gemini-3.1-pro-preview": 1_000_000,
-    "gemini-3-flash-preview": 1_000_000,
-    "gemini-2.5-pro": 1_000_000,
-    "grok-composer-2.5-fast": 200_000,
-    "grok-build": 512_000,
-    "qwen3-coder": 262_144,
-    "qwen3-coder-plus": 262_144,
-    "qwen3-coder-flash": 262_144,
-}
+_UNKNOWN_CONTEXT_WINDOW_WARNED_MODELS: set[str] = set()
 
 # Droid publishes its own model catalog and limits can differ from OpenRouter or
 # Codex defaults for the same visible IDs.
@@ -149,7 +118,7 @@ _DROID_PROVIDER_CATALOG_CONTEXT_LENGTHS: dict[str, int] = {
 class ResolvedContextWindow:
     """Context-window value with its winning source."""
 
-    value: int
+    value: int | None
     source: ContextWindowSource
 
 
@@ -165,7 +134,11 @@ def _apply_context_window_marker_floor(
     resolved: ResolvedContextWindow,
     has_one_million_marker: bool,
 ) -> ResolvedContextWindow:
-    if not has_one_million_marker or resolved.value >= _ONE_MILLION_CONTEXT_WINDOW:
+    if (
+        not has_one_million_marker
+        or resolved.value is None
+        or resolved.value >= _ONE_MILLION_CONTEXT_WINDOW
+    ):
         return resolved
     return ResolvedContextWindow(_ONE_MILLION_CONTEXT_WINDOW, resolved.source)
 
@@ -191,8 +164,7 @@ def coerce_context_length(value: Any) -> int | None:
             parsed = int(value.replace("_", ""))
         except ValueError:
             return None
-        return parsed if parsed > 0 else None
-    return None
+    return parsed if parsed > 0 else None
 
 
 def valid_context_length_source(value: Any) -> ContextLengthSource | None:
@@ -270,11 +242,6 @@ def context_key_allowed_for_provider(provider: str | None, key: str) -> bool:
     return True
 
 
-def static_context_length_for_model(provider: str | None, model: str | None) -> int | None:
-    """Return a last-resort static context length for known shipped models."""
-    return _lookup_context_length(_STATIC_CONTEXT_LENGTHS, provider, model)
-
-
 def provider_catalog_context_length_for_model(
     provider: str | None,
     model: str | None,
@@ -322,6 +289,7 @@ def resolve_context_window(
     provider: str | None = None,
     catalog: Any | None = None,
     provider_reported_context_window: Any | None = None,
+    db: HubDatabase | None = None,
 ) -> int | None:
     """Resolve context window using source-aware provider/registry precedence."""
     resolved = resolve_context_window_with_source(
@@ -331,6 +299,7 @@ def resolve_context_window(
         provider=provider,
         catalog=catalog,
         provider_reported_context_window=provider_reported_context_window,
+        db=db,
     )
     return resolved.value if resolved else None
 
@@ -366,13 +335,14 @@ def resolve_context_window_with_source(
     provider: str | None = None,
     catalog: Any | None = None,
     provider_reported_context_window: Any | None = None,
+    db: HubDatabase | None = None,
 ) -> ResolvedContextWindow | None:
     """Resolve context window and expose the selected source."""
     if model is not None and not isinstance(model, str):
         raise TypeError("model must be a string or None")
     if overrides is not None and not isinstance(overrides, dict):
         raise TypeError("overrides must be a dict or None")
-    if not model:
+    if not model or not model.strip():
         return None
 
     has_one_million_marker = _CONTEXT_WINDOW_MARKER_RE.search(model.strip()) is not None
@@ -404,7 +374,7 @@ def resolve_context_window_with_source(
     )
     if catalog_result and catalog_result.source in _AUTHORITATIVE_CATALOG_SOURCES:
         return _apply_context_window_marker_floor(catalog_result, has_one_million_marker)
-    if catalog_result and catalog_result.source in {"registry", "static_default"}:
+    if catalog_result and catalog_result.source == "registry":
         catalog_fallback = catalog_result
 
     provider_catalog_value = provider_catalog_context_length_for_model(provider_name, model)
@@ -414,7 +384,7 @@ def resolve_context_window_with_source(
             has_one_million_marker,
         )
 
-    registry_value = _registry_context_window(provider_name, model)
+    registry_value = _registry_context_window(provider_name, model, db)
     if registry_value is not None:
         return _apply_context_window_marker_floor(
             ResolvedContextWindow(registry_value, "registry"), has_one_million_marker
@@ -423,13 +393,11 @@ def resolve_context_window_with_source(
     if catalog_fallback is not None:
         return _apply_context_window_marker_floor(catalog_fallback, has_one_million_marker)
 
-    static_value = static_context_length_for_model(provider_name, model)
-    if static_value is not None:
-        return _apply_context_window_marker_floor(
-            ResolvedContextWindow(static_value, "static_default"), has_one_million_marker
-        )
-
-    return None
+    warning_key = normalize_model_lookup_id(model)
+    if warning_key not in _UNKNOWN_CONTEXT_WINDOW_WARNED_MODELS:
+        _UNKNOWN_CONTEXT_WINDOW_WARNED_MODELS.add(warning_key)
+        logger.warning("Context window is unknown for model %s", model)
+    return ResolvedContextWindow(None, "unknown")
 
 
 def _lookup_context_length(
@@ -501,13 +469,13 @@ def _resolve_from_catalog(
         if isinstance(raw, int) and not isinstance(raw, bool):
             value = coerce_context_length(raw)
             if value is not None:
-                return ResolvedContextWindow(value, "provider_reported")
+                return ResolvedContextWindow(value, "provider_catalog")
 
     if hasattr(catalog, "get_context_window"):
         value = catalog.get_context_window(provider, model)
         context_window = coerce_context_length(value)
         if context_window is not None:
-            return ResolvedContextWindow(context_window, "static_default")
+            return ResolvedContextWindow(context_window, "provider_catalog")
     return None
 
 
@@ -522,11 +490,19 @@ def _coerce_context_length_from_fields(
     return None
 
 
-def _registry_context_window(provider: str | None, model: str) -> int | None:
+def _registry_context_window(
+    provider: str | None,
+    model: str,
+    db: HubDatabase | None = None,
+) -> int | None:
     from gobby.llm.model_registry import lookup_context_window
 
     for candidate in _registry_lookup_candidates(provider, model):
-        registry_val = lookup_context_window(candidate)
+        registry_val = (
+            lookup_context_window(candidate, db=db)
+            if db is not None
+            else lookup_context_window(candidate)
+        )
         context_window = positive_context_window(registry_val)
         if context_window is not None:
             return context_window
@@ -571,7 +547,6 @@ __all__ = [
     "provider_catalog_context_length_for_model",
     "resolve_context_window",
     "resolve_context_window_with_source",
-    "static_context_length_for_model",
     "strip_known_provider_prefix",
     "strip_qwen_auth_suffix",
     "valid_context_length_source",

@@ -56,7 +56,9 @@ def test_snapshot_builders_resolve_one_million_context_marker() -> None:
     ],
 )
 def test_agy_uses_model_family_context_windows(model: str, expected: int) -> None:
-    assert context_window_for_source_model("agy", model) == expected
+    registry_value = None if "gpt-oss" in model.lower() else expected
+    with patch("gobby.llm.model_registry.lookup_context_window", return_value=registry_value):
+        assert context_window_for_source_model("agy", model) == expected
 
 
 def test_agy_does_not_use_family_fallback_for_unknown_models() -> None:
@@ -69,7 +71,12 @@ def test_agy_gemini_family_lookup_uses_agy_provider_catalog() -> None:
     ) as resolve:
         assert context_usage._context_window_for_agy_model("gemini-3.5-flash") == 1_048_576
 
-    resolve.assert_called_once_with("gemini-3.5-flash", provider="agy")
+    resolve.assert_called_once_with(
+        "gemini-3.5-flash",
+        overrides=None,
+        provider="agy",
+        db=None,
+    )
 
 
 def test_private_resolver_uses_normalized_source_without_renormalizing(
@@ -83,10 +90,14 @@ def test_private_resolver_uses_normalized_source_without_renormalizing(
         *,
         provider: str | None,
         catalog: object | None = None,
+        overrides: dict[str, int] | None = None,
+        db: object | None = None,
     ) -> int:
         assert model == "model-x"
         assert provider == "claude"
         assert catalog is None
+        assert overrides is None
+        assert db is None
         return 123
 
     monkeypatch.setattr(context_usage, "normalize_context_usage_source", fail_normalize)
@@ -96,11 +107,12 @@ def test_private_resolver_uses_normalized_source_without_renormalizing(
 
 
 def test_grok_window_only_snapshot_uses_model_metadata() -> None:
-    snapshot = snapshot_from_window_metadata(
-        source="grok",
-        context_window=None,
-        model="grok-build",
-    )
+    with patch("gobby.llm.model_registry.lookup_context_window", return_value=512_000):
+        snapshot = snapshot_from_window_metadata(
+            source="grok",
+            context_window=None,
+            model="grok-build",
+        )
 
     assert snapshot is not None
     assert snapshot.source == "grok"
@@ -112,11 +124,12 @@ def test_grok_window_only_snapshot_uses_model_metadata() -> None:
 
 
 def test_agy_window_only_snapshot_has_unknown_pressure() -> None:
-    snapshot = snapshot_from_window_metadata(
-        source="agy",
-        context_window=None,
-        model="gemini-2.5-pro",
-    )
+    with patch("gobby.llm.model_registry.lookup_context_window", return_value=1_000_000):
+        snapshot = snapshot_from_window_metadata(
+            source="agy",
+            context_window=None,
+            model="gemini-2.5-pro",
+        )
 
     assert snapshot is not None
     assert snapshot.source == "agy"
@@ -125,7 +138,7 @@ def test_agy_window_only_snapshot_has_unknown_pressure() -> None:
     assert snapshot.context_usage_ratio is None
 
 
-def test_effective_context_window_repairs_stale_codex_static_value() -> None:
+def test_effective_context_window_repairs_stale_codex_value_from_registry() -> None:
     session = SimpleNamespace(
         id="session-1",
         source="codex",
@@ -133,7 +146,24 @@ def test_effective_context_window_repairs_stale_codex_static_value() -> None:
         context_window=200_000,
     )
 
-    assert effective_context_window_for_session(session) == 258_400
+    with patch("gobby.llm.model_registry.lookup_context_window", return_value=258_400):
+        assert effective_context_window_for_session(session) == 258_400
+
+
+def test_context_window_overrides_applied() -> None:
+    session = SimpleNamespace(
+        id="session-override",
+        source="codex",
+        model="future-model",
+        context_window=None,
+    )
+    with patch("gobby.llm.model_registry.lookup_context_window", return_value=None):
+        result = effective_context_window_for_session(
+            session,
+            overrides={"future-model": 333_000},
+        )
+
+    assert result == 333_000
 
 
 def test_effective_context_window_preserves_reported_session_value() -> None:
@@ -196,7 +226,8 @@ def test_effective_context_window_ignores_non_reported_db_session_value() -> Non
         model="unknown-model",
     )
 
-    assert effective_context_window_for_session(session, db=FakeDb()) is None
+    with patch("gobby.llm.model_registry.lookup_context_window", return_value=None):
+        assert effective_context_window_for_session(session, db=FakeDb()) is None
 
 
 def test_effective_context_window_prefers_latest_token_event_window() -> None:
@@ -304,7 +335,11 @@ def test_backfill_bumps_under_counted_windows_and_recomputes_ratio() -> None:
         },
     ]
     db = _BackfillFakeDb(rows)
-    with patch("gobby.llm.model_registry.lookup_context_window", return_value=None):
+
+    def registry_window(model: str, **_kwargs: object) -> int | None:
+        return 1_000_000 if "claude-opus-4-8" in model else None
+
+    with patch("gobby.llm.model_registry.lookup_context_window", side_effect=registry_window):
         result = backfill_session_context_windows(db)  # type: ignore[arg-type]
 
     assert result.scanned == 5
@@ -332,7 +367,7 @@ def test_backfill_dry_run_writes_nothing() -> None:
         }
     ]
     db = _BackfillFakeDb(rows)
-    with patch("gobby.llm.model_registry.lookup_context_window", return_value=None):
+    with patch("gobby.llm.model_registry.lookup_context_window", return_value=1_000_000):
         result = backfill_session_context_windows(db, dry_run=True)  # type: ignore[arg-type]
 
     assert result.updated == 1

@@ -93,10 +93,18 @@ def snapshot_from_window_metadata(
 def context_window_for_source_model(
     source: ContextUsageSource | str | None,
     model: str | None,
+    *,
+    overrides: dict[str, int] | None = None,
+    db: HubDatabase | None = None,
 ) -> int | None:
     """Resolve context-window metadata for a provider/model pair."""
     snapshot_source = normalize_context_usage_source(source) if isinstance(source, str) else source
-    return _resolve_context_window_for_source_model(snapshot_source, model)
+    return _resolve_context_window_for_source_model(
+        snapshot_source,
+        model,
+        overrides=overrides,
+        db=db,
+    )
 
 
 def _resolve_context_window_for_source_model(
@@ -105,34 +113,70 @@ def _resolve_context_window_for_source_model(
     *,
     catalog: Any | None = None,
     provider_reported_context_window: Any | None = None,
+    overrides: dict[str, int] | None = None,
+    db: HubDatabase | None = None,
 ) -> int | None:
     """Resolve context-window metadata for a provider/model pair."""
     snapshot_source = source
     if snapshot_source == "agy":
         reported = _coerce_positive_int(provider_reported_context_window)
-        return reported if reported is not None else _context_window_for_agy_model(model)
+        resolved = resolve_context_window(
+            model,
+            overrides=overrides,
+            provider="agy",
+            provider_reported_context_window=reported,
+            db=db,
+        )
+        return (
+            resolved
+            if resolved is not None
+            else _context_window_for_agy_model(model, overrides, db=db)
+        )
     provider = snapshot_source
     if provider_reported_context_window is None:
-        return resolve_context_window(model, provider=provider, catalog=catalog)
+        return resolve_context_window(
+            model,
+            overrides=overrides,
+            provider=provider,
+            catalog=catalog,
+            db=db,
+        )
     reported = _coerce_positive_int(provider_reported_context_window)
     resolved = resolve_context_window(
         model,
+        overrides=overrides,
         provider=provider,
         catalog=catalog,
         provider_reported_context_window=reported,
+        db=db,
     )
     return resolved if resolved is not None else reported
 
 
-def _context_window_for_agy_model(model: str | None) -> int | None:
+def _context_window_for_agy_model(
+    model: str | None,
+    overrides: dict[str, int] | None = None,
+    *,
+    db: HubDatabase | None = None,
+) -> int | None:
     """Resolve AGY windows by the model family currently exposed by `agy models`."""
     lookup_model = _normalize_agy_model_lookup_id(model)
     if lookup_model is None:
         return None
     if lookup_model.startswith("gemini-"):
-        return resolve_context_window(lookup_model, provider="agy")
+        return resolve_context_window(
+            lookup_model,
+            overrides=overrides,
+            provider="agy",
+            db=db,
+        )
     if lookup_model.startswith("claude-"):
-        return resolve_context_window(lookup_model, provider="claude")
+        return resolve_context_window(
+            lookup_model,
+            overrides=overrides,
+            provider="claude",
+            db=db,
+        )
     if lookup_model.startswith("gpt-oss-"):
         return _GPT_OSS_CONTEXT_WINDOW
     return None
@@ -154,6 +198,7 @@ def effective_context_window_for_session(
     variables: dict[str, Any] | None = None,
     db: HubDatabase | None = None,
     catalog: Any | None = None,
+    overrides: dict[str, int] | None = None,
 ) -> int | None:
     """Return the best context window for session hydration payloads."""
     live_window = _context_window_from_variables(variables or {})
@@ -171,7 +216,13 @@ def effective_context_window_for_session(
     model = _effective_session_model(session, variables or {})
     source = getattr(session, "source", None)
     snapshot_source = normalize_context_usage_source(source if isinstance(source, str) else None)
-    resolved = _resolve_context_window_for_source_model(snapshot_source, model, catalog=catalog)
+    resolved = _resolve_context_window_for_source_model(
+        snapshot_source,
+        model,
+        catalog=catalog,
+        overrides=overrides,
+        db=db,
+    )
     if resolved is not None:
         return resolved
 
@@ -327,6 +378,7 @@ def backfill_session_context_windows(
     *,
     catalog: Any | None = None,
     dry_run: bool = False,
+    overrides: dict[str, int] | None = None,
 ) -> ContextWindowBackfillResult:
     """Re-resolve under-counted session context windows from the model.
 
@@ -363,6 +415,8 @@ def backfill_session_context_windows(
             snapshot_source,
             model,
             catalog=catalog,
+            overrides=overrides,
+            db=db,
         )
         if resolved is None:
             continue

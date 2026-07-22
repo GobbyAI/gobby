@@ -2,6 +2,10 @@ DO $$
 DECLARE
     missing_provider_count BIGINT;
 BEGIN
+    IF to_regclass('model_costs') IS NULL THEN
+        RETURN;
+    END IF;
+
     SELECT COUNT(*)
       INTO missing_provider_count
       FROM model_costs
@@ -14,12 +18,12 @@ BEGIN
     END IF;
 END $$;
 
-ALTER TABLE model_costs
+ALTER TABLE IF EXISTS model_costs
     DROP CONSTRAINT IF EXISTS model_costs_pkey;
 
-ALTER TABLE model_costs
+ALTER TABLE IF EXISTS model_costs
     ALTER COLUMN model SET NOT NULL,
     ALTER COLUMN provider SET NOT NULL;
 
-ALTER TABLE model_costs
+ALTER TABLE IF EXISTS model_costs
     ADD CONSTRAINT model_costs_pkey PRIMARY KEY (provider, model);

@@ -7,6 +7,7 @@ Pricing data has been removed — tokens are tracked directly.
 from __future__ import annotations
 
 import logging
+from datetime import UTC, datetime, timedelta
 from typing import TYPE_CHECKING, NamedTuple
 
 from gobby.llm.context_window_values import positive_context_window
@@ -16,6 +17,8 @@ if TYPE_CHECKING:
     from gobby.storage.hub.protocol import HubDatabase
 
 logger = logging.getLogger(__name__)
+MODEL_METADATA_STALE_AFTER = timedelta(hours=48)
+_stale_warning_emitted = False
 
 
 def _model_lookup_parts(model_id: str) -> tuple[str | None, str]:
@@ -39,11 +42,10 @@ class ModelMetadata(NamedTuple):
     max_completion_tokens: int | None = None
 
 
-class ModelCostStore:
-    """Manages the model_costs table populated from OpenRouter's model registry.
+class ModelMetadataStore:
+    """Manages model metadata populated from OpenRouter's model registry.
 
-    Despite the legacy table name, this now only stores model metadata
-    (context_length, max_completion_tokens), not pricing data.
+    The registry stores context windows and output-token limits.
     """
 
     def __init__(self, db: HubDatabase) -> None:
@@ -83,22 +85,40 @@ class ModelCostStore:
             )
 
         with self.db.transaction() as conn:
-            conn.execute("DELETE FROM model_costs")
+            conn.execute("DELETE FROM model_metadata")
             conn.executemany(
-                "INSERT INTO model_costs (model, provider, "
+                "INSERT INTO model_metadata (model, provider, "
                 "context_length, max_completion_tokens, "
                 "source) VALUES (%s, %s, %s, %s, %s)",
                 rows,
             )
 
-        logger.info("Populated model_costs table with %s models from registry", len(rows))
+        logger.info("Populated model_metadata table with %s models from registry", len(rows))
         return len(rows)
+
+    @staticmethod
+    def _warn_if_stale(row: object) -> None:
+        global _stale_warning_emitted
+
+        if _stale_warning_emitted:
+            return
+        updated_at = row.get("metadata_updated_at") if isinstance(row, dict) else None
+        if not isinstance(updated_at, datetime):
+            return
+        if updated_at.tzinfo is None:
+            updated_at = updated_at.replace(tzinfo=UTC)
+        if datetime.now(UTC) - updated_at > MODEL_METADATA_STALE_AFTER:
+            _stale_warning_emitted = True
+            logger.warning("Model metadata cache is older than 48 hours")
 
     def get_all(self) -> dict[str, ModelMetadata]:
         """Return all model metadata keyed by ``provider/model``."""
         rows = self.db.fetchall(
-            "SELECT provider, model, context_length, max_completion_tokens FROM model_costs"
+            "SELECT provider, model, context_length, max_completion_tokens, "
+            "MAX(updated_at) OVER () AS metadata_updated_at FROM model_metadata"
         )
+        if rows:
+            self._warn_if_stale(rows[0])
         return {
             f"{row['provider']}/{row['model']}": ModelMetadata(
                 context_length=row["context_length"],
@@ -113,18 +133,19 @@ class ModelCostStore:
 
         if provider is None:
             exact_query = (
-                "SELECT context_length FROM model_costs "
+                "SELECT context_length, updated_at AS metadata_updated_at FROM model_metadata "
                 "WHERE model = %s AND context_length > 0 "
                 "ORDER BY provider LIMIT 1"
             )
             exact_params: tuple[str, ...] = (model,)
         else:
             exact_query = (
-                "SELECT context_length FROM model_costs "
+                "SELECT context_length, updated_at AS metadata_updated_at FROM model_metadata "
                 "WHERE provider = %s AND model = %s AND context_length > 0"
             )
             exact_params = (provider, model)
         row = self.db.fetchone(exact_query, exact_params)
+        self._warn_if_stale(row)
         exact_context_window = positive_context_window(row["context_length"] if row else None)
         if exact_context_window is not None:
             return exact_context_window
@@ -133,18 +154,19 @@ class ModelCostStore:
         prefix_params: tuple[str, ...]
         if provider is None:
             prefix_query = (
-                "SELECT context_length FROM model_costs "
+                "SELECT context_length, updated_at AS metadata_updated_at FROM model_metadata "
                 "WHERE LEFT(%s, LENGTH(model)) = model AND context_length > 0 "
                 "ORDER BY LENGTH(model) DESC, provider LIMIT 1"
             )
             prefix_params = (model,)
         else:
             prefix_query = (
-                "SELECT context_length FROM model_costs "
+                "SELECT context_length, updated_at AS metadata_updated_at FROM model_metadata "
                 "WHERE provider = %s AND LEFT(%s, LENGTH(model)) = model "
                 "AND context_length > 0 "
                 "ORDER BY LENGTH(model) DESC, provider LIMIT 1"
             )
             prefix_params = (provider, model)
         row = self.db.fetchone(prefix_query, prefix_params)
+        self._warn_if_stale(row)
         return positive_context_window(row["context_length"] if row else None)

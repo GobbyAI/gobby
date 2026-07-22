@@ -1411,8 +1411,7 @@ class TestContinueInChatTerminalKill:
         assert response["context_window"] == 200000
 
     @pytest.mark.asyncio
-    async def test_attach_to_session_repairs_stale_codex_context_window(self) -> None:
-        """Attach payload should not trust stale stored Codex static windows."""
+    async def test_attach_context_window_override(self) -> None:
         from gobby.servers.websocket.session_control import SessionControlMixin
 
         ws = MagicMock()
@@ -1427,7 +1426,7 @@ class TestContinueInChatTerminalKill:
         source_session.source = "codex"
         source_session.title = "Observed Session"
         source_session.status = "active"
-        source_session.model = "gpt-5.4"
+        source_session.model = "future-model"
         source_session.reasoning_effort = "high"
         source_session.chat_mode = "plan"
         source_session.git_branch = "main"
@@ -1445,6 +1444,8 @@ class TestContinueInChatTerminalKill:
         host.session_manager = session_manager
         host.clients = {ws: {"user_id": "local-cli", "project_id": "project-1"}}
         host._send_error = AsyncMock()
+        host.daemon_config = MagicMock()
+        host.daemon_config.context_window_overrides = {"future-model": 444_000}
 
         with patch(
             "gobby.workflows.state_manager.SessionVariableManager.get_variables",
@@ -1459,7 +1460,7 @@ class TestContinueInChatTerminalKill:
         payload = ws.send.await_args_list[0].args[0]
         response = json.loads(payload)
         assert response["type"] == "attach_to_session_result"
-        assert response["context_window"] == _context_window("gpt-5.4", provider="codex")
+        assert response["context_window"] == 444_000
 
     @pytest.mark.asyncio
     async def test_attach_to_session_keeps_live_handoff_tmux_proxy_attachable(self) -> None:

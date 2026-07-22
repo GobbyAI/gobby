@@ -70,7 +70,12 @@ class TestProviderModelCatalog:
         )
         process.returncode = 0
 
-        with patch("asyncio.create_subprocess_exec", return_value=process):
+        with (
+            patch("asyncio.create_subprocess_exec", return_value=process) as create_process,
+            patch(
+                "gobby.llm.model_registry.lookup_context_window", return_value=1_000_000
+            ) as registry,
+        ):
             result = await catalog._probe_claude_model("sonnet", "Sonnet")
 
         assert result == {
@@ -78,9 +83,13 @@ class TestProviderModelCatalog:
             "label": "Sonnet",
             "canonical_id": "claude-sonnet-4-6-20260410",
             "context_length": 1_000_000,
-            "context_length_source": "static_default",
+            "context_length_source": "registry",
             "reasoning": {"supported_efforts": ["low", "medium", "high", "xhigh", "max"]},
         }
+        assert result["context_length_source"] == "registry"
+        create_process.assert_awaited_once()
+        process.communicate.assert_awaited_once_with()
+        registry.assert_called_once_with("claude/claude-sonnet-4-6-20260410")
 
     @pytest.mark.asyncio
     async def test_probe_claude_model_reports_malformed_final_json(self, temp_dir: Path) -> None:
@@ -116,7 +125,12 @@ class TestProviderModelCatalog:
         )
         process.returncode = 0
 
-        with patch("asyncio.create_subprocess_exec", return_value=process):
+        with (
+            patch("asyncio.create_subprocess_exec", return_value=process) as create_process,
+            patch(
+                "gobby.llm.model_registry.lookup_context_window", return_value=1_000_000
+            ) as registry,
+        ):
             result = await catalog._probe_claude_model("fable", "Fable")
 
         assert result == {
@@ -124,9 +138,13 @@ class TestProviderModelCatalog:
             "label": "Fable",
             "canonical_id": "claude-fable-5",
             "context_length": 1_000_000,
-            "context_length_source": "static_default",
+            "context_length_source": "registry",
             "reasoning": {"supported_efforts": ["low", "medium", "high", "xhigh", "max"]},
         }
+        assert result["context_length_source"] == "registry"
+        create_process.assert_awaited_once()
+        process.communicate.assert_awaited_once_with()
+        registry.assert_called_once_with("claude/claude-fable-5")
 
     @pytest.mark.asyncio
     async def test_discover_claude_models_keeps_successful_alias_probes(
@@ -195,6 +213,7 @@ class TestProviderModelCatalog:
             raise RuntimeError("codex probe failed")
 
         with (
+            patch("gobby.llm.model_registry.lookup_context_window", return_value=258_400),
             patch.object(catalog, "_discover_provider_models", side_effect=discover),
             patch.object(
                 catalog,
@@ -232,9 +251,7 @@ class TestProviderModelCatalog:
         assert payload["version"] == 5
         assert payload["providers"]["codex"]["source"] == "cache"
         assert payload["providers"]["codex"]["models"][0]["context_length"] == 258_400
-        assert (
-            payload["providers"]["codex"]["models"][0]["context_length_source"] == "static_default"
-        )
+        assert payload["providers"]["codex"]["models"][0]["context_length_source"] == "registry"
 
     def test_load_cache_preserves_and_enriches_context_lengths(self, temp_dir: Path) -> None:
         """Cache loading should preserve known lengths and fill missing defaults."""
@@ -264,14 +281,15 @@ class TestProviderModelCatalog:
             encoding="utf-8",
         )
 
-        catalog = ProviderModelCatalog(cache_path=cache_path)
+        with patch("gobby.llm.model_registry.lookup_context_window", return_value=258_400):
+            catalog = ProviderModelCatalog(cache_path=cache_path)
 
         codex = catalog.get_provider_snapshot("codex")["models"][0]
         qwen = catalog.get_provider_snapshot("qwen")["models"][0]
         assert codex["context_length"] == 258_400
-        assert codex["context_length_source"] == "static_default"
+        assert codex["context_length_source"] == "registry"
         assert qwen["context_length"] == 123_456
-        assert qwen["context_length_source"] == "static_default"
+        assert qwen["context_length_source"] == "provider_catalog"
 
     def test_load_cache_accepts_version_none(self, temp_dir: Path) -> None:
         """Cache loading should accept legacy payloads with null version."""
@@ -301,7 +319,7 @@ class TestProviderModelCatalog:
 
         model = catalog.get_provider_snapshot("codex")["models"][0]
         assert model["context_length"] == 123_000
-        assert model["context_length_source"] == "static_default"
+        assert model["context_length_source"] == "provider_catalog"
 
     def test_get_context_window_matches_aliases_suffixes_and_droid_core(
         self, temp_dir: Path
@@ -873,7 +891,7 @@ class TestProviderModelCatalog:
             "xhigh",
             "max",
         ]
-        assert static_models[0]["context_length_source"] == "static_default"
+        assert static_models[0]["context_length_source"] == "provider_catalog"
 
     @pytest.mark.asyncio
     async def test_refresh_uses_static_agy_catalog_without_live_discovery(

@@ -22,7 +22,6 @@ from gobby.llm.context_windows import (
     extract_context_length_candidate,
     normalize_model_lookup_id,
     provider_catalog_context_length_for_model,
-    static_context_length_for_model,
 )
 from gobby.paths import get_gobby_home
 from gobby.providers import provider_metadata
@@ -74,8 +73,11 @@ _MODEL_DISCOVERY_CWD_NAME = "provider-model-discovery"
 
 
 def context_length_for_model(provider: str | None, model: str | None) -> int | None:
-    """Return a static catalog context length for known shipped models."""
-    return static_context_length_for_model(provider, model)
+    """Resolve catalog or registry context length for a provider model."""
+    if not provider or not model:
+        return None
+    candidate = _fallback_context_candidate(provider, model)
+    return candidate.value if candidate is not None else None
 
 
 def _model_identifiers(model: dict[str, Any]) -> list[str]:
@@ -97,9 +99,11 @@ def _fallback_context_candidate(
     provider_catalog = provider_catalog_context_length_for_model(provider, identifier)
     if provider_catalog is not None:
         return ContextLengthCandidate(provider_catalog, "provider_catalog")
-    static_default = static_context_length_for_model(provider, identifier)
-    if static_default is not None:
-        return ContextLengthCandidate(static_default, "static_default")
+    from gobby.llm.model_registry import lookup_context_window
+
+    registry_value = lookup_context_window(f"{provider}/{identifier}")
+    if registry_value is not None:
+        return ContextLengthCandidate(registry_value, "registry")
     return None
 
 
@@ -119,6 +123,9 @@ def _normalize_model_entry(
     if candidate is not None:
         entry["context_length"] = candidate.value
         entry[CONTEXT_LENGTH_SOURCE_KEY] = candidate.source
+    else:
+        entry["context_length"] = None
+        entry[CONTEXT_LENGTH_SOURCE_KEY] = "unknown"
     return entry
 
 
@@ -139,9 +146,7 @@ def with_context_lengths(
 def _cached_models(provider: str, models: Any) -> list[dict[str, Any]]:
     if not isinstance(models, list):
         return []
-    legacy_source: ContextLengthSource = (
-        "provider_catalog" if provider == "droid" else "static_default"
-    )
+    legacy_source: ContextLengthSource = "provider_catalog"
     return with_context_lengths(provider, models, source_if_missing=legacy_source)
 
 

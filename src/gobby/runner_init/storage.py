@@ -95,6 +95,7 @@ def init_storage_and_config(runner: GobbyRunner, config_path: Path | None, verbo
     runner._span_cleanup_task = None
     runner._unmodeled_observations_cleanup_task = None
     runner._metrics_archive_task = None
+    runner._model_metadata_refresh_task = None
     runner._metric_snapshot_task = None
     runner._resource_monitor_task = None
     runner._hook_inbox_task = None
@@ -147,11 +148,11 @@ def init_storage_and_config(runner: GobbyRunner, config_path: Path | None, verbo
     )
     init_telemetry(runner.config.telemetry, runner.config.logging, verbose=verbose)
 
-    from gobby.storage.model_costs import ModelCostStore
+    from gobby.storage.model_metadata import ModelMetadataStore
 
     try:
-        cost_store = ModelCostStore(runner.database)
-        cost_store.populate()
+        metadata_store = ModelMetadataStore(runner.database)
+        metadata_store.populate()
     except Exception as e:
         logger.warning("Failed to populate model metadata: %s", e, exc_info=True)
 

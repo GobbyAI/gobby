@@ -357,6 +357,7 @@ async def _cancel_periodic_tasks(runner: GobbyRunner) -> None:
         "_metrics_cleanup_task",
         "_workflow_audit_cleanup_task",
         "_metrics_archive_task",
+        "_model_metadata_refresh_task",
         "_span_cleanup_task",
         "_unmodeled_observations_cleanup_task",
         "_metric_snapshot_task",
@@ -388,7 +389,23 @@ async def _cancel_periodic_tasks(runner: GobbyRunner) -> None:
     if external_issue_sync_shutdown is not None:
         external_issue_sync_shutdown.set()
 
-    cancellations = [(attr, _cancel_runner_task(runner, attr)) for attr in periodic_task_attrs]
+    from gobby.runner_model_metadata_refresh import MODEL_METADATA_DRAIN_TIMEOUT_SECONDS
+
+    cancellations = [
+        (
+            attr,
+            _cancel_runner_task(
+                runner,
+                attr,
+                timeout=(
+                    MODEL_METADATA_DRAIN_TIMEOUT_SECONDS
+                    if attr == "_model_metadata_refresh_task"
+                    else 2.0
+                ),
+            ),
+        )
+        for attr in periodic_task_attrs
+    ]
     cancellations.extend(
         (
             ("_code_index_task", _cancel_runner_task(runner, "_code_index_task")),

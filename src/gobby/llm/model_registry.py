@@ -4,7 +4,7 @@ Fetches model data from OpenRouter's public API
 (GET https://openrouter.ai/api/v1/models — no auth required).
 
 Data is fetched synchronously at daemon startup (before the event loop)
-and persisted to the model_costs DB table. The DB serves as a cache —
+and persisted to the model_metadata DB table. The DB serves as a cache —
 if OpenRouter is unreachable, the daemon uses whatever was last fetched.
 """
 
@@ -62,20 +62,8 @@ def _provider_for_model(model_id: str) -> str | None:
     return None
 
 
-def fetch_models_sync(timeout: float = _FETCH_TIMEOUT) -> list[ModelInfo]:
-    """Fetch models from OpenRouter's public API (sync, no auth).
-
-    Filters to providers in PROVIDER_MAP. Returns empty list on any failure
-    (network, parse, timeout) — the caller falls back to cached DB data.
-    """
-    try:
-        response = httpx.get(OPENROUTER_MODELS_URL, timeout=timeout)
-        response.raise_for_status()
-        data = response.json()
-    except (httpx.HTTPError, ValueError, KeyError) as e:
-        logger.warning("Failed to fetch models from OpenRouter: %s", e)
-        return []
-
+def _parse_models_payload(data: object) -> list[ModelInfo]:
+    """Parse the shared OpenRouter response shape for sync and async fetches."""
     if not isinstance(data, dict):
         logger.warning("OpenRouter response is not a dict, skipping")
         return []
@@ -117,16 +105,46 @@ def fetch_models_sync(timeout: float = _FETCH_TIMEOUT) -> list[ModelInfo]:
     return models
 
 
+def fetch_models_sync(timeout: float = _FETCH_TIMEOUT) -> list[ModelInfo]:
+    """Fetch models from OpenRouter's public API (sync, no auth)."""
+    try:
+        response = httpx.get(OPENROUTER_MODELS_URL, timeout=timeout)
+        response.raise_for_status()
+        return _parse_models_payload(response.json())
+    except (httpx.HTTPError, ValueError, KeyError) as e:
+        logger.warning("Failed to fetch models from OpenRouter: %s", e)
+        return []
+
+
+async def fetch_models_async(
+    timeout: float = _FETCH_TIMEOUT,
+    *,
+    client: httpx.AsyncClient | None = None,
+) -> list[ModelInfo]:
+    """Fetch models asynchronously without occupying a worker thread."""
+    try:
+        if client is not None:
+            response = await client.get(OPENROUTER_MODELS_URL, timeout=timeout)
+        else:
+            async with httpx.AsyncClient(timeout=timeout) as owned_client:
+                response = await owned_client.get(OPENROUTER_MODELS_URL)
+        response.raise_for_status()
+        return _parse_models_payload(response.json())
+    except (httpx.HTTPError, ValueError, KeyError) as e:
+        logger.warning("Failed to fetch models from OpenRouter: %s", e)
+        return []
+
+
 def lookup_context_window(model: str, db: HubDatabase | None = None) -> int | None:
     """Look up context window size for a model.
 
-    Uses ModelCostStore for DB-backed lookup with prefix matching.
+    Uses ModelMetadataStore for DB-backed lookup with prefix matching.
     Falls back to the module-level cache if no DB is provided.
     """
     if db is not None:
-        from gobby.storage.model_costs import ModelCostStore
+        from gobby.storage.model_metadata import ModelMetadataStore
 
-        store = ModelCostStore(db)
+        store = ModelMetadataStore(db)
         try:
             return store.get_context_window(model)
         except _DATABASE_LOOKUP_ERRORS as exc:
@@ -146,9 +164,9 @@ def lookup_context_window(model: str, db: HubDatabase | None = None) -> int | No
 
     ctx = get_app_context()
     if ctx and ctx.database:
-        from gobby.storage.model_costs import ModelCostStore
+        from gobby.storage.model_metadata import ModelMetadataStore
 
-        store = ModelCostStore(ctx.database)
+        store = ModelMetadataStore(ctx.database)
         try:
             return store.get_context_window(model)
         except _DATABASE_LOOKUP_ERRORS as exc:

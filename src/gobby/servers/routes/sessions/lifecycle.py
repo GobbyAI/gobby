@@ -188,11 +188,17 @@ def register_lifecycle_routes(
                     exc_info=True,
                 )
                 raise
+            session_config = server.config or getattr(server.services, "config", None)
+            configured_overrides = getattr(session_config, "context_window_overrides", None)
+            context_window_overrides = (
+                configured_overrides if isinstance(configured_overrides, dict) else None
+            )
             session_data["context_window"] = await server.run_db(
                 effective_context_window_for_session,
                 session,
                 variables=variables,
                 db=server.session_manager.db,
+                overrides=context_window_overrides,
             )
 
             # Enrich with activity stats

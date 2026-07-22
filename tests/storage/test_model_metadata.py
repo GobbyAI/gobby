@@ -2,11 +2,14 @@
 
 from __future__ import annotations
 
+import logging
+from datetime import UTC, datetime, timedelta
 from unittest.mock import MagicMock
 
 import pytest
 
-from gobby.storage.model_costs import ModelCostStore
+from gobby.storage import model_metadata
+from gobby.storage.model_metadata import ModelMetadataStore
 
 
 def test_populate_keeps_same_model_suffix_for_different_providers() -> None:
@@ -31,7 +34,7 @@ def test_populate_keeps_same_model_suffix_for_different_providers() -> None:
         ),
     ]
 
-    assert ModelCostStore(db).populate(models) == 2
+    assert ModelMetadataStore(db).populate(models) == 2
 
     rows = connection.executemany.call_args.args[1]
     assert rows == [
@@ -40,11 +43,39 @@ def test_populate_keeps_same_model_suffix_for_different_providers() -> None:
     ]
 
 
+def test_empty_populate_retains_cached_metadata() -> None:
+    db = MagicMock()
+
+    assert ModelMetadataStore(db).populate([]) == 0
+
+    db.transaction.assert_not_called()
+
+
+def test_stale_metadata_warns_once(
+    caplog: pytest.LogCaptureFixture,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(model_metadata, "_stale_warning_emitted", False)
+    db = MagicMock()
+    db.fetchone.return_value = {
+        "context_length": 200_000,
+        "metadata_updated_at": datetime.now(UTC) - timedelta(hours=49),
+    }
+    store = ModelMetadataStore(db)
+
+    with caplog.at_level(logging.WARNING, logger="gobby.storage.model_metadata"):
+        assert store.get_context_window("gpt-valid") == 200_000
+        assert store.get_context_window("gpt-valid") == 200_000
+
+    warnings = [record for record in caplog.records if "older than 48 hours" in record.message]
+    assert len(warnings) == 1
+
+
 def test_exact_positive_context_window_wins_without_prefix_lookup() -> None:
     db = MagicMock()
     db.fetchone.return_value = {"context_length": 200_000}
 
-    result = ModelCostStore(db).get_context_window("gpt-valid")
+    result = ModelMetadataStore(db).get_context_window("gpt-valid")
 
     assert result == 200_000
     assert db.fetchone.call_count == 1
@@ -55,7 +86,7 @@ def test_provider_prefixed_lookup_is_provider_scoped() -> None:
     db = MagicMock()
     db.fetchone.return_value = {"context_length": 200_000}
 
-    result = ModelCostStore(db).get_context_window("claude/shared-model")
+    result = ModelMetadataStore(db).get_context_window("claude/shared-model")
 
     assert result == 200_000
     query, params = db.fetchone.call_args.args
@@ -67,7 +98,7 @@ def test_provider_prefixed_prefix_lookup_is_provider_scoped() -> None:
     db = MagicMock()
     db.fetchone.side_effect = [None, {"context_length": 200_000}]
 
-    result = ModelCostStore(db).get_context_window("claude/shared-model-versioned")
+    result = ModelMetadataStore(db).get_context_window("claude/shared-model-versioned")
 
     assert result == 200_000
     query, params = db.fetchone.call_args.args
@@ -94,7 +125,7 @@ def test_invalid_exact_row_does_not_shadow_positive_prefix(invalid_value: object
         {"context_length": 128_000},
     ]
 
-    result = ModelCostStore(db).get_context_window("gpt-family-versioned")
+    result = ModelMetadataStore(db).get_context_window("gpt-family-versioned")
 
     assert result == 128_000
     assert db.fetchone.call_count == 2
@@ -121,4 +152,4 @@ def test_invalid_prefix_row_is_rejected(invalid_value: object) -> None:
     db = MagicMock()
     db.fetchone.side_effect = [None, {"context_length": invalid_value}]
 
-    assert ModelCostStore(db).get_context_window("gpt-family-versioned") is None
+    assert ModelMetadataStore(db).get_context_window("gpt-family-versioned") is None

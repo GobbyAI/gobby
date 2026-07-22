@@ -2,9 +2,10 @@
 
 from __future__ import annotations
 
+import asyncio
 import logging
 from types import SimpleNamespace
-from unittest.mock import MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import psycopg
 import pytest
@@ -13,6 +14,7 @@ from psycopg_pool import PoolTimeout
 from gobby.llm.model_registry import (
     ModelInfo,
     _provider_for_model,
+    fetch_models_async,
     fetch_models_sync,
     group_by_provider,
     lookup_context_window,
@@ -309,6 +311,40 @@ class TestFetchModelsSync:
         mock_get.return_value = mock_response
         models = fetch_models_sync()
         assert models == []
+
+
+@pytest.mark.asyncio
+async def test_fetch_models_async_uses_shared_parser() -> None:
+    response = MagicMock()
+    response.json.return_value = SAMPLE_OPENROUTER_RESPONSE
+    response.raise_for_status = MagicMock()
+    client = MagicMock()
+    client.get = AsyncMock(return_value=response)
+
+    models = await fetch_models_async(client=client)
+
+    assert len(models) == 7
+    assert {model.provider for model in models} == {"claude", "codex", "qwen", "droid"}
+    client.get.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_fetch_models_async_is_cancellable() -> None:
+    client = MagicMock()
+    entered = asyncio.Event()
+
+    async def blocked_get(*_args: object, **_kwargs: object) -> object:
+        entered.set()
+        await asyncio.Event().wait()
+        raise AssertionError("unreachable")
+
+    client.get = AsyncMock(side_effect=blocked_get)
+    task = asyncio.create_task(fetch_models_async(client=client))
+    await entered.wait()
+    task.cancel()
+
+    with pytest.raises(asyncio.CancelledError):
+        await task
 
 
 # -- group_by_provider -------------------------------------------------------

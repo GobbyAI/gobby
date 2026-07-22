@@ -313,6 +313,12 @@ class TestGetSessionEdgeCases:
             "UPDATE sessions SET context_window = %s, model = %s WHERE id = %s",
             (200_000, "gpt-5.4", session.id),
         )
+        session_storage.db.execute(
+            "INSERT INTO model_metadata "
+            "(provider, model, context_length, max_completion_tokens, source) "
+            "VALUES (%s, %s, %s, %s, %s)",
+            ("codex", "gpt-5.4", 258_400, 128_000, "registry"),
+        )
         stored_before = session_storage.db.fetchone(
             "SELECT context_window FROM sessions WHERE id = %s",
             (session.id,),
@@ -330,6 +336,31 @@ class TestGetSessionEdgeCases:
         )
         assert stored_after is not None
         assert stored_after["context_window"] == 200_000
+
+    def test_sessions_get_context_window_override(
+        self,
+        session_storage: SessionManager,
+        test_project: dict[str, Any],
+    ) -> None:
+        session = session_storage.register(
+            external_id="codex-context-override",
+            machine_id="machine-1",
+            source="codex",
+            project_id=test_project["id"],
+            title="Codex context override",
+        )
+        session_storage.db.execute(
+            "UPDATE sessions SET model = %s WHERE id = %s",
+            ("future-model", session.id),
+        )
+        config = MagicMock()
+        config.context_window_overrides = {"future-model": 444_000}
+        server = create_http_server(config=config, session_manager=session_storage)
+
+        response = TestClient(server.app).get(f"/api/sessions/{session.id}")
+
+        assert response.status_code == 200
+        assert response.json()["session"]["context_window"] == 444_000
 
     def test_get_session_internal_error(
         self,

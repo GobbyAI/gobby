@@ -486,7 +486,7 @@ async def probe_claude_model(
     context_length = context_length_resolver("claude", str(canonical_id))
     if context_length is not None:
         result["context_length"] = context_length
-        result["context_length_source"] = "static_default"
+        result["context_length_source"] = "registry"
     return result
 
 

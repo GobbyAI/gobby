@@ -121,6 +121,7 @@ class GobbyRunner:
     _websocket_task: asyncio.Task[None] | None
     _subsystem_init_task: asyncio.Task[None] | None
     _provider_model_refresh_task: asyncio.Task[dict[str, dict[str, Any]]] | None
+    _model_metadata_refresh_task: asyncio.Task[None] | None
     _pending_tasks: set[asyncio.Task[Any]]
     degraded_services: set[str]
 

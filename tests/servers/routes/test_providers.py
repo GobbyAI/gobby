@@ -176,8 +176,9 @@ class TestProviderModelsRoute:
             "supported_efforts": ["low", "medium", "high", "xhigh", "max"]
         }
         claude_by_id = {m["value"]: m for m in providers["claude"]["models"]}
-        assert claude_by_id["fable"]["context_length"] == 1_000_000
-        assert claude_by_id["sonnet"]["context_length"] == 1_000_000
+        assert claude_by_id["fable"]["context_length"] is None
+        assert claude_by_id["fable"]["context_length_source"] == "unknown"
+        assert claude_by_id["sonnet"]["context_length"] is None
 
         # Qwen intentionally owns its provider slot even before a static model catalog exists
         qwen = providers["qwen"]["models"]
@@ -244,17 +245,8 @@ class TestProviderModelsRoute:
             "gpt-5.2",
         ]
         assert codex[0]["reasoning"] == {"supported_efforts": ["low", "medium", "high", "xhigh"]}
-        assert [m["context_length"] for m in codex] == [
-            258_400,
-            258_400,
-            258_400,
-            258_400,
-            258_400,
-            258_400,
-            258_400,
-            258_400,
-        ]
-        assert {m["context_length_source"] for m in codex} == {"static_default"}
+        assert [m["context_length"] for m in codex] == [None] * 8
+        assert {m["context_length_source"] for m in codex} == {"unknown"}
 
         droid_values = [m["value"] for m in providers["droid"]["models"]]
         assert len(droid_values) == 26
@@ -376,8 +368,8 @@ class TestProviderModelsRoute:
         assert providers["claude"]["models"][0]["value"] == "claude-model"
         assert providers["qwen"]["models"][0]["value"] == "qwen-model"
         assert providers["codex"]["models"][0]["value"] == "gpt-5.4"
-        assert providers["codex"]["models"][0]["context_length"] == 258_400
-        assert providers["codex"]["models"][0]["context_length_source"] == "static_default"
+        assert providers["codex"]["models"][0]["context_length"] is None
+        assert providers["codex"]["models"][0]["context_length_source"] == "unknown"
         assert providers["droid"]["models"][0]["value"] == "droid-model"
         assert [model["value"] for model in providers["agy"]["models"]] == list(AGY_MODELS)
         assert providers["agy"]["source"] == "static"

@@ -1,4 +1,5 @@
 from pathlib import Path
+from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -715,3 +716,28 @@ def test_create_handoff_notes_persist_to_db_and_file(
     files = list(tmp_path.glob("session_*_s1.md"))
     assert len(files) == 1
     assert expected_notes_section in files[0].read_text()
+
+
+def test_backfill_context_windows_override() -> None:
+    manager = SimpleNamespace(db=object())
+    backfill_result = SimpleNamespace(updated=1, scanned=2, skipped=1)
+    with (
+        patch("gobby.cli.sessions.session_manager_context") as manager_context,
+        patch(
+            "gobby.config.app.load_config",
+            return_value=SimpleNamespace(context_window_overrides={"future-model": 444_000}),
+        ),
+        patch(
+            "gobby.sessions.context_usage.backfill_session_context_windows",
+            return_value=backfill_result,
+        ) as backfill,
+    ):
+        manager_context.return_value.__enter__.return_value = manager
+        result = CliRunner().invoke(sessions, ["backfill-context-windows", "--dry-run"])
+
+    assert result.exit_code == 0
+    backfill.assert_called_once_with(
+        manager.db,
+        dry_run=True,
+        overrides={"future-model": 444_000},
+    )
