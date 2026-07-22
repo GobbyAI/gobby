@@ -748,7 +748,12 @@ class TestSessionLifecycleManager:
                 self.kg_service = AsyncMock()
                 self.kg_service.add_to_graph.return_value = SimpleNamespace(status="success")
                 self.pending = [
-                    SimpleNamespace(id="mem-1", content="remember this", project_id="proj-1")
+                    SimpleNamespace(
+                        id="mem-1",
+                        content="remember this",
+                        project_id="proj-1",
+                        is_global=False,
+                    )
                 ]
                 self.marked: list[str] = []
                 self.run_db_calls: list[
@@ -823,6 +828,7 @@ class TestSessionLifecycleManager:
                     id="mem-failure",
                     content="poisoned content",
                     project_id="proj-1",
+                    is_global=False,
                 )
                 self.failures: list[tuple[str, bool, int]] = []
 
