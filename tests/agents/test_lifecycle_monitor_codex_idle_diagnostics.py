@@ -4,10 +4,12 @@ import json
 import time
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
+from typing import Any, cast
 from unittest.mock import AsyncMock, call, patch
 
 import pytest
 
+from gobby.agents.detection.registry import DetectionManifestRegistry
 from gobby.agents.idle_check_handler import REASONING_WATCHDOG_CONTINUATION, IdleCheckHandler
 from gobby.agents.idle_detector import IdleDetector
 from gobby.agents.lifecycle_monitor import AgentLifecycleMonitor
@@ -19,7 +21,7 @@ from gobby.storage.tasks import LocalTaskManager
 
 from .detection_test_support import BundledDetectionRegistry
 
-DETECTION_REGISTRY = BundledDetectionRegistry()
+DETECTION_REGISTRY = cast(DetectionManifestRegistry, BundledDetectionRegistry())
 pytestmark = pytest.mark.unit
 _CAPACITY_MESSAGE = "Selected model is at capacity. Please try a different model."
 _CAPACITY_PANE = "\x1b[31mSelected model is at\ncapacity. Please try a different model.\x1b[0m\n›\n"
@@ -32,7 +34,7 @@ def agent_run_manager(temp_db: HubDatabase) -> LocalAgentRunManager:
 
 def _make_terminal_run(
     agent_run_manager: LocalAgentRunManager,
-    parent_session: dict,
+    parent_session: dict[str, Any],
     *,
     child_session_id: str,
     run_id: str,
@@ -242,7 +244,7 @@ def _make_idle_monitor_run(
     *,
     temp_db: HubDatabase,
     session_manager: SessionManager,
-    sample_project: dict,
+    sample_project: dict[str, Any],
     agent_run_manager: LocalAgentRunManager,
     run_id: str,
     transcript_path: Path | None,
@@ -376,7 +378,7 @@ async def test_read_codex_transcript_snapshot_rejects_inconclusive_capacity_erro
 async def test_task_complete_reprompts_after_base_timeout_before_semantic_delay(
     temp_db: HubDatabase,
     session_manager: SessionManager,
-    sample_project: dict,
+    sample_project: dict[str, Any],
     agent_run_manager: LocalAgentRunManager,
     tmp_path: Path,
 ) -> None:
@@ -437,7 +439,7 @@ async def test_task_complete_reprompts_after_base_timeout_before_semantic_delay(
 async def test_fresh_task_complete_waits_for_base_timeout_before_any_recovery(
     temp_db: HubDatabase,
     session_manager: SessionManager,
-    sample_project: dict,
+    sample_project: dict[str, Any],
     agent_run_manager: LocalAgentRunManager,
     tmp_path: Path,
 ) -> None:
@@ -474,7 +476,7 @@ async def test_fresh_task_complete_waits_for_base_timeout_before_any_recovery(
 async def test_fresh_capacity_error_immediately_sends_workflow_aware_reprompt(
     temp_db: HubDatabase,
     session_manager: SessionManager,
-    sample_project: dict,
+    sample_project: dict[str, Any],
     agent_run_manager: LocalAgentRunManager,
     tmp_path: Path,
 ) -> None:
@@ -534,7 +536,7 @@ async def test_fresh_capacity_error_immediately_sends_workflow_aware_reprompt(
 async def test_capacity_pane_text_requires_structured_transcript_confirmation(
     temp_db: HubDatabase,
     session_manager: SessionManager,
-    sample_project: dict,
+    sample_project: dict[str, Any],
     agent_run_manager: LocalAgentRunManager,
     tmp_path: Path,
 ) -> None:
@@ -568,7 +570,7 @@ async def test_capacity_pane_text_requires_structured_transcript_confirmation(
 async def test_capacity_reprompt_retries_failed_send_and_deduplicates_success(
     temp_db: HubDatabase,
     session_manager: SessionManager,
-    sample_project: dict,
+    sample_project: dict[str, Any],
     agent_run_manager: LocalAgentRunManager,
     tmp_path: Path,
 ) -> None:
@@ -621,7 +623,7 @@ async def test_capacity_reprompt_retries_failed_send_and_deduplicates_success(
 async def test_capacity_reprompts_are_bounded_across_user_only_retry_turns(
     temp_db: HubDatabase,
     session_manager: SessionManager,
-    sample_project: dict,
+    sample_project: dict[str, Any],
     agent_run_manager: LocalAgentRunManager,
     tmp_path: Path,
 ) -> None:
@@ -669,7 +671,7 @@ async def test_capacity_reprompts_are_bounded_across_user_only_retry_turns(
 async def test_capacity_retry_budget_resets_after_model_output(
     temp_db: HubDatabase,
     session_manager: SessionManager,
-    sample_project: dict,
+    sample_project: dict[str, Any],
     agent_run_manager: LocalAgentRunManager,
     tmp_path: Path,
 ) -> None:
@@ -730,7 +732,7 @@ async def test_completed_turn_expedited_recovery_requires_conclusive_codex_marke
     malformed_tail: bool,
     temp_db: HubDatabase,
     session_manager: SessionManager,
-    sample_project: dict,
+    sample_project: dict[str, Any],
     agent_run_manager: LocalAgentRunManager,
     tmp_path: Path,
 ) -> None:
@@ -771,7 +773,7 @@ async def test_completed_turn_expedited_recovery_requires_conclusive_codex_marke
 async def test_unreadable_transcript_uses_existing_delayed_idle_reprompt(
     temp_db: HubDatabase,
     session_manager: SessionManager,
-    sample_project: dict,
+    sample_project: dict[str, Any],
     agent_run_manager: LocalAgentRunManager,
     tmp_path: Path,
 ) -> None:
@@ -814,7 +816,7 @@ async def test_unreadable_transcript_uses_existing_delayed_idle_reprompt(
 async def test_completed_turn_recovery_preserves_unsubmitted_input(
     temp_db: HubDatabase,
     session_manager: SessionManager,
-    sample_project: dict,
+    sample_project: dict[str, Any],
     agent_run_manager: LocalAgentRunManager,
     tmp_path: Path,
 ) -> None:
@@ -851,7 +853,7 @@ async def test_completed_turn_recovery_preserves_unsubmitted_input(
 async def test_recent_codex_session_activity_only_checks_capacity_pane(
     temp_db: HubDatabase,
     session_manager: SessionManager,
-    sample_project: dict,
+    sample_project: dict[str, Any],
     agent_run_manager: LocalAgentRunManager,
     tmp_path: Path,
 ) -> None:
@@ -887,7 +889,7 @@ async def test_recent_codex_session_activity_only_checks_capacity_pane(
 async def test_completed_turn_recovery_retains_max_attempt_failure(
     temp_db: HubDatabase,
     session_manager: SessionManager,
-    sample_project: dict,
+    sample_project: dict[str, Any],
     agent_run_manager: LocalAgentRunManager,
     tmp_path: Path,
 ) -> None:
@@ -923,7 +925,7 @@ async def test_completed_turn_recovery_retains_max_attempt_failure(
 async def test_idle_reprompt_falls_back_when_step_context_lookup_fails(
     temp_db: HubDatabase,
     session_manager: SessionManager,
-    sample_project: dict,
+    sample_project: dict[str, Any],
     agent_run_manager: LocalAgentRunManager,
 ) -> None:
     """Unexpected step-context lookup errors fall back and log exception context."""
@@ -976,7 +978,7 @@ async def test_idle_reprompt_falls_back_when_step_context_lookup_fails(
 async def test_idle_reprompt_logs_codex_response_items(
     temp_db: HubDatabase,
     session_manager: SessionManager,
-    sample_project: dict,
+    sample_project: dict[str, Any],
     agent_run_manager: LocalAgentRunManager,
     tmp_path: Path,
 ) -> None:
@@ -1052,7 +1054,7 @@ async def test_idle_reprompt_logs_codex_response_items(
 async def test_idle_reasoning_watchdog_interrupts_codex_and_records_task_event(
     temp_db: HubDatabase,
     session_manager: SessionManager,
-    sample_project: dict,
+    sample_project: dict[str, Any],
     agent_run_manager: LocalAgentRunManager,
     tmp_path: Path,
 ) -> None:
@@ -1150,7 +1152,7 @@ async def test_idle_reasoning_watchdog_interrupts_codex_and_records_task_event(
 async def test_idle_failure_logs_codex_response_items(
     temp_db: HubDatabase,
     session_manager: SessionManager,
-    sample_project: dict,
+    sample_project: dict[str, Any],
     agent_run_manager: LocalAgentRunManager,
     tmp_path: Path,
 ) -> None:
