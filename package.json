@@ -1,0 +1,26 @@
+{
+  "name": "gobby",
+  "version": "1.0.0",
+  "description": "<p align=\"center\">     <img src=\"img/logo.png\" alt=\"Gobby\" width=\"200\" />     <h3 align=\"center\">Gobby<br>Start with a task. Walk away. End with a PR.</h3> </p>",
+  "main": "index.js",
+  "directories": {
+    "doc": "docs",
+    "test": "tests"
+  },
+  "devDependencies": {},
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/GobbyAI/gobby.git"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "type": "commonjs",
+  "bugs": {
+    "url": "https://github.com/GobbyAI/gobby/issues"
+  },
+  "homepage": "https://github.com/GobbyAI/gobby#readme"
+}
