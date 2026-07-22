@@ -18,6 +18,7 @@ pub(crate) mod normalize;
 pub(crate) mod page;
 pub(crate) mod pages;
 pub(crate) mod paths;
+mod project_admission;
 pub(crate) mod purge;
 pub(crate) mod read;
 pub(crate) mod recap;
@@ -34,16 +35,14 @@ pub(crate) mod vault_tools;
 
 use std::path::Path;
 
-use crate::project_lock::{
-    ProjectLockGuard, acquire_purge_lock, acquire_writer_lock, run_with_project_lock,
-};
+use crate::project_lock::run_with_project_lock;
 use crate::support::scope::{resolve_command_scope, resolved_scope_identity};
 use crate::{
     Command, CommandOutcome, CommandResult, RunOptions, ScopeIdentity, ScopeSelection, WikiError,
 };
 
 pub(crate) fn run(command: Command, run_options: RunOptions) -> Result<CommandOutcome, WikiError> {
-    let project_lock = acquire_command_lock(&command)?;
+    let project_lock = project_admission::acquire_command_lock(&command)?;
     run_with_project_lock(project_lock, || dispatch(command, run_options))
 }
 
@@ -155,120 +154,6 @@ fn dispatch(command: Command, run_options: RunOptions) -> Result<CommandOutcome,
     }
 }
 
-#[derive(Debug)]
-enum CommandClassification<'a> {
-    PersistentWriter {
-        scope: &'a ScopeSelection,
-        command: &'static str,
-    },
-    ExplicitPurge {
-        scope: &'a ScopeSelection,
-    },
-    TopicOnly,
-    ReadOnly,
-}
-
-fn classify_command(command: &Command) -> CommandClassification<'_> {
-    match command {
-        Command::Index { scope, .. } => CommandClassification::PersistentWriter {
-            scope,
-            command: "gwiki index",
-        },
-        Command::Collect { scope } => CommandClassification::PersistentWriter {
-            scope,
-            command: "gwiki collect",
-        },
-        Command::IngestFile { scope, .. } => CommandClassification::PersistentWriter {
-            scope,
-            command: "gwiki ingest-file",
-        },
-        Command::IngestUrl { scope, .. } => CommandClassification::PersistentWriter {
-            scope,
-            command: "gwiki ingest-url",
-        },
-        Command::SyncSessions {
-            scope: ScopeSelection::Detect,
-            ..
-        } => CommandClassification::TopicOnly,
-        Command::SyncSessions { scope, .. } => CommandClassification::PersistentWriter {
-            scope,
-            command: "gwiki sync-sessions",
-        },
-        Command::Refresh {
-            scope,
-            dry_run: false,
-            ..
-        } => CommandClassification::PersistentWriter {
-            scope,
-            command: "gwiki refresh",
-        },
-        Command::RemoveSource {
-            scope,
-            dry_run: false,
-            ..
-        } => CommandClassification::PersistentWriter {
-            scope,
-            command: "gwiki remove-source",
-        },
-        Command::Purge { scope, .. } => CommandClassification::ExplicitPurge { scope },
-        Command::Init { .. }
-        | Command::Setup { .. }
-        | Command::Refresh { dry_run: true, .. }
-        | Command::Sources { .. }
-        | Command::RemoveSource { dry_run: true, .. }
-        | Command::Search { .. }
-        | Command::Ask { .. }
-        | Command::Read { .. }
-        | Command::Pages { .. }
-        | Command::PageWrite { .. }
-        | Command::PageDelete { .. }
-        | Command::Backlinks { .. }
-        | Command::LinkSuggest { .. }
-        | Command::Benchmark { .. }
-        | Command::Compile { .. }
-        | Command::Export { .. }
-        | Command::Graph { .. }
-        | Command::GraphContext { .. }
-        | Command::ReviewReport { .. }
-        | Command::Audit { .. }
-        | Command::Lint { .. }
-        | Command::Normalize { .. }
-        | Command::Health { .. }
-        | Command::Librarian { .. }
-        | Command::Upkeep { .. }
-        | Command::Recap { .. }
-        | Command::Status { .. }
-        | Command::Trust { .. }
-        | Command::CitationQuality { .. } => CommandClassification::ReadOnly,
-    }
-}
-
-fn acquire_command_lock(command: &Command) -> Result<Option<ProjectLockGuard>, WikiError> {
-    match classify_command(command) {
-        CommandClassification::PersistentWriter { scope, command } => {
-            let Some(project_id) = project_id_for_admission(scope)? else {
-                return Ok(None);
-            };
-            acquire_writer_lock(&project_id, command).map(Some)
-        }
-        CommandClassification::ExplicitPurge { scope } => {
-            let Some(project_id) = project_id_for_admission(scope)? else {
-                return Ok(None);
-            };
-            acquire_purge_lock(&project_id).map(Some)
-        }
-        CommandClassification::TopicOnly | CommandClassification::ReadOnly => Ok(None),
-    }
-}
-
-fn project_id_for_admission(selection: &ScopeSelection) -> Result<Option<String>, WikiError> {
-    if selection.topic_name().is_some() {
-        return Ok(None);
-    }
-    let scope = resolve_command_scope(selection)?;
-    Ok(scope.project_id().map(str::to_owned))
-}
-
 pub(crate) fn scoped_outcome(
     command: &'static str,
     scope: &ScopeIdentity,
@@ -306,108 +191,4 @@ where
         payload,
         render(&report),
     ))
-}
-
-#[cfg(test)]
-mod project_lock_tests {
-    use std::path::PathBuf;
-
-    use super::*;
-    use crate::{IngestFileOptions, SyncSessionsOptions};
-
-    #[test]
-    fn dispatch_classification_pins_every_persistent_writer_arm() {
-        let scope = || ScopeSelection::topic("classification-fixture");
-        let commands = vec![
-            Command::Index {
-                scope: scope(),
-                force: false,
-            },
-            Command::Collect { scope: scope() },
-            Command::IngestFile {
-                path: PathBuf::from("source.md"),
-                scope: scope(),
-                options: IngestFileOptions {
-                    no_ai: true,
-                    translate: false,
-                    target_lang: None,
-                    video_frame_interval_seconds: None,
-                    transcription_routing: None,
-                    vision_routing: None,
-                    text_routing: None,
-                },
-            },
-            Command::IngestUrl {
-                urls: vec!["https://example.com".to_string()],
-                scope: scope(),
-            },
-            Command::SyncSessions {
-                scope: scope(),
-                options: SyncSessionsOptions::default(),
-            },
-            Command::Refresh {
-                scope: scope(),
-                source_ids: Vec::new(),
-                dry_run: false,
-            },
-            Command::RemoveSource {
-                id: "source-id".to_string(),
-                scope: scope(),
-                dry_run: false,
-                keep_asset: false,
-            },
-        ];
-
-        for command in commands {
-            assert!(matches!(
-                classify_command(&command),
-                CommandClassification::PersistentWriter { .. }
-            ));
-        }
-    }
-
-    #[test]
-    fn dry_run_variants_are_classified_as_read_only() {
-        for command in [
-            Command::Refresh {
-                scope: ScopeSelection::topic("classification-fixture"),
-                source_ids: Vec::new(),
-                dry_run: true,
-            },
-            Command::RemoveSource {
-                id: "source-id".to_string(),
-                scope: ScopeSelection::topic("classification-fixture"),
-                dry_run: true,
-                keep_asset: false,
-            },
-        ] {
-            assert!(matches!(
-                classify_command(&command),
-                CommandClassification::ReadOnly
-            ));
-        }
-    }
-
-    #[test]
-    fn purge_has_its_own_serialized_cleanup_classification() {
-        let command = Command::Purge {
-            scope: ScopeSelection::topic("classification-fixture"),
-            yes: true,
-        };
-
-        assert!(matches!(
-            classify_command(&command),
-            CommandClassification::ExplicitPurge { .. }
-        ));
-    }
-
-    #[test]
-    fn topic_scopes_skip_project_lock_admission() {
-        let selection = ScopeSelection::topic("classification-fixture");
-
-        assert_eq!(
-            project_id_for_admission(&selection).expect("topic scope"),
-            None
-        );
-    }
 }
