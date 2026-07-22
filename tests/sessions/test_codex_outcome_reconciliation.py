@@ -124,3 +124,24 @@ async def test_reconcile_rejects_non_codex_registration(tmp_path: Path) -> None:
 
     assert result.flushed is False
     assert result.error == "session is not registered as Codex"
+
+
+async def test_reconcile_recovers_missing_codex_registration(tmp_path: Path) -> None:
+    transcript = tmp_path / "rollout.jsonl"
+    transcript.write_text("")
+    session_manager = MagicMock()
+    session_manager.get.return_value = MagicMock(
+        source="codex",
+        transcript_path=str(transcript),
+    )
+    processor = SessionMessageProcessor(MagicMock(), session_manager=session_manager)
+    processor._process_session = AsyncMock()
+
+    result = await processor.reconcile_codex_transcript("platform-session")
+
+    assert result.flushed is True
+    assert processor._session_sources["platform-session"] == "codex"
+    session_manager.get.assert_called_once_with("platform-session")
+    processor._process_session.assert_awaited_once_with(
+        "platform-session", str(transcript), at_eof=True
+    )

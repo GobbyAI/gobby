@@ -122,6 +122,10 @@ class ProcessorHost(Protocol):
 
     async def _process_all_sessions(self) -> None: ...
 
+    def register_session(
+        self, session_id: str, transcript_path: str, source: str = "claude"
+    ) -> None: ...
+
     def unregister_session(self, session_id: str) -> None: ...
 
     def _hydrate_registration_from_sidecar(

@@ -135,7 +135,21 @@ class ProcessorLifecycleMixin:
     ) -> SessionFlushResult:
         """Catch up a registered terminal Codex rollout before completion checks."""
         if self._session_sources.get(session_id) != "codex":
-            return SessionFlushResult(flushed=False, error="session is not registered as Codex")
+            if self.session_manager is None:
+                return SessionFlushResult(flushed=False, error="session is not registered as Codex")
+            session = await self._run_db(self.session_manager.get, session_id)
+            if session is None or getattr(session, "source", None) != "codex":
+                return SessionFlushResult(flushed=False, error="session is not registered as Codex")
+            transcript_path = getattr(session, "transcript_path", None)
+            if (
+                not isinstance(transcript_path, str)
+                or not transcript_path
+                or transcript_path == "missing_transcript"
+            ):
+                return SessionFlushResult(
+                    flushed=False, error="Codex session transcript is unavailable"
+                )
+            self.register_session(session_id, transcript_path, source="codex")
         return await self.flush_session(session_id)
 
     def unregister_session(self: ProcessorHost, session_id: str) -> None:
