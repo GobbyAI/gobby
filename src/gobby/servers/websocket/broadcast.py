@@ -13,6 +13,7 @@ from typing import Any
 
 from websockets.exceptions import ConnectionClosed
 
+from gobby.storage.attention import AttentionOrderingCoordinator
 from gobby.utils.json_helpers import json_dumps
 
 logger = logging.getLogger(__name__)
@@ -27,6 +28,25 @@ class BroadcastMixin:
     """
 
     clients: dict[Any, dict[str, Any]]
+    _attention_ordering: AttentionOrderingCoordinator | None = None
+
+    def configure_attention_ordering(self, ordering: AttentionOrderingCoordinator) -> None:
+        self._attention_ordering = ordering
+
+    @property
+    def attention_epoch(self) -> str | None:
+        ordering = self._attention_ordering
+        return ordering.epoch if ordering is not None else None
+
+    @property
+    def attention_seq(self) -> int:
+        ordering = self._attention_ordering
+        return ordering.seq if ordering is not None else 0
+
+    @property
+    def attention_ordering_lock(self) -> asyncio.Lock | None:
+        ordering = self._attention_ordering
+        return ordering.lock if ordering is not None else None
 
     def _is_subscribed(self, websocket: Any, message: dict[str, Any]) -> bool:
         """Check if a client is subscribed to receive a message."""

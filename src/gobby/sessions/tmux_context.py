@@ -42,6 +42,24 @@ def get_tmux_socket_name(terminal_context: Mapping[str, Any] | None) -> str | No
     return None
 
 
+def get_tmux_session_name(terminal_context: Mapping[str, Any] | None) -> str | None:
+    if not terminal_context:
+        return None
+    value = terminal_context.get("tmux_session")
+    return value if isinstance(value, str) and value else None
+
+
+def get_tmux_pane_pid(terminal_context: Mapping[str, Any] | None) -> int | None:
+    if not terminal_context:
+        return None
+    value = terminal_context.get("parent_pid")
+    if isinstance(value, int) and not isinstance(value, bool) and value > 0:
+        return value
+    if isinstance(value, str) and value.isdigit() and int(value) > 0:
+        return int(value)
+    return None
+
+
 def get_tmux_manager_for_context(
     terminal_context: Mapping[str, Any] | None,
     *,

@@ -140,8 +140,8 @@ class AgentCleanupHandler:
 
         if self._attention_manager is not None:
             try:
-                await self._run_db(
-                    self._attention_manager.transition,
+                await self._attention_manager.transition_async(
+                    self._run_db,
                     run_attention_entry_id(run.id),
                     state=None,
                 )

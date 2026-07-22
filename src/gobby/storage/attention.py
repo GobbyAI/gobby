@@ -2,14 +2,17 @@
 
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
 import threading
 import uuid
-from collections.abc import Callable, Mapping
+from collections.abc import Awaitable, Callable, Iterator, Mapping
+from contextlib import contextmanager
 from dataclasses import dataclass
 from datetime import datetime
-from typing import Literal
+from types import MappingProxyType
+from typing import Any, Literal, cast
 
 from gobby.storage.hub.protocol import HubDatabase, Row
 from gobby.utils.datetime import utc_now
@@ -31,6 +34,36 @@ def session_attention_entry_id(session_id: str) -> str:
 
 
 AttentionPublisher = Callable[[dict[str, object]], None]
+DatabaseRunner = Callable[..., Awaitable[Any]]
+
+
+class AttentionOrderingCoordinator:
+    """Assign one daemon epoch and monotonic cursor to ordered attention state."""
+
+    def __init__(self, *, epoch: str | None = None) -> None:
+        self.epoch = epoch or str(uuid.uuid4())
+        self._seq = 0
+        self._lock = asyncio.Lock()
+        self._sync_lock = threading.RLock()
+
+    @property
+    def lock(self) -> asyncio.Lock:
+        return self._lock
+
+    @property
+    def seq(self) -> int:
+        with self._sync_lock:
+            return self._seq
+
+    @contextmanager
+    def synchronized(self) -> Iterator[None]:
+        with self._sync_lock:
+            yield
+
+    def next_seq(self) -> int:
+        with self._sync_lock:
+            self._seq += 1
+            return self._seq
 
 
 @dataclass(frozen=True)
@@ -99,6 +132,16 @@ class AttentionTransitionResult:
     current: AttentionState | None
 
 
+@dataclass(frozen=True)
+class AttentionRosterSnapshot:
+    """Cursor-bounded durable and transient state captured under ordering."""
+
+    epoch: str
+    seq: int
+    states: tuple[AttentionState, ...]
+    metadata: Mapping[str, Mapping[str, object]]
+
+
 def _timestamp(value: object) -> str | None:
     if value is None:
         return None
@@ -117,13 +160,20 @@ class AttentionStateManager:
         event_publisher: AttentionPublisher | None = None,
         notification_publisher: AttentionPublisher | None = None,
         epoch: str | None = None,
+        ordering: AttentionOrderingCoordinator | None = None,
     ) -> None:
         self.db = db
         self._event_publisher = event_publisher
         self._notification_publisher = notification_publisher
-        self.epoch = epoch or str(uuid.uuid4())
-        self._seq = 0
-        self._transition_lock = threading.Lock()
+        self.ordering = ordering or AttentionOrderingCoordinator(epoch=epoch)
+
+    @property
+    def epoch(self) -> str:
+        return self.ordering.epoch
+
+    @property
+    def seq(self) -> int:
+        return self.ordering.seq
 
     def get(self, entry_id: str) -> AttentionState | None:
         """Return the latest state for an entry."""
@@ -143,6 +193,72 @@ class AttentionStateManager:
             """
         )
         return [AttentionState.from_row(row) for row in rows]
+
+    def snapshot(
+        self,
+        *,
+        metadata_snapshot: Callable[[], Mapping[str, Mapping[str, object]]] | None = None,
+    ) -> AttentionRosterSnapshot:
+        """Capture all attention and transient metadata at one cursor."""
+        with self.ordering.synchronized():
+            rows = self.db.fetchall("SELECT * FROM attention_states ORDER BY entry_id")
+            states = tuple(AttentionState.from_row(row) for row in rows)
+            raw_metadata = metadata_snapshot() if metadata_snapshot is not None else {}
+            metadata = MappingProxyType(
+                {
+                    entry_id: MappingProxyType(dict(value))
+                    for entry_id, value in raw_metadata.items()
+                }
+            )
+            return AttentionRosterSnapshot(
+                epoch=self.ordering.epoch,
+                seq=self.ordering.seq,
+                states=states,
+                metadata=metadata,
+            )
+
+    async def snapshot_async(
+        self,
+        run_db: DatabaseRunner,
+        *,
+        metadata_snapshot: Callable[[], Mapping[str, Mapping[str, object]]] | None = None,
+    ) -> AttentionRosterSnapshot:
+        async with self.ordering.lock:
+            result = await run_db(self.snapshot, metadata_snapshot=metadata_snapshot)
+        return cast(AttentionRosterSnapshot, result)
+
+    async def transition_async(
+        self,
+        run_db: DatabaseRunner,
+        entry_id: str,
+        *,
+        state: AttentionStatus | None,
+        run_id: str | None = None,
+        session_id: str | None = None,
+        reason: str | None = None,
+        kind: AttentionKind | None = None,
+        fingerprint: str | None = None,
+        payload: Mapping[str, object] | None = None,
+        expected_attention_id: str | None = None,
+        expected_fingerprint: str | None = None,
+        mark_seen: bool = False,
+    ) -> AttentionTransitionResult:
+        async with self.ordering.lock:
+            result = await run_db(
+                self.transition,
+                entry_id,
+                state=state,
+                run_id=run_id,
+                session_id=session_id,
+                reason=reason,
+                kind=kind,
+                fingerprint=fingerprint,
+                payload=payload,
+                expected_attention_id=expected_attention_id,
+                expected_fingerprint=expected_fingerprint,
+                mark_seen=mark_seen,
+            )
+        return cast(AttentionTransitionResult, result)
 
     def transition(
         self,
@@ -170,7 +286,7 @@ class AttentionStateManager:
         if state == "blocked" and (reason is None or kind is None or fingerprint is None):
             raise ValueError("blocked transitions require reason, kind, and fingerprint")
 
-        with self._transition_lock:
+        with self.ordering.synchronized():
             result, opened_episode = self._transition_locked(
                 entry_id,
                 state=state,
@@ -187,8 +303,8 @@ class AttentionStateManager:
             if not result.applied or result.current is None:
                 return result
 
-            self._seq += 1
-            event = result.current.event_payload(epoch=self.epoch, seq=self._seq)
+            seq = self.ordering.next_seq()
+            event = result.current.event_payload(epoch=self.ordering.epoch, seq=seq)
             self._publish(self._event_publisher, event, "attention event")
             if opened_episode:
                 self._publish(self._notification_publisher, event, "attention notification")
@@ -299,6 +415,7 @@ class AttentionStateManager:
             if expected_fingerprint is not None:
                 conditions.append("fingerprint = %s")
                 condition_params.append(expected_fingerprint)
+            # The SQL condition fragments are selected from fixed strings above.
             updated = transaction.execute(
                 f"""
                 UPDATE attention_states
@@ -315,7 +432,7 @@ class AttentionStateManager:
                     updated_at = %s
                 WHERE {" AND ".join(conditions)}
                 RETURNING *
-                """,  # nosec B608 -- condition fragments are fixed above
+                """,  # nosec B608
                 (
                     next_run_id,
                     next_session_id,

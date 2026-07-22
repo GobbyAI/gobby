@@ -275,7 +275,8 @@ class TmuxPaneMonitor:
                 and attention.session_id is not None
                 and attention.session_id not in active_interactive_ids
             ):
-                manager.transition(
+                await manager.transition_async(
+                    asyncio.to_thread,
                     attention.entry_id,
                     state=None,
                     expected_attention_id=attention.attention_id,
@@ -287,11 +288,11 @@ class TmuxPaneMonitor:
                 continue
             terminal_context = session.terminal_context
             if not isinstance(terminal_context, Mapping):
-                self._clear_attention_if_current(session_attention_entry_id(session.id))
+                await self._clear_attention_if_current(session_attention_entry_id(session.id))
                 continue
             pane_id = terminal_context.get("tmux_pane")
             if not isinstance(pane_id, str) or not pane_id:
-                self._clear_attention_if_current(session_attention_entry_id(session.id))
+                await self._clear_attention_if_current(session_attention_entry_id(session.id))
                 continue
             try:
                 tmux = self._tmux_manager_factory(terminal_context)
@@ -305,9 +306,9 @@ class TmuxPaneMonitor:
                 continue
             if pane_output is None:
                 continue
-            self._sync_interactive_attention(session.id, pane_output)
+            await self._sync_interactive_attention(session.id, pane_output)
 
-    def _sync_interactive_attention(self, session_id: str, pane_output: str) -> None:
+    async def _sync_interactive_attention(self, session_id: str, pane_output: str) -> None:
         manager = self._attention_manager
         if manager is None:
             return
@@ -324,14 +325,15 @@ class TmuxPaneMonitor:
                 kind = "non_actionable"
 
         if reason is None or kind is None:
-            self._clear_attention_if_current(session_attention_entry_id(session_id))
+            await self._clear_attention_if_current(session_attention_entry_id(session_id))
             return
         prompt_payload = (
             detected
             if detected is not None and detected.kind == reason
             else self._prompt_detector.prompt_payload(pane_output, kind=reason)
         )
-        manager.transition(
+        await manager.transition_async(
+            asyncio.to_thread,
             session_attention_entry_id(session_id),
             state="blocked",
             session_id=session_id,
@@ -341,14 +343,15 @@ class TmuxPaneMonitor:
             payload=prompt_payload.to_payload(),
         )
 
-    def _clear_attention_if_current(self, entry_id: str) -> None:
+    async def _clear_attention_if_current(self, entry_id: str) -> None:
         manager = self._attention_manager
         if manager is None:
             return
         current = manager.get(entry_id)
         if current is None or current.state is None:
             return
-        manager.transition(
+        await manager.transition_async(
+            asyncio.to_thread,
             entry_id,
             state=None,
             expected_attention_id=current.attention_id,

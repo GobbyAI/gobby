@@ -201,8 +201,8 @@ class IdleCheckHandler:
             if detected is not None and detected.kind == reason
             else self._prompt_detector.prompt_payload(pane_output, kind=reason)
         )
-        await self._run_db(
-            manager.transition,
+        await manager.transition_async(
+            self._run_db,
             run_attention_entry_id(run.id),
             state="blocked",
             run_id=run.id,
@@ -220,8 +220,8 @@ class IdleCheckHandler:
     async def clear_attention(self, run: AgentRun) -> None:
         """Authoritatively clear attention when a run becomes terminal."""
         if self._attention_manager is not None:
-            await self._run_db(
-                self._attention_manager.transition,
+            await self._attention_manager.transition_async(
+                self._run_db,
                 run_attention_entry_id(run.id),
                 state=None,
             )
@@ -234,8 +234,8 @@ class IdleCheckHandler:
         current = await self._run_db(manager.get, entry_id)
         if current is None or current.state is None:
             return
-        await self._run_db(
-            manager.transition,
+        await manager.transition_async(
+            self._run_db,
             entry_id,
             state=None,
             expected_attention_id=current.attention_id,

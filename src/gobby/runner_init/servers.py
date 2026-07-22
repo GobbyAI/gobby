@@ -142,6 +142,9 @@ def init_servers(runner: GobbyRunner) -> None:
             tool_proxy_getter=tool_proxy_getter,
         )
         runner.websocket_server.web_chat_runtime_manager = services.web_chat_runtime_manager
+        attention_manager = services.attention_manager
+        if attention_manager is not None:
+            runner.websocket_server.configure_attention_ordering(attention_manager.ordering)
         runner.http_server.websocket_server = runner.websocket_server
         runner.http_server.services.websocket_server = runner.websocket_server
         runner.http_server.broadcaster.websocket_server = runner.websocket_server

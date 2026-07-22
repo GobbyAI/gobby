@@ -6,7 +6,8 @@ import asyncio
 import re
 from collections.abc import Awaitable, Callable, Mapping, Sequence
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Literal, Self
+from datetime import datetime
+from typing import TYPE_CHECKING, Any, Literal, Self, cast
 
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel, ConfigDict, field_validator, model_validator
@@ -16,7 +17,9 @@ from gobby.agents.tmux.text_injection import (
     AttentionInjectionError,
     inject_attention_answer_to_tmux_target,
 )
-from gobby.storage.attention import AttentionState
+from gobby.storage.agents import AgentRun, LocalAgentRunManager
+from gobby.storage.attention import AttentionRosterSnapshot, AttentionState
+from gobby.storage.session_models import Session
 
 if TYPE_CHECKING:
     from gobby.servers.http import HTTPServer
@@ -84,6 +87,20 @@ class AttentionRespondRequest(BaseModel):
         return value
 
 
+class AttentionSeenRequest(BaseModel):
+    """Episode identity required to mark one prompt as seen."""
+
+    model_config = ConfigDict(extra="forbid")
+    attention_id: str
+
+    @field_validator("attention_id")
+    @classmethod
+    def validate_attention_id(cls, value: str) -> str:
+        if not value:
+            raise ValueError("attention_id is required")
+        return value
+
+
 @dataclass(frozen=True, slots=True)
 class AttentionPane:
     """Resolved tmux target and its capture operation."""
@@ -128,6 +145,52 @@ def create_attention_router(
             key=answer.key,
             tmux_cmd=pane.tmux_cmd,
         )
+
+    @router.get("/roster")
+    async def roster() -> dict[str, object]:
+        if manager is None:
+            raise HTTPException(status_code=503, detail={"code": "attention_unavailable"})
+        metadata_store = getattr(server.services, "attention_metadata_store", None)
+        metadata_snapshot = getattr(metadata_store, "snapshot", None)
+        snapshot = await manager.snapshot_async(
+            server.services.run_db,
+            metadata_snapshot=metadata_snapshot if callable(metadata_snapshot) else None,
+        )
+        entries = await _load_roster_entries(server, snapshot)
+        return {"epoch": snapshot.epoch, "seq": snapshot.seq, "entries": entries}
+
+    @router.post("/{entry_id}/seen")
+    async def mark_seen(entry_id: str, request: AttentionSeenRequest) -> dict[str, str]:
+        if manager is None:
+            raise HTTPException(status_code=503, detail={"code": "attention_unavailable"})
+        current = await server.services.run_db(manager.get, entry_id)
+        if current is None:
+            raise HTTPException(status_code=404, detail={"code": "attention_not_found"})
+        _require_seen_identity(current, request.attention_id)
+        result = await manager.transition_async(
+            server.services.run_db,
+            entry_id,
+            state="blocked",
+            run_id=current.run_id,
+            session_id=current.session_id,
+            reason=current.reason,
+            kind=current.kind,
+            fingerprint=current.fingerprint,
+            payload=current.payload,
+            expected_attention_id=request.attention_id,
+            mark_seen=True,
+        )
+        if not result.applied:
+            if (
+                result.current is not None
+                and result.current.attention_id == request.attention_id
+                and result.current.seen_at is not None
+            ):
+                return {"status": "seen", "entry_id": entry_id}
+            if result.current is None:
+                raise HTTPException(status_code=404, detail={"code": "attention_not_found"})
+            _raise_stale_episode(result.current)
+        return {"status": "seen", "entry_id": entry_id}
 
     @router.post("/{entry_id}/respond")
     async def respond(entry_id: str, request: AttentionRespondRequest) -> dict[str, str]:
@@ -177,8 +240,8 @@ def create_attention_router(
                 )
                 raise _injection_http_error(stage="partial") from exc
 
-            cleared = await server.services.run_db(
-                manager.transition,
+            cleared = await manager.transition_async(
+                server.services.run_db,
                 entry_id,
                 state=None,
                 expected_attention_id=latest.attention_id,
@@ -200,10 +263,19 @@ def _require_current_identity(
         or current.attention_id != request.attention_id
         or current.fingerprint != request.fingerprint
     ):
-        raise HTTPException(
-            status_code=409,
-            detail={"code": "stale_episode", **_identity(current)},
-        )
+        _raise_stale_episode(current)
+
+
+def _require_seen_identity(current: AttentionState, attention_id: str) -> None:
+    if current.state != "blocked" or current.attention_id != attention_id:
+        _raise_stale_episode(current)
+
+
+def _raise_stale_episode(current: AttentionState) -> None:
+    raise HTTPException(
+        status_code=409,
+        detail={"code": "stale_episode", **_identity(current)},
+    )
 
 
 def _identity(state: AttentionState) -> dict[str, str | None]:
@@ -247,8 +319,8 @@ async def _retire_and_redetect(
     manager = server.services.attention_manager
     if manager is None:
         return
-    cleared = await server.services.run_db(
-        manager.transition,
+    cleared = await manager.transition_async(
+        server.services.run_db,
         current.entry_id,
         state=None,
         expected_attention_id=current.attention_id,
@@ -262,8 +334,8 @@ async def _retire_and_redetect(
     detected = detector.detect_prompt(pane_output)
     if detected is None:
         return
-    await server.services.run_db(
-        manager.transition,
+    await manager.transition_async(
+        server.services.run_db,
         current.entry_id,
         state="blocked",
         run_id=current.run_id,
@@ -273,6 +345,186 @@ async def _retire_and_redetect(
         fingerprint=detected.fingerprint,
         payload=detected.to_payload(),
     )
+
+
+async def _load_roster_entries(
+    server: HTTPServer,
+    snapshot: AttentionRosterSnapshot,
+) -> list[dict[str, object]]:
+    """Join cursor-bounded attention with live run and session identity."""
+    services = server.services
+    runs_result, sessions_result = await asyncio.gather(
+        _list_active_runs(services),
+        _list_live_sessions(services),
+    )
+    runs = list(runs_result)
+    sessions = list(sessions_result)
+    attention = {state.entry_id: state for state in snapshot.states}
+    task_cache: dict[str, dict[str, str | None] | None] = {}
+    entries: list[dict[str, object]] = []
+    active_agent_sessions = {
+        run.child_session_id for run in runs if run.child_session_id is not None
+    }
+
+    for run in runs:
+        entry_id = f"run:{run.id}"
+        entries.append(
+            {
+                "entry_id": entry_id,
+                "run_id": run.id,
+                "session_id": run.child_session_id,
+                "lifecycle_status": run.status,
+                "attention": _serialize_attention(attention.get(entry_id)),
+                "task": await _load_task_payload(services, run.task_id, task_cache),
+                "provider": run.provider,
+                "model": run.model,
+                "tmux": _run_tmux_payload(services, run),
+                "last_activity_at": _serialize_timestamp(run.updated_at),
+                **_metadata_payload(snapshot, entry_id),
+            }
+        )
+
+    for session in sessions:
+        if session.id in active_agent_sessions:
+            continue
+        terminal_context = session.terminal_context
+        if not isinstance(terminal_context, Mapping):
+            continue
+        pane = terminal_context.get("tmux_pane")
+        if not isinstance(pane, str) or not pane:
+            continue
+        entry_id = f"session:{session.id}"
+        entries.append(
+            {
+                "entry_id": entry_id,
+                "run_id": None,
+                "session_id": session.id,
+                "lifecycle_status": session.status,
+                "attention": _serialize_attention(attention.get(entry_id)),
+                "task": None,
+                "provider": session.source,
+                "model": session.model,
+                "tmux": _session_tmux_payload(terminal_context),
+                "last_activity_at": _serialize_timestamp(session.updated_at),
+                **_metadata_payload(snapshot, entry_id),
+            }
+        )
+    return sorted(entries, key=lambda item: str(item["entry_id"]))
+
+
+async def _list_active_runs(services: Any) -> list[AgentRun]:
+    manager = LocalAgentRunManager(services.database)
+    runs: list[AgentRun] = []
+    offset = 0
+    while True:
+        page = await services.run_db(manager.list_active, limit=500, offset=offset)
+        runs.extend(page)
+        if len(page) < 500:
+            return runs
+        offset += len(page)
+
+
+async def _list_live_sessions(services: Any) -> list[Session]:
+    session_manager = services.session_manager
+    if session_manager is None:
+        return []
+    sessions: list[Session] = []
+    cursor_updated_at: str | None = None
+    cursor_id: str | None = None
+    while True:
+        result = await services.run_db(
+            session_manager.list,
+            statuses=["active", "paused"],
+            limit=500,
+            cursor_updated_at=cursor_updated_at,
+            cursor_id=cursor_id,
+        )
+        page = cast(list[Session], list(result))
+        sessions.extend(page)
+        if len(page) < 500:
+            return sessions
+        cursor_updated_at = _serialize_timestamp(page[-1].updated_at)
+        cursor_id = page[-1].id
+
+
+async def _load_task_payload(
+    services: Any,
+    task_id: str | None,
+    cache: dict[str, dict[str, str | None] | None],
+) -> dict[str, str | None] | None:
+    if task_id is None:
+        return None
+    if task_id in cache:
+        return cache[task_id]
+    task = await services.run_db(services.task_manager.get_task, task_id)
+    if task is None:
+        cache[task_id] = None
+        return None
+    brief = task.to_brief()
+    state = brief.get("state")
+    current_stage = state.get("current_stage") if isinstance(state, Mapping) else None
+    stage = current_stage.get("name") if isinstance(current_stage, Mapping) else None
+    payload = {"id": task.id, "ref": brief.get("ref"), "stage": stage}
+    cache[task_id] = payload
+    return payload
+
+
+def _serialize_attention(state: AttentionState | None) -> dict[str, object] | None:
+    if state is None or state.state is None:
+        return None
+    return {
+        "attention_id": state.attention_id,
+        "state": state.state,
+        "reason": state.reason,
+        "kind": state.kind,
+        "fingerprint": state.fingerprint,
+        "payload": state.payload,
+        "since": state.since,
+        "seen_at": state.seen_at,
+    }
+
+
+def _run_tmux_payload(services: Any, run: Any) -> dict[str, object] | None:
+    session_name = run.tmux_session_name
+    if not isinstance(session_name, str) or not session_name:
+        return None
+    tmux_config = getattr(services.config, "tmux", None)
+    socket_path = getattr(tmux_config, "socket_path", None)
+    return {
+        "socket_path": socket_path if isinstance(socket_path, str) and socket_path else None,
+        "session_name": session_name,
+        "pane_pid": run.pid,
+    }
+
+
+def _session_tmux_payload(terminal_context: Mapping[str, object]) -> dict[str, object]:
+    from gobby.sessions.tmux_context import (
+        get_tmux_pane_pid,
+        get_tmux_session_name,
+        get_tmux_socket_path,
+    )
+
+    return {
+        "socket_path": get_tmux_socket_path(terminal_context),
+        "session_name": get_tmux_session_name(terminal_context),
+        "pane_pid": get_tmux_pane_pid(terminal_context),
+    }
+
+
+def _metadata_payload(
+    snapshot: AttentionRosterSnapshot,
+    entry_id: str,
+) -> dict[str, object]:
+    metadata = snapshot.metadata.get(entry_id)
+    return {"metadata": dict(metadata)} if metadata is not None else {}
+
+
+def _serialize_timestamp(value: object) -> str | None:
+    if value is None:
+        return None
+    if isinstance(value, datetime):
+        return value.isoformat()
+    return str(value)
 
 
 async def _resolve_attention_pane(
