@@ -1,6 +1,6 @@
 ---
 goal: Complete 0.5.0 ship-blocker epic #18497
-status: active
+status: done
 anchor: "#18497"
 mode: solo
 created: 2026-07-21
@@ -18,16 +18,16 @@ so each iteration resumes from the durable goal document and live task state.
 
 ## Success Criteria
 
-- [ ] Every descendant in the live #18497 task tree is closed; the 17 open
+- [x] Every descendant in the live #18497 task tree is closed; the 17 open
       descendants present at drafting are #14844, #15005, #17654, #17659,
       #17662, #17665, #17673, #18490, #18491, #18499, #18501, #18516, #18519,
       #18637, #18638, #18643, and #18656.
-- [ ] Each changed leaf has focused validation evidence and a task-linked commit.
-- [ ] `gobby-sessions:compact_self` separates completed leaf iterations; no next
+- [x] Each changed leaf has focused validation evidence and a task-linked commit.
+- [x] `gobby-sessions:compact_self` separates completed leaf iterations; no next
       leaf starts before the compacted session resumes and reconciles live state.
-- [ ] No descendant remains claimed, escalated, blocked, or awaiting review.
-- [ ] No goal-owned worker, worktree, or clone remains active.
-- [ ] Epic #18497 closes only after its live tree is complete.
+- [x] No descendant remains claimed, escalated, blocked, or awaiting review.
+- [x] No goal-owned worker, worktree, or clone remains active.
+- [x] Epic #18497 closes only after its live tree is complete.
 
 ## Non-Goals
 
@@ -192,3 +192,9 @@ so each iteration resumes from the durable goal document and live task state.
   compile owns root-log updates. Final validation passed 20 focused skill,
   agent-definition, and manifest tests; Ruff format/check, test-quality, and
   diff checks also passed.
+- 2026-07-21 #9341 completion — reconciled the live hierarchy after iteration
+  16: all 18 current direct descendants are closed and none has descendants.
+  Draft-time task #15005 now belongs to #18498 and is outside the live #18497
+  tree. Verified zero active child agents, session worktrees, and active clones;
+  all success criteria are satisfied, so the final bookkeeping commit closes
+  #18497.
