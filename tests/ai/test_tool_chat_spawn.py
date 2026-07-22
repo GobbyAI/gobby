@@ -44,7 +44,7 @@ def _binding(
         provider=provider,
         adapter_style=style,
         available=True,
-        models=("gpt-5.5",),
+        models=("gpt-5.6-sol",),
         metadata={},
     )
 
@@ -341,7 +341,7 @@ def test_codex_build_command_uses_json_sandbox_and_gcode_prompt() -> None:
     request = _request(reasoning_effort="high")
     output_path = Path("/tmp/last-message.txt")
 
-    command = adapter._build_command(request, model="gpt-5.5", output_path=output_path)
+    command = adapter._build_command(request, model="gpt-5.6-sol", output_path=output_path)
     prompt = compose_gcode_direct_prompt(request)
 
     assert command[0] == "codex"
@@ -352,7 +352,7 @@ def test_codex_build_command_uses_json_sandbox_and_gcode_prompt() -> None:
     assert "--json" in command
     assert "--ignore-user-config" in command
     assert command[command.index("--output-last-message") + 1] == str(output_path)
-    assert command[command.index("--model") + 1] == "gpt-5.5"
+    assert command[command.index("--model") + 1] == "gpt-5.6-sol"
     assert command[-1] == "-"
     assert prompt not in command
     assert all("Document the auth module." not in arg for arg in command)
@@ -398,7 +398,7 @@ async def test_codex_adapter_captures_narrative_and_counts_tools(
 
     assert result.text == "## Auth\n\nGrounded narrative citing src/auth.rs:10."
     assert result.provider == "codex"
-    assert result.model == "gpt-5.5"
+    assert result.model == "gpt-5.6-sol"
     assert result.tool_use_count == 2
     assert result.tools == {"command_execution": 2}
     assert result.applied_reasoning_effort == "high"
@@ -510,7 +510,7 @@ def test_droid_build_command_enables_execute_and_uses_gcode_prompt() -> None:
     adapter = DroidSpawnToolChatAdapter(command_path="droid")
     request = _request(reasoning_effort="high")
 
-    command = adapter._build_command(request, model="gpt-5.5")
+    command = adapter._build_command(request, model="gpt-5.6-sol")
 
     assert command[0] == "droid"
     assert "exec" in command
@@ -523,7 +523,7 @@ def test_droid_build_command_enables_execute_and_uses_gcode_prompt() -> None:
     # But file-mutation and automation tools ARE disabled (defense-in-depth).
     for blocked in ("Edit", "Create", "ApplyPatch", "Task"):
         assert blocked in disabled
-    assert command[command.index("--model") + 1] == "gpt-5.5"
+    assert command[command.index("--model") + 1] == "gpt-5.6-sol"
     # The composed prompt uses gcode-direct, not gobby-index.
     assert "gcode" in command[-1]
     assert "gobby-index" not in command[-1]

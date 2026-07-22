@@ -338,7 +338,7 @@ class TestClaudeResolver:
         )
 
 
-# Verbatim capture from Codex CLI v0.138.0 (gpt-5.5) in a tmux pane: the single
+# Verbatim capture from Codex CLI v0.138.0 in a tmux pane: the single
 # plan-mode approval menu shown after `/plan` proposes a plan.
 _CODEX_PLAN_MENU_PANE = """\
   Implement this plan?

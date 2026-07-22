@@ -837,7 +837,7 @@ async def test_text_generation_service_profile_only_expands_profile_defaults() -
                 provider="codex",
                 adapter_style=AIAdapterStyle.DAEMON,
                 available=True,
-                models=("gpt-5.4-mini",),
+                models=("gpt-5.6-luna", "gpt-5.4-mini"),
             ),
         ]
     )
@@ -858,13 +858,13 @@ async def test_text_generation_service_profile_only_expands_profile_defaults() -
 
     assert result.text == "codex:summarize"
     assert result.provider == "codex"
-    assert result.model == "gpt-5.4-mini"
+    assert result.model == "gpt-5.6-luna"
     assert codex.requests == [
         TextGenerationRequest(
             prompt="summarize",
             provider="codex",
             profile="feature_low",
-            model="gpt-5.4-mini",
+            model="gpt-5.6-luna",
         )
     ]
 
@@ -978,7 +978,7 @@ async def test_text_generation_service_request_reasoning_effort_overrides_candid
                 provider="codex",
                 adapter_style=AIAdapterStyle.DAEMON,
                 available=True,
-                models=("gpt-5.5",),
+                models=("gpt-5.6-sol",),
             ),
         ]
     )
@@ -989,7 +989,7 @@ async def test_text_generation_service_request_reasoning_effort_overrides_candid
         TextGenerationRequest(
             prompt="summarize",
             candidates=(
-                FeatureCandidateConfig(candidate="codex/gpt-5.5", reasoning_effort="xhigh"),
+                FeatureCandidateConfig(candidate="codex/gpt-5.6-sol", reasoning_effort="xhigh"),
             ),
             reasoning_effort="low",
         )
@@ -1001,9 +1001,9 @@ async def test_text_generation_service_request_reasoning_effort_overrides_candid
             prompt="summarize",
             provider="codex",
             candidates=(
-                FeatureCandidateConfig(candidate="codex/gpt-5.5", reasoning_effort="xhigh"),
+                FeatureCandidateConfig(candidate="codex/gpt-5.6-sol", reasoning_effort="xhigh"),
             ),
-            model="gpt-5.5",
+            model="gpt-5.6-sol",
             reasoning_effort="low",
         )
     ]
@@ -1018,7 +1018,7 @@ async def test_text_generation_service_json_applies_effort_without_wrapping_resu
                 provider="codex",
                 adapter_style=AIAdapterStyle.DAEMON,
                 available=True,
-                models=("gpt-5.5",),
+                models=("gpt-5.6-sol",),
             ),
         ]
     )
@@ -1029,20 +1029,20 @@ async def test_text_generation_service_json_applies_effort_without_wrapping_resu
         TextGenerationRequest(
             prompt="classify",
             candidates=(
-                FeatureCandidateConfig(candidate="codex/gpt-5.5", reasoning_effort="xhigh"),
+                FeatureCandidateConfig(candidate="codex/gpt-5.6-sol", reasoning_effort="xhigh"),
             ),
         )
     )
 
-    assert result == {"provider": "codex", "model": "gpt-5.5"}
+    assert result == {"provider": "codex", "model": "gpt-5.6-sol"}
     assert codex.requests == [
         TextGenerationRequest(
             prompt="classify",
             provider="codex",
             candidates=(
-                FeatureCandidateConfig(candidate="codex/gpt-5.5", reasoning_effort="xhigh"),
+                FeatureCandidateConfig(candidate="codex/gpt-5.6-sol", reasoning_effort="xhigh"),
             ),
-            model="gpt-5.5",
+            model="gpt-5.6-sol",
             reasoning_effort="xhigh",
         )
     ]
@@ -1057,7 +1057,7 @@ async def test_text_generation_service_normalizes_auto_reasoning_effort_to_unset
                 provider="codex",
                 adapter_style=AIAdapterStyle.DAEMON,
                 available=True,
-                models=("gpt-5.5",),
+                models=("gpt-5.6-sol",),
             ),
         ]
     )
@@ -1068,7 +1068,7 @@ async def test_text_generation_service_normalizes_auto_reasoning_effort_to_unset
         TextGenerationRequest(
             prompt="summarize",
             candidates=(
-                FeatureCandidateConfig(candidate="codex/gpt-5.5", reasoning_effort="xhigh"),
+                FeatureCandidateConfig(candidate="codex/gpt-5.6-sol", reasoning_effort="xhigh"),
             ),
             reasoning_effort=" AUTO ",
         )
@@ -1080,9 +1080,9 @@ async def test_text_generation_service_normalizes_auto_reasoning_effort_to_unset
             prompt="summarize",
             provider="codex",
             candidates=(
-                FeatureCandidateConfig(candidate="codex/gpt-5.5", reasoning_effort="xhigh"),
+                FeatureCandidateConfig(candidate="codex/gpt-5.6-sol", reasoning_effort="xhigh"),
             ),
-            model="gpt-5.5",
+            model="gpt-5.6-sol",
             reasoning_effort=None,
         )
     ]

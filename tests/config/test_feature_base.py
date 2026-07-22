@@ -37,14 +37,15 @@ class TestFeatureProfile:
     def test_profile_candidate_ordering(self) -> None:
         assert candidate_labels(DEFAULT_PROFILE_CANDIDATES[FeatureProfile.LOW]) == (
             "claude/haiku",
+            "codex/gpt-5.6-luna",
             "codex/gpt-5.4-mini",
         )
         assert candidate_labels(DEFAULT_PROFILE_CANDIDATES[FeatureProfile.MID]) == (
             "claude/sonnet",
-            "codex/gpt-5.5",
+            "codex/gpt-5.6-terra",
         )
         assert candidate_labels(DEFAULT_PROFILE_CANDIDATES[FeatureProfile.HIGH]) == (
-            "codex/gpt-5.5",
+            "codex/gpt-5.6-sol",
             "claude/opus",
         )
         for candidates in DEFAULT_PROFILE_CANDIDATES.values():
@@ -65,7 +66,7 @@ class TestFeatureProfile:
 
     def test_default_candidates_for_profile_returns_labels(self) -> None:
         assert default_candidates_for_profile(FeatureProfile.HIGH) == (
-            "codex/gpt-5.5",
+            "codex/gpt-5.6-sol",
             "claude/opus",
         )
 
@@ -111,19 +112,19 @@ class TestFeatureDefaultConfig:
     def test_structured_candidate_config_parses_reasoning_effort(self) -> None:
         cfg = FeatureDefaultConfig(
             candidates=[
-                {"candidate": "codex/gpt-5.5", "reasoning_effort": "xhigh"},
+                {"candidate": "codex/gpt-5.6-sol", "reasoning_effort": "xhigh"},
                 FeatureCandidateConfig(candidate="claude/opus", reasoning_effort="HIGH"),
             ],
         )
 
-        assert candidate_labels(cfg.candidates) == ("codex/gpt-5.5", "claude/opus")
+        assert candidate_labels(cfg.candidates) == ("codex/gpt-5.6-sol", "claude/opus")
         assert [candidate.reasoning_effort for candidate in cfg.candidates] == ["xhigh", "high"]
 
     @pytest.mark.parametrize("reasoning_effort", ["auto", "", "  AUTO  ", None])
     def test_auto_reasoning_effort_maps_to_unset(self, reasoning_effort: str | None) -> None:
         cfg = FeatureDefaultConfig(
             candidates=[
-                {"candidate": "codex/gpt-5.5", "reasoning_effort": reasoning_effort},
+                {"candidate": "codex/gpt-5.6-terra", "reasoning_effort": reasoning_effort},
             ],
         )
 
@@ -132,7 +133,7 @@ class TestFeatureDefaultConfig:
     def test_unknown_reasoning_effort_is_accepted_at_config_load(self) -> None:
         cfg = FeatureDefaultConfig(
             candidates=[
-                {"candidate": "codex/gpt-5.5", "reasoning_effort": "banana"},
+                {"candidate": "codex/gpt-5.6-terra", "reasoning_effort": "banana"},
             ],
         )
 
@@ -140,7 +141,7 @@ class TestFeatureDefaultConfig:
 
     def test_explicit_candidate_reasoning_overrides_profile_default(self) -> None:
         entries = candidate_runtime_entries(
-            [{"candidate": "codex/gpt-5.5", "reasoning_effort": "xhigh"}],
+            [{"candidate": "codex/gpt-5.6-sol", "reasoning_effort": "xhigh"}],
             profile=FeatureProfile.HIGH,
         )
 
@@ -148,7 +149,7 @@ class TestFeatureDefaultConfig:
 
     def test_candidate_runtime_entries_resolve_auto_profile_default(self) -> None:
         entries = candidate_runtime_entries(
-            [{"candidate": "codex/gpt-5.5", "reasoning_effort": "auto"}],
+            [{"candidate": "codex/gpt-5.6-terra", "reasoning_effort": "auto"}],
             profile=FeatureProfile.HIGH,
         )
 
@@ -158,12 +159,12 @@ class TestFeatureDefaultConfig:
         cfg = FeatureDefaultConfig(
             candidates=[
                 "claude/claude-haiku-4-5",
-                "codex/gpt-5.5",
+                "codex/gpt-5.6-terra",
                 "claude/haiku",
             ],
         )
 
-        assert candidate_labels(cfg.candidates) == ("claude/haiku", "codex/gpt-5.5")
+        assert candidate_labels(cfg.candidates) == ("claude/haiku", "codex/gpt-5.6-terra")
 
     @pytest.mark.parametrize(
         ("candidate", "expected"),

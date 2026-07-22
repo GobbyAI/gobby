@@ -103,10 +103,7 @@ async def test_call_feature_delegates_to_text_generation(llm_config: DaemonConfi
 async def test_call_json_feature_delegates_to_text_generation(llm_config: DaemonConfig) -> None:
     fake_generation = FakeTextGeneration()
     service = LLMService(llm_config, text_generation=fake_generation)
-    config = TaskValidationConfig(
-        candidates=["claude/haiku"],
-        cli_candidate_timeout_seconds=180.0,
-    )
+    config = TaskValidationConfig(candidates=["claude/haiku"])
 
     result = await service.call_json_feature(
         config,
@@ -125,7 +122,7 @@ async def test_call_json_feature_delegates_to_text_generation(llm_config: Daemon
     assert request.cwd == "/tmp/project"
     assert request.max_tokens == 321
     assert request.candidate_timeout_seconds is None
-    assert request.cli_candidate_timeout_seconds == 180.0
+    assert request.cli_candidate_timeout_seconds is None
 
 
 @pytest.mark.asyncio
@@ -135,7 +132,7 @@ async def test_call_json_feature_preserves_structured_candidate_reasoning(
     fake_generation = FakeTextGeneration()
     service = LLMService(llm_config, text_generation=fake_generation)
     config = MemoryKnowledgeGraphConfig(
-        candidates=[{"candidate": "codex/gpt-5.5", "reasoning_effort": "xhigh"}],
+        candidates=[{"candidate": "codex/gpt-5.6-sol", "reasoning_effort": "xhigh"}],
     )
 
     result = await service.call_json_feature(config, "prompt")
@@ -144,7 +141,7 @@ async def test_call_json_feature_preserves_structured_candidate_reasoning(
     request = fake_generation.requests[0]
     assert len(request.candidates) == 1
     candidate = request.candidates[0]
-    assert candidate.candidate == "codex/gpt-5.5"
+    assert candidate.candidate == "codex/gpt-5.6-sol"
     assert candidate.reasoning_effort == "xhigh"
 
 

@@ -282,7 +282,7 @@ def _claude_plan_keystrokes(option_id: str, pane_text: str) -> PlanKeystrokeSequ
 
 
 # --- Codex native plan-mode approval menu ------------------------------------
-# Captured empirically from Codex CLI v0.138.0 (gpt-5.5) in a tmux pane
+# Captured empirically from Codex CLI v0.138.0 in a tmux pane
 # (task #15728). Entering Plan mode (`/plan`) and letting the model propose a
 # plan renders ONE approval menu; typing the item number selects AND activates
 # it immediately -- the "Press enter to confirm" hint applies only to arrow-key

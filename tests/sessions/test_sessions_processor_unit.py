@@ -1505,7 +1505,7 @@ class TestModelExtraction:
                 cache_creation_tokens=0,
                 cache_read_tokens=93568,
             ),
-            model="gpt-5.5",
+            model="gpt-5.6-sol",
             message_id="token-count-1",
         )
         mock_parser = MagicMock()
@@ -1525,7 +1525,7 @@ class TestModelExtraction:
             cache_creation_tokens=0,
             cache_read_tokens=93568,
             context_window=258400,
-            model="gpt-5.5",
+            model="gpt-5.6-sol",
         )
         mock_session_manager.update_context_usage.assert_called_once()
         snapshot = mock_session_manager.update_context_usage.call_args.args[1]
@@ -1602,7 +1602,7 @@ class TestModelExtraction:
                 cache_creation_tokens=0,
                 cache_read_tokens=93568,
             ),
-            model="gpt-5.5",
+            model="gpt-5.6-sol",
             message_id="token-count-1",
         )
 
@@ -1615,7 +1615,7 @@ class TestModelExtraction:
             cache_creation_tokens=0,
             cache_read_tokens=93568,
             context_window=258400,
-            model="gpt-5.5",
+            model="gpt-5.6-sol",
         )
         mock_session_manager.update_context_usage.assert_called_once()
         usage_payload = mock_ws.broadcast_session_usage_updated.await_args.args[0]

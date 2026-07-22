@@ -96,14 +96,14 @@ def test_resolve_spawn_reasoning_applies_claude_opus_xhigh(
     assert result.message is None
 
 
-def test_resolve_spawn_reasoning_applies_codex_gpt_55_xhigh(
+def test_resolve_spawn_reasoning_applies_codex_gpt_56_sol_xhigh(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     monkeypatch.setattr(
         "gobby.agents.reasoning._get_provider_models",
         lambda provider, daemon_config: [
             {
-                "value": "gpt-5.5",
+                "value": "gpt-5.6-sol",
                 "reasoning": {"supported_efforts": ["low", "medium", "high", "xhigh"]},
             }
         ],
@@ -111,7 +111,7 @@ def test_resolve_spawn_reasoning_applies_codex_gpt_55_xhigh(
 
     result = resolve_spawn_reasoning(
         provider="codex",
-        model="gpt-5.5",
+        model="gpt-5.6-sol",
         requested_effort="xhigh",
         reasoning_required=True,
     )

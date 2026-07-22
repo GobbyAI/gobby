@@ -161,7 +161,7 @@ def _config() -> Any:
     return SimpleNamespace(
         memory_usefulness=SimpleNamespace(
             profile="low",
-            candidates=["codex/gpt-5.5-mini", "claude/haiku"],
+            candidates=["codex/gpt-5.6-luna", "claude/haiku"],
             timeout=30,
         )
     )
@@ -184,7 +184,7 @@ def test_build_shadow_prompt_is_deterministic_and_masks_memory_ids() -> None:
         query_text="How should recall ranking work?",
         hits=hits,
         contents_by_id=contents,
-        judge_model="codex/gpt-5.5-mini",
+        judge_model="codex/gpt-5.6-luna",
         judge_config_fingerprint="judge-fingerprint",
     )
     repeated = _build_shadow_prompt(
@@ -192,7 +192,7 @@ def test_build_shadow_prompt_is_deterministic_and_masks_memory_ids() -> None:
         query_text="How should recall ranking work?",
         hits=list(reversed(hits)),
         contents_by_id=contents,
-        judge_model="codex/gpt-5.5-mini",
+        judge_model="codex/gpt-5.6-luna",
         judge_config_fingerprint="judge-fingerprint",
     )
 
@@ -206,7 +206,7 @@ def test_build_shadow_prompt_is_deterministic_and_masks_memory_ids() -> None:
         "M3",
     ]
     assert [item["order_index"] for item in presentation["presented"]] == [0, 1, 2]
-    assert presentation["judge_model"] == "codex/gpt-5.5-mini"
+    assert presentation["judge_model"] == "codex/gpt-5.6-luna"
     assert presentation["judge_config_fingerprint"] == "judge-fingerprint"
     assert presentation["prompt_hash"] == hashlib.sha256(prompt.encode("utf-8")).hexdigest()
     assert all(hit["memory_id"] not in prompt for hit in hits)

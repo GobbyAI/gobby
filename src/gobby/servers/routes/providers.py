@@ -62,9 +62,23 @@ _BASE_MODEL_CATALOG: dict[str, list[dict[str, Any]]] = {
         "codex",
         [
             {
-                "value": "gpt-5.5",
-                "label": "gpt-5.5",
+                "value": "gpt-5.6-sol",
+                "label": "gpt-5.6-sol",
                 "reasoning": {"supported_efforts": ["low", "medium", "high", "xhigh"]},
+                "context_length": 258_400,
+                "context_length_source": "static_default",
+            },
+            {
+                "value": "gpt-5.6-terra",
+                "label": "gpt-5.6-terra",
+                "context_length": 258_400,
+                "context_length_source": "static_default",
+            },
+            {
+                "value": "gpt-5.6-luna",
+                "label": "gpt-5.6-luna",
+                "context_length": 258_400,
+                "context_length_source": "static_default",
             },
             {
                 "value": "gpt-5.4",

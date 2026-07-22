@@ -381,7 +381,7 @@ def test_generate_defaults_to_feature_low_and_accepts_system_alias(
                 provider="codex",
                 adapter_style=AIAdapterStyle.DAEMON,
                 available=True,
-                models=("gpt-5.4-mini",),
+                models=("gpt-5.6-luna", "gpt-5.4-mini"),
             ),
             CapabilityBinding(
                 capability=AICapability.TEXT_GENERATE,
@@ -405,14 +405,14 @@ def test_generate_defaults_to_feature_low_and_accepts_system_alias(
         "text": "Generated text",
         "capability": "text_generate",
         "provider": "codex",
-        "model": "gpt-5.4-mini",
+        "model": "gpt-5.6-luna",
     }
     assert codex.requests == [
         TextGenerationRequest(
             prompt="Summarize this",
             provider="codex",
             profile="feature_low",
-            model="gpt-5.4-mini",
+            model="gpt-5.6-luna",
             system_prompt="Be concise",
             caller="llm-generate-route",
         )
@@ -657,7 +657,7 @@ def test_generate_accepts_structured_candidates_and_returns_applied_reasoning_ef
                 provider="codex",
                 adapter_style=AIAdapterStyle.DAEMON,
                 available=True,
-                models=("gpt-5.5",),
+                models=("gpt-5.6-sol",),
             ),
         ]
     )
@@ -668,7 +668,7 @@ def test_generate_accepts_structured_candidates_and_returns_applied_reasoning_ef
         "/api/llm/generate",
         json={
             "prompt": "Summarize this",
-            "candidates": [{"candidate": "codex/gpt-5.5", "reasoning_effort": "xhigh"}],
+            "candidates": [{"candidate": "codex/gpt-5.6-sol", "reasoning_effort": "xhigh"}],
             "reasoning_effort": "low",
         },
     )
@@ -678,7 +678,7 @@ def test_generate_accepts_structured_candidates_and_returns_applied_reasoning_ef
         "text": "Generated text",
         "capability": "text_generate",
         "provider": "codex",
-        "model": "gpt-5.5",
+        "model": "gpt-5.6-sol",
         "applied_reasoning_effort": "low",
     }
     assert codex.requests == [
@@ -686,9 +686,9 @@ def test_generate_accepts_structured_candidates_and_returns_applied_reasoning_ef
             prompt="Summarize this",
             provider="codex",
             candidates=(
-                FeatureCandidateConfig(candidate="codex/gpt-5.5", reasoning_effort="xhigh"),
+                FeatureCandidateConfig(candidate="codex/gpt-5.6-sol", reasoning_effort="xhigh"),
             ),
-            model="gpt-5.5",
+            model="gpt-5.6-sol",
             reasoning_effort="low",
             caller="llm-generate-route",
         )

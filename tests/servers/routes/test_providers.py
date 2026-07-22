@@ -195,7 +195,9 @@ class TestProviderModelsRoute:
         # Codex should expose the hardcoded web-chat defaults, not a placeholder
         codex = providers["codex"]["models"]
         assert [m["value"] for m in codex] == [
-            "gpt-5.5",
+            "gpt-5.6-sol",
+            "gpt-5.6-terra",
+            "gpt-5.6-luna",
             "gpt-5.4",
             "gpt-5.4-mini",
             "gpt-5.3-codex",
@@ -203,7 +205,9 @@ class TestProviderModelsRoute:
             "gpt-5.2",
         ]
         assert [m["label"] for m in codex] == [
-            "gpt-5.5",
+            "gpt-5.6-sol",
+            "gpt-5.6-terra",
+            "gpt-5.6-luna",
             "codex-5.4",
             "mini-5.4",
             "codex-5.3",
@@ -212,6 +216,8 @@ class TestProviderModelsRoute:
         ]
         assert codex[0]["reasoning"] == {"supported_efforts": ["low", "medium", "high", "xhigh"]}
         assert [m["context_length"] for m in codex] == [
+            258_400,
+            258_400,
             258_400,
             258_400,
             258_400,
@@ -678,7 +684,9 @@ class TestProviderModelsRoute:
             "haiku",
         ]
         assert [m["value"] for m in providers["codex"]["models"]] == [
-            "gpt-5.5",
+            "gpt-5.6-sol",
+            "gpt-5.6-terra",
+            "gpt-5.6-luna",
             "gpt-5.4",
             "gpt-5.4-mini",
             "gpt-5.3-codex",
@@ -686,7 +694,9 @@ class TestProviderModelsRoute:
             "gpt-5.2",
         ]
         assert [m["label"] for m in providers["codex"]["models"]] == [
-            "gpt-5.5",
+            "gpt-5.6-sol",
+            "gpt-5.6-terra",
+            "gpt-5.6-luna",
             "codex-5.4",
             "mini-5.4",
             "codex-5.3",
@@ -705,7 +715,7 @@ class TestProviderModelsRoute:
         response = client.get("/api/providers/models")
         providers = {p["provider"]: p for p in response.json()["providers"]}
 
-        assert providers["codex"]["models"][0]["value"] == "gpt-5.5"
+        assert providers["codex"]["models"][0]["value"] == "gpt-5.6-sol"
 
     def test_current_catalog_keeps_gemini_family_models_in_droid_catalog(self) -> None:
         """Gemini-family models remain as Droid catalog model-family data."""
@@ -733,7 +743,7 @@ class TestProviderModelsRoute:
     def test_filters_hidden_codex_models_from_web_chat_surface(self) -> None:
         """Only the provider-reported hidden flag excludes models from web chat.
 
-        Regression guard: real models (e.g. gpt-5.5) must never be dropped via
+        Regression guard: real models (e.g. gpt-5.6-sol) must never be dropped via
         value-based blocklists; see task #17775.
         """
         app = FastAPI()
@@ -745,7 +755,7 @@ class TestProviderModelsRoute:
             return {
                 "source": "live",
                 "models": [
-                    {"value": "gpt-5.5", "label": "gpt-5.5"},
+                    {"value": "gpt-5.6-sol", "label": "gpt-5.6-sol"},
                     {"value": "gpt-5.4", "label": "gpt-5.4"},
                     {"value": "gpt-5.2", "label": "gpt-5.2"},
                     {"value": "gpt-5.1-codex-max", "label": "gpt-5.1-codex-max"},
@@ -771,7 +781,7 @@ class TestProviderModelsRoute:
 
         providers = {p["provider"]: p for p in response.json()["providers"]}
         assert [m["value"] for m in providers["codex"]["models"]] == [
-            "gpt-5.5",
+            "gpt-5.6-sol",
             "gpt-5.4",
             "gpt-5.2",
             "gpt-5.1-codex-max",

@@ -811,13 +811,13 @@ class TestCodexAppServerClientThreadManagement:
         ) as mock_send:
             thread = await client.start_thread(
                 cwd="/project",
-                model="gpt-5.5",
+                model="gpt-5.6-sol",
                 terminal_context={"gobby_session_id": "sess-web", "gobby_web_chat_child": "1"},
             )
 
             mock_send.assert_called_once_with(
                 "thread/start",
-                {"cwd": "/project", "model": "gpt-5.5"},
+                {"cwd": "/project", "model": "gpt-5.6-sol"},
             )
 
         assert thread.id == "thr-web"
@@ -4051,6 +4051,7 @@ class TestCodexAdapterApprovalHandling:
 
         assert result == {"action": "accept", "content": None, "_meta": None}
         mock_hm.handle.assert_called_once()
+
 
 class TestCodexAdapterApprovalAttach:
     """Tests for approval handler registration during adapter attach."""

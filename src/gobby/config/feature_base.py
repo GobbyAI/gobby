@@ -56,7 +56,7 @@ class FeatureCandidateConfig(BaseModel):
     model_config = ConfigDict(extra="forbid", frozen=True)
 
     candidate: str = Field(
-        description="Provider/model candidate label, for example 'codex/gpt-5.5'.",
+        description="Provider/model candidate label, for example 'codex/gpt-5.6-terra'.",
     )
     reasoning_effort: str | None = Field(
         default=None,
@@ -93,14 +93,15 @@ type FeatureCandidateInput = str | FeatureCandidateConfig | Mapping[str, object]
 DEFAULT_PROFILE_CANDIDATES: dict[FeatureProfile, tuple[FeatureCandidateConfig, ...]] = {
     FeatureProfile.LOW: (
         FeatureCandidateConfig(candidate="claude/haiku"),
+        FeatureCandidateConfig(candidate="codex/gpt-5.6-luna"),
         FeatureCandidateConfig(candidate="codex/gpt-5.4-mini"),
     ),
     FeatureProfile.MID: (
         FeatureCandidateConfig(candidate="claude/sonnet"),
-        FeatureCandidateConfig(candidate="codex/gpt-5.5"),
+        FeatureCandidateConfig(candidate="codex/gpt-5.6-terra"),
     ),
     FeatureProfile.HIGH: (
-        FeatureCandidateConfig(candidate="codex/gpt-5.5", reasoning_effort="xhigh"),
+        FeatureCandidateConfig(candidate="codex/gpt-5.6-sol", reasoning_effort="xhigh"),
         FeatureCandidateConfig(candidate="claude/opus", reasoning_effort="high"),
     ),
 }
@@ -235,7 +236,7 @@ class FeatureDefaultConfig(BaseModel):
         default_factory=list,
         description=(
             "Ordered provider/model candidates with optional reasoning pins, for example "
-            "[{'candidate': 'codex/gpt-5.5', 'reasoning_effort': 'xhigh'}, "
+            "[{'candidate': 'codex/gpt-5.6-sol', 'reasoning_effort': 'xhigh'}, "
             "{'candidate': 'claude/haiku'}]."
         ),
     )

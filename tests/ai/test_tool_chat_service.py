@@ -132,7 +132,9 @@ async def test_builtins_on_spawn_style_binding_is_capability_unavailable() -> No
     )
 
     with pytest.raises(CapabilityUnavailableError, match="cannot execute builtin tools"):
-        await service.chat_result(_request(candidates=("codex/gpt-5.5",), builtins=(builtin,)))
+        await service.chat_result(
+            _request(candidates=("codex/gpt-5.6-terra",), builtins=(builtin,))
+        )
 
 
 @pytest.mark.asyncio
@@ -141,7 +143,7 @@ async def test_same_path_skips_unavailable_candidate_then_dispatches_by_style() 
     # selection moves to the next candidate. Switching which candidate wins
     # changes only the binding/adapter — the service path is identical.
     service, llm, openai = _service()
-    result = await service.chat_result(_request(candidates=("codex/gpt-5.5", "claude/haiku")))
+    result = await service.chat_result(_request(candidates=("codex/gpt-5.6-terra", "claude/haiku")))
     assert result.adapter_style == "llm_provider"
     assert [b.provider for b in llm.bindings] == ["claude"]
     assert openai.bindings == []
@@ -151,7 +153,7 @@ async def test_same_path_skips_unavailable_candidate_then_dispatches_by_style() 
 async def test_no_available_candidate_raises_without_fallback() -> None:
     service, llm, openai = _service()
     with pytest.raises(CapabilityUnavailableError):
-        await service.chat_result(_request(candidates=("codex/gpt-5.5",)))
+        await service.chat_result(_request(candidates=("codex/gpt-5.6-terra",)))
     # No adapter was invoked — no silent fallback to another provider/feature.
     assert llm.bindings == []
     assert openai.bindings == []
