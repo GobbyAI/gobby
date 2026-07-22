@@ -1215,7 +1215,8 @@ class TestWorkflowBeforeToolEnforcement:
         Regression for #12082: tool_proxy previously read the session off
         hook_manager._session_manager (service wrapper without .get), so the
         AttributeError was silently swallowed and source fell back to CODEX,
-        causing require-schema-before-call to fire on pipeline MCP calls.
+        causing the schema-lease gate (now require-current-context-schema-before-call)
+        to fire on pipeline MCP calls.
         """
         pipeline_session = SimpleNamespace(
             source="pipeline",
