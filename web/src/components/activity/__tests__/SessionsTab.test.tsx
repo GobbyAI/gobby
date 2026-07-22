@@ -9,12 +9,18 @@ import {
 } from "@testing-library/react";
 
 import { SessionsTab } from "../SessionsTab";
+import { useActivityPanel } from "../useActivityPanel";
+import { TerminalTab } from "../terminal/TerminalTab";
 import {
   createMockFetch,
   type MockFetchInstance,
 } from "../../../test/mocks/fetch";
 import type { GobbySession } from "../../../types/sessions";
 import type { SessionMessage } from "../../../hooks/useSessionDetail";
+import type {
+  TerminalViewHandle,
+  TerminalViewProps,
+} from "../terminal/TerminalView";
 
 type SessionDetailMock = {
   session: GobbySession | null;
@@ -54,6 +60,66 @@ const mockUseSessionDetail = vi.fn<
   firstItemIndex: 1_000_000,
   transcriptDegradedReason: null,
 }));
+
+const terminalHook = {
+  attachSession: vi.fn(),
+  detachSession: vi.fn(),
+  clearAttachError: vi.fn(),
+  refreshTerminal: vi.fn(),
+  createSession: vi.fn(),
+  killSession: vi.fn(),
+  refreshSessions: vi.fn(),
+  dismissEndedSession: vi.fn(),
+  sendInput: vi.fn(),
+  resizeTerminal: vi.fn(),
+  onOutput: vi.fn(),
+};
+
+vi.mock("../../../hooks/useTmuxSessions", () => ({
+  useTmuxSessions: () => ({
+    sessions: [
+      {
+        name: "paused-pane",
+        socket: "default",
+        pane_pid: 4202,
+        pane_dead: false,
+        pane_title: "Paused Terminal",
+        window_name: "agent",
+        session_title: "Paused Terminal",
+        gobby_session_id: "paused-1",
+        agent_managed: false,
+        agent_run_id: null,
+        attached_bridge: null,
+      },
+    ],
+    liveCliSessionIds: [],
+    connected: true,
+    sessionsLoaded: true,
+    attachedTarget: null,
+    streamingId: null,
+    isLoading: false,
+    sessionEnded: false,
+    requestPending: false,
+    attachError: null,
+    createdSession: null,
+    ...terminalHook,
+  }),
+}));
+
+vi.mock("../terminal/TerminalView", async () => {
+  const ReactModule = await import("react");
+  return {
+    TerminalView: ReactModule.forwardRef<TerminalViewHandle, TerminalViewProps>(
+      function MockTerminalView(_props, ref) {
+        ReactModule.useImperativeHandle(ref, () => ({
+          write: vi.fn(),
+          getSize: () => ({ rows: 24, cols: 80 }),
+        }));
+        return <div role="log" aria-label="Terminal output (read-only)" />;
+      },
+    ),
+  };
+});
 
 // Virtualized lists don't render items under jsdom's zero-height viewport, so
 // stand in a passthrough that renders every item (mirrors MessageList's test).
@@ -211,6 +277,27 @@ const PAUSED_SESSION = makeSession({
   summary_markdown: "# Session Summary",
 });
 
+function TerminalFocusHarness() {
+  const activity = useActivityPanel(false);
+
+  return (
+    <>
+      <SessionsTab sessions={[PAUSED_SESSION]} />
+      <output aria-label="Active activity tab">{activity.activeTab}</output>
+      <output aria-label="Terminal focus request">
+        {activity.terminalSessionRequest ?? ""}
+      </output>
+      {activity.activeTab === "terminal" ? (
+        <TerminalTab
+          sessions={[PAUSED_SESSION]}
+          focusSessionId={activity.terminalSessionRequest}
+          onFocusHandled={activity.clearTerminalSessionRequest}
+        />
+      ) : null}
+    </>
+  );
+}
+
 const EXPIRED_SESSION = makeSession({
   id: "expired-1",
   ref: "#203",
@@ -335,6 +422,8 @@ describe("SessionsTab", () => {
     // selectedEntry-gated UI (Summary/Resume/Swap buttons render against null).
     localStorage.clear();
     mockUseSessionDetail.mockReset();
+    terminalHook.attachSession.mockClear();
+    terminalHook.detachSession.mockClear();
     mockUseSessionDetail.mockReturnValue({
       session: PAUSED_SESSION,
       sessionError: null,
@@ -1354,6 +1443,36 @@ describe("SessionsTab", () => {
     expect(
       screen.getByRole("menuitem", { name: "Send Context" }),
     ).toBeEnabled();
+  });
+
+  it("open terminal focuses session", async () => {
+    render(<TerminalFocusHarness />);
+
+    await waitFor(() => {
+      expect(screen.getByText("#202: Paused Terminal")).toBeInTheDocument();
+    });
+
+    fireEvent.click(screen.getByRole("button", { name: "Session actions" }));
+
+    expect(screen.queryByRole("menuitem", { name: "Send Keys" })).toBeNull();
+    expect(screen.queryByRole("menuitem", { name: "Capture Pane" })).toBeNull();
+    fireEvent.click(screen.getByRole("menuitem", { name: "Open Terminal" }));
+
+    await waitFor(() => {
+      expect(
+        screen.getByRole("status", { name: "Active activity tab" }),
+      ).toHaveTextContent("terminal");
+      expect(
+        screen.getByRole("combobox", { name: "Terminal session" }),
+      ).toHaveTextContent("#202 Paused Terminal");
+    });
+    expect(terminalHook.attachSession).toHaveBeenCalledWith(
+      "paused-pane",
+      "default",
+    );
+    expect(
+      screen.getByRole("status", { name: "Terminal focus request" }),
+    ).toBeEmptyDOMElement();
   });
 
   it("restores a session in the list when expire fails", async () => {

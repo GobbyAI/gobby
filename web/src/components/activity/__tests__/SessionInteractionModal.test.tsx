@@ -31,7 +31,6 @@ describe("SessionInteractionModal", () => {
       <SessionInteractionModal
         open
         onClose={vi.fn()}
-        mode="context"
         entry={ENTRY}
         fromSessionId={fromSessionId}
       />,
@@ -46,6 +45,17 @@ describe("SessionInteractionModal", () => {
     const request = fetchMock.mock.calls[0][1] as RequestInit;
     return JSON.parse(String(request.body));
   }
+
+  it("is a context-only surface", () => {
+    render(<SessionInteractionModal open onClose={vi.fn()} entry={ENTRY} />);
+
+    expect(
+      screen.getByRole("heading", { name: "Send Context" }),
+    ).toBeInTheDocument();
+    expect(screen.queryByText("Send Keys")).toBeNull();
+    expect(screen.queryByText("Capture Pane")).toBeNull();
+    expect(screen.queryByRole("button", { name: "Refresh" })).toBeNull();
+  });
 
   it("omits from_session when no web chat session is active", async () => {
     const body = await sendContext();

@@ -33,7 +33,6 @@ import {
 import {
   SessionsContextMenu,
   SessionsInteractionModalHost,
-  type InteractionMode,
 } from "./SessionsTabMenu";
 import { useAcpSessionDiscovery } from "./useAcpSessionDiscovery";
 
@@ -136,7 +135,6 @@ export const SessionsTab = memo(function SessionsTab({
   const [topHeight, setTopHeight] = useState(DEFAULT_TOP_PANEL_PERCENT);
   const [expiringIds, setExpiringIds] = useState<Set<string>>(new Set());
   const [ctxMenu, setCtxMenu] = useState<SessionContextMenu | null>(null);
-  const [modalMode, setModalMode] = useState<InteractionMode | null>(null);
   // Filter state is owned by App so the catalog hook can refetch with
   // server-side predicates (covers historical-tail filtering). Fall back to
   // local state if a legacy caller mounts SessionsTab without the props —
@@ -479,17 +477,15 @@ export const SessionsTab = memo(function SessionsTab({
 
   const closeCtxMenu = useCallback(() => setCtxMenu(null), []);
 
-  const openModal = useCallback(
-    (mode: InteractionMode, entry: WatchingSessionEntry) => {
+  const openContextModal = useCallback(
+    (entry: WatchingSessionEntry) => {
       closeCtxMenu();
-      setModalMode(mode);
       setModalEntry(entry);
     },
     [closeCtxMenu],
   );
 
   const closeModal = useCallback(() => {
-    setModalMode(null);
     setModalEntry(null);
   }, []);
 
@@ -593,14 +589,13 @@ export const SessionsTab = memo(function SessionsTab({
         handleDelete={handleDelete}
         handleExpire={handleExpire}
         onResumeSession={onResumeSession ? handleResumeSession : undefined}
-        openModal={openModal}
+        openContextModal={openContextModal}
       />
 
       <SessionsInteractionModalHost
         chatSessionId={chatSessionId}
         closeModal={closeModal}
         modalEntry={modalEntry}
-        modalMode={modalMode}
       />
     </div>
   );

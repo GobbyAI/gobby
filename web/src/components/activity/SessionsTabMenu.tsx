@@ -1,14 +1,9 @@
-import {
-  SessionInteractionModal,
-  type InteractionMode,
-} from "./SessionInteractionModal";
+import { SessionInteractionModal } from "./SessionInteractionModal";
 import { QuickMenu, type QuickMenuItem } from "./QuickMenu";
 import type {
   SessionContextMenu,
   WatchingSessionEntry,
 } from "./SessionsTab.helpers";
-
-export type { InteractionMode };
 
 interface SessionsContextMenuProps {
   chatSessionId?: string | null;
@@ -18,7 +13,7 @@ interface SessionsContextMenuProps {
   handleDelete: (entry: WatchingSessionEntry) => Promise<boolean>;
   handleExpire: (entry: WatchingSessionEntry) => Promise<boolean>;
   onResumeSession?: (sessionId: string) => Promise<string> | string | void;
-  openModal: (mode: InteractionMode, entry: WatchingSessionEntry) => void;
+  openContextModal: (entry: WatchingSessionEntry) => void;
 }
 
 export function SessionsContextMenu({
@@ -29,7 +24,7 @@ export function SessionsContextMenu({
   handleDelete,
   handleExpire,
   onResumeSession,
-  openModal,
+  openContextModal,
 }: SessionsContextMenuProps) {
   if (!ctxMenu) {
     return null;
@@ -57,14 +52,20 @@ export function SessionsContextMenu({
       title: chatSessionId
         ? undefined
         : "Start a web chat before sending context",
-      onSelect: () => openModal("context", entry),
+      onSelect: () => openContextModal(entry),
     },
   ];
   if (entry.hasTmux) {
-    items.push(
-      { label: "Send Keys", onSelect: () => openModal("keys", entry) },
-      { label: "Capture Pane", onSelect: () => openModal("pane", entry) },
-    );
+    items.push({
+      label: "Open Terminal",
+      onSelect: () => {
+        window.dispatchEvent(
+          new CustomEvent("gobby:show-activity-tab", {
+            detail: { tab: "terminal", sessionId: entry.id },
+          }),
+        );
+      },
+    });
   }
   if (canResume && onResumeSession) {
     items.push({
@@ -113,16 +114,14 @@ interface SessionsInteractionModalHostProps {
   chatSessionId?: string | null;
   closeModal: () => void;
   modalEntry: WatchingSessionEntry | null;
-  modalMode: InteractionMode | null;
 }
 
 export function SessionsInteractionModalHost({
   chatSessionId,
   closeModal,
   modalEntry,
-  modalMode,
 }: SessionsInteractionModalHostProps) {
-  if (!modalMode || !modalEntry) {
+  if (!modalEntry) {
     return null;
   }
 
@@ -130,13 +129,9 @@ export function SessionsInteractionModalHost({
     <SessionInteractionModal
       open={true}
       onClose={closeModal}
-      mode={modalMode}
       entry={{
         id: modalEntry.id,
-        type: modalEntry.type === "agent" ? "agent" : "cli",
         label: modalEntry.label,
-        hasTmux: modalEntry.hasTmux,
-        runId: modalEntry.runId,
         seqNum: modalEntry.seqNum,
       }}
       fromSessionId={chatSessionId ?? undefined}
