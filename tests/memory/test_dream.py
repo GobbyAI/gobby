@@ -42,6 +42,8 @@ from gobby.memory.dream.truth_digest import (
     build_project_truth_digest,
     build_project_truth_digest_async,
 )
+from gobby.prompts.loader import PromptLoader
+from gobby.prompts.sync import sync_bundled_prompts
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.memories import LocalMemoryManager
 from gobby.storage.memories_scope import MemoryScope, MemoryScopeKind
@@ -2553,6 +2555,42 @@ def test_dream_prompt_declares_actions_and_truth_digest() -> None:
     assert "MySQL" in prompt
     assert "authoritative - complete current set" in prompt
     assert "partial - do NOT infer staleness from absence" in prompt
+
+
+def test_prompt_contract_evidence_and_access_count(temp_db: HubDatabase) -> None:
+    sync_bundled_prompts(temp_db)
+    prompt = PromptLoader(db=temp_db).render(
+        "memory/dream",
+        {
+            "candidates": "[]",
+            "truth_digest": "current truth",
+            "min_action_confidence": 0.7,
+            "min_delete_confidence": 0.9,
+            "min_rescope_confidence": 0.9,
+        },
+        strict=True,
+    )
+
+    current_truth = prompt.index("## Current truth")
+    related_evidence = prompt.index("## Related newer memories")
+    rules = prompt.index("## Rules")
+    assert current_truth < related_evidence < rules
+    assert "`related_newer_memories`" in prompt
+    assert "concrete, citable obsolescence signal" in prompt
+    assert "cite its `id` in `reason`" in prompt
+    assert "Absent or empty `related_newer_memories` is not evidence of currentness" in prompt
+    assert (
+        "a newer related memory records a decision or state change that contradicts or "
+        "supersedes this memory"
+    ) in prompt
+    assert "High `access_count` is never evidence of correctness" in prompt
+    assert "recall frequency measures retrieval, not truth" in prompt
+    assert "a wrong-but-popular memory self-reinforces" in prompt
+    assert "Only `access_count` at or near zero may corroborate a `delete`" in prompt
+    assert (
+        "never use high `access_count` to justify `keep` against a concrete obsolescence signal"
+    ) in prompt
+    assert "does not require low `access_count` when a contradiction signal exists" in prompt
 
 
 @pytest.mark.asyncio

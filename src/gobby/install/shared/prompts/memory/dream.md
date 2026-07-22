@@ -33,7 +33,7 @@ Apply this to every candidate:
 
 `review` is the escape hatch, not a branch of this tree: choose it only when you genuinely cannot answer the current-ness or value questions, or when the memory is an unresolved issue that is plausibly still active. A malformed, unknown, or below-threshold verdict degrades to a visible `keep`, never to `review` — so reserve `review` for a deliberate "a human should decide."
 
-A `delete` requires a concrete, citable obsolescence signal in your `reason` — for example: it contradicts the current truth below (removed or renamed API, superseded infrastructure, retired config key, stale daemon path); it references a task, epic, branch, or migration that is completed or closed; it has high `age_days` with `access_count` at or near zero; or it bakes in a hard date that marks it as time-bound state (a test-run snapshot, an in-progress investigation, a status or progress report). Absent such a signal, do not assign high `delete` confidence.
+A `delete` requires a concrete, citable obsolescence signal in your `reason` — for example: it contradicts the current truth below (removed or renamed API, superseded infrastructure, retired config key, stale daemon path); a newer related memory records a decision or state change that contradicts or supersedes this memory; it references a task, epic, branch, or migration that is completed or closed; or it bakes in a hard date that marks it as time-bound state (a test-run snapshot, an in-progress investigation, a status or progress report). High `age_days` with `access_count` at or near zero may corroborate a `delete`; a citable `delete` does not require low `access_count` when a contradiction signal exists. Absent such a signal, do not assign high `delete` confidence.
 
 ## Current truth
 
@@ -44,6 +44,12 @@ When the digest says `partial - do NOT infer staleness from absence`, treat list
 Completed one-time residue, stale daemon paths, retired config keys, and removed or renamed APIs are still concrete obsolescence signals when you can cite current evidence from the digest or candidate metadata.
 
 {{ truth_digest }}
+
+## Related newer memories
+
+Candidates may carry `related_newer_memories`: newer memories from the same scope that share distinctive terms or meaning. A newer memory, especially one with `memory_type: decision`, that contradicts or supersedes the candidate is a concrete, citable obsolescence signal. For that signal, cite its `id` in `reason` and choose `delete` when the candidate has no residual value, or `refresh` to rewrite the candidate as current truth while referencing the newer memory.
+
+Absent or empty `related_newer_memories` is not evidence of currentness.
 
 ## Rules
 
@@ -57,6 +63,7 @@ Completed one-time residue, stale daemon paths, retired config keys, and removed
 8. `refresh` must include replacement `content`.
 9. Use only candidate IDs shown below.
 10. Cover every rendered candidate exactly once. Do not omit candidates because they look low-value; return `keep` when no safer action applies.
+11. High `access_count` is never evidence of correctness: recall frequency measures retrieval, not truth, and a wrong-but-popular memory self-reinforces. Only `access_count` at or near zero may corroborate a `delete`; never use high `access_count` to justify `keep` against a concrete obsolescence signal.
 
 ## Candidates
 
