@@ -36,7 +36,6 @@ from gobby.memory.dream.related import (
 from gobby.memory.dream.storage import INTERRUPTED_CANCELLED_ERROR, MemoryDreamStore
 from gobby.memory.dream.truth_digest import (
     build_current_truth_digest,
-    build_project_truth_digest,
     build_project_truth_digest_async,
 )
 from gobby.storage.memories_scope import MemoryScope, MemoryScopeKind
@@ -549,29 +548,15 @@ class MemoryDreamService:
             error=error,
         )
 
-    def _build_truth_digest(self, options: DreamRunOptions) -> str:
-        if options.global_only:
-            return build_current_truth_digest(self._daemon_config)
-        if options.project_id and self._is_current_daemon_project(options.project_id):
-            return build_current_truth_digest(self._daemon_config)
-        if options.project_id:
-            return build_project_truth_digest(self._resolve_repo_path(options.project_id))
-        # Every sweep must carry an explicit scope: a concrete project_id or
-        # global_only. Unscoped manual triggers fan out through
-        # run_all_due_projects, so this branch is unreachable. Guard it instead
-        # of silently judging all projects' memories against the gobby platform
-        # truth digest — that cross-project contamination is the bug this path
-        # used to cause.
-        raise ValueError(
-            "memory dream sweep requires global_only or a project_id; "
-            "unscoped runs must fan out via run_all_due_projects"
-        )
-
     async def _build_truth_digest_async(self, options: DreamRunOptions) -> str:
         if options.global_only:
             return build_current_truth_digest(self._daemon_config)
         if options.project_id and self._is_current_daemon_project(options.project_id):
-            return build_current_truth_digest(self._daemon_config)
+            platform_digest = build_current_truth_digest(self._daemon_config)
+            project_digest = await build_project_truth_digest_async(
+                self._resolve_repo_path(options.project_id)
+            )
+            return "\n\n".join(part for part in (platform_digest, project_digest) if part)
         if options.project_id:
             return await build_project_truth_digest_async(
                 self._resolve_repo_path(options.project_id)

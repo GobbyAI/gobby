@@ -2456,34 +2456,34 @@ async def test_build_project_truth_digest_async_matches_sync_render(tmp_path: Pa
 
 
 @pytest.mark.asyncio
-async def test_service_uses_platform_truth_for_global_and_current_daemon_project(
+async def test_daemon_project_digest_blend_live_path(
     tmp_path: Path,
 ) -> None:
+    current_project_id = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa"
     db = _FakeDreamDB()
     current_repo = tmp_path / "current"
-    _write_truth_digest(
-        current_repo, _complete_digest_payload(service="Wrong current repo sidecar")
-    )
-    db.projects["current-project"] = _project_row("current-project", current_repo)
+    _write_truth_digest(current_repo, _complete_digest_payload(service="Current repo sidecar"))
+    db.projects[current_project_id] = _project_row(current_project_id, current_repo)
     db.memories = {
         "global": {**_row("global", "Global memory"), "is_global": True},
-        "current": {**_row("current", "Current project memory"), "project_id": "current-project"},
+        "current": {**_row("current", "Current project memory"), "project_id": current_project_id},
     }
 
     global_digest = await _capture_service_truth_digest(
         db,
         DreamRunOptions(dry_run=True, global_only=True),
-        current_project_id="current-project",
+        current_project_id=current_project_id,
     )
     current_digest = await _capture_service_truth_digest(
         db,
-        DreamRunOptions(dry_run=True, project_id="current-project"),
-        current_project_id="current-project",
+        DreamRunOptions(dry_run=True, project_id=current_project_id),
+        current_project_id=current_project_id,
     )
 
     assert "Knowledge graph backend: FalkorDB" in global_digest
     assert "Knowledge graph backend: FalkorDB" in current_digest
-    assert "Wrong current repo sidecar" not in current_digest
+    assert "Current repo sidecar (frontend)" in current_digest
+    assert "Current repo sidecar" not in global_digest
 
 
 @pytest.mark.asyncio
@@ -2848,7 +2848,7 @@ async def test_platform_truth_change_rejudges_global_and_current_project_memorie
     assert manager.get_memory(current_memory.id).last_dreamed_at is not None
 
 
-def test_build_truth_digest_requires_explicit_scope() -> None:
+async def test_build_truth_digest_requires_explicit_scope() -> None:
     db = _FakeDreamDB()
     service = MemoryDreamService(memory_manager=_FakeSweepManager(db), dream_config=_sweep_config())
 
@@ -2856,7 +2856,7 @@ def test_build_truth_digest_requires_explicit_scope() -> None:
     # default to platform truth across all projects — that was the contamination
     # bug. Such runs must fan out through run_all_due_projects instead.
     with pytest.raises(ValueError, match="run_all_due_projects"):
-        service._build_truth_digest(DreamRunOptions())
+        await service._build_truth_digest_async(DreamRunOptions())
 
 
 def test_completed_mutation_count_coerces_string_and_warns(
