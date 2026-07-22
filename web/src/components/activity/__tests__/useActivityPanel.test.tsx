@@ -67,6 +67,14 @@ describe('useActivityPanel — desktop', () => {
     expect(result.current.activeTab).toBe('sessions')
   })
 
+  it('restores Terminal from the registry-backed stored tab value', () => {
+    localStorage.setItem(TAB_KEY, 'terminal')
+
+    const { result } = renderHook(() => useActivityPanel(false))
+
+    expect(result.current.activeTab).toBe('terminal')
+  })
+
   it('toggleFromChat walks split -> chat -> split and persists', () => {
     const { result } = renderHook(() => useActivityPanel(false))
 
@@ -168,22 +176,22 @@ describe('useActivityPanel — desktop', () => {
     expect(result.current.effectiveMode).toBe('split')
   })
 
-  it('switches tabs on the gobby:show-activity-tab event and ignores unknown tabs', () => {
+  it('switches to Terminal on the gobby:show-activity-tab event and ignores unknown tabs', () => {
     const { result } = renderHook(() => useActivityPanel(false))
 
     act(() => {
       window.dispatchEvent(
-        new CustomEvent('gobby:show-activity-tab', { detail: { tab: 'pipelines' } }),
+        new CustomEvent('gobby:show-activity-tab', { detail: { tab: 'terminal' } }),
       )
     })
-    expect(result.current.activeTab).toBe('pipelines')
+    expect(result.current.activeTab).toBe('terminal')
 
     act(() => {
       window.dispatchEvent(
         new CustomEvent('gobby:show-activity-tab', { detail: { tab: 'bogus' } }),
       )
     })
-    expect(result.current.activeTab).toBe('pipelines')
+    expect(result.current.activeTab).toBe('terminal')
   })
 
   it('clears the transient override when the user explicitly toggles layout', () => {

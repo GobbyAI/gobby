@@ -2,6 +2,7 @@ import type { ReactNode } from "react";
 
 export type ActivityTab =
   | "sessions"
+  | "terminal"
   | "pipelines"
   | "cron"
   | "traces"
@@ -44,6 +45,16 @@ export const ACTIVITY_PANEL_TABS: ActivityPanelTab[] = [
         <rect x="2" y="3" width="20" height="14" rx="2" ry="2" />
         <line x1="8" y1="21" x2="16" y2="21" />
         <line x1="12" y1="17" x2="12" y2="21" />
+      </svg>
+    ),
+  },
+  {
+    id: "terminal",
+    label: "Terminal",
+    icon: (
+      <svg {...iconProps}>
+        <polyline points="4 17 10 11 4 5" />
+        <line x1="12" y1="19" x2="20" y2="19" />
       </svg>
     ),
   },

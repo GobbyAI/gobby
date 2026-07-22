@@ -3,7 +3,15 @@ import userEvent from '@testing-library/user-event'
 import { describe, expect, it, vi } from 'vitest'
 
 import { ActivityPanel } from '../ActivityPanel'
-import { ACTIVITY_PANEL_DROPDOWN_TABS } from '../ActivityPanelTabs'
+import {
+  ACTIVITY_PANEL_DROPDOWN_TABS,
+  ACTIVITY_PANEL_TABS,
+} from '../ActivityPanelTabs'
+import type { GobbySession } from '../../../types/sessions'
+
+const { terminalTabSpy } = vi.hoisted(() => ({
+  terminalTabSpy: vi.fn(),
+}))
 
 vi.mock('../../shared/ResizeHandle', () => ({
   ResizeHandle: ({
@@ -65,7 +73,65 @@ vi.mock('../AgentsTab', () => ({
   AgentsTab: () => <div>Agents Tab</div>,
 }))
 
+vi.mock('../terminal/TerminalTab', () => ({
+  TerminalTab: (props: {
+    sessions: unknown[]
+    focusSessionId?: string | null
+    onFocusHandled?: () => void
+  }) => {
+    terminalTabSpy(props)
+    return <div>Terminal Tab</div>
+  },
+}))
+
 describe('ActivityPanel', () => {
+  it('registers Terminal immediately after Sessions with the prompt icon', () => {
+    const sessionsIndex = ACTIVITY_PANEL_TABS.findIndex((tab) => tab.id === 'sessions')
+    const terminalIndex = ACTIVITY_PANEL_TABS.findIndex((tab) => tab.id === 'terminal')
+    const terminalTab = ACTIVITY_PANEL_TABS[terminalIndex]
+
+    expect(terminalIndex).toBe(sessionsIndex + 1)
+    expect(terminalTab?.label).toBe('Terminal')
+
+    const { container } = render(<>{terminalTab?.icon}</>)
+    expect(container.querySelector('polyline')).toHaveAttribute('points', '4 17 10 11 4 5')
+    expect(container.querySelector('line')).toHaveAttribute('x1', '12')
+    expect(container.querySelector('line')).toHaveAttribute('y1', '19')
+    expect(container.querySelector('line')).toHaveAttribute('x2', '20')
+    expect(container.querySelector('line')).toHaveAttribute('y2', '19')
+  })
+
+  it('lazy-renders Terminal with session focus wiring', async () => {
+    const sessions: GobbySession[] = []
+    const onTerminalFocusHandled = vi.fn()
+
+    render(
+      <ActivityPanel
+        mode="split"
+        onToggleChat={vi.fn()}
+        panelWidth={320}
+        onWidthChange={vi.fn()}
+        activeTab="terminal"
+        onTabChange={vi.fn()}
+        plans={new Map()}
+        activePlan={null}
+        onOpenPlan={vi.fn()}
+        onSetPlanVersion={vi.fn()}
+        sessions={sessions}
+        terminalFocusSessionId="gobby-session-42"
+        onTerminalFocusHandled={onTerminalFocusHandled}
+        isMobile={false}
+      />,
+    )
+
+    expect(await screen.findByText('Terminal Tab')).toBeInTheDocument()
+    expect(terminalTabSpy.mock.lastCall?.[0]).toMatchObject({
+      sessions,
+      focusSessionId: 'gobby-session-42',
+      onFocusHandled: onTerminalFocusHandled,
+    })
+  })
+
   it('returns null in chat-only mode', () => {
     const { container } = render(
       <ActivityPanel
