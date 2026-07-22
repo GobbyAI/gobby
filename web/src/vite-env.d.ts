@@ -5,5 +5,7 @@ declare module '*.module.css' {
   export default content
 }
 
+declare module '@wterm/dom/css'
+
 declare module '@fontsource-variable/geist'
 declare module '@fontsource-variable/jetbrains-mono'
