@@ -116,11 +116,11 @@ async def test_blocked_transition_broadcasts_agent_event(
 
     manager = _attention_manager(temp_db, event_publisher=publish)
     transition = manager.transition(
-        "run-1",
+        "run:run-1",
         state="blocked",
         run_id="run-1",
         session_id="session-1",
-        reason="approval_prompt",
+        reason="approval",
         kind="actionable",
         fingerprint="approval-v1",
         payload={"prompt_kind": "approval"},
@@ -131,7 +131,7 @@ async def test_blocked_transition_broadcasts_agent_event(
     websocket.broadcast_agent_event.assert_awaited_once()
     event = websocket.broadcast_agent_event.await_args.kwargs
     assert event["event"] == "attention_changed"
-    assert event["entry_id"] == "run-1"
+    assert event["entry_id"] == "run:run-1"
     assert event["attention_id"] == transition.current.attention_id
     assert event["state"] == "blocked"
     assert event["epoch"] == "test-epoch"
@@ -143,45 +143,45 @@ def test_notification_dedupe_by_episode(temp_db: HubDatabase) -> None:
     manager = _attention_manager(temp_db, notification_publisher=notifications.append)
 
     first = manager.transition(
-        "run-1",
+        "run:run-1",
         state="blocked",
         run_id="run-1",
         session_id="session-1",
-        reason="approval_prompt",
+        reason="approval",
         kind="actionable",
         fingerprint="same-prompt",
     )
     duplicate = manager.transition(
-        "run-1",
+        "run:run-1",
         state="blocked",
         run_id="run-1",
         session_id="session-1",
-        reason="approval_prompt",
+        reason="approval",
         kind="actionable",
         fingerprint="same-prompt",
     )
     seen = manager.transition(
-        "run-1",
+        "run:run-1",
         state="blocked",
         run_id="run-1",
         session_id="session-1",
-        reason="approval_prompt",
+        reason="approval",
         kind="actionable",
         fingerprint="same-prompt",
         mark_seen=True,
     )
     cleared = manager.transition(
-        "run-1",
+        "run:run-1",
         state=None,
         expected_attention_id=seen.current.attention_id,
         expected_fingerprint="same-prompt",
     )
     second = manager.transition(
-        "run-1",
+        "run:run-1",
         state="blocked",
         run_id="run-1",
         session_id="session-1",
-        reason="approval_prompt",
+        reason="approval",
         kind="actionable",
         fingerprint="same-prompt",
     )
@@ -201,32 +201,32 @@ def test_notification_dedupe_by_episode(temp_db: HubDatabase) -> None:
 def test_stale_request_races(temp_db: HubDatabase) -> None:
     manager = _attention_manager(temp_db)
     first = manager.transition(
-        "run-1",
+        "run:run-1",
         state="blocked",
         run_id="run-1",
         session_id="session-1",
-        reason="approval_prompt",
+        reason="approval",
         kind="actionable",
         fingerprint="approval-v1",
     )
     manager.transition(
-        "run-1",
+        "run:run-1",
         state=None,
         expected_attention_id=first.current.attention_id,
         expected_fingerprint="approval-v1",
     )
     replacement = manager.transition(
-        "run-1",
+        "run:run-1",
         state="blocked",
         run_id="run-1",
         session_id="session-1",
-        reason="approval_prompt",
+        reason="approval",
         kind="actionable",
         fingerprint="approval-v2",
     )
 
     stale_clear = manager.transition(
-        "run-1",
+        "run:run-1",
         state=None,
         expected_attention_id=first.current.attention_id,
         expected_fingerprint="approval-v1",
@@ -234,7 +234,7 @@ def test_stale_request_races(temp_db: HubDatabase) -> None:
 
     assert stale_clear.applied is False
     assert stale_clear.current == replacement.current
-    assert manager.get("run-1") == replacement.current
+    assert manager.get("run:run-1") == replacement.current
 
 
 @pytest.mark.asyncio
@@ -268,25 +268,25 @@ async def test_idle_handler_tracks_prompts_stalls_and_injection_clear(
     approval = "Permission required: press Enter to approve this command"
 
     await handler.sync_attention(run, approval)
-    blocked = manager.get(run.id)
+    blocked = manager.get(f"run:{run.id}")
     assert blocked is not None
     assert blocked.state == "blocked"
-    assert blocked.reason == "approval_prompt"
+    assert blocked.reason == "approval"
 
     await handler.clear_attention_after_injection(run)
-    assert manager.get(run.id).state is None
+    assert manager.get(f"run:{run.id}").state is None
 
     monkeypatch.setattr("gobby.agents.stall_classifier._MIN_CHECK_INTERVAL_SECONDS", 0)
     await handler.sync_attention(run, "503 service unavailable")
     await handler.sync_attention(run, "503 service unavailable")
-    stalled = manager.get(run.id)
+    stalled = manager.get(f"run:{run.id}")
     assert stalled is not None
     assert stalled.state == "blocked"
-    assert stalled.reason == "provider_stall"
+    assert stalled.reason == "stall"
     assert stalled.kind == "non_actionable"
 
     await handler.clear_attention(run)
-    assert manager.get(run.id).state is None
+    assert manager.get(f"run:{run.id}").state is None
 
 
 @pytest.mark.asyncio
@@ -323,10 +323,10 @@ async def test_idle_handler_checks_attention_without_waiting_for_idle(
     result = await handler.check_attention_agents()
 
     assert result == 1
-    attention = manager.get(run.id)
+    attention = manager.get(f"run:{run.id}")
     assert attention is not None
     assert attention.state == "blocked"
-    assert attention.reason == "approval_prompt"
+    assert attention.reason == "approval"
 
 
 @pytest.mark.asyncio
@@ -358,8 +358,8 @@ async def test_tmux_monitor_reports_interactive_prompt_without_injection(
 
     await monitor._check_attention_panes(active_runs=[])
 
-    attention = manager.get(session.id)
+    attention = manager.get(f"session:{session.id}")
     assert attention is not None
     assert attention.state == "blocked"
-    assert attention.reason == "approval_prompt"
+    assert attention.reason == "approval"
     tmux.send_keys.assert_not_awaited()

@@ -18,6 +18,18 @@ logger = logging.getLogger(__name__)
 
 AttentionKind = Literal["actionable", "non_actionable"]
 AttentionStatus = Literal["blocked"]
+
+
+def run_attention_entry_id(run_id: str) -> str:
+    """Return the stable attention entry key for a spawned run."""
+    return f"run:{run_id}"
+
+
+def session_attention_entry_id(session_id: str) -> str:
+    """Return the stable attention entry key for an interactive session."""
+    return f"session:{session_id}"
+
+
 AttentionPublisher = Callable[[dict[str, object]], None]
 
 

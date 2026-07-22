@@ -20,6 +20,7 @@ from gobby.agents.stall_classifier import StallClassifier, StallStatus
 from gobby.agents.tmux.session_manager import TMUX_COMMAND_TIMEOUT_SECONDS, TmuxSessionManager
 from gobby.config.tmux import TmuxConfig
 from gobby.hooks.events import HookEvent, HookEventType, SessionSource, parse_session_source
+from gobby.storage.attention import session_attention_entry_id
 
 if TYPE_CHECKING:
     from gobby.storage.agents import AgentRun
@@ -286,11 +287,11 @@ class TmuxPaneMonitor:
                 continue
             terminal_context = session.terminal_context
             if not isinstance(terminal_context, Mapping):
-                self._clear_attention_if_current(session.id)
+                self._clear_attention_if_current(session_attention_entry_id(session.id))
                 continue
             pane_id = terminal_context.get("tmux_pane")
             if not isinstance(pane_id, str) or not pane_id:
-                self._clear_attention_if_current(session.id)
+                self._clear_attention_if_current(session_attention_entry_id(session.id))
                 continue
             try:
                 tmux = self._tmux_manager_factory(terminal_context)
@@ -313,22 +314,22 @@ class TmuxPaneMonitor:
         reason: str | None = None
         kind: AttentionKind | None = None
         if self._prompt_detector.detect_approval_prompt(pane_output):
-            reason = "approval_prompt"
+            reason = "approval"
             kind = "actionable"
         elif self._prompt_detector.detect_trust_prompt(pane_output):
-            reason = "trust_prompt"
+            reason = "trust"
             kind = "actionable"
         else:
             classification = self._stall_classifier.classify(session_id, pane_output=pane_output)
             if classification.status is StallStatus.PROVIDER_STALL:
-                reason = "provider_stall"
+                reason = "stall"
                 kind = "non_actionable"
 
         if reason is None or kind is None:
-            self._clear_attention_if_current(session_id)
+            self._clear_attention_if_current(session_attention_entry_id(session_id))
             return
         manager.transition(
-            session_id,
+            session_attention_entry_id(session_id),
             state="blocked",
             session_id=session_id,
             reason=reason,

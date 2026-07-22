@@ -18,6 +18,7 @@ from gobby.agents.idle_detector import IdleDetector
 from gobby.agents.prompt_detector import PromptDetector
 from gobby.agents.stall_classifier import StallClassifier, StallStatus
 from gobby.servers.routes.sessions.statusline_activity import last_session_activity
+from gobby.storage.attention import run_attention_entry_id
 from gobby.utils.datetime import parse_stored_datetime
 from gobby.workflows.step_context import get_active_step_workflow_context
 
@@ -166,10 +167,10 @@ class IdleCheckHandler:
             not self._tmux_config.auto_enter_approval_prompts
             or self._prompt_detector.was_approval_prompt_dismissed(run.id, pane_output)
         ):
-            reason = "approval_prompt"
+            reason = "approval"
             kind = "actionable"
         elif trust_prompt and self._prompt_detector.was_dismissed(run.id):
-            reason = "trust_prompt"
+            reason = "trust"
             kind = "actionable"
         else:
             classification = self._stall_classifier.classify(
@@ -178,16 +179,16 @@ class IdleCheckHandler:
                 error=run.error,
             )
             if classification.status is StallStatus.PROVIDER_STALL:
-                reason = "provider_stall"
+                reason = "stall"
                 kind = "non_actionable"
 
         if reason is None or kind is None:
-            await self._clear_attention_if_current(run.id)
+            await self._clear_attention_if_current(run_attention_entry_id(run.id))
             return
 
         await self._run_db(
             manager.transition,
-            run.id,
+            run_attention_entry_id(run.id),
             state="blocked",
             run_id=run.id,
             session_id=run.child_session_id,
@@ -198,12 +199,16 @@ class IdleCheckHandler:
 
     async def clear_attention_after_injection(self, run: AgentRun) -> None:
         """Clear the exact attention episode resolved by successful injection."""
-        await self._clear_attention_if_current(run.id)
+        await self._clear_attention_if_current(run_attention_entry_id(run.id))
 
     async def clear_attention(self, run: AgentRun) -> None:
         """Authoritatively clear attention when a run becomes terminal."""
         if self._attention_manager is not None:
-            await self._run_db(self._attention_manager.transition, run.id, state=None)
+            await self._run_db(
+                self._attention_manager.transition,
+                run_attention_entry_id(run.id),
+                state=None,
+            )
         self._stall_classifier.clear(run.id)
 
     async def _clear_attention_if_current(self, entry_id: str) -> None:

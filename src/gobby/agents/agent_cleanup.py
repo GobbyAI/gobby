@@ -6,6 +6,8 @@ import os
 from collections.abc import Awaitable, Callable
 from typing import TYPE_CHECKING, Any, cast
 
+from gobby.storage.attention import run_attention_entry_id
+
 if TYPE_CHECKING:
     from gobby.agents.loop_tracker import LoopTracker
     from gobby.agents.prompt_detector import PromptDetector
@@ -138,7 +140,11 @@ class AgentCleanupHandler:
 
         if self._attention_manager is not None:
             try:
-                await self._run_db(self._attention_manager.transition, run.id, state=None)
+                await self._run_db(
+                    self._attention_manager.transition,
+                    run_attention_entry_id(run.id),
+                    state=None,
+                )
             except Exception:
                 logger.warning(
                     "Failed to clear attention for terminal agent %s",
