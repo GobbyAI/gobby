@@ -21,7 +21,6 @@ import yaml
 from gobby.agents.spawners.auth_env import has_auth_env
 from gobby.config.logging import (
     RUNTIME_LOG_FILENAME,
-    UI_LOG_FILENAME,
     resolved_log_path,
     resolved_logs_dir,
 )
@@ -48,7 +47,6 @@ from .utils import (
     is_port_available,
     kill_all_gobby_daemons,
     setup_logging,
-    spawn_ui_server,
     wait_for_port_available,
 )
 from .utils import (
@@ -403,13 +401,8 @@ def _wait_for_service_stop(
     is_flag=True,
     help="Enable verbose debug output",
 )
-@click.option(
-    "--no-ui",
-    is_flag=True,
-    help="Disable auto-starting the web UI",
-)
 @click.pass_context
-def start(ctx: click.Context, verbose: bool, no_ui: bool) -> None:
+def start(ctx: click.Context, verbose: bool) -> None:
     """Start the Gobby daemon."""
     from gobby.cli.runtime import get_cli_runtime
 
@@ -547,29 +540,14 @@ def start(ctx: click.Context, verbose: bool, no_ui: bool) -> None:
                 _show_runtime_output_tail(runtime_log_file)
                 sys.exit(1)
 
-            # Spawn UI server if enabled
+            # Report the UI endpoint and effective mode when enabled. The runner
+            # owns both production serving and the dev-server lifecycle.
             ui_url = None
             ui_mode_display = None
-            if not no_ui and config.ui.enabled:
+            if config.ui.enabled:
                 ui_resolution = resolve_ui_mode(config)
                 ui_mode_display = ui_resolution.display
                 ui_url = f"http://localhost:{http_port}/"
-                if ui_resolution.effective == "dev":
-                    web_dir = ui_resolution.source_web_dir
-                    if web_dir:
-                        ui_log = resolved_log_path(config.logging, UI_LOG_FILENAME)
-                        ui_pid = spawn_ui_server(
-                            config.ui.host,
-                            config.ui.port,
-                            web_dir,
-                            ui_log,
-                            daemon_port=http_port,
-                            ws_port=ws_port,
-                        )
-                        if ui_pid:
-                            ui_pid_file = gobby_dir / "ui.pid"
-                            with open(ui_pid_file, "w") as f:
-                                f.write(str(ui_pid))
 
             # Compact startup summary
             click.echo("")
@@ -676,25 +654,20 @@ def stop(ctx: click.Context, docker_flag: bool) -> None:
     help="Enable verbose debug output",
 )
 @click.option(
-    "--no-ui",
-    is_flag=True,
-    help="Disable auto-starting the web UI",
-)
-@click.option(
     "--docker",
     "docker_flag",
     is_flag=True,
     help="Also restart Docker service containers (Qdrant, FalkorDB)",
 )
 @click.pass_context
-def restart(ctx: click.Context, verbose: bool, no_ui: bool, docker_flag: bool) -> None:
+def restart(ctx: click.Context, verbose: bool, docker_flag: bool) -> None:
     """Restart the Gobby daemon (stop then start)."""
     setup_logging(verbose)
 
     if not _do_stop(ctx, docker_flag, shutdown_intent="restart"):
         sys.exit(1)
 
-    ctx.invoke(start, verbose=verbose, no_ui=no_ui)
+    ctx.invoke(start, verbose=verbose)
 
 
 @click.command()

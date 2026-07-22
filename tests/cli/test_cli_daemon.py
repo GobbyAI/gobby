@@ -244,11 +244,21 @@ class TestStartCommand:
 
     def test_start_help(self, runner: CliRunner) -> None:
         """Test start --help displays help text."""
+        removed_option = "--no-" + "ui"
         result = runner.invoke(cli, ["start", "--help"])
         assert result.exit_code == 0
         assert "--docker" not in result.output
+        assert removed_option not in result.output
         assert "Start the Gobby daemon" in result.output
         assert "--verbose" in result.output
+
+    def test_start_rejects_removed_ui_suppression_option(self, runner: CliRunner) -> None:
+        """The removed one-shot UI suppression option fails at the CLI boundary."""
+        removed_option = "--no-" + "ui"
+        result = runner.invoke(cli, ["start", removed_option])
+
+        assert result.exit_code == 2
+        assert f"No such option '{removed_option}'" in result.output
 
     def test_start_rejects_removed_docker_option(self, runner: CliRunner) -> None:
         """The removed start --docker option fails at the CLI boundary."""
@@ -1011,10 +1021,20 @@ class TestRestartCommand:
 
     def test_restart_help(self, runner: CliRunner) -> None:
         """Test restart --help displays help text."""
+        removed_option = "--no-" + "ui"
         result = runner.invoke(cli, ["restart", "--help"])
         assert result.exit_code == 0
+        assert removed_option not in result.output
         assert "Restart the Gobby daemon" in result.output
         assert "--verbose" in result.output
+
+    def test_restart_rejects_removed_ui_suppression_option(self, runner: CliRunner) -> None:
+        """The removed one-shot UI suppression option fails at the CLI boundary."""
+        removed_option = "--no-" + "ui"
+        result = runner.invoke(cli, ["restart", removed_option])
+
+        assert result.exit_code == 2
+        assert f"No such option '{removed_option}'" in result.output
 
     @patch("gobby.cli.daemon._poll_startup_progress", return_value=True)
     @patch("gobby.cli.daemon._wait_for_daemon_health", return_value=4.0)
@@ -1691,6 +1711,7 @@ class TestDaemonCommandsIntegration:
     ) -> None:
         """Test that start command displays startup summary."""
         mock_load_config.return_value = mock_daemon_config
+        mock_daemon_config.ui.enabled = True
         mock_kill_daemons.return_value = 0
         mock_is_port_available.return_value = True
 
@@ -1706,7 +1727,12 @@ class TestDaemonCommandsIntegration:
         with (
             runner.isolated_filesystem(temp_dir=str(temp_dir)),
             patch("gobby.cli.daemon.Path.home", return_value=temp_dir),
+            patch("gobby.cli.daemon.resolve_ui_mode") as mock_resolve_ui_mode,
+            patch("gobby.cli.daemon.spawn_ui_server", create=True) as mock_spawn_ui_server,
         ):
+            mock_resolve_ui_mode.return_value.display = "dev"
+            mock_resolve_ui_mode.return_value.effective = "dev"
+            mock_resolve_ui_mode.return_value.source_web_dir = temp_dir
             gobby_dir = temp_dir / ".gobby"
             gobby_dir.mkdir(parents=True, exist_ok=True)
             (gobby_dir / "logs").mkdir(parents=True, exist_ok=True)
@@ -1715,6 +1741,8 @@ class TestDaemonCommandsIntegration:
 
             assert result.exit_code == 0
             assert "Gobby daemon ready" in result.output
+            assert "Web UI:    http://localhost:60887/ (dev)" in result.output
+            mock_spawn_ui_server.assert_not_called()
 
     def test_cli_has_all_daemon_commands(self, runner: CliRunner) -> None:
         """Test that CLI has all daemon management commands."""

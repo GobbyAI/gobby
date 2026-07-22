@@ -80,16 +80,18 @@ Start it with `gobby start` and check it with `gobby status` or `gobby health`.
 Start the daemon.
 
 ```bash
-gobby start [--verbose] [--no-ui]
+gobby start [--verbose]
 ```
 
 | Option | Purpose |
 | --- | --- |
 | `--verbose` | Enable verbose startup output. |
-| `--no-ui` | Do not auto-start the web UI. |
 
 `gobby start` always starts PostgreSQL, Qdrant, and FalkorDB with Docker
 Compose and waits for container health before launching the daemon.
+The Web UI lifecycle follows the persistent `ui.enabled` setting. When it is
+enabled, the daemon owns production UI serving and the development-server
+lifecycle; set it to `false` persistently to run the daemon without the UI.
 
 ### `gobby stop`
 
@@ -106,7 +108,7 @@ Pass `--docker` to stop the managed datastore containers as well as the daemon.
 Stop and start the daemon.
 
 ```bash
-gobby restart [--verbose] [--no-ui] [--docker]
+gobby restart [--verbose] [--docker]
 ```
 
 ### `gobby status`

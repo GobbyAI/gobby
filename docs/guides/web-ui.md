@@ -6,8 +6,10 @@ configuration pages, and the operational dashboard.
 
 ## Mental Model
 
-Production installs serve the built React app from the daemon HTTP port. The
-frontend development server uses a separate port when `gobby ui dev` is running.
+The daemon owns the UI lifecycle whenever persistent `ui.enabled` is `true`.
+Production installs serve the built React app from the daemon HTTP port. In a
+source checkout, `dev` mode (and `auto` when source is available) starts and
+stops the frontend development server with the daemon on a separate port.
 
 - Installed Web UI and HTTP API: `http://localhost:60887`
 - Dev Web UI: `http://localhost:60889`
@@ -171,6 +173,10 @@ uv run gobby start --verbose
 uv run gobby status
 uv run gobby restart
 ```
+
+Both startup commands follow persistent `ui.enabled`; set it to `false` to run
+the daemon without the UI. The existing `gobby ui` commands remain available for
+explicit UI development, build, and status operations.
 
 Use `gobby status` as the source of truth for local ports, Tailscale status, and
 service health.
