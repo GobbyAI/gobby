@@ -9,7 +9,7 @@ import pytest
 
 import gobby.runner_lifecycle_subsystems as lifecycle_subsystems
 from gobby.runner_lifecycle_subsystems import _register_wiki_cron_handlers
-from gobby.wiki import scheduled_jobs
+from gobby.wiki import prune_job, scheduled_jobs
 
 pytestmark = pytest.mark.unit
 
@@ -37,6 +37,7 @@ async def test_wiki_cron_registration_uses_canonical_default_scope(
         return ([("project-id", None)], [])
 
     monkeypatch.setattr(lifecycle_subsystems, "_run_db", run_db)
+    monkeypatch.setattr(prune_job, "register_wiki_prune_cron", lambda **_kwargs: None)
     monkeypatch.setattr(scheduled_jobs, "register_wiki_cron_jobs_for_projects", register)
 
     await _register_wiki_cron_handlers(_runner(), tracker=None)
@@ -56,6 +57,7 @@ async def test_wiki_cron_registration_failure_logs_traceback(
         return ([("project-id", None)], [])
 
     monkeypatch.setattr(lifecycle_subsystems, "_run_db", run_db)
+    monkeypatch.setattr(prune_job, "register_wiki_prune_cron", lambda **_kwargs: None)
     monkeypatch.setattr(
         scheduled_jobs,
         "register_wiki_cron_jobs_for_projects",
@@ -75,3 +77,28 @@ async def test_wiki_cron_registration_failure_logs_traceback(
     assert record.exc_info is not None
     assert record.exc_info[0] is RuntimeError
     tracker_error.assert_called_once_with("Wiki cron handlers", "registration failed")
+
+
+@pytest.mark.asyncio
+async def test_global_wiki_prune_registers_before_empty_project_return(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    registrations: list[dict[str, Any]] = []
+
+    async def run_db(*_args: Any, **_kwargs: Any) -> tuple[list[Any], list[Any]]:
+        return ([], [])
+
+    monkeypatch.setattr(lifecycle_subsystems, "_run_db", run_db)
+    monkeypatch.setattr(
+        prune_job,
+        "register_wiki_prune_cron",
+        lambda **kwargs: registrations.append(kwargs),
+    )
+
+    runner = _runner()
+    await _register_wiki_cron_handlers(runner, tracker=None)
+
+    assert len(registrations) == 1
+    assert registrations[0]["cron_storage"] is runner.cron_storage
+    assert registrations[0]["cron_executor"] is runner.cron_scheduler.executor
+    assert registrations[0]["project_id"] == "project-id"

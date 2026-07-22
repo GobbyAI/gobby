@@ -4,6 +4,8 @@ import asyncio
 import json
 import time
 from collections.abc import Sequence
+from dataclasses import dataclass
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 from weakref import WeakKeyDictionary
@@ -105,6 +107,25 @@ class GwikiJsonError(GwikiGatewayError):
 
 class GwikiReadSelectorError(GwikiGatewayError, ValueError):
     """Raised when read receives anything other than one selector."""
+
+
+@dataclass(frozen=True)
+class GwikiCommandResult:
+    """Captured gwiki maintenance command outcome."""
+
+    command: tuple[str, ...]
+    returncode: int | None
+    stdout: str
+    stderr: str
+    started_at: str
+    completed_at: str
+    duration_seconds: float
+    timeout_seconds: float | None
+    timed_out: bool = False
+
+    @property
+    def success(self) -> bool:
+        return not self.timed_out and self.returncode == 0
 
 
 class GwikiCommandError(GwikiGatewayError):
@@ -368,6 +389,29 @@ class GwikiGateway:
             args.extend(["--date", date])
         return await self._run_json("recap", args)
 
+    async def prune_all_scopes(
+        self,
+        *,
+        timeout: float | None = None,
+    ) -> GwikiCommandResult:
+        binary = await self._resolve_binary()
+        return await self._run_command_result(
+            [binary, "prune", "--force"],
+            timeout=timeout,
+        )
+
+    async def purge_project_scope(
+        self,
+        project_id: str,
+        *,
+        timeout: float | None = None,
+    ) -> GwikiCommandResult:
+        binary = await self._resolve_binary()
+        return await self._run_command_result(
+            [binary, "purge", "--project-id", project_id, "--yes"],
+            timeout=timeout,
+        )
+
     async def _run_json(
         self,
         command_name: str,
@@ -527,6 +571,55 @@ class GwikiGateway:
             )
 
         return stdout, stderr_text
+
+    async def _run_command_result(
+        self,
+        command: Sequence[str],
+        *,
+        timeout: float | None = None,
+    ) -> GwikiCommandResult:
+        proc: asyncio.subprocess.Process | None = None
+        started_at = datetime.now(UTC).isoformat()
+        started = time.perf_counter()
+        timeout_seconds = self._timeout_seconds if timeout is None else timeout
+        try:
+            proc = await asyncio.create_subprocess_exec(
+                *command,
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.PIPE,
+            )
+            stdout, stderr = await asyncio.wait_for(
+                proc.communicate(),
+                timeout=timeout_seconds,
+            )
+            returncode = proc.returncode
+            timed_out = False
+        except FileNotFoundError as exc:
+            raise GwikiUnavailableError(f"gwiki binary not found: {command[0]}") from exc
+        except asyncio.CancelledError:
+            if proc is not None:
+                await self._kill_process(proc)
+            raise
+        except TimeoutError:
+            if proc is not None:
+                await self._kill_process(proc)
+            stdout = b""
+            stderr = f"gwiki timed out after {timeout_seconds}s".encode()
+            returncode = None
+            timed_out = True
+
+        forward_subprocess_stderr(stderr)
+        return GwikiCommandResult(
+            command=tuple(command),
+            returncode=returncode,
+            stdout=stdout.decode(errors="replace"),
+            stderr=stderr.decode(errors="replace"),
+            started_at=started_at,
+            completed_at=datetime.now(UTC).isoformat(),
+            duration_seconds=time.perf_counter() - started,
+            timeout_seconds=timeout_seconds,
+            timed_out=timed_out,
+        )
 
     async def _collect_streams(
         self,
