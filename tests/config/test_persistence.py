@@ -186,6 +186,34 @@ class TestMemoryDreamConfig:
         assert config.run_retention_days == 30
         assert config.min_rescope_confidence == 0.85
 
+    def test_related_evidence_field_defaults(self) -> None:
+        """Dream evidence and write-trigger knobs use the reconciliation defaults."""
+        from gobby.config.persistence import MemoryDreamConfig
+
+        config = MemoryDreamConfig()
+        assert config.related_evidence_enabled is True
+        assert config.related_evidence_top_k == 3
+        assert config.related_evidence_fetch_limit == 10
+        assert config.planner_batch_max_chars == 100_000
+        assert config.write_supersession_mark_due_enabled is True
+
+    @pytest.mark.parametrize(
+        ("field", "value"),
+        [
+            ("related_evidence_top_k", 0),
+            ("related_evidence_top_k", 11),
+            ("related_evidence_fetch_limit", 0),
+            ("related_evidence_fetch_limit", 51),
+            ("planner_batch_max_chars", 9_999),
+        ],
+    )
+    def test_related_evidence_fields_enforce_bounds(self, field: str, value: int) -> None:
+        """Bounded retrieval and planner settings reject unsafe values."""
+        from gobby.config.persistence import MemoryDreamConfig
+
+        with pytest.raises(ValidationError):
+            MemoryDreamConfig(**{field: value})
+
     @pytest.mark.parametrize(
         "field",
         [

@@ -4,9 +4,10 @@ The nightly run is a streaming page-and-apply sweep over *active* memories. Each
 page is fetched by the storage cooldown query, planned against the current-truth
 digest, validated (failures degrade to visible keep), applied, and stamped — so
 the cooldown cursor advances and the loop drains to zero. An immediate re-run is
-a no-op because every row was just stamped inside the cooldown window. A dry-run
-is a single bounded preview pass that writes nothing (no memory, snapshot, or
-stamp mutations).
+a no-op because every row was just stamped inside the cooldown window. Dry runs
+write no memory, snapshot, or stamp mutations. They materialize an immutable
+candidate-ID snapshot and hydrate it page by page so every start-of-run candidate
+is reviewed at most once.
 """
 
 from __future__ import annotations
@@ -23,6 +24,7 @@ from weakref import WeakKeyDictionary
 from gobby.config.persistence import MemoryDreamConfig
 from gobby.memory.dream.apply import apply_dream_plan, revert_dream_run
 from gobby.memory.dream.candidates import list_sweep_candidates
+from gobby.memory.dream.models import DreamCandidate
 from gobby.memory.dream.options import DreamRunOptions
 from gobby.memory.dream.plan import validate_dream_plan
 from gobby.memory.dream.planner import build_raw_plan
@@ -687,6 +689,27 @@ class MemoryDreamService:
         finally:
             await related_session.aclose()
 
+    async def _attach_related_evidence(
+        self,
+        candidates: list[DreamCandidate],
+        options: DreamRunOptions,
+        include_global: bool,
+        related_session: RelatedEvidenceSession,
+    ) -> list[DreamCandidate]:
+        if not self.dream_config.related_evidence_enabled:
+            return candidates
+        retrieval_scope = options.retrieval_scope(include_global=include_global)
+        if retrieval_scope is None:
+            return candidates
+        return await gather_related_evidence(
+            candidates,
+            db=self.memory_manager.db,
+            vector_store=getattr(self.memory_manager, "_vector_store", None),
+            dream_config=self.dream_config,
+            session=related_session,
+            scope=retrieval_scope,
+        )
+
     async def _stream_sweep(
         self,
         run_id: str,
@@ -700,7 +723,6 @@ class MemoryDreamService:
     ) -> _SweepTotals:
         totals = _SweepTotals()
         previous_ids: set[str] | None = None
-        retrieval_scope = options.retrieval_scope(include_global=include_global)
         while True:
             candidates = await list_sweep_candidates(
                 self.memory_manager,
@@ -712,15 +734,9 @@ class MemoryDreamService:
             )
             if not candidates:
                 break
-            if retrieval_scope is not None:
-                candidates = await gather_related_evidence(
-                    candidates,
-                    db=self.memory_manager.db,
-                    vector_store=getattr(self.memory_manager, "_vector_store", None),
-                    dream_config=self.dream_config,
-                    session=related_session,
-                    scope=retrieval_scope,
-                )
+            candidates = await self._attach_related_evidence(
+                candidates, options, include_global, related_session
+            )
             page_ids = {candidate.id for candidate in candidates}
             if previous_ids is not None and page_ids == previous_ids:
                 # Cursor failed to advance (e.g. persistent stamp failure); stop
@@ -773,63 +789,65 @@ class MemoryDreamService:
         run_started: datetime,
         related_session: RelatedEvidenceSession,
     ) -> dict[str, Any]:
-        candidates = await list_sweep_candidates(
-            self.memory_manager,
-            limit=page_size,
+        scope = options.memory_scope(include_global=include_global)
+        candidate_ids = await asyncio.to_thread(
+            self.memory_manager.list_dream_candidate_ids,
             redream_cutoff=redream_cutoff,
-            scope=options.memory_scope(include_global=include_global),
+            scope=scope,
             memory_type=options.memory_type,
-            now=run_started,
         )
-        retrieval_scope = options.retrieval_scope(include_global=include_global)
-        if candidates and retrieval_scope is not None:
-            candidates = await gather_related_evidence(
-                candidates,
-                db=self.memory_manager.db,
-                vector_store=getattr(self.memory_manager, "_vector_store", None),
-                dream_config=self.dream_config,
-                session=related_session,
-                scope=retrieval_scope,
+        totals = _SweepTotals()
+        all_actions: list[dict[str, Any]] = []
+        for offset in range(0, len(candidate_ids), page_size):
+            page_ids = candidate_ids[offset : offset + page_size]
+            candidates = await list_sweep_candidates(
+                self.memory_manager,
+                limit=page_size,
+                redream_cutoff=redream_cutoff,
+                scope=scope,
+                memory_type=options.memory_type,
+                candidate_ids=page_ids,
+                now=run_started,
             )
-        raw_plan = await build_raw_plan(
-            candidates=candidates,
-            duplicate_groups=[],
-            dream_config=self.dream_config,
-            llm_service=self.llm_service,
-            db=self.memory_manager.db,
-            project_id=options.project_id,
-            skip_consolidation=False,
-            truth_digest=digest,
-        )
-        raw_plan_metadata = _decode_raw_plan_metadata(raw_plan)
-        actions = validate_dream_plan(
-            raw_plan,
-            candidates,
-            min_action_confidence=self.dream_config.min_action_confidence,
-            min_delete_confidence=self.dream_config.min_delete_confidence,
-            min_rescope_confidence=self.dream_config.min_rescope_confidence,
-        )
-        summary = await apply_dream_plan(
-            memory_manager=self.memory_manager,
-            store=self.store,
-            run_id=run_id,
-            actions=actions,
-            candidates=candidates,
-            dry_run=True,
-            reconcile_after_apply=False,
-        )
-        planner_errors = [str(err) for err in raw_plan_metadata.get("planner_errors", [])][
-            :MAX_PLANNER_ERRORS
-        ]
-        summary["candidates_reviewed"] = len(candidates)
-        summary["pages"] = 1 if candidates else 0
-        summary["planner_errors"] = planner_errors
-        plan = {
-            "candidate_count": len(candidates),
-            "dry_run": True,
-            "planner_errors": planner_errors,
-            "action_sample": [action.to_dict() for action in actions][:MAX_ACTION_SAMPLE],
-        }
+            if not candidates:
+                continue
+            candidates = await self._attach_related_evidence(
+                candidates, options, include_global, related_session
+            )
+            raw_plan = await build_raw_plan(
+                candidates=candidates,
+                duplicate_groups=[],
+                dream_config=self.dream_config,
+                llm_service=self.llm_service,
+                db=self.memory_manager.db,
+                project_id=options.project_id,
+                skip_consolidation=False,
+                truth_digest=digest,
+            )
+            raw_plan_metadata = _decode_raw_plan_metadata(raw_plan)
+            actions = validate_dream_plan(
+                raw_plan,
+                candidates,
+                min_action_confidence=self.dream_config.min_action_confidence,
+                min_delete_confidence=self.dream_config.min_delete_confidence,
+                min_rescope_confidence=self.dream_config.min_rescope_confidence,
+            )
+            page_summary = await apply_dream_plan(
+                memory_manager=self.memory_manager,
+                store=self.store,
+                run_id=run_id,
+                actions=actions,
+                candidates=candidates,
+                dry_run=True,
+                reconcile_after_apply=False,
+            )
+            totals.add_page(len(candidates), actions, page_summary, raw_plan_metadata)
+            all_actions.extend(action.to_dict() for action in actions)
+        summary = totals.to_summary()
+        summary["dry_run"] = True
+        summary["planned_actions"] = all_actions[:MAX_ACTION_SAMPLE]
+        plan = totals.to_plan()
+        plan.update({"dry_run": True, "actions": all_actions})
         completed_ts = datetime.now(UTC).isoformat()
         run = await asyncio.to_thread(
             self.store.update_run,

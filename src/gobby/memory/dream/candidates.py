@@ -31,6 +31,8 @@ class SweepCandidateSource(Protocol):
         memory_type: str | None = None,
     ) -> list[Any]: ...
 
+    def get_memories(self, memory_ids: list[str], scope: MemoryScope) -> list[Any]: ...
+
 
 async def list_sweep_candidates(
     memory_manager: SweepCandidateSource,
@@ -39,22 +41,30 @@ async def list_sweep_candidates(
     redream_cutoff: str,
     scope: MemoryScope,
     memory_type: str | None = None,
+    candidate_ids: list[str] | None = None,
     now: datetime | None = None,
 ) -> list[DreamCandidate]:
     """Fetch one page of active sweep candidates and adapt them for planning.
 
-    Project/global and memory-type scope plus the cooldown cutoff are applied in
-    SQL by ``list_dream_candidates``; this helper only adapts the rows into
-    ``DreamCandidate`` prompt context.
+    Normal sweeps apply scope and cooldown through ``list_dream_candidates``.
+    Snapshot pages hydrate requested IDs in order and skip rows no longer active
+    or visible. This helper adapts either source into ``DreamCandidate`` context.
     """
     now = now or utc_now()
-    rows = await asyncio.to_thread(
-        memory_manager.list_dream_candidates,
-        limit=limit,
-        redream_cutoff=redream_cutoff,
-        scope=scope,
-        memory_type=memory_type,
-    )
+    if candidate_ids is None:
+        rows = await asyncio.to_thread(
+            memory_manager.list_dream_candidates,
+            limit=limit,
+            redream_cutoff=redream_cutoff,
+            scope=scope,
+            memory_type=memory_type,
+        )
+    else:
+        rows = await asyncio.to_thread(memory_manager.get_memories, candidate_ids, scope)
+        found_ids = {str(row.id) for row in rows}
+        for memory_id in candidate_ids:
+            if memory_id not in found_ids:
+                logger.info("Skipping missing dream snapshot candidate %s", memory_id)
     return [memory_to_candidate(row, now) for row in rows]
 
 

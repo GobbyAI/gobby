@@ -10,7 +10,9 @@ from typing import Any, cast
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
+from click.testing import CliRunner
 
+from gobby.cli.memory.dream import memory_dream
 from gobby.memory.dream.apply import apply_dream_plan, revert_dream_run
 from gobby.memory.dream.candidates import list_sweep_candidates, memory_to_candidate
 from gobby.memory.dream.duplicates import find_duplicate_groups
@@ -1947,8 +1949,49 @@ class _FakeSweepManager:
             if memory_type is not None and row.get("memory_type") != memory_type:
                 continue
             matches.append(row)
-        matches.sort(key=lambda r: (r.get("last_dreamed_at") or "", r.get("updated_at") or ""))
+        matches.sort(
+            key=lambda r: (
+                r.get("last_dreamed_at") or "",
+                r.get("updated_at") or "",
+                r["id"],
+            )
+        )
         return [SimpleNamespace(**row) for row in matches[:limit]]
+
+    def list_dream_candidate_ids(
+        self,
+        *,
+        redream_cutoff: str,
+        scope: MemoryScope,
+        memory_type: str | None = None,
+    ) -> list[str]:
+        rows = self.list_dream_candidates(
+            limit=len(self.db.memories),
+            redream_cutoff=redream_cutoff,
+            scope=scope,
+            memory_type=memory_type,
+        )
+        return [str(row.id) for row in rows]
+
+    def get_memories(self, memory_ids: list[str], scope: MemoryScope) -> list[Any]:
+        rows: list[Any] = []
+        for memory_id in memory_ids:
+            row = self.db.memories.get(memory_id)
+            if row is None or row.get("deleted_at") is not None:
+                continue
+            if scope.kind is MemoryScopeKind.GLOBAL_ONLY and not row["is_global"]:
+                continue
+            if scope.kind is MemoryScopeKind.PROJECT_ONLY:
+                if row["project_id"] != scope.project_id or row["is_global"]:
+                    continue
+            if scope.kind is MemoryScopeKind.PROJECT_VISIBLE:
+                visible = row["is_global"] or (
+                    row["project_id"] == scope.project_id and not row["is_global"]
+                )
+                if not visible:
+                    continue
+            rows.append(SimpleNamespace(**row))
+        return rows
 
     def mark_dreamed(
         self,
@@ -1985,7 +2028,12 @@ class _FakeSweepManager:
         return self.db.memories.pop(memory_id, None) is not None
 
 
-def _sweep_config(*, page_size: int = 2, redream_after_hours: int = 20) -> SimpleNamespace:
+def _sweep_config(
+    *,
+    page_size: int = 2,
+    redream_after_hours: int = 20,
+    related_evidence_enabled: bool = True,
+) -> SimpleNamespace:
     return SimpleNamespace(
         enabled=True,
         min_action_confidence=0.7,
@@ -1996,6 +2044,9 @@ def _sweep_config(*, page_size: int = 2, redream_after_hours: int = 20) -> Simpl
         page_size=page_size,
         redream_after_hours=redream_after_hours,
         include_global_memories=True,
+        related_evidence_enabled=related_evidence_enabled,
+        related_evidence_top_k=3,
+        related_evidence_fetch_limit=10,
     )
 
 
@@ -2078,7 +2129,7 @@ async def test_dry_run_previews_without_writing_or_stamping() -> None:
         result = await service.run(DreamRunOptions(dry_run=True, project_id="proj-1"))
 
     assert result["success"] is True
-    # Dry-run is a single bounded preview pass: no memory, snapshot, or stamp writes.
+    # Dry-run pagination performs no memory, snapshot, or stamp writes.
     assert all(row["deleted_at"] is None for row in db.memories.values())
     assert all(row["last_dreamed_at"] is None for row in db.memories.values())
     summary = result["run"]["summary"]
@@ -2086,6 +2137,151 @@ async def test_dry_run_previews_without_writing_or_stamping() -> None:
     assert summary["candidates_reviewed"] == 2
     assert summary["pages"] == 1
     assert summary.get("planned_actions")
+
+
+async def test_sweeps_attach_related_evidence() -> None:
+    live_db = _FakeDreamDB()
+    live_db.memories = {f"live-{i}": _row(f"live-{i}", f"live {i}") for i in range(5)}
+    dry_db = _FakeDreamDB()
+    dry_db.memories = {f"dry-{i}": _row(f"dry-{i}", f"dry {i}") for i in range(5)}
+    live_session = MagicMock()
+    live_session.aclose = AsyncMock()
+    dry_session = MagicMock()
+    dry_session.aclose = AsyncMock()
+
+    async def attach(candidates: list[DreamCandidate], **_kwargs: Any) -> list[DreamCandidate]:
+        return candidates
+
+    with (
+        patch(
+            "gobby.memory.dream.service.RelatedEvidenceSession",
+            side_effect=[live_session, dry_session],
+        ),
+        patch(
+            "gobby.memory.dream.service.gather_related_evidence",
+            AsyncMock(side_effect=attach),
+        ) as gather,
+    ):
+        live_service = MemoryDreamService(
+            memory_manager=_FakeSweepManager(live_db),
+            dream_config=_sweep_config(page_size=2),
+            llm_service=None,
+        )
+        dry_service = MemoryDreamService(
+            memory_manager=_FakeSweepManager(dry_db),
+            dream_config=_sweep_config(page_size=2),
+            llm_service=None,
+        )
+        await live_service.run(DreamRunOptions(project_id="proj-1"))
+        await dry_service.run(DreamRunOptions(dry_run=True, project_id="proj-1"))
+
+    assert gather.await_count == 6
+    assert all(call.kwargs["session"] is live_session for call in gather.await_args_list[:3])
+    assert all(call.kwargs["session"] is dry_session for call in gather.await_args_list[3:])
+    live_session.aclose.assert_awaited_once()
+    dry_session.aclose.assert_awaited_once()
+
+
+@pytest.mark.parametrize("dry_run", [False, True])
+async def test_sweeps_skip_related_evidence_when_disabled(dry_run: bool) -> None:
+    db = _FakeDreamDB()
+    db.memories = {f"m-{i}": _row(f"m-{i}", f"content {i}") for i in range(3)}
+    service = MemoryDreamService(
+        memory_manager=_FakeSweepManager(db),
+        dream_config=_sweep_config(page_size=2, related_evidence_enabled=False),
+        llm_service=None,
+    )
+
+    with patch(
+        "gobby.memory.dream.service.gather_related_evidence", new_callable=AsyncMock
+    ) as gather:
+        result = await service.run(DreamRunOptions(dry_run=dry_run, project_id="proj-1"))
+
+    assert result["success"] is True
+    assert result["run"]["summary"]["candidates_reviewed"] == 3
+    gather.assert_not_awaited()
+
+
+async def test_dry_run_full_coverage_pagination() -> None:
+    db = _FakeDreamDB()
+    db.memories = {f"m-{i:02d}": _row(f"m-{i:02d}", f"content {i}") for i in range(55)}
+    service = MemoryDreamService(
+        memory_manager=_FakeSweepManager(db),
+        dream_config=_sweep_config(page_size=10, related_evidence_enabled=False),
+        llm_service=MagicMock(),
+    )
+
+    async def plan_page(**kwargs: Any) -> dict[str, Any]:
+        return {
+            "actions": [
+                {"action": "keep", "memory_id": candidate.id, "confidence": 1.0}
+                for candidate in kwargs["candidates"]
+            ],
+            "planner_errors": [],
+        }
+
+    with patch("gobby.memory.dream.service.build_raw_plan", side_effect=plan_page):
+        result = await service.run(DreamRunOptions(dry_run=True, project_id="proj-1"))
+
+    run = result["run"]
+    actions = run["plan"]["actions"]
+    assert run["summary"]["candidates_reviewed"] == 55
+    assert run["summary"]["pages"] == 6
+    assert len(actions) == 55
+    assert actions[50]["memory_id"] in db.memories
+    assert {action["memory_id"] for action in actions} == set(db.memories)
+    assert all(row["last_dreamed_at"] is None for row in db.memories.values())
+
+    with patch("gobby.cli.memory.dream._request", return_value={"success": True, "run": run}):
+        output = CliRunner().invoke(memory_dream, ["status", run["id"]]).output
+
+    assert actions[50]["memory_id"] in output
+
+
+async def test_dry_run_snapshot_interleaving() -> None:
+    db = _FakeDreamDB()
+    db.memories = {f"m-{i}": _row(f"m-{i}", f"content {i}") for i in range(5)}
+    for row in db.memories.values():
+        row["last_dreamed_at"] = "2025-01-01T00:00:00+00:00"
+    manager = _FakeSweepManager(db)
+    snapshot_ids = manager.list_dream_candidate_ids(
+        redream_cutoff="2026-01-01T00:00:00+00:00",
+        scope=MemoryScope.project_visible("proj-1"),
+    )
+    deleted_id = snapshot_ids[-1]
+    service = MemoryDreamService(
+        memory_manager=manager,
+        dream_config=_sweep_config(page_size=2, related_evidence_enabled=False),
+        llm_service=MagicMock(),
+    )
+    page_count = 0
+
+    async def plan_page(**kwargs: Any) -> dict[str, Any]:
+        nonlocal page_count
+        page_count += 1
+        if page_count == 1:
+            db.memories[snapshot_ids[2]]["last_dreamed_at"] = None
+            db.memories[snapshot_ids[3]]["updated_at"] = datetime.now(UTC)
+            del db.memories[deleted_id]
+        return {
+            "actions": [
+                {"action": "keep", "memory_id": candidate.id, "confidence": 1.0}
+                for candidate in kwargs["candidates"]
+            ],
+            "planner_errors": [],
+        }
+
+    with (
+        patch("gobby.memory.dream.service.build_raw_plan", side_effect=plan_page),
+        patch("gobby.memory.dream.candidates.logger.info") as log_info,
+    ):
+        result = await service.run(DreamRunOptions(dry_run=True, project_id="proj-1"))
+
+    reviewed_ids = [action["memory_id"] for action in result["run"]["plan"]["actions"]]
+    assert reviewed_ids.count(snapshot_ids[2]) == 1
+    assert reviewed_ids.count(snapshot_ids[3]) == 1
+    assert set(reviewed_ids) == set(snapshot_ids) - {deleted_id}
+    assert deleted_id in str(log_info.call_args_list)
 
 
 async def test_global_only_run_persists_null_scope_and_selects_only_global() -> None:

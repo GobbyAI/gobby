@@ -124,23 +124,13 @@ class MemoryDreamMixin(MemoryStoreBase):
             self._notify_listeners()
         return ids
 
-    def list_dream_candidates(
+    def _dream_candidate_filter(
         self,
         *,
-        limit: int,
         redream_cutoff: datetime | str,
         scope: MemoryScope,
-        memory_type: str | None = None,
-    ) -> list[Memory]:
-        """Return the next page of active memories due for a dream sweep.
-
-        Selects visible rows (``deleted_at IS NULL``) that have either never been
-        dreamed or were last dreamed before ``redream_cutoff`` (the cooldown
-        boundary, ``run_started_at - redream_after_hours``). Review-lesson
-        memories are protected from dream mutations and excluded before paging.
-        Ownership/visibility and memory-type scoping is applied in SQL. Ordered
-        oldest-dreamed first so the sweep drains deterministically.
-        """
+        memory_type: str | None,
+    ) -> tuple[str, list[Any]]:
         clauses = [
             "deleted_at IS NULL",
             "(last_dreamed_at IS NULL OR last_dreamed_at < %s)",
@@ -163,14 +153,57 @@ class MemoryDreamMixin(MemoryStoreBase):
         if memory_type is not None:
             clauses.append("memory_type = %s")
             params.append(validate_memory_type(memory_type).value)
-        where = " AND ".join(clauses)
+        return " AND ".join(clauses), params
+
+    def list_dream_candidates(
+        self,
+        *,
+        limit: int,
+        redream_cutoff: datetime | str,
+        scope: MemoryScope,
+        memory_type: str | None = None,
+    ) -> list[Memory]:
+        """Return the next page of active memories due for a dream sweep.
+
+        Selects visible rows (``deleted_at IS NULL``) that have either never been
+        dreamed or were last dreamed before ``redream_cutoff`` (the cooldown
+        boundary, ``run_started_at - redream_after_hours``). Review-lesson
+        memories are protected from dream mutations and excluded before paging.
+        Ownership/visibility and memory-type scoping is applied in SQL. Ordered
+        oldest-dreamed first so the sweep drains deterministically.
+        """
+        where, params = self._dream_candidate_filter(
+            redream_cutoff=redream_cutoff,
+            scope=scope,
+            memory_type=memory_type,
+        )
         params.append(limit)
         rows = self.db.fetchall(
             f"SELECT * FROM memories WHERE {where} "  # nosec B608
-            "ORDER BY last_dreamed_at ASC NULLS FIRST, updated_at ASC LIMIT %s",
+            "ORDER BY last_dreamed_at ASC NULLS FIRST, updated_at ASC, id ASC LIMIT %s",
             tuple(params),
         )
         return [Memory.from_row(row) for row in rows]
+
+    def list_dream_candidate_ids(
+        self,
+        *,
+        redream_cutoff: datetime | str,
+        scope: MemoryScope,
+        memory_type: str | None = None,
+    ) -> list[str]:
+        """Materialize the stable ordered IDs eligible at sweep start."""
+        where, params = self._dream_candidate_filter(
+            redream_cutoff=redream_cutoff,
+            scope=scope,
+            memory_type=memory_type,
+        )
+        rows = self.db.fetchall(
+            f"SELECT id FROM memories WHERE {where} "  # nosec B608
+            "ORDER BY last_dreamed_at ASC NULLS FIRST, updated_at ASC, id ASC",
+            tuple(params),
+        )
+        return [str(row["id"]) for row in rows]
 
     def list_dream_scopes(self, *, redream_cutoff: datetime | str) -> list[MemoryScope]:
         """Return distinct explicit scopes that have due memory dream work."""

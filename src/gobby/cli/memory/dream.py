@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 from typing import Any, cast
 
 import click
@@ -83,6 +84,7 @@ def memory_dream_status(ctx: click.Context, run_id: str) -> None:
     click.echo(f"Dream run: {run.get('id', run_id)}")
     click.echo(f"Status: {run.get('status', 'unknown')}")
     _print_summary(run.get("summary"))
+    _print_dry_run_actions(run.get("plan"))
 
 
 @memory_dream.command("revert")
@@ -172,3 +174,15 @@ def _print_summary(summary: Any) -> None:
     click.echo(f"Snapshots: {summary.get('snapshots', 0)}")
     if summary.get("errors"):
         click.echo(f"Errors: {summary['errors']}")
+
+
+def _print_dry_run_actions(plan: Any) -> None:
+    if not isinstance(plan, dict) or plan.get("dry_run") is not True:
+        return
+    actions = plan.get("actions")
+    if not isinstance(actions, list):
+        return
+    click.echo("Proposed actions:")
+    for action in actions:
+        if isinstance(action, dict):
+            click.echo(json.dumps(action, sort_keys=True))

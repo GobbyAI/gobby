@@ -23,6 +23,16 @@ class MemoryDreamManagerProtocol(Protocol):
         memory_type: str | None = None,
     ) -> list[Any]: ...
 
+    def list_dream_candidate_ids(
+        self,
+        *,
+        redream_cutoff: str,
+        scope: MemoryScope,
+        memory_type: str | None = None,
+    ) -> list[str]: ...
+
+    def get_memories(self, memory_ids: list[str], scope: MemoryScope) -> list[Any]: ...
+
     def list_dream_scopes(self, *, redream_cutoff: str) -> list[MemoryScope]: ...
 
     def mark_project_memories_due(self, project_id: str) -> int: ...

@@ -297,7 +297,28 @@ class MemoryDreamConfig(FeatureDefaultConfig):
     )
     planner_batch_max_chars: int = Field(
         default=100_000,
+        ge=10_000,
         description="Soft maximum rendered candidate characters per planner LLM call",
+    )
+    related_evidence_enabled: bool = Field(
+        default=True,
+        description="Attach related memories as evidence during dream planning",
+    )
+    related_evidence_top_k: int = Field(
+        default=3,
+        ge=1,
+        le=10,
+        description="Maximum related memories attached to each dream candidate",
+    )
+    related_evidence_fetch_limit: int = Field(
+        default=10,
+        ge=1,
+        le=50,
+        description="Maximum retrieval hits fetched before related-evidence ranking",
+    )
+    write_supersession_mark_due_enabled: bool = Field(
+        default=True,
+        description="Mark older related memories due after superseding writes",
     )
     planner_max_concurrency: int = Field(
         default=3,
