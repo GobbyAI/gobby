@@ -7,9 +7,9 @@ their external form; for task features that is `gobby-tasks`, matching the MCP s
 
 | Profile | Default candidates |
 | --- | --- |
-| `feature_low` | `claude/haiku`, `codex/gpt-5.4-mini` |
-| `feature_mid` | `claude/sonnet`, `codex/gpt-5.5` |
-| `feature_high` | `codex/gpt-5.5` (`xhigh` reasoning), `claude/opus` (`high` reasoning) |
+| `feature_low` | `claude/haiku`, `codex/gpt-5.6-luna`, `codex/gpt-5.4-mini` |
+| `feature_mid` | `claude/sonnet`, `codex/gpt-5.6-terra` |
+| `feature_high` | `codex/gpt-5.6-sol` (`xhigh` reasoning), `claude/opus` (`high` reasoning) |
 
 Built-in defaults are cloud-only. Local runtimes are opt-in named endpoints and
 should be explicit final fallbacks:

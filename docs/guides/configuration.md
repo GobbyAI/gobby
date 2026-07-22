@@ -287,8 +287,8 @@ search.
 chat:
   profile: feature_high
   candidates:
-    - codex/gpt-5.5
-    - claude/opus
+    - codex/gpt-5.6-sol@xhigh
+    - claude/opus@high
 gobby-tasks:
   validation:
     profile: feature_mid

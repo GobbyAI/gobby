@@ -357,7 +357,7 @@ class TestProviderModelCatalog:
             },
             "codex": {
                 "models": [
-                    {"value": "gpt-5.5", "context_length": 321_000},
+                    {"value": "gpt-5.6-sol", "context_length": 321_000},
                     {"value": "gpt-5.4", "context_length": 333_000},
                 ]
             },
@@ -370,7 +370,7 @@ class TestProviderModelCatalog:
         assert catalog.get_context_window("claude", "claude-sonnet-4-6-20241022") == 200_000
         assert catalog.get_context_window("qwen", "qwen3-coder(openai)") == 262_144
         assert catalog.get_context_window("qwen", "qwen3-coder") == 262_144
-        assert catalog.get_context_window("droid", "gpt-5.5") == 321_000
+        assert catalog.get_context_window("droid", "gpt-5.6-sol") == 321_000
         assert catalog.get_context_window("droid", "gpt-5.4") == 333_000
         assert catalog.get_context_window("droid", "claude-fable-5") == 1_000_000
         assert catalog.get_context_window("droid", "z-ai/glm-5") == 128_000

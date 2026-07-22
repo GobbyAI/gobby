@@ -107,8 +107,8 @@ api_token: false
 Valid:
 
 ```yaml
-model: "gpt-5.5"
-reasoning_effort: high
+model: "gpt-5.6-sol"
+reasoning_effort: xhigh
 reasoning_required: false
 fallback_agent: "qa-reviewer"
 api_base: "http://localhost:1234/v1"

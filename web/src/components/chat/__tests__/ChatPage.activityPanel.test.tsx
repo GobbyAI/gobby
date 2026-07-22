@@ -465,7 +465,7 @@ describe("ChatPage – activity panel wiring", () => {
       project_id: "proj-1",
       title: "Swapped Web Chat",
       status: "active",
-      model: "gpt-5.5",
+      model: "gpt-5.6-sol",
       message_count: 1,
       created_at: "2026-05-04T12:00:00Z",
       updated_at: "2026-05-04T12:01:00Z",
