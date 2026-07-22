@@ -123,6 +123,19 @@ fn graph_and_ai_commands_request_only_needed_services() {
 }
 
 #[test]
+fn invalidate_requests_projection_cleanup_services() {
+    assert_eq!(
+        services_for(&[
+            "invalidate",
+            "--project-id",
+            "019bfef8-89bb-7bd1-a5c3-80baabdff01b",
+            "--force",
+        ]),
+        config::ServiceConfigSelection::projection_cleanup()
+    );
+}
+
+#[test]
 fn codewiki_ai_options_routes_verify_profile_override() {
     let options = codewiki_ai_options(
         Some(AiRouteArg::Daemon),

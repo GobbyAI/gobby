@@ -311,6 +311,14 @@
       "positionals": [],
       "flags": [
         {
+          "name": "--project-id",
+          "takes_value": true,
+          "value_name": "PROJECT_ID",
+          "allowed_values": [],
+          "required": false,
+          "repeatable": false
+        },
+        {
           "name": "--force",
           "takes_value": false,
           "value_name": null,

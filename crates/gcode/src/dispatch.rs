@@ -83,6 +83,7 @@ fn service_config_selection(command: &Command) -> config::ServiceConfigSelection
     match command {
         Command::Index { .. } => ServiceConfigSelection::all(),
         Command::Status => ServiceConfigSelection::projection_cleanup(),
+        Command::Invalidate { .. } => ServiceConfigSelection::projection_cleanup(),
         Command::Codewiki { purge: true, .. } => ServiceConfigSelection::projection_cleanup(),
         Command::Graph { .. }
         | Command::Codewiki { .. }
@@ -107,7 +108,6 @@ fn service_config_selection(command: &Command) -> config::ServiceConfigSelection
         | Command::Init
         | Command::Setup { .. }
         | Command::Projects
-        | Command::Invalidate { .. }
         | Command::SearchText { .. }
         | Command::SearchContent { .. }
         | Command::Grep { .. }
@@ -216,6 +216,18 @@ where
             commands::status::prune(*force, cli.project.as_deref(), cli.quiet)?;
             Ok(true)
         }
+        Command::Invalidate {
+            project_id: Some(project_id),
+            force,
+        } => {
+            let ctx = config::Context::resolve_for_project_id_with_services(
+                project_id,
+                cli.quiet,
+                config::ServiceConfigSelection::projection_cleanup(),
+            )?;
+            commands::status::invalidate(&ctx, *force, format)?;
+            Ok(true)
+        }
         Command::Graph {
             command:
                 GraphCommand::Clear {
@@ -307,7 +319,14 @@ fn run() -> anyhow::Result<()> {
             ensure_project_fresh(&ctx, cli.no_freshness)?;
             commands::status::run(&ctx, format)
         }
-        Command::Invalidate { force } => commands::status::invalidate(&ctx, force, format),
+        Command::Invalidate {
+            project_id: None,
+            force,
+        } => commands::status::invalidate(&ctx, force, format),
+        Command::Invalidate {
+            project_id: Some(_),
+            ..
+        } => Ok(()),
         Command::Graph {
             command:
                 GraphCommand::SyncFile {

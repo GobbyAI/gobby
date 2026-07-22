@@ -19,6 +19,29 @@ fn test_parse_index_require_cpp_semantics() {
 }
 
 #[test]
+fn test_parse_invalidate_project_id() {
+    let cli = Cli::try_parse_from([
+        "gcode",
+        "invalidate",
+        "--project-id",
+        "019bfef8-89bb-7bd1-a5c3-80baabdff01b",
+        "--force",
+    ])
+    .expect("invalidate --project-id parses");
+
+    match cli.command {
+        Command::Invalidate { project_id, force } => {
+            assert_eq!(
+                project_id.as_deref(),
+                Some("019bfef8-89bb-7bd1-a5c3-80baabdff01b")
+            );
+            assert!(force);
+        }
+        _ => panic!("expected invalidate command"),
+    }
+}
+
+#[test]
 fn test_parse_callers_remains_top_level() {
     let cli = Cli::try_parse_from(["gcode", "callers", "handleAuth"]).expect("callers parses");
 

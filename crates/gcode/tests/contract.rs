@@ -168,6 +168,20 @@ fn codewiki_declares_repair_citations_flag() {
 }
 
 #[test]
+fn invalidate_declares_project_id_flag() {
+    let contract = serde_json::to_value(gobby_code::contract::contract()).expect("contract json");
+    let invalidate = command(&contract, "invalidate");
+
+    let has_flag = invalidate["flags"]
+        .as_array()
+        .expect("flags array")
+        .iter()
+        .any(|flag| flag["name"] == Value::String("--project-id".to_string()));
+
+    assert!(has_flag, "invalidate must declare the --project-id flag");
+}
+
+#[test]
 fn code_graph_writer_matches_shared_schema_contract() {
     let docs = schema_node_identities(shared_graph_schema_doc());
     let relationships = schema_relationship_shapes(shared_graph_schema_doc());

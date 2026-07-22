@@ -96,7 +96,10 @@ pub fn contract() -> CliContract {
             },
             CommandContract {
                 positionals: vec![],
-                flags: vec![FlagContract::switch("--force")],
+                flags: vec![
+                    FlagContract::value("--project-id", "PROJECT_ID"),
+                    FlagContract::switch("--force"),
+                ],
                 json_output_keys: vec![],
                 ..CommandContract::new("invalidate", "Clear index state and force re-index.")
             },

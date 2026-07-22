@@ -217,6 +217,9 @@ pub(crate) enum Command {
     Status,
     /// Clear index and force re-index
     Invalidate {
+        /// Clear index state for this project id without resolving cwd project context
+        #[arg(long)]
+        project_id: Option<String>,
         /// Skip confirmation prompt
         #[arg(long)]
         force: bool,
