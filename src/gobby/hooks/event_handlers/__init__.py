@@ -24,6 +24,7 @@ from gobby.hooks.events import HookEvent, HookEventType, HookResponse
 from gobby.hooks.session_types import HookSessionManager
 
 if TYPE_CHECKING:
+    from gobby.agents.attention_metadata import AttentionMetadataStore
     from gobby.autonomous.progress_tracker import ProgressTracker
     from gobby.code_index.trigger import CodeIndexTrigger
     from gobby.config.sessions import MemoryRecallConfig
@@ -72,6 +73,7 @@ class EventHandlers(
         get_machine_id: Callable[[], str] | None = None,
         resolve_project_id: Callable[[str | None, str | None], str] | None = None,
         code_index_trigger: CodeIndexTrigger | None = None,
+        attention_metadata_store: AttentionMetadataStore | None = None,
         event_loop: asyncio.AbstractEventLoop | None = None,
         logger: logging.Logger | None = None,
     ) -> None:
@@ -123,6 +125,7 @@ class EventHandlers(
         self._get_machine_id = get_machine_id or (lambda: "unknown-machine")
         self._resolve_project_id = resolve_project_id or (lambda p, c: p or "")
         self._code_index_trigger = code_index_trigger
+        self._attention_metadata_store = attention_metadata_store
         self._event_loop = event_loop
         self._dispatch_session_summaries_fn: (
             Callable[[str, bool, threading.Event | None, bool], None] | None
@@ -165,6 +168,10 @@ class EventHandlers(
     def set_liveness_monitor(self, monitor: SessionLivenessMonitor | None) -> None:
         """Connect the daemon's session liveness monitor to lifecycle hooks."""
         self._liveness_monitor = monitor
+
+    def set_attention_metadata_store(self, store: AttentionMetadataStore | None) -> None:
+        """Connect transient agent metadata to lifecycle hooks."""
+        self._attention_metadata_store = store
 
     def get_handler(
         self, event_type: HookEventType | str

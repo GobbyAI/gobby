@@ -88,6 +88,9 @@ def create_lifespan(
         else:
             logger.debug("Reusing preconfigured HookManager in daemon")
         server._hook_manager = app.state.hook_manager
+        app.state.hook_manager.event_handlers.set_attention_metadata_store(
+            server.services.attention_metadata_store
+        )
         if server.services.message_processor is not None:
             server.services.message_processor.set_hook_manager(app.state.hook_manager)
 

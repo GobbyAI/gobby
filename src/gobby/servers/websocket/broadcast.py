@@ -13,6 +13,7 @@ from typing import Any
 
 from websockets.exceptions import ConnectionClosed
 
+from gobby.agents.attention_metadata import AttentionMetadataStore
 from gobby.storage.attention import AttentionOrderingCoordinator
 from gobby.utils.json_helpers import json_dumps
 
@@ -29,9 +30,13 @@ class BroadcastMixin:
 
     clients: dict[Any, dict[str, Any]]
     _attention_ordering: AttentionOrderingCoordinator | None = None
+    _attention_metadata_store: AttentionMetadataStore | None = None
 
     def configure_attention_ordering(self, ordering: AttentionOrderingCoordinator) -> None:
         self._attention_ordering = ordering
+
+    def configure_attention_metadata(self, store: AttentionMetadataStore) -> None:
+        self._attention_metadata_store = store
 
     @property
     def attention_epoch(self) -> str | None:
@@ -318,6 +323,12 @@ class BroadcastMixin:
         **kwargs: Any,
     ) -> None:
         """Broadcast agent event."""
+        entry_id = kwargs.get("entry_id")
+        metadata_store = self._attention_metadata_store
+        if metadata_store is not None and isinstance(entry_id, str) and "metadata" not in kwargs:
+            metadata = metadata_store.get(entry_id)
+            if metadata is not None:
+                kwargs["metadata"] = metadata
         message = {
             "type": "agent_event",
             "event": event,

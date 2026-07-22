@@ -10,8 +10,9 @@ from datetime import datetime
 from typing import TYPE_CHECKING, Any, Literal, Self, cast
 
 from fastapi import APIRouter, HTTPException
-from pydantic import BaseModel, ConfigDict, field_validator, model_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
+from gobby.agents.attention_metadata import validate_metadata_text, validate_metadata_ttl_ms
 from gobby.agents.prompt_detector import PromptDetector
 from gobby.agents.tmux.text_injection import (
     AttentionInjectionError,
@@ -101,6 +102,25 @@ class AttentionSeenRequest(BaseModel):
         return value
 
 
+class AttentionMetadataRequest(BaseModel):
+    """One bounded, expiring display-only metadata report."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    text: str = Field(strict=True)
+    ttl_ms: int = Field(strict=True)
+
+    @field_validator("text")
+    @classmethod
+    def validate_text(cls, value: str) -> str:
+        return validate_metadata_text(value)
+
+    @field_validator("ttl_ms")
+    @classmethod
+    def validate_ttl_ms(cls, value: int) -> int:
+        return validate_metadata_ttl_ms(value)
+
+
 @dataclass(frozen=True, slots=True)
 class AttentionPane:
     """Resolved tmux target and its capture operation."""
@@ -161,6 +181,17 @@ def create_attention_router(
         )
         entries = await _load_roster_entries(server, snapshot)
         return {"epoch": snapshot.epoch, "seq": snapshot.seq, "entries": entries}
+
+    @router.post("/{entry_id}/metadata")
+    async def set_metadata(
+        entry_id: str,
+        request: AttentionMetadataRequest,
+    ) -> dict[str, object]:
+        metadata_store = getattr(server.services, "attention_metadata_store", None)
+        if metadata_store is None:
+            raise HTTPException(status_code=503, detail={"code": "attention_unavailable"})
+        metadata = metadata_store.set(entry_id, request.text, request.ttl_ms)
+        return {"status": "updated", "entry_id": entry_id, "metadata": metadata}
 
     @router.post("/{entry_id}/seen")
     async def mark_seen(entry_id: str, request: AttentionSeenRequest) -> dict[str, str]:

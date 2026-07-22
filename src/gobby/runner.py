@@ -24,6 +24,7 @@ from gobby.shutdown_intent import ShutdownIntent
 
 if TYPE_CHECKING:
     from gobby.adapters.codex_impl.client import CodexAppServerClient
+    from gobby.agents.attention_metadata import AttentionMetadataStore
     from gobby.agents.detection.registry import DetectionManifestRegistry
     from gobby.agents.lifecycle_monitor import AgentLifecycleMonitor
     from gobby.agents.runner import AgentRunner
@@ -177,6 +178,7 @@ class GobbyRunner:
     agent_lifecycle_monitor: AgentLifecycleMonitor | None
     detection_registry: DetectionManifestRegistry
     attention_manager: AttentionStateManager
+    attention_metadata_store: AttentionMetadataStore
     lifecycle_manager: SessionLifecycleManager
     cron_storage: CronJobStorage | None
     cron_scheduler: CronScheduler | None

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import logging
 import re
+from collections.abc import Mapping
 from typing import Any
 
 import psycopg
@@ -80,8 +81,38 @@ def _load_agent_prompt(
 class AgentEventHandlerMixin(EventHandlersBase):
     """Mixin for handling agent-related events."""
 
+    def _set_attention_metadata(
+        self,
+        event: HookEvent,
+        *,
+        text: object,
+        ttl_ms: object,
+    ) -> None:
+        store = getattr(self, "_attention_metadata_store", None)
+        session_id = event.metadata.get("_platform_session_id")
+        if store is None or not isinstance(session_id, str) or not session_id:
+            return
+        try:
+            store.set(f"session:{session_id}", text, ttl_ms)
+        except (TypeError, ValueError) as exc:
+            self.logger.warning("Dropped invalid attention metadata self-report: %s", exc)
+
+    def _apply_attention_metadata_report(self, event: HookEvent) -> None:
+        report = event.data.get("attention_metadata")
+        if report is None:
+            return
+        if not isinstance(report, Mapping) or set(report) != {"text", "ttl_ms"}:
+            self.logger.warning("Dropped invalid attention metadata self-report payload")
+            return
+        self._set_attention_metadata(
+            event,
+            text=report["text"],
+            ttl_ms=report["ttl_ms"],
+        )
+
     def handle_before_agent(self, event: HookEvent) -> HookResponse:
         """Handle BEFORE_AGENT event (user prompt submit)."""
+        self._apply_attention_metadata_report(event)
         input_data = event.data
         prompt = input_data.get("prompt", "")
         stripped_prompt = prompt.strip()
@@ -473,6 +504,7 @@ class AgentEventHandlerMixin(EventHandlersBase):
 
     def handle_after_agent(self, event: HookEvent) -> HookResponse:
         """Handle AFTER_AGENT event."""
+        self._apply_attention_metadata_report(event)
         session_id = event.metadata.get("_platform_session_id")
         cli_source = event.source.value
 
@@ -534,6 +566,7 @@ class AgentEventHandlerMixin(EventHandlersBase):
 
     def handle_pre_compact(self, event: HookEvent) -> HookResponse:
         """Handle PRE_COMPACT event."""
+        self._set_attention_metadata(event, text="compacting", ttl_ms=60_000)
         trigger = event.data.get("trigger", "auto")
         session_id = event.metadata.get("_platform_session_id")
 

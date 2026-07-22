@@ -81,6 +81,7 @@ class ServiceContainer:
     # Agent Lifecycle
     agent_lifecycle_monitor: Any | None = None  # AgentLifecycleMonitor
     attention_manager: Any | None = None  # AttentionStateManager
+    attention_metadata_store: Any | None = None  # AttentionMetadataStore
     detection_registry: DetectionManifestRegistry | None = None
 
     # Communications

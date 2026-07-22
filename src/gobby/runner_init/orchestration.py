@@ -140,6 +140,7 @@ def init_orchestration(runner: GobbyRunner) -> None:
         mark_service_degraded(runner, "workflow_loader")
         logger.warning("Failed to initialize workflow loader", exc_info=True)
 
+    from gobby.agents.attention_metadata import AttentionMetadataStore
     from gobby.agents.tmux import configure_tmux
     from gobby.events.completion_registry import CompletionEventRegistry
     from gobby.events.wake import WakeDispatcher
@@ -193,10 +194,27 @@ def init_orchestration(runner: GobbyRunner) -> None:
 
         future.add_done_callback(log_failure)
 
+    def publish_attention_metadata(payload: dict[str, object]) -> None:
+        loop = runner.main_loop
+        if loop is None or not loop.is_running() or loop.is_closed():
+            return
+
+        def publish() -> None:
+            from gobby.runner_broadcasting import fire_agent_event
+
+            entry_id = str(payload["entry_id"])
+            fire_agent_event("attention_metadata_changed", entry_id, dict(payload))
+
+        loop.call_soon_threadsafe(publish)
+
     runner.attention_manager = AttentionStateManager(
         runner.database,
         event_publisher=publish_attention_event,
         notification_publisher=publish_attention_notification,
+    )
+    runner.attention_metadata_store = AttentionMetadataStore(
+        runner.attention_manager.ordering,
+        event_publisher=publish_attention_metadata,
     )
 
     runner.wake_dispatcher = WakeDispatcher(
@@ -260,6 +278,7 @@ def init_orchestration(runner: GobbyRunner) -> None:
             ),
             run_db=runner.db_executor.run,
             attention_manager=runner.attention_manager,
+            attention_metadata_store=runner.attention_metadata_store,
         )
     except Exception:
         mark_service_degraded(runner, "agent_lifecycle_monitor")

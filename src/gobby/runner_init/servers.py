@@ -60,6 +60,7 @@ def init_servers(runner: GobbyRunner) -> None:
         wake_dispatcher=runner.wake_dispatcher,
         agent_lifecycle_monitor=runner.agent_lifecycle_monitor,
         attention_manager=getattr(runner, "attention_manager", None),
+        attention_metadata_store=getattr(runner, "attention_metadata_store", None),
         detection_registry=runner.detection_registry,
         communications_manager=runner.communications_manager,
         code_indexer=runner.code_indexer,
@@ -146,6 +147,9 @@ def init_servers(runner: GobbyRunner) -> None:
         attention_manager = services.attention_manager
         if attention_manager is not None:
             runner.websocket_server.configure_attention_ordering(attention_manager.ordering)
+        attention_metadata_store = services.attention_metadata_store
+        if attention_metadata_store is not None:
+            runner.websocket_server.configure_attention_metadata(attention_metadata_store)
         runner.http_server.websocket_server = runner.websocket_server
         runner.http_server.services.websocket_server = runner.websocket_server
         runner.http_server.broadcaster.websocket_server = runner.websocket_server

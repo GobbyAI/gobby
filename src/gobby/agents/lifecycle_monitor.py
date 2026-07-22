@@ -34,6 +34,7 @@ from gobby.storage.tasks import TaskDispatchMutexManager
 from gobby.telemetry.instruments import inc_counter, observe_histogram
 
 if TYPE_CHECKING:
+    from gobby.agents.attention_metadata import AttentionMetadataStore
     from gobby.agents.detection.registry import DetectionManifestRegistry
     from gobby.autonomous.stuck_detector import StuckDetector
     from gobby.events.completion_registry import CompletionEventRegistry
@@ -113,6 +114,7 @@ class AgentLifecycleMonitor:
         stuck_detector: StuckDetector | None = None,
         run_db: Callable[..., Awaitable[Any]] | None = None,
         attention_manager: AttentionStateManager | None = None,
+        attention_metadata_store: AttentionMetadataStore | None = None,
     ) -> None:
         self._agent_run_manager = agent_run_manager
         self._db = db
@@ -211,6 +213,7 @@ class AgentLifecycleMonitor:
             task_manager=task_manager,
             run_db=run_db,
             attention_manager=attention_manager,
+            attention_metadata_store=attention_metadata_store,
             prompt_detector=self._prompt_detector,
             stall_classifier=self._stall_classifier,
         )

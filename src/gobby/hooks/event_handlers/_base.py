@@ -11,6 +11,7 @@ from gobby.hooks.events import HookEvent, HookEventType, HookResponse
 from gobby.hooks.session_types import HookSessionManager
 
 if TYPE_CHECKING:
+    from gobby.agents.attention_metadata import AttentionMetadataStore
     from gobby.autonomous.progress_tracker import ProgressTracker
     from gobby.config.sessions import MemoryRecallConfig
     from gobby.config.skills import SkillsConfig
@@ -32,6 +33,7 @@ class EventHandlersBase:
 
     _session_manager: HookSessionManager | None
     _liveness_monitor: SessionLivenessMonitor | None
+    _attention_metadata_store: AttentionMetadataStore | None
     _workflow_handler: WorkflowHookHandler | None
     _workflow_config: WorkflowConfig | None
     _session_task_manager: SessionTaskManager | None

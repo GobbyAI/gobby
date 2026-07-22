@@ -6,7 +6,6 @@ import logging
 import re
 from collections import deque
 from collections.abc import Awaitable, Callable
-from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any, cast
 
@@ -14,6 +13,11 @@ import psycopg
 import pydantic
 
 from gobby.agents.capture import terminate_managed_tmux_async
+from gobby.agents.idle_check_models import (
+    _CodexCapacityRecoveryState,
+    _CodexTranscriptEventSummary,
+    _CodexTranscriptSnapshot,
+)
 from gobby.agents.idle_detector import IdleDetector
 from gobby.agents.prompt_detector import PromptDetector, PromptKind
 from gobby.agents.stall_classifier import StallClassifier, StallStatus
@@ -24,6 +28,7 @@ from gobby.workflows.step_context import get_active_step_workflow_context
 
 if TYPE_CHECKING:
     from gobby.agents.agent_cleanup import AgentCleanupHandler
+    from gobby.agents.attention_metadata import AttentionMetadataStore
     from gobby.agents.tmux.session_manager import TmuxSessionManager
     from gobby.config.tmux import TmuxConfig
     from gobby.storage.agents import AgentRun, LocalAgentRunManager, TerminalAction
@@ -44,78 +49,6 @@ REASONING_WATCHDOG_CONTINUATION = (
 )
 
 
-@dataclass(frozen=True, slots=True)
-class _CodexTranscriptEventSummary:
-    line_num: int
-    timestamp: str | None
-    event_type: str
-    payload_type: str
-
-    def to_log_dict(self) -> dict[str, object]:
-        return {
-            "line_num": self.line_num,
-            "timestamp": self.timestamp,
-            "event_type": self.event_type,
-            "payload_type": self.payload_type,
-        }
-
-
-@dataclass(frozen=True, slots=True)
-class _CodexTranscriptSnapshot:
-    response_items: tuple[_CodexTranscriptEventSummary, ...]
-    lifecycle_event: _CodexTranscriptEventSummary | None
-    task_started_event: _CodexTranscriptEventSummary | None
-    capacity_error_event: _CodexTranscriptEventSummary | None
-    latest_model_output_line_num: int | None
-    last_malformed_line_num: int | None = None
-
-    @property
-    def latest_response_payload_type(self) -> str | None:
-        if not self.response_items:
-            return None
-        return self.response_items[-1].payload_type
-
-    @property
-    def has_conclusive_task_complete(self) -> bool:
-        event = self.lifecycle_event
-        if event is None or event.payload_type != "task_complete":
-            return False
-        return self.last_malformed_line_num is None
-
-    @property
-    def has_conclusive_capacity_error(self) -> bool:
-        started = self.task_started_event
-        error = self.capacity_error_event
-        completed = self.lifecycle_event
-        if started is None or error is None or completed is None:
-            return False
-        if completed.payload_type != "task_complete":
-            return False
-        if not started.line_num < error.line_num < completed.line_num:
-            return False
-        return self.last_malformed_line_num is None
-
-    def to_log_dict(self) -> dict[str, object]:
-        return {
-            "response_items": [item.to_log_dict() for item in self.response_items],
-            "lifecycle_event": (
-                self.lifecycle_event.to_log_dict() if self.lifecycle_event is not None else None
-            ),
-            "capacity_error_event": (
-                self.capacity_error_event.to_log_dict()
-                if self.capacity_error_event is not None
-                else None
-            ),
-        }
-
-
-@dataclass(slots=True)
-class _CodexCapacityRecoveryState:
-    transcript_path: str
-    last_error_line_num: int | None = None
-    successful_reprompts: int = 0
-
-
 class IdleCheckHandler:
     """Handles idle detection and reprompting for agents."""
 
@@ -133,6 +66,7 @@ class IdleCheckHandler:
         task_manager: LocalTaskManager | None = None,
         run_db: Callable[..., Awaitable[Any]] | None = None,
         attention_manager: AttentionStateManager | None = None,
+        attention_metadata_store: AttentionMetadataStore | None = None,
     ) -> None:
         self._agent_run_manager = agent_run_manager
         self.db = db
@@ -144,6 +78,7 @@ class IdleCheckHandler:
         self._task_manager = task_manager
         self._run_db_callback = run_db
         self._attention_manager = attention_manager
+        self._attention_metadata_store = attention_metadata_store
         self._prompt_detector = prompt_detector
         self._stall_classifier = stall_classifier
         self._codex_capacity_recovery: dict[str, _CodexCapacityRecoveryState] = {}
@@ -164,21 +99,24 @@ class IdleCheckHandler:
         reason: PromptKind | None = None
         kind: AttentionKind | None = None
         detected = prompt_detector.detect_prompt(pane_output)
-        if (
+        approval_dismissed = (
             detected is not None
             and detected.kind == "approval"
-            and (
-                not self._tmux_config.auto_enter_approval_prompts
-                or prompt_detector.was_approval_prompt_dismissed(run.id, pane_output)
-            )
-        ):
-            reason = "approval"
-            kind = "actionable"
-        elif (
+            and prompt_detector.was_approval_prompt_dismissed(run.id, pane_output)
+        )
+        trust_dismissed = (
             detected is not None
             and detected.kind == "trust"
             and prompt_detector.was_dismissed(run.id)
+        )
+        if (
+            detected is not None
+            and detected.kind == "approval"
+            and (not self._tmux_config.auto_enter_approval_prompts or approval_dismissed)
         ):
+            reason = "approval"
+            kind = "actionable"
+        elif detected is not None and detected.kind == "trust" and trust_dismissed:
             reason = "trust"
             kind = "actionable"
         elif detected is not None and detected.kind == "question":
@@ -194,8 +132,15 @@ class IdleCheckHandler:
                 reason = "stall"
                 kind = "non_actionable"
 
+        entry_id = run_attention_entry_id(run.id)
+        if self._attention_metadata_store is not None:
+            if reason == "stall":
+                self._attention_metadata_store.set(entry_id, "retrying provider", 30_000)
+            elif approval_dismissed or trust_dismissed:
+                self._attention_metadata_store.set(entry_id, "needs attention", 60_000)
+
         if reason is None or kind is None:
-            await self._clear_attention_if_current(run_attention_entry_id(run.id))
+            await self._clear_attention_if_current(entry_id)
             return
 
         prompt_payload = (
@@ -205,7 +150,7 @@ class IdleCheckHandler:
         )
         await manager.transition_async(
             self._run_db,
-            run_attention_entry_id(run.id),
+            entry_id,
             state="blocked",
             run_id=run.id,
             session_id=run.child_session_id,
