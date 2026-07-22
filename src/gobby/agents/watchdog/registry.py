@@ -2,16 +2,18 @@
 
 from gobby.agents.watchdog.claude import CLAUDE_WATCHDOG_READER
 from gobby.agents.watchdog.codex import CODEX_WATCHDOG_READER
+from gobby.agents.watchdog.droid import DROID_WATCHDOG_READER
 from gobby.agents.watchdog.grok import GROK_WATCHDOG_READER
 from gobby.agents.watchdog.models import KNOWN_WATCHDOG_PROVIDERS
+from gobby.agents.watchdog.qwen import QWEN_WATCHDOG_READER
 from gobby.agents.watchdog.reader import TranscriptWatchdogReader
 
 _READERS: dict[str, TranscriptWatchdogReader | None] = {
     "claude": CLAUDE_WATCHDOG_READER,
     "codex": CODEX_WATCHDOG_READER,
-    "droid": None,
+    "droid": DROID_WATCHDOG_READER,
     "grok": GROK_WATCHDOG_READER,
-    "qwen": None,
+    "qwen": QWEN_WATCHDOG_READER,
 }
 
 assert frozenset(_READERS) == KNOWN_WATCHDOG_PROVIDERS

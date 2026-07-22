@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import logging
 import time
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
@@ -224,6 +225,24 @@ def _write_grok_lifecycle_transcript(path: Path, *, age_seconds: int = 120) -> N
             },
             "timestamp": timestamp,
         },
+    ]
+    path.write_text(
+        "\n".join(json.dumps(record) for record in records) + "\n",
+        encoding="utf-8",
+    )
+
+
+def _write_droid_lifecycle_transcript(path: Path, *, secret: str) -> None:
+    timestamp = (datetime.now(UTC) - timedelta(seconds=120)).isoformat()
+    records = [
+        {
+            "type": "message",
+            "timestamp": timestamp,
+            "message": {
+                "role": "assistant",
+                "content": [{"type": "thinking", "thinking": secret}],
+            },
+        }
     ]
     path.write_text(
         "\n".join(json.dumps(record) for record in records) + "\n",
@@ -1233,3 +1252,58 @@ async def test_no_reader_provider_uses_shared_idle_path_without_transcript_read(
         ]
     )
     assert monitor._idle_detector.get_state(run.id).reprompt_count == 1
+
+
+@pytest.mark.asyncio
+async def test_droid_diagnostics_only_reader_uses_shared_reprompt_and_redacted_log(
+    temp_db: HubDatabase,
+    session_manager: SessionManager,
+    sample_project: dict[str, Any],
+    agent_run_manager: LocalAgentRunManager,
+    tmp_path: Path,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    secret = "droid-lifecycle-secret"
+    transcript_path = tmp_path / "droid-diagnostic.jsonl"
+    _write_droid_lifecycle_transcript(transcript_path, secret=secret)
+    monitor, run = _make_idle_monitor_run(
+        temp_db=temp_db,
+        session_manager=session_manager,
+        sample_project=sample_project,
+        agent_run_manager=agent_run_manager,
+        run_id="dddddddd-dddd-4ddd-8ddd-dddddddd1017",
+        transcript_path=transcript_path,
+        child_source="droid",
+    )
+    monitor._idle_detector.get_state(run.id).first_idle_at = time.monotonic() - 360
+
+    with (
+        caplog.at_level(logging.WARNING),
+        patch.object(monitor._tmux, "capture_pane", new_callable=AsyncMock, return_value="❯\n"),
+        patch.object(
+            monitor._tmux,
+            "send_keys",
+            new_callable=AsyncMock,
+            return_value=True,
+        ) as mock_send,
+        patch.object(
+            monitor._idle_check_handler,
+            "_idle_reprompt_message",
+            new_callable=AsyncMock,
+            return_value="shared continuation",
+        ),
+    ):
+        handled = await monitor.check_idle_agents()
+
+    assert handled == 1
+    mock_send.assert_has_awaits(
+        [
+            call(run.tmux_session_name, "Escape", literal=False),
+            call(run.tmux_session_name, "shared continuation"),
+            call(run.tmux_session_name, "Enter", literal=False),
+        ]
+    )
+    diagnostic = "\n".join(caplog.messages)
+    assert "Watchdog idle diagnostic for droid" in diagnostic
+    assert '"latest_activity_kind": "reasoning"' in diagnostic
+    assert secret not in diagnostic

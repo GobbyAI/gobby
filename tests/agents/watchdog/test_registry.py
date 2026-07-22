@@ -32,6 +32,16 @@ def test_registry_normalizes_grok_and_returns_reader() -> None:
     assert reader.supports_reasoning_interrupt is False
 
 
-@pytest.mark.parametrize("provider", ["agy", "droid", "qwen", "unknown"])
+@pytest.mark.parametrize("provider", ["droid", "qwen"])
+def test_registry_returns_diagnostics_only_readers(provider: str) -> None:
+    reader = WatchdogReaderRegistry().for_provider(provider.upper())
+
+    assert reader is not None
+    assert reader.provider_id == provider
+    assert reader.capacity_pane_message is None
+    assert reader.supports_reasoning_interrupt is False
+
+
+@pytest.mark.parametrize("provider", ["agy", "unknown"])
 def test_registry_returns_none_for_uninstalled_readers(provider: str) -> None:
     assert WatchdogReaderRegistry().for_provider(provider) is None
