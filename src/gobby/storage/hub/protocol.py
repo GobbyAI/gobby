@@ -325,6 +325,11 @@ class HubDatabase(Protocol):
 
     dialect: Literal["postgres"]
 
+    @property
+    def conninfo(self) -> str:
+        """Return the normalized PostgreSQL connection string for async consumers."""
+        ...
+
     def transaction(self) -> AbstractContextManager[Transaction]:
         """Open a transaction and yield a backend-neutral executor."""
         ...

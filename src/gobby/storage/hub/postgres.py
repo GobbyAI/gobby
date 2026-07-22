@@ -202,6 +202,11 @@ class PostgresHubDatabase:
         self._pool_open_timeout = pool_config.open_timeout_seconds
         _OPEN_DATABASES.add(self)
 
+    @property
+    def conninfo(self) -> str:
+        """Return the normalized connection string without exposing the sync pool."""
+        return self._conninfo
+
     def open(self, *, wait: bool = True, timeout: float | None = None) -> None:
         """Open the lazy connection pool before first use."""
         if getattr(self, "_pool_closed", False):

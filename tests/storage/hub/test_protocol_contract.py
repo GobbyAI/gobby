@@ -3,6 +3,7 @@ from __future__ import annotations
 import importlib
 import inspect
 from collections.abc import Callable, Mapping, Sequence
+from types import ModuleType
 from typing import Any, ClassVar, Literal, get_args, get_origin, get_type_hints
 
 import pytest
@@ -10,7 +11,7 @@ import pytest
 pytestmark = pytest.mark.unit
 
 
-def _protocol_module():
+def _protocol_module() -> ModuleType:
     return importlib.import_module("gobby.storage.hub.protocol")
 
 
@@ -126,6 +127,31 @@ def test_hub_database_exposes_regular_and_immediate_transactions() -> None:
         "after_commit",
     ):
         assert hasattr(module.HubDatabase, method), method
+
+
+def test_hub_database_exposes_read_only_conninfo() -> None:
+    module = _protocol_module()
+
+    protocol_property = module.HubDatabase.conninfo
+    assert isinstance(protocol_property, property)
+    assert protocol_property.fset is None
+    assert get_type_hints(protocol_property.fget)["return"] is str
+
+    postgres_module = importlib.import_module("gobby.storage.hub.postgres")
+    concrete_property = postgres_module.PostgresHubDatabase.conninfo
+    assert isinstance(concrete_property, property)
+    assert concrete_property.fset is None
+    assert get_type_hints(concrete_property.fget)["return"] is str
+
+    database = postgres_module.PostgresHubDatabase("postgresql://gobby:secret@localhost/gobby")
+    try:
+        assert database.conninfo == (
+            "user=gobby password=secret dbname=gobby host=localhost options=-ctimezone=UTC"
+        )
+        with pytest.raises(AttributeError):
+            concrete_property.__set__(database, "postgresql://replacement")
+    finally:
+        database.close()
 
 
 def test_protocol_annotations_do_not_leak_removed_driver_types() -> None:
