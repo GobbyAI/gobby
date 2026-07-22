@@ -18,7 +18,9 @@ at the pipeline.
   creating new entries.
 - A compiled, cited topic page at `knowledge/topics/<slug>.md` (explicit
   topic + full source list).
-- A run report page and a `log.md` append.
+- An ingested run report source under `raw/`; `wiki_compile` records the topic
+  page creation in `log.md` automatically. `outputs/` remains reserved for
+  generated artifacts.
 - Optional follow-up investigation tasks (label `wiki-research`,
   `allow_automation` untouched) when `create_tasks` is `"true"`.
 
@@ -118,7 +120,8 @@ See `docs/guides/cron-scheduler.md` for general cron behavior and
 ## Verify a pass
 
 - `gwiki sources` lists the fetched URLs and note sources.
+- `gwiki sources` lists the ingested run report source.
 - `knowledge/topics/<slug>.md` exists and carries `[source: …]` citations.
 - `gwiki audit` (or `wiki_audit` over MCP) must not flag the topic page.
 - Re-running the same question re-uses unchanged sources (no new manifest
-  entries) and writes a fresh run report.
+  entries) and ingests a fresh run report.

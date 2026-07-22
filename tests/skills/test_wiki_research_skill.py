@@ -31,10 +31,16 @@ def test_investigation_tasks_require_triage_before_filing() -> None:
 
 
 def test_run_report_records_triaged_away_items() -> None:
-    """Step 9's report checklist must include triage outcomes."""
+    """Step 9 must produce a reachable report without writing generated surfaces."""
     parsed = parse_skill_file(SKILL_PATH)
     body = parsed.content
 
     section_9 = body.split("## 9. Run report")[1].split("## 10.")[0]
     assert "items triaged away in step 8" in section_9
     assert "duplicate task refs or prior-art reasons" in section_9
+    assert "`wiki_ingest`" in section_9
+    assert "local path" in section_9
+    assert "vault source under `raw/`" in section_9
+    assert "`outputs/**` reserved for generated artifacts" in section_9
+    assert "`wiki_compile` records" in section_9
+    assert "Append one line" not in section_9

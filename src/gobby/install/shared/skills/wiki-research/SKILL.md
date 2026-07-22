@@ -146,18 +146,24 @@ Skipped filings are visible, never silent.
 
 ## 9. Run report
 
-Write a run report page under `outputs/` covering: the question, angles
-searched, candidates found, keep/discard reasons, dedup hits, ingest failures,
-compiled page path, tasks filed, and items triaged away in step 8 (with their
-duplicate task refs or prior-art reasons). Append one line to the vault's
-`log.md` recording the run and linking the report and topic page.
+Write the run report to a temporary local Markdown file covering: the question,
+angles searched, candidates found, keep/discard reasons, dedup hits, ingest
+failures, compiled page path, tasks filed, and items triaged away in step 8
+(with their duplicate task refs or prior-art reasons). Then `wiki_ingest` the
+local path so the report becomes a vault source under `raw/`; retain the
+returned source path as the run report path.
+
+Keep `outputs/**` reserved for generated artifacts; `wiki_write_page` only
+writes `knowledge/**`. Leave the root `log.md` to gwiki: `wiki_compile` records
+the topic page creation there automatically.
 
 ## 10. Finish
 
 Close your claimed task with the DEFAULT completed reason and a
 `changes_summary` naming the compiled topic page path, the run report path,
-and the source count (attach `commit_sha` only when repo files actually
-changed — vault-only runs close without a commit). Never close with
+and the source count (the run report path is its ingested `raw/` source path;
+attach `commit_sha` only when repo files actually changed — vault-only runs
+close without a commit). Never close with
 `out_of_repo`, `wont_fix`, or any validation-skipping reason: validation must
 check your summary against the task's criteria. Then call `end_agent_run`.
 Never leave the run open after the report is written.
