@@ -92,7 +92,7 @@ class TestWikiResearchDefinition:
             "topic_slug": "",
             "max_sources": 12,
             "max_items": 8,
-            "create_tasks": "true",
+            "create_tasks": "false",
             "provider": "claude",
             "model": "sonnet",
         }
@@ -177,7 +177,7 @@ class TestWikiResearchDynamicTool:
         assert properties["question"]["type"] == "string"
         assert properties["max_sources"]["default"] == 12
         assert properties["max_items"]["default"] == 8
-        assert properties["create_tasks"]["default"] == "true"
+        assert properties["create_tasks"]["default"] == "false"
         assert properties["provider"]["default"] == "claude"
         assert properties["model"]["default"] == "sonnet"
         assert properties["topic_slug"]["default"] == ""

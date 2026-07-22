@@ -143,12 +143,15 @@ fn daemon_synthesis_attributed_sections(page: &WikiPage) -> BTreeSet<String> {
     attributed
 }
 
-/// Deterministic catalog surfaces rebuilt by `catalog::regenerate` from
-/// on-disk vault state with no LLM involvement. They are navigation
-/// artifacts — derived listings and `(none yet)` placeholders, never claims
-/// needing provenance — so the audit skips them the same way it skips
-/// manifest-backed source digests.
-const CATALOG_PAGES: &[&str] = &["_index.md", "knowledge/INDEX.md", "code/INDEX.md"];
+/// Catalogs, per-folder context surfaces, and the wiki-research review backlog
+/// are navigation or triage artifacts rather than synthesized knowledge. The
+/// audit skips them the same way it skips manifest-backed source digests.
+const CATALOG_PAGES: &[&str] = &[
+    "_index.md",
+    "knowledge/INDEX.md",
+    "code/INDEX.md",
+    "knowledge/topics/wiki-research-backlog.md",
+];
 
 fn is_catalog_page(page: &WikiPage) -> bool {
     let page_path = page.relative_path.to_string_lossy().replace('\\', "/");

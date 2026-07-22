@@ -53,6 +53,9 @@ instructions: |
   - Partial results are still results: per-source failures become `gap:`
     lines, whatever ingested gets compiled, and the run report records every
     failure. Never abandon the run because some sources failed.
+  - The canonical destination for every finding is
+    `knowledge/topics/wiki-research-backlog.md`; `create_tasks=true` only adds
+    an optional linked task after the backlog entry exists.
   - Do NOT call approve_review or reject_review — close_task handles validation.
   - Do NOT call reopen_task or de_escalate_task — close_task is your only lifecycle transition.
   - `close_task` must happen before the workflow can satisfy end-of-turn gates and terminate.
@@ -136,19 +139,22 @@ steps:
     status_message: |
       Follow the wiki-research skill: bootstrap context, discover up to
       max_sources, curate to max_items, dedup, ingest, write accepted notes,
-      compile with an explicit topic and full source list, triage follow-up
-      findings against existing tasks and prior art before filing, write the
-      run report, then call close_task with a changes_summary — pass task_id set
-      to your assigned_task_id EXACTLY as given; closing any other task does
-      not complete this workflow. Escalate only for blocking missing
-      decisions.
+      compile with an explicit topic and full source list, append idempotent
+      finding entries to the central review backlog plus compact topic
+      backlinks, optionally triage and file linked tasks when create_tasks is
+      true, write the run report, then call close_task with a changes_summary —
+      pass task_id set to your assigned_task_id EXACTLY as given; closing any
+      other task does not complete this workflow. Escalate only for blocking
+      missing decisions.
     allowed_tools: "all"
     allowed_mcp_tools:
       - "gobby-wiki:wiki_ask"
       - "gobby-wiki:wiki_search"
+      - "gobby-wiki:wiki_read"
       - "gobby-wiki:wiki_list_sources"
       - "gobby-wiki:wiki_ingest"
       - "gobby-wiki:wiki_compile"
+      - "gobby-wiki:wiki_write_page"
       - "gobby-tasks:*"
       - "gobby-skills:get_skill"
       - "gobby-agents:end_agent_run"

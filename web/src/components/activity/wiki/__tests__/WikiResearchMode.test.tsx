@@ -311,7 +311,7 @@ describe("WikiResearchMode launch", () => {
         topic_slug: "",
         max_sources: 12,
         max_items: 8,
-        create_tasks: "true",
+        create_tasks: "false",
         provider: "claude",
         model: "",
       },
@@ -352,7 +352,7 @@ describe("WikiResearchMode launch", () => {
       topic_slug: "dispatch-rules",
       max_sources: 5,
       max_items: 3,
-      create_tasks: "false",
+      create_tasks: "true",
       provider: "codex",
       model: "gpt-5.1-codex",
     });

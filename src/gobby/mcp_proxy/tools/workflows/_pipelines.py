@@ -27,6 +27,7 @@ from gobby.mcp_proxy.tools.workflows._pipeline_execution import (
     run_pipeline,
 )
 from gobby.mcp_proxy.tools.workflows._pipeline_query import (
+    clear_pipeline_execution_history,
     list_pipeline_executions,
     search_pipeline_executions,
 )
@@ -413,6 +414,28 @@ def register_pipeline_tools(
             limit=limit,
             offset=offset,
             include_steps=include_steps,
+        )
+
+    @registry.tool(
+        name="clear_pipeline_execution_history",
+        description=(
+            "Preview or clear terminal execution history for one pipeline in the "
+            "current project. Defaults to a non-destructive preview; pass "
+            "confirm=true to delete. Refuses deletion while any selected execution "
+            "or descendant is active."
+        ),
+    )
+    def _clear_pipeline_execution_history(
+        pipeline_name: str,
+        confirm: bool = False,
+    ) -> dict[str, Any]:
+        em = _get_execution_manager()
+        if em is None:
+            return {"success": False, "error": "Pipeline execution manager not available"}
+        return clear_pipeline_execution_history(
+            execution_manager=em,
+            pipeline_name=pipeline_name,
+            confirm=confirm,
         )
 
     @registry.tool(

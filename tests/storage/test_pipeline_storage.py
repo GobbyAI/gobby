@@ -100,6 +100,113 @@ def test_unscoped_manager_reads_executions_across_projects(
     )
 
 
+class TestPipelineExecutionHistoryCleanup:
+    """Project-scoped preview and destructive cleanup safety."""
+
+    def test_preview_and_clear_cascade_terminal_descendants_and_steps(
+        self, db: HubDatabase, manager: LocalPipelineExecutionManager
+    ) -> None:
+        parent = manager.create_execution(pipeline_name="wiki-research")
+        child = manager.create_execution(
+            pipeline_name="nested-worker",
+            parent_execution_id=parent.id,
+        )
+        step = manager.create_step_execution(child.id, "work")
+        manager.update_step_execution(step.id, StepStatus.COMPLETED)
+        manager.update_execution_status(child.id, ExecutionStatus.COMPLETED)
+        manager.update_execution_status(parent.id, ExecutionStatus.COMPLETED)
+
+        db.execute(
+            "INSERT INTO projects (id, name, created_at, updated_at) "
+            "VALUES (%s, %s, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)",
+            (OTHER_PROJECT_ID, "Other Project"),
+        )
+        other_manager = LocalPipelineExecutionManager(db, project_id=OTHER_PROJECT_ID)
+        other = other_manager.create_execution(pipeline_name="wiki-research")
+        other_manager.update_execution_status(other.id, ExecutionStatus.COMPLETED)
+
+        preview = manager.preview_pipeline_execution_history("wiki-research")
+        assert preview == {
+            "pipeline_name": "wiki-research",
+            "project_id": PROJECT_ID,
+            "matching_count": 1,
+            "terminal_count": 1,
+            "selected_count": 2,
+            "descendant_count": 1,
+            "status_counts": {"completed": 1},
+            "selected_status_counts": {"completed": 2},
+            "blocking_count": 0,
+            "blockers": [],
+            "can_clear": True,
+            "status": "preview",
+            "deleted_count": 0,
+            "deleted_descendant_count": 0,
+        }
+
+        result = manager.clear_pipeline_execution_history("wiki-research")
+
+        assert result["status"] == "cleared"
+        assert result["deleted_count"] == 1
+        assert result["deleted_descendant_count"] == 1
+        assert manager.get_execution(parent.id) is None
+        assert manager.get_execution(child.id) is None
+        assert (
+            db.fetchone("SELECT id FROM step_executions WHERE execution_id = %s", (child.id,))
+            is None
+        )
+        assert other_manager.get_execution(other.id) is not None
+
+    @pytest.mark.parametrize(
+        "status",
+        [
+            ExecutionStatus.PENDING,
+            ExecutionStatus.RUNNING,
+            ExecutionStatus.WAITING_APPROVAL,
+            ExecutionStatus.INTERRUPTED,
+        ],
+    )
+    def test_clear_refuses_active_matching_execution(
+        self,
+        manager: LocalPipelineExecutionManager,
+        status: ExecutionStatus,
+    ) -> None:
+        execution = manager.create_execution(pipeline_name="wiki-research")
+        if status is not ExecutionStatus.PENDING:
+            manager.update_execution_status(execution.id, status)
+
+        result = manager.clear_pipeline_execution_history("wiki-research")
+
+        assert result["status"] == "blocked"
+        assert result["blocking_count"] == 1
+        assert result["deleted_count"] == 0
+        assert manager.get_execution(execution.id) is not None
+
+    def test_clear_refuses_active_descendant(self, manager: LocalPipelineExecutionManager) -> None:
+        parent = manager.create_execution(pipeline_name="wiki-research")
+        child = manager.create_execution(
+            pipeline_name="nested-worker",
+            parent_execution_id=parent.id,
+        )
+        manager.update_execution_status(parent.id, ExecutionStatus.COMPLETED)
+
+        preview = manager.preview_pipeline_execution_history("wiki-research")
+        result = manager.clear_pipeline_execution_history("wiki-research")
+
+        assert preview["status"] == "blocked"
+        assert preview["blockers"] == [
+            {"id": child.id, "pipeline_name": "nested-worker", "status": "pending"}
+        ]
+        assert result["status"] == "blocked"
+        assert result["deleted_count"] == 0
+        assert manager.get_execution(parent.id) is not None
+
+    def test_unscoped_manager_cannot_clear_history(self, db: HubDatabase) -> None:
+        unscoped = LocalPipelineExecutionManager(db, project_id=None)
+
+        with pytest.raises(ValueError, match="requires a project scope"):
+            unscoped.preview_pipeline_execution_history("wiki-research")
+
+
 class TestCreateExecution:
     """Tests for create_execution method."""
 

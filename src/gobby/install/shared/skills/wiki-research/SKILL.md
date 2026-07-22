@@ -1,6 +1,6 @@
 ---
 name: wiki-research
-description: Run one wiki research pass — scope a question against the repo and vault, discover and curate sources, ingest with dedup, write accepted notes, compile a cited topic page, and optionally file investigation tasks.
+description: Run one wiki research pass — scope a question against the repo and vault, discover and curate sources, ingest with dedup, compile a cited topic page, and record findings in the review backlog.
 version: "1.0.0"
 category: methodology
 internal: true
@@ -15,13 +15,14 @@ metadata:
 Use this skill when spawned to answer a research question into the wiki. One
 run = one question = one cited topic page. Inputs arrive with the question:
 `max_sources` (discovery stop), `max_items` (curation cap), `create_tasks`
-(whether findings become gobby-tasks), and optionally an explicit output
-contract. **Explicit output-contract instructions in the question override the
-default note template in step 6.**
+(whether backlog findings also become gobby-tasks), and optionally an explicit
+output contract. **Explicit output-contract instructions in the question
+override the default note template in step 6.**
 
 All wiki tools live on the `gobby-wiki` MCP server (`wiki_ask`, `wiki_search`,
-`wiki_list_sources`, `wiki_ingest`, `wiki_compile`). Discover them through
-progressive discovery before first use.
+`wiki_read`, `wiki_list_sources`, `wiki_ingest`, `wiki_compile`,
+`wiki_write_page`). Discover them through progressive discovery before first
+use.
 
 **Scope warning — never pass `topic` or `project` arguments to wiki tools.**
 Those parameters select the wiki SCOPE: `topic=<name>` routes every ingest and
@@ -120,7 +121,66 @@ implicit call can hijack or be hijacked by unrelated checkpoint state. Use
 kebab-cased question topic. Remember: `compile_topic` names the article;
 the `topic` parameter would switch wiki scope — never pass it.
 
-## 8. Investigation tasks (only when `create_tasks`)
+## 8. Review backlog (always)
+
+The canonical destination for findings is
+`knowledge/topics/wiki-research-backlog.md`. Read it with `wiki_read`; if it
+does not exist, create it with `wiki_write_page` using this header:
+
+```markdown
+---
+title: Wiki research review backlog
+source_kind: topic
+lifecycle: draft
+tags:
+  - wiki-research
+  - backlog
+---
+
+# Wiki Research Review Backlog
+
+Detailed research ideas awaiting manual review. Status edits on existing
+entries are authoritative and must be preserved by later research runs.
+
+## Findings
+```
+
+Append one entry per kept item. The finding slug is the kebab-cased accepted
+note basename, which is stable across retries. Derive both hidden markers from
+the canonical compiled topic path and that finding slug. Use this exact shape:
+
+```markdown
+<!-- wiki-research-backlog:knowledge/topics/<topic>.md#<finding-slug> -->
+<a id="wiki-research-<topic>--<finding-slug>"></a>
+### <finding title>
+
+- Status: pending review
+- Topic: [[knowledge/topics/<topic>|<compiled topic title>]]
+- Rationale: <concrete connection to gobby>
+- Investigation prompt: <the engineer follow-up from the accepted note>
+- Citations:
+  - <citation from the accepted note>
+  - <every other citation from the accepted note>
+```
+
+Before appending, search the existing backlog text for the full hidden marker.
+When it exists, leave the entire entry unchanged, including any manually edited
+status. For a missing marker, append the entry without rewriting existing
+entries.
+
+Read the compiled topic page and add one compact backlink per finding under a
+`## Later review` heading, using this exact two-line shape:
+
+```markdown
+<!-- wiki-research-topic:knowledge/topics/<topic>.md#<finding-slug> -->
+- Later review: [<finding title>](wiki-research-backlog.md#wiki-research-<topic>--<finding-slug>)
+```
+
+Check the backlog marker and topic marker independently so a retry repairs a
+partial write. Never replace an existing marked entry. Preserve the compiled
+page's source evidence and all pre-existing content verbatim.
+
+## 9. Investigation tasks (only when `create_tasks=true`)
 
 Triage every kept item before filing — the vault knows sources, but the task
 graph and the codebase know whether the idea is new:
@@ -138,32 +198,35 @@ graph and the codebase know whether the idea is new:
    in #NNNN" note) → do not file; record the prior art instead.
 
 Then one `create_task` on `gobby-tasks` per surviving item: title from the
-finding, description = the item's investigation prompt plus its `citation:`
-lines and any `related: #NNNN` lines, label `wiki-research`. No tasks for
-discarded candidates. Every triaged-away item MUST appear in the run report
-(step 9) with its reason — a duplicate task ref or a prior-art pointer.
-Skipped filings are visible, never silent.
+finding, description = the item's investigation prompt, its `citation:` lines,
+any `related: #NNNN` lines, and a Markdown link to the exact backlog anchor from
+step 8. Label it `wiki-research`. The backlog entry remains canonical. No tasks
+for discarded candidates. Every triaged-away item MUST appear in the run report
+(step 10) with its reason — a duplicate task ref or a prior-art pointer. Skipped
+filings are visible, never silent.
 
-## 9. Run report
+## 10. Run report
 
 Write the run report to a temporary local Markdown file covering: the question,
 angles searched, candidates found, keep/discard reasons, dedup hits, ingest
-failures, compiled page path, tasks filed, and items triaged away in step 8
-(with their duplicate task refs or prior-art reasons). Then `wiki_ingest` the
-local path so the report becomes a vault source under `raw/`; retain the
-returned source path as the run report path.
+failures, compiled page path, tasks filed, and items triaged away in step 9
+when task creation was enabled (with their duplicate task refs or prior-art
+reasons). Include the backlog path, finding count, and whether optional task
+creation was enabled. Then `wiki_ingest` the local path so the report becomes a
+vault source under `raw/`; retain the returned source path as the run report
+path.
 
 Keep `outputs/**` reserved for generated artifacts; `wiki_write_page` only
 writes `knowledge/**`. Leave the root `log.md` to gwiki: `wiki_compile` records
 the topic page creation there automatically.
 
-## 10. Finish
+## 11. Finish
 
 Close your claimed task with the DEFAULT completed reason and a
-`changes_summary` naming the compiled topic page path, the run report path,
-and the source count (the run report path is its ingested `raw/` source path;
-attach `commit_sha` only when repo files actually changed — vault-only runs
-close without a commit). Never close with
+`changes_summary` naming the compiled topic page path, the backlog path, the run
+report path, and the source/finding counts (the run report path is its ingested
+`raw/` source path; attach `commit_sha` only when repo files actually changed —
+vault-only runs close without a commit). Never close with
 `out_of_repo`, `wont_fix`, or any validation-skipping reason: validation must
 check your summary against the task's criteria. Then call `end_agent_run`.
 Never leave the run open after the report is written.

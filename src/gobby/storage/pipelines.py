@@ -6,6 +6,7 @@ import logging
 
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.pipeline_executions import PipelineExecutionStorageMixin
+from gobby.storage.pipeline_history import PipelineHistoryStorageMixin
 from gobby.storage.pipeline_steps import PipelineStepStorageMixin
 from gobby.storage.pipeline_subscribers import PipelineCompletionSubscriberMixin
 from gobby.storage.sessions import SessionManager
@@ -17,6 +18,7 @@ logger = logging.getLogger(__name__)
 
 
 class LocalPipelineExecutionManager(
+    PipelineHistoryStorageMixin,
     PipelineExecutionStorageMixin,
     PipelineStepStorageMixin,
     PipelineCompletionSubscriberMixin,

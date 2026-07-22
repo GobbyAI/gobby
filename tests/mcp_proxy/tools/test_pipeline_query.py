@@ -5,6 +5,7 @@ from unittest.mock import MagicMock
 import pytest
 
 from gobby.mcp_proxy.tools.workflows._pipeline_query import (
+    clear_pipeline_execution_history,
     list_pipeline_executions,
     search_pipeline_executions,
 )
@@ -261,3 +262,68 @@ class TestSearchPipelineExecutions:
 
         assert "steps" in result["executions"][0]
         assert result["executions"][0]["steps"][0]["error"] == "Connection refused"
+
+
+class TestClearPipelineExecutionHistory:
+    def test_preview_is_default_and_non_destructive(self, mock_em) -> None:
+        mock_em.preview_pipeline_execution_history.return_value = {
+            "status": "preview",
+            "matching_count": 34,
+            "terminal_count": 34,
+            "blocking_count": 0,
+        }
+
+        result = clear_pipeline_execution_history(mock_em, "wiki-research")
+
+        assert result == {
+            "success": True,
+            "confirmed": False,
+            "status": "preview",
+            "matching_count": 34,
+            "terminal_count": 34,
+            "blocking_count": 0,
+        }
+        mock_em.preview_pipeline_execution_history.assert_called_once_with("wiki-research")
+        mock_em.clear_pipeline_execution_history.assert_not_called()
+
+    def test_confirm_deletes_through_storage(self, mock_em) -> None:
+        mock_em.clear_pipeline_execution_history.return_value = {
+            "status": "cleared",
+            "matching_count": 34,
+            "deleted_count": 34,
+            "blocking_count": 0,
+        }
+
+        result = clear_pipeline_execution_history(mock_em, "wiki-research", confirm=True)
+
+        assert result["success"] is True
+        assert result["confirmed"] is True
+        assert result["deleted_count"] == 34
+        mock_em.clear_pipeline_execution_history.assert_called_once_with("wiki-research")
+
+    def test_preview_reports_blockers_without_error(self, mock_em) -> None:
+        mock_em.preview_pipeline_execution_history.return_value = {
+            "status": "blocked",
+            "matching_count": 2,
+            "blocking_count": 1,
+        }
+
+        result = clear_pipeline_execution_history(mock_em, "wiki-research")
+
+        assert result["success"] is True
+        assert result["status"] == "blocked"
+        assert "error" not in result
+
+    def test_confirm_refuses_blocked_selection(self, mock_em) -> None:
+        mock_em.clear_pipeline_execution_history.return_value = {
+            "status": "blocked",
+            "matching_count": 2,
+            "blocking_count": 1,
+            "deleted_count": 0,
+        }
+
+        result = clear_pipeline_execution_history(mock_em, "wiki-research", confirm=True)
+
+        assert result["success"] is False
+        assert result["status"] == "blocked"
+        assert "Refusing to clear" in result["error"]

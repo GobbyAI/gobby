@@ -36,6 +36,7 @@ fn catalog_surfaces_are_exempt_from_claim_scanning() {
         "knowledge/INDEX.md",
         "code/INDEX.md",
         "knowledge/concepts/_context.md",
+        "knowledge/topics/wiki-research-backlog.md",
     ] {
         let page = root.join(relative);
         std::fs::create_dir_all(page.parent().expect("page parent")).expect("create wiki dir");
@@ -793,6 +794,21 @@ fn source_excerpts_section_is_ignored() {
     assert!(
         claims.is_empty(),
         "source-excerpt lines should not be claims, got {claims:?}"
+    );
+}
+
+#[test]
+fn later_review_section_is_ignored() {
+    let page = test_codewiki_page(
+        "knowledge/topics/research.md",
+        "# Research\n## Later review\n- [Follow-up](wiki-research-backlog.md#follow-up)\n",
+    );
+
+    let claims = claim_lines(&page, &AuditOptions::default());
+
+    assert!(
+        claims.is_empty(),
+        "review-backlog navigation should not be treated as a claim: {claims:?}"
     );
 }
 

@@ -94,9 +94,11 @@ class TestWikiResearcherStepMachine:
         assert research.allowed_mcp_tools == [
             "gobby-wiki:wiki_ask",
             "gobby-wiki:wiki_search",
+            "gobby-wiki:wiki_read",
             "gobby-wiki:wiki_list_sources",
             "gobby-wiki:wiki_ingest",
             "gobby-wiki:wiki_compile",
+            "gobby-wiki:wiki_write_page",
             "gobby-tasks:*",
             "gobby-skills:get_skill",
             "gobby-agents:end_agent_run",
@@ -177,10 +179,12 @@ class TestWikiResearcherInstructions:
 
     def test_task_triage_present(self, agent: AgentDefinitionBody) -> None:
         instructions = agent.instructions or ""
-        assert "task triage" in instructions
+        assert "create_tasks=true" in instructions
+        assert "wiki-research-backlog.md" in instructions
 
         research = next(step for step in agent.steps or [] if step.name == "research")
-        assert "triage follow-up" in (research.status_message or "")
+        assert "central review backlog" in (research.status_message or "")
+        assert "create_tasks is" in (research.status_message or "")
 
 
 class TestSpawnSurfaceHasNoMaxTurns:

@@ -226,7 +226,7 @@ export function WikiResearchMode({
   const [topicSlug, setTopicSlug] = useState("");
   const [maxSources, setMaxSources] = useState("12");
   const [maxItems, setMaxItems] = useState("8");
-  const [createTasks, setCreateTasks] = useState(true);
+  const [createTasks, setCreateTasks] = useState(false);
   const [provider, setProvider] = useState("claude");
   const [model, setModel] = useState("");
   const [launching, setLaunching] = useState(false);

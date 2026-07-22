@@ -208,3 +208,27 @@ def search_pipeline_executions(
         "offset": offset,
         "query": query.strip(),
     }
+
+
+def clear_pipeline_execution_history(
+    execution_manager: Any,
+    pipeline_name: str,
+    *,
+    confirm: bool = False,
+) -> dict[str, Any]:
+    """Preview or clear one pipeline's terminal execution history."""
+    try:
+        if confirm:
+            result = execution_manager.clear_pipeline_execution_history(pipeline_name)
+        else:
+            result = execution_manager.preview_pipeline_execution_history(pipeline_name)
+    except ValueError as e:
+        return {"success": False, "error": str(e)}
+
+    success = not confirm or result["status"] != "blocked"
+    response = {"success": success, "confirmed": confirm, **result}
+    if confirm and not success:
+        response["error"] = (
+            "Refusing to clear pipeline history while selected executions or descendants are active"
+        )
+    return response

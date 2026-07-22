@@ -38,8 +38,10 @@ inputs:
     description: "Hard curation cap: at most this many sources are ingested."
   create_tasks:
     type: string
-    default: "true"
-    description: "When 'true', the researcher files follow-up investigation tasks for open leads."
+    default: "false"
+    description: >-
+      When 'true', the researcher may also file follow-up investigation tasks.
+      Every finding is recorded in the wiki review backlog regardless.
   provider:
     type: string
     default: "claude"
@@ -94,12 +96,13 @@ steps:
           Hard budgets (never exceed):
           - max_sources: ${{ inputs.max_sources }} (discovery cap)
           - max_items: ${{ inputs.max_items }} (curation/ingest cap)
-          - create_tasks: ${{ inputs.create_tasks }} (file follow-up investigation tasks only when 'true')
+          - create_tasks: ${{ inputs.create_tasks }} (backlog is always written; tasks are optional when 'true')
         task_type: "task"
         category: "research"
         validation_criteria: >-
           Cited topic page compiled with an explicit topic and the full
-          source list; run report written; budgets respected.
+          source list; review-backlog entries and topic backlinks written;
+          run report written; budgets respected.
         labels: ["wiki-research"]
 
   # --- RESEARCHER AGENT ---
