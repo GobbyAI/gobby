@@ -6,7 +6,7 @@
 
 <p align="center">
   <a href="https://github.com/GobbyAI/gobby"><img src="built-with-gobby.svg" alt="Built with Gobby"></a>
-  <a href="https://github.com/GobbyAI/gobby/blob/main/LICENSE.md"><img src="https://img.shields.io/badge/license-Apache%202.0-blue.svg" alt="License"></a>
+  <a href="https://github.com/GobbyAI/gobby/blob/main/LICENSE"><img src="https://img.shields.io/badge/license-FSL--1.1--ALv2-blue.svg" alt="License"></a>
   <a href="https://github.com/GobbyAI/gobby/stargazers"><img src="https://img.shields.io/github/stars/GobbyAI/gobby?style=flat" alt="Stars"></a>
   <a href="https://github.com/GobbyAI/gobby/issues"><img src="https://img.shields.io/github/issues/GobbyAI/gobby" alt="Issues"></a>
 </p>
@@ -95,7 +95,8 @@ gets to "hands-off" without lying about it.
 ### 2. Local-first, built with itself
 
 Your database, transcripts, hooks, task ledger, workflows, and rules stay on
-your machine. No cloud control plane. No SaaS dependency. Apache 2.0.
+your machine. No cloud control plane. No SaaS dependency. Fair Source
+(FSL-1.1-ALv2) — every release becomes Apache 2.0 two years after publication.
 
 The repo you're reading was built through its own build loop. 5K+ commits.
 15K+ tasks. 0.4.x was assembled by spawned agents working through staged
@@ -189,7 +190,7 @@ finishing real work on real codebases, and the toolchain is part of the moat.
 | **Superset, parallel-code, claude_code_bridge, CLI Agent Orchestrator** | Parallel CLI launchers | They run multiple CLIs side-by-side in worktrees. They don't share session, task, memory, or rules across CLIs. Gobby does. |
 | **IBM Context Forge, MintMCP, Composio, Runlayer** | MCP gateways | Cloud/enterprise reverse proxies for MCP. Gobby is local-first, adds progressive discovery, and binds MCP to a task lifecycle and rule engine. |
 | **OpenClaw** | Personal AI assistant across messaging channels | Different category — OpenClaw is a personal agent for WhatsApp/Slack/Telegram-style use. Gobby is dev infra for agents that ship code. |
-| **Devin, OpenHands Cloud** | Hosted autonomous SWE | Cloud-only, opinionated stack, your code on their servers. Gobby runs on your laptop, talks to whichever model and CLI you trust, and is Apache 2.0. |
+| **Devin, OpenHands Cloud** | Hosted autonomous SWE | Cloud-only, opinionated stack, your code on their servers. Gobby runs on your laptop, talks to whichever model and CLI you trust, and is Fair Source (FSL-1.1-ALv2). |
 
 The honest summary: if you've already picked a coding CLI you like, Gobby
 makes it more reliable. If you want to use several of them for different jobs,
@@ -404,8 +405,11 @@ every day, but APIs, configuration, workflow definitions, and hook behavior
 will continue to change as the daemon hardens. If that's a problem for you,
 wait for 1.0. If you want to influence the shape of it, jump in now.
 
-Apache 2.0 licensed. See [CONTRIBUTING.md](CONTRIBUTING.md) for development
-guidance.
+Licensed under the Functional Source License (FSL-1.1-ALv2): free to use,
+modify, self-host, and redistribute for anything except a competing product or
+service, and each release automatically converts to Apache 2.0 after two
+years. See [LICENSE](LICENSE) for the full text and
+[CONTRIBUTING.md](CONTRIBUTING.md) for development guidance.
 
 ---
 

@@ -9,7 +9,7 @@
 <p align="center">
   <a href="https://github.com/GobbyAI/gobby/actions/workflows/rust-ci.yml"><img src="https://github.com/GobbyAI/gobby/actions/workflows/rust-ci.yml/badge.svg" alt="Rust CI"></a>
   <a href="https://crates.io/crates/gobby-code"><img src="https://img.shields.io/crates/v/gobby-code" alt="crates.io"></a>
-  <a href="LICENSE"><img src="https://img.shields.io/badge/license-Apache%202.0-blue.svg" alt="License"></a>
+  <a href="https://github.com/GobbyAI/gobby/blob/main/LICENSE"><img src="https://img.shields.io/badge/license-FSL--1.1--ALv2-blue.svg" alt="License"></a>
 </p>
 
 ---

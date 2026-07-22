@@ -219,4 +219,13 @@ If you have questions, feel free to:
 
 ## License
 
-By contributing to Gobby, you agree that your contributions will be licensed under the Apache License 2.0.
+Gobby is licensed under the Functional Source License, Version 1.1, with an
+Apache 2.0 future license (FSL-1.1-ALv2) — see [LICENSE](LICENSE). Each release
+automatically converts to Apache 2.0 two years after publication.
+
+By contributing to Gobby, you agree that your contributions will be licensed
+under the same terms. External contributions additionally require a Contributor
+License Agreement (CLA) granting the maintainer the right to license your
+contribution under the FSL, its Apache 2.0 future license, and commercial
+licenses. CLA tooling is not wired up yet; until it is, a maintainer will
+coordinate signing on your first pull request.
