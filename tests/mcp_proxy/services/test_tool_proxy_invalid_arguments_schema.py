@@ -93,8 +93,10 @@ async def test_first_invalid_call_includes_schema_and_records_latch(
 
 
 @pytest.mark.asyncio
-async def test_second_invalid_call_omits_schema(proxy_parts: ProxyParts) -> None:
-    proxy, mcp_manager, _db, session_id = proxy_parts
+async def test_repeated_invalid_call_includes_schema_and_retains_lease(
+    proxy_parts: ProxyParts,
+) -> None:
+    proxy, mcp_manager, db, session_id = proxy_parts
     input_schema = {
         "type": "object",
         "properties": {"name": {"type": "string"}},
@@ -116,8 +118,9 @@ async def test_second_invalid_call_omits_schema(proxy_parts: ProxyParts) -> None
     )
 
     assert result["success"] is False
-    assert "schema" not in result
-    assert result["schema_already_shown"] is True
+    assert result["schema"] == input_schema
+    variables = SessionVariableManager(db).get_variables(session_id)
+    assert variables["unlocked_tools"].count("test-server:test_tool") == 1
 
 
 @pytest.mark.asyncio

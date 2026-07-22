@@ -368,11 +368,11 @@ These are the bundled default variables (from `gobby-default-variables.yaml`):
 | `enforce_tdd` | `false` | bool | Enable TDD enforcement |
 | `tdd_nudged_files` | `[]` | list | Files TDD-nudged this session (internal) |
 | `tdd_tests_written` | `[]` | list | Test files written during TDD (internal) |
-| `enforce_tool_schema_check` | `true` | bool | Enforce progressive discovery |
+| `enforce_tool_schema_check` | `true` | bool | Require current-context schema leases for ordinary proxy calls |
 | `auto_inject_handoff` | `true` | bool | Populate session summary template vars |
 | `servers_listed` | `true` | bool | Internal MCP servers are pre-seeded at startup |
 | `listed_servers` | internal server list | list | Internal servers discovered or pre-seeded for progressive discovery |
-| `unlocked_tools` | `[]` | list | Tools unlocked via `get_tool_schema` |
+| `unlocked_tools` | `[]` | list | Schema leases recorded by `get_tool_schema`; persisted across ordinary resume/restart and cleared on context loss |
 | `is_subagent` | `false` | bool | Whether a native subagent is currently active |
 | `loaded_skills` | `[]` | list | Skills loaded through `gobby-skills:get_skill` |
 | `code_index_navigation_used_this_turn` | `false` | bool | True after successful gcode navigation in the current turn |

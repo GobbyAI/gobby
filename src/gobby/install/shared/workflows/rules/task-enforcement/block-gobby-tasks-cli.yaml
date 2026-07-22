@@ -13,11 +13,11 @@ rules:
         reason: |
           The `gobby tasks` CLI bypasses MCP-side enforcement (validation gates,
           progressive discovery, hook policy). Mutations must go through the
-          gobby-tasks MCP server so those guarantees hold:
-            - list_mcp_servers() → confirm gobby-tasks is available
-            - list_tools(server_name='gobby-tasks') → see task tools
-            - get_tool_schema(server_name='gobby-tasks', tool_name='<tool>') → fetch params
-            - call_tool(server_name='gobby-tasks', tool_name='<tool>', args={...})
+          gobby-tasks MCP server so those guarantees hold. For a known unleased
+          task tool, call get_tool_schema(server_name='gobby-tasks',
+          tool_name='<tool>') directly, then call_tool(server_name='gobby-tasks',
+          tool_name='<tool>', args={...}). Use list_tools only if the task tool
+          name is unknown.
           Common equivalents: create_task, claim_task, update_task, close_task.
 
           Read-only subcommands stay open via Bash for ad-hoc use:

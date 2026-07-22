@@ -108,8 +108,7 @@ def build_compact_self_continue_prompt(
     directives = skill_fetch_batch_directive(skills)
     return (
         f"{wait_directive}\n\n"
-        "Before continuing the task, use progressive discovery to reload these required "
-        "skills in order:\n\n"
+        "Before continuing the task, reload these required skills directly in order:\n\n"
         f"{directives}"
     )
 

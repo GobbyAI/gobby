@@ -85,10 +85,8 @@ steps:
     status_message: |
       Load these exact skills from gobby-skills: code-index, task-transitions,
       review-learning, and proportionality. Do not inspect the task until all
-      required skills are loaded. Use only mcp__gobby__* proxy tools. For each
-      skill, follow list_mcp_servers -> list_tools("gobby-skills") ->
-      get_tool_schema("gobby-skills", "get_skill") ->
-      call_tool("gobby-skills", "get_skill", {"name": <skill>}). Do not use
+      required skills are loaded. Use only mcp__gobby__call_tool. For each
+      skill, call call_tool("gobby-skills", "get_skill", {"name": <skill>}). Do not use
       native Skill, GitHub/app connector, or Computer Use tools.
     allowed_tools:
       - mcp__gobby__call_tool

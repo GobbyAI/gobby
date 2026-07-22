@@ -190,7 +190,7 @@ def test_claude_reason_compaction_records_degradation(
     calls = _capture_degradations(monkeypatch)
     reason = (
         "Rule enforced by Gobby: [require-code-index-skill]\n"
-        'Call get_skill(name="code-index") on gobby-skills through mcp__gobby__ progressive discovery'
+        'Call get_skill(name="code-index") on gobby-skills directly through mcp__gobby__call_tool'
     )
 
     result = ClaudeCodeAdapter().translate_from_hook_response(
@@ -201,7 +201,7 @@ def test_claude_reason_compaction_records_degradation(
     permission_reason = result["hookSpecificOutput"]["permissionDecisionReason"]
     assert permission_reason.startswith("Gobby blocked [require-code-index-skill]:")
     assert 'get_skill(name="code-index")' in permission_reason
-    assert "mcp__gobby__ progressive discovery" in permission_reason
+    assert "mcp__gobby__call_tool" in permission_reason
     assert permission_reason != reason
     assert any(call["kind"] == "reason_compacted" for call in calls)
 
@@ -212,8 +212,8 @@ def test_qwen_tool_block_preserves_native_recoverable_reason(
     calls = _capture_degradations(monkeypatch)
     reason = (
         "Rule enforced by Gobby: [require-code-index-skill]\n"
-        'Call get_skill(name="code-index") on gobby-skills through mcp__gobby__ '
-        "progressive discovery"
+        'Call get_skill(name="code-index") on gobby-skills directly through '
+        "mcp__gobby__call_tool"
     )
 
     result = QwenAdapter().translate_from_hook_response(

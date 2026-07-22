@@ -277,8 +277,10 @@ def test_build_compact_self_continue_prompt_includes_skill_fetch_directives() ->
     )
     assert f'gobby-sessions.wait_for_summary(session_id="{SOURCE_SESSION_ID}")' in prompt
     assert "`completed=false`" in prompt
-    assert "progressive discovery" in prompt
-    assert prompt.count("list_mcp_servers") == 1
+    assert "directly" in prompt
+    assert "list_mcp_servers" not in prompt
+    assert "list_tools" not in prompt
+    assert "get_tool_schema" not in prompt
     assert (
         skill_fetch_batch_directive(["loading-skills", "python", "development-discipline"])
         in prompt

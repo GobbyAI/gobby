@@ -24,9 +24,7 @@ rules:
           retry after this nudge without loading context7.
           When docs are relevant, call get_skill(name="context7") on gobby-skills,
           then continue.
-          Use the Gobby MCP proxy path exactly: list_mcp_servers ->
-          list_tools("gobby-skills") ->
-          get_tool_schema("gobby-skills", "get_skill") ->
+          Call it directly through mcp__gobby__call_tool:
           call_tool("gobby-skills", "get_skill", {"name": "context7"}).
-          Use only mcp__gobby__* proxy tools while loading the skill; do not
+          Use only mcp__gobby__call_tool while loading the skill; do not
           use native Skill, GitHub/app connector, or Computer Use tools.

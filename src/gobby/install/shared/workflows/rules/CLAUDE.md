@@ -8,7 +8,7 @@ This directory contains bundled rule groups. These are **templates** — they ar
 |-------|-----|-------|---------|
 | `worker-safety` | `worker-safety/` | 49 | Block git push (global + worker-scoped), force push, destructive git/shell, bash sleep, agent spawn from merge, external GitHub issues, package install/publish, remote-script exec, full test suite, daemon management, data exfiltration (curl/wget upload, scp/sftp, secret-path reads) |
 | `tool-hygiene` | `tool-hygiene/` | 2 | Require `uv` for Python, track pending memory review |
-| `progressive-discovery` | `progressive-discovery/` | 7 | Enforce MCP discovery order: list_servers → list_tools → get_schema → call_tool |
+| `progressive-discovery` | `progressive-discovery/` | 5 | Require a current-context schema lease before ordinary MCP calls; track optional inventory discovery |
 | `task-enforcement` | `task-enforcement/` | 11 | Block native task tools, require task before edit, track claims, require lifecycle skills, require commits before status, block validation skip, block needs_review and review_approved for interactive, require error triage before status |
 | `stop-gates` | `stop-gates/` | 2 | Require task close and epic tree close before a turn can end |
 | `plan-mode` | `plan-mode/` | 4 | Detect enter/exit plan mode, prompt for plan skill, reset on session start |

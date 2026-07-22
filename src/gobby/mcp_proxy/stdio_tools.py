@@ -79,8 +79,8 @@ def register_proxy_tools(
         """
         List all MCP servers configured in the daemon.
 
-        Returns details about each MCP server including connection status,
-        available tools, and resources.
+        Use this for unknown-server discovery or explicit registry inspection.
+        Returns connection status, available tools, and resources.
 
         Returns:
             Dict with servers list, total count, and connected count
@@ -94,11 +94,10 @@ def register_proxy_tools(
         """
         List tools from MCP servers.
 
-        Use this to discover tools available on servers.
+        Use this when the tool name is unknown or for explicit inventory inspection.
 
         Args:
-            server_name: Server name (e.g., "context7", "supabase").
-                   Use list_mcp_servers() first to discover available servers.
+            server_name: Known server name (e.g., "context7", "supabase").
 
         Returns:
             Dict with tool listings
@@ -116,8 +115,8 @@ def register_proxy_tools(
         """
         Get full schema (inputSchema) for a specific MCP tool.
 
-        Use list_tools() first to discover available tools, then use this to get
-        full details before calling the tool.
+        Call this directly for a known unleased tool. Use list_tools only when
+        the tool name itself is unknown.
 
         Args:
             server_name: Name of the MCP server (e.g., "context7", "supabase")

@@ -37,7 +37,7 @@ instructions: |
   - Approval or escalation must happen before the workflow may end the turn and terminate.
   - Do NOT terminate or exit the agent process without calling end_agent_run.
   - Always use `uv run` for Python commands.
-  - Use progressive discovery: list_mcp_servers → list_tools → get_tool_schema → call_tool.
+  - Use context-aware progressive discovery: call leased known tools directly; fetch schemas directly for known unleased tools; use list_tools only for unknown tool names and list_mcp_servers only for server or registry inspection.
 
 provider: claude
 isolation: clone

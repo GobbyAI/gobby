@@ -55,7 +55,7 @@ instructions: |
   - Do NOT call complete_stage.
   - Do NOT spawn other agents.
   - Always use `uv run` for Python commands.
-  - Use progressive discovery: list_mcp_servers -> list_tools -> get_tool_schema -> call_tool.
+  - Use context-aware progressive discovery: call leased known tools directly; fetch schemas directly for known unleased tools; use list_tools only for unknown tool names and list_mcp_servers only for server or registry inspection.
 
 workflows:
   rule_selectors:
@@ -100,9 +100,7 @@ steps:
     description: "Load the ideate methodology skill"
     status_message: |
       Call get_skill(name="ideate") on gobby-skills, then continue before drafting.
-      Use only mcp__gobby__* proxy tools in this step. Exact path:
-      list_mcp_servers -> list_tools("gobby-skills") ->
-      get_tool_schema("gobby-skills", "get_skill") ->
+      Use only mcp__gobby__call_tool in this step. Call get_skill directly:
       call_tool("gobby-skills", "get_skill", {"name": "ideate"}).
       Do not use native Skill, GitHub/app connector, or Computer Use tools.
     allowed_tools:

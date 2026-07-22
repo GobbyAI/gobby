@@ -597,9 +597,8 @@ class TestTranslateFromHookResponse:
     def test_pre_tool_use_code_index_skill_block_preserves_get_skill_directive(self) -> None:
         adapter = ClaudeCodeAdapter()
         directive = (
-            'Call get_skill(name="code-index") on gobby-skills through '
-            "mcp__gobby__ progressive discovery: list_mcp_servers -> "
-            'list_tools("gobby-skills") -> get_tool_schema("gobby-skills", "get_skill") -> '
+            'Call get_skill(name="code-index") on gobby-skills directly through '
+            "mcp__gobby__call_tool: "
             'call_tool("gobby-skills", "get_skill", {"name": "code-index"}). Then continue.'
         )
         compacted_directive = directive.removesuffix(" Then continue.")
@@ -646,7 +645,7 @@ class TestTranslateFromHookResponse:
                 "Rule enforced by Gobby: [aggregated:2-gates]\n"
                 "Multiple gates blocked while retrying Edit.\n"
                 '1. [require-code-index-skill] Call get_skill(name="code-index") on '
-                "gobby-skills through progressive discovery. Then continue.\n"
+                "gobby-skills directly through mcp__gobby__call_tool. Then continue.\n"
                 '2. [prefer-gcode-for-code-search] Use `gcode grep "pattern" [PATH...] '
                 "-m 50` for exact text search."
             ),
@@ -657,7 +656,7 @@ class TestTranslateFromHookResponse:
         assert result["hookSpecificOutput"]["permissionDecisionReason"] == (
             "Gobby blocked [aggregated:2-gates]:\n"
             '1. [require-code-index-skill]: Call get_skill(name="code-index") on '
-            "gobby-skills through progressive discovery.\n"
+            "gobby-skills directly through mcp__gobby__call_tool.\n"
             '2. [prefer-gcode-for-code-search]: Use `gcode grep "pattern" [PATH...] '
             "-m 50` for exact text search."
         )
@@ -669,7 +668,7 @@ class TestTranslateFromHookResponse:
             reason=(
                 "Rule enforced by Gobby: [require-task-creation-skill-loaded]\n"
                 "Task lifecycle tools require the task creation skill.\n"
-                'Call get_skill(name="task-creation") on gobby-skills through mcp__gobby__ progressive discovery'
+                'Call get_skill(name="task-creation") on gobby-skills directly through mcp__gobby__call_tool'
             ),
         )
         result = adapter.translate_from_hook_response(response, hook_type="pre-tool-use")
@@ -682,7 +681,7 @@ class TestTranslateFromHookResponse:
                 "permissionDecisionReason": (
                     "Gobby blocked [require-task-creation-skill-loaded]: "
                     "Task lifecycle tools require the task creation skill; "
-                    'Call get_skill(name="task-creation") on gobby-skills through mcp__gobby__ progressive discovery'
+                    'Call get_skill(name="task-creation") on gobby-skills directly through mcp__gobby__call_tool'
                 ),
             },
         }

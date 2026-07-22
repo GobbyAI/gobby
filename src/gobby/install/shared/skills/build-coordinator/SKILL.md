@@ -178,12 +178,9 @@ when a user decision is genuinely required.
 ## Compaction
 
 Compact at handoff boundaries and before context size starts degrading
-decisions. Use progressive discovery, then call `gobby-sessions:compact_self`:
-
-1. `list_mcp_servers()`
-2. `list_tools(server_name="gobby-sessions")`
-3. `get_tool_schema(server_name="gobby-sessions", tool_name="compact_self")`
-4. `call_tool("gobby-sessions", "compact_self", {})`
+decisions. If `gobby-sessions:compact_self` is not leased in the current context,
+call `get_tool_schema(server_name="gobby-sessions", tool_name="compact_self")`
+directly. Then call `call_tool("gobby-sessions", "compact_self", {})`.
 
 Pass the current Gobby session ref as the top-level `call_tool.session_id`, not
 inside `arguments`. Set `rule_name` only when a workflow or rule specifically

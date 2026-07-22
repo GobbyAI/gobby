@@ -508,7 +508,7 @@ class TestInterceptSkillCommand:
         result = handler._intercept_skill_command("/gobby:expand")
         assert result is not None
         assert (
-            'Call get_skill(name="expand") on gobby-skills through mcp__gobby__ progressive discovery'
+            'Call get_skill(name="expand") on gobby-skills directly through mcp__gobby__call_tool'
             in result
         )
         assert "# Expand skill" not in result
@@ -523,7 +523,7 @@ class TestInterceptSkillCommand:
         result = handler._intercept_skill_command("/gobby expand some args")
         assert result is not None
         assert (
-            'Call get_skill(name="expand") on gobby-skills through mcp__gobby__ progressive discovery'
+            'Call get_skill(name="expand") on gobby-skills directly through mcp__gobby__call_tool'
             in result
         )
         assert "User arguments:" not in result
@@ -540,7 +540,7 @@ class TestInterceptSkillCommand:
 
         assert result is not None
         assert (
-            'Call get_skill(name="expand") on gobby-skills through mcp__gobby__ progressive discovery'
+            'Call get_skill(name="expand") on gobby-skills directly through mcp__gobby__call_tool'
             in result
         )
         assert "User arguments:" not in result
@@ -561,7 +561,7 @@ class TestInterceptSkillCommand:
 
         assert result is not None
         assert (
-            'Call get_skill(name="coderabbit") on gobby-skills through mcp__gobby__ progressive discovery'
+            'Call get_skill(name="coderabbit") on gobby-skills directly through mcp__gobby__call_tool'
             in result
         )
         assert "User arguments:" not in result
@@ -578,7 +578,7 @@ class TestInterceptSkillCommand:
 
         assert result is not None
         assert (
-            'Call get_skill(name="plan") on gobby-skills through mcp__gobby__ progressive discovery'
+            'Call get_skill(name="plan") on gobby-skills directly through mcp__gobby__call_tool'
             in result
         )
         assert "User arguments:" not in result
@@ -636,7 +636,7 @@ class TestInterceptSkillCommand:
         result = handler._intercept_skill_command("/gobby skills bridge")
         assert result is not None
         assert (
-            'Call get_skill(name="bridge") on gobby-skills through mcp__gobby__ progressive discovery'
+            'Call get_skill(name="bridge") on gobby-skills directly through mcp__gobby__call_tool'
             in result
         )
         assert "# Bridge skill" not in result
@@ -652,7 +652,7 @@ class TestInterceptSkillCommand:
         result = handler._intercept_skill_command("/gobby skill bridge")
         assert result is not None
         assert (
-            'Call get_skill(name="bridge") on gobby-skills through mcp__gobby__ progressive discovery'
+            'Call get_skill(name="bridge") on gobby-skills directly through mcp__gobby__call_tool'
             in result
         )
 

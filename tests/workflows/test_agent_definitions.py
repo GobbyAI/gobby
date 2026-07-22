@@ -130,9 +130,9 @@ def test_restricted_skill_load_steps_use_gobby_proxy_guidance() -> None:
 
             status = step.get("status_message") or ""
             label = f"{path.name}:{step.get('name')}"
-            assert "mcp__gobby__* proxy tools" in status, label
-            assert 'list_tools("gobby-skills")' in status, label
-            assert 'get_tool_schema("gobby-skills", "get_skill")' in status, label
+            assert "mcp__gobby__call_tool" in status, label
+            assert "list_tools" not in status, label
+            assert "get_tool_schema" not in status, label
             assert 'call_tool("gobby-skills", "get_skill"' in status, label
             assert "native Skill" in status, label
             assert "GitHub/app connector" in status, label

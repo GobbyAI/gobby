@@ -17,22 +17,18 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
-SKILL_FETCH_SCHEMA_PATH = (
-    'list_mcp_servers -> list_tools("gobby-skills") -> get_tool_schema("gobby-skills", "get_skill")'
-)
-
 SKILL_FETCH_CALL_TEMPLATE = 'call_tool("gobby-skills", "get_skill", {{"name": {name_json}}})'
 
-SKILL_FETCH_PROXY_PATH_TEMPLATE = SKILL_FETCH_SCHEMA_PATH + " -> " + SKILL_FETCH_CALL_TEMPLATE
+SKILL_FETCH_PROXY_PATH_TEMPLATE = SKILL_FETCH_CALL_TEMPLATE
 
 
 def skill_fetch_proxy_path(name: str) -> str:
-    """Return the progressive-discovery proxy path for fetching a skill."""
+    """Return the direct proxy call for fetching an enforcement-exempt skill."""
     return SKILL_FETCH_PROXY_PATH_TEMPLATE.format(name_json=json.dumps(name))
 
 
 def skill_fetch_call_path(name: str) -> str:
-    """Return the get_skill call path after discovery has already completed."""
+    """Return the direct get_skill call path."""
     return SKILL_FETCH_CALL_TEMPLATE.format(name_json=json.dumps(name))
 
 
@@ -40,14 +36,14 @@ def skill_fetch_directive(name: str) -> str:
     """Return the canonical agent-facing directive for loading a skill."""
     name_json = json.dumps(name)
     return (
-        f"Call get_skill(name={name_json}) on gobby-skills through "
-        f"mcp__gobby__ progressive discovery: {skill_fetch_proxy_path(name)}. "
+        f"Call get_skill(name={name_json}) on gobby-skills directly through "
+        f"mcp__gobby__call_tool: {skill_fetch_proxy_path(name)}. "
         "Then continue."
     )
 
 
 def skill_fetch_batch_directive(names: Sequence[str]) -> str:
-    """Return a compact directive for loading multiple skills with one discovery pass."""
+    """Return a compact directive for loading multiple skills directly."""
     skills = _unique_names(names)
     if not skills:
         return ""
@@ -56,8 +52,7 @@ def skill_fetch_batch_directive(names: Sequence[str]) -> str:
 
     calls = "\n".join(f"- {skill_fetch_call_path(skill)}" for skill in skills)
     return (
-        "Use progressive discovery once for gobby-skills get_skill: "
-        f"{SKILL_FETCH_SCHEMA_PATH}. Then load these skills in order with:\n"
+        "Load these skills directly through mcp__gobby__call_tool in order:\n"
         f"{calls}\n"
         "Then continue."
     )

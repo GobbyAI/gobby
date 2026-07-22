@@ -44,9 +44,10 @@ duplicated into `<gobby-context>`. Continue after the named skill is loaded.
 
 ## MCP Server Discovery
 
-For MCP tool access, use progressive discovery:
+For MCP tool access, use context-aware progressive discovery:
 
-1. `list_mcp_servers()` — discover servers
-2. `list_tools(server_name="...")` — discover tools
-3. `get_tool_schema(server_name="...", tool_name="...")` — get parameters
-4. `call_tool(server_name="...", tool_name="...", arguments={...})` — execute
+- Call a known tool directly when its schema is leased in the current context.
+- For a known unleased tool, call `get_tool_schema` directly, then `call_tool`.
+- Use `list_tools` only when the tool name is unknown.
+- Use `list_mcp_servers` only when the server is unknown or registry inspection is intended.
+- Call `get_skill`, `list_skills`, and `search_skills` directly; these bootstrap tools are exempt.

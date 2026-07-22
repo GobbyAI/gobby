@@ -14,6 +14,6 @@ with `{{ command_prefix }} <skill>`:
 **Skill discovery**: `list_skills()` / `get_skill(name="skill-name")` on
 `gobby-skills`.
 **Hub search**: `search_hub(query="...")` on `gobby-skills`.
-**MCP tools**: use progressive discovery: `list_mcp_servers()`,
-`list_tools(server_name="...")`, `get_tool_schema(server_name="...", tool_name="...")`,
-then `call_tool(server_name="...", tool_name="...", arguments={...})`.
+**MCP tools**: call leased known tools directly. For a known unleased tool, call
+`get_tool_schema` directly, then `call_tool`. Use `list_tools` only for an unknown
+tool name and `list_mcp_servers` only for unknown server or registry inspection.

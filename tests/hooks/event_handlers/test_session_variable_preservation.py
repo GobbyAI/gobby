@@ -114,6 +114,25 @@ def _register_session(db: HubDatabase, project_id: str, tmp_path: Path) -> str:
     )
 
 
+def test_reconstructed_daemon_managers_preserve_schema_leases(
+    temp_db: HubDatabase,
+    tmp_path: Path,
+) -> None:
+    project_id = _make_project(temp_db, tmp_path)
+    session_id = _register_session(temp_db, project_id, tmp_path)
+    SessionVariableManager(temp_db).merge_variables(
+        session_id,
+        {"unlocked_tools": ["gobby-tasks:create_task"]},
+    )
+
+    reconstructed_session_manager = SessionManager(temp_db)
+    reconstructed_variables = SessionVariableManager(
+        reconstructed_session_manager.db
+    ).get_variables(session_id)
+
+    assert reconstructed_variables["unlocked_tools"] == ["gobby-tasks:create_task"]
+
+
 def test_gobby_session_id_binding_merges_terminal_context(
     temp_db: HubDatabase,
     tmp_path: Path,
@@ -307,6 +326,31 @@ class TestReturningSessionPreservesUserVariables:
         changes = _get_merged_changes(mock_svm)
         for user_var in ("stop_attempts", "mode_level", "chat_mode"):
             assert user_var not in changes, f"{user_var} should NOT be overwritten"
+
+    @patch("gobby.workflows.state_manager.SessionVariableManager")
+    @patch("gobby.workflows.agent_resolver.resolve_agent")
+    def test_ordinary_resume_preserves_schema_leases(
+        self,
+        mock_resolve: MagicMock,
+        mock_svm_cls: MagicMock,
+    ) -> None:
+        handlers = _make_event_handlers()
+        mock_resolve.return_value = _make_agent_body(variables={"unlocked_tools": []})
+        mock_svm = MagicMock()
+        mock_svm_cls.return_value = mock_svm
+        mock_svm.get_variables.return_value = {
+            "_agent_type": "default",
+            "unlocked_tools": ["gobby-tasks:create_task"],
+        }
+
+        handlers._activate_default_agent(
+            session_id="sess-resume",
+            cli_source="claude",
+            project_id=None,
+            agent_name_override="default",
+        )
+
+        assert "unlocked_tools" not in _get_merged_changes(mock_svm)
 
 
 class TestReturningSessionReappliesInternalKeys:

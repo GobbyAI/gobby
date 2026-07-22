@@ -7,7 +7,7 @@ Verifies:
 - Reset rule clears state on context loss
 
 Includes integration tests that exercise the full RuleEngine.evaluate() flow
-to verify conditions like is_server_listed actually resolve correctly.
+to verify conditions like is_tool_unlocked actually resolve correctly.
 """
 
 from __future__ import annotations
@@ -53,8 +53,7 @@ def _sync_bundled(db):
 
 
 PROGRESSIVE_DISCOVERY_RULES = {
-    "require-server-listed-for-schema",
-    "require-schema-before-call",
+    "require-current-context-schema-before-call",
     "track-schema-lookup",
     "track-servers-listed",
     "track-listed-servers",
@@ -83,6 +82,30 @@ class TestProgressiveDiscoverySync:
         row = manager.get_by_name("require-servers-listed")
         assert row is None
 
+    def test_sync_retires_legacy_gates_and_enables_renamed_gate(self, db, manager) -> None:
+        """Removed gate rows are retired without carrying a disabled toggle forward."""
+        legacy_definition = '{"event":"before_tool","effects":[{"type":"block","reason":"legacy"}]}'
+        for name in ("require-server-listed-for-schema", "require-schema-before-call"):
+            manager.create(
+                name=name,
+                definition_json=legacy_definition,
+                workflow_type="rule",
+                enabled=False,
+                source="installed",
+                tags=["gobby", "progressive-discovery"],
+            )
+
+        _sync_bundled(db)
+
+        for name in ("require-server-listed-for-schema", "require-schema-before-call"):
+            retired = manager.get_by_name(name, include_deleted=True)
+            assert retired is not None
+            assert retired.deleted_at is not None
+
+        replacement = manager.get_by_name("require-current-context-schema-before-call")
+        assert replacement is not None
+        assert replacement.enabled is True
+
     def test_all_rules_have_progressive_discovery_tag(self, db, manager) -> None:
         """All rules should be tagged with 'progressive-discovery'."""
         _sync_bundled(db)
@@ -107,43 +130,14 @@ class TestProgressiveDiscoverySync:
                     assert effect.type in valid_types
 
 
-class TestRequireServerListedForSchema:
-    """Verify require-server-listed-for-schema blocks get_tool_schema."""
+class TestRequireCurrentContextSchemaBeforeCall:
+    """Verify the current-context schema gate blocks unleased call_tool calls."""
 
     def test_has_block_effect(self, db, manager) -> None:
         """Should have a block effect (not mcp_call auto-heal)."""
         _sync_bundled(db)
 
-        row = manager.get_by_name("require-server-listed-for-schema")
-        assert row is not None
-
-        body = RuleDefinitionBody.model_validate_json(row.definition_json)
-        assert body.event.value == "before_tool"
-        effects = body.resolved_effects
-        block_effects = [e for e in effects if e.type == "block"]
-        assert len(block_effects) == 1
-        assert "list_tools" in block_effects[0].reason
-
-    def test_when_checks_is_server_listed(self, db, manager) -> None:
-        """Should use is_server_listed helper and check tool name."""
-        _sync_bundled(db)
-
-        row = manager.get_by_name("require-server-listed-for-schema")
-        body = RuleDefinitionBody.model_validate_json(row.definition_json)
-
-        assert body.when is not None
-        assert "is_server_listed" in body.when
-        assert "get_tool_schema" in body.when
-
-
-class TestRequireSchemaBeforeCall:
-    """Verify require-schema-before-call blocks call_tool without schema."""
-
-    def test_has_block_effect(self, db, manager) -> None:
-        """Should have a block effect (not mcp_call auto-heal)."""
-        _sync_bundled(db)
-
-        row = manager.get_by_name("require-schema-before-call")
+        row = manager.get_by_name("require-current-context-schema-before-call")
         assert row is not None
 
         body = RuleDefinitionBody.model_validate_json(row.definition_json)
@@ -157,7 +151,7 @@ class TestRequireSchemaBeforeCall:
         """Should check tool exemptions, unlock state, and call_tool."""
         _sync_bundled(db)
 
-        row = manager.get_by_name("require-schema-before-call")
+        row = manager.get_by_name("require-current-context-schema-before-call")
         body = RuleDefinitionBody.model_validate_json(row.definition_json)
 
         assert body.when is not None
@@ -247,10 +241,10 @@ class TestTrackListedServers:
 
 
 class TestResetRules:
-    """Verify reset-progressive-discovery multi-effect rule clears all state on context loss."""
+    """Verify context loss clears schema leases while preserving inventory state."""
 
-    def test_resets_all_three_variables(self, db, manager) -> None:
-        """Should reset unlocked_tools, servers_listed, and listed_servers."""
+    def test_resets_only_schema_leases(self, db, manager) -> None:
+        """Inventory observations survive context loss."""
         _sync_bundled(db)
 
         row = manager.get_by_name("reset-progressive-discovery")
@@ -260,12 +254,10 @@ class TestResetRules:
         assert body.event.value == "session_start"
 
         effects = body.resolved_effects
-        assert len(effects) == 3
+        assert len(effects) == 1
 
         vars_and_values = {e.variable: e.value for e in effects}
-        assert vars_and_values["unlocked_tools"] == []
-        assert vars_and_values["servers_listed"] is False
-        assert vars_and_values["listed_servers"] == []
+        assert vars_and_values == {"unlocked_tools": []}
 
     def test_resets_fire_on_clear_compact_resume(self, db, manager) -> None:
         """Reset rule should fire on clear, compact, and conditional resume."""
@@ -318,7 +310,7 @@ class TestRuleDefinitionBodyToolsField:
         """Enforcement rules should use block effects, not mcp_call auto-heal."""
         _sync_bundled(db)
 
-        for rule_name in ["require-server-listed-for-schema", "require-schema-before-call"]:
+        for rule_name in ["require-current-context-schema-before-call"]:
             row = manager.get_by_name(rule_name)
             assert row is not None, f"{rule_name} not found"
             body = RuleDefinitionBody.model_validate_json(row.definition_json)
@@ -326,21 +318,6 @@ class TestRuleDefinitionBodyToolsField:
             assert len(block_effects) == 1, f"{rule_name} should have exactly 1 block effect"
             mcp_effects = [e for e in body.resolved_effects if e.type == "mcp_call"]
             assert len(mcp_effects) == 0, f"{rule_name} should not have mcp_call effects"
-
-
-class TestPriorityOrdering:
-    """Verify priority ordering within progressive-discovery group."""
-
-    def test_enforcement_rules_ordered_correctly(self, db, manager) -> None:
-        """require-server-listed-for-schema should fire before require-schema-before-call."""
-        _sync_bundled(db)
-
-        schema_rule = manager.get_by_name("require-server-listed-for-schema")
-        call_rule = manager.get_by_name("require-schema-before-call")
-
-        assert schema_rule is not None
-        assert call_rule is not None
-        assert schema_rule.priority <= call_rule.priority
 
 
 def _make_hook_event(
@@ -366,8 +343,8 @@ def _make_hook_event(
 class TestRuleEngineIntegration:
     """End-to-end tests: RuleEngine.evaluate() with progressive discovery rules.
 
-    Tests the actual condition evaluation path including is_server_listed,
-    is_tool_unlocked, and is_discovery_tool. The enforcement rules now block
+    Tests the actual condition evaluation path including is_tool_unlocked and
+    is_discovery_tool. The enforcement rules now block
     instead of auto-healing.
     """
 
@@ -408,8 +385,8 @@ class TestRuleEngineIntegration:
         assert len(mcp_calls) == 0
 
     @pytest.mark.asyncio
-    async def test_get_tool_schema_blocked_when_server_not_listed(self, engine) -> None:
-        """get_tool_schema should be blocked when list_tools not called for server."""
+    async def test_get_tool_schema_allowed_without_inventory_state(self, engine) -> None:
+        """Known tools can fetch their schema without list_tools state."""
         variables = {"enforce_tool_schema_check": True, "listed_servers": []}
         event = _make_hook_event(
             HookEventType.BEFORE_TOOL,
@@ -417,8 +394,7 @@ class TestRuleEngineIntegration:
             tool_input={"server_name": "gobby-tasks", "tool_name": "create_task"},
         )
         result = await engine.evaluate(event, SESSION_ID, variables)
-        assert result.decision == "block"
-        assert "list_tools" in result.reason
+        assert result.decision == "allow"
 
     @pytest.mark.asyncio
     async def test_get_tool_schema_allowed_after_list_tools(self, engine) -> None:
@@ -603,8 +579,7 @@ class TestRuleEngineIntegration:
     async def test_get_tool_schema_allowed_when_enforce_flag_false(self, engine) -> None:
         """get_tool_schema should also be allowed when enforce_tool_schema_check=False.
 
-        Sibling of the call_tool case above — same session-variable short-circuit
-        covers require-server-listed-for-schema too.
+        Direct schema lookup remains available regardless of the enforcement flag.
         """
         variables = {
             "enforce_tool_schema_check": False,
@@ -620,8 +595,22 @@ class TestRuleEngineIntegration:
         assert result.decision == "allow"
 
     @pytest.mark.asyncio
-    async def test_call_tool_allowed_for_discovery_tools(self, engine) -> None:
-        """call_tool should allow discovery tools (list_tools, etc.) without schema."""
+    @pytest.mark.parametrize(
+        ("server_name", "tool_name"),
+        [
+            ("gobby-tasks", "list_tools"),
+            ("gobby-skills", "list_skills"),
+            ("gobby-skills", "get_skill"),
+            ("gobby-skills", "search_skills"),
+        ],
+    )
+    async def test_call_tool_allows_bootstrap_tools_without_schema(
+        self,
+        engine,
+        server_name: str,
+        tool_name: str,
+    ) -> None:
+        """Discovery and skill bootstrap tools bypass the schema gate."""
         variables = {
             "enforce_tool_schema_check": True,
             "unlocked_tools": [],
@@ -630,9 +619,9 @@ class TestRuleEngineIntegration:
             HookEventType.BEFORE_TOOL,
             tool_name="mcp__gobby__call_tool",
             tool_input={
-                "server_name": "gobby-tasks",
-                "tool_name": "list_tools",
-                "arguments": {"server_name": "gobby-tasks"},
+                "server_name": server_name,
+                "tool_name": tool_name,
+                "arguments": {},
             },
         )
         result = await engine.evaluate(event, SESSION_ID, variables)
@@ -692,41 +681,20 @@ class TestRuleEngineIntegration:
         assert "gobby-tasks:add_label" in variables.get("unlocked_tools", [])
 
     @pytest.mark.asyncio
-    async def test_full_discovery_flow_with_blocking(self, engine) -> None:
-        """Full flow: block → track → allow progression.
-
-        1. get_tool_schema blocked (server not listed)
-        2. After list_tools tracking, get_tool_schema allowed
-        3. call_tool blocked (schema not looked up)
-        4. After get_tool_schema tracking, call_tool allowed
-        """
+    async def test_direct_schema_flow_blocks_then_reuses_lease(self, engine) -> None:
+        """Direct schema lookup unlocks repeated calls for the current context."""
         variables: dict = {
             "enforce_tool_schema_check": True,
         }
 
-        # Step 1: get_tool_schema blocked (server not listed)
         schema_event = _make_hook_event(
             HookEventType.BEFORE_TOOL,
             tool_name="mcp__gobby__get_tool_schema",
             tool_input={"server_name": "gobby-tasks", "tool_name": "create_task"},
         )
         result = await engine.evaluate(schema_event, SESSION_ID, variables)
-        assert result.decision == "block"
-
-        # Step 2: Simulate list_tools completing (tracking rule fires)
-        after_list_tools = _make_hook_event(
-            HookEventType.AFTER_TOOL,
-            tool_name="mcp__gobby__list_tools",
-            tool_input={"server_name": "gobby-tasks"},
-        )
-        await engine.evaluate(after_list_tools, SESSION_ID, variables)
-        assert "gobby-tasks" in variables.get("listed_servers", [])
-
-        # Step 3: get_tool_schema now allowed (server listed)
-        result = await engine.evaluate(schema_event, SESSION_ID, variables)
         assert result.decision == "allow"
 
-        # Step 4: call_tool blocked (schema not looked up)
         call_event = _make_hook_event(
             HookEventType.BEFORE_TOOL,
             tool_name="mcp__gobby__call_tool",
@@ -739,7 +707,6 @@ class TestRuleEngineIntegration:
         result = await engine.evaluate(call_event, SESSION_ID, variables)
         assert result.decision == "block"
 
-        # Step 5: Simulate get_tool_schema completing (tracking rule fires)
         after_schema = _make_hook_event(
             HookEventType.AFTER_TOOL,
             tool_name="mcp__gobby__get_tool_schema",
@@ -748,6 +715,38 @@ class TestRuleEngineIntegration:
         await engine.evaluate(after_schema, SESSION_ID, variables)
         assert "gobby-tasks:create_task" in variables.get("unlocked_tools", [])
 
-        # Step 6: call_tool now allowed (schema was looked up)
-        result = await engine.evaluate(call_event, SESSION_ID, variables)
+        for _ in range(2):
+            result = await engine.evaluate(call_event, SESSION_ID, variables)
+            assert result.decision == "allow"
+
+    @pytest.mark.parametrize(
+        ("source", "pending_context_reset"),
+        [("clear", False), ("compact", False), ("resume", True)],
+    )
+    async def test_context_loss_clears_only_schema_leases(
+        self,
+        engine,
+        source: str,
+        pending_context_reset: bool,
+    ) -> None:
+        variables = {
+            "unlocked_tools": ["gobby-tasks:create_task"],
+            "servers_listed": True,
+            "listed_servers": ["gobby-tasks"],
+            "pending_context_reset": pending_context_reset,
+        }
+        event = HookEvent(
+            event_type=HookEventType.SESSION_START,
+            session_id=EXTERNAL_SESSION_ID,
+            source=SessionSource.CLAUDE,
+            timestamp=datetime.now(UTC),
+            data={"source": source},
+            metadata={"_platform_session_id": SESSION_ID},
+        )
+
+        result = await engine.evaluate(event, SESSION_ID, variables)
+
         assert result.decision == "allow"
+        assert variables["unlocked_tools"] == []
+        assert variables["servers_listed"] is True
+        assert variables["listed_servers"] == ["gobby-tasks"]

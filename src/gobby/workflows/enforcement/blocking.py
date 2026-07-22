@@ -140,25 +140,6 @@ def is_tool_unlocked(
     return is_unlocked
 
 
-def is_server_listed(
-    tool_input: dict[str, Any],
-    variables: dict[str, Any],
-) -> bool:
-    """Check if list_tools has been called for this server.
-
-    Args:
-        tool_input: The tool input containing server_name or server
-        variables: Workflow state variables containing listed_servers list
-
-    Returns:
-        True if the server was previously listed via list_tools
-    """
-    server = tool_input.get("server_name") or tool_input.get("server") or ""
-    if not server:
-        return False
-    return server in variables.get("listed_servers", [])
-
-
 # CLI config directories whose .md files are exempt from task-before-edit
 # enforcement (plan files, notes, specs).  Any .md file under these dirs
 # qualifies — no "/plans/" subdirectory requirement.

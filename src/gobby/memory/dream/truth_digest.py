@@ -42,8 +42,9 @@ _CANONICAL_FACTS: tuple[str, ...] = (
     "Knowledge graph backend: FalkorDB. Neo4j is retired and no longer used.",
     "Vector store: Qdrant backs embedding-based memory recall; the FalkorDB "
     "graph backs the entity/relationship knowledge graph.",
-    "Tooling uses an MCP proxy with progressive discovery "
-    "(list_mcp_servers -> list_tools -> get_tool_schema -> call_tool).",
+    "Tooling uses context-aware MCP discovery: call leased known tools directly, "
+    "fetch schemas directly for known unleased tools, list tools for unknown names, "
+    "and list servers only for unknown-server or registry inspection.",
     "Gobby is a local-first daemon; sessions persist across restarts and "
     "context compactions, and stores PostgreSQL-authoritative task state with JSONL backups.",
 )

@@ -5,7 +5,7 @@ rules:
     description: "Clear pending_context_reset flag after use"
     event: session_start
     enabled: true
-    priority: 5
+    priority: 100
     when: "variables.get('pending_context_reset')"
     effects:
       - type: set_variable

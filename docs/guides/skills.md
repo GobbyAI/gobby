@@ -205,12 +205,11 @@ or write the local database and filesystem directly.
 
 ## MCP Tools
 
-Use progressive discovery before calling a skill tool:
-
-1. `list_mcp_servers`
-2. `list_tools(server_name="gobby-skills")`
-3. `get_tool_schema(server_name="gobby-skills", tool_name="...")`
-4. `call_tool(server_name="gobby-skills", tool_name="...", arguments={...})`
+Call `list_skills`, `get_skill`, and `search_skills` directly through
+`call_tool`; these bootstrap tools are exempt from the schema gate. For other
+known `gobby-skills` tools, call `get_tool_schema` directly when no
+current-context lease exists, then use `call_tool`. Use `list_tools` only when
+the tool name is unknown.
 
 Current `gobby-skills` tools:
 

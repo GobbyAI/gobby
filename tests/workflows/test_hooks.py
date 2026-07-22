@@ -952,7 +952,7 @@ class TestVariablePersistence:
         evidence = SessionVariableManager(db).get_variables(session.id)["verification_evidence"]
         assert [item["evidence_type"] for item in evidence] == [
             "manual_diff_review",
-            "validation_command",
+            "shell_command",
         ]
 
     @pytest.mark.asyncio
@@ -1074,7 +1074,7 @@ class TestVariablePersistence:
 
         assert before_response.decision == "block"
         assert (
-            'Call get_skill(name="task-transitions") on gobby-skills through mcp__gobby__ progressive discovery'
+            'Call get_skill(name="task-transitions") on gobby-skills directly through mcp__gobby__call_tool'
             in (before_response.reason or "")
         )
         assert response.decision == "allow"

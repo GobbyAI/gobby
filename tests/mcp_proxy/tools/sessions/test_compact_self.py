@@ -423,7 +423,10 @@ class TestCompactSelfTerminalPath:
             captured_prompts[0].index("wait_for_summary")
         )
         assert 'wait_for_summary(session_id="s1")' in captured_prompts[0]
-        assert "progressive discovery" in captured_prompts[0]
+        assert "directly" in captured_prompts[0]
+        assert "list_mcp_servers" not in captured_prompts[0]
+        assert "list_tools" not in captured_prompts[0]
+        assert "get_tool_schema" not in captured_prompts[0]
         assert '"name": "python"' in captured_prompts[0]
         assert '"name": "development-discipline"' in captured_prompts[0]
 

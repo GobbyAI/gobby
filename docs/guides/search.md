@@ -40,11 +40,9 @@ call_tool(server_name="gobby-skills", tool_name="search_skills", arguments={
 })
 ```
 
-Use progressive MCP discovery before calling a searched tool:
+For a known searched tool without a current-context lease, fetch its schema directly:
 
 ```python
-list_mcp_servers()
-list_tools(server_name="gobby-tasks")
 get_tool_schema(server_name="gobby-tasks", tool_name="search_tasks")
 call_tool(server_name="gobby-tasks", tool_name="search_tasks", arguments={
     "query": "login bug"
@@ -244,10 +242,9 @@ gobby skills search "code review" --hub clawdhub --limit 10
 
 ## MCP Tool Discovery
 
-Use lightweight discovery before tool calls:
+Use lightweight inventory discovery only when the tool name is unknown:
 
 ```python
-list_mcp_servers()
 list_tools(server_name="gobby-memory")
 get_tool_schema(server_name="gobby-memory", tool_name="search_memories")
 ```
@@ -314,8 +311,9 @@ and `ranking_mode`.
 
 ### Tool search fails
 
-1. Use progressive discovery first: `list_mcp_servers`, `list_tools`, then
-   `get_tool_schema`.
+1. If the tool name is known but unleased, call `get_tool_schema` directly. Use
+   `list_tools` only when the name is unknown and `list_mcp_servers` only when
+   the server or registry is unknown.
 2. For `search_tools`, confirm semantic tool embeddings are configured.
 3. For `recommend_tools`, use `search_mode="llm"` when semantic search is unavailable.
 

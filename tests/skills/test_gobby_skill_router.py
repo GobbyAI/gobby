@@ -50,7 +50,7 @@ class TestGobbyRouterSkill:
             "list_tools",
             "get_tool_schema",
             "call_tool",
-            "arguments={...}",
+            "bootstrap tools are exempt",
         ):
             assert text in body
 

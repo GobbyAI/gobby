@@ -168,11 +168,9 @@ When debugging from the browser, inspect fetches under `/api/cron/*`.
 - Running a job now.
 - Listing run history.
 
-Follow progressive discovery before calling a tool:
+For a known cron tool without a current-context lease, fetch its schema directly:
 
 ```text
-list_mcp_servers
-list_tools(server_name="gobby-cron")
 get_tool_schema(server_name="gobby-cron", tool_name="list_cron_jobs")
 call_tool(server_name="gobby-cron", tool_name="list_cron_jobs", ...)
 ```

@@ -47,7 +47,7 @@ instructions: |
   - `close_task` is the step-completion requirement before the workflow may end the turn.
   - Do NOT terminate the agent process without calling end_agent_run.
   - Always use `uv run` for Python commands.
-  - Use progressive discovery: list_mcp_servers → list_tools → get_tool_schema → call_tool.
+  - Use context-aware progressive discovery: call leased known tools directly; fetch schemas directly for known unleased tools; use list_tools only for unknown tool names and list_mcp_servers only for server or registry inspection.
   - Use review-learning only after verified pytest fixes, never for raw failure reports.
 
 workflows:

@@ -26,8 +26,7 @@ PLATFORM_SESSION_ID = "11111111-1111-4111-8111-111111111111"
 EXTERNAL_SESSION_ID = "22222222-2222-4222-8222-222222222222"
 
 PROGRESSIVE_DISCOVERY_RULES = {
-    "require-server-listed-for-schema",
-    "require-schema-before-call",
+    "require-current-context-schema-before-call",
     "track-schema-lookup",
     "track-servers-listed",
     "track-listed-servers",

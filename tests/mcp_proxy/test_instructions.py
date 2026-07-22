@@ -37,10 +37,10 @@ class TestBuildGobbyInstructions:
 
         assert "<tool_discovery>" in result
         assert "</tool_discovery>" in result
-        # Should mention progressive discovery pattern
-        assert "list_tools" in result
-        assert "get_tool_schema" in result
-        assert "call_tool" in result
+        assert "Known tool with a current-context schema lease" in result
+        assert "Known tool without a lease" in result
+        assert "Unknown tool name on a known server" in result
+        assert "Unknown server or registry inspection" in result
 
     def test_contains_rules_section(self) -> None:
         """Instructions should include <rules> section."""
@@ -60,10 +60,11 @@ class TestBuildGobbyInstructions:
 
         result = build_gobby_instructions()
 
-        # Should discourage loading all schemas upfront
         assert "NEVER" in result
-        # Should mention the pattern
-        assert "progressive" in result.lower() or "discovery" in result.lower()
+        assert "Invalid arguments always return the current schema" in result
+        assert "ordinary session resume and daemon restart" in result
+        assert "bootstrap tools" in result
+        assert "exempt from the schema gate" in result
 
     def test_loads_from_prompt_file(self) -> None:
         """Instructions should be loaded from the bundled prompt file."""

@@ -44,11 +44,10 @@ instead of trying to set `status` or `assignee` through `update_task`.
 
 ## Agent Workflow
 
-Agents should use progressive MCP discovery before invoking task tools:
+For a known task tool without a current-context lease, agents should fetch its
+schema directly before invoking it:
 
 ```python
-list_mcp_servers()
-list_tools(server_name="gobby-tasks")
 get_tool_schema(server_name="gobby-tasks", tool_name="create_task")
 call_tool(server_name="gobby-tasks", tool_name="create_task", arguments={...})
 ```

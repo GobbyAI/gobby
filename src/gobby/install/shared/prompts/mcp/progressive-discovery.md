@@ -6,22 +6,20 @@ version: "1.0"
 <gobby_system>
 
 <tool_discovery>
-Progressive discovery keeps token usage low — fetch schemas just-in-time, not upfront.
+Progressive discovery keeps token usage low by fetching schemas only when the current context needs them.
 
-All servers follow the same discovery chain:
-1. `list_mcp_servers()` — Discover available servers (required once per session)
-2. `list_tools(server_name="...")` — See tool names per server (required once per server, per session)
-3. `get_tool_schema(server_name, tool_name)` — Fetch parameter schema (required before first call)
-4. `call_tool(server_name, tool_name, args)` — Execute the tool
+- Known tool with a current-context schema lease: call `call_tool` directly.
+- Known tool without a lease: call `get_tool_schema` directly, then `call_tool`.
+- Unknown tool name on a known server: call `list_tools`, then `get_tool_schema`, then `call_tool`.
+- Unknown server or registry inspection: call `list_mcp_servers`.
 
-The proxy validates parameters on every call_tool. If params are wrong, the error includes the full schema.
+These are separate top-level proxy tools. Do not invoke `get_tool_schema` or another discovery step through `call_tool`.
+
+The proxy validates every `call_tool`. Invalid arguments always return the current schema and retain its lease.
 </tool_discovery>
 
 <skills>
-Discover skills with progressive discovery too:
-1. `list_skills()` on `gobby-skills` — Names and descriptions
-2. `get_skill(name="...")` on `gobby-skills` — Full skill content (use after list_skills or search_skills)
-3. `search_skills(query="...")` — Semantic search by topic (independent entry point, like list_skills)
+`list_skills`, `get_skill`, and `search_skills` on `gobby-skills` are bootstrap tools. Call them directly through `call_tool`; they are exempt from the schema gate.
 </skills>
 
 <code_search>
@@ -31,18 +29,17 @@ Use these instead of reading entire files — saves 90%+ tokens on large files.
 Run `gcode --help` for all available commands.
 </code_search>
 
-<caching>
-Schema fetches are cached per session. Once you call `get_tool_schema(server_name, tool_name)`,
-you can `call_tool` repeatedly WITHOUT re-fetching. Only fetch on first use.
-</caching>
+<leases>
+Schema leases survive ordinary session resume and daemon restart. Context loss such as clear or compact resets schema leases, so fetch the schema again before the next ordinary call. Inventory observations from `list_tools` and `list_mcp_servers` are preserved.
+</leases>
 
 <common_mistakes>
 WRONG — Loading all schemas upfront (wastes 30-40K tokens):
   for server in servers: get_tool_schema(server, tool) for each tool
 
-RIGHT — Just-in-time discovery:
-  get_tool_schema("gobby-tasks", "create_task")  # Learn required params
-  call_tool("gobby-tasks", "create_task", {"title": "Fix bug", "category": "code"})
+RIGHT — Fetch a known unleased tool schema directly:
+get_tool_schema("gobby-tasks", "create_task")  # Learn required params
+call_tool("gobby-tasks", "create_task", {"title": "Fix bug", "category": "code"})
 </common_mistakes>
 
 <variables>

@@ -378,8 +378,8 @@ class TestTranslateFromHookResponse:
         """ACP adapter keeps the turn alive on a BeforeTool block (recoverable)."""
         reason = (
             "Rule enforced by Gobby: [require-code-index-skill]\n"
-            'Call get_skill(name="code-index") on gobby-skills through mcp__gobby__ '
-            "progressive discovery"
+            'Call get_skill(name="code-index") on gobby-skills directly through '
+            "mcp__gobby__call_tool"
         )
         response = HookResponse(decision="block", reason=reason)
 

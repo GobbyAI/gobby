@@ -202,12 +202,10 @@ enabled, login and logout use `/api/auth/login` and `/api/auth/logout`.
 
 The Web UI does not replace the MCP proxy. It visualizes and operates the same
 daemon state that agents reach through MCP tools. For UI research or debugging,
-use progressive discovery against `chrome-devtools`:
-
-1. `list_mcp_servers`
-2. `list_tools(server_name="chrome-devtools")`
-3. `get_tool_schema(...)`
-4. `call_tool(...)`
+use context-aware discovery against `chrome-devtools`: call a leased known tool
+directly, or call `get_tool_schema` directly before an unleased known tool. Use
+`list_tools` only when the tool name is unknown and `list_mcp_servers` only when
+the server or registry is unknown.
 
 For product behavior, prefer native Gobby MCP servers such as `gobby-tasks`,
 `gobby-cron`, `gobby-metrics`, `gobby-memory`, and `gobby-skills`. File previews

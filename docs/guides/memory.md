@@ -38,11 +38,9 @@ call_tool(server_name="gobby-memory", tool_name="search_memories", arguments={
 })
 ```
 
-Use progressive discovery before relying on an MCP signature:
+For a known memory tool without a current-context lease, fetch its schema directly:
 
 ```python
-list_mcp_servers()
-list_tools(server_name="gobby-memory")
 get_tool_schema(server_name="gobby-memory", tool_name="search_memories")
 call_tool(server_name="gobby-memory", tool_name="search_memories", arguments={...})
 ```

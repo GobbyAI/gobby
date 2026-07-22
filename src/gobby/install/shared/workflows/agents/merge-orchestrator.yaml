@@ -171,8 +171,7 @@ instructions: |
     if you need to re-read the final report.
   - Always use `uv run` for any Python invocation that ends up inside
     verify_in_worktree commands.
-  - Use progressive discovery: list_mcp_servers -> list_tools ->
-    get_tool_schema -> call_tool.
+  - Use context-aware progressive discovery: call leased known tools directly; fetch schemas directly for known unleased tools; use list_tools only for unknown tool names and list_mcp_servers only for server or registry inspection.
 
 workflows:
   rule_selectors:
@@ -230,9 +229,7 @@ steps:
     status_message: |
       Call get_skill(name="merge-expert") and
       get_skill(name="build-coordinator") on gobby-skills, then continue.
-      Use only mcp__gobby__* proxy tools in this step. Exact path for each skill:
-      list_mcp_servers -> list_tools("gobby-skills") ->
-      get_tool_schema("gobby-skills", "get_skill") ->
+      Use only mcp__gobby__call_tool in this step. Call get_skill directly:
       call_tool("gobby-skills", "get_skill", {"name": <skill>}).
       Do not use native Skill, GitHub/app connector, or Computer Use tools.
     allowed_tools:

@@ -19,15 +19,11 @@ def skill_load_block_guidance(step: WorkflowStep) -> str:
     if targets:
         calls = ", then ".join(skill_fetch_proxy_path(target) for target in targets)
     else:
-        calls = (
-            'list_mcp_servers -> list_tools("gobby-skills") -> '
-            'get_tool_schema("gobby-skills", "get_skill") -> '
-            'call_tool("gobby-skills", "get_skill", {"name": "<skill-name>"})'
-        )
+        calls = 'call_tool("gobby-skills", "get_skill", {"name": "<skill-name>"})'
 
     return (
-        "\nDuring this skill-loading step, call gobby-skills:get_skill through "
-        f"mcp__gobby__ progressive discovery: {calls}."
+        "\nDuring this skill-loading step, call gobby-skills:get_skill directly through "
+        f"mcp__gobby__call_tool: {calls}."
     )
 
 

@@ -96,7 +96,7 @@ instructions: |
   - A verdict must happen before the workflow may end the turn and terminate.
   - Do NOT terminate or exit the agent process without calling end_agent_run.
   - Always use `uv run` for Python commands.
-  - Use progressive discovery: list_mcp_servers → list_tools → get_tool_schema → call_tool.
+  - Use context-aware progressive discovery: call leased known tools directly; fetch schemas directly for known unleased tools; use list_tools only for unknown tool names and list_mcp_servers only for server or registry inspection.
   - While in LOAD_SKILLS, do not call claim_task, get_task, get_workflow_status,
     or get_agent_definition. Only load skills from gobby-skills until the
     workflow advances to REVIEW.
@@ -157,9 +157,7 @@ steps:
       2. get_skill(name="task-transitions") on gobby-skills
       3. get_skill(name="review-learning") on gobby-skills
       4. get_skill(name="proportionality") on gobby-skills
-      Use only mcp__gobby__* proxy tools in this step. Exact path for each skill:
-      list_mcp_servers -> list_tools("gobby-skills") ->
-      get_tool_schema("gobby-skills", "get_skill") ->
+      Use only mcp__gobby__call_tool in this step. Call get_skill directly:
       call_tool("gobby-skills", "get_skill", {"name": <skill>}).
       Do not use native Skill, GitHub/app connector, or Computer Use tools.
     allowed_tools:

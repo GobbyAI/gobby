@@ -219,7 +219,6 @@ when: "mcp_called('gobby-memory', 'recall_with_synthesis')"
 when: "not mcp_failed('gobby-tasks', 'validate_task')"
 
 # Progressive discovery
-when: "is_server_listed(tool_input)"
 when: "is_tool_unlocked(tool_input)"
 
 # Aggregation with generators

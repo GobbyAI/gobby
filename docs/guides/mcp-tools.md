@@ -24,22 +24,22 @@ own non-`gobby-*` names.
 
 ## Progressive Discovery Pattern
 
-For token efficiency, use the progressive workflow on demand. Schemas are
-cached per session — fetch once, call repeatedly. Call each discovery step
-as its own native tool; do not try to invoke `list_tools` or
+For token efficiency, discovery is context-aware. A schema lookup creates a
+current-context lease for that server/tool pair:
+
+- **Known leased tool:** call `call_tool` directly.
+- **Known unleased tool:** call `get_tool_schema` directly, then `call_tool`.
+- **Unknown tool name:** call `list_tools`, then fetch the selected schema and call it.
+- **Unknown server or registry inspection:** call `list_mcp_servers`.
+
+Call each discovery step as its own native tool; do not invoke `list_tools` or
 `get_tool_schema` through `call_tool`.
 
 ```python
-# 1. Discover connected servers
-list_mcp_servers()
-
-# 2. Discover tools — lightweight metadata (~100 tokens/tool)
-list_tools(server_name="gobby-tasks")
-
-# 3. Inspect — full schema when needed (~500 tokens/tool)
+# Known tool without a current-context lease: inspect its schema directly
 get_tool_schema(server_name="gobby-tasks", tool_name="create_task")
 
-# 4. Execute — run the tool
+# Execute repeatedly while the lease remains current
 call_tool("gobby-tasks", "create_task", {
     "title": "Fix bug",
     "category": "code",
@@ -49,6 +49,14 @@ call_tool("gobby-tasks", "create_task", {
 
 Skip eager schema loading. Loading every schema upfront wastes 30–40K
 tokens that the proxy will happily deliver lazily.
+
+Leases and inventory observations are stored in PostgreSQL session variables,
+so ordinary session resume and daemon restart preserve them. Context loss from
+clear, compact, or a reconstructed resume clears only schema leases; inventory
+observations remain available. Fetch a tool's schema again after such a reset.
+
+`get_skill`, `list_skills`, and `search_skills` on `gobby-skills` are bootstrap
+tools and bypass the schema gate. Call them directly through `call_tool`.
 
 ---
 
@@ -86,13 +94,14 @@ all others are proxied to the downstream MCP server.
 
 #### `list_tools(server_name)`
 
-Light metadata for tools on a single server. Use `list_mcp_servers()` first,
-then pass one discovered server name.
+Light metadata for tools on a single known server. Use this when the tool name
+is unknown or when explicitly inspecting inventory. Use `list_mcp_servers()`
+only when the server name is unknown or registry inspection is intended.
 
 #### `get_tool_schema(server_name, tool_name)`
 
-Full `inputSchema` for a tool. Required before first call (the proxy
-enforces a "list before schema" rule per server).
+Full `inputSchema` for a tool. Call it directly for a known unleased tool; no
+prior inventory call is required. The lookup records a current-context lease.
 
 #### `read_mcp_resource(server_name, resource_uri)`
 
@@ -1042,9 +1051,9 @@ wrapper key. Payload shapes vary per tool (for example, `create_task` returns
 Some failure paths add an `error_code` field (proxy blocked/error responses)
 or, for import/config tools, an `error_type` field.
 
-When a `call_tool` invocation fails parameter validation, the error
-includes the full schema for the target tool so callers can correct and
-retry without an extra `get_tool_schema` round-trip.
+When a `call_tool` invocation fails parameter validation, the error always
+includes the current schema for the target tool and idempotently retains its
+lease, so callers can correct and retry without an extra schema round-trip.
 
 ---
 

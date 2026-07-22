@@ -2,7 +2,7 @@
 
 These are enforced by hooks, rules and workflows.
 
-1. **ALWAYS use progressive tool discovery.** Do not try to call one step through another (e.g., don't use call_tool to invoke get_tool_schema).
+1. **ALWAYS use context-aware progressive tool discovery.** Call leased known tools directly; call `get_tool_schema` directly for known unleased tools; use `list_tools` only when the tool name is unknown and `list_mcp_servers` only when the server or registry is unknown. Skill bootstrap tools are exempt. Do not try to call one step through another (e.g., don't use `call_tool` to invoke `get_tool_schema`).
 2. **NEVER create or leave monoliths.** Keep non-test Python, TypeScript, and CSS source files under 1,000 lines. For non-test `.py`, `.ts`, `.tsx`, and `.css` files only, you *MUST* search for an existing refactor task or create it if one does not already exist in gobby-tasks. Leave these tasks for another agent to pick up. Markdown files, including `docs/guides/*.md` and repo-root instruction files, are documentation artifacts and are not subject to this 1,000-line source-file rule; do not create refactor tasks or block docs work based only on Markdown line count.
 3. **ALWAYS create or claim a task before editing a file.** This applies to file edits only — no task needed for plan mode, research, investigation, or answering questions unless the user explicitly requests one.
 4. **Validation runs when closing with a commit. If a commit is done, validation must run.** `skip_validation` is silently stripped when commits are attached.
@@ -22,10 +22,9 @@ These are enforced by hooks, rules and workflows.
 
 ## Progressive Tool Discovery Enforced by Hooks
 
-Gobby uses an MCP proxy with progressive discovery. This means that you can't just call any tool you want.
-Each step (list_mcp_servers, list_tools, get_tool_schema, call_tool) is a separate top-level tool (e.g., mcp__gobby__list_mcp_servers).
-Load each via ToolSearch before first use.
-Do NOT try to call one step through another (e.g., don't use call_tool to invoke get_tool_schema).
+Gobby uses an MCP proxy with context-aware progressive discovery. A current-context schema lease permits direct `call_tool` use. For a known unleased tool, call `get_tool_schema` directly, then `call_tool`. Use `list_tools` only to discover an unknown tool name and `list_mcp_servers` only to inspect an unknown server or registry. `get_skill`, `list_skills`, and `search_skills` are enforcement-exempt and may be called directly.
+
+`list_mcp_servers`, `list_tools`, `get_tool_schema`, and `call_tool` are separate top-level tools (for example, `mcp__gobby__get_tool_schema`). Load each via ToolSearch before first use. Do NOT try to call one step through another (for example, don't use `call_tool` to invoke `get_tool_schema`).
 
 ## DO NOT RUN THE FULL PYTEST SUITE
 

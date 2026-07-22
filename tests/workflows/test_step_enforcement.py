@@ -300,7 +300,7 @@ class TestStepToolBlocking:
         engine: RuleEngine,
         instance_mgr: WorkflowInstanceManager,
     ) -> None:
-        """Blocked load-skill mistakes should tell agents the exact proxy path."""
+        """Blocked load-skill mistakes should give the direct bootstrap call."""
         workflow = {
             "name": "skill-load-feedback",
             "version": "1.0",
@@ -345,9 +345,10 @@ class TestStepToolBlocking:
         assert response.decision == "block"
         assert response.reason is not None
         assert "gobby-skills:get_skill" in response.reason
-        assert 'list_tools("gobby-skills")' in response.reason
-        assert 'get_tool_schema("gobby-skills", "get_skill")' in response.reason
-        assert 'call_tool("gobby-skills", "get_skill", {"name": "plan-review"})' in response.reason
+        guidance = response.reason.split("\nDuring this skill-loading step,", maxsplit=1)[-1]
+        assert "list_tools" not in guidance
+        assert "get_tool_schema" not in guidance
+        assert 'call_tool("gobby-skills", "get_skill", {"name": "plan-review"})' in guidance
         assert tool_name in response.reason
 
     @pytest.mark.asyncio
@@ -1407,6 +1408,8 @@ class TestToolOutputRouting:
                     "success": True,
                     "result": {"success": False, "has_conflicts": True},
                 },
+                "tool_outcome": {"status": "failed", "provenance": "test.fixture"},
+                "_tool_outcome_trust": "provider_contract",
             },
         )
         variables: dict[str, Any] = {}
@@ -1529,6 +1532,8 @@ class TestToolOutputRouting:
                     "success": True,
                     "result": {"success": False, "has_conflicts": False},
                 },
+                "tool_outcome": {"status": "failed", "provenance": "test.fixture"},
+                "_tool_outcome_trust": "provider_contract",
             },
         )
         variables: dict[str, Any] = {}
@@ -1551,6 +1556,8 @@ class TestToolOutputRouting:
                     "success": True,
                     "result": {"success": False, "has_conflicts": True},
                 },
+                "tool_outcome": {"status": "failed", "provenance": "test.fixture"},
+                "_tool_outcome_trust": "provider_contract",
             },
         )
 

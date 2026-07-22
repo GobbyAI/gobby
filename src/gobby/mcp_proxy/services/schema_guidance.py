@@ -41,30 +41,6 @@ def _session_variable_context(
         return None, resolved_session_id
 
 
-def schema_already_shown(
-    service: Any,
-    session_id: str | None,
-    *,
-    server_name: str,
-    tool_name: str,
-) -> bool:
-    """Return True when the target tool schema has already been shown this session."""
-    manager, resolved_session_id = _session_variable_context(service, session_id)
-    if manager is None or resolved_session_id is None:
-        return False
-
-    try:
-        variables = manager.get_variables(resolved_session_id)
-    except Exception as exc:
-        logger.debug("Failed to read schema latch for %s: %s", resolved_session_id, exc)
-        return False
-
-    unlocked_tools = variables.get(UNLOCKED_TOOLS_VARIABLE, [])
-    if not isinstance(unlocked_tools, list):
-        return False
-    return tool_schema_key(server_name, tool_name) in unlocked_tools
-
-
 def record_schema_shown(
     service: Any,
     session_id: str | None,
@@ -95,7 +71,7 @@ def build_invalid_arguments_response(
     error_message: str | None = None,
     hint: str | None = "Review the schema for the accepted arguments.",
 ) -> dict[str, Any]:
-    """Build a structured invalid-argument response with schema shown once."""
+    """Build an invalid-argument response with the current schema and lease."""
     errors = [str(error) for error in validation_errors if str(error)]
     if not errors and error_message:
         errors = [error_message]
@@ -111,21 +87,13 @@ def build_invalid_arguments_response(
     if hint:
         response["hint"] = hint
 
-    if input_schema:
-        if schema_already_shown(
+    if input_schema is not None:
+        response["schema"] = input_schema
+        record_schema_shown(
             service,
             session_id,
             server_name=server_name,
             tool_name=tool_name,
-        ):
-            response["schema_already_shown"] = True
-        else:
-            response["schema"] = input_schema
-            record_schema_shown(
-                service,
-                session_id,
-                server_name=server_name,
-                tool_name=tool_name,
-            )
+        )
 
     return response

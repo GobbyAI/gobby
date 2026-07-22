@@ -1,8 +1,8 @@
 tags: [progressive-discovery, enforcement, mcp, gobby, default]
 
 rules:
-  require-schema-before-call:
-    description: "Block call_tool if get_tool_schema has not been called for this tool"
+  require-current-context-schema-before-call:
+    description: "Block call_tool until the current context has seen this tool's schema"
     event: before_tool
     enabled: true
     priority: 22
@@ -11,4 +11,4 @@ rules:
       - type: block
         reason: >-
           Run get_tool_schema(server_name='{{ tool_input.get('server_name', '?') }}', tool_name='{{ tool_input.get('tool_name', '?') }}') first.
-          You only need to do this once per tool.
+          The lease remains valid until context is cleared or compacted.

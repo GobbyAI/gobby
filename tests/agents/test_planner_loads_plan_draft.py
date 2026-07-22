@@ -48,13 +48,13 @@ class TestPlannerSkillLoading:
         assert load_step is not None
         assert load_step.status_message is not None
         assert "plan-draft" in load_step.status_message
-        assert 'list_tools("gobby-skills")' in load_step.status_message
-        assert 'get_tool_schema("gobby-skills", "get_skill")' in load_step.status_message
+        assert "list_tools" not in load_step.status_message
+        assert "get_tool_schema" not in load_step.status_message
         assert (
             'call_tool("gobby-skills", "get_skill", {"name": "plan-draft"})'
             in load_step.status_message
         )
-        assert "mcp__gobby__* proxy tools" in load_step.status_message
+        assert "mcp__gobby__call_tool" in load_step.status_message
         assert "native Skill" in load_step.status_message
         assert "GitHub/app connector" in load_step.status_message
         assert "Computer Use tools" in load_step.status_message
