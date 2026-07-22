@@ -96,6 +96,7 @@ def _ready_variables(**overrides: object) -> dict[str, object]:
                 "evidence_type": "validation_command",
                 "command": "uv run pytest tests/workflows/test_hooks.py -v",
                 "success": True,
+                "outcome_provenance": "tool_outcome.status",
             }
         ],
         "verification_evidence_recorded": True,
@@ -223,6 +224,7 @@ async def test_completion_readiness_blocks_failed_validation_evidence(
                     "evidence_type": "validation_command",
                     "command": "uv run pytest tests/workflows/test_hooks.py -v",
                     "success": False,
+                    "outcome_provenance": "tool_outcome.status",
                 }
             ],
             verification_evidence_recorded=False,
@@ -278,11 +280,13 @@ async def test_later_successful_validation_clears_failed_validation_block(
                     "evidence_type": "validation_command",
                     "command": "uv run pytest old.py",
                     "success": False,
+                    "outcome_provenance": "tool_outcome.status",
                 },
                 {
                     "evidence_type": "validation_command",
                     "command": "uv run pytest new.py",
                     "success": True,
+                    "outcome_provenance": "tool_outcome.status",
                 },
             ],
         ),
@@ -308,6 +312,7 @@ async def test_different_validation_category_does_not_clear_failure(
                     "command": "uv run pytest tests/workflows/test_hooks.py",
                     "categories": ["test"],
                     "success": False,
+                    "outcome_provenance": "tool_outcome.status",
                 },
                 {
                     "evidence_type": "validation_command",
@@ -346,6 +351,7 @@ async def test_same_validation_category_clears_failure(
                     "command": "uv run pytest tests/workflows/test_rules.py",
                     "categories": ["test"],
                     "success": True,
+                    "outcome_provenance": "tool_outcome.status",
                 },
             ],
         ),
@@ -394,6 +400,7 @@ async def test_manual_evidence_cannot_clear_failed_validation(
                     "evidence_type": "validation_command",
                     "command": "uv run pytest old.py",
                     "success": False,
+                    "outcome_provenance": "tool_outcome.status",
                 },
                 {
                     "evidence_type": "manual_diff_review",

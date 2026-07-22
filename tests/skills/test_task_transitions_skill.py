@@ -20,11 +20,13 @@ SKILL_PATH = (
 )
 
 
-def test_codex_validation_guidance_matches_literal_command_collector() -> None:
+def test_validation_guidance_is_provider_neutral_and_source_aware() -> None:
     content = SKILL_PATH.read_text()
 
-    assert "one top-level `functions.exec` call per validation command" in content
-    assert 'tools.exec_command({cmd:"GOBBY_TEST_PROTECT=1 uv run pytest' in content
-    assert "text(JSON.stringify(result))" in content
-    assert "`functions.wait`" in content
-    assert "Promise.all(commands.map" not in content
+    assert "Run each validation command as one native terminal invocation" in content
+    assert "Follow every returned wait or polling token until the terminal result" in content
+    assert "Recovery by captured source" in content
+    assert "Claude Code and Qwen" in content
+    assert "Droid and Grok" in content
+    assert "Codex" in content
+    assert "Manual `validation_command` evidence is prohibited" in content

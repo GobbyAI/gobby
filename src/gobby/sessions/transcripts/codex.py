@@ -31,6 +31,7 @@ from typing import Any, Literal
 
 from gobby.adapters.codex_impl.item_normalization import (
     extract_functions_exec_command,
+    extract_functions_write_stdin_session_id,
     extract_wait_cell_id,
     extract_yielded_cell_id,
 )
@@ -83,12 +84,14 @@ class _PendingNestedExec:
     outer_call_id: str
     literal_command: str | None = None
     cell_id: str | None = None
+    session_id: str | None = None
 
     def to_state(self) -> dict[str, Any]:
         return {
             "outer_call_id": self.outer_call_id,
             "literal_command": self.literal_command,
             "cell_id": self.cell_id,
+            "session_id": self.session_id,
         }
 
     @classmethod
@@ -98,16 +101,20 @@ class _PendingNestedExec:
         outer_call_id = value.get("outer_call_id")
         literal_command = value.get("literal_command")
         cell_id = value.get("cell_id")
+        session_id = value.get("session_id")
         if not isinstance(outer_call_id, str) or not outer_call_id:
             return None
         if literal_command is not None and not isinstance(literal_command, str):
             return None
         if cell_id is not None and not isinstance(cell_id, str):
             return None
+        if session_id is not None and not isinstance(session_id, str):
+            return None
         return cls(
             outer_call_id=outer_call_id,
             literal_command=literal_command,
             cell_id=cell_id,
+            session_id=session_id,
         )
 
 
@@ -270,7 +277,7 @@ def _decoded_exec_results(value: Any) -> list[dict[str, Any]]:
 
     if not isinstance(value, dict):
         return []
-    if "exit_code" in value or "exitCode" in value:
+    if any(key in value for key in ("exit_code", "exitCode", "session_id", "sessionId")):
         return [value]
     for wrapper_key in ("content", "output"):
         wrapped = value.get(wrapper_key)
@@ -285,6 +292,15 @@ def _definitive_exit_code(result: dict[str, Any]) -> int | None:
         return None
     first = values[0]
     return first if all(value == first for value in values) else None
+
+
+def _exec_session_id(result: dict[str, Any]) -> str | None:
+    session_id = result.get("session_id", result.get("sessionId"))
+    if isinstance(session_id, str) and session_id:
+        return session_id
+    if isinstance(session_id, int) and not isinstance(session_id, bool):
+        return str(session_id)
+    return None
 
 
 def _explicit_result_command(result: dict[str, Any]) -> str | None:
@@ -325,6 +341,7 @@ class CodexTranscriptParser(BaseTranscriptParser):
         self._pending_tool_search_use_ids: deque[str] = deque()
         self._pending_nested_exec_calls: dict[str, _PendingNestedExec] = {}
         self._pending_nested_exec_cells: dict[str, _PendingNestedExec] = {}
+        self._pending_nested_exec_sessions: dict[str, _PendingNestedExec] = {}
 
     def snapshot_state(self) -> dict[str, Any]:
         state: dict[str, Any] = {
@@ -337,6 +354,10 @@ class CodexTranscriptParser(BaseTranscriptParser):
         if self._pending_nested_exec_cells:
             state["pending_nested_exec_cells"] = {
                 key: value.to_state() for key, value in self._pending_nested_exec_cells.items()
+            }
+        if self._pending_nested_exec_sessions:
+            state["pending_nested_exec_sessions"] = {
+                key: value.to_state() for key, value in self._pending_nested_exec_sessions.items()
             }
         return state
 
@@ -354,6 +375,9 @@ class CodexTranscriptParser(BaseTranscriptParser):
         )
         self._pending_nested_exec_cells = _bounded_pending_state(
             state.get("pending_nested_exec_cells")
+        )
+        self._pending_nested_exec_sessions = _bounded_pending_state(
+            state.get("pending_nested_exec_sessions")
         )
 
     def extract_last_messages(
@@ -485,9 +509,21 @@ class CodexTranscriptParser(BaseTranscriptParser):
             return
 
         if name in _NESTED_EXEC_NAMES:
+            arguments = _tool_call_arguments(payload)
+            literal_command = extract_functions_exec_command(arguments)
+            session_id = extract_functions_write_stdin_session_id(arguments)
+            if literal_command is None and session_id is not None:
+                session_pending = self._pending_nested_exec_sessions.get(session_id)
+                if session_pending is not None:
+                    self._set_pending(
+                        self._pending_nested_exec_calls,
+                        call_id,
+                        session_pending,
+                    )
+                return
             pending = _PendingNestedExec(
                 outer_call_id=call_id,
-                literal_command=extract_functions_exec_command(_tool_call_arguments(payload)),
+                literal_command=literal_command,
             )
             self._set_pending(self._pending_nested_exec_calls, call_id, pending)
             return
@@ -534,6 +570,7 @@ class CodexTranscriptParser(BaseTranscriptParser):
                 outer_call_id=pending.outer_call_id,
                 literal_command=pending.literal_command,
                 cell_id=yielded_cell_id,
+                session_id=pending.session_id,
             )
             self._set_pending(
                 self._pending_nested_exec_cells,
@@ -548,6 +585,36 @@ class CodexTranscriptParser(BaseTranscriptParser):
                 self._pending_nested_exec_cells.pop(pending.cell_id, None)
 
         results = _decoded_exec_results(output)
+        terminal_results = [
+            result for result in results if _definitive_exit_code(result) is not None
+        ]
+        if not terminal_results:
+            session_ids = {
+                session_id
+                for result in results
+                if (session_id := _exec_session_id(result)) is not None
+            }
+            if len(results) == 1 and len(session_ids) == 1:
+                session_id = next(iter(session_ids))
+                if pending.session_id is not None and pending.session_id != session_id:
+                    self._pending_nested_exec_sessions.pop(pending.session_id, None)
+                session_pending = _PendingNestedExec(
+                    outer_call_id=pending.outer_call_id,
+                    literal_command=pending.literal_command,
+                    session_id=session_id,
+                )
+                self._set_pending(
+                    self._pending_nested_exec_sessions,
+                    session_id,
+                    session_pending,
+                )
+            return []
+
+        if pending.session_id is not None:
+            current = self._pending_nested_exec_sessions.get(pending.session_id)
+            if current is not None and current.outer_call_id == pending.outer_call_id:
+                self._pending_nested_exec_sessions.pop(pending.session_id, None)
+
         derived: list[CodexNestedExecOutcome] = []
         for result_index, result in enumerate(results):
             if _definitive_exit_code(result) is None:

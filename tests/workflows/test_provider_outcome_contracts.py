@@ -18,6 +18,9 @@ from gobby.adapters.grok import GrokAdapter
 from gobby.adapters.qwen import QwenAdapter
 from gobby.hooks.events import HookEvent, HookEventType, SessionSource
 from gobby.hooks.normalization import normalize_tool_fields
+from gobby.mcp_proxy.tools.tasks._verification_evidence_context import (
+    format_verification_evidence_context,
+)
 from gobby.workflows.condition_helpers import completion_evidence_ready
 from gobby.workflows.observer_verification import detect_verification_evidence
 
@@ -210,6 +213,20 @@ def test_provider_outcome_drives_evidence_and_readiness(
     assert evidence["success"] is expected_success[expected_outcome]
     assert completion_evidence_ready(variables) is (expected_outcome == "succeeded")
 
+    context = format_verification_evidence_context([evidence], limit=1)
+    assert context is not None
+    structured = json.loads(context.splitlines()[1])
+    if expected_outcome == "unknown":
+        assert structured["command_result_correlation"] == "missing", provider
+        assert structured["success"] is None
+    else:
+        expected_signal = (
+            "exit_code" if evidence.get("exit_code") is not None else "provider_status"
+        )
+        assert structured["command_result_correlation"] == "correlated", provider
+        assert structured["command_result_signal"] == expected_signal
+        assert structured["success"] is expected_success[expected_outcome]
+
 
 def test_provider_outcome_matrix_covers_every_interactive_session_source() -> None:
     represented_sources = {event.source for _, event, _ in PROVIDER_OUTCOME_CASES}
@@ -217,3 +234,32 @@ def test_provider_outcome_matrix_covers_every_interactive_session_source() -> No
     assert set(SessionSource) == INTERACTIVE_SESSION_SOURCES | EXCLUDED_SESSION_SOURCES
     assert represented_sources == INTERACTIVE_SESSION_SOURCES
     assert represented_sources.isdisjoint(EXCLUDED_SESSION_SOURCES)
+
+
+def test_conflicting_machine_signals_remain_unknown_end_to_end() -> None:
+    data = {
+        "tool_name": "Bash",
+        "tool_input": {"command": COMMAND},
+        "status": "failed",
+        "tool_output": {"exitCode": 0},
+    }
+    normalize_tool_fields(data)
+    event = HookEvent(
+        event_type=HookEventType.AFTER_TOOL,
+        session_id=SESSION_ID,
+        source=SessionSource.GROK,
+        timestamp=datetime.now(UTC),
+        cwd="/repo",
+        data=data,
+    )
+    variables: dict[str, object] = {}
+
+    detect_verification_evidence(event, variables, SESSION_ID)
+
+    evidence = variables["verification_evidence"][-1]  # type: ignore[index]
+    assert data["tool_outcome"]["status"] == "unknown"
+    assert evidence["success"] is None
+    assert completion_evidence_ready(variables) is False
+    context = format_verification_evidence_context([evidence], limit=1)
+    assert context is not None
+    assert json.loads(context.splitlines()[1])["command_result_correlation"] == "missing"

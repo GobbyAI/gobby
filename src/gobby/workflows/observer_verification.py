@@ -25,6 +25,7 @@ from gobby.workflows.verification_evidence import (
     VERIFICATION_EVIDENCE_TYPE_VALIDATION_COMMAND,
     VERIFICATION_EVIDENCE_VARIABLE,
     append_verification_evidence,
+    correlate_validation_command_result,
 )
 
 if TYPE_CHECKING:
@@ -274,12 +275,14 @@ def detect_verification_evidence(
     outcome_provenance = summary_provenance or outcome.provenance
     if outcome_provenance is not None:
         evidence["outcome_provenance"] = outcome_provenance
+    correlated = correlate_validation_command_result(evidence)
+    evidence["success"] = correlated.success if correlated is not None else None
     existing = variables.get(VERIFICATION_EVIDENCE_VARIABLE, [])
     variables[VERIFICATION_EVIDENCE_VARIABLE] = append_verification_evidence(
         existing, _json_safe(evidence), session_id=session_id
     )
 
-    if success is True:
+    if correlated is not None and correlated.success:
         variables[VERIFICATION_EVIDENCE_RECORDED_VARIABLE] = True
         logger.debug(
             "Session %s: verification_evidence_recorded=true via validation command",
@@ -287,7 +290,7 @@ def detect_verification_evidence(
         )
         return
 
-    if success is False:
+    if correlated is not None and not correlated.success:
         variables[VERIFICATION_EVIDENCE_RECORDED_VARIABLE] = False
         logger.info(
             "Session %s: verification readiness cleared after failed validation command",

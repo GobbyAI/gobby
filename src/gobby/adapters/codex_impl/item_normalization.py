@@ -48,6 +48,8 @@ _EXEC_COMMAND_LITERAL_RE = re.compile(
     r'(?:^|[{,])\s*cmd\s*:\s*("(?:\\.|[^"\\])*")',
     re.DOTALL,
 )
+_WRITE_STDIN_CALL_RE = re.compile(r"\btools\.write_stdin\s*\(")
+_WRITE_STDIN_SESSION_RE = re.compile(r"\bsession_id\s*:\s*(\"(?:\\.|[^\"\\])*\"|-?\d+)")
 _YIELDED_CELL_RE = re.compile(r"^Script running with cell ID ([A-Za-z0-9._:-]+)\s*$")
 
 
@@ -85,6 +87,23 @@ def extract_functions_exec_command(arguments: Any) -> str | None:
     return command if isinstance(command, str) and command else None
 
 
+def extract_functions_write_stdin_session_id(arguments: Any) -> str | None:
+    """Extract one literal nested write_stdin session ID, failing closed."""
+    if isinstance(arguments, dict):
+        return _normalize_session_id(arguments.get("session_id"))
+    if not isinstance(arguments, str):
+        return None
+    if len(_WRITE_STDIN_CALL_RE.findall(arguments)) != 1:
+        return None
+    matches = _WRITE_STDIN_SESSION_RE.findall(arguments)
+    if len(matches) != 1:
+        return None
+    try:
+        return _normalize_session_id(json.loads(matches[0]))
+    except (TypeError, ValueError):
+        return None
+
+
 def _iter_wrapper_output_text(value: Any) -> list[str]:
     if isinstance(value, str):
         return [value]
@@ -102,6 +121,34 @@ def _iter_wrapper_output_text(value: Any) -> list[str]:
             if isinstance(nested, (dict, list, str)):
                 result.extend(_iter_wrapper_output_text(nested))
     return result
+
+
+def _normalize_session_id(value: Any) -> str | None:
+    if isinstance(value, str) and value:
+        return value
+    if isinstance(value, int) and not isinstance(value, bool):
+        return str(value)
+    return None
+
+
+def extract_exec_session_id(data: dict[str, Any]) -> str | None:
+    """Read an exact structured PTY session ID from a wrapper result."""
+    output = data.get("tool_output")
+    if isinstance(output, dict):
+        session_id = _normalize_session_id(output.get("session_id", output.get("sessionId")))
+        if session_id is not None:
+            return session_id
+    for text in _iter_wrapper_output_text(output):
+        try:
+            decoded = json.loads(text)
+        except (TypeError, ValueError):
+            continue
+        if not isinstance(decoded, dict):
+            continue
+        session_id = _normalize_session_id(decoded.get("session_id", decoded.get("sessionId")))
+        if session_id is not None:
+            return session_id
+    return None
 
 
 def extract_yielded_cell_id(data: dict[str, Any]) -> str | None:
@@ -134,35 +181,60 @@ class DynamicExecCorrelator:
 
     def __init__(self, max_pending: int = 64) -> None:
         self._max_pending = max_pending
-        self._pending: dict[str, dict[str, Any]] = {}
+        self._pending_cells: dict[str, dict[str, Any]] = {}
+        self._pending_sessions: dict[str, dict[str, Any]] = {}
 
     def correlate(self, data: dict[str, Any]) -> dict[str, Any]:
-        """Attach the original shell command to a correlated final wait result."""
+        """Attach the original shell command throughout a correlated wrapper chain."""
         original_tool = data.get("_original_tool_name") or data.get("tool_name")
-        yielded_cell_id = extract_yielded_cell_id(data)
+        pending_input: dict[str, Any] | None = None
+        waited_cell_id: str | None = None
+        polled_session_id: str | None = None
 
-        if original_tool in _FUNCTIONS_EXEC_NAMES and yielded_cell_id is not None:
+        if original_tool in _FUNCTIONS_EXEC_NAMES:
             tool_input = data.get("tool_input")
             if isinstance(tool_input, dict) and isinstance(tool_input.get("command"), str):
-                if len(self._pending) >= self._max_pending:
-                    self._pending.pop(next(iter(self._pending)))
-                self._pending[yielded_cell_id] = dict(tool_input)
-            return data
+                pending_input = dict(tool_input)
+            else:
+                polled_session_id = extract_functions_write_stdin_session_id(data.get("arguments"))
+                if polled_session_id is not None:
+                    pending_input = self._pending_sessions.get(polled_session_id)
+        elif original_tool in {"wait", "functions.wait"}:
+            waited_cell_id = extract_wait_cell_id(data)
+            if waited_cell_id is not None:
+                pending_input = self._pending_cells.get(waited_cell_id)
 
-        if original_tool not in {"wait", "functions.wait"}:
-            return data
-
-        cell_id = extract_wait_cell_id(data)
-        if cell_id is None or yielded_cell_id is not None:
-            return data
-        pending_input = self._pending.pop(cell_id, None)
         if pending_input is None:
             return data
 
         data["_original_tool_name"] = str(original_tool)
         data["tool_name"] = "Bash"
-        data["tool_input"] = pending_input
+        data["tool_input"] = dict(pending_input)
+
+        yielded_cell_id = extract_yielded_cell_id(data)
+        if yielded_cell_id is not None:
+            self._set_pending(self._pending_cells, yielded_cell_id, pending_input)
+            return data
+
+        if waited_cell_id is not None:
+            self._pending_cells.pop(waited_cell_id, None)
+
+        result_session_id = extract_exec_session_id(data)
+        if result_session_id is not None:
+            self._set_pending(self._pending_sessions, result_session_id, pending_input)
+        elif polled_session_id is not None:
+            self._pending_sessions.pop(polled_session_id, None)
         return data
+
+    def _set_pending(
+        self,
+        pending: dict[str, dict[str, Any]],
+        key: str,
+        tool_input: dict[str, Any],
+    ) -> None:
+        if len(pending) >= self._max_pending and key not in pending:
+            pending.pop(next(iter(pending)))
+        pending[key] = dict(tool_input)
 
 
 def extract_completed_item_payload(params: dict[str, Any]) -> dict[str, Any]:

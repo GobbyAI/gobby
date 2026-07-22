@@ -6,12 +6,13 @@ import json
 from collections.abc import Sequence
 from typing import Any
 
+from gobby.workflows.verification_evidence import correlate_validation_command_result
+
 _EVIDENCE_FIELDS: tuple[str, ...] = (
     "evidence_type",
     "command",
     "exit_code",
     "success",
-    "outcome_provenance",
     "matcher_id",
     "matcher_label",
     "summary",
@@ -82,14 +83,17 @@ def _structured_evidence_item(item: dict[str, Any]) -> dict[str, object]:
             payload[key] = value
 
     if command is not None:
-        exit_code = item.get("exit_code")
-        correlated = isinstance(exit_code, int) and not isinstance(exit_code, bool)
+        correlated = correlate_validation_command_result(item)
         payload["command_result_correlation"] = "correlated" if correlated else "missing"
-        if correlated:
-            payload["success"] = exit_code == 0
+        if correlated is not None:
+            payload["success"] = correlated.success
+            payload["command_result_signal"] = correlated.signal
         else:
             payload["success"] = None
-            payload["missing_evidence"] = f"integer exit_code correlated to command: {command}"
+            payload["missing_evidence"] = (
+                "trusted terminal provider status or consistent integer exit_code correlated "
+                f"to command: {command}"
+            )
     return payload
 
 

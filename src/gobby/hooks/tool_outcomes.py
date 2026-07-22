@@ -226,17 +226,22 @@ def _resolve_outcome(
         (signal for signal in failed_signals if signal.exit_code is not None),
         failed_signals[0] if failed_signals else None,
     )
+    succeeded_signals = [signal for signal in signals if signal.succeeded]
+    succeeded = next(
+        (signal for signal in succeeded_signals if signal.exit_code is not None),
+        succeeded_signals[0] if succeeded_signals else None,
+    )
+    if failed is not None and succeeded is not None:
+        return ToolOutcome(
+            ToolOutcomeStatus.UNKNOWN,
+            provenance=f"conflicting_outcomes:{failed.provenance}|{succeeded.provenance}",
+        )
     if failed is not None:
         return ToolOutcome(
             ToolOutcomeStatus.FAILED,
             exit_code=failed.exit_code,
             provenance=failed.provenance,
         )
-    succeeded_signals = [signal for signal in signals if signal.succeeded]
-    succeeded = next(
-        (signal for signal in succeeded_signals if signal.exit_code is not None),
-        succeeded_signals[0] if succeeded_signals else None,
-    )
     if succeeded is not None:
         return ToolOutcome(
             ToolOutcomeStatus.SUCCEEDED,
@@ -281,6 +286,10 @@ def normalize_tool_outcome(
             )
 
     if explicit_success is not None:
+        conflicting_signal = next(
+            (signal for signal in signals if signal.succeeded is not explicit_success),
+            None,
+        )
         matching_exit = next(
             (
                 signal.exit_code
@@ -289,11 +298,20 @@ def normalize_tool_outcome(
             ),
             None,
         )
-        outcome = ToolOutcome(
-            ToolOutcomeStatus.SUCCEEDED if explicit_success else ToolOutcomeStatus.FAILED,
-            exit_code=matching_exit,
-            provenance=provenance or "adapter.explicit_tool_outcome",
-        )
+        explicit_provenance = provenance or "adapter.explicit_tool_outcome"
+        if conflicting_signal is not None:
+            outcome = ToolOutcome(
+                ToolOutcomeStatus.UNKNOWN,
+                provenance=(
+                    f"conflicting_outcomes:{explicit_provenance}|{conflicting_signal.provenance}"
+                ),
+            )
+        else:
+            outcome = ToolOutcome(
+                ToolOutcomeStatus.SUCCEEDED if explicit_success else ToolOutcomeStatus.FAILED,
+                exit_code=matching_exit,
+                provenance=explicit_provenance,
+            )
     else:
         outcome = _resolve_outcome(signals, unknown_provenance)
     data["tool_outcome"] = outcome.to_dict()

@@ -97,7 +97,8 @@ def _status_gate_variables(
             {
                 "evidence_type": "validation_command",
                 "success": True,
-                "summary": "focused validation passed",
+                "command": "uv run pytest tests/workflows/test_task_enforcement_rules.py",
+                "outcome_provenance": "tool_outcome.status",
             }
         ],
     }
@@ -585,14 +586,28 @@ class TestRequireClaimedTaskRequiredSkills:
             is False
         )
 
+    @pytest.mark.parametrize(
+        "source",
+        [
+            SessionSource.CLAUDE,
+            SessionSource.CODEX,
+            SessionSource.DROID,
+            SessionSource.GROK,
+            SessionSource.QWEN,
+        ],
+    )
     @pytest.mark.asyncio
-    async def test_rule_blocks_with_first_unloaded_skill_directive(self, db: HubDatabase) -> None:
+    async def test_rule_blocks_with_first_unloaded_skill_directive(
+        self,
+        db: HubDatabase,
+        source: SessionSource,
+    ) -> None:
         _sync_bundled(db)
         engine = RuleEngine(db)
         event = HookEvent(
             event_type=HookEventType.BEFORE_TOOL,
             session_id=SESSION_ID,
-            source=SessionSource.CLAUDE,
+            source=source,
             timestamp=datetime.now(UTC),
             data={
                 "tool_name": "Write",
@@ -608,14 +623,18 @@ class TestRequireClaimedTaskRequiredSkills:
             session_id=SESSION_ID,
             variables={
                 "task_claimed": True,
-                "claimed_task_required_skills": ["python", "development-discipline"],
+                "claimed_task_required_skills": [
+                    "task-transitions",
+                    "python",
+                    "development-discipline",
+                ],
                 "loaded_skills": [],
             },
         )
 
         assert response.decision == "block"
         assert response.reason is not None
-        assert skill_fetch_directive("python") in response.reason
+        assert skill_fetch_directive("task-transitions") in response.reason
 
     @pytest.mark.asyncio
     async def test_rule_allows_when_all_relevant_skills_loaded(self, db: HubDatabase) -> None:

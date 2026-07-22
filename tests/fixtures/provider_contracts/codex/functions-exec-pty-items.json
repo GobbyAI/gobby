@@ -1,0 +1,75 @@
+{
+  "provider": "codex",
+  "capture_type": "app_server_dynamic_tool_contract",
+  "capture_status": "reproduced_from_live_rollout_and_schema",
+  "captured_at": "2026-07-21",
+  "codex_version": "0.144.5",
+  "capture_notes": "Sanitized long-running exec_command, outer wait, inner PTY session, and write_stdin polling shapes.",
+  "events": [
+    {
+      "case": "outer_exec_yielded",
+      "item": {
+        "id": "<ITEM_ID_OUTER_EXEC>",
+        "type": "dynamicToolCall",
+        "namespace": "functions",
+        "tool": "exec",
+        "arguments": "const r = await tools.exec_command({cmd:\"GOBBY_TEST_PROTECT=1 uv run pytest tests/sessions/test_codex_outcome_reconciliation.py -q\",yield_time_ms:1000}); text(r);",
+        "contentItems": [{"type": "inputText", "text": "Script running with cell ID outer-901"}],
+        "status": "completed",
+        "success": null
+      }
+    },
+    {
+      "case": "outer_wait_returns_pty_session",
+      "item": {
+        "id": "<ITEM_ID_OUTER_WAIT>",
+        "type": "dynamicToolCall",
+        "namespace": "functions",
+        "tool": "wait",
+        "arguments": "{\"cell_id\":\"outer-901\",\"yield_time_ms\":1000}",
+        "contentItems": [{"type": "inputText", "text": "{\"session_id\":901,\"output\":\"still running\"}"}],
+        "status": "completed",
+        "success": null
+      }
+    },
+    {
+      "case": "write_stdin_yielded",
+      "item": {
+        "id": "<ITEM_ID_WRITE_STDIN>",
+        "type": "dynamicToolCall",
+        "namespace": "functions",
+        "tool": "exec",
+        "arguments": "const r = await tools.write_stdin({session_id:901,yield_time_ms:1000}); text(r);",
+        "contentItems": [{"type": "inputText", "text": "Script running with cell ID poll-901"}],
+        "status": "completed",
+        "success": null
+      }
+    },
+    {
+      "case": "write_stdin_wait_running",
+      "item": {
+        "id": "<ITEM_ID_WRITE_WAIT>",
+        "type": "dynamicToolCall",
+        "namespace": "functions",
+        "tool": "wait",
+        "arguments": "{\"cell_id\":\"poll-901\",\"yield_time_ms\":1000}",
+        "contentItems": [{"type": "inputText", "text": "{\"session_id\":901,\"output\":\"still running\"}"}],
+        "status": "completed",
+        "success": null
+      }
+    },
+    {
+      "case": "write_stdin_terminal",
+      "item": {
+        "id": "<ITEM_ID_WRITE_TERMINAL>",
+        "type": "dynamicToolCall",
+        "namespace": "functions",
+        "tool": "exec",
+        "arguments": "const r = await tools.write_stdin({session_id:901,yield_time_ms:1000}); text(r);",
+        "contentItems": [{"type": "inputText", "text": "{\"exit_code\":0,\"output\":\"terminal\"}"}],
+        "status": "completed",
+        "success": null
+      }
+    }
+  ]
+}

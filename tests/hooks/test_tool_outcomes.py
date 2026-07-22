@@ -87,7 +87,7 @@ def test_functions_wrapper_preserves_definitive_outer_failure() -> None:
     assert outcome.provenance == "event.success"
 
 
-def test_explicit_provider_contract_overrides_conflicting_structured_signal() -> None:
+def test_explicit_provider_contract_is_unknown_when_structured_signal_conflicts() -> None:
     data = {"tool_name": "Bash", "tool_output": {"exitCode": 9}}
 
     outcome = normalize_tool_outcome(
@@ -96,12 +96,14 @@ def test_explicit_provider_contract_overrides_conflicting_structured_signal() ->
         provenance="claude.hook:PostToolUse",
     )
 
-    assert outcome.status is ToolOutcomeStatus.SUCCEEDED
+    assert outcome.status is ToolOutcomeStatus.UNKNOWN
     assert outcome.exit_code is None
-    assert outcome.provenance == "claude.hook:PostToolUse"
+    assert outcome.provenance == (
+        "conflicting_outcomes:claude.hook:PostToolUse|tool_output.exitCode"
+    )
 
 
-def test_failure_wins_when_structured_signals_conflict() -> None:
+def test_structured_signal_conflict_is_unknown() -> None:
     data = {
         "tool_name": "Bash",
         "status": "failed",
@@ -110,5 +112,5 @@ def test_failure_wins_when_structured_signals_conflict() -> None:
 
     outcome = normalize_tool_outcome(data)
 
-    assert outcome.status is ToolOutcomeStatus.FAILED
-    assert outcome.exit_code == 7
+    assert outcome.status is ToolOutcomeStatus.UNKNOWN
+    assert outcome.exit_code is None

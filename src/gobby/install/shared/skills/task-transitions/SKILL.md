@@ -70,19 +70,32 @@ until a later validation command succeeds. Manual evidence can satisfy readiness
 when no failed validation command is pending, but it cannot clear a failed
 validation command.
 
-The Terminal Codex collector accepts one literal nested shell command per tool
-event. Run one top-level `functions.exec` call per validation command, with the
-command written directly in `cmd`, and emit the full structured result:
+Run each validation command as one native terminal invocation. Preserve the
+exact command and the full structured terminal result.
+Follow every returned wait or polling token until the terminal result; an intermediate `running`,
+`yielded`, or textual-only result does not establish success or failure.
 
-```javascript
-const result = await tools.exec_command({cmd:"GOBBY_TEST_PROTECT=1 uv run pytest tests/path/test_file.py -q"});
-text(JSON.stringify(result));
-```
+Native terminal outcomes are captured from each supported CLI:
 
-If `functions.exec` yields a cell ID, call `functions.wait` on that cell until it
-finishes. Variable-driven, looped, and batched nested calls are unsupported by
-the live collector; rerun those commands as separate literal calls. Human
-summaries and `text(result.output)` leave completion readiness unknown.
+- Claude Code and Qwen use their terminal `PostToolUse` or
+  `PostToolUseFailure` hook result.
+- Droid and Grok use their structured hook or stream completion result.
+- Codex uses direct command execution results or preserves the initiating
+  command through `functions.exec`, outer wait cells, PTY session IDs, and
+  `write_stdin` polling.
+
+### Recovery by captured source
+
+If evidence is still missing, recover from the source that ran the command.
+For Claude Code and Qwen, rerun it as one shell tool call and wait for the
+terminal hook. For Droid and Grok, rerun it through the native terminal and
+retain the structured completion result. For Codex, write the command literally
+in the nested `exec_command` call, emit the complete structured result, and
+follow every `wait` or `write_stdin` token until it terminates. Do not replace
+machine-derived results with output excerpts or human summaries.
+
+Manual `validation_command` evidence is prohibited. Only a captured shell
+outcome with trusted provenance can satisfy the validation-command gate.
 
 For a genuinely non-command artifact such as manual review or PR state, record
 evidence explicitly. Do not use manual evidence to restate or replace a shell

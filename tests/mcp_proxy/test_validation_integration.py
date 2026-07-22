@@ -1,3 +1,4 @@
+import json
 from collections.abc import Generator
 from datetime import UTC, datetime
 from pathlib import Path
@@ -52,6 +53,7 @@ def test_format_verification_evidence_context_correlates_command_outcomes() -> N
                 "success": True,
                 "command": "uv run pytest tests/failing.py",
                 "exit_code": 7,
+                "outcome_provenance": "tool_output.json.exit_code",
                 "matcher_id": "python-tests",
             },
             {
@@ -59,6 +61,7 @@ def test_format_verification_evidence_context_correlates_command_outcomes() -> N
                 "success": True,
                 "command": "uv run pytest tests/tasks/test_validation.py -q",
                 "exit_code": 0,
+                "outcome_provenance": "tool_output.json.exit_code",
                 "matcher_id": "python-tests",
                 "matcher_label": "Python tests",
             },
@@ -66,6 +69,24 @@ def test_format_verification_evidence_context_correlates_command_outcomes() -> N
                 "evidence_type": "validation_command",
                 "success": True,
                 "command": "uv run pytest tests/uncorrelated.py",
+            },
+            {
+                "evidence_type": "validation_command",
+                "success": True,
+                "command": "uv run ruff check src/gobby",
+                "outcome_provenance": "claude.hook:PostToolUse",
+            },
+            {
+                "evidence_type": "validation_command",
+                "success": False,
+                "command": "uv run mypy src/gobby",
+                "outcome_provenance": "qwen.hook:PostToolUseFailure",
+            },
+            {
+                "evidence_type": "validation_command",
+                "success": True,
+                "command": "uv run pytest tests/textual.py",
+                "outcome_provenance": "validation_summary.pytest",
             },
             {
                 "evidence_type": "manual_diff_review",
@@ -76,21 +97,41 @@ def test_format_verification_evidence_context_correlates_command_outcomes() -> N
                 "task_id": "#15763",
             },
         ],
-        limit=4,
+        limit=7,
     )
 
     assert context is not None
     assert context.startswith("Structured verification results")
-    assert '"command":"uv run pytest tests/failing.py","exit_code":7,"success":false' in context
-    assert '"command_result_correlation":"correlated"' in context
-    assert '"command":"uv run pytest tests/tasks/test_validation.py -q","exit_code":0' in context
-    assert '"command":"uv run pytest tests/uncorrelated.py","success":null' in context
-    assert '"command_result_correlation":"missing"' in context
-    assert (
-        '"missing_evidence":"integer exit_code correlated to command: '
-        'uv run pytest tests/uncorrelated.py"' in context
+    results = [json.loads(line) for line in context.splitlines()[1:]]
+    by_command = {item["command"]: item for item in results if "command" in item}
+
+    contradictory = by_command["uv run pytest tests/failing.py"]
+    assert contradictory["command_result_correlation"] == "missing"
+    assert contradictory["success"] is None
+
+    exit_code = by_command["uv run pytest tests/tasks/test_validation.py -q"]
+    assert exit_code["command_result_correlation"] == "correlated"
+    assert exit_code["command_result_signal"] == "exit_code"
+    assert exit_code["success"] is True
+
+    provider_success = by_command["uv run ruff check src/gobby"]
+    assert provider_success["command_result_correlation"] == "correlated"
+    assert provider_success["command_result_signal"] == "provider_status"
+    assert provider_success["success"] is True
+
+    provider_failure = by_command["uv run mypy src/gobby"]
+    assert provider_failure["command_result_correlation"] == "correlated"
+    assert provider_failure["command_result_signal"] == "provider_status"
+    assert provider_failure["success"] is False
+
+    for command in ("uv run pytest tests/textual.py", "uv run pytest tests/uncorrelated.py"):
+        assert by_command[command]["command_result_correlation"] == "missing"
+        assert by_command[command]["success"] is None
+
+    assert any(
+        item.get("summary") == "Verified touched source line counts are below 1000"
+        for item in results
     )
-    assert '"summary":"Verified touched source line counts are below 1000"' in context
 
 
 def test_format_verification_evidence_context_bounds_oversized_result() -> None:
@@ -434,6 +475,7 @@ async def test_close_task_includes_latest_thirty_verification_evidence(
             "success": True,
             "command": f"uv run pytest validation_suite_{index:03d}.py",
             "exit_code": 0,
+            "outcome_provenance": "tool_output.json.exit_code",
             "matcher_id": "python-tests",
             "matcher_label": "Python tests",
         }

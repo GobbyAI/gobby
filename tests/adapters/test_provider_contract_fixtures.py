@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import copy
 import json
 from pathlib import Path
 from typing import Any
@@ -180,6 +181,36 @@ def test_codex_functions_exec_contract_correlates_yielded_final_outcome() -> Non
     assert failed["tool_outcome"]["status"] == "failed"
     assert failed["tool_outcome"]["exit_code"] == 7
     assert unknown["tool_outcome"]["status"] == "unknown"
+
+
+@pytest.mark.parametrize(("exit_code", "expected_status"), [(0, "succeeded"), (7, "failed")])
+def test_codex_functions_exec_contract_correlates_pty_write_stdin_chain(
+    exit_code: int,
+    expected_status: str,
+) -> None:
+    payload = json.loads(
+        (PROVIDER_CONTRACT_ROOT / "codex" / "functions-exec-pty-items.json").read_text()
+    )
+    items = [copy.deepcopy(record["item"]) for record in payload["events"]]
+    items[-1]["contentItems"][0]["text"] = json.dumps(
+        {"exit_code": exit_code, "output": "terminal"}
+    )
+    adapter = CodexAdapter()
+
+    results = [adapter._build_completed_tool_data(item) for item in items]
+
+    expected_command = (
+        "GOBBY_TEST_PROTECT=1 uv run pytest tests/sessions/test_codex_outcome_reconciliation.py -q"
+    )
+    assert results[1]["tool_name"] == "Bash"
+    assert results[1]["tool_input"] == {"command": expected_command}
+    assert results[1]["tool_outcome"]["status"] == "unknown"
+    assert results[3]["tool_name"] == "Bash"
+    assert results[3]["tool_input"] == {"command": expected_command}
+    assert results[-1]["tool_name"] == "Bash"
+    assert results[-1]["tool_input"] == {"command": expected_command}
+    assert results[-1]["tool_outcome"]["status"] == expected_status
+    assert results[-1]["tool_outcome"]["exit_code"] == exit_code
 
 
 @pytest.mark.parametrize(

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 from collections.abc import Iterable
+from pathlib import Path
 from typing import Any
 
 import pytest
@@ -10,6 +11,11 @@ from gobby.sessions.transcripts.base import raw_lines_from_texts
 from gobby.sessions.transcripts.codex import CodexNestedExecOutcome, CodexTranscriptParser
 
 pytestmark = pytest.mark.unit
+
+_PTY_FIXTURE = (
+    Path(__file__).parents[1]
+    / "fixtures/provider_contracts/codex/terminal-functions-exec-pty-rollout.jsonl"
+)
 
 
 def _response_item(payload: dict[str, Any]) -> str:
@@ -269,6 +275,24 @@ def test_function_call_wait_survives_repeated_yields_and_hydration() -> None:
             "ruff check",
             {"command": "ruff check", "exitCode": 0, "output": "passed"},
         ),
+    ]
+
+
+def test_pty_write_stdin_chain_survives_repeated_yields_and_parser_hydration() -> None:
+    records = [json.loads(line) for line in _PTY_FIXTURE.read_text().splitlines()]
+    lines = [json.dumps(record["payload"]) for record in records]
+    parser = CodexTranscriptParser()
+    outcomes: list[CodexNestedExecOutcome] = []
+
+    for offset in range(0, len(lines), 4):
+        outcomes.extend(_outcomes(parser, lines[offset : offset + 4]))
+        resumed = CodexTranscriptParser()
+        resumed.hydrate_state(parser.snapshot_state())
+        parser = resumed
+
+    assert [(item.identity, item.command, item.result["exit_code"]) for item in outcomes] == [
+        ("exec-pty-success:0", "pytest pty-success", 0),
+        ("exec-pty-failure:0", "pytest pty-failure", 7),
     ]
 
 

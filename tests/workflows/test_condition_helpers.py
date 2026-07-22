@@ -107,6 +107,7 @@ class TestCompletionEvidenceReady:
                         "evidence_type": "validation_command",
                         "command": "uv run pytest tests/workflows/test_hooks.py",
                         "success": False,
+                        "outcome_provenance": "tool_outcome.status",
                     }
                 ],
                 "failed verification evidence",
@@ -123,7 +124,7 @@ class TestCompletionEvidenceReady:
         assert expected in reason
         assert "did not attach" not in reason
 
-    def test_unknown_diagnostic_explains_supported_codex_command_shape(self) -> None:
+    def test_unknown_diagnostic_is_source_aware(self) -> None:
         reason = completion_evidence_diagnostic(
             {
                 "verification_evidence": [
@@ -136,9 +137,10 @@ class TestCompletionEvidenceReady:
             }
         )
 
-        assert 'tools.exec_command({cmd:"..."})' in reason
-        assert "separate" in reason
-        assert "functions.wait" in reason
+        assert "Claude Code and Qwen" in reason
+        assert "Droid and Grok" in reason
+        assert "Codex" in reason
+        assert "wait or polling token" in reason
 
     def test_successful_validation_evidence_is_ready(self) -> None:
         assert (
@@ -149,12 +151,53 @@ class TestCompletionEvidenceReady:
                             "evidence_type": "validation_command",
                             "command": "uv run pytest tests/workflows/test_hooks.py -v",
                             "success": True,
+                            "outcome_provenance": "tool_outcome.status",
                         }
                     ]
                 }
             )
             is True
         )
+
+    @pytest.mark.parametrize(
+        ("evidence", "expected"),
+        [
+            (
+                {
+                    "command": "uv run pytest provider.py",
+                    "success": True,
+                    "outcome_provenance": "claude.hook:PostToolUse",
+                },
+                True,
+            ),
+            ({"command": "uv run pytest missing.py", "success": True}, False),
+            (
+                {
+                    "command": "uv run pytest contradictory.py",
+                    "success": True,
+                    "exit_code": 7,
+                    "outcome_provenance": "tool_output.json.exit_code",
+                },
+                False,
+            ),
+            (
+                {
+                    "command": "uv run pytest textual.py",
+                    "success": True,
+                    "outcome_provenance": "validation_summary.pytest",
+                },
+                False,
+            ),
+        ],
+    )
+    def test_validation_readiness_uses_shared_command_correlation(
+        self,
+        evidence: dict[str, object],
+        expected: bool,
+    ) -> None:
+        evidence["evidence_type"] = "validation_command"
+
+        assert completion_evidence_ready({"verification_evidence": [evidence]}) is expected
 
     def test_failed_validation_blocks_until_later_validation_success(self) -> None:
         assert (
@@ -165,11 +208,13 @@ class TestCompletionEvidenceReady:
                             "evidence_type": "validation_command",
                             "command": "uv run pytest old.py",
                             "success": True,
+                            "outcome_provenance": "tool_outcome.status",
                         },
                         {
                             "evidence_type": "validation_command",
                             "command": "uv run pytest failing.py",
                             "success": False,
+                            "outcome_provenance": "tool_outcome.status",
                         },
                     ]
                 }
@@ -184,11 +229,13 @@ class TestCompletionEvidenceReady:
                             "evidence_type": "validation_command",
                             "command": "uv run pytest failing.py",
                             "success": False,
+                            "outcome_provenance": "tool_outcome.status",
                         },
                         {
                             "evidence_type": "validation_command",
                             "command": "uv run pytest fixed.py",
                             "success": True,
+                            "outcome_provenance": "tool_outcome.status",
                         },
                     ]
                 }
@@ -205,6 +252,7 @@ class TestCompletionEvidenceReady:
                             "evidence_type": "validation_command",
                             "command": "uv run pytest failing.py",
                             "success": False,
+                            "outcome_provenance": "tool_outcome.status",
                         },
                         {
                             "evidence_type": "manual_diff_review",
@@ -232,6 +280,7 @@ class TestCompletionEvidenceReady:
                             "evidence_type": "validation_command",
                             "command": "uv run pytest failing.py",
                             "success": False,
+                            "outcome_provenance": "tool_outcome.status",
                         },
                         unknown,
                     ]
@@ -268,7 +317,9 @@ class TestCompletionEvidenceReady:
                 {
                     "evidence_type": "validation_command",
                     "task_id": "#99",
+                    "command": "uv run pytest task-99.py",
                     "success": False,
+                    "outcome_provenance": "tool_outcome.status",
                 },
             ]
         }
@@ -282,12 +333,16 @@ class TestCompletionEvidenceReady:
                 {
                     "evidence_type": "validation_command",
                     "task_id": "#42",
+                    "command": "uv run pytest task-42.py",
                     "success": True,
+                    "outcome_provenance": "tool_outcome.status",
                 },
                 {
                     "evidence_type": "validation_command",
                     "supports": "task_id:42",
+                    "command": "uv run pytest task-42.py",
                     "success": False,
+                    "outcome_provenance": "tool_outcome.status",
                 },
             ]
         }
@@ -299,7 +354,9 @@ class TestCompletionEvidenceReady:
             "verification_evidence": [
                 {
                     "evidence_type": "validation_command",
+                    "command": "uv run pytest unscoped.py",
                     "success": True,
+                    "outcome_provenance": "tool_outcome.status",
                 }
             ]
         }

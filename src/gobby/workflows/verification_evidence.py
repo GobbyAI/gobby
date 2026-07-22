@@ -5,7 +5,8 @@ from __future__ import annotations
 import logging
 import re
 from collections.abc import Mapping
-from typing import Any
+from dataclasses import dataclass
+from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_validator, model_validator
 
@@ -18,6 +19,66 @@ VERIFICATION_EVIDENCE_RESET_UPDATES = {
     VERIFICATION_EVIDENCE_RECORDED_VARIABLE: False,
     VERIFICATION_EVIDENCE_VARIABLE: [],
 }
+
+CommandResultSignal = Literal["exit_code", "provider_status"]
+
+_TRUSTED_PROVIDER_OUTCOME_RE = re.compile(
+    r"^(?:claude|codex|droid|grok|qwen)\.(?:hook|stream|structured):[^\s]+$"
+)
+_TRUSTED_STRUCTURED_OUTCOME_RE = re.compile(
+    r"^(?:adapter|event|hook_event|tool_outcome|tool_output|tool_result|tool_response|"
+    r"contentItems)(?:[.\[].*)?\."
+    r"(?:exit_code|exitCode|status|success|isError|is_error|is_failure)$"
+)
+
+
+@dataclass(frozen=True)
+class CorrelatedCommandResult:
+    """A terminal command result backed by a trusted machine-derived signal."""
+
+    success: bool
+    signal: CommandResultSignal
+
+
+def correlate_validation_command_result(
+    evidence: Mapping[str, Any],
+) -> CorrelatedCommandResult | None:
+    """Correlate an exact command with one consistent, trusted terminal outcome."""
+    command = evidence.get("command")
+    success = evidence.get("success")
+    provenance = evidence.get("outcome_provenance")
+    if (
+        not isinstance(command, str)
+        or not command.strip()
+        or not isinstance(success, bool)
+        or not _is_trusted_outcome_provenance(provenance)
+    ):
+        return None
+
+    exit_code = evidence.get("exit_code")
+    if isinstance(exit_code, bool):
+        return None
+    if isinstance(exit_code, int):
+        exit_success = exit_code == 0
+        if exit_success is not success:
+            return None
+        return CorrelatedCommandResult(success=success, signal="exit_code")
+    if exit_code is not None:
+        return None
+    return CorrelatedCommandResult(success=success, signal="provider_status")
+
+
+def _is_trusted_outcome_provenance(value: Any) -> bool:
+    if not isinstance(value, str) or not value:
+        return False
+    if value == "adapter.explicit_tool_outcome":
+        return True
+    return bool(
+        _TRUSTED_PROVIDER_OUTCOME_RE.fullmatch(value)
+        or _TRUSTED_STRUCTURED_OUTCOME_RE.fullmatch(value)
+    )
+
+
 _EVIDENCE_TYPE_RE = re.compile(r"^[a-z][a-z0-9_:-]{1,63}$")
 logger = logging.getLogger(__name__)
 

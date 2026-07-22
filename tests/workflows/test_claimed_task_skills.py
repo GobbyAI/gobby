@@ -92,6 +92,27 @@ def test_claimed_task_touching_typescript_requires_typescript_skill() -> None:
     assert "typescript" in state["claimed_task_required_skills"]
 
 
+def test_every_claimed_task_requires_task_transitions_first() -> None:
+    task = SimpleNamespace(
+        labels=[],
+        additional_skills=[],
+        validation_criteria=None,
+        category="docs",
+    )
+    manager = MagicMock()
+
+    with (
+        patch("gobby.workflows.claimed_task_skills._load_task", return_value=task),
+        patch("gobby.workflows.claimed_task_skills._task_files", return_value=[]),
+    ):
+        state = build_claimed_task_skill_state(
+            {"claimed_tasks": {"task-id": {}}},
+            manager,
+        )
+
+    assert state["claimed_task_required_skills"] == ["task-transitions"]
+
+
 class _FakeAffectedFilesDb:
     def __init__(
         self,

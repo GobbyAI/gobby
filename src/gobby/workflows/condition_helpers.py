@@ -25,6 +25,7 @@ from gobby.tasks.state_semantics import projected_task_state
 from gobby.workflows.verification_evidence import (
     VERIFICATION_EVIDENCE_TYPE_VALIDATION_COMMAND,
     VERIFICATION_EVIDENCE_VARIABLE,
+    correlate_validation_command_result,
 )
 
 logger = logging.getLogger(__name__)
@@ -637,6 +638,9 @@ def _completion_evidence_state(
         evidence_seen = True
 
         success = item.get("success")
+        if evidence_type == VERIFICATION_EVIDENCE_TYPE_VALIDATION_COMMAND:
+            correlated = correlate_validation_command_result(item)
+            success = correlated.success if correlated is not None else None
         if success is None:
             unknown_outcome_seen = True
         elif success is False:
@@ -683,10 +687,10 @@ def completion_evidence_ready(
     return _completion_evidence_state(variables, task_ref).ready
 
 
-_CODEX_VALIDATION_RECOVERY = (
-    'Codex shell evidence requires one literal `tools.exec_command({cmd:"..."})` inside each '
-    "top-level `functions.exec`. Rerun variable-driven, looped, or batched commands as separate "
-    "calls, emit the full structured result, and use `functions.wait` until yielded calls finish."
+_VALIDATION_RECOVERY = (
+    "Recover from the CLI that ran the command. Claude Code and Qwen must reach a terminal "
+    "PostToolUse hook; Droid and Grok must retain their structured terminal result; Codex must "
+    "preserve the literal command and follow every wait or polling token to termination."
 )
 
 
@@ -702,12 +706,12 @@ def completion_evidence_diagnostic(
         return (
             "Completion readiness has verification evidence with an unknown outcome; "
             "the provider did not expose a definitive machine result. "
-            f"{_CODEX_VALIDATION_RECOVERY}"
+            f"{_VALIDATION_RECOVERY}"
         )
     if not state.evidence_seen:
         return (
             "Completion readiness has no verification evidence for this task. "
-            f"{_CODEX_VALIDATION_RECOVERY}"
+            f"{_VALIDATION_RECOVERY}"
         )
     return "Completion readiness has no successful verification evidence for this task."
 

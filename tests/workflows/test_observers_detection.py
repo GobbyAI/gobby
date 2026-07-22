@@ -599,6 +599,7 @@ class TestDetectTaskClaimClaimOperations:
 
         assert variables["claimed_task_language_skills"] == ["python"]
         assert variables["claimed_task_required_skills"] == [
+            "task-transitions",
             "python",
             "development-discipline",
         ]
@@ -636,6 +637,7 @@ class TestDetectTaskClaimClaimOperations:
 
         assert variables["claimed_task_language_skills"] == ["rust"]
         assert variables["claimed_task_required_skills"] == [
+            "task-transitions",
             "rust",
             "development-discipline",
         ]
@@ -698,6 +700,7 @@ class TestDetectTaskClaimClaimOperations:
 
         assert variables["task_claimed"] is True
         assert variables["claimed_task_required_skills"] == [
+            "task-transitions",
             "python",
             "development-discipline",
         ]
@@ -2016,7 +2019,7 @@ class TestDetectVerificationEvidence:
         assert variables["verification_evidence"][-1]["success"] is None
 
     @pytest.mark.parametrize(
-        "command,output,expected_success,provenance",
+        "command,output,_expected_summary_success,provenance",
         [
             (
                 "pytest tests/workflows 2>&1 | tail -5",
@@ -2098,12 +2101,12 @@ class TestDetectVerificationEvidence:
             ),
         ],
     )
-    def test_safe_pipeline_uses_validator_terminal_summary(
+    def test_safe_pipeline_summary_is_not_terminal_machine_outcome(
         self,
         variables,
         command: str,
         output: str,
-        expected_success: bool,
+        _expected_summary_success: bool,
         provenance: str,
     ) -> None:
         event = _make_bash_event(output, command=command)
@@ -2111,9 +2114,9 @@ class TestDetectVerificationEvidence:
         detect_verification_evidence(event, variables, SESSION_ID)
 
         evidence = variables["verification_evidence"][-1]
-        assert evidence["success"] is expected_success
+        assert evidence["success"] is None
         assert evidence["outcome_provenance"] == provenance
-        assert variables["verification_evidence_recorded"] is expected_success
+        assert "verification_evidence_recorded" not in variables
 
     @pytest.mark.parametrize(
         "command,output",
@@ -2189,7 +2192,7 @@ class TestDetectVerificationEvidence:
         detect_verification_evidence(event, variables, SESSION_ID)
 
         evidence = variables["verification_evidence"][-1]
-        assert evidence["success"] is False
+        assert evidence["success"] is None
         assert evidence["exit_code"] == 0
         assert evidence["outcome_provenance"] == "validation_summary.pytest"
 
@@ -2347,10 +2350,10 @@ class TestShellToolSucceeded:
 
         assert _shell_tool_succeeded(event) is expected
 
-    def test_explicit_failure_wins_over_success_signal(self) -> None:
+    def test_explicit_failure_conflicting_with_success_signal_is_unknown(self) -> None:
         event = _make_bash_event_dict({"exitCode": 0}, is_error=True)
 
-        assert _shell_tool_succeeded(event) is False
+        assert _shell_tool_succeeded(event) is None
 
 
 class TestIsGitCommitCommand:
