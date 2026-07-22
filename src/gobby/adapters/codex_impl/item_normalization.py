@@ -264,6 +264,8 @@ class DynamicExecCorrelator:
             data["_original_tool_name"] = str(original_tool)
             data["tool_name"] = "Bash"
             data["tool_input"] = dict(pending_input)
+            data["tool_result"] = dict(terminal_results[0])
+            normalize_tool_fields(data)
             if polled_session_id is not None:
                 self._pending_sessions.pop(polled_session_id, None)
             return data

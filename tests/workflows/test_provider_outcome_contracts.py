@@ -13,6 +13,7 @@ from gobby.adapters.agy import AgyAdapter
 from gobby.adapters.base import BaseAdapter
 from gobby.adapters.claude_code import ClaudeCodeAdapter
 from gobby.adapters.codex_impl.app_server_adapter import CodexAdapter
+from gobby.adapters.codex_impl.item_normalization import DynamicExecCorrelator
 from gobby.adapters.droid import DroidAdapter
 from gobby.adapters.grok import GrokAdapter
 from gobby.adapters.qwen import QwenAdapter
@@ -236,6 +237,33 @@ def test_provider_outcome_matrix_covers_every_interactive_session_source() -> No
     assert set(SessionSource) == INTERACTIVE_SESSION_SOURCES | EXCLUDED_SESSION_SOURCES
     assert represented_sources == INTERACTIVE_SESSION_SOURCES == registered_sources
     assert represented_sources.isdisjoint(EXCLUDED_SESSION_SOURCES)
+
+
+def test_codex_wrapper_promotes_unique_terminal_result_before_receipt_ingestion() -> None:
+    terminal_result = {"exit_code": 0, "output": "139 passed"}
+    data = {
+        "_original_tool_name": "functions.exec",
+        "_dynamic_exec_command": COMMAND,
+        "tool_name": "functions.exec",
+        "tool_output": {
+            "content": [
+                {"type": "input_text", "text": "Script completed\nOutput:\n"},
+                {"type": "input_text", "text": json.dumps(terminal_result)},
+            ]
+        },
+        "tool_outcome": {"status": "unknown", "provenance": "before_tool"},
+    }
+
+    correlated = DynamicExecCorrelator().correlate(data)
+
+    assert correlated["tool_name"] == "Bash"
+    assert correlated["tool_input"] == {"command": COMMAND}
+    assert correlated["tool_result"] == terminal_result
+    assert correlated["tool_outcome"] == {
+        "status": "succeeded",
+        "exit_code": 0,
+        "provenance": "tool_output.content[1].text.json.exit_code",
+    }
 
 
 def test_conflicting_machine_signals_remain_unknown_end_to_end() -> None:
