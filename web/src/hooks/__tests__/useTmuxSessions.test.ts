@@ -271,6 +271,74 @@ describe('useTmuxSessions', () => {
     unmount()
   })
 
+  it('correlates create results and suppresses duplicate create sends', () => {
+    const { result, unmount } = renderHook(() => useTmuxSessions())
+    const ws = mockWs.instances[0]
+    open(ws)
+    ws.send.mockClear()
+
+    act(() => {
+      result.current.createSession()
+      result.current.createSession()
+    })
+
+    expect(sentMessages(ws, 'tmux_create_session')).toEqual([{
+      type: 'tmux_create_session',
+      request_id: expect.any(String),
+      socket: 'default',
+    }])
+    expect(result.current.requestPending).toBe(true)
+    expect(result.current.createdSession).toBeNull()
+
+    const createId = requestId(ws, 'tmux_create_session')
+    act(() => ws.simulateMessage({
+      type: 'tmux_create_result',
+      request_id: 'stale-create',
+      success: true,
+      session_name: 'web-stale',
+      socket: 'default',
+    }))
+    expect(result.current.requestPending).toBe(true)
+    expect(result.current.createdSession).toBeNull()
+
+    act(() => ws.simulateMessage({
+      type: 'tmux_create_result',
+      request_id: createId,
+      success: true,
+      session_name: 'web-new',
+      socket: 'default',
+    }))
+    expect(result.current.requestPending).toBe(false)
+    expect(result.current.isLoading).toBe(false)
+    expect(result.current.createdSession).toEqual({
+      session_name: 'web-new',
+      socket: 'default',
+    })
+    expect(sentMessages(ws, 'tmux_list_sessions')).toHaveLength(1)
+    unmount()
+  })
+
+  it('routes a correlated create error through terminal request state', () => {
+    const { result, unmount } = renderHook(() => useTmuxSessions())
+    const ws = mockWs.instances[0]
+    open(ws)
+    ws.send.mockClear()
+
+    act(() => result.current.createSession())
+    const createId = requestId(ws, 'tmux_create_session')
+    act(() => ws.simulateMessage({
+      type: 'error',
+      request_id: createId,
+      message: 'Create failed',
+    }))
+
+    expect(result.current.requestPending).toBe(false)
+    expect(result.current.isLoading).toBe(false)
+    expect(result.current.attachError).toBe('Create failed')
+    expect(result.current.createdSession).toBeNull()
+    unmount()
+  })
+
   it('close clears pending request', () => {
     const { result, unmount } = renderHook(() => useTmuxSessions())
     const first = mockWs.instances[0]

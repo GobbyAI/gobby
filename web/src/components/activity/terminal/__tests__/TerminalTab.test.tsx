@@ -37,6 +37,7 @@ vi.mock("../TerminalSessionPicker", () => ({
         <option
           key={`${session.tmux.socket}:${session.tmux.name}`}
           value={`${session.tmux.socket}:${session.tmux.name}`}
+          data-external={session.external}
         >
           {session.label}
         </option>
@@ -140,6 +141,7 @@ function makeHookState(overrides: Partial<HookResult> = {}): HookResult {
     sessionEnded: false,
     requestPending: false,
     attachError: null,
+    createdSession: null,
     attachSession: vi.fn(),
     detachSession: vi.fn(),
     clearAttachError: vi.fn(),
@@ -305,8 +307,49 @@ describe("attach lifecycle", () => {
     rendered.rerender(<TerminalTab />);
     expect(await screen.findByText("No terminal sessions")).toBeInTheDocument();
     expect(screen.getByText(/Create one to start a live, read-only terminal view/)).toBeInTheDocument();
-    await user.click(screen.getByRole("button", { name: "Create terminal session" }));
+    await user.click(screen.getByRole("button", { name: "New Terminal" }));
     expect(hookState.createSession).toHaveBeenCalledTimes(1);
+  });
+
+  it("creates, selects, and attaches a new external terminal exactly once", async () => {
+    const user = userEvent.setup();
+    const createSession = vi.fn();
+    const attachSession = vi.fn();
+    hookState = makeHookState({
+      sessionsLoaded: true,
+      createSession,
+      attachSession,
+    });
+    const rendered = render(<TerminalTab />);
+
+    await user.click(screen.getByRole("button", { name: "New Terminal" }));
+    expect(createSession).toHaveBeenCalledTimes(1);
+    expect(createSession).toHaveBeenCalledWith();
+
+    hookState = { ...hookState, requestPending: true };
+    rendered.rerender(<TerminalTab />);
+    expect(screen.getByRole("button", { name: "New Terminal" })).toBeDisabled();
+    await user.click(screen.getByRole("button", { name: "New Terminal" }));
+    expect(createSession).toHaveBeenCalledTimes(1);
+
+    hookState = {
+      ...hookState,
+      requestPending: false,
+      createdSession: { session_name: "web-new", socket: "default" },
+      sessions: [makeTmuxSession({ name: "web-new", socket: "default" })],
+    };
+    rendered.rerender(<TerminalTab />);
+
+    await waitFor(() => {
+      expect(screen.getByRole("combobox", { name: "Terminal session" })).toHaveValue(
+        "default:web-new",
+      );
+      expect(attachSession).toHaveBeenCalledWith("web-new", "default");
+    });
+    expect(screen.getByRole("option", { name: "web-new" })).toHaveAttribute(
+      "data-external",
+      "true",
+    );
   });
 
   it("reports a missing focus target once, then selects the normal fallback", async () => {

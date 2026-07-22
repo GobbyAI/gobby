@@ -19,6 +19,11 @@ export interface TmuxTarget {
   socket: string
 }
 
+export interface CreatedTmuxSession {
+  session_name: string
+  socket: string
+}
+
 type PendingRequest =
   | {
       kind: 'attach'
@@ -32,6 +37,11 @@ type PendingRequest =
       generation: number
       nextTarget: TmuxTarget | null
     }
+  | {
+      kind: 'create'
+      requestId: string
+      generation: number
+    }
 
 interface TmuxSessionsResult {
   sessions: TmuxSession[]
@@ -44,6 +54,7 @@ interface TmuxSessionsResult {
   sessionEnded: boolean
   requestPending: boolean
   attachError: string | null
+  createdSession: CreatedTmuxSession | null
   attachSession: (sessionName: string, socket: string) => void
   detachSession: () => void
   clearAttachError: () => void
@@ -68,6 +79,7 @@ export function useTmuxSessions(): TmuxSessionsResult {
   const [sessionEnded, setSessionEnded] = useState(false)
   const [requestPending, setRequestPending] = useState(false)
   const [attachError, setAttachError] = useState<string | null>(null)
+  const [createdSession, setCreatedSession] = useState<CreatedTmuxSession | null>(null)
   const wsRef = useRef<WebSocket | null>(null)
   const reconnectTimeoutRef = useRef<number | null>(null)
   const outputCallbackRef = useRef<((runId: string, data: string) => void) | null>(null)
@@ -220,12 +232,28 @@ export function useTmuxSessions(): TmuxSessionsResult {
         break
       }
 
-      case 'tmux_create_result':
-        if (data.success) {
+      case 'tmux_create_result': {
+        const pending = pendingRequestRef.current
+        if (
+          !pending
+          || pending.kind !== 'create'
+          || pending.requestId !== data.request_id
+          || pending.generation !== connectionGenerationRef.current
+        ) break
+
+        if (
+          data.success
+          && typeof data.session_name === 'string'
+          && typeof data.socket === 'string'
+        ) {
+          setCreatedSession({ session_name: data.session_name, socket: data.socket })
           refreshSessions()
+        } else {
+          setAttachError(typeof data.message === 'string' ? data.message : 'Create failed')
         }
-        setIsLoading(false)
+        clearPendingRequest()
         break
+      }
 
       case 'tmux_kill_result':
         refreshSessions()
@@ -289,6 +317,7 @@ export function useTmuxSessions(): TmuxSessionsResult {
       setRequestPending(false)
       setIsLoading(false)
       setAttachError(null)
+      setCreatedSession(null)
       reconnectTimeoutRef.current = window.setTimeout(() => {
         if (!isCurrentConnection()) return
         reconnectTimeoutRef.current = null
@@ -344,11 +373,19 @@ export function useTmuxSessions(): TmuxSessionsResult {
   }, [])
 
   const createSession = useCallback((name?: string, socket?: string) => {
-    if (!wsRef.current || wsRef.current.readyState !== WebSocket.OPEN) return
+    const ws = wsRef.current
+    if (pendingRequestRef.current || !ws || ws.readyState !== WebSocket.OPEN) return
+
+    const generation = connectionGenerationRef.current
+    const requestId = `create-${generation}-${++requestCounterRef.current}`
+    pendingRequestRef.current = { kind: 'create', requestId, generation }
+    setRequestPending(true)
     setIsLoading(true)
-    wsRef.current.send(JSON.stringify({
+    setAttachError(null)
+    setCreatedSession(null)
+    ws.send(JSON.stringify({
       type: 'tmux_create_session',
-      request_id: `create-${Date.now()}`,
+      request_id: requestId,
       name,
       socket: socket || 'default',
     }))
@@ -432,6 +469,7 @@ export function useTmuxSessions(): TmuxSessionsResult {
     sessionEnded,
     requestPending,
     attachError,
+    createdSession,
     attachSession,
     detachSession,
     clearAttachError,

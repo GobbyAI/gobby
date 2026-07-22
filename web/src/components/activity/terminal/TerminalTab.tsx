@@ -61,6 +61,19 @@ function targetKey(target: { name: string; socket: string } | null): string | nu
   return target ? `${target.socket}:${target.name}` : null;
 }
 
+function PlusIcon() {
+  return (
+    <svg
+      className="size-3"
+      viewBox="0 0 16 16"
+      fill="currentColor"
+      aria-hidden="true"
+    >
+      <path d="M8 1.5a.75.75 0 0 1 .75.75v5h5a.75.75 0 0 1 0 1.5h-5v5a.75.75 0 0 1-1.5 0v-5h-5a.75.75 0 0 1 0-1.5h5v-5A.75.75 0 0 1 8 1.5Z" />
+    </svg>
+  );
+}
+
 export function TerminalTab({
   sessions,
   focusSessionId = null,
@@ -75,6 +88,7 @@ export function TerminalTab({
     sessionEnded: hookSessionEnded,
     requestPending,
     attachError,
+    createdSession,
     attachSession,
     detachSession,
     clearAttachError,
@@ -94,6 +108,7 @@ export function TerminalTab({
   const streamingIdRef = useRef<string | null>(streamingId);
   const lastAttachedKeyRef = useRef<string | null>(null);
   const consumedFocusIdRef = useRef<string | null>(null);
+  const consumedCreatedKeyRef = useRef<string | null>(null);
 
   const joinedSessions = useMemo(
     () => joinTmuxSessions(tmuxSessions, sessions),
@@ -140,6 +155,19 @@ export function TerminalTab({
     },
     [clearAttachError, dismissEndedSession, selectedKey],
   );
+
+  useEffect(() => {
+    if (createdSession === null) return;
+    const createdKey = `${createdSession.socket}:${createdSession.session_name}`;
+    if (
+      consumedCreatedKeyRef.current === createdKey ||
+      !joinedSessions.some((session) => sessionKey(session.tmux) === createdKey)
+    ) {
+      return;
+    }
+    consumedCreatedKeyRef.current = createdKey;
+    chooseSession(createdKey);
+  }, [chooseSession, createdSession, joinedSessions]);
 
   useEffect(() => {
     if (focusSessionId === null) {
@@ -298,6 +326,17 @@ export function TerminalTab({
       attachedKey !== selectedKey ||
       readyContext !== terminalContext);
   const composerDisabled = selected?.dead ?? false;
+  const newTerminalButton = (
+    <button
+      className="inline-flex min-h-8 items-center justify-center gap-1.5 rounded-md bg-accent px-2.5 text-xs font-semibold text-accent-foreground transition-colors hover:bg-accent-hover focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent disabled:cursor-not-allowed disabled:opacity-45 pointer-coarse:min-h-11"
+      type="button"
+      disabled={!connected || requestPending}
+      onClick={() => createSession()}
+    >
+      <PlusIcon />
+      New Terminal
+    </button>
+  );
 
   if (!sessionsLoaded && selectedKey === null) {
     return (
@@ -332,15 +371,7 @@ export function TerminalTab({
       <StatePanel
         title="No terminal sessions"
         body="Create one to start a live, read-only terminal view. Input stays behind the explicit composer."
-        action={
-          <button
-            className="min-h-9 rounded-md bg-accent px-3 text-xs font-semibold text-accent-foreground transition-colors hover:bg-accent-hover focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent pointer-coarse:min-h-11"
-            type="button"
-            onClick={() => createSession()}
-          >
-            Create terminal session
-          </button>
-        }
+        action={newTerminalButton}
       />
     );
   }
@@ -365,6 +396,7 @@ export function TerminalTab({
           />
         </div>
         <div className="flex shrink-0 items-center gap-2">
+          {newTerminalButton}
           <span
             className="inline-flex min-h-8 items-center rounded-md border border-border bg-[var(--bg-secondary)] px-2.5 text-xs font-medium text-muted-foreground"
             aria-live="polite"
