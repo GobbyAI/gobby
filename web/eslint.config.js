@@ -41,7 +41,6 @@ const SET_STATE_IN_EFFECT_EXEMPTIONS = [
   "src/components/tasks/TaskDetail.tsx",
   "src/components/tasks/TaskMemories.tsx",
   "src/components/tasks/TaskStatusStrip.tsx",
-  "src/components/terminals/TerminalsPage.tsx",
   "src/components/workflows/AgentsTab.tsx",
   "src/components/workflows/ReportsPage.tsx",
   "src/components/workflows/RulesTab.tsx",
