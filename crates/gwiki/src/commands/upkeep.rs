@@ -6,9 +6,9 @@ use crate::support::services;
 use crate::support::time::collect_timestamp;
 use crate::{CommandOutcome, ScopeSelection, UpkeepOptions, WikiError, daemon, session, upkeep};
 
-use super::lanes::{
-    ai_notice_label, resolve_ai_selection, resolve_explainer_transport, resolve_lane_b_generator,
-    routing_label,
+use super::generation_routes::{
+    ai_notice_label, resolve_ai_selection, resolve_explainer_transport,
+    resolve_tool_loop_generator, routing_label,
 };
 
 const COMMAND: &str = "gwiki upkeep";
@@ -81,7 +81,7 @@ pub(crate) fn execute(
                 "notice": Option::<&str>::None,
             }),
         )
-    } else if let Some(mut lane_b) = resolve_lane_b_generator(
+    } else if let Some(mut tool_loop) = resolve_tool_loop_generator(
         ai_selection.route,
         &selection,
         vault_root,
@@ -89,16 +89,16 @@ pub(crate) fn execute(
         context.output_scope.clone(),
         COMMAND,
     ) {
-        // Lane B tool loop resolved: generation failures fail the cluster
+        // Tool loop resolved: generation failures fail the cluster
         // instead of writing a skeleton page.
         lib_options.hard_fail_on_generation_failure = true;
-        let info = lane_b.info;
+        let info = tool_loop.info;
         let report = upkeep::run(
             research_scope,
             context.output_scope.clone(),
             &lib_options,
             probe,
-            Some(lane_b.generator.as_mut()),
+            Some(tool_loop.generator.as_mut()),
             &timestamp,
         )?;
         (

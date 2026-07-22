@@ -12,9 +12,9 @@ use crate::{
     session, synthesis, vault,
 };
 
-use super::lanes::{
+use super::generation_routes::{
     ai_notice_label, notice_for_explainer_status, resolve_ai_selection,
-    resolve_explainer_transport, resolve_lane_b_generator, routing_label,
+    resolve_explainer_transport, resolve_tool_loop_generator, routing_label,
 };
 
 const COMMAND: &str = "gwiki compile";
@@ -64,13 +64,13 @@ pub(crate) fn execute(
         write_intent,
     };
 
-    // Lane B (tool loop) is the primary compile narrative path: the model
+    // The tool loop is the primary compile narrative path: the model
     // investigates the indexed vault via tools to build its own grounding (#982,
-    // matching codewiki #978). A resolved Lane B route hard-fails on generation
+    // matching codewiki #978). A resolved tool-loop route hard-fails on generation
     // failure (no skeleton fallback); when no tool-chat route resolves, fall back
-    // to the Lane A one-shot explainer.
+    // to the one-shot explainer.
     let project_root = resolved_scope.project_root().map(|root| root.to_path_buf());
-    if let Some(mut lane_b) = resolve_lane_b_generator(
+    if let Some(mut tool_loop) = resolve_tool_loop_generator(
         ai_selection.route,
         &scope,
         vault_root,
@@ -78,7 +78,7 @@ pub(crate) fn execute(
         output_scope.clone(),
         COMMAND,
     ) {
-        let info = lane_b.info;
+        let info = tool_loop.info;
         let outcome = wiki_compile::compile_to_wiki_with_options(
             &mut session,
             request,
@@ -88,7 +88,7 @@ pub(crate) fn execute(
                 hard_fail_on_generation_failure: true,
                 ..wiki_compile::WikiCompileOptions::default()
             },
-            Some(lane_b.generator.as_mut()),
+            Some(tool_loop.generator.as_mut()),
         )?;
         return Ok(compile_command_outcome(
             ai_selection.requested,
@@ -104,7 +104,7 @@ pub(crate) fn execute(
         ));
     }
 
-    // Lane A one-shot explainer (no tool-chat route resolved).
+    // One-shot explainer (no tool-chat route resolved).
     let transport = resolve_explainer_transport(ai_selection.route, COMMAND);
     let route_label = transport.route_label();
     let notice = transport.notice_kind();
@@ -140,7 +140,7 @@ pub(crate) fn execute(
 }
 
 /// Build the `compile` command outcome (JSON payload + human text) shared by the
-/// Lane B and Lane A paths. `lane` is `tool_loop` or `one_shot`.
+/// Tool-loop and one-shot paths. `lane` is `tool_loop` or `one_shot`.
 #[allow(clippy::too_many_arguments)]
 fn compile_command_outcome(
     ai: AiRouting,

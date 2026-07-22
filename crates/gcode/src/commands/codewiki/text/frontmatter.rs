@@ -21,23 +21,23 @@ struct Frontmatter<'a> {
     degraded: Option<bool>,
     #[serde(skip_serializing_if = "Vec::is_empty")]
     degraded_sources: Vec<&'a str>,
-    /// Generation lane for an aggregate page produced by the Lane B tool loop
-    /// (#978): `tool_loop`. Absent for Lane A / leaf pages.
+    /// Generation lane for an aggregate page produced by the tool loop
+    /// (#978): `tool_loop`. Absent for one-shot / leaf pages.
     #[serde(skip_serializing_if = "Option::is_none")]
     lane: Option<&'a str>,
-    /// Lane B tool-loop call count, recorded alongside `lane`.
+    /// Tool-loop call count, recorded alongside `lane`.
     #[serde(skip_serializing_if = "Option::is_none")]
     tool_call_count: Option<usize>,
-    /// Lane B completion turns, recorded alongside `lane`.
+    /// Tool-loop completion turns, recorded alongside `lane`.
     #[serde(skip_serializing_if = "Option::is_none")]
     turns: Option<usize>,
     #[serde(skip_serializing_if = "Vec::is_empty")]
     verify_notes: Vec<FrontmatterVerifyNote<'a>>,
 }
 
-/// Lane B observability recorded into an aggregate page's frontmatter (#978):
+/// Tool-loop observability recorded into an aggregate page's frontmatter (#978):
 /// the generation lane and the tool loop's call/turn counts.
-pub(crate) struct FrontmatterLaneB<'a> {
+pub(crate) struct FrontmatterToolLoop<'a> {
     pub(crate) lane: &'a str,
     pub(crate) tool_call_count: usize,
     pub(crate) turns: usize,
@@ -113,15 +113,15 @@ pub(crate) fn frontmatter_with_degradation_and_verify_notes_without_ranges(
     )
 }
 
-/// Aggregate-page frontmatter (no symbol line ranges) carrying optional Lane B
-/// observability (#978). `lane_b` is `Some` only for a page produced by the
-/// tool loop; a Lane A / structural aggregate passes `None`.
+/// Aggregate-page frontmatter (no symbol line ranges) carrying optional tool-loop
+/// observability (#978). `tool_loop` is `Some` only for a page produced by the
+/// data; a one-shot / structural aggregate passes `None`.
 pub(crate) fn frontmatter_aggregate_without_ranges(
     title: &str,
     kind: &str,
     source_spans: &[SourceSpan],
     degraded_sources: &[String],
-    lane_b: Option<FrontmatterLaneB<'_>>,
+    tool_loop: Option<FrontmatterToolLoop<'_>>,
 ) -> String {
     frontmatter_with_options(
         title,
@@ -130,19 +130,19 @@ pub(crate) fn frontmatter_aggregate_without_ranges(
         degraded_sources,
         false,
         &[],
-        lane_b,
+        tool_loop,
     )
 }
 
 /// Aggregate-page frontmatter with verifier notes (curated concept/narrative
-/// pages) carrying optional Lane B observability (#978).
+/// pages) carrying optional tool-loop observability (#978).
 pub(crate) fn frontmatter_aggregate_with_verify_notes(
     title: &str,
     kind: &str,
     source_spans: &[SourceSpan],
     degraded_sources: &[String],
     verify_notes: &[VerifyNote],
-    lane_b: Option<FrontmatterLaneB<'_>>,
+    tool_loop: Option<FrontmatterToolLoop<'_>>,
 ) -> String {
     frontmatter_with_options(
         title,
@@ -151,7 +151,7 @@ pub(crate) fn frontmatter_aggregate_with_verify_notes(
         degraded_sources,
         false,
         verify_notes,
-        lane_b,
+        tool_loop,
     )
 }
 
@@ -162,7 +162,7 @@ fn frontmatter_with_options(
     degraded_sources: &[String],
     include_ranges: bool,
     verify_notes: &[VerifyNote],
-    lane_b: Option<FrontmatterLaneB<'_>>,
+    tool_loop: Option<FrontmatterToolLoop<'_>>,
 ) -> String {
     let (source_files, provenance_truncated) =
         frontmatter_source_files(source_spans, include_ranges);
@@ -187,9 +187,11 @@ fn frontmatter_with_options(
         ai_generation_status: ai_outcome.status.as_str(),
         degraded: page_degraded.then_some(true),
         degraded_sources: degraded_sources.iter().map(String::as_str).collect(),
-        lane: lane_b.as_ref().map(|lane_b| lane_b.lane),
-        tool_call_count: lane_b.as_ref().map(|lane_b| lane_b.tool_call_count),
-        turns: lane_b.as_ref().map(|lane_b| lane_b.turns),
+        lane: tool_loop.as_ref().map(|tool_loop| tool_loop.lane),
+        tool_call_count: tool_loop
+            .as_ref()
+            .map(|tool_loop| tool_loop.tool_call_count),
+        turns: tool_loop.as_ref().map(|tool_loop| tool_loop.turns),
         verify_notes: verify_notes
             .iter()
             .map(|note| FrontmatterVerifyNote {
@@ -436,23 +438,29 @@ mod tests {
     }
 
     #[test]
-    fn aggregate_frontmatter_records_lane_b_observability() {
-        let with_lane_b = frontmatter_aggregate_without_ranges(
+    fn aggregate_frontmatter_records_tool_loop_observability() {
+        let with_tool_loop = frontmatter_aggregate_without_ranges(
             "Repository Overview",
             "code_repo",
             &spans(),
             &[],
-            Some(FrontmatterLaneB {
+            Some(FrontmatterToolLoop {
                 lane: "tool_loop",
                 tool_call_count: 5,
                 turns: 3,
             }),
         );
-        assert!(with_lane_b.contains("lane: tool_loop"), "{with_lane_b}");
-        assert!(with_lane_b.contains("tool_call_count: 5"), "{with_lane_b}");
-        assert!(with_lane_b.contains("turns: 3"), "{with_lane_b}");
+        assert!(
+            with_tool_loop.contains("lane: tool_loop"),
+            "{with_tool_loop}"
+        );
+        assert!(
+            with_tool_loop.contains("tool_call_count: 5"),
+            "{with_tool_loop}"
+        );
+        assert!(with_tool_loop.contains("turns: 3"), "{with_tool_loop}");
 
-        // A Lane A / structural aggregate records no lane observability.
+        // A one-shot / structural aggregate records no lane observability.
         let without = frontmatter_aggregate_without_ranges(
             "Repository Overview",
             "code_repo",

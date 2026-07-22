@@ -77,7 +77,7 @@ fn push_ai_frontmatter_line(out: &mut String, indent: &str, key: &str, value: &s
     out.push('\n');
 }
 
-/// Lane B observability fields parsed back out of a page's rendered
+/// Tool-loop observability fields parsed back out of a page's rendered
 /// frontmatter, mirrored into `_meta/codewiki.json` (#978). Only the tool-loop
 /// fields are captured; every other frontmatter key is ignored.
 #[derive(Default, serde::Deserialize)]
@@ -87,9 +87,9 @@ pub(super) struct LaneObservability {
     pub(super) turns: Option<usize>,
 }
 
-/// Read the Lane B `lane`/`tool_call_count`/`turns` keys from a doc's rendered
+/// Read the tool-loop `lane`/`tool_call_count`/`turns` keys from a doc's rendered
 /// frontmatter. Returns defaults (all `None`) for pages with no frontmatter or
-/// no Lane B keys (Lane A / leaf / deterministic pages).
+/// no tool-loop keys (one-shot / leaf / deterministic pages).
 pub(super) fn lane_observability_from_content(content: &str) -> LaneObservability {
     let Some((frontmatter_body, _)) = split_frontmatter(content) else {
         return LaneObservability::default();
@@ -296,9 +296,9 @@ mod lane_meta_tests {
     }
 
     #[test]
-    fn lane_observability_is_absent_for_lane_a_and_unframed_pages() {
-        let lane_a = "---\ntitle: A File\ntype: code_file\n---\n\n# A File\n";
-        let parsed = lane_observability_from_content(lane_a);
+    fn lane_observability_is_absent_for_one_shot_and_unframed_pages() {
+        let one_shot = "---\ntitle: A File\ntype: code_file\n---\n\n# A File\n";
+        let parsed = lane_observability_from_content(one_shot);
         assert_eq!(parsed.lane, None);
         assert_eq!(parsed.tool_call_count, None);
         assert_eq!(parsed.turns, None);

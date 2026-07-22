@@ -33,7 +33,7 @@ const MAX_CURATED_SOURCE_FILE_LINKS: usize = 8;
 /// nine-chapter handbook spine, so a verbose structure response
 /// cannot crowd out the canonical guided tour.
 const MAX_EXTRA_NARRATIVE_PAGES: usize = 2;
-/// How many independent Lane A generations to try for the curated navigation
+/// How many independent one-shot generations to try for the curated navigation
 /// plan before falling back to the deterministic taxonomy. The structure
 /// synthesis is a single large JSON emission from a weak local model and is
 /// flaky run-to-run; a couple of retries recover a real AI taxonomy instead of
@@ -44,7 +44,7 @@ const CURATED_NAV_PLAN_MAX_ATTEMPTS: usize = 3;
 /// attempts: write the nav prompt and the last raw model output to
 /// `<dump_dir>/curated_navigation_plan.dump.md` so a persistent parse failure
 /// can be reproduced offline. `dump_dir` comes from
-/// [`super::curated_content::resolve_lane_b_dump_dir`] via the run options;
+/// [`super::curated_content::resolve_tool_loop_dump_dir`] via the run options;
 /// `None` (tests, library callers) is a no-op.
 fn maybe_dump_nav_failure(dump_dir: Option<&std::path::Path>, prompt: &str, raw: &str) {
     let Some(dir) = dump_dir else {
@@ -90,7 +90,7 @@ pub(crate) fn build_curated_navigation_docs(
     modules: &[ModuleDoc],
     leading_chunks: &std::collections::BTreeMap<String, LeadingChunk>,
     graph_edges: &[CodewikiGraphEdge],
-    lane_b_dump_dir: Option<&std::path::Path>,
+    tool_loop_dump_dir: Option<&std::path::Path>,
     generate: &mut Option<&mut TextGenerator<'_>>,
     verify: &mut Option<&mut TextVerifier<'_>>,
     reuse: &mut Option<&mut ReusePlan>,
@@ -99,18 +99,18 @@ pub(crate) fn build_curated_navigation_docs(
     let all_spans = all_input_spans(files, modules);
     let all_sources = span_files(&all_spans);
     if let Some(reused_docs) = reuse.as_deref_mut().and_then(|plan| {
-        let lane_a_ai_outcome = plan.ai_outcome();
+        let one_shot_ai_outcome = plan.ai_outcome();
         plan.reusable_page_with_ai_outcome(
             "code/concepts/index.md",
             &all_sources,
-            lane_a_ai_outcome,
+            one_shot_ai_outcome,
         )?;
         plan.reusable_pages_with_prefixes_by_ai_outcome(
             &["code/concepts/", "code/narrative/"],
-            // Concept/narrative bodies are Lane A one-shot (gobby-cli #1001),
-            // like the nav index, so all curated pages reuse on the Lane A
+            // Concept/narrative bodies use one-shot generation (gobby-cli #1001),
+            // like the nav index, so all curated pages reuse on the one-shot
             // outcome.
-            |_path| lane_a_ai_outcome,
+            |_path| one_shot_ai_outcome,
         )
     }) {
         // The manifest tracks files, not links: a stage skewed by a prior
@@ -131,12 +131,12 @@ pub(crate) fn build_curated_navigation_docs(
     let mut degraded_sources = Vec::new();
     // The curated navigation taxonomy is a one-shot structure synthesis: it
     // clusters the already-supplied module/file summaries into a handbook plan
-    // and has no per-claim source to investigate, so it runs Lane A even when a
-    // tool-loop is configured. Forcing it through the Lane B tool loop made a
+    // and has no per-claim source to investigate, so it runs one-shot even when a
+    // tool loop is configured. Forcing it through the tool loop made a
     // weak function-calling model investigate needlessly for minutes and then
     // emit JSON corrupted by that exploration, which failed to parse (#993).
-    // Lane B grounding stays where it earns its cost — the curated narrative and
-    // concept PROSE pages rendered below. On a Lane A parse failure the
+    // Tool-loop grounding stays where it earns its cost — the curated narrative and
+    // concept PROSE pages rendered below. On a one-shot parse failure the
     // deterministic fallback taxonomy applies, as before.
     // The nav structure pass is a one-shot JSON synthesis on a weak local model,
     // and it is nondeterministic: the same prompt parses cleanly on one run and
@@ -171,14 +171,14 @@ pub(crate) fn build_curated_navigation_docs(
                 }
                 if lane == LANE_TOOL_LOOP {
                     return Err(anyhow::anyhow!(
-                        "Lane B curated navigation plan was unparseable; \
+                        "Tool-loop curated navigation plan was unparseable; \
                          no deterministic fallback (no skeleton)"
                     ));
                 }
-                // Otherwise retry: a fresh Lane A generation usually parses.
+                // Otherwise retry: a fresh one-shot generation usually parses.
                 last_unparseable = Some(generated);
             }
-            // A Lane B failure already returned `Err`; these are Lane A paths.
+            // A tool-loop failure already returned `Err`; these are one-shot paths.
             GenerationContent::Failed(cause) => {
                 degraded_sources.push(cause.reason_code().to_string());
                 break;
@@ -193,7 +193,7 @@ pub(crate) fn build_curated_navigation_docs(
             // capture the last raw output for offline diagnosis, mark the layer
             // degraded, and fall back to the deterministic taxonomy.
             if let Some(raw) = &last_unparseable {
-                maybe_dump_nav_failure(lane_b_dump_dir, &nav_prompt, raw);
+                maybe_dump_nav_failure(tool_loop_dump_dir, &nav_prompt, raw);
                 degraded_sources.push("grounding-empty".to_string());
             }
             fallback_plan(files, modules)
@@ -209,7 +209,7 @@ pub(crate) fn build_curated_navigation_docs(
         &plan_observability,
         leading_chunks,
         graph_edges,
-        lane_b_dump_dir,
+        tool_loop_dump_dir,
         generate,
         verify,
     )

@@ -124,7 +124,7 @@ pub fn run(ctx: &Context, options: GrepOptions<'_>) -> anyhow::Result<()> {
     }
 }
 
-/// Result-returning grep beneath the CLI print layer, for the CodeWiki Lane B
+/// Result-returning grep beneath the CLI print layer, for the CodeWiki tool loop
 /// tool executor (#978): loads the indexed content chunks in scope and runs the
 /// same matcher [`run`] uses, returning the structured matches instead of
 /// printing them. Reuses the existing read-only connection rather than opening

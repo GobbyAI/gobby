@@ -17,13 +17,13 @@ use std::fmt::Write as _;
 
 use super::super::*;
 
-#[path = "curated_content/lane_b_dump.rs"]
-mod lane_b_dump;
 #[cfg(test)]
 #[path = "curated_content/tests.rs"]
 mod tests;
+#[path = "curated_content/tool_loop_dump.rs"]
+mod tool_loop_dump;
 
-pub(crate) use lane_b_dump::resolve_lane_b_dump_dir;
+pub(crate) use tool_loop_dump::resolve_tool_loop_dump_dir;
 
 /// Cap on key-symbol evidence rows fed into one content prompt. Bounds prompt
 /// size; the structural fallback table reuses the same cap.
@@ -51,9 +51,9 @@ pub(crate) struct CuratedBody {
     /// output.
     pub(crate) degraded_sources: Vec<String>,
     pub(crate) verify_notes: Vec<VerifyNote>,
-    /// Per-page Lane B tool-loop observability, recorded into the page's
+    /// Per-page tool-loop observability, recorded into the page's
     /// frontmatter when the run used the tool loop (#978). Default (zero counts)
-    /// for the Lane A / structural path.
+    /// for the one-shot / structural path.
     pub(crate) observability: GenerationObservability,
 }
 
@@ -72,7 +72,7 @@ pub(crate) fn curated_page_body(
     file_lookup: &BTreeMap<&str, &FileDoc>,
     leading_chunks: &BTreeMap<String, LeadingChunk>,
     spans: &[SourceSpan],
-    lane_b_dump_dir: Option<&std::path::Path>,
+    tool_loop_dump_dir: Option<&std::path::Path>,
     generate: &mut Option<&mut TextGenerator<'_>>,
     verify: &mut Option<&mut TextVerifier<'_>>,
 ) -> anyhow::Result<CuratedBody> {
@@ -109,12 +109,12 @@ pub(crate) fn curated_page_body(
         CuratedPageKind::Narrative => prompts::NARRATIVE_PAGE_SYSTEM,
     };
 
-    // Curated concept/narrative bodies are a Lane A one-shot (gobby-cli #1001),
+    // Curated concept/narrative bodies use one-shot generation (gobby-cli #1001),
     // matching the curated navigation plan (#993): the page already carries
     // assembled member/symbol/source evidence in its prompt, so the multi-turn
-    // Lane B agentic loop only added serial cold-spawn latency and parse
+    // The agentic tool loop only added serial cold-spawn latency and parse
     // instability without earning grounding. `tool_loop` is intentionally not
-    // forwarded here; Lane B stays for the repo/architecture aggregates. An
+    // forwarded here; the tool loop stays for repo/architecture aggregates. An
     // empty/incomplete one-shot degrades to the structural body below.
     let aggregate = generate_aggregate(
         &mut None,
@@ -124,7 +124,7 @@ pub(crate) fn curated_page_body(
         &format!("curated page '{title}'"),
     )?;
     let observability = aggregate.observability.clone();
-    let is_lane_b = aggregate.lane == LANE_TOOL_LOOP;
+    let is_tool_loop = aggregate.lane == LANE_TOOL_LOOP;
     let mut data_source_degraded = aggregate.data_source_degraded;
     match aggregate.content {
         GenerationContent::Generated(raw_text) => {
@@ -148,14 +148,14 @@ pub(crate) fn curated_page_body(
             let grounded_empty = grounded.trim().is_empty();
             let has_sections = has_required_curated_sections(kind, &grounded);
             if grounded_empty || !has_sections {
-                if is_lane_b {
-                    // Lane B produced ungroundable or structurally incomplete
+                if is_tool_loop {
+                    // The tool loop produced ungroundable or structurally incomplete
                     // prose: invalid, hard-fail (no skeleton fallback) (#978).
                     // The flags/lengths distinguish "grounding stripped every
                     // citation" (spans too narrow) from "missing a required
                     // section" (model output shape).
-                    lane_b_dump::maybe_dump_lane_b_failure(
-                        lane_b_dump_dir,
+                    tool_loop_dump::maybe_dump_tool_loop_failure(
+                        tool_loop_dump_dir,
                         kind,
                         title,
                         system,
@@ -165,7 +165,7 @@ pub(crate) fn curated_page_body(
                         &grounded,
                     );
                     return Err(anyhow::anyhow!(
-                        "Lane B curated page '{title}' produced an invalid body \
+                        "Tool-loop curated page '{title}' produced an invalid body \
                          (grounded_empty={grounded_empty}, has_required_sections={has_sections}, \
                          grounded_len={}, generated_len={}); page not written (no skeleton)",
                         grounded.trim().len(),
@@ -179,7 +179,7 @@ pub(crate) fn curated_page_body(
                     observability,
                 })
             } else {
-                // graph-unavailable (Lane B evidence degradation) is listed but
+                // graph-unavailable (tool-loop evidence degradation) is listed but
                 // never marks the page degraded.
                 Ok(CuratedBody {
                     body: Some(grounded),
@@ -189,8 +189,8 @@ pub(crate) fn curated_page_body(
                 })
             }
         }
-        // A Lane B failure already returned `Err` from `generate_aggregate`; this
-        // arm is reached only on the Lane A one-shot path.
+        // A tool-loop failure already returned `Err` from `generate_aggregate`; this
+        // arm is reached only on the one-shot path.
         GenerationContent::Failed(cause) => Ok(CuratedBody {
             body: Some(structural_body(kind, title, &members, &symbols)),
             degraded_sources: vec![cause.reason_code().to_string()],

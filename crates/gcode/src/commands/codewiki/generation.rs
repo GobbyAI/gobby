@@ -46,11 +46,11 @@ pub(crate) struct GenerateDocsOptions<'g, 'r> {
     /// leave `None` to omit the deprecations page, exactly like `system_model`.
     pub audit: Option<&'r AuditContext>,
     pub generate: Option<&'r mut TextGenerator<'g>>,
-    /// Lane B aggregate generator (#978). When present, the aggregate-tier
+    /// Tool-loop aggregate generator (#978). When present, the aggregate-tier
     /// pages (repo overview, architecture, curated navigation/concept/
     /// narrative) are produced by the gcode tool loop and hard-fail on a
-    /// Lane B failure; leaf pages always use the Lane A `generate` one-shot.
-    /// `None` (tests / AI off) falls the aggregates back to the Lane A path.
+    /// tool-loop failure; leaf pages always use one-shot `generate`.
+    /// `None` (tests / AI off) falls the aggregates back to the one-shot path.
     pub tool_loop: Option<&'r mut ToolLoopGenerator<'g>>,
     pub verify: Option<&'r mut TextVerifier<'g>>,
     pub ai_depth: AiDepth,
@@ -63,11 +63,11 @@ pub(crate) struct GenerateDocsOptions<'g, 'r> {
     pub progress: Option<&'r mut CodewikiProgress>,
     /// `None` generates the full unscoped doc set ([`DocPruneScope::unscoped`]).
     pub doc_scope: Option<&'r DocPruneScope>,
-    /// Where Lane B / nav-plan failure dumps are written (#17533), resolved by
-    /// the CLI runtime via [`super::build::resolve_lane_b_dump_dir`] — the
-    /// output's `_meta/lane_b/` by default, never among the generated pages.
+    /// Where tool-loop / nav-plan failure dumps are written (#17533), resolved by
+    /// the CLI runtime via [`super::build::resolve_tool_loop_dump_dir`] — the
+    /// output's `_meta/tool_loop/` by default, never among the generated pages.
     /// `None` (tests, library callers) disables dumping.
-    pub lane_b_dump_dir: Option<&'r Path>,
+    pub tool_loop_dump_dir: Option<&'r Path>,
     /// Bounded worker pool for Standard-tier (file) page generation
     /// (`--max-workers`, #17532). `None` — the default, and what `--max-workers 1`
     /// resolves to — keeps the byte-identical fully sequential path. `Some`
@@ -106,7 +106,7 @@ impl Default for GenerateDocsOptions<'_, '_> {
             reuse: None,
             progress: None,
             doc_scope: None,
-            lane_b_dump_dir: None,
+            tool_loop_dump_dir: None,
             file_workers: None,
         }
     }
@@ -155,7 +155,7 @@ pub(crate) fn generate_hierarchical_docs(
         mut reuse,
         progress,
         doc_scope,
-        lane_b_dump_dir,
+        tool_loop_dump_dir,
         file_workers,
     } = options;
     // The generation body threads these as `&mut Option<&mut T>` so builders
@@ -338,7 +338,7 @@ pub(crate) fn generate_hierarchical_docs(
         &module_docs,
         &input.leading_chunks,
         &input.graph_edges,
-        lane_b_dump_dir,
+        tool_loop_dump_dir,
         generate,
         verify,
         reuse,

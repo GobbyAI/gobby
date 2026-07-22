@@ -1,4 +1,4 @@
-//! Lane B chat generation over both routes.
+//! Tool-loop chat generation over both routes.
 //!
 //! * [`DirectChatTransport`] is a [`ChatTransport`] targeting OpenAI-compatible
 //!   local servers (LM Studio, vLLM, llama.cpp, and similar) that expose
@@ -120,7 +120,7 @@ impl ChatTransport for DirectChatTransport<'_> {
 }
 
 /// Final result of a one-shot daemon-side agentic narrative generation call
-/// (the Lane B daemon route for codewiki and gwiki).
+/// (the tool-loop daemon route for codewiki and gwiki).
 ///
 /// The daemon runs its own Claude Agent SDK investigation loop (executing only
 /// the policy-whitelisted tools over the project) server-side and returns the
@@ -315,7 +315,7 @@ pub(crate) fn parse_daemon_agentic(value: &Value) -> DaemonAgenticResult {
 
 /// Build the direct-route OpenAI-compatible request body for one completion
 /// turn. Threads the target's optional `reasoning_effort` through so direct
-/// Lane B (and Lane A) keep their profile reasoning pins.
+/// Tool-loop and one-shot routes keep their profile reasoning pins.
 pub(crate) fn build_request_body(
     target: &DirectGenerationTarget,
     request: &ChatCompletionRequest<'_>,
@@ -335,7 +335,7 @@ pub(crate) fn build_request_body(
 }
 
 /// Insert the OpenAI-shaped `messages` array, and `tools`/`tool_choice` when the
-/// request advertises any tools (Lane A passes none, suppressing tool calls).
+/// request advertises any tools (one-shot passes none, suppressing tool calls).
 fn push_messages_and_tools(body: &mut Map<String, Value>, request: &ChatCompletionRequest<'_>) {
     let messages: Vec<Value> = request.messages.iter().map(message_to_json).collect();
     body.insert("messages".to_string(), Value::Array(messages));

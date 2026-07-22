@@ -73,7 +73,7 @@ pub struct Options {
     pub max_sources_per_page: usize,
     pub dry_run: bool,
     pub daemon_synthesis_available: bool,
-    /// Set when a Lane B generator is driving synthesis: a generation failure
+    /// Set when a tool-loop generator is driving synthesis: a generation failure
     /// then fails the cluster instead of writing a skeleton page.
     pub hard_fail_on_generation_failure: bool,
     /// Days a page stays `stale` (per its `stale_at` demotion timestamp)

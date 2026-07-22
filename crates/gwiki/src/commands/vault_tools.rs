@@ -1,4 +1,4 @@
-//! Lane B vault tool executor for `gwiki compile`.
+//! Tool-loop vault executor for `gwiki compile`.
 //!
 //! Exposes the wiki vault's hybrid search and scoped document read as
 //! model-callable tools — the gwiki analog of codewiki's `CodewikiToolExecutor`
@@ -23,7 +23,7 @@ const MAX_SEARCH_LIMIT: usize = 25;
 /// inside the loop's per-result byte cap.
 const SEARCH_TOKEN_BUDGET: usize = 1_500;
 
-/// In-process executor over the indexed wiki vault, backing the Lane B compile
+/// In-process executor over the indexed wiki vault, backing the compile tool loop
 /// tool loop. Holds the resolved scope so every tool call runs against the same
 /// vault as the compile request.
 pub(crate) struct VaultToolExecutor {
@@ -120,7 +120,7 @@ impl ToolExecutor for VaultToolExecutor {
     }
 }
 
-/// Tool schemas advertised to the Lane B model for vault investigation.
+/// Tool schemas advertised to the tool-loop model for vault investigation.
 pub(crate) fn vault_tool_schemas() -> Vec<ToolSchema> {
     vec![
         tool_schema(
@@ -269,7 +269,7 @@ mod tests {
     }
 
     /// Recorded tool-calling transport: turn 1 asks for a vault tool, turn 2
-    /// returns the final narrative. Exercises the gwiki Lane B path end-to-end
+    /// returns the final narrative. Exercises the gwiki tool-loop path end-to-end
     /// over the real `VaultToolExecutor`.
     struct ScriptedChatTransport {
         completions: RefCell<VecDeque<ChatCompletion>>,
@@ -298,7 +298,7 @@ mod tests {
     }
 
     #[test]
-    fn lane_b_loop_invokes_vault_tool_then_completes() {
+    fn tool_loop_invokes_vault_tool_then_completes() {
         let temp = tempfile::tempdir().expect("tempdir");
         let path = write_vault_doc(
             temp.path(),

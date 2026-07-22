@@ -53,9 +53,9 @@ pub struct CompileOutcome {
 pub struct WikiCompileOptions {
     pub target_kind: ArticleKind,
     pub daemon_synthesis_available: bool,
-    /// When set, a Lane B generation *failure* hard-fails the compile with a
+    /// When set, a tool-loop generation *failure* hard-fails the compile with a
     /// distinct [`WikiError::Generation`] instead of writing a structural skeleton
-    /// page (#982, matching codewiki #978). Off for the Lane A one-shot path.
+    /// page (#982, matching codewiki #978). Off for the one-shot path.
     pub hard_fail_on_generation_failure: bool,
     /// Frontmatter `aliases` for the synthesized article (observed case
     /// variants of an entity name).
@@ -240,12 +240,12 @@ pub fn compile_to_wiki_with_options(
     if options.hard_fail_on_generation_failure
         && let ExplainerGeneration::Failed { error } = &explainer
     {
-        // Lane B generation failed: hard-fail with a distinct reason instead of
+        // Tool-loop generation failed: hard-fail with a distinct reason instead of
         // writing a structural skeleton page (#982, matching codewiki #978).
         return Err(WikiError::Generation {
             detail: format!(
-                "Lane B compile generation failed ({error}); page not written \
-                 (no skeleton, no Lane A fallback)"
+                "Tool-loop compile generation failed ({error}); page not written \
+                 (no skeleton, no one-shot fallback)"
             ),
         });
     }

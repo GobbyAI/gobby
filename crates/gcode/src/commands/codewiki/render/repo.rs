@@ -68,9 +68,9 @@ pub(crate) fn build_repo_doc(
     }
     progress.emit("generating repo overview");
     let sources = repo_source_excerpts(files, leading_chunks);
-    // Aggregate-tier page: Lane B tool loop when configured, else Lane A
-    // one-shot. A Lane B generation failure hard-fails the run here (no skeleton
-    // fallback); a Lane A failure degrades to the structural summary.
+    // Aggregate-tier page: tool loop when configured, else one-shot.
+    // A tool-loop generation failure hard-fails the run here (no skeleton
+    // fallback); a one-shot failure degrades to the structural summary.
     let aggregate = generate_aggregate(
         tool_loop,
         generate,
@@ -89,8 +89,8 @@ pub(crate) fn build_repo_doc(
                 degraded_sources.push("grounding-empty".to_string());
                 if aggregate.lane == LANE_TOOL_LOOP {
                     anyhow::bail!(
-                        "Lane B repo overview generation grounded to empty; \
-                         page not written (no skeleton, no Lane A fallback)"
+                        "Tool-loop repo overview generation grounded to empty; \
+                         page not written (no skeleton, no one-shot fallback)"
                     );
                 }
                 ground_text(&fallback, &source_spans, None)
@@ -168,7 +168,7 @@ pub(crate) fn render_repo_doc(
     lane: &str,
     observability: &GenerationObservability,
 ) -> String {
-    let lane_b = (lane == LANE_TOOL_LOOP).then_some(FrontmatterLaneB {
+    let tool_loop = (lane == LANE_TOOL_LOOP).then_some(FrontmatterToolLoop {
         lane,
         tool_call_count: observability.tool_call_count,
         turns: observability.turns,
@@ -178,7 +178,7 @@ pub(crate) fn render_repo_doc(
         "code_repo",
         source_spans,
         degraded_sources,
-        lane_b,
+        tool_loop,
     );
     append_relevant_source_files(&mut doc, source_spans);
     doc.push_str("# Repository Overview\n\n");
@@ -286,7 +286,7 @@ mod tests {
     }
 
     #[test]
-    fn repo_lane_a_grounding_empty_falls_back_and_marks_degraded() {
+    fn repo_one_shot_grounding_empty_falls_back_and_marks_degraded() {
         let mut files = vec![file_doc("src/lib.rs")];
         files[0].source_spans.clear();
         let mut generate = |_prompt: &str, _system: &str, _tier: PromptTier| {
@@ -319,10 +319,10 @@ mod tests {
     }
 
     #[test]
-    fn repo_lane_b_grounding_empty_hard_fails_without_fallback() {
+    fn repo_tool_loop_grounding_empty_hard_fails_without_fallback() {
         let mut files = vec![file_doc("src/lib.rs")];
         files[0].source_spans.clear();
-        let mut tool_loop = |_prompt: &str, _system: &str| LaneBResult {
+        let mut tool_loop = |_prompt: &str, _system: &str| ToolLoopResult {
             outcome: GenerationOutcome::generated("[src/missing.rs:99]".to_string()),
             data_source_degraded: Vec::new(),
         };
@@ -342,7 +342,7 @@ mod tests {
             &mut progress,
             CodewikiAiOutcome::generated(gobby_core::config::AiRouting::Daemon, false),
         )
-        .expect_err("Lane B grounding-empty hard-fails");
+        .expect_err("tool-loop grounding-empty hard-fails");
 
         assert!(error.to_string().contains("grounded to empty"), "{error}");
     }

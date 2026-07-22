@@ -241,10 +241,10 @@ fn curated_navigation_retries_an_unparseable_plan_before_falling_back() {
 fn exhausted_nav_plan_dumps_into_the_configured_dump_dir_not_the_page_set() {
     // Relocated debug artifacts (#17533): when every nav-plan attempt emits
     // unparseable JSON, the diagnostic dump goes to the run's resolved dump
-    // directory (`_meta/lane_b/` in production) and never surfaces as an
+    // directory (`_meta/tool_loop/` in production) and never surfaces as an
     // emitted page.
     let dump_root = tempfile::tempdir().expect("dump tempdir");
-    let dump_dir = dump_root.path().join("_meta").join("lane_b");
+    let dump_dir = dump_root.path().join("_meta").join("tool_loop");
     let mut generator = |_prompt: &str, system: &str, _tier: PromptTier| {
         if system == prompts::CURATED_NAVIGATION_SYSTEM {
             Some("Sure, here is the plan: { \"concept_modules\": [ {".to_string())
@@ -257,7 +257,7 @@ fn exhausted_nav_plan_dumps_into_the_configured_dump_dir_not_the_page_set() {
         &concept_input(),
         GenerateDocsOptions {
             generate: Some(&mut generator),
-            lane_b_dump_dir: Some(&dump_dir),
+            tool_loop_dump_dir: Some(&dump_dir),
             ..Default::default()
         },
     );

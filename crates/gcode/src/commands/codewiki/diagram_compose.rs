@@ -573,8 +573,8 @@ pub(crate) fn compose_flowchart(
             ),
             None => base_prompt.clone(),
         };
-        // Lane A one-shot on the aggregate tier: the evidence is fully
-        // supplied in the prompt, so the Lane B tool loop adds cost without
+        // One-shot on the aggregate tier: the evidence is fully
+        // supplied in the prompt, so the tool loop adds cost without
         // adding grounding (same rationale as curated page bodies).
         let mut no_tool_loop: Option<&mut ToolLoopGenerator<'_>> = None;
         let Ok(aggregate) = generate_aggregate(

@@ -1182,7 +1182,7 @@ fn compile_explainer_failure_degrades_and_keeps_structural_skeleton() {
 }
 
 #[test]
-fn compile_lane_b_failure_hard_fails_without_skeleton() {
+fn compile_tool_loop_failure_hard_fails_without_skeleton() {
     let temp = tempfile::tempdir().expect("tempdir");
     let scope = ResearchScope::project_for_id("project-1", temp.path());
     let note_path = scope.root().join("raw/research/compile.md");
@@ -1193,7 +1193,7 @@ fn compile_lane_b_failure_hard_fails_without_skeleton() {
     let mut generator = |_prompt: &ExplainerPrompt| {
         Err::<ExplainerResponse, _>("tool loop unavailable".to_string())
     };
-    // With hard-fail set (Lane B), a generation failure must NOT write a skeleton
+    // With tool-loop hard-fail set, a generation failure must NOT write a skeleton
     // article — it hard-fails with a distinct error (#982, matching codewiki #978).
     let error = compile_to_wiki_with_options(
         &mut session,
@@ -1209,7 +1209,7 @@ fn compile_lane_b_failure_hard_fails_without_skeleton() {
         },
         Some(&mut generator),
     )
-    .expect_err("Lane B failure hard-fails");
+    .expect_err("tool-loop failure hard-fails");
 
     assert!(
         matches!(error, crate::WikiError::Generation { .. }),
@@ -1217,7 +1217,7 @@ fn compile_lane_b_failure_hard_fails_without_skeleton() {
     );
     let message = error.to_string();
     assert!(
-        message.contains("Lane B compile generation failed"),
+        message.contains("Tool-loop compile generation failed"),
         "{message}"
     );
     assert!(message.contains("no skeleton"), "{message}");
@@ -1225,11 +1225,11 @@ fn compile_lane_b_failure_hard_fails_without_skeleton() {
     // No synthesized article was written under the vault's knowledge tree.
     assert!(
         !scope.root().join("knowledge").exists(),
-        "no skeleton article should be written on Lane B hard-fail"
+        "no skeleton article should be written on tool-loop hard-fail"
     );
     assert!(
         !scope.root().join("hard-fail-compile.md").exists(),
-        "write-intent target handoff should not be written on Lane B hard-fail"
+        "write-intent target handoff should not be written on tool-loop hard-fail"
     );
 }
 

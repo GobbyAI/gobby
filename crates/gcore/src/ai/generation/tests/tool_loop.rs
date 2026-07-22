@@ -82,7 +82,7 @@ fn two_tool_call_completion() -> ChatCompletion {
 }
 
 #[test]
-fn lane_b_executes_tool_then_completes_with_observability() {
+fn tool_loop_executes_tool_then_completes_with_observability() {
     let transport = StubTransport::new(vec![
         tool_call_completion("echo", "call_echo", json!({"text":"hi"})),
         content_completion("final answer"),
@@ -138,7 +138,7 @@ fn lane_b_executes_tool_then_completes_with_observability() {
 }
 
 #[test]
-fn lane_b_forces_tool_use_on_first_turn_then_auto() {
+fn tool_loop_forces_tool_use_on_first_turn_then_auto() {
     // Turn 0 forces a tool call (`required`) so a weak function-calling model
     // cannot one-shot an ungrounded answer and skip investigation entirely;
     // every later turn lets the model finalize freely (`auto`).
@@ -169,11 +169,11 @@ fn lane_b_forces_tool_use_on_first_turn_then_auto() {
 }
 
 #[test]
-fn lane_b_reprompts_a_model_that_ignores_required_tool_choice() {
+fn tool_loop_reprompts_a_model_that_ignores_required_tool_choice() {
     // A runtime may treat `tool_choice = "required"` as best-effort: the model
     // answers turn 0 with no tool call. The loop must not accept that
     // uninvestigated reply — it appends a correction and keeps forcing until a
-    // tool call lands, so Lane B genuinely investigates before answering.
+    // tool call lands, so the tool loop genuinely investigates before answering.
     let transport = StubTransport::new(vec![
         content_completion("premature one-shot answer"),
         tool_call_completion("echo", "call_echo", json!({"text": "hi"})),
@@ -224,7 +224,7 @@ fn lane_b_reprompts_a_model_that_ignores_required_tool_choice() {
 }
 
 #[test]
-fn lane_b_hard_fails_when_the_model_never_investigates_after_corrections() {
+fn tool_loop_hard_fails_when_the_model_never_investigates_after_corrections() {
     // A model that never calls a tool, even after repeated corrections, must
     // not spin forever and must not ship a silent uninvestigated one-shot:
     // the forcing retries are bounded, after which the loop fails (a non-
@@ -267,7 +267,7 @@ fn lane_b_hard_fails_when_the_model_never_investigates_after_corrections() {
 }
 
 #[test]
-fn lane_b_relays_tool_error_to_model() {
+fn tool_loop_relays_tool_error_to_model() {
     struct FailingExecutor;
     impl ToolExecutor for FailingExecutor {
         fn schemas(&self) -> Vec<ToolSchema> {
@@ -309,7 +309,7 @@ fn lane_b_relays_tool_error_to_model() {
 }
 
 #[test]
-fn lane_b_aggregates_token_usage_across_turns() {
+fn tool_loop_aggregates_token_usage_across_turns() {
     let mut turn1 = tool_call_completion("echo", "call_echo", json!({}));
     turn1.usage = Some(TokenUsage {
         input_tokens: Some(10),
@@ -344,7 +344,7 @@ fn lane_b_aggregates_token_usage_across_turns() {
 }
 
 #[test]
-fn lane_b_reports_no_usage_when_unreported() {
+fn tool_loop_reports_no_usage_when_unreported() {
     // Neither the investigation turn nor the final turn reports usage.
     let transport = StubTransport::new(vec![
         tool_call_completion("echo", "call_echo", json!({"text": "r"})),
@@ -363,7 +363,7 @@ fn lane_b_reports_no_usage_when_unreported() {
 }
 
 #[test]
-fn lane_b_stops_at_max_turns() {
+fn tool_loop_stops_at_max_turns() {
     let transport = StubTransport::new(vec![
         tool_call_completion("echo", "a", json!({})),
         tool_call_completion("echo", "b", json!({})),
@@ -390,7 +390,7 @@ fn lane_b_stops_at_max_turns() {
 }
 
 #[test]
-fn lane_b_stops_at_max_tool_calls() {
+fn tool_loop_stops_at_max_tool_calls() {
     fn two_calls() -> ChatCompletion {
         ChatCompletion {
             content: None,
@@ -434,7 +434,7 @@ fn lane_b_stops_at_max_tool_calls() {
 }
 
 #[test]
-fn lane_b_truncates_tool_result_on_utf8_boundary() {
+fn tool_loop_truncates_tool_result_on_utf8_boundary() {
     let transport = StubTransport::new(vec![
         tool_call_completion("echo", "call_echo", json!({})),
         content_completion("done"),
@@ -466,7 +466,7 @@ fn lane_b_truncates_tool_result_on_utf8_boundary() {
 }
 
 #[test]
-fn lane_b_stops_at_timeout() {
+fn tool_loop_stops_at_timeout() {
     let transport = StubTransport::new(vec![
         tool_call_completion("echo", "a", json!({})),
         tool_call_completion("echo", "b", json!({})),
@@ -509,7 +509,7 @@ fn lane_b_stops_at_timeout() {
 }
 
 #[test]
-fn lane_b_content_completion_times_out_after_transport() {
+fn tool_loop_content_completion_times_out_after_transport() {
     let transport = StubTransport::new(vec![content_completion("late answer")]);
     let mut executor = EchoExecutor::new("unused");
     let limits = ToolLoopLimits {
@@ -546,7 +546,7 @@ fn lane_b_content_completion_times_out_after_transport() {
 }
 
 #[test]
-fn lane_b_tool_call_completion_times_out_after_transport_without_executing_tools() {
+fn tool_loop_tool_call_completion_times_out_after_transport_without_executing_tools() {
     let transport = StubTransport::new(vec![tool_call_completion("echo", "a", json!({}))]);
     let mut executor = EchoExecutor::new("unused");
     let limits = ToolLoopLimits {
@@ -582,7 +582,7 @@ fn lane_b_tool_call_completion_times_out_after_transport_without_executing_tools
 }
 
 #[test]
-fn lane_b_times_out_after_first_tool_result_before_next_tool_call() {
+fn tool_loop_times_out_after_first_tool_result_before_next_tool_call() {
     let transport = StubTransport::new(vec![two_tool_call_completion()]);
     let mut executor = EchoExecutor::new("r");
     let limits = ToolLoopLimits {

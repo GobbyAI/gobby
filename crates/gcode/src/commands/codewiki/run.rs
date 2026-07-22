@@ -19,9 +19,9 @@ use super::{
     TextGenerator, TextVerifier, build_audit_context, build_codewiki_changes_doc,
     build_codewiki_index_snapshot, build_feature_catalog_doc, build_system_model,
     build_truth_digest, direct_route_candidate_error, fetch_codewiki_graph_edges, generation,
-    in_scope, io, is_core_file, read_ownership_meta, resolve_lane_b_dump_dir,
-    resolve_text_generator, resolve_text_verifier, resolve_tool_loop_generator,
-    write_ownership_meta, write_truth_digest,
+    in_scope, io, is_core_file, read_ownership_meta, resolve_text_generator, resolve_text_verifier,
+    resolve_tool_loop_dump_dir, resolve_tool_loop_generator, write_ownership_meta,
+    write_truth_digest,
 };
 
 // CLI entry point: each parameter maps to a distinct codewiki flag, so the
@@ -105,9 +105,9 @@ pub fn run(
     // Declared before `tool_loop_generator` so the serial adapters' borrows
     // outlive that box's drop.
     let shared_verifier = resolve_text_verifier(ctx, &ai);
-    // Lane B aggregate generator (#978): resolved for the `tool_chat` capability,
-    // threaded alongside the Lane A generator. `None` when no tool-chat route
-    // resolves (AI off) — aggregates then fall back to the Lane A path. The run's
+    // Tool-loop aggregate generator (#978): resolved for the `tool_chat` capability,
+    // threaded alongside the one-shot generator. `None` when no tool-chat route
+    // resolves (AI off) — aggregates then fall back to the one-shot path. The run's
     // resolved graph availability lets the executor's graph tools return an
     // explicit graph-unavailable result instead of an empty one.
     let resolved_tool_loop_generator =
@@ -271,13 +271,13 @@ pub fn run(
         sink.persist_with_ai_outcome(&doc, write_outcome)?;
         Ok(())
     };
-    // Lane B / nav-plan failure dumps land under the live output's `_meta/`
+    // Tool-loop / nav-plan failure dumps land under the live output's `_meta/`
     // — which the doc walkers never visit — instead of among the generated
-    // pages; `GOBBY_CODEWIKI_LANE_B_DUMP_DIR` redirects them to a scratch
+    // pages; `GOBBY_CODEWIKI_TOOL_LOOP_DUMP_DIR` redirects them to a scratch
     // directory (#17533). Resolved here once so library code never reads the
     // environment.
-    let lane_b_dump_dir = resolve_lane_b_dump_dir(
-        std::env::var("GOBBY_CODEWIKI_LANE_B_DUMP_DIR")
+    let tool_loop_dump_dir = resolve_tool_loop_dump_dir(
+        std::env::var("GOBBY_CODEWIKI_TOOL_LOOP_DUMP_DIR")
             .ok()
             .as_deref(),
         out_path,
@@ -313,7 +313,7 @@ pub fn run(
             reuse: Some(&mut reuse_plan),
             progress: Some(&mut progress),
             doc_scope: Some(&doc_scope),
-            lane_b_dump_dir: Some(&lane_b_dump_dir),
+            tool_loop_dump_dir: Some(&tool_loop_dump_dir),
             file_workers,
         },
         &mut emit,
@@ -428,16 +428,16 @@ mod scope_tests {
 
 fn ai_outcome_for_doc(
     path: &str,
-    lane_a: CodewikiAiOutcome,
+    one_shot: CodewikiAiOutcome,
     aggregate: CodewikiAiOutcome,
 ) -> CodewikiAiOutcome {
     match path {
-        "code/concepts/index.md" => lane_a,
+        "code/concepts/index.md" => one_shot,
         "code/repo.md" | "code/_architecture.md" => aggregate,
         path if path.starts_with("code/concepts/") || path.starts_with("code/narrative/") => {
             aggregate
         }
-        _ => lane_a,
+        _ => one_shot,
     }
 }
 

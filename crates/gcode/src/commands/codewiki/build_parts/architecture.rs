@@ -32,8 +32,8 @@ pub(crate) fn build_architecture_doc(
     let mut degraded_sources = BTreeSet::new();
     // The architecture page rolls several aggregate generations (one per
     // subsystem plus the layered narrative) into one document; accumulate their
-    // Lane B tool-loop call/turn counts for the page's frontmatter observability
-    // (#978). The lane is tool_loop whenever a Lane B generator is threaded in.
+    // Tool-loop call/turn counts for the page's frontmatter observability
+    // (#978). The lane is tool_loop whenever a tool-loop generator is threaded in.
     let lane = if tool_loop.is_some() {
         LANE_TOOL_LOOP
     } else {
@@ -103,9 +103,9 @@ pub(crate) fn build_architecture_doc(
                 ground_text(&generated, &source_spans, Some(&citations))
             }
             GenerationContent::Failed(cause) => {
-                // Only an attempted-and-failed Lane A generation is a degradation;
-                // structural output is the intent when no generator runs. (A Lane
-                // B failure hard-fails earlier via `generate_aggregate`.)
+                // Only an attempted-and-failed one-shot generation is a degradation;
+                // structural output is the intent when no generator runs. (A tool-loop
+                // failure hard-fails earlier via `generate_aggregate`.)
                 degraded_sources.insert(cause.reason_code().to_string());
                 ground_text(&fallback, &source_spans, None)
             }

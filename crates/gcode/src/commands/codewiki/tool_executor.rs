@@ -1,4 +1,4 @@
-//! gcode `ToolExecutor` for CodeWiki Lane B (#978).
+//! gcode `ToolExecutor` for the CodeWiki tool loop (#978).
 //!
 //! Wraps the existing read-only gcode index query internals (search, outline,
 //! symbol, grep, file read, code graph) behind the gcore [`ToolExecutor`] trait
@@ -46,7 +46,7 @@ const DEFAULT_READ_LINES: usize = 200;
 const MAX_READ_LINES: usize = 400;
 const MAX_SNIPPET_BYTES: usize = 4_000;
 
-/// In-process tool executor over the gcode index for a single Lane B
+/// In-process tool executor over the gcode index for a single tool-loop
 /// generation. Holds a read-only connection and the project context; records
 /// any data-source (graph) degradation hit during the loop.
 pub(crate) struct CodewikiToolExecutor<'a> {
@@ -321,7 +321,7 @@ impl ToolExecutor for CodewikiToolExecutor<'_> {
     }
 }
 
-/// The investigation tool schemas advertised to the model for a Lane B run.
+/// The investigation tool schemas advertised to the model for a tool-loop run.
 /// Free function so the schema surface can be asserted without a live index.
 pub(crate) fn codewiki_tool_schemas() -> Vec<ToolSchema> {
     vec![

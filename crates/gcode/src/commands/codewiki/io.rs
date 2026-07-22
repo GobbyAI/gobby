@@ -393,9 +393,9 @@ impl<'a> DocSink<'a> {
             if degraded {
                 self.degraded_docs.push(doc.path.clone());
             }
-            // Mirror the Lane B observability (lane/tool-call/turn counts) from
+            // Mirror tool-loop observability (lane/tool-call/turn counts) from
             // the page frontmatter into `_meta/codewiki.json` for traceability;
-            // absent for Lane A / leaf / deterministic pages (#978).
+            // absent for one-shot / leaf / deterministic pages (#978).
             let lane = lane_observability_from_content(&content);
             CodewikiDocMeta {
                 source_hashes,

@@ -102,7 +102,7 @@ impl AiBindings {
             AiCapability::AudioTranscribe => &self.audio_transcribe,
             AiCapability::AudioTranslate => &self.audio_translate,
             AiCapability::VisionExtract => &self.vision_extract,
-            // ToolChat (Lane B) has no binding of its own: it routes off the
+            // ToolChat has no binding of its own: it routes off the
             // resolved text_generate binding, so tool-capability filtering
             // layers on the same provider/model/profile config.
             AiCapability::TextGenerate | AiCapability::ToolChat => &self.text_generate,

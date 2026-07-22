@@ -10,7 +10,7 @@ pub(crate) use citations::{
     replace_citations_with_markers, write_references,
 };
 pub(crate) use frontmatter::{
-    FrontmatterLaneB, MAX_FRONTMATTER_PROVENANCE_FILES, append_curated_source_files,
+    FrontmatterToolLoop, MAX_FRONTMATTER_PROVENANCE_FILES, append_curated_source_files,
     append_relevant_source_files, frontmatter_aggregate_with_verify_notes,
     frontmatter_aggregate_without_ranges, frontmatter_with_degradation,
     frontmatter_with_degradation_and_verify_notes_without_ranges,
@@ -34,7 +34,7 @@ pub(crate) use citations::MAX_FALLBACK_CITATIONS;
 #[cfg(test)]
 pub(crate) use frontmatter::frontmatter;
 #[cfg(test)]
-pub(crate) use generation::LaneBResult;
+pub(crate) use generation::ToolLoopResult;
 #[cfg(test)]
 pub(crate) use generation::generate_with_bounded_retry;
 

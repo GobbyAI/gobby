@@ -831,18 +831,18 @@ fn direct_route_candidate_error_gates_pinned_runs() {
     assert!(
         direct_route_candidate_error(&[], AiRouting::Direct, Some(AiRouting::Direct)).is_none()
     );
-    // Pinned + daemon everywhere: proceeds (Lane B absent or daemon).
+    // Pinned + daemon everywhere: proceeds (tool loop absent or daemon).
     assert!(direct_route_candidate_error(&pinned, AiRouting::Daemon, None).is_none());
     assert!(
         direct_route_candidate_error(&pinned, AiRouting::Daemon, Some(AiRouting::Daemon)).is_none()
     );
     // Pinned + a Direct-resolved lane fails the run with an actionable message.
-    for (text_route, lane_b_route) in [
+    for (text_route, tool_loop_route) in [
         (AiRouting::Direct, None),
         (AiRouting::Direct, Some(AiRouting::Daemon)),
         (AiRouting::Daemon, Some(AiRouting::Direct)),
     ] {
-        let error = direct_route_candidate_error(&pinned, text_route, lane_b_route)
+        let error = direct_route_candidate_error(&pinned, text_route, tool_loop_route)
             .expect("direct route rejected");
         assert!(error.contains("--ai-aggregate-candidate"), "{error}");
         assert!(error.contains("daemon route"), "{error}");

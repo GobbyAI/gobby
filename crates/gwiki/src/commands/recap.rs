@@ -6,7 +6,7 @@ use crate::support::scope::resolve_selection_context;
 use crate::support::time::collect_timestamp;
 use crate::{CommandOutcome, RecapOptions, ScopeSelection, WikiError, daemon, recap};
 
-use super::lanes::{
+use super::generation_routes::{
     ai_notice_label, resolve_ai_selection, resolve_explainer_transport, routing_label,
 };
 
@@ -29,7 +29,7 @@ pub(crate) fn execute(
         daemon_report.synthesis.available,
     );
 
-    // Recap is one bounded completion by design — never the Lane B tool loop —
+    // Recap is one bounded completion by design — never the tool loop —
     // so it survives local models that cannot drive an agent loop.
     let transport = resolve_explainer_transport(ai_selection.route, COMMAND);
     let route_label = transport.route_label();

@@ -3,7 +3,7 @@ use std::fmt::Write as _;
 use super::super::*;
 
 pub(crate) fn render_architecture_doc(architecture: &ArchitectureDoc) -> String {
-    let lane_b = (architecture.lane == LANE_TOOL_LOOP).then_some(FrontmatterLaneB {
+    let tool_loop = (architecture.lane == LANE_TOOL_LOOP).then_some(FrontmatterToolLoop {
         lane: architecture.lane,
         tool_call_count: architecture.observability.tool_call_count,
         turns: architecture.observability.turns,
@@ -13,7 +13,7 @@ pub(crate) fn render_architecture_doc(architecture: &ArchitectureDoc) -> String 
         "code_architecture",
         &architecture.source_spans,
         &architecture.degraded_sources,
-        lane_b,
+        tool_loop,
     );
     append_relevant_source_files(&mut doc, &architecture.source_spans);
     doc.push_str("# Architecture Overview\n\n");

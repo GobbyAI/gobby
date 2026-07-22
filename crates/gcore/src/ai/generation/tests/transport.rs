@@ -150,7 +150,7 @@ fn parse_completion_defaults_malformed_tool_arguments_to_null() {
 }
 
 #[test]
-fn build_request_body_suppresses_tools_for_lane_a() {
+fn build_request_body_suppresses_tools_for_one_shot() {
     let target = DirectGenerationTarget {
         model: Some("m".to_string()),
         ..DirectGenerationTarget::default()
@@ -202,7 +202,7 @@ fn build_request_body_threads_reasoning_effort() {
         tool_choice: ToolChoice::Auto,
     };
 
-    // Present -> forwarded so direct Lane A/B keep their profile reasoning pin.
+    // Present -> forwarded so direct one-shot/tool-loop routes keep their profile reasoning pin.
     let target = DirectGenerationTarget {
         model: Some("m".to_string()),
         reasoning_effort: Some("high".to_string()),

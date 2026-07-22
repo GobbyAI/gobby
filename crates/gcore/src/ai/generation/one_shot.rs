@@ -1,6 +1,6 @@
-//! Lane A: one-shot text generation (tools suppressed), routed by writing tier.
+//! One-shot text generation (tools suppressed), routed by writing tier.
 //!
-//! Lane A is the existing single-prompt path used for verification, summaries,
+//! The one-shot route is the existing single-prompt path used for verification, summaries,
 //! and per-symbol/per-file prose. This module adds the tier -> feature-profile
 //! routing on top of it so both the Daemon and Direct routes honor the same
 //! mapping:

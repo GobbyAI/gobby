@@ -228,4 +228,4 @@ fn profile_unresolved_env_without_default_is_none() {
     assert!(target.api_base.is_none());
 }
 
-// ----- Lane B: stub transport + trivial executor harness ---------------------
+// ----- Tool loop: stub transport + trivial executor harness ------------------

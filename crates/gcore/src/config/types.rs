@@ -90,7 +90,7 @@ pub enum AiCapability {
     AudioTranslate,
     VisionExtract,
     TextGenerate,
-    /// Tool-calling chat completions (Lane B). A distinct capability so the
+    /// Tool-calling chat completions. A distinct capability so the
     /// daemon can advertise tool-call support separately (`feature_high` proving
     /// text generation says nothing about tool-call support), but it reuses the
     /// `ai.text_generate.*` config tree — there is no parallel `ai.tool_chat.*`

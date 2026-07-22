@@ -29,7 +29,7 @@ use crate::{db, secrets};
 pub(super) const GENERATION_RETRY_BACKOFF: [Duration; 2] =
     [Duration::from_millis(200), Duration::from_millis(500)];
 
-/// Read-only gcode subcommands the daemon's Lane B agent may invoke while
+/// Read-only gcode subcommands the daemon's tool-loop agent may invoke while
 /// investigating the repo. The daemon validates this list against its own
 /// read-only whitelist (`gobby.ai._tool_chat_tools`); codewiki declares the
 /// full read surface and never permits mutation — gcode itself writes the page.
@@ -215,8 +215,8 @@ pub(crate) fn resolve_text_generator(
 
 /// Run-level guard for `--ai-aggregate-candidate` on the Direct route: an
 /// explicit candidate chain can only be honored by the daemon (the Direct
-/// route resolves a single profile target), so a Direct-resolved Lane A or an
-/// engaged Direct-resolved Lane B must fail the whole run loudly instead of
+/// route resolves a single profile target), so a direct one-shot or an
+/// engaged direct tool loop must fail the whole run loudly instead of
 /// degrading every aggregate page. Returns the error message to surface, or
 /// `None` when the pinned run may proceed.
 pub(crate) fn direct_route_candidate_error(
@@ -436,7 +436,7 @@ fn resolve_ai_context(ctx: &Context, ai: Option<AiRouting>) -> anyhow::Result<Ai
 /// [`GRAPH_UNAVAILABLE`]): a graph backend being down is *evidence* degradation
 /// — the page still renders useful narrative — and is never recorded as a
 /// `GenerationFailureCause`. Splitting these causes out of the old blanket
-/// `model-unavailable` code is the substrate #978 needs to hard-fail a Lane B
+/// `model-unavailable` code is the substrate #978 needs to hard-fail a tool-loop
 /// page with a precise reason instead of silently degrading to a skeleton.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum GenerationFailureCause {
@@ -467,7 +467,7 @@ impl GenerationFailureCause {
 /// Data-source degradation reason code for an unavailable code-graph backend.
 ///
 /// #979 defines the code shape; #978 wires the concrete graph-tool behavior and
-/// its test when the Lane B `ToolExecutor` lands. A graph/vector backend being
+/// its test when the tool-loop `ToolExecutor` lands. A graph/vector backend being
 /// down is evidence degradation, never an AI-generation failure, so it carries
 /// its own code and is excluded from [`is_ai_generation_failure_code`].
 pub(crate) const GRAPH_UNAVAILABLE: &str = "graph-unavailable";
@@ -503,8 +503,8 @@ pub(crate) enum GenerationStatus {
     Skipped,
 }
 
-/// Per-attempt observability, uniform across the Lane A one-shot and (in #978)
-/// the Lane B tool loop. Lane A reports a single completed turn with no tool
+/// Per-attempt observability, uniform across one-shot and (in #978)
+/// tool-loop generation. One-shot reports a single completed turn with no tool
 /// calls; #978 maps a `ToolLoopOutcome` (turns, tool calls, stop reason, summed
 /// usage) in directly.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
@@ -538,7 +538,7 @@ pub(crate) struct GenerationOutcome {
 }
 
 impl GenerationOutcome {
-    /// A completed Lane A one-shot: one turn, no tool calls.
+    /// A completed one-shot: one turn, no tool calls.
     pub(crate) fn generated(content: String) -> Self {
         Self {
             status: GenerationStatus::Generated,
@@ -553,7 +553,7 @@ impl GenerationOutcome {
         }
     }
 
-    /// A Lane A attempt whose completion returned content that failed
+    /// A one-shot attempt whose completion returned content that failed
     /// classification (an echo or a refusal): one completed turn, no usable
     /// output.
     pub(crate) fn rejected(cause: GenerationFailureCause) -> Self {
@@ -591,8 +591,8 @@ impl GenerationOutcome {
         }
     }
 
-    /// A completed Lane B tool-loop generation, carrying the loop's observability
-    /// (real turn / tool-call counts and summed usage) rather than the Lane A
+    /// A completed tool-loop generation, carrying the loop's observability
+    /// (real turn / tool-call counts and summed usage) rather than the one-shot
     /// single-turn defaults.
     fn generated_with_observability(
         content: String,
@@ -606,7 +606,7 @@ impl GenerationOutcome {
         }
     }
 
-    /// A Lane B attempt that ran the loop but produced no usable answer (bad
+    /// A tool-loop attempt that ran the loop but produced no usable answer (bad
     /// stop reason, no content, an echo/refusal, or empty output). Carries the
     /// loop observability so the run can report what the loop did before
     /// failing.
@@ -623,7 +623,7 @@ impl GenerationOutcome {
     }
 
     /// Map a gcore [`ToolLoopOutcome`] into a structured `GenerationOutcome`,
-    /// classifying the Lane B result with the same vocabulary as the Lane A
+    /// classifying the tool-loop result with the same vocabulary as the one-shot
     /// one-shot: a non-`Completed` stop reason or missing/echoed/refused/empty
     /// content is a failure with a distinct cause; usable content is
     /// `Generated`. The loop's turn / tool-call counts and summed usage are
@@ -764,22 +764,22 @@ pub(crate) fn maybe_generate(
     }
 }
 
-/// Frontmatter/`_meta` lane label for a page produced by the Lane B tool loop.
+/// Frontmatter/`_meta` lane label for a page produced by the tool loop.
 pub(crate) const LANE_TOOL_LOOP: &str = "tool_loop";
-/// Lane label for a page produced by a Lane A one-shot generation.
+/// Lane label for a page produced by one-shot generation.
 pub(crate) const LANE_ONE_SHOT: &str = "one_shot";
 
-/// Result of one Lane B tool-loop generation: the classified outcome plus any
+/// Result of one tool-loop generation: the classified outcome plus any
 /// data-source (evidence) degradation the executor hit during the loop (e.g.
 /// `graph-unavailable`). The degradation is surfaced on the generated page but
 /// never hard-fails it — services being down is evidence degradation, not a
 /// generation failure.
-pub(crate) struct LaneBResult {
+pub(crate) struct ToolLoopResult {
     pub(crate) outcome: GenerationOutcome,
     pub(crate) data_source_degraded: Vec<String>,
 }
 
-impl LaneBResult {
+impl ToolLoopResult {
     /// The transport/loop could not run (transport build error or loop error).
     fn unavailable() -> Self {
         Self {
@@ -798,40 +798,40 @@ impl LaneBResult {
     }
 }
 
-/// A resolved Lane B generator: a closure that, given `(prompt, system)`, runs
-/// the gcode tool loop over the index and returns a [`LaneBResult`]. Mirrors
-/// [`TextGenerator`] for Lane A; aggregate-only (leaf pages stay Lane A).
-pub(crate) type ToolLoopGenerator<'a> = dyn FnMut(&str, &str) -> LaneBResult + 'a;
+/// A resolved tool-loop generator: a closure that, given `(prompt, system)`, runs
+/// the gcode tool loop over the index and returns a [`ToolLoopResult`]. Mirrors
+/// [`TextGenerator`] for one-shot; aggregate-only (leaf pages stay one-shot).
+pub(crate) type ToolLoopGenerator<'a> = dyn FnMut(&str, &str) -> ToolLoopResult + 'a;
 
 pub(crate) struct ResolvedToolLoopGenerator {
     pub(crate) generator: Option<Box<ToolLoopGenerator<'static>>>,
     pub(crate) ai_outcome: CodewikiAiOutcome,
 }
 
-/// Run one Lane B tool loop against the gcode index for the given transport,
+/// Run one tool loop against the gcode index for the given transport,
 /// returning the classified outcome plus the executor's data-source
 /// degradation. Builds a fresh read-only executor per call.
-/// Maximum byte size of the Lane B seed (user) prompt. The tool loop lets the
+/// Maximum byte size of the tool-loop seed (user) prompt. The tool loop lets the
 /// model fetch its own grounding, so the seed only needs to orient it; bounding
 /// it keeps the request inside a tool-capable model's effective context (#993).
-const LANE_B_SEED_MAX_BYTES: usize = 16 * 1024;
+const TOOL_LOOP_SEED_MAX_BYTES: usize = 16 * 1024;
 
-/// Upper bound on a Lane A one-shot prompt. A large module/aggregate prompt
+/// Upper bound on a one-shot prompt. A large module/aggregate prompt
 /// (many child summaries + source excerpts) combined with an unbounded output
 /// budget can overrun the model's loaded context window and 400 the request
 /// ("tokens to keep from the initial prompt is greater than the context
 /// length"). The one-shot path has no tools to recover elided detail, so the cap
-/// is far more generous than the Lane B seed; it only trims pathological inputs.
-const LANE_A_PROMPT_MAX_BYTES: usize = 32 * 1024;
+/// is far more generous than the tool-loop seed; it only trims pathological inputs.
+const ONE_SHOT_PROMPT_MAX_BYTES: usize = 32 * 1024;
 
-/// Bound a Lane A one-shot prompt to [`LANE_A_PROMPT_MAX_BYTES`], truncating on a
+/// Bound a one-shot prompt to [`ONE_SHOT_PROMPT_MAX_BYTES`], truncating on a
 /// char boundary, so an oversized module/aggregate prompt cannot 400 the request
-/// and degrade the page (#993). No tool note: Lane A has no investigation tools.
+/// and degrade the page (#993). No tool note: one-shot has no investigation tools.
 fn bound_one_shot_prompt(prompt: &str) -> String {
-    if prompt.len() <= LANE_A_PROMPT_MAX_BYTES {
+    if prompt.len() <= ONE_SHOT_PROMPT_MAX_BYTES {
         return prompt.to_string();
     }
-    let mut end = LANE_A_PROMPT_MAX_BYTES;
+    let mut end = ONE_SHOT_PROMPT_MAX_BYTES;
     while end > 0 && !prompt.is_char_boundary(end) {
         end -= 1;
     }
@@ -841,14 +841,14 @@ fn bound_one_shot_prompt(prompt: &str) -> String {
     )
 }
 
-/// Bound the Lane B seed prompt to [`LANE_B_SEED_MAX_BYTES`], truncating on a
+/// Bound the tool-loop seed prompt to [`TOOL_LOOP_SEED_MAX_BYTES`], truncating on a
 /// char boundary and appending a tool-investigation note so the model fetches
 /// any details beyond the seed via its tools.
 fn bound_seed_prompt(prompt: &str) -> String {
-    if prompt.len() <= LANE_B_SEED_MAX_BYTES {
+    if prompt.len() <= TOOL_LOOP_SEED_MAX_BYTES {
         return prompt.to_string();
     }
-    let mut end = LANE_B_SEED_MAX_BYTES;
+    let mut end = TOOL_LOOP_SEED_MAX_BYTES;
     while end > 0 && !prompt.is_char_boundary(end) {
         end -= 1;
     }
@@ -860,14 +860,14 @@ fn bound_seed_prompt(prompt: &str) -> String {
     )
 }
 
-/// Lane B operating directive appended to every aggregate page's system prompt.
+/// Tool-loop operating directive appended to every aggregate page's system prompt.
 /// The shared page prompts tell the model to write from "only the supplied
-/// input" — correct for the Lane A one-shot, but in Lane B the seed is a
+/// input" — correct for one-shot, but in the tool loop the seed is a
 /// bounded orientation and the real grounding comes from the tools. Without
 /// this, a weak function-calling model both skips investigation and declines to
 /// cite anything it fetched, producing an ungroundable body that hard-fails the
 /// no-skeleton contract (#993/#978).
-const LANE_B_SYSTEM_DIRECTIVE: &str = "Investigation mode: you have tools \
+const TOOL_LOOP_SYSTEM_DIRECTIVE: &str = "Investigation mode: you have tools \
 (search_code, outline_file, read_symbol, read_file, grep_repo, find_callers, \
 find_usages, imports). The user message is a bounded seed for orientation, not \
 the full evidence. Before answering, call these tools to read the actual source \
@@ -882,19 +882,19 @@ return only that answer in exactly the format the task instructions require — 
 tool-call narration, no preamble, and no extra commentary or code fences \
 wrapping a required JSON object.";
 
-/// Compose the Lane B system prompt: the page-specific system prompt followed by
-/// the [`LANE_B_SYSTEM_DIRECTIVE`] so the model investigates via tools before it
+/// Compose the tool-loop system prompt: the page-specific system prompt followed by
+/// the [`TOOL_LOOP_SYSTEM_DIRECTIVE`] so the model investigates via tools before it
 /// answers.
-fn lane_b_system_prompt(page_system: &str) -> String {
-    format!("{page_system}\n\n{LANE_B_SYSTEM_DIRECTIVE}")
+fn tool_loop_system_prompt(page_system: &str) -> String {
+    format!("{page_system}\n\n{TOOL_LOOP_SYSTEM_DIRECTIVE}")
 }
 
-/// Lane B operating directive for the *daemon* route. Unlike
-/// [`LANE_B_SYSTEM_DIRECTIVE`] it is tool-agnostic: the daemon's Claude Agent
+/// Tool-loop operating directive for the *daemon* route. Unlike
+/// [`TOOL_LOOP_SYSTEM_DIRECTIVE`] it is tool-agnostic: the daemon's Claude Agent
 /// SDK investigates with its own Read/Grep/Glob tools (not gcode's), so naming
 /// gcode tool names here would be wrong. It still enforces the grounding and
 /// section-completeness contract so the daemon writes a real, cited narrative.
-const LANE_B_DAEMON_DIRECTIVE: &str = "Investigation mode: investigate the \
+const TOOL_LOOP_DAEMON_DIRECTIVE: &str = "Investigation mode: investigate the \
 modules and files named in this task by reading the actual source in the \
 repository before writing, so every claim is grounded in real code. Cite the \
 file:line anchors you actually read; never invent files, symbols, or line \
@@ -902,33 +902,33 @@ numbers. If the task requires specific section headings, include every one \
 verbatim and in order. When you have gathered enough, write the complete \
 response as a single final message in exactly the format the task requires.";
 
-/// Compose the daemon-route Lane B system prompt: the page-specific system
-/// prompt followed by the tool-agnostic [`LANE_B_DAEMON_DIRECTIVE`]. The daemon
+/// Compose the daemon-route tool-loop system prompt: the page-specific system
+/// prompt followed by the tool-agnostic [`TOOL_LOOP_DAEMON_DIRECTIVE`]. The daemon
 /// runs its own agent loop, so this never names gcode tools.
-fn lane_b_daemon_system_prompt(page_system: &str) -> String {
-    format!("{page_system}\n\n{LANE_B_DAEMON_DIRECTIVE}")
+fn tool_loop_daemon_system_prompt(page_system: &str) -> String {
+    format!("{page_system}\n\n{TOOL_LOOP_DAEMON_DIRECTIVE}")
 }
 
-fn run_lane_b_loop(
+fn run_direct_tool_loop(
     transport: &dyn ChatTransport,
     ctx: &Context,
     graph_availability: CodewikiGraphAvailability,
     system: &str,
     prompt: &str,
     max_tokens: Option<usize>,
-) -> LaneBResult {
+) -> ToolLoopResult {
     let mut executor = match CodewikiToolExecutor::new(ctx, graph_availability) {
         Ok(executor) => executor,
-        Err(_) => return LaneBResult::unavailable(),
+        Err(_) => return ToolLoopResult::unavailable(),
     };
-    // Lane B's premise is that the model gathers its own grounding via tools, so
+    // The tool-loop premise is that the model gathers its own grounding via tools, so
     // the seed only orients it. An unbounded pre-assembled aggregate seed (full
     // source excerpts + repo-wide summary dumps — ~95KB observed) overruns a
     // tool-capable model's effective context and 400s the request (#993); bound
     // it and let the model fetch the rest via tools.
     let prompt = bound_seed_prompt(prompt);
     let messages = vec![
-        ChatMessage::system(lane_b_system_prompt(system)),
+        ChatMessage::system(tool_loop_system_prompt(system)),
         ChatMessage::user(prompt.clone()),
     ];
     // A local standalone model (e.g. gemma) is slower per turn than a frontier
@@ -947,14 +947,14 @@ fn run_lane_b_loop(
         Ok(outcome) => GenerationOutcome::from_tool_loop(outcome, &prompt),
         Err(_) => GenerationOutcome::unavailable(),
     };
-    LaneBResult {
+    ToolLoopResult {
         outcome,
         data_source_degraded: executor.into_data_source_degraded(),
     }
 }
 
 /// Resolve the Direct-route aggregate (`feature_high`) generation target from
-/// the AI config source, so a standalone `gcore.yaml` routes Lane B to its own
+/// the AI config source, so a standalone `gcore.yaml` routes the tool loop to its own
 /// provider/model/api_key. A failed config read leaves the target unset; the
 /// resolver then declines to produce a generator rather than silently
 /// degrading.
@@ -974,11 +974,11 @@ fn resolve_aggregate_direct_target(
     )
 }
 
-/// Resolve the Lane B aggregate generator for the `tool_chat` capability,
+/// Resolve the tool-loop aggregate generator for the `tool_chat` capability,
 /// mirroring [`resolve_text_generator`] but for the tool-calling chat route.
 /// When the route is off/auto or the Direct route has no usable aggregate
 /// target, the returned generator is empty and the outcome records the observed
-/// skip metadata; aggregate pages then fall back to the Lane A path (or
+/// skip metadata; aggregate pages then fall back to the one-shot path (or
 /// structural output when AI is off). Tool-chat reuses the `text_generate`
 /// config tree (Aggregate → `feature_high`), with daemon-side tool-capability
 /// filtering layered on; there is no parallel config tree.
@@ -1016,7 +1016,7 @@ pub(crate) fn resolve_tool_loop_generator(
     let aggregate_candidates = ai.aggregate_candidates.clone();
     let direct_target = if matches!(route, AiRouting::Direct) {
         let target = resolve_aggregate_direct_target(ctx, aggregate_profile.as_deref());
-        // No resolved api_base means a Direct-route Lane B cannot run; decline
+        // No resolved api_base means a direct tool loop cannot run; decline
         // rather than build a generator that always errors.
         if target.api_base().is_none() {
             return ResolvedToolLoopGenerator {
@@ -1045,7 +1045,7 @@ pub(crate) fn resolve_tool_loop_generator(
             AiRouting::Daemon => {
                 let bounded_prompt = bound_seed_prompt(prompt);
                 let messages = vec![
-                    ChatMessage::system(lane_b_daemon_system_prompt(system.as_ref())),
+                    ChatMessage::system(tool_loop_daemon_system_prompt(system.as_ref())),
                     ChatMessage::user(bounded_prompt.clone()),
                 ];
                 let binding = ai_context.binding(AiCapability::ToolChat);
@@ -1060,17 +1060,17 @@ pub(crate) fn resolve_tool_loop_generator(
                     Some(60),
                     binding.reasoning_effort.as_deref(),
                 ) {
-                    Ok(result) => LaneBResult {
+                    Ok(result) => ToolLoopResult {
                         outcome: GenerationOutcome::from_daemon_agentic(result, &bounded_prompt),
                         data_source_degraded: Vec::new(),
                     },
-                    Err(_) => LaneBResult::unavailable(),
+                    Err(_) => ToolLoopResult::unavailable(),
                 }
             }
             AiRouting::Direct => match direct_target.clone() {
                 Some(target) => {
                     match DirectChatTransport::new(&ai_context, target, Some(profile.clone())) {
-                        Ok(transport) => run_lane_b_loop(
+                        Ok(transport) => run_direct_tool_loop(
                             &transport,
                             &ctx_owned,
                             graph_availability,
@@ -1078,12 +1078,12 @@ pub(crate) fn resolve_tool_loop_generator(
                             prompt,
                             max_tokens,
                         ),
-                        Err(_) => LaneBResult::unavailable(),
+                        Err(_) => ToolLoopResult::unavailable(),
                     }
                 }
-                None => LaneBResult::unavailable(),
+                None => ToolLoopResult::unavailable(),
             },
-            AiRouting::Off | AiRouting::Auto => LaneBResult::skipped(),
+            AiRouting::Off | AiRouting::Auto => ToolLoopResult::skipped(),
         }
     });
     ResolvedToolLoopGenerator {
@@ -1092,16 +1092,16 @@ pub(crate) fn resolve_tool_loop_generator(
     }
 }
 
-/// Run the Lane B generator if present, returning a [`LaneBResult`]. A `None`
+/// Run the tool-loop generator if present, returning a [`ToolLoopResult`]. A `None`
 /// generator yields a skipped outcome, exactly like [`maybe_generate`] for
-/// Lane A — the aggregate site then falls back to Lane A or structural output.
+/// one-shot — the aggregate site then falls back to one-shot or structural output.
 pub(crate) fn maybe_generate_tool_loop(
     tool_loop: &mut Option<&mut ToolLoopGenerator<'_>>,
     prompt: &str,
     system: &str,
-) -> LaneBResult {
+) -> ToolLoopResult {
     match tool_loop.as_deref_mut() {
-        None => LaneBResult {
+        None => ToolLoopResult {
             outcome: GenerationOutcome::skipped(),
             data_source_degraded: Vec::new(),
         },
@@ -1110,10 +1110,10 @@ pub(crate) fn maybe_generate_tool_loop(
 }
 
 /// The classified content of an aggregate-page generation plus its lane,
-/// observability, and data-source degradation, uniform across Lane B and the
-/// Lane A fallback. A Lane B *generation failure* never reaches here — it is
+/// observability, and data-source degradation, uniform across the tool loop and
+/// one-shot fallback. A tool-loop *generation failure* never reaches here — it is
 /// returned as an `Err` by [`generate_aggregate`] so the page hard-fails (no
-/// skeleton); only Lane A failures arrive as [`GenerationContent::Failed`].
+/// skeleton); only one-shot failures arrive as [`GenerationContent::Failed`].
 #[derive(Debug)]
 pub(crate) struct AggregateGeneration {
     pub(crate) content: GenerationContent,
@@ -1122,12 +1122,12 @@ pub(crate) struct AggregateGeneration {
     pub(crate) lane: &'static str,
 }
 
-/// Generate an aggregate page: Lane B (tool loop) when a `tool_loop` generator
-/// is present, else the Lane A one-shot. A Lane B generation failure (bad stop
+/// Generate an aggregate page with the tool loop when a `tool_loop` generator
+/// is present, else one-shot. A tool-loop generation failure (bad stop
 /// reason, no/echoed/refused/empty content) is a hard `Err` with a distinct
 /// reason code — the page is not written and there is no skeleton or silent
-/// Lane A fallback (#978). A `graph-unavailable` evidence degradation hit during
-/// the loop is carried on the `Ok` result, not a failure. Lane A failures stay
+/// one-shot fallback (#978). A `graph-unavailable` evidence degradation hit during
+/// the loop is carried on the `Ok` result, not a failure. One-shot failures stay
 /// `Ok(Failed(cause))` so the existing leaf-style structural fallback applies.
 pub(crate) fn generate_aggregate(
     tool_loop: &mut Option<&mut ToolLoopGenerator<'_>>,
@@ -1140,12 +1140,12 @@ pub(crate) fn generate_aggregate(
         let result = maybe_generate_tool_loop(tool_loop, prompt, system);
         let observability = result.outcome.observability().clone();
         let data_source_degraded = result.data_source_degraded;
-        // A Lane B generation failure hard-fails the page with its distinct
-        // reason code — no skeleton, no silent Lane A fallback (#978).
+        // A tool-loop generation failure hard-fails the page with its distinct
+        // reason code — no skeleton, no silent one-shot fallback (#978).
         if let Some(cause) = result.outcome.failure_cause() {
             return Err(anyhow::anyhow!(
-                "Lane B {label} generation failed ({}, stop={:?}, turns={}, tool_calls={}); \
-                 page not written (no skeleton, no Lane A fallback)",
+                "Tool-loop {label} generation failed ({}, stop={:?}, turns={}, tool_calls={}); \
+                 page not written (no skeleton, no one-shot fallback)",
                 cause.reason_code(),
                 observability.stop_reason,
                 observability.turns,
@@ -1258,9 +1258,9 @@ mod tests {
     }
 
     #[test]
-    fn lane_b_system_prompt_appends_investigation_directive() {
-        let composed = lane_b_system_prompt(prompts::CONCEPT_PAGE_SYSTEM);
-        // Page contract stays first and intact; the Lane B directive follows.
+    fn tool_loop_system_prompt_appends_investigation_directive() {
+        let composed = tool_loop_system_prompt(prompts::CONCEPT_PAGE_SYSTEM);
+        // Page contract stays first and intact; the tool-loop directive follows.
         assert!(composed.starts_with(prompts::CONCEPT_PAGE_SYSTEM));
         assert!(composed.contains("Investigation mode"));
         assert!(composed.contains("search_code"));
@@ -1283,24 +1283,24 @@ mod tests {
 
     #[test]
     fn bound_one_shot_prompt_truncates_oversized_prompt_on_a_char_boundary() {
-        let prompt = "é".repeat(LANE_A_PROMPT_MAX_BYTES); // 2 bytes each → over the cap
+        let prompt = "é".repeat(ONE_SHOT_PROMPT_MAX_BYTES); // 2 bytes each → over the cap
         let bounded = bound_one_shot_prompt(&prompt);
         assert!(std::str::from_utf8(bounded.as_bytes()).is_ok());
         assert!(bounded.contains("[Input truncated to fit the model context.]"));
-        assert!(bounded.len() <= LANE_A_PROMPT_MAX_BYTES + 64);
+        assert!(bounded.len() <= ONE_SHOT_PROMPT_MAX_BYTES + 64);
     }
 
     #[test]
     fn bound_seed_prompt_truncates_oversized_seed_on_a_char_boundary_with_a_tool_note() {
         // A multi-byte char straddling the cap must not be split mid-codepoint.
-        let prompt = "é".repeat(LANE_B_SEED_MAX_BYTES); // 2 bytes each → well over the cap
+        let prompt = "é".repeat(TOOL_LOOP_SEED_MAX_BYTES); // 2 bytes each → well over the cap
         let bounded = bound_seed_prompt(&prompt);
         assert!(bounded.is_char_boundary(0) && std::str::from_utf8(bounded.as_bytes()).is_ok());
         assert!(bounded.contains("[Seed truncated to fit context."));
         assert!(bounded.contains("search_code"));
         // The retained prefix is bounded; the note adds a small fixed suffix.
         assert!(bounded.len() < prompt.len());
-        assert!(bounded.len() <= LANE_B_SEED_MAX_BYTES + 512);
+        assert!(bounded.len() <= TOOL_LOOP_SEED_MAX_BYTES + 512);
     }
 
     #[test]
@@ -1485,7 +1485,7 @@ mod tests {
     }
 
     #[test]
-    fn lane_a_generation_outcome_carries_one_shot_observability() {
+    fn one_shot_generation_outcome_carries_observability() {
         let mut healthy = |_: &str, _: &str, _: PromptTier| Some("Grounded narrative.".to_string());
         let mut generate = Some::<&mut TextGenerator<'_>>(&mut healthy);
         let outcome = maybe_generate(&mut generate, "prompt", "system", PromptTier::Aggregate);
@@ -1532,7 +1532,7 @@ mod tests {
         assert!(codes.is_empty());
     }
 
-    /// Build a stub `ToolLoopOutcome` for Lane B classification tests, without a
+    /// Build a stub `ToolLoopOutcome` for tool-loop classification tests, without a
     /// live transport or executor.
     fn tool_loop_outcome(
         content: Option<&str>,
@@ -1584,7 +1584,7 @@ mod tests {
 
     #[test]
     fn from_tool_loop_hard_fails_on_bad_stop_reason_or_missing_content() {
-        // A non-Completed stop reason is a Lane B failure, with the loop's
+        // A non-Completed stop reason is a tool-loop failure, with the loop's
         // observability preserved.
         let max_turns = GenerationOutcome::from_tool_loop(
             tool_loop_outcome(None, StopReason::MaxTurns, 24, 8),
@@ -1644,13 +1644,13 @@ mod tests {
     }
 
     #[test]
-    fn lane_b_daemon_system_prompt_is_tool_agnostic() {
-        let composed = lane_b_daemon_system_prompt(prompts::CONCEPT_PAGE_SYSTEM);
+    fn tool_loop_daemon_system_prompt_is_tool_agnostic() {
+        let composed = tool_loop_daemon_system_prompt(prompts::CONCEPT_PAGE_SYSTEM);
         // Page contract stays first and intact; the daemon directive follows.
         assert!(composed.starts_with(prompts::CONCEPT_PAGE_SYSTEM));
         assert!(composed.contains("Investigation mode"));
         // Tool-agnostic: the daemon uses its own Read/Grep/Glob, so gcode tool
-        // names must NOT leak into this directive (unlike LANE_B_SYSTEM_DIRECTIVE).
+        // names must NOT leak into this directive (unlike TOOL_LOOP_SYSTEM_DIRECTIVE).
         assert!(!composed.contains("search_code"));
         assert!(!composed.contains("outline_file"));
         assert!(!composed.contains("read_symbol"));
@@ -1741,8 +1741,8 @@ mod tests {
     }
 
     #[test]
-    fn generate_aggregate_lane_b_success_records_lane_and_observability() {
-        let mut tool_loop = |_prompt: &str, _system: &str| LaneBResult {
+    fn generate_aggregate_tool_loop_success_records_route_and_observability() {
+        let mut tool_loop = |_prompt: &str, _system: &str| ToolLoopResult {
             outcome: GenerationOutcome::from_tool_loop(
                 tool_loop_outcome(
                     Some("Grounded aggregate prose."),
@@ -1774,8 +1774,8 @@ mod tests {
     }
 
     #[test]
-    fn generate_aggregate_lane_b_failure_hard_fails_with_reason_code() {
-        let mut tool_loop = |_prompt: &str, _system: &str| LaneBResult {
+    fn generate_aggregate_tool_loop_failure_hard_fails_with_reason_code() {
+        let mut tool_loop = |_prompt: &str, _system: &str| ToolLoopResult {
             outcome: GenerationOutcome::from_tool_loop(
                 tool_loop_outcome(None, StopReason::MaxToolCalls, 24, 8),
                 "p",
@@ -1790,9 +1790,9 @@ mod tests {
             "system",
             "architecture",
         )
-        .expect_err("a Lane B failure must hard-fail the page, not degrade");
+        .expect_err("a tool-loop failure must hard-fail the page");
         let message = error.to_string();
-        assert!(message.contains("Lane B architecture"), "{message}");
+        assert!(message.contains("Tool-loop architecture"), "{message}");
         assert!(message.contains("model-unavailable"), "{message}");
         assert!(message.contains("no skeleton"), "{message}");
         // The hard-fail surfaces the loop's termination reason so a stalled or
@@ -1803,10 +1803,10 @@ mod tests {
     }
 
     #[test]
-    fn generate_aggregate_lane_b_carries_graph_unavailable_evidence_degradation() {
+    fn generate_aggregate_tool_loop_carries_graph_unavailable_evidence_degradation() {
         // graph-unavailable during the loop is evidence degradation: the page
         // still generates and the code is carried, never a hard fail.
-        let mut tool_loop = |_prompt: &str, _system: &str| LaneBResult {
+        let mut tool_loop = |_prompt: &str, _system: &str| ToolLoopResult {
             outcome: GenerationOutcome::from_tool_loop(
                 tool_loop_outcome(
                     Some("Prose grounded without the graph."),
@@ -1836,12 +1836,12 @@ mod tests {
     }
 
     #[test]
-    fn generate_aggregate_without_tool_loop_uses_lane_a_one_shot() {
-        // No tool-chat route resolved: aggregates fall back to the Lane A
-        // one-shot (lane = one_shot), and a Lane A failure degrades rather than
+    fn generate_aggregate_without_tool_loop_uses_one_shot() {
+        // No tool-chat route resolved: aggregates fall back to one-shot
+        // (lane = one_shot), and a one-shot failure degrades rather than
         // hard-failing.
         let mut generate =
-            |_prompt: &str, _system: &str, _tier: PromptTier| Some("Lane A prose.".to_string());
+            |_prompt: &str, _system: &str, _tier: PromptTier| Some("One-shot prose.".to_string());
         let mut generate: Option<&mut TextGenerator<'_>> = Some(&mut generate);
         let aggregate = generate_aggregate(
             &mut None,
@@ -1854,14 +1854,14 @@ mod tests {
         assert_eq!(aggregate.lane, LANE_ONE_SHOT);
         assert!(matches!(
             aggregate.content,
-            GenerationContent::Generated(text) if text == "Lane A prose."
+            GenerationContent::Generated(text) if text == "One-shot prose."
         ));
 
         let mut failing = |_prompt: &str, _system: &str, _tier: PromptTier| None;
         let mut failing: Option<&mut TextGenerator<'_>> = Some(&mut failing);
         let degraded =
             generate_aggregate(&mut None, &mut failing, "prompt", "system", "repo overview")
-                .expect("a Lane A failure degrades, never hard-fails");
+                .expect("a one-shot failure degrades");
         assert!(matches!(
             degraded.content,
             GenerationContent::Failed(GenerationFailureCause::Unavailable)

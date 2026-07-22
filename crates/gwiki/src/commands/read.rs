@@ -56,7 +56,7 @@ fn read_path(
     read_existing_path(root, scope, requested, wiki_path)
 }
 
-/// Read a vault document for the Lane B compile tool loop, returning a bounded
+/// Read a vault document for the compile tool loop, returning a bounded
 /// text block (title + content, with a truncation note) or a short degradation
 /// note when the path is missing or invalid. Reuses the same scoped,
 /// byte-bounded read path as the `read` command.

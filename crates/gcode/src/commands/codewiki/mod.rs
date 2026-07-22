@@ -53,9 +53,9 @@ const MAX_EDGE_LIMIT: usize = 100_000;
 // 18 (#985): AI route/fallback/status frontmatter and metadata are explicit, and
 // the rejected repo-level code-graph dependency diagram is absent again.
 // 19 (#978): aggregate pages (repo overview, architecture, curated
-// navigation/concept/narrative) are produced by the Lane B tool loop when a
+// navigation/concept/narrative) are produced by the tool loop when a
 // tool-chat route resolves, recording `lane: tool_loop` + tool-call/turn counts
-// in frontmatter; a Lane B failure hard-fails the page instead of degrading to a
+// in frontmatter; a tool-loop failure hard-fails the page instead of degrading to a
 // skeleton, so prior on-disk aggregate pages re-render under the new shape.
 // 20 (#980): generalized handbook taxonomy (Overview/Architecture/Capabilities/
 // Workflows/Getting Started/Operations/Data Model/CLI-API/Troubleshooting),
@@ -171,7 +171,7 @@ pub(crate) use build::{
     build_codewiki_changes_doc, build_codewiki_index_snapshot, build_curated_navigation_docs,
     build_deprecations_doc, build_feature_catalog_doc, build_file_doc, build_hotspots_doc,
     build_infrastructure_doc, build_module_docs_with_filter, build_onboarding_doc,
-    hash_snapshot_file, resolve_file_reuse, resolve_lane_b_dump_dir,
+    hash_snapshot_file, resolve_file_reuse, resolve_tool_loop_dump_dir,
 };
 pub(crate) use publication::{CodewikiPublication, PublicationFingerprint, code_wikilinks};
 pub(crate) use reuse_guard::{
@@ -242,13 +242,13 @@ pub use run::{run, run_repair};
 // Citation repair: re-anchor on-disk citations against the current index with
 // no regeneration. Public so a later leaf's `--repair-citations` flag drives it.
 pub use repair::{CitationRepairSummary, repair_citations};
-// In-process tool executor for the Lane B narrative tool loop (#978).
+// In-process executor for the narrative tool loop (#978).
 pub(crate) use tool_executor::CodewikiToolExecutor;
 // AI and structural text helpers.
 #[cfg(test)]
-pub(crate) use text::LaneBResult;
+pub(crate) use text::ToolLoopResult;
 pub(crate) use text::{
-    CitationResolver, FrontmatterLaneB, GRAPH_UNAVAILABLE, GenerationContent,
+    CitationResolver, FrontmatterToolLoop, GRAPH_UNAVAILABLE, GenerationContent,
     GenerationObservability, GenerationOutcome, LANE_ONE_SHOT, LANE_TOOL_LOOP,
     MAX_FRONTMATTER_PROVENANCE_FILES, ToolLoopGenerator, VerifyOutcome,
     append_curated_source_files, append_relevant_source_files, citation_list, citation_markers,

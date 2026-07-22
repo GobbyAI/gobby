@@ -1,5 +1,5 @@
 //! Shared AI lane resolution for article-synthesizing commands (`compile`,
-//! `upkeep`, `recap`): Lane B tool-loop generators and the Lane A one-shot
+//! `upkeep`, `recap`): tool-loop generators and the one-shot
 //! explainer transport, resolved through the same gcore routing every other
 //! gwiki capability uses.
 
@@ -29,18 +29,18 @@ use super::vault_tools::VaultToolExecutor;
 /// to its own provider/model/api_key.
 pub(crate) const ARTICLE_TIER: GenerationTier = GenerationTier::Aggregate;
 
-/// Owned Lane B explainer generator (the boxed counterpart of the borrowed
+/// Owned tool-loop explainer generator (the boxed counterpart of the borrowed
 /// [`crate::explainer::ExplainerGenerator`]).
 pub(crate) type BoxedExplainerGenerator =
     Box<dyn FnMut(&ExplainerPrompt) -> Result<ExplainerResponse, String>>;
 
-/// A resolved Lane B generator plus the routing metadata to report.
-pub(crate) struct LaneB {
+/// A resolved tool-loop generator plus the routing metadata to report.
+pub(crate) struct ToolLoopGeneration {
     pub(crate) generator: BoxedExplainerGenerator,
-    pub(crate) info: LaneBInfo,
+    pub(crate) info: ToolLoopInfo,
 }
 
-/// Read-only gwiki subcommands the daemon's agent may run during a Lane B
+/// Read-only gwiki subcommands the daemon's agent may run during a tool-loop
 /// investigation. Must stay a subset of the daemon's `GWIKI_READONLY_TOOLS`
 /// whitelist in `src/gobby/ai/_tool_chat_tools.py` — the daemon rejects the
 /// whole policy if any listed subcommand is off its allowlist.
@@ -59,7 +59,7 @@ const GWIKI_READONLY_TOOLS: [&str; 8] = [
 /// [`ToolLoopLimits::default`] bound the Direct route runs under.
 const DAEMON_AGENTIC_MAX_TURNS: usize = 8;
 
-/// The read-only gwiki investigation policy Lane B hands the daemon: the agent
+/// The read-only gwiki investigation policy the tool loop hands the daemon: the agent
 /// may inspect the vault but never mutate it.
 fn gwiki_readonly_tool_policy() -> ToolPolicy {
     ToolPolicy {
@@ -73,7 +73,7 @@ fn gwiki_readonly_tool_policy() -> ToolPolicy {
 }
 
 #[derive(Clone, Copy)]
-pub(crate) struct LaneBInfo {
+pub(crate) struct ToolLoopInfo {
     pub(crate) route_label: &'static str,
     pub(crate) notice: Option<AiNoticeKind>,
 }
@@ -128,20 +128,20 @@ pub(crate) fn resolve_ai_selection(
     }
 }
 
-/// Resolve a Lane B tool-loop generator, mirroring codewiki's
+/// Resolve a tool-loop generator, mirroring codewiki's
 /// `resolve_tool_loop_generator` (#978). Returns `None` (so the caller uses the
-/// Lane A one-shot explainer) when AI is off, no tool-chat route resolves,
+/// one-shot explainer) when AI is off, no tool-chat route resolves,
 /// a Direct route lacks a usable `api_base`, or a Daemon route lacks a project
 /// root (the daemon's agent investigates with `cwd=project_path`, which topic
 /// scopes cannot supply).
-pub(crate) fn resolve_lane_b_generator(
+pub(crate) fn resolve_tool_loop_generator(
     route: AiRouting,
     scope: &ScopeSelection,
     vault_root: PathBuf,
     project_root: Option<PathBuf>,
     scope_identity: ScopeIdentity,
     command: &'static str,
-) -> Option<LaneB> {
+) -> Option<ToolLoopGeneration> {
     if matches!(route, AiRouting::Off | AiRouting::Auto) {
         return None;
     }
@@ -154,9 +154,9 @@ pub(crate) fn resolve_lane_b_generator(
             forced_routing: Some(route),
         },
     );
-    // A Daemon-route Lane B without a project root (topic scope) cannot give
+    // A daemon tool loop without a project root (topic scope) cannot give
     // the daemon's agent an investigation cwd; decline so the caller uses the
-    // Lane A one-shot explainer, which needs no project root.
+    // one-shot explainer, which needs no project root.
     if matches!(route, AiRouting::Daemon) && project_root.is_none() {
         return None;
     }
@@ -164,20 +164,20 @@ pub(crate) fn resolve_lane_b_generator(
     let target = if matches!(route, AiRouting::Direct) {
         let target =
             resolve_direct_generation_target(&mut source, &profile_for_tier(ARTICLE_TIER, None));
-        // A Direct-route Lane B with no resolved api_base cannot run; decline so
-        // the caller falls back to the Lane A one-shot explainer.
+        // A direct tool loop with no resolved api_base cannot run; decline so
+        // the caller falls back to the one-shot explainer.
         target.api_base()?;
         Some(target)
     } else {
         None
     };
-    let info = LaneBInfo {
+    let info = ToolLoopInfo {
         route_label: routing_label(route),
         notice: None,
     };
     let scope = scope.clone();
     let generator: BoxedExplainerGenerator = Box::new(move |prompt: &ExplainerPrompt| {
-        run_lane_b(
+        run_agentic_generation(
             &context,
             route,
             &profile,
@@ -189,10 +189,10 @@ pub(crate) fn resolve_lane_b_generator(
             &scope_identity,
         )
     });
-    Some(LaneB { generator, info })
+    Some(ToolLoopGeneration { generator, info })
 }
 
-/// Run one Lane B generation. Hard-fails (returns `Err`) on generation failure
+/// Run one tool-loop generation. Hard-fails (returns `Err`) on generation failure
 /// or empty content — callers fail the article instead of writing a skeleton.
 ///
 /// Daemon route: one server-side agentic POST via [`daemon_agentic_chat`]. The
@@ -206,7 +206,7 @@ pub(crate) fn resolve_lane_b_generator(
 /// via [`VaultToolExecutor`]. Data-source degradation mid-loop is logged as
 /// evidence, never a generation failure.
 #[allow(clippy::too_many_arguments)]
-fn run_lane_b(
+fn run_agentic_generation(
     context: &AiContext,
     route: AiRouting,
     profile: &str,
@@ -224,7 +224,7 @@ fn run_lane_b(
     match route {
         AiRouting::Daemon => {
             let project_root = project_root
-                .ok_or_else(|| "daemon Lane B requires a project scope root".to_string())?;
+                .ok_or_else(|| "daemon tool loop requires a project scope root".to_string())?;
             let result = daemon_agentic_chat(
                 context,
                 profile,
@@ -251,7 +251,7 @@ fn run_lane_b(
         }
         AiRouting::Direct => {
             let target = target
-                .ok_or_else(|| "direct Lane B requires a resolved profile target".to_string())?;
+                .ok_or_else(|| "direct tool loop requires a resolved profile target".to_string())?;
             let transport =
                 DirectChatTransport::new(context, target.clone(), Some(profile.to_string()))
                     .map_err(|error| error.to_string())?;
@@ -270,7 +270,7 @@ fn run_lane_b(
             let degraded = executor.into_data_source_degraded();
             if !degraded.is_empty() {
                 log::warn!(
-                    "Lane B: data-source degradation during tool loop: {}",
+                    "Tool loop: data-source degradation during tool loop: {}",
                     degraded.join(", ")
                 );
             }
@@ -483,13 +483,13 @@ mod tests {
         assert_eq!(profile_for_tier(ARTICLE_TIER, None), FEATURE_HIGH);
     }
 
-    /// Pins the daemon Lane B investigation policy to the daemon's
+    /// Pins the daemon tool-loop investigation policy to the daemon's
     /// `GWIKI_READONLY_TOOLS` whitelist (`src/gobby/ai/_tool_chat_tools.py`).
     /// Adding a subcommand here without updating the daemon allowlist makes the
     /// daemon reject the whole policy, so this list must only change in
     /// lockstep with the daemon side.
     #[test]
-    fn daemon_lane_b_policy_is_readonly_gwiki_whitelist() {
+    fn daemon_tool_loop_policy_is_readonly_gwiki_whitelist() {
         let policy = gwiki_readonly_tool_policy();
         assert_eq!(policy.cli, "gwiki");
         assert!(!policy.allow_mutation);

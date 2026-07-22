@@ -36,7 +36,7 @@ pub(super) struct ConceptModule {
     pub(super) body_degraded_sources: Vec<String>,
     #[serde(skip)]
     pub(super) verify_notes: Vec<VerifyNote>,
-    /// Per-page Lane B tool-loop observability for the content pass, recorded
+    /// Per-page tool-loop observability for the content pass, recorded
     /// into the page's frontmatter when the run used the tool loop (#978).
     #[serde(skip)]
     pub(super) body_observability: GenerationObservability,
@@ -72,7 +72,7 @@ pub(super) struct NarrativePage {
     pub(super) body_degraded_sources: Vec<String>,
     #[serde(skip)]
     pub(super) verify_notes: Vec<VerifyNote>,
-    /// Per-page Lane B tool-loop observability for the content pass; see
+    /// Per-page tool-loop observability for the content pass; see
     /// [`ConceptModule::body_observability`].
     #[serde(skip)]
     pub(super) body_observability: GenerationObservability,

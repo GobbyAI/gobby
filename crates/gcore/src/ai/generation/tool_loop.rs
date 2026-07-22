@@ -1,4 +1,4 @@
-//! Lane B: the provider-neutral, tool-enabled completion loop owned by gcore.
+//! Provider-neutral, tool-enabled completion loop owned by gcore.
 //!
 //! gcore owns the loop mechanics — message bookkeeping, tool-call execution
 //! limits, termination accounting, and observability — and defines the
@@ -18,7 +18,7 @@ use serde_json::Value;
 
 use crate::ai_types::{AiError, TokenUsage};
 
-/// Role of a chat message in the Lane B transcript.
+/// Role of a chat message in the tool-loop transcript.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ChatRole {
     System,
@@ -157,7 +157,7 @@ pub enum ToolChoice {
     Auto,
     /// The model must emit at least one tool call this turn (OpenAI
     /// `"required"`). The loop forces this until the first tool call lands so
-    /// Lane B always investigates via tools before it is allowed to answer; a
+    /// The tool loop always investigates before it is allowed to answer; a
     /// model whose runtime ignores `"required"` is re-prompted with a
     /// correction (see `FORCE_INVESTIGATION_CORRECTION`) rather than allowed to
     /// one-shot an ungrounded reply.
@@ -224,7 +224,7 @@ pub trait ChatTransport {
     }
 }
 
-/// Hard limits enforced on a Lane B run.
+/// Hard limits enforced on a tool-loop run.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct ToolLoopLimits {
     /// Maximum number of completion turns (model calls).
@@ -249,7 +249,7 @@ impl Default for ToolLoopLimits {
     }
 }
 
-/// Why a Lane B run stopped.
+/// Why a tool-loop run stopped.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum StopReason {
     /// Model returned a final answer with no further tool calls.
@@ -278,7 +278,7 @@ impl StopReason {
     }
 }
 
-/// Structured observability for one Lane B run, suitable for a single log line.
+/// Structured observability for one tool-loop run, suitable for a single log line.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ToolLoopObservability {
     pub lane: &'static str,
@@ -298,7 +298,7 @@ pub struct ToolLoopObservability {
     pub termination_reason: &'static str,
 }
 
-/// Outcome of a Lane B run.
+/// Outcome of a tool-loop run.
 #[derive(Debug, Clone, PartialEq)]
 pub struct ToolLoopOutcome {
     /// Final answer text. `Some` only when `stop_reason` is
@@ -328,7 +328,7 @@ pub(super) const MAX_FORCED_INVESTIGATION_RETRIES: usize = 6;
 /// where an identical re-issue would not. The final entry repeats for any
 /// retries past its length.
 const FORCE_INVESTIGATION_CORRECTIONS: [&str; 3] = [
-    "You answered without calling any tool. Lane B requires you to investigate the code with the \
+    "You answered without calling any tool. The tool loop requires you to investigate the code with the \
      provided tools before writing. Discard that draft. Call at least one tool now — for example \
      search_code or outline_file for a symbol or file named in the seed — and read its result \
      before you write anything.",
@@ -340,7 +340,7 @@ const FORCE_INVESTIGATION_CORRECTIONS: [&str; 3] = [
      after you have read at least one tool result.",
 ];
 
-/// Run the Lane B tool loop to completion or a limit.
+/// Run the tool loop to completion or a limit.
 ///
 /// `initial_messages` should carry the system/user prompt; tool schemas are
 /// taken from the executor. Transport failures propagate as `Err`; reaching a
@@ -389,7 +389,7 @@ pub(super) fn run_tool_loop_with_clock<C: FnMut() -> Duration>(
         }
 
         // Force tool use until the model has actually investigated at least
-        // once, so Lane B never answers from the seed alone. `tool_choice =
+        // once, so the tool loop never answers from the seed alone. `tool_choice =
         // "required"` is only best-effort on some runtimes (a local reasoning
         // model routinely ignores it and one-shots), so the forcing window
         // stays open across turns until the first tool call lands; afterward
@@ -443,7 +443,7 @@ pub(super) fn run_tool_loop_with_clock<C: FnMut() -> Duration>(
                     continue;
                 }
                 // The model refused to investigate even after repeated
-                // escalating corrections. Lane B's contract is
+                // escalating corrections. The tool-loop contract is
                 // investigate-then-answer, so fail (callers hard-fail the page,
                 // no skeleton) rather than ship a silent uninvestigated one-shot.
                 break (None, StopReason::MaxTurns);
@@ -509,7 +509,7 @@ pub(super) fn run_tool_loop_with_clock<C: FnMut() -> Duration>(
     })
 }
 
-/// Sums per-turn [`TokenUsage`] across a Lane B run. Each component is summed
+/// Sums per-turn [`TokenUsage`] across a tool-loop run. Each component is summed
 /// independently; a component is reported only when at least one turn supplied
 /// it. `total_tokens` accumulates provider-reported totals, so
 /// [`TokenUsage::token_count`] still prefers the provider total over the

@@ -248,7 +248,7 @@ pub(crate) struct ArchitectureDoc {
     /// Generation lane (`tool_loop` / `one_shot`) for the page's aggregate
     /// prose, recorded into frontmatter (#978).
     pub(crate) lane: &'static str,
-    /// Accumulated Lane B tool-loop observability across the subsystem and
+    /// Accumulated tool-loop observability across the subsystem and
     /// narrative generations, recorded into frontmatter when `lane` is
     /// `tool_loop`.
     pub(crate) observability: GenerationObservability,
@@ -607,9 +607,9 @@ pub(crate) struct CodewikiDocMeta {
     /// and the page — unchanged. `None` for source-file pages.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub(crate) invalidation_key: Option<String>,
-    /// Lane B tool-loop observability mirrored from the page frontmatter for an
+    /// Tool-loop observability mirrored from the page frontmatter for an
     /// aggregate page produced by the tool loop (#978): the generation lane and
-    /// the loop's call/turn counts. `None` for Lane A / leaf / deterministic
+    /// the loop's call/turn counts. `None` for one-shot / leaf / deterministic
     /// pages. Recorded for traceability; not part of the reuse-invalidation
     /// comparison.
     #[serde(default, skip_serializing_if = "Option::is_none")]
