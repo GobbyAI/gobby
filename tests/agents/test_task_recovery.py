@@ -34,6 +34,9 @@ class _RunManager:
 
 
 class _Classifier:
+    def for_provider(self, provider_id: str) -> _Classifier:
+        return self
+
     def is_provider_error(self, error_string: str | None) -> bool:
         return False
 

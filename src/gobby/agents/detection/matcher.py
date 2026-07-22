@@ -97,38 +97,49 @@ class CompiledManifest:
     def match(self, pane_snapshot: str) -> MatchEvaluation:
         issues = list(self.issues)
         for compiled_rule in self.rules:
-            rule = compiled_rule.rule
-            region_text = _select_region(pane_snapshot, rule.region)
-            matched, issue = compiled_rule.match_clause.evaluate(region_text, rule.id)
+            match = self._evaluate_rule(compiled_rule, pane_snapshot, issues)
+            if match is not None:
+                return MatchEvaluation(match=match, issues=tuple(issues))
+        return MatchEvaluation(match=None, issues=tuple(issues))
+
+    def match_rule(self, rule_id: str, pane_snapshot: str) -> MatchEvaluation:
+        """Evaluate one named rule through the compiled matcher."""
+
+        issues = list(self.issues)
+        for compiled_rule in self.rules:
+            if compiled_rule.rule.id != rule_id:
+                continue
+            match = self._evaluate_rule(compiled_rule, pane_snapshot, issues)
+            return MatchEvaluation(match=match, issues=tuple(issues))
+        return MatchEvaluation(match=None, issues=tuple(issues))
+
+    @staticmethod
+    def _evaluate_rule(
+        compiled_rule: _CompiledRule,
+        pane_snapshot: str,
+        issues: list[ManifestIssue],
+    ) -> DetectionMatch | None:
+        rule = compiled_rule.rule
+        region_text = _select_region(pane_snapshot, rule.region)
+        matched, issue = compiled_rule.match_clause.evaluate(region_text, rule.id)
+        if issue is not None:
+            issues.append(issue)
+            return None
+        if not matched:
+            return None
+        for clause in compiled_rule.exclusions:
+            exclusion_matched, issue = clause.evaluate(region_text, rule.id)
             if issue is not None:
                 issues.append(issue)
-                continue
-            if not matched:
-                continue
-
-            excluded = False
-            for clause in compiled_rule.exclusions:
-                exclusion_matched, issue = clause.evaluate(region_text, rule.id)
-                if issue is not None:
-                    issues.append(issue)
-                    excluded = True
-                    break
-                if exclusion_matched:
-                    excluded = True
-                    break
-            if excluded:
-                continue
-
-            return MatchEvaluation(
-                match=DetectionMatch(
-                    rule_id=rule.id,
-                    state=rule.state,
-                    reason=rule.reason,
-                    priority=rule.priority,
-                ),
-                issues=tuple(issues),
-            )
-        return MatchEvaluation(match=None, issues=tuple(issues))
+                return None
+            if exclusion_matched:
+                return None
+        return DetectionMatch(
+            rule_id=rule.id,
+            state=rule.state,
+            reason=rule.reason,
+            priority=rule.priority,
+        )
 
 
 def _select_region(pane_snapshot: str, region: str) -> str:

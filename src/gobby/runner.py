@@ -24,6 +24,7 @@ from gobby.shutdown_intent import ShutdownIntent
 
 if TYPE_CHECKING:
     from gobby.adapters.codex_impl.client import CodexAppServerClient
+    from gobby.agents.detection.registry import DetectionManifestRegistry
     from gobby.agents.lifecycle_monitor import AgentLifecycleMonitor
     from gobby.agents.runner import AgentRunner
     from gobby.ai import TextGenerationService, ToolChatService
@@ -174,6 +175,7 @@ class GobbyRunner:
     pipeline_executor: PipelineExecutor | None
     agent_runner: AgentRunner | None
     agent_lifecycle_monitor: AgentLifecycleMonitor | None
+    detection_registry: DetectionManifestRegistry
     attention_manager: AttentionStateManager
     lifecycle_manager: SessionLifecycleManager
     cron_storage: CronJobStorage | None

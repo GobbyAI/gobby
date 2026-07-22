@@ -9,6 +9,7 @@ from typing import TYPE_CHECKING, Any
 from gobby.mcp_proxy.tools.internal import InternalRegistryManager
 
 if TYPE_CHECKING:
+    from gobby.agents.detection.registry import DetectionManifestRegistry
     from gobby.agents.lifecycle_monitor import AgentLifecycleMonitor
     from gobby.agents.runner import AgentRunner
     from gobby.config.app import DaemonConfig
@@ -73,6 +74,7 @@ def setup_internal_registries(
     web_chat_session_registry: Any | None = None,
     code_index: Any | None = None,
     run_db: Callable[..., Awaitable[Any]] | None = None,
+    detection_registry: DetectionManifestRegistry | None = None,
 ) -> InternalRegistryManager:
     """
     Setup internal MCP registries (tasks, messages, memory, metrics, agents, worktrees).
@@ -214,6 +216,7 @@ def setup_internal_registries(
         executor_getter=lambda: pipeline_executor,
         execution_manager_getter=lambda: pipeline_execution_manager,
         completion_registry=completion_registry,
+        detection_registry=detection_registry,
     )
     manager.add_registry(workflows_registry)
     logger.debug("Workflows registry initialized")
@@ -271,6 +274,7 @@ def setup_internal_registries(
             daemon_config=_config,
             code_index=code_index,
             transcript_reader=transcript_reader,
+            detection_registry=detection_registry,
         )
 
         # Add inter-agent messaging tools if dependencies are available

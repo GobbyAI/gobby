@@ -69,22 +69,24 @@ class TerminalPromptMonitor:
 
         handled = 0
         for run in runs:
-            if self._prompt_detector.was_dismissed(run.id):
+            detector = self._prompt_detector.for_provider(run.provider)
+            if detector.was_dismissed(run.id):
                 continue
 
             tmux_name = run.tmux_session_name
-            assert tmux_name is not None
+            if tmux_name is None:
+                continue
 
             try:
                 pane_output = await self._get_tmux().capture_pane(tmux_name, lines=15)
-                if pane_output and self._prompt_detector.detect_trust_prompt(pane_output):
+                if pane_output and detector.detect_trust_prompt(pane_output):
                     sent = await self._get_tmux().send_keys(
                         tmux_name,
                         PromptDetector.TRUST_DISMISS_KEYS,
                     )
                     if sent:
                         self.mark_enter_sent(run.id)
-                        self._prompt_detector.mark_dismissed(run.id)
+                        detector.mark_dismissed(run.id)
                         if self._on_prompt_injected is not None:
                             await self._on_prompt_injected(run)
                         logger.info(
@@ -103,14 +105,16 @@ class TerminalPromptMonitor:
 
         handled = 0
         for run in runs:
+            detector = self._prompt_detector.for_provider(run.provider)
             tmux_name = run.tmux_session_name
-            assert tmux_name is not None
+            if tmux_name is None:
+                continue
 
             try:
                 pane_output = await self._get_tmux().capture_pane(tmux_name, lines=15)
-                if not pane_output or not self._prompt_detector.detect_loop_prompt(pane_output):
+                if not pane_output or not detector.detect_loop_prompt(pane_output):
                     continue
-                if self._prompt_detector.was_loop_prompt_dismissed(run.id, pane_output):
+                if detector.was_loop_prompt_dismissed(run.id, pane_output):
                     continue
 
                 now = self._monotonic()
@@ -130,7 +134,7 @@ class TerminalPromptMonitor:
 
                 self.mark_enter_sent(run.id)
                 self._last_loop_dismissed_at[run.id] = now
-                self._prompt_detector.mark_loop_prompt_dismissed(run.id, pane_output)
+                detector.mark_loop_prompt_dismissed(run.id, pane_output)
                 count = self._loop_tracker.record_dismissal(run.id)
                 logger.info(
                     "Auto-dismissed loop prompt for agent %s (%s/%s)",
@@ -162,14 +166,16 @@ class TerminalPromptMonitor:
 
         handled = 0
         for run in runs:
+            detector = self._prompt_detector.for_provider(run.provider)
             tmux_name = run.tmux_session_name
-            assert tmux_name is not None
+            if tmux_name is None:
+                continue
 
             try:
                 pane_output = await self._get_tmux().capture_pane(tmux_name, lines=15)
-                if not pane_output or not self._prompt_detector.detect_approval_prompt(pane_output):
+                if not pane_output or not detector.detect_approval_prompt(pane_output):
                     continue
-                if self._prompt_detector.was_approval_prompt_dismissed(run.id, pane_output):
+                if detector.was_approval_prompt_dismissed(run.id, pane_output):
                     continue
 
                 sent = await self._get_tmux().send_keys(
@@ -179,7 +185,7 @@ class TerminalPromptMonitor:
                 )
                 if sent:
                     self.mark_enter_sent(run.id)
-                    self._prompt_detector.mark_approval_prompt_dismissed(run.id, pane_output)
+                    detector.mark_approval_prompt_dismissed(run.id, pane_output)
                     if self._on_prompt_injected is not None:
                         await self._on_prompt_injected(run)
                     logger.info("Auto-entered approval prompt for agent %s", run.id)
@@ -203,14 +209,16 @@ class TerminalPromptMonitor:
         runs = await self._run_db(self._get_active_terminal_runs)
 
         for run in runs:
+            detector = self._prompt_detector.for_provider(run.provider)
             tmux_name = run.tmux_session_name
-            assert tmux_name is not None
+            if tmux_name is None:
+                continue
 
             try:
                 pane_output = await self._get_tmux().capture_pane(tmux_name, lines=30)
                 if not pane_output:
                     continue
-                if not self._prompt_detector.detect_queued_continuation_prompt(pane_output):
+                if not detector.detect_queued_continuation_prompt(pane_output):
                     continue
 
                 # Observation-only: periodic enter handling owns any actual key submission.
@@ -234,8 +242,10 @@ class TerminalPromptMonitor:
 
         handled = 0
         for run in runs:
+            detector = self._prompt_detector.for_provider(run.provider)
             tmux_name = run.tmux_session_name
-            assert tmux_name is not None
+            if tmux_name is None:
+                continue
 
             last_sent = self._last_enter_sent_at.get(run.id)
             if last_sent is not None and now - last_sent < interval:
@@ -245,7 +255,7 @@ class TerminalPromptMonitor:
                 pane_output = await self._get_tmux().capture_pane(tmux_name, lines=15)
                 if pane_output is None:
                     pane_output = ""
-                if self._should_skip_periodic_enter_for_dialog(pane_output, config):
+                if self._should_skip_periodic_enter_for_dialog(pane_output, config, detector):
                     logger.debug(
                         "Skipped periodic Enter for agent %s while known dialog is visible",
                         run.id,
@@ -270,17 +280,16 @@ class TerminalPromptMonitor:
         self,
         pane_output: str,
         config: TmuxConfig,
+        detector: PromptDetector,
     ) -> bool:
         """Return True when periodic Enter would confirm a known prompt dialog."""
         if not pane_output:
             return False
 
-        if self._prompt_detector.detect_trust_prompt(pane_output):
+        if detector.detect_trust_prompt(pane_output):
             return True
-        if self._prompt_detector.detect_loop_prompt(pane_output):
+        if detector.detect_loop_prompt(pane_output):
             return True
-        if not config.auto_enter_approval_prompts and self._prompt_detector.detect_approval_prompt(
-            pane_output
-        ):
+        if not config.auto_enter_approval_prompts and detector.detect_approval_prompt(pane_output):
             return True
         return False

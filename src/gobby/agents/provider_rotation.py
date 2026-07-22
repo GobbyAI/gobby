@@ -50,7 +50,7 @@ def get_failed_providers_for_task(
     task_id: str,
     agent_run_manager: LocalAgentRunManager,
     *,
-    classifier: StallClassifier | None = None,
+    classifier: StallClassifier,
 ) -> list[str]:
     """Get providers that failed with provider-side errors for a task.
 
@@ -60,14 +60,11 @@ def get_failed_providers_for_task(
     Args:
         task_id: Task ID to check.
         agent_run_manager: Agent run storage manager.
-        classifier: Optional StallClassifier instance (created if not provided).
+        classifier: Registry-backed classifier root.
 
     Returns:
         List of provider names that failed due to provider errors.
     """
-    if classifier is None:
-        classifier = StallClassifier()
-
     rows = agent_run_manager.db.fetchall(
         """
         SELECT provider, error FROM agent_runs
@@ -82,7 +79,7 @@ def get_failed_providers_for_task(
     for row in rows:
         provider = row["provider"]
         error = row["error"]
-        if provider and classifier.is_provider_error(error):
+        if provider and classifier.for_provider(provider).is_provider_error(error):
             if provider.lower() not in failed:
                 failed.append(provider.lower())
 
@@ -96,7 +93,7 @@ def select_next_provider(
     is_provider_error: bool = False,
     *,
     agent_run_manager: LocalAgentRunManager | None = None,
-    classifier: StallClassifier | None = None,
+    classifier: StallClassifier,
 ) -> str | None:
     """Select the next provider to try for a task.
 
@@ -112,7 +109,7 @@ def select_next_provider(
         failed_provider: The provider that just failed (if any).
         is_provider_error: Whether the current failure is provider-side.
         agent_run_manager: For querying historical failures.
-        classifier: Optional StallClassifier instance.
+        classifier: Registry-backed classifier root.
 
     Returns:
         Next provider name to try, or None if all exhausted / not a provider error.

@@ -14,6 +14,7 @@ from collections.abc import Callable, Mapping, Sequence
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any
 
+from gobby.agents.detection.provider import DetectionRegistry
 from gobby.agents.kill import pid_matches_agent_identity
 from gobby.agents.prompt_detector import PromptDetector, PromptKind
 from gobby.agents.stall_classifier import StallClassifier, StallStatus
@@ -48,6 +49,7 @@ class TmuxPaneMonitor:
     def __init__(
         self,
         session_end_callback: Callable[[HookEvent], Any],
+        detection_registry: DetectionRegistry,
         config: TmuxConfig | None = None,
         poll_interval: float = 5.0,
         session_manager: SessionManager | None = None,
@@ -69,8 +71,9 @@ class TmuxPaneMonitor:
         self._poll_interval = poll_interval
         self._session_manager = session_manager
         self._attention_manager = attention_manager
-        self._prompt_detector = prompt_detector or PromptDetector()
-        self._stall_classifier = stall_classifier or StallClassifier()
+        self._detection_registry = detection_registry
+        self._prompt_detector = prompt_detector or PromptDetector(detection_registry)
+        self._stall_classifier = stall_classifier or StallClassifier(detection_registry)
         if tmux_manager_factory is None:
 
             def tmux_manager_factory(context: Mapping[str, Any]) -> TmuxSessionManager:
@@ -82,6 +85,10 @@ class TmuxPaneMonitor:
         self._task: asyncio.Task[None] | None = None
         # session_id -> timestamp when it was marked ended
         self._recently_ended: dict[str, float] = {}
+
+    @property
+    def detection_registry(self) -> DetectionRegistry:
+        return self._detection_registry
 
     # ------------------------------------------------------------------
     # Lifecycle
@@ -312,14 +319,18 @@ class TmuxPaneMonitor:
         manager = self._attention_manager
         if manager is None:
             return
+        session = self._lookup_session(session_id)
+        provider = session.source if session is not None else ""
+        prompt_detector = self._prompt_detector.for_provider(provider)
+        stall_classifier = self._stall_classifier.for_provider(provider)
         reason: PromptKind | None = None
         kind: AttentionKind | None = None
-        detected = self._prompt_detector.detect_prompt(pane_output)
+        detected = prompt_detector.detect_prompt(pane_output)
         if detected is not None:
             reason = detected.kind
             kind = "actionable"
         else:
-            classification = self._stall_classifier.classify(session_id, pane_output=pane_output)
+            classification = stall_classifier.classify(session_id, pane_output=pane_output)
             if classification.status is StallStatus.PROVIDER_STALL:
                 reason = "stall"
                 kind = "non_actionable"
@@ -330,7 +341,7 @@ class TmuxPaneMonitor:
         prompt_payload = (
             detected
             if detected is not None and detected.kind == reason
-            else self._prompt_detector.prompt_payload(pane_output, kind=reason)
+            else prompt_detector.prompt_payload(pane_output, kind=reason)
         )
         await manager.transition_async(
             asyncio.to_thread,

@@ -7,6 +7,7 @@ from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
+    from gobby.agents.detection.registry import DetectionManifestRegistry
     from gobby.agents.lifecycle_monitor import AgentLifecycleMonitor
     from gobby.agents.runner import AgentRunner
     from gobby.clones.git import CloneGitManager
@@ -48,3 +49,4 @@ class AgentsRegistryContext:
     daemon_config: DaemonConfig | None = None
     code_index: CodeIndexContext | None = None
     transcript_reader: TranscriptReader | None = None
+    detection_registry: DetectionManifestRegistry | None = None

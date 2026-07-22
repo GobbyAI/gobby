@@ -17,7 +17,9 @@ from gobby.agents.prompt_detector import PromptDetector
 from gobby.servers.routes.attention import AttentionAnswer, AttentionPane, create_attention_router
 from gobby.storage.attention import AttentionState, AttentionStateManager
 from gobby.storage.hub.protocol import HubDatabase
+from tests.agents.detection_test_support import BundledDetectionRegistry
 
+DETECTION_REGISTRY = BundledDetectionRegistry()
 pytestmark = pytest.mark.unit
 QUESTION_PROMPT = "Would you like to continue?\n1. Yes\n2. No\n"
 
@@ -32,7 +34,7 @@ def _open(
     run_id: str | None = "run-1",
     session_id: str = "session-1",
 ) -> AttentionState:
-    prompt = PromptDetector().detect_prompt(QUESTION_PROMPT)
+    prompt = PromptDetector(DETECTION_REGISTRY, "claude").detect_prompt(QUESTION_PROMPT)
     assert prompt is not None
     result = manager.transition(
         entry_id,
@@ -57,7 +59,9 @@ def _server(
     return SimpleNamespace(
         services=SimpleNamespace(
             attention_manager=manager,
-            agent_lifecycle_monitor=SimpleNamespace(prompt_detector=PromptDetector()),
+            agent_lifecycle_monitor=SimpleNamespace(
+                prompt_detector=PromptDetector(DETECTION_REGISTRY, "claude")
+            ),
             session_manager=SimpleNamespace(
                 list=lambda **_kwargs: list(live_sessions),
                 get=lambda session_id: next(

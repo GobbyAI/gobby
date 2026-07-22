@@ -381,7 +381,7 @@ class AgentHealthMonitor:
                     continue
 
                 pane_output = await self._tmux.capture_pane(tmux_name, lines=8)
-                classification = self._stall_classifier.classify(
+                classification = self._stall_classifier.for_provider(run.provider).classify(
                     run.id,
                     pane_output=pane_output,
                 )

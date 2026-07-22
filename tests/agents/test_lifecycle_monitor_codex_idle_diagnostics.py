@@ -17,6 +17,9 @@ from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.sessions import SessionManager
 from gobby.storage.tasks import LocalTaskManager
 
+from .detection_test_support import BundledDetectionRegistry
+
+DETECTION_REGISTRY = BundledDetectionRegistry()
 pytestmark = pytest.mark.unit
 _CAPACITY_MESSAGE = "Selected model is at capacity. Please try a different model."
 _CAPACITY_PANE = "\x1b[31mSelected model is at\ncapacity. Please try a different model.\x1b[0m\n›\n"
@@ -255,6 +258,7 @@ def _make_idle_monitor_run(
         reasoning_watchdog_settle_seconds=0,
     )
     monitor = AgentLifecycleMonitor(
+        detection_registry=DETECTION_REGISTRY,
         agent_run_manager=agent_run_manager,
         db=temp_db,
         session_manager=session_manager,
@@ -925,6 +929,7 @@ async def test_idle_reprompt_falls_back_when_step_context_lookup_fails(
     """Unexpected step-context lookup errors fall back and log exception context."""
     config = TmuxConfig(idle_check_enabled=True, idle_timeout_seconds=10, max_reprompt_attempts=2)
     monitor = AgentLifecycleMonitor(
+        detection_registry=DETECTION_REGISTRY,
         agent_run_manager=agent_run_manager,
         db=temp_db,
         session_manager=session_manager,
@@ -982,6 +987,7 @@ async def test_idle_reprompt_logs_codex_response_items(
         reasoning_watchdog_settle_seconds=0,
     )
     monitor = AgentLifecycleMonitor(
+        detection_registry=DETECTION_REGISTRY,
         agent_run_manager=agent_run_manager,
         db=temp_db,
         session_manager=session_manager,
@@ -1062,6 +1068,7 @@ async def test_idle_reasoning_watchdog_interrupts_codex_and_records_task_event(
 
     config = TmuxConfig(idle_check_enabled=True, idle_timeout_seconds=10, max_reprompt_attempts=2)
     monitor = AgentLifecycleMonitor(
+        detection_registry=DETECTION_REGISTRY,
         agent_run_manager=agent_run_manager,
         db=temp_db,
         session_manager=session_manager,
@@ -1149,6 +1156,7 @@ async def test_idle_failure_logs_codex_response_items(
 ) -> None:
     config = TmuxConfig(idle_check_enabled=True, idle_timeout_seconds=10, max_reprompt_attempts=2)
     monitor = AgentLifecycleMonitor(
+        detection_registry=DETECTION_REGISTRY,
         agent_run_manager=agent_run_manager,
         db=temp_db,
         session_manager=session_manager,

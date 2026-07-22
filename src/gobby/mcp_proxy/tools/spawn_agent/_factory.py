@@ -19,6 +19,7 @@ from ._implementation import spawn_agent_impl
 from ._spawn_guards import max_active_agents_for_project
 
 if TYPE_CHECKING:
+    from gobby.agents.detection.registry import DetectionManifestRegistry
     from gobby.agents.runner import AgentRunner
     from gobby.storage.hub.protocol import HubDatabase
     from gobby.storage.tasks import LocalTaskManager
@@ -258,6 +259,7 @@ def create_spawn_agent_registry(
     completion_registry: Any | None = None,
     daemon_config: Any | None = None,
     code_index: Any | None = None,
+    detection_registry: DetectionManifestRegistry | None = None,
 ) -> InternalToolRegistry:
     """
     Create a spawn_agent tool registry with the unified spawn_agent tool.
@@ -406,13 +408,25 @@ def create_spawn_agent_registry(
 
         # Fallback agent: if this agent's provider has failed on this task,
         # walk the fallback chain to find a viable agent definition.
-        if task_id and db and agent_body and agent_body.fallback_agent and not provider:
+        if (
+            task_id
+            and db
+            and agent_body
+            and agent_body.fallback_agent
+            and not provider
+            and detection_registry is not None
+        ):
             try:
                 from gobby.agents.provider_rotation import get_failed_providers_for_task
+                from gobby.agents.stall_classifier import StallClassifier
                 from gobby.storage.agents import LocalAgentRunManager
 
                 arm = LocalAgentRunManager(db)
-                failed_providers = get_failed_providers_for_task(task_id, arm)
+                failed_providers = get_failed_providers_for_task(
+                    task_id,
+                    arm,
+                    classifier=StallClassifier(detection_registry),
+                )
 
                 def _resolve_provider(p: str | None) -> str:
                     if p is None or p == "inherit":

@@ -34,6 +34,7 @@ from gobby.storage.tasks import TaskDispatchMutexManager
 from gobby.telemetry.instruments import inc_counter, observe_histogram
 
 if TYPE_CHECKING:
+    from gobby.agents.detection.registry import DetectionManifestRegistry
     from gobby.autonomous.stuck_detector import StuckDetector
     from gobby.events.completion_registry import CompletionEventRegistry
     from gobby.hooks.session_coordinator import SessionCoordinator
@@ -98,6 +99,7 @@ class AgentLifecycleMonitor:
         self,
         agent_run_manager: LocalAgentRunManager,
         db: HubDatabase,
+        detection_registry: DetectionManifestRegistry,
         session_manager: SessionManager | None = None,
         session_coordinator: SessionCoordinator | None = None,
         clone_storage: LocalCloneManager | None = None,
@@ -114,6 +116,7 @@ class AgentLifecycleMonitor:
     ) -> None:
         self._agent_run_manager = agent_run_manager
         self._db = db
+        self._detection_registry = detection_registry
         self._run_db_callback = run_db
         self._session_manager = session_manager
         self._session_coordinator = session_coordinator
@@ -127,9 +130,9 @@ class AgentLifecycleMonitor:
             tmux_config = get_configured_tmux_config()
         self._tmux_config = tmux_config
         self._tmux = TmuxSessionManager(config=self._tmux_config)
-        self._idle_detector = IdleDetector()
-        self._prompt_detector = PromptDetector()
-        self._stall_classifier = StallClassifier()
+        self._idle_detector = IdleDetector(detection_registry)
+        self._prompt_detector = PromptDetector(detection_registry)
+        self._stall_classifier = StallClassifier(detection_registry)
         self._loop_tracker = LoopTracker(threshold=3)
         # In-memory tracking for inherently non-persistable state
         self._master_fds: dict[str, int] = {}
@@ -237,9 +240,19 @@ class AgentLifecycleMonitor:
         return self._prompt_detector
 
     @property
+    def idle_detector(self) -> IdleDetector:
+        """Return the idle-detector provider cache."""
+        return self._idle_detector
+
+    @property
     def stall_classifier(self) -> StallClassifier:
         """Return the stall classifier shared by lifecycle consumers."""
         return self._stall_classifier
+
+    @property
+    def detection_registry(self) -> DetectionManifestRegistry:
+        """Return the shared live manifest registry."""
+        return self._detection_registry
 
     def register_master_fd(self, run_id: str, fd: int) -> None:
         """Register a PTY master file descriptor for an agent."""

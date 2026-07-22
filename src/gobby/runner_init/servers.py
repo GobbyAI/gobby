@@ -60,6 +60,7 @@ def init_servers(runner: GobbyRunner) -> None:
         wake_dispatcher=runner.wake_dispatcher,
         agent_lifecycle_monitor=runner.agent_lifecycle_monitor,
         attention_manager=getattr(runner, "attention_manager", None),
+        detection_registry=runner.detection_registry,
         communications_manager=runner.communications_manager,
         code_indexer=runner.code_indexer,
         cron_storage=runner.cron_storage,

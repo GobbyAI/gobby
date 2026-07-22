@@ -13,6 +13,13 @@ from gobby.agents.stall_classifier import (
     StallStatus,
 )
 
+from .detection_test_support import BundledDetectionRegistry
+
+
+def make_classifier() -> StallClassifier:
+    return StallClassifier(BundledDetectionRegistry(), "claude")
+
+
 pytestmark = pytest.mark.unit
 
 
@@ -57,11 +64,11 @@ class TestIsProviderError:
         ],
     )
     def test_matches_provider_errors(self, error: str) -> None:
-        classifier = StallClassifier()
+        classifier = make_classifier()
         assert classifier.is_provider_error(error) is True
 
     def test_identifies_bootstrap_stall(self) -> None:
-        classifier = StallClassifier()
+        classifier = make_classifier()
         assert (
             classifier.is_bootstrap_stall(
                 "Provider bootstrap/accounting stall: session accounting stayed at zero"
@@ -97,7 +104,7 @@ class TestIsProviderError:
         ],
     )
     def test_does_not_match_task_errors(self, error: str | None) -> None:
-        classifier = StallClassifier()
+        classifier = make_classifier()
         assert classifier.is_provider_error(error) is False
 
 
@@ -105,17 +112,17 @@ class TestClassify:
     """Stateful classification with consecutive-check tracking."""
 
     def test_healthy_on_empty_input(self) -> None:
-        classifier = StallClassifier()
+        classifier = make_classifier()
         result = classifier.classify("run-1")
         assert result.status == StallStatus.HEALTHY
 
     def test_healthy_on_normal_output(self) -> None:
-        classifier = StallClassifier()
+        classifier = make_classifier()
         result = classifier.classify("run-1", pane_output="Working on task...\nEditing file.py")
         assert result.status == StallStatus.HEALTHY
 
     def test_source_text_in_pane_does_not_trigger_provider_stall(self) -> None:
-        classifier = StallClassifier()
+        classifier = make_classifier()
         pane_output = """
         _PROVIDER_ERROR_PATTERNS = (
             re.compile(r"(?:error|failed|exception|raise|fatal).*rate.?limit"),
@@ -140,7 +147,7 @@ class TestClassify:
 
     def test_single_provider_error_returns_unknown(self) -> None:
         """First detection should be UNKNOWN (not yet confirmed)."""
-        classifier = StallClassifier()
+        classifier = make_classifier()
         result = classifier.classify("run-1", pane_output="Error: 429 rate limit exceeded")
         assert result.status == StallStatus.UNKNOWN
         assert result.consecutive_hits == 1
@@ -159,7 +166,7 @@ class TestClassify:
         ],
     )
     def test_bottom_line_provider_errors_confirm_stall(self, pane_output: str) -> None:
-        classifier = StallClassifier()
+        classifier = make_classifier()
 
         with patch("gobby.agents.stall_classifier.time") as mock_time:
             mock_time.monotonic.return_value = 0.0
@@ -175,7 +182,7 @@ class TestClassify:
 
     def test_consecutive_errors_confirm_stall(self) -> None:
         """Two consecutive checks with provider errors = confirmed stall."""
-        classifier = StallClassifier()
+        classifier = make_classifier()
 
         # First check
         with patch("gobby.agents.stall_classifier.time") as mock_time:
@@ -191,7 +198,7 @@ class TestClassify:
 
     def test_healthy_output_resets_consecutive_count(self) -> None:
         """A healthy check between errors should reset the counter."""
-        classifier = StallClassifier()
+        classifier = make_classifier()
 
         with patch("gobby.agents.stall_classifier.time") as mock_time:
             mock_time.monotonic.return_value = 0.0
@@ -210,7 +217,7 @@ class TestClassify:
 
     def test_rapid_checks_dont_increment(self) -> None:
         """Two checks within MIN_CHECK_INTERVAL shouldn't double-count."""
-        classifier = StallClassifier()
+        classifier = make_classifier()
 
         with patch("gobby.agents.stall_classifier.time") as mock_time:
             mock_time.monotonic.return_value = 0.0
@@ -223,7 +230,7 @@ class TestClassify:
 
     def test_error_field_also_matched(self) -> None:
         """Error string (from agent_runs.error) should be checked too."""
-        classifier = StallClassifier()
+        classifier = make_classifier()
 
         with patch("gobby.agents.stall_classifier.time") as mock_time:
             mock_time.monotonic.return_value = 0.0
@@ -236,7 +243,7 @@ class TestClassify:
 
     def test_independent_tracking_per_run(self) -> None:
         """Each run_id has independent state."""
-        classifier = StallClassifier()
+        classifier = make_classifier()
 
         with patch("gobby.agents.stall_classifier.time") as mock_time:
             mock_time.monotonic.return_value = 0.0
@@ -252,7 +259,7 @@ class TestClassify:
 
     def test_clear_removes_state(self) -> None:
         """Clearing state should reset tracking for a run."""
-        classifier = StallClassifier()
+        classifier = make_classifier()
 
         with patch("gobby.agents.stall_classifier.time") as mock_time:
             mock_time.monotonic.return_value = 0.0

@@ -124,9 +124,12 @@ def create_attention_router(
     router = APIRouter(prefix="/api/attention", tags=["attention"])
     manager = server.services.attention_manager
     lifecycle_monitor = server.services.agent_lifecycle_monitor
-    detector = (
-        lifecycle_monitor.prompt_detector if lifecycle_monitor is not None else PromptDetector()
-    )
+    if lifecycle_monitor is not None:
+        detector_root = lifecycle_monitor.prompt_detector
+    elif server.services.detection_registry is not None:
+        detector_root = PromptDetector(server.services.detection_registry)
+    else:
+        detector_root = None
     locks: dict[str, asyncio.Lock] = {}
 
     async def resolve_pane(state: AttentionState) -> AttentionPane | None:
@@ -217,6 +220,9 @@ def create_attention_router(
             if latest is None:
                 raise HTTPException(status_code=404, detail={"code": "attention_not_found"})
             _require_current_identity(latest, request)
+            detector = await _resolve_prompt_detector(server, latest, detector_root)
+            if detector is None:
+                raise HTTPException(status_code=503, detail={"code": "attention_unavailable"})
             observed_fingerprint = detector.pane_fingerprint(pane_output)
             if observed_fingerprint != request.fingerprint:
                 raise HTTPException(
@@ -252,6 +258,27 @@ def create_attention_router(
             return {"status": "accepted", "entry_id": entry_id}
 
     return router
+
+
+async def _resolve_prompt_detector(
+    server: HTTPServer,
+    state: AttentionState,
+    detector_root: PromptDetector | None,
+) -> PromptDetector | None:
+    if detector_root is None:
+        return None
+    if detector_root.provider_id is not None:
+        return detector_root
+    services = server.services
+    if state.run_id is not None:
+        for run in await _list_active_runs(services):
+            if run.id == state.run_id:
+                return detector_root.for_provider(run.provider)
+    if state.session_id is not None:
+        for session in await _list_live_sessions(services):
+            if session.id == state.session_id:
+                return detector_root.for_provider(session.source)
+    return None
 
 
 def _require_current_identity(

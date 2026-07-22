@@ -8,11 +8,11 @@ pane analysis only runs when the session appears stale.
 
 from __future__ import annotations
 
-import re
 import time
 from dataclasses import dataclass
 
-from gobby.agents.prompt_detector import PromptDetector
+from gobby.agents.detection.matcher import CompiledManifest
+from gobby.agents.detection.provider import DetectionRegistry, resolve_manifest
 
 
 @dataclass
@@ -33,60 +33,31 @@ class IdleDetector:
     3. **Active** — agent is still working (no action needed)
     """
 
-    IDLE_PROMPT_PATTERNS: tuple[re.Pattern[str], ...] = (
-        re.compile(r"^\s*[❯>]\s*$"),  # Claude Code idle prompt
-        re.compile(r"^\s*\$\s*$"),  # Shell prompt (agent exited)
-    )
-
-    # Patterns that indicate text is sitting in the tmux buffer unsubmitted.
-    # The agent typed something but never hit Enter — treated as idle so the
-    # lifecycle monitor can submit it via send_keys("\n").
-    STALLED_BUFFER_PATTERNS: tuple[re.Pattern[str], ...] = (
-        re.compile(r"^\s*[❯>]\s+\S"),  # Prompt char followed by unsubmitted text
-        re.compile(r"^\s*\$\s+\S"),  # Shell prompt with trailing text
-    )
-
-    # Patterns that indicate agent tried to stop but was blocked by a hook.
-    # Treated as idle — the agent isn't doing useful work, it's stuck.
-    STOP_HOOK_BLOCKED_PATTERNS: tuple[re.Pattern[str], ...] = (
-        re.compile(r"Stop hook error", re.IGNORECASE),
-        re.compile(r"Rule enforced by Gobby", re.IGNORECASE),
-    )
-
-    ACTIVE_WORK_PATTERNS: tuple[re.Pattern[str], ...] = (
-        re.compile(
-            r"\bRunning(?:[.…]+|\s+(?:command|task|process|job|tests?|checks?)\b)",
-            re.IGNORECASE,
-        ),
-        re.compile(r"almost done thinking", re.IGNORECASE),
-        re.compile(r"thinking with .*effort", re.IGNORECASE),
-        re.compile(r"\bReading\s+\d+\s+files?\b", re.IGNORECASE),
-    )
-
-    CONTEXT_FULL_PATTERNS: tuple[re.Pattern[str], ...] = (
-        re.compile(
-            r"The context window is full\. Would you like to start a new conversation\?",
-            re.IGNORECASE,
-        ),
-        re.compile(r"The context window is full\.", re.IGNORECASE),
-        re.compile(r"I've run out of context space\.", re.IGNORECASE),
-        re.compile(r"This conversation is too long to continue\.", re.IGNORECASE),
-    )
-    CONTEXT_FULL_BOTTOM_LINE_COUNT = 4
-
-    # Claude Code status bar lines — skip these when searching for the prompt
-    STATUS_BAR_PATTERNS: tuple[re.Pattern[str], ...] = (
-        re.compile(r"Opus|Sonnet|Haiku", re.IGNORECASE),
-        re.compile(r"bypass permissions", re.IGNORECASE),
-        re.compile(r"^\s*[⎇𖠰]"),  # Branch/worktree indicators
-        re.compile(r"^\s*/"),  # Absolute path (cwd line)
-        re.compile(r"^\s*[─━▪▫]+"),  # Separator/divider lines
-    )
-
     REPROMPT_MESSAGE = "Continue working on your task."
 
-    def __init__(self) -> None:
+    def __init__(self, registry: DetectionRegistry, provider_id: str | None = None) -> None:
+        self._registry = registry
+        self._provider_id = provider_id.strip().lower() if provider_id is not None else None
+        self._providers: dict[str, IdleDetector] = {}
         self._states: dict[str, IdleState] = {}
+
+    def for_provider(self, provider_id: str) -> IdleDetector:
+        """Return the cached detector bound to one provider."""
+
+        normalized = provider_id.strip().lower()
+        if self._provider_id == normalized:
+            return self
+        cached = self._providers.get(normalized)
+        if cached is None:
+            cached = IdleDetector(self._registry, normalized)
+            cached._states = self._states
+            self._providers[normalized] = cached
+        return cached
+
+    def _manifest(self) -> CompiledManifest | None:
+        if self._provider_id is None:
+            raise RuntimeError("IdleDetector must be bound with for_provider() before detection")
+        return resolve_manifest(self._registry, self._provider_id)
 
     def get_state(self, run_id: str) -> IdleState:
         """Get or create idle state for an agent."""
@@ -96,22 +67,22 @@ class IdleDetector:
 
     def clear_state(self, run_id: str) -> None:
         """Remove tracking state for an agent (on cleanup)."""
+        for detector in self._providers.values():
+            detector.clear_state(run_id)
         self._states.pop(run_id, None)
 
     def has_unsubmitted_input(self, pane_output: str) -> bool:
         """Return whether pane output shows text typed at a prompt but not submitted."""
+        manifest = self._manifest()
+        if manifest is None:
+            return False
+        if manifest.match_rule("queued_continuation", pane_output).match is not None:
+            return False
+        if manifest.match_rule("queued_message", pane_output).match is not None:
+            return False
         for line in pane_output.strip().splitlines():
             stripped = line.strip()
-            if any(
-                pattern.search(stripped) for pattern in PromptDetector.QUEUED_CONTINUATION_PATTERNS
-            ):
-                continue
-            if any(
-                pattern.search(stripped)
-                for pattern in PromptDetector.QUEUED_MESSAGE_PROMPT_PATTERNS
-            ):
-                continue
-            if any(pattern.match(stripped) for pattern in self.STALLED_BUFFER_PATTERNS):
+            if manifest.match_rule("stalled_input", stripped).match is not None:
                 return True
         return False
 
@@ -124,49 +95,33 @@ class IdleDetector:
         Returns:
             One of: 'idle', 'context_full', 'active'
         """
+        manifest = self._manifest()
+        if manifest is None:
+            return "unknown"
+
         lines = pane_output.strip().splitlines()
         if not lines:
             return "active"
 
-        full_text = "\n".join(lines)
-
-        # Context-full is destructive, so only honor exact CLI limit errors near the prompt.
-        bottom_lines = [line.strip() for line in lines if line.strip()]
-        for line in bottom_lines[-self.CONTEXT_FULL_BOTTOM_LINE_COUNT :]:
-            for pattern in self.CONTEXT_FULL_PATTERNS:
-                if pattern.fullmatch(line):
-                    return "context_full"
-
-        # Check all lines for stop-hook-blocked patterns (agent tried to exit)
-        for pattern in self.STOP_HOOK_BLOCKED_PATTERNS:
-            if pattern.search(full_text):
-                return "idle"
-
-        has_queued_message = any(
-            pattern.search(full_text) for pattern in PromptDetector.QUEUED_MESSAGE_PROMPT_PATTERNS
-        )
-        has_active_work = any(pattern.search(full_text) for pattern in self.ACTIVE_WORK_PATTERNS)
-        # A queued prompt can be visible while the agent is still working; do not reprompt then.
-        if has_queued_message and has_active_work:
+        if manifest.match_rule("context_full", pane_output).match is not None:
+            return "context_full"
+        if manifest.match_rule("stop_hook_blocked", pane_output).match is not None:
+            return "idle"
+        has_queued = manifest.match_rule("queued_message", pane_output).match is not None
+        has_active = manifest.match_rule("active_work", pane_output).match is not None
+        if has_queued and has_active:
             return "active"
-
-        # Check lines bottom-up, skipping status bar chrome
         for line in reversed(lines):
             stripped = line.strip()
             if not stripped:
                 continue
-            # Skip Claude Code status bar lines
-            if any(p.search(stripped) for p in self.STATUS_BAR_PATTERNS):
+            if manifest.match_rule("status_bar", stripped).match is not None:
                 continue
-            for pattern in self.IDLE_PROMPT_PATTERNS:
-                if pattern.match(stripped):
-                    return "idle"
-            for pattern in self.STALLED_BUFFER_PATTERNS:
-                if pattern.match(stripped):
-                    return "idle"
-            # First non-empty, non-status-bar line doesn't match idle → active
+            if manifest.match_rule("idle_prompt", stripped).match is not None:
+                return "idle"
+            if manifest.match_rule("stalled_input", stripped).match is not None:
+                return "idle"
             break
-
         return "active"
 
     def should_reprompt(

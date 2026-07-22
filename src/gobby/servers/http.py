@@ -141,7 +141,9 @@ class HTTPServer:
 
     def _init_mcp_subsystems(self, services: ServiceContainer, port: int) -> None:
         """Initialize MCP proxy, internal registries, and semantic search."""
-        assert services.mcp_manager is not None, "caller must check services.mcp_manager"
+
+        if services.mcp_manager is None:
+            raise RuntimeError("caller must check services.mcp_manager")
         # Determine WebSocket port
         ws_port = DEFAULT_WEBSOCKET_PORT
         cfg = services.config
@@ -227,6 +229,7 @@ class HTTPServer:
             web_chat_session_registry=services.web_chat_session_registry,
             code_index=services.code_indexer,
             run_db=services.run_db,
+            detection_registry=services.detection_registry,
         )
         registry_count = len(self._internal_manager)
         logger.debug("Internal registries initialized: %s registries", registry_count)

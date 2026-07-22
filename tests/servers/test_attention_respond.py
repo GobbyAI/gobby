@@ -22,7 +22,9 @@ from gobby.servers.routes.attention import (
 )
 from gobby.storage.attention import AttentionState, AttentionStateManager
 from gobby.storage.hub.protocol import HubDatabase
+from tests.agents.detection_test_support import BundledDetectionRegistry
 
+DETECTION_REGISTRY = BundledDetectionRegistry()
 pytestmark = pytest.mark.unit
 
 APPROVAL_PROMPT = (
@@ -50,7 +52,7 @@ def _open_prompt(
     entry_id: str = "run:run-1",
     prompt: str = APPROVAL_PROMPT,
 ) -> AttentionState:
-    detector = PromptDetector()
+    detector = PromptDetector(DETECTION_REGISTRY, "claude")
     detected = detector.detect_prompt(prompt)
     assert detected is not None
     result = manager.transition(
@@ -82,7 +84,9 @@ def _client(
     server = SimpleNamespace(
         services=SimpleNamespace(
             attention_manager=manager,
-            agent_lifecycle_monitor=SimpleNamespace(prompt_detector=PromptDetector()),
+            agent_lifecycle_monitor=SimpleNamespace(
+                prompt_detector=PromptDetector(DETECTION_REGISTRY, "claude")
+            ),
             run_db=run_db,
         )
     )
@@ -173,7 +177,7 @@ def test_respond_cas_and_recurrence(temp_db: HubDatabase) -> None:
 
 def test_partial_injection_and_stall_paths(temp_db: HubDatabase) -> None:
     manager = _manager(temp_db)
-    detector = PromptDetector()
+    detector = PromptDetector(DETECTION_REGISTRY, "claude")
     fingerprint = detector.pane_fingerprint("provider still unavailable")
     stalled = manager.transition(
         "run:run-1",
@@ -337,6 +341,7 @@ def test_attention_router_is_registered_in_real_app(temp_db: HubDatabase) -> Non
         session_manager=None,
         task_manager=MagicMock(),
         attention_manager=_manager(temp_db),
+        detection_registry=DETECTION_REGISTRY,
     )
     server = HTTPServer(services=services, test_mode=True, auth_mode="disabled")
 
@@ -373,7 +378,9 @@ def test_attention_router_composes_session_pane_dependencies(
     server = SimpleNamespace(
         services=SimpleNamespace(
             attention_manager=manager,
-            agent_lifecycle_monitor=SimpleNamespace(prompt_detector=PromptDetector()),
+            agent_lifecycle_monitor=SimpleNamespace(
+                prompt_detector=PromptDetector(DETECTION_REGISTRY, "claude")
+            ),
             session_manager=session_manager,
             agent_runner=None,
             config=None,

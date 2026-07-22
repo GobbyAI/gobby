@@ -16,6 +16,9 @@ from gobby.agents.tmux.pane_monitor import TmuxPaneMonitor
 from gobby.storage.agents import AgentRun
 from gobby.storage.hub.protocol import HubDatabase
 
+from .detection_test_support import BundledDetectionRegistry
+
+DETECTION_REGISTRY = BundledDetectionRegistry()
 pytestmark = pytest.mark.unit
 
 
@@ -243,8 +246,8 @@ async def test_idle_handler_tracks_prompts_stalls_and_injection_clear(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     manager = _attention_manager(temp_db)
-    prompt_detector = PromptDetector()
-    stall_classifier = StallClassifier()
+    prompt_detector = PromptDetector(DETECTION_REGISTRY, "claude")
+    stall_classifier = StallClassifier(DETECTION_REGISTRY, "claude")
 
     async def run_db(function: Any, *args: Any, **kwargs: Any) -> Any:
         return function(*args, **kwargs)
@@ -327,6 +330,8 @@ async def test_idle_handler_checks_attention_without_waiting_for_idle(
         get_session_manager=lambda: None,
         tmux=tmux,
         idle_detector=MagicMock(),
+        prompt_detector=PromptDetector(DETECTION_REGISTRY, "claude"),
+        stall_classifier=StallClassifier(DETECTION_REGISTRY, "claude"),
         cleanup_handler=MagicMock(),
         tmux_config=config,
         run_db=run_db,
@@ -351,10 +356,12 @@ async def test_tmux_monitor_reports_interactive_prompt_without_injection(
     session = SimpleNamespace(
         id="interactive-session",
         status="active",
+        source="claude",
         terminal_context={"tmux_pane": "%42"},
     )
     session_manager = MagicMock()
     session_manager.db = temp_db
+    session_manager.get.return_value = session
     session_manager.list.return_value = [session]
     tmux = MagicMock()
     tmux.capture_pane = AsyncMock(
@@ -362,11 +369,12 @@ async def test_tmux_monitor_reports_interactive_prompt_without_injection(
     )
     tmux.send_keys = AsyncMock()
     monitor = TmuxPaneMonitor(
+        detection_registry=DETECTION_REGISTRY,
         session_end_callback=MagicMock(),
         session_manager=session_manager,
         attention_manager=manager,
-        prompt_detector=PromptDetector(),
-        stall_classifier=StallClassifier(),
+        prompt_detector=PromptDetector(DETECTION_REGISTRY, "claude"),
+        stall_classifier=StallClassifier(DETECTION_REGISTRY, "claude"),
         tmux_manager_factory=lambda _context: tmux,
     )
 

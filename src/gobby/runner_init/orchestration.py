@@ -7,6 +7,7 @@ import json
 import logging
 from typing import TYPE_CHECKING, Any
 
+from gobby.agents.detection.registry import DetectionManifestRegistry
 from gobby.agents.lifecycle_monitor import AgentLifecycleMonitor
 from gobby.agents.runner import AgentRunner
 from gobby.autonomous.progress_tracker import ProgressTracker
@@ -240,10 +241,12 @@ def init_orchestration(runner: GobbyRunner) -> None:
 
     from gobby.storage.checkpoints import LocalCheckpointManager
 
+    runner.detection_registry = DetectionManifestRegistry(runner.database)
     try:
         runner.agent_lifecycle_monitor = AgentLifecycleMonitor(
             agent_run_manager=LocalAgentRunManager(runner.database),
             db=runner.database,
+            detection_registry=runner.detection_registry,
             session_manager=runner.session_manager,
             clone_storage=runner.clone_storage,
             completion_registry=runner.completion_registry,

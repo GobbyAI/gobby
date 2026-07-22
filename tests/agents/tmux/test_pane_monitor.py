@@ -11,7 +11,9 @@ from gobby.agents.tmux.pane_monitor import _RECENTLY_ENDED_TTL, TmuxPaneMonitor
 from gobby.agents.tmux.session_manager import TMUX_COMMAND_TIMEOUT_SECONDS, TmuxSessionInfo
 from gobby.hooks.events import HookEvent, HookEventType
 from gobby.storage.agents import AgentRun
+from tests.agents.detection_test_support import BundledDetectionRegistry
 
+DETECTION_REGISTRY = BundledDetectionRegistry()
 pytestmark = pytest.mark.unit
 
 
@@ -54,6 +56,7 @@ def _make_monitor_with_db(callback: MagicMock) -> TmuxPaneMonitor:
     mock_session_manager = MagicMock()
     mock_session_manager.db = mock_db
     monitor = TmuxPaneMonitor(
+        detection_registry=DETECTION_REGISTRY,
         session_end_callback=callback,
         poll_interval=1.0,
         session_manager=mock_session_manager,

@@ -11,6 +11,11 @@ from gobby.agents.provider_rotation import (
     parse_provider_list,
     select_next_provider,
 )
+from gobby.agents.stall_classifier import StallClassifier
+
+from .detection_test_support import BundledDetectionRegistry
+
+CLASSIFIER = StallClassifier(BundledDetectionRegistry())
 
 pytestmark = pytest.mark.unit
 
@@ -45,7 +50,7 @@ class TestGetFailedProviders:
             {"provider": "qwen", "error": "429 rate limit exceeded"},
             {"provider": "claude", "error": "SyntaxError in code"},
         ]
-        result = get_failed_providers_for_task("task-1", mock_arm)
+        result = get_failed_providers_for_task("task-1", mock_arm, classifier=CLASSIFIER)
         assert result == ["qwen"]
 
     def test_deduplicates_providers(self) -> None:
@@ -54,7 +59,7 @@ class TestGetFailedProviders:
             {"provider": "qwen", "error": "429 rate limit exceeded"},
             {"provider": "qwen", "error": "503 service unavailable"},
         ]
-        result = get_failed_providers_for_task("task-1", mock_arm)
+        result = get_failed_providers_for_task("task-1", mock_arm, classifier=CLASSIFIER)
         assert result == ["qwen"]
 
     def test_empty_when_no_provider_errors(self) -> None:
@@ -62,13 +67,13 @@ class TestGetFailedProviders:
         mock_arm.db.fetchall.return_value = [
             {"provider": "claude", "error": "AssertionError: test failed"},
         ]
-        result = get_failed_providers_for_task("task-1", mock_arm)
+        result = get_failed_providers_for_task("task-1", mock_arm, classifier=CLASSIFIER)
         assert result == []
 
     def test_empty_when_no_runs(self) -> None:
         mock_arm = MagicMock()
         mock_arm.db.fetchall.return_value = []
-        result = get_failed_providers_for_task("task-1", mock_arm)
+        result = get_failed_providers_for_task("task-1", mock_arm, classifier=CLASSIFIER)
         assert result == []
 
 
@@ -79,6 +84,7 @@ class TestSelectNextProvider:
             ["qwen", "claude"],
             failed_provider="qwen",
             is_provider_error=False,
+            classifier=CLASSIFIER,
         )
         assert result is None
 
@@ -88,6 +94,7 @@ class TestSelectNextProvider:
             [],
             failed_provider="qwen",
             is_provider_error=True,
+            classifier=CLASSIFIER,
         )
         assert result is None
 
@@ -97,6 +104,7 @@ class TestSelectNextProvider:
             ["qwen", "claude"],
             failed_provider="qwen",
             is_provider_error=True,
+            classifier=CLASSIFIER,
         )
         assert result == "claude"
 
@@ -110,6 +118,7 @@ class TestSelectNextProvider:
             ["qwen", "claude"],
             failed_provider="qwen",
             is_provider_error=True,
+            classifier=CLASSIFIER,
             agent_run_manager=mock_arm,
         )
         assert result is None
@@ -124,6 +133,7 @@ class TestSelectNextProvider:
             ["qwen", "claude", "codex"],
             failed_provider="qwen",
             is_provider_error=True,
+            classifier=CLASSIFIER,
             agent_run_manager=mock_arm,
         )
         assert result == "claude"
@@ -135,6 +145,7 @@ class TestSelectNextProvider:
             ["claude", "qwen", "codex"],
             failed_provider="claude",
             is_provider_error=True,
+            classifier=CLASSIFIER,
         )
         assert result == "qwen"
 
@@ -144,6 +155,7 @@ class TestSelectNextProvider:
             ["qwen", "claude"],
             failed_provider="qwen",
             is_provider_error=True,
+            classifier=CLASSIFIER,
             agent_run_manager=None,
         )
         assert result == "claude"

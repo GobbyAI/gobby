@@ -63,6 +63,8 @@ class _AgentRunManager(Protocol):
 
 
 class _StallClassifier(Protocol):
+    def for_provider(self, provider_id: str) -> _StallClassifier: ...
+
     def is_provider_error(self, error_string: str | None) -> bool: ...
 
     def is_bootstrap_stall(self, error_string: str | None) -> bool: ...
@@ -191,7 +193,9 @@ class TaskRecoveryHandler:
                 )
                 return True
 
-            is_provider = self._stall_classifier.is_provider_error(db_run.error)
+            is_provider = self._stall_classifier.for_provider(db_run.provider).is_provider_error(
+                db_run.error
+            )
             is_bootstrap_stall = self._is_bootstrap_stall(db_run.error)
             if is_provider:
                 logger.info(

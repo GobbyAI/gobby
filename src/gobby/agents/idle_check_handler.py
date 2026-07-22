@@ -126,13 +126,13 @@ class IdleCheckHandler:
         get_session_manager: Callable[[], SessionManager | None],
         tmux: TmuxSessionManager,
         idle_detector: IdleDetector,
+        prompt_detector: PromptDetector,
+        stall_classifier: StallClassifier,
         cleanup_handler: AgentCleanupHandler,
         tmux_config: TmuxConfig,
         task_manager: LocalTaskManager | None = None,
         run_db: Callable[..., Awaitable[Any]] | None = None,
         attention_manager: AttentionStateManager | None = None,
-        prompt_detector: PromptDetector | None = None,
-        stall_classifier: StallClassifier | None = None,
     ) -> None:
         self._agent_run_manager = agent_run_manager
         self.db = db
@@ -144,8 +144,8 @@ class IdleCheckHandler:
         self._task_manager = task_manager
         self._run_db_callback = run_db
         self._attention_manager = attention_manager
-        self._prompt_detector = prompt_detector or PromptDetector()
-        self._stall_classifier = stall_classifier or StallClassifier()
+        self._prompt_detector = prompt_detector
+        self._stall_classifier = stall_classifier
         self._codex_capacity_recovery: dict[str, _CodexCapacityRecoveryState] = {}
 
     async def _run_db(self, func: Callable[..., Any], *args: Any, **kwargs: Any) -> Any:
@@ -159,15 +159,17 @@ class IdleCheckHandler:
         if manager is None:
             return
 
+        prompt_detector = self._prompt_detector.for_provider(run.provider)
+        stall_classifier = self._stall_classifier.for_provider(run.provider)
         reason: PromptKind | None = None
         kind: AttentionKind | None = None
-        detected = self._prompt_detector.detect_prompt(pane_output)
+        detected = prompt_detector.detect_prompt(pane_output)
         if (
             detected is not None
             and detected.kind == "approval"
             and (
                 not self._tmux_config.auto_enter_approval_prompts
-                or self._prompt_detector.was_approval_prompt_dismissed(run.id, pane_output)
+                or prompt_detector.was_approval_prompt_dismissed(run.id, pane_output)
             )
         ):
             reason = "approval"
@@ -175,7 +177,7 @@ class IdleCheckHandler:
         elif (
             detected is not None
             and detected.kind == "trust"
-            and self._prompt_detector.was_dismissed(run.id)
+            and prompt_detector.was_dismissed(run.id)
         ):
             reason = "trust"
             kind = "actionable"
@@ -183,7 +185,7 @@ class IdleCheckHandler:
             reason = "question"
             kind = "actionable"
         else:
-            classification = self._stall_classifier.classify(
+            classification = stall_classifier.classify(
                 run.id,
                 pane_output=pane_output,
                 error=run.error,
@@ -199,7 +201,7 @@ class IdleCheckHandler:
         prompt_payload = (
             detected
             if detected is not None and detected.kind == reason
-            else self._prompt_detector.prompt_payload(pane_output, kind=reason)
+            else prompt_detector.prompt_payload(pane_output, kind=reason)
         )
         await manager.transition_async(
             self._run_db,
@@ -349,16 +351,18 @@ class IdleCheckHandler:
     async def _handle_idle_check(self, run: AgentRun) -> int:
         """Handle idle check for a single agent."""
         latest_run = await self._run_db(self._agent_run_manager.get, run.id)
+        idle_detector = self._idle_detector.for_provider((latest_run or run).provider)
         if latest_run is None or latest_run.status not in ("pending", "running"):
             await self.clear_attention(latest_run or run)
-            self._idle_detector.reset_idle(run.id)
+            idle_detector.reset_idle(run.id)
             return 0
 
         run = latest_run
+        prompt_detector = self._prompt_detector.for_provider(run.provider)
         tmux_name = run.tmux_session_name
         if tmux_name is None:
             logger.warning("Skipping idle check for run %s: missing tmux name", run.id)
-            self._idle_detector.reset_idle(run.id)
+            idle_detector.reset_idle(run.id)
             return 0
         idle_timeout_seconds = self._idle_timeout_seconds_for_run(run)
 
@@ -391,7 +395,7 @@ class IdleCheckHandler:
 
         is_codex = session is not None and getattr(session, "source", None) == "codex"
         if session_recent and not is_codex:
-            self._idle_detector.reset_idle(run.id)
+            idle_detector.reset_idle(run.id)
             return 0
 
         pane_output = await self._tmux.capture_pane(tmux_name, lines=15)
@@ -400,37 +404,30 @@ class IdleCheckHandler:
         await self.sync_attention(run, pane_output)
         capacity_candidate = is_codex and self._pane_has_codex_capacity_message(pane_output)
 
-        queued_message_prompt_visible = False
-        if pane_output is not None:
-            status = self._idle_detector.detect(pane_output)
-            queued_message_prompt_visible = self._prompt_detector.detect_queued_message_prompt(
-                pane_output
-            )
+        status = idle_detector.detect(pane_output)
+        queued_message_prompt_visible = prompt_detector.detect_queued_message_prompt(pane_output)
 
-            if status == "context_full":
-                logger.info("Agent %s hit context window limit - failing", run.id)
-                await self._fail_idle_agent(run, reason="context window exhausted")
-                return 1
+        if status == "context_full":
+            logger.info("Agent %s hit context window limit - failing", run.id)
+            await self._fail_idle_agent(run, reason="context window exhausted")
+            return 1
 
-            # Active output is liveness even when the session row looks stale.
-            if status == "active" and not capacity_candidate:
-                if (
-                    session_recent
-                    or not session_stale
-                    or self._idle_detector.should_fail(
-                        run.id, self._tmux_config.max_reprompt_attempts
-                    )
-                ):
-                    self._idle_detector.reset_idle(run.id)
-                    return 0
-
-            if self._idle_detector.has_unsubmitted_input(pane_output):
-                logger.info(
-                    "Agent %s has unsubmitted prompt input visible; skipping idle reprompt",
-                    run.id,
-                )
-                self._idle_detector.reset_idle(run.id)
+        # Active output is liveness even when the session row looks stale.
+        if status == "active" and not capacity_candidate:
+            if (
+                session_recent
+                or not session_stale
+                or idle_detector.should_fail(run.id, self._tmux_config.max_reprompt_attempts)
+            ):
+                idle_detector.reset_idle(run.id)
                 return 0
+
+        if idle_detector.has_unsubmitted_input(pane_output):
+            logger.info(
+                "Agent %s has unsubmitted prompt input visible; skipping idle reprompt", run.id
+            )
+            idle_detector.reset_idle(run.id)
+            return 0
 
         transcript_snapshot: _CodexTranscriptSnapshot | None = None
         transcript_path = getattr(session, "transcript_path", None) if is_codex else None
@@ -462,10 +459,10 @@ class IdleCheckHandler:
             )
 
         if session_recent:
-            self._idle_detector.reset_idle(run.id)
+            idle_detector.reset_idle(run.id)
             return 0
 
-        if self._idle_detector.should_fail(run.id, self._tmux_config.max_reprompt_attempts):
+        if idle_detector.should_fail(run.id, self._tmux_config.max_reprompt_attempts):
             if queued_message_prompt_visible:
                 logger.info(
                     "Agent %s has a queued-message prompt visible; suppressing idle failure",
@@ -509,7 +506,7 @@ class IdleCheckHandler:
             )
             return 1
 
-        if self._idle_detector.should_reprompt(
+        if idle_detector.should_reprompt(
             run.id,
             self._idle_reprompt_delay_seconds_for_run(run),
             self._tmux_config.max_reprompt_attempts,
@@ -628,7 +625,7 @@ class IdleCheckHandler:
         if not submitted:
             logger.warning("Failed to submit idle reprompt for agent %s", run.id)
             return False
-        self._idle_detector.record_reprompt(run.id)
+        self._idle_detector.for_provider(run.provider).record_reprompt(run.id)
         return True
 
     async def _idle_reprompt_message(self, run: AgentRun) -> str:
@@ -751,7 +748,7 @@ class IdleCheckHandler:
         if not submitted:
             return False
 
-        self._idle_detector.record_reprompt(run.id)
+        self._idle_detector.for_provider(run.provider).record_reprompt(run.id)
         await self._record_watchdog_task_event(
             run,
             action="reasoning_interrupt",

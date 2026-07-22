@@ -33,12 +33,20 @@ line_regex = [
 ]
 
 [[rules]]
+id = "pane_provider_error"
+state = "stall"
+reason = "provider_error"
+priority = 860
+region = "whole_recent"
+line_regex = ['(?i)^(?:(?:error|fatal|failed|warning|exception|provider(?:\s+api)?\s+error|api\s+error)\s*[:\-]\s*)?(?:\b429\b.*(?:rate|limit|too many|quota)|\b503\b.*(?:service|unavailable|overloaded)|\b502\b.*(?:bad gateway|upstream)|\b500\b.*internal server error|\b529\b.*(?:overloaded|server-side|server side)|(?:provider\s+)?(?:request|connection|read)\s+timed?\s*out\b.*|network\s+error\b.*|(?:ETIMEDOUT|ECONNREFUSED|ECONNRESET)\b.*|(?:overloaded_error|ResourceExhausted|capacity\s+exceeded)\b.*|(?:(?:openai|anthropic|google(?:\.api_core)?|google\.genai)\.)?(?:APIConnectionError|APIStatusError|InternalServerError|RateLimitError|APITimeoutError|APIError)\b.*|anthropic\.\w*Error\b.*)']
+
+[[rules]]
 id = "provider_error"
 state = "stall"
 reason = "provider_error"
 priority = 850
-region = "bottom_non_empty_lines(12)"
-line_regex = ['(?i)(?:\b(?:429|503|502|500|529)\b.*(?:rate|limit|quota|unavailable|overloaded|gateway|upstream|internal server error)|rate.?limit.*(?:error|exception|exceeded|retry)|quota\s+(?:exceeded|exhausted)|(?:request|connection|read)\s+timed?\s*out|ETIMEDOUT|ECONNREFUSED|ECONNRESET|network\s+error|overloaded_error|ResourceExhausted|capacity\s+exceeded|APIConnectionError|APIStatusError|InternalServerError|anthropic\..*Error)']
+region = "whole_recent"
+line_regex = ['(?i)(?:\b429\b.*(?:rate|limit|too many|quota)|\b503\b.*(?:service|unavailable|overloaded)|\b502\b.*(?:bad gateway|upstream)|\b500\b.*internal server error|\b529\b.*(?:overloaded|server-side|server side)|(?:error|failed|exception|raise|fatal|❌).*rate.?limit|rate.?limit.*(?:error|exception|exceeded|please retry)|(?:error|failed|warning).*too many requests|quota\s+(?:exceeded|exhausted)|(?:request|connection|read)\s+timed?\s*out|ETIMEDOUT|ECONNREFUSED|ECONNRESET|network\s+error|overloaded_error|ResourceExhausted|capacity\s+exceeded|APIConnectionError|APIStatusError|InternalServerError|anthropic\..*Error)']
 
 [[rules]]
 id = "context_full"
@@ -46,7 +54,7 @@ state = "blocked"
 reason = "context_full"
 priority = 800
 region = "bottom_non_empty_lines(4)"
-line_regex = ['(?i)(?:The context window is full(?:\. Would you like to start a new conversation\?)?\.|This conversation is too long to continue\.)']
+line_regex = ['(?i)(?:The context window is full(?:\. Would you like to start a new conversation\?)?\.|I.ve run out of context space\.|This conversation is too long to continue\.)']
 
 [[rules]]
 id = "stop_hook_blocked"
@@ -55,6 +63,13 @@ reason = "stop_hook_blocked"
 priority = 700
 region = "whole_recent"
 line_regex = ['(?i)(?:Stop hook error|Rule enforced by Gobby)']
+
+[[rules]]
+id = "active_work"
+state = "working"
+priority = 690
+region = "whole_recent"
+line_regex = ['(?i)(?:\bRunning(?:[.…]+|\s+(?:command|task|process|job|tests?|checks?)\b)|almost done thinking|thinking with .*effort|\bReading\s+\d+\s+files?\b)']
 
 [[rules]]
 id = "queued_continuation"
@@ -68,22 +83,37 @@ line_regex = [
 ]
 
 [[rules]]
-id = "active_work"
-state = "working"
-priority = 600
+id = "queued_message"
+state = "idle"
+reason = "queued_message"
+priority = 640
 region = "whole_recent"
-line_regex = ['(?i)(?:\bRunning(?:[.…]+|\s+(?:command|task|process|job|tests?|checks?)\b)|almost done thinking|thinking with .*effort|\bReading\s+\d+\s+files?\b)']
+line_regex = ['(?i)(?:queued messages|Press up to edit queued messages)']
+
+[[rules]]
+id = "status_bar"
+state = "working"
+priority = 200
+region = "whole_recent"
+line_regex = ['(?i)(?:Opus|Sonnet|Haiku|bypass permissions|^\s*[⎇𖠰]|^\s*/|^\s*[─━▪▫]+)']
 
 [[rules]]
 id = "idle_prompt"
 state = "idle"
 priority = 100
-region = "bottom_non_empty_lines(8)"
+region = "whole_recent"
 line_regex = ['(?m)^\s*[❯>$]\s*$']
 
 [[rules]]
 id = "stalled_input"
 state = "idle"
 priority = 90
-region = "bottom_non_empty_lines(8)"
+region = "whole_recent"
 line_regex = ['(?m)^\s*[❯>$]\s+\S']
+
+[[rules]]
+id = "source_shaped"
+state = "working"
+priority = 10
+region = "whole_recent"
+line_regex = ['(?i)^(?:(?:#|//|/\*|\*|--|-|\+)\s*|(?:from\s+\S+\s+import|import\s+\S+)|(?:assert|return|raise|yield|with|if|elif|else:|for|while|try:|except\b|class\b|def\b|async\s+def\b)\b|@|(?:self|cls|mock|logger|pytest|re)\.|(?:const|let|var|final)\s+\w+\s*=|[A-Za-z_][\w.]*\s*(?::\s*[^=]+)?[+\-*/%|&^]?=|/(?:\\.|[^/])+/[a-z]*[,;]?$|\w+\(.*\)\s*$|[}\]\)],?\s*$)']

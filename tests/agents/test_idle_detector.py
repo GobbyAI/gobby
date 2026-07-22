@@ -8,6 +8,13 @@ import pytest
 
 from gobby.agents.idle_detector import IdleDetector
 
+from .detection_test_support import BundledDetectionRegistry
+
+
+def make_detector() -> IdleDetector:
+    return IdleDetector(BundledDetectionRegistry(), "claude")
+
+
 pytestmark = pytest.mark.unit
 
 
@@ -15,7 +22,7 @@ class TestDetect:
     """Tests for IdleDetector.detect()."""
 
     def setup_method(self) -> None:
-        self.detector = IdleDetector()
+        self.detector = make_detector()
 
     def test_empty_output_is_active(self) -> None:
         assert self.detector.detect("") == "active"
@@ -126,7 +133,7 @@ class TestShouldReprompt:
     """Tests for reprompt timing logic."""
 
     def setup_method(self) -> None:
-        self.detector = IdleDetector()
+        self.detector = make_detector()
 
     def test_first_idle_records_time_no_reprompt(self) -> None:
         """First idle detection should not trigger reprompt."""
@@ -158,7 +165,7 @@ class TestShouldFail:
     """Tests for failure detection."""
 
     def setup_method(self) -> None:
-        self.detector = IdleDetector()
+        self.detector = make_detector()
 
     def test_should_fail_at_max_attempts(self) -> None:
         state = self.detector.get_state("run-1")
@@ -175,7 +182,7 @@ class TestRecordReprompt:
     """Tests for reprompt recording."""
 
     def setup_method(self) -> None:
-        self.detector = IdleDetector()
+        self.detector = make_detector()
 
     def test_increments_count(self) -> None:
         self.detector.record_reprompt("run-1")
@@ -196,7 +203,7 @@ class TestResetIdle:
     """Tests for idle state reset."""
 
     def setup_method(self) -> None:
-        self.detector = IdleDetector()
+        self.detector = make_detector()
 
     def test_clears_idle_start(self) -> None:
         state = self.detector.get_state("run-1")
@@ -219,7 +226,7 @@ class TestClearState:
     """Tests for state cleanup."""
 
     def setup_method(self) -> None:
-        self.detector = IdleDetector()
+        self.detector = make_detector()
 
     def test_removes_state(self) -> None:
         self.detector.get_state("run-1")
@@ -239,7 +246,7 @@ class TestStatusBarFiltering:
     """Tests for idle detection through Claude Code status bar."""
 
     def setup_method(self) -> None:
-        self.detector = IdleDetector()
+        self.detector = make_detector()
 
     def test_idle_prompt_above_status_bar(self) -> None:
         """The real-world case: ❯ prompt is above the status bar."""
@@ -282,7 +289,7 @@ class TestStalledBuffer:
     """Tests for detecting stalled buffer (unsubmitted text at prompt)."""
 
     def setup_method(self) -> None:
-        self.detector = IdleDetector()
+        self.detector = make_detector()
 
     def test_prompt_with_unsubmitted_text(self) -> None:
         """Prompt char followed by text that was never submitted."""
@@ -320,7 +327,7 @@ class TestStopHookBlocked:
     """Tests for detecting agents blocked by stop hooks."""
 
     def setup_method(self) -> None:
-        self.detector = IdleDetector()
+        self.detector = make_detector()
 
     def test_stop_hook_error_detected_as_idle(self) -> None:
         """Agent tried to stop but hook blocked it — treat as idle."""

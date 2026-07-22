@@ -9,6 +9,9 @@ import pytest
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.workflow_definitions import LocalWorkflowDefinitionManager
 from gobby.workflows.definitions import AgentDefinitionBody
+from tests.agents.detection_test_support import BundledDetectionRegistry
+
+DETECTION_REGISTRY = BundledDetectionRegistry()
 
 pytestmark = pytest.mark.unit
 
@@ -67,7 +70,9 @@ class TestFallbackAgent:
                 create_spawn_agent_registry,
             )
 
-            registry = create_spawn_agent_registry(runner, db=db)
+            registry = create_spawn_agent_registry(
+                runner, db=db, detection_registry=DETECTION_REGISTRY
+            )
             tool_fn = registry.get_tool("spawn_agent")
             assert tool_fn is not None
 
@@ -112,7 +117,9 @@ class TestFallbackAgent:
                 create_spawn_agent_registry,
             )
 
-            registry = create_spawn_agent_registry(runner, db=db)
+            registry = create_spawn_agent_registry(
+                runner, db=db, detection_registry=DETECTION_REGISTRY
+            )
             tool_fn = registry.get_tool("spawn_agent")
 
             await tool_fn(
@@ -150,7 +157,9 @@ class TestFallbackAgent:
                 create_spawn_agent_registry,
             )
 
-            registry = create_spawn_agent_registry(runner, db=db)
+            registry = create_spawn_agent_registry(
+                runner, db=db, detection_registry=DETECTION_REGISTRY
+            )
             tool_fn = registry.get_tool("spawn_agent")
 
             await tool_fn(
@@ -187,7 +196,9 @@ class TestFallbackAgent:
                 create_spawn_agent_registry,
             )
 
-            registry = create_spawn_agent_registry(runner, db=db)
+            registry = create_spawn_agent_registry(
+                runner, db=db, detection_registry=DETECTION_REGISTRY
+            )
             tool_fn = registry.get_tool("spawn_agent")
 
             await tool_fn(

@@ -26,6 +26,7 @@ from gobby.storage.worktrees import LocalWorktreeManager
 from gobby.sync.memories import MemoryBackupManager
 
 if TYPE_CHECKING:
+    from gobby.agents.detection.registry import DetectionManifestRegistry
     from gobby.code_index.codewiki_trigger import CodewikiRefreshTrigger
     from gobby.events.wake import WakeDispatcher
     from gobby.mcp_proxy.manager import MCPClientManager
@@ -80,6 +81,7 @@ class ServiceContainer:
     # Agent Lifecycle
     agent_lifecycle_monitor: Any | None = None  # AgentLifecycleMonitor
     attention_manager: Any | None = None  # AttentionStateManager
+    detection_registry: DetectionManifestRegistry | None = None
 
     # Communications
     communications_manager: Any | None = None  # CommunicationsManager

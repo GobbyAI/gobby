@@ -13,6 +13,8 @@ import re
 from dataclasses import dataclass
 from typing import Literal
 
+from gobby.agents.detection.provider import DetectionRegistry, resolve_manifest
+
 PromptKind = Literal["approval", "trust", "question", "stall"]
 
 
@@ -42,79 +44,18 @@ class PromptDetector:
     This handles interactive prompts that block agent startup or execution.
     """
 
-    TRUST_PROMPT_PATTERNS: tuple[re.Pattern[str], ...] = (
-        re.compile(r"Do you trust the files", re.IGNORECASE),
-        re.compile(r"Is this a project you created or one you trust", re.IGNORECASE),
-        re.compile(r"Trust.*Folder", re.IGNORECASE),
-    )
-
     # Key sequence to send: Enter to accept "Trust Folder" (option 1).
     # Do NOT use "2\n" (Trust parent Folder) — that would trust the
     # parent directory, granting access to sibling clone directories
     # when multiple dev pipelines run in parallel.
     TRUST_DISMISS_KEYS = "\n"
 
-    LOOP_DETECTION_PATTERNS: tuple[re.Pattern[str], ...] = (
-        re.compile(r"stuck in a loop", re.IGNORECASE),
-        re.compile(r"repeating myself", re.IGNORECASE),
-        re.compile(r"potential loop detected", re.IGNORECASE),
-        re.compile(r"seems? to be (?:stuck|looping|repeating)", re.IGNORECASE),
-    )
-    LOOP_DIALOG_CHROME_PATTERNS: tuple[re.Pattern[str], ...] = (
-        re.compile(
-            r"\b(?:continue|proceed)(?:\s+anyway)?\?\s*"
-            r"(?:\((?:y|yes)/(?:n|no)\)|\[(?:y|yes)/(?:n|no)\])",
-            re.IGNORECASE,
-        ),
-        re.compile(
-            r"\b(?:press|type)\s+(?:y|yes)\s+(?:to\s+)?(?:continue|proceed)\b",
-            re.IGNORECASE,
-        ),
-    )
-
     # Key sequence to dismiss loop detection: "yes, continue"
     LOOP_DISMISS_KEYS = "y\n"
-
-    APPROVAL_CONTEXT_PATTERNS: tuple[re.Pattern[str], ...] = (
-        re.compile(
-            r"\b(?:approval|permission|allow|approve|permit|confirmation)\b",
-            re.IGNORECASE,
-        ),
-        re.compile(r"\b(?:run|execute|apply)\s+(?:this\s+)?(?:command|tool|action)", re.IGNORECASE),
-    )
-    APPROVAL_ENTER_PATTERNS: tuple[re.Pattern[str], ...] = (
-        re.compile(
-            r"\b(?:press|hit)\s+(?:enter|return)\s+to\s+"
-            r"(?:approve|allow|permit|proceed|continue|accept|confirm)\b",
-            re.IGNORECASE,
-        ),
-        re.compile(
-            r"\b(?:approve|allow|permit|proceed|continue|accept|confirm)\b"
-            r".{0,40}\b(?:enter|return)\b",
-            re.IGNORECASE | re.DOTALL,
-        ),
-        re.compile(
-            r"\b(?:enter|return)\b.{0,40}\b"
-            r"(?:approve|allow|permit|proceed|continue|accept|confirm)\b",
-            re.IGNORECASE | re.DOTALL,
-        ),
-        re.compile(
-            r"\b(?:enter|return)\b\s+to\s+submit\b",
-            re.IGNORECASE,
-        ),
-    )
 
     # Key sequence to approve prompts whose visible text says Enter approves/proceeds.
     APPROVAL_DISMISS_KEYS = "\n"
     ENTER_KEY = "Enter"
-    QUEUED_CONTINUATION_PATTERNS: tuple[re.Pattern[str], ...] = (
-        re.compile(r"Continue working on your task", re.IGNORECASE),
-        re.compile(r"active Gobby step workflow is not complete", re.IGNORECASE),
-    )
-    QUEUED_MESSAGE_PROMPT_PATTERNS: tuple[re.Pattern[str], ...] = (
-        re.compile(r"queued messages", re.IGNORECASE),
-        re.compile(r"Press up to edit queued messages", re.IGNORECASE),
-    )
     PROMPT_EXCERPT_LINES = 12
     PROMPT_EXCERPT_CHARS = 4096
     ENUMERATED_OPTION_PATTERN = re.compile(
@@ -123,60 +64,64 @@ class PromptDetector:
         r"(?=(?:\s*/\s*|\s{2,})(?:[>›❯*•-]\s*)?[1-9]\d{0,2}[.)]\s+|$)"
     )
 
-    def __init__(self) -> None:
+    def __init__(self, registry: DetectionRegistry, provider_id: str | None = None) -> None:
+        self._registry = registry
+        self._provider_id = provider_id.strip().lower() if provider_id is not None else None
+        self._providers: dict[str, PromptDetector] = {}
         self._dismissed: set[str] = set()
         self._loop_counts: dict[str, int] = {}
         self._loop_prompt_fingerprints: dict[str, set[str]] = {}
         self._approval_fingerprints: dict[str, str] = {}
 
+    def for_provider(self, provider_id: str) -> PromptDetector:
+        """Return the cached detector bound to one provider."""
+
+        normalized = provider_id.strip().lower()
+        if self._provider_id == normalized:
+            return self
+        cached = self._providers.get(normalized)
+        if cached is None:
+            cached = PromptDetector(self._registry, normalized)
+            cached._dismissed = self._dismissed
+            cached._loop_counts = self._loop_counts
+            cached._loop_prompt_fingerprints = self._loop_prompt_fingerprints
+            cached._approval_fingerprints = self._approval_fingerprints
+            self._providers[normalized] = cached
+        return cached
+
+    @property
+    def provider_id(self) -> str | None:
+        return self._provider_id
+
     def detect_trust_prompt(self, pane_output: str) -> bool:
         """Return True if pane output contains a folder trust prompt."""
-        for pattern in self.TRUST_PROMPT_PATTERNS:
-            if pattern.search(pane_output):
-                return True
-        return False
+        return self._matches("trust_prompt", pane_output)
 
     def detect_loop_prompt(self, pane_output: str) -> bool:
         """Return True if pane output contains a loop detection prompt."""
-        if not pane_output:
-            return False
-
-        has_loop_text = any(pattern.search(pane_output) for pattern in self.LOOP_DETECTION_PATTERNS)
-        if not has_loop_text:
-            return False
-
-        return any(pattern.search(pane_output) for pattern in self.LOOP_DIALOG_CHROME_PATTERNS)
+        return self._matches("loop_prompt", pane_output)
 
     def detect_approval_prompt(self, pane_output: str) -> bool:
         """Return True when Enter is explicitly shown as an approval action."""
-        if not pane_output:
-            return False
-
-        has_context = any(pattern.search(pane_output) for pattern in self.APPROVAL_CONTEXT_PATTERNS)
-        if not has_context:
-            return False
-
-        return any(pattern.search(pane_output) for pattern in self.APPROVAL_ENTER_PATTERNS)
+        return self._matches("approval_prompt", pane_output)
 
     def detect_queued_message_prompt(self, pane_output: str) -> bool:
         """Return True when the CLI shows a queued-message editing prompt."""
-        if not pane_output:
-            return False
-
-        return any(pattern.search(pane_output) for pattern in self.QUEUED_MESSAGE_PROMPT_PATTERNS)
+        return self._matches("queued_message", pane_output)
 
     def detect_queued_continuation_prompt(self, pane_output: str) -> bool:
         """Return True when a Gobby continuation message is queued at a CLI prompt."""
+        return self._matches("queued_continuation", pane_output)
+
+    def _matches(self, rule_id: str, pane_output: str) -> bool:
         if not pane_output:
             return False
-
-        has_continuation = any(
-            pattern.search(pane_output) for pattern in self.QUEUED_CONTINUATION_PATTERNS
-        )
-        if not has_continuation:
+        if self._provider_id is None:
+            raise RuntimeError("PromptDetector must be bound with for_provider() before detection")
+        manifest = resolve_manifest(self._registry, self._provider_id)
+        if manifest is None:
             return False
-
-        return self.detect_queued_message_prompt(pane_output)
+        return manifest.match_rule(rule_id, pane_output).match is not None
 
     def detect_prompt(self, pane_output: str) -> DetectedPrompt | None:
         """Detect an actionable prompt and return its structured payload."""
@@ -246,6 +191,8 @@ class PromptDetector:
 
     def clear(self, run_id: str) -> None:
         """Remove tracking state for an agent (on cleanup)."""
+        for detector in self._providers.values():
+            detector.clear(run_id)
         self._dismissed.discard(run_id)
         self._loop_counts.pop(run_id, None)
         self._loop_prompt_fingerprints.pop(run_id, None)

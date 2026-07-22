@@ -9,6 +9,9 @@ import pytest
 from gobby.agents.lifecycle_monitor import AgentLifecycleMonitor
 from gobby.config.tmux import TmuxConfig
 
+from .detection_test_support import BundledDetectionRegistry
+
+DETECTION_REGISTRY = BundledDetectionRegistry()
 pytestmark = pytest.mark.unit
 
 
@@ -18,6 +21,7 @@ class TestCompletedRunIdleGuard:
         agent_run_manager = MagicMock()
         agent_run_manager.get.return_value = MagicMock(id="run-123", status="completed")
         monitor = AgentLifecycleMonitor(
+            detection_registry=DETECTION_REGISTRY,
             agent_run_manager=agent_run_manager,
             db=MagicMock(),
             check_interval_seconds=1.0,

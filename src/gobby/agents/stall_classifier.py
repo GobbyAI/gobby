@@ -12,6 +12,9 @@ import time
 from dataclasses import dataclass
 from enum import Enum
 
+from gobby.agents.detection.matcher import CompiledManifest
+from gobby.agents.detection.provider import DetectionRegistry, resolve_manifest
+
 
 class StallStatus(Enum):
     """Classification of agent health."""
@@ -40,106 +43,8 @@ class _RunState:
     last_status: StallStatus = StallStatus.HEALTHY
 
 
-# Broad patterns that indicate provider-side errors in trusted stored errors.
-# Live tmux panes use stricter line-anchored patterns below because panes can
-# contain source/test text about provider errors.
-_PROVIDER_ERROR_PATTERNS: tuple[re.Pattern[str], ...] = (
-    # HTTP status codes with error context — specific enough as-is
-    re.compile(r"\b429\b.*(?:rate|limit|too many|quota)", re.IGNORECASE),
-    re.compile(r"\b503\b.*(?:service|unavailable|overloaded)", re.IGNORECASE),
-    re.compile(r"\b502\b.*(?:bad gateway|upstream)", re.IGNORECASE),
-    re.compile(r"\b500\b.*(?:internal server error)", re.IGNORECASE),
-    re.compile(r"\b529\b.*(?:overloaded|server-side|server side)", re.IGNORECASE),
-    # Rate limiting — require error/exception context to avoid matching
-    # code that discusses rate limiting (task titles, variable names, etc.)
-    re.compile(r"(?:error|failed|exception|raise|fatal|❌).*rate.?limit", re.IGNORECASE),
-    re.compile(r"rate.?limit.*(?:error|exception|exceeded|please retry)", re.IGNORECASE),
-    re.compile(r"(?:error|failed|warning).*too many requests", re.IGNORECASE),
-    re.compile(r"quota\s+(?:exceeded|exhausted)", re.IGNORECASE),
-    # Timeout / connectivity — already specific
-    re.compile(r"(?:request|connection|read)\s+timed?\s*out", re.IGNORECASE),
-    re.compile(r"ETIMEDOUT|ECONNREFUSED|ECONNRESET", re.IGNORECASE),
-    re.compile(r"network\s+error", re.IGNORECASE),
-    # Provider-specific error types — already specific (class names / error codes)
-    re.compile(r"overloaded_error", re.IGNORECASE),
-    re.compile(r"ResourceExhausted", re.IGNORECASE),
-    re.compile(r"capacity\s+exceeded", re.IGNORECASE),
-    # Anthropic/OpenAI/Google — use specific exception class names
-    re.compile(r"APIConnectionError", re.IGNORECASE),
-    re.compile(r"APIStatusError", re.IGNORECASE),
-    re.compile(r"InternalServerError", re.IGNORECASE),
-    re.compile(r"anthropic\..*Error", re.IGNORECASE),
-)
-
-_PANE_PROVIDER_ERROR_PREFIX = (
-    r"(?:(?:error|fatal|failed|warning|exception|provider(?:\s+api)?\s+error|api\s+error)"
-    r"\s*[:\-]\s*)?"
-)
-
-_PANE_PROVIDER_ERROR_PATTERNS: tuple[re.Pattern[str], ...] = (
-    re.compile(
-        rf"^{_PANE_PROVIDER_ERROR_PREFIX}\b429\b.*(?:rate|limit|too many|quota)",
-        re.IGNORECASE,
-    ),
-    re.compile(
-        rf"^{_PANE_PROVIDER_ERROR_PREFIX}\b503\b.*(?:service|unavailable|overloaded)",
-        re.IGNORECASE,
-    ),
-    re.compile(
-        rf"^{_PANE_PROVIDER_ERROR_PREFIX}\b502\b.*(?:bad gateway|upstream)",
-        re.IGNORECASE,
-    ),
-    re.compile(
-        rf"^{_PANE_PROVIDER_ERROR_PREFIX}\b500\b.*internal server error",
-        re.IGNORECASE,
-    ),
-    re.compile(
-        rf"^{_PANE_PROVIDER_ERROR_PREFIX}\b529\b.*(?:overloaded|server-side|server side)",
-        re.IGNORECASE,
-    ),
-    re.compile(
-        rf"^{_PANE_PROVIDER_ERROR_PREFIX}(?:provider\s+)?"
-        r"(?:request|connection|read)\s+timed?\s*out\b.*",
-        re.IGNORECASE,
-    ),
-    re.compile(rf"^{_PANE_PROVIDER_ERROR_PREFIX}network\s+error\b.*", re.IGNORECASE),
-    re.compile(
-        rf"^{_PANE_PROVIDER_ERROR_PREFIX}(?:ETIMEDOUT|ECONNREFUSED|ECONNRESET)\b.*",
-        re.IGNORECASE,
-    ),
-    re.compile(
-        rf"^{_PANE_PROVIDER_ERROR_PREFIX}(?:overloaded_error|ResourceExhausted|capacity\s+exceeded)\b.*",
-        re.IGNORECASE,
-    ),
-    re.compile(
-        rf"^{_PANE_PROVIDER_ERROR_PREFIX}"
-        r"(?:(?:openai|anthropic|google(?:\.api_core)?|google\.genai)\.)?"
-        r"(?:APIConnectionError|APIStatusError|InternalServerError|RateLimitError|"
-        r"APITimeoutError|APIError)\b.*",
-        re.IGNORECASE,
-    ),
-    re.compile(rf"^{_PANE_PROVIDER_ERROR_PREFIX}anthropic\.\w*Error\b.*", re.IGNORECASE),
-)
-
 _ANSI_ESCAPE_RE = re.compile(r"\x1b(?:[@-Z\\-_]|\[[0-?]*[ -/]*[@-~])")
 _CONTROL_CHARS_RE = re.compile(r"[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]")
-
-_SOURCE_SHAPED_LINE_PATTERNS: tuple[re.Pattern[str], ...] = (
-    re.compile(r"^(?:#|//|/\*|\*|--|-|\+)\s*"),
-    re.compile(r"^(?:from\s+\S+\s+import|import\s+\S+)"),
-    re.compile(
-        r"^(?:assert|return|raise|yield|with|if|elif|else:|for|while|try:|except\b|"
-        r"class\b|def\b|async\s+def\b)\b"
-    ),
-    re.compile(r"^@"),
-    re.compile(r"^(?:self|cls|mock|logger|pytest|re)\."),
-    re.compile(r"^(?:const|let|var|final)\s+\w+\s*="),
-    re.compile(r"^[A-Za-z_][\w.]*\s*(?::\s*[^=]+)?[+\-*/%|&^]?="),
-    re.compile(r"^(?:r|u|b|f|fr|rf|br|rb)?[\"'].*[\"']\s*,?\s*$", re.IGNORECASE),
-    re.compile(r"^/(?:\\.|[^/])+/[a-z]*[,;]?$"),
-    re.compile(r"^\w+\(.*\)\s*$"),
-    re.compile(r"^[}\]\)],?\s*$"),
-)
 
 _BOOTSTRAP_STALL_PATTERNS: tuple[re.Pattern[str], ...] = (
     re.compile(r"bootstrap/accounting stall", re.IGNORECASE),
@@ -162,8 +67,29 @@ class StallClassifier:
     errors, preventing transient errors from triggering false positives.
     """
 
-    def __init__(self) -> None:
+    def __init__(self, registry: DetectionRegistry, provider_id: str | None = None) -> None:
+        self._registry = registry
+        self._provider_id = provider_id.strip().lower() if provider_id is not None else None
+        self._providers: dict[str, StallClassifier] = {}
         self._states: dict[str, _RunState] = {}
+
+    def for_provider(self, provider_id: str) -> StallClassifier:
+        """Return the cached classifier bound to one provider."""
+
+        normalized = provider_id.strip().lower()
+        if self._provider_id == normalized:
+            return self
+        cached = self._providers.get(normalized)
+        if cached is None:
+            cached = StallClassifier(self._registry, normalized)
+            cached._states = self._states
+            self._providers[normalized] = cached
+        return cached
+
+    def _manifest(self) -> CompiledManifest | None:
+        if self._provider_id is None:
+            raise RuntimeError("StallClassifier must be bound with for_provider() before detection")
+        return resolve_manifest(self._registry, self._provider_id)
 
     def classify(
         self,
@@ -183,6 +109,12 @@ class StallClassifier:
         """
         state = self._states.setdefault(run_id, _RunState())
         now = time.monotonic()
+
+        if self._manifest() is None:
+            state.consecutive_provider_hits = 0
+            state.last_status = StallStatus.UNKNOWN
+            state.last_check_at = now
+            return StallClassification(status=StallStatus.UNKNOWN)
 
         has_pane_output = bool(pane_output and pane_output.strip())
         has_error = bool(error and error.strip())
@@ -254,28 +186,32 @@ class StallClassifier:
 
     def clear(self, run_id: str) -> None:
         """Remove tracking state for an agent run."""
+        for classifier in self._providers.values():
+            classifier.clear(run_id)
         self._states.pop(run_id, None)
 
-    @staticmethod
-    def _match_provider_error(text: str) -> str | None:
+    def _match_provider_error(self, text: str) -> str | None:
         """Return the first matching provider error reason, or None."""
-        for pattern in _PROVIDER_ERROR_PATTERNS:
-            match = pattern.search(text)
-            if match:
-                return match.group(0)
-        return None
+        manifest = self._manifest()
+        if manifest is None:
+            return None
+        match = manifest.match_rule("provider_error", text).match
+        return text if match is not None else None
 
-    @staticmethod
-    def _match_pane_provider_error(pane_output: str) -> str | None:
+    def _match_pane_provider_error(self, pane_output: str) -> str | None:
         """Return provider error evidence from live pane output, or None."""
+        manifest = self._manifest()
+        if manifest is None:
+            return None
         for raw_line in pane_output.splitlines():
-            line = StallClassifier._normalize_pane_line(raw_line)
-            if not line or StallClassifier._is_source_shaped_line(line):
+            line = self._normalize_pane_line(raw_line)
+            if not line:
                 continue
-            for pattern in _PANE_PROVIDER_ERROR_PATTERNS:
-                match = pattern.search(line)
-                if match:
-                    return match.group(0)
+            if manifest.match_rule("source_shaped", line).match is not None:
+                continue
+            match = manifest.match_rule("pane_provider_error", line).match
+            if match is not None:
+                return line
         return None
 
     @staticmethod
@@ -283,8 +219,3 @@ class StallClassifier:
         """Strip terminal controls before matching visible pane text."""
         without_ansi = _ANSI_ESCAPE_RE.sub("", line)
         return _CONTROL_CHARS_RE.sub("", without_ansi).strip()
-
-    @staticmethod
-    def _is_source_shaped_line(line: str) -> bool:
-        """Return true for lines that look like code or test fixtures."""
-        return any(pattern.search(line) for pattern in _SOURCE_SHAPED_LINE_PATTERNS)

@@ -13,6 +13,7 @@ from gobby.mcp_proxy.tools.internal import InternalToolRegistry
 from gobby.storage.agents import LocalAgentRunManager
 
 if TYPE_CHECKING:
+    from gobby.agents.detection.registry import DetectionManifestRegistry
     from gobby.agents.lifecycle_monitor import AgentLifecycleMonitor
     from gobby.agents.runner import AgentRunner
     from gobby.clones.git import CloneGitManager
@@ -51,6 +52,7 @@ def create_agents_registry(
     daemon_config: DaemonConfig | None = None,
     code_index: CodeIndexContext | None = None,
     transcript_reader: TranscriptReader | None = None,
+    detection_registry: DetectionManifestRegistry | None = None,
 ) -> InternalToolRegistry:
     """
     Create an agent tool registry with all agent-related tools.
@@ -105,6 +107,7 @@ def create_agents_registry(
         daemon_config=daemon_config,
         code_index=code_index,
         transcript_reader=transcript_reader,
+        detection_registry=detection_registry,
         agent_run_manager=agent_run_manager,
         resolve_session_id=_resolve_session_id,
         get_current_session_id=get_current_session_id,

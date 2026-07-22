@@ -37,6 +37,9 @@ from gobby.storage.workflow_definitions import LocalWorkflowDefinitionManager
 from gobby.workflows.definitions import WorkflowInstance
 from gobby.workflows.state_manager import WorkflowInstanceManager
 
+from .detection_test_support import BundledDetectionRegistry
+
+DETECTION_REGISTRY = BundledDetectionRegistry()
 pytestmark = pytest.mark.unit
 
 configure_tmux(TmuxConfig())
@@ -101,6 +104,7 @@ def monitor(
     temp_db: HubDatabase,
 ) -> AgentLifecycleMonitor:
     return AgentLifecycleMonitor(
+        detection_registry=DETECTION_REGISTRY,
         agent_run_manager=agent_run_manager,
         db=temp_db,
         check_interval_seconds=1.0,
@@ -175,6 +179,7 @@ async def test_check_autonomous_stuck_agents_nudges_change_approach(
         suggested_action="change_approach",
     )
     monitor = AgentLifecycleMonitor(
+        detection_registry=DETECTION_REGISTRY,
         agent_run_manager=agent_run_manager,
         db=temp_db,
         stuck_detector=stuck_detector,
@@ -263,6 +268,7 @@ async def test_refresh_active_run_dispatch_mutexes_advances_batch_cursor(
     second_batch = [_metadata_run(_rid("run-no-task-tail"), None)]
     agent_run_manager.list_active.side_effect = [first_batch, second_batch]
     monitor = AgentLifecycleMonitor(
+        detection_registry=DETECTION_REGISTRY,
         agent_run_manager=agent_run_manager,
         db=temp_db,
         check_interval_seconds=1.0,
@@ -318,6 +324,7 @@ async def test_refresh_active_run_dispatch_mutexes_extends_expired_attached_mute
     assert stale.lease_until < datetime.now(UTC)
 
     monitor = AgentLifecycleMonitor(
+        detection_registry=DETECTION_REGISTRY,
         agent_run_manager=agent_run_manager,
         db=temp_db,
         check_interval_seconds=1.0,
@@ -363,6 +370,7 @@ async def test_refresh_active_run_dispatch_mutexes_restores_missing_mutex(
     assert mutexes.get_mutex(task.id) is None
 
     monitor = AgentLifecycleMonitor(
+        detection_registry=DETECTION_REGISTRY,
         agent_run_manager=agent_run_manager,
         db=temp_db,
         check_interval_seconds=1.0,
@@ -415,6 +423,7 @@ async def test_refresh_active_run_dispatch_mutexes_does_not_restore_without_stag
     assert mutexes.get_mutex(task.id) is None
 
     monitor = AgentLifecycleMonitor(
+        detection_registry=DETECTION_REGISTRY,
         agent_run_manager=agent_run_manager,
         db=temp_db,
         check_interval_seconds=1.0,
@@ -807,6 +816,7 @@ class TestCheckDeadAgents:
         )
         mock_coordinator = MagicMock()
         mon = AgentLifecycleMonitor(
+            detection_registry=DETECTION_REGISTRY,
             agent_run_manager=agent_run_manager,
             db=temp_db,
             session_coordinator=mock_coordinator,
@@ -891,6 +901,7 @@ class TestCheckIdleAgents:
             idle_check_enabled=True, idle_timeout_seconds=10, max_reprompt_attempts=2
         )
         return AgentLifecycleMonitor(
+            detection_registry=DETECTION_REGISTRY,
             agent_run_manager=agent_run_manager,
             db=temp_db,
             check_interval_seconds=1.0,
@@ -1334,6 +1345,7 @@ class TestCheckIdleAgents:
 
         config = TmuxConfig(idle_check_enabled=False)
         mon = AgentLifecycleMonitor(
+            detection_registry=DETECTION_REGISTRY,
             agent_run_manager=agent_run_manager,
             db=temp_db,
             tmux_config=config,
@@ -1397,6 +1409,7 @@ class TestCheckIdleAgents:
             idle_check_enabled=True, idle_timeout_seconds=10, max_reprompt_attempts=2
         )
         mon = AgentLifecycleMonitor(
+            detection_registry=DETECTION_REGISTRY,
             agent_run_manager=agent_run_manager,
             db=temp_db,
             session_manager=session_manager,
@@ -1445,6 +1458,7 @@ class TestCheckIdleAgents:
             idle_check_enabled=True, idle_timeout_seconds=10, max_reprompt_attempts=2
         )
         mon = AgentLifecycleMonitor(
+            detection_registry=DETECTION_REGISTRY,
             agent_run_manager=agent_run_manager,
             db=temp_db,
             session_manager=session_manager,
@@ -1496,6 +1510,7 @@ class TestCheckIdleAgents:
             idle_check_enabled=True, idle_timeout_seconds=10, max_reprompt_attempts=2
         )
         mon = AgentLifecycleMonitor(
+            detection_registry=DETECTION_REGISTRY,
             agent_run_manager=agent_run_manager,
             db=temp_db,
             session_manager=session_manager,
@@ -1563,6 +1578,7 @@ class TestCheckIdleAgents:
             idle_check_enabled=True, idle_timeout_seconds=10, max_reprompt_attempts=2
         )
         mon = AgentLifecycleMonitor(
+            detection_registry=DETECTION_REGISTRY,
             agent_run_manager=agent_run_manager,
             db=temp_db,
             session_manager=session_manager,
@@ -1629,6 +1645,7 @@ class TestCheckIdleAgents:
             idle_check_enabled=True, idle_timeout_seconds=10, max_reprompt_attempts=2
         )
         mon = AgentLifecycleMonitor(
+            detection_registry=DETECTION_REGISTRY,
             agent_run_manager=agent_run_manager,
             db=temp_db,
             session_manager=session_manager,
@@ -1721,6 +1738,7 @@ class TestCheckIdleAgents:
             idle_check_enabled=True, idle_timeout_seconds=10, max_reprompt_attempts=2
         )
         mon = AgentLifecycleMonitor(
+            detection_registry=DETECTION_REGISTRY,
             agent_run_manager=agent_run_manager,
             db=temp_db,
             session_manager=session_manager,
@@ -1783,6 +1801,7 @@ class TestCheckIdleAgents:
             idle_check_enabled=True, idle_timeout_seconds=10, max_reprompt_attempts=2
         )
         mon = AgentLifecycleMonitor(
+            detection_registry=DETECTION_REGISTRY,
             agent_run_manager=agent_run_manager,
             db=temp_db,
             session_manager=session_manager,
@@ -1850,6 +1869,7 @@ class TestCheckIdleAgents:
             idle_check_enabled=True, idle_timeout_seconds=10, max_reprompt_attempts=2
         )
         mon = AgentLifecycleMonitor(
+            detection_registry=DETECTION_REGISTRY,
             agent_run_manager=agent_run_manager,
             db=temp_db,
             session_manager=session_manager,
@@ -1916,6 +1936,7 @@ class TestCheckIdleAgents:
             idle_check_enabled=True, idle_timeout_seconds=10, max_reprompt_attempts=2
         )
         mon = AgentLifecycleMonitor(
+            detection_registry=DETECTION_REGISTRY,
             agent_run_manager=agent_run_manager,
             db=temp_db,
             session_manager=session_manager,
@@ -1977,6 +1998,7 @@ class TestCheckIdleAgents:
             idle_check_enabled=True, idle_timeout_seconds=10, max_reprompt_attempts=2
         )
         mon = AgentLifecycleMonitor(
+            detection_registry=DETECTION_REGISTRY,
             agent_run_manager=agent_run_manager,
             db=temp_db,
             session_manager=session_manager,
@@ -2333,6 +2355,7 @@ class TestCheckExpiredAgents:
             (past, 120, run.id),
         )
         monitor = AgentLifecycleMonitor(
+            detection_registry=DETECTION_REGISTRY,
             agent_run_manager=agent_run_manager,
             db=temp_db,
             session_manager=session_manager,
@@ -2463,6 +2486,7 @@ class TestCheckExpiredAgents:
         )
 
         monitor = AgentLifecycleMonitor(
+            detection_registry=DETECTION_REGISTRY,
             agent_run_manager=agent_run_manager,
             db=temp_db,
             session_manager=session_manager,
@@ -2539,6 +2563,7 @@ class TestCheckExpiredAgents:
         )
 
         monitor = AgentLifecycleMonitor(
+            detection_registry=DETECTION_REGISTRY,
             agent_run_manager=agent_run_manager,
             db=temp_db,
             session_manager=session_manager,
@@ -2751,6 +2776,7 @@ class TestCheckExpiredAgents:
             ("agent session ended with incomplete workflow", completed_at, completed_at, run.id),
         )
         monitor = AgentLifecycleMonitor(
+            detection_registry=DETECTION_REGISTRY,
             agent_run_manager=agent_run_manager,
             db=temp_db,
             session_manager=session_manager,
@@ -2816,6 +2842,7 @@ class TestCheckExpiredAgents:
             ("agent session ended with incomplete workflow", completed_at, completed_at, run.id),
         )
         monitor = AgentLifecycleMonitor(
+            detection_registry=DETECTION_REGISTRY,
             agent_run_manager=agent_run_manager,
             db=temp_db,
             session_manager=session_manager,
@@ -2907,6 +2934,7 @@ class TestCheckExpiredAgents:
             ("user_cancelled", completed_at, completed_at, run.id),
         )
         monitor = AgentLifecycleMonitor(
+            detection_registry=DETECTION_REGISTRY,
             agent_run_manager=agent_run_manager,
             db=temp_db,
             session_manager=session_manager,
@@ -2953,6 +2981,7 @@ class TestCheckExpiredAgents:
         )
         mock_coordinator = MagicMock()
         mon = AgentLifecycleMonitor(
+            detection_registry=DETECTION_REGISTRY,
             agent_run_manager=agent_run_manager,
             db=temp_db,
             session_coordinator=mock_coordinator,
@@ -3003,6 +3032,7 @@ class TestCheckExpiredAgents:
         mock_clone_storage = MagicMock()
         mock_clone_storage.release = MagicMock()
         mon = AgentLifecycleMonitor(
+            detection_registry=DETECTION_REGISTRY,
             agent_run_manager=agent_run_manager,
             db=temp_db,
             clone_storage=mock_clone_storage,
@@ -3257,6 +3287,7 @@ class TestCheckProviderStallsKillsAgent:
             tmux_session_name="gobby-stall-stage-reset",
         )
         monitor = AgentLifecycleMonitor(
+            detection_registry=DETECTION_REGISTRY,
             agent_run_manager=agent_run_manager,
             db=temp_db,
             task_manager=task_manager,
@@ -3340,7 +3371,7 @@ class TestCheckProviderStallsKillsAgent:
 
         updated = agent_run_manager.get(_rid("run-stall-pattern"))
         assert updated is not None
-        classifier = StallClassifier()
+        classifier = StallClassifier(DETECTION_REGISTRY, "claude")
         assert classifier.is_provider_error(updated.error)
 
 
@@ -3485,6 +3516,7 @@ class TestCheckInitializationTimeout:
             (backdated, run.id),
         )
         monitor = AgentLifecycleMonitor(
+            detection_registry=DETECTION_REGISTRY,
             agent_run_manager=agent_run_manager,
             db=temp_db,
             session_manager=session_manager,
@@ -3695,7 +3727,7 @@ class TestCheckInitializationTimeout:
 
         updated = agent_run_manager.get(_rid("run-pattern"))
         assert updated is not None
-        classifier = StallClassifier()
+        classifier = StallClassifier(DETECTION_REGISTRY, "claude")
         assert classifier.is_provider_error(updated.error), (
             f"Error '{updated.error}' should match provider error patterns"
         )
@@ -3850,6 +3882,7 @@ class TestRecoverTaskFromFailedAgent:
     ) -> None:
         """Without task_manager, recovery does nothing."""
         mon = AgentLifecycleMonitor(
+            detection_registry=DETECTION_REGISTRY,
             agent_run_manager=agent_run_manager,
             db=temp_db,
             task_manager=None,
@@ -3867,6 +3900,7 @@ class TestRecoverTaskFromFailedAgent:
         """When DB run not found, recovery does nothing."""
         mock_task_manager = MagicMock()
         mon = AgentLifecycleMonitor(
+            detection_registry=DETECTION_REGISTRY,
             agent_run_manager=agent_run_manager,
             db=temp_db,
             task_manager=mock_task_manager,
@@ -3921,6 +3955,7 @@ async def test_lifecycle_monitor_db_paths_stay_on_bounded_executor(
     agent_run_manager.update_runtime(run.id, tmux_session_name="gobby-bounded-db")
 
     monitor = AgentLifecycleMonitor(
+        detection_registry=DETECTION_REGISTRY,
         agent_run_manager=agent_run_manager,
         db=temp_db,
         session_manager=session_manager,
@@ -3993,6 +4028,7 @@ class TestDeadAgentCompletionEvent:
         mock_cr = MagicMock()
         mock_cr.notify = AsyncMock()
         mon = AgentLifecycleMonitor(
+            detection_registry=DETECTION_REGISTRY,
             agent_run_manager=agent_run_manager,
             db=temp_db,
             completion_registry=mock_cr,
@@ -4024,6 +4060,7 @@ class TestDeadAgentCompletionEvent:
         mock_clone_storage = MagicMock()
         mock_clone_storage.release = MagicMock()
         mon = AgentLifecycleMonitor(
+            detection_registry=DETECTION_REGISTRY,
             agent_run_manager=agent_run_manager,
             db=temp_db,
             clone_storage=mock_clone_storage,
@@ -4092,6 +4129,7 @@ class TestSessionExpirationOnCleanup:
         )
 
         mon = AgentLifecycleMonitor(
+            detection_registry=DETECTION_REGISTRY,
             agent_run_manager=agent_run_manager,
             db=temp_db,
             session_manager=session_manager,
@@ -4125,6 +4163,7 @@ class TestSessionExpirationOnCleanup:
     ) -> None:
         """Without session_manager, cleanup still succeeds but skips expiration."""
         mon = AgentLifecycleMonitor(
+            detection_registry=DETECTION_REGISTRY,
             agent_run_manager=agent_run_manager,
             db=temp_db,
             session_manager=None,

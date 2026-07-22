@@ -22,6 +22,9 @@ from gobby.workflows.definitions import WorkflowInstance
 from gobby.workflows.state_manager import SessionVariableManager, WorkflowInstanceManager
 from gobby.workflows.task_claim_state import add_claimed_task
 
+from .detection_test_support import BundledDetectionRegistry
+
+DETECTION_REGISTRY = BundledDetectionRegistry()
 configure_tmux(ConfiguredTmuxConfig())
 
 pytestmark = pytest.mark.unit
@@ -57,6 +60,7 @@ def _task(
 
 
 def _use_stall_classifier(monitor: AgentLifecycleMonitor, stall_classifier: MagicMock) -> None:
+    stall_classifier.for_provider.return_value = stall_classifier
     monitor._task_recovery._stall_classifier = stall_classifier
 
 
@@ -72,6 +76,7 @@ class TestRecoverTaskFromFailedAgent:
         mock_stall = MagicMock()
 
         monitor = AgentLifecycleMonitor(
+            detection_registry=DETECTION_REGISTRY,
             agent_run_manager=mock_run_mgr,
             db=mock_db,
             task_manager=mock_task_mgr,
@@ -120,6 +125,7 @@ class TestRecoverTaskFromFailedAgent:
         mock_stall = MagicMock()
 
         monitor = AgentLifecycleMonitor(
+            detection_registry=DETECTION_REGISTRY,
             agent_run_manager=mock_run_mgr,
             db=mock_db,
             task_manager=mock_task_mgr,
@@ -176,6 +182,7 @@ class TestRecoverTaskFromFailedAgent:
         mock_stall = MagicMock()
 
         monitor = AgentLifecycleMonitor(
+            detection_registry=DETECTION_REGISTRY,
             agent_run_manager=mock_run_mgr,
             db=MagicMock(),
             task_manager=mock_task_mgr,
@@ -215,6 +222,7 @@ class TestRecoverTaskFromFailedAgent:
     async def test_recover_task_no_task_manager(self) -> None:
         """Does nothing if no task_manager is configured."""
         monitor = AgentLifecycleMonitor(
+            detection_registry=DETECTION_REGISTRY,
             agent_run_manager=MagicMock(),
             db=MagicMock(),
         )
@@ -228,6 +236,7 @@ class TestRecoverTaskFromFailedAgent:
         mock_run_mgr = MagicMock()
         mock_task_mgr = MagicMock()
         monitor = AgentLifecycleMonitor(
+            detection_registry=DETECTION_REGISTRY,
             agent_run_manager=mock_run_mgr,
             db=MagicMock(),
             task_manager=mock_task_mgr,
@@ -265,6 +274,7 @@ class TestRecoverTaskFromFailedAgent:
         mock_stall = MagicMock()
 
         monitor = AgentLifecycleMonitor(
+            detection_registry=DETECTION_REGISTRY,
             agent_run_manager=mock_run_mgr,
             db=MagicMock(),
             task_manager=mock_task_mgr,
@@ -313,6 +323,7 @@ class TestRecoverTaskFromFailedAgent:
         mock_stall = MagicMock()
 
         monitor = AgentLifecycleMonitor(
+            detection_registry=DETECTION_REGISTRY,
             agent_run_manager=mock_run_mgr,
             db=MagicMock(),
             task_manager=mock_task_mgr,
@@ -359,6 +370,7 @@ class TestRecoverTaskFromFailedAgent:
         mock_stall = MagicMock()
 
         monitor = AgentLifecycleMonitor(
+            detection_registry=DETECTION_REGISTRY,
             agent_run_manager=mock_run_mgr,
             db=MagicMock(),
             task_manager=mock_task_mgr,
@@ -400,6 +412,7 @@ class TestRecoverTaskFromFailedAgent:
         mock_run_mgr.cleanup_stale_pending_runs.return_value = 5
 
         monitor = AgentLifecycleMonitor(
+            detection_registry=DETECTION_REGISTRY,
             agent_run_manager=mock_run_mgr,
             db=MagicMock(),
         )
@@ -427,7 +440,7 @@ class TestRecoverTaskFromFailedAgent:
         session_manager = MagicMock()
         tmux = MagicMock()
         tmux.capture_pane = AsyncMock(return_value="working")
-        idle_detector = IdleDetector()
+        idle_detector = IdleDetector(DETECTION_REGISTRY, "claude")
         cleanup_handler = AsyncMock()
 
         async def run_db(func, *args, **kwargs):
@@ -439,6 +452,8 @@ class TestRecoverTaskFromFailedAgent:
             get_session_manager=lambda: session_manager,
             tmux=tmux,
             idle_detector=idle_detector,
+            prompt_detector=PromptDetector(DETECTION_REGISTRY, "codex"),
+            stall_classifier=MagicMock(),
             cleanup_handler=cleanup_handler,
             tmux_config=SimpleNamespace(
                 idle_timeout_seconds=60,
@@ -479,6 +494,7 @@ class TestLoopPromptEscalation:
         mock_run_mgr = MagicMock()
         mock_tmux = AsyncMock()
         monitor = AgentLifecycleMonitor(
+            detection_registry=DETECTION_REGISTRY,
             agent_run_manager=mock_run_mgr,
             db=MagicMock(),
         )
@@ -500,6 +516,7 @@ class TestLoopPromptEscalation:
         mock_run_mgr = MagicMock()
         mock_tmux = AsyncMock()
         monitor = AgentLifecycleMonitor(
+            detection_registry=DETECTION_REGISTRY,
             agent_run_manager=mock_run_mgr,
             db=MagicMock(),
         )
@@ -531,6 +548,7 @@ class TestLoopPromptEscalation:
         mock_run_mgr = MagicMock()
         mock_tmux = AsyncMock()
         monitor = AgentLifecycleMonitor(
+            detection_registry=DETECTION_REGISTRY,
             agent_run_manager=mock_run_mgr,
             db=MagicMock(),
         )
@@ -557,6 +575,7 @@ class TestLoopPromptEscalation:
         mock_run_mgr = MagicMock()
         mock_tmux = AsyncMock()
         monitor = AgentLifecycleMonitor(
+            detection_registry=DETECTION_REGISTRY,
             agent_run_manager=mock_run_mgr,
             db=MagicMock(),
         )
@@ -582,6 +601,7 @@ class TestLoopPromptEscalation:
         mock_run_mgr = MagicMock()
         mock_tmux = AsyncMock()
         monitor = AgentLifecycleMonitor(
+            detection_registry=DETECTION_REGISTRY,
             agent_run_manager=mock_run_mgr,
             db=MagicMock(),
         )
@@ -610,6 +630,7 @@ class TestLoopPromptEscalation:
         mock_run_mgr = MagicMock()
         mock_tmux = AsyncMock()
         monitor = AgentLifecycleMonitor(
+            detection_registry=DETECTION_REGISTRY,
             agent_run_manager=mock_run_mgr,
             db=MagicMock(),
         )
@@ -651,6 +672,7 @@ class TestApprovalPromptAutoEnter:
     @staticmethod
     def _monitor(mock_run_mgr: MagicMock, mock_tmux: AsyncMock) -> AgentLifecycleMonitor:
         monitor = AgentLifecycleMonitor(
+            detection_registry=DETECTION_REGISTRY,
             agent_run_manager=mock_run_mgr,
             db=MagicMock(),
         )
@@ -745,6 +767,7 @@ class TestApprovalPromptAutoEnter:
         mock_run_mgr = MagicMock()
         mock_tmux = AsyncMock()
         monitor = AgentLifecycleMonitor(
+            detection_registry=DETECTION_REGISTRY,
             agent_run_manager=mock_run_mgr,
             db=MagicMock(),
             tmux_config=TmuxConfig(auto_enter_approval_prompts=False),
@@ -810,6 +833,7 @@ class TestPeriodicAgentTerminalEnter:
         from gobby.config.tmux import TmuxConfig
 
         monitor = AgentLifecycleMonitor(
+            detection_registry=DETECTION_REGISTRY,
             agent_run_manager=mock_run_mgr,
             db=db or MagicMock(),
             tmux_config=TmuxConfig(
@@ -1172,6 +1196,7 @@ class TestTerminalizeCancelledRun:
         mock_task_mgr.get_task.return_value = task
 
         monitor = AgentLifecycleMonitor(
+            detection_registry=DETECTION_REGISTRY,
             agent_run_manager=mock_run_mgr,
             db=MagicMock(),
             session_manager=mock_session_mgr,
@@ -1231,6 +1256,7 @@ class TestTerminalizeCancelledRun:
         mock_task_mgr.get_task.return_value = task
 
         monitor = AgentLifecycleMonitor(
+            detection_registry=DETECTION_REGISTRY,
             agent_run_manager=mock_run_mgr,
             db=MagicMock(),
             task_manager=mock_task_mgr,
@@ -1305,6 +1331,7 @@ class TestTerminalizeCancelledRun:
         )
         run_manager.start(run.id)
         monitor = AgentLifecycleMonitor(
+            detection_registry=DETECTION_REGISTRY,
             agent_run_manager=run_manager,
             db=temp_db,
             session_manager=session_manager,
@@ -1396,6 +1423,7 @@ class TestTerminalizeCancelledRun:
         )
         run_manager.start(run.id)
         monitor = AgentLifecycleMonitor(
+            detection_registry=DETECTION_REGISTRY,
             agent_run_manager=run_manager,
             db=temp_db,
             session_manager=session_manager,
@@ -1440,6 +1468,7 @@ class TestTerminalizeCancelledRun:
         mock_completion_registry.notify = AsyncMock()
 
         monitor = AgentLifecycleMonitor(
+            detection_registry=DETECTION_REGISTRY,
             agent_run_manager=mock_run_mgr,
             db=MagicMock(),
             completion_registry=mock_completion_registry,
