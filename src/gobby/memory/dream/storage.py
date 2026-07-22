@@ -3,13 +3,15 @@
 from __future__ import annotations
 
 import json
+from collections.abc import Callable
+from dataclasses import dataclass
 from datetime import UTC, datetime
-from typing import Any
+from typing import Any, Literal
 from uuid import uuid4
 
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.sql_dialect import older_than_now_expr
-from gobby.utils.datetime import to_json_safe
+from gobby.utils.datetime import to_json_safe, utc_now
 
 PLATFORM_TRUTH_SCOPE = "__gobby_platform__"
 
@@ -62,6 +64,24 @@ _RUN_UPDATE_SET_CLAUSES = {
 INTERRUPTED_RESTART_ERROR = "Interrupted: daemon restarted while the dream run was in progress"
 # Error recorded when an in-flight run is cancelled (shutdown/timeout) before completing.
 INTERRUPTED_CANCELLED_ERROR = "Interrupted: dream run cancelled before completion"
+
+
+@dataclass(frozen=True, slots=True)
+class DreamApplyResult:
+    """Rows captured by one committed fenced dream action."""
+
+    snapshot_id: int
+    before: dict[str, Any]
+    after: dict[str, Any]
+
+
+@dataclass(frozen=True, slots=True)
+class DreamRevertResult:
+    """Outcome of one snapshot's conflict-aware primary restore."""
+
+    status: Literal["restored", "conflict", "missing"]
+    memory_id: str
+    row: dict[str, Any] | None = None
 
 
 class MemoryDreamStore:
@@ -304,7 +324,7 @@ class MemoryDreamStore:
 
     def get_memory_row(self, memory_id: str) -> dict[str, Any] | None:
         row = self.db.fetchone(
-            f"SELECT {', '.join(_MEMORY_COLUMNS)} FROM memories WHERE id = %s",  # nosec B608
+            "SELECT * FROM memories WHERE id = %s",
             (memory_id,),
         )
         if row is None:
@@ -313,6 +333,302 @@ class MemoryDreamStore:
         data["tags"] = _decode(data.get("tags")) or []
         data["_crossrefs"] = self._get_crossref_rows(memory_id)
         return data
+
+    @staticmethod
+    def _crossrefs_with_connection(conn: Any, memory_id: str) -> list[dict[str, Any]]:
+        rows = conn.execute(
+            """
+            SELECT source_id, target_id, similarity, created_at
+              FROM memory_crossrefs
+             WHERE source_id = %s OR target_id = %s
+             ORDER BY source_id, target_id
+            """,
+            (memory_id, memory_id),
+        ).fetchall()
+        return [dict(row) for row in rows]
+
+    @staticmethod
+    def _insert_snapshot_with_connection(
+        conn: Any,
+        *,
+        run_id: str,
+        memory_id: str,
+        action: str,
+        before_data: dict[str, Any] | None,
+    ) -> int:
+        row = conn.execute(
+            """
+            INSERT INTO memory_dream_snapshots (
+                run_id, memory_id, action, before_data, applied
+            )
+            VALUES (%s, %s, %s, %s, FALSE)
+            RETURNING id
+            """,
+            (run_id, memory_id, action, _json(before_data)),
+        ).fetchone()
+        if row is None:
+            raise RuntimeError("memory_dream_snapshots insert did not return an id")
+        return int(row["id"])
+
+    @staticmethod
+    def _complete_snapshot_with_connection(
+        conn: Any,
+        snapshot_id: int,
+        *,
+        after_data: dict[str, Any] | None,
+    ) -> None:
+        conn.execute(
+            """
+            UPDATE memory_dream_snapshots
+               SET after_data = %s, applied = TRUE
+             WHERE id = %s
+            """,
+            (_json(after_data), snapshot_id),
+        )
+
+    def apply_candidate_action(
+        self,
+        *,
+        run_id: str,
+        memory_id: str,
+        action: Literal["keep", "review", "delete", "refresh", "promote"],
+        selected_due_version: int,
+        selected_updated_at: datetime,
+        selected_project_id: str,
+        selected_is_global: bool,
+        stamp: str,
+        content: str | None = None,
+        tags: list[str] | None = None,
+        on_committed: Callable[[], None] | None = None,
+    ) -> DreamApplyResult | None:
+        """Apply one dream action behind the complete selected-row fence."""
+        with self.db.transaction() as conn:
+            row = conn.execute(
+                """
+                SELECT * FROM memories
+                 WHERE id = %s
+                   AND dream_due_version = %s
+                   AND updated_at = %s
+                   AND project_id = %s
+                   AND is_global = %s
+                   AND deleted_at IS NULL
+                 FOR UPDATE
+                """,
+                (
+                    memory_id,
+                    selected_due_version,
+                    selected_updated_at,
+                    selected_project_id,
+                    selected_is_global,
+                ),
+            ).fetchone()
+            if row is None:
+                return None
+
+            before = dict(row)
+            before["tags"] = _decode(before.get("tags")) or []
+            before["_crossrefs"] = self._crossrefs_with_connection(conn, memory_id)
+            snapshot_id = self._insert_snapshot_with_connection(
+                conn,
+                run_id=run_id,
+                memory_id=memory_id,
+                action=action,
+                before_data=before,
+            )
+
+            if action == "keep":
+                conn.execute(
+                    "UPDATE memories SET last_dreamed_at = %s WHERE id = %s",
+                    (stamp, memory_id),
+                )
+            elif action in {"review", "delete"}:
+                conn.execute(
+                    """
+                    UPDATE memories
+                       SET last_dreamed_at = %s, deleted_at = %s, dream_action = %s
+                     WHERE id = %s
+                    """,
+                    (stamp, stamp, action, memory_id),
+                )
+            elif action == "refresh":
+                normalized_content = (content or "").strip()
+                if not normalized_content:
+                    raise ValueError("Memory content cannot be empty")
+                duplicate = conn.execute(
+                    """
+                    SELECT id FROM memories
+                     WHERE content = %s
+                       AND project_id = %s
+                       AND is_global = %s
+                       AND id != %s
+                     LIMIT 1
+                    """,
+                    (normalized_content, selected_project_id, selected_is_global, memory_id),
+                ).fetchone()
+                if duplicate is not None:
+                    raise ValueError("Memory content already exists in this project/global scope")
+                if tags is None:
+                    conn.execute(
+                        """
+                        UPDATE memories
+                           SET content = %s, updated_at = %s, last_dreamed_at = %s,
+                               vector_needs_reindex = TRUE
+                         WHERE id = %s
+                        """,
+                        (normalized_content, utc_now(), stamp, memory_id),
+                    )
+                else:
+                    conn.execute(
+                        """
+                        UPDATE memories
+                           SET content = %s, tags = %s, updated_at = %s,
+                               last_dreamed_at = %s, vector_needs_reindex = TRUE
+                         WHERE id = %s
+                        """,
+                        (normalized_content, _json(tags), utc_now(), stamp, memory_id),
+                    )
+            else:
+                conn.execute(
+                    """
+                    UPDATE memories
+                       SET is_global = TRUE, vector_needs_reindex = TRUE,
+                           last_dreamed_at = %s
+                     WHERE id = %s
+                    """,
+                    (stamp, memory_id),
+                )
+
+            after_row = conn.execute(
+                "SELECT * FROM memories WHERE id = %s", (memory_id,)
+            ).fetchone()
+            if after_row is None:
+                raise RuntimeError(f"Memory {memory_id} vanished during dream apply")
+            after = dict(after_row)
+            after["tags"] = _decode(after.get("tags")) or []
+            after["_crossrefs"] = self._crossrefs_with_connection(conn, memory_id)
+            self._complete_snapshot_with_connection(
+                conn,
+                snapshot_id,
+                after_data=after,
+            )
+
+        if on_committed is not None:
+            on_committed()
+        return DreamApplyResult(snapshot_id=snapshot_id, before=before, after=after)
+
+    @staticmethod
+    def _same_snapshot_value(current: Any, captured: Any) -> bool:
+        return json.dumps(to_json_safe(current), default=str, sort_keys=True) == json.dumps(
+            to_json_safe(captured),
+            default=str,
+            sort_keys=True,
+        )
+
+    @staticmethod
+    def _restore_crossrefs_with_connection(
+        conn: Any,
+        memory_id: str,
+        crossrefs: list[dict[str, Any]],
+    ) -> None:
+        conn.execute(
+            "DELETE FROM memory_crossrefs WHERE source_id = %s OR target_id = %s",
+            (memory_id, memory_id),
+        )
+        for crossref in crossrefs:
+            conn.execute(
+                """
+                INSERT INTO memory_crossrefs (source_id, target_id, similarity, created_at)
+                VALUES (%s, %s, %s, %s)
+                ON CONFLICT (source_id, target_id) DO UPDATE
+                SET similarity = EXCLUDED.similarity,
+                    created_at = EXCLUDED.created_at
+                """,
+                (
+                    crossref["source_id"],
+                    crossref["target_id"],
+                    crossref["similarity"],
+                    crossref["created_at"],
+                ),
+            )
+
+    def revert_snapshot(
+        self,
+        snapshot: dict[str, Any],
+        *,
+        on_committed: Callable[[], None] | None = None,
+    ) -> DreamRevertResult:
+        """Restore one snapshot only if its action-owned after-state still owns the row."""
+        memory_id = str(snapshot["memory_id"])
+        action = str(snapshot["action"])
+        before = snapshot.get("before_data")
+        after = snapshot.get("after_data")
+        if not isinstance(before, dict) or not isinstance(after, dict):
+            raise ValueError(f"Snapshot {snapshot.get('id')} lacks restorable row data")
+
+        owned_columns: tuple[str, ...]
+        if action == "refresh":
+            owned_columns = ("content", "tags")
+        elif action == "promote":
+            owned_columns = ("is_global",)
+        elif action in {"review", "delete"}:
+            owned_columns = ("deleted_at", "dream_action")
+        else:
+            owned_columns = ()
+
+        with self.db.transaction() as conn:
+            current_row = conn.execute(
+                "SELECT * FROM memories WHERE id = %s FOR UPDATE",
+                (memory_id,),
+            ).fetchone()
+            if current_row is None:
+                return DreamRevertResult(status="missing", memory_id=memory_id)
+            current = dict(current_row)
+            current["tags"] = _decode(current.get("tags")) or []
+            fence_columns = tuple(
+                dict.fromkeys(("deleted_at", "project_id", "is_global", *owned_columns))
+            )
+            if any(
+                not self._same_snapshot_value(current.get(column), after.get(column))
+                for column in fence_columns
+            ):
+                return DreamRevertResult(status="conflict", memory_id=memory_id)
+
+            assignments: list[str] = []
+            params: list[Any] = []
+            for column in owned_columns:
+                assignments.append(f"{column} = %s")
+                value = before.get(column)
+                params.append(_json(value) if column == "tags" else value)
+            assignments.extend(
+                [
+                    "updated_at = %s",
+                    "last_dreamed_at = NULL",
+                    "dream_due_version = dream_due_version + 1",
+                    "vector_needs_reindex = TRUE",
+                ]
+            )
+            params.extend((utc_now(), memory_id))
+            conn.execute(
+                f"UPDATE memories SET {', '.join(assignments)} WHERE id = %s",  # nosec B608
+                tuple(params),
+            )
+            self._restore_crossrefs_with_connection(
+                conn,
+                memory_id,
+                list(before.get("_crossrefs") or []),
+            )
+            restored_row = conn.execute(
+                "SELECT * FROM memories WHERE id = %s",
+                (memory_id,),
+            ).fetchone()
+            if restored_row is None:
+                raise RuntimeError(f"Memory {memory_id} vanished during dream revert")
+            restored = dict(restored_row)
+            restored["tags"] = _decode(restored.get("tags")) or []
+
+        if on_committed is not None:
+            on_committed()
+        return DreamRevertResult(status="restored", memory_id=memory_id, row=restored)
 
     def _get_crossref_rows(self, memory_id: str) -> list[dict[str, Any]]:
         rows = self.db.fetchall(

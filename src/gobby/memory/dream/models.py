@@ -59,6 +59,7 @@ class DreamCandidate:
     created_at: datetime
     updated_at: datetime
     last_accessed_at: datetime | None
+    dream_due_version: int = 0
     reasons: list[str] = field(default_factory=list)
     related: tuple[RelatedMemoryEvidence, ...] = ()
 
@@ -77,6 +78,7 @@ class DreamCandidate:
             "created_at": self.created_at,
             "updated_at": self.updated_at,
             "last_accessed_at": self.last_accessed_at,
+            "dream_due_version": self.dream_due_version,
             "reasons": self.reasons,
         }
         if self.related:

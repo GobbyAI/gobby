@@ -16,7 +16,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
-from typing import Any, Literal
+from typing import Any, Literal, cast
 
 import psycopg
 
@@ -70,7 +70,13 @@ async def apply_dream_plan(
             logger.warning("Memory dream action failed: %s", exc)
             # A failed mutation must not strand the candidate in the sweep window;
             # advance its cooldown cursor so it is not re-dreamed immediately.
-            await _advance_cursor(memory_manager, action.memory_id, stamp)
+            await _advance_cursor(
+                memory_manager,
+                store,
+                run_id,
+                candidate_map.get(action.memory_id or ""),
+                stamp,
+            )
         except Exception:
             logger.exception("Unexpected memory dream action failure")
             raise
@@ -82,6 +88,167 @@ async def apply_dream_plan(
 
 
 async def revert_dream_run(
+    *,
+    store: MemoryDreamStore,
+    run_id: str,
+    memory_manager: MemoryDreamManagerProtocol | None = None,
+    reconcile_after_revert: bool = True,
+) -> dict[str, Any]:
+    """Conflict-aware restore for transactional stores; preserve protocol fakes."""
+    if not hasattr(store.db, "transaction"):
+        return await _revert_dream_run_legacy(
+            store=store,
+            run_id=run_id,
+            memory_manager=memory_manager,
+            reconcile_after_revert=reconcile_after_revert,
+        )
+
+    run = await asyncio.to_thread(store.get_run, run_id)
+    if run is None:
+        return {"success": False, "error": f"Dream run not found: {run_id}"}
+    if run.get("status") == "reverted":
+        return {"success": True, "run_id": run_id, "already_reverted": True}
+
+    restored = 0
+    deleted = 0
+    conflicts: list[dict[str, Any]] = []
+    failures: list[dict[str, Any]] = []
+    secondary_failures: list[dict[str, str]] = []
+    snapshots = await asyncio.to_thread(store.list_snapshots, run_id)
+    for snapshot in snapshots:
+        memory_id_value = snapshot.get("memory_id")
+        if not memory_id_value:
+            failures.append(
+                {"snapshot_id": snapshot.get("id"), "error": "snapshot missing memory_id"}
+            )
+            continue
+        memory_id = str(memory_id_value)
+        before = snapshot.get("before_data")
+        after = snapshot.get("after_data")
+        try:
+            if before is None and after is not None:
+                if memory_manager is None:
+                    raise ValueError("Dream-created memory revert requires a memory manager")
+                removed = await memory_manager.delete_memory(memory_id)
+                if removed:
+                    deleted += 1
+                continue
+
+            outcome = await asyncio.to_thread(
+                store.revert_snapshot,
+                snapshot,
+                on_committed=(
+                    getattr(memory_manager, "notify_memory_changed", None)
+                    if memory_manager is not None
+                    else None
+                ),
+            )
+            if outcome.status == "conflict":
+                conflicts.append(
+                    {
+                        "snapshot_id": snapshot.get("id"),
+                        "memory_id": memory_id,
+                        "reason": "newer mutation owns action-restored columns",
+                    }
+                )
+                continue
+            if outcome.status == "missing" or outcome.row is None:
+                continue
+
+            restored += 1
+            if memory_manager is not None:
+                row = outcome.row
+                try:
+                    if snapshot.get("action") == "promote" and isinstance(after, dict):
+                        secondary_failures.extend(
+                            await memory_manager.sync_memory_scope_indices(
+                                Memory.from_row(row),
+                                previous_project_id=str(after["project_id"]),
+                                previous_is_global=bool(after["is_global"]),
+                                notify_changed=False,
+                            )
+                        )
+                    else:
+                        converged = await memory_manager.restore_memory_indices(
+                            memory_id,
+                            str(row["content"]),
+                            str(row["project_id"]),
+                            bool(row["is_global"]),
+                            str(row["memory_type"]),
+                            notify_changed=False,
+                        )
+                        if not converged:
+                            secondary_failures.append(
+                                {
+                                    "memory_id": memory_id,
+                                    "index": "secondary",
+                                    "error": "not converged",
+                                }
+                            )
+                except Exception as exc:
+                    secondary_failures.append(
+                        {"memory_id": memory_id, "index": "secondary", "error": str(exc)}
+                    )
+                    logger.warning("Memory dream revert reconciliation deferred: %s", exc)
+        except Exception as exc:
+            failures.append(
+                {
+                    "snapshot_id": snapshot.get("id"),
+                    "memory_id": memory_id,
+                    "error": str(exc),
+                }
+            )
+            logger.warning("Memory dream snapshot revert failed: %s", exc)
+
+    completed_ts = _now()
+    if failures:
+        summary = {
+            "restored": restored,
+            "deleted_created_memories": deleted,
+            "conflicts": conflicts,
+            "secondary_sync_failures": secondary_failures,
+            "errors": len(failures),
+            "error_details": failures,
+        }
+        error = f"Failed to revert {len(failures)} memory dream snapshot(s)"
+        await asyncio.to_thread(
+            store.update_run,
+            run_id,
+            status="revert_failed",
+            completed_at=completed_ts,
+            summary=summary,
+            error=error,
+        )
+        return {
+            "success": False,
+            "run_id": run_id,
+            "status": "revert_failed",
+            **summary,
+            "error": error,
+        }
+
+    await asyncio.to_thread(
+        store.update_run,
+        run_id,
+        status="reverted",
+        reverted_at=completed_ts,
+        completed_at=completed_ts,
+    )
+    result: dict[str, Any] = {
+        "success": True,
+        "run_id": run_id,
+        "restored": restored,
+        "deleted_created_memories": deleted,
+        "conflicts": conflicts,
+    }
+    if secondary_failures:
+        result["secondary_sync_failures"] = secondary_failures
+    if reconcile_after_revert and memory_manager is not None and (restored or deleted):
+        await _reconcile(memory_manager, result)
+    return result
+
+
+async def _revert_dream_run_legacy(
     *,
     store: MemoryDreamStore,
     run_id: str,
@@ -226,34 +393,94 @@ async def _apply_action(
     candidate_map: dict[str, DreamCandidate],
     stamp: str,
 ) -> int:
-    if action.action == "keep":
-        await _advance_cursor(memory_manager, action.memory_id, stamp)
-        return 0
-    if action.action == "review":
-        return await _soft_hide(
-            memory_manager, store, run_id, _required_memory_id(action), "review", stamp
+    if not hasattr(store.db, "transaction"):
+        return await _apply_action_legacy(
+            memory_manager=memory_manager,
+            store=store,
+            run_id=run_id,
+            action=action,
+            candidate_map=candidate_map,
+            stamp=stamp,
         )
-    if action.action == "delete":
-        return await _soft_hide(
-            memory_manager, store, run_id, _required_memory_id(action), "delete", stamp
+    if action.action in {"keep", "review", "delete", "refresh", "promote"}:
+        memory_id = _required_memory_id(action)
+        candidate = candidate_map.get(memory_id)
+        if candidate is None:
+            logger.warning("Memory dream action skipped missing selected candidate: %s", memory_id)
+            return 0
+        return await _apply_fenced_action(
+            memory_manager,
+            store,
+            run_id,
+            candidate,
+            action,
+            stamp,
         )
-    if action.action == "refresh" and action.content:
-        memory_id = _required_memory_id(action)
-        return await _refresh(memory_manager, store, run_id, memory_id, action, stamp)
-    if action.action == "promote":
-        memory_id = _required_memory_id(action)
-        return await _promote(memory_manager, store, run_id, memory_id, stamp)
     if action.action == "merge":
         return await _merge(memory_manager, store, run_id, action)
     if action.action == "supersede":
         _required_memory_id(action)
         return await _supersede(memory_manager, store, run_id, action, candidate_map)
     # Defensive: any other shape (e.g. refresh with no content) advances the cursor.
-    await _advance_cursor(memory_manager, action.memory_id, stamp)
+    await _advance_cursor(
+        memory_manager,
+        store,
+        run_id,
+        candidate_map.get(action.memory_id or ""),
+        stamp,
+    )
     return 0
 
 
-async def _soft_hide(
+async def _apply_action_legacy(
+    *,
+    memory_manager: MemoryDreamManagerProtocol,
+    store: MemoryDreamStore,
+    run_id: str,
+    action: DreamAction,
+    candidate_map: dict[str, DreamCandidate],
+    stamp: str,
+) -> int:
+    """Retain deterministic behavior for non-transactional protocol test doubles."""
+    if action.action == "keep":
+        await _advance_cursor_legacy(memory_manager, action.memory_id, stamp)
+        return 0
+    if action.action in {"review", "delete"}:
+        hide_action = cast(Literal["review", "delete"], action.action)
+        return await _soft_hide_legacy(
+            memory_manager,
+            store,
+            run_id,
+            _required_memory_id(action),
+            hide_action,
+            stamp,
+        )
+    if action.action == "refresh" and action.content:
+        return await _refresh_legacy(
+            memory_manager,
+            store,
+            run_id,
+            _required_memory_id(action),
+            action,
+            stamp,
+        )
+    if action.action == "promote":
+        return await _promote_legacy(
+            memory_manager,
+            store,
+            run_id,
+            _required_memory_id(action),
+            stamp,
+        )
+    if action.action == "merge":
+        return await _merge(memory_manager, store, run_id, action)
+    if action.action == "supersede":
+        return await _supersede(memory_manager, store, run_id, action, candidate_map)
+    await _advance_cursor_legacy(memory_manager, action.memory_id, stamp)
+    return 0
+
+
+async def _soft_hide_legacy(
     memory_manager: MemoryDreamManagerProtocol,
     store: MemoryDreamStore,
     run_id: str,
@@ -261,7 +488,6 @@ async def _soft_hide(
     action_name: Literal["review", "delete"],
     stamp: str,
 ) -> int:
-    """Snapshot the active row, then soft-hide it via ``mark_dreamed``."""
     before = await asyncio.to_thread(store.get_memory_row, memory_id)
     if before is None:
         return 0
@@ -273,28 +499,29 @@ async def _soft_hide(
         before_data=before,
     )
     await asyncio.to_thread(
-        memory_manager.mark_dreamed, memory_id, hidden_as=action_name, when=stamp
+        memory_manager.mark_dreamed,
+        memory_id,
+        hidden_as=action_name,
+        when=stamp,
     )
     after = await asyncio.to_thread(store.get_memory_row, memory_id)
     await asyncio.to_thread(store.complete_snapshot, snapshot_id, after_data=after)
     return 1
 
 
-async def _promote(
+async def _promote_legacy(
     memory_manager: MemoryDreamManagerProtocol,
     store: MemoryDreamStore,
     run_id: str,
     memory_id: str,
     stamp: str,
 ) -> int:
-    """Snapshot and promote a repo-scoped memory to global scope."""
     before = await asyncio.to_thread(store.get_memory_row, memory_id)
     if before is None:
         return 0
     if bool(before["is_global"]):
-        await _advance_cursor(memory_manager, memory_id, stamp)
+        await _advance_cursor_legacy(memory_manager, memory_id, stamp)
         return 0
-
     snapshot_id = await asyncio.to_thread(
         store.insert_snapshot,
         run_id=run_id,
@@ -302,42 +529,145 @@ async def _promote(
         action="promote",
         before_data=before,
     )
-    db_mutated = False
     try:
-        db_mutated = True
         await memory_manager.promote_memory(memory_id)
-        await asyncio.to_thread(memory_manager.mark_dreamed, memory_id, hidden_as=None, when=stamp)
+        await asyncio.to_thread(memory_manager.mark_dreamed, memory_id, when=stamp)
         after = await asyncio.to_thread(store.get_memory_row, memory_id)
         await asyncio.to_thread(store.complete_snapshot, snapshot_id, after_data=after)
         return 1
     except Exception:
-        if db_mutated:
-            try:
-                current = await asyncio.to_thread(store.get_memory_row, memory_id)
-                if current is not None and bool(current["is_global"]) != bool(before["is_global"]):
-                    await _restore_promote_row(memory_manager, store, before)
-            except Exception as rollback_exc:
-                logger.warning(
-                    "Memory dream promote rollback restore failed: %s",
-                    rollback_exc,
-                    exc_info=True,
-                )
+        try:
+            current = await asyncio.to_thread(store.get_memory_row, memory_id)
+            if current is not None and bool(current["is_global"]) != bool(before["is_global"]):
+                await _restore_promote_row(memory_manager, store, before)
+        except Exception as rollback_exc:
+            logger.warning(
+                "Memory dream promote rollback restore failed: %s",
+                rollback_exc,
+                exc_info=True,
+            )
         raise
 
 
-async def _advance_cursor(
+async def _refresh_legacy(
+    memory_manager: MemoryDreamManagerProtocol,
+    store: MemoryDreamStore,
+    run_id: str,
+    memory_id: str,
+    action: DreamAction,
+    stamp: str,
+) -> int:
+    before = await asyncio.to_thread(store.get_memory_row, memory_id)
+    if before is None:
+        return 0
+    snapshot_id = await asyncio.to_thread(
+        store.insert_snapshot,
+        run_id=run_id,
+        memory_id=memory_id,
+        action="refresh",
+        before_data=before,
+    )
+    await memory_manager.update_memory(
+        memory_id=memory_id, content=action.content, tags=action.tags
+    )
+    await asyncio.to_thread(memory_manager.mark_dreamed, memory_id, when=stamp)
+    after = await asyncio.to_thread(store.get_memory_row, memory_id)
+    await asyncio.to_thread(store.complete_snapshot, snapshot_id, after_data=after)
+    return 1
+
+
+async def _advance_cursor_legacy(
     memory_manager: MemoryDreamManagerProtocol,
     memory_id: str | None,
     stamp: str,
 ) -> None:
-    """Stamp ``last_dreamed_at`` for a kept candidate so the sweep cursor advances."""
     if not memory_id:
         return
     try:
-        await asyncio.to_thread(memory_manager.mark_dreamed, memory_id, hidden_as=None, when=stamp)
+        await asyncio.to_thread(memory_manager.mark_dreamed, memory_id, when=stamp)
+    except _EXPECTED_ACTION_ERRORS as exc:
+        logger.debug("Memory dream cursor advance skipped memory_id=%s: %s", memory_id, exc)
+
+
+async def _apply_fenced_action(
+    memory_manager: MemoryDreamManagerProtocol,
+    store: MemoryDreamStore,
+    run_id: str,
+    candidate: DreamCandidate,
+    action: DreamAction,
+    stamp: str,
+) -> int:
+    """Apply selected state atomically, then reconcile secondaries post-commit."""
+    action_name = cast(
+        Literal["keep", "review", "delete", "refresh", "promote"],
+        action.action,
+    )
+    if action_name not in {"keep", "review", "delete", "refresh", "promote"}:
+        raise ValueError(f"Unsupported fenced dream action: {action_name}")
+    result = await asyncio.to_thread(
+        store.apply_candidate_action,
+        run_id=run_id,
+        memory_id=candidate.id,
+        action=action_name,
+        selected_due_version=candidate.dream_due_version,
+        selected_updated_at=candidate.updated_at,
+        selected_project_id=candidate.project_id,
+        selected_is_global=candidate.is_global,
+        stamp=stamp,
+        content=action.content,
+        tags=action.tags,
+        on_committed=getattr(memory_manager, "notify_memory_changed", None),
+    )
+    if result is None:
+        return 0
+    if action_name == "refresh":
+        await memory_manager.restore_memory_indices(
+            candidate.id,
+            str(result.after["content"]),
+            str(result.after["project_id"]),
+            bool(result.after["is_global"]),
+            str(result.after["memory_type"]),
+            notify_changed=False,
+        )
+    elif action_name == "promote":
+        await memory_manager.sync_memory_scope_indices(
+            Memory.from_row(result.after),
+            previous_project_id=str(result.before["project_id"]),
+            previous_is_global=bool(result.before["is_global"]),
+            notify_changed=False,
+        )
+    return 0 if action_name == "keep" else 1
+
+
+async def _advance_cursor(
+    memory_manager: MemoryDreamManagerProtocol,
+    store: MemoryDreamStore,
+    run_id: str,
+    candidate: DreamCandidate | None,
+    stamp: str,
+) -> None:
+    """Stamp ``last_dreamed_at`` for a kept candidate so the sweep cursor advances."""
+    if candidate is None:
+        return
+    if not hasattr(store.db, "transaction"):
+        await _advance_cursor_legacy(memory_manager, candidate.id, stamp)
+        return
+    try:
+        await asyncio.to_thread(
+            store.apply_candidate_action,
+            run_id=run_id,
+            memory_id=candidate.id,
+            action="keep",
+            selected_due_version=candidate.dream_due_version,
+            selected_updated_at=candidate.updated_at,
+            selected_project_id=candidate.project_id,
+            selected_is_global=candidate.is_global,
+            stamp=stamp,
+            on_committed=getattr(memory_manager, "notify_memory_changed", None),
+        )
     except _EXPECTED_ACTION_ERRORS as exc:
         # Row vanished (e.g. concurrent delete); it drops out of the sweep naturally.
-        logger.debug("Memory dream cursor advance skipped memory_id=%s: %s", memory_id, exc)
+        logger.debug("Memory dream cursor advance skipped memory_id=%s: %s", candidate.id, exc)
 
 
 async def _delete(
@@ -371,37 +701,6 @@ async def _delete(
         )
         return 0
     await asyncio.to_thread(store.complete_snapshot, snapshot_id, after_data=None)
-    return 1
-
-
-async def _refresh(
-    memory_manager: MemoryDreamManagerProtocol,
-    store: MemoryDreamStore,
-    run_id: str,
-    memory_id: str,
-    action: DreamAction,
-    stamp: str,
-) -> int:
-    before = await asyncio.to_thread(store.get_memory_row, memory_id)
-    if before is None:
-        return 0
-    snapshot_id = await asyncio.to_thread(
-        store.insert_snapshot,
-        run_id=run_id,
-        memory_id=memory_id,
-        action="refresh",
-        before_data=before,
-    )
-    await memory_manager.update_memory(
-        memory_id=memory_id,
-        content=action.content,
-        tags=action.tags,
-    )
-    # update_memory bumps updated_at (intended for refresh); stamp the cooldown
-    # cursor too so the refreshed row drops out of the next sweep page.
-    await asyncio.to_thread(memory_manager.mark_dreamed, memory_id, hidden_as=None, when=stamp)
-    after = await asyncio.to_thread(store.get_memory_row, memory_id)
-    await asyncio.to_thread(store.complete_snapshot, snapshot_id, after_data=after)
     return 1
 
 

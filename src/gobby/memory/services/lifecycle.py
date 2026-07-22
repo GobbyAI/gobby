@@ -10,9 +10,16 @@ from typing import TYPE_CHECKING, Any, cast
 
 from psycopg.rows import dict_row
 
+from gobby.memory.dream.candidates import memory_to_candidate
+from gobby.memory.dream.related import (
+    RelatedEvidenceSession,
+    RetrievalScope,
+    gather_related_evidence,
+)
 from gobby.memory.protocol import MemoryBackendProtocol, MemoryRecord
 from gobby.memory.services.crossref import CrossrefService
 from gobby.memory.vectorstore import is_recoverable_vector_store_error
+from gobby.memory.write_result import MemoryWriteOutcome
 from gobby.projects.fenced_vector_store import global_write_context, project_write_context
 from gobby.storage.hub.async_ops import run_bounded_db
 from gobby.storage.memories import (
@@ -34,6 +41,8 @@ logger = logging.getLogger(__name__)
 EMBEDDING_WARNING_INTERVAL_SECONDS = 60.0
 SUPERSESSION_CLEANUP_BUDGET_SECONDS = 5.0
 MUTATOR_RECONCILIATION_BUDGET_SECONDS = 5.0
+WRITE_MARK_DUE_MAX_CONCURRENCY = 2
+_local_mode_dedup_warning_logged = False
 
 
 class MemoryLifecycleService:
@@ -72,6 +81,8 @@ class MemoryLifecycleService:
         self._log_vector_store_failure = vector_store_failure_logger
         self._run_db = run_db
         self._last_embedding_warning_at = -EMBEDDING_WARNING_INTERVAL_SECONDS
+        self._write_mark_due_semaphore = asyncio.Semaphore(WRITE_MARK_DUE_MAX_CONCURRENCY)
+        self._related_evidence_sessions: set[RelatedEvidenceSession] = set()
 
     async def _run_storage[T](self, func: Callable[..., T], *args: Any, **kwargs: Any) -> T:
         if self._run_db is None:
@@ -156,6 +167,13 @@ class MemoryLifecycleService:
         exclude_memory_id: str | None = None,
     ) -> None:
         """Fire a background dedup task."""
+        global _local_mode_dedup_warning_logged
+        is_remote = getattr(self._vector_store, "is_remote", None)
+        if callable(is_remote) and not is_remote():
+            if not _local_mode_dedup_warning_logged:
+                logger.warning("Background memory dedup is disabled for local Qdrant mode")
+                _local_mode_dedup_warning_logged = True
+            return
 
         async def _run_dedup() -> None:
             try:
@@ -178,6 +196,78 @@ class MemoryLifecycleService:
         task = asyncio.create_task(_run_dedup(), name="memory-dedup")
         self._background_tasks.add(task)
         task.add_done_callback(self._background_tasks.discard)
+
+    def schedule_write_mark_due(
+        self,
+        memory: Memory,
+        outcome: MemoryWriteOutcome,
+    ) -> asyncio.Task[None] | None:
+        """Schedule bounded related-memory wakeup for newly active knowledge."""
+        if not self._config.dream.write_supersession_mark_due_enabled:
+            return None
+        if outcome not in {"created", "reactivated"}:
+            return None
+
+        anchor_at = memory.created_at if outcome == "created" else memory.updated_at
+        scope = (
+            RetrievalScope.global_only()
+            if memory.is_global
+            else RetrievalScope.project_only(memory.project_id)
+        )
+        expected_project_id = None if memory.is_global else memory.project_id
+
+        async def mark_related_due() -> None:
+            session: RelatedEvidenceSession | None = None
+            try:
+                async with self._write_mark_due_semaphore:
+                    session = RelatedEvidenceSession()
+                    self._related_evidence_sessions.add(session)
+                    candidate = memory_to_candidate(memory, anchor_at)
+                    enriched = await gather_related_evidence(
+                        [candidate],
+                        db=self.storage.db,
+                        vector_store=self._vector_store,
+                        dream_config=self._config.dream,
+                        session=session,
+                        scope=scope,
+                        temporal_direction="older",
+                        anchor_at=anchor_at,
+                    )
+                    related_ids = [item.id for item in enriched[0].related] if enriched else []
+                    if related_ids:
+                        await self._run_storage(
+                            self.storage.mark_memories_due,
+                            related_ids,
+                            expected_project_id=expected_project_id,
+                        )
+            except asyncio.CancelledError:
+                raise
+            except Exception:
+                logger.warning(
+                    "Background related-memory mark-due failed for %s",
+                    memory.id,
+                    exc_info=True,
+                )
+            finally:
+                if session is not None:
+                    try:
+                        await session.aclose()
+                    finally:
+                        self._related_evidence_sessions.discard(session)
+
+        task = asyncio.create_task(mark_related_due(), name=f"memory-mark-due-{memory.id}")
+        self._background_tasks.add(task)
+        task.add_done_callback(self._background_tasks.discard)
+        return task
+
+    async def close_related_evidence_sessions(self) -> None:
+        """Concurrently drain any sessions retained after task cancellation."""
+        sessions = tuple(self._related_evidence_sessions)
+        if sessions:
+            await asyncio.gather(
+                *(session.aclose() for session in sessions), return_exceptions=True
+            )
+        self._related_evidence_sessions.clear()
 
     async def enqueue_for_graph(
         self,
@@ -251,6 +341,8 @@ class MemoryLifecycleService:
             return memory
 
         await self._reconcile_active_snapshot(memory)
+
+        self.schedule_write_mark_due(memory, result.outcome)
 
         if self._dedup_service_provider():
             self.fire_background_dedup(
@@ -425,6 +517,7 @@ class MemoryLifecycleService:
         graph_cleanup_project_id: str | None = None,
         graph_cleanup_is_global: bool | None = None,
         payload_only: bool = False,
+        notify_changed: bool = True,
     ) -> bool:
         """Rebuild secondaries only while the scheduled active row remains locked."""
 
@@ -568,7 +661,8 @@ class MemoryLifecycleService:
             return False
         if converged:
             memory.vector_needs_reindex = False
-            self.storage.notify_changed()
+            if notify_changed:
+                self.storage.notify_changed()
         return converged
 
     async def sync_memory_scope_indices(
@@ -577,13 +671,16 @@ class MemoryLifecycleService:
         *,
         previous_project_id: str | None = None,
         previous_is_global: bool | None = None,
+        notify_changed: bool = True,
     ) -> list[dict[str, str]]:
         """Rebuild scope-dependent projections through the active-row fence."""
-        converged = await self._reconcile_active_snapshot(
-            memory,
-            graph_cleanup_project_id=previous_project_id,
-            graph_cleanup_is_global=previous_is_global,
-        )
+        reconcile_kwargs: dict[str, Any] = {
+            "graph_cleanup_project_id": previous_project_id,
+            "graph_cleanup_is_global": previous_is_global,
+        }
+        if not notify_changed:
+            reconcile_kwargs["notify_changed"] = False
+        converged = await self._reconcile_active_snapshot(memory, **reconcile_kwargs)
         if converged:
             return []
         return [{"memory_id": memory.id, "index": "secondary", "error": "not converged"}]
@@ -595,6 +692,8 @@ class MemoryLifecycleService:
         project_id: str,
         is_global: bool,
         memory_type: str,
+        *,
+        notify_changed: bool = True,
     ) -> bool:
         """Recreate secondary state through the active-row fence."""
         stored = await self._run_storage(
@@ -613,6 +712,7 @@ class MemoryLifecycleService:
             stored,
             graph_cleanup_project_id=project_id,
             graph_cleanup_is_global=is_global,
+            notify_changed=notify_changed,
         )
 
     async def reconcile_memory_indices(self, memory_id: str) -> bool:

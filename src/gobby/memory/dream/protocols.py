@@ -39,6 +39,8 @@ class MemoryDreamManagerProtocol(Protocol):
 
     def mark_global_memories_due(self) -> int: ...
 
+    def notify_memory_changed(self) -> None: ...
+
     def mark_dreamed(
         self,
         memory_id: str,
@@ -75,6 +77,10 @@ class MemoryDreamManagerProtocol(Protocol):
     async def sync_memory_scope_indices(
         self,
         memory: Memory,
+        *,
+        previous_project_id: str | None = None,
+        previous_is_global: bool | None = None,
+        notify_changed: bool = True,
     ) -> list[dict[str, str]]: ...
 
     async def restore_memory_indices(
@@ -84,6 +90,8 @@ class MemoryDreamManagerProtocol(Protocol):
         project_id: str,
         is_global: bool,
         memory_type: str,
+        *,
+        notify_changed: bool = True,
     ) -> bool: ...
 
     async def delete_memory(self, memory_id: str) -> bool: ...

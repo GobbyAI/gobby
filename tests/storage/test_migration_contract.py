@@ -258,12 +258,25 @@ def test_postgres_migrations_preserve_known_contiguous_post_baseline_prefix() ->
         "332_attention_states.sql",
         "333_detection_manifests.sql",
         "334_verification_receipts.sql",
+        "335_memories_dream_due_version.sql",
     ]
     migration_names = _tracked_migration_names(migrations_dir)
 
     assert migration_names[: len(known_prefix)] == known_prefix
     versions = [int(name.split("_", 1)[0]) for name in migration_names]
     assert versions == list(range(306, 306 + len(versions)))
+
+
+def test_memory_dream_due_version_schema_contract() -> None:
+    """Fresh baselines and upgraded hubs expose the same monotonic fence column."""
+    baseline = (SRC_ROOT / "storage" / "postgres_baseline_schema.sql").read_text()
+    migration = (
+        SRC_ROOT / "storage" / "migrations" / "335_memories_dream_due_version.sql"
+    ).read_text()
+
+    expected = "dream_due_version INTEGER NOT NULL DEFAULT 0"
+    assert expected in baseline
+    assert expected in migration
 
 
 def test_recall_shadow_migration_defines_capture_and_gate_contract() -> None:

@@ -211,5 +211,6 @@ class StorageAdapter:
             deleted_at=deleted_at,
             dream_action=memory.dream_action,
             last_dreamed_at=last_dreamed_at,
+            dream_due_version=memory.dream_due_version,
             vector_needs_reindex=memory.vector_needs_reindex,
         )

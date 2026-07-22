@@ -186,7 +186,10 @@ class TestBackgroundDedupTask:
 
         await manager.create_memory(content="Content")
 
-        # No background tasks should be created
+        if manager._background_tasks:
+            await asyncio.gather(*tuple(manager._background_tasks))
+
+        # The independent write-time mark-due hook may run, but dedup must not.
         assert len(manager._background_tasks) == 0
 
     @pytest.mark.asyncio

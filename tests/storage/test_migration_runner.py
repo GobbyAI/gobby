@@ -283,6 +283,7 @@ def test_postgres_migration_discovery_finds_all_post_baseline_migrations() -> No
         (332, "attention_states"),
         (333, "detection_manifests"),
         (334, "verification_receipts"),
+        (335, "memories_dream_due_version"),
     ]
     actual = [(migration.version, migration.name) for migration in discovered]
 

@@ -13,6 +13,7 @@ from gobby.memory.services.maintenance import export_markdown as _export_markdow
 from gobby.memory.services.maintenance import get_stats as _get_stats
 from gobby.memory.services.repository import DEFAULT_LIST_LIMIT, MemoryRepository
 from gobby.memory.services.search import DEFAULT_SEARCH_LIMIT, SearchService
+from gobby.memory.write_result import MemoryWriteOutcome
 from gobby.storage.memories import ALL_MEMORIES, Memory, MemoryScope, Visibility
 from gobby.storage.projects import PERSONAL_PROJECT_ID
 
@@ -339,6 +340,30 @@ class MemoryManagerFacadeMethods:
         """Delegate to storage: clear the dream cooldown for global memories."""
         return self.storage.mark_global_memories_due()
 
+    def mark_memories_due(
+        self,
+        memory_ids: list[str],
+        *,
+        expected_project_id: str | None,
+    ) -> int:
+        """Mark listed active memories due after atomically revalidating scope."""
+        return self.storage.mark_memories_due(
+            memory_ids,
+            expected_project_id=expected_project_id,
+        )
+
+    def notify_memory_changed(self) -> None:
+        """Notify listeners after a caller-owned transaction commits."""
+        self.storage.notify_changed()
+
+    def schedule_write_mark_due(
+        self,
+        memory: Memory,
+        outcome: MemoryWriteOutcome,
+    ) -> asyncio.Task[None] | None:
+        """Schedule the shared outcome-aware write-time wakeup hook."""
+        return self._lifecycle_service.schedule_write_mark_due(memory, outcome)
+
     def mark_dreamed(
         self,
         memory_id: str,
@@ -518,8 +543,17 @@ class MemoryManagerFacadeMethods:
     async def sync_memory_scope_indices(
         self,
         memory: Memory,
+        *,
+        previous_project_id: str | None = None,
+        previous_is_global: bool | None = None,
+        notify_changed: bool = True,
     ) -> list[dict[str, str]]:
-        return await self._lifecycle_service.sync_memory_scope_indices(memory)
+        return await self._lifecycle_service.sync_memory_scope_indices(
+            memory,
+            previous_project_id=previous_project_id,
+            previous_is_global=previous_is_global,
+            notify_changed=notify_changed,
+        )
 
     async def restore_memory_indices(
         self,
@@ -528,6 +562,8 @@ class MemoryManagerFacadeMethods:
         project_id: str,
         is_global: bool,
         memory_type: str,
+        *,
+        notify_changed: bool = True,
     ) -> bool:
         return await self._lifecycle_service.restore_memory_indices(
             memory_id,
@@ -535,6 +571,7 @@ class MemoryManagerFacadeMethods:
             project_id,
             is_global,
             memory_type,
+            notify_changed=notify_changed,
         )
 
     async def repair_secondary_scope_projections(self) -> ProjectionScopeRepairResult:

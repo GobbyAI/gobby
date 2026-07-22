@@ -13,6 +13,35 @@ from gobby.utils.datetime import parse_stored_datetime, utc_now
 
 
 class MemoryDreamMixin(MemoryStoreBase):
+    def mark_memories_due(
+        self,
+        memory_ids: list[str],
+        *,
+        expected_project_id: str | None,
+    ) -> int:
+        """Mark listed active memories due when their scope still matches."""
+        if not memory_ids:
+            return 0
+
+        if expected_project_id is None:
+            scope_sql = "is_global IS TRUE"
+            params: tuple[Any, ...] = (memory_ids,)
+        else:
+            scope_sql = "project_id = %s AND is_global IS FALSE"
+            params = (memory_ids, expected_project_id)
+
+        with self.db.transaction() as conn:
+            cursor = conn.execute(
+                "UPDATE memories SET last_dreamed_at = NULL, "
+                "dream_due_version = dream_due_version + 1 "
+                "WHERE id = ANY(%s::uuid[]) AND deleted_at IS NULL AND " + scope_sql,
+                params,
+            )
+            affected = cursor.rowcount
+        if affected:
+            self.notify_changed()
+        return affected
+
     def mark_dreamed_with_connection(
         self,
         conn: Any,
@@ -79,7 +108,8 @@ class MemoryDreamMixin(MemoryStoreBase):
         """
         with self.db.transaction() as conn:
             cursor = conn.execute(
-                "UPDATE memories SET last_dreamed_at = NULL "
+                "UPDATE memories SET last_dreamed_at = NULL, "
+                "dream_due_version = dream_due_version + 1 "
                 "WHERE project_id = %s AND is_global IS FALSE AND deleted_at IS NULL "
                 "AND last_dreamed_at IS NOT NULL",
                 (project_id,),
@@ -93,7 +123,8 @@ class MemoryDreamMixin(MemoryStoreBase):
         """Clear ``last_dreamed_at`` for global live memories only."""
         with self.db.transaction() as conn:
             cursor = conn.execute(
-                "UPDATE memories SET last_dreamed_at = NULL "
+                "UPDATE memories SET last_dreamed_at = NULL, "
+                "dream_due_version = dream_due_version + 1 "
                 "WHERE is_global IS TRUE AND deleted_at IS NULL "
                 "AND last_dreamed_at IS NOT NULL"
             )

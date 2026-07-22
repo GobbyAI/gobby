@@ -337,7 +337,15 @@ class MemoryManager(MemoryManagerFacadeMethods):
         return task
 
     async def close(self) -> None:
-        """Close underlying graph clients."""
+        """Drain daemon-owned work before closing secondary clients."""
+        tasks = tuple(self._background_tasks)
+        for task in tasks:
+            task.cancel()
+        if tasks:
+            await asyncio.gather(*tasks, return_exceptions=True)
+        self._background_tasks.clear()
+        await self._lifecycle_service.close_related_evidence_sessions()
+
         if self._falkor_client:
             try:
                 await self._falkor_client.close()

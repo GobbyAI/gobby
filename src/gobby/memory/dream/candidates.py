@@ -92,6 +92,7 @@ def memory_to_candidate(memory: Any, now: datetime) -> DreamCandidate:
         created_at=require_stored_datetime(getattr(memory, "created_at", None), "created_at"),
         updated_at=require_stored_datetime(getattr(memory, "updated_at", None), "updated_at"),
         last_accessed_at=getattr(memory, "last_accessed_at", None),
+        dream_due_version=_int_attr(memory, "dream_due_version"),
         reasons=reasons,
     )
 

@@ -118,6 +118,7 @@ class Memory:
     deleted_at: datetime | None = None  # NULL = visible; non-NULL = dream-hidden (recoverable)
     dream_action: Literal["review", "delete"] | None = None  # why dream hid the row
     last_dreamed_at: datetime | None = None  # cooldown cursor for the nightly active sweep
+    dream_due_version: int = 0  # monotonic lost-wakeup fence for dream apply
     similarity: float | None = None  # Set at search time, not persisted
     search_via: str | None = None  # Set at search time, not persisted
     ranking_score: float | None = None  # Hybrid retrieval rank, not persisted
@@ -169,6 +170,7 @@ class Memory:
             deleted_at=row.get("deleted_at"),
             dream_action=row.get("dream_action"),
             last_dreamed_at=row.get("last_dreamed_at"),
+            dream_due_version=int(row.get("dream_due_version", 0)),
         )
 
     def to_dict(self) -> dict[str, Any]:
@@ -192,6 +194,7 @@ class Memory:
             "deleted_at": self.deleted_at,
             "dream_action": self.dream_action,
             "last_dreamed_at": self.last_dreamed_at,
+            "dream_due_version": self.dream_due_version,
         }
         if self.similarity is not None:
             data["similarity"] = self.similarity

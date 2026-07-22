@@ -13,8 +13,9 @@ from uuid import UUID
 
 from gobby.config.persistence import MemoryBackupConfig
 from gobby.memory.manager import MemoryManager
+from gobby.memory.write_result import MemoryWriteResult
 from gobby.storage.hub.protocol import HubDatabase
-from gobby.storage.memories import ALL_MEMORIES, MemoryScope, validate_memory_type
+from gobby.storage.memories import ALL_MEMORIES, Memory, MemoryScope, validate_memory_type
 from gobby.sync.jsonl_io import atomic_write_text, export_file_lock
 from gobby.utils.datetime import datetime_to_iso, parse_stored_datetime
 from gobby.utils.json_helpers import json_dumps
@@ -215,19 +216,34 @@ class MemoryBackupManager:
 
     async def restore(self) -> int:
         """Restore a backup without blocking the caller's event loop."""
-        if not self.config.enabled or self.memory_manager is None:
+        memory_manager = self.memory_manager
+        if not self.config.enabled or memory_manager is None:
             return 0
         path = self._get_backup_path()
         if not path.is_file():
             return 0
-        try:
-            restored_count, changed_ids = await asyncio.to_thread(
+
+        async def restore_owned() -> int:
+            restored_count, outcomes = await asyncio.to_thread(
                 self._restore_memories_with_outcomes_sync,
                 path,
             )
-            for memory_id in changed_ids:
-                await self.memory_manager.reconcile_memory_indices(memory_id)
+            mark_due_tasks: list[asyncio.Task[None]] = []
+            for result in outcomes:
+                await memory_manager.reconcile_memory_indices(result.memory.id)
+                task = memory_manager.schedule_write_mark_due(result.memory, result.outcome)
+                if task is not None:
+                    mark_due_tasks.append(task)
+            if mark_due_tasks:
+                await asyncio.gather(*mark_due_tasks)
             return restored_count
+
+        owned_task = asyncio.create_task(restore_owned(), name="memory-backup-restore")
+        try:
+            return await asyncio.shield(owned_task)
+        except asyncio.CancelledError:
+            await asyncio.shield(owned_task)
+            raise
         except MemoryRestoreError:
             raise
         except Exception as exc:
@@ -241,17 +257,20 @@ class MemoryBackupManager:
         return asyncio.run(self.restore())
 
     def _restore_memories_sync(self, path: Path) -> int:
-        restored_count, _changed_ids = self._restore_memories_with_outcomes_sync(path)
+        restored_count, _outcomes = self._restore_memories_with_outcomes_sync(path)
         return restored_count
 
-    def _restore_memories_with_outcomes_sync(self, path: Path) -> tuple[int, list[str]]:
+    def _restore_memories_with_outcomes_sync(
+        self,
+        path: Path,
+    ) -> tuple[int, list[MemoryWriteResult[Memory]]]:
         memory_manager = self.memory_manager
         if memory_manager is None:
             return 0, []
 
         records = _load_memory_backup(path)
         restored_count = 0
-        changed_ids: list[str] = []
+        outcomes: list[MemoryWriteResult[Memory]] = []
         with self.db.transaction() as conn:
             existing_session_ids = {
                 row["id"] for row in conn.execute("SELECT id FROM sessions").fetchall()
@@ -292,9 +311,9 @@ class MemoryBackupManager:
                 )
                 restored_count += 1
                 if result.outcome in {"created", "reactivated", "updated"}:
-                    changed_ids.append(result.memory.id)
+                    outcomes.append(result)
 
-        return restored_count, changed_ids
+        return restored_count, outcomes
 
     def _backup_memories_sync(self, path: Path, project_id: str | None = None) -> int:
         memory_manager = self.memory_manager

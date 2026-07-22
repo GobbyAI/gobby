@@ -531,7 +531,7 @@ async def _close_managers_and_storage(runner: GobbyRunner) -> None:
     memory_manager = getattr(runner, "memory_manager", None)
     if memory_manager:
         try:
-            await asyncio.wait_for(memory_manager.close(), timeout=5.0)
+            await asyncio.wait_for(memory_manager.close(), timeout=10.0)
         except TimeoutError:
             logger.warning("MemoryManager close timed out")
         except Exception as e:

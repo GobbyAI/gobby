@@ -190,6 +190,7 @@ class MemoryRecord:
     deleted_at: datetime | None = None
     dream_action: str | None = None
     last_dreamed_at: datetime | None = None
+    dream_due_version: int = 0
     vector_needs_reindex: bool = False
 
     def __post_init__(self) -> None:
@@ -217,6 +218,7 @@ class MemoryRecord:
             "deleted_at": self.deleted_at.isoformat() if self.deleted_at else None,
             "dream_action": self.dream_action,
             "last_dreamed_at": (self.last_dreamed_at.isoformat() if self.last_dreamed_at else None),
+            "dream_due_version": self.dream_due_version,
             "vector_needs_reindex": self.vector_needs_reindex,
         }
 
@@ -264,6 +266,7 @@ class MemoryRecord:
             deleted_at=deleted_at,
             dream_action=data.get("dream_action"),
             last_dreamed_at=last_dreamed_at,
+            dream_due_version=int(data.get("dream_due_version", 0)),
             vector_needs_reindex=bool(data.get("vector_needs_reindex", False)),
         )
 
