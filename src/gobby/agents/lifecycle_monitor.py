@@ -43,6 +43,7 @@ if TYPE_CHECKING:
         LocalAgentRunManager,
         TerminalAction,
     )
+    from gobby.storage.attention import AttentionStateManager
     from gobby.storage.checkpoints import LocalCheckpointManager
     from gobby.storage.clones import LocalCloneManager
     from gobby.storage.hub.protocol import HubDatabase
@@ -109,6 +110,7 @@ class AgentLifecycleMonitor:
         project_manager: LocalProjectManager | None = None,
         stuck_detector: StuckDetector | None = None,
         run_db: Callable[..., Awaitable[Any]] | None = None,
+        attention_manager: AttentionStateManager | None = None,
     ) -> None:
         self._agent_run_manager = agent_run_manager
         self._db = db
@@ -154,6 +156,9 @@ class AgentLifecycleMonitor:
             loop_tracker=self._loop_tracker,
             get_tmux_config=lambda: self._tmux_config,
             handle_looping_agent=lambda run: self._checkpoint_and_kill_looping_agent(run),
+            on_prompt_injected=lambda run: self._idle_check_handler.clear_attention_after_injection(
+                run
+            ),
             run_db=run_db,
         )
         self._cleanup_handler = AgentCleanupHandler(
@@ -171,6 +176,7 @@ class AgentLifecycleMonitor:
             master_fds=self._master_fds,
             kill_tmux_session=lambda name: self._tmux.kill_session(name, missing_ok=True),
             run_db=run_db,
+            attention_manager=attention_manager,
         )
         self._health_monitor = AgentHealthMonitor(
             agent_run_manager=agent_run_manager,
@@ -201,6 +207,9 @@ class AgentLifecycleMonitor:
             tmux_config=self._tmux_config,
             task_manager=task_manager,
             run_db=run_db,
+            attention_manager=attention_manager,
+            prompt_detector=self._prompt_detector,
+            stall_classifier=self._stall_classifier,
         )
 
         self._checkpoint_manager = (
@@ -221,6 +230,16 @@ class AgentLifecycleMonitor:
     def set_session_coordinator(self, coordinator: SessionCoordinator) -> None:
         """Inject session coordinator after construction (avoids circular init ordering)."""
         self._session_coordinator = coordinator
+
+    @property
+    def prompt_detector(self) -> PromptDetector:
+        """Return the prompt detector shared by lifecycle consumers."""
+        return self._prompt_detector
+
+    @property
+    def stall_classifier(self) -> StallClassifier:
+        """Return the stall classifier shared by lifecycle consumers."""
+        return self._stall_classifier
 
     def register_master_fd(self, run_id: str, fd: int) -> None:
         """Register a PTY master file descriptor for an agent."""
@@ -313,6 +332,7 @@ class AgentLifecycleMonitor:
                 await self.check_approval_prompts()
                 await self.check_queued_continuation_prompts()
                 await self.check_periodic_enters()
+                await self.check_attention_agents()
                 await self.check_unhealthy_agents()
                 await self.check_agent_memory()
                 await self.expire_terminal_run_sessions()
@@ -383,6 +403,10 @@ class AgentLifecycleMonitor:
     async def check_idle_agents(self) -> int:
         """Check for idle agents and reprompt or fail them."""
         return await self._idle_check_handler.check_idle_agents()
+
+    async def check_attention_agents(self) -> int:
+        """Check active terminal panes for prompts and sustained provider stalls."""
+        return await self._idle_check_handler.check_attention_agents()
 
     async def check_initialization_timeout(self) -> int:
         """Detect agents that never initialized (provider hung on connect)."""

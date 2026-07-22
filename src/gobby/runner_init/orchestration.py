@@ -3,8 +3,9 @@
 from __future__ import annotations
 
 import asyncio
+import json
 import logging
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 from gobby.agents.lifecycle_monitor import AgentLifecycleMonitor
 from gobby.agents.runner import AgentRunner
@@ -129,11 +130,60 @@ def init_orchestration(runner: GobbyRunner) -> None:
     from gobby.events.completion_registry import CompletionEventRegistry
     from gobby.events.wake import WakeDispatcher
     from gobby.storage.agents import LocalAgentRunManager
+    from gobby.storage.attention import AttentionStateManager
     from gobby.storage.inter_session_messages import InterSessionMessageManager
 
     ism_manager = InterSessionMessageManager(runner.database)
     agent_run_manager = LocalAgentRunManager(runner.database)
     configure_tmux(runner.config.tmux)
+
+    def publish_attention_event(payload: dict[str, object]) -> None:
+        loop = runner.main_loop
+        if loop is None or not loop.is_running() or loop.is_closed():
+            return
+
+        def publish() -> None:
+            from gobby.runner_broadcasting import fire_agent_event
+
+            entry_id = str(payload["entry_id"])
+            run_id = payload.get("run_id")
+            fire_agent_event(
+                "attention_changed",
+                str(run_id) if run_id is not None else entry_id,
+                dict(payload),
+            )
+
+        loop.call_soon_threadsafe(publish)
+
+    def publish_attention_notification(payload: dict[str, object]) -> None:
+        loop = runner.main_loop
+        communications = runner.communications_manager
+        if loop is None or not loop.is_running() or loop.is_closed() or communications is None:
+            return
+        session_id = payload.get("session_id")
+        future = asyncio.run_coroutine_threadsafe(
+            communications.send_event(
+                "attention.blocked",
+                json.dumps(payload, sort_keys=True),
+                project_id=runner.project_id,
+                session_id=str(session_id) if session_id is not None else None,
+            ),
+            loop,
+        )
+
+        def log_failure(completed: Any) -> None:
+            try:
+                completed.result()
+            except Exception:
+                logger.warning("Failed to publish attention notification", exc_info=True)
+
+        future.add_done_callback(log_failure)
+
+    runner.attention_manager = AttentionStateManager(
+        runner.database,
+        event_publisher=publish_attention_event,
+        notification_publisher=publish_attention_notification,
+    )
 
     runner.wake_dispatcher = WakeDispatcher(
         session_manager=runner.session_manager,
@@ -193,6 +243,7 @@ def init_orchestration(runner: GobbyRunner) -> None:
                 progress_tracker=ProgressTracker(runner.database),
             ),
             run_db=runner.db_executor.run,
+            attention_manager=runner.attention_manager,
         )
     except Exception:
         mark_service_degraded(runner, "agent_lifecycle_monitor")

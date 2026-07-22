@@ -209,6 +209,21 @@ def setup_agent_event_broadcasting(websocket_server: WebSocketServer) -> None:
 
                 _schedule_agent_broadcast(broadcast_tmux_killed(), event_type=event_type)
 
+        forwarded = {
+            key: value
+            for key, value in data.items()
+            if key
+            not in {
+                "run_id",
+                "parent_session_id",
+                "session_id",
+                "mode",
+                "provider",
+                "pid",
+                "tmux_session_name",
+            }
+        }
+
         # Create async task to broadcast and attach exception callback
         _schedule_agent_broadcast(
             websocket_server.broadcast_agent_event(
@@ -220,6 +235,7 @@ def setup_agent_event_broadcasting(websocket_server: WebSocketServer) -> None:
                 provider=data.get("provider"),
                 pid=data.get("pid"),
                 tmux_session_name=data.get("tmux_session_name"),
+                **forwarded,
             ),
             event_type=event_type,
         )

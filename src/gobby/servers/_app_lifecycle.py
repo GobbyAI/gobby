@@ -264,6 +264,17 @@ def create_lifespan(
                     session_end_callback=app.state.hook_manager.event_handlers.handle_session_end,
                     config=server.services.config.tmux,
                     session_manager=app.state.hook_manager._session_manager,
+                    attention_manager=server.services.attention_manager,
+                    prompt_detector=(
+                        server.services.agent_lifecycle_monitor.prompt_detector
+                        if server.services.agent_lifecycle_monitor is not None
+                        else None
+                    ),
+                    stall_classifier=(
+                        server.services.agent_lifecycle_monitor.stall_classifier
+                        if server.services.agent_lifecycle_monitor is not None
+                        else None
+                    ),
                 )
                 set_tmux_pane_monitor(monitor)
                 await monitor.start()

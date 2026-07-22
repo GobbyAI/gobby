@@ -44,6 +44,7 @@ if TYPE_CHECKING:
     from gobby.servers.websocket.server import WebSocketServer
     from gobby.sessions.lifecycle import SessionLifecycleManager
     from gobby.sessions.processor import SessionMessageProcessor
+    from gobby.storage.attention import AttentionStateManager
     from gobby.storage.clones import LocalCloneManager
     from gobby.storage.config_store import ConfigStore
     from gobby.storage.cron import CronJobStorage
@@ -170,6 +171,7 @@ class GobbyRunner:
     pipeline_executor: PipelineExecutor | None
     agent_runner: AgentRunner | None
     agent_lifecycle_monitor: AgentLifecycleMonitor | None
+    attention_manager: AttentionStateManager
     lifecycle_manager: SessionLifecycleManager
     cron_storage: CronJobStorage | None
     cron_scheduler: CronScheduler | None

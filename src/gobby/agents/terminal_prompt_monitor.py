@@ -33,6 +33,7 @@ class TerminalPromptMonitor:
         loop_tracker: LoopTracker,
         get_tmux_config: Callable[[], TmuxConfig],
         handle_looping_agent: Callable[[AgentRun], Awaitable[None]],
+        on_prompt_injected: Callable[[AgentRun], Awaitable[None]] | None = None,
         monotonic: Callable[[], float] = time.monotonic,
         run_db: Callable[..., Awaitable[Any]] | None = None,
     ) -> None:
@@ -42,6 +43,7 @@ class TerminalPromptMonitor:
         self._loop_tracker = loop_tracker
         self._get_tmux_config = get_tmux_config
         self._handle_looping_agent = handle_looping_agent
+        self._on_prompt_injected = on_prompt_injected
         self._monotonic = monotonic
         self._last_enter_sent_at: dict[str, float] = {}
         self._last_loop_dismissed_at: dict[str, float] = {}
@@ -83,6 +85,8 @@ class TerminalPromptMonitor:
                     if sent:
                         self.mark_enter_sent(run.id)
                         self._prompt_detector.mark_dismissed(run.id)
+                        if self._on_prompt_injected is not None:
+                            await self._on_prompt_injected(run)
                         logger.info(
                             "Auto-dismissed trust prompt for agent %s (trust folder)",
                             run.id,
@@ -176,6 +180,8 @@ class TerminalPromptMonitor:
                 if sent:
                     self.mark_enter_sent(run.id)
                     self._prompt_detector.mark_approval_prompt_dismissed(run.id, pane_output)
+                    if self._on_prompt_injected is not None:
+                        await self._on_prompt_injected(run)
                     logger.info("Auto-entered approval prompt for agent %s", run.id)
                     handled += 1
             except Exception as e:

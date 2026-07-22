@@ -79,6 +79,7 @@ class ServiceContainer:
 
     # Agent Lifecycle
     agent_lifecycle_monitor: Any | None = None  # AgentLifecycleMonitor
+    attention_manager: Any | None = None  # AttentionStateManager
 
     # Communications
     communications_manager: Any | None = None  # CommunicationsManager

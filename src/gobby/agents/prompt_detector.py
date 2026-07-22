@@ -187,6 +187,10 @@ class PromptDetector:
         self._loop_prompt_fingerprints.pop(run_id, None)
         self._approval_fingerprints.pop(run_id, None)
 
+    def pane_fingerprint(self, pane_output: str) -> str:
+        """Return the stable fingerprint used for pane-backed prompt episodes."""
+        return self._pane_fingerprint(pane_output)
+
     def _approval_fingerprint(self, pane_output: str) -> str:
         return self._pane_fingerprint(pane_output)
 

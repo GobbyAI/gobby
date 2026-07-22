@@ -16,6 +16,7 @@ import pydantic
 from gobby.agents.capture import terminate_managed_tmux_async
 from gobby.agents.idle_detector import IdleDetector
 from gobby.agents.prompt_detector import PromptDetector
+from gobby.agents.stall_classifier import StallClassifier, StallStatus
 from gobby.servers.routes.sessions.statusline_activity import last_session_activity
 from gobby.utils.datetime import parse_stored_datetime
 from gobby.workflows.step_context import get_active_step_workflow_context
@@ -25,6 +26,7 @@ if TYPE_CHECKING:
     from gobby.agents.tmux.session_manager import TmuxSessionManager
     from gobby.config.tmux import TmuxConfig
     from gobby.storage.agents import AgentRun, LocalAgentRunManager, TerminalAction
+    from gobby.storage.attention import AttentionKind, AttentionStateManager
     from gobby.storage.hub.protocol import HubDatabase
     from gobby.storage.sessions import SessionManager
     from gobby.storage.tasks import LocalTaskManager
@@ -127,6 +129,9 @@ class IdleCheckHandler:
         tmux_config: TmuxConfig,
         task_manager: LocalTaskManager | None = None,
         run_db: Callable[..., Awaitable[Any]] | None = None,
+        attention_manager: AttentionStateManager | None = None,
+        prompt_detector: PromptDetector | None = None,
+        stall_classifier: StallClassifier | None = None,
     ) -> None:
         self._agent_run_manager = agent_run_manager
         self.db = db
@@ -137,13 +142,84 @@ class IdleCheckHandler:
         self._tmux_config = tmux_config
         self._task_manager = task_manager
         self._run_db_callback = run_db
-        self._prompt_detector = PromptDetector()
+        self._attention_manager = attention_manager
+        self._prompt_detector = prompt_detector or PromptDetector()
+        self._stall_classifier = stall_classifier or StallClassifier()
         self._codex_capacity_recovery: dict[str, _CodexCapacityRecoveryState] = {}
 
     async def _run_db(self, func: Callable[..., Any], *args: Any, **kwargs: Any) -> Any:
         if self._run_db_callback is None:
             return await asyncio.to_thread(func, *args, **kwargs)
         return await self._run_db_callback(func, *args, **kwargs)
+
+    async def sync_attention(self, run: AgentRun, pane_output: str) -> None:
+        """Persist the attention episode represented by the latest pane output."""
+        manager = self._attention_manager
+        if manager is None:
+            return
+
+        reason: str | None = None
+        kind: AttentionKind | None = None
+        approval_prompt = self._prompt_detector.detect_approval_prompt(pane_output)
+        trust_prompt = self._prompt_detector.detect_trust_prompt(pane_output)
+        if approval_prompt and (
+            not self._tmux_config.auto_enter_approval_prompts
+            or self._prompt_detector.was_approval_prompt_dismissed(run.id, pane_output)
+        ):
+            reason = "approval_prompt"
+            kind = "actionable"
+        elif trust_prompt and self._prompt_detector.was_dismissed(run.id):
+            reason = "trust_prompt"
+            kind = "actionable"
+        else:
+            classification = self._stall_classifier.classify(
+                run.id,
+                pane_output=pane_output,
+                error=run.error,
+            )
+            if classification.status is StallStatus.PROVIDER_STALL:
+                reason = "provider_stall"
+                kind = "non_actionable"
+
+        if reason is None or kind is None:
+            await self._clear_attention_if_current(run.id)
+            return
+
+        await self._run_db(
+            manager.transition,
+            run.id,
+            state="blocked",
+            run_id=run.id,
+            session_id=run.child_session_id,
+            reason=reason,
+            kind=kind,
+            fingerprint=self._prompt_detector.pane_fingerprint(pane_output),
+        )
+
+    async def clear_attention_after_injection(self, run: AgentRun) -> None:
+        """Clear the exact attention episode resolved by successful injection."""
+        await self._clear_attention_if_current(run.id)
+
+    async def clear_attention(self, run: AgentRun) -> None:
+        """Authoritatively clear attention when a run becomes terminal."""
+        if self._attention_manager is not None:
+            await self._run_db(self._attention_manager.transition, run.id, state=None)
+        self._stall_classifier.clear(run.id)
+
+    async def _clear_attention_if_current(self, entry_id: str) -> None:
+        manager = self._attention_manager
+        if manager is None:
+            return
+        current = await self._run_db(manager.get, entry_id)
+        if current is None or current.state is None:
+            return
+        await self._run_db(
+            manager.transition,
+            entry_id,
+            state=None,
+            expected_attention_id=current.attention_id,
+            expected_fingerprint=current.fingerprint,
+        )
 
     async def _clear_tmux_session_name(self, run: AgentRun) -> None:
         if run.tmux_session_name:
@@ -188,6 +264,30 @@ class IdleCheckHandler:
 
         return handled
 
+    async def check_attention_agents(self) -> int:
+        """Scan active panes for attention without waiting for idle eligibility."""
+        if self._attention_manager is None:
+            return 0
+        runs = await self._run_db(self._get_active_terminal_runs)
+        checked = 0
+        for run in runs:
+            tmux_name = run.tmux_session_name
+            if tmux_name is None:
+                continue
+            try:
+                pane_output = await self._tmux.capture_pane(tmux_name, lines=15)
+                if pane_output is None:
+                    continue
+                await self.sync_attention(run, pane_output)
+                checked += 1
+            except Exception:
+                logger.warning(
+                    "Failed to scan attention state for agent %s",
+                    run.id,
+                    exc_info=True,
+                )
+        return checked
+
     def _get_active_terminal_runs(self) -> list[AgentRun]:
         """Get active terminal agent runs with tmux sessions from DB."""
         runs = self._agent_run_manager.list_active()
@@ -229,6 +329,7 @@ class IdleCheckHandler:
         """Handle idle check for a single agent."""
         latest_run = await self._run_db(self._agent_run_manager.get, run.id)
         if latest_run is None or latest_run.status not in ("pending", "running"):
+            await self.clear_attention(latest_run or run)
             self._idle_detector.reset_idle(run.id)
             return 0
 
@@ -275,6 +376,7 @@ class IdleCheckHandler:
         pane_output = await self._tmux.capture_pane(tmux_name, lines=15)
         if pane_output is None:
             return 0
+        await self.sync_attention(run, pane_output)
         capacity_candidate = is_codex and self._pane_has_codex_capacity_message(pane_output)
 
         queued_message_prompt_visible = False

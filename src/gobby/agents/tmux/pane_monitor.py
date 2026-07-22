@@ -10,16 +10,20 @@ from __future__ import annotations
 import asyncio
 import logging
 import time
-from collections.abc import Callable
+from collections.abc import Callable, Mapping, Sequence
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any
 
 from gobby.agents.kill import pid_matches_agent_identity
+from gobby.agents.prompt_detector import PromptDetector
+from gobby.agents.stall_classifier import StallClassifier, StallStatus
 from gobby.agents.tmux.session_manager import TMUX_COMMAND_TIMEOUT_SECONDS, TmuxSessionManager
 from gobby.config.tmux import TmuxConfig
 from gobby.hooks.events import HookEvent, HookEventType, SessionSource, parse_session_source
 
 if TYPE_CHECKING:
+    from gobby.storage.agents import AgentRun
+    from gobby.storage.attention import AttentionKind, AttentionStateManager
     from gobby.storage.session_models import Session
     from gobby.storage.sessions import SessionManager
 
@@ -46,6 +50,10 @@ class TmuxPaneMonitor:
         config: TmuxConfig | None = None,
         poll_interval: float = 5.0,
         session_manager: SessionManager | None = None,
+        attention_manager: AttentionStateManager | None = None,
+        prompt_detector: PromptDetector | None = None,
+        stall_classifier: StallClassifier | None = None,
+        tmux_manager_factory: Callable[[Mapping[str, Any]], TmuxSessionManager] | None = None,
     ) -> None:
         self._callback = session_end_callback
         if config is None:
@@ -59,6 +67,17 @@ class TmuxPaneMonitor:
         self._config = config
         self._poll_interval = poll_interval
         self._session_manager = session_manager
+        self._attention_manager = attention_manager
+        self._prompt_detector = prompt_detector or PromptDetector()
+        self._stall_classifier = stall_classifier or StallClassifier()
+        if tmux_manager_factory is None:
+
+            def tmux_manager_factory(context: Mapping[str, Any]) -> TmuxSessionManager:
+                from gobby.sessions.tmux_context import get_tmux_manager_for_context
+
+                return get_tmux_manager_for_context(context)
+
+        self._tmux_manager_factory = tmux_manager_factory
         self._task: asyncio.Task[None] | None = None
         # session_id -> timestamp when it was marked ended
         self._recently_ended: dict[str, float] = {}
@@ -154,6 +173,7 @@ class TmuxPaneMonitor:
         except Exception:
             logger.warning("TmuxPaneMonitor: failed to list active agent runs", exc_info=True)
             return
+        await self._check_attention_panes(active_runs=all_runs)
         tmux_agents = [r for r in all_runs if r.tmux_session_name]
 
         if not tmux_agents:
@@ -226,6 +246,109 @@ class TmuxPaneMonitor:
                 logger.exception("TmuxPaneMonitor: callback error for session %s", child_sid)
 
             self._recently_ended[child_sid] = now
+
+    async def _check_attention_panes(self, *, active_runs: Sequence[AgentRun]) -> None:
+        """Report attention for interactive panes without injecting input."""
+        manager = self._attention_manager
+        session_manager = self._session_manager
+        if manager is None or session_manager is None:
+            return
+
+        try:
+            sessions = session_manager.list(
+                statuses=["active", "paused"],
+                modes=["interactive"],
+                limit=500,
+            )
+        except Exception:
+            logger.warning("TmuxPaneMonitor: failed to list interactive sessions", exc_info=True)
+            return
+
+        active_agent_sessions = {
+            run.child_session_id for run in active_runs if run.child_session_id is not None
+        }
+        active_interactive_ids = {session.id for session in sessions}
+        for attention in manager.list_blocked():
+            if (
+                attention.run_id is None
+                and attention.session_id is not None
+                and attention.session_id not in active_interactive_ids
+            ):
+                manager.transition(
+                    attention.entry_id,
+                    state=None,
+                    expected_attention_id=attention.attention_id,
+                    expected_fingerprint=attention.fingerprint,
+                )
+
+        for session in sessions:
+            if session.id in active_agent_sessions:
+                continue
+            terminal_context = session.terminal_context
+            if not isinstance(terminal_context, Mapping):
+                self._clear_attention_if_current(session.id)
+                continue
+            pane_id = terminal_context.get("tmux_pane")
+            if not isinstance(pane_id, str) or not pane_id:
+                self._clear_attention_if_current(session.id)
+                continue
+            try:
+                tmux = self._tmux_manager_factory(terminal_context)
+                pane_output = await tmux.capture_pane(pane_id, lines=15)
+            except Exception:
+                logger.warning(
+                    "TmuxPaneMonitor: failed to capture interactive pane %s",
+                    pane_id,
+                    exc_info=True,
+                )
+                continue
+            if pane_output is None:
+                continue
+            self._sync_interactive_attention(session.id, pane_output)
+
+    def _sync_interactive_attention(self, session_id: str, pane_output: str) -> None:
+        manager = self._attention_manager
+        if manager is None:
+            return
+        reason: str | None = None
+        kind: AttentionKind | None = None
+        if self._prompt_detector.detect_approval_prompt(pane_output):
+            reason = "approval_prompt"
+            kind = "actionable"
+        elif self._prompt_detector.detect_trust_prompt(pane_output):
+            reason = "trust_prompt"
+            kind = "actionable"
+        else:
+            classification = self._stall_classifier.classify(session_id, pane_output=pane_output)
+            if classification.status is StallStatus.PROVIDER_STALL:
+                reason = "provider_stall"
+                kind = "non_actionable"
+
+        if reason is None or kind is None:
+            self._clear_attention_if_current(session_id)
+            return
+        manager.transition(
+            session_id,
+            state="blocked",
+            session_id=session_id,
+            reason=reason,
+            kind=kind,
+            fingerprint=self._prompt_detector.pane_fingerprint(pane_output),
+        )
+
+    def _clear_attention_if_current(self, entry_id: str) -> None:
+        manager = self._attention_manager
+        if manager is None:
+            return
+        current = manager.get(entry_id)
+        if current is None or current.state is None:
+            return
+        manager.transition(
+            entry_id,
+            state=None,
+            expected_attention_id=current.attention_id,
+            expected_fingerprint=current.fingerprint,
+        )
 
     def _lookup_session(self, session_id: str) -> Session | None:
         """Look up a session from the database."""

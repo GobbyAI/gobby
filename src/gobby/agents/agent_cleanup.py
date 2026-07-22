@@ -20,6 +20,7 @@ if TYPE_CHECKING:
         LocalAgentRunManager,
         TerminalAction,
     )
+    from gobby.storage.attention import AttentionStateManager
     from gobby.storage.clones import LocalCloneManager
     from gobby.storage.hub.protocol import HubDatabase
     from gobby.storage.sessions import SessionManager
@@ -78,6 +79,7 @@ class AgentCleanupHandler:
         master_fds: dict[str, int],
         kill_tmux_session: Callable[[str], Awaitable[bool]] | None = None,
         run_db: Callable[..., Awaitable[Any]] | None = None,
+        attention_manager: AttentionStateManager | None = None,
     ) -> None:
         self._agent_run_manager = agent_run_manager
         self._db = db
@@ -93,6 +95,7 @@ class AgentCleanupHandler:
         self._master_fds = master_fds
         self._kill_tmux_session = kill_tmux_session
         self._run_db_callback = run_db
+        self._attention_manager = attention_manager
 
     async def _run_db(self, func: Callable[..., Any], *args: Any, **kwargs: Any) -> Any:
         if self._run_db_callback is None:
@@ -132,6 +135,16 @@ class AgentCleanupHandler:
             session_id = run.parent_session_id
         session_manager = self._get_session_manager()
         session_coordinator = self._get_session_coordinator()
+
+        if self._attention_manager is not None:
+            try:
+                await self._run_db(self._attention_manager.transition, run.id, state=None)
+            except Exception:
+                logger.warning(
+                    "Failed to clear attention for terminal agent %s",
+                    run.id,
+                    exc_info=True,
+                )
 
         fd = self._master_fds.pop(run.id, None)
         if fd is not None:
