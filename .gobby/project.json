@@ -16,6 +16,25 @@
       "ts_check": "cd web && npm run type-check"
     }
   },
+  "validation_detection": {
+    "custom_matchers": [
+      {
+        "id": "gobby-test-quality-audit",
+        "label": "Gobby test-quality audit",
+        "languages": [],
+        "categories": [
+          "test"
+        ],
+        "prefixes": [
+          "gobby test-quality audit"
+        ],
+        "required_args_all": [
+          "--fail-on-new",
+          "--min-severity"
+        ]
+      }
+    ]
+  },
   "hooks": {
     "pre-commit": {
       "run": [],

@@ -168,6 +168,14 @@ pub enum SearchError {
     InvalidPath { path: PathBuf },
 }
 
+pub(crate) fn backend_error(error: postgres::Error) -> SearchError {
+    let message = match error.as_db_error() {
+        Some(db_error) => db_error.to_string(),
+        None => error.to_string(),
+    };
+    SearchError::Backend(message)
+}
+
 impl fmt::Display for SearchError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {

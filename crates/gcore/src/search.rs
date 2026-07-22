@@ -143,15 +143,41 @@ pub fn sanitize_pg_search_query(query: &str) -> String {
         .collect::<String>();
 
     let chars = cleaned.chars().collect::<Vec<_>>();
-    let literal_parentheses = literal_parenthesis_mask(&chars);
+    let mut quote_backslash_run = 0;
+    let unescaped_quote_count = chars
+        .iter()
+        .filter(|&&ch| {
+            let unescaped_quote = ch == '"' && quote_backslash_run % 2 == 0;
+            quote_backslash_run = if ch == '\\' {
+                quote_backslash_run + 1
+            } else {
+                0
+            };
+            unescaped_quote
+        })
+        .count();
+    let balanced_quotes = unescaped_quote_count % 2 == 0;
+    let literal_parentheses = literal_parenthesis_mask(&chars, balanced_quotes);
     let mut escaped_literals = String::with_capacity(cleaned.len());
     let mut backslash_run = 0;
+    let mut in_quotes = false;
     for (index, ch) in chars.into_iter().enumerate() {
-        let needs_escape = matches!(ch, '[' | ']') || literal_parentheses[index];
-        if needs_escape && backslash_run % 2 == 0 {
+        let is_escaped = backslash_run % 2 == 1;
+        let unescaped_quote = ch == '"' && !is_escaped;
+        let outside_phrase = !balanced_quotes || !in_quotes;
+        let needs_escape = (unescaped_quote && !balanced_quotes)
+            || (outside_phrase
+                && (matches!(
+                    ch,
+                    '[' | ']' | '?' | '\'' | '*' | ':' | '^' | '~' | '{' | '}' | '/' | '!'
+                ) || literal_parentheses[index]));
+        if needs_escape && !is_escaped {
             escaped_literals.push('\\');
         }
         escaped_literals.push(ch);
+        if balanced_quotes && unescaped_quote {
+            in_quotes = !in_quotes;
+        }
         backslash_run = if ch == '\\' { backslash_run + 1 } else { 0 };
     }
 
@@ -209,7 +235,7 @@ fn neutralize_boolean_operators(query: &str) -> String {
     sanitized
 }
 
-fn literal_parenthesis_mask(chars: &[char]) -> Vec<bool> {
+fn literal_parenthesis_mask(chars: &[char], balanced_quotes: bool) -> Vec<bool> {
     // pg_search grouping requires balanced, non-empty parentheses. Code-like calls and
     // unmatched delimiters are literal search text; quoted phrases are already literal.
     let mut mask = vec![false; chars.len()];
@@ -219,7 +245,7 @@ fn literal_parenthesis_mask(chars: &[char]) -> Vec<bool> {
 
     for (index, ch) in chars.iter().copied().enumerate() {
         let is_escaped = backslash_run % 2 == 1;
-        if ch == '"' && !is_escaped {
+        if balanced_quotes && ch == '"' && !is_escaped {
             in_quotes = !in_quotes;
         } else if !in_quotes && !is_escaped {
             match ch {
@@ -285,7 +311,7 @@ mod tests {
     fn sanitize_pg_search_query_matches_gobby_rules() {
         assert_eq!(
             sanitize_pg_search_query("foo::bar baz-qux _id + \"drop\""),
-            "foo::bar baz-qux _id + \"drop\""
+            r#"foo\:\:bar baz-qux _id + "drop""#
         );
         assert_eq!(sanitize_pg_search_query("-draft stable"), "\\-draft stable");
         assert_eq!(
@@ -298,7 +324,7 @@ mod tests {
         );
         assert_eq!(
             sanitize_pg_search_query(":: + compute (fence)"),
-            ":: + compute (fence)"
+            r"\:\: + compute (fence)"
         );
         assert_eq!(
             sanitize_pg_search_query("_compute_fence_mask()"),
@@ -340,6 +366,28 @@ mod tests {
         assert_eq!(
             sanitize_pg_search_query(r#""salt AND pepper" OR "NOT""#),
             r#""salt AND pepper" or "NOT""#
+        );
+    }
+
+    #[test]
+    fn sanitize_escapes_tantivy_metachars() {
+        assert_eq!(
+            sanitize_pg_search_query("? ' * : ^ ~ { } / !"),
+            r"\? \' \* \: \^ \~ \{ \} \/ \!"
+        );
+        assert_eq!(
+            sanitize_pg_search_query(r#""proxy's foo:bar!? / {x}""#),
+            r#""proxy's foo:bar!? / {x}""#
+        );
+        assert_eq!(
+            sanitize_pg_search_query(r#"title:"Draft? notes"#),
+            r#"title\:\"Draft\? notes"#
+        );
+        assert_eq!(
+            sanitize_pg_search_query(
+                "How does the MCP proxy's progressive tool discovery work and why does it exist?",
+            ),
+            r"How does the MCP proxy\'s progressive tool discovery work and why does it exist\?"
         );
     }
 

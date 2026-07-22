@@ -39,7 +39,7 @@ fn fixture_uuid_param(id: &str) -> uuid::Uuid {
 fn sanitize_pg_search_query_matches_gobby_rules() {
     assert_eq!(
         sanitize_pg_search_query("foo::bar baz-qux _id + \"drop\""),
-        "foo::bar baz-qux _id + \"drop\""
+        r#"foo\:\:bar baz-qux _id + "drop""#
     );
 }
 
@@ -56,7 +56,7 @@ fn sanitize_pg_search_query_escapes_leading_minus_per_token() {
 fn sanitize_pg_search_query_preserves_dsl_punctuation() {
     assert_eq!(
         sanitize_pg_search_query(":: + compute (fence)"),
-        ":: + compute (fence)"
+        r"\:\: + compute (fence)"
     );
     assert_eq!(
         sanitize_pg_search_query("_compute_fence_mask()"),

@@ -6,7 +6,7 @@ use gobby_core::search::{TrustedRowId, bm25_score_expr, sanitize_pg_search_query
 
 use crate::search::{
     ChunkProvenance, SearchError, SearchHitKind, SearchProvenance, SearchScope, SearchSource,
-    WikiSearchResult,
+    WikiSearchResult, backend_error,
 };
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -209,14 +209,14 @@ impl Bm25SearchBackend for PostgresBm25Backend<'_> {
             } => self
                 .conn
                 .query(&query.sql, &[query_text, scope_kind, scope_value, limit])
-                .map_err(|error| SearchError::Backend(error.to_string()))?,
+                .map_err(backend_error)?,
             Bm25SqlParams::Global {
                 query: query_text,
                 limit,
             } => self
                 .conn
                 .query(&query.sql, &[query_text, limit])
-                .map_err(|error| SearchError::Backend(error.to_string()))?,
+                .map_err(backend_error)?,
         };
 
         rows.into_iter()
@@ -248,7 +248,7 @@ fn row_to_result(row: postgres::Row, scope: &SearchScope) -> Result<WikiSearchRe
                     byte_end,
                     heading: row
                         .try_get::<_, Option<String>>("heading")
-                        .map_err(|error| SearchError::Backend(error.to_string()))?,
+                        .map_err(backend_error)?,
                 }),
                 _ => None,
             }
@@ -260,15 +260,13 @@ fn row_to_result(row: postgres::Row, scope: &SearchScope) -> Result<WikiSearchRe
         id,
         title: row
             .try_get::<_, Option<String>>("title")
-            .map_err(|error| SearchError::Backend(error.to_string()))?,
+            .map_err(backend_error)?,
         scope: scope.clone(),
         path: path.clone(),
         source_path: source_path.clone(),
         hit_kind,
         snippet: read_string(&row, "snippet")?,
-        score: row
-            .try_get::<_, f64>("score")
-            .map_err(|error| SearchError::Backend(error.to_string()))?,
+        score: row.try_get::<_, f64>("score").map_err(backend_error)?,
         sources: vec![SearchSource::Bm25],
         explanations: Vec::new(),
         chunk,
@@ -278,14 +276,13 @@ fn row_to_result(row: postgres::Row, scope: &SearchScope) -> Result<WikiSearchRe
             source_kind,
             content_hash: row
                 .try_get::<_, Option<String>>("content_hash")
-                .map_err(|error| SearchError::Backend(error.to_string()))?,
+                .map_err(backend_error)?,
         },
     })
 }
 
 fn read_string(row: &postgres::Row, column: &str) -> Result<String, SearchError> {
-    row.try_get::<_, String>(column)
-        .map_err(|error| SearchError::Backend(error.to_string()))
+    row.try_get::<_, String>(column).map_err(backend_error)
 }
 
 fn parse_hit_kind(raw: &str) -> Result<SearchHitKind, SearchError> {
@@ -418,12 +415,126 @@ mod tests {
         assert_eq!(sanitize_pg_search_query("-draft stable"), r"\-draft stable");
         assert_eq!(
             sanitize_pg_search_query(r#"title:"Draft notes" + tag:(rust)"#),
-            r#"title:"Draft notes" + tag:(rust)"#
+            r#"title\:"Draft notes" + tag\:(rust)"#
         );
         assert_eq!(
             sanitize_pg_search_query(r"\-draft -stable"),
             r"\-draft \-stable"
         );
+    }
+
+    fn postgres_test_database_url(purpose: &str) -> Option<String> {
+        let database_url = std::env::var("GWIKI_POSTGRES_TEST_DATABASE_URL")
+            .ok()
+            .or_else(|| std::env::var("GCODE_POSTGRES_TEST_DATABASE_URL").ok());
+        if database_url.is_none() {
+            eprintln!("skipping {purpose}; GWIKI_POSTGRES_TEST_DATABASE_URL is not set");
+        }
+        database_url
+    }
+
+    #[test]
+    fn backend_error_preserves_postgres_detail() -> anyhow::Result<()> {
+        let Some(database_url) = postgres_test_database_url("PostgreSQL error detail test") else {
+            return Ok(());
+        };
+        let mut conn = gobby_core::postgres::connect_readwrite(&database_url)?;
+        let postgres_error = conn
+            .query_one(
+                "SELECT definitely_missing_column FROM pg_catalog.pg_class",
+                &[],
+            )
+            .expect_err("invalid column must produce a PostgreSQL error");
+        let SearchError::Backend(message) = crate::search::backend_error(postgres_error) else {
+            panic!("PostgreSQL errors must map to SearchError::Backend");
+        };
+        assert!(message.contains("definitely_missing_column"));
+        Ok(())
+    }
+
+    #[test]
+    fn postgres_bm25_accepts_sanitized_tantivy_metachars() -> anyhow::Result<()> {
+        let Some(database_url) = postgres_test_database_url("pg_search boundary test") else {
+            return Ok(());
+        };
+        let mut conn = gobby_core::postgres::connect_readwrite(&database_url)?;
+        let schema = format!(
+            "gwiki_bm25_sanitizer_{}_{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)?
+                .as_nanos()
+        );
+        conn.batch_execute("BEGIN")?;
+        conn.batch_execute(&format!(
+            r#"
+CREATE SCHEMA {schema};
+SET LOCAL search_path TO {schema}, public;
+CREATE TABLE gwiki_documents (
+    id TEXT PRIMARY KEY,
+    scope_kind TEXT NOT NULL,
+    scope_id TEXT NOT NULL,
+    path TEXT NOT NULL,
+    title TEXT NOT NULL,
+    source_kind TEXT NOT NULL,
+    content_hash TEXT NOT NULL,
+    provenance JSONB NOT NULL DEFAULT '{{}}'::jsonb,
+    body TEXT NOT NULL
+);
+CREATE TABLE gwiki_chunks (
+    id TEXT PRIMARY KEY,
+    document_id TEXT NOT NULL,
+    scope_kind TEXT NOT NULL,
+    scope_id TEXT NOT NULL,
+    path TEXT NOT NULL,
+    chunk_index INTEGER NOT NULL,
+    source_kind TEXT NOT NULL,
+    content_hash TEXT NOT NULL,
+    provenance JSONB NOT NULL DEFAULT '{{}}'::jsonb,
+    heading_path TEXT[] NOT NULL DEFAULT ARRAY[]::TEXT[],
+    content TEXT NOT NULL
+);
+CREATE INDEX gwiki_documents_search_bm25
+    ON gwiki_documents USING bm25 (id, path, title, body) WITH (key_field = 'id');
+CREATE INDEX gwiki_chunks_search_bm25
+    ON gwiki_chunks USING bm25 (id, path, content) WITH (key_field = 'id');
+"#
+        ))?;
+        conn.execute(
+            r#"
+INSERT INTO gwiki_documents (
+    id, scope_kind, scope_id, path, title, source_kind, content_hash, body
+) VALUES ($1, 'project', 'sanitizer', 'knowledge/progressive-tools.md', $2, 'test', 'hash', $3)
+"#,
+            &[
+                &"sanitizer-document",
+                &"Progressive tool discovery",
+                &"How does the MCP proxy's progressive tool discovery work and why does it exist?",
+            ],
+        )?;
+
+        for query in [
+            "How does the MCP proxy's progressive tool discovery work and why does it exist?",
+            "progressive ? ' * : ^ ~ { } / !",
+            r#""progressive tool discovery""#,
+            r#"progressive "tool discovery"#,
+        ] {
+            let mut backend = PostgresBm25Backend::new(&mut conn);
+            let result = backend.search_bm25(&Bm25SearchRequest {
+                query: query.to_string(),
+                scope: SearchScope::project("sanitizer"),
+                limit: 10,
+            });
+            match result {
+                Ok(_) => {}
+                Err(SearchError::Backend(message)) => {
+                    panic!("query produced a backend error ({query}): {message}")
+                }
+                Err(error) => panic!("query failed ({query}): {error}"),
+            }
+        }
+        conn.batch_execute("ROLLBACK")?;
+        Ok(())
     }
 
     #[test]
