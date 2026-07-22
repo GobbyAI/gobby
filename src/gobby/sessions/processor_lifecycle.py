@@ -255,6 +255,7 @@ class ProcessorLifecycleMixin:
             seek_mode="byte",
             mtime_ns=st.st_mtime_ns,
             size=st.st_size,
+            allow_append=source == "codex",
         )
         if index is None:
             return

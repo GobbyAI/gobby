@@ -359,6 +359,67 @@ class TestSessionRegistration:
         assert latest.total_groups == initial_groups
         assert latest.session_stats == stats
 
+    async def test_register_session_resumes_sidecar_after_append(
+        self, mock_db: MagicMock, tmp_path: Path
+    ) -> None:
+        """Restart registration should process only bytes appended after the sidecar."""
+        session_manager = MagicMock()
+        transcript = tmp_path / "restart-continuation.jsonl"
+        transcript.write_text(
+            _codex_response_message("user", "hello")
+            + _codex_response_message("assistant", "first"),
+            encoding="utf-8",
+        )
+        initial_stat = transcript.stat()
+        index = build_index_from_file(
+            str(transcript),
+            "codex",
+            "sid",
+            mtime_ns=initial_stat.st_mtime_ns,
+            size=initial_stat.st_size,
+        )
+        persist_index_sidecar(str(transcript), index)
+        with transcript.open("a", encoding="utf-8") as handle:
+            handle.write(_codex_response_message("assistant", "second"))
+
+        processor = SessionMessageProcessor(mock_db, session_manager=session_manager)
+        processor.register_session("sid", str(transcript), source="codex")
+
+        assert processor._byte_offsets["sid"] == initial_stat.st_size
+        await processor._process_session("sid", str(transcript))
+        assert processor._stats["sid"]["last_assistant_content"] == "second"
+        assert (
+            processor._stats["sid"]["message_count"]
+            == (index.session_stats or {}).get("message_count", 0) + 1
+        )
+
+    def test_register_session_rejects_replaced_append_candidate(
+        self, mock_db: MagicMock, tmp_path: Path
+    ) -> None:
+        """A larger replacement file must not be mistaken for an appended rollout."""
+        transcript = tmp_path / "replaced-before-restart.jsonl"
+        transcript.write_text(_codex_response_message("user", "old"), encoding="utf-8")
+        initial_stat = transcript.stat()
+        index = build_index_from_file(
+            str(transcript),
+            "codex",
+            "sid",
+            mtime_ns=initial_stat.st_mtime_ns,
+            size=initial_stat.st_size,
+        )
+        persist_index_sidecar(str(transcript), index)
+        replacement = tmp_path / "replacement.tmp"
+        replacement.write_text(
+            _codex_response_message("user", "replacement content that is longer than old"),
+            encoding="utf-8",
+        )
+        replacement.replace(transcript)
+
+        processor = SessionMessageProcessor(mock_db)
+        processor.register_session("sid", str(transcript), source="codex")
+
+        assert "sid" not in processor._byte_offsets
+
     def test_unregister_session_existing(
         self, processor: SessionMessageProcessor, tmp_path: Path
     ) -> None:

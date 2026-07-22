@@ -91,9 +91,12 @@ def _index_to_payload(path: str, index: TranscriptIndex) -> dict[str, Any]:
     from gobby.sessions.transcript_index import _require_gzip_logical_size
 
     _require_gzip_logical_size(index.seek_mode, index.logical_size)
+    source_stat = os.stat(path)
     return {
         "schema_version": INDEX_SCHEMA_VERSION,
         "source_path": os.path.abspath(path),
+        "source_device": source_stat.st_dev,
+        "source_inode": source_stat.st_ino,
         "source": index.source,
         "session_id": index.session_id,
         "seek_mode": index.seek_mode,
@@ -249,15 +252,33 @@ def _sidecar_matches(
     seek_mode: str,
     mtime_ns: int,
     size: int,
+    allow_append: bool = False,
 ) -> bool:
-    return (
+    identity_matches = (
         payload.get("schema_version") == INDEX_SCHEMA_VERSION
         and payload.get("source_path") == os.path.abspath(path)
         and payload.get("source") == source
         and payload.get("session_id") == session_id
         and payload.get("seek_mode") == seek_mode
-        and int(payload.get("mtime_ns", -1)) == mtime_ns
-        and int(payload.get("size", -1)) == size
+    )
+    if not identity_matches:
+        return False
+
+    stored_mtime_ns = int(payload.get("mtime_ns", -1))
+    stored_size = int(payload.get("size", -1))
+    if stored_mtime_ns == mtime_ns and stored_size == size:
+        return True
+    if not allow_append or seek_mode != "byte":
+        return False
+    try:
+        source_stat = os.stat(path)
+    except OSError:
+        return False
+    return (
+        stored_mtime_ns <= mtime_ns
+        and 0 <= stored_size <= size
+        and payload.get("source_device") == source_stat.st_dev
+        and payload.get("source_inode") == source_stat.st_ino
     )
 
 
@@ -269,8 +290,9 @@ def load_index_sidecar(
     seek_mode: str,
     mtime_ns: int,
     size: int,
+    allow_append: bool = False,
 ) -> TranscriptIndex | None:
-    """Load a sidecar index if it exactly matches the requested snapshot."""
+    """Load a matching sidecar, optionally accepting an append-only byte prefix."""
     sidecar = _sidecar_path(path)
     try:
         with open(sidecar, encoding="utf-8") as handle:
@@ -293,6 +315,7 @@ def load_index_sidecar(
             seek_mode=seek_mode,
             mtime_ns=mtime_ns,
             size=size,
+            allow_append=allow_append,
         ):
             return None
         index = _payload_to_index(payload)
