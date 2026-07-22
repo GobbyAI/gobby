@@ -1,0 +1,248 @@
+"""Query and point operations for :mod:`gobby.memory.vectorstore`."""
+
+from __future__ import annotations
+
+import asyncio
+from typing import TYPE_CHECKING, Any
+
+from qdrant_client.models import Filter, FilterSelector, PointIdsList, PointStruct
+
+from gobby.memory.vectorstore_client import (
+    VectorStoreUnavailableError,
+    is_recoverable_vector_store_error,
+)
+from gobby.memory.vectorstore_filters import payload_filter
+
+if TYPE_CHECKING:
+    from gobby.memory.vectorstore import VectorStore
+
+
+class VectorStoreQueries:
+    """Own vector point writes, searches, counts, and scrolling."""
+
+    def __init__(self, store: VectorStore) -> None:
+        self._store = store
+
+    async def upsert(
+        self,
+        memory_id: str,
+        embedding: list[float],
+        payload: dict[str, Any] | None = None,
+        collection_name: str | None = None,
+    ) -> None:
+        """Insert or update a single point."""
+        store = self._store
+        client = await store._ensure_initialized()
+        point = PointStruct(id=memory_id, vector=embedding, payload=payload or {})
+        try:
+            await asyncio.to_thread(
+                client.upsert,
+                collection_name=collection_name or store._collection_name,
+                points=[point],
+            )
+        except Exception as exc:
+            store._raise_if_recoverable(exc)
+            raise
+
+    async def search(
+        self,
+        query_embedding: list[float],
+        limit: int = 10,
+        filters: dict[str, str] | Filter | None = None,
+        collection_name: str | None = None,
+    ) -> list[tuple[str, float]]:
+        """Search for similar vectors."""
+        store = self._store
+        client = await store._ensure_initialized()
+        try:
+            results = await asyncio.to_thread(
+                client.query_points,
+                collection_name=collection_name or store._collection_name,
+                query=query_embedding,
+                query_filter=payload_filter(filters),
+                limit=limit,
+            )
+        except Exception as exc:
+            store._raise_if_recoverable(exc)
+            raise
+        return [(str(point.id), point.score) for point in results.points]
+
+    async def search_with_payload(
+        self,
+        query_embedding: list[float],
+        limit: int = 10,
+        filters: dict[str, str] | None = None,
+        collection_name: str | None = None,
+    ) -> list[tuple[str, float, dict[str, Any]]]:
+        """Search for similar vectors and return their payloads."""
+        store = self._store
+        client = await store._ensure_initialized()
+        query_filter = payload_filter(filters) if filters else None
+        try:
+            results = await asyncio.to_thread(
+                client.query_points,
+                collection_name=collection_name or store._collection_name,
+                query=query_embedding,
+                query_filter=query_filter,
+                limit=limit,
+            )
+        except Exception as exc:
+            store._raise_if_recoverable(exc)
+            raise
+        return [(str(point.id), point.score, point.payload or {}) for point in results.points]
+
+    async def set_payload(
+        self,
+        memory_id: str,
+        payload: dict[str, Any],
+        collection_name: str | None = None,
+    ) -> None:
+        """Update payload fields on a point without re-embedding."""
+        store = self._store
+        client = await store._ensure_initialized()
+        try:
+            await asyncio.to_thread(
+                client.set_payload,
+                collection_name=collection_name or store._collection_name,
+                payload=payload,
+                points=[memory_id],
+            )
+        except Exception as exc:
+            store._raise_if_recoverable(exc)
+            raise
+
+    async def delete(
+        self,
+        memory_id: str | None = None,
+        filters: dict[str, str] | None = None,
+        collection_name: str | None = None,
+    ) -> None:
+        """Delete a point by memory ID or filter."""
+        store = self._store
+        client = await store._ensure_initialized()
+        selector: PointIdsList | FilterSelector
+        if memory_id:
+            selector = PointIdsList(points=[memory_id])
+        elif filters:
+            query_filter = payload_filter(filters)
+            if query_filter is None:
+                raise ValueError("Must provide either memory_id or filters to delete")
+            selector = FilterSelector(filter=query_filter)
+        else:
+            raise ValueError("Must provide either memory_id or filters to delete")
+        try:
+            await asyncio.to_thread(
+                client.delete,
+                collection_name=collection_name or store._collection_name,
+                points_selector=selector,
+            )
+        except Exception as exc:
+            store._raise_if_recoverable(exc)
+            raise
+
+    async def delete_many(
+        self,
+        memory_ids: list[str],
+        collection_name: str | None = None,
+    ) -> None:
+        """Delete multiple points by memory ID in a single batch call."""
+        if not memory_ids:
+            return
+        store = self._store
+        client = await store._ensure_initialized()
+        selector = PointIdsList(points=memory_ids)
+        try:
+            await asyncio.to_thread(
+                client.delete,
+                collection_name=collection_name or store._collection_name,
+                points_selector=selector,
+            )
+        except Exception as exc:
+            store._raise_if_recoverable(exc)
+            raise
+
+    async def batch_upsert(
+        self,
+        items: list[tuple[str, list[float], dict[str, Any]]],
+        collection_name: str | None = None,
+    ) -> None:
+        """Insert or update multiple points at once."""
+        if not items:
+            return
+        store = self._store
+        client = await store._ensure_initialized()
+        points = [
+            PointStruct(id=memory_id, vector=embedding, payload=payload)
+            for memory_id, embedding, payload in items
+        ]
+        try:
+            await asyncio.to_thread(
+                client.upsert,
+                collection_name=collection_name or store._collection_name,
+                points=points,
+            )
+        except Exception as exc:
+            store._raise_if_recoverable(exc)
+            raise
+
+    async def count(self) -> int:
+        """Return the number of points in the default collection."""
+        store = self._store
+        client = await store._ensure_initialized()
+        try:
+            result = await asyncio.to_thread(
+                client.count,
+                collection_name=store._collection_name,
+            )
+        except Exception as exc:
+            store._raise_if_recoverable(exc)
+            raise
+        count: int = result.count
+        return count
+
+    def count_sync(self) -> int:
+        """Return the point count from synchronous code."""
+        store = self._store
+        client = store._client
+        if client is None:
+            raise VectorStoreUnavailableError("Vector store is not initialized")
+        try:
+            result = client.count(collection_name=store._collection_name)
+        except Exception as exc:
+            if is_recoverable_vector_store_error(exc):
+                store._mark_unavailable(exc)
+                raise VectorStoreUnavailableError("Vector store count is unavailable") from exc
+            raise
+        count: int = result.count
+        return count
+
+    async def scroll_ids(
+        self,
+        batch_size: int = 1000,
+        filters: dict[str, str] | None = None,
+    ) -> list[str]:
+        """Return point IDs, optionally filtered by payload."""
+        store = self._store
+        client = await store._ensure_initialized()
+        all_ids: list[str] = []
+        offset = None
+        scroll_filter = payload_filter(filters) if filters else None
+        while True:
+            try:
+                points, next_offset = await asyncio.to_thread(
+                    client.scroll,
+                    collection_name=store._collection_name,
+                    limit=batch_size,
+                    offset=offset,
+                    scroll_filter=scroll_filter,
+                    with_payload=False,
+                    with_vectors=False,
+                )
+            except Exception as exc:
+                store._raise_if_recoverable(exc)
+                raise
+            all_ids.extend(str(point.id) for point in points)
+            if next_offset is None:
+                break
+            offset = next_offset
+        return all_ids
