@@ -94,6 +94,7 @@ export function useActivityPanel(isMobile: boolean) {
   })
 
   const [activeTab, setActiveTab] = useState<ActivityTab>(loadActiveTab)
+  const [terminalSessionRequest, setTerminalSessionRequest] = useState<string | null>(null)
 
   useEffect(() => {
     if (isMobile) return
@@ -189,13 +190,21 @@ export function useActivityPanel(isMobile: boolean) {
   // threading `showTab` through every panel surface.
   useEffect(() => {
     const handler = (event: Event) => {
-      const tab = (event as CustomEvent<{ tab?: string }>).detail?.tab
-      const normalized = normalizeStoredTab(tab ?? null)
-      if (normalized) showTab(normalized)
+      const detail = (event as CustomEvent<{ tab?: string; sessionId?: unknown }>).detail
+      const normalized = normalizeStoredTab(detail?.tab ?? null)
+      if (!normalized) return
+      if (normalized === 'terminal' && typeof detail?.sessionId === 'string') {
+        setTerminalSessionRequest(detail.sessionId)
+      }
+      showTab(normalized)
     }
     window.addEventListener('gobby:show-activity-tab', handler)
     return () => window.removeEventListener('gobby:show-activity-tab', handler)
   }, [showTab])
+
+  const clearTerminalSessionRequest = useCallback(() => {
+    setTerminalSessionRequest(null)
+  }, [])
 
   const closeIfAutoOpened = useCallback(() => {
     void dirtyGuard.guardedRun(() => {
@@ -258,6 +267,8 @@ export function useActivityPanel(isMobile: boolean) {
     panelWidth,
     setPanelWidth,
     activeTab,
+    terminalSessionRequest,
+    clearTerminalSessionRequest,
     setActiveTab: handleTabChange,
     showTab,
     closeIfAutoOpened,

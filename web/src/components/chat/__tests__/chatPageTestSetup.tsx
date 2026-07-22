@@ -21,6 +21,10 @@ export const toggleFromChatSpy = vi.fn();
 export const toggleFromPanelSpy = vi.fn();
 export const dismissOnMobileSpy = vi.fn();
 export const commandPalettePropsSpy = vi.fn();
+export const clearTerminalSessionRequestSpy = vi.fn();
+export const terminalSessionRequestState: { value: string | null } = {
+  value: "terminal-focus",
+};
 
 const noopDirtyGuard: DirtyGuardContextValue = {
   registerDirtyGuard: () => () => {},
@@ -194,6 +198,8 @@ export const activityPanelMockFactory = () => ({
     onResumeSession,
     chatSessionId,
     focusSessionId,
+    terminalFocusSessionId,
+    onTerminalFocusHandled,
     onApprovePlan,
     onRequestPlanChanges,
     onAddFileToChat,
@@ -207,6 +213,8 @@ export const activityPanelMockFactory = () => ({
     onResumeSession?: (sessionId: string) => void;
     chatSessionId?: string | null;
     focusSessionId?: string | null;
+    terminalFocusSessionId?: string | null;
+    onTerminalFocusHandled?: () => void;
     onApprovePlan?: () => void;
     onRequestPlanChanges?: (feedback: string) => void;
     onAddFileToChat?: (filePath: string) => void;
@@ -221,6 +229,16 @@ export const activityPanelMockFactory = () => ({
       <span data-testid="activity-panel-focus-session-id">
         {focusSessionId ?? ""}
       </span>
+      <span data-testid="activity-panel-terminal-focus-session-id">
+        {terminalFocusSessionId ?? ""}
+      </span>
+      <button
+        type="button"
+        data-testid="handle-terminal-focus"
+        onClick={() => onTerminalFocusHandled?.()}
+      >
+        Handle Terminal Focus
+      </button>
       <button
         type="button"
         data-testid="swap-terminal-session"
@@ -414,6 +432,8 @@ export const useActivityPanelMockFactory = () => ({
     setActiveTab: vi.fn(),
     setPanelWidth: vi.fn(),
     showTab: showTabSpy,
+    terminalSessionRequest: terminalSessionRequestState.value,
+    clearTerminalSessionRequest: clearTerminalSessionRequestSpy,
     toggleFromChat: toggleFromChatSpy,
     toggleFromPanel: toggleFromPanelSpy,
     dirtyGuard: noopDirtyGuard,
@@ -509,6 +529,7 @@ export function setupChatPageEnvironment(): void {
   vi.clearAllMocks();
   isMobileState.value = false;
   effectiveModeState.value = "split";
+  terminalSessionRequestState.value = "terminal-focus";
   vi.stubGlobal(
     "fetch",
     vi.fn(async (input: RequestInfo | URL) => {

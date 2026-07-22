@@ -11,6 +11,7 @@ import { ChatPage } from "../ChatPage";
 import type { GobbySession } from "../../../types/sessions";
 import {
   commandPalettePropsSpy,
+  clearTerminalSessionRequestSpy,
   createChat,
   createConversations,
   createVoice,
@@ -116,6 +117,22 @@ describe("ChatPage – activity panel wiring", () => {
 
     fireEvent.click(screen.getByTestId("command-bar-panel-toggle"));
     expect(toggleFromChatSpy).toHaveBeenCalledTimes(1);
+  });
+
+  it("threads terminal focus request handling into the activity panel", () => {
+    render(
+      <ChatPage
+        chat={createChat()}
+        conversations={createConversations()}
+        voice={createVoice()}
+      />,
+    );
+
+    expect(screen.getByTestId("activity-panel-terminal-focus-session-id")).toHaveTextContent(
+      "terminal-focus",
+    );
+    fireEvent.click(screen.getByTestId("handle-terminal-focus"));
+    expect(clearTerminalSessionRequestSpy).toHaveBeenCalledTimes(1);
   });
 
   it("keeps invoking toggleFromChat on repeated toggles without unmounting the panel", async () => {

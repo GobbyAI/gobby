@@ -194,6 +194,32 @@ describe('useActivityPanel — desktop', () => {
     expect(result.current.activeTab).toBe('terminal')
   })
 
+  it('stores terminal session request', () => {
+    const { result } = renderHook(() => useActivityPanel(false))
+
+    act(() => {
+      window.dispatchEvent(
+        new CustomEvent('gobby:show-activity-tab', {
+          detail: { tab: 'terminal', sessionId: 'session-focus' },
+        }),
+      )
+    })
+    expect(result.current.activeTab).toBe('terminal')
+    expect(result.current.terminalSessionRequest).toBe('session-focus')
+
+    act(() => result.current.clearTerminalSessionRequest())
+    expect(result.current.terminalSessionRequest).toBeNull()
+
+    act(() => {
+      window.dispatchEvent(
+        new CustomEvent('gobby:show-activity-tab', {
+          detail: { tab: 'sessions', sessionId: 'wrong-tab' },
+        }),
+      )
+    })
+    expect(result.current.terminalSessionRequest).toBeNull()
+  })
+
   it('clears the transient override when the user explicitly toggles layout', () => {
     const { result } = renderHook(() => useActivityPanel(false))
 

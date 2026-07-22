@@ -223,8 +223,10 @@ export function ChatPage({
           onAcpDeleteSession={conversations.onAcpDeleteSession}
           chatSessionId={routing.activityPanelChatSessionId}
           focusSessionId={routing.focusSessionId}
+          terminalFocusSessionId={activity.terminalSessionRequest}
           dirtyGuard={dirtyGuard}
           onFocusSessionHandled={routing.handleFocusSessionHandled}
+          onTerminalFocusHandled={activity.clearTerminalSessionRequest}
           onSwapSession={routing.handleSwapSession}
           onResumeSession={routing.handleResumeSessionFromActivity}
           onAddFileToChat={routing.handleAddFileToChat}
