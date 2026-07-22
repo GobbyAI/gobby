@@ -151,9 +151,9 @@ export function TerminalTab({
       setComposerContext(null);
       setSelectedKey(nextKey);
       clearAttachError();
-      dismissEndedSession();
+      if (hookSessionEnded) dismissEndedSession();
     },
-    [clearAttachError, dismissEndedSession, selectedKey],
+    [clearAttachError, dismissEndedSession, hookSessionEnded, selectedKey],
   );
 
   useEffect(() => {

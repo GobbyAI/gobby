@@ -1,141 +1,379 @@
-import { test } from "@playwright/test";
+import { expect, test, type Page } from "@playwright/test";
 
-// ANSI color lines to inject into the mock terminal
-const ANSI_OUTPUT = [
-  "\x1b[1;37m=== ANSI Color Test ===\x1b[0m",
-  "",
-  "\x1b[30m[30] ANSI Black\x1b[0m  <-- should be visible",
-  "\x1b[31m[31] Red\x1b[0m",
-  "\x1b[32m[32] Green\x1b[0m",
-  "\x1b[33m[33] Yellow\x1b[0m",
-  "\x1b[34m[34] Blue\x1b[0m",
-  "\x1b[35m[35] Magenta\x1b[0m",
-  "\x1b[36m[36] Cyan\x1b[0m",
-  "\x1b[37m[37] White\x1b[0m",
-  "\x1b[90m[90] Bright Black\x1b[0m",
-  "",
-  "Default foreground text for comparison",
-].join("\r\n") + "\r\n";
+interface TmuxSessionFixture {
+  name: string;
+  socket: string;
+  pane_pid: number;
+  pane_dead: boolean;
+  pane_title: string;
+  window_name: string;
+  session_title: string;
+  gobby_session_id: string | null;
+  agent_managed: boolean;
+  agent_run_id: string | null;
+  attached_bridge: string | null;
+}
 
-const MOCK_SESSIONS = [
+interface TerminalHarness {
+  messages: Array<Record<string, unknown>>;
+}
+
+const ANSI_OUTPUT =
+  [
+    "\x1b[1;37m=== ANSI Color Test ===\x1b[0m",
+    "\x1b[31m[31] Red\x1b[0m",
+    "\x1b[32m[32] Green\x1b[0m",
+    "Default foreground text for comparison",
+  ].join("\r\n") + "\r\n";
+
+const MOCK_SESSIONS: TmuxSessionFixture[] = [
   {
     name: "test-session",
     socket: "default",
-    windows: 1,
-    created: new Date().toISOString(),
-    attached: false,
-    agent_managed: false,
     pane_pid: 12345,
-    pane_current_command: "zsh",
+    pane_dead: false,
+    pane_title: "Terminal color fixture",
+    window_name: "colors",
+    session_title: "Terminal color fixture",
+    gobby_session_id: null,
+    agent_managed: false,
+    agent_run_id: null,
+    attached_bridge: null,
+  },
+  {
+    name: "second-session",
+    socket: "gobby",
+    pane_pid: 23456,
+    pane_dead: false,
+    pane_title: "Second fixture",
+    window_name: "second",
+    session_title: "Second fixture",
+    gobby_session_id: null,
+    agent_managed: false,
+    agent_run_id: null,
+    attached_bridge: null,
   },
 ];
 
-const STREAMING_ID = "mock-stream-001";
+const STREAM_IDS: Record<string, string> = {
+  "test-session": "stream-test-session",
+  "second-session": "stream-second-session",
+};
 
-test("screenshot terminal ANSI colors", async ({ page }) => {
-  // Mock the WebSocket to provide fake tmux sessions and ANSI output
+const OUTPUT_BY_STREAM: Record<string, string> = {
+  "stream-test-session": ANSI_OUTPUT,
+  "stream-second-session": "Second session output\r\n",
+};
+
+async function installApiMocks(page: Page): Promise<void> {
+  await page.addInitScript(() => {
+    localStorage.removeItem("gobby-conversation-id");
+    localStorage.removeItem("gobby-db-session-id");
+    localStorage.setItem("gobby-activity-panel-layout", "chat");
+    localStorage.setItem("gobby-activity-panel-tab-v2", "sessions");
+    localStorage.setItem(
+      "gobby-settings",
+      JSON.stringify({
+        model: "opus",
+        fontSize: 16,
+        theme: "dark",
+        defaultChatMode: "plan",
+      }),
+    );
+  });
+
+  await page.route("**/api/**", async (route) => {
+    const path = new URL(route.request().url()).pathname;
+    const json = (body: unknown) =>
+      route.fulfill({
+        status: 200,
+        contentType: "application/json",
+        body: JSON.stringify(body),
+      });
+
+    if (path === "/api/auth/status") {
+      return json({ auth_required: false, authenticated: true });
+    }
+    if (path === "/api/config/ui-settings") {
+      return json({
+        selectedProjectId: "project-terminal-test",
+        model: "opus",
+        theme: "dark",
+        defaultChatMode: "plan",
+        fontSize: 16,
+      });
+    }
+    if (path === "/api/providers") {
+      return json({ providers: [{ name: "claude", available: true }] });
+    }
+    if (path === "/api/providers/models") {
+      return json({ providers: [] });
+    }
+    if (path === "/api/voice/status") {
+      return json({ enabled: false, stt_available: false });
+    }
+    if (path === "/api/projects" || path === "/api/files/projects") {
+      return json([
+        {
+          id: "project-terminal-test",
+          name: "terminal-test",
+          display_name: "Terminal Test",
+          repo_path: "/tmp/terminal-test",
+          github_url: null,
+          github_repo: null,
+          linear_team_id: null,
+          approval_rules: [],
+          created_at: "2026-07-22T00:00:00Z",
+          updated_at: "2026-07-22T00:00:00Z",
+          session_count: 0,
+          open_task_count: 0,
+          last_activity_at: null,
+        },
+      ]);
+    }
+    if (path === "/api/agents/running") {
+      return json({ agents: [] });
+    }
+    if (path === "/api/sessions") {
+      return json({ sessions: [], total: 0 });
+    }
+    if (path === "/api/tasks") {
+      return json({ tasks: [], total: 0, stats: {}, limit: 200, offset: 0 });
+    }
+
+    return json({});
+  });
+}
+
+async function installTerminalSocket(page: Page): Promise<TerminalHarness> {
+  const messages: Array<Record<string, unknown>> = [];
+  const outputSent = new Set<string>();
+
   await page.routeWebSocket("**/ws", (ws) => {
-    ws.onMessage((msg) => {
-      let data: Record<string, unknown>;
+    ws.onMessage((raw) => {
+      let message: Record<string, unknown>;
       try {
-        data = JSON.parse(msg as string);
+        message = JSON.parse(String(raw)) as Record<string, unknown>;
       } catch {
         return;
       }
+      messages.push(message);
 
-      switch (data.type) {
-        case "subscribe":
-          // Acknowledge subscription silently
-          break;
+      if (message.type === "subscribe") {
+        ws.send(
+          JSON.stringify({
+            type: "connection_established",
+            conversation_ids: [],
+          }),
+        );
+        ws.send(
+          JSON.stringify({
+            type: "subscribe_success",
+            events: message.events ?? [],
+          }),
+        );
+        return;
+      }
 
-        case "tmux_list_sessions":
-          ws.send(
-            JSON.stringify({
-              type: "tmux_sessions_list",
-              sessions: MOCK_SESSIONS,
-            })
-          );
-          break;
+      if (message.type === "tmux_list_sessions") {
+        ws.send(
+          JSON.stringify({
+            type: "tmux_sessions_list",
+            sessions: MOCK_SESSIONS,
+            live_cli_session_ids: [],
+          }),
+        );
+        return;
+      }
 
-        case "tmux_attach":
-          ws.send(
-            JSON.stringify({
-              type: "tmux_attach_result",
-              success: true,
-              streaming_id: STREAMING_ID,
-              session_name: data.session_name,
-            })
-          );
-          // Send ANSI color output immediately — Playwright waitFor handles synchronization
+      if (message.type === "tmux_attach") {
+        const sessionName = String(message.session_name);
+        ws.send(
+          JSON.stringify({
+            type: "tmux_attach_result",
+            request_id: message.request_id,
+            success: true,
+            streaming_id: STREAM_IDS[sessionName],
+          }),
+        );
+        return;
+      }
+
+      if (message.type === "tmux_detach") {
+        ws.send(
+          JSON.stringify({
+            type: "tmux_detach_result",
+            request_id: message.request_id,
+            success: true,
+          }),
+        );
+        return;
+      }
+
+      if (message.type === "tmux_resize") {
+        const streamingId = String(message.streaming_id);
+        if (!outputSent.has(streamingId)) {
+          outputSent.add(streamingId);
           ws.send(
             JSON.stringify({
               type: "terminal_output",
-              run_id: STREAMING_ID,
-              data: ANSI_OUTPUT,
-            })
+              run_id: streamingId,
+              data: OUTPUT_BY_STREAM[streamingId] ?? "Unknown terminal output\r\n",
+            }),
           );
-          break;
-
-        case "tmux_detach":
-          ws.send(
-            JSON.stringify({
-              type: "tmux_detach_result",
-              success: true,
-            })
-          );
-          ws.send(
-            JSON.stringify({
-              type: "tmux_sessions_list",
-              sessions: MOCK_SESSIONS,
-            })
-          );
-          break;
-
-        case "terminal_input":
-          break;
-
-        case "tmux_resize":
-          break;
+        }
       }
     });
   });
 
-  // Mock HTTP endpoints to prevent 404 noise
-  await page.route("**/tasks*", (route) =>
-    route.fulfill({
-      status: 200,
-      contentType: "application/json",
-      body: JSON.stringify({ tasks: [], total: 0, stats: {}, limit: 200, offset: 0 }),
-    })
-  );
-  await page.route("**/sessions*", (route) =>
-    route.fulfill({
-      status: 200,
-      contentType: "application/json",
-      body: JSON.stringify({ sessions: [], total: 0 }),
-    })
-  );
+  return { messages };
+}
 
+async function openTerminalTab(page: Page): Promise<void> {
   await page.goto("/");
+  await page.getByRole("button", { name: "Show activity panel" }).click();
 
-  // Navigate to Terminals page
-  await page.click(".hamburger-button");
-  await page.click("text=Terminals");
-  await page.waitForSelector(".terminals-page");
+  const tabTrigger = page.locator(".activity-panel-mobile-trigger");
+  await expect(tabTrigger).toContainText("Sessions");
+  await tabTrigger.click();
+  await page
+    .locator(".activity-panel-mobile-menu")
+    .getByRole("button", { name: "Terminal", exact: true })
+    .click();
 
-  // Wait for mock session to appear and attach
-  await page.locator(".session-item-main").first().waitFor();
-  await page.locator(".session-item-main").first().click();
-
-  // Wait for xterm DOM renderer to render rows (v6 uses DOM, not canvas)
-  await page.waitForSelector(".xterm-screen", { timeout: 10000 });
-  await page.locator(".xterm-rows").waitFor({ timeout: 5000 });
-
-  // Wait for ANSI output to appear in the terminal
-  await page.locator(".xterm-rows").getByText("Default foreground text").waitFor({ timeout: 5000 });
-
-  await page.screenshot({
-    path: "tests/screenshots/terminal-colors.png",
-    fullPage: true,
+  await expect(tabTrigger).toContainText("Terminal");
+  await expect(page.getByRole("combobox", { name: "Terminal session" })).toBeVisible({
+    timeout: 15_000,
   });
+}
+
+async function chooseTerminalSession(page: Page, name: string): Promise<void> {
+  const picker = page.getByRole("combobox", { name: "Terminal session" });
+  await picker.click();
+  await page.getByRole("option", { name: new RegExp(name) }).click();
+  await expect(picker).toContainText(name);
+}
+
+function messagesOfType(harness: TerminalHarness, type: string): Array<Record<string, unknown>> {
+  return harness.messages.filter((message) => message.type === type);
+}
+
+test.beforeEach(async ({ page }) => {
+  await installApiMocks(page);
+});
+
+test("renders ANSI output and row-grid styling in the activity terminal", async ({ page }) => {
+  await installTerminalSocket(page);
+  await openTerminalTab(page);
+  await chooseTerminalSession(page, "test-session");
+
+  const terminal = page.getByTestId("terminal-view");
+  await expect(terminal).toContainText("Default foreground text for comparison");
+
+  const renderedStyle = await terminal.locator(".wterm").evaluate((element) => {
+    const row = Array.from(element.querySelectorAll<HTMLElement>(".term-row")).find((item) =>
+      item.textContent?.includes("[31] Red"),
+    );
+    const redRun = Array.from(element.querySelectorAll<HTMLElement>(".term-row > span")).find(
+      (item) => item.textContent?.includes("[31] Red"),
+    );
+    const defaultRun = Array.from(element.querySelectorAll<HTMLElement>(".term-row > span")).find(
+      (item) => item.textContent?.includes("Default foreground text"),
+    );
+    if (!row || !redRun || !defaultRun) {
+      throw new Error("Expected ANSI and default terminal rows");
+    }
+
+    const terminalStyle = getComputedStyle(element);
+    const rowStyle = getComputedStyle(row);
+    return {
+      defaultColor: getComputedStyle(defaultRun).color,
+      redColor: getComputedStyle(redRun).color,
+      rowHeight: rowStyle.height,
+      rowLineHeight: rowStyle.lineHeight,
+      rowHeightToken: terminalStyle.getPropertyValue("--term-row-height").trim(),
+    };
+  });
+
+  expect(renderedStyle.rowHeightToken).toMatch(/^\d+px$/);
+  expect(renderedStyle.rowHeight).toBe(renderedStyle.rowHeightToken);
+  expect(renderedStyle.rowLineHeight).toBe(renderedStyle.rowHeightToken);
+  expect(renderedStyle.redColor).toBe("rgb(204, 102, 102)");
+  expect(renderedStyle.redColor).not.toBe(renderedStyle.defaultColor);
+});
+
+test("forwards composer input and detaches before switching terminal sessions", async ({
+  page,
+}) => {
+  const harness = await installTerminalSocket(page);
+  await openTerminalTab(page);
+
+  const terminal = page.getByTestId("terminal-view");
+  await expect(terminal).toContainText("Default foreground text for comparison");
+  await expect
+    .poll(() => messagesOfType(harness, "tmux_attach"))
+    .toContainEqual(
+      expect.objectContaining({
+        session_name: "test-session",
+        socket: "default",
+      }),
+    );
+
+  await page.getByRole("button", { name: "Open terminal composer" }).click();
+  await page.getByRole("textbox", { name: "Terminal input" }).fill("status");
+  await page.getByRole("button", { name: "Send", exact: true }).click();
+  await page.getByRole("button", { name: "Esc", exact: true }).click();
+  await page.getByRole("button", { name: "Ctrl+C", exact: true }).click();
+
+  await expect
+    .poll(() =>
+      messagesOfType(harness, "terminal_input")
+        .filter((message) => ["status\r", "\x1b", "\x03"].includes(String(message.data)))
+        .map(({ run_id, data }) => ({ run_id, data })),
+    )
+    .toEqual([
+      { run_id: STREAM_IDS["test-session"], data: "status\r" },
+      { run_id: STREAM_IDS["test-session"], data: "\x1b" },
+      { run_id: STREAM_IDS["test-session"], data: "\x03" },
+    ]);
+
+  await chooseTerminalSession(page, "second-session");
+  await expect(terminal).toContainText("Second session output");
+
+  await expect
+    .poll(() => messagesOfType(harness, "tmux_detach"))
+    .toContainEqual(
+      expect.objectContaining({
+        streaming_id: STREAM_IDS["test-session"],
+      }),
+    );
+  await expect
+    .poll(() => messagesOfType(harness, "tmux_attach"))
+    .toContainEqual(
+      expect.objectContaining({
+        session_name: "second-session",
+        socket: "gobby",
+      }),
+    );
+  const firstDetachIndex = harness.messages.findIndex(
+    (message) =>
+      message.type === "tmux_detach" && message.streaming_id === STREAM_IDS["test-session"],
+  );
+  const secondAttachIndex = harness.messages.findIndex(
+    (message) => message.type === "tmux_attach" && message.session_name === "second-session",
+  );
+
+  expect(firstDetachIndex).toBeGreaterThan(-1);
+  expect(secondAttachIndex).toBeGreaterThan(firstDetachIndex);
+});
+
+test("keeps streamed output visible when Ghostty WASM falls back", async ({ page }) => {
+  await page.route("**/wasm/ghostty-vt.wasm", (route) => route.abort());
+  await installTerminalSocket(page);
+  await openTerminalTab(page);
+
+  const terminal = page.getByTestId("terminal-view");
+  await expect(page.getByText("Reduced terminal fidelity", { exact: true })).toBeVisible();
+  await expect(terminal).toContainText("Default foreground text for comparison");
+  await expect(terminal.locator(".term-row")).not.toHaveCount(0);
 });

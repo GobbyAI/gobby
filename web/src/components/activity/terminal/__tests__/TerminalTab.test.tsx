@@ -238,6 +238,7 @@ describe("attach lifecycle", () => {
     );
     await waitFor(() => expect(hookState.detachSession).toHaveBeenCalledTimes(1));
     expect(hookState.clearAttachError).toHaveBeenCalledTimes(1);
+    expect(hookState.dismissEndedSession).not.toHaveBeenCalled();
 
     hookState = { ...hookState, requestPending: true };
     rendered.rerender(<TerminalTab />);
