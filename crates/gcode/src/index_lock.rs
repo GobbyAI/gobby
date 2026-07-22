@@ -34,6 +34,10 @@ pub(crate) enum IndexLockPolicy {
 
 impl IndexLockPolicy {
     pub(crate) fn brief_freshness_try() -> Self {
+        Self::maintenance_try()
+    }
+
+    pub(crate) fn maintenance_try() -> Self {
         Self::BriefTry {
             total_wait: Duration::from_millis(150),
             poll: Duration::from_millis(25),
@@ -90,14 +94,14 @@ enum ProjectIndexLockAttempt {
     Busy,
 }
 
-fn acquire_project_lock(
-    ctx: &Context,
+pub(crate) fn lock_project_by_id(
+    database_url: &str,
+    project_id: &str,
     policy: IndexLockPolicy,
-) -> anyhow::Result<ProjectIndexLockAttempt> {
-    let key = project_lock_key(&ctx.project_id);
-    let mut conn = db::connect_readwrite(&ctx.database_url)
+) -> anyhow::Result<Option<ProjectIndexLock>> {
+    let key = project_lock_key(project_id);
+    let mut conn = db::connect_readwrite(database_url)
         .with_context(|| "failed to connect PostgreSQL hub for gcode index lock")?;
-    let started = Instant::now();
 
     let acquired = match policy {
         IndexLockPolicy::Wait { max_wait } => {
@@ -112,7 +116,7 @@ fn acquire_project_lock(
                     "gave up acquiring gcode index lock for project {} after {}s: \
                      a lock holder is likely hung (check for a stalled index or \
                      codewiki run)",
-                    ctx.project_id,
+                    project_id,
                     max_wait.as_secs(),
                 );
             }
@@ -123,23 +127,32 @@ fn acquire_project_lock(
         }
     };
 
-    if acquired {
-        let elapsed = started.elapsed();
-        if !ctx.quiet && elapsed >= advisory_lock_delay_warning() {
-            eprintln!(
-                "warning: waited {}ms to acquire gcode index lock",
-                elapsed.as_millis()
-            );
+    Ok(acquired.then_some(ProjectIndexLock {
+        conn,
+        key,
+        quiet: true,
+    }))
+}
+
+fn acquire_project_lock(
+    ctx: &Context,
+    policy: IndexLockPolicy,
+) -> anyhow::Result<ProjectIndexLockAttempt> {
+    let started = Instant::now();
+
+    match lock_project_by_id(&ctx.database_url, &ctx.project_id, policy)? {
+        Some(mut guard) => {
+            guard.quiet = ctx.quiet;
+            let elapsed = started.elapsed();
+            if !ctx.quiet && elapsed >= advisory_lock_delay_warning() {
+                eprintln!(
+                    "warning: waited {}ms to acquire gcode index lock",
+                    elapsed.as_millis()
+                );
+            }
+            Ok(ProjectIndexLockAttempt::Acquired(Box::new(guard)))
         }
-        Ok(ProjectIndexLockAttempt::Acquired(Box::new(
-            ProjectIndexLock {
-                conn,
-                key,
-                quiet: ctx.quiet,
-            },
-        )))
-    } else {
-        Ok(ProjectIndexLockAttempt::Busy)
+        None => Ok(ProjectIndexLockAttempt::Busy),
     }
 }
 
@@ -205,7 +218,7 @@ fn advisory_lock_delay_warning() -> Duration {
         .unwrap_or_else(|| Duration::from_millis(DEFAULT_ADVISORY_LOCK_DELAY_WARNING_MS))
 }
 
-struct ProjectIndexLock {
+pub(crate) struct ProjectIndexLock {
     conn: Client,
     key: i64,
     quiet: bool,
@@ -307,6 +320,75 @@ mod tests {
 
     mod serial_db {
         use super::*;
+
+        #[test]
+        #[cfg_attr(
+            not(gcode_postgres_tests),
+            ignore = "requires a PostgreSQL test database URL"
+        )]
+        #[serial_test::serial(serial_db)]
+        fn project_id_lock_acquires_and_releases_guard() {
+            let database_url = connect_postgres_test_db();
+            let project_id = "gcode-lock-by-id-acquire";
+
+            let guard = lock_project_by_id(
+                &database_url,
+                project_id,
+                IndexLockPolicy::maintenance_try(),
+            )
+            .expect("acquire project lock by id")
+            .expect("project lock should be available");
+
+            assert!(
+                lock_project_by_id(
+                    &database_url,
+                    project_id,
+                    IndexLockPolicy::maintenance_try(),
+                )
+                .expect("retry project lock by id")
+                .is_none(),
+                "guard must hold the project advisory lock"
+            );
+
+            drop(guard);
+
+            assert!(
+                lock_project_by_id(
+                    &database_url,
+                    project_id,
+                    IndexLockPolicy::maintenance_try(),
+                )
+                .expect("reacquire released project lock by id")
+                .is_some(),
+                "dropping the guard must release the project advisory lock"
+            );
+        }
+
+        #[test]
+        #[cfg_attr(
+            not(gcode_postgres_tests),
+            ignore = "requires a PostgreSQL test database URL"
+        )]
+        #[serial_test::serial(serial_db)]
+        fn maintenance_project_id_lock_defers_when_busy() {
+            let database_url = connect_postgres_test_db();
+            let project_id = "gcode-lock-by-id-busy";
+            let _holder = hold_project_lock(&database_url, project_id);
+            let started = Instant::now();
+
+            let result = lock_project_by_id(
+                &database_url,
+                project_id,
+                IndexLockPolicy::maintenance_try(),
+            )
+            .expect("busy project lock must defer without error");
+
+            assert!(result.is_none(), "busy project lock must return None");
+            assert!(
+                started.elapsed() >= Duration::from_millis(150),
+                "maintenance lock must try for its full bounded wait"
+            );
+        }
 
         #[test]
         #[cfg_attr(
