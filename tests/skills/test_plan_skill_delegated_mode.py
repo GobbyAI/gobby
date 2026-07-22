@@ -124,6 +124,47 @@ def test_enhancement_phase_precedes_adversary_gate(body: str) -> None:
     assert "never gate" in lowered
 
 
+def test_enhancement_presentation_contract(body: str) -> None:
+    start = body.index("3. Wait as described in **Waiting on Spawned Runs**")
+    end = body.index("4. Apply only the **accepted** suggestions", start)
+    presentation = " ".join(body[start:end].split())
+
+    assert "ranked summary of every suggestion" in presentation
+    assert "`id`, lens, location, impact, effort, risk, and a one-line gist" in presentation
+    assert "full text verbatim" in presentation
+    assert "description, suggested enhancement, and metadata" in presentation
+    assert "quote the current plan sections" in presentation
+    assert "individual accept/decline vote for each suggestion" in presentation
+    assert "per-item exploration before recording its vote" in presentation
+    assert "interaction payload" in presentation
+    assert "full item text inside that payload" in presentation
+    assert "outside tool calls is not guaranteed to render" in presentation
+    assert "`kind: deferred`" in presentation
+    assert "follow-up task" in presentation
+
+
+def test_adversary_presentation_contract(body: str) -> None:
+    start = body.index("6. Wait as described in **Waiting on Spawned Runs**")
+    end = body.index("7. If the verdict is `needs_review`", start)
+    presentation = " ".join(body[start:end].split())
+
+    result = presentation.index("Read the run result")
+    changelog = presentation.index("append a `## V1 Plan Changelog` entry")
+    vote_gate = presentation.index("ranked summary of every finding")
+    assert result < changelog < vote_gate
+    assert "`id`, severity, location, impact, effort, risk, and a one-line gist" in presentation
+    assert "full text verbatim" in presentation
+    assert "description, finding detail, and metadata" in presentation
+    assert "quote the current plan sections" in presentation
+    assert "individual accept/decline vote for each finding" in presentation
+    assert "per-item exploration before recording its vote" in presentation
+    assert "interaction payload" in presentation
+    assert "full item text inside that payload" in presentation
+    assert "outside tool calls is not guaranteed to render" in presentation
+    assert "`kind: deferred`" in presentation
+    assert "follow-up task" in presentation
+
+
 def test_enhancement_changelog_uses_kind_enhancement(body: str) -> None:
     assert "`kind: enhancement`" in body
     assert "enhancer_run" in body

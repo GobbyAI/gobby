@@ -56,10 +56,20 @@ which runs after approval and before the unchanged adversary gate.
    2. Immediately after every enhancer launch, call
       `gobby-sessions:compact_self` for the parent session before waiting or
       doing any other work. This is mandatory on every enhancement round.
-   3. Wait as described in **Waiting on Spawned Runs**, then surface the ranked
-      suggestions to the user — highest impact-vs-effort first — for
-      accept/decline. The human is the scope gate (present-and-stop): you
-      present, the user decides what ships.
+   3. Wait as described in **Waiting on Spawned Runs**, then present a ranked
+      summary of every suggestion — highest impact-vs-effort first — including
+      its `id`, lens, location, impact, effort, risk, and a one-line gist.
+      Present each suggestion's full text verbatim, including its description,
+      suggested enhancement, and metadata. When a suggestion modifies existing
+      text, quote the current plan sections it touches. Collect an individual
+      accept/decline vote for each suggestion, and allow per-item exploration
+      before recording its vote. Put the complete presentation and vote prompt
+      in the interaction payload itself, with the full item text inside that
+      payload; free text emitted outside tool calls is not guaranteed to render.
+      If the user declines an item with deferral, record a typed
+      `kind: deferred` plan section that points to its follow-up task (section
+      2.3 is the worked example). The human is the scope gate
+      (present-and-stop): you present, the user decides what ships.
    4. Apply only the **accepted** suggestions to the plan artifact, re-run
       `uv run gobby plans validate <plan-file>`, and append a `## V1 Plan
       Changelog` entry with `kind: enhancement`.
@@ -74,7 +84,18 @@ which runs after approval and before the unchanged adversary gate.
    any other work. This is mandatory on every adversarial review round.
 6. Wait as described in **Waiting on Spawned Runs** for the adversary run. Read
    the run result and append a `## V1 Plan Changelog` entry with
-   `kind: verification`.
+   `kind: verification`. Then, before any step 7 revision, present a ranked
+   summary of every finding, including its `id`, severity, location, impact,
+   effort, risk, and a one-line gist. Present each finding's full text verbatim,
+   including its description, finding detail, and metadata. When a finding
+   modifies existing text, quote the current plan sections it touches. Collect
+   an individual accept/decline vote for each finding, and allow per-item
+   exploration before recording its vote. Put the complete presentation and
+   vote prompt in the interaction payload itself, with the full item text inside
+   that payload; free text emitted outside tool calls is not guaranteed to
+   render. If the user declines an item with deferral, record a typed
+   `kind: deferred` plan section that points to its follow-up task (section 2.3
+   is the worked example).
 7. If the verdict is `needs_review`, revise the plan with the user, rerun
    validation, and dispatch the next taskless adversary round until the review
    cap is reached.
