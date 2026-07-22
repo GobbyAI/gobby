@@ -14,6 +14,7 @@ single-connection model.
 
 from __future__ import annotations
 
+import contextlib
 import logging
 import os
 import time
@@ -201,21 +202,18 @@ def _reset_schema(
                     )
 
 
-@pytest.fixture(scope="session")
-def postgres_schema(postgres_database_url: str, worker_id: str) -> Iterator[str]:
-    """Create a unique schema for this xdist worker; drop it on teardown.
+@contextlib.contextmanager
+def isolated_test_schema(url: str, worker_label: str) -> Iterator[str]:
+    """Create a uniquely named `gobby_test_*` schema; drop it on exit.
 
-    Schema name layout: `gobby_test_<epoch>_<pid>_<worker>_<nonce>` — six
+    Schema name layout: `gobby_test_<epoch>_<pid>_<label>_<nonce>` — six
     underscore-delimited parts so `_cleanup_orphaned_schemas` can recover
-    the creation epoch from `parts[2]` even when the worker id is `master`.
-
-    Uses `DATABASE_URL` when configured, otherwise falls back to the local
-    Gobby bootstrap database_url under `GOBBY_TEST_PROTECT=1`.
+    the creation epoch from `parts[2]` regardless of the label. The label
+    must not contain underscores.
     """
-    url = postgres_database_url
     created_epoch = int(time.time())
     nonce = uuid.uuid4().hex[:6]
-    schema = f"{_TEST_SCHEMA_PREFIX}{created_epoch}_{os.getpid()}_{worker_id}_{nonce}"
+    schema = f"{_TEST_SCHEMA_PREFIX}{created_epoch}_{os.getpid()}_{worker_label}_{nonce}"
     _enforce_safe_test_schema(schema)
     _cleanup_orphaned_schemas(url)
     with psycopg.connect(url, autocommit=True) as conn:
@@ -240,6 +238,23 @@ def postgres_schema(postgres_database_url: str, worker_id: str) -> Iterator[str]
                     "SELECT pg_advisory_unlock(hashtext(%s))",
                     (_TEST_SCHEMA_DROP_LOCK,),
                 )
+
+
+@pytest.fixture(scope="session")
+def postgres_schema(postgres_database_url: str, worker_id: str) -> Iterator[str]:
+    """Create a unique schema for this xdist worker; drop it on teardown.
+
+    This schema is reserved for the canonical-baseline lifecycle
+    (`postgres_canonical_seed` / `postgres_db`). Tests that need raw scratch
+    tables without the migrated baseline must use their own
+    `isolated_test_schema` so the baseline classifier never sees a schema
+    holding foreign tables.
+
+    Uses `DATABASE_URL` when configured, otherwise falls back to the local
+    Gobby bootstrap database_url under `GOBBY_TEST_PROTECT=1`.
+    """
+    with isolated_test_schema(postgres_database_url, worker_id) as schema:
+        yield schema
 
 
 @pytest.fixture(scope="session")

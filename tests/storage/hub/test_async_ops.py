@@ -5,7 +5,7 @@ import contextlib
 import struct
 import threading
 import time
-from collections.abc import Awaitable
+from collections.abc import Awaitable, Iterator
 from typing import Any
 
 import psutil
@@ -19,8 +19,23 @@ from gobby.storage.hub.async_ops import (
     IndeterminateCommitError,
     run_bounded_db,
 )
+from tests.fixtures.postgres import isolated_test_schema
 
 pytestmark = pytest.mark.asyncio
+
+
+@pytest.fixture
+def async_ops_schema(postgres_database_url: str) -> Iterator[str]:
+    """Dedicated scratch schema for raw-table tests.
+
+    These tests create bare tables with no migrated baseline. Sharing the
+    per-worker `postgres_schema` would leave foreign tables in it, which the
+    canonical-seed baseline classifier rejects when another suite migrates
+    that schema afterwards (bug #18712).
+    """
+    with isolated_test_schema(postgres_database_url, "asyncops") as schema:
+        yield schema
+
 
 _DEADLINE_SECONDS = RUN_BOUNDED_DB_CLEANUP_SLICE_SECONDS + 0.25
 _SCHEDULER_TOLERANCE_SECONDS = 0.2
@@ -314,7 +329,7 @@ def _install_fake_connect(
 async def test_termination_matrix(
     monkeypatch: pytest.MonkeyPatch,
     postgres_database_url: str,
-    postgres_schema: str,
+    async_ops_schema: str,
 ) -> None:
     """Every pre-commit wait site terminates inside the caller's original deadline."""
     threads_before = {thread.ident for thread in threading.enumerate()}
@@ -381,7 +396,7 @@ async def test_termination_matrix(
         await _wait_for_event_loop_callback(0.02)
         assert connection.activity == activity_at_return, label
 
-    conninfo = _scoped_conninfo(postgres_database_url, postgres_schema)
+    conninfo = _scoped_conninfo(postgres_database_url, async_ops_schema)
     table = "bounded_async_termination_matrix"
     async with await psycopg.AsyncConnection.connect(conninfo, autocommit=True) as setup:
         await setup.execute(f"DROP TABLE IF EXISTS {table}")
@@ -511,9 +526,9 @@ async def test_supervisor_cancellation_during_commit_is_indeterminate(
 async def test_lock_release_on_hard_close(
     monkeypatch: pytest.MonkeyPatch,
     postgres_database_url: str,
-    postgres_schema: str,
+    async_ops_schema: str,
 ) -> None:
-    conninfo = _scoped_conninfo(postgres_database_url, postgres_schema)
+    conninfo = _scoped_conninfo(postgres_database_url, async_ops_schema)
     table = "bounded_async_lock_release"
     async with await psycopg.AsyncConnection.connect(conninfo, autocommit=True) as setup:
         await setup.execute(f"DROP TABLE IF EXISTS {table}")
@@ -553,9 +568,9 @@ async def test_lock_release_on_hard_close(
 
 async def test_commit_phase_outcomes(
     postgres_database_url: str,
-    postgres_schema: str,
+    async_ops_schema: str,
 ) -> None:
-    conninfo = _scoped_conninfo(postgres_database_url, postgres_schema)
+    conninfo = _scoped_conninfo(postgres_database_url, async_ops_schema)
     table = "bounded_async_commit_outcomes"
     async with await psycopg.AsyncConnection.connect(conninfo, autocommit=True) as setup:
         await setup.execute(f"DROP TABLE IF EXISTS {table}")
