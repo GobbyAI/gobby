@@ -10,6 +10,29 @@ from __future__ import annotations
 
 import hashlib
 import re
+from dataclasses import dataclass
+from typing import Literal
+
+PromptKind = Literal["approval", "trust", "question", "stall"]
+
+
+@dataclass(frozen=True, slots=True)
+class DetectedPrompt:
+    """Structured prompt data safe to publish to attention clients."""
+
+    kind: PromptKind
+    excerpt: str
+    options: tuple[dict[str, object], ...]
+    fingerprint: str
+
+    def to_payload(self) -> dict[str, object]:
+        """Return the JSON-compatible episode payload."""
+        return {
+            "kind": self.kind,
+            "excerpt": self.excerpt,
+            "options": [dict(option) for option in self.options],
+            "fingerprint": self.fingerprint,
+        }
 
 
 class PromptDetector:
@@ -92,6 +115,13 @@ class PromptDetector:
         re.compile(r"queued messages", re.IGNORECASE),
         re.compile(r"Press up to edit queued messages", re.IGNORECASE),
     )
+    PROMPT_EXCERPT_LINES = 12
+    PROMPT_EXCERPT_CHARS = 4096
+    ENUMERATED_OPTION_PATTERN = re.compile(
+        r"(?<!\d)(?P<option>[1-9]\d{0,2})[.)]\s+"
+        r"(?P<label>.+?)"
+        r"(?=(?:\s*/\s*|\s{2,})(?:[>›❯*•-]\s*)?[1-9]\d{0,2}[.)]\s+|$)"
+    )
 
     def __init__(self) -> None:
         self._dismissed: set[str] = set()
@@ -147,6 +177,40 @@ class PromptDetector:
             return False
 
         return self.detect_queued_message_prompt(pane_output)
+
+    def detect_prompt(self, pane_output: str) -> DetectedPrompt | None:
+        """Detect an actionable prompt and return its structured payload."""
+        if self.detect_approval_prompt(pane_output):
+            return self.prompt_payload(pane_output, kind="approval")
+        if self.detect_trust_prompt(pane_output):
+            return self.prompt_payload(pane_output, kind="trust")
+        if len(self._enumerated_options(pane_output)) >= 2:
+            return self.prompt_payload(pane_output, kind="question")
+        return None
+
+    def prompt_payload(self, pane_output: str, *, kind: PromptKind) -> DetectedPrompt:
+        """Build a bounded structured payload for a known prompt kind."""
+        lines = pane_output.splitlines()[-self.PROMPT_EXCERPT_LINES :]
+        excerpt = "\n".join(lines).strip()
+        if len(excerpt) > self.PROMPT_EXCERPT_CHARS:
+            excerpt = excerpt[-self.PROMPT_EXCERPT_CHARS :]
+        return DetectedPrompt(
+            kind=kind,
+            excerpt=excerpt,
+            options=self._enumerated_options(excerpt),
+            fingerprint=self.pane_fingerprint(pane_output),
+        )
+
+    def _enumerated_options(self, pane_output: str) -> tuple[dict[str, object], ...]:
+        options: dict[int, str] = {}
+        for raw_line in pane_output.splitlines():
+            line = raw_line.strip(" │╭╮╰╯─")
+            for match in self.ENUMERATED_OPTION_PATTERN.finditer(line):
+                option = int(match.group("option"))
+                label = match.group("label").strip(" │")
+                if label:
+                    options.setdefault(option, label)
+        return tuple({"option": option, "label": label} for option, label in options.items())
 
     def record_loop_dismiss(self, run_id: str) -> int:
         """Record loop prompt dismissal. Returns the new count."""

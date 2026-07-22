@@ -164,6 +164,41 @@ class TestDetectApprovalPrompt:
         assert detector.detect_approval_prompt(loop_output) is False
 
 
+class TestStructuredPromptDetection:
+    """Tests for prompt payloads consumed by attention clients."""
+
+    def test_detects_bounded_enumerated_prompt_payload(self) -> None:
+        detector = PromptDetector()
+        history = "\n".join(f"history line {index}" for index in range(20))
+        pane_output = (
+            f"{history}\n"
+            "Tool call needs your approval.\n"
+            "1. Allow / 2. Cancel\n"
+            "Press Enter to approve this command\n"
+        )
+
+        detected = detector.detect_prompt(pane_output)
+
+        assert detected is not None
+        assert detected.kind == "approval"
+        assert detected.options == (
+            {"option": 1, "label": "Allow"},
+            {"option": 2, "label": "Cancel"},
+        )
+        assert detected.fingerprint == detector.pane_fingerprint(pane_output)
+        assert len(detected.excerpt.splitlines()) <= detector.PROMPT_EXCERPT_LINES
+        assert "history line 0" not in detected.excerpt
+        assert detected.to_payload() == {
+            "kind": "approval",
+            "excerpt": detected.excerpt,
+            "options": [
+                {"option": 1, "label": "Allow"},
+                {"option": 2, "label": "Cancel"},
+            ],
+            "fingerprint": detected.fingerprint,
+        }
+
+
 class TestDetectQueuedMessagePrompt:
     """Tests for queued-message prompt detection."""
 

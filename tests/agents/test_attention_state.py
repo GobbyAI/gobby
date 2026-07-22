@@ -272,9 +272,21 @@ async def test_idle_handler_tracks_prompts_stalls_and_injection_clear(
     assert blocked is not None
     assert blocked.state == "blocked"
     assert blocked.reason == "approval"
+    assert blocked.payload["kind"] == "approval"
+    assert blocked.payload["fingerprint"] == blocked.fingerprint
 
     await handler.clear_attention_after_injection(run)
     assert manager.get(f"run:{run.id}").state is None
+
+    await handler.sync_attention(run, "Choose a response:\n1. Yes / 2. No\n")
+    question = manager.get(f"run:{run.id}")
+    assert question is not None
+    assert question.reason == "question"
+    assert question.payload["options"] == [
+        {"option": 1, "label": "Yes"},
+        {"option": 2, "label": "No"},
+    ]
+    await handler.clear_attention_after_injection(run)
 
     monkeypatch.setattr("gobby.agents.stall_classifier._MIN_CHECK_INTERVAL_SECONDS", 0)
     await handler.sync_attention(run, "503 service unavailable")
@@ -284,6 +296,7 @@ async def test_idle_handler_tracks_prompts_stalls_and_injection_clear(
     assert stalled.state == "blocked"
     assert stalled.reason == "stall"
     assert stalled.kind == "non_actionable"
+    assert stalled.payload["kind"] == "stall"
 
     await handler.clear_attention(run)
     assert manager.get(f"run:{run.id}").state is None
@@ -327,6 +340,7 @@ async def test_idle_handler_checks_attention_without_waiting_for_idle(
     assert attention is not None
     assert attention.state == "blocked"
     assert attention.reason == "approval"
+    assert attention.payload["kind"] == "approval"
 
 
 @pytest.mark.asyncio
@@ -362,4 +376,5 @@ async def test_tmux_monitor_reports_interactive_prompt_without_injection(
     assert attention is not None
     assert attention.state == "blocked"
     assert attention.reason == "approval"
+    assert attention.payload["kind"] == "approval"
     tmux.send_keys.assert_not_awaited()

@@ -20,6 +20,7 @@ def register_routes(app: FastAPI, server: "HTTPServer") -> None:
         create_admin_router,
         create_agent_spawn_router,
         create_agents_router,
+        create_attention_router,
         create_build_router,
         create_chat_attachments_router,
         create_chat_router,
@@ -59,6 +60,7 @@ def register_routes(app: FastAPI, server: "HTTPServer") -> None:
     app.include_router(create_admin_router(server))
     app.include_router(create_agent_spawn_router(server))
     app.include_router(create_agents_router(server))
+    app.include_router(create_attention_router(server))
     app.include_router(create_build_router(server))
     app.include_router(create_chat_attachments_router(server))
     app.include_router(create_chat_router(server))

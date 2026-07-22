@@ -15,7 +15,7 @@ import pydantic
 
 from gobby.agents.capture import terminate_managed_tmux_async
 from gobby.agents.idle_detector import IdleDetector
-from gobby.agents.prompt_detector import PromptDetector
+from gobby.agents.prompt_detector import PromptDetector, PromptKind
 from gobby.agents.stall_classifier import StallClassifier, StallStatus
 from gobby.servers.routes.sessions.statusline_activity import last_session_activity
 from gobby.storage.attention import run_attention_entry_id
@@ -159,18 +159,28 @@ class IdleCheckHandler:
         if manager is None:
             return
 
-        reason: str | None = None
+        reason: PromptKind | None = None
         kind: AttentionKind | None = None
-        approval_prompt = self._prompt_detector.detect_approval_prompt(pane_output)
-        trust_prompt = self._prompt_detector.detect_trust_prompt(pane_output)
-        if approval_prompt and (
-            not self._tmux_config.auto_enter_approval_prompts
-            or self._prompt_detector.was_approval_prompt_dismissed(run.id, pane_output)
+        detected = self._prompt_detector.detect_prompt(pane_output)
+        if (
+            detected is not None
+            and detected.kind == "approval"
+            and (
+                not self._tmux_config.auto_enter_approval_prompts
+                or self._prompt_detector.was_approval_prompt_dismissed(run.id, pane_output)
+            )
         ):
             reason = "approval"
             kind = "actionable"
-        elif trust_prompt and self._prompt_detector.was_dismissed(run.id):
+        elif (
+            detected is not None
+            and detected.kind == "trust"
+            and self._prompt_detector.was_dismissed(run.id)
+        ):
             reason = "trust"
+            kind = "actionable"
+        elif detected is not None and detected.kind == "question":
+            reason = "question"
             kind = "actionable"
         else:
             classification = self._stall_classifier.classify(
@@ -186,6 +196,11 @@ class IdleCheckHandler:
             await self._clear_attention_if_current(run_attention_entry_id(run.id))
             return
 
+        prompt_payload = (
+            detected
+            if detected is not None and detected.kind == reason
+            else self._prompt_detector.prompt_payload(pane_output, kind=reason)
+        )
         await self._run_db(
             manager.transition,
             run_attention_entry_id(run.id),
@@ -194,7 +209,8 @@ class IdleCheckHandler:
             session_id=run.child_session_id,
             reason=reason,
             kind=kind,
-            fingerprint=self._prompt_detector.pane_fingerprint(pane_output),
+            fingerprint=prompt_payload.fingerprint,
+            payload=prompt_payload.to_payload(),
         )
 
     async def clear_attention_after_injection(self, run: AgentRun) -> None:

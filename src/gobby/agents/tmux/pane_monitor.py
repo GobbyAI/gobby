@@ -15,7 +15,7 @@ from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any
 
 from gobby.agents.kill import pid_matches_agent_identity
-from gobby.agents.prompt_detector import PromptDetector
+from gobby.agents.prompt_detector import PromptDetector, PromptKind
 from gobby.agents.stall_classifier import StallClassifier, StallStatus
 from gobby.agents.tmux.session_manager import TMUX_COMMAND_TIMEOUT_SECONDS, TmuxSessionManager
 from gobby.config.tmux import TmuxConfig
@@ -311,13 +311,11 @@ class TmuxPaneMonitor:
         manager = self._attention_manager
         if manager is None:
             return
-        reason: str | None = None
+        reason: PromptKind | None = None
         kind: AttentionKind | None = None
-        if self._prompt_detector.detect_approval_prompt(pane_output):
-            reason = "approval"
-            kind = "actionable"
-        elif self._prompt_detector.detect_trust_prompt(pane_output):
-            reason = "trust"
+        detected = self._prompt_detector.detect_prompt(pane_output)
+        if detected is not None:
+            reason = detected.kind
             kind = "actionable"
         else:
             classification = self._stall_classifier.classify(session_id, pane_output=pane_output)
@@ -328,13 +326,19 @@ class TmuxPaneMonitor:
         if reason is None or kind is None:
             self._clear_attention_if_current(session_attention_entry_id(session_id))
             return
+        prompt_payload = (
+            detected
+            if detected is not None and detected.kind == reason
+            else self._prompt_detector.prompt_payload(pane_output, kind=reason)
+        )
         manager.transition(
             session_attention_entry_id(session_id),
             state="blocked",
             session_id=session_id,
             reason=reason,
             kind=kind,
-            fingerprint=self._prompt_detector.pane_fingerprint(pane_output),
+            fingerprint=prompt_payload.fingerprint,
+            payload=prompt_payload.to_payload(),
         )
 
     def _clear_attention_if_current(self, entry_id: str) -> None:

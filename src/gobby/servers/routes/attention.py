@@ -1,0 +1,323 @@
+"""HTTP responses for durable attention episodes."""
+
+from __future__ import annotations
+
+import asyncio
+import re
+from collections.abc import Awaitable, Callable, Mapping, Sequence
+from dataclasses import dataclass
+from typing import TYPE_CHECKING, Literal, Self
+
+from fastapi import APIRouter, HTTPException
+from pydantic import BaseModel, ConfigDict, field_validator, model_validator
+
+from gobby.agents.prompt_detector import PromptDetector
+from gobby.agents.tmux.text_injection import (
+    AttentionInjectionError,
+    inject_attention_answer_to_tmux_target,
+)
+from gobby.storage.attention import AttentionState
+
+if TYPE_CHECKING:
+    from gobby.servers.http import HTTPServer
+
+AttentionKey = Literal["enter", "escape", "tab", "up", "down"]
+
+_SHA256_RE = re.compile(r"[0-9a-f]{64}")
+
+
+class AttentionAnswer(BaseModel):
+    """Exactly one answer variant for an actionable prompt."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    option: int | None = None
+    text: str | None = None
+    key: AttentionKey | None = None
+
+    @field_validator("option", mode="before")
+    @classmethod
+    def validate_option(cls, value: object) -> object:
+        if isinstance(value, bool):
+            raise ValueError("option must be an integer")
+        return value
+
+    @field_validator("text")
+    @classmethod
+    def validate_text(cls, value: str | None) -> str | None:
+        if value is None:
+            return None
+        if len(value.encode("utf-8")) > 2048:
+            raise ValueError("text must be at most 2,048 UTF-8 bytes")
+        if any((ord(char) < 32 and char != "\n") or ord(char) == 127 for char in value):
+            raise ValueError("text contains an unsupported control character")
+        return value
+
+    @model_validator(mode="after")
+    def validate_variant(self) -> Self:
+        if sum(value is not None for value in (self.option, self.text, self.key)) != 1:
+            raise ValueError("answer must contain exactly one variant")
+        return self
+
+
+class AttentionRespondRequest(BaseModel):
+    """Identity-checked response to one attention episode."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    attention_id: str
+    fingerprint: str
+    answer: AttentionAnswer
+
+    @field_validator("attention_id")
+    @classmethod
+    def validate_attention_id(cls, value: str) -> str:
+        if not value:
+            raise ValueError("attention_id is required")
+        return value
+
+    @field_validator("fingerprint")
+    @classmethod
+    def validate_fingerprint(cls, value: str) -> str:
+        if _SHA256_RE.fullmatch(value) is None:
+            raise ValueError("fingerprint must be a lowercase sha256 digest")
+        return value
+
+
+@dataclass(frozen=True, slots=True)
+class AttentionPane:
+    """Resolved tmux target and its capture operation."""
+
+    target: str
+    tmux_cmd: Sequence[str]
+    capture: Callable[[], Awaitable[str | None]]
+
+
+PaneResolver = Callable[[AttentionState], Awaitable[AttentionPane | None]]
+AttentionInjector = Callable[[AttentionPane, AttentionAnswer], Awaitable[None]]
+
+
+def create_attention_router(
+    server: HTTPServer,
+    *,
+    pane_resolver: PaneResolver | None = None,
+    injector: AttentionInjector | None = None,
+) -> APIRouter:
+    """Create the attention response router with composed daemon services."""
+    router = APIRouter(prefix="/api/attention", tags=["attention"])
+    manager = server.services.attention_manager
+    lifecycle_monitor = server.services.agent_lifecycle_monitor
+    detector = (
+        lifecycle_monitor.prompt_detector if lifecycle_monitor is not None else PromptDetector()
+    )
+    locks: dict[str, asyncio.Lock] = {}
+
+    async def resolve_pane(state: AttentionState) -> AttentionPane | None:
+        if pane_resolver is not None:
+            return await pane_resolver(state)
+        return await _resolve_attention_pane(server, state)
+
+    async def inject_answer(pane: AttentionPane, answer: AttentionAnswer) -> None:
+        if injector is not None:
+            await injector(pane, answer)
+            return
+        await inject_attention_answer_to_tmux_target(
+            pane.target,
+            option=answer.option,
+            text=answer.text,
+            key=answer.key,
+            tmux_cmd=pane.tmux_cmd,
+        )
+
+    @router.post("/{entry_id}/respond")
+    async def respond(entry_id: str, request: AttentionRespondRequest) -> dict[str, str]:
+        if manager is None:
+            raise HTTPException(status_code=503, detail={"code": "attention_unavailable"})
+        lock = locks.setdefault(entry_id, asyncio.Lock())
+        async with lock:
+            current = await server.services.run_db(manager.get, entry_id)
+            if current is None:
+                raise HTTPException(status_code=404, detail={"code": "attention_not_found"})
+            _require_current_identity(current, request)
+            if current.kind != "actionable":
+                raise HTTPException(status_code=409, detail={"code": "not_actionable"})
+            _validate_option_membership(current, request.answer)
+
+            pane = await resolve_pane(current)
+            if pane is None:
+                raise _injection_http_error(stage="none")
+            pane_output = await pane.capture()
+            if pane_output is None:
+                raise _injection_http_error(stage="none")
+
+            latest = await server.services.run_db(manager.get, entry_id)
+            if latest is None:
+                raise HTTPException(status_code=404, detail={"code": "attention_not_found"})
+            _require_current_identity(latest, request)
+            observed_fingerprint = detector.pane_fingerprint(pane_output)
+            if observed_fingerprint != request.fingerprint:
+                raise HTTPException(
+                    status_code=409,
+                    detail={
+                        "code": "prompt_changed",
+                        **_identity(latest),
+                    },
+                )
+
+            try:
+                await inject_answer(pane, request.answer)
+            except AttentionInjectionError as exc:
+                if exc.stage == "none":
+                    raise _injection_http_error(stage="none") from exc
+                await _retire_and_redetect(
+                    server,
+                    current=latest,
+                    pane=pane,
+                    detector=detector,
+                )
+                raise _injection_http_error(stage="partial") from exc
+
+            cleared = await server.services.run_db(
+                manager.transition,
+                entry_id,
+                state=None,
+                expected_attention_id=latest.attention_id,
+                expected_fingerprint=latest.fingerprint,
+            )
+            if not cleared.applied:
+                raise _injection_http_error(stage="partial")
+            return {"status": "accepted", "entry_id": entry_id}
+
+    return router
+
+
+def _require_current_identity(
+    current: AttentionState,
+    request: AttentionRespondRequest,
+) -> None:
+    if (
+        current.state != "blocked"
+        or current.attention_id != request.attention_id
+        or current.fingerprint != request.fingerprint
+    ):
+        raise HTTPException(
+            status_code=409,
+            detail={"code": "stale_episode", **_identity(current)},
+        )
+
+
+def _identity(state: AttentionState) -> dict[str, str | None]:
+    return {
+        "attention_id": state.attention_id,
+        "fingerprint": state.fingerprint,
+    }
+
+
+def _validate_option_membership(state: AttentionState, answer: AttentionAnswer) -> None:
+    if answer.option is None:
+        return
+    raw_options_value = state.payload.get("options")
+    raw_options: list[object] = raw_options_value if isinstance(raw_options_value, list) else []
+    allowed = {
+        value
+        for raw in raw_options
+        if isinstance(raw, Mapping)
+        for value in [raw.get("option")]
+        if isinstance(value, int) and not isinstance(value, bool)
+    }
+    if answer.option not in allowed:
+        raise HTTPException(
+            status_code=422,
+            detail={"code": "invalid_option", "options": sorted(allowed)},
+        )
+
+
+def _injection_http_error(*, stage: Literal["none", "partial"]) -> HTTPException:
+    code = "injection_failed" if stage == "none" else "injection_indeterminate"
+    return HTTPException(status_code=502, detail={"code": code, "stage": stage})
+
+
+async def _retire_and_redetect(
+    server: HTTPServer,
+    *,
+    current: AttentionState,
+    pane: AttentionPane,
+    detector: PromptDetector,
+) -> None:
+    manager = server.services.attention_manager
+    if manager is None:
+        return
+    cleared = await server.services.run_db(
+        manager.transition,
+        current.entry_id,
+        state=None,
+        expected_attention_id=current.attention_id,
+        expected_fingerprint=current.fingerprint,
+    )
+    if not cleared.applied:
+        return
+    pane_output = await pane.capture()
+    if pane_output is None:
+        return
+    detected = detector.detect_prompt(pane_output)
+    if detected is None:
+        return
+    await server.services.run_db(
+        manager.transition,
+        current.entry_id,
+        state="blocked",
+        run_id=current.run_id,
+        session_id=current.session_id,
+        reason=detected.kind,
+        kind="actionable",
+        fingerprint=detected.fingerprint,
+        payload=detected.to_payload(),
+    )
+
+
+async def _resolve_attention_pane(
+    server: HTTPServer,
+    state: AttentionState,
+) -> AttentionPane | None:
+    services = server.services
+    session_manager = services.session_manager
+    if state.session_id is not None and session_manager is not None:
+        session = await services.run_db(session_manager.get, state.session_id)
+        if session is not None and isinstance(session.terminal_context, Mapping):
+            terminal_context = session.terminal_context
+            pane_id = terminal_context.get("tmux_pane")
+            if isinstance(pane_id, str) and pane_id:
+                from gobby.sessions.tmux_context import get_tmux_manager_for_context
+
+                tmux = get_tmux_manager_for_context(terminal_context)
+
+                async def capture_session_pane() -> str | None:
+                    return await tmux.capture_pane(pane_id, lines=15)
+
+                return AttentionPane(
+                    target=pane_id,
+                    tmux_cmd=tuple(tmux._base_args()),
+                    capture=capture_session_pane,
+                )
+
+    agent_runner = services.agent_runner
+    if state.run_id is None or agent_runner is None:
+        return None
+    run = await services.run_db(agent_runner.get_run, state.run_id)
+    if run is None or not run.tmux_session_name:
+        return None
+
+    from gobby.agents.tmux import get_tmux_session_manager
+
+    tmux_config = services.config.tmux if services.config is not None else None
+    tmux = get_tmux_session_manager(tmux_config)
+    session_name = run.tmux_session_name
+
+    async def capture_run_pane() -> str | None:
+        return await tmux.capture_pane(session_name, lines=15)
+
+    return AttentionPane(
+        target=f"={session_name}:",
+        tmux_cmd=tuple(tmux._base_args()),
+        capture=capture_run_pane,
+    )
