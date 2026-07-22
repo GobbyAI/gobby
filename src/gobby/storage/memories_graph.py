@@ -116,7 +116,9 @@ class MemoryGraphMixin(MemoryStoreBase):
         rows = self.db.fetchall(
             """
             SELECT * FROM memories
-            WHERE graph_processed IS FALSE AND graph_status = 'pending'
+            WHERE graph_processed IS FALSE
+              AND graph_status = 'pending'
+              AND deleted_at IS NULL
             ORDER BY created_at ASC
             LIMIT %s
             """,

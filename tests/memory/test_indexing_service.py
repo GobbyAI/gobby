@@ -79,6 +79,34 @@ class _MemoryStorage:
         self.stale_ids -= cleared
         return len(cleared)
 
+    def mark_vector_reindex_needed(self, memory_id: str) -> None:
+        self.stale_ids.add(memory_id)
+
+    def mark_vector_snapshot_reindexed(
+        self,
+        memory_id: str,
+        content: str,
+        project_id: str,
+        is_global: bool,
+    ) -> bool:
+        matching = next(
+            (
+                memory
+                for memory in self.memories
+                if memory.id == memory_id
+                and memory.content == content
+                and memory.project_id == project_id
+                and memory.is_global == is_global
+                and memory.deleted_at is None
+            ),
+            None,
+        )
+        if matching is None:
+            return False
+        self.reindexed_content[memory_id] = content
+        self.stale_ids.discard(memory_id)
+        return True
+
 
 class _VectorStore:
     def __init__(self) -> None:
@@ -156,6 +184,7 @@ def _service(
     vector_store: _VectorStore,
     run_db: Callable[..., Awaitable[Any]] | None = None,
     embed_fn: Callable[[str], Awaitable[list[float]]] = _embed_fn,
+    cleanup_rowless: Callable[[str], Awaitable[None]] | None = None,
 ) -> IndexingService:
     return IndexingService(
         storage=storage,
@@ -164,8 +193,34 @@ def _service(
         kg_service=None,
         crossref_service=MagicMock(),
         kg_rebuilder=AsyncMock(return_value={}),
+        cleanup_rowless=cleanup_rowless,
         run_db=run_db,
     )
+
+
+@pytest.mark.asyncio
+async def test_global_reindex_routes_rowless_cleanup_through_recreate_fence() -> None:
+    storage = _MemoryStorage([_memory("mem-1", "alpha")])
+    vector_store = _VectorStore()
+    cleanup_rowless = AsyncMock()
+    service = _service(storage, vector_store, cleanup_rowless=cleanup_rowless)
+    original_fetch = service.fetch_all_memories
+    snapshot_count = 0
+
+    async def fetch() -> list[Memory]:
+        nonlocal snapshot_count
+        snapshot_count += 1
+        if snapshot_count == 2:
+            storage.memories.clear()
+        return await original_fetch()
+
+    service.fetch_all_memories = fetch  # type: ignore[method-assign]
+
+    result = await service.reindex_embeddings()
+
+    assert result["success"] is True
+    cleanup_rowless.assert_awaited_once_with("mem-1")
+    vector_store.delete.assert_not_awaited()
 
 
 @pytest.mark.asyncio
@@ -436,7 +491,13 @@ async def test_global_reindex_acquires_admission_before_source_snapshot() -> Non
     result = await service.reindex_embeddings()
 
     assert result["success"] is True
-    assert events == ["admission:enter", "snapshot", "rebuild", "admission:exit"]
+    assert events == [
+        "admission:enter",
+        "snapshot",
+        "rebuild",
+        "snapshot",
+        "admission:exit",
+    ]
 
 
 @pytest.mark.asyncio
@@ -471,6 +532,9 @@ async def test_global_reindex_pages_every_memory(monkeypatch: pytest.MonkeyPatch
         (ALL_MEMORIES, 2, 0),
         (ALL_MEMORIES, 2, 2),
         (ALL_MEMORIES, 2, 4),
+        (ALL_MEMORIES, 2, 0),
+        (ALL_MEMORIES, 2, 2),
+        (ALL_MEMORIES, 2, 4),
     ]
 
 
@@ -488,6 +552,9 @@ async def test_global_index_rebuild_pages_every_crossref_memory(
     assert report["crossrefs"] == {"memories_processed": 5, "crossrefs_created": 5}
     assert service._crossref_service.rebuild_for_memory.await_count == 5
     assert storage.list_calls == [
+        (ALL_MEMORIES, 2, 0),
+        (ALL_MEMORIES, 2, 2),
+        (ALL_MEMORIES, 2, 4),
         (ALL_MEMORIES, 2, 0),
         (ALL_MEMORIES, 2, 2),
         (ALL_MEMORIES, 2, 4),

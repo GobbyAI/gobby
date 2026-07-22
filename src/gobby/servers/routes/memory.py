@@ -11,10 +11,11 @@ from typing import TYPE_CHECKING, Any, cast
 from uuid import uuid4
 
 from fastapi import APIRouter, HTTPException, Query
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 
 from gobby.servers.responses import JSONResponse
 from gobby.storage.memories import Memory, MemoryType, Visibility
+from gobby.storage.memories_crud import normalize_supersedes
 from gobby.storage.projects import PERSONAL_PROJECT_ID
 
 if TYPE_CHECKING:
@@ -70,6 +71,15 @@ class MemoryCreateRequest(BaseModel):
     )
     source_session_id: str | None = Field(default=None, description="Source session ID")
     tags: list[str] | None = Field(default=None, description="Tags for categorization")
+    supersedes: list[str] | None = Field(
+        default=None,
+        description="Memory UUIDs atomically replaced by this memory",
+    )
+
+    @field_validator("supersedes")
+    @classmethod
+    def validate_supersedes(cls, value: list[str] | None) -> list[str]:
+        return normalize_supersedes(value)
 
 
 class MemoryUpdateRequest(BaseModel):
@@ -280,6 +290,7 @@ def create_memory_router(server: "HTTPServer") -> APIRouter:
                 source_type=request_data.source_type,
                 source_session_id=request_data.source_session_id,
                 tags=request_data.tags,
+                supersedes=request_data.supersedes,
             )
             return memory.to_dict()
         except HTTPException:
@@ -593,14 +604,22 @@ def create_memory_router(server: "HTTPServer") -> APIRouter:
             raise HTTPException(status_code=500, detail=str(e)) from e
 
     @router.post("/{memory_id}/restore")
-    def restore_memory(memory_id: str) -> Any:
+    async def restore_memory(memory_id: str) -> Any:
         """Restore a soft-hidden (dream-flagged) memory to active visibility.
 
         Returns the restored memory so callers can refresh from the response.
         """
         try:
             _ensure_memory_in_current_project(server, memory_id)
+            hidden_memory = server.memory_manager.get_memory(memory_id, visibility="all")
             server.memory_manager.restore_memory(memory_id)
+            await server.memory_manager.restore_memory_indices(
+                hidden_memory.id,
+                hidden_memory.content,
+                hidden_memory.project_id,
+                hidden_memory.is_global,
+                hidden_memory.memory_type.value,
+            )
         except ValueError as e:
             raise HTTPException(status_code=404, detail=str(e)) from e
         except Exception as e:

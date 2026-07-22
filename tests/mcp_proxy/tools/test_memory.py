@@ -12,6 +12,7 @@ Focuses on:
 import asyncio
 import inspect
 import logging
+import uuid
 from collections.abc import Iterator
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
@@ -45,9 +46,47 @@ class MockMemory:
         self.created_at = created_at
         self.updated_at = updated_at or created_at
         self.project_id = project_id
+        self.is_global = False
         self.source_type = source_type
         self.access_count = access_count
         self.tags = tags or []
+
+
+@pytest.mark.asyncio
+async def test_create_memory_supersedes_guard_bypass(mock_memory_manager: MagicMock) -> None:
+    superseded_id = str(uuid.uuid4())
+    registry = create_memory_registry(mock_memory_manager)
+    ephemeral = {
+        "content": "Gobby build #epic E2E docs test #14353 completed.",
+        "memory_type": "implementation_note",
+        "tags": ["gobby", "build-e2e", "#14353"],
+    }
+
+    skipped = await registry.call("create_memory", ephemeral)
+    assert skipped["skipped"] is True
+    persisted = await registry.call(
+        "create_memory",
+        {**ephemeral, "supersedes": [superseded_id]},
+    )
+    assert persisted["success"] is True, persisted
+    assert mock_memory_manager.create_memory.call_args.kwargs["supersedes"] == [superseded_id]
+
+    mock_memory_manager.create_memory.reset_mock()
+    proposal = (
+        "SessionStart should persist a durable completion marker. If any invariant is "
+        "missing, call an idempotent ensure_session_activation(session_id) helper."
+    )
+    task_manager = MagicMock()
+    proposal_registry = create_memory_registry(
+        mock_memory_manager,
+        task_manager=task_manager,
+    )
+    await proposal_registry.call(
+        "create_memory",
+        {"content": proposal, "supersedes": [superseded_id]},
+    )
+    mock_memory_manager.create_memory.assert_awaited_once()
+    task_manager.create_task_with_decomposition.assert_not_called()
 
 
 @pytest.fixture

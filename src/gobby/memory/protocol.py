@@ -28,6 +28,7 @@ from datetime import UTC, datetime
 from enum import Enum
 from typing import TYPE_CHECKING, Any, Protocol, runtime_checkable
 
+from gobby.memory.write_result import MemoryWriteResult
 from gobby.storage.memories_models import MemoryType, validate_memory_type
 from gobby.storage.memories_scope import ALL_MEMORIES, MemoryScope
 from gobby.storage.projects import PERSONAL_PROJECT_ID
@@ -308,10 +309,11 @@ class MemoryBackendProtocol(Protocol):
         is_global: bool = False,
         user_id: str | None = None,
         tags: list[str] | None = None,
+        supersedes: list[str] | None = None,
         source_type: str = "agent",
         source_session_id: str | None = None,
         metadata: dict[str, Any] | None = None,
-    ) -> MemoryRecord:
+    ) -> MemoryWriteResult[MemoryRecord]:
         """Create a new memory.
 
         Args:
@@ -320,12 +322,13 @@ class MemoryBackendProtocol(Protocol):
             project_id: Associated project ID
             user_id: Associated user ID
             tags: List of tags
+            supersedes: Memory ids atomically soft-hidden by this write
             source_type: Origin of memory
             source_session_id: Session that created the memory
             metadata: Additional metadata
 
         Returns:
-            The created MemoryRecord
+            The memory record and its primary-write outcome
         """
         ...
 

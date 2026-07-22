@@ -7,10 +7,12 @@ import logging
 from collections.abc import Awaitable, Callable
 from typing import TYPE_CHECKING, Any
 
+from psycopg.rows import dict_row
 from qdrant_client.models import Filter
 
 from gobby.memory.vectorstore import memory_scope_filter
 from gobby.storage.memories import ALL_MEMORIES, LocalMemoryManager, Memory, MemoryScope
+from gobby.storage.memories_base import MEMORY_PROJECTION_FENCE_LOCK_KEY
 
 if TYPE_CHECKING:
     from gobby.config.persistence import MemoryConfig
@@ -62,10 +64,17 @@ class CrossrefService:
         memory: Memory,
         threshold: float | None = None,
         max_links: int | None = None,
+        *,
+        connection: Any | None = None,
     ) -> int:
         """Public wrapper for cross-reference creation."""
         try:
-            return await self.create(memory, threshold, max_links)
+            return await self.create(
+                memory,
+                threshold,
+                max_links,
+                connection=connection,
+            )
         except Exception as exc:
             raise CrossrefRebuildError(str(exc)) from exc
 
@@ -74,6 +83,8 @@ class CrossrefService:
         memory: Memory,
         threshold: float | None = None,
         max_links: int | None = None,
+        *,
+        connection: Any | None = None,
     ) -> int:
         """Find and link similar memories using VectorStore search."""
         if not self._vector_store or not self._embed_fn:
@@ -88,6 +99,15 @@ class CrossrefService:
             limit=max_links + 1,
             filters=_crossref_scope_filter(memory.project_id, memory.is_global),
         )
+
+        if connection is not None:
+            return await self._replace_fenced(
+                memory,
+                results,
+                threshold,
+                max_links,
+                connection,
+            )
 
         count = 0
         for other_id, score in results:
@@ -104,6 +124,118 @@ class CrossrefService:
                 logger.debug("Crossref creation failed: %s", e)
 
         return count
+
+    async def _replace_fenced(
+        self,
+        memory: Memory,
+        results: list[tuple[str, float]],
+        threshold: float,
+        max_links: int,
+        connection: Any,
+    ) -> int:
+        """Replace a source's links after locking and revalidating every endpoint."""
+        candidate_ids = [other_id for other_id, _score in results if other_id != memory.id]
+        lock_ids = sorted({memory.id, *candidate_ids})
+        result_scores = dict(results)
+        async with connection.cursor(row_factory=dict_row) as cursor:
+            await cursor.execute(
+                "SELECT pg_advisory_xact_lock(%s)",
+                (MEMORY_PROJECTION_FENCE_LOCK_KEY,),
+            )
+            await cursor.execute(
+                """
+                SELECT id, content, project_id, is_global, deleted_at,
+                       vector_needs_reindex
+                FROM memories
+                WHERE id = ANY(%s)
+                ORDER BY id
+                FOR SHARE
+                """,
+                (lock_ids,),
+            )
+            rows = {str(row["id"]): row for row in await cursor.fetchall()}
+            source = rows.get(memory.id)
+            if (
+                source is None
+                or source["deleted_at"] is not None
+                or source["content"] != memory.content
+                or str(source["project_id"]) != memory.project_id
+                or bool(source["is_global"]) != memory.is_global
+            ):
+                return 0
+
+            await cursor.execute(
+                """
+                DELETE FROM memory_crossrefs
+                WHERE source_id = %s OR target_id = %s
+                """,
+                (memory.id, memory.id),
+            )
+
+            count = 0
+            for other_id in candidate_ids:
+                if count >= max_links:
+                    break
+                candidate = rows.get(other_id)
+                if candidate is None or candidate["deleted_at"] is not None:
+                    continue
+                if bool(candidate["vector_needs_reindex"]):
+                    continue
+                candidate_is_global = bool(candidate["is_global"])
+                candidate_project_id = str(candidate["project_id"])
+                if memory.is_global:
+                    if not candidate_is_global:
+                        continue
+                elif not candidate_is_global and candidate_project_id != memory.project_id:
+                    continue
+
+                score = await self._current_stored_similarity(
+                    memory,
+                    other_id,
+                    result_scores[other_id],
+                    max_links,
+                )
+                if score < threshold:
+                    continue
+                await cursor.execute(
+                    """
+                    INSERT INTO memory_crossrefs
+                        (source_id, target_id, similarity, created_at)
+                    VALUES (%s, %s, %s, CURRENT_TIMESTAMP)
+                    ON CONFLICT(source_id, target_id) DO UPDATE SET
+                        similarity = excluded.similarity
+                    """,
+                    (memory.id, other_id, score),
+                )
+                count += 1
+        return count
+
+    async def _current_stored_similarity(
+        self,
+        memory: Memory,
+        candidate_id: str,
+        fallback: float,
+        max_links: int,
+    ) -> float:
+        """Re-read a candidate's current stored vector score when supported."""
+        vector_store = self._vector_store
+        if vector_store is None or not vector_store.supports_stored_vector_search:
+            return fallback
+        try:
+            current = await vector_store.search_by_stored_vectors(
+                [candidate_id],
+                limit=max_links + 1,
+                query_filter=_crossref_scope_filter(memory.project_id, memory.is_global),
+            )
+        except Exception as exc:
+            logger.debug("Stored-vector crossref revalidation failed: %s", exc)
+            return fallback
+        if not isinstance(current, dict):
+            return fallback
+        for other_id, score in current.get(candidate_id, []):
+            if other_id == memory.id:
+                return score
+        return 0.0
 
     def get_related(
         self,

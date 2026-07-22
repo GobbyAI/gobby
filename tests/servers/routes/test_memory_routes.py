@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import uuid
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -54,6 +55,7 @@ def mock_server():
     server.memory_manager.search_memories = AsyncMock(return_value=[])
     server.memory_manager.update_memory = AsyncMock(return_value=_make_memory())
     server.memory_manager.delete_memory = AsyncMock(return_value=True)
+    server.memory_manager.restore_memory_indices = AsyncMock(return_value=True)
     server.memory_manager.count_memories.return_value = 0
     return server
 
@@ -341,6 +343,45 @@ class TestCreateMemory:
         data = response.json()
         assert data["id"] == "mm-new-123"
         assert data["content"] == "User prefers dark mode"
+
+    def test_create_memory_supersedes(self, client, mock_server) -> None:
+        superseded_id = str(uuid.uuid4())
+        mock_server.memory_manager.create_memory = AsyncMock(
+            return_value=_make_memory(id="replacement")
+        )
+        response = client.post(
+            "/api/memories",
+            json={"content": "Replacement", "supersedes": [superseded_id]},
+        )
+        assert response.status_code == 201
+        assert mock_server.memory_manager.create_memory.call_args.kwargs["supersedes"] == [
+            superseded_id
+        ]
+
+    def test_create_memory_supersedes_retry(self, client, mock_server) -> None:
+        superseded_id = str(uuid.uuid4())
+        mock_server.memory_manager.create_memory = AsyncMock(
+            return_value=_make_memory(id="replacement")
+        )
+        payload = {"content": "Replacement", "supersedes": [superseded_id]}
+        assert client.post("/api/memories", json=payload).status_code == 201
+        assert client.post("/api/memories", json=payload).status_code == 201
+
+    def test_create_memory_supersedes_bounds(self, client, mock_server) -> None:
+        malformed = client.post(
+            "/api/memories",
+            json={"content": "Malformed", "supersedes": ["bad-id"]},
+        )
+        assert malformed.status_code == 422
+        over_cap = client.post(
+            "/api/memories",
+            json={
+                "content": "Over cap",
+                "supersedes": [str(uuid.uuid4()) for _ in range(21)],
+            },
+        )
+        assert over_cap.status_code == 422
+        mock_server.memory_manager.create_memory.assert_not_called()
 
     def test_create_requires_content(self, client, mock_server) -> None:
         """POST /memories requires content field."""

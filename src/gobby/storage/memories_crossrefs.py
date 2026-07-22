@@ -66,20 +66,21 @@ class MemoryCrossRefMixin(MemoryStoreBase):
         Returns:
             List of MemoryCrossRef objects, sorted by similarity descending
         """
-        # Get crossrefs where this memory is the source
         rows = self.db.fetchall(
             """
-            SELECT source_id, target_id, similarity, created_at
-            FROM memory_crossrefs
-            WHERE source_id = %s AND similarity >= %s
-            UNION
-            SELECT source_id, target_id, similarity, created_at
-            FROM memory_crossrefs
-            WHERE target_id = %s AND similarity >= %s
-            ORDER BY similarity DESC
+            SELECT crossref.source_id, crossref.target_id,
+                   crossref.similarity, crossref.created_at
+            FROM memory_crossrefs AS crossref
+            JOIN memories AS source_memory ON source_memory.id = crossref.source_id
+            JOIN memories AS target_memory ON target_memory.id = crossref.target_id
+            WHERE (crossref.source_id = %s OR crossref.target_id = %s)
+              AND crossref.similarity >= %s
+              AND source_memory.deleted_at IS NULL
+              AND target_memory.deleted_at IS NULL
+            ORDER BY crossref.similarity DESC
             LIMIT %s
             """,
-            (memory_id, min_similarity, memory_id, min_similarity, limit),
+            (memory_id, memory_id, min_similarity, limit),
         )
 
         return [MemoryCrossRef.from_row(row) for row in rows]

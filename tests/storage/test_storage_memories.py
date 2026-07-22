@@ -107,6 +107,7 @@ def test_update_memory_type_marks_vector_payload_stale(memory_manager) -> None:
 
 def test_update_memory_with_same_type_keeps_vector_payload_fresh(memory_manager) -> None:
     memory = memory_manager.create_memory(content="Same type update")
+    memory_manager.mark_vectors_reindexed({memory.id: memory.content})
 
     updated = memory_manager.update_memory(memory.id, memory_type="fact")
 

@@ -172,6 +172,8 @@ class DedupService:
             embedding = await self.embed_fn(content)
         except Exception as e:
             self._log_embedding_failure("Embedding failed, falling back to simple store", e)
+            if exclude_memory_id is not None:
+                return result
             return await self._fallback_store(
                 content,
                 project_id,
@@ -196,6 +198,8 @@ class DedupService:
                 )
             else:
                 logger.warning("Vector search failed, falling back to simple store: %s", e)
+            if exclude_memory_id is not None:
+                return result
             return await self._fallback_store(
                 content,
                 project_id,

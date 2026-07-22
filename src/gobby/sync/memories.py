@@ -217,30 +217,41 @@ class MemoryBackupManager:
         """Restore a backup without blocking the caller's event loop."""
         if not self.config.enabled or self.memory_manager is None:
             return 0
-        return await asyncio.to_thread(self.restore_sync)
-
-    def restore_sync(self) -> int:
-        """Explicitly restore the configured backup path."""
-        if not self.config.enabled or self.memory_manager is None:
-            return 0
         path = self._get_backup_path()
         if not path.is_file():
             return 0
         try:
-            return self._restore_memories_sync(path)
+            restored_count, changed_ids = await asyncio.to_thread(
+                self._restore_memories_with_outcomes_sync,
+                path,
+            )
+            for memory_id in changed_ids:
+                await self.memory_manager.reconcile_memory_indices(memory_id)
+            return restored_count
         except MemoryRestoreError:
             raise
         except Exception as exc:
             logger.exception("Failed to restore memories: %s", exc)
             raise MemoryRestoreError(f"Failed to restore memories: {exc}") from exc
 
+    def restore_sync(self) -> int:
+        """Explicitly restore the configured backup path."""
+        if not self.config.enabled or self.memory_manager is None:
+            return 0
+        return asyncio.run(self.restore())
+
     def _restore_memories_sync(self, path: Path) -> int:
+        restored_count, _changed_ids = self._restore_memories_with_outcomes_sync(path)
+        return restored_count
+
+    def _restore_memories_with_outcomes_sync(self, path: Path) -> tuple[int, list[str]]:
         memory_manager = self.memory_manager
         if memory_manager is None:
-            return 0
+            return 0, []
 
         records = _load_memory_backup(path)
         restored_count = 0
+        changed_ids: list[str] = []
         with self.db.transaction() as conn:
             existing_session_ids = {
                 row["id"] for row in conn.execute("SELECT id FROM sessions").fetchall()
@@ -267,7 +278,7 @@ class MemoryBackupManager:
                 source_session_id = record.get("source_id")
                 if source_session_id not in existing_session_ids:
                     source_session_id = None
-                memory_manager.storage.create_memory(
+                result = memory_manager.storage.create_memory_with_outcome(
                     content=record["content"],
                     memory_type=record["type"],
                     project_id=record["project_id"],
@@ -280,8 +291,10 @@ class MemoryBackupManager:
                     updated_at=record["updated_at"],
                 )
                 restored_count += 1
+                if result.outcome in {"created", "reactivated", "updated"}:
+                    changed_ids.append(result.memory.id)
 
-        return restored_count
+        return restored_count, changed_ids
 
     def _backup_memories_sync(self, path: Path, project_id: str | None = None) -> int:
         memory_manager = self.memory_manager

@@ -13,6 +13,30 @@ from gobby.utils.datetime import parse_stored_datetime, utc_now
 
 
 class MemoryDreamMixin(MemoryStoreBase):
+    def mark_dreamed_with_connection(
+        self,
+        conn: Any,
+        memory_id: str,
+        *,
+        hidden_as: Literal["review", "delete"] | None = None,
+        when: datetime | str | None = None,
+    ) -> bool:
+        """Apply dream visibility bookkeeping on an existing transaction."""
+        stamp = parse_stored_datetime(when) or utc_now()
+        if hidden_as is None:
+            sql = "UPDATE memories SET last_dreamed_at = %s WHERE id = %s"
+            params: tuple[Any, ...] = (stamp, memory_id)
+        else:
+            sql = (
+                "UPDATE memories SET last_dreamed_at = %s, deleted_at = %s, "
+                "dream_action = %s WHERE id = %s"
+            )
+            params = (stamp, stamp, hidden_as, memory_id)
+        cursor = conn.execute(sql, params)
+        if cursor.rowcount == 0:
+            raise ValueError(f"Memory {memory_id} not found")
+        return True
+
     def mark_dreamed(
         self,
         memory_id: str,
@@ -31,21 +55,14 @@ class MemoryDreamMixin(MemoryStoreBase):
 
         Raises ``ValueError`` if the memory does not exist.
         """
-        stamp = parse_stored_datetime(when) or utc_now()
-        if hidden_as is None:
-            sql = "UPDATE memories SET last_dreamed_at = %s WHERE id = %s"
-            params: tuple[Any, ...] = (stamp, memory_id)
-        else:
-            sql = (
-                "UPDATE memories SET last_dreamed_at = %s, deleted_at = %s, "
-                "dream_action = %s WHERE id = %s"
-            )
-            params = (stamp, stamp, hidden_as, memory_id)
         with self.db.transaction() as conn:
-            cursor = conn.execute(sql, params)
-            if cursor.rowcount == 0:
-                raise ValueError(f"Memory {memory_id} not found")
-        self._notify_listeners()
+            self.mark_dreamed_with_connection(
+                conn,
+                memory_id,
+                hidden_as=hidden_as,
+                when=when,
+            )
+        self.notify_changed()
         return True
 
     def mark_project_memories_due(self, project_id: str) -> int:
@@ -96,14 +113,26 @@ class MemoryDreamMixin(MemoryStoreBase):
         """
         stamp = parse_stored_datetime(when) or utc_now()
         with self.db.transaction() as conn:
+            row = conn.execute(
+                "SELECT vector_needs_reindex FROM memories WHERE id = %s FOR UPDATE",
+                (memory_id,),
+            ).fetchone()
+            if row is None:
+                raise ValueError(f"Memory {memory_id} not found")
+            if bool(row["vector_needs_reindex"]):
+                conn.execute(
+                    "DELETE FROM memory_crossrefs WHERE source_id = %s OR target_id = %s",
+                    (memory_id, memory_id),
+                )
             cursor = conn.execute(
                 "UPDATE memories SET deleted_at = NULL, dream_action = NULL, "
-                "last_dreamed_at = %s WHERE id = %s",
+                "last_dreamed_at = %s, vector_needs_reindex = TRUE, "
+                "graph_processed = FALSE, graph_status = 'pending' WHERE id = %s",
                 (stamp, memory_id),
             )
             if cursor.rowcount == 0:
                 raise ValueError(f"Memory {memory_id} not found")
-        self._notify_listeners()
+        self.notify_changed()
         return True
 
     def purge_dream_hidden(self, action: str, older_than_days: int) -> list[str]:

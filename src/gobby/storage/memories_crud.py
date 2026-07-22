@@ -4,7 +4,8 @@ import uuid
 from datetime import UTC, datetime
 from typing import Any
 
-from gobby.storage.memories_base import MemoryStoreBase
+from gobby.memory.write_result import MemoryWriteOutcome, MemoryWriteResult
+from gobby.storage.memories_base import MEMORY_PROJECTION_FENCE_LOCK_KEY, MemoryStoreBase
 from gobby.storage.memories_models import (
     MEMORY_UUID_NAMESPACE,
     Memory,
@@ -22,6 +23,42 @@ from gobby.storage.sql_dialect import newer_than_now_expr
 from gobby.utils.datetime import parse_stored_datetime, to_aware_utc, utc_now
 
 logger = logging.getLogger(__name__)
+MAX_SUPERSEDES_IDS = 20
+
+
+def normalize_supersedes(supersedes: list[str] | None) -> list[str]:
+    """Validate, canonicalize, and bound public supersession ids."""
+    normalized: list[str] = []
+    seen: set[str] = set()
+    for raw_memory_id in supersedes or []:
+        try:
+            memory_id = str(uuid.UUID(raw_memory_id))
+        except (AttributeError, TypeError, ValueError) as exc:
+            raise ValueError(f"Invalid supersedes memory id: {raw_memory_id!r}") from exc
+        if memory_id not in seen:
+            normalized.append(memory_id)
+            seen.add(memory_id)
+    if len(normalized) > MAX_SUPERSEDES_IDS:
+        raise ValueError(f"supersedes accepts at most {MAX_SUPERSEDES_IDS} unique memory ids")
+    return normalized
+
+
+def _memory_lock_key(memory_id: str) -> int:
+    """Map a UUID to a stable signed PostgreSQL advisory-lock key."""
+    raw = uuid.UUID(memory_id).int & ((1 << 64) - 1)
+    return raw - (1 << 64) if raw >= (1 << 63) else raw
+
+
+def _row_tags(row: Any | None) -> list[str]:
+    if row is None:
+        return []
+    value = row["tags"]
+    if isinstance(value, str):
+        parsed = json.loads(value) if value else []
+        return [str(tag) for tag in parsed]
+    if isinstance(value, list):
+        return [str(tag) for tag in value]
+    return []
 
 
 def _content_scope(project_id: str, is_global: bool) -> MemoryScope:
@@ -59,7 +96,7 @@ def map_get_memories_rows(rows: list[Any], memory_ids: list[str]) -> list[Memory
 
 
 class MemoryCrudMixin(MemoryStoreBase):
-    def create_memory(
+    def create_memory_with_outcome(
         self,
         content: str,
         project_id: str,
@@ -70,9 +107,10 @@ class MemoryCrudMixin(MemoryStoreBase):
         memory_id: str | None = None,
         created_at: datetime | None = None,
         updated_at: datetime | None = None,
+        supersedes: list[str] | None = None,
         *,
         is_global: bool = False,
-    ) -> Memory:
+    ) -> MemoryWriteResult[Memory]:
         # Validate that content is not empty
         if not content or not content.strip():
             logger.warning("Skipping memory creation: empty content provided")
@@ -86,26 +124,38 @@ class MemoryCrudMixin(MemoryStoreBase):
         # Normalize content for consistent ID generation (avoid duplicates from
         # whitespace differences)
         normalized_content = content.strip()
-        if memory_id:
-            final_memory_id = memory_id
-        else:
-            current_memory_id_seed = json.dumps(
-                {
-                    "content": normalized_content,
-                    "project_id": project_id,
-                    "is_global": is_global,
-                },
-                sort_keys=True,
-                separators=(",", ":"),
-            )
-            current_memory_id = str(uuid.uuid5(MEMORY_UUID_NAMESPACE, current_memory_id_seed))
-            final_memory_id = current_memory_id
+        current_memory_id_seed = json.dumps(
+            {
+                "content": normalized_content,
+                "project_id": project_id,
+                "is_global": is_global,
+            },
+            sort_keys=True,
+            separators=(",", ":"),
+        )
+        current_memory_id = str(uuid.uuid5(MEMORY_UUID_NAMESPACE, current_memory_id_seed))
+        final_memory_id = str(uuid.UUID(memory_id)) if memory_id else current_memory_id
 
-        tags_json = json.dumps(tags) if tags else None
+        supersedes_ids = normalize_supersedes(supersedes)
+        requested_tags = list(
+            dict.fromkeys([*(tags or []), *(f"supersedes:{item}" for item in supersedes_ids)])
+        )
 
         changed = False
         row: Any | None = None
         with self.db.transaction() as conn:
+            conn.execute(
+                "SELECT pg_advisory_xact_lock(%s)",
+                (MEMORY_PROJECTION_FENCE_LOCK_KEY,),
+            )
+            advisory_ids = set(supersedes_ids)
+            advisory_ids.add(current_memory_id)
+            advisory_ids.add(final_memory_id)
+            held_advisory_keys = {_memory_lock_key(item) for item in advisory_ids}
+            for lock_key in sorted(held_advisory_keys):
+                conn.execute("SELECT pg_advisory_xact_lock(%s)", (lock_key,))
+
+            resolved_duplicate: Any | None = None
             if memory_id is None:
                 scope_predicate, scope_params = memory_scope_predicate(
                     _content_scope(project_id, is_global)
@@ -120,11 +170,12 @@ class MemoryCrudMixin(MemoryStoreBase):
                     (normalized_content, *scope_params),
                 ).fetchone()
                 if visible_duplicate is not None:
-                    return Memory.from_row(visible_duplicate)
+                    resolved_duplicate = visible_duplicate
+                    final_memory_id = str(visible_duplicate["id"])
 
             # source_id proximity dedup: if the same session created a very similar
             # memory within the last 60 seconds, treat it as a duplicate.
-            if source_session_id:
+            if source_session_id and resolved_duplicate is None:
                 recent_cutoff_sql = newer_than_now_expr(self.db, "created_at", "%s", "second")
                 recent_sql = (
                     f"SELECT * FROM memories WHERE source_session_id = %s "  # nosec
@@ -136,14 +187,16 @@ class MemoryCrudMixin(MemoryStoreBase):
                     (source_session_id, project_id, is_global, 60),
                 ).fetchone()
                 if recent and normalized_content == str(recent["content"]).strip():
-                    return Memory.from_row(recent)
+                    resolved_duplicate = recent
+                    final_memory_id = str(recent["id"])
 
             existing_row = conn.execute(
-                "SELECT content, deleted_at, updated_at FROM memories WHERE id = %s",
+                "SELECT * FROM memories WHERE id = %s",
                 (final_memory_id,),
             ).fetchone()
             if (
                 memory_id is None
+                and resolved_duplicate is None
                 and existing_row is not None
                 and str(existing_row["content"]).strip() != normalized_content
             ):
@@ -159,7 +212,7 @@ class MemoryCrudMixin(MemoryStoreBase):
                 )
                 final_memory_id = str(uuid.uuid5(MEMORY_UUID_NAMESPACE, collision_seed))
                 existing_row = conn.execute(
-                    "SELECT content, deleted_at, updated_at FROM memories WHERE id = %s",
+                    "SELECT * FROM memories WHERE id = %s",
                     (final_memory_id,),
                 ).fetchone()
                 if (
@@ -167,14 +220,49 @@ class MemoryCrudMixin(MemoryStoreBase):
                     and str(existing_row["content"]).strip() != normalized_content
                 ):
                     raise RuntimeError(f"Memory ID collision for content: {final_memory_id}")
+
+            resolved_key = _memory_lock_key(final_memory_id)
+            if resolved_key not in held_advisory_keys:
+                conn.execute("SELECT pg_advisory_xact_lock(%s)", (resolved_key,))
+            locked_ids = sorted({final_memory_id, *supersedes_ids})
+            placeholders = ", ".join(["%s"] * len(locked_ids))
+            locked_rows = conn.execute(
+                f"SELECT * FROM memories WHERE id IN ({placeholders}) ORDER BY id FOR UPDATE",  # nosec
+                tuple(locked_ids),
+            ).fetchall()
+            rows_by_id = {str(locked_row["id"]): locked_row for locked_row in locked_rows}
+            existing_row = rows_by_id.get(final_memory_id)
+
+            existing_tags = _row_tags(existing_row)
+            merged_tags = list(dict.fromkeys([*existing_tags, *requested_tags]))
+            tags_json = json.dumps(merged_tags) if merged_tags else None
+            pending_soft_hides: list[str] = []
+            for superseded_id in supersedes_ids:
+                if superseded_id == final_memory_id:
+                    raise ValueError("A memory cannot supersede itself")
+                superseded = rows_by_id.get(superseded_id)
+                if superseded is None:
+                    raise ValueError(f"Superseded memory {superseded_id} not found")
+                if str(superseded["project_id"]) != project_id or bool(
+                    superseded["is_global"]
+                ) != bool(is_global):
+                    raise ValueError(
+                        f"Superseded memory {superseded_id} is outside the target scope"
+                    )
+                if superseded["deleted_at"] is None:
+                    pending_soft_hides.append(superseded_id)
+                elif f"supersedes:{superseded_id}" not in existing_tags:
+                    raise ValueError(
+                        f"Superseded memory {superseded_id} is hidden without matching provenance"
+                    )
             if restore_metadata:
                 cursor = conn.execute(
                     """
                     INSERT INTO memories (
                         id, project_id, is_global, memory_type, content, source_type,
-                        source_session_id, access_count, tags,
+                        source_session_id, access_count, tags, vector_needs_reindex,
                         created_at, updated_at
-                    ) VALUES (%s, %s, %s, %s, %s, %s, %s, 0, %s, %s, %s)
+                    ) VALUES (%s, %s, %s, %s, %s, %s, %s, 0, %s, TRUE, %s, %s)
                     ON CONFLICT (id) DO UPDATE SET
                         project_id = CASE
                             WHEN excluded.updated_at > memories.updated_at
@@ -233,6 +321,11 @@ class MemoryCrudMixin(MemoryStoreBase):
                               AND excluded.updated_at > memories.updated_at
                             THEN NULL
                             ELSE memories.last_dreamed_at
+                        END,
+                        vector_needs_reindex = CASE
+                            WHEN excluded.updated_at > memories.updated_at
+                            THEN TRUE
+                            ELSE memories.vector_needs_reindex
                         END
                     RETURNING *
                     """,
@@ -254,13 +347,18 @@ class MemoryCrudMixin(MemoryStoreBase):
                     """
                     INSERT INTO memories (
                         id, project_id, is_global, memory_type, content, source_type,
-                        source_session_id, access_count, tags,
+                        source_session_id, access_count, tags, vector_needs_reindex,
                         created_at, updated_at
-                    ) VALUES (%s, %s, %s, %s, %s, %s, %s, 0, %s, %s, %s)
+                    ) VALUES (%s, %s, %s, %s, %s, %s, %s, 0, %s, TRUE, %s, %s)
                     ON CONFLICT (id) DO UPDATE SET
                         deleted_at = NULL,
                         dream_action = NULL,
                         last_dreamed_at = NULL,
+                        tags = excluded.tags,
+                        vector_needs_reindex = CASE
+                            WHEN memories.deleted_at IS NOT NULL THEN TRUE
+                            ELSE memories.vector_needs_reindex
+                        END,
                         updated_at = CASE
                             WHEN memories.deleted_at IS NOT NULL THEN excluded.updated_at
                             ELSE memories.updated_at
@@ -281,21 +379,77 @@ class MemoryCrudMixin(MemoryStoreBase):
                     ),
                 )
             row = cursor.fetchone()
-            changed = existing_row is None
-            if restore_metadata and existing_row is not None:
-                existing_updated_at = parse_stored_datetime(
-                    existing_row["updated_at"]
-                ) or datetime.min.replace(tzinfo=UTC)
-                changed = updated_at_value > existing_updated_at
-            elif existing_row is not None:
-                changed = existing_row["deleted_at"] is not None
+            if row is not None and not restore_metadata and _row_tags(row) != merged_tags:
+                row = conn.execute(
+                    "UPDATE memories SET tags = %s WHERE id = %s RETURNING *",
+                    (tags_json, final_memory_id),
+                ).fetchone()
+            for superseded_id in pending_soft_hides:
+                self.mark_dreamed_with_connection(
+                    conn,
+                    superseded_id,
+                    hidden_as="delete",
+                    when=now,
+                )
+            existing_updated_at = (
+                parse_stored_datetime(existing_row["updated_at"])
+                if existing_row is not None
+                else None
+            ) or datetime.min.replace(tzinfo=UTC)
+            incoming_wins = restore_metadata and updated_at_value > existing_updated_at
+            outcome: MemoryWriteOutcome
+            if existing_row is None:
+                outcome = "created"
+            elif existing_row["deleted_at"] is not None and (not restore_metadata or incoming_wins):
+                outcome = "reactivated"
+            elif incoming_wins:
+                outcome = "updated"
+            elif memory_id is None:
+                outcome = "deduped"
+            else:
+                outcome = "unchanged"
+            changed = (
+                outcome in {"created", "reactivated", "updated"}
+                or existing_tags != merged_tags
+                or bool(pending_soft_hides)
+            )
 
         if row is None:
             raise RuntimeError(f"Memory {final_memory_id} not found after creation")
 
         if changed:
-            self._notify_listeners()
-        return Memory.from_row(row)
+            self.notify_changed()
+        return MemoryWriteResult(Memory.from_row(row), outcome)
+
+    def create_memory(
+        self,
+        content: str,
+        project_id: str,
+        memory_type: str | MemoryType = MemoryType.FACT,
+        source_type: str = "agent",
+        source_session_id: str | None = None,
+        tags: list[str] | None = None,
+        memory_id: str | None = None,
+        created_at: datetime | None = None,
+        updated_at: datetime | None = None,
+        supersedes: list[str] | None = None,
+        *,
+        is_global: bool = False,
+    ) -> Memory:
+        """Create or deduplicate a memory while preserving the legacy payload surface."""
+        return self.create_memory_with_outcome(
+            content=content,
+            project_id=project_id,
+            memory_type=memory_type,
+            source_type=source_type,
+            source_session_id=source_session_id,
+            tags=tags,
+            memory_id=memory_id,
+            created_at=created_at,
+            updated_at=updated_at,
+            supersedes=supersedes,
+            is_global=is_global,
+        ).memory
 
     def get_memory(
         self,
@@ -506,15 +660,18 @@ class MemoryCrudMixin(MemoryStoreBase):
         params.append(memory_id)
         params.extend(scope_params)
 
-        sql = f"UPDATE memories SET {', '.join(updates)} WHERE id = %s{scope_clause}"  # nosec
+        sql = (  # nosec
+            f"UPDATE memories SET {', '.join(updates)} WHERE id = %s{scope_clause} RETURNING *"
+        )
 
         with self.db.transaction() as conn:
             cursor = conn.execute(sql, tuple(params))
-            if cursor.rowcount == 0:
+            row = cursor.fetchone()
+            if row is None:
                 raise ValueError(f"Memory {memory_id} not found")
 
-        self._notify_listeners()
-        return self.get_memory(memory_id)
+        self.notify_changed()
+        return Memory.from_row(row)
 
     def list_vector_reindex_ids(self) -> list[str]:
         """Return memories whose stored content is newer than their vector."""
@@ -554,6 +711,31 @@ class MemoryCrudMixin(MemoryStoreBase):
                     cleared += 1
         return cleared
 
+    def mark_vector_snapshot_reindexed(
+        self,
+        memory_id: str,
+        content: str,
+        project_id: str,
+        is_global: bool,
+    ) -> bool:
+        """Clear repair intent only when the full scheduling identity still matches."""
+        with self.db.transaction() as conn:
+            cursor = conn.execute(
+                """
+                UPDATE memories
+                SET vector_needs_reindex = FALSE
+                WHERE id = %s
+                  AND content = %s
+                  AND project_id = %s
+                  AND is_global = %s
+                  AND deleted_at IS NULL
+                """,
+                (memory_id, content, project_id, is_global),
+            )
+        if cursor.rowcount:
+            self.notify_changed()
+        return bool(cursor.rowcount)
+
     def move_memory(self, memory_id: str, new_project_id: str) -> Memory:
         """Move memory ownership while preserving its visibility."""
         with self.db.transaction() as conn:
@@ -564,27 +746,39 @@ class MemoryCrudMixin(MemoryStoreBase):
             if project_row is None:
                 raise ValueError(f"Project {new_project_id} not found")
             cursor = conn.execute(
-                "UPDATE memories SET project_id = %s WHERE id = %s",
+                """
+                UPDATE memories
+                SET project_id = %s, vector_needs_reindex = TRUE
+                WHERE id = %s
+                RETURNING *
+                """,
                 (new_project_id, memory_id),
             )
-            if cursor.rowcount == 0:
+            row = cursor.fetchone()
+            if row is None:
                 raise ValueError(f"Memory {memory_id} not found")
 
-        self._notify_listeners()
-        return self.get_memory(memory_id)
+        self.notify_changed()
+        return Memory.from_row(row)
 
     def set_memory_global(self, memory_id: str, is_global: bool) -> Memory:
         """Set cross-project visibility while preserving memory ownership."""
         with self.db.transaction() as conn:
             cursor = conn.execute(
-                "UPDATE memories SET is_global = %s WHERE id = %s",
+                """
+                UPDATE memories
+                SET is_global = %s, vector_needs_reindex = TRUE
+                WHERE id = %s
+                RETURNING *
+                """,
                 (is_global, memory_id),
             )
-            if cursor.rowcount == 0:
+            row = cursor.fetchone()
+            if row is None:
                 raise ValueError(f"Memory {memory_id} not found")
 
-        self._notify_listeners()
-        return self.get_memory(memory_id, visibility="all")
+        self.notify_changed()
+        return Memory.from_row(row)
 
     def delete_memory(self, memory_id: str) -> bool:
         with self.db.transaction() as conn:

@@ -17,6 +17,7 @@ from gobby.memory.services.knowledge_graph import (
     KnowledgeGraphResult,
     KnowledgeGraphStatus,
 )
+from gobby.memory.write_result import MemoryWriteResult
 from gobby.storage.memories import Memory
 from tests._timing import wait_for_async_condition
 
@@ -637,19 +638,20 @@ class TestGraphBackgroundTask:
         mock_record.access_count = 0
         mock_record.last_accessed_at = None
         mock_record.tags = []
-        manager._backend.create = AsyncMock(return_value=mock_record)
+        manager._backend.create = AsyncMock(return_value=MemoryWriteResult(mock_record, "created"))
 
         # Mock KG service
         manager._kg_service.add_to_graph = AsyncMock()
 
-        manager.storage.mark_pending_graph = MagicMock()
+        manager._lifecycle_service._reconcile_active_snapshot = AsyncMock(return_value=True)
 
-        await manager.create_memory(content="Josh uses Python")
+        created = await manager.create_memory(content="Josh uses Python")
 
-        # Graph is now queued via mark_pending_graph, not fired as background task
-        manager.storage.mark_pending_graph.assert_called_once()
-        assert manager.storage.mark_pending_graph.call_count == 1
-        assert manager.storage.mark_pending_graph.call_args is not None
+        # Graph queuing now happens inside the active-row reconciliation fence.
+        assert created.id == "test-id"
+        assert created.content == "Josh uses Python"
+        assert created.memory_type.value == "fact"
+        manager._lifecycle_service._reconcile_active_snapshot.assert_awaited_once()
 
     async def test_create_memory_no_graph_task_when_no_kg_service(self) -> None:
         """create_memory doesn't fire graph task when KnowledgeGraphService is unavailable."""
@@ -676,7 +678,7 @@ class TestGraphBackgroundTask:
         mock_record.access_count = 0
         mock_record.last_accessed_at = None
         mock_record.tags = []
-        manager._backend.create = AsyncMock(return_value=mock_record)
+        manager._backend.create = AsyncMock(return_value=MemoryWriteResult(mock_record, "created"))
 
         await manager.create_memory(content="test")
 
@@ -715,7 +717,7 @@ class TestGraphBackgroundTask:
         mock_record.access_count = 0
         mock_record.last_accessed_at = None
         mock_record.tags = []
-        manager._backend.create = AsyncMock(return_value=mock_record)
+        manager._backend.create = AsyncMock(return_value=MemoryWriteResult(mock_record, "created"))
 
         # Make graph service fail
         manager._kg_service.add_to_graph = AsyncMock(side_effect=Exception("FalkorDB down"))

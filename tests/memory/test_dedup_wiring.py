@@ -9,6 +9,7 @@ import pytest
 
 from gobby.config.persistence import MemoryConfig
 from gobby.memory.manager import MemoryManager
+from gobby.memory.write_result import MemoryWriteResult
 from tests._timing import wait_for_async_condition, wait_forever
 
 pytestmark = pytest.mark.unit
@@ -103,7 +104,7 @@ class TestBackgroundDedupTask:
         mock_record.dream_action = None
         mock_record.last_dreamed_at = None
         manager._backend.content_exists = AsyncMock(return_value=False)
-        manager._backend.create = AsyncMock(return_value=mock_record)
+        manager._backend.create = AsyncMock(return_value=MemoryWriteResult(mock_record, "created"))
 
         # Mock dedup service
         manager._dedup_service.process = AsyncMock()
@@ -144,7 +145,7 @@ class TestBackgroundDedupTask:
         mock_record.dream_action = None
         mock_record.last_dreamed_at = None
         manager._backend.content_exists = AsyncMock(return_value=False)
-        manager._backend.create = AsyncMock(return_value=mock_record)
+        manager._backend.create = AsyncMock(return_value=MemoryWriteResult(mock_record, "created"))
         manager._dedup_service.process = AsyncMock()
 
         await manager.create_memory(content="Content")
@@ -181,7 +182,7 @@ class TestBackgroundDedupTask:
         mock_record.dream_action = None
         mock_record.last_dreamed_at = None
         manager._backend.content_exists = AsyncMock(return_value=False)
-        manager._backend.create = AsyncMock(return_value=mock_record)
+        manager._backend.create = AsyncMock(return_value=MemoryWriteResult(mock_record, "created"))
 
         await manager.create_memory(content="Content")
 
@@ -210,7 +211,7 @@ class TestBackgroundDedupTask:
         mock_record.dream_action = None
         mock_record.last_dreamed_at = None
         manager._backend.content_exists = AsyncMock(return_value=False)
-        manager._backend.create = AsyncMock(return_value=mock_record)
+        manager._backend.create = AsyncMock(return_value=MemoryWriteResult(mock_record, "created"))
 
         # Make dedup fail
         manager._dedup_service.process = AsyncMock(side_effect=Exception("LLM crash"))
@@ -251,7 +252,7 @@ class TestBackgroundDedupTask:
         mock_record.dream_action = None
         mock_record.last_dreamed_at = None
         manager._backend.content_exists = AsyncMock(return_value=False)
-        manager._backend.create = AsyncMock(return_value=mock_record)
+        manager._backend.create = AsyncMock(return_value=MemoryWriteResult(mock_record, "created"))
 
         # Make dedup slow
         async def slow_dedup(*args, **kwargs):

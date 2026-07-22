@@ -79,8 +79,9 @@ class TestNullBackend:
     async def test_null_backend_create(self):
         """Test that NullBackend.create() works."""
         backend = get_backend("null")
-        record = await backend.create("test memory content")
-        assert record is not None
+        result = await backend.create("test memory content")
+        assert result.outcome == "created"
+        record = result.memory
         assert record.content == "test memory content"
         assert record.id is not None
 
@@ -150,12 +151,13 @@ class TestStorageAdapter:
         backend = _make_adapter(hub_db)
 
         # Create a memory
-        record = await backend.create(
+        result = await backend.create(
             content="Test memory for StorageAdapter",
             memory_type="fact",
             tags=["test", "adapter"],
         )
-        assert record is not None
+        assert result.outcome == "created"
+        record = result.memory
         assert record.id is not None
         assert record.content == "Test memory for StorageAdapter"
 
@@ -171,7 +173,7 @@ class TestStorageAdapter:
         backend = _make_adapter(hub_db)
 
         # Create a memory
-        record = await backend.create(content="Original content", tags=["old"])
+        record = (await backend.create(content="Original content", tags=["old"])).memory
 
         # Update it
         updated = await backend.update(
@@ -187,7 +189,7 @@ class TestStorageAdapter:
         backend = _make_adapter(hub_db)
 
         # Create a memory
-        record = await backend.create(content="To be deleted")
+        record = (await backend.create(content="To be deleted")).memory
 
         # Delete it
         result = await backend.delete(record.id)

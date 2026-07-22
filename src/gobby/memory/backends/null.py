@@ -14,6 +14,7 @@ from typing import TYPE_CHECKING, Any
 from uuid import uuid4
 
 from gobby.memory.protocol import MemoryCapability, MemoryQuery, MemoryRecord
+from gobby.memory.write_result import MemoryWriteResult
 from gobby.storage.memories_models import validate_memory_type
 from gobby.storage.memories_scope import ALL_MEMORIES, MemoryScope
 from gobby.storage.projects import PERSONAL_PROJECT_ID
@@ -48,13 +49,14 @@ class NullBackend:
         is_global: bool = False,
         user_id: str | None = None,
         tags: list[str] | None = None,
+        supersedes: list[str] | None = None,
         source_type: str = "agent",
         source_session_id: str | None = None,
         metadata: dict[str, Any] | None = None,
-    ) -> MemoryRecord:
+    ) -> MemoryWriteResult[MemoryRecord]:
         """Create a memory record (in-memory only, not persisted)."""
         now = datetime.now(UTC)
-        return MemoryRecord(
+        record = MemoryRecord(
             id=f"null-{uuid4().hex[:8]}",
             content=content,
             created_at=now,
@@ -62,11 +64,14 @@ class NullBackend:
             project_id=project_id,
             is_global=is_global,
             user_id=user_id,
-            tags=tags or [],
+            tags=list(
+                dict.fromkeys([*(tags or []), *(f"supersedes:{item}" for item in supersedes or [])])
+            ),
             source_type=source_type,
             source_session_id=source_session_id,
             metadata=metadata or {},
         )
+        return MemoryWriteResult(record, "created")
 
     async def get(
         self, memory_id: str, *, visibility: Visibility = "active"

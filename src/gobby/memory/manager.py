@@ -167,6 +167,9 @@ class MemoryManager(MemoryManagerFacadeMethods):
             kg_service=self._kg_service,
             crossref_service=self._crossref_service,
             kg_rebuilder=self.rebuild_knowledge_graph,
+            reconcile_memory=self._lifecycle_service.reconcile_memory_indices,
+            rebuild_crossrefs=self._lifecycle_service.rebuild_crossrefs_for_memory,
+            cleanup_rowless=self._lifecycle_service.purge_secondary_indices,
             run_db=run_db,
         )
         self._kg_rebuild_service = KnowledgeGraphRebuildService(

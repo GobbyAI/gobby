@@ -157,6 +157,7 @@ class MemoryManagerFacadeMethods:
         source_type: str = "agent",
         source_session_id: str | None = None,
         tags: list[str] | None = None,
+        supersedes: list[str] | None = None,
         *,
         is_global: bool = False,
     ) -> Memory:
@@ -167,6 +168,7 @@ class MemoryManagerFacadeMethods:
             source_type=source_type,
             source_session_id=source_session_id,
             tags=tags,
+            supersedes=supersedes,
             is_global=is_global,
         )
 
@@ -273,6 +275,10 @@ class MemoryManagerFacadeMethods:
 
     async def reconcile_stores(self, dry_run: bool = False) -> dict[str, Any]:
         return await self._indexing_service.reconcile_stores(dry_run=dry_run)
+
+    async def reconcile_memory_indices(self, memory_id: str) -> bool:
+        """Converge one memory's durable projection intent."""
+        return await self._lifecycle_service.reconcile_memory_indices(memory_id)
 
     def count_memories(
         self,
@@ -571,7 +577,11 @@ class MemoryManagerFacadeMethods:
         threshold: float | None = None,
         max_links: int | None = None,
     ) -> int:
-        return await self._crossref_service.rebuild_for_memory(memory, threshold, max_links)
+        return await self._lifecycle_service.rebuild_crossrefs_for_memory(
+            memory,
+            threshold,
+            max_links,
+        )
 
     async def _create_crossrefs(
         self,

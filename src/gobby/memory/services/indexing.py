@@ -55,6 +55,16 @@ class MemoryStorageProtocol(Protocol):
 
     def mark_vectors_reindexed(self, indexed_content: dict[str, str]) -> int: ...
 
+    def mark_vector_reindex_needed(self, memory_id: str) -> None: ...
+
+    def mark_vector_snapshot_reindexed(
+        self,
+        memory_id: str,
+        content: str,
+        project_id: str,
+        is_global: bool,
+    ) -> bool: ...
+
 
 class VectorStoreProtocol(Protocol):
     @property
@@ -106,6 +116,9 @@ class IndexingService:
         kg_service: KnowledgeGraphService | None,
         crossref_service: CrossrefService,
         kg_rebuilder: Callable[[str | None], Awaitable[dict[str, Any]]],
+        reconcile_memory: Callable[[str], Awaitable[bool]] | None = None,
+        rebuild_crossrefs: Callable[..., Awaitable[int]] | None = None,
+        cleanup_rowless: Callable[[str], Awaitable[None]] | None = None,
         run_db: Callable[..., Awaitable[Any]] | None = None,
     ) -> None:
         self._storage = storage
@@ -114,6 +127,9 @@ class IndexingService:
         self._kg_service = kg_service
         self._crossref_service = crossref_service
         self._kg_rebuilder = kg_rebuilder
+        self._reconcile_memory = reconcile_memory
+        self._rebuild_crossrefs = rebuild_crossrefs
+        self._cleanup_rowless = cleanup_rowless
         self._run_db = run_db
         self._global_reindex_lock = asyncio.Lock()
         self._global_reindex_task: asyncio.Task[dict[str, Any]] | None = None
@@ -233,6 +249,7 @@ class IndexingService:
 
     async def _reconcile_stores_admitted(self, dry_run: bool) -> dict[str, Any]:
         storage_ids = set(await self._run_storage(self._storage.list_all_ids))
+        intent_ids = set(await self._run_storage(self._storage.list_vector_reindex_ids))
         report: dict[str, Any] = {
             "dry_run": dry_run,
             "storage_count": len(storage_ids),
@@ -251,20 +268,40 @@ class IndexingService:
                 "orphan_entities_deleted": 0,
                 "errors": 0,
             },
+            "projection_intents": {
+                "found": len(intent_ids),
+                "attempted": 0,
+                "converged": 0,
+                "remaining": len(intent_ids),
+                "errors": 0,
+            },
         }
+
+        repaired_ids: set[str] = set()
+        if not dry_run and self._reconcile_memory is not None:
+            for memory_id in sorted(intent_ids):
+                report["projection_intents"]["attempted"] += 1
+                try:
+                    if await self._reconcile_memory(memory_id):
+                        repaired_ids.add(memory_id)
+                except Exception as exc:
+                    logger.warning("Projection-intent repair failed for %s: %s", memory_id, exc)
+                    report["projection_intents"]["errors"] += 1
+            report["projection_intents"]["converged"] = len(repaired_ids)
+            report["projection_intents"]["remaining"] = len(intent_ids - repaired_ids)
 
         if self._vector_store:
             try:
                 qdrant_ids = set(await self._vector_store.scroll_ids())
                 orphaned = qdrant_ids - storage_ids
                 missing = storage_ids - qdrant_ids
-                stale = set(await self._run_storage(self._storage.list_vector_reindex_ids))
-                reindex_ids = missing | stale
+                stale = intent_ids
+                reindex_ids = missing if self._reconcile_memory is not None else missing | stale
                 report["qdrant"]["total"] = len(qdrant_ids)
                 report["qdrant"]["orphans_found"] = len(orphaned)
                 report["qdrant"]["missing_found"] = len(missing)
                 report["qdrant"]["stale_found"] = len(stale)
-                report["qdrant"]["stale_reindexed"] = 0
+                report["qdrant"]["stale_reindexed"] = len(repaired_ids & stale)
 
                 if not dry_run and orphaned:
                     try:
@@ -281,7 +318,7 @@ class IndexingService:
                     report["qdrant"]["missing_embedded"] = len(embedded_ids & missing)
                     reindexed_stale = embedded_ids & stale
                     cleared_stale = 0
-                    if reindexed_stale:
+                    if reindexed_stale and self._reconcile_memory is None:
                         cleared_stale = await self._run_storage(
                             self._storage.mark_vectors_reindexed,
                             {
@@ -289,7 +326,11 @@ class IndexingService:
                                 for memory_id in reindexed_stale
                             },
                         )
-                    report["qdrant"]["stale_reindexed"] = cleared_stale
+                    report["qdrant"]["stale_reindexed"] = (
+                        len(repaired_ids & stale)
+                        if self._reconcile_memory is not None
+                        else cleared_stale
+                    )
                     report["qdrant"]["errors"] += len(failures)
                     if failures:
                         report["qdrant"]["reindex_failures"] = failures
@@ -423,6 +464,21 @@ class IndexingService:
             existing_ids = set(await vector_store.scroll_ids(filters={"project_id": project_id}))
             memories = await self.fetch_all_project_memories(project_id)
             total = len(memories)
+            if self._reconcile_memory is not None:
+                generated = 0
+                for memory in memories:
+                    if await self._reconcile_memory(memory.id):
+                        generated += 1
+                incoming_ids = {memory.id for memory in memories}
+                stale_ids = sorted(existing_ids - incoming_ids)
+                for index in range(0, len(stale_ids), REINDEX_PAGE_SIZE):
+                    await vector_store.delete_many(stale_ids[index : index + REINDEX_PAGE_SIZE])
+                return {
+                    "success": generated == total,
+                    "total_memories": total,
+                    "embeddings_generated": generated,
+                    "skipped": False,
+                }
             memory_dicts = self._memory_dicts(memories)
             incoming_ids = {str(mem["id"]) for mem in memory_dicts}
             batch: list[tuple[str, list[float], dict[str, Any]]] = []
@@ -507,10 +563,7 @@ class IndexingService:
             vector_store = cast(VectorStoreProtocol, self._vector_store)
             embed_fn = cast(Callable[..., Any], self._embed_fn)
             await vector_store.rebuild(memory_dicts, embed_fn)
-            await self._run_storage(
-                self._storage.mark_vectors_reindexed,
-                {str(mem["id"]): str(mem["content"]) for mem in memory_dicts},
-            )
+            await self._sweep_rebuild_snapshot(memory_dicts)
             self._last_global_reindex_identity_fingerprint = identity_fingerprint
             self._last_global_reindex_fingerprint = fingerprint
             self._last_global_reindex_completed_at = asyncio.get_running_loop().time()
@@ -524,6 +577,34 @@ class IndexingService:
             "embeddings_generated": total,
             "skipped": False,
         }
+
+    async def _sweep_rebuild_snapshot(self, memory_dicts: list[dict[str, Any]]) -> None:
+        """CAS-clear exact rows and repair/delete mutations missed by a rebuild snapshot."""
+        vector_store = cast(VectorStoreProtocol, self._vector_store)
+        snapshot = {str(memory["id"]): memory for memory in memory_dicts}
+        current = {memory.id: memory for memory in await self.fetch_all_memories()}
+        for memory_id, memory in current.items():
+            scheduled = snapshot.get(memory_id)
+            if (
+                scheduled is not None
+                and str(scheduled["content"]) == memory.content
+                and str(scheduled["project_id"]) == memory.project_id
+                and bool(scheduled["is_global"]) == memory.is_global
+            ):
+                await self._run_storage(
+                    self._storage.mark_vector_snapshot_reindexed,
+                    memory.id,
+                    memory.content,
+                    memory.project_id,
+                    memory.is_global,
+                )
+            else:
+                await self._run_storage(self._storage.mark_vector_reindex_needed, memory.id)
+        for memory_id in sorted(set(snapshot) - set(current)):
+            if self._cleanup_rowless is not None:
+                await self._cleanup_rowless(memory_id)
+            else:
+                await vector_store.delete(memory_id)
 
     async def clear_indices(self, project_id: str | None = None) -> dict[str, Any]:
         """Fast wipe of all secondary indices for a project (or all projects)."""
@@ -586,7 +667,10 @@ class IndexingService:
             nonlocal crossref_done
             async with crossref_sem:
                 try:
-                    result = await self._crossref_service.rebuild_for_memory(mem)
+                    if self._rebuild_crossrefs is not None:
+                        result = await self._rebuild_crossrefs(mem)
+                    else:
+                        result = await self._crossref_service.rebuild_for_memory(mem)
                 except (CrossrefRebuildError, ValueError) as e:
                     logger.warning("Crossref failed for %s: %s", mem.id, e)
                     result = 0

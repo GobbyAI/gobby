@@ -1,10 +1,12 @@
 import logging
 from collections.abc import Callable
-from typing import Any
+from datetime import datetime
+from typing import Any, Literal
 
 from gobby.storage.hub.protocol import HubDatabase
 
 logger = logging.getLogger(__name__)
+MEMORY_PROJECTION_FENCE_LOCK_KEY = 4_607_187_217_790_855_201
 
 
 class MemoryStoreBase:
@@ -22,5 +24,19 @@ class MemoryStoreBase:
             except Exception:
                 logger.exception("Error in memory change listener")
 
+    def notify_changed(self) -> None:
+        """Notify listeners after a committed material memory change."""
+        self._notify_listeners()
+
     def restore_memory(self, memory_id: str, when: str | None = None) -> bool:
+        raise NotImplementedError
+
+    def mark_dreamed_with_connection(
+        self,
+        conn: Any,
+        memory_id: str,
+        *,
+        hidden_as: Literal["review", "delete"] | None = None,
+        when: datetime | str | None = None,
+    ) -> bool:
         raise NotImplementedError

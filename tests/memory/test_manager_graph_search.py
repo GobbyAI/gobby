@@ -11,6 +11,7 @@ from gobby.config.persistence import MemoryConfig
 from gobby.memory.identity import entity_key
 from gobby.memory.manager import MemoryManager
 from gobby.memory.services.knowledge_graph.reader import RelatedMemoryTraversal
+from gobby.memory.write_result import MemoryWriteResult
 from gobby.storage.memories_scope import MemoryScope, memory_matches_scope
 from gobby.storage.projects import GLOBAL_PROJECT_ID, PERSONAL_PROJECT_ID
 
@@ -676,17 +677,18 @@ class TestCreateMemoryPassesMemoryId:
             last_accessed_at=None,
             tags=[],
         )
-        manager._backend.create = AsyncMock(return_value=mock_record)
+        manager._backend.create = AsyncMock(return_value=MemoryWriteResult(mock_record, "created"))
 
         manager._kg_service.add_to_graph = AsyncMock()
-        manager.storage.mark_pending_graph = MagicMock()
+        manager._lifecycle_service._reconcile_active_snapshot = AsyncMock(return_value=True)
 
-        await manager.create_memory(content="test content")
+        created = await manager.create_memory(content="test content")
 
-        # Graph is now queued via mark_pending_graph, not fired as background task
-        manager.storage.mark_pending_graph.assert_called_once_with("test-mem-id")
-        assert manager.storage.mark_pending_graph.call_count == 1
-        assert manager.storage.mark_pending_graph.call_args is not None
+        # Graph queuing now happens inside the active-row reconciliation fence.
+        assert created.id == "test-mem-id"
+        assert created.content == "test content"
+        assert created.project_id == PERSONAL_PROJECT_ID
+        manager._lifecycle_service._reconcile_active_snapshot.assert_awaited_once()
 
 
 class TestTemporalDecayIntegration:

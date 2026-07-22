@@ -20,6 +20,7 @@ from gobby.memory.protocol import (
     MemoryQuery,
     MemoryRecord,
 )
+from gobby.memory.write_result import MemoryWriteResult
 from gobby.storage.memories import ALL_MEMORIES, LocalMemoryManager, MemoryScope, Visibility
 from gobby.storage.projects import PERSONAL_PROJECT_ID
 from gobby.utils.datetime import parse_stored_datetime, utc_now
@@ -64,12 +65,13 @@ class StorageAdapter:
         is_global: bool = False,
         user_id: str | None = None,
         tags: list[str] | None = None,
+        supersedes: list[str] | None = None,
         source_type: str = "agent",
         source_session_id: str | None = None,
         metadata: dict[str, Any] | None = None,
-    ) -> MemoryRecord:
-        memory = await self._run_storage(
-            self._storage.create_memory,
+    ) -> MemoryWriteResult[MemoryRecord]:
+        result = await self._run_storage(
+            self._storage.create_memory_with_outcome,
             content=content,
             memory_type=memory_type,
             project_id=project_id,
@@ -77,8 +79,12 @@ class StorageAdapter:
             source_type=source_type,
             source_session_id=source_session_id,
             tags=tags,
+            supersedes=supersedes,
         )
-        return self._to_record(memory, user_id=user_id, metadata=metadata)
+        return MemoryWriteResult(
+            self._to_record(result.memory, user_id=user_id, metadata=metadata),
+            result.outcome,
+        )
 
     async def get(
         self, memory_id: str, *, visibility: Visibility = "active"

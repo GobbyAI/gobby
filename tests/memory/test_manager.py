@@ -290,6 +290,22 @@ class TestProjectionScopeRepair:
         manager._projection_repair_service.repair.assert_awaited_once_with()
 
 
+def test_null_project_repair_fenced(db: HubDatabase) -> None:
+    """The explicit-scope migration makes the former NULL-project race unrepresentable."""
+    column = db.fetchone(
+        """
+        SELECT is_nullable
+        FROM information_schema.columns
+        WHERE table_schema = current_schema()
+          AND table_name = 'memories'
+          AND column_name = 'project_id'
+        """
+    )
+
+    assert column is not None
+    assert column["is_nullable"] == "NO"
+
+
 class TestMemoryScopeChanges:
     """Tests for explicit visibility changes and secondary-store sync."""
 
@@ -312,17 +328,30 @@ class TestMemoryScopeChanges:
             is_global=True,
         )
         manager.storage = MagicMock(spec=LocalMemoryManager)
+        previous = Memory(
+            id="mem-1",
+            memory_type="fact",
+            content="Universal",
+            created_at="2026-01-01T00:00:00+00:00",
+            updated_at="2026-01-01T00:00:00+00:00",
+            project_id="proj-1",
+            is_global=False,
+        )
+        manager.storage.get_memory.return_value = previous
         manager.storage.set_memory_global.return_value = updated
+        manager._lifecycle_service._reconcile_active_snapshot = AsyncMock(return_value=True)
 
         result = await manager.promote_memory("mem-1")
 
         assert result is updated
+        assert result.is_global is True
+        assert result.project_id == "proj-1"
         manager.storage.set_memory_global.assert_called_once_with("mem-1", True)
-        vector_store.set_payload.assert_awaited_once_with(
-            "mem-1",
-            {"project_id": "proj-1", "is_global": True, "memory_type": "fact"},
+        manager._lifecycle_service._reconcile_active_snapshot.assert_awaited_once_with(
+            updated,
+            graph_cleanup_project_id="proj-1",
+            graph_cleanup_is_global=False,
         )
-        manager.storage.mark_pending_graph.assert_called_once_with("mem-1")
 
 
 # =============================================================================

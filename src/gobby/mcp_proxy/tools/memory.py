@@ -173,6 +173,7 @@ def create_memory_registry(
         content: str,
         memory_type: MemoryType | Literal["implementation_note"] = MemoryType.FACT,
         tags: list[str] | None = None,
+        supersedes: list[str] | None = None,
         session_id: str | None = None,
         is_global: bool = False,
     ) -> dict[str, Any]:
@@ -183,10 +184,16 @@ def create_memory_registry(
             content: The memory content to store
             memory_type: Type of memory (fact, preference, etc)
             tags: Optional list of tags
+            supersedes: Up to 20 memory UUIDs to atomically soft-hide while recording
+                ``supersedes:<id>`` provenance on the resulting memory. Use this for
+                durable decisions, removals, and replacements.
             session_id: Session ID that created this memory (accepts #N, N, UUID, or prefix)
         """
         try:
-            if is_ephemeral_implementation_note(
+            from gobby.storage.memories_crud import normalize_supersedes
+
+            supersedes_ids = normalize_supersedes(supersedes)
+            if not supersedes_ids and is_ephemeral_implementation_note(
                 {"content": content, "type": memory_type, "tags": tags or []}
             ):
                 return {
@@ -194,7 +201,10 @@ def create_memory_registry(
                     "skipped": True,
                     "reason": "ephemeral_implementation_note",
                 }
-            canonical_memory_type = validate_memory_type(memory_type)
+            persisted_memory_type = (
+                MemoryType.CONTEXT if memory_type == "implementation_note" else memory_type
+            )
+            canonical_memory_type = validate_memory_type(persisted_memory_type)
 
             project_id = get_current_project_id() or PERSONAL_PROJECT_ID
 
@@ -211,7 +221,9 @@ def create_memory_registry(
                 except Exception as e:
                     logger.warning("Could not resolve session_id '%s': %s", session_id, e)
 
-            redirected_task_title = _speculative_memory_task_title(content)
+            redirected_task_title = (
+                None if supersedes_ids else _speculative_memory_task_title(content)
+            )
             if redirected_task_title:
                 try:
                     task = _redirect_speculative_memory_to_task(
@@ -240,6 +252,7 @@ def create_memory_registry(
                 memory_type=canonical_memory_type,
                 project_id=project_id,
                 tags=tags,
+                supersedes=supersedes_ids,
                 source_type="agent",
                 source_session_id=resolved_session_id,
                 is_global=is_global,
@@ -423,9 +436,16 @@ def create_memory_registry(
         """
         try:
             memory = memory_manager.get_memory(memory_id, visibility="all")
-            if not _memory_allowed_in_current_project(memory):
+            if memory is None or not _memory_allowed_in_current_project(memory):
                 return {"success": False, "error": f"Memory {memory_id} not found"}
             await asyncio.to_thread(memory_manager.restore_memory, memory_id)
+            await memory_manager.restore_memory_indices(
+                memory.id,
+                memory.content,
+                memory.project_id,
+                memory.is_global,
+                getattr(memory.memory_type, "value", memory.memory_type),
+            )
             return {"success": True}
         except Exception as e:
             return {"success": False, "error": str(e)}

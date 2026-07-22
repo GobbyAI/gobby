@@ -23,6 +23,7 @@ from gobby.memory.protocol import (
     MemoryQuery,
     MemoryRecord,
 )
+from gobby.memory.write_result import MemoryWriteResult
 from gobby.storage.memories import MemoryType
 from gobby.storage.memories_scope import ALL_MEMORIES, MemoryScope
 
@@ -286,14 +287,18 @@ class TestMemoryBackendProtocolCompliance:
                 project_id: str | None = None,
                 user_id: str | None = None,
                 tags: list[str] | None = None,
+                supersedes: list[str] | None = None,
                 source_type: str | None = None,
                 source_session_id: str | None = None,
                 metadata: dict | None = None,
-            ) -> MemoryRecord:
-                return MemoryRecord(
-                    id="mock-id",
-                    content=content,
-                    created_at=datetime.now(UTC),
+            ) -> MemoryWriteResult[MemoryRecord]:
+                return MemoryWriteResult(
+                    MemoryRecord(
+                        id="mock-id",
+                        content=content,
+                        created_at=datetime.now(UTC),
+                    ),
+                    "created",
                 )
 
             async def get(self, memory_id: str) -> MemoryRecord | None:
@@ -343,10 +348,12 @@ class TestMemoryBackendProtocolCompliance:
 
     @pytest.mark.asyncio
     async def test_create_returns_record(self, mock_backend):
-        """Test that create returns a MemoryRecord."""
-        record = await mock_backend.create("test content")
-        assert isinstance(record, MemoryRecord)
-        assert record.content == "test content"
+        """Test that create returns a typed MemoryRecord outcome."""
+        result = await mock_backend.create("test content")
+        assert isinstance(result, MemoryWriteResult)
+        assert isinstance(result.memory, MemoryRecord)
+        assert result.outcome == "created"
+        assert result.memory.content == "test content"
 
     @pytest.mark.asyncio
     async def test_search_returns_list(self, mock_backend) -> None:
