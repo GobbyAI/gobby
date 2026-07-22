@@ -20,6 +20,10 @@ from gobby.workflows.observer_verification import detect_verification_evidence
 pytestmark = pytest.mark.unit
 
 
+def test_codex_close_reconciliation_default_allows_large_receipt_batches() -> None:
+    assert result_handling._CODEX_RECONCILE_TIMEOUT_SECONDS == 60.0
+
+
 class _Processor:
     def __init__(
         self,

@@ -9,6 +9,7 @@ from gobby.tasks.commits import (
     AutoLinkResult,
     auto_link_commits,
     extract_task_ids_from_message,
+    resolve_task_tagged_commits,
     summarize_diff_for_validation,
 )
 
@@ -369,6 +370,40 @@ class TestAutoLinkCommits:
             # Should only link to #1
             assert "#1" in result.linked_tasks
             assert "#2" not in result.linked_tasks
+
+    def test_read_only_resolver_returns_ordered_task_commits_without_linking(
+        self, mock_task_manager: MagicMock
+    ) -> None:
+        task = MagicMock(id="task-uuid", seq_num=42, commits=["existing"])
+        mock_task_manager.get_task.return_value = task
+
+        with (
+            patch("gobby.tasks.commits._resolve_branch_for_task", return_value="feature"),
+            patch("gobby.tasks.commits.run_git_command") as mock_git,
+        ):
+            mock_git.return_value = (
+                "old111|[gobby-#42] first\nskip22|[gobby-#43] other task\nnew333|Fixes gobby-#42\n"
+            )
+
+            result = resolve_task_tagged_commits(
+                mock_task_manager,
+                task_id="task-uuid",
+                since="2026-07-01T00:00:00+00:00",
+                cwd="/tmp/repo",
+                project_name="gobby",
+            )
+
+        assert result == ["old111", "new333"]
+        assert mock_git.call_args.args[0] == [
+            "git",
+            "log",
+            "--reverse",
+            "--pretty=format:%h|%s",
+            "feature",
+            "--since=2026-07-01T00:00:00+00:00",
+        ]
+        mock_task_manager.link_commit.assert_not_called()
+        mock_task_manager.update_task.assert_not_called()
 
     def test_uuid_task_filter_accepts_matching_seq_ref(self, mock_task_manager) -> None:
         """Stage handoff may filter by UUID while commits mention the #seq ref."""

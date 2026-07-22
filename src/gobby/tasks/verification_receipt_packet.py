@@ -85,6 +85,8 @@ class VerificationReceiptPacket:
     disclosure: EvidenceCompleteness
     projection: VerificationOutcomeProjection
     error: str | None = None
+    detailed_receipt_ids: tuple[str, ...] = ()
+    catalogued_receipt_ids: tuple[str, ...] = ()
 
 
 def _detail(receipt: VerificationReceipt) -> dict[str, Any]:
@@ -198,6 +200,7 @@ def build_verification_receipt_packet(
             disclosure=floor_disclosure,
             projection=projection,
             error="evidence_budget_exceeded",
+            catalogued_receipt_ids=tuple(receipt.id for receipt in catalog_receipts),
         )
 
     details: list[dict[str, Any]] = []
@@ -253,4 +256,6 @@ def build_verification_receipt_packet(
         text=text,
         disclosure=disclosure,
         projection=projection,
+        detailed_receipt_ids=tuple(str(item["receipt_id"]) for item in details),
+        catalogued_receipt_ids=tuple(receipt.id for receipt in catalog_receipts),
     )

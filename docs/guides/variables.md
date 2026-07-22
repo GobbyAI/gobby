@@ -189,6 +189,10 @@ Fresh successful validation commands set `verification_evidence_recorded` and ap
 `gobby-sessions:record_verification_evidence` with a snake-case `evidence_type` such as
 `manual_diff_review`. Completion gates derive readiness from the evidence list:
 failed validation commands block readiness until a later validation command succeeds.
+These session variables drive lifecycle readiness and audited overrides. Semantic
+task-close validation uses durable task-scoped verification receipts. Failed,
+conflicting, and unknown receipts remain audit context; only trusted successful
+terminal outcomes substantiate completed verification.
 
 ---
 
@@ -354,7 +358,7 @@ These are the bundled default variables (from `gobby-default-variables.yaml`):
 | `require_task_before_edit` | `true` | bool | Enforce task-before-edit gate |
 | `require_commit_before_status` | `true` | bool | Enforce commit-before-status gate |
 | `verification_evidence_recorded` | `false` | bool | Whether verification evidence was recorded this session |
-| `verification_evidence` | `[]` | list | Structured verification evidence (newest 50 entries retained) |
+| `verification_evidence` | `[]` | list | Bounded session readiness evidence; durable task-close evidence lives in verification receipts |
 | `stop_attempts` | `0` | int | Consecutive turn-end attempts (auto-managed) |
 | `max_stop_attempts` | `8` | int | Threshold before escape hatch allows stop |
 | `max_consecutive_blocked_tool_attempts` | `5` | int | Retry threshold for repeated blocked tool calls |

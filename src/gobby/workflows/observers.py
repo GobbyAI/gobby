@@ -132,6 +132,9 @@ def detect_task_claim(
     inner_tool_name = event.data.get("mcp_tool", "")
 
     if inner_tool_name == "close_task":
+        arguments = tool_input.get("arguments", {}) or {}
+        if arguments.get("preview"):
+            return
         if not tool_output:
             return
         if isinstance(tool_output, dict):
@@ -141,7 +144,6 @@ def detect_task_claim(
             if isinstance(result, dict) and result.get("error"):
                 return
 
-        arguments = tool_input.get("arguments", {}) or {}
         closed_task_id: str | None = None
         raw_close_id = arguments.get("task_id")
         if raw_close_id:

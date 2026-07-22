@@ -384,6 +384,33 @@ class TestDetectTaskClaimCloseTaskBehavior:
         assert variables.get("task_claimed") is False
         assert variables.get("claimed_tasks") == {}
 
+    def test_successful_close_preview_preserves_claimed_task(
+        self, variables, make_after_tool_event, mock_task_manager
+    ) -> None:
+        variables["task_claimed"] = True
+        variables["claimed_tasks"] = {"task-uuid-123": "#1"}
+        event = make_after_tool_event(
+            "mcp__gobby__call_tool",
+            tool_input={
+                "server_name": "gobby-tasks",
+                "tool_name": "close_task",
+                "arguments": {"task_id": "#1", "preview": True},
+            },
+            tool_output={"success": True, "preview": True, "can_close": True},
+        )
+
+        detect_task_claim(event, variables, SESSION_ID, task_manager=mock_task_manager)
+
+        assert variables.get("task_claimed") is True
+        assert variables.get("claimed_tasks") == {"task-uuid-123": "#1"}
+        mock_task_manager.get_task.assert_not_called()
+
+        mock_task_manager.get_task.return_value = _claimed_task(claimed_by_session_id=SESSION_ID)
+        reconcile_claimed_tasks(variables, SESSION_ID, task_manager=mock_task_manager)
+
+        assert variables.get("task_claimed") is True
+        assert variables.get("claimed_tasks") == {"task-uuid-123": "#1"}
+
     def test_close_task_prefers_claimed_ref_before_project_resolution(
         self,
         variables,
@@ -1168,6 +1195,27 @@ class TestDetectCommitLink:
         detect_commit_link(event, variables, SESSION_ID)
 
         assert variables["task_has_commits"] is True
+
+    def test_close_task_preview_does_not_set_task_has_commits(
+        self, variables, make_after_tool_event
+    ) -> None:
+        event = make_after_tool_event(
+            "mcp__gobby__call_tool",
+            tool_input={
+                "server_name": "gobby-tasks",
+                "tool_name": "close_task",
+                "arguments": {
+                    "task_id": "#123",
+                    "commit_sha": "abc123",
+                    "preview": True,
+                },
+            },
+            tool_output={"success": True, "preview": True, "can_close": True},
+        )
+
+        detect_commit_link(event, variables, SESSION_ID)
+
+        assert "task_has_commits" not in variables
 
     def test_close_task_without_commit_sha_does_not_set(
         self, variables, make_after_tool_event

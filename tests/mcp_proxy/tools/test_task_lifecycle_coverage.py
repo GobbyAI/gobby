@@ -230,6 +230,23 @@ class TestCloseTask:
             # it locally) so LocalPlanManager doesn't run against the mock db.
             patch("gobby.hooks.event_handlers._plan.on_epic_terminal") as mock_epic_terminal,
         ):
+            preview_result = await registry.call(
+                "close_task",
+                {
+                    "task_id": parent.id,
+                    "changes_summary": "All subtasks completed",
+                    "preview": True,
+                },
+            )
+            assert preview_result["success"] is True
+            assert preview_result["can_close"] is True
+            assert any(
+                gate["name"] == "children_closed" and gate["passed"]
+                for gate in preview_result["mechanical_gates"]
+            )
+            mock_task_manager.close_task.assert_not_called()
+            mock_epic_terminal.assert_not_called()
+
             result = await registry.call(
                 "close_task",
                 {"task_id": parent.id, "changes_summary": "All subtasks completed"},
@@ -424,12 +441,13 @@ class TestCloseTask:
         )
 
         assert "error" in result
-        assert "Invalid or unresolved" in result["error"]
+        assert result["error"] == "invalid_commit_sha"
+        assert "could not be resolved" in result["message"]
 
     @pytest.mark.asyncio
     async def test_close_task_passes_cwd_to_link_commit(self, mock_task_manager: MagicMock) -> None:
         """Verifies link_commit receives the project repo_path as cwd."""
-        task = _make_task(commits=["abc1234"])
+        task = _make_task(commits=[])
         mock_task_manager.get_task.return_value = task
         mock_task_manager.link_commit.return_value = task
         mock_task_manager.list_tasks.return_value = []
@@ -437,9 +455,12 @@ class TestCloseTask:
 
         registry = _create_registry(mock_task_manager)
 
-        with patch(
-            "gobby.mcp_proxy.tools.tasks._lifecycle_close.validate_commit_requirements"
-        ) as mock_vcr:
+        with (
+            patch(
+                "gobby.mcp_proxy.tools.tasks._lifecycle_close.validate_commit_requirements"
+            ) as mock_vcr,
+            patch("gobby.utils.git.normalize_commit_sha", return_value="abc1234"),
+        ):
             mock_vcr.return_value = MagicMock(can_close=True)
             await registry.call(
                 "close_task",
@@ -458,7 +479,7 @@ class TestCloseTask:
         """Cross-repo close_task calls must use a registered repo path."""
         repo_path = tmp_path / "external" / "repo"
         repo_path.mkdir(parents=True)
-        task = _make_task(commits=["abc1234"])
+        task = _make_task(commits=[])
         mock_task_manager.get_task.return_value = task
         mock_task_manager.link_commit.return_value = task
         mock_task_manager.list_tasks.return_value = []
@@ -498,7 +519,9 @@ class TestCloseTask:
             cwd=expected_cwd,
         )
         mock_norm.assert_called_with("abc1234", cwd=expected_cwd)
-        mock_vcr.assert_called_with(task, "completed", expected_cwd)
+        validation_task = mock_vcr.call_args.args[0]
+        assert validation_task.commits == ["abc1234"]
+        mock_vcr.assert_called_with(validation_task, "completed", expected_cwd)
         close_call = mock_task_manager.close_task.call_args
         assert close_call is not None
         assert close_call.kwargs["closed_commit_sha"] == "abc1234"
@@ -512,7 +535,7 @@ class TestCloseTask:
         external_worktree = tmp_path / "external-project" / "worktree"
         task_repo.mkdir()
         external_worktree.mkdir(parents=True)
-        task = _make_task(commits=["abc1234"])
+        task = _make_task(commits=[])
         mock_task_manager.get_task.return_value = task
         mock_task_manager.link_commit.return_value = task
         mock_task_manager.list_tasks.return_value = []
@@ -561,7 +584,9 @@ class TestCloseTask:
             cwd=expected_cwd,
         )
         mock_norm.assert_called_with("abc1234", cwd=expected_cwd)
-        mock_vcr.assert_called_with(task, "completed", expected_cwd)
+        validation_task = mock_vcr.call_args.args[0]
+        assert validation_task.commits == ["abc1234"]
+        mock_vcr.assert_called_with(validation_task, "completed", expected_cwd)
 
     @pytest.mark.asyncio
     async def test_close_task_rejects_missing_project_path_before_git(
@@ -584,7 +609,8 @@ class TestCloseTask:
                 },
             )
 
-        assert result["error"].startswith("project_path does not exist:")
+        assert result["error"] == "invalid_project_path"
+        assert result["message"].startswith("project_path does not exist:")
         mock_task_manager.link_commit.assert_not_called()
 
     @pytest.mark.asyncio
@@ -610,7 +636,8 @@ class TestCloseTask:
                 },
             )
 
-        assert result["error"].startswith("project_path is not a directory:")
+        assert result["error"] == "invalid_project_path"
+        assert result["message"].startswith("project_path is not a directory:")
         mock_task_manager.link_commit.assert_not_called()
 
     @pytest.mark.asyncio
@@ -657,7 +684,7 @@ class TestCloseTask:
             {"task_id": task.id, "changes_summary": "No repository diff was required"},
         )
 
-        assert result == {"success": True}
+        assert result["success"] is True
         assert mock_task_manager.close_task.call_args.kwargs["reset_validation_fail_count"] is True
 
     @pytest.mark.asyncio
@@ -686,7 +713,7 @@ class TestCloseTask:
                 {"task_id": task.id, "changes_summary": "Implemented and verified"},
             )
 
-        assert result == {"success": True}
+        assert result["success"] is True
         task_validator.validate_task.assert_awaited_once()
         validation_kwargs = task_validator.validate_task.await_args.kwargs
         assert validation_kwargs["task_id"] == task.id
@@ -728,7 +755,7 @@ class TestCloseTask:
                 {"task_id": task.id, "changes_summary": "Implemented and verified"},
             )
 
-        assert result == {"success": True}
+        assert result["success"] is True
         task_validator.validate_task.assert_awaited_once()
         validation_kwargs = task_validator.validate_task.await_args.kwargs
         assert validation_kwargs["task_id"] == task.id
@@ -1579,7 +1606,8 @@ def test_close_task_git_helper_calls_follow_repo_path_resolution() -> None:
     lines = _call_line_numbers(close_task)
 
     resolver_line = lines["resolve_task_repo_path"]
-    assert resolver_line < lines["ctx.task_manager.link_commit"]
+    assert resolver_line < lines["resolve_close_commit_shas"]
+    assert resolver_line < lines["link_close_commit_shas"]
     assert resolver_line < lines["validate_commit_requirements"]
     assert resolver_line < lines["gather_validation_context"]
     assert resolver_line < lines["normalize_commit_sha"]

@@ -49,6 +49,33 @@ def _blocked_tools(agent: dict[str, Any]) -> set[str]:
     return set(value)
 
 
+def test_close_task_success_handlers_ignore_preview_calls() -> None:
+    close_handlers: list[tuple[str, str, dict[str, Any]]] = []
+    for path in sorted(AGENTS_DIR.glob("*.yaml")):
+        agent = _load_yaml(path)
+        for step in agent.get("steps", []):
+            for handler in step.get("on_mcp_success", []) or []:
+                if handler.get("server") == "gobby-tasks" and handler.get("tool") == "close_task":
+                    close_handlers.append((path.name, str(step.get("name")), handler))
+
+    assert close_handlers
+    for path_name, step_name, handler in close_handlers:
+        assert "preview" in str(handler.get("when")), f"{path_name}:{step_name}"
+
+
+def test_agent_success_handlers_do_not_fabricate_verification_evidence() -> None:
+    protected_variables = {"verification_evidence", "verification_evidence_recorded"}
+    offenders: list[str] = []
+    for path in sorted(AGENTS_DIR.glob("*.yaml")):
+        agent = _load_yaml(path)
+        for step in agent.get("steps", []):
+            for handler in step.get("on_mcp_success", []) or []:
+                if handler.get("variable") in protected_variables:
+                    offenders.append(f"{path.name}:{step.get('name')}")
+
+    assert offenders == []
+
+
 def test_build_smoke_agent_runtime_mappings() -> None:
     expected = {
         "analyst": ("codex", "gpt-5.6-sol", "xhigh"),

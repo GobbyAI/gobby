@@ -145,9 +145,9 @@ instructions: |
     is explicitly unsafe.
   - Report: record the campaign result with
     gobby-tasks-ops:record_merge_result. If the merge survey/plan is empty
-    because the campaign work is already landed, close the campaign task with
-    gobby-tasks:close_task(reason="already_implemented") instead of recording
-    a failed merge result.
+    because the campaign work is already landed, preview
+    gobby-tasks:close_task(reason="already_implemented", preview=true), then
+    repeat it with preview=false instead of recording a failed merge result.
   - After a successful merge result is recorded, call
     gobby-tasks-ops:close_linked_github_issue with the assigned task id and
     merge_sha. The tool comments on the linked issue, applies `gobby:resolved`,
@@ -294,7 +294,7 @@ steps:
         value: true
       - server: gobby-tasks
         tool: close_task
-        when: "tool_input.get('reason') == 'already_implemented'"
+        when: "not tool_input.get('preview', False) and tool_input.get('reason') == 'already_implemented'"
         action: set_variable
         variable: report_complete
         value: true
@@ -338,7 +338,7 @@ steps:
     on_mcp_success:
       - server: gobby-tasks
         tool: close_task
-        when: "tool_input.get('reason') == 'already_implemented'"
+        when: "not tool_input.get('preview', False) and tool_input.get('reason') == 'already_implemented'"
         action: set_variable
         variable: report_complete
         value: true
@@ -494,18 +494,6 @@ steps:
         action: set_variable
         variable: execution_complete
         value: true
-      - server: gobby-merge
-        tool: verify_in_worktree
-        when: "tool_input.final is True and tool_output.get('success') is True and int(tool_output.get('exit_code', 1)) == 0"
-        action: set_variable
-        variable: verification_evidence
-        value: "(vars.get('verification_evidence') or []) + [{'evidence_type': 'validation_command', 'success': True, 'command': tool_input.get('command'), 'summary': 'merge-orchestrator final verify_in_worktree passed', 'tool_name': 'gobby-merge:verify_in_worktree'}]"
-      - server: gobby-merge
-        tool: verify_in_worktree
-        when: "tool_input.final is True and tool_output.get('success') is True and int(tool_output.get('exit_code', 1)) == 0"
-        action: set_variable
-        variable: verification_evidence_recorded
-        value: true
       - server: gobby-tasks-ops
         tool: record_merge_result
         action: set_variable
@@ -518,13 +506,13 @@ steps:
         value: true
       - server: gobby-tasks
         tool: close_task
-        when: "tool_input.get('reason') == 'already_implemented'"
+        when: "not tool_input.get('preview', False) and tool_input.get('reason') == 'already_implemented'"
         action: set_variable
         variable: execution_complete
         value: true
       - server: gobby-tasks
         tool: close_task
-        when: "tool_input.get('reason') == 'already_implemented'"
+        when: "not tool_input.get('preview', False) and tool_input.get('reason') == 'already_implemented'"
         action: set_variable
         variable: report_complete
         value: true
@@ -603,7 +591,7 @@ steps:
         value: true
       - server: gobby-tasks
         tool: close_task
-        when: "tool_input.get('reason') == 'already_implemented'"
+        when: "not tool_input.get('preview', False) and tool_input.get('reason') == 'already_implemented'"
         action: set_variable
         variable: report_complete
         value: true

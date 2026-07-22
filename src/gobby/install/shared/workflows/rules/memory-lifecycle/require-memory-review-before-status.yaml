@@ -8,6 +8,7 @@ rules:
     priority: 50
     when: >
       not variables.get('plan_mode')
+      and not tool_input.get('preview', False)
       and not variables.get('memory_review_completed')
       and (variables.get('target_task_has_edits') or variables.get('task_has_commits'))
     effects:

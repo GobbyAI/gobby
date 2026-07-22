@@ -536,6 +536,45 @@ def _resolve_task_filter(
     return refs, task.id
 
 
+def resolve_task_tagged_commits(
+    task_manager: "LocalTaskManager",
+    *,
+    task_id: str,
+    since: str | None = None,
+    cwd: str | Path | None = None,
+    project_name: str | None = None,
+    project_id: str | None = None,
+) -> list[str]:
+    """Resolve task-tagged commits without mutating task state."""
+    working_dir = Path(cwd) if cwd else Path.cwd()
+    resolved_project_name = project_name or get_current_project_name()
+    task_filter = _resolve_task_filter(task_manager, task_id, project_id)
+    if task_filter is None:
+        return []
+    accepted_refs, _resolved_task_id = task_filter
+
+    git_cmd = ["git", "log", "--reverse", "--pretty=format:%h|%s"]
+    branch = _resolve_branch_for_task(task_manager, task_id)
+    if branch:
+        git_cmd.append(branch)
+    if since:
+        git_cmd.append(f"--since={since}")
+
+    log_output = run_git_command(git_cmd, cwd=working_dir)
+    if not log_output:
+        return []
+
+    commits: list[str] = []
+    for line in log_output.strip().split("\n"):
+        if not line or "|" not in line:
+            continue
+        commit_sha, message = line.split("|", 1)
+        found_task_ids = extract_task_ids_from_message(message, resolved_project_name)
+        if any(task_ref in accepted_refs for task_ref in found_task_ids):
+            commits.append(commit_sha)
+    return commits
+
+
 def auto_link_commits(
     task_manager: "LocalTaskManager",
     task_id: str | None = None,
@@ -561,6 +600,40 @@ def auto_link_commits(
     Returns:
         AutoLinkResult with details of linked and skipped commits.
     """
+    if task_id:
+        task_filter = _resolve_task_filter(task_manager, task_id, project_id)
+        if task_filter is None:
+            return AutoLinkResult()
+        _accepted_refs, resolved_task_id = task_filter
+        task = task_manager.get_task(resolved_task_id)
+        if task is None:
+            return AutoLinkResult()
+        result = AutoLinkResult()
+        seq_num = getattr(task, "seq_num", None)
+        task_ref = f"#{seq_num}" if isinstance(seq_num, int) and seq_num > 0 else task_id
+        existing_commits = list(task.commits or [])
+        for commit_sha in resolve_task_tagged_commits(
+            task_manager,
+            task_id=task_id,
+            since=since,
+            cwd=cwd,
+            project_name=project_name,
+            project_id=project_id,
+        ):
+            if commit_sha in existing_commits:
+                result.skipped += 1
+                continue
+            try:
+                task_manager.link_commit(task.id, commit_sha, cwd=cwd)
+            except ValueError as error:
+                logger.debug("Skipping commit %s for task %s: %s", commit_sha, task_ref, error)
+                result.skipped += 1
+                continue
+            result.linked_tasks.setdefault(task_ref, []).append(commit_sha)
+            result.total_linked += 1
+            existing_commits.append(commit_sha)
+        return result
+
     working_dir = Path(cwd) if cwd else Path.cwd()
 
     # Get project name for filtering (auto-detect if not provided)

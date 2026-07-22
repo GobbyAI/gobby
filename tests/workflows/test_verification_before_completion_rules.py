@@ -45,11 +45,14 @@ def _lifecycle_event(
     server: str = "gobby-tasks",
     tool: str = "close_task",
     task_id: str = "#42",
+    *,
+    preview: bool = False,
 ) -> HookEvent:
     arguments = {
         "task_id": task_id,
         "commit_sha": "abc1234",
         "changes_summary": "done",
+        "preview": preview,
     }
     if server == "gobby-tasks-ops":
         arguments["stage_name"] = "development"
@@ -152,6 +155,21 @@ async def test_completion_readiness_blocks_without_evidence(
     assert "same verification category succeeds" in reason
     for language_specific_example in ("pytest", "ruff", "mypy", "npm test"):
         assert language_specific_example not in reason
+
+
+@pytest.mark.asyncio
+async def test_completion_readiness_allows_read_only_close_preview_without_evidence(
+    db: HubDatabase,
+) -> None:
+    _sync_bundled(db)
+
+    response = await RuleEngine(db).evaluate(
+        _lifecycle_event(preview=True),
+        session_id=SESSION_ID,
+        variables=_ready_variables(verification_evidence=[], verification_evidence_recorded=False),
+    )
+
+    assert response.decision == "allow"
 
 
 @pytest.mark.asyncio

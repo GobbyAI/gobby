@@ -197,7 +197,7 @@ registries (`gobby-tasks`, `gobby-tasks-ops`, `gobby-workflows`,
 | `create_task` | Create a new task. `claim=true` to auto-assign. `validation_criteria` required when `category="code"`. |
 | `get_task` | Get task details, including dependencies. Accepts `#N`, path, or UUID. |
 | `update_task` | Update task fields, including `isolation`, `assigned_agent`, and `additional_skills`. |
-| `close_task` | Close a task. Pass `commit_sha` to link the closing commit; leaf closes require `changes_summary`. |
+| `close_task` | Preview or close a task. Use `preview=true` before agent-driven leaf closes; pass `commit_sha` and `changes_summary`, then repeat with `preview=false` after repairs. |
 | `reopen_task` | Reopen a closed or escalated task. |
 | `delete_task` | Delete a task. `cascade=true` removes subtasks and dependent tasks; `unlink=true` preserves dependents by removing links. |
 | `list_tasks` | List tasks with filters. |
@@ -300,13 +300,26 @@ call_tool("gobby-tasks", "create_task", {
 # 3. Inspect the task
 call_tool("gobby-tasks", "get_task", {"task_id": "#123"})
 
-# 4. Close with commit linkage
+# 4. Preview close readiness
 call_tool("gobby-tasks", "close_task", {
     "task_id": "#123",
     "commit_sha": "abc1234",
     "changes_summary": "Updated task validation flow and covered it with focused tests.",
+    "preview": True,
+})
+
+# 5. Repair every blocker, then reevaluate and close
+call_tool("gobby-tasks", "close_task", {
+    "task_id": "#123",
+    "commit_sha": "abc1234",
+    "changes_summary": "Updated task validation flow and covered it with focused tests.",
+    "preview": False,
 })
 ```
+
+Optional `evidence_receipt_ids` prioritizes assigned receipts for detailed
+inspection without suppressing failed, conflicting, or unknown audit outcomes.
+Unknown or unassigned IDs block with a concrete receipt-assignment action.
 
 ---
 

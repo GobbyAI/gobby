@@ -126,17 +126,30 @@ commit message. Use the project name from `.gobby/project.json` in the task
 reference, e.g. `[<project_name>-#N] type: description`. The placeholder is
 never a literal prefix.
 
-## Gate 3: Close with Commit SHA
+## Gate 3: Preview, then Close with Commit SHA
 
-Pass `commit_sha` to `close_task` — this links the commit and closes in one call:
+Call `close_task` with `preview=true` after validation and commit. The preview is
+read-only and returns the exact prospective commit set, selected receipts,
+evidence completeness, unassigned-receipt diagnostics, blocking reasons, and
+required repair actions:
 
 ```python
 call_tool("gobby-tasks", "close_task", {
     "task_id": "#N",
     "commit_sha": "abc1234",
-    "changes_summary": "What changed and why"
+    "changes_summary": "What changed and why",
+    "preview": True
 }, session_id="#2333")
 ```
+
+If a preview asks for more specific receipts, pass their assigned IDs through
+`evidence_receipt_ids`. This prioritizes detail without removing failed,
+conflicting, or unknown audit outcomes. An unknown ID must be assigned to the
+task before retrying.
+
+Repair every blocking reason. Then repeat the same call with `preview=false` or
+omit `preview`. Real close reevaluates current state and links the commit during
+that call.
 
 `session_id` is a parameter of `call_tool`, not the inner tool — pass your Gobby session ref.
 
@@ -166,7 +179,9 @@ Do NOT create memories for bugs or errors — create tasks instead.
 3. git add + git commit (with `[<project_name>-#<task_number>]` in the message, using the project name from `.gobby/project.json`)
 4. Review memories → save/delete/clear gate
 5. set_variable(memory_review_completed=true)
-6. close_task(task_id, commit_sha, changes_summary)  ← one call links + closes
+6. close_task(task_id, commit_sha, changes_summary, preview=true)
+7. Repair every returned blocker and repeat preview until can_close=true
+8. close_task(task_id, commit_sha, changes_summary)  ← reevaluates, links, closes
 ```
 
 ## Review Flow (autonomous/pipeline agents)
@@ -245,6 +260,7 @@ Fresh evidence and memory review still apply. `changes_summary` is still require
 | Mistake | Why it fails | Fix |
 |---------|-------------|-----|
 | Close without `commit_sha` | Gate 2 blocks — no commit to validate | Commit first, pass `commit_sha` to `close_task` |
+| Skip close preview | Validation blockers surface during mutation attempt | Run the identical call with `preview=true` first |
 | Separate `link_commit` then `close_task` | Unnecessary extra call | Pass `commit_sha` directly to `close_task` |
 | `git add -A` | May stage secrets or binaries | Stage specific files |
 | Skip memory review | Gate 4 blocks — `memory_review_completed` not set | Review or explicitly clear |

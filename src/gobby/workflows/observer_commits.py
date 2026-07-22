@@ -103,7 +103,7 @@ def detect_commit_link(event: HookEvent, variables: dict[str, Any], session_id: 
     if inner_tool == "close_task":
         tool_input = event.data.get("tool_input", {}) or {}
         arguments = tool_input.get("arguments", {}) or {}
-        if not arguments.get("commit_sha"):
+        if arguments.get("preview") or not arguments.get("commit_sha"):
             return
 
     tool_output = event.data.get("tool_output") or {}

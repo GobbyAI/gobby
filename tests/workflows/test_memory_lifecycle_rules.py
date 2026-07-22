@@ -318,6 +318,7 @@ class TestRequireMemoryReviewBeforeStatus:
         assert body.when is not None
         assert "memory_review_completed" in body.when
         assert "target_task_has_edits" in body.when
+        assert "preview" in body.when
         assert "session_edited_files" not in body.when
 
 

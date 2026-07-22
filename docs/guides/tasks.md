@@ -111,13 +111,23 @@ call_tool(server_name="gobby-tasks", tool_name="close_task", arguments={
     "task_id": "#14390",
     "commit_sha": "abc1234",
     "changes_summary": "Refreshed the task guide for stage manifests and MCP-first task flow.",
+    "preview": True,
 })
 ```
 
-Passing `commit_sha` links the commit and closes in one call. Validation runs
-when the task has validation criteria. Skip-style reasons such as `duplicate`,
+Preview is read-only. It returns the prospective commit set, canonical selected
+receipt IDs, evidence-completeness disclosure, unassigned-receipt diagnostics,
+blocking reasons, and exact repair actions. Repair every blocker, then repeat
+the same call with `preview=false`. Real close reevaluates current state and
+links `commit_sha` during that call. Validation runs when the task has validation
+criteria. Skip-style reasons such as `duplicate`,
 `already_implemented`, `wont_fix`, `obsolete`, and `out_of_repo` are for
 no-work or out-of-repo closes; they still require a useful `changes_summary`.
+
+Pass `evidence_receipt_ids` when specific assigned receipts need detailed
+inspection. Explicit selection changes detail priority only: failed,
+conflicting, and unknown outcomes remain disclosed as audit context, and an ID
+not assigned to the task returns an exact assignment repair action.
 
 Autonomous stage work may require review instead of direct close. Inspect the
 stage manifest first:
@@ -294,7 +304,9 @@ call_tool(server_name="gobby-tasks", tool_name="close_task", arguments={
     "task_id": "#14390",
     "commit_sha": "abc1234",
     "changes_summary": "Updated the task guide against current MCP and stage behavior.",
+    "preview": True,
 })
+# After can_close=true, repeat with preview=false.
 ```
 
 Related MCP tools:

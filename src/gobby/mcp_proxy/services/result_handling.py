@@ -13,7 +13,7 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger("gobby.mcp.server")
 
-_CODEX_RECONCILE_TIMEOUT_SECONDS = 10.0
+_CODEX_RECONCILE_TIMEOUT_SECONDS = 60.0
 _CODEX_RECONCILE_TASKS: dict[str, asyncio.Task[Any]] = {}
 
 

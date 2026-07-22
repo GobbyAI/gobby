@@ -868,6 +868,7 @@ class TestRequireCleanTreeBeforeStatus:
 
         assert body.when is not None
         assert "has_target_task_dirty_files" in body.when
+        assert "preview" in body.when
         assert "has_dirty_files" not in body.when
         assert "task_has_commits" not in body.when
 
@@ -989,6 +990,7 @@ class TestRequireCommitBeforeStatus:
         assert body.when is not None
         assert "task_has_commits" in body.when
         assert "commit_sha" in body.when
+        assert "preview" in body.when
 
     def test_when_checks_target_task_edits(self, db, manager) -> None:
         """Should only require commit when the target task has edits."""

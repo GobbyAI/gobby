@@ -147,6 +147,8 @@ class TestToolSchemas:
             "skip_validation",
             "override_justification",
             "commit_sha",
+            "preview",
+            "evidence_receipt_ids",
         ]
 
         for prop in expected_props:

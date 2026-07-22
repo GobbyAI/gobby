@@ -412,6 +412,7 @@ async def validate_leaf_task_with_llm(
     *,
     is_documentation_only: bool = False,
     verification_receipt_text: str | None = None,
+    read_only: bool = False,
 ) -> ValidationResult:
     """Run LLM validation on a leaf task.
 
@@ -430,14 +431,15 @@ async def validate_leaf_task_with_llm(
     if is_documentation_only:
         logger.info("Skipping LLM validation for task %s: doc-only changes", task.id)
         feedback = "Auto-validated: documentation-only changes"
-        _record_validation_iteration(
-            task,
-            ctx,
-            status="valid",
-            feedback=feedback,
-            context_type="documentation_diff",
-            validator_type="automatic",
-        )
+        if not read_only:
+            _record_validation_iteration(
+                task,
+                ctx,
+                status="valid",
+                feedback=feedback,
+                context_type="documentation_diff",
+                validator_type="automatic",
+            )
         return ValidationResult(
             can_close=True,
             validation_status="valid",
@@ -496,6 +498,18 @@ async def validate_leaf_task_with_llm(
     # not persist 'invalid' or burn the validation-failure / work-attempt counters.
     if result.status == "error":
         failure_category = result.failure_category or FailureCategory.PROVIDER
+        if read_only:
+            return ValidationResult(
+                can_close=False,
+                error_type="validation_infrastructure_unavailable",
+                message=result.feedback,
+                extra={
+                    "validation_status": "error",
+                    "failure_category": failure_category.value,
+                    "retryable": True,
+                },
+                failure_category=failure_category,
+            )
         state = backoff_store.record_failure(task.id, error=result.feedback, now=now)
         ctx.task_manager.update_task(
             resolved_id,
@@ -578,6 +592,21 @@ async def validate_leaf_task_with_llm(
             result.verdict_override,
         )
         if failure_category in INFRASTRUCTURE_FAILURE_CATEGORIES:
+            if read_only:
+                preview_extra: dict[str, Any] = {
+                    "validation_status": "error",
+                    "failure_category": failure_category.value,
+                    "retryable": True,
+                }
+                if blocking_reasons:
+                    preview_extra["blocking_reasons"] = blocking_reasons
+                return ValidationResult(
+                    can_close=False,
+                    error_type="validation_infrastructure_failure",
+                    message=message,
+                    extra=preview_extra,
+                    failure_category=failure_category,
+                )
             state = backoff_store.record_failure(task.id, error=message, now=now)
             ctx.task_manager.update_task(
                 resolved_id,
@@ -632,6 +661,22 @@ async def validate_leaf_task_with_llm(
                     "next_retry_at": retry_at,
                     "consecutive_failures": state.consecutive_failures,
                 },
+                failure_category=failure_category,
+            )
+        if read_only:
+            preview_extra = {
+                "validation_status": validation_status,
+                "failure_category": failure_category.value,
+            }
+            if result.verdict_override is not None:
+                preview_extra["verdict_override"] = result.verdict_override
+            if blocking_reasons:
+                preview_extra["blocking_reasons"] = blocking_reasons
+            return ValidationResult(
+                can_close=False,
+                error_type="validation_failed",
+                message=message,
+                extra=preview_extra,
                 failure_category=failure_category,
             )
         if backoff_state is not None:
@@ -701,15 +746,16 @@ async def validate_leaf_task_with_llm(
         )
 
     # A real valid verdict clears any prior infrastructure outage state.
-    if backoff_state is not None:
-        backoff_store.clear(task.id)
-    _record_validation_iteration(
-        task,
-        ctx,
-        status=validation_status,
-        feedback=original_feedback,
-        context_type="validation_evidence_gate",
-    )
+    if not read_only:
+        if backoff_state is not None:
+            backoff_store.clear(task.id)
+        _record_validation_iteration(
+            task,
+            ctx,
+            status=validation_status,
+            feedback=original_feedback,
+            context_type="validation_evidence_gate",
+        )
     return ValidationResult(
         can_close=True,
         validation_status="valid",

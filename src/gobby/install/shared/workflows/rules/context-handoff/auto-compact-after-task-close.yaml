@@ -11,6 +11,7 @@ rules:
     when: >
       event.data.get('mcp_server') == 'gobby-tasks'
       and event.data.get('mcp_tool') == 'close_task'
+      and not tool_input.get('preview', False)
       and tool_call_succeeded()
       and variables.get('claimed_tasks')
       and (

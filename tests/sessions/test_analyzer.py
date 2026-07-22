@@ -754,6 +754,19 @@ class TestFormatToolDescription:
             analyzer._format_tool_description(block) == "Closed task #789: Completed implementation"
         )
 
+    def test_mcp_call_tool_close_task_preview_is_not_described_as_closed(self) -> None:
+        analyzer = TranscriptAnalyzer()
+        block = {
+            "name": "mcp__gobby__call_tool",
+            "input": {
+                "server_name": "gobby-tasks",
+                "tool_name": "close_task",
+                "arguments": {"task_id": "#789", "preview": True},
+            },
+        }
+
+        assert analyzer._format_tool_description(block) == "Previewed close for task #789"
+
     def test_mcp_call_tool_claim_task(self) -> None:
         """Test gobby-tasks claim_task shows task ID."""
         analyzer = TranscriptAnalyzer()

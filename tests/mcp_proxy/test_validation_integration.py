@@ -44,6 +44,8 @@ def _verification_receipt(
     command: str,
     *,
     index: int = 1,
+    normalized_outcome: str = "success",
+    exit_code: int | None = 0,
 ) -> VerificationReceipt:
     timestamp = utc_now() + timedelta(seconds=index)
     return VerificationReceipt(
@@ -57,9 +59,9 @@ def _verification_receipt(
         evidence_type="shell_command",
         command=command,
         cwd="/repo",
-        normalized_outcome="success",
+        normalized_outcome=normalized_outcome,
         outcome_provenance="tool_output.json.exit_code",
-        exit_code=0,
+        exit_code=exit_code,
         started_at=timestamp,
         completed_at=timestamp,
         output_first_4k="passed",
@@ -812,13 +814,12 @@ async def test_close_task_autolinks_claim_window_before_validation(
         task.commits.append(commit_sha)
         return task
 
-    def autolink_side_effect(*args: Any, **kwargs: Any) -> None:
+    def resolve_commits_side_effect(*args: Any, **kwargs: Any) -> list[str]:
         assert kwargs["task_id"] == "t1"
         assert kwargs["since"] == "2026-05-01T00:00:00+00:00"
         assert kwargs["cwd"] == repo_path
         assert kwargs["project_id"] == "p1"
-        assert task.commits is not None
-        task.commits.insert(1, "a2")
+        return ["a2"]
 
     with (
         patch("gobby.mcp_proxy.tools.tasks._context.TaskDependencyManager"),
@@ -826,7 +827,7 @@ async def test_close_task_autolinks_claim_window_before_validation(
         patch("gobby.mcp_proxy.tools.tasks._context.SessionManager") as mock_sm_cls,
         patch("gobby.mcp_proxy.tools.tasks._context.SessionTaskManager") as mock_stm_cls,
         patch("gobby.mcp_proxy.tools.tasks._context.SessionVariableManager") as mock_svm_cls,
-        patch("gobby.tasks.commits.auto_link_commits") as mock_autolink,
+        patch("gobby.tasks.commits.resolve_task_tagged_commits") as mock_resolve_commits,
         patch("gobby.tasks.commits.collect_task_diff_text") as mock_diff,
         patch("gobby.utils.git.normalize_commit_sha", side_effect=lambda sha, cwd=None: sha),
     ):
@@ -847,7 +848,7 @@ async def test_close_task_autolinks_claim_window_before_validation(
         mock_stm_cls.return_value = mock_stm
         mock_svm_cls.return_value.get_variables.return_value = {}
         mock_task_manager.link_commit.side_effect = link_commit_side_effect
-        mock_autolink.side_effect = autolink_side_effect
+        mock_resolve_commits.side_effect = resolve_commits_side_effect
 
         def diff_side_effect(
             task_id: str,
@@ -889,7 +890,7 @@ async def test_close_task_autolinks_claim_window_before_validation(
         changes_summary = validator_call.kwargs["changes_summary"]
 
     assert result["success"] is True
-    mock_autolink.assert_called_once()
+    mock_resolve_commits.assert_called_once()
     assert "Commit-based diff (3 commits, 3 manifest entries):" in changes_summary
     assert "task A1" in changes_summary
     assert "task A2" in changes_summary
@@ -1221,3 +1222,239 @@ async def test_close_task_with_commits_does_not_fallback_to_smart_context(
         mock_smart_context.assert_not_called()
         assert mock_smart_context.call_count == 0
         assert not mock_smart_context.called
+
+
+@pytest.mark.asyncio
+async def test_close_task_preview_is_read_only_and_prioritizes_explicit_receipts(
+    mock_task_manager: MagicMock,
+    mock_task_validator: AsyncMock,
+    repo_path: str,
+) -> None:
+    task = _task(
+        id="t1",
+        title="Preview close",
+        project_id="p1",
+        status="open",
+        description="Preview the canonical close evaluator.",
+        validation_criteria="Focused tests pass.",
+        commits=["a1"],
+        claimed_by_session_id="sess-uuid",
+        priority=1,
+        task_type="task",
+        category="code",
+        created_at="now",
+        updated_at="now",
+    )
+    receipts = [
+        _verification_receipt(f"uv run pytest tests/test_{index}.py", index=index)
+        for index in range(1, 21)
+    ]
+    receipts.append(
+        _verification_receipt(
+            "uv run pytest tests/failing.py",
+            index=21,
+            normalized_outcome="failure",
+            exit_code=1,
+        )
+    )
+    mock_task_manager.get_task.return_value = task
+    mock_task_manager.list_tasks.return_value = []
+    mock_task_validator.validate_task.return_value = ValidationResult(
+        status="valid",
+        feedback="All focused checks pass.",
+    )
+
+    with (
+        patch("gobby.mcp_proxy.tools.tasks._context.TaskDependencyManager"),
+        patch("gobby.mcp_proxy.tools.tasks._context.LocalProjectManager") as mock_pm,
+        patch("gobby.mcp_proxy.tools.tasks._context.SessionManager") as mock_sm_cls,
+        patch("gobby.mcp_proxy.tools.tasks._context.SessionTaskManager") as mock_stm_cls,
+        patch("gobby.mcp_proxy.tools.tasks._context.SessionVariableManager") as mock_svm_cls,
+        patch("gobby.tasks.commits.resolve_task_tagged_commits", return_value=["a2"]),
+        patch(
+            "gobby.tasks.commits.collect_task_diff_text",
+            return_value=_diff_result(
+                diff="diff --git a/a.py b/a.py\n+preview\n",
+                commits=["a1", "a2", "a3"],
+                file_count=1,
+            ),
+        ),
+        patch("gobby.utils.git.normalize_commit_sha", side_effect=lambda sha, cwd=None: sha),
+        patch(
+            "gobby.mcp_proxy.tools.tasks._lifecycle_validation._record_validation_iteration"
+        ) as record_iteration,
+        patch(
+            "gobby.mcp_proxy.tools.tasks._lifecycle_close.VerificationReceiptStore"
+        ) as receipt_store_cls,
+    ):
+        mock_pm.return_value.get.return_value = MagicMock(repo_path=repo_path)
+        mock_sm_cls.return_value.resolve_session_reference.return_value = "sess-uuid"
+        mock_stm_cls.return_value.get_task_sessions.return_value = [
+            {
+                "session_id": "sess-uuid",
+                "task_id": "t1",
+                "action": "claimed",
+                "created_at": "2026-05-01T00:00:00+00:00",
+            }
+        ]
+        mock_svm_cls.return_value.get_variables.return_value = {}
+        receipt_store_cls.return_value.list_for_task.return_value = receipts
+        receipt_store_cls.return_value.count_unassigned.return_value = 3
+        registry = create_task_registry(
+            task_manager=mock_task_manager,
+            task_validator=mock_task_validator,
+        )
+
+        missing_result = await registry.call(
+            "close_task",
+            {
+                "task_id": "t1",
+                "commit_sha": "a3",
+                "changes_summary": "Implemented preview.",
+                "preview": True,
+                "evidence_receipt_ids": ["missing-receipt"],
+            },
+        )
+        result = await registry.call(
+            "close_task",
+            {
+                "task_id": "t1",
+                "commit_sha": "a3",
+                "changes_summary": "Implemented preview.",
+                "preview": True,
+                "evidence_receipt_ids": ["receipt-020"],
+            },
+        )
+
+    assert missing_result["success"] is True
+    assert missing_result["can_close"] is False
+    assert missing_result["error"] == "evidence_receipts_not_found"
+    assert "assign the intended receipt IDs" in missing_result["required_actions"][0]
+    assert result["success"] is True
+    assert result["preview"] is True
+    assert result["can_close"] is True
+    assert result["commit_shas"] == ["a1", "a2", "a3"]
+    assert "receipt-020" in result["selected_evidence"]["detailed_receipt_ids"]
+    assert "receipt-021" in result["selected_evidence"]["catalogued_receipt_ids"]
+    assert result["evidence_completeness"]["total"] == 21
+    assert result["unassigned_receipts"]["count"] == 3
+    assert result["blocking_reasons"] == []
+    assert result["required_actions"] == []
+    receipt_text = mock_task_validator.validate_task.await_args.kwargs["verification_receipt_text"]
+    assert "receipt-021" in receipt_text
+    assert "failure" in receipt_text
+    mock_task_manager.link_commit.assert_not_called()
+    mock_task_manager.close_task.assert_not_called()
+    mock_task_manager.update_task.assert_not_called()
+    mock_task_manager.increment_validation_failure.assert_not_called()
+    record_iteration.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_real_close_reevaluates_after_successful_preview(
+    mock_task_manager: MagicMock,
+    mock_task_validator: AsyncMock,
+    repo_path: str,
+) -> None:
+    task = _task(
+        id="t1",
+        title="Reevaluate close",
+        project_id="p1",
+        status="open",
+        description="Reevaluate current evidence.",
+        validation_criteria="Focused tests pass.",
+        commits=["a1"],
+        claimed_by_session_id="sess-uuid",
+        priority=1,
+        task_type="task",
+        category="code",
+        created_at="now",
+        updated_at="now",
+    )
+    mock_task_manager.get_task.return_value = task
+    mock_task_manager.list_tasks.return_value = []
+    mock_task_manager.increment_validation_failure.return_value = (1, False)
+    mock_task_validator.validate_task.side_effect = [
+        ValidationResult(status="valid", feedback="First pass."),
+        ValidationResult(
+            status="invalid",
+            feedback="Evidence changed.",
+            blocking_reasons=("Focused tests no longer pass.",),
+        ),
+        ValidationResult(
+            status="invalid",
+            feedback="Evidence still invalid.",
+            blocking_reasons=("Focused tests no longer pass.",),
+        ),
+    ]
+
+    with (
+        patch("gobby.mcp_proxy.tools.tasks._context.TaskDependencyManager"),
+        patch("gobby.mcp_proxy.tools.tasks._context.LocalProjectManager") as mock_pm,
+        patch("gobby.mcp_proxy.tools.tasks._context.SessionManager") as mock_sm_cls,
+        patch("gobby.mcp_proxy.tools.tasks._context.SessionTaskManager"),
+        patch("gobby.mcp_proxy.tools.tasks._context.SessionVariableManager") as mock_svm_cls,
+        patch(
+            "gobby.tasks.commits.collect_task_diff_text",
+            return_value=_diff_result(
+                diff="diff --git a/a.py b/a.py\n+change\n",
+                commits=["a1"],
+                file_count=1,
+            ),
+        ),
+        patch("gobby.utils.git.normalize_commit_sha", side_effect=lambda sha, cwd=None: sha),
+        patch(
+            "gobby.mcp_proxy.tools.tasks._lifecycle_close.VerificationReceiptStore"
+        ) as receipt_store_cls,
+        patch(
+            "gobby.mcp_proxy.tools.tasks._lifecycle_validation._record_validation_iteration"
+        ) as record_iteration,
+    ):
+        mock_pm.return_value.get.return_value = MagicMock(repo_path=repo_path)
+        mock_sm_cls.return_value.resolve_session_reference.return_value = "sess-uuid"
+        mock_svm_cls.return_value.get_variables.return_value = {}
+        receipt_store_cls.return_value.list_for_task.return_value = [
+            _verification_receipt("uv run pytest tests/focused.py")
+        ]
+        receipt_store_cls.return_value.count_unassigned.return_value = 0
+        registry = create_task_registry(
+            task_manager=mock_task_manager,
+            task_validator=mock_task_validator,
+        )
+
+        preview_result = await registry.call(
+            "close_task",
+            {
+                "task_id": "t1",
+                "changes_summary": "Implemented reevaluation.",
+                "preview": True,
+            },
+        )
+        blocked_preview_result = await registry.call(
+            "close_task",
+            {
+                "task_id": "t1",
+                "changes_summary": "Implemented reevaluation.",
+                "preview": True,
+            },
+        )
+        mock_task_manager.increment_validation_failure.assert_not_called()
+        mock_task_manager.update_task.assert_not_called()
+        record_iteration.assert_not_called()
+        close_result = await registry.call(
+            "close_task",
+            {
+                "task_id": "t1",
+                "changes_summary": "Implemented reevaluation.",
+            },
+        )
+
+    assert preview_result["can_close"] is True
+    assert blocked_preview_result["can_close"] is False
+    assert blocked_preview_result["error"] == "validation_failed"
+    assert close_result["success"] is False
+    assert close_result["error"] == "validation_failed"
+    assert mock_task_validator.validate_task.await_count == 3
+    mock_task_manager.increment_validation_failure.assert_called_once()
+    record_iteration.assert_called_once()
+    mock_task_manager.close_task.assert_not_called()
