@@ -4148,3 +4148,64 @@ async def test_run_cli_text_generation_command_closes_stdin(
     # stdin is closed so codex-style "Reading additional input from stdin" cannot hang.
     assert captured["stdin"] == asyncio.subprocess.DEVNULL
     assert captured["cwd"] == str(tmp_path)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("returncode", [0, 55])
+async def test_run_cli_text_generation_command_returns_accepted_exit_details(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    returncode: int,
+) -> None:
+    async def fake_create_subprocess_exec(
+        *command: str,
+        stdin: int,
+        stdout: int,
+        stderr: int,
+        cwd: str | None,
+        env: dict[str, str],
+        start_new_session: bool,
+    ) -> FakeProcess:
+        return FakeProcess(b"partial stdout\n", b"budget diagnostic\n", returncode=returncode)
+
+    monkeypatch.setattr(asyncio, "create_subprocess_exec", fake_create_subprocess_exec)
+
+    result = await text_generation_adapters._run_cli_text_generation_command(
+        "Qwen",
+        ("/usr/local/bin/qwen", "--prompt", "hi"),
+        neutral_cwd=tmp_path,
+        timeout_seconds=5,
+        env_overrides={},
+        accepted_exit_codes=frozenset({53, 55}),
+    )
+
+    assert result == ("partial stdout", "budget diagnostic", returncode)
+
+
+@pytest.mark.asyncio
+async def test_run_cli_text_generation_command_rejects_unaccepted_exit(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    async def fake_create_subprocess_exec(
+        *command: str,
+        stdin: int,
+        stdout: int,
+        stderr: int,
+        cwd: str | None,
+        env: dict[str, str],
+        start_new_session: bool,
+    ) -> FakeProcess:
+        return FakeProcess(b"partial stdout", b"unexpected failure", returncode=54)
+
+    monkeypatch.setattr(asyncio, "create_subprocess_exec", fake_create_subprocess_exec)
+
+    with pytest.raises(RuntimeError, match="Qwen CLI failed with exit code 54: unexpected failure"):
+        await text_generation_adapters._run_cli_text_generation_command(
+            "Qwen",
+            ("/usr/local/bin/qwen", "--prompt", "hi"),
+            neutral_cwd=tmp_path,
+            timeout_seconds=5,
+            env_overrides={},
+            accepted_exit_codes=frozenset({53, 55}),
+        )

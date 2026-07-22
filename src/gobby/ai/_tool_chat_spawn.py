@@ -32,6 +32,7 @@ adapter layer).
 from __future__ import annotations
 
 import json
+import logging
 import os
 import shlex
 import tempfile
@@ -61,6 +62,9 @@ if TYPE_CHECKING:
     from gobby.config.app import DaemonConfig
 
 _DEFAULT_SPAWN_TIMEOUT_SECONDS = 300.0
+_QWEN_LIMIT_EXIT_CODES = frozenset({53, 55})
+
+logger = logging.getLogger(__name__)
 
 # Droid built-in tools disabled for tool_chat spawn agents. Execute is NOT
 # disabled — the agent needs shell access to run gcode. Droid's default
@@ -204,16 +208,29 @@ def parse_codex_stream(stdout: str) -> tuple[str, int, dict[str, int]]:
     return final_text.strip(), total, breakdown
 
 
-def parse_qwen_stream(stdout: str) -> tuple[str, int, dict[str, int]]:
-    """Parse qwen ``--output-format stream-json`` NDJSON into (final_text, tool_calls, breakdown).
+def parse_qwen_stream(
+    stdout: str,
+) -> tuple[
+    str | None,
+    int,
+    dict[str, int],
+    int | None,
+    dict[str, int] | None,
+    str | None,
+]:
+    """Parse qwen stream JSON into narrative, tool, turn, usage, and error signals.
 
     Tool-call provenance comes from ``assistant`` events whose ``content``
-    array contains ``tool_use`` entries (counted by ``name``). The narrative is
-    the ``result`` event's ``result`` field. Non-JSON lines are skipped.
+    array contains ``tool_use`` entries (counted by ``name``). Terminal result
+    events carry native turn and usage provenance, including limit failures that
+    omit narrative text. Non-JSON lines are skipped.
     """
-    final_text = ""
+    final_text: str | None = None
     breakdown: dict[str, int] = {}
     total = 0
+    turns: int | None = None
+    usage: dict[str, int] | None = None
+    error_message: str | None = None
     for raw in stdout.splitlines():
         line = raw.strip()
         if not line:
@@ -242,8 +259,22 @@ def parse_qwen_stream(stdout: str) -> tuple[str, int, dict[str, int]]:
         elif etype == "result":
             result = event.get("result")
             if isinstance(result, str) and result.strip():
-                final_text = result
-    return final_text.strip(), total, breakdown
+                final_text = result.strip()
+            raw_turns = event.get("num_turns")
+            if isinstance(raw_turns, int):
+                turns = raw_turns
+            raw_usage = event.get("usage")
+            if isinstance(raw_usage, dict):
+                parsed_usage = {
+                    str(key): value for key, value in raw_usage.items() if isinstance(value, int)
+                }
+                usage = parsed_usage or None
+            error = event.get("error")
+            if isinstance(error, dict):
+                message = error.get("message")
+                if isinstance(message, str) and message.strip():
+                    error_message = message.strip()
+    return final_text, total, breakdown, turns, usage, error_message
 
 
 def _resolve_grok_session_dir(session_id: str, work_dir: Path) -> Path | None:
@@ -267,15 +298,30 @@ def _resolve_grok_session_dir(session_id: str, work_dir: Path) -> Path | None:
     return None
 
 
-def parse_grok_session_signals(session_dir: Path) -> tuple[int, dict[str, int]]:
-    """Extract (tool_call_count, per_tool_breakdown) from a grok session directory.
+def parse_grok_session_signals(
+    session_dir: Path,
+) -> tuple[int, dict[str, int], int | None]:
+    """Extract tool calls, per-tool counts, and native turns from a Grok session.
 
-    Reads ``signals.json`` for the total ``toolCallCount`` and ``updates.jsonl``
-    for per-tool breakdown (counting ``sessionUpdate == "tool_call"`` events by
-    ``title``).  Falls back to ``(0, {})`` if neither file is available.
+    Reads ``signals.json`` for aggregate ``toolCallCount`` and ``turnCount``, and
+    ``updates.jsonl`` for per-tool counts. Missing provider data stays unknown.
     """
     total = 0
     breakdown: dict[str, int] = {}
+    turns: int | None = None
+    signals: dict[str, Any] = {}
+
+    signals_path = session_dir / "signals.json"
+    if signals_path.exists():
+        try:
+            raw_signals = json.loads(signals_path.read_text(encoding="utf-8"))
+            if isinstance(raw_signals, dict):
+                signals = raw_signals
+                raw_turns = signals.get("turnCount")
+                if isinstance(raw_turns, int):
+                    turns = raw_turns
+        except (json.JSONDecodeError, TypeError):
+            pass
 
     # Primary source: updates.jsonl has per-tool-call records.
     updates_path = session_dir / "updates.jsonl"
@@ -304,27 +350,51 @@ def parse_grok_session_signals(session_dir: Path) -> tuple[int, dict[str, int]]:
             total += 1
             breakdown[title] = breakdown.get(title, 0) + 1
         if total > 0:
-            return total, breakdown
+            return total, breakdown, turns
 
     # Fallback: signals.json has the aggregate count but no per-tool counts.
-    signals_path = session_dir / "signals.json"
-    if signals_path.exists():
-        try:
-            signals = json.loads(signals_path.read_text(encoding="utf-8"))
-            if isinstance(signals, dict):
-                count = signals.get("toolCallCount")
-                if isinstance(count, int) and count > 0:
-                    tools_used = signals.get("toolsUsed")
-                    if isinstance(tools_used, list):
-                        # Without per-tool counts from updates.jsonl, distribute
-                        # the total evenly as a best-effort approximation.
-                        for tool_name in tools_used:
-                            breakdown[str(tool_name)] = breakdown.get(str(tool_name), 0) + 1
-                    return count, breakdown
-        except (json.JSONDecodeError, TypeError):
-            pass
+    count = signals.get("toolCallCount")
+    if isinstance(count, int) and count > 0:
+        tools_used = signals.get("toolsUsed")
+        if isinstance(tools_used, list):
+            # Without per-tool counts from updates.jsonl, retain which tools ran.
+            for tool_name in tools_used:
+                breakdown[str(tool_name)] = breakdown.get(str(tool_name), 0) + 1
+        return count, breakdown, turns
 
-    return 0, {}
+    return 0, {}, turns
+
+
+def _normalize_grok_stop_reason(value: object) -> str | None:
+    if value == "EndTurn":
+        return "completed"
+    if value == "MaxTurnRequests":
+        return "max_turns"
+    return None
+
+
+def _classify_qwen_stop_reason(
+    returncode: int,
+    *,
+    error_message: str | None,
+    stderr: str,
+) -> str:
+    if returncode == 0:
+        return "completed"
+    if returncode == 53:
+        return "max_turns"
+    if returncode != 55:
+        raise RuntimeError(f"Qwen tool_chat returned unexpected accepted exit code {returncode}")
+
+    diagnostic = error_message or stderr
+    normalized = diagnostic.casefold()
+    if "--max-tool-calls" in normalized or "tool-call budget" in normalized:
+        return "max_tool_calls"
+    if "--max-wall-time" in normalized or "wall-clock budget" in normalized:
+        return "timeout"
+    raise RuntimeError(
+        f"Qwen tool_chat ambiguous limit diagnostic for exit code 55: {diagnostic or '<empty>'}"
+    )
 
 
 class CodexSpawnToolChatAdapter:
@@ -386,6 +456,9 @@ class CodexSpawnToolChatAdapter:
 
     async def chat(self, request: ToolChatRequest, binding: CapabilityBinding) -> ToolChatResult:
         validate_policy(request.tool_policy)
+        logger.warning(
+            "Codex tool_chat cannot enforce request.limits; only wall-time timeout applies"
+        )
         model = request.model or next(iter(binding.models), None)
         with tempfile.TemporaryDirectory(prefix="tool-chat-codex-") as work_str:
             work = Path(work_str)
@@ -417,7 +490,7 @@ class CodexSpawnToolChatAdapter:
             provider=binding.provider,
             model=model,
             tool_use_count=tool_use_count,
-            turns=tool_use_count,
+            turns=None,
             tools=tools,
             applied_reasoning_effort=request.reasoning_effort,
             stop_reason="completed",
@@ -428,17 +501,18 @@ class CodexSpawnToolChatAdapter:
         )
 
 
-def parse_droid_stream(stdout: str) -> tuple[str, int, dict[str, int]]:
-    """Parse droid ``--output-format stream-json`` into (final_text, tool_calls, breakdown).
+def parse_droid_stream(stdout: str) -> tuple[str, int, dict[str, int], int | None]:
+    """Parse Droid stream JSON into narrative, tool calls, and native turns.
 
     The narrative is the ``completion`` event's ``finalText`` (falling back to the
     last assistant ``message``). Tool-call provenance comes from ``tool_call``
-    events, counted by ``toolName``.
+    events, counted by ``toolName``. Turns come only from the completion envelope.
     """
     final_text = ""
     last_assistant = ""
     breakdown: dict[str, int] = {}
     total = 0
+    turns: int | None = None
     for raw in stdout.splitlines():
         line = raw.strip()
         if not line:
@@ -462,7 +536,10 @@ def parse_droid_stream(stdout: str) -> tuple[str, int, dict[str, int]]:
             final = event.get("finalText")
             if isinstance(final, str):
                 final_text = final
-    return (final_text or last_assistant).strip(), total, breakdown
+            raw_turns = event.get("numTurns", event.get("num_turns"))
+            if isinstance(raw_turns, int):
+                turns = raw_turns
+    return (final_text or last_assistant).strip(), total, breakdown, turns
 
 
 class DroidSpawnToolChatAdapter:
@@ -515,6 +592,9 @@ class DroidSpawnToolChatAdapter:
 
     async def chat(self, request: ToolChatRequest, binding: CapabilityBinding) -> ToolChatResult:
         validate_policy(request.tool_policy)
+        logger.warning(
+            "Droid tool_chat cannot enforce request.limits; only wall-time timeout applies"
+        )
         model = request.model or next(iter(binding.models), None)
         command = self._build_command(request, model=model)
         with tempfile.TemporaryDirectory(prefix="tool-chat-droid-") as work_str:
@@ -532,7 +612,7 @@ class DroidSpawnToolChatAdapter:
                 timeout_seconds=self._timeout_seconds,
                 env_overrides=isolated_env,
             )
-        text, tool_use_count, tools = parse_droid_stream(stdout)
+        text, tool_use_count, tools, turns = parse_droid_stream(stdout)
         if not text:
             raise RuntimeError(
                 "Droid tool_chat produced no final message "
@@ -543,7 +623,7 @@ class DroidSpawnToolChatAdapter:
             provider=binding.provider,
             model=model,
             tool_use_count=tool_use_count,
-            turns=tool_use_count,
+            turns=turns,
             tools=tools,
             applied_reasoning_effort=request.reasoning_effort,
             stop_reason="completed",
@@ -622,10 +702,12 @@ class GrokSpawnToolChatAdapter:
             )
         text = ""
         session_id = ""
+        stop_reason: str | None = None
         try:
             result = json.loads(stdout)
             if isinstance(result, dict):
                 text = (result.get("text") or "").strip()
+                stop_reason = _normalize_grok_stop_reason(result.get("stopReason"))
                 sid = result.get("sessionId")
                 if isinstance(sid, str):
                     session_id = sid
@@ -636,19 +718,20 @@ class GrokSpawnToolChatAdapter:
         # Extract tool-call provenance from the persisted session directory.
         tool_use_count = 0
         tools: dict[str, int] = {}
+        turns: int | None = None
         if session_id:
             session_dir = _resolve_grok_session_dir(session_id, work)
             if session_dir is not None:
-                tool_use_count, tools = parse_grok_session_signals(session_dir)
+                tool_use_count, tools, turns = parse_grok_session_signals(session_dir)
         return ToolChatResult(
             text=text,
             provider=binding.provider,
             model=model,
             tool_use_count=tool_use_count,
-            turns=tool_use_count,
+            turns=turns,
             tools=tools,
             applied_reasoning_effort=request.reasoning_effort,
-            stop_reason="completed",
+            stop_reason=stop_reason,
             trace=(),
             calls_used=0,
             budget_exhausted=False,
@@ -703,6 +786,7 @@ class QwenSpawnToolChatAdapter:
         path = self._command_path or shutil.which("qwen")
         if not path:
             raise FileNotFoundError("Qwen CLI not found in PATH")
+        max_turns = _resolve_max_turns(request, default=8)
         command = [
             path,
             "--bare",
@@ -711,6 +795,8 @@ class QwenSpawnToolChatAdapter:
             "yolo",
             "--output-format",
             "stream-json",
+            "--max-session-turns",
+            str(max_turns),
             "--max-tool-calls",
             str(request.limits.max_tool_calls),
             "--max-wall-time",
@@ -743,15 +829,21 @@ class QwenSpawnToolChatAdapter:
         with tempfile.TemporaryDirectory(prefix="tool-chat-qwen-") as work_str:
             work = Path(work_str)
             _prepare_qwen_sandbox_profile(work)
-            stdout = await _run_cli_text_generation_command(
+            stdout, stderr, returncode = await _run_cli_text_generation_command(
                 "Qwen tool_chat",
                 command,
                 neutral_cwd=work,
                 timeout_seconds=self._timeout_seconds,
                 env_overrides=env,
+                accepted_exit_codes=_QWEN_LIMIT_EXIT_CODES,
             )
-        text, tool_use_count, tools = parse_qwen_stream(stdout)
-        if not text:
+        text, tool_use_count, tools, turns, usage, error_message = parse_qwen_stream(stdout)
+        stop_reason = _classify_qwen_stop_reason(
+            returncode,
+            error_message=error_message,
+            stderr=stderr,
+        )
+        if returncode == 0 and not text:
             raise RuntimeError(
                 "Qwen tool_chat produced no final message "
                 f"(model={model}, tool_use_count={tool_use_count})"
@@ -761,13 +853,14 @@ class QwenSpawnToolChatAdapter:
             provider=binding.provider,
             model=model,
             tool_use_count=tool_use_count,
-            turns=tool_use_count,
+            turns=turns,
             tools=tools,
+            usage=usage,
             applied_reasoning_effort=request.reasoning_effort,
-            stop_reason="completed",
+            stop_reason=stop_reason,
             trace=(),
             calls_used=0,
-            budget_exhausted=False,
+            budget_exhausted=returncode in _QWEN_LIMIT_EXIT_CODES,
             trace_available=False,
         )
 

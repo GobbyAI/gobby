@@ -112,18 +112,19 @@ def _resolve_max_turns(request: ToolChatRequest, *, default: int) -> int:
 class ToolChatResult:
     """Result of a ``tool_chat`` run plus investigation provenance.
 
-    ``text`` is the grounded narrative; the remaining fields describe how the
-    investigation ran so callers can surface provenance and the route used.
+    ``text`` is the grounded narrative when the provider produced one; limit-only
+    results may omit it. The remaining fields describe how the investigation ran
+    so callers can surface provenance and the route used.
     ``adapter_style`` records which adapter family executed (for observability
     only — callers must not branch on it).
     """
 
-    text: str
+    text: str | None
     provider: str | None = None
     model: str | None = None
     adapter_style: str | None = None
     tool_use_count: int = 0
-    turns: int = 0
+    turns: int | None = None
     tools: dict[str, int] = field(default_factory=dict)
     usage: dict[str, int] | None = None
     applied_reasoning_effort: str | None = None

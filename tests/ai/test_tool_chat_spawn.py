@@ -8,6 +8,7 @@ external spawn stubbed out.
 from __future__ import annotations
 
 import json
+import logging
 import os
 import shlex
 from pathlib import Path
@@ -18,7 +19,12 @@ import pytest
 
 from gobby.ai import AIAdapterStyle, AICapability, CapabilityBinding
 from gobby.ai import _tool_chat_spawn as spawn
-from gobby.ai._tool_chat_contracts import ToolChatRequest, ToolLoopLimits, ToolPolicy
+from gobby.ai._tool_chat_contracts import (
+    ToolChatRequest,
+    ToolChatResult,
+    ToolLoopLimits,
+    ToolPolicy,
+)
 from gobby.ai._tool_chat_spawn import (
     ACPSpawnToolChatAdapter,
     CodexSpawnToolChatAdapter,
@@ -58,6 +64,13 @@ def _request(**overrides: Any) -> ToolChatRequest:
     }
     base.update(overrides)
     return ToolChatRequest(**base)
+
+
+def test_tool_chat_result_defaults_optional_text_and_turns() -> None:
+    result = ToolChatResult(text=None)
+
+    assert result.text is None
+    assert result.turns is None
 
 
 def _arg_max_for_regression() -> int:
@@ -159,11 +172,12 @@ _DROID_STREAM = "\n".join(
 
 
 def test_parse_droid_stream_extracts_final_text_and_tool_counts() -> None:
-    text, total, breakdown = parse_droid_stream(_DROID_STREAM)
+    text, total, breakdown, turns = parse_droid_stream(_DROID_STREAM)
 
     assert text == "## Auth\n\nNarrative citing src/auth.rs:10."
     assert total == 2
     assert breakdown == {"Execute": 2}
+    assert turns == 3
 
 
 def test_parse_droid_stream_falls_back_to_last_assistant_message() -> None:
@@ -174,10 +188,11 @@ def test_parse_droid_stream_falls_back_to_last_assistant_message() -> None:
         ]
     )
 
-    text, total, _ = parse_droid_stream(stream)
+    text, total, _, turns = parse_droid_stream(stream)
 
     assert text == "## Final answer"
     assert total == 0
+    assert turns is None
 
 
 # --- Qwen stream parser ----------------------------------------------------
@@ -197,22 +212,49 @@ def test_parse_qwen_stream_extracts_narrative_and_tool_counts() -> None:
             '{"type":"assistant","message":{"role":"assistant","content":'
             '[{"type":"tool_use","name":"run_shell_command"}]}}',
             '{"type":"result","result":"## Auth\\n\\nNarrative citing src/auth.rs:10.",'
-            '"usage":{"input_tokens":100,"output_tokens":50}}',
+            '"num_turns":4,"usage":{"input_tokens":100,"output_tokens":50}}',
         ]
     )
 
-    text, total, breakdown = parse_qwen_stream(stream)
+    text, total, breakdown, turns, usage, error_message = parse_qwen_stream(stream)
 
     assert text == "## Auth\n\nNarrative citing src/auth.rs:10."
     assert total == 2
     assert breakdown == {"run_shell_command": 2}
+    assert turns == 4
+    assert usage == {"input_tokens": 100, "output_tokens": 50}
+    assert error_message is None
+
+
+def test_parse_qwen_stream_extracts_limit_result_without_narrative() -> None:
+    stream = "\n".join(
+        [
+            '{"type":"assistant","message":{"content":'
+            '[{"type":"tool_use","name":"run_shell_command"}]}}',
+            '{"type":"result","subtype":"error_during_execution","is_error":true,'
+            '"num_turns":6,"usage":{"input_tokens":120,"output_tokens":20},'
+            '"error":{"message":"tool-call budget of 1 exceeded (--max-tool-calls)"}}',
+        ]
+    )
+
+    text, total, breakdown, turns, usage, error_message = parse_qwen_stream(stream)
+
+    assert text is None
+    assert total == 1
+    assert breakdown == {"run_shell_command": 1}
+    assert turns == 6
+    assert usage == {"input_tokens": 120, "output_tokens": 20}
+    assert error_message == "tool-call budget of 1 exceeded (--max-tool-calls)"
 
 
 def test_parse_qwen_stream_skips_non_json_lines() -> None:
-    text, total, _ = parse_qwen_stream("warning text\n{}\n")
+    text, total, _, turns, usage, error_message = parse_qwen_stream("warning text\n{}\n")
 
-    assert text == ""
+    assert text is None
     assert total == 0
+    assert turns is None
+    assert usage is None
+    assert error_message is None
 
 
 # --- Grok session signals parser -------------------------------------------
@@ -266,11 +308,16 @@ def test_parse_grok_session_signals_extracts_tool_counts_from_updates(
         ]
     )
     (tmp_path / "updates.jsonl").write_text(updates, encoding="utf-8")
+    (tmp_path / "signals.json").write_text(
+        json.dumps({"toolCallCount": 2, "turnCount": 5}),
+        encoding="utf-8",
+    )
 
-    total, breakdown = parse_grok_session_signals(tmp_path)
+    total, breakdown, turns = parse_grok_session_signals(tmp_path)
 
     assert total == 2
     assert breakdown == {"run_terminal_command": 1, "read_file": 1}
+    assert turns == 5
 
 
 def test_parse_grok_session_signals_falls_back_to_signals_json(
@@ -282,24 +329,32 @@ def test_parse_grok_session_signals_falls_back_to_signals_json(
         encoding="utf-8",
     )
     (tmp_path / "signals.json").write_text(
-        json.dumps({"toolCallCount": 3, "toolsUsed": ["run_terminal_command", "read_file"]}),
+        json.dumps(
+            {
+                "toolCallCount": 3,
+                "turnCount": 4,
+                "toolsUsed": ["run_terminal_command", "read_file"],
+            }
+        ),
         encoding="utf-8",
     )
 
-    total, breakdown = parse_grok_session_signals(tmp_path)
+    total, breakdown, turns = parse_grok_session_signals(tmp_path)
 
     assert total == 3
     assert "run_terminal_command" in breakdown
     assert "read_file" in breakdown
+    assert turns == 4
 
 
 def test_parse_grok_session_signals_returns_zeros_when_files_missing(
     tmp_path: Path,
 ) -> None:
-    total, breakdown = parse_grok_session_signals(tmp_path)
+    total, breakdown, turns = parse_grok_session_signals(tmp_path)
 
     assert total == 0
     assert breakdown == {}
+    assert turns is None
 
 
 def test_resolve_grok_session_dir_finds_by_encoded_cwd(
@@ -363,6 +418,7 @@ def test_codex_build_command_uses_json_sandbox_and_gcode_prompt() -> None:
 @pytest.mark.asyncio
 async def test_codex_adapter_captures_narrative_and_counts_tools(
     monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
 ) -> None:
     codex_jsonl = "\n".join(
         [
@@ -395,12 +451,14 @@ async def test_codex_adapter_captures_narrative_and_counts_tools(
     monkeypatch.setattr(spawn, "_run_cli_text_generation_command", fake_run)
     adapter = CodexSpawnToolChatAdapter(command_path="codex")
 
-    result = await adapter.chat(_request(reasoning_effort="high"), _binding())
+    with caplog.at_level(logging.WARNING, logger=spawn.__name__):
+        result = await adapter.chat(_request(reasoning_effort="high"), _binding())
 
     assert result.text == "## Auth\n\nGrounded narrative citing src/auth.rs:10."
     assert result.provider == "codex"
     assert result.model == "gpt-5.6-sol"
     assert result.tool_use_count == 2
+    assert result.turns is None
     assert result.tools == {"command_execution": 2}
     assert result.applied_reasoning_effort == "high"
     assert result.stop_reason == "completed"
@@ -408,6 +466,7 @@ async def test_codex_adapter_captures_narrative_and_counts_tools(
     assert result.calls_used == 0
     assert result.budget_exhausted is False
     assert result.trace_available is False
+    assert sum("Codex tool_chat cannot enforce request.limits" in m for m in caplog.messages) == 1
 
 
 @pytest.mark.asyncio
@@ -533,6 +592,7 @@ def test_droid_build_command_enables_execute_and_uses_gcode_prompt() -> None:
 @pytest.mark.asyncio
 async def test_droid_adapter_captures_narrative_and_counts_tools(
     monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
 ) -> None:
     captured: dict[str, object] = {}
 
@@ -554,14 +614,17 @@ async def test_droid_adapter_captures_narrative_and_counts_tools(
     monkeypatch.setattr(spawn, "_run_cli_text_generation_command", fake_run)
     adapter = DroidSpawnToolChatAdapter(command_path="droid")
 
-    result = await adapter.chat(_request(reasoning_effort="high"), _droid_binding())
+    with caplog.at_level(logging.WARNING, logger=spawn.__name__):
+        result = await adapter.chat(_request(reasoning_effort="high"), _droid_binding())
 
     assert result.text == "## Auth\n\nNarrative citing src/auth.rs:10."
     assert result.provider == "droid"
     assert result.tool_use_count == 2
+    assert result.turns == 3
     assert result.tools == {"Execute": 2}
     assert result.stop_reason == "completed"
     assert captured["provider"] == "Droid tool_chat"
+    assert sum("Droid tool_chat cannot enforce request.limits" in m for m in caplog.messages) == 1
 
 
 @pytest.mark.asyncio
@@ -672,6 +735,45 @@ async def test_grok_adapter_captures_narrative_from_json(
     assert result.tools == {}
 
 
+@pytest.mark.parametrize(
+    ("provider_stop_reason", "expected"),
+    [
+        ("EndTurn", "completed"),
+        ("MaxTurnRequests", "max_turns"),
+        ("MaxTokens", None),
+        ("Refusal", None),
+        ("Cancelled", None),
+        (None, None),
+        ("FutureReason", None),
+    ],
+)
+@pytest.mark.asyncio
+async def test_grok_adapter_normalizes_verified_stop_reasons(
+    monkeypatch: pytest.MonkeyPatch,
+    provider_stop_reason: str | None,
+    expected: str | None,
+) -> None:
+    async def fake_run(
+        provider_name: str,
+        command: list[str],
+        *,
+        neutral_cwd: Path,
+        timeout_seconds: float,
+        env_overrides: dict[str, str],
+    ) -> str:
+        payload: dict[str, str] = {"text": "Grounded result."}
+        if provider_stop_reason is not None:
+            payload["stopReason"] = provider_stop_reason
+        return json.dumps(payload)
+
+    monkeypatch.setattr(spawn, "_run_cli_text_generation_command", fake_run)
+    adapter = GrokSpawnToolChatAdapter(command_path="grok")
+
+    result = await adapter.chat(_request(), _grok_binding())
+
+    assert result.stop_reason == expected
+
+
 @pytest.mark.asyncio
 async def test_grok_adapter_extracts_tool_counts_from_session(
     monkeypatch: pytest.MonkeyPatch,
@@ -710,6 +812,10 @@ async def test_grok_adapter_extracts_tool_counts_from_session(
         ),
         encoding="utf-8",
     )
+    (fake_session / "signals.json").write_text(
+        json.dumps({"toolCallCount": 2, "turnCount": 7}),
+        encoding="utf-8",
+    )
 
     async def fake_run(
         provider_name: str,
@@ -740,7 +846,7 @@ async def test_grok_adapter_extracts_tool_counts_from_session(
     assert result.text == "## Auth\n\nNarrative citing src/auth.rs:10."
     assert result.tool_use_count == 2
     assert result.tools == {"run_terminal_command": 2}
-    assert result.turns == 2
+    assert result.turns == 7
 
 
 @pytest.mark.asyncio
@@ -773,7 +879,11 @@ def _qwen_binding() -> CapabilityBinding:
 
 def test_qwen_build_command_uses_sandbox_yolo_and_stream_json() -> None:
     adapter = QwenSpawnToolChatAdapter(command_path="qwen")
-    request = _request(reasoning_effort="high")
+    request = _request(
+        reasoning_effort="high",
+        max_turns=11,
+        limits=ToolLoopLimits(max_turns=4, max_tool_calls=9),
+    )
 
     command = adapter._build_command(request, model="qwen3-coder")
 
@@ -781,6 +891,8 @@ def test_qwen_build_command_uses_sandbox_yolo_and_stream_json() -> None:
     assert "--sandbox" in command
     assert command[command.index("--approval-mode") + 1] == "yolo"
     assert command[command.index("--output-format") + 1] == "stream-json"
+    assert command[command.index("--max-session-turns") + 1] == "11"
+    assert command[command.index("--max-tool-calls") + 1] == "9"
     assert "--bare" in command
     assert command[command.index("--model") + 1] == "qwen3-coder"
     # The prompt is the final positional argument.
@@ -796,7 +908,8 @@ async def test_qwen_adapter_captures_narrative_and_counts_tools(
         [
             '{"type":"assistant","message":{"role":"assistant","content":'
             '[{"type":"tool_use","name":"run_shell_command"}]}}',
-            '{"type":"result","result":"## Auth\\n\\nNarrative citing src/auth.rs:10."}',
+            '{"type":"result","result":"## Auth\\n\\nNarrative citing src/auth.rs:10.",'
+            '"num_turns":4,"usage":{"input_tokens":100,"output_tokens":20}}',
         ]
     )
     captured: dict[str, object] = {}
@@ -808,7 +921,8 @@ async def test_qwen_adapter_captures_narrative_and_counts_tools(
         neutral_cwd: Path,
         timeout_seconds: float,
         env_overrides: dict[str, str],
-    ) -> str:
+        accepted_exit_codes: frozenset[int] | None = None,
+    ) -> tuple[str, str, int]:
         captured["env"] = env_overrides
         assert env_overrides.get("QWEN_CODE_SUPPRESS_YOLO_WARNING") == "1"
         assert env_overrides.get("SEATBELT_PROFILE") == "gobby-open"
@@ -819,7 +933,8 @@ async def test_qwen_adapter_captures_narrative_and_counts_tools(
         content = profile_path.read_text(encoding="utf-8")
         assert "(version 1)" in content
         assert "file-write*" in content
-        return qwen_stream
+        assert accepted_exit_codes == frozenset({53, 55})
+        return qwen_stream, "", 0
 
     monkeypatch.setattr(spawn, "_run_cli_text_generation_command", fake_run)
     adapter = QwenSpawnToolChatAdapter(command_path="qwen")
@@ -829,7 +944,94 @@ async def test_qwen_adapter_captures_narrative_and_counts_tools(
     assert result.text == "## Auth\n\nNarrative citing src/auth.rs:10."
     assert result.provider == "qwen"
     assert result.tool_use_count == 1
+    assert result.turns == 4
     assert result.tools == {"run_shell_command": 1}
+    assert result.usage == {"input_tokens": 100, "output_tokens": 20}
+    assert result.stop_reason == "completed"
+
+
+@pytest.mark.parametrize(
+    ("returncode", "message", "stderr", "expected_stop_reason"),
+    [
+        (53, "session turn limit exceeded (--max-session-turns)", "", "max_turns"),
+        (55, "tool-call budget of 1 exceeded (--max-tool-calls)", "", "max_tool_calls"),
+        (55, "wall-clock budget of 10s exceeded (--max-wall-time)", "", "timeout"),
+        (55, None, "tool-call budget exceeded (--max-tool-calls)", "max_tool_calls"),
+    ],
+)
+@pytest.mark.asyncio
+async def test_qwen_adapter_maps_limit_exits_to_typed_results(
+    monkeypatch: pytest.MonkeyPatch,
+    returncode: int,
+    message: str | None,
+    stderr: str,
+    expected_stop_reason: str,
+) -> None:
+    stream = json.dumps(
+        {
+            "type": "result",
+            "subtype": "error_during_execution",
+            "is_error": True,
+            "num_turns": 6,
+            "usage": {"input_tokens": 120, "output_tokens": 20},
+            "error": {"message": message},
+        }
+    )
+
+    async def fake_run(
+        provider_name: str,
+        command: list[str],
+        *,
+        neutral_cwd: Path,
+        timeout_seconds: float,
+        env_overrides: dict[str, str],
+        accepted_exit_codes: frozenset[int] | None = None,
+    ) -> tuple[str, str, int]:
+        assert accepted_exit_codes == frozenset({53, 55})
+        return stream, stderr, returncode
+
+    monkeypatch.setattr(spawn, "_run_cli_text_generation_command", fake_run)
+    adapter = QwenSpawnToolChatAdapter(command_path="qwen")
+
+    result = await adapter.chat(_request(), _qwen_binding())
+
+    assert result.text is None
+    assert result.stop_reason == expected_stop_reason
+    assert result.turns == 6
+    assert result.usage == {"input_tokens": 120, "output_tokens": 20}
+    assert result.budget_exhausted is True
+
+
+@pytest.mark.asyncio
+async def test_qwen_adapter_rejects_ambiguous_exit_55(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    stream = json.dumps(
+        {
+            "type": "result",
+            "subtype": "error_during_execution",
+            "is_error": True,
+            "num_turns": 2,
+            "error": {"message": "fatal budget exceeded"},
+        }
+    )
+
+    async def fake_run(
+        provider_name: str,
+        command: list[str],
+        *,
+        neutral_cwd: Path,
+        timeout_seconds: float,
+        env_overrides: dict[str, str],
+        accepted_exit_codes: frozenset[int] | None = None,
+    ) -> tuple[str, str, int]:
+        return stream, "FatalBudgetExceededError", 55
+
+    monkeypatch.setattr(spawn, "_run_cli_text_generation_command", fake_run)
+    adapter = QwenSpawnToolChatAdapter(command_path="qwen")
+
+    with pytest.raises(RuntimeError, match="ambiguous.*exit code 55"):
+        await adapter.chat(_request(), _qwen_binding())
 
 
 @pytest.mark.asyncio
@@ -843,8 +1045,9 @@ async def test_qwen_adapter_hard_fails_on_empty_output(
         neutral_cwd: Path,
         timeout_seconds: float,
         env_overrides: dict[str, str],
-    ) -> str:
-        return '{"type":"system"}\n{"type":"result","result":""}'
+        accepted_exit_codes: frozenset[int] | None = None,
+    ) -> tuple[str, str, int]:
+        return '{"type":"system"}\n{"type":"result","result":""}', "", 0
 
     monkeypatch.setattr(spawn, "_run_cli_text_generation_command", fake_run)
     adapter = QwenSpawnToolChatAdapter(command_path="qwen")
@@ -901,8 +1104,9 @@ async def test_acp_adapter_dispatches_to_qwen(monkeypatch: pytest.MonkeyPatch) -
         neutral_cwd: Path,
         timeout_seconds: float,
         env_overrides: dict[str, str],
-    ) -> str:
-        return '{"type":"result","result":"Qwen narrative."}'
+        accepted_exit_codes: frozenset[int] | None = None,
+    ) -> tuple[str, str, int]:
+        return '{"type":"result","result":"Qwen narrative."}', "", 0
 
     monkeypatch.setattr(spawn, "_run_cli_text_generation_command", fake_run)
 

@@ -10,10 +10,10 @@ import os
 import shlex
 import shutil
 import signal
-from collections.abc import Mapping, Sequence
+from collections.abc import Collection, Mapping, Sequence
 from dataclasses import dataclass
 from pathlib import Path
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, overload
 
 from gobby.agents.provider_capabilities import provider_reasoning_flag
 from gobby.agents.reasoning import normalize_reasoning_effort
@@ -143,6 +143,7 @@ class LocalTextGenerateAdapter:
         )
 
 
+@overload
 async def _run_cli_text_generation_command(
     provider_name: str,
     command: Sequence[str],
@@ -151,7 +152,33 @@ async def _run_cli_text_generation_command(
     timeout_seconds: float,
     env_overrides: Mapping[str, str],
     stdin_input: str | None = None,
-) -> str:
+    accepted_exit_codes: None = None,
+) -> str: ...
+
+
+@overload
+async def _run_cli_text_generation_command(
+    provider_name: str,
+    command: Sequence[str],
+    *,
+    neutral_cwd: Path,
+    timeout_seconds: float,
+    env_overrides: Mapping[str, str],
+    stdin_input: str | None = None,
+    accepted_exit_codes: Collection[int],
+) -> tuple[str, str, int]: ...
+
+
+async def _run_cli_text_generation_command(
+    provider_name: str,
+    command: Sequence[str],
+    *,
+    neutral_cwd: Path,
+    timeout_seconds: float,
+    env_overrides: Mapping[str, str],
+    stdin_input: str | None = None,
+    accepted_exit_codes: Collection[int] | None = None,
+) -> str | tuple[str, str, int]:
     # One-shot text generation never runs in the project directory: ``neutral_cwd``
     # is a per-call temp dir owned by the calling adapter (see neutral_textgen_cwd).
     # ``request.cwd`` is intentionally never threaded here — that prevents project
@@ -187,11 +214,15 @@ async def _run_cli_text_generation_command(
         await _cleanup_cli_process(provider_name, process, reason="cancellation")
         raise
 
-    returncode = process.returncode
-    if returncode:
-        message = _decode(stderr).strip() or _decode(stdout).strip()
+    returncode = process.returncode or 0
+    stdout_text = _decode(stdout).strip()
+    stderr_text = _decode(stderr).strip()
+    if returncode and (accepted_exit_codes is None or returncode not in accepted_exit_codes):
+        message = stderr_text or stdout_text
         raise RuntimeError(f"{provider_name} CLI failed with exit code {returncode}: {message}")
-    return _decode(stdout).strip()
+    if accepted_exit_codes is not None:
+        return stdout_text, stderr_text, returncode
+    return stdout_text
 
 
 def _signal_cli_process_group(process: Any, sig: signal.Signals) -> bool:

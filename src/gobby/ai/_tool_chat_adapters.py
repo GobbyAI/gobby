@@ -318,7 +318,7 @@ class ClaudeToolChatAdapter:
             tools=dict(getattr(result, "tools", {}) or {}),
             usage=getattr(result, "usage", None),
             applied_reasoning_effort=getattr(result, "applied_reasoning_effort", None),
-            stop_reason="completed",
+            stop_reason="max_tool_calls" if runtime.budget_exhausted else "completed",
             trace=tuple(runtime.invocation_log),
             calls_used=runtime.calls_used,
             budget_exhausted=runtime.budget_exhausted,

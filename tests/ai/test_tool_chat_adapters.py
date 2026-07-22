@@ -411,7 +411,7 @@ async def test_claude_budget_exhaustion_comes_from_runtime_trace(
 
     result = await adapter.chat(request, _claude_binding())
 
-    assert result.stop_reason == "completed"
+    assert result.stop_reason == "max_tool_calls"
     assert result.calls_used == 1
     assert result.budget_exhausted is True
     assert result.trace_available is True
