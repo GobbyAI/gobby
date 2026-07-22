@@ -1,0 +1,59 @@
+id = "qwen"
+version = "1"
+engine = 1
+
+[[rules]]
+id = "approval_prompt"
+state = "blocked"
+reason = "approval"
+priority = 900
+region = "whole_recent"
+line_regex = [
+  '(?i)(?:\b(?:approval|permission|allow|approve|permit|confirmation)\b|\b(?:run|execute|apply)\s+(?:this\s+)?(?:command|tool|action))',
+  '(?is)(?:(?:press|hit)\s+(?:enter|return)\s+to\s+(?:approve|allow|permit|proceed|continue|accept|confirm)|(?:approve|allow|permit|proceed|continue|accept|confirm).{0,40}(?:enter|return)|(?:enter|return).{0,40}(?:approve|allow|permit|proceed|continue|accept|confirm)|(?:enter|return)\s+to\s+submit)',
+]
+
+[[rules]]
+id = "provider_error"
+state = "stall"
+reason = "provider_error"
+priority = 850
+region = "bottom_non_empty_lines(12)"
+line_regex = ['(?i)(?:\b(?:429|503|502|500|529)\b.*(?:rate|limit|quota|unavailable|overloaded|gateway|upstream|internal server error)|rate.?limit.*(?:error|exception|exceeded|retry)|quota\s+(?:exceeded|exhausted)|(?:request|connection|read)\s+timed?\s*out|ETIMEDOUT|ECONNREFUSED|ECONNRESET|network\s+error|overloaded_error|ResourceExhausted|capacity\s+exceeded|APIConnectionError|APIStatusError|InternalServerError)']
+
+[[rules]]
+id = "context_full"
+state = "blocked"
+reason = "context_full"
+priority = 800
+region = "bottom_non_empty_lines(4)"
+line_regex = ['(?i)(?:The context window is full(?:\. Would you like to start a new conversation\?)?\.|This conversation is too long to continue\.)']
+
+[[rules]]
+id = "stop_hook_blocked"
+state = "idle"
+reason = "stop_hook_blocked"
+priority = 700
+region = "whole_recent"
+line_regex = ['(?i)(?:Stop hook error|Rule enforced by Gobby)']
+
+[[rules]]
+id = "active_work"
+state = "working"
+priority = 600
+region = "whole_recent"
+line_regex = ['(?i)(?:\bRunning(?:[.…]+|\s+(?:command|task|process|job|tests?|checks?)\b)|almost done thinking|thinking with .*effort|\bReading\s+\d+\s+files?\b)']
+
+[[rules]]
+id = "idle_prompt"
+state = "idle"
+priority = 100
+region = "bottom_non_empty_lines(8)"
+line_regex = ['(?m)^\s*[❯>$]\s*$']
+
+[[rules]]
+id = "stalled_input"
+state = "idle"
+priority = 90
+region = "bottom_non_empty_lines(8)"
+line_regex = ['(?m)^\s*[❯>$]\s+\S']

@@ -12,6 +12,7 @@ from collections.abc import Callable, Mapping, Sequence
 from pathlib import Path
 from typing import Any, Literal, Protocol
 
+from gobby.agents.detection.registry import DetectionManifestRegistry
 from gobby.mcp_proxy.tools.internal import InternalToolRegistry
 from gobby.mcp_proxy.tools.workflows._agents import (
     create_agent_definition,
@@ -109,6 +110,7 @@ def create_workflows_registry(
     executor_getter: Callable[[], Any | None] | None = None,
     execution_manager_getter: Callable[[], Any | None] | None = None,
     completion_registry: Any | None = None,
+    detection_registry: DetectionManifestRegistry | None = None,
 ) -> InternalToolRegistry:
     """
     Create a workflow tool registry with all workflow-related tools.
@@ -296,6 +298,7 @@ def create_workflows_registry(
             db=_db,
             project_path=project_path,
             project_id=project_id,
+            detection_registry=detection_registry,
         )
 
     @registry.tool(

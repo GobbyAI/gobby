@@ -242,7 +242,7 @@ def sync_bundled_content_to_db(
     db: "HubDatabase",
     skip_types: set[str] | None = None,
 ) -> dict[str, Any]:
-    """Sync all bundled content (skills, prompts, rules, agents, workflows) to the database.
+    """Sync all bundled content definitions to the database.
 
     Called during ``gobby install`` as the single import point.
     The daemon no longer syncs on startup (except in dev mode).
@@ -270,6 +270,11 @@ def sync_bundled_content_to_db(
         ("rules", "gobby.workflows.sync_rules", "sync_bundled_rules"),
         ("variables", "gobby.workflows.sync_variables", "sync_bundled_variables"),
         ("build_profiles", "gobby.storage.build_profiles", "sync_bundled_build_profiles"),
+        (
+            "detection_manifests",
+            "gobby.agents.detection.registry",
+            "sync_bundled_detection_manifests",
+        ),
     ]
 
     for content_type, module_path, func_name in sync_targets:

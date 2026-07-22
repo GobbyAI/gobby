@@ -10,6 +10,7 @@ from typing import Any
 
 import yaml
 
+from gobby.agents.detection.registry import DetectionManifestRegistry
 from gobby.paths import get_global_workflows_dir
 from gobby.utils.project_context import get_workflow_project_path
 from gobby.workflows.imports import sync_imported_definition, sync_imported_workflows
@@ -132,6 +133,7 @@ def reload_cache(
     *,
     project_path: str | None = None,
     project_id: str | None = None,
+    detection_registry: DetectionManifestRegistry | None = None,
 ) -> dict[str, Any]:
     """
     Clear the cache and optionally re-sync imported and bundled definitions to the DB.
@@ -168,6 +170,11 @@ def reload_cache(
             ("rules", "gobby.workflows.sync_rules", "sync_bundled_rules"),
             ("variables", "gobby.workflows.sync_variables", "sync_bundled_variables"),
             ("agents", "gobby.agents.sync", "sync_bundled_agents"),
+            (
+                "detection_manifests",
+                "gobby.agents.detection.registry",
+                "sync_bundled_detection_manifests",
+            ),
         ]
         total_synced = 0
         for content_type, module_path, func_name in sync_targets:
@@ -186,5 +193,8 @@ def reload_cache(
 
         if total_synced > 0:
             result["message"] += f", {total_synced} definitions re-synced to DB"
+
+    if detection_registry is not None:
+        result["detection_manifests_reloaded"] = detection_registry.reload()
 
     return result
