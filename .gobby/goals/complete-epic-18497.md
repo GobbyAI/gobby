@@ -160,3 +160,9 @@ so each iteration resumes from the durable goal document and live task state.
   focused validation passed 698 tests; Ruff format/check, strict mypy,
   configured Bandit, package build, test-quality, diff, source-size, and wheel
   content checks passed.
+- 2026-07-21 #9341 iteration 12 — closed #18516 with commit `84a133435`;
+  pruned nonexistent task wait names and made `wait_for_agent` and
+  `wait_for_summary` share a dynamically resolved 300-second wrapper ceiling.
+  Final focused validation passed 359 tests; Ruff format/check, strict mypy,
+  configured Bandit, package wheel build, test-quality, diff, dead-name, and
+  source-size checks passed.
