@@ -186,3 +186,9 @@ so each iteration resumes from the durable goal document and live task state.
   host-runtime tests, and 191 lifecycle tests; Ruff, strict mypy, Bandit,
   package build, test-quality, diff, wheel-content, and source-size checks also
   passed.
+- 2026-07-21 #9341 iteration 16 — closed #18643 with commit `5ceeee5fd`;
+  aligned the wiki-research run-report contract with gwiki's write ownership:
+  reports are ingested as raw sources, `outputs/**` stays generated, and gwiki
+  compile owns root-log updates. Final validation passed 20 focused skill,
+  agent-definition, and manifest tests; Ruff format/check, test-quality, and
+  diff checks also passed.
