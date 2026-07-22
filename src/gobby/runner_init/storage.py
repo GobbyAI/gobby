@@ -231,6 +231,7 @@ def init_storage_and_config(runner: GobbyRunner, config_path: Path | None, verbo
             ClaudePluginsProvider,
             ClawdHubProvider,
             GitHubCollectionProvider,
+            GitHubTopicProvider,
             HubManager,
             SkillsMPProvider,
         )
@@ -239,15 +240,21 @@ def init_storage_and_config(runner: GobbyRunner, config_path: Path | None, verbo
 
         api_keys: dict[str, str] = {}
         for _hub_name, hub_config in skills_config.hubs.items():
-            if hub_config.auth_key_name:
-                value = os.environ.get(hub_config.auth_key_name)
+            key_name = (
+                hub_config.auth_token_env
+                if hub_config.type == "github-topic"
+                else hub_config.auth_key_name
+            )
+            if key_name:
+                value = os.environ.get(key_name)
                 if value:
-                    api_keys[hub_config.auth_key_name] = value
+                    api_keys[key_name] = value
 
         runner.hub_manager = HubManager(configs=skills_config.hubs, api_keys=api_keys)
         runner.hub_manager.register_provider_factory("clawdhub", ClawdHubProvider)
         runner.hub_manager.register_provider_factory("skillsmp", SkillsMPProvider)
         runner.hub_manager.register_provider_factory("github-collection", GitHubCollectionProvider)
+        runner.hub_manager.register_provider_factory("github-topic", GitHubTopicProvider)
         runner.hub_manager.register_provider_factory("claude-plugins", ClaudePluginsProvider)
         runner.hub_manager._skill_description_config = (
             runner.config.skill_description if hasattr(runner.config, "skill_description") else None

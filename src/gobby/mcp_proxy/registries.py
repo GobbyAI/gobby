@@ -385,6 +385,7 @@ def setup_internal_registries(
             ClaudePluginsProvider,
             ClawdHubProvider,
             GitHubCollectionProvider,
+            GitHubTopicProvider,
             HubManager,
             SkillsMPProvider,
         )
@@ -404,6 +405,7 @@ def setup_internal_registries(
         hub_manager.register_provider_factory("clawdhub", ClawdHubProvider)
         hub_manager.register_provider_factory("skillsmp", SkillsMPProvider)
         hub_manager.register_provider_factory("github-collection", GitHubCollectionProvider)
+        hub_manager.register_provider_factory("github-topic", GitHubTopicProvider)
         hub_manager.register_provider_factory("claude-plugins", ClaudePluginsProvider)
         hub_manager._skill_description_config = (
             getattr(_config, "skill_description", None) if _config else None

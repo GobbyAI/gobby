@@ -33,6 +33,7 @@ class DownloadResult:
     version: str | None = None
     error: str | None = None
     is_temp: bool = False
+    provenance: dict[str, str] | None = None
 
     def to_dict(self) -> dict[str, Any]:
         """Convert to dictionary representation."""
@@ -42,6 +43,7 @@ class DownloadResult:
             "slug": self.slug,
             "version": self.version,
             "error": self.error,
+            "provenance": self.provenance,
         }
 
 

@@ -37,11 +37,16 @@ def resolve_hub_api_keys(
     """
     api_keys: dict[str, str] = {}
     for hub_config in configs.values():
-        if not hub_config.auth_key_name:
+        key_name = (
+            hub_config.auth_token_env
+            if hub_config.type == "github-topic"
+            else hub_config.auth_key_name
+        )
+        if not key_name:
             continue
-        value = store.get(hub_config.auth_key_name)
+        value = store.get(key_name)
         if value:
-            api_keys[hub_config.auth_key_name] = value
+            api_keys[key_name] = value
     return api_keys
 
 
@@ -204,8 +209,11 @@ class HubManager:
 
         # Resolve auth token from api_keys if auth_key_name is set
         auth_token: str | None = None
-        if config.auth_key_name:
-            auth_token = self._api_keys.get(config.auth_key_name)
+        auth_key_name = (
+            config.auth_token_env if config.type == "github-topic" else config.auth_key_name
+        )
+        if auth_key_name:
+            auth_token = self._api_keys.get(auth_key_name)
             if auth_token is None:
                 logger.debug("Configured auth key not found for skill hub '%s'", hub_name)
 
@@ -226,6 +234,9 @@ class HubManager:
             kwargs["path"] = config.path
             kwargs["llm_service"] = self._llm_service
             kwargs["config"] = getattr(self, "_skill_description_config", None)
+        elif config.type == "github-topic":
+            kwargs["topic"] = config.topic
+            kwargs["cache_ttl_seconds"] = config.cache_ttl_seconds
 
         # Create the provider
         provider = factory(**kwargs)

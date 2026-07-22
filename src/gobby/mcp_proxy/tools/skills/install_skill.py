@@ -11,9 +11,29 @@ from typing import Any
 
 from gobby.mcp_proxy.tools.internal import InternalToolRegistry
 from gobby.mcp_proxy.tools.skills._context import SkillsContext
+from gobby.skills.hubs.github_topic import TopicHubError, normalize_topic_item_id
 from gobby.skills.loader import SkillLoadError
 
 logger = logging.getLogger(__name__)
+
+_HUB_NAME_RE = re.compile(r"^[A-Za-z0-9_-]+$")
+_LEGACY_HUB_SLUG_RE = re.compile(r"^[A-Za-z0-9_-]+(?:/[A-Za-z0-9_-]+)*$")
+
+
+def _parse_hub_reference(source: str) -> tuple[str, str] | None:
+    if source.startswith(("http", "github:")) or ":" not in source:
+        return None
+    hub_name, item_id = source.split(":", 1)
+    if not _HUB_NAME_RE.fullmatch(hub_name):
+        return None
+    if ":" in item_id:
+        try:
+            return hub_name, normalize_topic_item_id(item_id)
+        except TopicHubError as exc:
+            raise ValueError(f"invalid hub item reference: {exc}") from exc
+    if _LEGACY_HUB_SLUG_RE.fullmatch(item_id):
+        return hub_name, item_id
+    return None
 
 
 def register(ctx: SkillsContext, registry: InternalToolRegistry) -> None:
@@ -43,6 +63,7 @@ def register(ctx: SkillsContext, registry: InternalToolRegistry) -> None:
             Dict with success status, skill_id, skill_name, and source_type
         """
         temporary_download_path: Path | None = None
+        download_provenance: dict[str, str] | None = None
         try:
             # Validate input
             if not source or not source.strip():
@@ -57,14 +78,14 @@ def register(ctx: SkillsContext, registry: InternalToolRegistry) -> None:
             parsed_skill: ParsedSkill | list[ParsedSkill] | None = None
             source_type: SkillSourceType | None = None
 
-            # Check for hub:slug syntax (e.g., "github-collection:category/name")
-            # Slug path segments are limited to the same safe characters as hub names.
-            hub_pattern = re.compile(r"^([A-Za-z0-9_-]+):([A-Za-z0-9_-]+(?:/[A-Za-z0-9_-]+)*)$")
-            hub_match = hub_pattern.match(source)
+            try:
+                hub_reference = _parse_hub_reference(source)
+            except ValueError as exc:
+                return {"success": False, "error": str(exc)}
 
-            if hub_match and not source.startswith(("http", "github:")):
+            if hub_reference is not None:
                 # Hub reference: hub_name:skill_slug
-                hub_name, skill_slug = hub_match.groups()
+                hub_name, skill_slug = hub_reference
 
                 if ctx.hub_manager is None:
                     return {
@@ -91,6 +112,24 @@ def register(ctx: SkillsContext, registry: InternalToolRegistry) -> None:
                             "success": False,
                             "error": f"Failed to download from hub: {download_result.error or 'Unknown error'}",
                         }
+
+                    if download_result.provenance is not None:
+                        provenance = download_result.provenance
+                        try:
+                            canonical = normalize_topic_item_id(provenance["item_id"])
+                            matches = (
+                                canonical == skill_slug
+                                and canonical == f"{provenance['repo']}:{provenance['path']}"
+                                and provenance["sha"] == download_result.version
+                            )
+                        except (KeyError, TopicHubError):
+                            matches = False
+                        if not matches:
+                            return {
+                                "success": False,
+                                "error": "Failed to download from hub: item_unavailable",
+                            }
+                        download_provenance = dict(provenance)
 
                     # Load the skill from the downloaded path — skip dir name
                     # check since hub downloads use temp directories
@@ -190,6 +229,14 @@ def register(ctx: SkillsContext, registry: InternalToolRegistry) -> None:
                         parsed_skill[0].name,
                     )
                 parsed_skill = parsed_skill[0]
+
+            if download_provenance is not None:
+                parsed_skill.source_path = download_provenance["item_id"]
+                parsed_skill.source_ref = download_provenance["sha"]
+                parsed_skill.metadata = {
+                    **(parsed_skill.metadata or {}),
+                    "hub_provenance": download_provenance,
+                }
 
             # Scan the skill's full text surface (SKILL.md + references/,
             # scripts/, assets) for safety before persisting

@@ -18,9 +18,11 @@ class HubConfig(BaseModel):
     Configuration for a skill hub or collection.
     """
 
-    type: Literal["clawdhub", "skillsmp", "github-collection", "claude-plugins"] = Field(
-        ...,
-        description="Type of the hub: 'clawdhub', 'skillsmp', 'github-collection', or 'claude-plugins'",
+    type: Literal["clawdhub", "skillsmp", "github-collection", "github-topic", "claude-plugins"] = (
+        Field(
+            ...,
+            description="Type of the hub: 'clawdhub', 'skillsmp', 'github-collection', or 'claude-plugins'",
+        )
     )
 
     base_url: str | None = Field(
@@ -46,6 +48,24 @@ class HubConfig(BaseModel):
     auth_key_name: str | None = Field(
         default=None,
         description="Secret name in SecretStore for the hub's auth key",
+    )
+
+    topic: str = Field(
+        default="gobby-skill",
+        min_length=1,
+        description="GitHub repository topic used for discovery",
+    )
+
+    auth_token_env: str = Field(
+        default="GITHUB_TOKEN",
+        min_length=1,
+        description="Environment or secret name containing the GitHub token",
+    )
+
+    cache_ttl_seconds: int = Field(
+        default=1800,
+        gt=0,
+        description="GitHub topic discovery cache TTL in seconds",
     )
 
     @field_validator("base_url")
@@ -90,6 +110,7 @@ class SkillsConfig(BaseModel):
                 branch="main",
                 path="skills",
             ),
+            "gobby-topic": HubConfig(type="github-topic"),
             "claude-plugins": HubConfig(
                 type="claude-plugins",
                 base_url="https://claude-plugins.dev",
