@@ -25,7 +25,6 @@ from gobby.agents.kill import kill_agent as kill_agent  # Re-imported for tests
 from gobby.agents.loop_tracker import LoopTracker
 from gobby.agents.memory_watchdog import MemoryWatchdogHandler
 from gobby.agents.prompt_detector import PromptDetector
-from gobby.agents.detection.registry import DetectionManifestRegistry
 from gobby.agents.stall_classifier import StallClassifier
 from gobby.agents.task_recovery import TaskRecoveryHandler
 from gobby.agents.terminal_prompt_monitor import TerminalPromptMonitor
@@ -128,10 +127,9 @@ class AgentLifecycleMonitor:
             tmux_config = get_configured_tmux_config()
         self._tmux_config = tmux_config
         self._tmux = TmuxSessionManager(config=self._tmux_config)
-        detection_registry = DetectionManifestRegistry(db)
-        self._idle_detector = IdleDetector(detection_registry, "claude")
-        self._prompt_detector = PromptDetector(detection_registry, "claude")
-        self._stall_classifier = StallClassifier(detection_registry, "claude")
+        self._idle_detector = IdleDetector()
+        self._prompt_detector = PromptDetector()
+        self._stall_classifier = StallClassifier()
         self._loop_tracker = LoopTracker(threshold=3)
         # In-memory tracking for inherently non-persistable state
         self._master_fds: dict[str, int] = {}
