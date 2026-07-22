@@ -10,8 +10,8 @@ from unittest.mock import MagicMock, patch
 import pytest
 
 from gobby.agents import spawn_executor
-from gobby.agents.sandbox import SandboxConfig
 from gobby.agents.kill import pid_matches_agent_identity
+from gobby.agents.sandbox import SandboxConfig
 from gobby.agents.spawn_executor import execute_spawn
 from gobby.agents.spawn_models import SpawnRequest
 from gobby.agents.srt_runtime import SandboxLaunch, SrtRuntimeError

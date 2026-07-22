@@ -10,7 +10,7 @@ from unittest.mock import AsyncMock, call, patch
 import pytest
 
 from gobby.agents.detection.registry import DetectionManifestRegistry
-from gobby.agents.idle_check_handler import REASONING_WATCHDOG_CONTINUATION, IdleCheckHandler
+from gobby.agents.idle_check_handler import REASONING_WATCHDOG_CONTINUATION
 from gobby.agents.idle_detector import IdleDetector
 from gobby.agents.lifecycle_monitor import AgentLifecycleMonitor
 from gobby.config.tmux import TmuxConfig
@@ -291,87 +291,6 @@ def _make_idle_monitor_run(
         tmux_session_name=f"gobby-{run_id[-4:]}",
     )
     return monitor, run
-
-
-@pytest.mark.asyncio
-async def test_read_codex_transcript_snapshot_keeps_redacted_tail(tmp_path: Path) -> None:
-    transcript_path = tmp_path / "rollout.jsonl"
-    _write_codex_transcript(transcript_path)
-
-    snapshot = await IdleCheckHandler._read_codex_transcript_snapshot(str(transcript_path), limit=1)
-
-    assert len(snapshot.response_items) == 1
-    assert snapshot.response_items[0].payload_type == "custom_tool_call"
-    assert snapshot.response_items[0].event_type == "response_item"
-    assert "apply_patch" not in json.dumps(snapshot.to_log_dict())
-
-
-@pytest.mark.asyncio
-async def test_read_codex_transcript_snapshot_tracks_latest_lifecycle_event(
-    tmp_path: Path,
-) -> None:
-    transcript_path = tmp_path / "rollout-lifecycle.jsonl"
-    _write_codex_lifecycle_transcript(
-        transcript_path,
-        lifecycle_events=("task_started", "task_complete", "task_started"),
-    )
-
-    snapshot = await IdleCheckHandler._read_codex_transcript_snapshot(str(transcript_path))
-
-    assert snapshot.lifecycle_event is not None
-    assert snapshot.lifecycle_event.line_num == 3
-    assert snapshot.lifecycle_event.event_type == "event_msg"
-    assert snapshot.lifecycle_event.payload_type == "task_started"
-    assert snapshot.has_conclusive_task_complete is False
-    assert "prompt-and-tool-secret" not in json.dumps(snapshot.to_log_dict())
-
-
-@pytest.mark.asyncio
-async def test_read_codex_transcript_snapshot_confirms_redacted_capacity_error(
-    tmp_path: Path,
-) -> None:
-    transcript_path = tmp_path / "codex-capacity.jsonl"
-    _append_codex_capacity_turn(transcript_path)
-
-    snapshot = await IdleCheckHandler._read_codex_transcript_snapshot(str(transcript_path))
-
-    assert snapshot.has_conclusive_capacity_error is True
-    assert snapshot.capacity_error_event is not None
-    assert snapshot.capacity_error_event.payload_type == "error"
-    assert snapshot.latest_model_output_line_num is None
-    assert _CAPACITY_MESSAGE not in json.dumps(snapshot.to_log_dict())
-
-
-@pytest.mark.asyncio
-@pytest.mark.parametrize(
-    ("message", "error_info", "lifecycle_suffix", "malformed_tail"),
-    [
-        ("A different provider error", "server_overloaded", (), False),
-        (_CAPACITY_MESSAGE, "other_error", (), False),
-        (_CAPACITY_MESSAGE, "server_overloaded", ("task_started", "task_complete"), False),
-        (_CAPACITY_MESSAGE, "server_overloaded", (), True),
-    ],
-    ids=["wrong-message", "wrong-error-info", "prior-turn", "malformed-tail"],
-)
-async def test_read_codex_transcript_snapshot_rejects_inconclusive_capacity_error(
-    tmp_path: Path,
-    message: str,
-    error_info: str,
-    lifecycle_suffix: tuple[str, ...],
-    malformed_tail: bool,
-) -> None:
-    transcript_path = tmp_path / "codex-inconclusive-capacity.jsonl"
-    _append_codex_capacity_turn(
-        transcript_path,
-        message=message,
-        error_info=error_info,
-        lifecycle_suffix=lifecycle_suffix,
-        malformed_tail=malformed_tail,
-    )
-
-    snapshot = await IdleCheckHandler._read_codex_transcript_snapshot(str(transcript_path))
-
-    assert snapshot.has_conclusive_capacity_error is False
 
 
 @pytest.mark.asyncio

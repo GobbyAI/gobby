@@ -12,17 +12,17 @@ import psycopg
 import pydantic
 
 from gobby.agents.capture import terminate_managed_tmux_async
-from gobby.agents.codex_idle_transcript import (
-    CODEX_MODEL_CAPACITY_MESSAGE,
-    read_codex_transcript_snapshot,
-)
-from gobby.agents.idle_check_models import (
-    _CodexCapacityRecoveryState,
-    _CodexTranscriptSnapshot,
-)
 from gobby.agents.idle_detector import IdleDetector
 from gobby.agents.prompt_detector import PromptDetector, PromptKind
 from gobby.agents.stall_classifier import StallClassifier, StallStatus
+from gobby.agents.watchdog.codex import (
+    CODEX_MODEL_CAPACITY_MESSAGE,
+    read_codex_transcript_snapshot,
+)
+from gobby.agents.watchdog.models import (
+    CapacityRecoveryState,
+    WatchdogTranscriptSnapshot,
+)
 from gobby.servers.routes.sessions.statusline_activity import last_session_activity
 from gobby.storage.attention import run_attention_entry_id
 from gobby.utils.datetime import parse_stored_datetime
@@ -82,7 +82,7 @@ class IdleCheckHandler:
         self._attention_metadata_store = attention_metadata_store
         self._prompt_detector = prompt_detector
         self._stall_classifier = stall_classifier
-        self._codex_capacity_recovery: dict[str, _CodexCapacityRecoveryState] = {}
+        self._codex_capacity_recovery: dict[str, CapacityRecoveryState] = {}
 
     async def _run_db(self, func: Callable[..., Any], *args: Any, **kwargs: Any) -> Any:
         if self._run_db_callback is None:
@@ -375,7 +375,7 @@ class IdleCheckHandler:
             idle_detector.reset_idle(run.id)
             return 0
 
-        transcript_snapshot: _CodexTranscriptSnapshot | None = None
+        transcript_snapshot: WatchdogTranscriptSnapshot | None = None
         transcript_path = getattr(session, "transcript_path", None) if is_codex else None
         if (
             is_codex
@@ -490,15 +490,15 @@ class IdleCheckHandler:
         tmux_name: str,
         session_id: str | None,
         transcript_path: str,
-        snapshot: _CodexTranscriptSnapshot,
+        snapshot: WatchdogTranscriptSnapshot,
     ) -> int:
-        error_event = snapshot.capacity_error_event
+        error_event = snapshot.provider_error_event
         if error_event is None:
             return 0
 
         state = self._codex_capacity_recovery.get(run.id)
         if state is None or state.transcript_path != transcript_path:
-            state = _CodexCapacityRecoveryState(transcript_path=transcript_path)
+            state = CapacityRecoveryState(transcript_path=transcript_path)
             self._codex_capacity_recovery[run.id] = state
 
         if state.last_error_line_num == error_event.line_num:
@@ -622,23 +622,17 @@ class IdleCheckHandler:
 
     @staticmethod
     def _completed_codex_turn_recovery_due(
-        snapshot: _CodexTranscriptSnapshot,
+        snapshot: WatchdogTranscriptSnapshot,
         *,
         idle_timeout_seconds: int,
     ) -> bool | None:
-        if not snapshot.has_conclusive_task_complete:
+        if not snapshot.has_conclusive_turn_completed:
             return None
 
-        event = snapshot.lifecycle_event
+        event = snapshot.latest_turn_event
         if event is None or event.timestamp is None:
             return None
-        try:
-            completed_at = parse_stored_datetime(event.timestamp)
-        except (TypeError, ValueError):
-            return None
-        if completed_at is None:
-            return None
-        elapsed = (datetime.now(UTC) - completed_at).total_seconds()
+        elapsed = (datetime.now(UTC) - event.timestamp).total_seconds()
         return elapsed >= idle_timeout_seconds
 
     async def _recover_reasoning_idle(
@@ -648,7 +642,7 @@ class IdleCheckHandler:
         tmux_name: str,
         session: Any | None,
         session_id: str | None,
-        snapshot: _CodexTranscriptSnapshot | None = None,
+        snapshot: WatchdogTranscriptSnapshot | None = None,
     ) -> bool:
         """Interrupt a stale Codex reasoning turn and send a focused continuation."""
         if not self._tmux_config.reasoning_watchdog_interrupt_enabled:
@@ -669,7 +663,7 @@ class IdleCheckHandler:
                 )
                 return False
 
-        if snapshot.latest_response_payload_type != "reasoning":
+        if snapshot.latest_activity_kind != "reasoning":
             return False
 
         logger.warning(
@@ -800,17 +794,15 @@ class IdleCheckHandler:
     @staticmethod
     async def _read_codex_transcript_snapshot(
         transcript_path: str,
-        *,
-        limit: int = 8,
-    ) -> _CodexTranscriptSnapshot:
-        return await read_codex_transcript_snapshot(transcript_path, limit=limit)
+    ) -> WatchdogTranscriptSnapshot:
+        return await read_codex_transcript_snapshot(transcript_path)
 
     async def _log_codex_transcript_snapshot(
         self,
         run: AgentRun,
         *,
         reason: str,
-        snapshot: _CodexTranscriptSnapshot | None = None,
+        snapshot: WatchdogTranscriptSnapshot | None = None,
     ) -> None:
         session_id = run.child_session_id
         if not session_id:
@@ -854,7 +846,7 @@ class IdleCheckHandler:
                 )
                 return
 
-        if not snapshot.response_items and snapshot.lifecycle_event is None:
+        if not snapshot.tail and snapshot.latest_turn_event is None:
             logger.warning(
                 "Codex idle diagnostic for run %s (%s): no transcript summaries for session %s",
                 run.id,
