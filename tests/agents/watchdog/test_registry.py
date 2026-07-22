@@ -14,6 +14,15 @@ def test_registry_normalizes_codex_and_returns_reader() -> None:
     assert reader.supports_reasoning_interrupt is True
 
 
-@pytest.mark.parametrize("provider", ["agy", "claude", "grok", "droid", "qwen", "unknown"])
+def test_registry_normalizes_claude_and_returns_reader() -> None:
+    reader = WatchdogReaderRegistry().for_provider(" CLAUDE ")
+
+    assert reader is not None
+    assert reader.provider_id == "claude"
+    assert reader.capacity_pane_message is None
+    assert reader.supports_reasoning_interrupt is False
+
+
+@pytest.mark.parametrize("provider", ["agy", "grok", "droid", "qwen", "unknown"])
 def test_registry_returns_none_for_uninstalled_readers(provider: str) -> None:
     assert WatchdogReaderRegistry().for_provider(provider) is None

@@ -132,6 +132,68 @@ def _write_codex_lifecycle_transcript(
     path.write_text("\n".join(lines) + "\n", encoding="utf-8")
 
 
+def _write_claude_lifecycle_transcript(
+    path: Path,
+    *,
+    obsolete_completion: bool = False,
+    age_seconds: int = 120,
+) -> None:
+    timestamp = (datetime.now(UTC) - timedelta(seconds=age_seconds)).isoformat()
+    records: list[dict[str, object]] = [
+        {
+            "type": "user",
+            "timestamp": timestamp,
+            "message": {"role": "user", "content": "continue"},
+        },
+        {
+            "type": "assistant",
+            "timestamp": timestamp,
+            "message": {
+                "role": "assistant",
+                "content": [{"type": "thinking", "thinking": "private reasoning"}],
+            },
+        },
+        {
+            "type": "system",
+            "subtype": "turn_duration",
+            "timestamp": timestamp,
+            "durationMs": 1200,
+            "messageCount": 2,
+        },
+    ]
+    if obsolete_completion:
+        records.extend(
+            [
+                {
+                    "type": "user",
+                    "timestamp": timestamp,
+                    "message": {
+                        "role": "user",
+                        "content": [
+                            {
+                                "type": "tool_result",
+                                "tool_use_id": "toolu_next",
+                                "content": "private tool output",
+                            }
+                        ],
+                    },
+                },
+                {
+                    "type": "assistant",
+                    "timestamp": timestamp,
+                    "message": {
+                        "role": "assistant",
+                        "content": [{"type": "thinking", "thinking": "new turn"}],
+                    },
+                },
+            ]
+        )
+    path.write_text(
+        "\n".join(json.dumps(record) for record in records) + "\n",
+        encoding="utf-8",
+    )
+
+
 def _append_codex_capacity_turn(
     path: Path,
     *,
@@ -318,6 +380,83 @@ async def test_completed_turn_reprompts_after_base_timeout_before_semantic_delay
         session_id=run.child_session_id,
         detail="latest_turn_kind=completed",
     )
+
+
+@pytest.mark.asyncio
+async def test_claude_turn_duration_reprompts_after_base_timeout(
+    temp_db: HubDatabase,
+    session_manager: SessionManager,
+    sample_project: dict[str, Any],
+    agent_run_manager: LocalAgentRunManager,
+    tmp_path: Path,
+) -> None:
+    transcript_path = tmp_path / "claude-completed-turn.jsonl"
+    _write_claude_lifecycle_transcript(transcript_path)
+    monitor, run = _make_idle_monitor_run(
+        temp_db=temp_db,
+        session_manager=session_manager,
+        sample_project=sample_project,
+        agent_run_manager=agent_run_manager,
+        run_id="dddddddd-dddd-4ddd-8ddd-dddddddd1014",
+        transcript_path=transcript_path,
+        child_source="claude",
+    )
+
+    with (
+        patch.object(monitor._tmux, "capture_pane", new_callable=AsyncMock, return_value="❯\n"),
+        patch.object(
+            monitor._tmux, "send_keys", new_callable=AsyncMock, return_value=True
+        ) as mock_send,
+        patch.object(
+            monitor._idle_check_handler,
+            "_idle_reprompt_message",
+            new_callable=AsyncMock,
+            return_value="workflow-aware continuation",
+        ),
+    ):
+        handled = await monitor.check_idle_agents()
+
+    assert handled == 1
+    mock_send.assert_has_awaits(
+        [
+            call(run.tmux_session_name, "Escape", literal=False),
+            call(run.tmux_session_name, "workflow-aware continuation"),
+            call(run.tmux_session_name, "Enter", literal=False),
+        ]
+    )
+
+
+@pytest.mark.asyncio
+async def test_claude_new_user_record_suppresses_obsolete_completion_recovery(
+    temp_db: HubDatabase,
+    session_manager: SessionManager,
+    sample_project: dict[str, Any],
+    agent_run_manager: LocalAgentRunManager,
+    tmp_path: Path,
+) -> None:
+    transcript_path = tmp_path / "claude-active-next-turn.jsonl"
+    _write_claude_lifecycle_transcript(transcript_path, obsolete_completion=True)
+    monitor, run = _make_idle_monitor_run(
+        temp_db=temp_db,
+        session_manager=session_manager,
+        sample_project=sample_project,
+        agent_run_manager=agent_run_manager,
+        run_id="dddddddd-dddd-4ddd-8ddd-dddddddd1015",
+        transcript_path=transcript_path,
+        child_source="claude",
+    )
+
+    with (
+        patch.object(monitor._tmux, "capture_pane", new_callable=AsyncMock, return_value="❯\n"),
+        patch.object(
+            monitor._tmux, "send_keys", new_callable=AsyncMock, return_value=True
+        ) as mock_send,
+    ):
+        handled = await monitor.check_idle_agents()
+
+    assert handled == 0
+    mock_send.assert_not_awaited()
+    assert monitor._idle_detector.get_state(run.id).reprompt_count == 0
 
 
 @pytest.mark.asyncio
