@@ -249,8 +249,6 @@ def _maybe_run_linear_setup(
                 team_id=team_id,
                 linear_project_id=linear_project_id,
                 project_name=None,
-                import_issues=False,
-                create_missing=False,
             )
         )
     except Exception as e:

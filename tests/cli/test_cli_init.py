@@ -1,5 +1,6 @@
 """Comprehensive tests for the CLI init command module."""
 
+from collections.abc import Iterator
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
@@ -17,6 +18,13 @@ pytestmark = pytest.mark.unit
 def runner() -> CliRunner:
     """Create a CLI test runner."""
     return CliRunner()
+
+
+@pytest.fixture(autouse=True)
+def isolate_cli_database() -> Iterator[None]:
+    """Keep init tests isolated from the operator's bootstrap database settings."""
+    with patch("gobby.cli.runtime.require_cli_database", return_value=MagicMock()):
+        yield
 
 
 @pytest.fixture
