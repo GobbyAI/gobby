@@ -3,11 +3,16 @@
 from __future__ import annotations
 
 import logging
+import uuid
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any
 
 from gobby.mcp_proxy.tools.workflows._resolution import resolve_session_id
 from gobby.storage.hub.protocol import HubDatabase
+from gobby.storage.verification_receipts import (
+    VerificationReceiptStore,
+    VerificationReceiptWrite,
+)
 from gobby.workflows.state_manager import SessionVariableManager
 from gobby.workflows.verification_evidence import (
     MAX_VERIFICATION_EVIDENCE_ITEMS,
@@ -91,6 +96,7 @@ def register_verification_tools(
             )
             return {"success": False, "error": str(exc)}
 
+        recorded_at = datetime.now(UTC)
         evidence = {
             "summary": summary,
             "evidence_type": evidence_type,
@@ -99,7 +105,7 @@ def register_verification_tools(
             "stage_name": stage_name,
             "command": command,
             "scope": scope,
-            "timestamp": datetime.now(UTC).isoformat(),
+            "timestamp": recorded_at.isoformat(),
             "tool_name": "record_verification_evidence",
             "success": True,
         }
@@ -112,6 +118,46 @@ def register_verification_tools(
         )[0]
 
         manager = SessionVariableManager(db)
+        session = session_manager.get(resolved_session_id)
+        if session is None or not session.project_id:
+            return {"success": False, "error": "resolved session has no project"}
+        receipt_store = VerificationReceiptStore(db)
+        variables = manager.get_variables(resolved_session_id)
+        active_task_ref = variables.get("active_task_id")
+        attributed_task_id, attribution_source = receipt_store.resolve_attribution(
+            project_id=session.project_id,
+            session_id=resolved_session_id,
+            active_task_ref=active_task_ref if isinstance(active_task_ref, str) else None,
+            explicit_task_ref=task_id,
+        )
+        execution_id = f"manual:{uuid.uuid4()}"
+        receipt = receipt_store.upsert(
+            VerificationReceiptWrite(
+                project_id=session.project_id,
+                session_id=resolved_session_id,
+                task_id=attributed_task_id,
+                provider="gobby",
+                execution_id=execution_id,
+                source_event_id=execution_id,
+                evidence_type=evidence_type,
+                command=command,
+                normalized_outcome="success",
+                outcome_provenance="manual_attestation",
+                started_at=recorded_at,
+                completed_at=recorded_at,
+                output=summary,
+                details={
+                    "summary": summary,
+                    "supports": supports,
+                    "requested_task_ref": task_id,
+                    "stage_name": stage_name,
+                    "scope": scope,
+                },
+                attribution_source=attribution_source,
+                attribution_actor=resolved_session_id if attributed_task_id else None,
+                attributed_at=recorded_at if attributed_task_id else None,
+            )
+        )
         evidence_count = manager.append_to_bounded_list_variable(
             resolved_session_id,
             VERIFICATION_EVIDENCE_VARIABLE,
@@ -136,6 +182,7 @@ def register_verification_tools(
             "session_id": resolved_session_id,
             "evidence": evidence,
             "evidence_count": evidence_count,
+            "receipt_id": receipt.id,
         }
 
 

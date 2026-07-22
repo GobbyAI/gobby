@@ -13,6 +13,7 @@ from gobby.sessions.transcript_renderer import ContentBlock, RenderedMessage
 from gobby.sessions.transcript_window import WindowResult
 from gobby.storage.session_models import Session
 from gobby.storage.sessions import SessionManager
+from gobby.storage.verification_receipts import VerificationReceiptStore
 from gobby.workflows.state_manager import SessionVariableManager
 from gobby.workflows.verification_evidence import MAX_VERIFICATION_EVIDENCE_ITEMS
 
@@ -115,6 +116,19 @@ async def test_record_verification_evidence_sets_readiness(
     )
 
     assert result["success"] is True
+    assert isinstance(result["receipt_id"], str)
+    receipts, total = VerificationReceiptStore(temp_db).list_page(
+        project_id=sample_project["id"],
+        session_id=session.id,
+        scope="unassigned",
+        task_id=None,
+        limit=10,
+        offset=0,
+    )
+    assert total == 1
+    assert receipts[0].id == result["receipt_id"]
+    assert receipts[0].evidence_type == "manual_diff_review"
+    assert receipts[0].normalized_outcome == "success"
     variables = SessionVariableManager(temp_db).get_variables(session.id)
     assert variables["verification_evidence_recorded"] is True
     assert (

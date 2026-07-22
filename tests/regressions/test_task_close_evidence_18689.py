@@ -2,18 +2,16 @@ from __future__ import annotations
 
 import copy
 import json
+from datetime import timedelta
 from pathlib import Path
 from typing import Any
 
 from gobby.adapters.codex_impl.app_server_adapter import CodexAdapter
-from gobby.mcp_proxy.tools.tasks._lifecycle_close import (
-    CLOSE_VALIDATION_EVIDENCE_CONTEXT_LIMIT,
-)
-from gobby.mcp_proxy.tools.tasks._verification_evidence_context import (
-    format_verification_evidence_context,
-)
 from gobby.sessions.transcripts.base import raw_lines_from_texts
 from gobby.sessions.transcripts.codex import CodexNestedExecOutcome, CodexTranscriptParser
+from gobby.storage.verification_receipts import VerificationReceipt
+from gobby.tasks.verification_receipt_packet import build_verification_receipt_packet
+from gobby.utils.datetime import utc_now
 from gobby.workflows.condition_helpers import completion_evidence_ready
 from gobby.workflows.observer_verification import detect_verification_evidence
 from gobby.workflows.verification_evidence import append_verification_evidence
@@ -118,43 +116,50 @@ def test_trusted_selector_success_is_weakened_to_unknown() -> None:
     assert completion_evidence_ready(variables) is False
 
 
-def test_identical_evidence_diverges_between_readiness_and_close_packet() -> None:
+def test_durable_packet_keeps_early_success_that_makes_readiness_true() -> None:
     over_budget_command = "uv run pytest " + ("over_catalog_budget_" * 500)
     evidence = [
         _validation_item(EARLY_COMMAND, True),
-        *(
-            _validation_item(f"pytest -k s{index:02d}", None)
-            for index in range(1, CLOSE_VALIDATION_EVIDENCE_CONTEXT_LIMIT)
-        ),
+        *(_validation_item(f"pytest -k s{index:02d}", None) for index in range(1, 30)),
         _validation_item(over_budget_command, None),
     ]
     variables = {"verification_evidence": evidence}
-
-    packet = format_verification_evidence_context(
-        evidence,
-        limit=CLOSE_VALIDATION_EVIDENCE_CONTEXT_LIMIT,
-    )
-
-    assert packet is not None
-    packet_items = [json.loads(line) for line in packet.splitlines()[1:]]
-    packet_commands = [item["command"] for item in packet_items if "command" in item]
-    normalized_packet_commands = [
-        "<over-catalog-budget-command>"
-        if command.startswith("uv run pytest over_catalog_budget_")
-        else command
-        for command in packet_commands
+    timestamp = utc_now()
+    receipts = [
+        VerificationReceipt(
+            id=f"receipt-{index:03d}",
+            project_id="project-1",
+            session_id=SESSION_ID,
+            task_id="task-1",
+            provider="codex",
+            execution_id=f"execution-{index:03d}",
+            source_event_id=f"event-{index:03d}",
+            evidence_type="validation_command",
+            command=item["command"],
+            cwd="/repo",
+            normalized_outcome="success" if item["success"] is True else "unknown",
+            outcome_provenance="tool_output.json.exit_code",
+            exit_code=0 if item["success"] is True else None,
+            started_at=timestamp + timedelta(seconds=index),
+            completed_at=timestamp + timedelta(seconds=index),
+            output_first_4k=None,
+            output_last_4k=None,
+            output_sha256=None,
+            output_bytes=None,
+            details={},
+            attribution_source="sole_claim",
+            attribution_actor=SESSION_ID,
+            attributed_at=timestamp + timedelta(seconds=index),
+            created_at=timestamp + timedelta(seconds=index),
+            updated_at=timestamp + timedelta(seconds=index),
+        )
+        for index, item in enumerate(evidence)
     ]
-    actual = {
-        "source_fixture": "raw_codex_events.jsonl",
-        "source_session": "#9397",
-        "evidence_count": len(evidence),
-        "readiness_ready": completion_evidence_ready(variables),
-        "close_limit": CLOSE_VALIDATION_EVIDENCE_CONTEXT_LIMIT,
-        "packet_result_count": len(packet_items),
-        "packet_commands": normalized_packet_commands,
-        "contains_early_success": EARLY_COMMAND in packet,
-        "catalog_budget_truncated": len(packet_items) < CLOSE_VALIDATION_EVIDENCE_CONTEXT_LIMIT,
-    }
-    expected = json.loads((FIXTURE_ROOT / "assembled_close_packet.json").read_text())
+    packet = build_verification_receipt_packet(receipts)
 
-    assert actual == expected
+    assert completion_evidence_ready(variables) is True
+    assert packet.error is None
+    assert packet.text is not None
+    assert EARLY_COMMAND in packet.text
+    assert packet.disclosure.total == len(evidence)
+    assert packet.disclosure.catalogued + packet.disclosure.aggregated == packet.disclosure.total

@@ -6,7 +6,6 @@ commit checks, session linking, and worktree status updates.
 
 import asyncio
 import logging
-from collections.abc import Mapping, Sequence
 from typing import Any
 
 from gobby.mcp_proxy.tools.internal import InternalToolRegistry
@@ -26,18 +25,14 @@ from gobby.mcp_proxy.tools.tasks._lifecycle_validation import (
 )
 from gobby.mcp_proxy.tools.tasks._notifications import notify_parent_on_task_state_change
 from gobby.mcp_proxy.tools.tasks._resolution import resolve_task_id_for_mcp
-from gobby.mcp_proxy.tools.tasks._verification_evidence_context import (
-    format_verification_evidence_context,
-)
 from gobby.plans.bootstrap_ledger import BootstrapLedgerMismatchError
 from gobby.storage.tasks import TaskNotFoundError, TaskStaleStateError
+from gobby.storage.verification_receipts import VerificationReceiptStore
 from gobby.tasks.state_semantics import get_claimed_session_id
+from gobby.tasks.verification_receipt_packet import build_verification_receipt_packet
 from gobby.workflows.condition_helpers import completion_evidence_ready
-from gobby.workflows.verification_evidence import VERIFICATION_EVIDENCE_VARIABLE
 
 logger = logging.getLogger(__name__)
-
-CLOSE_VALIDATION_EVIDENCE_CONTEXT_LIMIT: int = 30
 
 
 def _repo_path_unavailable_error() -> dict[str, Any]:
@@ -338,29 +333,60 @@ def register_close_task(registry: InternalToolRegistry, ctx: RegistryContext) ->
                 and ctx.task_validator
                 and (task.validation_criteria or task.category == "code")
             ):
-                verification_items = _load_verification_items(ctx, resolved_session_id)
+                receipt_store = VerificationReceiptStore(ctx.task_manager.db)
+                verification_receipts = receipt_store.list_for_task(task.project_id, task.id)
+                explicit_reference_text = "\n".join(
+                    value
+                    for value in (
+                        task.title,
+                        task.description,
+                        task.validation_criteria,
+                        changes_summary,
+                    )
+                    if value
+                )
+                receipt_packet = build_verification_receipt_packet(
+                    verification_receipts,
+                    explicit_receipt_ids=[
+                        receipt.id
+                        for receipt in verification_receipts
+                        if receipt.id in explicit_reference_text
+                    ],
+                    unassigned_count=receipt_store.count_unassigned(
+                        task.project_id, resolved_session_id
+                    ),
+                )
+                evidence_completeness = receipt_packet.disclosure.to_dict()
+                if receipt_packet.error:
+                    return {
+                        "success": False,
+                        "error": receipt_packet.error,
+                        "message": (
+                            "High-risk verification receipts exceed the semantic evidence budget."
+                        ),
+                        "evidence_completeness": evidence_completeness,
+                    }
                 evidence = gather_validation_context(
                     task,
                     changes_summary,
                     repo_path,
                     ctx.task_manager,
                 )
-                validation_context = _append_verification_evidence_context(
-                    evidence.validation_context,
-                    ctx,
-                    resolved_session_id,
-                    evidence_items=verification_items,
-                )
                 llm_result = await validate_leaf_task_with_llm(
                     task=task,
                     task_validator=ctx.task_validator,
-                    validation_context=validation_context or changes_summary or "",
+                    validation_context=evidence.validation_context or changes_summary or "",
                     ctx=ctx,
                     resolved_id=resolved_id,
                     validation_config=ctx.validation_config,
                     file_context_text=evidence.file_context_text,
                     is_documentation_only=evidence.is_documentation_only,
+                    verification_receipt_text=receipt_packet.text,
                 )
+                llm_result.extra = {
+                    **(llm_result.extra or {}),
+                    "evidence_completeness": evidence_completeness,
+                }
                 if not llm_result.can_close:
                     response = {
                         "success": False,
@@ -592,52 +618,6 @@ def register_close_task(registry: InternalToolRegistry, ctx: RegistryContext) ->
     )
 
 
-def _load_verification_items(
-    ctx: RegistryContext,
-    resolved_session_id: str | None,
-) -> tuple[Mapping[str, object], ...]:
-    if not resolved_session_id:
-        return ()
-    try:
-        variables = ctx.session_var_manager.get_variables(resolved_session_id)
-    except Exception as exc:
-        logger.debug("Failed to load verification evidence for close validation: %s", exc)
-        return ()
-    evidence_items = variables.get(VERIFICATION_EVIDENCE_VARIABLE)
-    if not isinstance(evidence_items, list):
-        return ()
-    return tuple(item for item in evidence_items if isinstance(item, Mapping))
-
-
-def _append_verification_evidence_context(
-    validation_context: str | None,
-    ctx: RegistryContext,
-    resolved_session_id: str | None,
-    *,
-    evidence_items: Sequence[Mapping[str, object]] | None = None,
-) -> str | None:
-    """Append structured verification results to the LLM validation context."""
-    if evidence_items is None:
-        evidence_items = _load_verification_items(ctx, resolved_session_id)
-    if not evidence_items:
-        return validation_context
-
-    evidence_text = format_verification_evidence_context(
-        evidence_items,
-        limit=CLOSE_VALIDATION_EVIDENCE_CONTEXT_LIMIT,
-    )
-    if not evidence_text:
-        return validation_context
-
-    logger.debug(
-        "Appended verification evidence to validation context: evidence_chars=%d",
-        len(evidence_text),
-    )
-    if validation_context:
-        return f"{validation_context}\n\n{evidence_text}"
-    return evidence_text
-
-
 def _auto_link_claim_window_commits(
     *,
     ctx: RegistryContext,
@@ -722,6 +702,14 @@ def _has_current_session_verification_evidence(
 ) -> bool:
     if not resolved_session_id:
         return False
+    try:
+        project_id = ctx.resolve_project_from_session(resolved_session_id)
+        if VerificationReceiptStore(ctx.task_manager.db).has_success(
+            project_id, resolved_session_id
+        ):
+            return True
+    except Exception as exc:
+        logger.debug("Failed to load durable verification receipts for skip override: %s", exc)
     try:
         variables = ctx.session_var_manager.get_variables(resolved_session_id)
     except Exception as exc:

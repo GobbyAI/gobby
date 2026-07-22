@@ -1,6 +1,6 @@
 import json
 from collections.abc import Generator
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any, Literal
 from unittest.mock import AsyncMock, MagicMock, patch
@@ -10,16 +10,16 @@ import pytest
 from gobby.config.tasks import TaskValidationConfig
 from gobby.llm import LLMService
 from gobby.mcp_proxy.tools.tasks import create_task_registry
-from gobby.mcp_proxy.tools.tasks._lifecycle_close import CLOSE_VALIDATION_EVIDENCE_CONTEXT_LIMIT
 from gobby.mcp_proxy.tools.tasks._verification_evidence_context import (
     format_verification_evidence_context,
 )
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.tasks import LocalTaskManager, StageState, Task
+from gobby.storage.verification_receipts import VerificationReceipt
 from gobby.tasks.validation import TaskValidator
 from gobby.tasks.validation_verdict import ValidationResult
+from gobby.utils.datetime import utc_now
 from gobby.utils.session_context import session_context_for_test
-from gobby.workflows.verification_evidence import VERIFICATION_EVIDENCE_VARIABLE
 
 
 def _task_validator(
@@ -38,6 +38,42 @@ def _diff_result(
         "commits": {"total": len(commits)},
         "manifest": {"total": file_count},
     }
+
+
+def _verification_receipt(
+    command: str,
+    *,
+    index: int = 1,
+    details: dict[str, object] | None = None,
+) -> VerificationReceipt:
+    timestamp = utc_now() + timedelta(seconds=index)
+    return VerificationReceipt(
+        id=f"receipt-{index:03d}",
+        project_id="p1",
+        session_id="sess-uuid",
+        task_id="t1",
+        provider="codex",
+        execution_id=f"execution-{index:03d}",
+        source_event_id=f"event-{index:03d}",
+        evidence_type="validation_command",
+        command=command,
+        cwd="/repo",
+        normalized_outcome="success",
+        outcome_provenance="tool_output.json.exit_code",
+        exit_code=0,
+        started_at=timestamp,
+        completed_at=timestamp,
+        output_first_4k="passed",
+        output_last_4k="passed",
+        output_sha256=None,
+        output_bytes=6,
+        details=details or {},
+        attribution_source="sole_claim",
+        attribution_actor="sess-uuid",
+        attributed_at=timestamp,
+        created_at=timestamp,
+        updated_at=timestamp,
+    )
 
 
 _TEST_TIMESTAMP = datetime(2026, 1, 1, tzinfo=UTC)
@@ -431,7 +467,11 @@ async def test_close_task_uses_commit_diff_when_commits_linked(
         )
 
         result = await registry.call(
-            "close_task", {"task_id": "t1", "changes_summary": "test changes"}
+            "close_task",
+            {
+                "task_id": "t1",
+                "changes_summary": "test changes",
+            },
         )
 
         validator_call = mock_task_validator.validate_task.call_args
@@ -445,12 +485,12 @@ async def test_close_task_uses_commit_diff_when_commits_linked(
 
 @pytest.mark.integration
 @pytest.mark.asyncio
-async def test_close_task_includes_latest_thirty_verification_evidence(
+async def test_close_task_includes_durable_receipt_packet_and_completeness(
     mock_task_manager: MagicMock,
     mock_task_validator: AsyncMock,
     repo_path: str,
 ) -> None:
-    """close_task should pass a useful structured evidence window to LLM validation."""
+    """close_task should pass all durable receipt identities and disclose any aggregation."""
     task = _task(
         id="t1",
         title="Task with retained evidence",
@@ -469,28 +509,40 @@ async def test_close_task_includes_latest_thirty_verification_evidence(
     mock_task_validator.validate_task.return_value = ValidationResult(status="valid", feedback="OK")
     mock_task_manager.close_task.return_value = task
 
-    evidence = [
-        {
-            "evidence_type": "validation_command",
-            "success": True,
-            "command": f"uv run pytest validation_suite_{index:03d}.py",
-            "exit_code": 0,
-            "outcome_provenance": "tool_output.json.exit_code",
-            "matcher_id": "python-tests",
-            "matcher_label": "Python tests",
-        }
-        for index in range(1, CLOSE_VALIDATION_EVIDENCE_CONTEXT_LIMIT + 2)
+    timestamp = utc_now()
+    receipts = [
+        VerificationReceipt(
+            id=f"receipt-{index:03d}",
+            project_id="p1",
+            session_id="sess-uuid",
+            task_id="t1",
+            provider="codex",
+            execution_id=f"execution-{index:03d}",
+            source_event_id=f"event-{index:03d}",
+            evidence_type="validation_command",
+            command=f"uv run pytest validation_suite_{index:03d}.py",
+            cwd=repo_path,
+            normalized_outcome="success",
+            outcome_provenance="tool_output.json.exit_code",
+            exit_code=0,
+            started_at=timestamp + timedelta(seconds=index),
+            completed_at=timestamp + timedelta(seconds=index),
+            output_first_4k="passed",
+            output_last_4k="passed",
+            output_sha256=None,
+            output_bytes=6,
+            details={"matcher_id": "python-tests"},
+            attribution_source="sole_claim",
+            attribution_actor="sess-uuid",
+            attributed_at=timestamp + timedelta(seconds=index),
+            created_at=timestamp + timedelta(seconds=index),
+            updated_at=timestamp + timedelta(seconds=index),
+        )
+        for index in range(1, 304)
     ]
-    evidence.append(
-        {
-            "evidence_type": "manual_diff_review",
-            "success": True,
-            "summary": "Verified touched source line counts are below 1000",
-            "supports": "source line-count gate for #15763",
-            "scope": "src/gobby/mcp_proxy/tools/tasks",
-            "task_id": "#15763",
-        }
-    )
+    receipt_store = MagicMock()
+    receipt_store.list_for_task.return_value = receipts
+    receipt_store.count_unassigned.return_value = 3
 
     with (
         patch("gobby.mcp_proxy.tools.tasks._context.TaskDependencyManager"),
@@ -499,6 +551,10 @@ async def test_close_task_includes_latest_thirty_verification_evidence(
         patch("gobby.mcp_proxy.tools.tasks._context.LocalProjectManager") as mock_pm,
         patch("gobby.mcp_proxy.tools.tasks._context.SessionManager") as mock_sm_cls,
         patch("gobby.mcp_proxy.tools.tasks._context.SessionVariableManager") as mock_svm_cls,
+        patch(
+            "gobby.mcp_proxy.tools.tasks._lifecycle_close.VerificationReceiptStore",
+            return_value=receipt_store,
+        ),
         patch("gobby.utils.git.normalize_commit_sha", side_effect=lambda sha, cwd=None: sha),
     ):
         mock_diff.return_value = _diff_result(
@@ -512,9 +568,7 @@ async def test_close_task_includes_latest_thirty_verification_evidence(
         mock_sm.resolve_session_reference.return_value = "sess-uuid"
         mock_sm.get.return_value = MagicMock(had_edits=True)
         mock_sm_cls.return_value = mock_sm
-        mock_svm_cls.return_value.get_variables.return_value = {
-            VERIFICATION_EVIDENCE_VARIABLE: evidence
-        }
+        mock_svm_cls.return_value.get_variables.return_value = {}
 
         registry = create_task_registry(
             task_manager=mock_task_manager,
@@ -522,24 +576,29 @@ async def test_close_task_includes_latest_thirty_verification_evidence(
         )
 
         result = await registry.call(
-            "close_task", {"task_id": "t1", "changes_summary": "test changes"}
+            "close_task",
+            {
+                "task_id": "t1",
+                "changes_summary": "Explicitly prioritize receipt-001",
+            },
         )
 
-    assert result == {"success": True}
+    assert result["success"] is True
+    completeness = result["evidence_completeness"]
+    assert completeness["total"] == 303
+    assert completeness["detailed"] == 12
+    assert completeness["catalogued"] + completeness["aggregated"] == 303
+    assert completeness["aggregated"] > 0
+    assert completeness["unassigned"] == 3
+    assert completeness["per_outcome"] == {"success": 303}
     validator_call = mock_task_validator.validate_task.call_args
-    validation_evidence = validator_call.kwargs["changes_summary"]
-    assert "Structured verification results" in validation_evidence
-    assert '"command":"uv run pytest validation_suite_001.py"' not in validation_evidence
-    assert '"command":"uv run pytest validation_suite_002.py"' not in validation_evidence
-    for index in range(3, CLOSE_VALIDATION_EVIDENCE_CONTEXT_LIMIT + 2):
-        assert f'"command":"uv run pytest validation_suite_{index:03d}.py"' in validation_evidence
-    assert '"exit_code":0' in validation_evidence
-    assert '"matcher_id":"python-tests"' in validation_evidence
-    assert '"matcher_label":"Python tests"' in validation_evidence
-    assert '"summary":"Verified touched source line counts are below 1000"' in validation_evidence
-    assert '"supports":"source line-count gate for #15763"' in validation_evidence
-    assert '"scope":"src/gobby/mcp_proxy/tools/tasks"' in validation_evidence
-    assert '"task_id":"#15763"' in validation_evidence
+    assert "Verification receipt packet" not in validator_call.kwargs["changes_summary"]
+    validation_evidence = validator_call.kwargs["verification_receipt_text"]
+    assert '"receipt_id":"receipt-001"' in validation_evidence
+    assert '"receipt_id":"receipt-303"' in validation_evidence
+    assert '"total":303' in validation_evidence
+    packet_payload = json.loads(validation_evidence.removeprefix("Verification receipt packet:\n"))
+    assert packet_payload["detailed_receipts"][0]["receipt_id"] == "receipt-001"
 
 
 @pytest.mark.integration
@@ -570,6 +629,17 @@ async def test_close_task_accepts_git_diff_check_evidence_without_override(
         status="valid",
         feedback="Required git diff --check evidence passed.",
     )
+    receipt_store = MagicMock()
+    receipt_store.list_for_task.return_value = [
+        _verification_receipt(
+            "git diff --check HEAD~1..HEAD",
+            details={
+                "matcher_id": "git-diff-check",
+                "matcher_label": "Git whitespace checks",
+            },
+        )
+    ]
+    receipt_store.count_unassigned.return_value = 0
 
     with (
         patch("gobby.mcp_proxy.tools.tasks._context.TaskDependencyManager"),
@@ -578,6 +648,10 @@ async def test_close_task_accepts_git_diff_check_evidence_without_override(
         patch("gobby.mcp_proxy.tools.tasks._context.LocalProjectManager") as mock_pm,
         patch("gobby.mcp_proxy.tools.tasks._context.SessionManager") as mock_sm_cls,
         patch("gobby.mcp_proxy.tools.tasks._context.SessionVariableManager") as mock_svm_cls,
+        patch(
+            "gobby.mcp_proxy.tools.tasks._lifecycle_close.VerificationReceiptStore",
+            return_value=receipt_store,
+        ),
         patch("gobby.utils.git.normalize_commit_sha", side_effect=lambda sha, cwd=None: sha),
     ):
         mock_diff.return_value = _diff_result(
@@ -591,18 +665,7 @@ async def test_close_task_accepts_git_diff_check_evidence_without_override(
         mock_sm.resolve_session_reference.return_value = "sess-uuid"
         mock_sm.get.return_value = MagicMock(had_edits=True)
         mock_sm_cls.return_value = mock_sm
-        mock_svm_cls.return_value.get_variables.return_value = {
-            VERIFICATION_EVIDENCE_VARIABLE: [
-                {
-                    "evidence_type": "validation_command",
-                    "success": True,
-                    "command": "git diff --check HEAD~1..HEAD",
-                    "exit_code": 0,
-                    "matcher_id": "git-diff-check",
-                    "matcher_label": "Git whitespace checks",
-                }
-            ]
-        }
+        mock_svm_cls.return_value.get_variables.return_value = {}
 
         registry = create_task_registry(
             task_manager=mock_task_manager,
@@ -613,11 +676,13 @@ async def test_close_task_accepts_git_diff_check_evidence_without_override(
             {"task_id": "t1", "changes_summary": "Added Git validation classification"},
         )
 
-    assert result == {"success": True}
-    validation_context = mock_task_validator.validate_task.call_args.kwargs["changes_summary"]
+    assert result["success"] is True
+    validation_context = mock_task_validator.validate_task.call_args.kwargs[
+        "verification_receipt_text"
+    ]
     assert '"command":"git diff --check HEAD~1..HEAD"' in validation_context
     assert '"exit_code":0' in validation_context
-    assert '"matcher_id":"git-diff-check"' in validation_context
+    assert "git-diff-check" in validation_context
     close_kwargs = mock_task_manager.close_task.call_args.kwargs
     assert close_kwargs["validation_override_reason"] is None
 
@@ -671,6 +736,14 @@ async def test_close_task_preserves_oversized_test_definitions_with_focused_evid
         "@@ -0,0 +1,331 @@\n" + "".join(f"{line}\n" for line in test_lines)
     )
     focused_command = "GOBBY_TEST_PROTECT=1 uv run pytest tests/test_acceptance.py -k acceptance -q"
+    receipt_store = MagicMock()
+    receipt_store.list_for_task.return_value = [
+        _verification_receipt(
+            focused_command,
+            details={"matcher_id": "python-tests", "matcher_label": "Python tests"},
+        )
+    ]
+    receipt_store.count_unassigned.return_value = 0
 
     with (
         patch("gobby.mcp_proxy.tools.tasks._context.TaskDependencyManager"),
@@ -679,6 +752,10 @@ async def test_close_task_preserves_oversized_test_definitions_with_focused_evid
         patch("gobby.mcp_proxy.tools.tasks._context.LocalProjectManager") as mock_pm,
         patch("gobby.mcp_proxy.tools.tasks._context.SessionManager") as mock_sm_cls,
         patch("gobby.mcp_proxy.tools.tasks._context.SessionVariableManager") as mock_svm_cls,
+        patch(
+            "gobby.mcp_proxy.tools.tasks._lifecycle_close.VerificationReceiptStore",
+            return_value=receipt_store,
+        ),
         patch("gobby.utils.git.normalize_commit_sha", side_effect=lambda sha, cwd=None: sha),
     ):
         mock_diff.return_value = _diff_result(
@@ -692,18 +769,7 @@ async def test_close_task_preserves_oversized_test_definitions_with_focused_evid
         mock_sm.resolve_session_reference.return_value = "sess-uuid"
         mock_sm.get.return_value = MagicMock(had_edits=True)
         mock_sm_cls.return_value = mock_sm
-        mock_svm_cls.return_value.get_variables.return_value = {
-            VERIFICATION_EVIDENCE_VARIABLE: [
-                {
-                    "evidence_type": "validation_command",
-                    "success": True,
-                    "command": focused_command,
-                    "exit_code": 0,
-                    "matcher_id": "python-tests",
-                    "matcher_label": "Python tests",
-                }
-            ]
-        }
+        mock_svm_cls.return_value.get_variables.return_value = {}
 
         registry = create_task_registry(
             task_manager=mock_task_manager,
@@ -715,13 +781,14 @@ async def test_close_task_preserves_oversized_test_definitions_with_focused_evid
         )
         validator_call = mock_task_validator.validate_task.call_args
         changes_summary = validator_call.kwargs["changes_summary"]
+        receipt_text = validator_call.kwargs["verification_receipt_text"]
 
-    assert result == {"success": True}
+    assert result["success"] is True
     for name in test_names:
         assert name in changes_summary
     assert "hunk truncated for tests/test_acceptance.py" in changes_summary
-    assert f'"command":"{focused_command}"' in changes_summary
-    assert '"matcher_label":"Python tests"' in changes_summary
+    assert f'"command":"{focused_command}"' in receipt_text
+    assert "Python tests" in receipt_text
 
 
 @pytest.mark.integration
@@ -832,7 +899,7 @@ async def test_close_task_autolinks_claim_window_before_validation(
         validator_call = mock_task_validator.validate_task.call_args
         changes_summary = validator_call.kwargs["changes_summary"]
 
-    assert result == {"success": True}
+    assert result["success"] is True
     mock_autolink.assert_called_once()
     assert "Commit-based diff (3 commits, 3 manifest entries):" in changes_summary
     assert "task A1" in changes_summary
@@ -1090,7 +1157,7 @@ async def test_close_task_commit_diff_excludes_uncommitted_changes(
             {"task_id": "t1", "changes_summary": "test changes"},
         )
 
-        assert result == {"success": True}
+        assert result["success"] is True
         validator_call = mock_task_validator.validate_task.call_args
         changes_summary = validator_call.kwargs["changes_summary"]
         assert "Commit-based diff (1 commits, 5 manifest entries):" in changes_summary

@@ -1649,6 +1649,36 @@ class TestCodexToolContextRehydration:
             "tool_name": "claim_task",
         }
 
+    def test_shell_fallback_execution_identity_survives_before_after_rehydration(self) -> None:
+        handler, _ = self._make_handler()
+        before_event = self._make_event(
+            HookEventType.BEFORE_TOOL,
+            data={
+                "tool_name": "exec_command",
+                "tool_input": {"cmd": "echo repeated"},
+            },
+        )
+        after_event = self._make_event(
+            HookEventType.AFTER_TOOL,
+            data={
+                "tool_name": "exec_command",
+                "tool_output": {"output": "repeated"},
+                "exit_code": 0,
+            },
+        )
+
+        handler._sync_tool_context(before_event, "platform-codex-session")
+        handler._sync_tool_context(after_event, "platform-codex-session")
+
+        assert (
+            after_event.data["verification_execution_id"]
+            == before_event.data["verification_execution_id"]
+        )
+        assert (
+            after_event.data["verification_source_event_id"]
+            == before_event.data["verification_source_event_id"]
+        )
+
     @pytest.mark.asyncio
     @pytest.mark.parametrize(
         "source",

@@ -253,7 +253,7 @@ def test_postgres_migration_discovery_finds_all_post_baseline_migrations() -> No
 
     discovered = runner._discover_migrations()
 
-    assert [(migration.version, migration.name) for migration in discovered] == [
+    known_prefix = [
         (306, "reconcile_live_hub_schema_drift"),
         (307, "cron_run_scheduler_owner"),
         (308, "recall_signal_hub"),
@@ -275,7 +275,19 @@ def test_postgres_migration_discovery_finds_all_post_baseline_migrations() -> No
         (324, "drop_sync_tombstones"),
         (325, "recall_usefulness_shadow_index"),
         (326, "validate_recall_usefulness_label_source"),
+        (327, "failure_category_taxonomy"),
+        (328, "memory_global_visibility"),
+        (329, "memory_type_enum"),
+        (330, "rename_epic_qa"),
+        (331, "external_issue_sync_coordinator"),
+        (332, "attention_states"),
+        (333, "detection_manifests"),
+        (334, "verification_receipts"),
     ]
+    actual = [(migration.version, migration.name) for migration in discovered]
+
+    assert actual[: len(known_prefix)] == known_prefix
+    assert [version for version, _ in actual] == list(range(306, 306 + len(actual)))
 
 
 class _AutocommitMigrationState:

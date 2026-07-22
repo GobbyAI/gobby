@@ -664,6 +664,7 @@ class TaskValidator:
         category: str | None = None,
         *,
         file_context_text: str | None = None,
+        verification_receipt_text: str | None = None,
     ) -> ValidationResult:
         """Validate one preassembled evidence packet with one JSON model request."""
         return await self._validate_task_static(
@@ -675,6 +676,7 @@ class TaskValidator:
             context_files=context_files,
             category=category,
             file_context_text=file_context_text,
+            verification_receipt_text=verification_receipt_text,
         )
 
     async def _validate_task_static(
@@ -688,6 +690,7 @@ class TaskValidator:
         category: str | None = None,
         *,
         file_context_text: str | None = None,
+        verification_receipt_text: str | None = None,
     ) -> ValidationResult:
         """
         Validate task completion.
@@ -790,6 +793,13 @@ class TaskValidator:
             )
             changes_section = f"Changes Summary:\n{summary}\n\n"
 
+        if verification_receipt_text:
+            if len(verification_receipt_text) > VALIDATION_PROMPT_BUDGET_CHARS:
+                raise ValueError("verification receipt packet exceeds its 32,000-character budget")
+            changes_section += (
+                f"Server-computed verification receipt evidence:\n{verification_receipt_text}\n\n"
+            )
+
         # Build test strategy section if provided
         category_section = ""
         if category:
@@ -808,12 +818,13 @@ class TaskValidator:
         logger.info(
             "Validation prompt assembled for task %s: raw_changes_chars=%d "
             "raw_file_context_chars=%d shaped_changes_chars=%d shaped_file_context_chars=%d "
-            "final_prompt_chars=%d",
+            "verification_receipt_chars=%d final_prompt_chars=%d",
             task_id,
             raw_changes_chars,
             raw_file_context_chars,
             len(changes_section),
             len(shaped_file_context),
+            len(verification_receipt_text or ""),
             len(prompt),
         )
 

@@ -1613,6 +1613,45 @@ class TestTaskValidatorMerged:
         assert "file content" in prompt
 
     @pytest.mark.asyncio
+    async def test_validate_task_appends_server_receipt_packet_to_prompt(self, config, mock_llm):
+        validator = _task_validator(config, mock_llm)
+        mock_llm.call_json_feature.return_value = {"status": "valid", "feedback": "Good"}
+        receipt_packet = (
+            'Verification receipt packet:\n{"evidence_completeness":{"total":303},'
+            '"receipt_catalog":[{"receipt_id":"receipt-0303"}]}'
+        )
+
+        result = await validator.validate_task(
+            "task-1",
+            "title",
+            "instr",
+            "summary",
+            verification_receipt_text=receipt_packet,
+        )
+
+        assert result.status == "valid"
+        prompt = mock_llm.call_json_feature.call_args.args[1]
+        assert "Server-computed verification receipt evidence" in prompt
+        assert receipt_packet in prompt
+
+    @pytest.mark.asyncio
+    async def test_validate_task_rejects_oversized_server_receipt_packet(
+        self, config, mock_llm
+    ) -> None:
+        validator = _task_validator(config, mock_llm)
+
+        with pytest.raises(ValueError, match="verification receipt packet exceeds"):
+            await validator.validate_task(
+                "task-1",
+                "title",
+                "instr",
+                "summary",
+                verification_receipt_text="x" * 32_001,
+            )
+
+        mock_llm.call_json_feature.assert_not_called()
+
+    @pytest.mark.asyncio
     async def test_validate_task_llm_error(self, config, mock_llm):
         validator = _task_validator(config, mock_llm)
         mock_llm.call_json_feature.side_effect = Exception("LLM Error")

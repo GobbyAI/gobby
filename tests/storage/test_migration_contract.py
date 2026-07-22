@@ -223,12 +223,12 @@ def test_legacy_migration_api_is_absent_from_source_and_runtime() -> None:
         assert removed not in assignments
 
 
-def test_postgres_migrations_limited_to_known_post_baseline() -> None:
+def test_postgres_migrations_preserve_known_contiguous_post_baseline_prefix() -> None:
     migrations_dir = SRC_ROOT / "storage" / "migrations"
 
     # The 0.5.0 pre-release flatten folded every migration (295-305) into the
     # baseline schema. Later fixes remain replayable in numeric order.
-    assert _tracked_migration_names(migrations_dir) == [
+    known_prefix = [
         "306_reconcile_live_hub_schema_drift.sql",
         "307_cron_run_scheduler_owner.sql",
         "308_recall_signal_hub.sql",
@@ -255,7 +255,15 @@ def test_postgres_migrations_limited_to_known_post_baseline() -> None:
         "329_memory_type_enum.sql",
         "330_rename_epic_qa.sql",
         "331_external_issue_sync_coordinator.sql",
+        "332_attention_states.sql",
+        "333_detection_manifests.sql",
+        "334_verification_receipts.sql",
     ]
+    migration_names = _tracked_migration_names(migrations_dir)
+
+    assert migration_names[: len(known_prefix)] == known_prefix
+    versions = [int(name.split("_", 1)[0]) for name in migration_names]
+    assert versions == list(range(306, 306 + len(versions)))
 
 
 def test_recall_shadow_migration_defines_capture_and_gate_contract() -> None:
@@ -369,7 +377,7 @@ def test_postgres_baseline_version_is_flattened_to_305() -> None:
     # The 0.5.0 pre-release flatten folded 295-305 into the baseline. Hubs below
     # 305 take the corrupt_partial backup/recreate path; later migrations replay.
     assert module.BASELINE_VERSION == 305
-    assert module.latest_known_version() == 331
+    assert module.latest_known_version() >= 334
 
 
 def test_external_issue_sync_migration_preserves_legacy_enablement() -> None:

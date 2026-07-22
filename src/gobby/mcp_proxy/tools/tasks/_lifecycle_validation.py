@@ -411,6 +411,7 @@ async def validate_leaf_task_with_llm(
     file_context_text: str | None = None,
     *,
     is_documentation_only: bool = False,
+    verification_receipt_text: str | None = None,
 ) -> ValidationResult:
     """Run LLM validation on a leaf task.
 
@@ -487,6 +488,7 @@ async def validate_leaf_task_with_llm(
         validation_criteria=task.validation_criteria,
         category=task.category,
         file_context_text=file_context_text,
+        verification_receipt_text=verification_receipt_text,
     )
 
     # An LLM infrastructure failure (no candidate produced a usable result) is not a

@@ -264,6 +264,8 @@ class WorkflowHookHandler:
             "call_id",
             "callId",
             "id",
+            "verification_execution_id",
+            "verification_source_event_id",
         ):
             value = data.get(key)
             if value not in (None, ""):
@@ -393,6 +395,9 @@ class WorkflowHookHandler:
             return
 
         if event.event_type == HookEventType.BEFORE_TOOL:
+            from .verification_receipt_ingestion import ensure_verification_execution_identity
+
+            ensure_verification_execution_identity(event)
             self._remember_tool_context(event.source, session_id, event.data)
             return
 
@@ -401,7 +406,14 @@ class WorkflowHookHandler:
 
         snapshot = self._match_tool_context(event.source, session_id, event.data)
         if snapshot is None:
+            from .verification_receipt_ingestion import ensure_verification_execution_identity
+
+            ensure_verification_execution_identity(event)
             return
+
+        for key in ("verification_execution_id", "verification_source_event_id"):
+            if snapshot.get(key):
+                event.data[key] = snapshot[key]
 
         if self._needs_tool_rehydration(event.data):
             for key, value in snapshot.items():
@@ -559,6 +571,19 @@ class WorkflowHookHandler:
                 session_manager=self._session_manager,
                 session_task_manager=self._session_task_manager,
             )
+
+        if event.event_type in (HookEventType.BEFORE_TOOL, HookEventType.AFTER_TOOL):
+            from .verification_receipt_ingestion import persist_verification_receipt
+
+            if self._session_var_manager is not None:
+                run_observer(
+                    "persist_verification_receipt",
+                    persist_verification_receipt,
+                    event,
+                    variables,
+                    session_id,
+                    db=self._session_var_manager.db,
+                )
 
         # Task claim/release tracking (AFTER_TOOL for gobby-tasks calls)
         if event.event_type == HookEventType.AFTER_TOOL:
