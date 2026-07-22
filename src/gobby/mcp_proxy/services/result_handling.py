@@ -14,6 +14,21 @@ if TYPE_CHECKING:
 logger = logging.getLogger("gobby.mcp.server")
 
 _CODEX_RECONCILE_TIMEOUT_SECONDS = 2.0
+_CODEX_RECONCILE_TASKS: dict[str, asyncio.Task[Any]] = {}
+
+
+def _cleanup_codex_reconcile_task(session_id: str, task: asyncio.Task[Any]) -> None:
+    if _CODEX_RECONCILE_TASKS.get(session_id) is task:
+        _CODEX_RECONCILE_TASKS.pop(session_id, None)
+    if task.cancelled():
+        return
+    exception = task.exception()
+    if exception is not None:
+        logger.warning(
+            "Codex transcript reconciliation failed",
+            extra={"session_id": session_id},
+            exc_info=(type(exception), exception, exception.__traceback__),
+        )
 
 
 async def _reconcile_codex_close_transcript(
@@ -37,9 +52,17 @@ async def _reconcile_codex_close_transcript(
     if not isinstance(platform_session_id, str) or not platform_session_id:
         platform_session_id = effective_session_id
 
+    task = _CODEX_RECONCILE_TASKS.get(platform_session_id)
+    if task is None or task.done():
+        task = asyncio.create_task(reconcile(platform_session_id))
+        _CODEX_RECONCILE_TASKS[platform_session_id] = task
+        task.add_done_callback(
+            lambda completed: _cleanup_codex_reconcile_task(platform_session_id, completed)
+        )
+
     try:
         result = await asyncio.wait_for(
-            reconcile(platform_session_id),
+            asyncio.shield(task),
             timeout=_CODEX_RECONCILE_TIMEOUT_SECONDS,
         )
     except TimeoutError:

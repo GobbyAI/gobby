@@ -168,10 +168,11 @@ async def test_codex_close_reconciliation_timeout_remains_fail_closed(
 ) -> None:
     service = _Service(SessionSource.CODEX, require_ready=True)
     service.variables["verification_evidence_recorded"] = True
+    release = asyncio.Event()
 
     async def _slow_reconcile(_session_id: str) -> SimpleNamespace:
         service.order.append("reconcile")
-        await asyncio.Event().wait()
+        await release.wait()
         return SimpleNamespace(flushed=True, error=None)
 
     service.hook_manager._message_processor = SimpleNamespace(
@@ -192,6 +193,61 @@ async def test_codex_close_reconciliation_timeout_remains_fail_closed(
     assert error["retryable"] is True
     assert "retry task closure" in error["error"]
     assert service.order == ["reconcile"]
+    background = result_handling._CODEX_RECONCILE_TASKS["platform-codex-session"]
+    release.set()
+    await background
+
+
+async def test_codex_close_retry_joins_timed_out_reconciliation(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    service = _Service(SessionSource.CODEX, require_ready=False)
+    release = asyncio.Event()
+    cancelled = False
+    reconcile_calls = 0
+
+    async def _slow_reconcile(_session_id: str) -> SimpleNamespace:
+        nonlocal cancelled, reconcile_calls
+        reconcile_calls += 1
+        try:
+            await release.wait()
+        except asyncio.CancelledError:
+            cancelled = True
+            raise
+        return SimpleNamespace(flushed=True, error=None)
+
+    service.hook_manager._message_processor = SimpleNamespace(
+        reconcile_codex_transcript=_slow_reconcile
+    )
+    monkeypatch.setattr(result_handling, "_CODEX_RECONCILE_TIMEOUT_SECONDS", 0.01)
+    event = HookEvent(
+        event_type=HookEventType.BEFORE_TOOL,
+        session_id="platform-codex-session",
+        source=SessionSource.CODEX,
+        timestamp=datetime.now(UTC),
+        data={},
+        metadata={"_platform_session_id": "platform-codex-session"},
+    )
+    first_result = await result_handling._reconcile_codex_close_transcript(
+        service.hook_manager,
+        event,
+        server_name="gobby-tasks",
+        tool_name="close_task",
+        effective_session_id="platform-codex-session",
+    )
+    asyncio.get_running_loop().call_soon(release.set)
+    retry_result = await result_handling._reconcile_codex_close_transcript(
+        service.hook_manager,
+        event,
+        server_name="gobby-tasks",
+        tool_name="close_task",
+        effective_session_id="platform-codex-session",
+    )
+
+    assert first_result is False
+    assert retry_result is True
+    assert reconcile_calls == 1
+    assert cancelled is False
 
 
 @pytest.mark.asyncio
