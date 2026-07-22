@@ -71,6 +71,12 @@ async def test_enablement_is_discovered_without_daemon_restart() -> None:
     states = [call.kwargs["state"] for call in coordinator.status_store.upsert.call_args_list]
     assert "disabled" in states
     assert "healthy" in states
+    healthy = next(
+        call
+        for call in coordinator.status_store.upsert.call_args_list
+        if call.kwargs["state"] == "healthy"
+    )
+    assert healthy.kwargs["consecutive_failures"] == 0
 
 
 @pytest.mark.asyncio
@@ -194,6 +200,26 @@ async def test_rate_limit_retry_time_is_respected() -> None:
     calls = coordinator.status_store.upsert.call_args_list
     assert any(call.kwargs["state"] == "rate_limited" for call in calls)
     assert any(call.kwargs["retry_at"] is not None for call in calls)
+
+
+@pytest.mark.asyncio
+async def test_usage_limit_uses_maximum_backoff() -> None:
+    now = [10.0]
+    coordinator, _ = _coordinator([_project()], monotonic=lambda: now[0])
+    current = MagicMock(consecutive_failures=1, last_error="usage limit exceeded")
+    coordinator.status_store.get.side_effect = [None, None, None, current, current]
+    linear = MagicMock()
+    linear.is_available.return_value = True
+    linear.create_missing_issues = AsyncMock(side_effect=RuntimeError("usage limit exceeded"))
+
+    with patch("gobby.sync.external_coordinator.LinearSyncService", return_value=linear):
+        await coordinator._run_linear(_project())
+
+    assert coordinator._due[("linear", "project-1")] == 310.0
+    assert any(
+        call.kwargs["state"] == "rate_limited"
+        for call in coordinator.status_store.upsert.call_args_list
+    )
 
 
 @pytest.mark.asyncio

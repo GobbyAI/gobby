@@ -87,8 +87,6 @@ async def finalize_disconnect_all(
 ) -> None:
     """Disconnect all manager connections and finalize state under cancellation."""
     reconnect_snapshot = list(reconnect_tasks)
-    disconnect_tasks: list[asyncio.Task[None]] = []
-
     try:
         if health_check_task:
             health_check_task.cancel()
@@ -101,14 +99,11 @@ async def finalize_disconnect_all(
         reconnect_tasks.clear()
 
         for name, connection in list(connections.items()):
-            disconnect_tasks.append(
-                asyncio.create_task(disconnect_connection(name, connection, logger))
-            )
+            # MCP stdio contexts are task-affine. Disconnect in the caller task
+            # so their cancel scopes exit from the task that entered them.
+            await disconnect_connection(name, connection, logger)
             if name in health:
                 health[name].state = ConnectionState.DISCONNECTED
-
-        if disconnect_tasks:
-            await asyncio.gather(*disconnect_tasks, return_exceptions=True)
     except asyncio.CancelledError:
         logger.debug("MCP disconnect cleanup cancelled; finalizing state cleanup")
     finally:
@@ -121,12 +116,6 @@ async def finalize_disconnect_all(
 
         for task in all_reconnect_tasks:
             task.cancel()
-            if task not in cleanup_tasks:
-                cleanup_tasks.append(task)
-
-        for task in disconnect_tasks:
-            if not task.done():
-                task.cancel()
             if task not in cleanup_tasks:
                 cleanup_tasks.append(task)
 

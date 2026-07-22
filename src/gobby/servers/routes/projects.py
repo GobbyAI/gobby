@@ -419,6 +419,10 @@ def create_projects_router(server: HTTPServer) -> APIRouter:
                 project_manager=pm,
             )
             try:
+                repositories = github_service.repositories_for(project, github_config)
+            except ValueError:
+                repositories = ()
+            try:
                 repositories = await github_service.check_access(project, github_config)
                 github_ready = True
             except GitHubRepositoryReadinessError as exc:
@@ -435,6 +439,9 @@ def create_projects_router(server: HTTPServer) -> APIRouter:
                 "linked_count": counts[0],
                 "pending_count": counts[1],
                 "consecutive_failures": 0,
+                "last_attempt_at": None,
+                "last_success_at": None,
+                "retry_at": None,
                 "last_statistics": {},
                 "last_error": None,
             }

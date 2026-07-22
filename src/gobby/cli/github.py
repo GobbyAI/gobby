@@ -15,7 +15,7 @@ from gobby.mcp_proxy.manager import MCPClientManager
 from gobby.storage.external_issue_sync import ExternalIssueSyncStatusStore
 from gobby.storage.github_triage import GitHubTriageConfig, GitHubTriageStore
 from gobby.storage.mcp import LocalMCPManager
-from gobby.storage.projects import LocalProjectManager
+from gobby.storage.projects import LocalProjectManager, Project
 from gobby.storage.tasks import LocalTaskManager
 from gobby.sync.github import GitHubSyncService
 from gobby.sync.github_issue_sync import (
@@ -67,6 +67,19 @@ def get_sync_service(repo: str | None = None) -> GitHubSyncService:
         project_id=project_id,
         github_repo=repo,
     )
+
+
+async def _check_github_access(
+    readiness: GitHubIssueSyncService,
+    project: Project,
+    config: GitHubTriageConfig,
+    mcp_manager: MCPClientManager,
+) -> tuple[str, ...]:
+    """Check access and close CLI-owned MCP transports in the same async task."""
+    try:
+        return await readiness.check_access(project, config)
+    finally:
+        await mcp_manager.disconnect_all()
 
 
 @click.group()
@@ -124,7 +137,7 @@ def github_setup(
             project_manager=project_manager,
         )
         resolved = (
-            asyncio.run(readiness.check_access(project, candidate))
+            asyncio.run(_check_github_access(readiness, project, candidate, mcp_manager))
             if candidate.sync_enabled or candidate.triage_enabled
             else readiness.repositories_for(project, candidate)
         )
@@ -181,9 +194,14 @@ def github_status(project_ref: str | None, all_projects: bool, json_format: bool
             )
             ready = False
             readiness_error = None
-            repositories: tuple[str, ...] = ()
             try:
-                repositories = asyncio.run(readiness.check_access(project, config))
+                repositories = readiness.repositories_for(project, config)
+            except ValueError:
+                repositories = ()
+            try:
+                repositories = asyncio.run(
+                    _check_github_access(readiness, project, config, mcp_manager)
+                )
                 ready = True
             except GitHubRepositoryReadinessError as exc:
                 readiness_error = str(exc)
@@ -200,6 +218,7 @@ def github_status(project_ref: str | None, all_projects: bool, json_format: bool
                     "pending_count": pending,
                     "last_attempt_at": status.last_attempt_at if status else None,
                     "last_success_at": status.last_success_at if status else None,
+                    "retry_at": status.retry_at if status else None,
                     "last_statistics": status.last_statistics if status else {},
                     "consecutive_failures": status.consecutive_failures if status else 0,
                     "last_error": status.last_error if status else None,
@@ -224,6 +243,8 @@ def github_status(project_ref: str | None, all_projects: bool, json_format: bool
                 )
                 if payload["readiness_error"] or payload["last_error"]:
                     click.echo(f"Error: {payload['readiness_error'] or payload['last_error']}")
+                if payload["retry_at"]:
+                    click.echo(f"Retry at: {payload['retry_at']}")
 
     except click.ClickException:
         raise

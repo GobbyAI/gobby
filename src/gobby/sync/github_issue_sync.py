@@ -325,7 +325,10 @@ def _is_rate_limit_error(exc: Exception) -> bool:
     if any(getattr(exc, name, None) is not None for name in ("retry_after_seconds", "retry_after")):
         return True
     message = str(exc).lower()
-    return "rate limit" in message or "rate-limit" in message or "429" in message
+    return any(
+        marker in message
+        for marker in ("rate limit", "rate-limit", "usage limit", "quota exceeded", "429")
+    )
 
 
 def _copy_retry_metadata(source: Exception, target: Exception) -> None:

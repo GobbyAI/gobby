@@ -34,6 +34,7 @@ def _mock_github_deps(
     project.deleted_at = None
     project_manager.get.return_value = project
     mcp_manager = MagicMock()
+    mcp_manager.disconnect_all = AsyncMock()
     return task_manager, mcp_manager, project_manager, project_id
 
 
@@ -140,6 +141,7 @@ class TestGithubSetup:
         assert saved.sync_enabled is True
         assert saved.triage_enabled is False
         assert saved.repositories == ("owner/repo",)
+        mcp.disconnect_all.assert_awaited_once()
         mock_deps.assert_called_once_with("gobby")
 
     @patch("gobby.cli.github.GitHubIssueSyncService")

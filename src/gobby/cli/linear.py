@@ -288,6 +288,7 @@ def linear_status(project_ref: str | None, all_projects: bool, json_format: bool
                     "pending_count": pending,
                     "last_attempt_at": status.last_attempt_at if status else None,
                     "last_success_at": status.last_success_at if status else None,
+                    "retry_at": status.retry_at if status else None,
                     "last_statistics": status.last_statistics if status else {},
                     "consecutive_failures": status.consecutive_failures if status else 0,
                     "last_error": status.last_error if status else None,
@@ -311,6 +312,8 @@ def linear_status(project_ref: str | None, all_projects: bool, json_format: bool
                 )
                 if payload["last_error"]:
                     click.echo(f"Error: {payload['last_error']}")
+                if payload["retry_at"]:
+                    click.echo(f"Retry at: {payload['retry_at']}")
 
     except click.ClickException:
         raise

@@ -314,6 +314,7 @@ class ExternalIssueSyncCoordinator:
                     pending=pending,
                     last_attempt_at=attempt,
                     last_success_at=utc_now(),
+                    consecutive_failures=0,
                     statistics=stats,
                 )
             self._due[("linear", project.id)] = self.monotonic() + (
@@ -410,6 +411,7 @@ class ExternalIssueSyncCoordinator:
                     pending=pending,
                     last_attempt_at=attempt,
                     last_success_at=utc_now(),
+                    consecutive_failures=0,
                     statistics=stats,
                 )
             now = self.monotonic()
@@ -548,6 +550,9 @@ class ExternalIssueSyncCoordinator:
             value = getattr(exc, name, None)
             if isinstance(value, (int, float)) and math.isfinite(value) and value > 0:
                 return min(float(value), 300.0)
+        text = str(exc).lower()
+        if "usage limit" in text or "quota exceeded" in text:
+            return 300.0
         return 30.0 if _is_rate_limit(exc) else 5.0
 
 
@@ -566,4 +571,13 @@ def _failure_count(value: Any) -> int:
 
 def _is_rate_limit(exc: Exception) -> bool:
     text = f"{type(exc).__name__}: {exc}".lower()
-    return "rate limit" in text or "status 429" in text or "http 429" in text
+    return any(
+        marker in text
+        for marker in (
+            "rate limit",
+            "usage limit",
+            "quota exceeded",
+            "status 429",
+            "http 429",
+        )
+    )

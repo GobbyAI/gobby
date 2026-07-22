@@ -30,6 +30,26 @@ class BlockingConnection:
 
 
 @pytest.mark.asyncio
+async def test_disconnect_all_closes_transport_in_caller_task() -> None:
+    """Task-affine transport contexts must be closed by their caller task."""
+    manager = MCPClientManager(server_configs=[])
+    connection = BlockingConnection()
+    caller_task = asyncio.current_task()
+    observed_task: asyncio.Task[object] | None = None
+
+    async def disconnect() -> None:
+        nonlocal observed_task
+        observed_task = asyncio.current_task()
+
+    connection.disconnect = disconnect  # type: ignore[method-assign]
+    manager._connections["stdio-server"] = connection
+
+    await manager.disconnect_all()
+
+    assert observed_task is caller_task
+
+
+@pytest.mark.asyncio
 async def test_disconnect_all_cleans_state_when_cancelled_during_disconnect() -> None:
     config = MCPServerConfig(
         name="slow-server",
