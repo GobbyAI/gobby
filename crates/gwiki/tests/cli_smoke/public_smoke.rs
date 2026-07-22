@@ -273,23 +273,16 @@ fn public_cli_smoke_compiles_accepted_notes_and_audits_in_topic_scope() {
 }
 
 #[test]
-fn public_cli_smoke_compile_source_bootstraps_fresh_project_checkpoint() {
+fn public_cli_smoke_compile_source_bootstraps_fresh_topic_checkpoint() {
     let fixture = common::GwikiFixture::new();
-    common::write_gcode_json(fixture.project());
+    let topic = fixture.init_topic("fresh-compile");
 
     let source = fixture.project().join("fresh-source.md");
     fs::write(
         &source,
-        "# Fresh source\n\nFresh project compile should select this ingested note.\n",
+        "# Fresh source\n\nFresh topic compile should select this ingested note.\n",
     )
     .expect("write source");
-
-    let init = gwiki(
-        &fixture,
-        fixture.project(),
-        &["--format", "json", "init", "--project"],
-    );
-    common::assert_success(&init, "project init");
 
     let source_arg = source.to_str().expect("source path utf8");
     let ingest = gwiki(
@@ -298,7 +291,8 @@ fn public_cli_smoke_compile_source_bootstraps_fresh_project_checkpoint() {
         &[
             "--format",
             "json",
-            "--project",
+            "--topic",
+            &topic.name,
             "ingest-file",
             "--no-ai",
             source_arg,
@@ -317,7 +311,8 @@ fn public_cli_smoke_compile_source_bootstraps_fresh_project_checkpoint() {
         &[
             "--format",
             "json",
-            "--project",
+            "--topic",
+            &topic.name,
             "compile",
             "Fresh Vault Compile",
             "--source",
@@ -331,7 +326,7 @@ fn public_cli_smoke_compile_source_bootstraps_fresh_project_checkpoint() {
     assert_eq!(compile_payload["command"], "compile");
     assert_eq!(compile_payload["ai"]["route"], "off");
 
-    let vault = fixture.project().join("wiki");
+    let vault = topic.vault;
     let article = vault.join("knowledge/topics/fresh-vault-compile.md");
     assert!(article.is_file(), "missing article {}", article.display());
 

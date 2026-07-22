@@ -40,6 +40,7 @@ pub(crate) mod obsidian;
 pub mod output;
 pub(crate) mod paths;
 pub(crate) mod progress;
+pub(crate) mod project_lock;
 pub(crate) mod provenance;
 pub(crate) mod recap;
 pub(crate) mod registry;
