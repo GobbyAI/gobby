@@ -135,6 +135,72 @@ describe("ChatPage – activity panel wiring", () => {
     expect(clearTerminalSessionRequestSpy).toHaveBeenCalledTimes(1);
   });
 
+  it("dispatches terminal activity only for a viewed terminal with a database session", () => {
+    const terminalMeta = {
+      ref: "#220",
+      source: "codex",
+      title: "Terminal",
+      status: "active",
+      model: "gpt-5.4",
+      externalId: "terminal-ext",
+      chatMode: null,
+      gitBranch: "main",
+      contextWindow: null,
+      agentRunId: null,
+      workflowName: null,
+      agentName: null,
+      sessionType: "terminal" as const,
+    };
+    const onShowActivityTab = vi.fn();
+    window.addEventListener("gobby:show-activity-tab", onShowActivityTab);
+
+    const { rerender } = render(
+      <ChatPage
+        chat={createChat({
+          dbSessionId: "terminal-db-1",
+          viewingSessionMeta: terminalMeta,
+        })}
+        conversations={createConversations()}
+        voice={createVoice()}
+      />,
+    );
+
+    fireEvent.click(screen.getByTestId("agent-status-open-terminal"));
+
+    const event = onShowActivityTab.mock.calls[0]?.[0] as CustomEvent;
+    expect(event).toBeInstanceOf(CustomEvent);
+    expect(event.detail).toEqual({
+      tab: "terminal",
+      sessionId: "terminal-db-1",
+    });
+
+    rerender(
+      <ChatPage
+        chat={createChat({
+          dbSessionId: null,
+          viewingSessionMeta: terminalMeta,
+        })}
+        conversations={createConversations()}
+        voice={createVoice()}
+      />,
+    );
+    expect(screen.queryByTestId("agent-status-open-terminal")).toBeNull();
+
+    rerender(
+      <ChatPage
+        chat={createChat({
+          dbSessionId: "web-db-1",
+          viewingSessionMeta: { ...terminalMeta, sessionType: "web_chat" },
+        })}
+        conversations={createConversations()}
+        voice={createVoice()}
+      />,
+    );
+    expect(screen.queryByTestId("agent-status-open-terminal")).toBeNull();
+
+    window.removeEventListener("gobby:show-activity-tab", onShowActivityTab);
+  });
+
   it("keeps invoking toggleFromChat on repeated toggles without unmounting the panel", async () => {
     isMobileState.value = true;
     const chat = createChat();

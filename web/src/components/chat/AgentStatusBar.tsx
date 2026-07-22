@@ -12,6 +12,25 @@ import { PlusIcon } from './icons/PlusIcon'
 import { PlanPendingActionStrip } from './PlanPendingActionStrip'
 import type { PlanPendingVariant } from './planPendingSurface'
 
+function PromptIcon() {
+  return (
+    <svg
+      width="14"
+      height="14"
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="2"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      aria-hidden="true"
+    >
+      <polyline points="4 17 10 11 4 5" />
+      <line x1="12" y1="19" x2="20" y2="19" />
+    </svg>
+  )
+}
+
 interface AgentStatusBarProps {
   viewingMeta?: SessionObservationMeta | null
   interactionMode: SessionInteractionMode
@@ -22,6 +41,7 @@ interface AgentStatusBarProps {
   onAttach?: () => void
   onResume?: () => void
   onDetach?: () => void
+  onOpenTerminal?: () => void
   onNewChat?: () => void
   planPendingApproval?: boolean
   planApprovalOptions?: ApprovalOption[]
@@ -73,6 +93,7 @@ export function AgentStatusBar({
   onAttach,
   onResume,
   onDetach,
+  onOpenTerminal,
   onNewChat,
   planPendingApproval = false,
   planApprovalOptions,
@@ -149,6 +170,18 @@ export function AgentStatusBar({
           >
             <UnlinkIcon />
             <span className="chat-action-btn__label">Detach</span>
+          </button>
+        )}
+        {onOpenTerminal && (
+          <button
+            type="button"
+            className="btn btn-accent btn-sm"
+            onClick={onOpenTerminal}
+            aria-label="Terminal"
+            title="Terminal"
+          >
+            <PromptIcon />
+            <span className="chat-action-btn__label">Terminal</span>
           </button>
         )}
         {canResume && (

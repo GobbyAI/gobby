@@ -353,12 +353,14 @@ export const agentStatusBarMockFactory = () => ({
     onAttach,
     onResume,
     onDetach,
+    onOpenTerminal,
     onNewChat,
   }: {
     isAttached?: boolean;
     onAttach?: () => void;
     onResume?: () => void;
     onDetach?: () => void;
+    onOpenTerminal?: () => void;
     onNewChat?: () => void;
   }) => (
     <div data-testid="agent-status-bar">
@@ -390,6 +392,15 @@ export const agentStatusBarMockFactory = () => ({
           onClick={onDetach}
         >
           Detach
+        </button>
+      )}
+      {onOpenTerminal && (
+        <button
+          type="button"
+          data-testid="agent-status-open-terminal"
+          onClick={onOpenTerminal}
+        >
+          Terminal
         </button>
       )}
       {onNewChat && (

@@ -131,6 +131,32 @@ describe('AgentStatusBar', () => {
     expect(newChatButton).toBeDisabled()
   })
 
+  it('terminal button', async () => {
+    const onOpenTerminal = vi.fn()
+    const { rerender } = render(<AgentStatusBar interactionMode="none" />)
+
+    expect(screen.queryByRole('button', { name: 'Terminal' })).toBeNull()
+
+    rerender(
+      <AgentStatusBar
+        interactionMode="none"
+        onOpenTerminal={onOpenTerminal}
+      />,
+    )
+
+    const terminalButton = screen.getByRole('button', { name: 'Terminal' })
+    expect(terminalButton).toHaveClass('btn', 'btn-accent', 'btn-sm')
+    expect(terminalButton.querySelector('polyline')).toHaveAttribute(
+      'points',
+      '4 17 10 11 4 5',
+    )
+    expect(terminalButton.querySelector('line')).toHaveAttribute('x1', '12')
+
+    await userEvent.click(terminalButton)
+
+    expect(onOpenTerminal).toHaveBeenCalledTimes(1)
+  })
+
   it('shows Resume and Detach (but not Attach) while attached', () => {
     const onResume = vi.fn()
     const onDetach = vi.fn()

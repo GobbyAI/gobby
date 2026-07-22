@@ -160,6 +160,20 @@ export function ChatMainColumn({
             canControlViewedSession ? handleResumeViewedSession : undefined
           }
           onDetach={chat.attachedSessionId ? chat.onDetachFromSession : undefined}
+          onOpenTerminal={
+            viewingMeta?.sessionType === "terminal" && chat.dbSessionId
+              ? () => {
+                  window.dispatchEvent(
+                    new CustomEvent("gobby:show-activity-tab", {
+                      detail: {
+                        tab: "terminal",
+                        sessionId: chat.dbSessionId,
+                      },
+                    }),
+                  );
+                }
+              : undefined
+          }
           onNewChat={() => onNewChat()}
           planPendingApproval={chat.planPendingApproval}
           planApprovalOptions={chat.planApprovalOptions}
