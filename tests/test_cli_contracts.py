@@ -130,7 +130,7 @@ async def test_gwiki_gateway_argv_conforms_to_vendored_contract() -> None:
             "ask",
             lambda: gateway.ask(
                 "ownership",
-                llm=True,
+                deep=True,
                 ai="direct",
                 require_ai=True,
                 token_budget=2048,
@@ -214,7 +214,7 @@ async def test_gwiki_gateway_argv_conforms_to_vendored_contract() -> None:
         if cli_name == "search":
             assert "--token-budget" in _observed_flags(argv)
         if cli_name == "ask":
-            assert {"--llm", "--ai", "--require-ai", "--token-budget"} <= _observed_flags(argv)
+            assert {"--deep", "--ai", "--require-ai", "--token-budget"} <= _observed_flags(argv)
         if cli_name == "page write":
             assert {"--path", "--mode", "--expected-hash"} <= _observed_flags(argv)
             assert gateway.stdin_by_command["write_page"] == b"# Demo\n"
@@ -231,6 +231,17 @@ async def test_gwiki_gateway_argv_conforms_to_vendored_contract() -> None:
             } <= _observed_flags(argv)
             assert argv[2] == "Ownership Story"
         assert "--project" in argv
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("options", [{"ai": "direct"}, {"require_ai": True}])
+async def test_gwiki_gateway_rejects_ai_options_without_generation(
+    options: dict[str, Any],
+) -> None:
+    gateway = RecordingGwikiGateway()
+
+    with pytest.raises(ValueError, match="require llm=True or deep=True"):
+        await gateway.ask("ownership", **options)
 
 
 @pytest.mark.unit

@@ -67,6 +67,7 @@ pub fn contract() -> CliContract {
                 positionals: vec![PositionalContract::required("QUESTION")],
                 flags: vec![
                     FlagContract::switch("--llm"),
+                    FlagContract::switch("--deep"),
                     ai_flag("--ai"),
                     FlagContract::switch("--require-ai"),
                     FlagContract::value("--token-budget", "N"),

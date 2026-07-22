@@ -84,6 +84,7 @@ def create_wiki_router(server: HTTPServer) -> APIRouter:
         q: str | None = Query(None),
         query: str | None = Query(None),
         llm: bool = Query(False),
+        deep: bool = Query(False),
         ai: str | None = Query(None),
         require_ai: bool = Query(False),
         project: str | None = Query(None),
@@ -91,7 +92,7 @@ def create_wiki_router(server: HTTPServer) -> APIRouter:
     ) -> dict[str, Any]:
         ask_query = _one_query(q, query)
         ai_value = _normalize_ai(ai) if ai is not None else None
-        timeout_seconds = resolve_ask_timeout(llm, ai_value)
+        timeout_seconds = resolve_ask_timeout(llm, deep)
         try:
             return await _read(
                 server,
@@ -100,6 +101,7 @@ def create_wiki_router(server: HTTPServer) -> APIRouter:
                 lambda gateway: gateway.ask(
                     ask_query,
                     llm=llm,
+                    deep=deep,
                     ai=ai_value,
                     require_ai=require_ai,
                 ),

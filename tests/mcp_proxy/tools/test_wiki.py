@@ -69,16 +69,26 @@ class FakeGateway:
         query: str,
         *,
         llm: bool = False,
+        deep: bool = False,
         ai: str | None = None,
         require_ai: bool = False,
         token_budget: int | None = None,
     ) -> dict[str, Any]:
+        generation_requested = llm or deep
+        if not generation_requested and (ai is not None or require_ai):
+            names = [
+                name
+                for name, enabled in (("ai", ai is not None), ("require_ai", require_ai))
+                if enabled
+            ]
+            raise ValueError(f"{' and '.join(names)} require llm=True or deep=True")
         self.calls.append(
             (
                 "ask",
                 {
                     "query": query,
                     "llm": llm,
+                    "deep": deep,
                     "ai": ai,
                     "require_ai": require_ai,
                     "token_budget": token_budget,
@@ -97,7 +107,7 @@ class FakeGateway:
             "suggested_questions": [],
             "warnings": [],
         }
-        if llm:
+        if generation_requested:
             payload["ai"] = {"requested": True, "route": "direct", "status": "available"}
             payload["synthesis"] = {"answer": "Hooks run at turn boundaries."}
         return self._result("ask", payload)
@@ -333,9 +343,16 @@ async def test_tool_schemas(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> 
     assert search_schema["required"] == ["query"]
 
     ask_schema = _schema("wiki_ask")
-    assert {"query", "project", "topic", "llm", "ai", "require_ai", "token_budget"} <= set(
-        ask_schema["properties"]
-    )
+    assert {
+        "query",
+        "project",
+        "topic",
+        "llm",
+        "deep",
+        "ai",
+        "require_ai",
+        "token_budget",
+    } <= set(ask_schema["properties"])
     assert ask_schema["required"] == ["query"]
 
     remove_schema = _schema("wiki_remove_source")
@@ -375,7 +392,7 @@ async def test_tool_schemas(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> 
         "wiki_ask",
         {
             "query": "How do hooks work?",
-            "llm": True,
+            "deep": True,
             "ai": "direct",
             "require_ai": True,
             "token_budget": 4096,
@@ -388,7 +405,8 @@ async def test_tool_schemas(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> 
             "ask",
             {
                 "query": "How do hooks work?",
-                "llm": True,
+                "llm": False,
+                "deep": True,
                 "ai": "direct",
                 "require_ai": True,
                 "token_budget": 4096,
@@ -791,10 +809,12 @@ async def test_wiki_compile_uses_generation_gateway_timeout() -> None:
 @pytest.mark.parametrize(
     ("arguments", "expected_timeout"),
     [
-        ({"query": "q", "ai": "daemon"}, GENERATION_GWIKI_TIMEOUT_SECONDS),
-        ({"query": "q", "ai": "auto"}, GENERATION_GWIKI_TIMEOUT_SECONDS),
+        (
+            {"query": "q", "deep": True, "ai": "daemon", "require_ai": True},
+            GENERATION_GWIKI_TIMEOUT_SECONDS,
+        ),
         ({"query": "q", "llm": True}, GENERATION_GWIKI_TIMEOUT_SECONDS),
-        ({"query": "q", "ai": "off"}, INTERACTIVE_GWIKI_TIMEOUT_SECONDS),
+        ({"query": "q", "llm": True, "ai": "off"}, GENERATION_GWIKI_TIMEOUT_SECONDS),
         ({"query": "q"}, INTERACTIVE_GWIKI_TIMEOUT_SECONDS),
     ],
 )

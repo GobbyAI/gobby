@@ -178,6 +178,14 @@
           "repeatable": false
         },
         {
+          "name": "--deep",
+          "takes_value": false,
+          "value_name": null,
+          "allowed_values": [],
+          "required": false,
+          "repeatable": false
+        },
+        {
           "name": "--ai",
           "takes_value": true,
           "value_name": "auto|daemon|direct|off",

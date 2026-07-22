@@ -86,10 +86,12 @@ def normalize_page_write_mode(value: str) -> str:
     return mode
 
 
-def resolve_ask_timeout(llm: bool, ai: str | None) -> float:
-    ai_may_generate = llm or (ai is not None and ai != "off")
+def resolve_ask_timeout(llm: bool, deep: bool) -> float:
+    generation_requested = llm or deep
     return (
-        GENERATION_GWIKI_TIMEOUT_SECONDS if ai_may_generate else INTERACTIVE_GWIKI_TIMEOUT_SECONDS
+        GENERATION_GWIKI_TIMEOUT_SECONDS
+        if generation_requested
+        else INTERACTIVE_GWIKI_TIMEOUT_SECONDS
     )
 
 
@@ -202,20 +204,25 @@ class GwikiGateway:
         query: str,
         *,
         llm: bool = False,
+        deep: bool = False,
         ai: str | None = None,
         require_ai: bool = False,
         token_budget: int | None = None,
     ) -> dict[str, Any]:
-        if not llm and (ai is not None or require_ai):
+        generation_requested = llm or deep
+        if not generation_requested and (ai is not None or require_ai):
             names = []
             if ai is not None:
                 names.append("ai")
             if require_ai:
                 names.append("require_ai")
-            raise ValueError(f"{' and '.join(names)} require llm=True")
+            raise ValueError(f"{' and '.join(names)} require llm=True or deep=True")
         args = ["ask", query]
         if llm:
             args.append("--llm")
+        if deep:
+            args.append("--deep")
+        if generation_requested:
             if ai is not None:
                 args.extend(["--ai", ai])
             if require_ai:

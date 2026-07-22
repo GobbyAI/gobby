@@ -70,12 +70,22 @@ class FakeGateway:
         query: str,
         *,
         llm: bool = False,
+        deep: bool = False,
         ai: str | None = None,
         require_ai: bool = False,
     ) -> dict[str, Any]:
+        generation_requested = llm or deep
+        if not generation_requested and (ai is not None or require_ai):
+            names = [
+                name
+                for name, enabled in (("ai", ai is not None), ("require_ai", require_ai))
+                if enabled
+            ]
+            raise ValueError(f"{' and '.join(names)} require llm=True or deep=True")
         payload = {
             "query": query,
             "llm": llm,
+            "deep": deep,
             "ai": ai,
             "require_ai": require_ai,
             "status": "retrieved",
@@ -303,7 +313,7 @@ def test_status_search_read_and_gateway_scope(client: TestClient) -> None:
         "/api/wiki/ask",
         params={
             "q": "hooks?",
-            "llm": True,
+            "deep": True,
             "ai": "direct",
             "require_ai": True,
             "topic": "t",
@@ -313,7 +323,8 @@ def test_status_search_read_and_gateway_scope(client: TestClient) -> None:
     assert ask.json()["payload"] == {
         "command": "ask",
         "query": "hooks?",
-        "llm": True,
+        "llm": False,
+        "deep": True,
         "ai": "direct",
         "require_ai": True,
         "status": "retrieved",
@@ -323,7 +334,8 @@ def test_status_search_read_and_gateway_scope(client: TestClient) -> None:
             "ask",
             {
                 "query": "hooks?",
-                "llm": True,
+                "llm": False,
+                "deep": True,
                 "ai": "direct",
                 "require_ai": True,
                 "status": "retrieved",
@@ -827,13 +839,20 @@ def test_compile_route_uses_generation_gateway_timeout(client: TestClient) -> No
 
 
 def test_ask_route_gateway_timeout_tracks_ai_routing(client: TestClient) -> None:
-    generative = client.get("/api/wiki/ask", params={"q": "hooks?", "ai": "daemon"})
+    generative = client.get(
+        "/api/wiki/ask",
+        params={"q": "hooks?", "deep": True, "ai": "daemon", "require_ai": True},
+    )
     assert generative.status_code == 200
     assert FakeGateway.instances[-1].timeout_seconds == GENERATION_GWIKI_TIMEOUT_SECONDS
 
     retrieval_only = client.get("/api/wiki/ask", params={"q": "hooks?"})
     assert retrieval_only.status_code == 200
     assert FakeGateway.instances[-1].timeout_seconds == INTERACTIVE_GWIKI_TIMEOUT_SECONDS
+
+    invalid_ai = client.get("/api/wiki/ask", params={"q": "hooks?", "ai": "daemon"})
+    assert invalid_ai.status_code == 400
+    assert invalid_ai.json()["detail"] == "ai require llm=True or deep=True"
 
 
 def test_write_routes_delegate_to_coordinator(

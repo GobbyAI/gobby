@@ -146,12 +146,13 @@ def create_wiki_registry(
         project: str | None = None,
         topic: str | None = None,
         llm: bool = False,
+        deep: bool = False,
         ai: str | None = None,
         require_ai: bool = False,
         token_budget: int | None = None,
     ) -> dict[str, Any]:
         ai_value = _normalize_ai(ai) if ai is not None else None
-        timeout_seconds = resolve_ask_timeout(llm, ai_value)
+        timeout_seconds = resolve_ask_timeout(llm, deep)
         return await _guard(
             lambda: read_call(
                 project,
@@ -159,6 +160,7 @@ def create_wiki_registry(
                 lambda gwiki: gwiki.ask(
                     query,
                     llm=llm,
+                    deep=deep,
                     ai=ai_value,
                     require_ai=require_ai,
                     token_budget=token_budget,
