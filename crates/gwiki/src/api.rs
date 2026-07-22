@@ -71,6 +71,7 @@ pub enum Command {
         query: String,
         scope: ScopeSelection,
         llm: bool,
+        deep: bool,
         ai: AiRouting,
         require_ai: bool,
         token_budget: Option<usize>,

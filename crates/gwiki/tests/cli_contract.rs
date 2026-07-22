@@ -5,8 +5,8 @@ use std::path::PathBuf;
 use gobby_wiki::{
     ScopeIdentity,
     output::{
-        AskAiOutput, AskCitationCheckOutput, AskEvidenceOutput, AskOutput, AskSynthesisOutput,
-        CodeCitationOutput, SearchOutput, SearchResultOutput, SearchResultType,
+        AskAiOutput, AskCitationCheckOutput, AskDeepOutput, AskEvidenceOutput, AskOutput,
+        AskSynthesisOutput, CodeCitationOutput, SearchOutput, SearchResultOutput, SearchResultType,
         SearchSourceExplanationOutput,
     },
 };
@@ -111,6 +111,49 @@ fn ask_contract_keys_serialize_from_representative_output() {
     );
 }
 
+#[test]
+fn deep_output_serializes_stop_reason_and_optional_turns() {
+    let direct = serde_json::to_value(AskDeepOutput {
+        route: "direct",
+        model: Some("test-model".to_string()),
+        turns: Some(8),
+        tool_use_count: 24,
+        max_turns: 8,
+        usage: None,
+        stop_reason: Some("max_tool_calls".to_string()),
+    })
+    .expect("direct deep output");
+    assert_eq!(direct["stop_reason"], "max_tool_calls");
+    assert_eq!(direct["turns"], 8);
+
+    let daemon = serde_json::to_value(AskDeepOutput {
+        route: "daemon",
+        model: None,
+        turns: None,
+        tool_use_count: 0,
+        max_turns: 8,
+        usage: None,
+        stop_reason: None,
+    })
+    .expect("daemon deep output");
+    for key in [
+        "route",
+        "model",
+        "turns",
+        "tool_use_count",
+        "max_turns",
+        "usage",
+        "stop_reason",
+    ] {
+        assert!(
+            daemon.get(key).is_some(),
+            "missing deep key {key}: {daemon}"
+        );
+    }
+    assert!(daemon["turns"].is_null());
+    assert!(daemon["stop_reason"].is_null());
+}
+
 fn representative_ask_output() -> AskOutput {
     AskOutput {
         command: "ask",
@@ -144,6 +187,15 @@ fn representative_ask_output() -> AskOutput {
             status: "degraded",
             model: Some("test-model".to_string()),
             error: Some("synthetic warning".to_string()),
+        }),
+        deep: Some(AskDeepOutput {
+            route: "direct",
+            model: Some("test-model".to_string()),
+            turns: Some(2),
+            tool_use_count: 3,
+            max_turns: 8,
+            usage: None,
+            stop_reason: Some("completed".to_string()),
         }),
         synthesis: Some(AskSynthesisOutput {
             answer: "Contract keys must serialize from command output.".to_string(),

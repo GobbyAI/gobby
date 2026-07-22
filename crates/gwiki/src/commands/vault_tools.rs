@@ -14,8 +14,9 @@ use serde_json::{Value, json};
 
 use crate::ScopeSelection;
 use crate::api::ScopeIdentity;
+use crate::sources::SourceManifest;
 
-use super::{read, search};
+use super::{backlinks, read, search};
 
 const DEFAULT_SEARCH_LIMIT: usize = 8;
 const MAX_SEARCH_LIMIT: usize = 25;
@@ -104,6 +105,29 @@ impl VaultToolExecutor {
         )
         .map_err(|error| tool_err(format!("read `{path}` failed: {error}")))
     }
+
+    fn backlinks(&mut self, args: &Value) -> Result<String, ToolError> {
+        let path = arg_str(args, "path")?;
+        let limit = arg_usize(args, "limit", DEFAULT_SEARCH_LIMIT, MAX_SEARCH_LIMIT);
+        let outcome = backlinks::execute(path.clone(), self.selection.clone())
+            .map_err(|error| tool_err(format!("backlinks for `{path}` failed: {error}")))?;
+        let mut records = outcome.result.payload["backlinks"]
+            .as_array()
+            .cloned()
+            .unwrap_or_default();
+        records.truncate(limit);
+        serde_json::to_string(&records)
+            .map_err(|error| tool_err(format!("backlinks serialization failed: {error}")))
+    }
+
+    fn sources(&mut self, args: &Value) -> Result<String, ToolError> {
+        let limit = arg_usize(args, "limit", DEFAULT_SEARCH_LIMIT, MAX_SEARCH_LIMIT);
+        let manifest = SourceManifest::read(&self.vault_root)
+            .map_err(|error| tool_err(format!("source manifest read failed: {error}")))?;
+        let records = manifest.entries.into_iter().take(limit).collect::<Vec<_>>();
+        serde_json::to_string(&records)
+            .map_err(|error| tool_err(format!("source manifest serialization failed: {error}")))
+    }
 }
 
 impl ToolExecutor for VaultToolExecutor {
@@ -115,6 +139,8 @@ impl ToolExecutor for VaultToolExecutor {
         match call.name.as_str() {
             "search_vault" => self.search_vault(&call.arguments),
             "read_document" => self.read_document(&call.arguments),
+            "backlinks" => self.backlinks(&call.arguments),
+            "sources" => self.sources(&call.arguments),
             other => Err(tool_err(format!("unknown tool `{other}`"))),
         }
     }
@@ -160,6 +186,40 @@ pub(crate) fn vault_tool_schemas() -> Vec<ToolSchema> {
                     }
                 },
                 "required": ["path"]
+            }),
+        ),
+        tool_schema(
+            "backlinks",
+            "List vault pages linking to a wiki path. Results are bounded and read-only.",
+            json!({
+                "type": "object",
+                "properties": {
+                    "path": {
+                        "type": "string",
+                        "description": "Vault-relative target wiki path."
+                    },
+                    "limit": {
+                        "type": "integer",
+                        "minimum": 1,
+                        "maximum": MAX_SEARCH_LIMIT
+                    }
+                },
+                "required": ["path"]
+            }),
+        ),
+        tool_schema(
+            "sources",
+            "List registered vault source records. Results are bounded and read-only.",
+            json!({
+                "type": "object",
+                "properties": {
+                    "limit": {
+                        "type": "integer",
+                        "minimum": 1,
+                        "maximum": MAX_SEARCH_LIMIT
+                    }
+                },
+                "required": []
             }),
         ),
     ]
@@ -216,10 +276,13 @@ mod tests {
     }
 
     #[test]
-    fn schemas_advertise_search_and_read_with_required_args() {
+    fn schemas_advertise_exact_readonly_capabilities() {
         let schemas = vault_tool_schemas();
         let names: Vec<&str> = schemas.iter().map(|schema| schema.name.as_str()).collect();
-        assert_eq!(names, vec!["search_vault", "read_document"]);
+        assert_eq!(
+            names,
+            vec!["search_vault", "read_document", "backlinks", "sources"]
+        );
         for schema in &schemas {
             assert_eq!(schema.parameters["type"], "object");
             assert!(
@@ -228,6 +291,79 @@ mod tests {
                 schema.name
             );
         }
+    }
+
+    #[test]
+    fn sources_tool_returns_bounded_manifest_records() {
+        use crate::sources::{SourceDraft, SourceKind, SourceManifest};
+
+        let temp = tempfile::tempdir().expect("tempdir");
+        SourceManifest::register(
+            temp.path(),
+            SourceDraft::new("first.md", SourceKind::Markdown, "2026-07-22", b"first"),
+        )
+        .expect("register first source");
+        SourceManifest::register(
+            temp.path(),
+            SourceDraft::new("second.md", SourceKind::Markdown, "2026-07-22", b"second"),
+        )
+        .expect("register second source");
+
+        let mut executor = executor(temp.path());
+        let output = executor
+            .execute(&ToolCall {
+                id: "call-sources".to_string(),
+                name: "sources".to_string(),
+                arguments: json!({"limit": 1}),
+            })
+            .expect("sources tool executes");
+        let records: Vec<Value> = serde_json::from_str(&output).expect("sources JSON");
+        assert_eq!(records.len(), 1);
+        assert!(records[0]["id"].is_string());
+    }
+
+    #[test]
+    fn backlinks_tool_returns_bounded_vault_records() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let vault = temp.path().join("wiki");
+        fs::create_dir_all(temp.path().join(".gobby")).expect("create project metadata");
+        fs::write(
+            temp.path().join(".gobby/project.json"),
+            r#"{"id":"00000000-0000-4000-8000-000000000001"}"#,
+        )
+        .expect("write project identity");
+        fs::create_dir_all(vault.join("_gwiki")).expect("create vault state");
+        fs::write(
+            vault.join("_gwiki/scope.json"),
+            r#"{"kind":"project","id":"00000000-0000-4000-8000-000000000001"}"#,
+        )
+        .expect("write vault scope");
+        fs::create_dir_all(vault.join("knowledge/concepts")).expect("create vault");
+        fs::write(vault.join("knowledge/concepts/target.md"), "# Target\n").expect("write target");
+        fs::write(
+            vault.join("knowledge/concepts/source.md"),
+            "# Source\n\nSee [[knowledge/concepts/target.md]].\n",
+        )
+        .expect("write source");
+        let mut executor = VaultToolExecutor::new(
+            ScopeSelection::project(temp.path()),
+            vault,
+            ScopeIdentity::project("00000000-0000-4000-8000-000000000001"),
+        );
+
+        let output = executor
+            .execute(&ToolCall {
+                id: "call-backlinks".to_string(),
+                name: "backlinks".to_string(),
+                arguments: json!({
+                    "path": "knowledge/concepts/target.md",
+                    "limit": 1,
+                }),
+            })
+            .expect("backlinks tool executes");
+        let records: Vec<Value> = serde_json::from_str(&output).expect("backlinks JSON");
+        assert_eq!(records.len(), 1);
+        assert_eq!(records[0]["source_path"], "knowledge/concepts/source.md");
     }
 
     fn write_vault_doc(root: &std::path::Path, body: &str) -> &'static str {

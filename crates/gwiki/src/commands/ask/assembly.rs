@@ -35,6 +35,7 @@ pub(super) fn ask_output_from_retrieval(search: SearchOutput, plan: &EvidencePla
         warnings,
         hint: search.hint,
         ai: None,
+        deep: None,
         synthesis: None,
     }
 }

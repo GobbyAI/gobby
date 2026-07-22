@@ -590,7 +590,7 @@ mod tests {
             verify_notes: Vec::new(),
             body_observability: GenerationObservability {
                 tool_call_count: 3,
-                turns: 4,
+                turns: Some(4),
                 ..GenerationObservability::default()
             },
         };
@@ -613,7 +613,7 @@ mod tests {
 
         // A content pass that made no tool calls is one-shot: no tool_loop lane.
         concept.body_observability.tool_call_count = 0;
-        concept.body_observability.turns = 1;
+        concept.body_observability.turns = Some(1);
         let doc_a = render_concept_page(
             &concept,
             &[],

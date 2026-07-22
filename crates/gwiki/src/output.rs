@@ -154,6 +154,8 @@ pub struct AskOutput {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub ai: Option<AskAiOutput>,
     #[serde(skip_serializing_if = "Option::is_none")]
+    pub deep: Option<AskDeepOutput>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub synthesis: Option<AskSynthesisOutput>,
 }
 
@@ -223,6 +225,17 @@ pub struct AskAiOutput {
     pub status: &'static str,
     pub model: Option<String>,
     pub error: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize)]
+pub struct AskDeepOutput {
+    pub route: &'static str,
+    pub model: Option<String>,
+    pub turns: Option<usize>,
+    pub tool_use_count: usize,
+    pub max_turns: usize,
+    pub usage: Option<gobby_core::ai_types::TokenUsage>,
+    pub stop_reason: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize)]

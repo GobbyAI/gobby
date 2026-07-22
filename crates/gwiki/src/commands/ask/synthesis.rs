@@ -10,7 +10,7 @@ use crate::WikiError;
 use crate::commands::ask::citation::citation_check;
 use crate::commands::ask::evidence::EvidencePlan;
 use crate::commands::ask::narration::strip_leading_model_narration;
-use crate::output::{AskAiOutput, AskOutput, AskSynthesisOutput};
+use crate::output::{AskAiOutput, AskCitationCheckOutput, AskOutput, AskSynthesisOutput};
 
 /// Ask answers are a single bounded synthesis over retrieved evidence, so they
 /// generate on the module tier. Tier -> feature profile is owned by gcore's
@@ -18,7 +18,7 @@ use crate::output::{AskAiOutput, AskOutput, AskSynthesisOutput};
 /// in config and is never pinned here. The Daemon route forwards the resolved
 /// profile name; the Direct route resolves it to a concrete target so a
 /// standalone gcore.yaml routes ask to its own provider/model/api_key.
-const ASK_TIER: GenerationTier = GenerationTier::Module;
+pub(super) const ASK_TIER: GenerationTier = GenerationTier::Module;
 
 /// Run the single bounded-prompt completion over the planned evidence.
 /// Transport is the daemon route or the direct OpenAI-compatible endpoint
@@ -69,12 +69,15 @@ pub(super) fn synthesize(
                     output,
                     require_ai,
                     Some("direct AI synthesis requires ai.text_generate api_base".to_string()),
+                    "ai_unavailable",
                 );
             }
             generate_synthesis(output, plan, &context, route, Some(&target), require_ai)
         }
         AiRouting::Daemon => generate_synthesis(output, plan, &context, route, None, require_ai),
-        AiRouting::Auto | AiRouting::Off => mark_ai_unavailable(output, require_ai, None),
+        AiRouting::Auto | AiRouting::Off => {
+            mark_ai_unavailable(output, require_ai, None, "ai_unavailable")
+        }
     }
 }
 
@@ -97,28 +100,29 @@ fn generate_synthesis(
         None,
     ) {
         Ok(result) => {
-            record_synthesis(
-                output,
-                &plan.excerpts,
-                routing_label(route),
-                result.text,
-                result.model,
-            );
+            let answer = strip_leading_model_narration(&result.text);
+            let check = citation_check(&answer, output, &plan.excerpts);
+            record_synthesis(output, routing_label(route), answer, result.model, check);
             Ok(())
         }
         Err(error) => {
             push_ai_notice_warning(output, AiNoticeKind::GenerationFailed);
-            mark_ai_unavailable(output, require_ai, Some(error.to_string()))
+            mark_ai_unavailable(
+                output,
+                require_ai,
+                Some(error.to_string()),
+                "ai_unavailable",
+            )
         }
     }
 }
 
 pub(super) fn record_synthesis(
     output: &mut AskOutput,
-    evidence_excerpts: &[String],
     route: &'static str,
     answer: String,
     model: Option<String>,
+    citation_check: AskCitationCheckOutput,
 ) {
     let answer = strip_leading_model_narration(&answer);
     output.status = "answered";
@@ -134,7 +138,6 @@ pub(super) fn record_synthesis(
         model: model.clone(),
         error: None,
     });
-    let citation_check = citation_check(&answer, output, evidence_excerpts);
     for claim in &citation_check.unsupported_claims {
         let warning =
             format!("synthesis claim lacks citation support in retrieved evidence: {claim}");
@@ -149,10 +152,11 @@ pub(super) fn record_synthesis(
     });
 }
 
-fn mark_ai_unavailable(
+pub(super) fn mark_ai_unavailable(
     output: &mut AskOutput,
     require_ai: bool,
     error: Option<String>,
+    warning: &str,
 ) -> Result<(), WikiError> {
     if require_ai {
         return Err(WikiError::Config {
@@ -170,12 +174,8 @@ fn mark_ai_unavailable(
             .degraded_sources
             .push("model_provider_unavailable".to_string());
     }
-    if !output
-        .warnings
-        .iter()
-        .any(|warning| warning == "ai_unavailable")
-    {
-        output.warnings.push("ai_unavailable".to_string());
+    if !output.warnings.iter().any(|existing| existing == warning) {
+        output.warnings.push(warning.to_string());
     }
     if let Some(ai) = &mut output.ai {
         ai.error = error;
@@ -183,7 +183,7 @@ fn mark_ai_unavailable(
     Ok(())
 }
 
-fn push_ai_notice_warning(output: &mut AskOutput, notice: AiNoticeKind) {
+pub(super) fn push_ai_notice_warning(output: &mut AskOutput, notice: AiNoticeKind) {
     let warning = ai_notice_label(notice).to_string();
     if !output.warnings.contains(&warning) {
         output.warnings.push(warning);
@@ -235,14 +235,16 @@ mod tests {
         let plan = plan_evidence(&retrieval);
         let mut output = ask_output_from_retrieval(retrieval.output, &plan);
 
+        let answer = "Hooks run at turn boundaries and dispatch envelopes to the daemon. \
+                      Kubernetes pods restart the scheduler cluster nightly."
+            .to_string();
+        let check = citation_check(&answer, &output, &plan.excerpts);
         record_synthesis(
             &mut output,
-            &plan.excerpts,
             "direct",
-            "Hooks run at turn boundaries and dispatch envelopes to the daemon. \
-                 Kubernetes pods restart the scheduler cluster nightly."
-                .to_string(),
+            answer,
             Some("test-model".to_string()),
+            check,
         );
 
         let synthesis = output.synthesis.as_ref().expect("synthesis recorded");
@@ -284,16 +286,19 @@ mod tests {
         let plan = plan_evidence(&retrieval);
         let mut output = ask_output_from_retrieval(retrieval.output, &plan);
 
+        let answer = "I'm checking the codewiki docs just enough to answer which page types it emits, \
+                      then I'll summarize the set precisely.I've got the documented page categories already. \
+                      Hooks run at turn boundaries and dispatch envelopes to the daemon."
+            .to_string();
+        let stripped = strip_leading_model_narration(&answer);
+        let check = citation_check(&stripped, &output, &plan.excerpts);
         record_synthesis(
-                &mut output,
-                &plan.excerpts,
-                "daemon",
-                "I'm checking the codewiki docs just enough to answer which page types it emits, \
-                 then I'll summarize the set precisely.I've got the documented page categories already. \
-                 Hooks run at turn boundaries and dispatch envelopes to the daemon."
-                    .to_string(),
-                Some("test-model".to_string()),
-            );
+            &mut output,
+            "daemon",
+            answer,
+            Some("test-model".to_string()),
+            check,
+        );
 
         let synthesis = output.synthesis.as_ref().expect("synthesis recorded");
         assert_eq!(
@@ -321,15 +326,11 @@ mod tests {
         let plan = plan_evidence(&retrieval);
         let mut output = ask_output_from_retrieval(retrieval.output, &plan);
 
-        record_synthesis(
-            &mut output,
-            &plan.excerpts,
-            "daemon",
-            "Hooks dispatch envelopes to the daemon at turn boundaries. \
-                 The evidence is thin."
-                .to_string(),
-            None,
-        );
+        let answer = "Hooks dispatch envelopes to the daemon at turn boundaries. \
+                      The evidence is thin."
+            .to_string();
+        let check = citation_check(&answer, &output, &plan.excerpts);
+        record_synthesis(&mut output, "daemon", answer, None, check);
 
         let synthesis = output.synthesis.as_ref().expect("synthesis recorded");
         assert_eq!(synthesis.citation_check.status, "supported");
@@ -366,8 +367,13 @@ mod tests {
             body: Some("x".repeat(450)),
         };
 
-        mark_ai_unavailable(&mut output, false, Some(error.to_string()))
-            .expect("model unavailable should degrade without require_ai");
+        mark_ai_unavailable(
+            &mut output,
+            false,
+            Some(error.to_string()),
+            "ai_unavailable",
+        )
+        .expect("model unavailable should degrade without require_ai");
 
         assert!(output.degraded);
         assert_eq!(

@@ -40,7 +40,7 @@ struct Frontmatter<'a> {
 pub(crate) struct FrontmatterToolLoop<'a> {
     pub(crate) lane: &'a str,
     pub(crate) tool_call_count: usize,
-    pub(crate) turns: usize,
+    pub(crate) turns: Option<usize>,
 }
 
 #[derive(Clone, serde::Serialize)]
@@ -191,7 +191,7 @@ fn frontmatter_with_options(
         tool_call_count: tool_loop
             .as_ref()
             .map(|tool_loop| tool_loop.tool_call_count),
-        turns: tool_loop.as_ref().map(|tool_loop| tool_loop.turns),
+        turns: tool_loop.as_ref().and_then(|tool_loop| tool_loop.turns),
         verify_notes: verify_notes
             .iter()
             .map(|note| FrontmatterVerifyNote {
@@ -447,7 +447,7 @@ mod tests {
             Some(FrontmatterToolLoop {
                 lane: "tool_loop",
                 tool_call_count: 5,
-                turns: 3,
+                turns: Some(3),
             }),
         );
         assert!(

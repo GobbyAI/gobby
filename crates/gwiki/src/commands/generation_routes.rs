@@ -7,8 +7,8 @@ use std::path::{Path, PathBuf};
 
 use gobby_core::ai::generation::{
     ChatMessage, ChatTransport, DirectChatTransport, DirectGenerationTarget, GenerationTier,
-    ToolLoopLimits, ToolPolicy, daemon_agentic_chat, generate_one_shot, profile_for_tier,
-    resolve_direct_generation_target, run_tool_loop,
+    ToolLoopLimits, ToolLoopOutcome, ToolPolicy, daemon_agentic_chat, generate_one_shot,
+    profile_for_tier, resolve_direct_generation_target, run_tool_loop,
 };
 use gobby_core::ai::{AiNoticeKind, resolve_route_observed_with_probe};
 use gobby_core::ai_context::{AiContext, AiContextOptions};
@@ -38,6 +38,14 @@ pub(crate) type BoxedExplainerGenerator =
 pub(crate) struct ToolLoopGeneration {
     pub(crate) generator: BoxedExplainerGenerator,
     pub(crate) info: ToolLoopInfo,
+}
+
+/// Provider metadata and the unmodified bounded-loop result from a direct
+/// OpenAI-compatible tool-chat investigation.
+pub(crate) struct DirectAgenticGeneration {
+    pub(crate) model: Option<String>,
+    pub(crate) outcome: ToolLoopOutcome,
+    pub(crate) data_source_degraded: Vec<String>,
 }
 
 /// Read-only gwiki subcommands the daemon's agent may run during a tool-loop
@@ -206,6 +214,34 @@ pub(crate) fn resolve_tool_loop_generator(
 /// via [`VaultToolExecutor`]. Data-source degradation mid-loop is logged as
 /// evidence, never a generation failure.
 #[allow(clippy::too_many_arguments)]
+pub(crate) fn run_direct_agentic_generation(
+    context: &AiContext,
+    profile: &str,
+    target: &DirectGenerationTarget,
+    messages: Vec<ChatMessage>,
+    scope: &ScopeSelection,
+    vault_root: &Path,
+    scope_identity: &ScopeIdentity,
+    limits: &ToolLoopLimits,
+) -> Result<DirectAgenticGeneration, String> {
+    let transport = DirectChatTransport::new(context, target.clone(), Some(profile.to_string()))
+        .map_err(|error| error.to_string())?;
+    let model = transport.model().map(str::to_string);
+    let mut executor = VaultToolExecutor::new(
+        scope.clone(),
+        vault_root.to_path_buf(),
+        scope_identity.clone(),
+    );
+    let outcome = run_tool_loop(&transport, &mut executor, messages, limits, None)
+        .map_err(|error| error.to_string())?;
+    Ok(DirectAgenticGeneration {
+        model,
+        outcome,
+        data_source_degraded: executor.into_data_source_degraded(),
+    })
+}
+
+#[allow(clippy::too_many_arguments)]
 fn run_agentic_generation(
     context: &AiContext,
     route: AiRouting,
@@ -245,52 +281,55 @@ fn run_agentic_generation(
                 model: result.model,
                 route: routing_label(route),
                 tool_use_count: Some(result.tool_use_count),
-                turns: Some(result.turns),
+                turns: result.turns,
                 usage: result.usage,
             })
         }
         AiRouting::Direct => {
             let target = target
                 .ok_or_else(|| "direct tool loop requires a resolved profile target".to_string())?;
-            let transport =
-                DirectChatTransport::new(context, target.clone(), Some(profile.to_string()))
-                    .map_err(|error| error.to_string())?;
-            let model = transport.model().map(str::to_string);
-            let mut executor = VaultToolExecutor::new(
-                scope.clone(),
-                vault_root.to_path_buf(),
-                scope_identity.clone(),
-            );
             let limits = ToolLoopLimits::default();
-            let outcome = run_tool_loop(&transport, &mut executor, messages, &limits, None)
-                .map_err(|error| error.to_string())?;
+            let direct = run_direct_agentic_generation(
+                context,
+                profile,
+                target,
+                messages,
+                scope,
+                vault_root,
+                scope_identity,
+                &limits,
+            )?;
             // Data-source degradation (graph/semantic backend down mid-loop) is
             // evidence degradation, not a generation failure — log it without
             // hard-failing.
-            let degraded = executor.into_data_source_degraded();
-            if !degraded.is_empty() {
+            if !direct.data_source_degraded.is_empty() {
                 log::warn!(
                     "Tool loop: data-source degradation during tool loop: {}",
-                    degraded.join(", ")
+                    direct.data_source_degraded.join(", ")
                 );
             }
-            if !outcome.stop_reason.is_completed() {
+            let ToolLoopOutcome {
+                content,
+                stop_reason,
+                observability,
+                total_usage,
+            } = direct.outcome;
+            if !stop_reason.is_completed() {
                 return Err(format!(
                     "tool loop did not complete ({})",
-                    outcome.stop_reason.as_str()
+                    stop_reason.as_str()
                 ));
             }
-            let content = outcome
-                .content
+            let content = content
                 .filter(|text| !text.trim().is_empty())
                 .ok_or_else(|| "tool loop returned no content".to_string())?;
             Ok(ExplainerResponse {
                 text: content,
-                model,
+                model: direct.model,
                 route: routing_label(route),
-                tool_use_count: None,
-                turns: None,
-                usage: None,
+                tool_use_count: Some(observability.tool_call_count),
+                turns: Some(observability.turns),
+                usage: total_usage,
             })
         }
         AiRouting::Off | AiRouting::Auto => Err("tool-chat route is off or unresolved".to_string()),

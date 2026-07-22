@@ -80,13 +80,10 @@ mod tests {
         let retrieval = retrieval_with_hooks_hit();
         let plan = plan_evidence(&retrieval);
         let mut output = ask_output_from_retrieval(retrieval.output, &plan);
-        record_synthesis(
-            &mut output,
-            &plan.excerpts,
-            "direct",
-            "Kubernetes pods restart the scheduler cluster nightly.".to_string(),
-            None,
-        );
+        let answer = "Kubernetes pods restart the scheduler cluster nightly.".to_string();
+        let check =
+            crate::commands::ask::citation::citation_check(&answer, &output, &plan.excerpts);
+        record_synthesis(&mut output, "direct", answer, None, check);
 
         let text = render_text(
             &output.query.clone(),
@@ -98,13 +95,10 @@ mod tests {
         let retrieval = retrieval_with_hooks_hit();
         let plan = plan_evidence(&retrieval);
         let mut grounded = ask_output_from_retrieval(retrieval.output, &plan);
-        record_synthesis(
-            &mut grounded,
-            &plan.excerpts,
-            "direct",
-            "Hooks run at turn boundaries.".to_string(),
-            None,
-        );
+        let answer = "Hooks run at turn boundaries.".to_string();
+        let check =
+            crate::commands::ask::citation::citation_check(&answer, &grounded, &plan.excerpts);
+        record_synthesis(&mut grounded, "direct", answer, None, check);
         let text = render_text(
             &grounded.query.clone(),
             &ScopeIdentity::topic("docs"),

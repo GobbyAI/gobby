@@ -350,7 +350,11 @@ struct AskArgs {
     #[arg(long)]
     llm: bool,
 
-    /// AI routing override for synthesis. Inert unless --llm is set.
+    /// Investigate the wiki with a bounded read-only agent before answering.
+    #[arg(long)]
+    deep: bool,
+
+    /// AI routing override for synthesis. Inert unless --llm or --deep is set.
     #[arg(long, default_value = "auto", value_name = "auto|daemon|direct|off")]
     ai: AiRouting,
 

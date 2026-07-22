@@ -35,13 +35,13 @@ fn research_subcommand_is_removed() {
 }
 
 #[test]
-fn ask_flag_surface_is_unchanged() {
+fn ask_flag_surface_supports_deep_investigation() {
     use clap::Parser;
 
     let cli = Cli::try_parse_from([
         "gwiki",
         "ask",
-        "--llm",
+        "--deep",
         "--ai",
         "daemon",
         "--require-ai",
@@ -51,7 +51,8 @@ fn ask_flag_surface_is_unchanged() {
     let CliCommand::Ask(args) = cli.command else {
         panic!("expected ask command");
     };
-    assert!(args.llm);
+    assert!(!args.llm);
+    assert!(args.deep);
     assert_eq!(args.ai, AiRouting::Daemon);
     assert!(args.require_ai);
 }
@@ -220,6 +221,7 @@ fn ask_cli_flags_map_to_command_options() {
         CliCommand::Ask(AskArgs {
             question: "How do hooks work?".to_string(),
             llm: true,
+            deep: true,
             ai: AiRouting::Direct,
             require_ai: true,
             token_budget: Some(2000),
@@ -233,6 +235,7 @@ fn ask_cli_flags_map_to_command_options() {
         query,
         scope,
         llm,
+        deep,
         ai,
         require_ai,
         token_budget,
@@ -244,6 +247,7 @@ fn ask_cli_flags_map_to_command_options() {
     assert_eq!(query, "How do hooks work?");
     assert_eq!(scope, ScopeSelection::topic("docs"));
     assert!(llm);
+    assert!(deep);
     assert_eq!(ai, AiRouting::Direct);
     assert!(require_ai);
     assert_eq!(token_budget, Some(2000));

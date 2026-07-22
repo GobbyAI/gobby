@@ -511,7 +511,7 @@ pub(crate) enum GenerationStatus {
 pub(crate) struct GenerationObservability {
     pub(crate) stop_reason: Option<StopReason>,
     pub(crate) tool_call_count: usize,
-    pub(crate) turns: usize,
+    pub(crate) turns: Option<usize>,
     pub(crate) usage: Option<TokenUsage>,
 }
 
@@ -547,7 +547,7 @@ impl GenerationOutcome {
             observability: GenerationObservability {
                 stop_reason: Some(StopReason::Completed),
                 tool_call_count: 0,
-                turns: 1,
+                turns: Some(1),
                 usage: None,
             },
         }
@@ -564,7 +564,7 @@ impl GenerationOutcome {
             observability: GenerationObservability {
                 stop_reason: Some(StopReason::Completed),
                 tool_call_count: 0,
-                turns: 1,
+                turns: Some(1),
                 usage: None,
             },
         }
@@ -632,7 +632,7 @@ impl GenerationOutcome {
         let observability = GenerationObservability {
             stop_reason: Some(outcome.stop_reason),
             tool_call_count: outcome.observability.tool_call_count,
-            turns: outcome.observability.turns,
+            turns: Some(outcome.observability.turns),
             usage: outcome.total_usage,
         };
         if !outcome.stop_reason.is_completed() {
@@ -671,12 +671,25 @@ impl GenerationOutcome {
     /// `Generated`. The daemon's tool-use / turn counts and reported usage are
     /// preserved for `_meta` recording.
     pub(crate) fn from_daemon_agentic(result: DaemonAgenticResult, prompt: &str) -> Self {
+        let stop_reason = match result.stop_reason.as_deref() {
+            Some("completed") => Some(StopReason::Completed),
+            Some("max_turns") => Some(StopReason::MaxTurns),
+            Some("max_tool_calls") => Some(StopReason::MaxToolCalls),
+            Some("timeout") => Some(StopReason::Timeout),
+            Some(_) | None => None,
+        };
         let observability = GenerationObservability {
-            stop_reason: Some(StopReason::Completed),
+            stop_reason,
             tool_call_count: result.tool_use_count,
             turns: result.turns,
             usage: result.usage,
         };
+        if stop_reason.is_some_and(|reason| !reason.is_completed()) {
+            return Self::rejected_with_observability(
+                GenerationFailureCause::Unavailable,
+                observability,
+            );
+        }
         match result.content {
             None => Self::rejected_with_observability(
                 GenerationFailureCause::Unavailable,
@@ -1144,7 +1157,7 @@ pub(crate) fn generate_aggregate(
         // reason code — no skeleton, no silent one-shot fallback (#978).
         if let Some(cause) = result.outcome.failure_cause() {
             return Err(anyhow::anyhow!(
-                "Tool-loop {label} generation failed ({}, stop={:?}, turns={}, tool_calls={}); \
+                "Tool-loop {label} generation failed ({}, stop={:?}, turns={:?}, tool_calls={}); \
                  page not written (no skeleton, no one-shot fallback)",
                 cause.reason_code(),
                 observability.stop_reason,
@@ -1495,7 +1508,7 @@ mod tests {
             Some(StopReason::Completed)
         );
         assert_eq!(outcome.observability.tool_call_count, 0);
-        assert_eq!(outcome.observability.turns, 1);
+        assert_eq!(outcome.observability.turns, Some(1));
         assert_eq!(outcome.observability.usage, None);
         assert!(matches!(
             outcome.into_content(),
@@ -1507,7 +1520,7 @@ mod tests {
         let mut generate = Some::<&mut TextGenerator<'_>>(&mut failing);
         let outcome = maybe_generate(&mut generate, "prompt", "system", PromptTier::Aggregate);
         assert_eq!(outcome.observability.stop_reason, None);
-        assert_eq!(outcome.observability.turns, 0);
+        assert_eq!(outcome.observability.turns, None);
     }
 
     #[test]
@@ -1571,7 +1584,7 @@ mod tests {
             "investigate the repo",
         );
         assert_eq!(outcome.observability().tool_call_count, 5);
-        assert_eq!(outcome.observability().turns, 3);
+        assert_eq!(outcome.observability().turns, Some(3));
         assert_eq!(
             outcome.observability().stop_reason,
             Some(StopReason::Completed)
@@ -1594,7 +1607,7 @@ mod tests {
             max_turns.failure_cause(),
             Some(GenerationFailureCause::Unavailable)
         );
-        assert_eq!(max_turns.observability().turns, 8);
+        assert_eq!(max_turns.observability().turns, Some(8));
         // Completed but no content is also a failure.
         let empty = GenerationOutcome::from_tool_loop(
             tool_loop_outcome(None, StopReason::Completed, 1, 1),
@@ -1663,13 +1676,15 @@ mod tests {
     fn daemon_agentic_result(
         content: Option<&str>,
         tool_use_count: usize,
-        turns: usize,
+        turns: Option<usize>,
+        stop_reason: Option<&str>,
     ) -> DaemonAgenticResult {
         DaemonAgenticResult {
             content: content.map(str::to_string),
             model: Some("claude-opus".to_string()),
             tool_use_count,
             turns,
+            stop_reason: stop_reason.map(str::to_string),
             usage: Some(TokenUsage {
                 input_tokens: Some(100),
                 output_tokens: Some(50),
@@ -1681,11 +1696,16 @@ mod tests {
     #[test]
     fn from_daemon_agentic_maps_completed_content_with_provenance() {
         let outcome = GenerationOutcome::from_daemon_agentic(
-            daemon_agentic_result(Some("A grounded narrative body."), 7, 4),
+            daemon_agentic_result(
+                Some("A grounded narrative body."),
+                7,
+                Some(4),
+                Some("completed"),
+            ),
             "investigate the repo",
         );
         assert_eq!(outcome.observability().tool_call_count, 7);
-        assert_eq!(outcome.observability().turns, 4);
+        assert_eq!(outcome.observability().turns, Some(4));
         assert_eq!(
             outcome.observability().stop_reason,
             Some(StopReason::Completed)
@@ -1707,18 +1727,21 @@ mod tests {
     #[test]
     fn from_daemon_agentic_classifies_missing_echo_and_refusal() {
         // No content from the daemon -> unavailable, with provenance preserved.
-        let empty = GenerationOutcome::from_daemon_agentic(daemon_agentic_result(None, 3, 2), "p");
+        let empty = GenerationOutcome::from_daemon_agentic(
+            daemon_agentic_result(None, 3, Some(2), Some("completed")),
+            "p",
+        );
         assert_eq!(
             empty.failure_cause(),
             Some(GenerationFailureCause::Unavailable)
         );
-        assert_eq!(empty.observability().turns, 2);
+        assert_eq!(empty.observability().turns, Some(2));
 
         // Echoing a prompt past the echo-detection floor -> prompt-echo.
         let prompt = "Summarize the architecture of this codebase in thorough detail for the \
                       reader, covering every subsystem boundary and data flow.";
         let echo = GenerationOutcome::from_daemon_agentic(
-            daemon_agentic_result(Some(prompt), 1, 1),
+            daemon_agentic_result(Some(prompt), 1, Some(1), Some("completed")),
             prompt,
         );
         assert_eq!(
@@ -1730,7 +1753,8 @@ mod tests {
             daemon_agentic_result(
                 Some("I cannot write this documentation for the codebase."),
                 1,
-                1,
+                Some(1),
+                Some("completed"),
             ),
             prompt,
         );
@@ -1738,6 +1762,39 @@ mod tests {
             refusal.failure_cause(),
             Some(GenerationFailureCause::Refusal)
         );
+    }
+
+    #[test]
+    fn from_daemon_agentic_maps_limit_exits_and_optional_provenance() {
+        for (reported, expected) in [
+            ("max_turns", StopReason::MaxTurns),
+            ("max_tool_calls", StopReason::MaxToolCalls),
+            ("timeout", StopReason::Timeout),
+        ] {
+            let outcome = GenerationOutcome::from_daemon_agentic(
+                daemon_agentic_result(Some("partial"), 5, Some(8), Some(reported)),
+                "prompt",
+            );
+            assert_eq!(outcome.observability().stop_reason, Some(expected));
+            assert_eq!(outcome.observability().turns, Some(8));
+            assert_eq!(
+                outcome.failure_cause(),
+                Some(GenerationFailureCause::Unavailable)
+            );
+        }
+
+        for reported in [None, Some("provider_specific")] {
+            let outcome = GenerationOutcome::from_daemon_agentic(
+                daemon_agentic_result(Some("grounded"), 2, None, reported),
+                "prompt",
+            );
+            assert_eq!(outcome.observability().stop_reason, None);
+            assert_eq!(outcome.observability().turns, None);
+            assert!(matches!(
+                outcome.into_content(),
+                GenerationContent::Generated(text) if text == "grounded"
+            ));
+        }
     }
 
     #[test]
@@ -1765,7 +1822,7 @@ mod tests {
         .expect("lane B success is not a hard fail");
         assert_eq!(aggregate.lane, LANE_TOOL_LOOP);
         assert_eq!(aggregate.observability.tool_call_count, 4);
-        assert_eq!(aggregate.observability.turns, 2);
+        assert_eq!(aggregate.observability.turns, Some(2));
         assert!(aggregate.data_source_degraded.is_empty());
         assert!(matches!(
             aggregate.content,
@@ -1798,7 +1855,7 @@ mod tests {
         // The hard-fail surfaces the loop's termination reason so a stalled or
         // budget-exhausted investigation is diagnosable (not just "unavailable").
         assert!(message.contains("MaxToolCalls"), "{message}");
-        assert!(message.contains("turns=8"), "{message}");
+        assert!(message.contains("turns=Some(8)"), "{message}");
         assert!(message.contains("tool_calls=24"), "{message}");
     }
 

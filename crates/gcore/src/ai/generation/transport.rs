@@ -135,8 +135,10 @@ pub struct DaemonAgenticResult {
     pub model: Option<String>,
     /// Tool invocations the daemon's agent made during its investigation.
     pub tool_use_count: usize,
-    /// Investigation turns the daemon's agent ran.
-    pub turns: usize,
+    /// Provider-native investigation turns, when reported.
+    pub turns: Option<usize>,
+    /// Canonical termination reason reported by the daemon, when available.
+    pub stop_reason: Option<String>,
     /// Token usage, when reported.
     pub usage: Option<TokenUsage>,
 }
@@ -302,13 +304,16 @@ pub(crate) fn parse_daemon_agentic(value: &Value) -> DaemonAgenticResult {
             .and_then(|inv| inv.get(key))
             .and_then(Value::as_u64)
             .and_then(|value| usize::try_from(value).ok())
-            .unwrap_or(0)
     };
     DaemonAgenticResult {
         content,
         model: chat_completion_model(value),
-        tool_use_count: count("tool_use_count"),
+        tool_use_count: count("tool_use_count").unwrap_or(0),
         turns: count("turns"),
+        stop_reason: investigation
+            .and_then(|inv| inv.get("stop_reason"))
+            .and_then(Value::as_str)
+            .map(str::to_string),
         usage: chat_completion_usage(value),
     }
 }

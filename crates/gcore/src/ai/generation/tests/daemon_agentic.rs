@@ -79,7 +79,7 @@ fn daemon_agentic_chat_posts_once_and_parses_narrative_and_investigation() {
     // The daemon runs its own agent loop and returns the FINAL narrative plus
     // investigation provenance: a single POST under the local CLI token, no
     // tools/tool_choice/model passthrough, and no per-turn tool-call response.
-    let response = r##"{"model":"claude-opus","choices":[{"finish_reason":"stop","message":{"role":"assistant","content":"# Architecture\n\nGrounded narrative citing crates/foo/src/lib.rs:12."}}],"investigation":{"tool_use_count":7,"turns":4,"tools":{"Read":5,"Grep":2}},"usage":{"input_tokens":1200,"output_tokens":800,"total_tokens":2000}}"##;
+    let response = r##"{"model":"claude-opus","choices":[{"finish_reason":"stop","message":{"role":"assistant","content":"# Architecture\n\nGrounded narrative citing crates/foo/src/lib.rs:12."}}],"investigation":{"tool_use_count":7,"turns":4,"stop_reason":"max_turns","tools":{"Read":5,"Grep":2}},"usage":{"input_tokens":1200,"output_tokens":800,"total_tokens":2000}}"##;
     let (api_base, handle) = spawn_json_response(response).expect("spawn test server");
     let home = tempfile::tempdir().expect("temp home");
     let _env = DaemonEnvGuard::set(&api_base, home.path(), "agentic-token");
@@ -141,7 +141,8 @@ fn daemon_agentic_chat_posts_once_and_parses_narrative_and_investigation() {
     );
     assert_eq!(result.model.as_deref(), Some("claude-opus"));
     assert_eq!(result.tool_use_count, 7);
-    assert_eq!(result.turns, 4);
+    assert_eq!(result.turns, Some(4));
+    assert_eq!(result.stop_reason.as_deref(), Some("max_turns"));
     assert_eq!(
         result.usage.and_then(|usage| usage.token_count()),
         Some(2000)
@@ -187,8 +188,24 @@ fn daemon_agentic_chat_defaults_missing_investigation_and_omits_unset_fields() {
 
     assert_eq!(result.content.as_deref(), Some("body"));
     assert_eq!(result.tool_use_count, 0);
-    assert_eq!(result.turns, 0);
+    assert_eq!(result.turns, None);
+    assert_eq!(result.stop_reason, None);
     assert!(result.usage.is_none());
+}
+
+#[test]
+fn parse_daemon_agentic_preserves_null_investigation_provenance() {
+    let result = parse_daemon_agentic(&json!({
+        "investigation": {
+            "turns": null,
+            "stop_reason": null,
+            "tool_use_count": null
+        }
+    }));
+
+    assert_eq!(result.turns, None);
+    assert_eq!(result.stop_reason, None);
+    assert_eq!(result.tool_use_count, 0);
 }
 
 #[test]

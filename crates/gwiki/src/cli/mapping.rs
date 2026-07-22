@@ -102,6 +102,7 @@ pub(super) fn command_from_cli(
             query: args.question,
             scope,
             llm: args.llm,
+            deep: args.deep,
             ai: args.ai,
             require_ai: args.require_ai,
             token_budget: args.token_budget,

@@ -39,7 +39,10 @@ pub(crate) fn build_architecture_doc(
     } else {
         LANE_ONE_SHOT
     };
-    let mut observability = GenerationObservability::default();
+    let mut observability = GenerationObservability {
+        turns: (tool_loop.is_some() || generate.is_some()).then_some(0),
+        ..GenerationObservability::default()
+    };
 
     let mut subsystems = Vec::new();
     let subsystem_modules = modules
@@ -95,7 +98,10 @@ pub(crate) fn build_architecture_doc(
             &format!("architecture subsystem {}", module.module),
         )?;
         observability.tool_call_count += generated.observability.tool_call_count;
-        observability.turns += generated.observability.turns;
+        observability.turns = observability
+            .turns
+            .zip(generated.observability.turns)
+            .map(|(total, turns)| total + turns);
         degraded_sources.extend(generated.data_source_degraded);
         let responsibility = match generated.content {
             GenerationContent::Generated(generated) => {
@@ -155,7 +161,10 @@ pub(crate) fn build_architecture_doc(
             "architecture narrative",
         )?;
         observability.tool_call_count += generated.observability.tool_call_count;
-        observability.turns += generated.observability.turns;
+        observability.turns = observability
+            .turns
+            .zip(generated.observability.turns)
+            .map(|(total, turns)| total + turns);
         degraded_sources.extend(generated.data_source_degraded);
         match generated.content {
             GenerationContent::Generated(generated) => {
