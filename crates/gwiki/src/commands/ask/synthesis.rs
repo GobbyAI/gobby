@@ -353,7 +353,20 @@ mod tests {
         let plan = plan_evidence(&retrieval);
         let mut output = ask_output_from_retrieval(retrieval.output, &plan);
 
-        mark_ai_unavailable(&mut output, false, Some("no model".to_string()))
+        output.ai = Some(AskAiOutput {
+            requested: true,
+            requested_mode: "direct",
+            route: "direct",
+            status: "unavailable",
+            model: None,
+            error: None,
+        });
+        let error = gobby_core::ai_types::AiError::HttpStatus {
+            status: 401,
+            body: Some("x".repeat(450)),
+        };
+
+        mark_ai_unavailable(&mut output, false, Some(error.to_string()))
             .expect("model unavailable should degrade without require_ai");
 
         assert!(output.degraded);
@@ -362,5 +375,12 @@ mod tests {
             vec!["model_provider_unavailable".to_string()]
         );
         assert_eq!(output.warnings, vec!["ai_unavailable".to_string()]);
+        assert_eq!(
+            output.ai.and_then(|ai| ai.error),
+            Some(format!(
+                "AI endpoint returned HTTP 401: {}",
+                "x".repeat(400)
+            ))
+        );
     }
 }

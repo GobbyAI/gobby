@@ -45,18 +45,38 @@ impl DirectGenerationTarget {
 /// Each field prefers `ai.text_generate.profiles.<profile>.<field>` and falls
 /// back to the base `ai.text_generate.<field>` value. The base fallback keeps a
 /// single-endpoint standalone config working without per-profile blocks: all
-/// tiers then resolve to the same target.
+/// tiers then resolve to the same target. When no API key is configured, known
+/// providers fall back to their conventional API-key environment variable.
 pub fn resolve_direct_generation_target(
     source: &mut impl ConfigSource,
     profile: &str,
 ) -> DirectGenerationTarget {
+    let api_base = profile_or_base(source, profile, ai_keys::PROFILE_API_BASE);
+    let configured_api_key = profile_or_base(source, profile, ai_keys::PROFILE_API_KEY);
+    let model = profile_or_base(source, profile, ai_keys::PROFILE_MODEL);
+    let provider = profile_or_base(source, profile, ai_keys::PROFILE_PROVIDER);
+    let api_key = configured_api_key.or_else(|| default_env_api_key(provider.as_deref()));
+
     DirectGenerationTarget {
-        api_base: profile_or_base(source, profile, ai_keys::PROFILE_API_BASE),
-        api_key: profile_or_base(source, profile, ai_keys::PROFILE_API_KEY),
-        model: profile_or_base(source, profile, ai_keys::PROFILE_MODEL),
-        provider: profile_or_base(source, profile, ai_keys::PROFILE_PROVIDER),
+        api_base,
+        api_key,
+        model,
+        provider,
         reasoning_effort: profile_reasoning_effort(source, profile),
     }
+}
+
+fn default_env_api_key(provider: Option<&str>) -> Option<String> {
+    let env_name = match provider.map(str::trim) {
+        Some("anthropic") => "ANTHROPIC_API_KEY",
+        Some("openai") => "OPENAI_API_KEY",
+        Some("openrouter") => "OPENROUTER_API_KEY",
+        Some("groq") => "GROQ_API_KEY",
+        _ => return None,
+    };
+    std::env::var(env_name)
+        .ok()
+        .and_then(|value| non_empty(Some(&value)).map(str::to_owned))
 }
 
 /// Profile-specific field, falling back to the base `ai.text_generate.<field>`.
