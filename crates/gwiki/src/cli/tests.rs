@@ -1,7 +1,7 @@
 use clap::CommandFactory;
 use gobby_core::ai_context::AiContext;
 use gobby_core::config::{AiRouting, EnvOnlySource};
-use gobby_wiki::ScopeSelection;
+use gobby_wiki::{PurgeTarget, ScopeSelection};
 
 use crate::cli_runtime::log_level;
 
@@ -95,13 +95,48 @@ fn purge_flag_surface_requires_explicit_confirmation() {
     };
     assert!(args.yes);
 
-    let command = command_from_cli(CliCommand::Purge(PurgeArgs { yes: true }), cli.scope.into())
-        .expect("map purge command");
-    let Command::Purge { scope, yes } = command else {
+    let command = command_from_cli(
+        CliCommand::Purge(PurgeArgs {
+            project_id: None,
+            yes: true,
+        }),
+        cli.scope.into(),
+    )
+    .expect("map purge command");
+    let Command::Purge { target, yes } = command else {
         panic!("expected purge command");
     };
-    assert_eq!(scope, ScopeSelection::project(PathBuf::from(".")));
+    assert_eq!(
+        target,
+        PurgeTarget::selection(ScopeSelection::project(PathBuf::from(".")))
+    );
     assert!(yes);
+}
+
+#[test]
+fn purge_project_id_maps_without_a_project_root() {
+    use clap::Parser;
+
+    let project_id = "7c2f6952-2c51-4c57-a5f9-b5ac194b6599";
+    let cli = Cli::try_parse_from(["gwiki", "purge", "--project-id", project_id, "--yes"])
+        .expect("ID-native purge flags parse");
+    let command = command_from_cli(cli.command, cli.scope.into()).expect("map ID-native purge");
+    let Command::Purge { target, yes } = command else {
+        panic!("expected purge command");
+    };
+
+    assert_eq!(target, PurgeTarget::project_id(project_id));
+    assert!(yes);
+}
+
+#[test]
+fn prune_force_maps_to_reachable_command() {
+    use clap::Parser;
+
+    let cli = Cli::try_parse_from(["gwiki", "prune", "--force"]).expect("prune flags parse");
+    let command = command_from_cli(cli.command, cli.scope.into()).expect("map prune command");
+
+    assert_eq!(command, Command::Prune { force: true });
 }
 
 #[test]

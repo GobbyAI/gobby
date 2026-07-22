@@ -1,6 +1,6 @@
 use crate::project_lock::{ProjectLockGuard, acquire_purge_lock, acquire_writer_lock};
 use crate::support::scope::resolve_command_scope;
-use crate::{Command, ScopeSelection, WikiError};
+use crate::{Command, PurgeTarget, ScopeSelection, WikiError};
 
 #[derive(Debug)]
 enum CommandClassification<'a> {
@@ -9,7 +9,7 @@ enum CommandClassification<'a> {
         command: &'static str,
     },
     ExplicitPurge {
-        scope: &'a ScopeSelection,
+        target: &'a PurgeTarget,
     },
     TopicOnly,
     ReadOnly,
@@ -36,9 +36,10 @@ fn classify_command(command: &Command) -> CommandClassification<'_> {
             dry_run: false,
             ..
         } => writer(scope, "gwiki remove-source"),
-        Command::Purge { scope, .. } => CommandClassification::ExplicitPurge { scope },
+        Command::Purge { target, .. } => CommandClassification::ExplicitPurge { target },
         Command::Init { .. }
         | Command::Setup { .. }
+        | Command::Prune { .. }
         | Command::Refresh { dry_run: true, .. }
         | Command::Sources { .. }
         | Command::RemoveSource { dry_run: true, .. }
@@ -83,13 +84,20 @@ pub(super) fn acquire_command_lock(
             };
             acquire_writer_lock(&project_id, command).map(Some)
         }
-        CommandClassification::ExplicitPurge { scope } => {
-            let Some(project_id) = project_id_for_admission(scope)? else {
+        CommandClassification::ExplicitPurge { target } => {
+            let Some(project_id) = purge_project_id_for_admission(target)? else {
                 return Ok(None);
             };
             acquire_purge_lock(&project_id).map(Some)
         }
         CommandClassification::TopicOnly | CommandClassification::ReadOnly => Ok(None),
+    }
+}
+
+fn purge_project_id_for_admission(target: &PurgeTarget) -> Result<Option<String>, WikiError> {
+    match target {
+        PurgeTarget::ProjectId(project_id) => Ok(Some(project_id.clone())),
+        PurgeTarget::Selection(selection) => project_id_for_admission(selection),
     }
 }
 

@@ -19,6 +19,7 @@ pub(crate) mod page;
 pub(crate) mod pages;
 pub(crate) mod paths;
 mod project_admission;
+pub(crate) mod prune;
 pub(crate) mod purge;
 pub(crate) mod read;
 pub(crate) mod recap;
@@ -73,7 +74,8 @@ fn dispatch(command: Command, run_options: RunOptions) -> Result<CommandOutcome,
             dry_run,
             keep_asset,
         } => sources::execute_remove(id, scope, dry_run, keep_asset),
-        Command::Purge { scope, yes } => purge::execute(scope, yes),
+        Command::Purge { target, yes } => purge::execute(target, yes),
+        Command::Prune { force } => prune::execute(force),
         Command::Search {
             query,
             scope,

@@ -1,8 +1,11 @@
+use std::collections::BTreeSet;
+
 use gobby_core::config::FalkorConfig;
 use gobby_core::falkor::{
     GraphClient, escape_label, escape_property, escape_rel_type, escape_string,
 };
 use postgres::Client;
+use serde_json::Value;
 
 use crate::WikiError;
 use crate::graph::{
@@ -111,6 +114,41 @@ pub(crate) fn purge_scope(scope: &SearchScope, config: &FalkorConfig) -> Result<
         execute_statement(&mut client, statement).map_err(graph_sync_error)?;
     }
     Ok(())
+}
+
+pub(crate) fn list_project_scopes(config: &FalkorConfig) -> Result<Vec<String>, WikiError> {
+    let mut client = GraphClient::from_config(config, FALKORDB_GRAPH_NAME).map_err(|error| {
+        WikiError::Config {
+            detail: format!("failed to connect to FalkorDB for gwiki prune discovery: {error}"),
+        }
+    })?;
+    let rows = client
+        .query(project_scope_query(), None)
+        .map_err(|error| WikiError::Config {
+            detail: format!("failed to enumerate FalkorDB gwiki project scopes: {error}"),
+        })?;
+
+    let mut project_ids = BTreeSet::new();
+    for row in rows {
+        let Some(project_id) = row.get("project_id").and_then(Value::as_str) else {
+            return Err(WikiError::Config {
+                detail: "FalkorDB gwiki scope discovery returned a non-string project_id"
+                    .to_string(),
+            });
+        };
+        project_ids.insert(project_id.to_string());
+    }
+    Ok(project_ids.into_iter().collect())
+}
+
+fn project_scope_query() -> &'static str {
+    "MATCH (node) \
+     WHERE node.scope_kind = 'project' \
+     RETURN DISTINCT node.scope_id AS project_id \
+     UNION \
+     MATCH ()-[rel]->() \
+     WHERE rel.scope_kind = 'project' \
+     RETURN DISTINCT rel.scope_id AS project_id"
 }
 
 /// Latest-deleted document paths in the scope, mirroring the Qdrant stale-path
@@ -254,5 +292,15 @@ mod tests {
                 "orphan-cleanup"
             ]
         );
+    }
+
+    #[test]
+    fn project_scope_discovery_covers_nodes_and_relationships() {
+        let query = project_scope_query();
+
+        assert!(query.contains("MATCH (node)"));
+        assert!(query.contains("MATCH ()-[rel]->()"));
+        assert_eq!(query.matches("scope_kind = 'project'").count(), 2);
+        assert!(query.contains("UNION"));
     }
 }

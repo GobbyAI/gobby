@@ -522,6 +522,38 @@ fn collection_point_count_reads_collection_info() {
     );
 }
 
+#[test]
+fn collection_listing_is_sorted_and_deduplicated() {
+    let (base_url, request_handle) = spawn_qdrant_response(
+        200,
+        json!({
+            "result": {
+                "collections": [
+                    {"name": "gwiki_topic_rust"},
+                    {"name": "gwiki_project_abc"},
+                    {"name": "gwiki_project_abc"}
+                ]
+            }
+        }),
+    );
+    let config = QdrantConfig {
+        url: Some(base_url),
+        api_key: None,
+    };
+
+    let collections = list_collections(&config).expect("collection listing");
+    let request = request_handle.join().expect("request thread").unwrap();
+
+    assert_eq!(
+        collections,
+        vec![
+            "gwiki_project_abc".to_string(),
+            "gwiki_topic_rust".to_string()
+        ]
+    );
+    assert!(request.starts_with("GET /collections HTTP/1.1"));
+}
+
 fn spawn_qdrant_response(status: u16, body: Value) -> (String, RequestHandle) {
     spawn_json_response_with_status(status, body.to_string()).expect("spawn qdrant test server")
 }

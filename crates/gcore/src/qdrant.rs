@@ -325,6 +325,40 @@ pub fn delete_collection(config: &QdrantConfig, collection: &str) -> anyhow::Res
     Ok(())
 }
 
+/// Lists every collection name from Qdrant in deterministic order.
+pub fn list_collections(config: &QdrantConfig) -> anyhow::Result<Vec<String>> {
+    const REQUEST_PATH: &str = "/collections";
+    let resp = qdrant_request(config, reqwest::Method::GET, REQUEST_PATH)?.send()?;
+    let status = resp.status();
+    if !status.is_success() {
+        let body = resp
+            .text()
+            .unwrap_or_else(|error| format!("<failed to read response body: {error}>"));
+        return Err(QdrantError::HttpStatus {
+            operation: "list collections",
+            status,
+            body,
+            collection: None,
+            request: Some(format!("GET {REQUEST_PATH}")),
+        }
+        .into());
+    }
+
+    let data: Value = resp.json()?;
+    let mut collections = data
+        .get("result")
+        .and_then(|result| result.get("collections"))
+        .and_then(Value::as_array)
+        .into_iter()
+        .flatten()
+        .filter_map(|collection| collection.get("name").and_then(Value::as_str))
+        .map(str::to_string)
+        .collect::<Vec<_>>();
+    collections.sort_unstable();
+    collections.dedup();
+    Ok(collections)
+}
+
 fn create_collection(
     config: &QdrantConfig,
     collection: &str,
@@ -594,6 +628,7 @@ fn qdrant_http_error(
 fn operation_method(operation: &str) -> &'static str {
     match operation {
         "get collection" => "GET",
+        "list collections" => "GET",
         "create collection" => "PUT",
         "delete collection" => "DELETE",
         "delete points" => "POST",

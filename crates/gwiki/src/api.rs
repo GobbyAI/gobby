@@ -51,8 +51,11 @@ pub enum Command {
         keep_asset: bool,
     },
     Purge {
-        scope: ScopeSelection,
+        target: PurgeTarget,
         yes: bool,
+    },
+    Prune {
+        force: bool,
     },
     Search {
         query: String,
@@ -355,6 +358,23 @@ pub enum ScopeSelection {
     Detect,
     ProjectRoot(PathBuf),
     Topic(String),
+}
+
+/// Scope target accepted by destructive purge commands.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum PurgeTarget {
+    Selection(ScopeSelection),
+    ProjectId(String),
+}
+
+impl PurgeTarget {
+    pub fn selection(selection: ScopeSelection) -> Self {
+        Self::Selection(selection)
+    }
+
+    pub fn project_id(project_id: impl Into<String>) -> Self {
+        Self::ProjectId(project_id.into())
+    }
 }
 
 impl ScopeSelection {

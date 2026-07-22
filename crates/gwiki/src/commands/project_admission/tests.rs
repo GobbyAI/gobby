@@ -114,7 +114,7 @@ fn dry_run_variants_are_classified_as_read_only() {
 #[test]
 fn purge_has_its_own_serialized_cleanup_classification() {
     let command = Command::Purge {
-        scope: ScopeSelection::topic("classification-fixture"),
+        target: PurgeTarget::selection(ScopeSelection::topic("classification-fixture")),
         yes: true,
     };
 
@@ -122,6 +122,17 @@ fn purge_has_its_own_serialized_cleanup_classification() {
         classify_command(&command),
         CommandClassification::ExplicitPurge { .. }
     ));
+}
+
+#[test]
+fn id_native_purge_admission_does_not_resolve_a_project_root() {
+    let project_id = "7c2f6952-2c51-4c57-a5f9-b5ac194b6599";
+
+    assert_eq!(
+        purge_project_id_for_admission(&PurgeTarget::project_id(project_id))
+            .expect("ID-native admission"),
+        Some(project_id.to_string())
+    );
 }
 
 #[test]

@@ -20,6 +20,7 @@ const CLI_SUBCOMMANDS: &[&str] = &[
     "sources",
     "remove-source",
     "purge",
+    "prune",
     "search",
     "ask",
     "read",
@@ -172,6 +173,8 @@ enum CliCommand {
     RemoveSource(RemoveSourceArgs),
     /// Purge generated/indexed wiki state in the selected scope.
     Purge(PurgeArgs),
+    /// Reconcile generated project state whose authoritative project row is absent.
+    Prune(PruneArgs),
     /// Search wiki documents in the selected scope.
     Search(SearchArgs),
     /// Ask a question about wiki documents in the selected scope.
@@ -301,9 +304,20 @@ struct SetupArgs {
 
 #[derive(Debug, Args)]
 struct PurgeArgs {
+    /// Purge a project scope directly by UUID without resolving a project root.
+    #[arg(long, value_name = "UUID", conflicts_with_all = ["project", "topic"])]
+    project_id: Option<uuid::Uuid>,
+
     /// Confirm destructive purge of generated/indexed wiki state for the selected scope.
     #[arg(long)]
     yes: bool,
+}
+
+#[derive(Debug, Args)]
+struct PruneArgs {
+    /// Skip the destructive reconciliation confirmation prompt.
+    #[arg(long)]
+    force: bool,
 }
 
 #[derive(Debug, Args)]

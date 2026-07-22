@@ -13,7 +13,7 @@ use crate::support::scope::{
     resolve_command_scope, resolved_scope_identity, search_scope_for_resolved,
 };
 use crate::support::search::PostgresConfigSource;
-use crate::{CommandOutcome, ScopeIdentity, ScopeSelection, WikiError};
+use crate::{CommandOutcome, PurgeTarget, ScopeIdentity, WikiError};
 
 const COMMAND: &str = "gwiki purge";
 
@@ -41,21 +41,44 @@ pub(crate) struct PostgresPurgeSummary {
     ingestions: u64,
 }
 
+impl PostgresPurgeSummary {
+    pub(crate) fn total(&self) -> u64 {
+        self.documents + self.chunks + self.links + self.sources + self.ingestions
+    }
+}
+
 #[derive(Debug, Serialize)]
 pub(crate) struct BackendPurgeSummary {
     status: &'static str,
     target: Option<String>,
 }
 
-struct BackendConfigs {
-    qdrant: Option<QdrantConfig>,
-    falkor: Option<FalkorConfig>,
+pub(crate) struct BackendConfigs {
+    pub(crate) qdrant: Option<QdrantConfig>,
+    pub(crate) falkor: Option<FalkorConfig>,
 }
 
-pub(crate) fn execute(selection: ScopeSelection, yes: bool) -> Result<CommandOutcome, WikiError> {
-    let scope = resolve_command_scope(&selection)?;
-    let output_scope = resolved_scope_identity(&scope);
-    let search_scope = search_scope_for_resolved(&scope);
+#[derive(Debug)]
+pub(crate) struct PurgeStateSummary {
+    pub(crate) postgres: PostgresPurgeSummary,
+    pub(crate) qdrant: BackendPurgeSummary,
+    pub(crate) falkor: BackendPurgeSummary,
+}
+
+pub(crate) fn execute(target: PurgeTarget, yes: bool) -> Result<CommandOutcome, WikiError> {
+    let (output_scope, search_scope) = match target {
+        PurgeTarget::Selection(selection) => {
+            let scope = resolve_command_scope(&selection)?;
+            (
+                resolved_scope_identity(&scope),
+                search_scope_for_resolved(&scope),
+            )
+        }
+        PurgeTarget::ProjectId(project_id) => (
+            ScopeIdentity::project(project_id.clone()),
+            SearchScope::project(project_id),
+        ),
+    };
 
     if matches!(search_scope, SearchScope::Global) {
         return Err(WikiError::InvalidScope {
@@ -73,19 +96,17 @@ pub(crate) fn execute(selection: ScopeSelection, yes: bool) -> Result<CommandOut
     }
 
     let mut conn = require_postgres_index_readwrite(COMMAND)?;
-    let backend_configs = optional_backend_configs(&mut conn)?;
-    let postgres = purge_postgres_scope(&mut conn, &output_scope)?;
-    let qdrant = purge_qdrant_scope(backend_configs.qdrant.as_ref(), &search_scope)?;
-    let falkor = purge_falkor_scope(backend_configs.falkor.as_ref(), &search_scope)?;
+    let backend_configs = optional_backend_configs(&mut conn, COMMAND)?;
+    let state = purge_scope_state(&mut conn, &backend_configs, &output_scope, &search_scope)?;
     let summary = PurgeSummary {
         command: COMMAND,
         scope: ScopeOutput {
             kind: output_scope.kind.as_str().to_string(),
             id: output_scope.id.clone(),
         },
-        postgres,
-        qdrant,
-        falkor,
+        postgres: state.postgres,
+        qdrant: state.qdrant,
+        falkor: state.falkor,
     };
     let payload = serde_json::to_value(&summary).map_err(|error| WikiError::Json {
         action: "serialize gwiki purge summary",
@@ -94,6 +115,39 @@ pub(crate) fn execute(selection: ScopeSelection, yes: bool) -> Result<CommandOut
     })?;
     let text = render_text(&output_scope, &summary);
     Ok(super::scoped_outcome(COMMAND, &output_scope, payload, text))
+}
+
+pub(crate) fn purge_scope_state(
+    conn: &mut Client,
+    configs: &BackendConfigs,
+    scope: &ScopeIdentity,
+    search_scope: &SearchScope,
+) -> Result<PurgeStateSummary, WikiError> {
+    purge_scope_in_order(
+        || purge_qdrant_scope(configs.qdrant.as_ref(), search_scope),
+        || purge_falkor_scope(configs.falkor.as_ref(), search_scope),
+        || purge_postgres_scope(conn, scope),
+    )
+}
+
+fn purge_scope_in_order<Q, F, P>(
+    purge_qdrant: Q,
+    purge_falkor: F,
+    purge_postgres: P,
+) -> Result<PurgeStateSummary, WikiError>
+where
+    Q: FnOnce() -> Result<BackendPurgeSummary, WikiError>,
+    F: FnOnce() -> Result<BackendPurgeSummary, WikiError>,
+    P: FnOnce() -> Result<PostgresPurgeSummary, WikiError>,
+{
+    let qdrant = purge_qdrant()?;
+    let falkor = purge_falkor()?;
+    let postgres = purge_postgres()?;
+    Ok(PurgeStateSummary {
+        postgres,
+        qdrant,
+        falkor,
+    })
 }
 
 pub(crate) fn purge_postgres_scope(
@@ -126,18 +180,19 @@ fn delete_scope_rows(
     })
 }
 
-fn optional_backend_configs(conn: &mut Client) -> Result<BackendConfigs, WikiError> {
+pub(crate) fn optional_backend_configs(
+    conn: &mut Client,
+    command: &'static str,
+) -> Result<BackendConfigs, WikiError> {
     let gobby_home = gobby_core::gobby_home().map_err(|error| WikiError::Config {
-        detail: format!("failed to resolve Gobby home for gwiki purge config: {error}"),
+        detail: format!("failed to resolve Gobby home for {command} config: {error}"),
     })?;
 
     let qdrant = {
         let primary = PostgresConfigSource { conn: &mut *conn };
         let mut source = AiConfigSource::with_primary_from_gobby_home(primary, &gobby_home)
             .map_err(|error| WikiError::Config {
-                detail: format!(
-                    "failed to resolve optional Qdrant config for gwiki purge: {error}"
-                ),
+                detail: format!("failed to resolve optional Qdrant config for {command}: {error}"),
             })?;
         resolve_qdrant_config(&mut source)
     };
@@ -146,7 +201,7 @@ fn optional_backend_configs(conn: &mut Client) -> Result<BackendConfigs, WikiErr
         let mut source = AiConfigSource::with_primary_from_gobby_home(primary, &gobby_home)
             .map_err(|error| WikiError::Config {
                 detail: format!(
-                    "failed to resolve optional FalkorDB config for gwiki purge: {error}"
+                    "failed to resolve optional FalkorDB config for {command}: {error}"
                 ),
             })?;
         resolve_falkordb_config(&mut source)
@@ -223,6 +278,8 @@ fn backend_text(summary: &BackendPurgeSummary) -> String {
 
 #[cfg(test)]
 mod tests {
+    use std::cell::{Cell, RefCell};
+
     use super::*;
 
     #[test]
@@ -234,6 +291,52 @@ mod tests {
         let topic = purge_qdrant_scope(None, &SearchScope::topic("rust-notes")).unwrap();
         assert_eq!(topic.status, "skipped");
         assert_eq!(topic.target.as_deref(), Some("gwiki_topic_rust-notes"));
+    }
+
+    #[test]
+    fn shared_purge_clears_projections_before_sql_discovery_rows() {
+        let calls = RefCell::new(Vec::new());
+
+        let summary = purge_scope_in_order(
+            || {
+                calls.borrow_mut().push("qdrant");
+                Ok(backend_summary())
+            },
+            || {
+                calls.borrow_mut().push("falkor");
+                Ok(backend_summary())
+            },
+            || {
+                calls.borrow_mut().push("postgres");
+                Ok(postgres_summary())
+            },
+        )
+        .expect("ordered purge succeeds");
+
+        assert_eq!(*calls.borrow(), ["qdrant", "falkor", "postgres"]);
+        assert_eq!(summary.postgres.total(), 0);
+    }
+
+    #[test]
+    fn projection_failure_preserves_sql_discovery_rows() {
+        let postgres_called = Cell::new(false);
+
+        let error = purge_scope_in_order(
+            || Ok(backend_summary()),
+            || {
+                Err(WikiError::Config {
+                    detail: "fixture Falkor failure".to_string(),
+                })
+            },
+            || {
+                postgres_called.set(true);
+                Ok(postgres_summary())
+            },
+        )
+        .expect_err("projection failure must abort SQL deletion");
+
+        assert!(error.to_string().contains("fixture Falkor failure"));
+        assert!(!postgres_called.get());
     }
 
     #[test]
@@ -325,5 +428,22 @@ mod tests {
             total += row.get::<_, i64>(0);
         }
         Ok(total)
+    }
+
+    fn backend_summary() -> BackendPurgeSummary {
+        BackendPurgeSummary {
+            status: "purged",
+            target: None,
+        }
+    }
+
+    fn postgres_summary() -> PostgresPurgeSummary {
+        PostgresPurgeSummary {
+            documents: 0,
+            chunks: 0,
+            links: 0,
+            sources: 0,
+            ingestions: 0,
+        }
     }
 }

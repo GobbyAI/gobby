@@ -1,6 +1,6 @@
 use gobby_wiki::{
-    BenchmarkOptions, Command, GraphCommandOptions, IngestFileOptions, PageWriteMode, ReadTarget,
-    ScopeSelection, SyncSessionsOptions, WikiError,
+    BenchmarkOptions, Command, GraphCommandOptions, IngestFileOptions, PageWriteMode, PurgeTarget,
+    ReadTarget, ScopeSelection, SyncSessionsOptions, WikiError,
 };
 
 use super::{
@@ -83,9 +83,13 @@ pub(super) fn command_from_cli(
             })
         }
         CliCommand::Purge(args) => Ok(Command::Purge {
-            scope,
+            target: args.project_id.map_or_else(
+                || PurgeTarget::selection(scope),
+                |project_id| PurgeTarget::project_id(project_id.to_string()),
+            ),
             yes: args.yes,
         }),
+        CliCommand::Prune(args) => Ok(Command::Prune { force: args.force }),
         CliCommand::Search(args) => Ok(Command::Search {
             query: args.query,
             scope,
