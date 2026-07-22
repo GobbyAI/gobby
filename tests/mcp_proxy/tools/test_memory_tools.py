@@ -85,7 +85,7 @@ def mock_memory_manager():
     manager.update_memory = AsyncMock(return_value=MockMemory())
     manager.update_memory_scoped = AsyncMock(return_value=MockMemory())
     manager.promote_memory = AsyncMock(return_value=MockMemory(is_global=True))
-    manager.get_stats = MagicMock(return_value={"total": 10, "by_type": {"fact": 5}})
+    manager.get_stats = AsyncMock(return_value={"total": 10, "by_type": {"fact": 5}})
     manager.db = MagicMock()
     manager.content_exists = MagicMock(return_value=False)
     manager.config = MagicMock()
@@ -898,7 +898,7 @@ class TestMemoryStats:
 
         assert "stats" in result
         assert result["stats"]["total"] == 100
-        mock_memory_manager.get_stats.assert_called_once_with(
+        mock_memory_manager.get_stats.assert_awaited_once_with(
             project_id="11111111-1111-4111-8111-111111110001"
         )
 

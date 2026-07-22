@@ -331,7 +331,7 @@ def register_health_routes(router: APIRouter, server: "HTTPServer") -> None:
         memory_stats: dict[str, Any] = {"count": 0, "by_type": {}, "recent_count": 0}
         if server.memory_manager is not None:
             try:
-                stats = await server.run_db(server.memory_manager.get_stats)
+                stats = await server.memory_manager.get_stats()
                 memory_stats["count"] = stats.get("total_count", 0)
                 memory_stats["by_type"] = stats.get("by_type", {})
                 memory_stats["recent_count"] = stats.get("recent_count", 0)

@@ -31,6 +31,33 @@ def _content_scope(project_id: str, is_global: bool) -> MemoryScope:
     return MemoryScope.project_visible(project_id)
 
 
+def render_get_memories_statement(
+    memory_ids: list[str],
+    scope: MemoryScope = ALL_MEMORIES,
+    *,
+    visibility: Visibility = "active",
+) -> tuple[str, tuple[Any, ...]] | None:
+    """Render ordered bulk hydration SQL for sync and async consumers."""
+    if not memory_ids:
+        return None
+
+    placeholders = ", ".join("%s" for _ in memory_ids)
+    vis = visibility_predicate(visibility)
+    vis_clause = f" AND {vis}" if vis else ""
+    scope_predicate, scope_params = memory_scope_predicate(scope)
+    scope_clause = f" AND {scope_predicate}" if scope_predicate else ""
+    sql = (  # Values stay parameterized; clauses come from closed internal scope enums.
+        f"SELECT * FROM memories WHERE id IN ({placeholders}){scope_clause}{vis_clause}"  # nosec
+    )
+    return sql, (*memory_ids, *scope_params)
+
+
+def map_get_memories_rows(rows: list[Any], memory_ids: list[str]) -> list[Memory]:
+    """Map hydrated rows while preserving requested memory-ID order."""
+    memories_by_id = {str(row["id"]): Memory.from_row(row) for row in rows}
+    return [memories_by_id[memory_id] for memory_id in memory_ids if memory_id in memories_by_id]
+
+
 class MemoryCrudMixin(MemoryStoreBase):
     def create_memory(
         self,
@@ -83,17 +110,13 @@ class MemoryCrudMixin(MemoryStoreBase):
                 scope_predicate, scope_params = memory_scope_predicate(
                     _content_scope(project_id, is_global)
                 )
+                visible_duplicate_sql = (
+                    f"SELECT * FROM memories WHERE content = %s AND {scope_predicate} "  # nosec
+                    "AND deleted_at IS NULL "
+                    "ORDER BY is_global ASC, created_at ASC, id ASC LIMIT 1"
+                )
                 visible_duplicate = conn.execute(
-                    f"""
-                    SELECT * FROM memories
-                     WHERE content = %s
-                       AND {scope_predicate}
-                       AND deleted_at IS NULL
-                     ORDER BY is_global ASC,
-                              created_at ASC,
-                              id ASC
-                     LIMIT 1
-                    """,  # nosec B608
+                    visible_duplicate_sql,
                     (normalized_content, *scope_params),
                 ).fetchone()
                 if visible_duplicate is not None:
@@ -103,14 +126,13 @@ class MemoryCrudMixin(MemoryStoreBase):
             # memory within the last 60 seconds, treat it as a duplicate.
             if source_session_id:
                 recent_cutoff_sql = newer_than_now_expr(self.db, "created_at", "%s", "second")
+                recent_sql = (
+                    f"SELECT * FROM memories WHERE source_session_id = %s "  # nosec
+                    "AND project_id = %s AND is_global = %s AND deleted_at IS NULL "
+                    f"AND {recent_cutoff_sql} ORDER BY created_at DESC, id DESC LIMIT 1"
+                )
                 recent = conn.execute(
-                    f"""SELECT * FROM memories
-                       WHERE source_session_id = %s
-                         AND project_id = %s
-                         AND is_global = %s
-                         AND deleted_at IS NULL
-                         AND {recent_cutoff_sql}
-                       ORDER BY created_at DESC, id DESC LIMIT 1""",
+                    recent_sql,
                     (source_session_id, project_id, is_global, 60),
                 ).fetchone()
                 if recent and normalized_content == str(recent["content"]).strip():
@@ -288,7 +310,7 @@ class MemoryCrudMixin(MemoryStoreBase):
         scope_predicate, scope_params = memory_scope_predicate(scope)
         scope_clause = f" AND {scope_predicate}" if scope_predicate else ""
         row = self.db.fetchone(
-            f"SELECT * FROM memories WHERE id = %s{scope_clause}{vis_clause}",
+            f"SELECT * FROM memories WHERE id = %s{scope_clause}{vis_clause}",  # nosec
             (memory_id, *scope_params),
         )
         if not row:
@@ -303,23 +325,16 @@ class MemoryCrudMixin(MemoryStoreBase):
         visibility: Visibility = "active",
     ) -> list[Memory]:
         """Return multiple memories, preserving the requested order."""
-        if not memory_ids:
-            return []
-
-        placeholders = ", ".join("%s" for _ in memory_ids)
-        vis = visibility_predicate(visibility)
-        vis_clause = f" AND {vis}" if vis else ""
-        scope_predicate, scope_params = memory_scope_predicate(scope)
-        scope_clause = f" AND {scope_predicate}" if scope_predicate else ""
-        rows = self.db.fetchall(
-            f"SELECT * FROM memories WHERE id IN ({placeholders}){scope_clause}{vis_clause}",
-            (*memory_ids, *scope_params),
+        statement = render_get_memories_statement(
+            memory_ids,
+            scope,
+            visibility=visibility,
         )
-
-        memories_by_id = {row["id"]: Memory.from_row(row) for row in rows}
-        return [
-            memories_by_id[memory_id] for memory_id in memory_ids if memory_id in memories_by_id
-        ]
+        if statement is None:
+            return []
+        sql, params = statement
+        rows = self.db.fetchall(sql, params)
+        return map_get_memories_rows(rows, memory_ids)
 
     def memory_exists(self, memory_id: str) -> bool:
         """Check if a memory with the given ID exists."""
@@ -342,14 +357,12 @@ class MemoryCrudMixin(MemoryStoreBase):
         vis_clause = f" AND {vis}" if vis else ""
         scope_predicate, scope_params = memory_scope_predicate(scope)
         scope_clause = f" AND {scope_predicate}" if scope_predicate else ""
+        sql = (
+            f"SELECT 1 FROM memories WHERE content = %s {scope_clause}{vis_clause} "  # nosec
+            "ORDER BY created_at ASC, id ASC LIMIT 1"
+        )
         row = self.db.fetchone(
-            f"""
-            SELECT 1 FROM memories
-             WHERE content = %s
-               {scope_clause}{vis_clause}
-             ORDER BY created_at ASC, id ASC
-             LIMIT 1
-            """,  # nosec B608
+            sql,
             (normalized_content, *scope_params),
         )
         return row is not None
@@ -370,16 +383,12 @@ class MemoryCrudMixin(MemoryStoreBase):
         vis_clause = f" AND {vis}" if vis else ""
         scope_predicate, scope_params = memory_scope_predicate(scope)
         scope_clause = f" AND {scope_predicate}" if scope_predicate else ""
+        sql = (
+            f"SELECT * FROM memories WHERE content = %s {scope_clause}{vis_clause} "  # nosec
+            "ORDER BY is_global ASC, created_at ASC, id ASC LIMIT 1"
+        )
         row = self.db.fetchone(
-            f"""
-            SELECT * FROM memories
-             WHERE content = %s
-               {scope_clause}{vis_clause}
-             ORDER BY is_global ASC,
-                      created_at ASC,
-                      id ASC
-             LIMIT 1
-            """,  # nosec B608
+            sql,
             (normalized_content, *scope_params),
         )
         if row:
@@ -444,7 +453,7 @@ class MemoryCrudMixin(MemoryStoreBase):
                 raise ValueError("Memory content cannot be empty")
             with self.db.transaction() as conn:
                 current = conn.execute(
-                    f"SELECT project_id, is_global, content FROM memories WHERE id = %s{scope_clause}",
+                    f"SELECT project_id, is_global, content FROM memories WHERE id = %s{scope_clause}",  # nosec
                     (memory_id, *scope_params),
                 ).fetchone()
                 if current is None:
@@ -485,7 +494,7 @@ class MemoryCrudMixin(MemoryStoreBase):
 
         if not updates:
             row = self.db.fetchone(
-                f"SELECT * FROM memories WHERE id = %s{scope_clause}",
+                f"SELECT * FROM memories WHERE id = %s{scope_clause}",  # nosec
                 (memory_id, *scope_params),
             )
             if not row:
@@ -497,9 +506,7 @@ class MemoryCrudMixin(MemoryStoreBase):
         params.append(memory_id)
         params.extend(scope_params)
 
-        sql = (  # nosec B608
-            f"UPDATE memories SET {', '.join(updates)} WHERE id = %s{scope_clause}"
-        )
+        sql = f"UPDATE memories SET {', '.join(updates)} WHERE id = %s{scope_clause}"  # nosec
 
         with self.db.transaction() as conn:
             cursor = conn.execute(sql, tuple(params))

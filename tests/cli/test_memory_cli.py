@@ -447,10 +447,12 @@ class TestMemoryStatsCommand:
     def test_stats_output(self, mock_get_manager: MagicMock, runner: CliRunner) -> None:
         """Test stats command output formatting."""
         mock_manager = MagicMock()
-        mock_manager.get_stats.return_value = {
-            "total_count": 42,
-            "by_type": {"fact": 20, "preference": 15, "context": 7},
-        }
+        mock_manager.get_stats = AsyncMock(
+            return_value={
+                "total_count": 42,
+                "by_type": {"fact": 20, "preference": 15, "context": 7},
+            }
+        )
         mock_get_manager.return_value = mock_manager
 
         result = runner.invoke(cli, ["memory", "stats"])
@@ -464,10 +466,12 @@ class TestMemoryStatsCommand:
     def test_stats_empty_by_type(self, mock_get_manager: MagicMock, runner: CliRunner) -> None:
         """Test stats with no type breakdown."""
         mock_manager = MagicMock()
-        mock_manager.get_stats.return_value = {
-            "total_count": 0,
-            "by_type": {},
-        }
+        mock_manager.get_stats = AsyncMock(
+            return_value={
+                "total_count": 0,
+                "by_type": {},
+            }
+        )
         mock_get_manager.return_value = mock_manager
 
         result = runner.invoke(cli, ["memory", "stats"])

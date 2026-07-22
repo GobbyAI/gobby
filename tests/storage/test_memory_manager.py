@@ -116,7 +116,7 @@ async def test_get_stats(memory_manager):
     await memory_manager.create_memory("Fact", memory_type="fact")
     await memory_manager.create_memory("Preference", memory_type="preference")
 
-    stats = memory_manager.get_stats()
+    stats = await memory_manager.get_stats()
 
     assert stats["total_count"] == 2
     assert stats["by_type"]["fact"] == 1

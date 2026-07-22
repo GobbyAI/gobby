@@ -30,7 +30,7 @@ def _maintenance_scope(project_id: str | None) -> MemoryScope:
     return MemoryScope.project_visible(project_id)
 
 
-def get_stats(
+async def get_stats(
     storage: LocalMemoryManager,
     db: HubDatabase,
     project_id: str | None = None,
@@ -47,7 +47,11 @@ def get_stats(
     Returns:
         Dictionary with memory statistics.
     """
-    memories = storage.list_memories(scope=_maintenance_scope(project_id), limit=10000)
+    memories = await asyncio.to_thread(
+        storage.list_memories,
+        scope=_maintenance_scope(project_id),
+        limit=10000,
+    )
 
     if not memories:
         return {
@@ -73,10 +77,9 @@ def get_stats(
         "project_id": project_id,
     }
 
-    # Vector store count — use sync Qdrant client to avoid async issues
     if vector_store is not None:
         try:
-            stats["vector_count"] = vector_store.count_sync()
+            stats["vector_count"] = await vector_store.count()
         except Exception:
             stats["vector_count"] = -1
 
@@ -351,16 +354,12 @@ def find_orphaned_memories(
         params.append(project_id)
     params.append(limit)
 
-    rows = db.fetchall(
-        f"""SELECT m.* FROM memories m
-            LEFT JOIN sessions s ON m.source_session_id = s.id
-            WHERE m.source_session_id IS NOT NULL
-              AND s.id IS NULL
-              AND m.created_at < %s
-              {project_clause}
-            ORDER BY m.created_at ASC
-            LIMIT %s""",  # nosec B608
-        tuple(params),
+    sql = (
+        f"SELECT m.* FROM memories m "  # nosec
+        "LEFT JOIN sessions s ON m.source_session_id = s.id "
+        "WHERE m.source_session_id IS NOT NULL AND s.id IS NULL "
+        f"AND m.created_at < %s {project_clause} ORDER BY m.created_at ASC LIMIT %s"
     )
+    rows = db.fetchall(sql, tuple(params))
 
     return [Memory.from_row(row) for row in rows]

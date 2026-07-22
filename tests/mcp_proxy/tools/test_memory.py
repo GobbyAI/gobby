@@ -61,7 +61,7 @@ def mock_memory_manager() -> MagicMock:
     manager.get_memory = MagicMock(return_value=MockMemory())
     manager.get_related = AsyncMock(return_value=[])
     manager.update_memory = AsyncMock(return_value=MockMemory())
-    manager.get_stats = MagicMock(return_value={"total": 0})
+    manager.get_stats = AsyncMock(return_value={"total": 0})
     manager.rebuild_crossrefs_for_memory = AsyncMock(return_value=2)
     manager.reindex_embeddings = AsyncMock(return_value={"success": True, "count": 5})
     manager.kg_service = None

@@ -5,11 +5,11 @@ from __future__ import annotations
 import asyncio
 from typing import TYPE_CHECKING, Any
 
-from qdrant_client.models import Filter, FilterSelector, PointIdsList, PointStruct
+from qdrant_client.models import Filter, FilterSelector, PointIdsList, PointStruct, QueryRequest
 
 from gobby.memory.vectorstore_client import (
+    QDRANT_CLIENT_TIMEOUT_SECONDS,
     VectorStoreUnavailableError,
-    is_recoverable_vector_store_error,
 )
 from gobby.memory.vectorstore_filters import payload_filter
 
@@ -35,8 +35,9 @@ class VectorStoreQueries:
         client = await store._ensure_initialized()
         point = PointStruct(id=memory_id, vector=embedding, payload=payload or {})
         try:
-            await asyncio.to_thread(
-                client.upsert,
+            await store._call_client(
+                client,
+                "upsert",
                 collection_name=collection_name or store._collection_name,
                 points=[point],
             )
@@ -55,8 +56,9 @@ class VectorStoreQueries:
         store = self._store
         client = await store._ensure_initialized()
         try:
-            results = await asyncio.to_thread(
-                client.query_points,
+            results = await store._call_client(
+                client,
+                "query_points",
                 collection_name=collection_name or store._collection_name,
                 query=query_embedding,
                 query_filter=payload_filter(filters),
@@ -79,8 +81,9 @@ class VectorStoreQueries:
         client = await store._ensure_initialized()
         query_filter = payload_filter(filters) if filters else None
         try:
-            results = await asyncio.to_thread(
-                client.query_points,
+            results = await store._call_client(
+                client,
+                "query_points",
                 collection_name=collection_name or store._collection_name,
                 query=query_embedding,
                 query_filter=query_filter,
@@ -90,6 +93,75 @@ class VectorStoreQueries:
             store._raise_if_recoverable(exc)
             raise
         return [(str(point.id), point.score, point.payload or {}) for point in results.points]
+
+    async def search_by_stored_vectors(
+        self,
+        ids: list[str],
+        *,
+        limit: int,
+        query_filter: Filter | None = None,
+        collection_name: str | None = None,
+        timeout: float | None = None,
+    ) -> dict[str, list[tuple[str, float]]]:
+        """Batch-search using vectors already stored for IDs."""
+        if not ids:
+            return {}
+        store = self._store
+        if not store.supports_stored_vector_search:
+            raise VectorStoreUnavailableError("Stored-vector search is disabled in local mode")
+
+        loop = asyncio.get_running_loop()
+        deadline = loop.time() + (
+            timeout if timeout is not None else float(QDRANT_CLIENT_TIMEOUT_SECONDS)
+        )
+
+        def remaining() -> float:
+            budget = deadline - loop.time()
+            if budget <= 0:
+                raise TimeoutError("Stored-vector search deadline expired")
+            return budget
+
+        client = await store._ensure_initialized(timeout=remaining())
+        resolved_collection = collection_name or store._collection_name
+        try:
+            records = await store._call_client(
+                client,
+                "retrieve",
+                collection_name=resolved_collection,
+                ids=ids,
+                with_payload=False,
+                with_vectors=True,
+                timeout=remaining(),
+            )
+            stored = [(str(record.id), record.vector) for record in records if record.vector]
+            result: dict[str, list[tuple[str, float]]] = {}
+            for start in range(0, len(stored), 50):
+                batch = stored[start : start + 50]
+                requests = [
+                    QueryRequest(
+                        query=vector,
+                        filter=query_filter,
+                        limit=limit,
+                        with_payload=False,
+                        with_vector=False,
+                    )
+                    for _memory_id, vector in batch
+                ]
+                responses = await store._call_client(
+                    client,
+                    "query_batch_points",
+                    collection_name=resolved_collection,
+                    requests=requests,
+                    timeout=remaining(),
+                )
+                for (memory_id, _vector), response in zip(batch, responses, strict=True):
+                    result[memory_id] = [
+                        (str(point.id), float(point.score)) for point in response.points
+                    ]
+            return result
+        except Exception as exc:
+            store._raise_if_recoverable(exc)
+            raise
 
     async def set_payload(
         self,
@@ -101,8 +173,9 @@ class VectorStoreQueries:
         store = self._store
         client = await store._ensure_initialized()
         try:
-            await asyncio.to_thread(
-                client.set_payload,
+            await store._call_client(
+                client,
+                "set_payload",
                 collection_name=collection_name or store._collection_name,
                 payload=payload,
                 points=[memory_id],
@@ -131,8 +204,9 @@ class VectorStoreQueries:
         else:
             raise ValueError("Must provide either memory_id or filters to delete")
         try:
-            await asyncio.to_thread(
-                client.delete,
+            await store._call_client(
+                client,
+                "delete",
                 collection_name=collection_name or store._collection_name,
                 points_selector=selector,
             )
@@ -152,8 +226,9 @@ class VectorStoreQueries:
         client = await store._ensure_initialized()
         selector = PointIdsList(points=memory_ids)
         try:
-            await asyncio.to_thread(
-                client.delete,
+            await store._call_client(
+                client,
+                "delete",
                 collection_name=collection_name or store._collection_name,
                 points_selector=selector,
             )
@@ -176,8 +251,9 @@ class VectorStoreQueries:
             for memory_id, embedding, payload in items
         ]
         try:
-            await asyncio.to_thread(
-                client.upsert,
+            await store._call_client(
+                client,
+                "upsert",
                 collection_name=collection_name or store._collection_name,
                 points=points,
             )
@@ -190,28 +266,13 @@ class VectorStoreQueries:
         store = self._store
         client = await store._ensure_initialized()
         try:
-            result = await asyncio.to_thread(
-                client.count,
+            result = await store._call_client(
+                client,
+                "count",
                 collection_name=store._collection_name,
             )
         except Exception as exc:
             store._raise_if_recoverable(exc)
-            raise
-        count: int = result.count
-        return count
-
-    def count_sync(self) -> int:
-        """Return the point count from synchronous code."""
-        store = self._store
-        client = store._client
-        if client is None:
-            raise VectorStoreUnavailableError("Vector store is not initialized")
-        try:
-            result = client.count(collection_name=store._collection_name)
-        except Exception as exc:
-            if is_recoverable_vector_store_error(exc):
-                store._mark_unavailable(exc)
-                raise VectorStoreUnavailableError("Vector store count is unavailable") from exc
             raise
         count: int = result.count
         return count
@@ -229,8 +290,9 @@ class VectorStoreQueries:
         scroll_filter = payload_filter(filters) if filters else None
         while True:
             try:
-                points, next_offset = await asyncio.to_thread(
-                    client.scroll,
+                points, next_offset = await store._call_client(
+                    client,
+                    "scroll",
                     collection_name=store._collection_name,
                     limit=batch_size,
                     offset=offset,

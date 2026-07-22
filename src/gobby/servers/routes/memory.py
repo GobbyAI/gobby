@@ -316,12 +316,12 @@ def create_memory_router(server: "HTTPServer") -> APIRouter:
             raise HTTPException(status_code=500, detail=str(e)) from e
 
     @router.get("/stats")
-    def memory_stats(
+    async def memory_stats(
         project_id: str | None = Query(None, description="Filter by project ID"),
     ) -> Any:
         """Get memory statistics."""
         try:
-            return server.memory_manager.get_stats(project_id=project_id)
+            return await server.memory_manager.get_stats(project_id=project_id)
         except Exception as e:
             logger.error("Failed to get memory stats: %s", e)
             raise HTTPException(status_code=500, detail=str(e)) from e

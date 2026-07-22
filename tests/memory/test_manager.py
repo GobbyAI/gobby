@@ -673,9 +673,10 @@ class TestUpdateMemory:
 class TestGetStats:
     """Tests for get_stats method."""
 
-    def test_get_stats_empty(self, memory_manager: MemoryManager) -> None:
+    @pytest.mark.asyncio
+    async def test_get_stats_empty(self, memory_manager: MemoryManager) -> None:
         """Test stats with no memories."""
-        stats = memory_manager.get_stats()
+        stats = await memory_manager.get_stats()
 
         assert stats["total_count"] == 0
         assert stats["by_type"] == {}
@@ -687,7 +688,7 @@ class TestGetStats:
         await memory_manager.create_memory(content="Fact 2", memory_type="fact")
         await memory_manager.create_memory(content="Pref 1", memory_type="preference")
 
-        stats = memory_manager.get_stats()
+        stats = await memory_manager.get_stats()
 
         assert stats["total_count"] == 3
         assert stats["by_type"]["fact"] == 2

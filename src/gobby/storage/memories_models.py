@@ -145,15 +145,17 @@ class Memory:
         )
 
         return cls(
-            id=row["id"],
+            id=str(row["id"]),
             memory_type=validate_memory_type(row["memory_type"]),
             content=row["content"],
             created_at=row["created_at"],
             updated_at=row["updated_at"],
-            project_id=row["project_id"],
+            project_id=str(row["project_id"]),
             is_global=bool(row.get("is_global", False)),
             source_type=source_type,
-            source_session_id=row["source_session_id"],
+            source_session_id=(
+                str(row["source_session_id"]) if row["source_session_id"] is not None else None
+            ),
             access_count=row["access_count"],
             last_accessed_at=row["last_accessed_at"],
             graph_processed=bool(row.get("graph_processed", True)),

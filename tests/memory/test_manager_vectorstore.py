@@ -8,7 +8,8 @@ from __future__ import annotations
 
 import asyncio
 from datetime import UTC, datetime, timedelta
-from unittest.mock import AsyncMock
+from types import SimpleNamespace
+from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
@@ -19,6 +20,42 @@ from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.projects import PERSONAL_PROJECT_ID
 
 pytestmark = pytest.mark.unit
+
+
+async def test_search_by_stored_vectors() -> None:
+    store = VectorStore(url="http://qdrant:6333", collection_name="stored-search")
+    client = MagicMock()
+    records = [
+        SimpleNamespace(id=f"memory-{index}", vector=[float(index), 1.0]) for index in range(51)
+    ]
+    client.retrieve = AsyncMock(return_value=records)
+
+    async def query_batch_points(**kwargs: object) -> list[SimpleNamespace]:
+        requests = kwargs["requests"]
+        assert isinstance(requests, list)
+        return [
+            SimpleNamespace(points=[SimpleNamespace(id="neighbor", score=0.8)])
+            for _request in requests
+        ]
+
+    client.query_batch_points = AsyncMock(side_effect=query_batch_points)
+    client.close = AsyncMock()
+    store._client = client
+
+    result = await store.search_by_stored_vectors(
+        [*[f"memory-{index}" for index in range(51)], "missing"],
+        limit=3,
+        timeout=2.5,
+    )
+    await store.close()
+
+    assert result["memory-0"] == [("neighbor", 0.8)]
+    assert "missing" not in result
+    client.retrieve.assert_awaited_once()
+    assert client.query_batch_points.await_count == 2
+    assert isinstance(client.retrieve.await_args.kwargs["timeout"], int)
+    assert client.retrieve.await_args.kwargs["timeout"] > 0
+    client.close.assert_awaited_once()
 
 
 @pytest.fixture

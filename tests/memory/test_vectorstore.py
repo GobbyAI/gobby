@@ -153,9 +153,10 @@ async def test_lazy_init_backoff_suppresses_repeated_attempts(monkeypatch) -> No
     monkeypatch.setattr(vectorstore_module.time, "monotonic", lambda: now)
 
     client = MagicMock()
-    client.collection_exists.side_effect = ResponseHandlingException(Exception("down"))
+    client.collection_exists = AsyncMock(side_effect=ResponseHandlingException(Exception("down")))
+    client.close = AsyncMock()
 
-    with patch("gobby.memory.vectorstore.QdrantClient", return_value=client) as qdrant_cls:
+    with patch("gobby.memory.vectorstore.AsyncQdrantClient", return_value=client) as qdrant_cls:
         store = VectorStore(url="http://qdrant:6333", collection_name="retry_test")
 
         with pytest.raises(VectorStoreUnavailableError, match="VectorStore not initialized"):
@@ -179,13 +180,14 @@ async def test_lazy_init_retries_after_backoff(monkeypatch) -> None:
     monkeypatch.setattr(vectorstore_module.time, "monotonic", monotonic)
 
     client = MagicMock()
-    client.collection_exists.side_effect = [
-        ResponseHandlingException(Exception("down")),
-        False,
-    ]
-    client.count.return_value = SimpleNamespace(count=7)
+    client.collection_exists = AsyncMock(
+        side_effect=[ResponseHandlingException(Exception("down")), False]
+    )
+    client.create_collection = AsyncMock()
+    client.count = AsyncMock(return_value=SimpleNamespace(count=7))
+    client.close = AsyncMock()
 
-    with patch("gobby.memory.vectorstore.QdrantClient", return_value=client):
+    with patch("gobby.memory.vectorstore.AsyncQdrantClient", return_value=client):
         store = VectorStore(url="http://qdrant:6333", collection_name="retry_test")
 
         with pytest.raises(VectorStoreUnavailableError):
@@ -217,30 +219,9 @@ async def test_transient_operation_error_resets_client(monkeypatch) -> None:
     assert store._next_retry_at == 1005.0
 
 
-def test_count_sync_raises_when_uninitialized() -> None:
+def test_count_sync_surface_removed() -> None:
     store = VectorStore(collection_name="sync_test")
-
-    with pytest.raises(VectorStoreUnavailableError, match="not initialized"):
-        store.count_sync()
-
-
-def test_count_sync_returns_zero_for_initialized_empty_collection() -> None:
-    store = VectorStore(collection_name="sync_test")
-    store._client = MagicMock()
-    store._client.count.return_value = SimpleNamespace(count=0)
-
-    assert store.count_sync() == 0
-
-
-def test_count_sync_raises_and_resets_client_on_recoverable_error() -> None:
-    store = VectorStore(collection_name="sync_test")
-    store._client = MagicMock()
-    store._client.count.side_effect = ResponseHandlingException(Exception("down"))
-
-    with pytest.raises(VectorStoreUnavailableError, match="count is unavailable"):
-        store.count_sync()
-
-    assert store._client is None
+    assert not hasattr(store, "count_sync")
 
 
 @pytest.mark.parametrize(

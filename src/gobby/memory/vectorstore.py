@@ -11,10 +11,11 @@ import time
 from collections.abc import Awaitable, Callable
 from typing import Any
 
-from qdrant_client import QdrantClient
+from qdrant_client import AsyncQdrantClient, QdrantClient
 from qdrant_client.models import Filter
 
 from gobby.memory.vectorstore_client import (
+    QdrantClientLike,
     VectorStoreClient,
 )
 from gobby.memory.vectorstore_client import (
@@ -40,8 +41,8 @@ class VectorStore:
     """Async wrapper around Qdrant for memory vector storage.
 
     Uses embedded mode (path) for local operation or remote mode (url) for
-    external Qdrant servers. All blocking qdrant-client calls are wrapped
-    in asyncio.to_thread() for async compatibility.
+    external Qdrant servers. Remote calls use the async client directly;
+    embedded calls are offloaded because QdrantLocal is synchronous.
 
     Args:
         path: Directory path for embedded Qdrant storage.
@@ -64,7 +65,8 @@ class VectorStore:
         self._api_key = api_key
         self._collection_name = collection_name
         self._embedding_dim = embedding_dim
-        self._client: QdrantClient | None = None
+        self._client: QdrantClientLike | None = None
+        self._retired_clients: list[QdrantClientLike] = []
         self._init_lock = asyncio.Lock()
         self._rebuild_lock = asyncio.Lock()
         self._collection_lifecycle_lock = asyncio.Lock()
@@ -75,6 +77,7 @@ class VectorStore:
             self,
             lambda: time.monotonic(),
             lambda **kwargs: QdrantClient(**kwargs),
+            lambda **kwargs: AsyncQdrantClient(**kwargs),
         )
         self._queries = VectorStoreQueries(self)
         self._maintenance = VectorStoreMaintenance(self)
@@ -95,8 +98,34 @@ class VectorStore:
     async def _initialize_locked(self) -> None:
         await self._client_ops.initialize_locked()
 
-    async def _ensure_initialized(self) -> QdrantClient:
-        return await self._client_ops.ensure_initialized()
+    @property
+    def is_remote(self) -> bool:
+        return self._client_ops.is_remote
+
+    @property
+    def supports_stored_vector_search(self) -> bool:
+        return self._client_ops.supports_stored_vector_search
+
+    async def _ensure_initialized(self, timeout: float | None = None) -> QdrantClientLike:
+        return await self._client_ops.ensure_initialized(timeout)
+
+    async def _call_client(
+        self,
+        client: QdrantClientLike,
+        method_name: str,
+        *args: Any,
+        timeout: float | None = None,
+        timeout_hint: bool = True,
+        **kwargs: Any,
+    ) -> Any:
+        return await self._client_ops.call(
+            client,
+            method_name,
+            *args,
+            timeout=timeout,
+            timeout_hint=timeout_hint,
+            **kwargs,
+        )
 
     def _raise_if_recoverable(self, error: Exception) -> None:
         self._client_ops.raise_if_recoverable(error)
@@ -109,14 +138,14 @@ class VectorStore:
 
     async def _read_collection_dimension(
         self,
-        client: QdrantClient,
+        client: QdrantClientLike,
         collection_name: str,
     ) -> int | None:
         return await self._client_ops.read_collection_dimension(client, collection_name)
 
     async def _collection_has_expected_dimension(
         self,
-        client: QdrantClient,
+        client: QdrantClientLike,
         collection_name: str,
         dim: int,
     ) -> bool:
@@ -128,7 +157,7 @@ class VectorStore:
 
     async def _create_collection(
         self,
-        client: QdrantClient,
+        client: QdrantClientLike,
         collection_name: str,
         dim: int,
     ) -> bool:
@@ -177,6 +206,24 @@ class VectorStore:
             collection_name,
         )
 
+    async def search_by_stored_vectors(
+        self,
+        ids: list[str],
+        *,
+        limit: int,
+        query_filter: Filter | None = None,
+        collection_name: str | None = None,
+        timeout: float | None = None,
+    ) -> dict[str, list[tuple[str, float]]]:
+        """Batch-search using vectors already stored for IDs."""
+        return await self._queries.search_by_stored_vectors(
+            ids,
+            limit=limit,
+            query_filter=query_filter,
+            collection_name=collection_name,
+            timeout=timeout,
+        )
+
     async def set_payload(
         self,
         memory_id: str,
@@ -217,7 +264,7 @@ class VectorStore:
 
     async def _prepare_collection_for_rebuild(
         self,
-        client: QdrantClient,
+        client: QdrantClientLike,
         *,
         recreate_on_mismatch: bool = True,
     ) -> RebuildCollectionPlan:
@@ -228,14 +275,14 @@ class VectorStore:
 
     async def _activate_rebuild_collection(
         self,
-        client: QdrantClient,
+        client: QdrantClientLike,
         plan: RebuildCollectionPlan,
     ) -> None:
         await self._maintenance.activate_rebuild_collection(client, plan)
 
     async def _delete_collection_best_effort(
         self,
-        client: QdrantClient,
+        client: QdrantClientLike,
         collection_name: str,
     ) -> None:
         await self._maintenance.delete_collection_best_effort(client, collection_name)
@@ -274,10 +321,6 @@ class VectorStore:
         """Return the number of points in the collection."""
         return await self._queries.count()
 
-    def count_sync(self) -> int:
-        """Return the point count from synchronous code."""
-        return self._queries.count_sync()
-
     async def rebuild(
         self,
         memories: list[dict[str, Any]],
@@ -296,7 +339,7 @@ class VectorStore:
 
     async def _delete_stale_ids(
         self,
-        client: QdrantClient,
+        client: QdrantClientLike,
         incoming_ids: set[str],
         *,
         batch_size: int,

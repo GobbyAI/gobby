@@ -3,12 +3,14 @@
 from __future__ import annotations
 
 import asyncio
+import inspect
 import logging
+import math
 from collections.abc import Callable
 from typing import TYPE_CHECKING, Any
 
 import httpx
-from qdrant_client import QdrantClient
+from qdrant_client import AsyncQdrantClient, QdrantClient
 from qdrant_client.http.exceptions import ResponseHandlingException, UnexpectedResponse
 from qdrant_client.http.models.models import (
     CreateAlias,
@@ -23,6 +25,7 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
+QDRANT_CLIENT_TIMEOUT_SECONDS = 5
 _UNINITIALIZED_MESSAGE = "VectorStore not initialized. Call initialize() first."
 _INITIAL_RETRY_BACKOFF_SECONDS = 5.0
 _MAX_RETRY_BACKOFF_SECONDS = 300.0
@@ -33,6 +36,8 @@ _QDRANT_CLIENT_CLOSE_ERRORS = (
     UnexpectedResponse,
     httpx.TransportError,
 )
+
+type QdrantClientLike = QdrantClient | AsyncQdrantClient
 
 
 def _vector_size(vectors_cfg: Any) -> int | None:
@@ -67,11 +72,44 @@ class VectorStoreClient:
         self,
         store: VectorStore,
         monotonic: Callable[[], float],
-        client_factory: Callable[..., QdrantClient],
+        local_client_factory: Callable[..., QdrantClient],
+        remote_client_factory: Callable[..., AsyncQdrantClient],
     ) -> None:
         self._store = store
         self._monotonic = monotonic
-        self._client_factory = client_factory
+        self._local_client_factory = local_client_factory
+        self._remote_client_factory = remote_client_factory
+
+    @property
+    def is_remote(self) -> bool:
+        return bool(self._store._url)
+
+    @property
+    def supports_stored_vector_search(self) -> bool:
+        return self.is_remote
+
+    async def call(
+        self,
+        client: QdrantClientLike,
+        method_name: str,
+        *args: Any,
+        timeout: float | None = None,
+        timeout_hint: bool = True,
+        **kwargs: Any,
+    ) -> Any:
+        """Execute a client operation using native remote awaits or local offload."""
+        method = getattr(client, method_name)
+        if not self.is_remote:
+            return await asyncio.to_thread(method, *args, **kwargs)
+
+        budget = timeout if timeout is not None else float(QDRANT_CLIENT_TIMEOUT_SECONDS)
+        if budget <= 0:
+            raise TimeoutError(f"Qdrant {method_name} deadline expired")
+        if timeout_hint:
+            kwargs["timeout"] = max(1, math.ceil(budget))
+        async with asyncio.timeout(budget):
+            result = method(*args, **kwargs)
+            return await result if inspect.isawaitable(result) else result
 
     @property
     def collection_name(self) -> str:
@@ -97,15 +135,17 @@ class VectorStoreClient:
         """Initialize the client while the caller holds the initialization lock."""
         store = self._store
         if store._client is None:
+            await self._close_clients(store._retired_clients)
+            store._retired_clients.clear()
             if store._url:
-                store._client = await asyncio.to_thread(
-                    self._client_factory,
+                store._client = self._remote_client_factory(
                     url=store._url,
                     api_key=store._api_key,
+                    timeout=QDRANT_CLIENT_TIMEOUT_SECONDS,
                 )
             else:
                 store._client = await asyncio.to_thread(
-                    self._client_factory,
+                    self._local_client_factory,
                     path=store._path,
                 )
 
@@ -113,7 +153,12 @@ class VectorStoreClient:
         if client is None:
             raise RuntimeError(_UNINITIALIZED_MESSAGE)
         async with store._collection_lifecycle_lock:
-            exists = await asyncio.to_thread(client.collection_exists, store._collection_name)
+            exists = await self.call(
+                client,
+                "collection_exists",
+                store._collection_name,
+                timeout_hint=False,
+            )
             if not exists:
                 created = await store._create_collection(
                     client,
@@ -148,8 +193,14 @@ class VectorStoreClient:
                     exc,
                 )
 
-    async def ensure_initialized(self) -> QdrantClient:
+    async def ensure_initialized(self, timeout: float | None = None) -> QdrantClientLike:
         """Return an initialized client, lazily retrying recoverable failures."""
+        if timeout is not None:
+            if timeout <= 0:
+                raise TimeoutError("Qdrant initialization deadline expired")
+            async with asyncio.timeout(timeout):
+                return await self.ensure_initialized()
+
         store = self._store
         if store._client is not None:
             return store._client
@@ -184,13 +235,7 @@ class VectorStoreClient:
         client = store._client
         store._client = None
         if client is not None:
-            try:
-                client.close()
-            except _QDRANT_CLIENT_CLOSE_ERRORS as close_error:
-                logger.warning(
-                    "Failed to close Qdrant client during mark_unavailable: %s",
-                    close_error,
-                )
+            store._retired_clients.append(client)
         delay = store._retry_backoff_seconds
         store._next_retry_at = self._monotonic() + delay
         store._retry_backoff_seconds = min(delay * 2, _MAX_RETRY_BACKOFF_SECONDS)
@@ -206,15 +251,15 @@ class VectorStoreClient:
 
     async def read_collection_dimension(
         self,
-        client: QdrantClient,
+        client: QdrantClientLike,
         collection_name: str,
     ) -> int | None:
-        info = await asyncio.to_thread(client.get_collection, collection_name)
+        info = await self.call(client, "get_collection", collection_name)
         return _vector_size(info.config.params.vectors)
 
     async def collection_has_expected_dimension(
         self,
-        client: QdrantClient,
+        client: QdrantClientLike,
         collection_name: str,
         dim: int,
     ) -> bool:
@@ -230,13 +275,14 @@ class VectorStoreClient:
 
     async def create_collection(
         self,
-        client: QdrantClient,
+        client: QdrantClientLike,
         collection_name: str,
         dim: int,
     ) -> bool:
         try:
-            await asyncio.to_thread(
-                client.create_collection,
+            await self.call(
+                client,
+                "create_collection",
                 collection_name=collection_name,
                 vectors_config=VectorParams(size=dim, distance=Distance.COSINE),
             )
@@ -289,7 +335,12 @@ class VectorStoreClient:
         dim = embedding_dim or store._embedding_dim
         async with store._collection_lifecycle_lock:
             try:
-                exists = await asyncio.to_thread(client.collection_exists, collection_name)
+                exists = await self.call(
+                    client,
+                    "collection_exists",
+                    collection_name,
+                    timeout_hint=False,
+                )
             except Exception as exc:
                 store._raise_if_recoverable(exc)
                 raise
@@ -319,8 +370,9 @@ class VectorStoreClient:
                         "dimensions; when intentionally using OpenAI "
                         "text-embedding-3-small, configure or pass embedding_dim=1536."
                     )
-                await asyncio.to_thread(
-                    client.delete_collection,
+                await self.call(
+                    client,
+                    "delete_collection",
                     collection_name=collection_name,
                 )
                 created = await store._create_collection(client, collection_name, dim)
@@ -343,8 +395,9 @@ class VectorStoreClient:
         client = await store._ensure_initialized()
         async with store._collection_lifecycle_lock:
             try:
-                await asyncio.to_thread(
-                    client.delete_collection,
+                await self.call(
+                    client,
+                    "delete_collection",
                     collection_name=collection_name,
                 )
             except Exception as exc:
@@ -357,8 +410,9 @@ class VectorStoreClient:
         client = await store._ensure_initialized()
         async with store._collection_lifecycle_lock:
             try:
-                await asyncio.to_thread(
-                    client.update_collection_aliases,
+                await self.call(
+                    client,
+                    "update_collection_aliases",
                     change_aliases_operations=[
                         CreateAliasOperation(
                             create_alias=CreateAlias(
@@ -378,8 +432,9 @@ class VectorStoreClient:
         client = await store._ensure_initialized()
         async with store._collection_lifecycle_lock:
             try:
-                await asyncio.to_thread(
-                    client.update_collection_aliases,
+                await self.call(
+                    client,
+                    "update_collection_aliases",
                     change_aliases_operations=[
                         DeleteAliasOperation(delete_alias=DeleteAlias(alias_name=alias_name))
                     ],
@@ -393,7 +448,7 @@ class VectorStoreClient:
         store = self._store
         client = await store._ensure_initialized()
         try:
-            response = await asyncio.to_thread(client.get_aliases)
+            response = await self.call(client, "get_aliases")
         except Exception as exc:
             store._raise_if_recoverable(exc)
             raise
@@ -401,6 +456,23 @@ class VectorStoreClient:
 
     async def close(self) -> None:
         """Close the Qdrant client connection."""
-        if self._store._client is not None:
-            await asyncio.to_thread(self._store._client.close)
-            self._store._client = None
+        store = self._store
+        clients = [*store._retired_clients]
+        store._retired_clients.clear()
+        if store._client is not None:
+            clients.append(store._client)
+            store._client = None
+        await self._close_clients(clients)
+
+    async def _close_clients(self, clients: list[QdrantClientLike]) -> None:
+        """Close each distinct client, containing teardown failures."""
+        seen: set[int] = set()
+        for client in clients:
+            identity = id(client)
+            if identity in seen:
+                continue
+            seen.add(identity)
+            try:
+                await self.call(client, "close", timeout_hint=False)
+            except _QDRANT_CLIENT_CLOSE_ERRORS as close_error:
+                logger.warning("Failed to close Qdrant client: %s", close_error)

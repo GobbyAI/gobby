@@ -23,16 +23,21 @@ from weakref import WeakKeyDictionary
 from gobby.config.persistence import MemoryDreamConfig
 from gobby.memory.dream.apply import apply_dream_plan, revert_dream_run
 from gobby.memory.dream.candidates import list_sweep_candidates
+from gobby.memory.dream.options import DreamRunOptions
 from gobby.memory.dream.plan import validate_dream_plan
 from gobby.memory.dream.planner import build_raw_plan
 from gobby.memory.dream.protocols import MemoryDreamLLMProtocol, MemoryDreamManagerProtocol
+from gobby.memory.dream.related import (
+    RelatedEvidenceSession,
+    gather_related_evidence,
+)
 from gobby.memory.dream.storage import INTERRUPTED_CANCELLED_ERROR, MemoryDreamStore
 from gobby.memory.dream.truth_digest import (
     build_current_truth_digest,
     build_project_truth_digest,
     build_project_truth_digest_async,
 )
-from gobby.storage.memories_scope import ALL_MEMORIES, MemoryScope, MemoryScopeKind
+from gobby.storage.memories_scope import MemoryScope, MemoryScopeKind
 from gobby.storage.projects import LocalProjectManager
 
 logger = logging.getLogger(__name__)
@@ -61,49 +66,6 @@ MAX_PLANNER_ERRORS = 50
 # memories — including ones fully within the cooldown window. The truth-change
 # trigger needs that full set so a digest change on a cooled project is caught.
 _ALL_MEMORIES_CUTOFF = "9999-12-31T23:59:59+00:00"
-
-
-@dataclass(frozen=True)
-class DreamRunOptions:
-    dry_run: bool = True
-    # Vestigial: cross-memory consolidation is out of scope for the GC sweep, so
-    # the planner always runs (merge is suppressed by passing no duplicate groups).
-    skip_consolidation: bool = False
-    memory_type: str | None = None
-    project_id: str | None = None
-    global_only: bool = False
-    # None uses the dream config default. Scheduled per-project runs set this to
-    # False so the NULL/global bucket is swept by its own target exactly once.
-    include_global: bool | None = None
-    # When True, ignore the rolling redream cooldown and sweep every active
-    # in-scope memory once (cutoff = run_start). Scheduled nightly runs leave
-    # this False so project coverage stays cooldown-throttled.
-    full_sweep: bool = False
-
-    def __post_init__(self) -> None:
-        if self.global_only and self.project_id is not None:
-            raise ValueError("global_only and project_id are mutually exclusive")
-
-    def to_dict(self) -> dict[str, Any]:
-        return {
-            "dry_run": self.dry_run,
-            "skip_consolidation": self.skip_consolidation,
-            "memory_type": self.memory_type,
-            "project_id": self.project_id,
-            "global_only": self.global_only,
-            "include_global": self.include_global,
-            "full_sweep": self.full_sweep,
-        }
-
-    def memory_scope(self, *, include_global: bool) -> MemoryScope:
-        """Resolve transport options to the typed storage scope contract."""
-        if self.global_only:
-            return MemoryScope.global_only()
-        if self.project_id is None:
-            return ALL_MEMORIES
-        if include_global:
-            return MemoryScope.project_visible(self.project_id)
-        return MemoryScope.project_only(self.project_id)
 
 
 @dataclass
@@ -383,7 +345,7 @@ class MemoryDreamService:
         every memory-bearing project this compares the current rendered truth
         digest against the last-seen hash; on a change it clears that project's
         cooldown cursor so the upcoming sweep re-judges its memories against the
-        new stack, then records the new hash. The global/NULL bucket and the
+        new stack, then records the new hash. Globally visible memories and the
         daemon's own project use platform truth rather than a per-project
         codewiki digest and are skipped. Per-project failures are isolated.
         """
@@ -630,6 +592,7 @@ class MemoryDreamService:
 
     async def _execute_run_locked(self, run_id: str, options: DreamRunOptions) -> dict[str, Any]:
         await self._ensure_schema_async()
+        related_session = RelatedEvidenceSession()
         try:
             run_started = datetime.now(UTC)
             page_size = _positive_int(
@@ -657,11 +620,25 @@ class MemoryDreamService:
 
             if options.dry_run:
                 return await self._execute_dry_run(
-                    run_id, options, redream_cutoff, digest, page_size, include_global, run_started
+                    run_id,
+                    options,
+                    redream_cutoff,
+                    digest,
+                    page_size,
+                    include_global,
+                    run_started,
+                    related_session,
                 )
 
             totals = await self._stream_sweep(
-                run_id, options, redream_cutoff, digest, page_size, include_global, run_started
+                run_id,
+                options,
+                redream_cutoff,
+                digest,
+                page_size,
+                include_global,
+                run_started,
+                related_session,
             )
             if totals.mutations and self.dream_config.reconcile_after_apply:
                 await self._reconcile(totals)
@@ -707,6 +684,8 @@ class MemoryDreamService:
                 error=str(exc),
             )
             return {"success": False, "run_id": run_id, "run": run, "error": str(exc)}
+        finally:
+            await related_session.aclose()
 
     async def _stream_sweep(
         self,
@@ -717,9 +696,11 @@ class MemoryDreamService:
         page_size: int,
         include_global: bool,
         run_started: datetime,
+        related_session: RelatedEvidenceSession,
     ) -> _SweepTotals:
         totals = _SweepTotals()
         previous_ids: set[str] | None = None
+        retrieval_scope = options.retrieval_scope(include_global=include_global)
         while True:
             candidates = await list_sweep_candidates(
                 self.memory_manager,
@@ -731,6 +712,15 @@ class MemoryDreamService:
             )
             if not candidates:
                 break
+            if retrieval_scope is not None:
+                candidates = await gather_related_evidence(
+                    candidates,
+                    db=self.memory_manager.db,
+                    vector_store=getattr(self.memory_manager, "_vector_store", None),
+                    dream_config=self.dream_config,
+                    session=related_session,
+                    scope=retrieval_scope,
+                )
             page_ids = {candidate.id for candidate in candidates}
             if previous_ids is not None and page_ids == previous_ids:
                 # Cursor failed to advance (e.g. persistent stamp failure); stop
@@ -781,6 +771,7 @@ class MemoryDreamService:
         page_size: int,
         include_global: bool,
         run_started: datetime,
+        related_session: RelatedEvidenceSession,
     ) -> dict[str, Any]:
         candidates = await list_sweep_candidates(
             self.memory_manager,
@@ -790,6 +781,16 @@ class MemoryDreamService:
             memory_type=options.memory_type,
             now=run_started,
         )
+        retrieval_scope = options.retrieval_scope(include_global=include_global)
+        if candidates and retrieval_scope is not None:
+            candidates = await gather_related_evidence(
+                candidates,
+                db=self.memory_manager.db,
+                vector_store=getattr(self.memory_manager, "_vector_store", None),
+                dream_config=self.dream_config,
+                session=related_session,
+                scope=retrieval_scope,
+            )
         raw_plan = await build_raw_plan(
             candidates=candidates,
             duplicate_groups=[],

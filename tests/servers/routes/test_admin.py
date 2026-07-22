@@ -93,7 +93,7 @@ class TestAdminRoutes:
         server.task_manager.count_blocked_tasks.return_value = 0
 
         server.memory_manager = MagicMock()
-        server.memory_manager.get_stats.return_value = {"total_count": 10}
+        server.memory_manager.get_stats = AsyncMock(return_value={"total_count": 10})
         server.memory_manager._vector_store = None
         server.memory_manager._falkor_client = None
 

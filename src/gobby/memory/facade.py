@@ -524,8 +524,13 @@ class MemoryManagerFacadeMethods:
     ) -> Memory:
         return await self._lifecycle_service.aupdate_memory(memory_id, content, tags)
 
-    def get_stats(self, project_id: str | None = None) -> dict[str, Any]:
-        return _get_stats(self.storage, self.db, project_id, vector_store=self._vector_store)
+    async def get_stats(self, project_id: str | None = None) -> dict[str, Any]:
+        return await _get_stats(
+            self.storage,
+            self.db,
+            project_id,
+            vector_store=self._vector_store,
+        )
 
     async def reindex_embeddings(self, project_id: str | None = None) -> dict[str, Any]:
         return await self._indexing_service.reindex_embeddings(project_id=project_id)

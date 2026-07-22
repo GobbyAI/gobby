@@ -593,11 +593,13 @@ class TestMemoryStats:
 
     def test_stats_returns_counts(self, client, mock_server) -> None:
         """GET /memories/stats returns memory statistics."""
-        mock_server.memory_manager.get_stats.return_value = {
-            "total_count": 42,
-            "by_type": {"fact": 30, "preference": 12},
-            "project_id": None,
-        }
+        mock_server.memory_manager.get_stats = AsyncMock(
+            return_value={
+                "total_count": 42,
+                "by_type": {"fact": 30, "preference": 12},
+                "project_id": None,
+            }
+        )
         response = client.get("/api/memories/stats")
         assert response.status_code == 200
         data = response.json()
@@ -606,18 +608,20 @@ class TestMemoryStats:
 
     def test_stats_with_project_filter(self, client, mock_server) -> None:
         """GET /memories/stats supports project_id filter."""
-        mock_server.memory_manager.get_stats.return_value = {
-            "total_count": 10,
-            "by_type": {"fact": 10},
-            "project_id": "proj-1",
-        }
+        mock_server.memory_manager.get_stats = AsyncMock(
+            return_value={
+                "total_count": 10,
+                "by_type": {"fact": 10},
+                "project_id": "proj-1",
+            }
+        )
         response = client.get("/api/memories/stats", params={"project_id": "proj-1"})
         assert response.status_code == 200
-        mock_server.memory_manager.get_stats.assert_called_once_with(project_id="proj-1")
+        mock_server.memory_manager.get_stats.assert_awaited_once_with(project_id="proj-1")
 
     def test_stats_server_error(self, client, mock_server) -> None:
         """GET /memories/stats returns 500 on error."""
-        mock_server.memory_manager.get_stats.side_effect = RuntimeError("DB error")
+        mock_server.memory_manager.get_stats = AsyncMock(side_effect=RuntimeError("DB error"))
         response = client.get("/api/memories/stats")
         assert response.status_code == 500
 

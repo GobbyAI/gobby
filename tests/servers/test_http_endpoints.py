@@ -89,9 +89,7 @@ class TestAdminEndpoints:
     ) -> None:
         """Test status check includes memory stats."""
         mock_memory_manager = MagicMock()
-        mock_memory_manager.get_stats.return_value = {
-            "total_count": 10,
-        }
+        mock_memory_manager.get_stats = AsyncMock(return_value={"total_count": 10})
 
         services = ServiceContainer(
             config=None,
@@ -117,7 +115,7 @@ class TestAdminEndpoints:
     def test_status_check_memory_manager_failure(self, session_storage: SessionManager) -> None:
         """Test status check handles memory manager failure."""
         mock_memory_manager = MagicMock()
-        mock_memory_manager.get_stats.side_effect = RuntimeError("Memory error")
+        mock_memory_manager.get_stats = AsyncMock(side_effect=RuntimeError("Memory error"))
 
         services = ServiceContainer(
             config=None,

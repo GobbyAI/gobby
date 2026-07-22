@@ -2,13 +2,11 @@
 
 from __future__ import annotations
 
-import asyncio
 import logging
 import time
 from collections.abc import Awaitable, Callable
 from typing import TYPE_CHECKING, Any, Literal
 
-from qdrant_client import QdrantClient
 from qdrant_client.http.models.models import (
     CreateAlias,
     CreateAliasOperation,
@@ -16,7 +14,7 @@ from qdrant_client.http.models.models import (
     DeleteAliasOperation,
 )
 
-from gobby.memory.vectorstore_client import VectorStoreCollectionDimensionError
+from gobby.memory.vectorstore_client import QdrantClientLike, VectorStoreCollectionDimensionError
 from gobby.memory.vectorstore_rebuild import RebuildCollectionPlan
 
 if TYPE_CHECKING:
@@ -35,19 +33,24 @@ class VectorStoreMaintenance:
 
     async def prepare_collection_for_rebuild(
         self,
-        client: QdrantClient,
+        client: QdrantClientLike,
         *,
         recreate_on_mismatch: bool = True,
     ) -> RebuildCollectionPlan:
         """Choose a rebuild target without modifying the active collection."""
         store = self._store
         try:
-            aliases_response = await asyncio.to_thread(client.get_aliases)
+            aliases_response = await store._call_client(client, "get_aliases")
             alias_targets = {
                 alias.alias_name: alias.collection_name for alias in aliases_response.aliases
             }
             active_alias_target = alias_targets.get(store._collection_name)
-            exists = await asyncio.to_thread(client.collection_exists, store._collection_name)
+            exists = await store._call_client(
+                client,
+                "collection_exists",
+                store._collection_name,
+                timeout_hint=False,
+            )
             if not exists:
                 created = await store._create_collection(
                     client,
@@ -105,7 +108,7 @@ class VectorStoreMaintenance:
 
     async def activate_rebuild_collection(
         self,
-        client: QdrantClient,
+        client: QdrantClientLike,
         plan: RebuildCollectionPlan,
     ) -> None:
         """Activate a fully populated rebuild target."""
@@ -116,8 +119,9 @@ class VectorStoreMaintenance:
                 DeleteAliasOperation(delete_alias=DeleteAlias(alias_name=store._collection_name))
             )
         else:
-            await asyncio.to_thread(
-                client.delete_collection,
+            await store._call_client(
+                client,
+                "delete_collection",
                 collection_name=store._collection_name,
             )
         operations.append(
@@ -128,19 +132,21 @@ class VectorStoreMaintenance:
                 )
             )
         )
-        await asyncio.to_thread(
-            client.update_collection_aliases,
+        await store._call_client(
+            client,
+            "update_collection_aliases",
             change_aliases_operations=operations,
         )
 
     async def delete_collection_best_effort(
         self,
-        client: QdrantClient,
+        client: QdrantClientLike,
         collection_name: str,
     ) -> None:
         try:
-            await asyncio.to_thread(
-                client.delete_collection,
+            await self._store._call_client(
+                client,
+                "delete_collection",
                 collection_name=collection_name,
             )
         except Exception as exc:
@@ -227,7 +233,7 @@ class VectorStoreMaintenance:
 
     async def delete_stale_ids(
         self,
-        client: QdrantClient,
+        client: QdrantClientLike,
         incoming_ids: set[str],
         *,
         batch_size: int,
@@ -238,8 +244,9 @@ class VectorStoreMaintenance:
         stale_ids: list[str] = []
         while True:
             try:
-                points, next_offset = await asyncio.to_thread(
-                    client.scroll,
+                points, next_offset = await store._call_client(
+                    client,
+                    "scroll",
                     collection_name=store._collection_name,
                     limit=batch_size,
                     offset=offset,

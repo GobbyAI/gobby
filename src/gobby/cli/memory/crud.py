@@ -221,7 +221,7 @@ def memory_stats(ctx: click.Context, project_ref: str | None) -> None:
     memory_module = _facade()
     project_id = memory_module.resolve_project_ref(project_ref) if project_ref else None
     manager = memory_module.get_memory_manager(ctx)
-    stats = manager.get_stats(project_id=project_id)
+    stats = asyncio.run(manager.get_stats(project_id=project_id))
 
     click.echo("Memory Statistics:")
     click.echo(f"  Total Memories: {stats['total_count']}")

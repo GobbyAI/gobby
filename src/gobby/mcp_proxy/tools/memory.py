@@ -657,12 +657,12 @@ def create_memory_registry(
         name="memory_stats",
         description="Get statistics about the memory system.",
     )
-    def memory_stats() -> dict[str, Any]:
+    async def memory_stats() -> dict[str, Any]:
         """
         Get statistics about stored memories.
         """
         try:
-            stats = memory_manager.get_stats(project_id=get_current_project_id())
+            stats = await memory_manager.get_stats(project_id=get_current_project_id())
             return {"success": True, "stats": stats}
         except Exception as e:
             return {"success": False, "error": str(e)}

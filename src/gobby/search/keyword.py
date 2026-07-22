@@ -9,6 +9,7 @@ from dataclasses import dataclass
 from typing import Any, Literal, Protocol
 
 SearchMode = Literal["keyword", "semantic"]
+MemoryKeywordScope = Literal["global_only", "project_only", "project_and_global"]
 
 logger = logging.getLogger(__name__)
 
@@ -154,40 +155,17 @@ class BM25SearchBackend:
         filters: Mapping[str, Any] | None = None,
         allowed_ids: Collection[str] | None = None,
     ) -> list[SearchHit]:
-        bm25_query = sanitize_pg_search_query(query)
-        if not bm25_query:
-            return []
-        if allowed_ids is not None and not allowed_ids:
-            return []
-
-        params: list[Any] = []
-        search_clauses = []
-        for column in self._config.postgres_columns:
-            placeholder = _add_param(self._hub, params, bm25_query)
-            search_clauses.append(f"{column} @@@ {placeholder}")
-
-        where = [f"({' OR '.join(search_clauses)})"]
-        if filters:
-            where.extend(
-                _filter_clauses(self._hub, params, self._config.table, self._config, filters)
-            )
-        if allowed_ids is not None:
-            id_placeholders = [_add_param(self._hub, params, item_id) for item_id in allowed_ids]
-            where.append(f"{self._config.table}.id IN ({', '.join(id_placeholders)})")
-        if self._config.active_clause:
-            where.append(self._config.active_clause)
-
-        limit_placeholder = _add_param(self._hub, params, limit)
-        order_by = ", ".join(
-            ["score DESC", *(f"{column} ASC" for column in self._config.tie_break_columns)]
+        statement = render_keyword_search_statement(
+            self._hub,
+            self._config,
+            query,
+            limit,
+            filters=filters,
+            allowed_ids=allowed_ids,
         )
-        sql = f"""
-            SELECT id, pdb.score(id) AS score
-              FROM {self._config.table}
-             WHERE {" AND ".join(where)}
-             ORDER BY {order_by}
-             LIMIT {limit_placeholder}
-        """
+        if statement is None:
+            return []
+        sql, params = statement
 
         try:
             rows = fetch_all(self._hub, sql, params)
@@ -196,16 +174,15 @@ class BM25SearchBackend:
                 raise SearchQuerySyntaxError(query) from exc
             raise
 
-        raw_scores = [float(row_value(row, "score")) for row in rows]
-        normalized = normalize_positive_scores(raw_scores)
-        return [
-            SearchHit(id=str(row_value(row, "id")), score=score)
-            for row, score in zip(rows, normalized, strict=False)
-        ]
+        return map_keyword_search_rows(rows)
 
     def get_stats(self) -> dict[str, Any]:
         try:
-            row = fetch_one(self._hub, f"SELECT count(*) AS cnt FROM {self._config.table}", [])
+            row = fetch_one(
+                self._hub,
+                f"SELECT count(*) AS cnt FROM {self._config.table}",  # nosec
+                [],
+            )
             count = int(row_value(row, "cnt")) if row else 0
         except Exception:
             count = 0
@@ -218,6 +195,53 @@ class BM25SearchBackend:
 
     def clear(self) -> None:
         return None
+
+
+def render_keyword_search_statement(
+    hub: Any,
+    table: str | _TableConfig,
+    query: str,
+    limit: int,
+    *,
+    filters: Mapping[str, Any] | None = None,
+    allowed_ids: Collection[str] | None = None,
+) -> tuple[str, tuple[Any, ...]] | None:
+    """Render the exact PostgreSQL statement used by sync and async consumers."""
+    bm25_query = sanitize_pg_search_query(query)
+    if not bm25_query or (allowed_ids is not None and not allowed_ids):
+        return None
+
+    config = table if isinstance(table, _TableConfig) else _table_config(table)
+    params: list[Any] = []
+    search_clauses = [
+        f"{column} @@@ {_add_param(hub, params, bm25_query)}" for column in config.postgres_columns
+    ]
+    where = [f"({' OR '.join(search_clauses)})"]
+    if filters:
+        where.extend(_filter_clauses(hub, params, config.table, config, filters))
+    if allowed_ids is not None:
+        id_placeholders = [_add_param(hub, params, item_id) for item_id in allowed_ids]
+        where.append(f"{config.table}.id IN ({', '.join(id_placeholders)})")
+    if config.active_clause:
+        where.append(config.active_clause)
+
+    limit_placeholder = _add_param(hub, params, limit)
+    order_by = ", ".join(["score DESC", *(f"{column} ASC" for column in config.tie_break_columns)])
+    sql = (
+        f"SELECT id, pdb.score(id) AS score FROM {config.table} "  # nosec
+        f"WHERE {' AND '.join(where)} ORDER BY {order_by} LIMIT {limit_placeholder}"
+    )
+    return sql, tuple(params)
+
+
+def map_keyword_search_rows(rows: Sequence[Any]) -> list[SearchHit]:
+    """Map PostgreSQL keyword rows to normalized search hits."""
+    raw_scores = [float(row_value(row, "score")) for row in rows]
+    normalized = normalize_positive_scores(raw_scores)
+    return [
+        SearchHit(id=str(row_value(row, "id")), score=score)
+        for row, score in zip(rows, normalized, strict=False)
+    ]
 
 
 class KeywordAsyncSearchBackend:
@@ -357,7 +381,34 @@ def _filter_clauses(
 ) -> list[str]:
     clauses: list[str] = []
     columns = config.filters or {}
+    memory_scope = filters.get("memory_scope") if config.table == "memories" else None
+    if memory_scope is not None:
+        project_id = filters.get("project_id")
+        if memory_scope == "global_only":
+            clauses.append(f"{alias}.is_global IS TRUE")
+        elif memory_scope in {"project_only", "project_and_global"}:
+            if not isinstance(project_id, str) or not project_id:
+                raise ValueError(f"{memory_scope} keyword scope requires project_id")
+            project_placeholder = _add_param(hub, params, project_id)
+            if memory_scope == "project_only":
+                clauses.append(
+                    f"{alias}.project_id = {project_placeholder} AND {alias}.is_global IS FALSE"
+                )
+            else:
+                clauses.append(
+                    f"({alias}.project_id = {project_placeholder} OR {alias}.is_global IS TRUE)"
+                )
+        else:
+            raise ValueError(f"unsupported memory keyword scope: {memory_scope!r}")
+
     for filter_name, value in filters.items():
+        if memory_scope is not None and filter_name in {
+            "memory_scope",
+            "project_id",
+            "include_global",
+            "is_global",
+        }:
+            continue
         if config.table == "memories" and filter_name == "include_global":
             continue
         if filter_name not in columns:
