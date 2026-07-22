@@ -194,6 +194,43 @@ def _write_claude_lifecycle_transcript(
     )
 
 
+def _write_grok_lifecycle_transcript(path: Path, *, age_seconds: int = 120) -> None:
+    timestamp = time.time() - age_seconds
+    records = [
+        {
+            "jsonrpc": "2.0",
+            "method": "session/update",
+            "params": {
+                "sessionId": "grok-session",
+                "update": {
+                    "sessionUpdate": "user_message_chunk",
+                    "content": {"text": "continue"},
+                },
+                "_meta": {"agentTimestampMs": int(timestamp * 1000)},
+            },
+            "timestamp": timestamp,
+        },
+        {
+            "jsonrpc": "2.0",
+            "method": "_x.ai/session/update",
+            "params": {
+                "sessionId": "grok-session",
+                "update": {
+                    "sessionUpdate": "turn_completed",
+                    "prompt_id": "prompt-id",
+                    "stop_reason": "end_turn",
+                },
+                "_meta": {"agentTimestampMs": int(timestamp * 1000)},
+            },
+            "timestamp": timestamp,
+        },
+    ]
+    path.write_text(
+        "\n".join(json.dumps(record) for record in records) + "\n",
+        encoding="utf-8",
+    )
+
+
 def _append_codex_capacity_turn(
     path: Path,
     *,
@@ -423,6 +460,64 @@ async def test_claude_turn_duration_reprompts_after_base_timeout(
             call(run.tmux_session_name, "workflow-aware continuation"),
             call(run.tmux_session_name, "Enter", literal=False),
         ]
+    )
+
+
+@pytest.mark.asyncio
+async def test_grok_turn_completed_reprompts_and_records_watchdog_event(
+    temp_db: HubDatabase,
+    session_manager: SessionManager,
+    sample_project: dict[str, Any],
+    agent_run_manager: LocalAgentRunManager,
+    tmp_path: Path,
+) -> None:
+    transcript_path = tmp_path / "grok-completed-turn.jsonl"
+    _write_grok_lifecycle_transcript(transcript_path)
+    monitor, run = _make_idle_monitor_run(
+        temp_db=temp_db,
+        session_manager=session_manager,
+        sample_project=sample_project,
+        agent_run_manager=agent_run_manager,
+        run_id="dddddddd-dddd-4ddd-8ddd-dddddddd1016",
+        transcript_path=transcript_path,
+        child_source="grok",
+    )
+
+    with (
+        patch.object(monitor._tmux, "capture_pane", new_callable=AsyncMock, return_value="❯\n"),
+        patch.object(
+            monitor._tmux, "send_keys", new_callable=AsyncMock, return_value=True
+        ) as mock_send,
+        patch.object(
+            monitor._idle_check_handler,
+            "_idle_reprompt_message",
+            new_callable=AsyncMock,
+            return_value="workflow-aware continuation",
+        ) as mock_message,
+        patch.object(
+            monitor._idle_check_handler,
+            "_record_watchdog_task_event",
+            new_callable=AsyncMock,
+        ) as mock_audit,
+    ):
+        handled = await monitor.check_idle_agents()
+
+    assert handled == 1
+    mock_message.assert_awaited_once()
+    mock_send.assert_has_awaits(
+        [
+            call(run.tmux_session_name, "Escape", literal=False),
+            call(run.tmux_session_name, "workflow-aware continuation"),
+            call(run.tmux_session_name, "Enter", literal=False),
+        ]
+    )
+    assert all(awaited.args[1] != "C-c" for awaited in mock_send.await_args_list)
+    assert monitor._idle_detector.get_state(run.id).reprompt_count == 1
+    mock_audit.assert_awaited_once_with(
+        run,
+        action="completed_turn_reprompt",
+        session_id=run.child_session_id,
+        detail="latest_turn_kind=completed",
     )
 
 
