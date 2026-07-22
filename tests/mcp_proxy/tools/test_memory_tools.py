@@ -572,11 +572,15 @@ class TestRestoreMemory:
     async def test_restore_memory_success(self, memory_registry, mock_memory_manager) -> None:
         """Restoring an existing memory returns success and calls storage."""
         mock_memory_manager.restore_memory = MagicMock(return_value=True)
+        mock_memory_manager.restore_memory_indices = AsyncMock(return_value=None)
 
         result = await memory_registry.call("restore_memory", {"memory_id": "mem-123"})
 
         assert result == {"success": True}
         mock_memory_manager.restore_memory.assert_called_once_with("mem-123")
+        mock_memory_manager.restore_memory_indices.assert_awaited_once_with(
+            "mem-123", "Test memory content", PERSONAL_PROJECT_ID, False, "fact"
+        )
 
     @pytest.mark.asyncio
     async def test_restore_memory_not_found(self, memory_registry, mock_memory_manager) -> None:
