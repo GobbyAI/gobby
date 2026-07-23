@@ -139,6 +139,7 @@ class StorageAdapter:
         limit: int = 50,
         offset: int = 0,
         tags_all: list[str] | None = None,
+        tags_none: list[str] | None = None,
         *,
         visibility: Visibility = "active",
     ) -> list[MemoryRecord]:
@@ -149,6 +150,7 @@ class StorageAdapter:
             limit=limit,
             offset=offset,
             tags_all=tags_all,
+            tags_none=tags_none,
             visibility=visibility,
         )
         return [self._to_record(m) for m in memories]

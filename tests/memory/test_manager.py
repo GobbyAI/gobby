@@ -1269,6 +1269,28 @@ class TestAListMemories:
         result = await memory_manager.alist_memories(limit=0)
         assert result == []
 
+    @pytest.mark.asyncio
+    async def test_alist_excludes_memories_with_forbidden_tags(
+        self,
+        memory_manager: MemoryManager,
+    ) -> None:
+        """alist_memories applies tags_none through the async backend."""
+        code_memory = await memory_manager.create_memory(
+            content="Code lesson",
+            tags=["review-lesson", "lesson-domain:code"],
+        )
+        await memory_manager.create_memory(
+            content="Plan lesson",
+            tags=["review-lesson", "lesson-domain:plan"],
+        )
+
+        result = await memory_manager.alist_memories(
+            tags_all=["review-lesson"],
+            tags_none=["lesson-domain:plan"],
+        )
+
+        assert [memory.id for memory in result] == [code_memory.id]
+
 
 # =============================================================================
 # Test: acontent_exists (async content exists)

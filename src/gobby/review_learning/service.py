@@ -22,6 +22,7 @@ from gobby.review_learning.fingerprint import (
 from gobby.review_learning.guidance import format_review_lesson_guidance
 from gobby.review_learning.lessons import (
     CI_SOURCE_KINDS,
+    CODE_DOMAIN_EXCLUDED_TAGS,
     derive_lesson_domain,
     has_verified_fix,
     normalize_lesson,
@@ -85,6 +86,7 @@ class ReviewLearningMemoryManager(PromotionMemoryManager, Protocol):
         limit: int | None = None,
         offset: int = 0,
         tags_all: list[str] | None = None,
+        tags_none: list[str] | None = None,
         include_global: bool = True,
     ) -> list[Any]: ...
 
@@ -312,7 +314,9 @@ class ReviewLearningService:
         matches: list[dict[str, Any]] = []
         for query in queries:
             for tags_all in (None, ["review-lesson"]):
-                tags_none = ["review-lesson"] if tags_all is None else None
+                tags_none = (
+                    ["review-lesson"] if tags_all is None else list(CODE_DOMAIN_EXCLUDED_TAGS)
+                )
                 include_global = tags_all is None
                 memories = await self.memory_manager.search_memories(
                     query=query,
@@ -421,6 +425,7 @@ class ReviewLearningService:
         tagged_paths = {tag: path for path in touched_paths if (tag := path_tag(path))}
         candidates: list[tuple[Any, str | None]] = []
         seen: set[str] = set()
+        code_domain_exclusions = list(CODE_DOMAIN_EXCLUDED_TAGS)
 
         for tag, touched_path in tagged_paths.items():
             tagged_memories = await self.memory_manager.alist_memories(
@@ -428,6 +433,7 @@ class ReviewLearningService:
                 memory_type="pattern",
                 limit=limit,
                 tags_all=["review-lesson", "confirmed", tag],
+                tags_none=code_domain_exclusions,
                 include_global=False,
             )
             for memory in tagged_memories:
@@ -445,6 +451,7 @@ class ReviewLearningService:
             memory_type="pattern",
             limit=max(_LEGACY_SCAN_LIMIT, limit),
             tags_all=["review-lesson", "confirmed"],
+            tags_none=code_domain_exclusions,
             include_global=False,
         )
         for memory in legacy_memories:

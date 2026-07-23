@@ -11,6 +11,9 @@ from gobby.review_learning.file_paths import (
     path_tag,
     paths_match,
 )
+from gobby.review_learning.lessons import CODE_DOMAIN_EXCLUDED_TAGS
+from gobby.review_learning.service import ReviewLearningService
+from tests.review_learning.conftest import FakeMemory, FakeMemoryManager, FakeTaskManager
 
 pytestmark = pytest.mark.unit
 
@@ -131,3 +134,41 @@ def test_extract_lesson_file_paths_combines_finding_and_evidence_in_order(
         "src/gobby/tasks.py",
         "tests/tasks/test_manager.py",
     ]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("candidate_path", ["tagged", "legacy"])
+async def test_plan_lesson_colliding_path_excluded(candidate_path: str) -> None:
+    colliding_path = "src/gobby/review_learning/service.py"
+    tags = [
+        "review-lesson",
+        "confirmed",
+        *CODE_DOMAIN_EXCLUDED_TAGS,
+        "pattern:plan-review:reviewer-miss:correctness-safety:recall-domain",
+    ]
+    if candidate_path == "tagged":
+        tags.append(path_tag(colliding_path))
+    memory_manager = FakeMemoryManager()
+    memory_manager.memories.append(
+        FakeMemory(
+            id=f"mem-plan-{candidate_path}",
+            content="\n".join(
+                [
+                    "# Review Lesson",
+                    "- pattern_id: plan-review:reviewer-miss:correctness-safety:recall-domain",
+                    "- principle: Plan lessons stay in plan recall.",
+                    f"- path: {colliding_path}",
+                ]
+            ),
+            tags=tags,
+        )
+    )
+    service = ReviewLearningService(memory_manager, FakeTaskManager())
+
+    result = await service.recall_review_lessons_for_files(
+        file_paths=[colliding_path],
+        project_id="project",
+        limit=1,
+    )
+
+    assert result["lessons"] == []

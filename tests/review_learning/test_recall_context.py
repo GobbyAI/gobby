@@ -6,6 +6,7 @@ from typing import Any
 
 import pytest
 
+from gobby.review_learning.lessons import CODE_DOMAIN_EXCLUDED_TAGS
 from gobby.review_learning.service import (
     ReviewLearningService,
     build_recall_queries,
@@ -176,6 +177,44 @@ async def test_recall_returns_ordinary_and_review_lesson_memories(
     assert memory_ids == {"mem-ordinary", "mem-lesson"}
     assert result["findings"][0]["finding_index"] == 0
     assert all(match["finding_index"] == 0 for match in result["matches"])
+
+
+@pytest.mark.asyncio
+async def test_code_domain_excludes_plan_lessons(fake_task_manager) -> None:
+    fake_memory_manager = _scoped_memory_manager()
+    fake_memory_manager.search_results = [
+        FakeMemory(
+            id="mem-code-lesson",
+            content="Code-domain review lesson.",
+            tags=["review-lesson", "lesson-domain:code"],
+        ),
+        FakeMemory(
+            id="mem-plan-lesson",
+            content="Plan-domain review lesson.",
+            tags=["review-lesson", "lesson-domain:plan"],
+        ),
+    ]
+    service = ReviewLearningService(fake_memory_manager, fake_task_manager)
+
+    result = await service.recall_context(
+        findings=[{"title": "Review this implementation"}],
+        source="coderabbit",
+        source_kind="review_comment",
+        session_id=SESSION_ID,
+    )
+
+    assert {match["memory_id"] for match in result["matches"]} == {"mem-code-lesson"}
+    lesson_calls = [
+        query
+        for query in fake_memory_manager.search_queries
+        if query["tags_all"] == ["review-lesson"]
+    ]
+    ordinary_calls = [
+        query for query in fake_memory_manager.search_queries if query["tags_all"] is None
+    ]
+    assert lesson_calls
+    assert all(query["tags_none"] == list(CODE_DOMAIN_EXCLUDED_TAGS) for query in lesson_calls)
+    assert all(query["tags_none"] == ["review-lesson"] for query in ordinary_calls)
 
 
 @pytest.mark.asyncio

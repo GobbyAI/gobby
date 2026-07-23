@@ -148,6 +148,7 @@ class FakeMemoryManager:
         limit: int | None = None,
         offset: int = 0,
         tags_all: list[str] | None = None,
+        tags_none: list[str] | None = None,
         include_global: bool = True,
     ) -> list[FakeMemory]:
         return self.list_memories(
@@ -156,6 +157,7 @@ class FakeMemoryManager:
             limit=limit,
             offset=offset,
             tags_all=tags_all,
+            tags_none=tags_none,
             include_global=include_global,
         )
 

@@ -113,6 +113,7 @@ class MemoryRepository:
         limit: int | None = DEFAULT_LIST_LIMIT,
         offset: int = 0,
         tags_all: list[str] | None = None,
+        tags_none: list[str] | None = None,
         visibility: Visibility = "active",
     ) -> list[Memory]:
         """List memories via backend."""
@@ -123,6 +124,7 @@ class MemoryRepository:
             limit=resolved_limit,
             offset=offset,
             tags_all=tags_all,
+            tags_none=tags_none,
             visibility=visibility,
         )
         return [self.record_to_memory(record) for record in records]
