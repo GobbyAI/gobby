@@ -9,7 +9,7 @@ import logging
 import re
 from typing import Any, Protocol
 
-from gobby.review_learning.class_recall import ReviewLessonClassRecall
+from gobby.review_learning.class_recall import ReviewLessonClassRecall, ReviewLessonRetirement
 from gobby.review_learning.file_paths import (
     extract_file_paths_from_mapping,
     normalize_lesson_file_path,
@@ -90,6 +90,14 @@ class ReviewLearningMemoryManager(PromotionMemoryManager, Protocol):
         tags_none: list[str] | None = None,
         include_global: bool = True,
     ) -> list[Any]: ...
+
+    async def update_memory(
+        self,
+        memory_id: str,
+        content: str | None = None,
+        tags: list[str] | None = None,
+        memory_type: str | None = None,
+    ) -> Any: ...
 
 
 class ReviewLearningService:
@@ -221,6 +229,22 @@ class ReviewLearningService:
             lesson_type=lesson_type,
             category=category,
         )
+
+    async def retire_review_lesson(
+        self,
+        *,
+        pattern_id: str,
+        evidence: dict[str, Any],
+        session_id: str | None = None,
+    ) -> dict[str, Any]:
+        """Retire confirmed occurrences of an obsolete review lesson."""
+        project_id, _ = await self._resolve_record_scope(session_id)
+        retirement = ReviewLessonRetirement(
+            memory_manager=self.memory_manager,
+            task_manager=self.task_manager,
+            project_id=project_id,
+        )
+        return await retirement.retire(pattern_id=pattern_id, evidence=evidence)
 
     async def record(
         self,

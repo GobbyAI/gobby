@@ -35,6 +35,10 @@ the recommendation.
 After a confirmed reusable outcome, call
 `gobby-review-learning.record_review_lesson`. Do not record raw leads.
 
+Any agent that verifies an injected lesson is obsolete must call
+`gobby-review-learning.retire_review_lesson` with the injected `pattern_id`,
+non-empty verification evidence, and the current `session_id`.
+
 ## Finding Payload
 
 Pass the diagnostic and generalized lesson in one `finding` dict:

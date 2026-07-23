@@ -84,6 +84,7 @@ def test_create_review_learning_registry_registers_class_recall_tools() -> None:
         "recall_review_lessons_by_class",
         "recall_review_lessons_for_files",
         "record_review_lesson",
+        "retire_review_lesson",
     }
 
 

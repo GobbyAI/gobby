@@ -2,13 +2,16 @@
 
 from __future__ import annotations
 
+import asyncio
 from datetime import UTC, datetime
 from typing import Any, Protocol
 
 from gobby.review_learning.guidance import format_review_lesson_guidance
-from gobby.review_learning.lessons import SOURCE_KIND_DOMAIN, slugify
+from gobby.review_learning.lessons import SOURCE_KIND_DOMAIN, pattern_key_for, slugify
+from gobby.storage.hub.protocol import HubDatabase, ReviewLearningPatternMutation
 
 _PAGE_SIZE = 100
+_GUARDRAIL_TASK_LIMIT = 50
 _VALID_LESSON_DOMAINS = frozenset(SOURCE_KIND_DOMAIN.values())
 
 
@@ -26,6 +29,117 @@ class ClassRecallMemoryManager(Protocol):
         tags_none: list[str] | None = None,
         include_global: bool = True,
     ) -> list[Any]: ...
+
+
+class RetirementMemoryManager(ClassRecallMemoryManager, Protocol):
+    """Memory operations required to retire a review lesson."""
+
+    db: HubDatabase
+
+    async def update_memory(
+        self,
+        memory_id: str,
+        content: str | None = None,
+        tags: list[str] | None = None,
+        memory_type: str | None = None,
+    ) -> Any: ...
+
+
+class RetirementTaskManager(Protocol):
+    """Task lookup required to report guardrails associated with a lesson."""
+
+    def list_tasks(
+        self,
+        *,
+        project_id: str,
+        closed: bool,
+        label: str,
+        limit: int,
+    ) -> list[Any]: ...
+
+
+class ReviewLessonRetirement:
+    """Project-scoped retirement for obsolete confirmed review lessons."""
+
+    def __init__(
+        self,
+        memory_manager: RetirementMemoryManager,
+        task_manager: RetirementTaskManager,
+        project_id: str,
+    ) -> None:
+        if not project_id:
+            raise RuntimeError("Review-learning retirement requires a project context")
+        self._memory_manager = memory_manager
+        self._task_manager = task_manager
+        self._project_id = project_id
+
+    async def retire(
+        self,
+        *,
+        pattern_id: str,
+        evidence: dict[str, Any],
+    ) -> dict[str, Any]:
+        """Retag every confirmed occurrence for a pattern and report its guardrail tasks."""
+        if not isinstance(pattern_id, str) or not pattern_id.strip():
+            raise ValueError("retire_review_lesson requires a non-empty pattern_id")
+        if not isinstance(evidence, dict) or not evidence:
+            raise ValueError("retire_review_lesson requires non-empty evidence")
+
+        normalized_pattern_id = pattern_id.strip()
+        pattern_key = pattern_key_for(normalized_pattern_id)
+        lock = ReviewLearningPatternMutation(
+            project_id=self._project_id,
+            pattern_key=pattern_key,
+        )
+        async with self._memory_manager.db.advisory_lock(lock):
+            memories = await self._confirmed_memories(pattern_key)
+            affected_memory_ids: list[str] = []
+            for memory in memories:
+                memory_id = _memory_id(memory)
+                if not memory_id:
+                    continue
+                await self._memory_manager.update_memory(
+                    memory_id,
+                    tags=_replace_confirmed_with_stale(getattr(memory, "tags", None)),
+                )
+                affected_memory_ids.append(memory_id)
+
+            tasks = await asyncio.to_thread(
+                self._task_manager.list_tasks,
+                project_id=self._project_id,
+                closed=False,
+                label=f"pattern:{pattern_key}",
+                limit=_GUARDRAIL_TASK_LIMIT,
+            )
+            guardrail_task_refs = [
+                _task_ref(task)
+                for task in tasks
+                if str(getattr(task, "title", "")).startswith("Guardrail:")
+            ]
+
+        return {
+            "pattern_id": normalized_pattern_id,
+            "affected_memory_ids": affected_memory_ids,
+            "guardrail_task_refs": guardrail_task_refs,
+        }
+
+    async def _confirmed_memories(self, pattern_key: str) -> list[Any]:
+        memories: list[Any] = []
+        offset = 0
+        while True:
+            page = await self._memory_manager.alist_memories(
+                project_id=self._project_id,
+                memory_type="pattern",
+                limit=_PAGE_SIZE,
+                offset=offset,
+                tags_all=["review-lesson", "confirmed", f"pattern:{pattern_key}"],
+                include_global=False,
+            )
+            memories.extend(page)
+            if len(page) < _PAGE_SIZE:
+                break
+            offset += len(page)
+        return memories
 
 
 class ReviewLessonClassRecall:
@@ -273,3 +387,21 @@ def _extract_avoid_text(prevention: str) -> str:
     if marker not in lower:
         return ""
     return prevention[lower.find(marker) + len(marker) :].strip(" ;.")
+
+
+def _replace_confirmed_with_stale(tags: list[str] | None) -> list[str]:
+    retagged: list[str] = []
+    for tag in tags or []:
+        replacement = "stale" if tag == "confirmed" else tag
+        if replacement not in retagged:
+            retagged.append(replacement)
+    if "stale" not in retagged:
+        retagged.append("stale")
+    return retagged
+
+
+def _task_ref(task: Any) -> str:
+    seq_num = getattr(task, "seq_num", None)
+    if seq_num:
+        return f"#{seq_num}"
+    return str(getattr(task, "id", ""))[:8]

@@ -166,6 +166,26 @@ def create_review_learning_registry(service: ReviewLearningService) -> InternalT
             return {"success": False, "error": str(exc)}
 
     @registry.tool(
+        name="retire_review_lesson",
+        description="Retire an obsolete review lesson and report its open guardrail tasks.",
+    )
+    async def retire_review_lesson(
+        pattern_id: str,
+        evidence: dict[str, Any],
+        session_id: str | None = None,
+    ) -> dict[str, Any]:
+        """Retag confirmed lesson occurrences as stale after verifying obsolescence."""
+        try:
+            result = await service.retire_review_lesson(
+                pattern_id=pattern_id,
+                evidence=evidence,
+                session_id=session_id,
+            )
+            return {"success": True, **result}
+        except (AttributeError, ValueError, RuntimeError, OSError) as exc:
+            return {"success": False, "error": str(exc)}
+
+    @registry.tool(
         name="record_review_lesson",
         description="Record a confirmed review lesson and promote repeated patterns.",
     )
