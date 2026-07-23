@@ -1008,6 +1008,7 @@ class TestRemoteTimeoutHint:
 
         from gobby.memory.vectorstore_client import _accepts_timeout_kwarg
 
+        assert not _accepts_timeout_kwarg(AsyncQdrantClient.get_collection)
         assert not _accepts_timeout_kwarg(AsyncQdrantClient.upsert)
         assert not _accepts_timeout_kwarg(AsyncQdrantClient.delete)
         assert not _accepts_timeout_kwarg(AsyncQdrantClient.set_payload)
@@ -1035,6 +1036,12 @@ class TestRemoteTimeoutHint:
                 self.calls.append(("upsert", None))
                 return "ok"
 
+            async def get_collection(self, collection_name: str, **kwargs: object) -> str:
+                if kwargs:
+                    raise ValueError(f"Unknown arguments: {list(kwargs.keys())}")
+                self.calls.append(("get_collection", None))
+                return "ok"
+
             async def query_points(
                 self, collection_name: str, timeout: int | None = None, **kwargs: object
             ) -> str:
@@ -1050,5 +1057,10 @@ class TestRemoteTimeoutHint:
         fake = _FakeRemoteClient()
 
         assert await ops.call(fake, "upsert", collection_name="c", points=[]) == "ok"
+        assert await ops.call(fake, "get_collection", collection_name="c") == "ok"
         assert await ops.call(fake, "query_points", collection_name="c") == "ok"
-        assert fake.calls == [("upsert", None), ("query_points", 5)]
+        assert fake.calls == [
+            ("upsert", None),
+            ("get_collection", None),
+            ("query_points", 5),
+        ]
