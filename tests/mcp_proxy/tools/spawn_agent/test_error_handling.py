@@ -1191,3 +1191,81 @@ test"""
             )
             assert result["success"] is True
             assert "timeout" not in mock_execute.call_args.kwargs
+
+
+class _RecordingWake:
+    """Wake callback recording deliveries with a configurable outcome."""
+
+    def __init__(self, ism_persisted: bool) -> None:
+        self._ism_persisted = ism_persisted
+        self.calls: list[tuple[str, str, dict[str, object]]] = []
+
+    async def __call__(
+        self, session_id: str, message: str, result: dict[str, object]
+    ) -> dict[str, object]:
+        self.calls.append((session_id, message, result))
+        return {"ism_persisted": self._ism_persisted}
+
+
+class TestCleanupFailedSpawnWakesWaiter:
+    """Plan 1.4.10: spawn-failure cleanup delivers to the pre-registered waiter."""
+
+    def _harness(self, *, ism_persisted: bool) -> SimpleNamespace:
+        from contextlib import nullcontext
+
+        from gobby.events import CompletionEventRegistry
+
+        wake = _RecordingWake(ism_persisted)
+        registry = CompletionEventRegistry(wake_callback=wake)
+        registry.register("run-123", ["waiter-sess"])
+
+        failed_run = SimpleNamespace(
+            id="run-123", status="error", error="spawn failed", child_session_id=None
+        )
+        run_storage = MagicMock()
+        run_storage.fail.return_value = failed_run
+        run_storage.get.return_value = failed_run
+        run_storage.db.bounded_transaction.return_value = nullcontext()
+        runner = SimpleNamespace(run_storage=run_storage, session_manager=None)
+        return SimpleNamespace(wake=wake, registry=registry, runner=runner)
+
+    def _record_removals(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> list[tuple[str, list[str] | None]]:
+        import gobby.agents.completion_subscribers as subscribers_module
+
+        removals: list[tuple[str, list[str] | None]] = []
+
+        def _record(*, db: object, run_id: str, session_ids: list[str] | None = None) -> None:
+            removals.append((run_id, session_ids))
+
+        monkeypatch.setattr(subscribers_module, "remove_agent_completion_subscribers", _record)
+        return removals
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("ism_persisted", [True, False])
+    async def test_spawn_failure_delivers_and_settles_rows(
+        self, monkeypatch: pytest.MonkeyPatch, ism_persisted: bool
+    ) -> None:
+        from gobby.mcp_proxy.tools.spawn_agent._failure_cleanup import cleanup_failed_spawn
+
+        harness = self._harness(ism_persisted=ism_persisted)
+        removals = self._record_removals(monkeypatch)
+
+        await cleanup_failed_spawn(
+            harness.runner,
+            "run-123",
+            "spawn failed",
+            handler=MagicMock(),
+            spawn_config=MagicMock(),
+            completion_registry=harness.registry,
+            cleanup_isolation=False,
+        )
+
+        assert [call[0] for call in harness.wake.calls] == ["waiter-sess"]
+        assert harness.wake.calls[0][2]["run_id"] == "run-123"
+        if ism_persisted:
+            assert removals == [("run-123", ["waiter-sess"])]
+        else:
+            assert removals == []
+        assert harness.registry.is_registered("run-123") is False

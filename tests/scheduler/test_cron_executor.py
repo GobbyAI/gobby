@@ -1013,3 +1013,35 @@ async def test_execute_agent_spawn_agent_definition_not_found(
     # Prompt should be unchanged (no preamble)
     call_kwargs = mock_spawn.call_args
     assert call_kwargs.kwargs.get("prompt") == "Do stuff"
+
+
+@pytest.mark.asyncio
+async def test_agent_spawn_supplies_owning_completion_registry(
+    cron_storage: CronJobStorage,
+) -> None:
+    """Plan 1.4.10: the cron surface passes its registry into spawn_agent_impl,
+    so the deferred health check can wake a pre-registered waiter."""
+    from types import SimpleNamespace
+
+    registry = object()
+    executor = CronExecutor(
+        storage=cron_storage,
+        agent_runner=MagicMock(),
+        services=SimpleNamespace(completion_registry=registry),
+    )
+    job = _make_job(
+        cron_storage,
+        "agent_spawn",
+        {"prompt": "say hello", "provider": "claude", "timeout_seconds": 30},
+    )
+    run = cron_storage.create_run(job.id)
+
+    with patch(
+        "gobby.mcp_proxy.tools.spawn_agent._implementation.spawn_agent_impl",
+        new_callable=AsyncMock,
+        return_value={"success": True, "run_id": "dddddddd-dddd-4ddd-8ddd-dddddddd0abc"},
+    ) as mock_spawn:
+        result = await executor.execute(job, run)
+
+    assert result.status == "dispatched"
+    assert mock_spawn.call_args.kwargs["completion_registry"] is registry

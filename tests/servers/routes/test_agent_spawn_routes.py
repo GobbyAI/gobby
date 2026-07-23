@@ -273,6 +273,46 @@ class TestSpawnAgent:
         assert kwargs["daemon_config"] is server.services.config
         assert "sandbox" not in kwargs
 
+    def test_spawn_route_supplies_owning_completion_registry(
+        self,
+        client: TestClient,
+        server,
+        task_manager: LocalTaskManager,
+        test_project,
+    ) -> None:
+        """Plan 1.4.10: the HTTP spawn surface passes its registry into
+        spawn_agent_impl, so a deferred-health failure after a successful
+        run_id return can wake a pre-registered waiter."""
+        task = _create_task(task_manager, test_project.id, "Registry wiring task")
+        server.services.agent_runner = MagicMock()
+
+        with (
+            patch(
+                "gobby.utils.project_context.get_project_context",
+                return_value={"id": test_project.id},
+            ),
+            patch(
+                "gobby.workflows.agent_resolver.resolve_agent",
+                return_value=None,
+            ),
+            patch(
+                "gobby.mcp_proxy.tools.spawn_agent._implementation.spawn_agent_impl",
+                new=AsyncMock(
+                    return_value={
+                        "success": True,
+                        "run_id": "run-123",
+                        "child_session_id": "child-456",
+                        "isolation": "none",
+                    }
+                ),
+            ) as mock_spawn,
+        ):
+            response = client.post("/api/agents/spawn", json={"task_id": task.id})
+
+        assert response.status_code == 200
+        kwargs = mock_spawn.await_args.kwargs
+        assert kwargs["completion_registry"] is server.services.completion_registry
+
 
 # ---------------------------------------------------------------------------
 # POST /api/agents/spawn/batch

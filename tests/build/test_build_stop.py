@@ -233,3 +233,141 @@ def test_resume_cleanup_preserves_expired_mutex_for_active_run(temp_db) -> None:
     assert cleared == 1
     assert mutexes.get_mutex(active_task.id) is not None
     assert mutexes.get_mutex(orphan_task.id) is None
+
+
+class _RecordingWake:
+    """Wake callback recording deliveries with a configurable outcome."""
+
+    def __init__(self, ism_persisted: bool) -> None:
+        self._ism_persisted = ism_persisted
+        self.calls: list[tuple[str, str, dict[str, object]]] = []
+
+    async def __call__(
+        self, session_id: str, message: str, result: dict[str, object]
+    ) -> dict[str, object]:
+        self.calls.append((session_id, message, result))
+        return {"ism_persisted": self._ism_persisted}
+
+
+class TestBuildStopWakesWaiter:
+    """Plan 1.4.10: build-stop agent cancellation delivers to the waiter."""
+
+    def _harness(self, *, ism_persisted: bool) -> Any:
+        from contextlib import nullcontext
+        from types import SimpleNamespace
+        from unittest.mock import MagicMock
+
+        from gobby.events import CompletionEventRegistry
+
+        wake = _RecordingWake(ism_persisted)
+        registry = CompletionEventRegistry(wake_callback=wake)
+        registry.register("run-123", ["waiter-sess"])
+
+        run = SimpleNamespace(id="run-123", status="running", error=None)
+        terminal_run = SimpleNamespace(id="run-123", status="cancelled", error=None)
+        run_manager = MagicMock()
+        run_manager.cancel.return_value = terminal_run
+        run_manager.get.return_value = terminal_run
+        db = MagicMock()
+        db.bounded_transaction.return_value = nullcontext()
+        services = SimpleNamespace(agent_lifecycle_monitor=None, completion_registry=registry)
+        return SimpleNamespace(
+            wake=wake,
+            registry=registry,
+            run=run,
+            run_manager=run_manager,
+            db=db,
+            services=services,
+        )
+
+    def _record_removals(self, monkeypatch: pytest.MonkeyPatch) -> list[tuple[str, Any]]:
+        import gobby.agents.completion_subscribers as subscribers_module
+
+        removals: list[tuple[str, Any]] = []
+
+        def _record(*, db: object, run_id: str, session_ids: Any = None) -> None:
+            removals.append((run_id, session_ids))
+
+        monkeypatch.setattr(subscribers_module, "remove_agent_completion_subscribers", _record)
+        return removals
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("ism_persisted", [True, False])
+    async def test_cancelled_agent_delivery_settles_rows(
+        self, monkeypatch: pytest.MonkeyPatch, ism_persisted: bool
+    ) -> None:
+        from unittest.mock import AsyncMock
+
+        from gobby.build import controls as controls_module
+
+        harness = self._harness(ism_persisted=ism_persisted)
+        removals = self._record_removals(monkeypatch)
+        monkeypatch.setattr(
+            controls_module, "LocalAgentRunManager", lambda _db: harness.run_manager
+        )
+        monkeypatch.setattr(
+            controls_module, "kill_agent", AsyncMock(return_value={"success": True})
+        )
+
+        await controls_module._cancel_active_agents(
+            harness.db, [harness.run], services=harness.services
+        )
+
+        assert [call[0] for call in harness.wake.calls] == ["waiter-sess"]
+        assert harness.wake.calls[0][2]["run_id"] == "run-123"
+        if ism_persisted:
+            assert removals == [("run-123", ["waiter-sess"])]
+        else:
+            assert removals == []
+        assert harness.registry.is_registered("run-123") is False
+
+    @pytest.mark.asyncio
+    async def test_kill_exception_after_capture_commit_still_delivers(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        from unittest.mock import AsyncMock
+
+        from gobby.build import controls as controls_module
+
+        harness = self._harness(ism_persisted=True)
+        removals = self._record_removals(monkeypatch)
+        harness.run_manager.cancel.return_value = None
+        monkeypatch.setattr(
+            controls_module, "LocalAgentRunManager", lambda _db: harness.run_manager
+        )
+        monkeypatch.setattr(
+            controls_module,
+            "kill_agent",
+            AsyncMock(side_effect=RuntimeError("kill exploded after capture commit")),
+        )
+
+        await controls_module._cancel_active_agents(
+            harness.db, [harness.run], services=harness.services
+        )
+
+        assert [call[0] for call in harness.wake.calls] == ["waiter-sess"]
+        assert removals == [("run-123", ["waiter-sess"])]
+
+    @pytest.mark.asyncio
+    async def test_none_registry_performs_no_delivery(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        from types import SimpleNamespace
+        from unittest.mock import AsyncMock
+
+        from gobby.build import controls as controls_module
+
+        harness = self._harness(ism_persisted=True)
+        removals = self._record_removals(monkeypatch)
+        monkeypatch.setattr(
+            controls_module, "LocalAgentRunManager", lambda _db: harness.run_manager
+        )
+        monkeypatch.setattr(
+            controls_module, "kill_agent", AsyncMock(return_value={"success": True})
+        )
+        services = SimpleNamespace(agent_lifecycle_monitor=None, completion_registry=None)
+
+        await controls_module._cancel_active_agents(harness.db, [harness.run], services=services)
+
+        assert harness.wake.calls == []
+        assert removals == []
