@@ -5,10 +5,8 @@ from __future__ import annotations
 from typing import Any
 
 from gobby.mcp_proxy.tools.internal import InternalToolRegistry
-from gobby.review_learning.promotion import PromotionTaskManager
 from gobby.review_learning.service import (
     MAX_RECALL_FINDINGS,
-    ReviewLearningMemoryManager,
     ReviewLearningService,
 )
 
@@ -63,12 +61,8 @@ _RECALL_REVIEW_CONTEXT_SCHEMA: dict[str, Any] = {
 }
 
 
-def create_review_learning_registry(
-    memory_manager: ReviewLearningMemoryManager,
-    task_manager: PromotionTaskManager,
-) -> InternalToolRegistry:
+def create_review_learning_registry(service: ReviewLearningService) -> InternalToolRegistry:
     """Create the review-learning MCP registry."""
-    service = ReviewLearningService(memory_manager=memory_manager, task_manager=task_manager)
     registry = InternalToolRegistry(
         name="gobby-review-learning",
         description="Review signal learning - recall lessons and record confirmed findings",

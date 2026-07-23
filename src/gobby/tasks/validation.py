@@ -665,6 +665,7 @@ class TaskValidator:
         *,
         file_context_text: str | None = None,
         verification_receipt_text: str | None = None,
+        lessons_section: str = "",
     ) -> ValidationResult:
         """Validate one preassembled evidence packet with one JSON model request."""
         return await self._validate_task_static(
@@ -677,6 +678,7 @@ class TaskValidator:
             category=category,
             file_context_text=file_context_text,
             verification_receipt_text=verification_receipt_text,
+            lessons_section=lessons_section,
         )
 
     async def _validate_task_static(
@@ -691,6 +693,7 @@ class TaskValidator:
         *,
         file_context_text: str | None = None,
         verification_receipt_text: str | None = None,
+        lessons_section: str = "",
     ) -> ValidationResult:
         """
         Validate task completion.
@@ -813,6 +816,7 @@ class TaskValidator:
             "criteria_text": criteria_text,
             "changes_section": changes_section,
             "file_context": shaped_file_context,
+            "lessons_section": lessons_section,
         }
         prompt = self._loader.render(prompt_path, template_context)
         logger.info(

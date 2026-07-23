@@ -170,8 +170,10 @@ async def test_recall_context_caps_fan_out_and_flat_response() -> None:
 def test_recall_context_schema_declares_findings_max_items() -> None:
     _, typed_manager = _memory_manager()
     registry = create_review_learning_registry(
-        typed_manager,
-        cast(PromotionTaskManager, object()),
+        ReviewLearningService(
+            typed_manager,
+            cast(PromotionTaskManager, object()),
+        )
     )
 
     schema = registry.get_schema("recall_review_context")

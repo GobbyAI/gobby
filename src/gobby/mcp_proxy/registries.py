@@ -110,6 +110,14 @@ def setup_internal_registries(
         InternalRegistryManager containing all registries
     """
     manager = InternalRegistryManager()
+    review_learning_service = None
+    if memory_manager is not None and task_manager is not None:
+        from gobby.review_learning.service import ReviewLearningService
+
+        review_learning_service = ReviewLearningService(
+            memory_manager=memory_manager,
+            task_manager=task_manager,
+        )
 
     # Initialize tasks registry if enabled and task_manager is available
     if _config is None:
@@ -131,6 +139,7 @@ def setup_internal_registries(
                 task_validator=task_validator,
                 config=_config,
                 project_id=project_id,
+                review_learning_service=review_learning_service,
             )
             manager.add_registry(tasks_registry)
             logger.debug("Tasks registry initialized")
@@ -145,6 +154,7 @@ def setup_internal_registries(
                 llm_service=llm_service,
                 completion_registry=completion_registry,
                 mcp_manager=mcp_manager,
+                review_learning_service=review_learning_service,
             )
             manager.add_registry(ops_registry)
             logger.debug("Tasks-ops registry initialized")
@@ -194,13 +204,10 @@ def setup_internal_registries(
         manager.add_registry(memory_registry)
         logger.debug("Memory registry initialized")
 
-    if memory_manager is not None and task_manager is not None:
+    if review_learning_service is not None:
         from gobby.mcp_proxy.tools.review_learning import create_review_learning_registry
 
-        review_learning_registry = create_review_learning_registry(
-            memory_manager=memory_manager,
-            task_manager=task_manager,
-        )
+        review_learning_registry = create_review_learning_registry(review_learning_service)
         manager.add_registry(review_learning_registry)
         logger.debug("Review-learning registry initialized")
 

@@ -5,13 +5,25 @@ from typing import Any, cast
 
 import pytest
 
+from gobby.config.app import DaemonConfig
+from gobby.mcp_proxy.registries import setup_internal_registries
+from gobby.mcp_proxy.tools import review_learning as review_learning_tools
 from gobby.mcp_proxy.tools.internal import InternalToolRegistry
 from gobby.mcp_proxy.tools.review_learning import (
     create_review_learning_registry as _create_review_learning_registry,
 )
+from gobby.mcp_proxy.tools.tasks import _factory as task_factory
+from gobby.mcp_proxy.tools.tasks import _ops_factory as task_ops_factory
+from gobby.mcp_proxy.tools.tasks._context import RegistryContext
+from gobby.memory.manager import MemoryManager
 from gobby.review_learning.file_paths import path_tag
 from gobby.review_learning.promotion import PromotionTaskManager
-from gobby.review_learning.service import ReviewLearningMemoryManager
+from gobby.review_learning.service import (
+    ReviewLearningMemoryManager,
+    ReviewLearningService,
+)
+from gobby.storage.hub.protocol import HubDatabase
+from gobby.storage.tasks import LocalTaskManager
 from tests.review_learning.conftest import (
     FakeDB,
     FakeMemory,
@@ -54,10 +66,11 @@ def create_review_learning_registry(
     memory_manager: FakeMemoryManager,
     task_manager: FakeTaskManager,
 ) -> InternalToolRegistry:
-    return _create_review_learning_registry(
-        cast(ReviewLearningMemoryManager, memory_manager),
-        cast(PromotionTaskManager, task_manager),
+    service = ReviewLearningService(
+        memory_manager=cast(ReviewLearningMemoryManager, memory_manager),
+        task_manager=cast(PromotionTaskManager, task_manager),
     )
+    return _create_review_learning_registry(service)
 
 
 def test_create_review_learning_registry_registers_class_recall_tools() -> None:
@@ -72,6 +85,46 @@ def test_create_review_learning_registry_registers_class_recall_tools() -> None:
         "recall_review_lessons_for_files",
         "record_review_lesson",
     }
+
+
+def test_shared_service_identity(
+    temp_db: HubDatabase,
+    sample_project: dict[str, Any],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    contexts: list[RegistryContext] = []
+    review_services: list[ReviewLearningService] = []
+    original_context = RegistryContext
+    original_review_factory = review_learning_tools.create_review_learning_registry
+
+    def record_context(**kwargs: Any) -> RegistryContext:
+        context = original_context(**kwargs)
+        contexts.append(context)
+        return context
+
+    def record_review_factory(service: ReviewLearningService) -> InternalToolRegistry:
+        review_services.append(service)
+        return original_review_factory(service)
+
+    monkeypatch.setattr(task_factory, "RegistryContext", record_context)
+    monkeypatch.setattr(task_ops_factory, "RegistryContext", record_context)
+    monkeypatch.setattr(
+        review_learning_tools,
+        "create_review_learning_registry",
+        record_review_factory,
+    )
+    memory_manager = _scoped_memory_manager(sample_project["id"])
+
+    manager = setup_internal_registries(
+        _config=DaemonConfig(),
+        memory_manager=cast(MemoryManager, memory_manager),
+        task_manager=LocalTaskManager(temp_db),
+    )
+
+    assert manager.get_registry("gobby-review-learning") is not None
+    assert len(contexts) == 2
+    assert len(review_services) == 1
+    assert all(context.review_learning_service is review_services[0] for context in contexts)
 
 
 def test_recall_review_context_schema_documents_finding_shapes() -> None:

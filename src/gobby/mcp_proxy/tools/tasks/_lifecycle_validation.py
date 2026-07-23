@@ -406,6 +406,44 @@ def gather_validation_context(
     )
 
 
+async def _recall_validation_lessons(
+    ctx: "RegistryContext",
+) -> tuple[str, list[dict[str, str]]]:
+    service = getattr(ctx, "review_learning_service", None)
+    if service is None:
+        return "", []
+
+    try:
+        recall = await service.recall_review_lessons_by_class(
+            lesson_domain="code",
+            lesson_types=["validation-miss"],
+            limit=3,
+        )
+        message = recall.get("message", "")
+        if not isinstance(message, str):
+            raise ValueError("review-learning recall returned a non-string message")
+        return message, []
+    except (AttributeError, ValueError, RuntimeError, OSError) as exc:
+        detail = str(exc)
+        logger.warning("Validation lesson recall failed: %s", detail, exc_info=True)
+        return "", [
+            {
+                "code": "lesson-recall-failed",
+                "severity": "warning",
+                "detail": detail,
+            }
+        ]
+
+
+def _with_validation_diagnostics(
+    extra: dict[str, Any],
+    diagnostics: list[dict[str, str]],
+) -> dict[str, Any]:
+    if not diagnostics:
+        return extra
+    return {**extra, "diagnostics": diagnostics}
+
+
 async def validate_leaf_task_with_llm(
     task: Task,
     task_validator: "TaskValidator",
@@ -486,6 +524,8 @@ async def validate_leaf_task_with_llm(
             failure_category=failure_category,
         )
 
+    lessons_section, recall_diagnostics = await _recall_validation_lessons(ctx)
+
     # Run LLM validation
     result = await task_validator.validate_task(
         task_id=task.id,
@@ -496,7 +536,9 @@ async def validate_leaf_task_with_llm(
         category=task.category,
         file_context_text=file_context_text,
         verification_receipt_text=verification_receipt_text,
+        lessons_section=lessons_section,
     )
+    result.diagnostics.extend(recall_diagnostics)
 
     # An LLM infrastructure failure (no candidate produced a usable result) is not a
     # verdict: record/extend the backoff and escalate after too many in a row, but do
@@ -508,11 +550,14 @@ async def validate_leaf_task_with_llm(
                 can_close=False,
                 error_type="validation_infrastructure_unavailable",
                 message=result.feedback,
-                extra={
-                    "validation_status": "error",
-                    "failure_category": failure_category.value,
-                    "retryable": True,
-                },
+                extra=_with_validation_diagnostics(
+                    {
+                        "validation_status": "error",
+                        "failure_category": failure_category.value,
+                        "retryable": True,
+                    },
+                    result.diagnostics,
+                ),
                 failure_category=failure_category,
             )
         state = backoff_store.record_failure(task.id, error=result.feedback, now=now)
@@ -553,13 +598,16 @@ async def validate_leaf_task_with_llm(
                     f"Validation generation unavailable after {state.consecutive_failures} "
                     "consecutive infrastructure failures; escalated for manual review."
                 ),
-                extra={
-                    "validation_status": "error",
-                    "failure_category": failure_category.value,
-                    "retryable": False,
-                    "escalated": True,
-                    "consecutive_failures": state.consecutive_failures,
-                },
+                extra=_with_validation_diagnostics(
+                    {
+                        "validation_status": "error",
+                        "failure_category": failure_category.value,
+                        "retryable": False,
+                        "escalated": True,
+                        "consecutive_failures": state.consecutive_failures,
+                    },
+                    result.diagnostics,
+                ),
                 failure_category=failure_category,
             )
         logger.warning(
@@ -573,13 +621,16 @@ async def validate_leaf_task_with_llm(
             can_close=False,
             error_type="validation_infrastructure_unavailable",
             message=f"Validation generation unavailable (infrastructure); retry after {retry_at}.",
-            extra={
-                "validation_status": "error",
-                "failure_category": failure_category.value,
-                "retryable": True,
-                "next_retry_at": retry_at,
-                "consecutive_failures": state.consecutive_failures,
-            },
+            extra=_with_validation_diagnostics(
+                {
+                    "validation_status": "error",
+                    "failure_category": failure_category.value,
+                    "retryable": True,
+                    "next_retry_at": retry_at,
+                    "consecutive_failures": state.consecutive_failures,
+                },
+                result.diagnostics,
+            ),
             failure_category=failure_category,
         )
 
@@ -610,7 +661,7 @@ async def validate_leaf_task_with_llm(
                     can_close=False,
                     error_type="validation_infrastructure_failure",
                     message=message,
-                    extra=preview_extra,
+                    extra=_with_validation_diagnostics(preview_extra, result.diagnostics),
                     failure_category=failure_category,
                 )
             state = backoff_store.record_failure(task.id, error=message, now=now)
@@ -648,26 +699,32 @@ async def validate_leaf_task_with_llm(
                     can_close=False,
                     error_type="validation_infrastructure_failure",
                     message=message,
-                    extra={
-                        "validation_status": "error",
-                        "failure_category": failure_category.value,
-                        "retryable": False,
-                        "escalated": True,
-                        "consecutive_failures": state.consecutive_failures,
-                    },
+                    extra=_with_validation_diagnostics(
+                        {
+                            "validation_status": "error",
+                            "failure_category": failure_category.value,
+                            "retryable": False,
+                            "escalated": True,
+                            "consecutive_failures": state.consecutive_failures,
+                        },
+                        result.diagnostics,
+                    ),
                     failure_category=failure_category,
                 )
             return ValidationResult(
                 can_close=False,
                 error_type="validation_infrastructure_failure",
                 message=message,
-                extra={
-                    "validation_status": "error",
-                    "failure_category": failure_category.value,
-                    "retryable": True,
-                    "next_retry_at": retry_at,
-                    "consecutive_failures": state.consecutive_failures,
-                },
+                extra=_with_validation_diagnostics(
+                    {
+                        "validation_status": "error",
+                        "failure_category": failure_category.value,
+                        "retryable": True,
+                        "next_retry_at": retry_at,
+                        "consecutive_failures": state.consecutive_failures,
+                    },
+                    result.diagnostics,
+                ),
                 failure_category=failure_category,
             )
         if read_only:
@@ -683,7 +740,7 @@ async def validate_leaf_task_with_llm(
                 can_close=False,
                 error_type="validation_failed",
                 message=message,
-                extra=preview_extra,
+                extra=_with_validation_diagnostics(preview_extra, result.diagnostics),
                 failure_category=failure_category,
             )
         if backoff_state is not None:
@@ -720,7 +777,10 @@ async def validate_leaf_task_with_llm(
                 can_close=False,
                 error_type="stale_task_state",
                 message=str(exc),
-                extra={"validation_status": validation_status, "stale_state": True},
+                extra=_with_validation_diagnostics(
+                    {"validation_status": validation_status, "stale_state": True},
+                    result.diagnostics,
+                ),
             )
 
         extra: dict[str, Any] = {
@@ -749,7 +809,7 @@ async def validate_leaf_task_with_llm(
             can_close=False,
             error_type="validation_failed",
             message=message,
-            extra=extra,
+            extra=_with_validation_diagnostics(extra, result.diagnostics),
             failure_category=failure_category,
         )
 
@@ -784,7 +844,10 @@ async def validate_leaf_task_with_llm(
         ]
     return ValidationResult(
         can_close=True,
-        extra={"recurring_validation_candidates": recurring_validation_candidates},
+        extra=_with_validation_diagnostics(
+            {"recurring_validation_candidates": recurring_validation_candidates},
+            result.diagnostics,
+        ),
         validation_status="valid",
         validation_feedback=original_feedback,
         reset_reason="llm_valid",

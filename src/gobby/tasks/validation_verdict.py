@@ -24,6 +24,7 @@ class ValidationResult:
     feedback: str | None = None
     blocking_reasons: list[str] = field(default_factory=list)
     issues: list[Issue] = field(default_factory=list)
+    diagnostics: list[dict[str, str]] = field(default_factory=list)
     verdict_override: dict[str, object] | None = None
     failure_category: FailureCategory | None = None
 
