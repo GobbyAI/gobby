@@ -196,7 +196,8 @@ def _ensure_contract_phase(
             "suggested_test_files": [],
             "entry_criteria": [
                 "TDD-required leaves provide red, green, refactor/final-green, "
-                "exact command, and test-quality evidence."
+                "exact command, test-quality evidence, and test-types audit "
+                "(mypy ratchet) evidence for Python test changes."
             ],
         },
         "task_ids": [],

@@ -70,7 +70,7 @@ Return ONLY valid JSON. No prose, no markdown, no code fences.
 6. Include `affected_files` when you can infer them from the current repo.
 7. `implementation_domain` is required for every `category: "code"` task and must be one of `backend`, `frontend`, or `fullstack`.
 8. Derive code task routing from `implementation_domain`: backend -> backend-developer, frontend -> frontend-developer, fullstack -> fullstack-developer. Do not set a different code `assigned_agent` unless the caller explicitly requested a privileged manual override.
-9. For TDD-required code/config work, emit one implementation task with `additional_skills: ["test-driven-development"]`, a `tdd:required` label if labels are present, and validation criteria requiring red, green, refactor/final-green, exact test command, and test-quality audit evidence.
+9. For TDD-required code/config work, emit one implementation task with `additional_skills: ["test-driven-development"]`, a `tdd:required` label if labels are present, and validation criteria requiring red, green, refactor/final-green, exact test command, test-quality audit evidence, and test-types audit (mypy ratchet) evidence for Python test changes.
 10. Do not create separate `[TEST]`, `[IMPL]`, or `[REF]` tasks yourself.
 11. Do not invent optional scope or extra features.
 12. Assign every `config`, `docs`, `refactor`, or `test` leaf to an available agent using

@@ -153,4 +153,6 @@ uv run mypy <package-or-files>
 GOBBY_TEST_PROTECT=1 uv run pytest <tests> -q
 ```
 
-Match the repo's validation gates before closing work. If you changed tests, run any configured test-quality audit for those files.
+Match the repo's validation gates before closing work. If you changed tests, run
+any configured test-quality audit and `gobby test-types audit` ratchet for those
+files.

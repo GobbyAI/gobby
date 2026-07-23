@@ -32,6 +32,7 @@ The task handoff must include:
 - Refactor/final-green evidence: exact final command and pass output summary.
 - Test-quality audit evidence for supported touched test paths, or an
   unsupported-language warning plus focused repo-native validation outside Gobby.
+- Test-types audit output for touched Python test paths.
 
 When tests were added or heavily edited, run:
 
@@ -41,6 +42,15 @@ uv run gobby test-quality audit <paths> --baseline .gobby/test-quality-baseline.
 
 A missing baseline is not a skip reason; the CLI falls back to treating current
 supported-language issues at or above `--min-severity` as new.
+
+For Python test paths, also run:
+
+```bash
+uv run gobby test-types audit <paths> --baseline .gobby/test-types-baseline.json --fail-on-new
+```
+
+A missing `.gobby/test-types-baseline.json` is not a skip reason; without it,
+the CLI treats all current type errors as new.
 
 TDD is not satisfied by writing tests after implementation, by only running a broad
 suite, or by omitting the expected red failure.

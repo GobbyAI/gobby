@@ -95,6 +95,9 @@ uv run gobby install             # Install hooks for detected CLIs
 uv run ruff check src/           # Lint
 uv run ruff format src/          # Auto-format
 uv run mypy src/                 # Type check
+uv run gobby test-types audit tests/ --baseline .gobby/test-types-baseline.json --fail-on-new  # Ratchet Python test types
+uv run gobby test-types audit tests/ --baseline .gobby/test-types-baseline.json --fail-on-new --write-baseline .gobby/test-types-baseline.json  # Safely regenerate after debt reduction
+# Repo type gate remains mypy src/; tests are ratcheted, never gated.
 
 # Testing (full suite runs pre-push - only run specific tests)
 uv run pytest tests/test_file.py -v    # Run specific test file

@@ -54,6 +54,24 @@ the CLI treats current supported-language issues at or above `--min-severity`
 as new. If the audit reports an unsupported-language warning outside the Gobby
 repo, include that warning plus focused repo-native validation evidence.
 
+When adding or heavily editing Python tests, also run `gobby test-types audit`
+on the touched test paths:
+
+```bash
+uv run gobby test-types audit <paths> --baseline .gobby/test-types-baseline.json --fail-on-new
+```
+
+Fix new test type errors directly. Use `typing.cast` at intentional invalid-input
+boundaries; never add `# type: ignore` comments (#14544). After reducing existing
+debt, safely regenerate the baseline with:
+
+```bash
+uv run gobby test-types audit <paths> --baseline .gobby/test-types-baseline.json --fail-on-new --write-baseline .gobby/test-types-baseline.json
+```
+
+This writes only after the ratchet passes. Reserve `--allow-failing-baseline`
+for explicitly reviewed additions.
+
 ## TDD-Required Tasks
 
 If the task has label `tdd:required`, `additional_skills` contains

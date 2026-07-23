@@ -70,6 +70,7 @@ Use `uv` for local development.
 - `uv run ruff format src/`: apply formatting.
 - `uv run ruff check src/`: run lint checks.
 - `uv run mypy src/`: run strict type checking.
+- `uv run gobby test-types audit tests/ --baseline .gobby/test-types-baseline.json --fail-on-new`: ratchet Python test typing.
 - `uv run pytest tests/tasks/test_validation.py -v`: run a focused test file.
 - `uv run pytest tests/workflows/ --cov=gobby --cov-report=term-missing`: run a module with coverage.
 
