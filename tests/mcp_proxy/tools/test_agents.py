@@ -1949,3 +1949,158 @@ class TestCompleteSelfTerminatedRunSignoffMessage:
         assert "signoff_message" not in notify_result
         assert notify_result["status"] == "success"
         assert notify_result["run_id"] == "run-abc"
+
+
+class _KillDeliveryRegistry:
+    """Recording registry whose notify returns a configurable delivered map."""
+
+    def __init__(self, delivery: dict[str, bool] | None) -> None:
+        self._delivery = delivery
+        self.notify_calls: list[tuple[str, dict[str, Any] | None, str]] = []
+        self.cleanup_calls: list[str] = []
+
+    async def notify(
+        self, run_id: str, *, result: dict[str, Any] | None = None, message: str = ""
+    ) -> dict[str, bool] | None:
+        self.notify_calls.append((run_id, result, message))
+        return self._delivery
+
+    def cleanup(self, run_id: str) -> None:
+        self.cleanup_calls.append(run_id)
+
+
+class TestKillAgentCapturePreemptedDelivery:
+    """Plan 1.4.7: kill_agent delivers capture-committed rows for both stop values."""
+
+    def _harness(self, delivery: dict[str, bool] | None = None) -> tuple[Any, Any]:
+        from contextlib import nullcontext
+        from types import SimpleNamespace
+
+        runner = _make_runner_with_run_storage()
+        mock_run = _make_mock_agent_run(run_id="run-123")
+        runner.get_run.return_value = mock_run
+        runner.run_storage.db.bounded_transaction.return_value = nullcontext()
+        runner.run_storage.get.return_value = SimpleNamespace(
+            id="run-123", status="cancelled", error=None
+        )
+        registry = _KillDeliveryRegistry(delivery or {"waiter-sess": True})
+        tool_registry = create_agents_registry(runner, completion_registry=registry)
+        return tool_registry._tools["kill_agent"].func, registry
+
+    def _record_removals(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> list[tuple[str, list[str] | None]]:
+        import gobby.agents.completion_subscribers as subscribers_module
+
+        removals: list[tuple[str, list[str] | None]] = []
+
+        def _record(*, db: Any, run_id: str, session_ids: list[str] | None = None) -> None:
+            removals.append((run_id, session_ids))
+
+        monkeypatch.setattr(subscribers_module, "remove_agent_completion_subscribers", _record)
+        return removals
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("stop", [True, False])
+    async def test_kill_failure_after_close_still_delivers(
+        self, monkeypatch: pytest.MonkeyPatch, stop: bool
+    ) -> None:
+        kill_agent, registry = self._harness()
+        removals = self._record_removals(monkeypatch)
+        kill_result = {
+            "success": False,
+            "error": "Terminal closed but no target PID was found to verify process death",
+            "error_code": "kill_verification_failed",
+        }
+        with patch(
+            "gobby.mcp_proxy.tools.agents._kill_agent_process",
+            new_callable=AsyncMock,
+            return_value=dict(kill_result),
+        ):
+            result = await kill_agent(run_id="run-123", stop=stop)
+
+        assert result == kill_result
+        assert len(registry.notify_calls) == 1
+        assert removals == [("run-123", ["waiter-sess"])]
+        assert registry.cleanup_calls == ["run-123"]
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("stop", [True, False])
+    async def test_kill_raises_after_commit_delivers_before_propagation(
+        self, monkeypatch: pytest.MonkeyPatch, stop: bool
+    ) -> None:
+        kill_agent, registry = self._harness()
+        removals = self._record_removals(monkeypatch)
+        with (
+            patch(
+                "gobby.mcp_proxy.tools.agents._kill_agent_process",
+                new_callable=AsyncMock,
+                side_effect=RuntimeError("kill exploded after committing"),
+            ),
+            pytest.raises(RuntimeError, match="kill exploded"),
+        ):
+            await kill_agent(run_id="run-123", stop=stop)
+
+        assert len(registry.notify_calls) == 1
+        assert removals == [("run-123", ["waiter-sess"])]
+        assert registry.cleanup_calls == ["run-123"]
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("stop", [True, False])
+    async def test_commits_then_cancel_settles_before_cancelled_error(
+        self, monkeypatch: pytest.MonkeyPatch, stop: bool
+    ) -> None:
+        kill_agent, registry = self._harness()
+        removals = self._record_removals(monkeypatch)
+        started = asyncio.Event()
+        release = asyncio.Event()
+
+        async def _gated_kill(*_args: Any, **_kwargs: Any) -> dict[str, Any]:
+            started.set()
+            await release.wait()
+            return {
+                "success": False,
+                "error": "kill interrupted",
+                "error_code": "kill_verification_failed",
+            }
+
+        with patch(
+            "gobby.mcp_proxy.tools.agents._kill_agent_process",
+            new_callable=AsyncMock,
+            side_effect=_gated_kill,
+        ):
+            task = asyncio.ensure_future(kill_agent(run_id="run-123", stop=stop))
+            await started.wait()
+            task.cancel()
+            release.set()
+            with pytest.raises(asyncio.CancelledError):
+                await task
+
+        assert len(registry.notify_calls) == 1
+        assert removals == [("run-123", ["waiter-sess"])]
+        assert registry.cleanup_calls == ["run-123"]
+
+    @pytest.mark.asyncio
+    async def test_stop_false_delivers_without_explicit_terminalize(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        kill_agent, registry = self._harness()
+        removals = self._record_removals(monkeypatch)
+        with (
+            patch(
+                "gobby.mcp_proxy.tools.agents._kill_agent_process",
+                new_callable=AsyncMock,
+                return_value={"success": True},
+            ),
+            patch(
+                "gobby.mcp_proxy.tools.agents_lifecycle_tools.terminalize_killed_agent_run",
+                new_callable=AsyncMock,
+            ) as terminalize,
+        ):
+            result = await kill_agent(run_id="run-123", stop=False)
+
+        assert result["workflow_stopped"] is False
+        terminalize.assert_not_awaited()
+        assert len(registry.notify_calls) == 1
+        assert removals == [("run-123", ["waiter-sess"])]
+        assert registry.cleanup_calls == ["run-123"]
