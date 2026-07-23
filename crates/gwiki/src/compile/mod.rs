@@ -4,9 +4,7 @@ use std::time::Duration;
 
 use serde::Serialize;
 
-use crate::citations::{
-    render_source_citations, source_record_matches_path, source_records_for_paths,
-};
+use crate::citations::{render_citations, source_record_matches_path, source_records_for_paths};
 use crate::explainer::{
     ExplainerGeneration, ExplainerGenerator, ExplainerReport, build_explainer_prompt,
     generate_explainer,
@@ -179,10 +177,7 @@ pub fn compile_to_wiki_with_options(
         .map(|source| source.path.clone())
         .collect();
     let mut citations = handoff.bundle.citations.clone();
-    extend_unique(
-        &mut citations,
-        render_source_citations(vault_root, &source_paths)?,
-    );
+    extend_unique(&mut citations, render_citations(vault_root, &source_paths)?);
 
     // Resolve the article page before building the synthesis input: a
     // recompile of the same topic with no explicit target must land on the

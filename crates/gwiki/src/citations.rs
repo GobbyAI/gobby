@@ -6,7 +6,7 @@ use crate::WikiError;
 use crate::sources::{SourceManifest, SourceRecord};
 use crate::support::time::{ParsedTimestamp, format_timestamp, local_offset_for, parse_timestamp};
 
-pub fn render_source_citations(
+pub fn render_citations(
     vault_root: &Path,
     source_paths: &[PathBuf],
 ) -> Result<Vec<String>, WikiError> {
@@ -191,7 +191,7 @@ mod tests {
         .expect("source registered");
 
         let citations =
-            render_source_citations(temp.path(), &[temp.path().join("raw/research/compile.md")])
+            render_citations(temp.path(), &[temp.path().join("raw/research/compile.md")])
                 .expect("citations rendered");
 
         assert_eq!(citations.len(), 1);
