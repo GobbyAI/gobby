@@ -674,6 +674,30 @@ class TestGenerateSessionSummaries:
         sm.update_status.assert_not_called()
 
     @pytest.mark.asyncio
+    async def test_default_does_not_set_handoff_ready(self, tmp_path: Path) -> None:
+        # Synchronous lifecycle handlers own handoff_ready transitions, so
+        # callers must opt in explicitly; the default must never flip status.
+        transcript_path = _write_transcript(tmp_path)
+        sm = MagicMock()
+        sm.get.return_value = _make_session(transcript_path=transcript_path)
+
+        with (
+            patch("gobby.sessions.summarize._enrich_git_context"),
+            patch(
+                "gobby.sessions.formatting.format_handoff_as_markdown",
+                return_value="### Recent Activity\n- Completed the requested implementation work.",
+            ),
+        ):
+            result = await generate_session_summaries(
+                session_id="sess-1",
+                session_manager=sm,
+                compact_only=True,
+            )
+
+        assert result["success"] is True
+        sm.update_status.assert_not_called()
+
+    @pytest.mark.asyncio
     async def test_full_summary_with_llm(self, tmp_path: Path) -> None:
         transcript_path = _write_transcript(tmp_path)
         sm = MagicMock()

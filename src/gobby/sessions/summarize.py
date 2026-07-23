@@ -198,7 +198,7 @@ async def generate_session_summaries(
     db: HubDatabase | None = None,
     write_file: bool = False,
     output_path: str = ".gobby/session_summaries",
-    set_handoff_ready: bool = True,
+    set_handoff_ready: bool = False,
     compact_only: bool = False,
     full_only: bool = False,
     run_db: Callable[..., Awaitable[Any]] | None = None,
@@ -217,7 +217,10 @@ async def generate_session_summaries(
         db: Database for prompt template loading.
         write_file: Write summary files to disk.
         output_path: Directory for summary files.
-        set_handoff_ready: Update session status to handoff_ready.
+        set_handoff_ready: Update session status to handoff_ready. Only
+            synchronous, deliberate handoff paths may pass True; delayed or
+            background refreshes must leave lifecycle status to the
+            synchronous lifecycle handlers.
         compact_only: Ignored (kept for API compatibility).
         full_only: Ignored (kept for API compatibility).
         run_db: Optional bounded executor bridge for hub database storage calls.
