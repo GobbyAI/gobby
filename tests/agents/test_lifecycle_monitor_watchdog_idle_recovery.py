@@ -949,11 +949,11 @@ async def test_capacity_retry_budget_resets_after_model_output(
     ("case", "child_source", "lifecycle_events", "malformed_tail"),
     [
         ("later-start", "codex", ("task_complete", "task_started"), False),
-        ("non-codex", "claude", ("task_complete",), False),
+        ("provider-mismatch", "claude", ("task_complete",), False),
         ("malformed", "codex", ("task_complete",), True),
     ],
 )
-async def test_completed_turn_expedited_recovery_requires_conclusive_codex_marker(
+async def test_completed_turn_expedited_recovery_requires_conclusive_provider_marker(
     case: str,
     child_source: str,
     lifecycle_events: tuple[str, ...],
@@ -977,7 +977,7 @@ async def test_completed_turn_expedited_recovery_requires_conclusive_codex_marke
         agent_run_manager=agent_run_manager,
         run_id={
             "later-start": "dddddddd-dddd-4ddd-8ddd-dddddddd1011",
-            "non-codex": "dddddddd-dddd-4ddd-8ddd-dddddddd1012",
+            "provider-mismatch": "dddddddd-dddd-4ddd-8ddd-dddddddd1012",
             "malformed": "dddddddd-dddd-4ddd-8ddd-dddddddd1013",
         }[case],
         transcript_path=transcript_path,
@@ -1078,7 +1078,7 @@ async def test_completed_turn_recovery_preserves_unsubmitted_input(
 
 
 @pytest.mark.asyncio
-async def test_recent_codex_session_activity_only_checks_capacity_pane(
+async def test_recent_session_activity_still_checks_supported_capacity_pane(
     temp_db: HubDatabase,
     session_manager: SessionManager,
     sample_project: dict[str, Any],
