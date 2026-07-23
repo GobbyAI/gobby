@@ -407,6 +407,7 @@ class TestInitSubsystems:
         runner.completion_registry = None
         runner.wake_dispatcher = SimpleNamespace(set_web_chat_session_registry=MagicMock())
         runner.agent_lifecycle_monitor = None
+        runner.detection_registry = None
         runner.communications_manager = None
         runner.code_indexer = None
         runner.cron_storage = None
@@ -3254,6 +3255,44 @@ class TestMainFunctionExtended:
         assert exc_info.value.code == 1
 
 
+@pytest.mark.asyncio
+async def test_startup_completion_recovery_is_first_operation_before_failure() -> None:
+    events: list[str] = []
+
+    async def recover(_runner: object) -> int:
+        events.append("recover")
+        return 0
+
+    def schedule(*_args: object) -> None:
+        events.append("schedule")
+
+    async def fail_connect(*_args: object) -> None:
+        events.append("connect")
+        raise RuntimeError("optional startup failed")
+
+    with (
+        patch.object(
+            runner_lifecycle_subsystems,
+            "_schedule_provider_model_refresh",
+            side_effect=schedule,
+        ),
+        patch.object(
+            runner_lifecycle_subsystems,
+            "_connect_mcp_servers",
+            side_effect=fail_connect,
+        ),
+        pytest.raises(RuntimeError, match="optional startup failed"),
+    ):
+        await runner_lifecycle_subsystems.init_subsystems(
+            SimpleNamespace(),
+            AsyncMock(),
+            None,
+            recover_agent_completion_subscribers=recover,
+        )
+
+    assert events == ["recover", "schedule", "connect"]
+
+
 class TestAgentRestartRecoveryHelpers:
     """Tests for agent restart/shutdown recovery helpers."""
 
@@ -3282,12 +3321,13 @@ class TestAgentRestartRecoveryHelpers:
         runner.agent_runner.run_storage.list_active.assert_called_once_with(limit=500, offset=0)
         runner.completion_registry.register.assert_called_once_with(
             "ac314d27-4314-5fe3-a0ab-01645086e137",
-            subscribers=["sess-1"],
+            subscribers=[],
             continuation_prompt="Check the agent result",
         )
+        runner.pipeline_execution_manager.get_completion_subscribers.assert_not_called()
 
     @pytest.mark.asyncio
-    async def test_recover_agent_runs_after_restart_sweeps_terminal_subscribers(self) -> None:
+    async def test_recover_agent_runs_after_restart_leaves_terminal_sweep_to_startup(self) -> None:
         runner = SimpleNamespace(
             agent_runner=None,
             pipeline_execution_manager=SimpleNamespace(
@@ -3299,7 +3339,7 @@ class TestAgentRestartRecoveryHelpers:
         recovered = await runner_lifecycle._recover_agent_runs_after_restart(runner)
 
         assert recovered == 0
-        runner.pipeline_execution_manager.remove_completion_subscribers_for_terminal_agent_runs.assert_called_once_with()
+        runner.pipeline_execution_manager.remove_completion_subscribers_for_terminal_agent_runs.assert_not_called()
 
     @pytest.mark.asyncio
     async def test_rehydrated_agent_completion_event_fires_on_later_notify(self) -> None:
@@ -3332,6 +3372,292 @@ class TestAgentRestartRecoveryHelpers:
             "status": "success",
             "run_id": "ac314d27-4314-5fe3-a0ab-01645086e137",
         }
+
+    @pytest.mark.asyncio
+    async def test_startup_completion_recovery_rehydrates_active_and_sweeps_terminal(
+        self,
+    ) -> None:
+        from gobby.events.completion_registry import CompletionEventRegistry
+
+        active = SimpleNamespace(id="active-run", continuation_prompt="Inspect result")
+        terminal = SimpleNamespace(id="terminal-run", status="success")
+        subscriber_manager = MagicMock()
+        subscriber_manager.get_completion_subscribers.side_effect = lambda run_id: {
+            "active-run": ["active-session"],
+            "terminal-run": ["terminal-session"],
+        }.get(run_id, [])
+        run_manager = MagicMock()
+        run_manager.list_active.return_value = [active]
+        run_manager.list_by_status.side_effect = (
+            lambda status, **_kwargs: [terminal] if status == "success" else []
+        )
+        wake = AsyncMock(return_value={"ism_persisted": True})
+        registry = CompletionEventRegistry(wake_callback=wake)
+        runner = SimpleNamespace(
+            database=MagicMock(),
+            db_executor=None,
+            completion_registry=registry,
+            wake_dispatcher=SimpleNamespace(wake=wake),
+            agent_lifecycle_monitor=None,
+            pipeline_execution_manager=None,
+        )
+
+        with (
+            patch.object(
+                runner_lifecycle_agents,
+                "CompletionSubscriberManager",
+                return_value=subscriber_manager,
+            ),
+            patch.object(
+                runner_lifecycle_agents,
+                "LocalAgentRunManager",
+                return_value=run_manager,
+            ),
+        ):
+            recovered = (
+                await runner_lifecycle_agents._recover_agent_completion_subscribers_on_startup(
+                    runner
+                )
+            )
+
+        active_delivery = await registry.notify(
+            "active-run",
+            {"status": "success", "run_id": "active-run"},
+            message="Agent active-run completed",
+        )
+
+        assert recovered == 2
+        assert registry.get_subscribers("active-run") == ["active-session"]
+        assert active_delivery == {"active-session": True}
+        assert wake.await_count == 2
+        wake.assert_any_await(
+            "terminal-session",
+            "Agent terminal-run reached terminal status success",
+            {"status": "success", "run_id": "terminal-run"},
+        )
+        wake.assert_any_await(
+            "active-session",
+            "Agent active-run completed",
+            {
+                "status": "success",
+                "run_id": "active-run",
+                "continuation_prompt": "Inspect result",
+            },
+        )
+        subscriber_manager.remove_completion_subscribers.assert_called_once_with(
+            "terminal-run",
+            session_ids=["terminal-session"],
+        )
+
+    @pytest.mark.asyncio
+    async def test_startup_completion_recovery_sweeps_boot_concurrent_transition(
+        self,
+    ) -> None:
+        from gobby.events.completion_registry import CompletionEventRegistry
+
+        run = SimpleNamespace(
+            id="racing-run",
+            status="running",
+            continuation_prompt="Inspect result",
+        )
+        subscriber_manager = MagicMock()
+
+        def get_subscribers(_run_id: str) -> list[str]:
+            run.status = "success"
+            return ["session-1"]
+
+        subscriber_manager.get_completion_subscribers.side_effect = get_subscribers
+        run_manager = MagicMock()
+        run_manager.list_active.return_value = [run]
+        run_manager.list_by_status.side_effect = (
+            lambda status, **_kwargs: [run] if status == "success" else []
+        )
+        wake = AsyncMock(return_value={"ism_persisted": True})
+        runner = SimpleNamespace(
+            database=MagicMock(),
+            db_executor=None,
+            completion_registry=CompletionEventRegistry(wake_callback=wake),
+            wake_dispatcher=SimpleNamespace(wake=wake),
+            agent_lifecycle_monitor=None,
+            pipeline_execution_manager=None,
+        )
+
+        with (
+            patch.object(
+                runner_lifecycle_agents,
+                "CompletionSubscriberManager",
+                return_value=subscriber_manager,
+            ),
+            patch.object(
+                runner_lifecycle_agents,
+                "LocalAgentRunManager",
+                return_value=run_manager,
+            ),
+        ):
+            recovered = (
+                await runner_lifecycle_agents._recover_agent_completion_subscribers_on_startup(
+                    runner
+                )
+            )
+
+        assert recovered == 2
+        assert runner.completion_registry.get_subscribers("racing-run") == ["session-1"]
+        wake.assert_awaited_once_with(
+            "session-1",
+            "Agent racing-run reached terminal status success",
+            {"status": "success", "run_id": "racing-run"},
+        )
+        subscriber_manager.remove_completion_subscribers.assert_called_once_with(
+            "racing-run",
+            session_ids=["session-1"],
+        )
+        assert subscriber_manager.get_completion_subscribers.call_count == 2
+
+    @pytest.mark.asyncio
+    async def test_startup_completion_recovery_is_idempotent_with_monitor_reconciliation(
+        self,
+    ) -> None:
+        from gobby.events.completion_registry import CompletionEventRegistry
+
+        run = SimpleNamespace(id="active-run", continuation_prompt="Inspect result")
+        subscriber_manager = MagicMock()
+        subscriber_manager.get_completion_subscribers.return_value = ["session-1"]
+        run_manager = MagicMock()
+        run_manager.list_active.return_value = [run]
+        run_manager.list_by_status.return_value = []
+        registry = CompletionEventRegistry()
+        runner = SimpleNamespace(
+            database=MagicMock(),
+            db_executor=None,
+            completion_registry=registry,
+            wake_dispatcher=SimpleNamespace(wake=AsyncMock()),
+            agent_lifecycle_monitor=MagicMock(),
+            pipeline_execution_manager=None,
+            agent_runner=SimpleNamespace(run_storage=run_manager),
+        )
+
+        with (
+            patch.object(
+                runner_lifecycle_agents,
+                "CompletionSubscriberManager",
+                return_value=subscriber_manager,
+            ),
+            patch.object(
+                runner_lifecycle_agents,
+                "LocalAgentRunManager",
+                return_value=run_manager,
+            ),
+        ):
+            startup_recovered = (
+                await runner_lifecycle_agents._recover_agent_completion_subscribers_on_startup(
+                    runner
+                )
+            )
+            monitor_recovered = await runner_lifecycle_agents._recover_agent_runs_after_restart(
+                runner
+            )
+
+        assert startup_recovered == 1
+        assert monitor_recovered == 0
+        assert registry.get_subscribers("active-run") == ["session-1"]
+
+    @pytest.mark.asyncio
+    async def test_startup_completion_recovery_retries_unacknowledged_terminal_row(
+        self,
+    ) -> None:
+        terminal = SimpleNamespace(id="terminal-run", status="error")
+        subscriber_manager = MagicMock()
+        subscriber_manager.get_completion_subscribers.return_value = ["session-1"]
+        run_manager = MagicMock()
+        run_manager.list_by_status.side_effect = (
+            lambda status, **_kwargs: [terminal] if status == "error" else []
+        )
+        wake = AsyncMock(
+            side_effect=[
+                {"ism_persisted": False, "error_code": "ism_persist_failed"},
+                {"ism_persisted": True},
+            ]
+        )
+        runner = SimpleNamespace(
+            database=MagicMock(),
+            db_executor=None,
+            completion_registry=MagicMock(),
+            wake_dispatcher=SimpleNamespace(wake=wake),
+        )
+
+        with (
+            patch.object(
+                runner_lifecycle_agents,
+                "CompletionSubscriberManager",
+                return_value=subscriber_manager,
+            ),
+            patch.object(
+                runner_lifecycle_agents,
+                "LocalAgentRunManager",
+                return_value=run_manager,
+            ),
+        ):
+            first = await runner_lifecycle_agents._cleanup_terminal_agent_completion_subscribers(
+                runner
+            )
+            second = await runner_lifecycle_agents._cleanup_terminal_agent_completion_subscribers(
+                runner
+            )
+
+        assert first == 0
+        assert second == 1
+        subscriber_manager.remove_completion_subscribers.assert_called_once_with(
+            "terminal-run",
+            session_ids=["session-1"],
+        )
+
+    @pytest.mark.asyncio
+    async def test_startup_completion_recovery_removes_missing_session_row(self) -> None:
+        terminal = SimpleNamespace(id="terminal-run", status="cancelled")
+        subscriber_manager = MagicMock()
+        subscriber_manager.get_completion_subscribers.return_value = ["deleted-session"]
+        run_manager = MagicMock()
+        run_manager.list_by_status.side_effect = (
+            lambda status, **_kwargs: [terminal] if status == "cancelled" else []
+        )
+        wake = AsyncMock(return_value={"error_code": "session_not_found"})
+        runner = SimpleNamespace(
+            database=MagicMock(),
+            db_executor=None,
+            completion_registry=MagicMock(),
+            wake_dispatcher=SimpleNamespace(wake=wake),
+        )
+
+        with (
+            patch.object(
+                runner_lifecycle_agents,
+                "CompletionSubscriberManager",
+                return_value=subscriber_manager,
+            ),
+            patch.object(
+                runner_lifecycle_agents,
+                "LocalAgentRunManager",
+                return_value=run_manager,
+            ),
+        ):
+            delivered = (
+                await runner_lifecycle_agents._cleanup_terminal_agent_completion_subscribers(runner)
+            )
+
+        assert delivered == 1
+        wake.assert_awaited_once_with(
+            "deleted-session",
+            "Agent terminal-run reached terminal status cancelled",
+            {"status": "cancelled", "run_id": "terminal-run"},
+        )
+        subscriber_manager.remove_completion_subscribers.assert_called_once_with(
+            "terminal-run",
+            session_ids=["deleted-session"],
+        )
+        subscriber_manager.get_completion_subscribers.assert_called_once_with("terminal-run")
+        assert run_manager.list_by_status.call_count == len(
+            runner_lifecycle_agents.TERMINAL_AGENT_RUN_STATUSES
+        )
 
     @pytest.mark.asyncio
     async def test_cancel_active_agent_runs_for_shutdown_kills_and_cancels(self) -> None:

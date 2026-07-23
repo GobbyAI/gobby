@@ -9,13 +9,20 @@ from __future__ import annotations
 
 import asyncio
 import logging
-from collections.abc import Callable, Coroutine
+from collections.abc import Callable, Coroutine, Mapping
 from typing import Any
 
 logger = logging.getLogger(__name__)
 
 # Type for the wake callback: (session_id, message, result) -> structured outcome
 WakeCallback = Callable[[str, str, dict[str, Any]], Coroutine[Any, Any, object]]
+
+
+def wake_result_is_delivered(result: object) -> bool:
+    """Return whether a wake outcome durably resolves a subscriber row."""
+    if not isinstance(result, Mapping):
+        return False
+    return result.get("ism_persisted") is True or result.get("error_code") == "session_not_found"
 
 
 class CompletionResultEvictedError(RuntimeError):
@@ -89,7 +96,7 @@ class CompletionEventRegistry:
         completion_id: str,
         result: dict[str, Any],
         message: str = "",
-    ) -> None:
+    ) -> dict[str, bool] | None:
         """Signal completion and wake all subscribers.
 
         Args:
@@ -100,10 +107,10 @@ class CompletionEventRegistry:
         event = self._events.get(completion_id)
         if event is None:
             logger.debug("notify() called for unregistered ID %s - ignoring", completion_id)
-            return
+            return None
         if completion_id in self._results:
             logger.debug("notify() called for completed ID %s - ignoring duplicate", completion_id)
-            return
+            return None
 
         # Include continuation_prompt in result so wake dispatcher can use it
         # Enrich a copy to avoid mutating the caller's dict
@@ -114,18 +121,22 @@ class CompletionEventRegistry:
         self._results[completion_id] = result
         event.set()
 
-        # Wake each subscriber via callback (fail-open per subscriber)
-        if self._wake_callback:
-            for session_id in list(self._subscribers.get(completion_id, [])):
-                try:
-                    await self._wake_callback(session_id, message, result)
-                except Exception:
-                    logger.warning(
-                        "Wake callback failed for session %s (completion %s)",
-                        session_id,
-                        completion_id,
-                        exc_info=True,
-                    )
+        delivery: dict[str, bool] = {}
+        for session_id in list(self._subscribers.get(completion_id, [])):
+            delivery[session_id] = False
+            if self._wake_callback is None:
+                continue
+            try:
+                wake_result = await self._wake_callback(session_id, message, result)
+                delivery[session_id] = wake_result_is_delivered(wake_result)
+            except Exception:
+                logger.warning(
+                    "Wake callback failed for session %s (completion %s)",
+                    session_id,
+                    completion_id,
+                    exc_info=True,
+                )
+        return delivery
 
     async def wait(self, completion_id: str, timeout: float | None = None) -> dict[str, Any]:
         """Block until a completion event fires.

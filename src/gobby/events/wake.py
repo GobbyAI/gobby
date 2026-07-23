@@ -124,22 +124,25 @@ class WakeDispatcher:
         session = self._session_manager.get(session_id)
         if session is None:
             logger.warning("Cannot wake session %s: not found", session_id)
-            return self._live_wake_failure(
+            failure = self._live_wake_failure(
                 session_id,
                 method=None,
                 error_code="session_not_found",
                 error_message="Session not found",
             )
+            return {**failure, "ism_persisted": False}
 
         if not self._send_ism(session_id, message, result):
-            return self._live_wake_failure(
+            failure = self._live_wake_failure(
                 session_id,
                 method="ism",
                 error_code="ism_persist_failed",
                 error_message="Could not persist completion notification",
             )
+            return {**failure, "ism_persisted": False}
 
-        return await self.dispatch_live_wake(session_id, session=session)
+        live_result = await self.dispatch_live_wake(session_id, session=session)
+        return {**live_result, "ism_persisted": True}
 
     async def dispatch_live_wake(
         self,

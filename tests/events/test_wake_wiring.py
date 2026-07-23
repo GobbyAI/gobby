@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from collections.abc import Mapping, Sequence
+from types import SimpleNamespace
 from typing import Protocol
 from unittest.mock import AsyncMock, MagicMock
 
@@ -262,9 +263,20 @@ class TestRegistryWakeCallback:
         runner = MagicMock()
         runner.get_run.return_value = run
         session_manager = MagicMock()
-        session_manager.get.return_value = None
-        wake_mock = AsyncMock()
-        completion_registry = CompletionEventRegistry(wake_callback=wake_mock)
+        session_manager.get.return_value = SimpleNamespace(
+            id=session_id,
+            agent_depth=0,
+            terminal_context=None,
+            session_type=None,
+            status="active",
+            parent_session_id=None,
+        )
+        ism_manager = MagicMock()
+        wake_dispatcher = WakeDispatcher(
+            session_manager=session_manager,
+            ism_manager=ism_manager,
+        )
+        completion_registry = CompletionEventRegistry(wake_callback=wake_dispatcher.wake)
         registry = create_agents_registry(
             runner,
             session_manager=session_manager,
@@ -274,7 +286,7 @@ class TestRegistryWakeCallback:
 
         with session_context_for_test(session_id):
             wait_result = await registry._tools["wait_for_agent"].func(run_id)
-        await completion_registry.notify(
+        delivered = await completion_registry.notify(
             run_id,
             {"status": "success", "result": "done"},
             message="Agent done",
@@ -285,11 +297,8 @@ class TestRegistryWakeCallback:
         assert wait_result["notification_registered"] is True
         assert wait_result["notification_session_id"] == session_id
         assert completion_registry.get_subscribers(run_id) == [session_id]
-        wake_mock.assert_awaited_once_with(
-            session_id,
-            "Agent done",
-            {"status": "success", "result": "done"},
-        )
+        assert delivered == {session_id: True}
+        ism_manager.create_message.assert_called_once()
 
 
 class TestContinuationPromptStorage:

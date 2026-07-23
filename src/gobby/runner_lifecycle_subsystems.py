@@ -12,6 +12,7 @@ from gobby.config.bootstrap import DEFAULT_WEBSOCKET_PORT
 from gobby.config.logging import UI_LOG_FILENAME, resolved_log_path
 from gobby.runner_lifecycle_agents import (
     _reconcile_agent_runs_after_restart,
+    _recover_agent_completion_subscribers_on_startup,
 )
 from gobby.runner_lifecycle_startup import (
     StartupTracker,
@@ -773,8 +774,12 @@ async def init_subsystems(
     reconcile_agent_runs_after_restart: AgentLifecycleOperation = (
         _reconcile_agent_runs_after_restart
     ),
+    recover_agent_completion_subscribers: AgentLifecycleOperation = (
+        _recover_agent_completion_subscribers_on_startup
+    ),
 ) -> None:
     """Heavy initialization that runs after HTTP is already serving."""
+    await recover_agent_completion_subscribers(runner)
     _schedule_provider_model_refresh(
         runner,
         tracker,

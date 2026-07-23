@@ -75,11 +75,49 @@ class TestWakeDispatch:
 
         assert result["session_id"] == WAKE_SESSION_ID
         assert "delivered" in result
+        assert result["ism_persisted"] is True
         ism_manager.create_message.assert_called_once()
         call_kwargs = ism_manager.create_message.call_args.kwargs
         assert call_kwargs["to_session"] == WAKE_SESSION_ID
         assert call_kwargs["message_type"] == "completion_notification"
         assert "Pipeline completed" in call_kwargs["content"]
+
+    @pytest.mark.asyncio
+    async def test_wake_result_contract_marks_ism_insert_failure(
+        self,
+        session_manager: MagicMock,
+        ism_manager: MagicMock,
+    ) -> None:
+        session_manager.get.return_value = FakeSession(id=WAKE_SESSION_ID, agent_depth=0)
+        ism_manager.create_message.side_effect = RuntimeError("database unavailable")
+        dispatcher = WakeDispatcher(session_manager=session_manager, ism_manager=ism_manager)
+
+        result = await dispatcher.wake(
+            WAKE_SESSION_ID,
+            "Agent completed",
+            {"status": "completed", "run_id": WAKE_RUN_ID},
+        )
+
+        assert result["ism_persisted"] is False
+        assert result["error_code"] == "ism_persist_failed"
+
+    @pytest.mark.asyncio
+    async def test_wake_result_contract_marks_missing_session_terminal(
+        self,
+        session_manager: MagicMock,
+        ism_manager: MagicMock,
+    ) -> None:
+        session_manager.get.return_value = None
+        dispatcher = WakeDispatcher(session_manager=session_manager, ism_manager=ism_manager)
+
+        result = await dispatcher.wake(
+            WAKE_SESSION_ID,
+            "Agent completed",
+            {"status": "completed", "run_id": WAKE_RUN_ID},
+        )
+
+        assert result["ism_persisted"] is False
+        assert result["error_code"] == "session_not_found"
 
     @pytest.mark.asyncio
     async def test_terminal_agent_gets_tmux(
@@ -303,12 +341,13 @@ class TestWakeDispatch:
             ism_manager=ism_manager,
         )
 
-        await dispatcher.wake(
+        result = await dispatcher.wake(
             WAKE_SESSION_ID,
             "Agent interrupted",
             {"status": "cancelled", "run_id": WAKE_RUN_ID},
         )
 
+        assert result["ism_persisted"] is True
         ism_manager.create_message.assert_not_called()
         assert ism_manager.create_message.call_count == 0
         assert not ism_manager.create_message.called

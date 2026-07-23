@@ -31,6 +31,53 @@ logger = logging.getLogger(__name__)
 SESSION_STATS_LOOKUP_TIMEOUT_SECONDS = 2.0
 
 
+async def deliver_and_cleanup_terminal_run(
+    *,
+    db: HubDatabase,
+    completion_registry: CompletionEventRegistry | None,
+    run_id: str,
+    result: dict[str, Any] | None,
+    message: str,
+    run_db: Callable[..., Awaitable[Any]],
+) -> dict[str, bool] | None:
+    """Deliver a terminal result, remove acknowledged rows, then evict registry state."""
+    if completion_registry is None:
+        return None
+
+    delivery: dict[str, bool] | None = None
+    if result is not None:
+        payload = result if "run_id" in result else {**result, "run_id": run_id}
+        try:
+            delivery = await completion_registry.notify(run_id, result=payload, message=message)
+        except Exception:
+            logger.warning("Failed to notify completion for %s", run_id, exc_info=True)
+
+    delivered_session_ids = [
+        session_id for session_id, delivered in (delivery or {}).items() if delivered
+    ]
+    try:
+        if delivered_session_ids:
+            from gobby.agents.completion_subscribers import (
+                remove_agent_completion_subscribers,
+            )
+
+            await run_db(
+                remove_agent_completion_subscribers,
+                db=db,
+                run_id=run_id,
+                session_ids=delivered_session_ids,
+            )
+    except Exception:
+        logger.warning(
+            "Failed to remove delivered completion subscribers for agent %s",
+            run_id,
+            exc_info=True,
+        )
+    finally:
+        completion_registry.cleanup(run_id)
+    return delivery
+
+
 def cleanup_merged_task_artifacts_after_agent_exit(
     db: HubDatabase,
     task_id: str,
@@ -112,12 +159,14 @@ class AgentCleanupHandler:
         message: str,
     ) -> None:
         """Notify waiters about a terminal run transition."""
-        if not self._completion_registry:
-            return
-        try:
-            await self._completion_registry.notify(run_id, result=result, message=message)
-        except Exception as e:
-            logger.warning("Failed to notify completion for %s: %s", run_id, e)
+        await deliver_and_cleanup_terminal_run(
+            db=self._db,
+            completion_registry=self._completion_registry,
+            run_id=run_id,
+            result=result,
+            message=message,
+            run_db=self._run_db,
+        )
 
     async def post_terminal_cleanup(
         self,
@@ -125,9 +174,10 @@ class AgentCleanupHandler:
         *,
         cleanup_session_id: str | None = None,
         allow_parent_session_fallback: bool = False,
+        notification_result: dict[str, Any] | None = None,
+        notification_message: str = "",
     ) -> None:
         """Release in-memory and isolation state for a terminal agent run."""
-        from gobby.agents.completion_subscribers import remove_agent_completion_subscribers
         from gobby.agents.runtime_cleanup import cleanup_agent_runtime_state
 
         session_id = cleanup_session_id
@@ -137,6 +187,15 @@ class AgentCleanupHandler:
             session_id = run.parent_session_id
         session_manager = self._get_session_manager()
         session_coordinator = self._get_session_coordinator()
+
+        await deliver_and_cleanup_terminal_run(
+            db=self._db,
+            completion_registry=self._completion_registry,
+            run_id=run.id,
+            result=notification_result,
+            message=notification_message,
+            run_db=self._run_db,
+        )
 
         if self._attention_manager is not None:
             try:
@@ -164,16 +223,6 @@ class AgentCleanupHandler:
         self._terminal_prompt_monitor.clear(run.id)
         self._stall_classifier.clear(run.id)
         self._loop_tracker.clear(run.id)
-        if self._completion_registry:
-            self._completion_registry.cleanup(run.id)
-        try:
-            await self._run_db(remove_agent_completion_subscribers, db=self._db, run_id=run.id)
-        except Exception:
-            logger.warning(
-                "Failed to remove completion subscribers for agent %s",
-                run.id,
-                exc_info=True,
-            )
 
         if session_coordinator and session_id:
             try:
@@ -452,11 +501,12 @@ class AgentCleanupHandler:
                 )
             return False
 
-        await self.notify_terminal_completion(db_run.id, result=notify_result, message=message)
         await self.post_terminal_cleanup(
             db_run,
             cleanup_session_id=db_run.child_session_id,
             allow_parent_session_fallback=False,
+            notification_result=notify_result,
+            notification_message=message,
         )
         return True
 
@@ -509,19 +559,16 @@ class AgentCleanupHandler:
             return False
 
         await self._task_recovery.recover_task_from_terminal_agent(db_run, outcome="cancelled")
-        await self.notify_terminal_completion(
-            db_run.id,
-            result={
-                "status": "cancelled",
-                "terminal_reason": terminal_reason,
-                "run_id": db_run.id,
-            },
-            message=f"Agent {db_run.id} cancelled",
-        )
         await self.post_terminal_cleanup(
             db_run,
             cleanup_session_id=db_run.child_session_id,
             allow_parent_session_fallback=False,
+            notification_result={
+                "status": "cancelled",
+                "terminal_reason": terminal_reason,
+                "run_id": db_run.id,
+            },
+            notification_message=f"Agent {db_run.id} cancelled",
         )
         from gobby.build.dispatch_tick import schedule_dispatcher_tick_for_task
 
@@ -571,6 +618,8 @@ class AgentCleanupHandler:
         """
         terminal_run = run
         transitioned = False
+        notification_result: dict[str, str] | None = None
+        notification_message = ""
 
         if run.status in ("pending", "running"):
             tool_calls_count, turns_used = await self._completion_stats_for_run(run)
@@ -625,15 +674,10 @@ class AgentCleanupHandler:
                 )
 
             if is_success:
-                result_data: dict[str, str] = {"status": "completed"}
+                notification_result = {"status": "completed"}
             else:
-                result_data = {"status": "error", "error": terminal_payload}
-
-            await self.notify_terminal_completion(
-                run.id,
-                result=result_data,
-                message=f"Agent {run.id} {'completed' if is_success else 'failed'}",
-            )
+                notification_result = {"status": "error", "error": terminal_payload}
+            notification_message = f"Agent {run.id} {'completed' if is_success else 'failed'}"
         else:
             current = await self._run_db(self._agent_run_manager.get, run.id)
             logger.debug(
@@ -648,4 +692,6 @@ class AgentCleanupHandler:
             terminal_run,
             cleanup_session_id=terminal_run.child_session_id,
             allow_parent_session_fallback=False,
+            notification_result=notification_result,
+            notification_message=notification_message,
         )

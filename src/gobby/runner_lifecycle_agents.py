@@ -2,15 +2,35 @@
 
 from __future__ import annotations
 
+import asyncio
 import logging
+from collections.abc import Callable
 from typing import TYPE_CHECKING, Any
 
+from gobby.events.completion_registry import wake_result_is_delivered
+from gobby.storage.agents import (
+    TERMINAL_AGENT_RUN_STATUSES,
+    LocalAgentRunManager,
+)
+from gobby.storage.pipeline_subscribers import CompletionSubscriberManager
 from gobby.storage.tasks._dispatch_mutex import TaskDispatchMutexManager
 
 if TYPE_CHECKING:
     from gobby.runner import GobbyRunner
 
 logger = logging.getLogger("gobby.runner_lifecycle")
+
+
+async def _run_db(
+    runner: GobbyRunner,
+    operation: Callable[..., Any],
+    *args: Any,
+    **kwargs: Any,
+) -> Any:
+    db_executor = getattr(runner, "db_executor", None)
+    if db_executor is not None:
+        return await db_executor.run(operation, *args, **kwargs)
+    return await asyncio.to_thread(operation, *args, **kwargs)
 
 
 def _register_persisted_completion_subscribers(
@@ -33,22 +53,117 @@ def _register_persisted_completion_subscribers(
     return subscribers
 
 
-def _cleanup_terminal_agent_completion_subscribers(runner: GobbyRunner) -> int:
-    """Remove stale subscriber rows for agent runs already in a terminal state."""
-    manager = runner.pipeline_execution_manager
-    if manager is None:
+async def _rehydrate_active_agent_completion_subscribers(runner: GobbyRunner) -> int:
+    """Restore durable subscribers for active runs into the live registry."""
+    db = getattr(runner, "database", None)
+    registry = getattr(runner, "completion_registry", None)
+    if db is None or registry is None:
         return 0
-    cleanup = getattr(manager, "remove_completion_subscribers_for_terminal_agent_runs", None)
-    if cleanup is None:
+
+    subscriber_manager = CompletionSubscriberManager(db)
+    run_manager = LocalAgentRunManager(db)
+    rehydrated = 0
+    offset = 0
+    while True:
+        runs = await _run_db(
+            runner,
+            run_manager.list_active,
+            limit=_RUN_REPLAY_PAGE_SIZE,
+            offset=offset,
+        )
+        if not runs:
+            break
+        for run in runs:
+            subscribers = await _run_db(
+                runner,
+                subscriber_manager.get_completion_subscribers,
+                run.id,
+            )
+            if not subscribers:
+                continue
+            registry.register(
+                run.id,
+                subscribers=subscribers,
+                continuation_prompt=getattr(run, "continuation_prompt", None),
+            )
+            rehydrated += 1
+        offset += len(runs)
+        if len(runs) < _RUN_REPLAY_PAGE_SIZE:
+            break
+    return rehydrated
+
+
+async def _cleanup_terminal_agent_completion_subscribers(runner: GobbyRunner) -> int:
+    """Redeliver retained terminal notifications and remove acknowledged rows."""
+    db = getattr(runner, "database", None)
+    wake_dispatcher = getattr(runner, "wake_dispatcher", None)
+    wake = getattr(wake_dispatcher, "wake", None)
+    if db is None or not callable(wake):
         return 0
+
+    subscriber_manager = CompletionSubscriberManager(db)
+    run_manager = LocalAgentRunManager(db)
+    delivered_count = 0
+    for status in TERMINAL_AGENT_RUN_STATUSES:
+        offset = 0
+        while True:
+            runs = await _run_db(
+                runner,
+                run_manager.list_by_status,
+                status,
+                limit=_RUN_REPLAY_PAGE_SIZE,
+                offset=offset,
+            )
+            if not runs:
+                break
+            for run in runs:
+                subscribers = await _run_db(
+                    runner,
+                    subscriber_manager.get_completion_subscribers,
+                    run.id,
+                )
+                acknowledged: list[str] = []
+                payload = {"status": run.status, "run_id": run.id}
+                message = f"Agent {run.id} reached terminal status {run.status}"
+                for session_id in subscribers:
+                    try:
+                        outcome = await wake(session_id, message, payload)
+                    except Exception:
+                        logger.warning(
+                            "Terminal completion redelivery failed for session %s (run %s)",
+                            session_id,
+                            run.id,
+                            exc_info=True,
+                        )
+                        continue
+                    if wake_result_is_delivered(outcome):
+                        acknowledged.append(session_id)
+                if acknowledged:
+                    await _run_db(
+                        runner,
+                        subscriber_manager.remove_completion_subscribers,
+                        run.id,
+                        session_ids=acknowledged,
+                    )
+                    delivered_count += len(acknowledged)
+            offset += len(runs)
+            if len(runs) < _RUN_REPLAY_PAGE_SIZE:
+                break
+    return delivered_count
+
+
+async def _recover_agent_completion_subscribers_on_startup(runner: GobbyRunner) -> int:
+    """Rehydrate active subscribers, then replay retained terminal notifications."""
+    recovered = 0
     try:
-        cleaned = cleanup()
+        recovered += await _rehydrate_active_agent_completion_subscribers(runner)
     except Exception:
-        logger.warning("Failed to clean terminal agent completion subscribers", exc_info=True)
-        return 0
-    if cleaned:
-        logger.info("Cleaned %s terminal agent completion subscriber row(s)", cleaned)
-    return int(cleaned)
+        logger.warning("Failed to rehydrate active agent completion subscribers", exc_info=True)
+    try:
+        recovered += await _cleanup_terminal_agent_completion_subscribers(runner)
+    except Exception:
+        logger.warning("Failed to redeliver terminal agent completion subscribers", exc_info=True)
+    return recovered
 
 
 _RUN_REPLAY_PAGE_SIZE = 500
@@ -56,7 +171,6 @@ _RUN_REPLAY_PAGE_SIZE = 500
 
 async def _recover_agent_runs_after_restart(runner: GobbyRunner) -> int:
     """Rehydrate completion events for active agent rows after daemon restart."""
-    _cleanup_terminal_agent_completion_subscribers(runner)
     if runner.agent_runner is None or runner.completion_registry is None:
         return 0
 
@@ -76,12 +190,9 @@ async def _recover_agent_runs_after_restart(runner: GobbyRunner) -> int:
             seen_ids.add(run.id)
             if runner.completion_registry.is_registered(run.id):
                 continue
-            subscribers: list[str] = []
-            if runner.pipeline_execution_manager:
-                subscribers = runner.pipeline_execution_manager.get_completion_subscribers(run.id)
             runner.completion_registry.register(
                 run.id,
-                subscribers=subscribers,
+                subscribers=[],
                 continuation_prompt=getattr(run, "continuation_prompt", None),
             )
             rehydrated += 1

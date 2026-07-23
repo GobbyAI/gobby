@@ -316,6 +316,74 @@ class TestWakeCallback:
         result = await registry.wait(COMPLETION_ID, timeout=0.1)
         assert result == {"status": "completed"}
 
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize(
+        ("wake_result", "expected"),
+        [
+            ({"ism_persisted": True}, True),
+            ({"ism_persisted": False}, False),
+            ({"error_code": "session_not_found"}, True),
+            ({}, False),
+            (None, False),
+            (object(), False),
+        ],
+    )
+    async def test_acknowledged_delivery_classifier_is_total_and_conservative(
+        self,
+        wake_result: object,
+        expected: bool,
+    ) -> None:
+        async def wake(_session_id: str, _message: str, _result: dict) -> object:
+            return wake_result
+
+        registry = CompletionEventRegistry(wake_callback=wake)
+        registry.register(COMPLETION_ID, subscribers=[PRIMARY_SUBSCRIBER_ID])
+
+        delivered = await registry.notify(COMPLETION_ID, {"status": "completed"})
+
+        assert delivered == {PRIMARY_SUBSCRIBER_ID: expected}
+
+    @pytest.mark.asyncio
+    async def test_acknowledged_delivery_marks_callback_failure_and_continues(self) -> None:
+        async def wake(session_id: str, _message: str, _result: dict) -> object:
+            if session_id == PRIMARY_SUBSCRIBER_ID:
+                raise RuntimeError("wake failed")
+            return {"ism_persisted": True}
+
+        registry = CompletionEventRegistry(wake_callback=wake)
+        registry.register(
+            COMPLETION_ID,
+            subscribers=[PRIMARY_SUBSCRIBER_ID, SECONDARY_SUBSCRIBER_ID],
+        )
+
+        delivered = await registry.notify(COMPLETION_ID, {"status": "completed"})
+
+        assert delivered == {
+            PRIMARY_SUBSCRIBER_ID: False,
+            SECONDARY_SUBSCRIBER_ID: True,
+        }
+
+    @pytest.mark.asyncio
+    async def test_acknowledged_delivery_without_callback_is_undelivered(
+        self,
+        registry: CompletionEventRegistry,
+    ) -> None:
+        registry.register(COMPLETION_ID, subscribers=[PRIMARY_SUBSCRIBER_ID])
+
+        delivered = await registry.notify(COMPLETION_ID, {"status": "completed"})
+
+        assert delivered == {PRIMARY_SUBSCRIBER_ID: False}
+
+    @pytest.mark.asyncio
+    async def test_acknowledged_delivery_noop_has_no_delivery_map(
+        self,
+        registry: CompletionEventRegistry,
+    ) -> None:
+        assert await registry.notify(COMPLETION_ID, {"status": "completed"}) is None
+        registry.register(COMPLETION_ID, subscribers=[])
+        assert await registry.notify(COMPLETION_ID, {"status": "completed"}) == {}
+        assert await registry.notify(COMPLETION_ID, {"status": "duplicate"}) is None
+
 
 class TestCleanup:
     """Resource cleanup."""

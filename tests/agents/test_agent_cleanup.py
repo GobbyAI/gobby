@@ -34,6 +34,30 @@ class RecordingCompletionRegistry:
         self.cleaned.append(completion_id)
 
 
+class AcknowledgingCompletionRegistry(RecordingCompletionRegistry):
+    def __init__(self, delivery: dict[str, bool] | None, events: list[str] | None = None) -> None:
+        super().__init__()
+        self.delivery = delivery
+        self.events = events
+        self.notifications: list[tuple[str, dict[str, object], str]] = []
+
+    async def notify(
+        self,
+        completion_id: str,
+        result: dict[str, object],
+        message: str = "",
+    ) -> dict[str, bool] | None:
+        if self.events is not None:
+            self.events.append("notify")
+        self.notifications.append((completion_id, result, message))
+        return self.delivery
+
+    def cleanup(self, completion_id: str) -> None:
+        if self.events is not None:
+            self.events.append("cleanup")
+        super().cleanup(completion_id)
+
+
 def _run(
     task_id: str | None = "task-1",
     *,
@@ -206,9 +230,7 @@ async def test_post_terminal_cleanup_retries_merge_artifact_cleanup_for_task_run
     await _handler(db).post_terminal_cleanup(_run(), allow_parent_session_fallback=False)
 
     assert calls == [(db, "task-1")]
-    assert db.executed == [
-        ("DELETE FROM completion_subscribers WHERE completion_id = %s", ("run-1",))
-    ]
+    assert db.executed == []
 
 
 async def test_post_terminal_cleanup_preserves_reused_worktree_after_no_commit_run(
@@ -266,9 +288,7 @@ async def test_post_terminal_cleanup_skips_merge_artifact_cleanup_without_task(
 
     assert result is None
     cleanup.assert_not_called()
-    assert db.executed == [
-        ("DELETE FROM completion_subscribers WHERE completion_id = %s", ("run-1",))
-    ]
+    assert db.executed == []
 
 
 @pytest.mark.asyncio
@@ -287,9 +307,89 @@ async def test_post_terminal_cleanup_clears_completion_registry_and_subscribers(
     )
 
     assert registry.cleaned == ["run-1"]
-    assert db.executed == [
-        ("DELETE FROM completion_subscribers WHERE completion_id = %s", ("run-1",))
+    assert db.executed == []
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "payload",
+    [
+        {"status": "completed"},
+        {"status": "error", "error": "failed"},
+        {"status": "cancelled"},
+    ],
+)
+async def test_terminal_delivery_injects_run_id_and_removes_only_acknowledged_rows(
+    payload: dict[str, object],
+) -> None:
+    db = RecordingDb()
+    registry = AcknowledgingCompletionRegistry({"delivered": True, "retained": False})
+
+    await _handler(db, completion_registry=registry).notify_terminal_completion(
+        "run-1",
+        result=payload,
+        message="Agent terminal",
+    )
+
+    assert registry.notifications == [
+        (
+            "run-1",
+            {**payload, "run_id": "run-1"},
+            "Agent terminal",
+        )
     ]
+    assert registry.cleaned == ["run-1"]
+    assert db.executed == [
+        (
+            "DELETE FROM completion_subscribers WHERE completion_id = %s AND session_id = ANY(%s)",
+            ("run-1", ["delivered"]),
+        )
+    ]
+
+
+@pytest.mark.asyncio
+async def test_terminal_delivery_without_map_retains_rows_and_cleans_registry() -> None:
+    db = RecordingDb()
+    registry = AcknowledgingCompletionRegistry(None)
+
+    await _handler(db, completion_registry=registry).notify_terminal_completion(
+        "run-1",
+        result={"status": "completed"},
+        message="Agent completed",
+    )
+
+    assert db.executed == []
+    assert registry.cleaned == ["run-1"]
+
+
+@pytest.mark.asyncio
+async def test_terminal_delivery_orders_remove_and_cleanup_after_awaited_notify(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    events: list[str] = []
+    registry = AcknowledgingCompletionRegistry({"session-1": True}, events)
+
+    def remove_subscribers(**_kwargs: object) -> None:
+        events.append("remove")
+
+    async def run_db(func, *args, **kwargs):
+        return func(*args, **kwargs)
+
+    monkeypatch.setattr(
+        "gobby.agents.completion_subscribers.remove_agent_completion_subscribers",
+        remove_subscribers,
+    )
+
+    await agent_cleanup.deliver_and_cleanup_terminal_run(
+        db=RecordingDb(),
+        completion_registry=registry,
+        run_id="run-1",
+        result={"status": "completed"},
+        message="Agent completed",
+        run_db=run_db,
+    )
+
+    assert events == ["notify", "remove", "cleanup"]
 
 
 @pytest.mark.asyncio
@@ -357,9 +457,7 @@ async def test_post_terminal_cleanup_missing_child_does_not_target_parent_sessio
 
     session_coordinator.release_session_worktrees.assert_not_called()
     session_manager.update_status.assert_not_called()
-    assert db.executed == [
-        ("DELETE FROM completion_subscribers WHERE completion_id = %s", ("run-1",))
-    ]
+    assert db.executed == []
 
 
 @pytest.mark.asyncio
