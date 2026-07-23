@@ -125,3 +125,110 @@ async def test_deferred_health_check_does_not_fail_terminal_run() -> None:
 
     assert terminal_run.status == "success"
     runner.run_storage.fail.assert_not_called()
+
+
+class _RecordingWake:
+    """Wake callback recording deliveries with a configurable outcome."""
+
+    def __init__(self, ism_persisted: bool) -> None:
+        self._ism_persisted = ism_persisted
+        self.calls: list[tuple[str, str, dict[str, object]]] = []
+
+    async def __call__(
+        self, session_id: str, message: str, result: dict[str, object]
+    ) -> dict[str, object]:
+        self.calls.append((session_id, message, result))
+        return {"ism_persisted": self._ism_persisted}
+
+
+class TestDeferredHealthFailureWakesWaiter:
+    """Plan 1.4.10: a deferred-health failure wakes the pre-registered waiter."""
+
+    def _harness(self, *, ism_persisted: bool) -> SimpleNamespace:
+        from contextlib import nullcontext
+
+        from gobby.events import CompletionEventRegistry
+
+        wake = _RecordingWake(ism_persisted)
+        registry = CompletionEventRegistry(wake_callback=wake)
+        registry.register("run-123", ["waiter-sess"])
+
+        run_storage = MagicMock()
+        run_storage.fail.return_value = SimpleNamespace(
+            id="run-123", status="error", error="Agent process exited immediately after spawn"
+        )
+        run_storage.db.bounded_transaction.return_value = nullcontext()
+        # deliver_existing_terminal_run re-reads the run after fail(); return the
+        # terminal row on that second read.
+        run_storage.get.side_effect = [
+            SimpleNamespace(status="running"),
+            SimpleNamespace(
+                id="run-123",
+                status="error",
+                error="Agent process exited immediately after spawn",
+            ),
+        ]
+        runner = SimpleNamespace(run_storage=run_storage)
+        return SimpleNamespace(wake=wake, registry=registry, runner=runner)
+
+    def _record_removals(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> list[tuple[str, list[str] | None]]:
+        import gobby.agents.completion_subscribers as subscribers_module
+
+        removals: list[tuple[str, list[str] | None]] = []
+
+        def _record(*, db: object, run_id: str, session_ids: list[str] | None = None) -> None:
+            removals.append((run_id, session_ids))
+
+        monkeypatch.setattr(subscribers_module, "remove_agent_completion_subscribers", _record)
+        return removals
+
+    @pytest.mark.asyncio
+    async def test_acknowledged_delivery_wakes_and_removes_rows(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        harness = self._harness(ism_persisted=True)
+        removals = self._record_removals(monkeypatch)
+        with patch(
+            "gobby.mcp_proxy.tools.spawn_agent._health._check_tmux_session_alive",
+            new_callable=AsyncMock,
+            return_value=False,
+        ):
+            await _deferred_tmux_health_check(
+                harness.runner,
+                "run-123",
+                "tmux-run-123",
+                None,
+                None,
+                delay=0,
+                completion_registry=harness.registry,
+            )
+
+        assert [call[0] for call in harness.wake.calls] == ["waiter-sess"]
+        assert harness.wake.calls[0][2]["run_id"] == "run-123"
+        assert removals == [("run-123", ["waiter-sess"])]
+        assert harness.registry.is_registered("run-123") is False
+
+    @pytest.mark.asyncio
+    async def test_failed_delivery_retains_rows(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        harness = self._harness(ism_persisted=False)
+        removals = self._record_removals(monkeypatch)
+        with patch(
+            "gobby.mcp_proxy.tools.spawn_agent._health._check_tmux_session_alive",
+            new_callable=AsyncMock,
+            return_value=False,
+        ):
+            await _deferred_tmux_health_check(
+                harness.runner,
+                "run-123",
+                "tmux-run-123",
+                None,
+                None,
+                delay=0,
+                completion_registry=harness.registry,
+            )
+
+        assert [call[0] for call in harness.wake.calls] == ["waiter-sess"]
+        assert removals == []
+        assert harness.registry.is_registered("run-123") is False
