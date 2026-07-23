@@ -187,3 +187,19 @@ async def test_serve_failure_cleans_up_and_exits_zero_when_winner_is_healthy(
     assert "HTTP server failed before binding (SystemExit(1))" in caplog.text
     assert "requesting daemon shutdown" in caplog.text
     assert not pid_file.exists()
+
+
+def test_ownership_parameters_have_no_default() -> None:
+    """Plan 1.4.19-1.4.21 witness: ownership must be resolved before construction,
+    so neither entry point may offer a defaulted ownership parameter."""
+    import inspect
+
+    from gobby.runner import GobbyRunner
+    from gobby.runner_lifecycle import run_daemon
+
+    run_param = inspect.signature(GobbyRunner.run).parameters["ownership_resolution"]
+    daemon_param = inspect.signature(run_daemon).parameters["ownership_resolution"]
+    assert run_param.default is inspect.Parameter.empty
+    assert daemon_param.default is inspect.Parameter.empty
+    assert run_param.kind is inspect.Parameter.KEYWORD_ONLY
+    assert daemon_param.kind is inspect.Parameter.KEYWORD_ONLY

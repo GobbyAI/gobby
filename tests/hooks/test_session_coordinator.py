@@ -1076,3 +1076,166 @@ class TestIntegrationWithHookManager:
         # Duplicate registration
         result = manager.handle_session_start("session-123")
         assert result == "Already registered"
+
+
+class _GatedRegistry:
+    """Recording completion-registry fake whose notify blocks until released."""
+
+    def __init__(self, delivery: dict[str, bool] | None, release: asyncio.Event) -> None:
+        self._delivery = delivery
+        self._release = release
+        self.notify_calls: list[tuple[str, dict[str, Any] | None, str]] = []
+        self.cleanup_calls: list[str] = []
+        self.order: list[str] = []
+
+    async def notify(
+        self, run_id: str, *, result: dict[str, Any] | None = None, message: str = ""
+    ) -> dict[str, bool] | None:
+        self.notify_calls.append((run_id, result, message))
+        await self._release.wait()
+        self.order.append("notify-resolved")
+        return self._delivery
+
+    def cleanup(self, run_id: str) -> None:
+        self.cleanup_calls.append(run_id)
+        self.order.append("cleanup")
+
+
+class TestNotifyAgentCompletionDelivery:
+    """Plan 1.4.6: the coordinator schedules the acknowledged helper chain."""
+
+    def _coordinator(self, registry: _GatedRegistry) -> SessionCoordinator:
+        coordinator = SessionCoordinator()
+        coordinator._completion_registry = registry
+        coordinator._agent_run_manager = SimpleNamespace(db=MagicMock())
+        return coordinator
+
+    def _record_removals(
+        self, monkeypatch: pytest.MonkeyPatch, registry: _GatedRegistry
+    ) -> list[tuple[str, list[str] | None]]:
+        import gobby.agents.completion_subscribers as subscribers_module
+
+        removals: list[tuple[str, list[str] | None]] = []
+
+        def _record(*, db: Any, run_id: str, session_ids: list[str] | None = None) -> None:
+            registry.order.append("remove")
+            removals.append((run_id, session_ids))
+
+        monkeypatch.setattr(subscribers_module, "remove_agent_completion_subscribers", _record)
+        return removals
+
+    def _schedule(self, coordinator: SessionCoordinator, run_id: str) -> asyncio.Task[Any]:
+        before = asyncio.all_tasks()
+        coordinator._notify_agent_completion(run_id, "completed")
+        new_tasks = asyncio.all_tasks() - before
+        assert len(new_tasks) == 1
+        return new_tasks.pop()
+
+    @pytest.mark.asyncio
+    async def test_cleanup_runs_only_after_awaited_notify_and_delivered_map(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        release = asyncio.Event()
+        registry = _GatedRegistry({"sess-1": True, "sess-2": False}, release)
+        removals = self._record_removals(monkeypatch, registry)
+        coordinator = self._coordinator(registry)
+
+        task = self._schedule(coordinator, "run-1")
+        await asyncio.sleep(0)
+        assert registry.notify_calls[0][1] == {"status": "completed", "run_id": "run-1"}
+        assert removals == []
+        assert registry.cleanup_calls == []
+
+        release.set()
+        await task
+        assert removals == [("run-1", ["sess-1"])]
+        assert registry.cleanup_calls == ["run-1"]
+        assert registry.order == ["notify-resolved", "remove", "cleanup"]
+
+    @pytest.mark.asyncio
+    async def test_duplicate_notify_without_map_removes_no_rows(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        release = asyncio.Event()
+        release.set()
+        registry = _GatedRegistry(None, release)
+        removals = self._record_removals(monkeypatch, registry)
+        coordinator = self._coordinator(registry)
+
+        await self._schedule(coordinator, "run-1")
+        assert removals == []
+        assert registry.cleanup_calls == ["run-1"]
+
+    @pytest.mark.asyncio
+    async def test_current_loop_cancellation_before_delivery_retains_rows(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        release = asyncio.Event()
+        registry = _GatedRegistry({"sess-1": True}, release)
+        removals = self._record_removals(monkeypatch, registry)
+        coordinator = self._coordinator(registry)
+
+        task = self._schedule(coordinator, "run-1")
+        await asyncio.sleep(0)
+        task.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await task
+        assert removals == []
+        assert registry.cleanup_calls == []
+
+    @pytest.mark.asyncio
+    async def test_cross_thread_branch_delivers_and_settles(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        release = asyncio.Event()
+        registry = _GatedRegistry({"sess-1": True}, release)
+        removals = self._record_removals(monkeypatch, registry)
+        coordinator = self._coordinator(registry)
+        coordinator._event_loop = asyncio.get_running_loop()
+
+        before = asyncio.all_tasks()
+        await asyncio.to_thread(coordinator._notify_agent_completion, "run-1", "completed")
+        await asyncio.sleep(0)
+        new_tasks = asyncio.all_tasks() - before
+        assert len(new_tasks) == 1
+        task = new_tasks.pop()
+
+        release.set()
+        await task
+        assert removals == [("run-1", ["sess-1"])]
+        assert registry.cleanup_calls == ["run-1"]
+
+    @pytest.mark.asyncio
+    async def test_cross_thread_cancellation_before_delivery_retains_rows(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        release = asyncio.Event()
+        registry = _GatedRegistry({"sess-1": True}, release)
+        removals = self._record_removals(monkeypatch, registry)
+        coordinator = self._coordinator(registry)
+        coordinator._event_loop = asyncio.get_running_loop()
+
+        before = asyncio.all_tasks()
+        await asyncio.to_thread(coordinator._notify_agent_completion, "run-1", "completed")
+        await asyncio.sleep(0)
+        task = (asyncio.all_tasks() - before).pop()
+        task.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await task
+        assert removals == []
+        assert registry.cleanup_calls == []
+
+    @pytest.mark.asyncio
+    async def test_absent_or_closed_loop_skips_delivery_and_retains_rows(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        release = asyncio.Event()
+        registry = _GatedRegistry({"sess-1": True}, release)
+        removals = self._record_removals(monkeypatch, registry)
+        coordinator = self._coordinator(registry)
+        coordinator._event_loop = None
+
+        await asyncio.to_thread(coordinator._notify_agent_completion, "run-1", "completed")
+        assert registry.notify_calls == []
+        assert removals == []
+        assert registry.cleanup_calls == []
