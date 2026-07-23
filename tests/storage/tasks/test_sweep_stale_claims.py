@@ -17,8 +17,6 @@ from tests.storage.tasks._stage_test_helpers import (
 pytestmark = pytest.mark.unit
 
 SESS_DEAD = str(uuid.uuid4())
-SESS_LIVE = str(uuid.uuid4())
-SESS_PAUSED = str(uuid.uuid4())
 
 
 def _make_session(temp_db, sample_project, session_id: str, status: str) -> None:
@@ -69,8 +67,13 @@ def _claim(temp_db, task_id: str) -> str | None:
     return row["claimed_by_session_id"] if row else None
 
 
-def test_sweep_reclaims_task_claimed_by_inactive_session(temp_db, sample_project) -> None:
-    _make_session(temp_db, sample_project, SESS_DEAD, "expired")
+@pytest.mark.parametrize("status", ["expired", "deleted"])
+def test_sweep_reclaims_task_claimed_by_terminal_session(
+    temp_db,
+    sample_project,
+    status: str,
+) -> None:
+    _make_session(temp_db, sample_project, SESS_DEAD, status)
     task = _claimed_task(temp_db, sample_project, claimed_by=SESS_DEAD)
 
     reclaimed = sweep_stale_claims(temp_db, project_id=sample_project["id"])
@@ -81,6 +84,19 @@ def test_sweep_reclaims_task_claimed_by_inactive_session(temp_db, sample_project
         t.id for t in list_automation_candidates(temp_db, project_id=sample_project["id"])
     }
     assert task.id in candidate_ids
+
+
+def test_missing_session_cannot_retain_task_claim(temp_db, sample_project) -> None:
+    session_id = str(uuid.uuid4())
+    _make_session(temp_db, sample_project, session_id, "active")
+    task = _claimed_task(temp_db, sample_project, claimed_by=session_id)
+    assert _claim(temp_db, task.id) == session_id
+
+    temp_db.execute("DELETE FROM sessions WHERE id = %s", (session_id,))
+
+    sweep_stale_claims(temp_db, project_id=sample_project["id"])
+
+    assert _claim(temp_db, task.id) is None
 
 
 def test_sweep_reclaims_non_automation_task_claimed_by_inactive_session(
@@ -104,28 +120,23 @@ def test_sweep_reclaims_non_automation_task_claimed_by_inactive_session(
     assert task.id not in candidate_ids
 
 
-def test_sweep_keeps_task_claimed_by_active_session(temp_db, sample_project) -> None:
-    _make_session(temp_db, sample_project, SESS_LIVE, "active")
-    task = _claimed_task(temp_db, sample_project, claimed_by=SESS_LIVE)
+@pytest.mark.parametrize("status", ["active", "paused", "handoff_ready"])
+def test_sweep_keeps_task_claimed_by_live_session(
+    temp_db,
+    sample_project,
+    status: str,
+) -> None:
+    session_id = str(uuid.uuid4())
+    _make_session(temp_db, sample_project, session_id, status)
+    task = _claimed_task(temp_db, sample_project, claimed_by=session_id)
 
     sweep_stale_claims(temp_db, project_id=sample_project["id"])
 
-    assert _claim(temp_db, task.id) == SESS_LIVE
+    assert _claim(temp_db, task.id) == session_id
     candidate_ids = {
         t.id for t in list_automation_candidates(temp_db, project_id=sample_project["id"])
     }
     assert task.id not in candidate_ids
-
-
-def test_sweep_keeps_task_claimed_by_paused_session(temp_db, sample_project) -> None:
-    # A paused session is idle but alive (e.g. an interactive session
-    # between turns); its claim must not be reclaimed.
-    _make_session(temp_db, sample_project, SESS_PAUSED, "paused")
-    task = _claimed_task(temp_db, sample_project, claimed_by=SESS_PAUSED)
-
-    sweep_stale_claims(temp_db, project_id=sample_project["id"])
-
-    assert _claim(temp_db, task.id) == SESS_PAUSED
 
 
 def test_sweep_skips_closed_and_escalated_tasks(temp_db, sample_project) -> None:

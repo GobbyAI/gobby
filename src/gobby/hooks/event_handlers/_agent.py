@@ -168,7 +168,7 @@ class AgentEventHandlerMixin(EventHandlersBase):
                 self.logger.debug("Detected %s - generating session summaries", prompt_lower)
                 try:
                     if self._dispatch_session_summaries_fn:
-                        self._dispatch_session_summaries_fn(session_id, False, None, True)
+                        self._dispatch_session_summaries_fn(session_id, False, None, False)
                 except Exception as e:
                     self.logger.warning(
                         "Failed to generate session summaries on %s: %s", prompt_lower, e
@@ -587,7 +587,7 @@ class AgentEventHandlerMixin(EventHandlersBase):
                         session_id,
                         False,
                         None,
-                        is_handoff_trigger,
+                        False,
                     )
             except Exception as e:
                 self.logger.warning("Failed to generate session summaries on compact: %s", e)

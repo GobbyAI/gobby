@@ -126,7 +126,7 @@ def sweep_stale_claims(
                AND NOT EXISTS (
                    SELECT 1 FROM sessions s
                     WHERE s.id = tasks.claimed_by_session_id
-                      AND s.status IN ('active', 'paused')
+                      AND s.status IN ('active', 'paused', 'handoff_ready')
                )
                {project_filter}
             """,  # nosec B608 # project_filter is static SQL selected above.

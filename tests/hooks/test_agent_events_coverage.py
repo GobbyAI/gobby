@@ -149,7 +149,7 @@ class TestHandleBeforeAgent:
             "sess-1",
             False,
             None,
-            True,
+            False,
         )
         assert handler._dispatch_session_summaries_fn.call_count == 1
         assert handler._dispatch_session_summaries_fn.call_args is not None
@@ -167,7 +167,7 @@ class TestHandleBeforeAgent:
             "sess-1",
             False,
             None,
-            True,
+            False,
         )
         assert handler._dispatch_session_summaries_fn.call_count == 1
         assert handler._dispatch_session_summaries_fn.call_args is not None
@@ -1011,7 +1011,7 @@ class TestHandlePreCompact:
             "sess-1",
             False,
             None,
-            True,
+            False,
         )
 
     def test_auto_claude_summarizes_without_handoff_status(self) -> None:

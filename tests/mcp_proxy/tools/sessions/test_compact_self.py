@@ -27,6 +27,9 @@ from gobby.mcp_proxy.tools.sessions._terminal import (
 from gobby.servers.chat_session_base import ChatSessionProtocol
 from gobby.servers.websocket.chat.session_registry import WebChatSessionRegistry
 from gobby.sessions.compact_continuation import build_compact_self_continue_prompt
+from gobby.storage.sessions import SessionManager
+from gobby.storage.tasks import LocalTaskManager
+from gobby.storage.tasks._automation import sweep_stale_claims
 from gobby.utils.session_context import session_context_for_test
 from tests._timing import drain_asyncio_tasks
 
@@ -709,6 +712,115 @@ class TestCompactSelfTerminalPath:
         mock_metadata_matches.assert_awaited_once()
         assert "Latest coordinator state for #15156." in handoff["context"]
         assert "stale pre-compaction" not in handoff["context"]
+
+    def test_delayed_archival_refresh_preserves_resumed_session_claim(
+        self,
+        temp_db,
+        sample_project,
+    ) -> None:
+        session_manager = SessionManager(temp_db)
+        session_id = session_manager.register_session(
+            external_id="compact-claim-regression",
+            machine_id="machine-test",
+            source="codex",
+            project_id=sample_project["id"],
+            title="Compact claim regression",
+            terminal_context={"tmux_pane": "%12", "tmux_socket_path": "/tmp/tmux"},
+        )
+        assert session_id
+        temp_db.execute(
+            """
+            UPDATE sessions
+               SET digest_markdown = %s,
+                   summary_markdown = %s,
+                   summary_source_context_hash = NULL,
+                   summary_digest_turn_count = NULL
+             WHERE id = %s
+            """,
+            ("### Turn 1\nClaimed task is still running.", "stale summary", session_id),
+        )
+
+        task_manager = LocalTaskManager(temp_db)
+        task = task_manager.create_task(
+            project_id=sample_project["id"],
+            title="Survive delayed compact summary",
+            category="test",
+            task_type="task",
+        )
+        task_manager.claim_task(task.id, session_id)
+
+        registry = _TestRegistry(name="test", description="test")
+        agent_run_manager = MagicMock()
+        agent_run_manager.get_by_session.return_value = None
+        tmux = MagicMock()
+        tmux.capture_pane = AsyncMock(return_value="")
+        tmux.send_keys = AsyncMock(return_value=True)
+        pending_refreshes: list[Any] = []
+        summary_handoff_flags: list[bool] = []
+
+        def retain_background_refresh(coro: Any, *, name: str | None = None) -> MagicMock:
+            pending_refreshes.append(coro)
+            task_handle = MagicMock()
+            task_handle.get_name.return_value = name
+            return task_handle
+
+        async def complete_delayed_summary(**kwargs: Any) -> dict[str, Any]:
+            set_handoff_ready = kwargs["set_handoff_ready"]
+            summary_handoff_flags.append(set_handoff_ready)
+            if set_handoff_ready:
+                session_manager.update_session_status(session_id, "handoff_ready")
+            return {"success": True}
+
+        with patch(
+            "gobby.mcp_proxy.tools.sessions._terminal.LocalAgentRunManager",
+            return_value=agent_run_manager,
+        ):
+            register_terminal_tools(registry, session_manager, temp_db, llm_service=MagicMock())
+
+        compact_self = registry.get_tool("compact_self")
+        assert compact_self is not None
+
+        with (
+            patch(
+                "gobby.mcp_proxy.tools.sessions._terminal.get_tmux_manager_for_context",
+                return_value=tmux,
+            ),
+            patch("gobby.mcp_proxy.tools.sessions._terminal._CODEX_INTERRUPT_SETTLE_SECONDS", 0),
+            patch(
+                "gobby.mcp_proxy.tools.sessions._terminal.asyncio.create_task",
+                side_effect=retain_background_refresh,
+            ),
+            patch(
+                "gobby.sessions.summarize.generate_session_summaries",
+                side_effect=complete_delayed_summary,
+            ),
+            patch(
+                "gobby.mcp_proxy.tools.sessions._summary_metadata.compact_summary_metadata_matches",
+                new=AsyncMock(return_value=False),
+            ),
+            session_context_for_test(session_id),
+        ):
+            result = asyncio.run(compact_self())
+            assert session_manager.get(session_id).status == "handoff_ready"
+
+            assert session_manager.update_session_status(
+                session_id,
+                "active",
+                activity_confirmed=True,
+            )
+            assert len(pending_refreshes) == 1
+            asyncio.run(pending_refreshes.pop())
+
+        sweep_stale_claims(temp_db, project_id=sample_project["id"])
+        session = session_manager.get(session_id)
+        claimed_task = task_manager.get_task(task.id)
+
+        assert result["compacted"] is True
+        assert summary_handoff_flags == [False]
+        assert session is not None
+        assert session.status == "active"
+        assert claimed_task is not None
+        assert claimed_task.claimed_by_session_id == session_id
 
     def test_terminal_session_uses_transcript_tail_fallback_when_digest_missing(
         self,

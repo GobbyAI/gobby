@@ -214,7 +214,7 @@ async def _run_compact_handoff_background_refresh(
                 llm_service=llm_service,
                 session_summary_config=session_summary_config,
                 db=db,
-                set_handoff_ready=True,
+                set_handoff_ready=False,
             ),
             timeout=timeout_seconds,
         )
