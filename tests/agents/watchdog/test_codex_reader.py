@@ -263,3 +263,32 @@ async def test_invalid_completion_timestamp_disables_recovery_and_is_redacted(
 async def test_reader_raises_oserror_for_missing_path(tmp_path: Path) -> None:
     with pytest.raises(OSError):
         await CodexTranscriptWatchdogReader().read(str(tmp_path / "missing.jsonl"))
+
+
+@pytest.mark.asyncio
+async def test_empty_transcript_returns_empty_snapshot(tmp_path: Path) -> None:
+    path = tmp_path / "empty.jsonl"
+    path.write_bytes(b"")
+
+    snapshot = await CodexTranscriptWatchdogReader().read(str(path))
+
+    assert snapshot.provider == "codex"
+    assert snapshot.tail == ()
+    assert snapshot.latest_turn_event is None
+    assert snapshot.last_malformed_line_num is None
+    assert json.dumps(snapshot.to_log_dict())
+
+
+@pytest.mark.asyncio
+async def test_secret_response_item_labels_are_coerced_and_redacted(tmp_path: Path) -> None:
+    path = tmp_path / "secret-labels.jsonl"
+    _write(path, [_record("response_item", _SECRET, timestamp=_SECRET)])
+
+    snapshot = await CodexTranscriptWatchdogReader().read(str(path))
+    encoded = json.dumps(snapshot.to_log_dict())
+
+    assert snapshot.last_malformed_line_num is None
+    assert len(snapshot.tail) == 1
+    assert snapshot.tail[0].payload_type == "other"
+    assert snapshot.tail[0].timestamp is None
+    assert _SECRET not in encoded

@@ -161,8 +161,3 @@ class QwenTranscriptWatchdogReader:
 
 
 QWEN_WATCHDOG_READER = QwenTranscriptWatchdogReader()
-
-
-async def read_qwen_transcript_snapshot(path: str) -> WatchdogTranscriptSnapshot:
-    """Read structurally redacted Qwen watchdog diagnostics from JSONL."""
-    return await QWEN_WATCHDOG_READER.read(path)

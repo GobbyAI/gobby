@@ -136,8 +136,3 @@ class CodexTranscriptWatchdogReader:
 
 
 CODEX_WATCHDOG_READER = CodexTranscriptWatchdogReader()
-
-
-async def read_codex_transcript_snapshot(path: str) -> WatchdogTranscriptSnapshot:
-    """Read a bounded, structurally redacted Codex rollout snapshot."""
-    return await CODEX_WATCHDOG_READER.read(path)

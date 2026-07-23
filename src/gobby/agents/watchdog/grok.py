@@ -188,8 +188,3 @@ class GrokTranscriptWatchdogReader:
 
 
 GROK_WATCHDOG_READER = GrokTranscriptWatchdogReader()
-
-
-async def read_grok_transcript_snapshot(path: str) -> WatchdogTranscriptSnapshot:
-    """Read a Grok transcript without constructing the reader."""
-    return await GROK_WATCHDOG_READER.read(path)

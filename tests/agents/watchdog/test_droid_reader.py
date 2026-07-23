@@ -117,6 +117,8 @@ async def test_droid_error_shaped_tool_result_and_session_end_stay_diagnostic_on
     assert snapshot.provider_error_kind is None
     assert snapshot.has_conclusive_turn_completed is False
     assert snapshot.has_conclusive_capacity_error is False
+    assert snapshot.tail[0].payload_type == "session_start"
+    assert snapshot.tail[-1].payload_type == "session_end"
 
 
 @pytest.mark.asyncio

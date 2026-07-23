@@ -92,7 +92,7 @@ def _read_droid_snapshot(path: str) -> WatchdogTranscriptSnapshot:
                     line_num=line_num,
                     timestamp=timestamp,
                     event_type="session_start",
-                    payload_type="task_started",
+                    payload_type="session_start",
                 )
             )
             return ScanVerdict.VALID
@@ -102,7 +102,7 @@ def _read_droid_snapshot(path: str) -> WatchdogTranscriptSnapshot:
                     line_num=line_num,
                     timestamp=timestamp,
                     event_type="session_end",
-                    payload_type="task_complete",
+                    payload_type="session_end",
                 )
             )
             return ScanVerdict.VALID
@@ -162,8 +162,3 @@ class DroidTranscriptWatchdogReader:
 
 
 DROID_WATCHDOG_READER = DroidTranscriptWatchdogReader()
-
-
-async def read_droid_transcript_snapshot(path: str) -> WatchdogTranscriptSnapshot:
-    """Read structurally redacted Droid watchdog diagnostics from JSONL."""
-    return await DROID_WATCHDOG_READER.read(path)

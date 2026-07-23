@@ -204,8 +204,3 @@ class ClaudeTranscriptWatchdogReader:
 
 
 CLAUDE_WATCHDOG_READER = ClaudeTranscriptWatchdogReader()
-
-
-async def read_claude_transcript_snapshot(path: str) -> WatchdogTranscriptSnapshot:
-    """Read structurally redacted Claude watchdog signals from JSONL."""
-    return await CLAUDE_WATCHDOG_READER.read(path)

@@ -48,6 +48,7 @@ KNOWN_PAYLOAD_TYPES = frozenset(
         "reasoning",
         "retry_state",
         "session_end",
+        "session_start",
         "snapshot",
         "task_complete",
         "task_started",

@@ -712,8 +712,8 @@ class IdleCheckHandler:
         if snapshot is None:
             if session is None:
                 return False
-            transcript_path = getattr(session, "transcript_path", None)
-            if not isinstance(transcript_path, str) or not transcript_path:
+            transcript_path = await self._resolve_transcript_path(session, run_id=run.id)
+            if transcript_path is None:
                 return False
             try:
                 snapshot = await reader.read(transcript_path)
@@ -887,11 +887,11 @@ class IdleCheckHandler:
             reader = self._watchdog_readers.for_provider(provider_id)
             if reader is None:
                 return
-            transcript_path = getattr(session, "transcript_path", None)
-            if not isinstance(transcript_path, str) or not transcript_path:
+            transcript_path = await self._resolve_transcript_path(session, run_id=run.id)
+            if transcript_path is None:
                 logger.warning(
                     "Watchdog idle diagnostic for %s run %s (%s): "
-                    "session %s has no transcript path",
+                    "session %s has no readable transcript path",
                     reader.provider_id,
                     run.id,
                     reason,

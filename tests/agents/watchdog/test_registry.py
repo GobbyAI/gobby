@@ -1,8 +1,16 @@
 import pytest
 
-from gobby.agents.watchdog.registry import WatchdogReaderRegistry
+from gobby.agents.watchdog.models import KNOWN_WATCHDOG_PROVIDERS
+from gobby.agents.watchdog.registry import _READERS, WatchdogReaderRegistry
 
 pytestmark = pytest.mark.unit
+
+
+def test_registry_ids_match_known_watchdog_providers() -> None:
+    assert frozenset(_READERS) == KNOWN_WATCHDOG_PROVIDERS
+    for provider_id, reader in _READERS.items():
+        assert reader is not None
+        assert reader.provider_id == provider_id
 
 
 def test_registry_normalizes_codex_and_returns_reader() -> None:

@@ -16,7 +16,11 @@ _READERS: dict[str, TranscriptWatchdogReader | None] = {
     "qwen": QWEN_WATCHDOG_READER,
 }
 
-assert frozenset(_READERS) == KNOWN_WATCHDOG_PROVIDERS
+if frozenset(_READERS) != KNOWN_WATCHDOG_PROVIDERS:  # pragma: no cover - import-time guard
+    raise RuntimeError(
+        "Watchdog reader registry keys must match KNOWN_WATCHDOG_PROVIDERS: "
+        f"{sorted(_READERS)} != {sorted(KNOWN_WATCHDOG_PROVIDERS)}"
+    )
 
 
 class WatchdogReaderRegistry:
