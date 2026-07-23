@@ -65,17 +65,33 @@ impl StandaloneConfig {
     }
 
     pub fn read_at(path: &Path) -> anyhow::Result<Option<Self>> {
+        Self::read_at_inner(path, true)
+    }
+
+    pub fn read_raw_at(path: &Path) -> anyhow::Result<Option<Self>> {
+        Self::read_at_inner(path, false)
+    }
+
+    fn read_at_inner(path: &Path, derive: bool) -> anyhow::Result<Option<Self>> {
         if !path.exists() {
             return Ok(None);
         }
         let contents = fs::read_to_string(path)
             .map_err(|err| anyhow::anyhow!("failed to read {}: {err}", path.display()))?;
-        Self::from_yaml_str(&contents)
+        Self::from_yaml_str_inner(&contents, derive)
             .map(Some)
             .map_err(|err| anyhow::anyhow!("failed to parse {}: {err}", path.display()))
     }
 
     pub fn from_yaml_str(contents: &str) -> anyhow::Result<Self> {
+        Self::from_yaml_str_inner(contents, true)
+    }
+
+    pub fn from_yaml_str_raw(contents: &str) -> anyhow::Result<Self> {
+        Self::from_yaml_str_inner(contents, false)
+    }
+
+    fn from_yaml_str_inner(contents: &str, derive: bool) -> anyhow::Result<Self> {
         if contents.trim().is_empty() {
             return Ok(Self::default());
         }
@@ -83,7 +99,9 @@ impl StandaloneConfig {
         let mut values = BTreeMap::new();
         flatten_yaml_value(None, &yaml, &mut values)?;
         let mut config = Self { values };
-        config.apply_text_generation_defaults_from_embeddings();
+        if derive {
+            config.apply_text_generation_defaults_from_embeddings();
+        }
         Ok(config)
     }
 
@@ -114,6 +132,10 @@ impl StandaloneConfig {
 
     pub fn values(&self) -> &BTreeMap<String, String> {
         &self.values
+    }
+
+    pub(crate) fn into_values(self) -> BTreeMap<String, String> {
+        self.values
     }
 
     fn apply_text_generation_defaults_from_embeddings(&mut self) {

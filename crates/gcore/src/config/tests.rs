@@ -206,6 +206,7 @@ impl ConfigSource for LayeredTestSource {
 }
 
 mod ai;
+mod daemon_source;
 mod embedding_guard;
 mod indexing;
 mod resolution;

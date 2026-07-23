@@ -4,12 +4,14 @@
 //! are shared across Gobby Rust crates. Concrete service resolution is added in
 //! focused follow-up modules so this baseline crate remains small.
 
+mod daemon_source;
 mod resolve;
 mod types;
 
 /// FalkorDB graph name owned by the gcode code graph projection.
 pub const CODE_GRAPH_NAME: &str = "gobby_code";
 
+pub use daemon_source::{DaemonOrPrimary, DaemonServedConfig, routing_overrides_only};
 pub use resolve::{
     ConfigSource, EnvOnlySource, INDEXING_RESPECT_GITIGNORE_KEY, LayeredConfigSource,
     decode_config_value, resolve_ai_setting, resolve_ai_tuning, resolve_capability_binding,
