@@ -13,6 +13,7 @@ from gobby.mcp_proxy.tools.plans import create_plan_registry
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.plans import LocalPlanManager
 from gobby.storage.projects import LocalProjectManager
+from gobby.storage.sessions import SessionManager
 from gobby.storage.tasks import LocalTaskManager
 
 pytestmark = pytest.mark.unit
@@ -135,6 +136,15 @@ async def test_plan_tool_schemas_and_happy_path(temp_db: HubDatabase, tmp_path: 
         "update_plan_hash",
         "regenerate_coverage_manifest",
         "delete_plan",
+        "prepare_plan_review_round",
+        "get_plan_review_snapshot",
+        "bind_evidence_run",
+        "expire_plan_review_evidence",
+        "verify_plan_unchanged",
+        "apply_plan_review_manifest",
+        "render_v1_round_checkpoint",
+        "finalize_plan_review_evidence",
+        "checkpoint_plan_review_lesson_mint",
     } <= names
     assert registry.get_schema("create_plan") is not None
 
@@ -155,6 +165,47 @@ async def test_plan_tool_schemas_and_happy_path(temp_db: HubDatabase, tmp_path: 
     archived = await registry.call("archive_plan", {"plan_id": "task-100-demo"})
     assert archived["ok"] is True
     assert archived["plan"]["state"] == "archived"
+
+
+async def test_review_evidence_tools_prepare_and_return_pinned_snapshot(
+    temp_db: HubDatabase,
+    tmp_path: Path,
+) -> None:
+    project_id = (
+        LocalProjectManager(temp_db)
+        .create(
+            name="review-evidence-tools",
+            repo_path=str(tmp_path),
+        )
+        .id
+    )
+    session = SessionManager(temp_db).register(
+        external_id="review-evidence-tools",
+        machine_id="test-machine",
+        source="codex",
+        project_id=project_id,
+    )
+    plan_path = _write_plan(tmp_path)
+    expected = plan_path.read_text()
+    registry = create_plan_registry(temp_db, default_project_id=project_id)
+
+    prepared = await registry.call(
+        "prepare_plan_review_round",
+        {
+            "plan_path": str(plan_path),
+            "round_number": 1,
+            "session_id": session.id,
+        },
+    )
+    assert prepared["ok"] is True
+    assert prepared["sections"][0]["section_id"] == "__preamble__"
+
+    snapshot = await registry.call(
+        "get_plan_review_snapshot",
+        {"evidence_id": prepared["evidence_id"]},
+    )
+    assert snapshot["ok"] is True
+    assert snapshot["snapshot"] == expected
 
 
 @pytest.mark.asyncio

@@ -21,6 +21,7 @@ __all__ = [
     "IntegrationWorkspaceMutex",
     "LockAcquisitionOrderError",
     "LockTarget",
+    "PlanReviewEvidenceMutation",
     "ReviewLearningPatternMutation",
     "Row",
     "Savepoint",
@@ -101,6 +102,15 @@ class ReviewLearningPatternMutation:
     PRIORITY: ClassVar[int] = 175
     project_id: str
     pattern_key: str
+
+
+@dataclass(frozen=True)
+class PlanReviewEvidenceMutation:
+    """Serializes evidence lifecycle and plan-file writes for one plan path."""
+
+    PRIORITY: ClassVar[int] = 475
+    project_id: str
+    plan_path: str
 
 
 @dataclass(frozen=True)
