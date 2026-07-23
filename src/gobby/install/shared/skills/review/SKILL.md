@@ -24,15 +24,31 @@ dotted task path. If the user does not provide one, ask for the task ref.
 
 ## Mode Selection
 
-Ask for the I/D mode unless it is already clear from the user's request:
+Ask how the review should run unless it is already clear from the user's
+request:
 
 ```text
-I) Interactive - dispatch epic-reviewer and surface the run ids.
-D) Delegated - dispatch epic-reviewer and end the turn.
+I) In-line - apply the epic-reviewer persona to this session and review here.
+S) Spawned - dispatch a separate epic-reviewer agent and surface the run ids.
 ```
 
-Persist the choice as `value="interactive" | "delegated"` for the handoff.
-Both modes use the `epic-reviewer` agent and the shared workflow YAML.
+Both modes use the `epic-reviewer` methodology. Spawned mode works for open
+and already-closed epics — the workflow passes `allow_closed_task` so the
+reviewer can run post-hoc; on a closed epic the reviewer makes no stage
+transitions and instead delivers findings plus remediation tasks (or reopens
+the epic).
+
+### In-line mode
+
+Apply the persona, then run the review yourself in this session:
+
+```python
+call_tool("gobby-agents", "apply_persona", {"agent": "epic-reviewer"})
+```
+
+Follow the loaded epic-reviewer methodology against the target epic. For a
+closed epic, skip claiming and stage transitions; deliver the
+`## Epic Findings` verdict and file remediation tasks for blocking findings.
 
 ## Verdict Contract
 
@@ -47,7 +63,7 @@ one verdict:
 Use the explicit user-facing summary `approve / reject / escalate` when
 describing possible outcomes.
 
-## Dispatch
+## Dispatch (Spawned mode)
 
 Run the `review` workflow with the resolved epic task id:
 
@@ -56,7 +72,7 @@ call_tool("gobby-workflows", "run_pipeline", {
     "name": "review",
     "inputs": {
         "task_id": "<epic_task_ref>",
-        "mode": "<interactive|delegated>"
+        "mode": "spawned"
     }
 })
 ```

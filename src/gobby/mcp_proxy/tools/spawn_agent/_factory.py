@@ -301,6 +301,7 @@ def create_spawn_agent_registry(
         prompt: str,
         agent: str = "default",
         task_id: str | None = None,
+        allow_closed_task: bool = False,
         # Isolation
         isolation: Literal["none", "worktree", "clone"] | None = None,
         branch_name: str | None = None,
@@ -327,6 +328,8 @@ def create_spawn_agent_registry(
                     prompt: Required - what the agent should do
                     agent: Agent definition name (defaults to "default")
                     task_id: Optional - link to task (supports N, #N, UUID)
+                    allow_closed_task: Permit spawning against a closed, non-escalated
+                        task for read-only review work (no auto-claim occurs)
                     isolation: Isolation mode (none/worktree/clone)
                     branch_name: Git branch name (auto-generated from task if not provided)
                     base_branch: Base branch for worktree/clone
@@ -481,6 +484,7 @@ def create_spawn_agent_registry(
             agent_lookup_name=agent,
             task_id=task_id,
             task_manager=task_manager,
+            allow_closed_task=allow_closed_task,
             isolation=isolation,
             branch_name=branch_name,
             base_branch=base_branch,

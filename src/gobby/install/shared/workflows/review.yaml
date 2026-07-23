@@ -15,8 +15,8 @@ inputs:
     description: "Epic task ID to review"
   mode:
     type: string
-    default: "interactive"
-    description: "Invocation mode: interactive or delegated"
+    default: "spawned"
+    description: "Invocation mode; the skill's in-line mode uses apply_persona instead of this pipeline"
   provider:
     type: string
     default: "codex"
@@ -38,6 +38,7 @@ steps:
       arguments:
         agent: epic-reviewer
         task_id: "${{ inputs.task_id }}"
+        allow_closed_task: true
         provider: "${{ inputs.provider }}"
         model: "${{ inputs.model }}"
         worktree_id: "${{ inputs.worktree_id }}"
@@ -46,3 +47,7 @@ steps:
           Review epic task ${{ inputs.task_id }} as the epic-reviewer
           agent. Check scope, reality, testing, and YAGNI against the approved
           plan and implementation evidence, then approve, reject, or escalate.
+          If the epic is already closed, follow the closed-epic branch of your
+          instructions: do not claim it and make no stage transitions — deliver
+          the Epic Findings verdict and file remediation tasks (or reopen the
+          epic) for blocking findings.

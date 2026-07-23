@@ -34,6 +34,7 @@ SPAWN_AGENT_PARAMETERS = frozenset(
         "prompt",
         "agent",
         "task_id",
+        "allow_closed_task",
         "isolation",
         "branch_name",
         "base_branch",

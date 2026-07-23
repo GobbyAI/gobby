@@ -142,6 +142,16 @@ def is_task_actionable(task: Any) -> bool:
     return True
 
 
+def is_task_reviewable(task: Any) -> bool:
+    """Return whether a closed task can host read-only review work.
+
+    Closed is terminal and mutually exclusive with escalated, so closure alone
+    establishes reviewability; open tasks (escalated or otherwise) are the
+    actionable/refusal domain of ``is_task_actionable``.
+    """
+    return task is not None and is_task_closed(task)
+
+
 def is_task_actively_claimed(task: Any, session_id: str | None = None) -> bool:
     """Return whether a task has an owner and remains in active stage work."""
     if task is None or not is_task_actionable(task):

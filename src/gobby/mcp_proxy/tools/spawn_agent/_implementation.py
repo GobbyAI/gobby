@@ -27,7 +27,11 @@ from gobby.agents.sandbox import SandboxConfig, agent_sandbox_config
 from gobby.agents.spawn_executor import execute_spawn
 from gobby.agents.spawn_models import SpawnRequest
 from gobby.mcp_proxy.tools.tasks import resolve_task_id_for_mcp
-from gobby.tasks.state_semantics import get_claimed_session_id, is_task_actionable
+from gobby.tasks.state_semantics import (
+    get_claimed_session_id,
+    is_task_actionable,
+    is_task_reviewable,
+)
 from gobby.utils.machine_id import get_machine_id
 from gobby.utils.project_context import get_project_context
 from gobby.workflows.definitions import AgentDefinitionBody
@@ -161,6 +165,7 @@ async def spawn_agent_impl(
     agent_lookup_name: str | None = None,
     task_id: str | None = None,
     task_manager: LocalTaskManager | None = None,
+    allow_closed_task: bool = False,
     # Isolation
     isolation: Literal["none", "worktree", "clone"] | None = None,
     branch_name: str | None = None,
@@ -374,9 +379,10 @@ async def spawn_agent_impl(
             logger.warning("Failed to resolve task_id %s: %s", task_id, e)
 
     if resolved_task_id and resolved_task is not None and not is_task_actionable(resolved_task):
-        return non_actionable_task_spawn_response(
-            resolved_task, task_ref=task_id, resolved_task_id=resolved_task_id
-        )
+        if not (allow_closed_task and is_task_reviewable(resolved_task)):
+            return non_actionable_task_spawn_response(
+                resolved_task, task_ref=task_id, resolved_task_id=resolved_task_id
+            )
     # 5. Build spawn config and handle worktree_id/clone_id reuse.
     spawn_config = SpawnConfig(
         prompt=prompt,

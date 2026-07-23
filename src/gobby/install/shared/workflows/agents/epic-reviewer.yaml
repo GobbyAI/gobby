@@ -37,6 +37,14 @@ instructions: |
   task references for docs/build epics that use a Discovery Brief plus
   descendant task set as the review scope.
 
+  CLOSED-EPIC REVIEW:
+  If the assigned epic is already closed, run a post-hoc review: do not
+  claim the epic, and do not call approve_review or reject_review — there
+  is no active stage to transition. Follow the same methodology, deliver
+  the `## Epic Findings` verdict block, and for blocking findings create
+  remediation tasks (or reopen the epic with reopen_task when the delivered
+  work must be reworked). Then terminate with end_agent_run as usual.
+
   WORKFLOW:
   - Claim the assigned epic and read it.
   - Load code-index, epic-review, tech-writer, task-transitions, and

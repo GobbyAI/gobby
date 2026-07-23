@@ -161,6 +161,97 @@ class TestSpawnAgentDedup:
         mock_execute.assert_not_awaited()
 
     @pytest.mark.asyncio
+    @pytest.mark.parametrize(
+        ("closed_at", "escalated_at", "expect_spawn"),
+        [
+            ("2026-05-22T00:00:00+00:00", None, True),
+            (None, "2026-05-22T01:00:00+00:00", False),
+        ],
+        ids=["closed-reviewable", "open-escalated"],
+    )
+    async def test_allow_closed_task_permits_review_spawn_unless_escalated(
+        self, db: HubDatabase, closed_at: str | None, escalated_at: str | None, expect_spawn: bool
+    ) -> None:
+        """allow_closed_task admits closed tasks for review; open escalated tasks still refuse."""
+        from gobby.mcp_proxy.tools.spawn_agent import create_spawn_agent_registry
+
+        runner = MagicMock()
+        runner.can_spawn.return_value = (True, "Can spawn", 0)
+        runner._child_session_manager = MagicMock()
+        runner.run_storage.has_active_run_for_task.return_value = False
+
+        agent_body = AgentDefinitionBody(name="epic-reviewer", provider="claude")
+
+        mock_task_manager = MagicMock()
+        mock_task = MagicMock()
+        mock_task.title = "Closed epic"
+        mock_task.seq_num = 102
+        mock_task.id = "11111111-1111-4111-8111-111111110222"
+        mock_task.additional_skills = None
+        mock_task.closed_at = closed_at
+        mock_task.escalated_at = escalated_at
+        mock_task.is_escalated = escalated_at is not None
+        mock_task.stages = []
+        mock_task_manager.get_task.return_value = mock_task
+
+        registry = create_spawn_agent_registry(
+            runner,
+            task_manager=mock_task_manager,
+            db=db,
+        )
+
+        with (
+            patch(
+                "gobby.mcp_proxy.tools.spawn_agent._factory._load_agent_body",
+                return_value=agent_body,
+            ),
+            patch(
+                "gobby.mcp_proxy.tools.spawn_agent._implementation.get_project_context"
+            ) as mock_ctx,
+            patch(
+                "gobby.mcp_proxy.tools.spawn_agent._implementation.resolve_task_id_for_mcp"
+            ) as mock_resolve,
+            patch(
+                "gobby.mcp_proxy.tools.spawn_agent._implementation.execute_spawn",
+                new_callable=AsyncMock,
+            ) as mock_execute,
+            patch(
+                "gobby.mcp_proxy.tools.spawn_agent._implementation.TaskSpawnLease"
+            ) as mock_lease_cls,
+        ):
+            mock_ctx.return_value = {
+                "id": "11111111-1111-4111-8111-111111110123",
+                "project_path": "/path/to/project",
+            }
+            mock_resolve.return_value = "11111111-1111-4111-8111-111111110222"
+            mock_lease_cls.return_value.acquire.return_value = None
+            mock_lease_cls.return_value.attach.return_value = None
+            spawn_result = MagicMock()
+            spawn_result.success = True
+            spawn_result.terminal_type = "headless"
+            spawn_result.child_session_id = "child-review-1"
+            spawn_result.error = None
+            mock_execute.return_value = spawn_result
+
+            result = await registry.call(
+                "spawn_agent",
+                {
+                    "prompt": "Post-hoc epic review",
+                    "parent_session_id": "parent-789",
+                    "task_id": "#102",
+                    "allow_closed_task": True,
+                },
+            )
+
+        if expect_spawn:
+            mock_execute.assert_awaited_once()
+            assert result["success"] is True
+        else:
+            mock_execute.assert_not_awaited()
+            assert result["success"] is False
+            assert "not actionable" in result["error"]
+
+    @pytest.mark.asyncio
     async def test_merge_worker_spawn_ignores_parent_merge_orchestrator_run(
         self, db: HubDatabase
     ) -> None:
