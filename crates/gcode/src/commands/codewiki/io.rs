@@ -6,6 +6,7 @@ use super::frontmatter::{
     apply_ai_outcome_to_markdown, lane_observability_from_content, page_frontmatter_blocks_reuse,
     source_files_from_frontmatter,
 };
+use super::text::{stamp_commit, strip_commit_lines};
 use super::*;
 
 const CONTENT_SENSITIVE_INVALIDATION_PREFIX: &str = "content-sensitive:";
@@ -23,7 +24,8 @@ fn content_sensitive_target_matches(
     generated: &str,
 ) -> bool {
     !invalidation_key.is_some_and(|key| key.starts_with(CONTENT_SENSITIVE_INVALIDATION_PREFIX))
-        || existing == Some(generated)
+        || existing
+            .is_some_and(|existing| strip_commit_lines(existing) == strip_commit_lines(generated))
 }
 
 pub fn write_doc_set(out_dir: &Path, docs: &[(String, String)]) -> anyhow::Result<()> {
@@ -132,6 +134,7 @@ pub(crate) struct DocSink<'a> {
     out_dir: &'a Path,
     ai_mode: String,
     ai_outcome: CodewikiAiOutcome,
+    commit_stamp: Option<CommitStamp>,
     /// Requested AI generation settings of the current run, recorded into each
     /// written doc's meta and compared against the previous entry so a
     /// settings change is never mistaken for "unchanged" (#17530).
@@ -183,6 +186,7 @@ impl<'a> DocSink<'a> {
             out_dir,
             ai_mode: ai_mode.to_string(),
             ai_outcome: CodewikiAiOutcome::default(),
+            commit_stamp: None,
             ai_settings: AiGenerationSettings::default(),
             previous_docs: previous.docs.clone(),
             // An interrupted run must not lose entries for docs it never
@@ -201,6 +205,11 @@ impl<'a> DocSink<'a> {
 
     pub(crate) fn with_ai_outcome(mut self, ai_outcome: CodewikiAiOutcome) -> Self {
         self.ai_outcome = ai_outcome;
+        self
+    }
+
+    pub(crate) fn with_commit_stamp(mut self, commit_stamp: Option<CommitStamp>) -> Self {
+        self.commit_stamp = commit_stamp;
         self
     }
 
@@ -395,7 +404,14 @@ impl<'a> DocSink<'a> {
             // healthy prose for unchanged sources.
             previous_meta.cloned().unwrap_or_default()
         } else {
-            write_doc(self.out_dir, &doc.path, &content)?;
+            let persisted_content = if doc.path.ends_with(".md") {
+                self.commit_stamp
+                    .as_ref()
+                    .map_or_else(|| content.clone(), |stamp| stamp_commit(&content, stamp))
+            } else {
+                content.clone()
+            };
+            write_doc(self.out_dir, &doc.path, &persisted_content)?;
             self.generated_docs.push(doc.path.clone());
             if degraded {
                 self.degraded_docs.push(doc.path.clone());
@@ -406,6 +422,8 @@ impl<'a> DocSink<'a> {
             let lane = lane_observability_from_content(&content);
             CodewikiDocMeta {
                 source_hashes,
+                commit: self.commit_stamp.as_ref().map(|stamp| stamp.sha.clone()),
+                commit_dirty: self.commit_stamp.as_ref().map(|stamp| stamp.dirty),
                 degraded,
                 // Degraded fallbacks are never reused, so their summaries are
                 // never recorded.
@@ -442,6 +460,8 @@ impl<'a> DocSink<'a> {
         let meta = CodewikiMeta {
             docs: self.next_docs.clone(),
             generated_docs: self.generated_docs.clone(),
+            commit: self.commit_stamp.as_ref().map(|stamp| stamp.sha.clone()),
+            commit_dirty: self.commit_stamp.as_ref().map(|stamp| stamp.dirty),
             // The previous snapshot is kept until the run completes so an
             // interrupted run still diffs changes against the last complete
             // one.
@@ -535,6 +555,8 @@ impl<'a> DocSink<'a> {
         let meta = CodewikiMeta {
             docs: self.next_docs,
             generated_docs: self.generated_docs.clone(),
+            commit: self.commit_stamp.as_ref().map(|stamp| stamp.sha.clone()),
+            commit_dirty: self.commit_stamp.as_ref().map(|stamp| stamp.dirty),
             index_snapshot: index_snapshot.or(self.previous_snapshot),
             ai_mode: self.ai_mode,
             diagram_stats: self.diagram_stats,
@@ -696,5 +718,23 @@ mod diagram_stats_tests {
         assert_eq!(stats.no_generator, 0);
         assert_eq!(stats.rejected, 1);
         assert_eq!(stats.total(), 1);
+    }
+
+    #[test]
+    fn content_sensitive_match_ignores_commit_frontmatter_lines() {
+        let generated = "---\ntitle: Example\n---\n\n# Example\n";
+        let existing = stamp_commit(
+            generated,
+            &CommitStamp {
+                sha: "0123456789abcdef0123456789abcdef01234567".to_string(),
+                dirty: true,
+            },
+        );
+
+        assert!(content_sensitive_target_matches(
+            Some("content-sensitive:example"),
+            Some(&existing),
+            generated,
+        ));
     }
 }

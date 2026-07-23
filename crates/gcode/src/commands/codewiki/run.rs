@@ -14,9 +14,9 @@ use crate::visibility;
 
 use super::{
     AiGenerationSettings, BuiltDoc, CodewikiAiOptions, CodewikiAiOutcome, CodewikiInput,
-    CodewikiProgress, CodewikiPublication, CodewikiRunSummary, DEFAULT_OUT_DIR, DocPruneScope,
-    DocSink, LeadingChunk, MAX_EDGE_LIMIT, PromptTier, PublicationFingerprint, ReusePlan,
-    TextGenerator, TextVerifier, build_audit_context, build_codewiki_changes_doc,
+    CodewikiProgress, CodewikiPublication, CodewikiRunSummary, CommitStamp, DEFAULT_OUT_DIR,
+    DocPruneScope, DocSink, LeadingChunk, MAX_EDGE_LIMIT, PromptTier, PublicationFingerprint,
+    ReusePlan, TextGenerator, TextVerifier, build_audit_context, build_codewiki_changes_doc,
     build_codewiki_index_snapshot, build_feature_catalog_doc, build_system_model,
     build_truth_digest, direct_route_candidate_error, fetch_codewiki_graph_edges, generation,
     in_scope, io, is_core_file, read_ownership_meta, resolve_text_generator, resolve_text_verifier,
@@ -41,6 +41,7 @@ pub fn run(
     verbose: bool,
 ) -> anyhow::Result<()> {
     validate_edge_limit(edge_limit)?;
+    let commit_stamp = capture_commit_stamp(&ctx.project_root);
     if complete_scope && scope_args.is_empty() {
         anyhow::bail!("--complete-scope requires at least one --scope path");
     }
@@ -252,6 +253,7 @@ pub fn run(
     let mut sink =
         DocSink::open_with_prune_scope(&ctx.project_root, &stage_path, ai_mode, doc_scope.clone())?
             .with_ai_outcome(ai_outcome)
+            .with_commit_stamp(commit_stamp.clone())
             .with_ai_settings(ai_settings)
             .with_since(effective_since_changed);
     let mut generated_pages = 0_usize;
@@ -358,8 +360,13 @@ pub fn run(
     }
     sink.finish(index_snapshot)?;
     if doc_scope.is_unscoped() {
-        let truth_digest =
-            build_truth_digest(&system_model, &ctx.project_id, file_count, module_count);
+        let truth_digest = build_truth_digest(
+            &system_model,
+            &ctx.project_id,
+            file_count,
+            module_count,
+            commit_stamp.as_ref(),
+        );
         write_truth_digest(&stage_path, &doc_scope, &truth_digest)?;
     }
     progress.emit("publishing completed codewiki stage");
@@ -424,6 +431,39 @@ mod scope_tests {
         let complete = codewiki_doc_scope(&scopes, true);
         assert!(complete.is_unscoped());
         assert!(complete.includes_file("tools/helper.rs"));
+    }
+
+    #[test]
+    fn capture_commit_stamp_detects_dirty_worktrees_and_non_git_roots() {
+        let project = tempfile::tempdir().expect("project tempdir");
+        let root = project.path();
+        assert_eq!(capture_commit_stamp(root), None);
+
+        let git = |args: &[&str]| {
+            let status = std::process::Command::new("git")
+                .arg("-C")
+                .arg(root)
+                .args(args)
+                .status()
+                .expect("run git");
+            assert!(status.success(), "git {args:?} failed");
+        };
+        git(&["init", "-q"]);
+        git(&["config", "user.email", "test@example.com"]);
+        git(&["config", "user.name", "Test"]);
+        std::fs::write(root.join("tracked.rs"), "fn tracked() {}\n").expect("write source");
+        git(&["add", "tracked.rs"]);
+        git(&["commit", "-q", "-m", "base"]);
+
+        let clean = capture_commit_stamp(root).expect("clean commit stamp");
+        assert_eq!(clean.sha.len(), 40);
+        assert!(!clean.dirty);
+
+        std::fs::write(root.join("tracked.rs"), "fn tracked() { let _ = 1; }\n")
+            .expect("modify source");
+        let dirty = capture_commit_stamp(root).expect("dirty commit stamp");
+        assert_eq!(dirty.sha, clean.sha);
+        assert!(dirty.dirty);
     }
 }
 
@@ -547,6 +587,36 @@ pub(crate) fn git_changed_files(
         .filter(|line| !line.is_empty())
         .map(str::to_string)
         .collect())
+}
+
+pub(crate) fn capture_commit_stamp(project_root: &Path) -> Option<CommitStamp> {
+    let revision = std::process::Command::new("git")
+        .arg("-C")
+        .arg(project_root)
+        .args(["rev-parse", "HEAD"])
+        .output()
+        .ok()?;
+    if !revision.status.success() {
+        return None;
+    }
+    let sha = String::from_utf8(revision.stdout).ok()?.trim().to_string();
+    if sha.is_empty() {
+        return None;
+    }
+
+    let status = std::process::Command::new("git")
+        .arg("-C")
+        .arg(project_root)
+        .args(["status", "--porcelain"])
+        .output()
+        .ok()?;
+    if !status.status.success() {
+        return None;
+    }
+    Some(CommitStamp {
+        sha,
+        dirty: !status.stdout.is_empty(),
+    })
 }
 
 /// codewiki documents code and structured config — any file the indexer

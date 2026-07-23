@@ -278,7 +278,7 @@ pub(crate) use types::{
     AiGenerationSettings, AiGenerationStatus, ArchitectureDoc, ArchitectureSubsystem, BuiltDoc,
     CodewikiAiOutcome, CodewikiDocMeta, CodewikiFileSnapshot, CodewikiGraph, CodewikiIndexSnapshot,
     CodewikiMeta, CodewikiSymbolSnapshot, CodewikiTruthDigest, CodewikiTruthStackEntry,
-    CodewikiTruthSuperseded, DeprecatedSymbol, DeprecationIndex, DeprecationsDoc,
+    CodewikiTruthSuperseded, CommitStamp, DeprecatedSymbol, DeprecationIndex, DeprecationsDoc,
     FeatureCatalogDoc, FileDoc, FileLink, HotspotFinding, HotspotNode, HotspotsDoc, InfraSection,
     InfrastructureDoc, ModuleDoc, ModuleLink, OnboardingDoc, OnboardingEntryPoint, OnboardingStep,
     SourceSpan, SymbolDoc, SyncTextGenerator, SyncTextVerifier, TestIndex, VerifyNote,

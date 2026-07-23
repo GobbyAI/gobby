@@ -28,10 +28,16 @@ fn truth_digest_renders_slugged_bounded_authoritative_stack() {
         },
     ]);
 
-    let digest = build_truth_digest(&model, "project-1", 7, 2);
+    let stamp = CommitStamp {
+        sha: "0123456789abcdef0123456789abcdef01234567".to_string(),
+        dirty: true,
+    };
+    let digest = build_truth_digest(&model, "project-1", 7, 2, Some(&stamp));
 
     assert_eq!(digest.schema_version, 1);
     assert_eq!(digest.project_id, "project-1");
+    assert_eq!(digest.commit.as_deref(), Some(stamp.sha.as_str()));
+    assert_eq!(digest.commit_dirty, Some(true));
     assert_eq!(digest.stack_authority, "complete_current_set");
     assert!(digest.repo_summary.contains("7 files"));
     assert!(digest.repo_summary.contains("2 modules"));
@@ -61,7 +67,7 @@ fn truth_digest_renders_slugged_bounded_authoritative_stack() {
 
 #[test]
 fn truth_digest_marks_empty_stack_partial() {
-    let digest = build_truth_digest(&model_with_services(Vec::new()), "project-1", 0, 0);
+    let digest = build_truth_digest(&model_with_services(Vec::new()), "project-1", 0, 0, None);
 
     assert_eq!(digest.stack_authority, "partial");
     assert!(digest.stack.is_empty());
@@ -70,7 +76,10 @@ fn truth_digest_marks_empty_stack_partial() {
 
 #[test]
 fn truth_digest_write_is_unscoped_only() {
-    let digest = build_truth_digest(&model_with_services(Vec::new()), "project-1", 0, 0);
+    let digest = build_truth_digest(&model_with_services(Vec::new()), "project-1", 0, 0, None);
+    let json = serde_json::to_string(&digest).expect("serialize digest");
+    assert!(!json.contains("\"commit\""));
+    assert!(!json.contains("commit_dirty"));
     let unscoped_dir = tempfile::tempdir().expect("unscoped tempdir");
 
     write_truth_digest(unscoped_dir.path(), &DocPruneScope::unscoped(), &digest)

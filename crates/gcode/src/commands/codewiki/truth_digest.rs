@@ -4,8 +4,9 @@ use std::path::Path;
 use chrono::{SecondsFormat, Utc};
 
 use super::{
-    CodewikiTruthDigest, CodewikiTruthStackEntry, CodewikiTruthSuperseded, DocPruneScope,
-    SystemModel, build::infra_descriptor, doc_paths::write_doc, structural_repo_summary,
+    CodewikiTruthDigest, CodewikiTruthStackEntry, CodewikiTruthSuperseded, CommitStamp,
+    DocPruneScope, SystemModel, build::infra_descriptor, doc_paths::write_doc,
+    structural_repo_summary,
 };
 
 pub(crate) const TRUTH_DIGEST_META_PATH: &str = "_meta/truth_digest.json";
@@ -24,6 +25,7 @@ pub(crate) fn build_truth_digest(
     project_id: &str,
     file_count: usize,
     module_count: usize,
+    commit_stamp: Option<&CommitStamp>,
 ) -> CodewikiTruthDigest {
     let mut stack = system_model
         .services
@@ -61,6 +63,8 @@ pub(crate) fn build_truth_digest(
     CodewikiTruthDigest {
         schema_version: SCHEMA_VERSION,
         generated_at: Utc::now().to_rfc3339_opts(SecondsFormat::Secs, true),
+        commit: commit_stamp.map(|stamp| stamp.sha.clone()),
+        commit_dirty: commit_stamp.map(|stamp| stamp.dirty),
         project_id: project_id.to_string(),
         repo_summary: bounded(
             &structural_repo_summary(file_count, module_count),

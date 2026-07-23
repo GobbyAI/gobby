@@ -1,4 +1,5 @@
 use super::strict_markdown;
+use super::text::{preserve_commit_lines, strip_commit_lines};
 use std::io::Write;
 use std::path::{Path, PathBuf};
 
@@ -101,15 +102,19 @@ pub(super) fn refresh_doc_if_needed(
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(false),
         Err(error) => return Err(error.into()),
     };
-    if existing == content {
+    let existing_without_stamp = strip_commit_lines(&existing);
+    let content_without_stamp = strip_commit_lines(content);
+    if existing_without_stamp == content_without_stamp {
         return Ok(false);
     }
     if !relative_path.ends_with(".md")
-        || strict_markdown::normalize_codewiki_markdown(&existing) != content
+        || strict_markdown::normalize_codewiki_markdown(&existing_without_stamp)
+            != content_without_stamp
     {
         return Ok(false);
     }
-    write_doc(out_dir, relative_path, content)?;
+    let refreshed = preserve_commit_lines(&existing, &content_without_stamp);
+    write_doc(out_dir, relative_path, &refreshed)?;
     Ok(true)
 }
 

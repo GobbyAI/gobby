@@ -14,7 +14,8 @@ pub(crate) use frontmatter::{
     append_relevant_source_files, frontmatter_aggregate_with_verify_notes,
     frontmatter_aggregate_without_ranges, frontmatter_with_degradation,
     frontmatter_with_degradation_and_verify_notes_without_ranges,
-    frontmatter_with_degradation_without_ranges,
+    frontmatter_with_degradation_without_ranges, preserve_commit_lines, stamp_commit,
+    strip_commit_lines,
 };
 pub(crate) use generation::{
     GRAPH_UNAVAILABLE, GenerationContent, GenerationObservability, GenerationOutcome,

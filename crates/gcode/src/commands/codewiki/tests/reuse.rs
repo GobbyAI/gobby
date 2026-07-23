@@ -2282,3 +2282,77 @@ fn page_frontmatter_blocks_reuse_reads_top_level_health_keys() {
     // No frontmatter: nothing to block on.
     assert!(!page_frontmatter_blocks_reuse("Body only.\n"));
 }
+
+#[test]
+fn unchanged_stamped_page_keeps_original_commit_without_churn() {
+    let project = tempfile::tempdir().expect("project tempdir");
+    let out_dir = project.path().join("codewiki");
+    std::fs::create_dir_all(project.path().join("src")).expect("source dir");
+    std::fs::write(project.path().join("src/lib.rs"), "pub struct Client;\n").expect("source file");
+    let content = frontmatter(
+        "Client",
+        "code_file",
+        &[SourceSpan {
+            file: "src/lib.rs".to_string(),
+            line_start: 1,
+            line_end: 1,
+        }],
+    ) + "# Client\n\nGenerated documentation.\n";
+    let doc = BuiltDoc::healthy("code/files/src/lib.rs.md", content);
+    let original_stamp = CommitStamp {
+        sha: "1111111111111111111111111111111111111111".to_string(),
+        dirty: false,
+    };
+
+    let mut first = DocSink::open(project.path(), &out_dir, "off")
+        .expect("first sink")
+        .with_commit_stamp(Some(original_stamp.clone()));
+    assert!(first.persist(&doc).expect("first write"));
+    first.finish(None).expect("first finish");
+    let original_page = std::fs::read_to_string(out_dir.join(&doc.path)).expect("stamped page");
+
+    let current_stamp = CommitStamp {
+        sha: "2222222222222222222222222222222222222222".to_string(),
+        dirty: true,
+    };
+    let mut second = DocSink::open(project.path(), &out_dir, "off")
+        .expect("second sink")
+        .with_commit_stamp(Some(current_stamp.clone()));
+    assert!(!second.persist(&doc).expect("reuse page"));
+    let changed = second.finish(None).expect("second finish");
+    assert!(
+        changed.is_empty(),
+        "unchanged rerun must not churn: {changed:?}"
+    );
+    assert_eq!(
+        std::fs::read_to_string(out_dir.join(&doc.path)).expect("reused page"),
+        original_page
+    );
+
+    let meta = io::read_codewiki_meta(&out_dir).expect("codewiki metadata");
+    assert_eq!(meta.commit.as_deref(), Some(current_stamp.sha.as_str()));
+    assert_eq!(meta.commit_dirty, Some(true));
+    let page_meta = meta.docs.get(&doc.path).expect("page metadata");
+    assert_eq!(
+        page_meta.commit.as_deref(),
+        Some(original_stamp.sha.as_str())
+    );
+    assert_eq!(page_meta.commit_dirty, Some(false));
+
+    let stale =
+        format!("{original_page}\n<details>\n<summary>Source</summary>\n\nold\n</details>\n");
+    std::fs::write(out_dir.join(&doc.path), stale).expect("plant normalization drift");
+    let mut third = DocSink::open(project.path(), &out_dir, "off")
+        .expect("third sink")
+        .with_commit_stamp(Some(CommitStamp {
+            sha: "3333333333333333333333333333333333333333".to_string(),
+            dirty: false,
+        }));
+    assert!(third.persist(&doc).expect("refresh normalized page"));
+    third.finish(None).expect("third finish");
+    assert_eq!(
+        std::fs::read_to_string(out_dir.join(&doc.path)).expect("refreshed page"),
+        original_page,
+        "normalization refresh must preserve the original commit and generated timestamp"
+    );
+}

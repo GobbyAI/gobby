@@ -22,6 +22,12 @@ pub struct CodewikiInput {
     pub leading_chunks: BTreeMap<String, LeadingChunk>,
 }
 
+#[derive(Debug, Clone, Eq, PartialEq)]
+pub(crate) struct CommitStamp {
+    pub(crate) sha: String,
+    pub(crate) dirty: bool,
+}
+
 /// The first indexed content chunk of a file: real source text with its
 /// line range, used as retrieved prompt input and citation provenance.
 #[derive(Debug, Clone)]
@@ -35,6 +41,10 @@ pub struct LeadingChunk {
 pub(crate) struct CodewikiTruthDigest {
     pub(crate) schema_version: u8,
     pub(crate) generated_at: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(crate) commit: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(crate) commit_dirty: Option<bool>,
     pub(crate) project_id: String,
     pub(crate) repo_summary: String,
     pub(crate) stack_authority: String,
@@ -561,6 +571,10 @@ pub(crate) struct CodewikiMeta {
     pub(crate) docs: BTreeMap<String, CodewikiDocMeta>,
     pub(crate) generated_docs: Vec<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(crate) commit: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(crate) commit_dirty: Option<bool>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub(crate) index_snapshot: Option<CodewikiIndexSnapshot>,
     #[serde(default)]
     pub(crate) ai_mode: String,
@@ -571,6 +585,10 @@ pub(crate) struct CodewikiMeta {
 #[derive(Debug, Clone, Default, Deserialize, Eq, PartialEq, Serialize)]
 pub(crate) struct CodewikiDocMeta {
     pub(crate) source_hashes: BTreeMap<String, String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(crate) commit: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(crate) commit_dirty: Option<bool>,
     /// True when the doc on disk was written from a failed generation
     /// fallback. Source hashes cannot see generation failures, so this flag
     /// is what lets a later successful run repair the doc (#687).

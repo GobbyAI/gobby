@@ -1,7 +1,11 @@
 use std::collections::{BTreeMap, BTreeSet};
 use std::fmt::Write as _;
 
-use crate::commands::codewiki::{CodewikiAiOutcome, GRAPH_UNAVAILABLE, SourceSpan, VerifyNote};
+use chrono::{Local, SecondsFormat};
+
+use crate::commands::codewiki::{
+    CodewikiAiOutcome, CommitStamp, GRAPH_UNAVAILABLE, SourceSpan, VerifyNote,
+};
 
 #[derive(serde::Serialize)]
 struct Frontmatter<'a> {
@@ -65,6 +69,86 @@ pub(crate) const MAX_FRONTMATTER_PROVENANCE_FILES: usize = 30;
 #[cfg(test)]
 pub(crate) fn frontmatter(title: &str, kind: &str, source_spans: &[SourceSpan]) -> String {
     frontmatter_with_degradation(title, kind, source_spans, &[])
+}
+
+pub(crate) fn stamp_commit(content: &str, stamp: &CommitStamp) -> String {
+    let generated = Local::now().to_rfc3339_opts(SecondsFormat::Secs, false);
+    insert_commit_lines(
+        content,
+        &[
+            Some(format!("commit: {}", stamp.sha)),
+            stamp.dirty.then(|| "commit_dirty: true".to_string()),
+            Some(format!("generated: {generated}")),
+        ]
+        .into_iter()
+        .flatten()
+        .collect::<Vec<_>>(),
+    )
+}
+
+pub(crate) fn strip_commit_lines(content: &str) -> String {
+    let Some(closing) = frontmatter_closing_offset(content) else {
+        return content.to_string();
+    };
+    let mut out = String::from(&content[..4]);
+    for line in content[4..closing].split_inclusive('\n') {
+        if !is_commit_line(line) {
+            out.push_str(line);
+        }
+    }
+    out.push_str(&content[closing..]);
+    out
+}
+
+pub(crate) fn preserve_commit_lines(existing: &str, content: &str) -> String {
+    let lines = commit_lines(existing);
+    if lines.is_empty() {
+        content.to_string()
+    } else {
+        insert_commit_lines(content, &lines)
+    }
+}
+
+fn insert_commit_lines(content: &str, lines: &[String]) -> String {
+    let content = strip_commit_lines(content);
+    let Some(closing) = frontmatter_closing_offset(&content) else {
+        return content;
+    };
+    let mut out = String::with_capacity(
+        content.len() + lines.iter().map(|line| line.len() + 1).sum::<usize>(),
+    );
+    out.push_str(&content[..closing]);
+    for line in lines {
+        out.push_str(line);
+        out.push('\n');
+    }
+    out.push_str(&content[closing..]);
+    out
+}
+
+fn commit_lines(content: &str) -> Vec<String> {
+    let Some(closing) = frontmatter_closing_offset(content) else {
+        return Vec::new();
+    };
+    content[4..closing]
+        .lines()
+        .filter(|line| is_commit_line(line))
+        .map(str::to_string)
+        .collect()
+}
+
+fn frontmatter_closing_offset(content: &str) -> Option<usize> {
+    content
+        .strip_prefix("---\n")?
+        .find("\n---\n")
+        .map(|offset| 4 + offset + 1)
+}
+
+fn is_commit_line(line: &str) -> bool {
+    let line = line.trim_end_matches(['\r', '\n']);
+    line.starts_with("commit:")
+        || line.starts_with("commit_dirty:")
+        || line.starts_with("generated:")
 }
 
 /// Builds the same generated frontmatter as `frontmatter`, plus optional
@@ -495,5 +579,34 @@ mod tests {
         );
         assert!(failure.contains("degraded: true"), "{failure}");
         assert!(failure.contains("model-unavailable"), "{failure}");
+    }
+
+    #[test]
+    fn commit_stamp_round_trips_and_survives_markdown_normalization() {
+        let original = frontmatter("Repository Overview", "code_repo", &spans())
+            + "# Repository Overview\n\nGenerated documentation.\n";
+        let stamp = crate::commands::codewiki::CommitStamp {
+            sha: "0123456789abcdef0123456789abcdef01234567".to_string(),
+            dirty: true,
+        };
+
+        let stamped = stamp_commit(&original, &stamp);
+        assert!(stamped.contains("commit: 0123456789abcdef0123456789abcdef01234567\n"));
+        assert!(stamped.contains("commit_dirty: true\n"));
+        let generated = stamped
+            .lines()
+            .find_map(|line| line.strip_prefix("generated: "))
+            .expect("generated timestamp");
+        chrono::DateTime::parse_from_rfc3339(generated).expect("RFC 3339 generated timestamp");
+        assert!(matches!(
+            generated.as_bytes().get(generated.len().saturating_sub(6)),
+            Some(b'+' | b'-')
+        ));
+        assert_eq!(strip_commit_lines(&stamped), original);
+
+        let normalized =
+            crate::commands::codewiki::strict_markdown::normalize_codewiki_markdown(&stamped);
+        assert!(normalized.contains("commit: 0123456789abcdef0123456789abcdef01234567"));
+        assert!(normalized.contains("generated: "));
     }
 }
