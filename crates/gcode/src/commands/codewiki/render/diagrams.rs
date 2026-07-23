@@ -295,7 +295,7 @@ pub(crate) fn render_module_call_sequence(
         graph_availability == CodewikiGraphAvailability::Truncated,
     );
     diagram.push_str(
-        "_Static call sequence — indexed call edges ordered by call depth…; not a recorded execution trace._\n\n",
+        "_Static call sequence — indexed call edges ordered by call depth; not a recorded execution trace._\n\n",
     );
     diagram.push_str(&fence);
     DiagramOutcome::Emitted(diagram)

@@ -148,3 +148,24 @@ impl Drop for EnvGuard {
         }
     }
 }
+
+#[test]
+fn capability_probe_authenticates_with_local_cli_token() {
+    let (port, handle) =
+        spawn_server(r#"{"capabilities": {"text_generate": {"available": true}}}"#);
+    let home = temp_home();
+    write_daemon_files(home.path(), port, "probe-token");
+    let _env = EnvGuard::set_home(home.path());
+
+    let availability = crate::ai::probe::probe_daemon_capability_at(
+        &format!("http://127.0.0.1:{port}"),
+        crate::config::AiCapability::TextGenerate,
+    );
+
+    let request = handle.join().expect("join server").expect("read request");
+    assert!(
+        has_header(&request, "Authorization", "Bearer probe-token"),
+        "probe request must carry the local CLI token, got: {request}"
+    );
+    assert!(availability.available);
+}

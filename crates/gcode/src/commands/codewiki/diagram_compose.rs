@@ -653,10 +653,12 @@ pub(crate) fn fence(body: &str) -> String {
 /// LLM attempts per diagram: one composition plus one repair re-prompt.
 const COMPOSE_ATTEMPTS: usize = 2;
 
-/// Compose one evidence-grounded flowchart. Returns the validated fenced
-/// block, or `None` when the evidence is too sparse, no generator is
-/// available (AI off), or nothing verifiable survived the repair loop — all
-/// normal no-diagram outcomes, never degradation.
+/// Compose one evidence-grounded flowchart. Returns [`DiagramOutcome::Emitted`]
+/// with the validated fenced block, or the typed no-diagram outcome:
+/// [`DiagramOutcome::SparseEvidence`] when the evidence is too sparse,
+/// [`DiagramOutcome::NoGenerator`] when no generator is available (AI off), or
+/// [`DiagramOutcome::Rejected`] when nothing verifiable survived the repair
+/// loop — all normal no-diagram outcomes, never degradation.
 pub(crate) fn compose_flowchart(
     generate: &mut Option<&mut TextGenerator<'_>>,
     evidence: &DiagramEvidence,

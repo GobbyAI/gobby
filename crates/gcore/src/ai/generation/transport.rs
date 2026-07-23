@@ -286,8 +286,10 @@ fn tool_policy_to_json(policy: &ToolPolicy) -> Value {
 
 /// Parse the daemon agentic-chat response into a [`DaemonAgenticResult`]:
 /// `choices[0].message.content` is the narrative, `model` the agent's model, and
-/// `investigation.tool_use_count`/`investigation.turns` the provenance (0 when
-/// absent). Token usage reuses the shared chat-completion usage parser.
+/// `investigation.tool_use_count`/`investigation.turns`/`investigation.stop_reason`
+/// the provenance — `tool_use_count` defaults to 0 when absent, while `turns` and
+/// `stop_reason` stay `None` so absence is never reported as a count or a verdict.
+/// Token usage reuses the shared chat-completion usage parser.
 pub(crate) fn parse_daemon_agentic(value: &Value) -> DaemonAgenticResult {
     let content = value
         .get("choices")

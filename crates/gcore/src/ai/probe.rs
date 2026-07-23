@@ -295,7 +295,17 @@ struct UreqProbeTransport;
 impl DaemonProbeTransport for UreqProbeTransport {
     fn status(&self, base_url: &str, method: &str, path: &str) -> ProbeObservation {
         let url = format!("{}{}", base_url.trim_end_matches('/'), path);
-        match ureq::request(method, &url).timeout(PROBE_TIMEOUT).call() {
+        // The status routes sit behind daemon auth like every other daemon
+        // route; an unauthenticated probe reads as Unauthorized and demotes an
+        // available daemon to the direct fallback.
+        let mut request = ureq::request(method, &url).timeout(PROBE_TIMEOUT);
+        if let Ok(token) = crate::local_token::read_local_cli_token() {
+            request = request.set(
+                crate::local_token::AUTHORIZATION_HEADER,
+                &crate::local_token::authorization_bearer(&token),
+            );
+        }
+        match request.call() {
             Ok(response) => ProbeObservation::Http {
                 status: response.status(),
                 body: response.into_string().ok(),

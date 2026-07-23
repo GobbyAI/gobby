@@ -270,7 +270,7 @@ fn module_call_sequence_emits_only_for_depth_two_chains() {
     let fence = mermaid_fence(&diagram);
 
     assert!(diagram.contains(
-        "_Static call sequence — indexed call edges ordered by call depth…; not a recorded execution trace._"
+        "_Static call sequence — indexed call edges ordered by call depth; not a recorded execution trace._"
     ));
     assert!(fence.contains("sequenceDiagram"));
     assert!(fence.contains("m_component_00->>m_component_01: calls"));
