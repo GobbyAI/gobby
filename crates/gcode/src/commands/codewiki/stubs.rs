@@ -193,6 +193,7 @@ pub(crate) fn breadcrumb_stub_docs(
             direct_files,
             child_modules,
             dependency_diagram: None,
+            call_sequence_diagram: None,
             degraded: false,
             degraded_sources: Vec::new(),
             verify_notes: Vec::new(),

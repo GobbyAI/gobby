@@ -137,6 +137,20 @@ pub(crate) fn build_module_docs_with_filter(
             | DiagramOutcome::NoGenerator
             | DiagramOutcome::Rejected => None,
         };
+        let call_sequence_outcome =
+            render_module_call_sequence(&module, files, graph_edges, graph_availability);
+        diagram_stats.record(
+            &module_doc_path(&module),
+            DiagramKind::ModuleCallSequence,
+            &call_sequence_outcome,
+            progress,
+        );
+        let call_sequence_diagram = match call_sequence_outcome {
+            DiagramOutcome::Emitted(diagram) => Some(diagram),
+            DiagramOutcome::SparseEvidence
+            | DiagramOutcome::NoGenerator
+            | DiagramOutcome::Rejected => None,
+        };
         let fallback = structural_module_summary(&module, &direct_files, &child_modules);
         let source_spans = collect_link_spans(&direct_files, &child_modules);
         // A module's provenance rolls up every file under it (child spans
@@ -151,9 +165,10 @@ pub(crate) fn build_module_docs_with_filter(
         // while its Child Modules links dangle (#17731). Child names also
         // feed the brief prompt, so a changed child set regenerates the page
         // instead of patching links.
-        // Dependency edges intentionally stay out of the reuse key: the graph
-        // query is a bounded, order-unstable sample with the same staleness
-        // envelope as the relationship-facts prose above.
+        // Diagram graph edges intentionally stay out of the reuse key: the
+        // query is a bounded sample with the same staleness envelope as the
+        // relationship-facts prose above. Render-version 21 forces the initial
+        // dependency + call-sequence regeneration together.
         let reused =
             reused.filter(|(page, _)| reused_module_child_links_current(page, &child_modules));
         progress.emit(format!(
@@ -231,6 +246,7 @@ pub(crate) fn build_module_docs_with_filter(
             direct_files,
             child_modules,
             dependency_diagram,
+            call_sequence_diagram,
             degraded,
             degraded_sources: degraded_sources.into_iter().collect(),
             verify_notes: Vec::new(),

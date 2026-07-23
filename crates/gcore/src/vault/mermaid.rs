@@ -274,7 +274,7 @@ mod tests {
 
     #[test]
     fn validator_accepts_sequence_diagram() {
-        let block = "```mermaid\nsequenceDiagram\n    A->>B: msg\n    B-->>A: reply\n```\n";
+        let block = "```mermaid\nsequenceDiagram\n    participant m_a as alpha\n    participant m_b as beta\n    participant m_c as gamma\n    m_a->>m_b: calls\n    m_b->>m_c: calls\n```\n";
         assert!(is_valid_mermaid(block));
     }
 

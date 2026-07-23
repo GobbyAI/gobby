@@ -183,8 +183,9 @@ fn module_dependency_diagrams_emit_valid_sections_and_observable_empty_slots() {
         is_valid_mermaid(fence),
         "invalid dependency fence:\n{fence}"
     );
-    assert_eq!(diagram_stats.total(), docs.len());
     assert_eq!(diagram_stats.emitted, docs.len());
+    assert_eq!(diagram_stats.sparse_evidence, docs.len());
+    assert_eq!(diagram_stats.total(), docs.len() * 2);
 
     let files = vec![file_doc_with_symbol("src/lib.rs", "src", "root")];
     let mut diagram_stats = DiagramStats::default();
@@ -203,8 +204,8 @@ fn module_dependency_diagrams_emit_valid_sections_and_observable_empty_slots() {
     let rendered = render_module_doc(&docs[0]);
 
     assert!(!rendered.contains("## Dependencies"));
-    assert_eq!(diagram_stats.sparse_evidence, 1);
-    assert_eq!(diagram_stats.total(), 1);
+    assert_eq!(diagram_stats.sparse_evidence, 2);
+    assert_eq!(diagram_stats.total(), 2);
 }
 
 #[test]
@@ -251,6 +252,193 @@ fn module_dependency_diagrams_are_bounded_and_permutation_invariant() {
     assert_eq!(available, reordered);
 }
 
+#[test]
+fn module_call_sequence_emits_only_for_depth_two_chains() {
+    let files = call_sequence_files(3);
+    let chain = vec![
+        CodewikiGraphEdge::call("component-00", "component-01"),
+        CodewikiGraphEdge::call("component-01", "component-02"),
+    ];
+    let DiagramOutcome::Emitted(diagram) = render_module_call_sequence(
+        "src/core",
+        &files,
+        &chain,
+        CodewikiGraphAvailability::Available,
+    ) else {
+        panic!("depth-two call chain was not emitted");
+    };
+    let fence = mermaid_fence(&diagram);
+
+    assert!(diagram.contains(
+        "_Static call sequence — indexed call edges ordered by call depth…; not a recorded execution trace._"
+    ));
+    assert!(fence.contains("sequenceDiagram"));
+    assert!(fence.contains("m_component_00->>m_component_01: calls"));
+    assert!(fence.contains("m_component_01->>m_component_02: calls"));
+    assert!(
+        fence.find("m_component_00->>m_component_01: calls")
+            < fence.find("m_component_01->>m_component_02: calls")
+    );
+    assert!(
+        is_valid_mermaid(fence),
+        "invalid call-sequence fence:\n{fence}"
+    );
+
+    let mut generate = None;
+    let mut diagram_stats = DiagramStats::default();
+    let mut progress = CodewikiProgress::silent();
+    let docs = build_module_docs(
+        &files,
+        &std::collections::BTreeMap::new(),
+        &chain,
+        CodewikiGraphAvailability::Available,
+        &mut generate,
+        &mut None,
+        &mut diagram_stats,
+        &mut progress,
+        &mut |_| Ok(()),
+    )
+    .expect("module docs build");
+    let core = docs
+        .iter()
+        .find(|doc| doc.module == "src/core")
+        .expect("core module is documented");
+    assert!(core.call_sequence_diagram.is_some());
+    assert!(render_module_doc(core).contains("## Call sequence\n\n_Static call sequence"));
+
+    let flat_star = vec![
+        CodewikiGraphEdge::call("component-00", "component-01"),
+        CodewikiGraphEdge::call("component-00", "component-02"),
+    ];
+    assert_eq!(
+        render_module_call_sequence(
+            "src/core",
+            &files,
+            &flat_star,
+            CodewikiGraphAvailability::Available,
+        ),
+        DiagramOutcome::SparseEvidence
+    );
+
+    let mut cycle = chain;
+    cycle.push(CodewikiGraphEdge::call("component-02", "component-00"));
+    assert!(matches!(
+        render_module_call_sequence(
+            "src/core",
+            &files,
+            &cycle,
+            CodewikiGraphAvailability::Available,
+        ),
+        DiagramOutcome::Emitted(_)
+    ));
+}
+
+#[test]
+fn module_call_sequence_is_bounded_and_permutation_invariant() {
+    let files = call_sequence_files(21);
+    let mut edges = Vec::new();
+    for index in 1..=10 {
+        edges.push(CodewikiGraphEdge::call(
+            "component-00",
+            format!("component-{index:02}"),
+        ));
+        edges.push(CodewikiGraphEdge::call(
+            format!("component-{index:02}"),
+            format!("component-{:02}", index + 10),
+        ));
+    }
+
+    let DiagramOutcome::Emitted(available) = render_module_call_sequence(
+        "src/core",
+        &files,
+        &edges,
+        CodewikiGraphAvailability::Available,
+    ) else {
+        panic!("bounded call sequence was not emitted");
+    };
+    let fence = mermaid_fence(&available);
+    assert!(available.contains("_Simplified diagram:"));
+    assert!(
+        fence
+            .lines()
+            .filter(|line| line.trim_start().starts_with("participant "))
+            .count()
+            <= 8
+    );
+    assert!(fence.lines().filter(|line| line.contains("->>")).count() <= 12);
+    assert!(is_valid_mermaid(fence));
+
+    let DiagramOutcome::Emitted(truncated) = render_module_call_sequence(
+        "src/core",
+        &files,
+        &edges,
+        CodewikiGraphAvailability::Truncated,
+    ) else {
+        panic!("truncated call sequence was not emitted");
+    };
+    assert!(truncated.contains("source graph was truncated"));
+
+    let mut reordered_files = files.clone();
+    reordered_files.reverse();
+    let mut reordered_edges = edges.clone();
+    reordered_edges.reverse();
+    let DiagramOutcome::Emitted(reordered) = render_module_call_sequence(
+        "src/core",
+        &reordered_files,
+        &reordered_edges,
+        CodewikiGraphAvailability::Available,
+    ) else {
+        panic!("reordered call sequence was not emitted");
+    };
+
+    assert_eq!(available, reordered);
+}
+
+#[test]
+fn module_diagram_slots_record_dependency_and_suppressed_call_sequence() {
+    let files = vec![
+        file_doc_with_symbol("src/core.rs", "src/core", "root"),
+        file_doc_with_symbol("src/dep-a.rs", "src/dep-a", "dep-a"),
+        file_doc_with_symbol("src/dep-b.rs", "src/dep-b", "dep-b"),
+    ];
+    let edges = vec![
+        CodewikiGraphEdge::call("root", "dep-a"),
+        CodewikiGraphEdge::call("root", "dep-b"),
+    ];
+    let mut generate = None;
+    let mut diagram_stats = DiagramStats::default();
+    let mut progress = CodewikiProgress::capture();
+
+    let docs = build_module_docs(
+        &files,
+        &std::collections::BTreeMap::new(),
+        &edges,
+        CodewikiGraphAvailability::Available,
+        &mut generate,
+        &mut None,
+        &mut diagram_stats,
+        &mut progress,
+        &mut |_| Ok(()),
+    )
+    .expect("module docs build");
+    let core = docs
+        .iter()
+        .find(|doc| doc.module == "src/core")
+        .expect("core module is documented");
+
+    assert!(core.dependency_diagram.is_some());
+    assert!(core.call_sequence_diagram.is_none());
+    assert_eq!(diagram_stats.total(), docs.len() * 2);
+    assert_eq!(diagram_stats.recorded_slots_len(), docs.len() * 2);
+    let lines = progress.into_lines();
+    assert!(lines.iter().any(|line| {
+        line == "codewiki: diagram code/modules/src/core.md [module_dependency]: emitted"
+    }));
+    assert!(lines.iter().any(|line| {
+        line == "codewiki: diagram code/modules/src/core.md [module_call_sequence]: sparse_evidence"
+    }));
+}
+
 fn dependency_fixture(edge_count: usize) -> (Vec<FileDoc>, Vec<CodewikiGraphEdge>) {
     let mut files = vec![file_doc_with_symbol("src/core.rs", "src/core", "root")];
     let mut edges = Vec::new();
@@ -268,6 +456,18 @@ fn dependency_fixture(edge_count: usize) -> (Vec<FileDoc>, Vec<CodewikiGraphEdge
         });
     }
     (files, edges)
+}
+
+fn call_sequence_files(component_count: usize) -> Vec<FileDoc> {
+    (0..component_count)
+        .map(|index| {
+            file_doc_with_symbol(
+                &format!("src/core/component_{index:02}.rs"),
+                "src/core",
+                &format!("component-{index:02}"),
+            )
+        })
+        .collect()
 }
 
 fn mermaid_fence(diagram: &str) -> &str {

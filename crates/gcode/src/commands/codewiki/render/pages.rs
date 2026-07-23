@@ -25,6 +25,11 @@ pub(crate) fn render_module_doc(module: &ModuleDoc) -> String {
         doc.push_str(diagram);
         doc.push('\n');
     }
+    if let Some(diagram) = &module.call_sequence_diagram {
+        doc.push_str("## Call sequence\n\n");
+        doc.push_str(diagram);
+        doc.push('\n');
+    }
     if !module.child_modules.is_empty() {
         doc.push_str("## Child Modules\n\n");
         write_markdown_table_header(&mut doc, &["Module", "Summary"]);

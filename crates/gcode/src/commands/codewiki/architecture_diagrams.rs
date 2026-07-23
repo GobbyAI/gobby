@@ -311,7 +311,9 @@ fn service_edge_label(kind: ServiceKind) -> &'static str {
 mod tests {
     use super::super::types::PromptTier;
     use super::*;
-    use crate::commands::codewiki::render::render_module_dependency_mermaid;
+    use crate::commands::codewiki::render::{
+        render_module_call_sequence, render_module_dependency_mermaid,
+    };
     use crate::commands::codewiki::system_model::{Crate, ServiceBoundary};
     use crate::commands::codewiki::types::{CodewikiGraphAvailability, CodewikiGraphEdge, FileDoc};
     use std::collections::BTreeMap;
@@ -667,6 +669,7 @@ mod tests {
         // Mermaid parser gate as model-composed architecture diagrams.
         let dependency_files = [
             ("src/core.rs", "src/core", "core"),
+            ("src/worker.rs", "src/core", "worker"),
             ("src/api.rs", "src/api", "api"),
         ]
         .into_iter()
@@ -694,6 +697,22 @@ mod tests {
         };
         doc.push('\n');
         doc.push_str(&dependency);
+
+        // Deterministic module sequence block: validates the participant and
+        // ordered call-message syntax emitted by the real renderer.
+        let DiagramOutcome::Emitted(sequence) = render_module_call_sequence(
+            "src/core",
+            &dependency_files,
+            &[
+                CodewikiGraphEdge::call("core", "worker"),
+                CodewikiGraphEdge::call("worker", "api"),
+            ],
+            CodewikiGraphAvailability::Available,
+        ) else {
+            panic!("call-sequence diagram was not emitted");
+        };
+        doc.push('\n');
+        doc.push_str(&sequence);
 
         let dir = tempfile::tempdir().expect("tempdir");
         let input = dir.path().join("emitted.md");

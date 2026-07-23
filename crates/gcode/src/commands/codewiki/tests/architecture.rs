@@ -482,8 +482,8 @@ fn architecture_page_composes_evidence_verified_diagrams() {
         page.content
     );
     assert!(page.content.contains("flowchart TD"), "{}", page.content);
-    // The deterministic sequence-diagram composers are retired (#17521);
-    // runtime facts now live in the evidence-verified topology.
+    // This architecture aggregate page stays flowchart-only (#17521); module
+    // pages own their deterministic static call-sequence diagrams.
     assert!(
         !page.content.contains("sequenceDiagram"),
         "{}",

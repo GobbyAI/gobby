@@ -220,6 +220,7 @@ pub(crate) struct ModuleDoc {
     pub(crate) direct_files: Vec<FileLink>,
     pub(crate) child_modules: Vec<ModuleLink>,
     pub(crate) dependency_diagram: Option<String>,
+    pub(crate) call_sequence_diagram: Option<String>,
     /// True when AI generation was attempted for this doc and failed.
     pub(crate) degraded: bool,
     pub(crate) degraded_sources: Vec<String>,

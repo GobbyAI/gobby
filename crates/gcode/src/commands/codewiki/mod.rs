@@ -83,7 +83,9 @@ const MAX_EDGE_LIMIT: usize = 100_000;
 // global value) for backward compatibility with existing _meta/codewiki.json.
 const RENDER_VERSION_DEFAULT: u32 = 20;
 const RENDER_VERSION_FILE: u32 = 20;
-const RENDER_VERSION_MODULE: u32 = 20;
+// 21 (#18570): module pages regenerate once with both restored deterministic
+// dependency and depth-bearing call-sequence diagram sections.
+const RENDER_VERSION_MODULE: u32 = 21;
 const RENDER_VERSION_REPO: u32 = 20;
 const RENDER_VERSION_ARCHITECTURE: u32 = 21;
 const RENDER_VERSION_INFRASTRUCTURE: u32 = 21;
@@ -229,8 +231,8 @@ pub(crate) use diagram_compose::{
 pub(crate) use render::{
     build_repo_doc, collect_subsystem_dependency_edges, render_architecture_doc,
     render_deprecations_doc, render_feature_catalog_doc, render_file_doc, render_hotspots_doc,
-    render_infrastructure_doc, render_module_dependency_mermaid, render_module_doc,
-    render_onboarding_doc,
+    render_infrastructure_doc, render_module_call_sequence, render_module_dependency_mermaid,
+    render_module_doc, render_onboarding_doc,
 };
 // Reuse of unchanged docs without regeneration.
 #[cfg(test)]
