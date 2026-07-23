@@ -1,0 +1,20 @@
+tags: [review-learning, plan-review, gobby, default]
+
+rules:
+  inject-plan-reviewer-lessons:
+    description: "Inject reviewer-miss lessons for plan adversaries"
+    event: turn_start
+    enabled: true
+    priority: 24
+    group: review-learning
+    agent_scope: [plan-adversary, plan-adversary-taskless]
+    effects:
+      - type: mcp_call
+        server: gobby-review-learning
+        tool: recall_review_lessons_by_class
+        arguments:
+          lesson_domain: plan
+          lesson_types: [reviewer-miss]
+          limit: 3
+        background: false
+        inject_result: true

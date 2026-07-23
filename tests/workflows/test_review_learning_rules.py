@@ -36,6 +36,16 @@ def _event(data: dict[str, Any]) -> HookEvent:
     )
 
 
+def _turn_start_event() -> HookEvent:
+    return HookEvent(
+        event_type=HookEventType.BEFORE_AGENT,
+        session_id=EXTERNAL_SESSION_ID,
+        source=SessionSource.CODEX,
+        timestamp=datetime.now(UTC),
+        data={},
+    )
+
+
 def _lesson(memory_id: str = "lesson-1") -> dict[str, Any]:
     return {
         "memory_id": memory_id,
@@ -262,3 +272,110 @@ async def test_class_recall_formatter_routing(temp_db: HubDatabase) -> None:
     assert "matched lesson class" in first.context
     assert "Check every required plan section" in first.context
     assert second.context is None
+
+
+@pytest.mark.asyncio
+async def test_class_injection_agent_scoping(temp_db: HubDatabase) -> None:
+    _sync_bundled(temp_db)
+    manager = LocalWorkflowDefinitionManager(temp_db)
+    expected_rules = {
+        "inject-plan-reviewer-lessons": (
+            ["plan-adversary", "plan-adversary-taskless"],
+            "plan",
+            ["reviewer-miss"],
+        ),
+        "inject-planner-lessons": (["planner"], "plan", ["fixer-induced-defect"]),
+        "inject-plan-enhancer-lessons": (
+            ["plan-enhancer", "plan-enhancer-taskless"],
+            "plan",
+            ["fixer-induced-defect"],
+        ),
+        "inject-qa-reviewer-lessons": (["qa-reviewer"], "code", ["qa-miss"]),
+    }
+
+    expected_by_agent: dict[str, tuple[str, list[str]]] = {}
+    for rule_name, (agent_scope, lesson_domain, lesson_types) in expected_rules.items():
+        row = manager.get_by_name(rule_name)
+        assert row is not None
+        body = RuleDefinitionBody.model_validate_json(row.definition_json)
+        assert body.event == RuleTriggerEvent.TURN_START
+        assert body.group == "review-learning"
+        assert body.agent_scope == agent_scope
+        effect = body.resolved_effects[0]
+        assert effect.type == "mcp_call"
+        assert effect.server == "gobby-review-learning"
+        assert effect.tool == "recall_review_lessons_by_class"
+        assert effect.arguments == {
+            "lesson_domain": lesson_domain,
+            "lesson_types": lesson_types,
+            "limit": 3,
+        }
+        assert effect.background is False
+        assert effect.inject_result is True
+        expected_by_agent.update(dict.fromkeys(agent_scope, (lesson_domain, lesson_types)))
+
+    class_calls: list[dict[str, Any]] = []
+
+    async def dispatcher(
+        server: str, tool: str, args: dict[str, Any], event: HookEvent
+    ) -> dict[str, Any]:
+        del event
+        if tool != "recall_review_lessons_by_class":
+            return {"success": True, "result": {}}
+        assert server == "gobby-review-learning"
+        class_calls.append(args)
+        if args["lesson_types"] == ["qa-miss"]:
+            return {"success": True, "result": {"count": 0, "lessons": []}}
+        return {
+            "success": True,
+            "result": {
+                "count": 1,
+                "lessons": [
+                    {
+                        "memory_id": f"class-lesson-{len(class_calls)}",
+                        "pattern_id": "plan-review:reviewer-miss:correctness:stale-section",
+                        "do": "Apply the matched class lesson.",
+                        "avoid": "Repeating the matched review failure.",
+                    }
+                ],
+            },
+        }
+
+    engine = RuleEngine(temp_db, mcp_dispatcher=dispatcher)
+    base_variables = {
+        "brevity_disabled": True,
+        "restraint_disabled": True,
+        "skill_discovery_instructions_shown": True,
+        "memory_nudge_fired": True,
+        "servers_listed": True,
+    }
+    for agent_type, (lesson_domain, lesson_types) in expected_by_agent.items():
+        before = len(class_calls)
+        response = await engine.evaluate(
+            _turn_start_event(),
+            session_id=EXTERNAL_SESSION_ID,
+            variables={**base_variables, "_agent_type": agent_type},
+        )
+        assert len(class_calls) == before + 1
+        assert class_calls[-1] == {
+            "lesson_domain": lesson_domain,
+            "lesson_types": lesson_types,
+            "limit": 3,
+        }
+        if lesson_types == ["qa-miss"]:
+            assert "<review-guidance>" not in (response.context or "")
+        else:
+            assert "<review-guidance>" in (response.context or "")
+
+    for variables in (
+        {**base_variables, "_agent_type": "developer"},
+        base_variables,
+    ):
+        before = len(class_calls)
+        response = await engine.evaluate(
+            _turn_start_event(),
+            session_id=EXTERNAL_SESSION_ID,
+            variables=variables,
+        )
+        assert len(class_calls) == before
+        assert "<review-guidance>" not in (response.context or "")
