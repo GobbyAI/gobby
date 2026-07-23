@@ -39,6 +39,22 @@ _DATABASE_EXECUTOR_JOIN_SECONDS = 6.0
 _FINALIZER_SETTLE_SECONDS = 10.0
 _GOBBY_SHUTDOWN_DRAIN_MESSAGE = "Gobby shutdown drain"
 
+# Set on the finalizer-deadline expiry branch: an abandoned settlement scope
+# can leave a wedged non-daemon executor worker that blocks interpreter exit
+# at the atexit thread join, so the standalone entry point must force process
+# death after pid release. Embedded hosts never consult this.
+_expiry_exit_backstop_required = False
+
+
+def finalizer_expiry_backstop_required() -> bool:
+    """Report whether shutdown abandoned unsettled terminal-delivery work."""
+    return _expiry_exit_backstop_required
+
+
+def _reset_finalizer_expiry_backstop() -> None:
+    global _expiry_exit_backstop_required
+    _expiry_exit_backstop_required = False
+
 
 class ReapChildProcesses(Protocol):
     async def __call__(
@@ -679,6 +695,8 @@ async def _settle_finalizers_under_cancellation(
             logger.warning("Terminal delivery finalizer failed", exc_info=True)
         return cancellation
 
+    global _expiry_exit_backstop_required
+    _expiry_exit_backstop_required = True
     detached = detach_shielded_terminal_deliveries()
     logger.error(
         "Terminal delivery finalizer exceeded %.1fs; detached work for next-boot recovery: %s",

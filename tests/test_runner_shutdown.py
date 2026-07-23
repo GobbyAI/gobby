@@ -1068,3 +1068,80 @@ class TestShutdownSessionStatusLifecycle:
             "mcp",
         ):
             assert events.index(event) < database_index
+
+
+class TestFinalizerExpiryBackstop:
+    """Expiry-branch state that drives main()'s forced-exit backstop."""
+
+    @pytest.mark.asyncio
+    async def test_expiry_branch_sets_backstop_state(self, monkeypatch) -> None:
+        monkeypatch.setattr(runner_lifecycle_shutdown, "_FINALIZER_SETTLE_SECONDS", 0.05)
+        monkeypatch.setattr(
+            runner_lifecycle_shutdown,
+            "_run_terminal_delivery_finalizers",
+            lambda runner: _never_complete(),
+        )
+        runner_lifecycle_shutdown._reset_finalizer_expiry_backstop()
+        try:
+            cancellation = await runner_lifecycle_shutdown._settle_finalizers_under_cancellation(
+                SimpleNamespace(db_executor=None),
+            )
+            assert cancellation is None
+            assert runner_lifecycle_shutdown.finalizer_expiry_backstop_required()
+        finally:
+            runner_lifecycle_shutdown._reset_finalizer_expiry_backstop()
+
+    @pytest.mark.asyncio
+    async def test_settled_finalizer_leaves_backstop_unset(self, monkeypatch) -> None:
+        async def _instant(runner) -> None:
+            return None
+
+        monkeypatch.setattr(
+            runner_lifecycle_shutdown, "_run_terminal_delivery_finalizers", _instant
+        )
+        runner_lifecycle_shutdown._reset_finalizer_expiry_backstop()
+        cancellation = await runner_lifecycle_shutdown._settle_finalizers_under_cancellation(
+            SimpleNamespace(db_executor=None),
+        )
+        assert cancellation is None
+        assert not runner_lifecycle_shutdown.finalizer_expiry_backstop_required()
+
+
+class TestForceExitBackstop:
+    """main()'s expiry-branch os._exit backstop."""
+
+    def _arm(self, monkeypatch) -> list[int]:
+        from gobby import runner as runner_module
+
+        exits: list[int] = []
+        monkeypatch.setattr(runner_module.os, "_exit", exits.append)
+        monkeypatch.setattr(runner_module.logging, "shutdown", lambda: None)
+        return exits
+
+    def test_no_exit_when_backstop_unset(self, monkeypatch) -> None:
+        from gobby import runner as runner_module
+
+        exits = self._arm(monkeypatch)
+        runner_lifecycle_shutdown._reset_finalizer_expiry_backstop()
+        runner_module._force_exit_after_expired_settlement()
+        assert exits == []
+
+    def test_forces_exit_code_zero_on_clean_unwind(self, monkeypatch) -> None:
+        from gobby import runner as runner_module
+
+        exits = self._arm(monkeypatch)
+        monkeypatch.setattr(runner_lifecycle_shutdown, "_expiry_exit_backstop_required", True)
+        runner_module._force_exit_after_expired_settlement()
+        assert exits == [0]
+
+    def test_forces_exit_with_systemexit_code_from_unwind(self, monkeypatch) -> None:
+        from gobby import runner as runner_module
+
+        exits = self._arm(monkeypatch)
+        monkeypatch.setattr(runner_lifecycle_shutdown, "_expiry_exit_backstop_required", True)
+        with pytest.raises(SystemExit):
+            try:
+                raise SystemExit(5)
+            finally:
+                runner_module._force_exit_after_expired_settlement()
+        assert exits == [5]

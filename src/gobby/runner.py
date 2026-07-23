@@ -317,6 +317,34 @@ def _raise_fd_limit(target: int = 10240) -> None:
         logger.warning("Could not raise fd limit from %s: %s", soft, e)
 
 
+def _force_exit_after_expired_settlement() -> None:
+    """Force process death when shutdown abandoned wedged settlement workers.
+
+    A non-daemon executor worker wedged in a settlement transaction survives
+    ``shutdown(cancel_futures=True)`` and blocks interpreter exit at the
+    atexit thread join, so the standalone daemon would linger as a zombie
+    process after pid release. Embedded hosts never call this — ``run_daemon``
+    returns to them normally with workers leaked until gate severance.
+    """
+    from gobby.runner_lifecycle_shutdown import finalizer_expiry_backstop_required
+
+    if not finalizer_expiry_backstop_required():
+        return
+    exc = sys.exception()
+    if isinstance(exc, SystemExit):
+        code = exc.code if isinstance(exc.code, int) else 0 if exc.code is None else 1
+    elif exc is None or isinstance(exc, KeyboardInterrupt):
+        code = 0
+    else:
+        code = 1
+    logger.error(
+        "Terminal-delivery settlement expired at shutdown; forcing process exit (code %s)",
+        code,
+    )
+    logging.shutdown()
+    os._exit(code)
+
+
 def main(config_path: Path | None = None, verbose: bool = False) -> None:
     # Must precede any torch import (torch is lazy, voice-only): PyTorch's
     # default MPS high watermark is 1.7x Metal's recommended working set,
@@ -385,6 +413,7 @@ def main(config_path: Path | None = None, verbose: bool = False) -> None:
             FailOpenPidOwnership,
         ):
             ownership_resolution.release()
+        _force_exit_after_expired_settlement()
 
 
 if __name__ == "__main__":
