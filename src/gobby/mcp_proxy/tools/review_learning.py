@@ -130,6 +130,48 @@ def create_review_learning_registry(
             return {"success": False, "error": str(exc)}
 
     @registry.tool(
+        name="recall_review_lessons_by_class",
+        description="Recall confirmed review lessons for a domain-qualified lesson class.",
+    )
+    async def recall_review_lessons_by_class(
+        lesson_domain: str,
+        lesson_types: list[str],
+        source_kinds: list[str] | None = None,
+        limit: int = 3,
+    ) -> dict[str, Any]:
+        """Recall compact guidance for class-scoped guardrail injection."""
+        try:
+            result = await service.recall_review_lessons_by_class(
+                lesson_domain=lesson_domain,
+                lesson_types=lesson_types,
+                source_kinds=source_kinds,
+                limit=limit,
+            )
+            return {"success": True, **result}
+        except (AttributeError, ValueError, RuntimeError, OSError) as exc:
+            return {"success": False, "error": str(exc)}
+
+    @registry.tool(
+        name="list_check_keys",
+        description="List all check-key identities recorded for a review-lesson class.",
+    )
+    async def list_check_keys(
+        lesson_domain: str,
+        lesson_type: str,
+        category: str | None = None,
+    ) -> dict[str, Any]:
+        """Enumerate the complete class-scoped check-key set."""
+        try:
+            result = await service.list_check_keys(
+                lesson_domain=lesson_domain,
+                lesson_type=lesson_type,
+                category=category,
+            )
+            return {"success": True, **result}
+        except (AttributeError, ValueError, RuntimeError, OSError) as exc:
+            return {"success": False, "error": str(exc)}
+
+    @registry.tool(
         name="record_review_lesson",
         description="Record a confirmed review lesson and promote repeated patterns.",
     )

@@ -9,7 +9,7 @@ import pytest
 from gobby.hooks.events import HookEvent, HookEventType, SessionSource
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.workflow_definitions import LocalWorkflowDefinitionManager
-from gobby.workflows.definitions import RuleDefinitionBody
+from gobby.workflows.definitions import RuleDefinitionBody, RuleEffect, RuleTriggerEvent
 from gobby.workflows.engine.core import RuleEngine
 from gobby.workflows.sync_rules import get_bundled_rules_path, sync_bundled_rules
 
@@ -207,3 +207,58 @@ class TestReviewLearningRule:
 
         assert response.context is None
         assert calls == 0
+
+
+@pytest.mark.asyncio
+async def test_class_recall_formatter_routing(temp_db: HubDatabase) -> None:
+    body = RuleDefinitionBody(
+        event=RuleTriggerEvent.BEFORE_TOOL,
+        effects=[
+            RuleEffect(
+                type="mcp_call",
+                server="gobby-review-learning",
+                tool="recall_review_lessons_by_class",
+                arguments={
+                    "lesson_domain": "plan",
+                    "lesson_types": ["missing-section"],
+                },
+                inject_result=True,
+            )
+        ],
+    )
+    LocalWorkflowDefinitionManager(temp_db).create(
+        name="test-class-recall-routing",
+        definition_json=body.model_dump_json(),
+        workflow_type="rule",
+        enabled=True,
+    )
+
+    async def dispatcher(
+        server: str, tool: str, args: dict[str, Any], event: HookEvent
+    ) -> dict[str, Any]:
+        del server, tool, args, event
+        return {
+            "success": True,
+            "result": {
+                "count": 1,
+                "lessons": [
+                    {
+                        "memory_id": "class-routing-lesson",
+                        "pattern_id": "plan-review:missing-section:correctness:stale-section",
+                        "do": "Check every required plan section.",
+                        "avoid": "Leaving stale sections unreviewed.",
+                    }
+                ],
+                "message": "ignored upstream rendering",
+            },
+        }
+
+    engine = RuleEngine(temp_db, mcp_dispatcher=dispatcher)
+    first = await engine.evaluate(_event({"tool_name": "Read"}), EXTERNAL_SESSION_ID, {})
+    second = await engine.evaluate(_event({"tool_name": "Read"}), EXTERNAL_SESSION_ID, {})
+
+    assert first.context is not None
+    assert "<review-guidance>" in first.context
+    assert "matched lesson class" in first.context
+    assert "Check every required plan section" in first.context
+    assert second.context is None

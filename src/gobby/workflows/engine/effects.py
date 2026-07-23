@@ -174,15 +174,26 @@ class EffectsMixin(DeliveryFormattingMixin):
                                 platform_session_id,
                                 variables,
                             )
-                        elif (effect.server, effect.tool) == (
-                            "gobby-review-learning",
-                            "recall_review_lessons_for_files",
-                        ) and isinstance(raw_result, dict):
+                        elif (
+                            effect.server == "gobby-review-learning"
+                            and effect.tool
+                            in {
+                                "recall_review_lessons_for_files",
+                                "recall_review_lessons_by_class",
+                            }
+                            and isinstance(raw_result, dict)
+                        ):
+                            scope_label = (
+                                "matched lesson class"
+                                if effect.tool == "recall_review_lessons_by_class"
+                                else "matched file"
+                            )
                             formatted = await asyncio.to_thread(
                                 self._format_review_lessons_result,
                                 raw_result,
                                 platform_session_id,
                                 variables,
+                                scope_label,
                             )
                         elif (effect.server, effect.tool) == (
                             "gobby-agents",

@@ -9,6 +9,7 @@ import logging
 import re
 from typing import Any, Protocol
 
+from gobby.review_learning.class_recall import ReviewLessonClassRecall
 from gobby.review_learning.file_paths import (
     extract_file_paths_from_mapping,
     normalize_lesson_file_path,
@@ -188,6 +189,38 @@ class ReviewLearningService:
             "lessons": lessons,
             "message": format_review_lesson_guidance(lessons),
         }
+
+    async def recall_review_lessons_by_class(
+        self,
+        lesson_domain: str,
+        lesson_types: list[str],
+        source_kinds: list[str] | None = None,
+        limit: int = 3,
+    ) -> dict[str, Any]:
+        """Recall confirmed lessons for a domain-qualified lesson class."""
+        project_id = (await self._resolve_scope(None))[0]
+        recall = ReviewLessonClassRecall(self.memory_manager, project_id)
+        return await recall.recall_review_lessons_by_class(
+            lesson_domain=lesson_domain,
+            lesson_types=lesson_types,
+            source_kinds=source_kinds,
+            limit=limit,
+        )
+
+    async def list_check_keys(
+        self,
+        lesson_domain: str,
+        lesson_type: str,
+        category: str | None = None,
+    ) -> dict[str, Any]:
+        """List complete check-key identities for one lesson class."""
+        project_id = (await self._resolve_scope(None))[0]
+        recall = ReviewLessonClassRecall(self.memory_manager, project_id)
+        return await recall.list_check_keys(
+            lesson_domain=lesson_domain,
+            lesson_type=lesson_type,
+            category=category,
+        )
 
     async def record(
         self,

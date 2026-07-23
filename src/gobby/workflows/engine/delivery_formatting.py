@@ -300,10 +300,11 @@ class DeliveryFormattingMixin(InjectionTrackingMixin):
         result: dict[str, Any],
         platform_session_id: str | None,
         variables: dict[str, Any],
+        scope_label: str = "matched file",
     ) -> str | None:
-        """Inline pipeline for file-scoped review lesson results."""
+        """Inline pipeline for review lesson results."""
         del variables
-        from gobby.hooks.dispatchers.mcp import format_discovery_result
+        from gobby.review_learning.guidance import format_review_lesson_guidance
 
         if _is_empty_inject_payload(result):
             return None
@@ -314,9 +315,4 @@ class DeliveryFormattingMixin(InjectionTrackingMixin):
         new_lessons = self._filter_and_track_new_review_lessons(lessons, platform_session_id)
         if not new_lessons:
             return None
-        return format_discovery_result(
-            {
-                "tool": "recall_review_lessons_for_files",
-                "result": {"lessons": new_lessons, "count": len(new_lessons)},
-            }
-        )
+        return format_review_lesson_guidance(new_lessons, scope_label=scope_label)

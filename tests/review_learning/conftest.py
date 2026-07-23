@@ -4,6 +4,7 @@ import asyncio
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from dataclasses import dataclass
+from datetime import datetime
 from typing import Any
 
 import pytest
@@ -38,6 +39,7 @@ class FakeMemory:
     project_id: str | None = "project"
     source_session_id: str | None = None
     tags: list[str] | None = None
+    created_at: datetime | None = None
 
 
 @dataclass

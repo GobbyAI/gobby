@@ -60,13 +60,15 @@ def create_review_learning_registry(
     )
 
 
-def test_create_review_learning_registry_registers_two_tools() -> None:
+def test_create_review_learning_registry_registers_class_recall_tools() -> None:
     registry = create_review_learning_registry(FakeMemoryManager(), FakeTaskManager())
 
     assert registry.name == "gobby-review-learning"
     tool_names = {tool["name"] for tool in registry.list_tools()}
     assert tool_names == {
+        "list_check_keys",
         "recall_review_context",
+        "recall_review_lessons_by_class",
         "recall_review_lessons_for_files",
         "record_review_lesson",
     }

@@ -5,14 +5,18 @@ from __future__ import annotations
 from typing import Any
 
 
-def format_review_lesson_guidance(lessons: list[dict[str, Any]]) -> str:
+def format_review_lesson_guidance(
+    lessons: list[dict[str, Any]],
+    *,
+    scope_label: str = "matched file",
+) -> str:
     """Format matched review lessons for advisory context injection."""
     if not lessons:
         return ""
 
     lines = ["<review-guidance>"]
     for lesson in lessons:
-        path = lesson.get("matched_file_path") or lesson.get("evidence_path") or "matched file"
+        path = lesson.get("matched_file_path") or lesson.get("evidence_path") or scope_label
         pattern_id = lesson.get("pattern_id") or "review-lesson"
         lines.append(f"- {path} [{pattern_id}]")
 
