@@ -27,20 +27,35 @@ class PipelineCompletionSubscriberMixin:
             (completion_id, session_id),
         )
 
-    def add_completion_subscribers(self, completion_id: str, session_ids: list[str]) -> None:
+    def add_completion_subscribers(self, completion_id: str, session_ids: list[str]) -> list[str]:
         """Bulk add subscribers for a completion event.
 
         Args:
             completion_id: Execution or run ID to subscribe to
             session_ids: Sessions to notify on completion
+
+        Returns:
+            Session IDs whose durable rows were created by this call.
         """
-        if not session_ids:
-            return
-        self.db.executemany(
-            "INSERT INTO completion_subscribers (completion_id, session_id) "
-            "VALUES (%s, %s) ON CONFLICT (completion_id, session_id) DO NOTHING",
-            [(completion_id, sid) for sid in session_ids],
+        unique_session_ids = list(dict.fromkeys(session_ids))
+        if not unique_session_ids:
+            return []
+
+        values = ", ".join("(%s, %s)" for _ in unique_session_ids)
+        params = tuple(
+            value for session_id in unique_session_ids for value in (completion_id, session_id)
         )
+        rows = self.db.execute(
+            f"""
+            INSERT INTO completion_subscribers (completion_id, session_id)
+            VALUES {values}
+            ON CONFLICT (completion_id, session_id) DO NOTHING
+            RETURNING session_id
+            """,
+            params,
+        ).fetchall()
+        inserted = {str(row["session_id"]) for row in rows}
+        return [session_id for session_id in unique_session_ids if session_id in inserted]
 
     def get_completion_subscribers(self, completion_id: str) -> list[str]:
         """Get all subscriber session IDs for a completion event.
@@ -57,12 +72,28 @@ class PipelineCompletionSubscriberMixin:
         )
         return [row["session_id"] for row in rows]
 
-    def remove_completion_subscribers(self, completion_id: str) -> None:
-        """Remove all subscribers for a completion event.
+    def remove_completion_subscribers(
+        self,
+        completion_id: str,
+        *,
+        session_ids: list[str] | None = None,
+    ) -> None:
+        """Remove all or selected subscribers for a completion event.
 
         Args:
             completion_id: Execution or run ID
+            session_ids: Optional sessions to remove; ``None`` removes all
         """
+        if session_ids is not None:
+            if not session_ids:
+                return
+            self.db.execute(
+                "DELETE FROM completion_subscribers "
+                "WHERE completion_id = %s AND session_id = ANY(%s)",
+                (completion_id, session_ids),
+            )
+            return
+
         self.db.execute(
             "DELETE FROM completion_subscribers WHERE completion_id = %s",
             (completion_id,),

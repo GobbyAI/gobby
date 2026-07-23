@@ -130,13 +130,14 @@ class TestSubscribers:
 
     @pytest.mark.asyncio
     async def test_register_with_subscribers(self, registry: CompletionEventRegistry) -> None:
-        registry.register(
+        created_fresh = registry.register(
             COMPLETION_ID,
             subscribers=[
                 PRIMARY_SUBSCRIBER_ID,
                 SECONDARY_SUBSCRIBER_ID,
             ],
         )
+        assert created_fresh is True
         subs = registry.get_subscribers(COMPLETION_ID)
         assert set(subs) == {
             PRIMARY_SUBSCRIBER_ID,
@@ -157,7 +158,7 @@ class TestSubscribers:
         )
         original_event = registry._events[COMPLETION_ID]
 
-        registry.register(
+        created_fresh = registry.register(
             COMPLETION_ID,
             subscribers=[
                 SECONDARY_SUBSCRIBER_ID,
@@ -166,6 +167,7 @@ class TestSubscribers:
             continuation_prompt="second prompt",
         )
 
+        assert created_fresh is False
         assert registry._events[COMPLETION_ID] is original_event
         assert registry.get_subscribers(COMPLETION_ID) == [
             PRIMARY_SUBSCRIBER_ID,

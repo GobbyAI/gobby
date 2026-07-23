@@ -49,13 +49,16 @@ class CompletionEventRegistry:
         completion_id: str,
         subscribers: list[str],
         continuation_prompt: str | None = None,
-    ) -> None:
+    ) -> bool:
         """Register a completion event with subscriber session IDs.
 
         Args:
             completion_id: Unique ID (execution_id or run_id)
             subscribers: Session IDs to notify on completion
             continuation_prompt: Optional prompt describing what to do with results
+
+        Returns:
+            ``True`` for a new entry and ``False`` when merging an existing entry.
         """
         if completion_id in self._events:
             logger.warning("Merging existing completion registration: %s", completion_id)
@@ -69,12 +72,13 @@ class CompletionEventRegistry:
                 self._continuation_prompts[completion_id] = continuation_prompt
             elif continuation_prompt:
                 logger.debug("Ignoring duplicate continuation prompt for %s", completion_id)
-            return
+            return False
 
         self._events[completion_id] = asyncio.Event()
         self._subscribers[completion_id] = list(subscribers)
         if continuation_prompt:
             self._continuation_prompts[completion_id] = continuation_prompt
+        return True
 
     def is_registered(self, completion_id: str) -> bool:
         """Check if a completion event is registered."""

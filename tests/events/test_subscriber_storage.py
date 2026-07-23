@@ -72,6 +72,22 @@ class TestCompletionSubscribers:
         subs = manager.get_completion_subscribers("55361235-ff5f-5de3-88f4-c98c82f7f0c3")
         assert subs == []
 
+    def test_remove_selected_subscribers(self, manager: LocalPipelineExecutionManager) -> None:
+        completion_id = "55361235-ff5f-5de3-88f4-c98c82f7f0c3"
+        retained_session_id = "9264a39c-68db-5eed-917c-6f7babb8e6b1"
+        removed_session_id = "7a378a57-18dd-56d9-be74-0fcb8a19376d"
+        manager.add_completion_subscribers(
+            completion_id,
+            [retained_session_id, removed_session_id],
+        )
+
+        manager.remove_completion_subscribers(
+            completion_id,
+            session_ids=[removed_session_id],
+        )
+
+        assert manager.get_completion_subscribers(completion_id) == [retained_session_id]
+
     def test_remove_subscribers_noop_if_none(self, manager: LocalPipelineExecutionManager) -> None:
         """Remove on nonexistent completion_id doesn't raise."""
         result = manager.remove_completion_subscribers("00000000-0000-0000-0000-0000000000ff")
@@ -96,7 +112,7 @@ class TestCompletionSubscribers:
 
     def test_add_completion_subscribers_bulk(self, manager: LocalPipelineExecutionManager) -> None:
         """Bulk add multiple subscribers at once."""
-        manager.add_completion_subscribers(
+        inserted = manager.add_completion_subscribers(
             "55361235-ff5f-5de3-88f4-c98c82f7f0c3",
             [
                 "9264a39c-68db-5eed-917c-6f7babb8e6b1",
@@ -104,12 +120,26 @@ class TestCompletionSubscribers:
                 "204df9de-a672-51b8-811a-0fc1a71bca39",
             ],
         )
+        assert inserted == [
+            "9264a39c-68db-5eed-917c-6f7babb8e6b1",
+            "7a378a57-18dd-56d9-be74-0fcb8a19376d",
+            "204df9de-a672-51b8-811a-0fc1a71bca39",
+        ]
         subs = manager.get_completion_subscribers("55361235-ff5f-5de3-88f4-c98c82f7f0c3")
         assert set(subs) == {
             "9264a39c-68db-5eed-917c-6f7babb8e6b1",
             "7a378a57-18dd-56d9-be74-0fcb8a19376d",
             "204df9de-a672-51b8-811a-0fc1a71bca39",
         }
+
+        inserted = manager.add_completion_subscribers(
+            "55361235-ff5f-5de3-88f4-c98c82f7f0c3",
+            [
+                "204df9de-a672-51b8-811a-0fc1a71bca39",
+                "ba8e8e0d-c7dd-5b7a-88d4-863678433d34",
+            ],
+        )
+        assert inserted == ["ba8e8e0d-c7dd-5b7a-88d4-863678433d34"]
 
     def test_remove_completion_subscribers_for_terminal_agent_runs(
         self,
