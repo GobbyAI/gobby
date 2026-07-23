@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 from collections.abc import Callable, Mapping
 
 PromptBuilder = Callable[[object, Mapping[str, object]], str]
@@ -162,6 +163,47 @@ def _plan_adversary(task: object, context: Mapping[str, object]) -> str:
         context,
         role="Review the plan",
         contract="plan-adversary.yaml agent",
+    )
+
+
+def attach_plan_review_evidence(
+    prompt: str,
+    *,
+    evidence_id: str,
+    round_number: int,
+    plan_hash: str,
+    section_manifest: list[dict[str, str]],
+    snapshot: bytes,
+) -> str:
+    """Append the immutable stage-native evidence transport to an adversary prompt."""
+    snapshot_text = snapshot.decode("utf-8")
+    metadata = json.dumps(
+        {
+            "evidence_id": evidence_id,
+            "plan_hash": plan_hash,
+            "round_number": round_number,
+            "section_manifest": section_manifest,
+        },
+        sort_keys=True,
+        separators=(",", ":"),
+    )
+    return "\n".join(
+        [
+            prompt,
+            "",
+            "## Immutable Plan Review Evidence",
+            "",
+            "Use this stored snapshot as the complete review target. Pass its evidence_id "
+            "and round_number with the structured verdict.",
+            "",
+            "```json",
+            metadata,
+            "```",
+            "",
+            "<plan-review-snapshot>",
+            snapshot_text,
+            "</plan-review-snapshot>",
+        ]
     )
 
 

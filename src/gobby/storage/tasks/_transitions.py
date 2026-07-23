@@ -2,12 +2,24 @@
 
 from __future__ import annotations
 
+import re
 from datetime import datetime
 from typing import Any, cast
 
 from gobby.plans.bootstrap_ledger import bootstrap_ledger_path_for_task, verify_bootstrap_ledger
+from gobby.plans.review_evidence import PlanReviewEvidenceService
+from gobby.plans.review_evidence_models import (
+    PlanReviewEvidence,
+    ReviewEvidenceError,
+    validate_round_result,
+)
+from gobby.plans.review_findings import (
+    render_rejection_section,
+    validate_plan_review_findings,
+)
 from gobby.storage.agents import LocalAgentRunManager
-from gobby.storage.hub.protocol import HubDatabase
+from gobby.storage.hub.protocol import HubDatabase, StageReviewRejectionMutation
+from gobby.storage.tasks._artifacts import TaskArtifactManager
 from gobby.storage.tasks._dispatch_mutex import TaskDispatchMutexManager
 from gobby.storage.tasks._lifecycle_events import TaskLifecycleEventManager
 from gobby.storage.tasks._models import (
@@ -458,6 +470,8 @@ def reject_review(
     *,
     rejection_notes: str | None = None,
     round_number: int | None = None,
+    findings: list[dict[str, object]] | None = None,
+    evidence_id: str | None = None,
     plan_hash: str | None = None,
     cited_subtasks: list[str] | None = None,
     by_session_id: str | None = None,
@@ -478,6 +492,17 @@ def reject_review(
         if current is None:
             raise NoCurrentStageError(task_id)
         stage_name = current.stage_name
+    if findings is not None:
+        return _reject_review_with_findings(
+            db,
+            task=task,
+            stage_name=stage_name,
+            round_number=normalized_round,
+            findings=findings,
+            evidence_id=evidence_id,
+            by_session_id=by_session_id,
+            dispatch_run_id=dispatch_run_id,
+        )
     notes = rejection_notes
     if plan_hash:
         notes = f"{notes or ''}\n\nplan_hash: {plan_hash}".strip()
@@ -506,8 +531,6 @@ def reject_review(
         # generic "## Review Rejection" heading is used for one-off rejections
         # without a round number and is allowed to stack.
         if normalized_round is not None:
-            import re
-
             pattern = re.compile(
                 rf"^{re.escape(heading)}$.*?(?=^## |\Z)",
                 re.DOTALL | re.MULTILINE,
@@ -526,6 +549,147 @@ def reject_review(
         claimed_by_session_id=None,
     )
     return get_task(db, task_id)
+
+
+def _reject_review_with_findings(
+    db: HubDatabase,
+    *,
+    task: Task,
+    stage_name: str,
+    round_number: int | None,
+    findings: list[dict[str, object]],
+    evidence_id: str | None,
+    by_session_id: str | None,
+    dispatch_run_id: str | None,
+) -> Task:
+    if stage_name != "planning":
+        raise ReviewEvidenceError(
+            "unsupported_review_stage",
+            "structured findings are supported only for planning-stage review",
+        )
+    if round_number is None:
+        raise ReviewEvidenceError(
+            "missing_round_number",
+            "structured findings require round_number",
+        )
+    if not evidence_id:
+        raise ReviewEvidenceError(
+            "missing_evidence_id",
+            "structured findings require evidence_id",
+        )
+    artifacts = TaskArtifactManager(db).get_artifacts(task.id)
+    if not artifacts.plan_file_path:
+        raise ReviewEvidenceError(
+            "plan_path_missing",
+            "planning-stage structured findings require a plan artifact",
+        )
+
+    service = PlanReviewEvidenceService(db)
+    evidence = service.authorize_current_attempt(
+        evidence_id,
+        project_id=task.project_id,
+        plan_path=artifacts.plan_file_path,
+        round_number=round_number,
+        task_id=task.id,
+        stage=stage_name,
+        run_id=dispatch_run_id,
+        allow_rejection_replay=True,
+    )
+    validated_findings = validate_plan_review_findings(
+        findings,
+        evidence=evidence,
+    )
+    round_result = validate_round_result(
+        {"verdict": "needs_review", "findings": validated_findings}
+    )
+    replay = _recorded_rejection_replay(
+        db,
+        task.id,
+        evidence=evidence,
+        round_result=round_result,
+    )
+    if replay is not None:
+        return replay
+
+    with db.transaction_immediate(StageReviewRejectionMutation(task_id=task.id)):
+        evidence = service.authorize_current_attempt(
+            evidence_id,
+            project_id=task.project_id,
+            plan_path=artifacts.plan_file_path,
+            round_number=round_number,
+            task_id=task.id,
+            stage=stage_name,
+            run_id=dispatch_run_id,
+            allow_rejection_replay=True,
+        )
+        replay = _recorded_rejection_replay(
+            db,
+            task.id,
+            evidence=evidence,
+            round_result=round_result,
+        )
+        if replay is not None:
+            return replay
+        current_task = get_task(db, task.id)
+        section = render_rejection_section(
+            round_number=round_number,
+            findings=validated_findings,
+            evidence=evidence,
+        )
+        description = _replace_round_section(
+            current_task.description or "",
+            round_number=round_number,
+            section=section,
+        )
+        _stage_states(db).reject_review(
+            task.id,
+            stage_name,
+            reason="review_rejected",
+            by_session_id=by_session_id,
+            notes=section,
+            dispatch_run_id=dispatch_run_id,
+        )
+        update_task(
+            db,
+            task.id,
+            description=description,
+            claimed_by_session_id=None,
+        )
+        service.finalize_plan_review_evidence(evidence_id, round_result)
+    return get_task(db, task.id)
+
+
+def _recorded_rejection_replay(
+    db: HubDatabase,
+    task_id: str,
+    *,
+    evidence: PlanReviewEvidence,
+    round_result: dict[str, object],
+) -> Task | None:
+    if evidence.finalized_at is None:
+        return None
+    if evidence.round_result != round_result:
+        raise ReviewEvidenceError(
+            "evidence_replay",
+            "finalized rejection evidence cannot be reused with changed findings",
+        )
+    return get_task(db, task_id)
+
+
+def _replace_round_section(
+    description: str,
+    *,
+    round_number: int,
+    section: str,
+) -> str:
+    heading = f"## Adversary Findings — Round {round_number}"
+    pattern = re.compile(
+        rf"^{re.escape(heading)}$.*?(?=^## |\Z)",
+        re.DOTALL | re.MULTILINE,
+    )
+    if pattern.search(description):
+        return pattern.sub(section.rstrip() + "\n\n", description).rstrip() or section
+    return f"{description}\n\n{section}" if description else section
 
 
 def close_task(

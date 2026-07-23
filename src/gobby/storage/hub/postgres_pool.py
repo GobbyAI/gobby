@@ -37,6 +37,7 @@ from gobby.storage.hub.protocol import (
     SessionRecoveryByProject,
     SessionRegistration,
     SessionSeqMutation,
+    StageReviewRejectionMutation,
     SystemSessionBootstrap,
     TaskLifecycleMutation,
     TaskSeqAllocation,
@@ -460,6 +461,8 @@ def _advisory_lock_keys(lock: LockTarget) -> tuple[str, ...]:
         return (f"github_issue_triage:{lock.project_id}:{lock.repo}#{lock.issue_number}",)
     if isinstance(lock, ReviewLearningPatternMutation):
         return (f"review_learning_pattern:{lock.project_id}:{lock.pattern_key}",)
+    if isinstance(lock, StageReviewRejectionMutation):
+        return (f"stage_review_rejection:{lock.task_id}",)
     if isinstance(lock, PlanReviewEvidenceMutation):
         return (f"plan_review_evidence:{lock.project_id}:{lock.plan_path}",)
     if isinstance(lock, IntegrationWorkspaceMutex):

@@ -320,6 +320,8 @@ class TaskTransitionsMixin:
         stage_name: str | None = None,
         rejection_notes: str | None = None,
         round_number: int | None = None,
+        findings: list[dict[str, object]] | None = None,
+        evidence_id: str | None = None,
         *,
         by_session_id: str | None = None,
         dispatch_run_id: str | None = None,
@@ -331,6 +333,8 @@ class TaskTransitionsMixin:
             stage_name=stage_name,
             rejection_notes=rejection_notes,
             round_number=round_number,
+            findings=findings,
+            evidence_id=evidence_id,
             by_session_id=by_session_id,
             dispatch_run_id=dispatch_run_id,
         )

@@ -21,6 +21,7 @@ from gobby.mcp_proxy.tools.tasks._escalation_coordinator import (
 from gobby.mcp_proxy.tools.tasks._lifecycle_status import _lifecycle_value_error
 from gobby.mcp_proxy.tools.tasks._notifications import notify_parent_on_task_state_change
 from gobby.mcp_proxy.tools.tasks._resolution import resolve_task_id_for_mcp
+from gobby.plans.review_evidence_models import ReviewEvidenceError
 from gobby.storage.tasks import TaskNotFoundError
 from gobby.storage.tasks._stage_views import stage_state_operation_view
 from gobby.tasks.state_semantics import get_claimed_session_id
@@ -409,6 +410,8 @@ def register_review_stage_tools(registry: InternalToolRegistry, ctx: RegistryCon
         stage_name: str,
         rejection_notes: str | None = None,
         round_number: int | None = None,
+        findings: list[dict[str, object]] | None = None,
+        evidence_id: str | None = None,
         signoff_summary: str | None = None,
     ) -> dict[str, Any]:
         """Reject review on a stage."""
@@ -428,15 +431,24 @@ def register_review_stage_tools(registry: InternalToolRegistry, ctx: RegistryCon
             return task_error(f"Task {task_id} not found", TaskToolErrorCode.TASK_NOT_FOUND)
         prior_owner_session_id = get_claimed_session_id(task)
         dispatch_kwargs = _dispatch_run_kwargs(ctx, resolved_id, resolved_session_id)
+        review_kwargs: dict[str, Any] = {
+            "rejection_notes": rejection_notes,
+            "round_number": round_number,
+            "by_session_id": resolved_session_id,
+            **dispatch_kwargs,
+        }
+        if findings is not None:
+            review_kwargs["findings"] = findings
+        if evidence_id is not None:
+            review_kwargs["evidence_id"] = evidence_id
         try:
             updated = ctx.task_manager.reject_review(
                 resolved_id,
                 stage_name,
-                rejection_notes=rejection_notes,
-                round_number=round_number,
-                by_session_id=resolved_session_id,
-                **dispatch_kwargs,
+                **review_kwargs,
             )
+        except ReviewEvidenceError as e:
+            return e.to_dict()
         except ValueError as e:
             return _lifecycle_value_error(str(e))
         if not updated:
@@ -513,6 +525,64 @@ def register_review_stage_tools(registry: InternalToolRegistry, ctx: RegistryCon
                 "stage_name": {"type": "string"},
                 "rejection_notes": {"type": ["string", "null"]},
                 "round_number": {"type": ["integer", "null"]},
+                "findings": {
+                    "type": ["array", "null"],
+                    "items": {
+                        "type": "object",
+                        "properties": {
+                            "finding_id": {"type": "string"},
+                            "section_id": {"type": "string"},
+                            "check_key": {"type": "string"},
+                            "severity": {
+                                "type": "string",
+                                "enum": ["blocking", "nit"],
+                            },
+                            "category": {
+                                "type": "string",
+                                "enum": [
+                                    "missing-requirement",
+                                    "bad-sequencing",
+                                    "unhandled-edge",
+                                    "weak-testability",
+                                    "traceability",
+                                    "over-engineering",
+                                    "gobby-format",
+                                ],
+                            },
+                            "location": {"type": "string"},
+                            "description": {"type": "string"},
+                            "fix": {"type": "string"},
+                            "prevention": {"type": "string"},
+                            "principle": {"type": "string"},
+                            "root_cause": {"type": "string"},
+                            "introduced_in_round": {"type": "integer", "minimum": 1},
+                            "causal_finding_id": {"type": "string"},
+                            "participating_section_ids": {
+                                "type": "array",
+                                "items": {"type": "string"},
+                                "uniqueItems": True,
+                            },
+                            "causal_section_ids": {
+                                "type": "array",
+                                "items": {"type": "string"},
+                                "uniqueItems": True,
+                            },
+                        },
+                        "required": [
+                            "finding_id",
+                            "section_id",
+                            "check_key",
+                            "severity",
+                            "category",
+                            "location",
+                            "description",
+                            "fix",
+                            "prevention",
+                        ],
+                        "additionalProperties": False,
+                    },
+                },
+                "evidence_id": {"type": ["string", "null"]},
                 "signoff_summary": {"type": ["string", "null"]},
             },
             "required": ["task_id", "stage_name"],

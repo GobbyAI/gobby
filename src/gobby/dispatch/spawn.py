@@ -7,6 +7,7 @@ import logging
 from typing import TYPE_CHECKING, cast
 
 from gobby.dispatch.actions import SpawnAgentAction
+from gobby.dispatch.prompts import attach_plan_review_evidence
 from gobby.dispatch.skill_composition import inspect_skill_composition
 from gobby.dispatch.spawn_artifacts import (
     SpawnIsolation,
@@ -31,6 +32,8 @@ from gobby.dispatch.spawn_completion import (
     subscribe_agent_completion,
 )
 from gobby.dispatch.spawn_errors import DispatchSpawnFailed, DispatchSpawnUnavailable
+from gobby.plans.review_evidence import PlanReviewEvidenceService
+from gobby.plans.review_evidence_models import ReviewEvidenceError
 from gobby.storage.hub.protocol import HubDatabase
 
 if TYPE_CHECKING:
@@ -65,6 +68,77 @@ __all__ = [
     "spawn_agent",
     "subscribe_agent_completion",
 ]
+
+
+def _prepare_plan_adversary_evidence(
+    *,
+    db: HubDatabase,
+    action: SpawnAgentAction,
+    task: object,
+    artifacts: object,
+    project_id: str,
+    prompt: str,
+) -> tuple[str, PlanReviewEvidenceService | None, str | None]:
+    if action.agent_slug != "plan-adversary":
+        return prompt, None, None
+    stage_name = str((action.initial_variables or {}).get("stage_name") or "")
+    if stage_name != "planning":
+        raise DispatchSpawnFailed("plan_review_stage_missing")
+    plan_path = str(getattr(artifacts, "plan_file_path", "") or "")
+    if not plan_path:
+        raise DispatchSpawnFailed("plan_review_plan_path_missing")
+    task_id = str(getattr(task, "id", "") or action.task_id)
+    stage = next(
+        (
+            candidate
+            for candidate in (getattr(task, "stages", ()) or ())
+            if str(_field(candidate, "stage_name", "") or "") == stage_name
+        ),
+        None,
+    )
+    if stage is None:
+        raise DispatchSpawnFailed("plan_review_stage_missing")
+    review_round_count = _field(stage, "review_round_count", 0)
+    if not isinstance(review_round_count, int) or isinstance(review_round_count, bool):
+        raise DispatchSpawnFailed("plan_review_round_invalid")
+    round_number = review_round_count + 1
+    service = PlanReviewEvidenceService(db)
+    prepared = service.prepare_plan_review_round(
+        project_id=project_id,
+        plan_path=plan_path,
+        round_number=round_number,
+        task_id=task_id,
+        stage=stage_name,
+    )
+    try:
+        transport = attach_plan_review_evidence(
+            prompt,
+            evidence_id=prepared.evidence_id,
+            round_number=round_number,
+            plan_hash=prepared.plan_hash,
+            section_manifest=[section.to_dict() for section in prepared.sections],
+            snapshot=service.snapshot_bytes(prepared.evidence_id),
+        )
+    except BaseException:
+        _expire_failed_adversary_spawn(service, prepared.evidence_id)
+        raise
+    return transport, service, prepared.evidence_id
+
+
+def _expire_failed_adversary_spawn(
+    service: PlanReviewEvidenceService | None,
+    evidence_id: str | None,
+) -> None:
+    if service is None or evidence_id is None:
+        return
+    try:
+        service.expire_plan_review_evidence(evidence_id, spawn_failed=True)
+    except Exception:
+        logger.warning(
+            "Failed to expire prepared plan-review evidence",
+            extra={"evidence_id": evidence_id},
+            exc_info=True,
+        )
 
 
 async def spawn_agent(
@@ -216,44 +290,67 @@ async def spawn_agent(
         artifacts=artifacts,
         isolation=effective_isolation,
     )
+    prompt, evidence_service, evidence_id = _prepare_plan_adversary_evidence(
+        db=db,
+        action=action,
+        task=task,
+        artifacts=artifacts,
+        project_id=project_id,
+        prompt=prompt,
+    )
 
     from gobby.mcp_proxy.tools.spawn_agent._implementation import spawn_agent_impl
 
-    result = await spawn_agent_impl(
-        prompt=prompt,
-        runner=runner,
-        agent_body=agent_body,
-        agent_lookup_name=action.agent_slug,
-        task_id=action.task_id,
-        task_manager=task_manager,
-        isolation=effective_isolation,
-        branch_name=None,
-        base_branch=artifacts.target_branch,
-        clone_id=clone_id,
-        worktree_id=worktree_id,
-        worktree_storage=getattr(services, "worktree_storage", None),
-        git_manager=_project_git_manager(services, project_id),
-        clone_storage=getattr(services, "clone_storage", None),
-        clone_manager=_project_clone_manager(services, project_id),
-        workflow=workflow,
-        provider=None,
-        model=action.model_override,
-        reasoning_effort=action.reasoning_effort,
-        parent_session_id=parent_session_id,
-        project_path=project_path,
-        initial_variables=initial_variables,
-        session_manager=session_manager,
-        db=db,
-        completion_registry=getattr(services, "completion_registry", None),
-        daemon_config=getattr(services, "config", None),
-        code_index=getattr(services, "code_indexer", None),
-        held_task_mutex=mutex,
-    )
+    try:
+        result = await spawn_agent_impl(
+            prompt=prompt,
+            runner=runner,
+            agent_body=agent_body,
+            agent_lookup_name=action.agent_slug,
+            task_id=action.task_id,
+            task_manager=task_manager,
+            isolation=effective_isolation,
+            branch_name=None,
+            base_branch=artifacts.target_branch,
+            clone_id=clone_id,
+            worktree_id=worktree_id,
+            worktree_storage=getattr(services, "worktree_storage", None),
+            git_manager=_project_git_manager(services, project_id),
+            clone_storage=getattr(services, "clone_storage", None),
+            clone_manager=_project_clone_manager(services, project_id),
+            workflow=workflow,
+            provider=None,
+            model=action.model_override,
+            reasoning_effort=action.reasoning_effort,
+            parent_session_id=parent_session_id,
+            project_path=project_path,
+            initial_variables=initial_variables,
+            session_manager=session_manager,
+            db=db,
+            completion_registry=getattr(services, "completion_registry", None),
+            daemon_config=getattr(services, "config", None),
+            code_index=getattr(services, "code_indexer", None),
+            held_task_mutex=mutex,
+        )
+    except BaseException:
+        _expire_failed_adversary_spawn(evidence_service, evidence_id)
+        raise
     if not result.get("success"):
+        _expire_failed_adversary_spawn(evidence_service, evidence_id)
         raise DispatchSpawnFailed(str(result.get("error") or "spawn_failed"))
     run_id = result.get("run_id")
     if not run_id:
+        _expire_failed_adversary_spawn(evidence_service, evidence_id)
         raise DispatchSpawnFailed("missing run_id")
+    if evidence_service is not None and evidence_id is not None:
+        try:
+            evidence_service.bind_evidence_run(evidence_id, str(run_id))
+        except ReviewEvidenceError as exc:
+            _expire_failed_adversary_spawn(evidence_service, evidence_id)
+            raise DispatchSpawnFailed(
+                f"plan_review_evidence_bind_failed:{exc.code}",
+                spawned_run_id=str(run_id),
+            ) from exc
 
     try:
         _persist_spawn_artifacts(db, action.task_id, result)
