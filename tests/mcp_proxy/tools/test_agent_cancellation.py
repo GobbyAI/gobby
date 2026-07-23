@@ -2,7 +2,10 @@
 
 from __future__ import annotations
 
+import asyncio
 from contextlib import nullcontext
+from types import SimpleNamespace
+from typing import Any
 from unittest.mock import ANY, AsyncMock, MagicMock, patch
 
 import pytest
@@ -255,3 +258,206 @@ async def test_stop_agent_run_happy_path_call_order() -> None:
         hook_manager_resolver=None,
         result={"success": True},
     )
+
+
+class _DeliveryRegistry:
+    """Recording registry whose notify returns a configurable delivered map."""
+
+    def __init__(self, delivery: dict[str, bool] | None) -> None:
+        self._delivery = delivery
+        self.notify_calls: list[tuple[str, dict[str, Any] | None, str]] = []
+        self.cleanup_calls: list[str] = []
+
+    async def notify(
+        self, run_id: str, *, result: dict[str, Any] | None = None, message: str = ""
+    ) -> dict[str, bool] | None:
+        self.notify_calls.append((run_id, result, message))
+        return self._delivery
+
+    def cleanup(self, run_id: str) -> None:
+        self.cleanup_calls.append(run_id)
+
+
+class TestStopAgentRunCapturePreemptedDelivery:
+    """Plan 1.4.7: capture-committed transitions reach the waiter through the helper."""
+
+    def _harness(
+        self,
+        *,
+        delivery: dict[str, bool] | None,
+        db_status: str = "cancelled",
+    ) -> SimpleNamespace:
+        live_run = MagicMock()
+        live_run.id = "run-123"
+        live_run.status = "running"
+        live_run.tmux_session_name = "tmux-run-123"
+        live_run.child_session_id = "child-session-123"
+
+        runner = MagicMock()
+        runner.get_run.return_value = live_run
+        agent_run_manager = MagicMock()
+        agent_run_manager.db.bounded_transaction.return_value = nullcontext()
+        agent_run_manager.get.return_value = SimpleNamespace(
+            id="run-123", status=db_status, error=None
+        )
+        registry = _DeliveryRegistry(delivery)
+        return SimpleNamespace(
+            run=live_run,
+            runner=runner,
+            agent_run_manager=agent_run_manager,
+            registry=registry,
+        )
+
+    def _record_removals(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> list[tuple[str, list[str] | None]]:
+        import gobby.agents.completion_subscribers as subscribers_module
+
+        removals: list[tuple[str, list[str] | None]] = []
+
+        def _record(*, db: Any, run_id: str, session_ids: list[str] | None = None) -> None:
+            removals.append((run_id, session_ids))
+
+        monkeypatch.setattr(subscribers_module, "remove_agent_completion_subscribers", _record)
+        return removals
+
+    async def _stop(self, harness: SimpleNamespace, kill_agent_process: Any) -> dict[str, Any]:
+        return await stop_agent_run(
+            run_id="run-123",
+            runner=harness.runner,
+            agent_run_manager=harness.agent_run_manager,
+            db=None,
+            lifecycle_monitor=None,
+            completion_registry=harness.registry,
+            task_manager=None,
+            session_manager=None,
+            hook_manager_resolver=None,
+            kill_agent_process=kill_agent_process,
+            cleanup_terminal_artifacts=AsyncMock(),
+        )
+
+    @pytest.mark.asyncio
+    async def test_capture_preempted_stop_delivers_committed_row(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        harness = self._harness(delivery={"waiter-sess": True})
+        removals = self._record_removals(monkeypatch)
+        with patch(
+            "gobby.mcp_proxy.tools.agent_cancellation.terminalize_cancelled_agent_run",
+            new_callable=AsyncMock,
+            return_value=False,
+        ):
+            result = await self._stop(harness, AsyncMock(return_value={"success": True}))
+
+        assert result["success"] is True
+        assert len(harness.registry.notify_calls) == 1
+        _, payload, _ = harness.registry.notify_calls[0]
+        assert payload is not None and payload["run_id"] == "run-123"
+        assert payload["status"] == "cancelled"
+        assert removals == [("run-123", ["waiter-sess"])]
+        assert harness.registry.cleanup_calls == ["run-123"]
+
+    @pytest.mark.asyncio
+    async def test_failed_delivery_retains_rows(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        harness = self._harness(delivery={"waiter-sess": False})
+        removals = self._record_removals(monkeypatch)
+        with patch(
+            "gobby.mcp_proxy.tools.agent_cancellation.terminalize_cancelled_agent_run",
+            new_callable=AsyncMock,
+            return_value=False,
+        ):
+            result = await self._stop(harness, AsyncMock(return_value={"success": True}))
+
+        assert result["success"] is True
+        assert removals == []
+        assert harness.registry.cleanup_calls == ["run-123"]
+
+    @pytest.mark.asyncio
+    async def test_kill_failure_after_terminal_close_still_delivers(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        harness = self._harness(delivery={"waiter-sess": True})
+        removals = self._record_removals(monkeypatch)
+        kill_result = {
+            "success": False,
+            "error": "Terminal closed but no target PID was found to verify process death",
+            "error_code": "kill_verification_failed",
+        }
+        result = await self._stop(harness, AsyncMock(return_value=kill_result))
+
+        assert result == kill_result
+        assert len(harness.registry.notify_calls) == 1
+        assert removals == [("run-123", ["waiter-sess"])]
+        assert harness.registry.cleanup_calls == ["run-123"]
+
+    @pytest.mark.asyncio
+    async def test_kill_raises_after_commit_delivers_before_propagation(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        harness = self._harness(delivery={"waiter-sess": True})
+        removals = self._record_removals(monkeypatch)
+
+        async def _commit_then_raise(*_args: Any, **_kwargs: Any) -> dict[str, Any]:
+            raise RuntimeError("kill exploded after committing")
+
+        with pytest.raises(RuntimeError, match="kill exploded"):
+            await self._stop(harness, AsyncMock(side_effect=_commit_then_raise))
+
+        assert len(harness.registry.notify_calls) == 1
+        assert removals == [("run-123", ["waiter-sess"])]
+        assert harness.registry.cleanup_calls == ["run-123"]
+
+    @pytest.mark.asyncio
+    async def test_commits_then_cancel_settles_before_cancelled_error(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        harness = self._harness(delivery={"waiter-sess": True})
+        removals = self._record_removals(monkeypatch)
+        started = asyncio.Event()
+        release = asyncio.Event()
+
+        async def _gated_kill(*_args: Any, **_kwargs: Any) -> dict[str, Any]:
+            started.set()
+            await release.wait()
+            return {"success": True}
+
+        with patch(
+            "gobby.mcp_proxy.tools.agent_cancellation.terminalize_cancelled_agent_run",
+            new_callable=AsyncMock,
+            return_value=False,
+        ):
+            task = asyncio.ensure_future(self._stop(harness, AsyncMock(side_effect=_gated_kill)))
+            await started.wait()
+            task.cancel()
+            release.set()
+            with pytest.raises(asyncio.CancelledError):
+                await task
+
+        assert len(harness.registry.notify_calls) == 1
+        assert removals == [("run-123", ["waiter-sess"])]
+        assert harness.registry.cleanup_calls == ["run-123"]
+
+
+@pytest.mark.asyncio
+async def test_terminalize_killed_error_shape_delivers_when_fail_reports_none() -> None:
+    """Plan 1.4.7: the error request shape routes no-transition runs to delivery."""
+    runner = MagicMock()
+    runner.run_storage.fail.return_value = None
+    runner.get_run.return_value = SimpleNamespace(status="cancelled")
+
+    with patch(
+        "gobby.agents.agent_cleanup.deliver_existing_terminal_run",
+        new_callable=AsyncMock,
+    ) as deliver:
+        result = await terminalize_killed_agent_run(
+            runner=runner,
+            run_id="run-123",
+            effective_status="error",
+            lifecycle_monitor=None,
+            completion_registry=None,
+            task_manager=None,
+        )
+
+    assert result == {"status": "error", "workflow_stopped": True}
+    deliver.assert_awaited_once()
+    assert deliver.await_args.kwargs["run_id"] == "run-123"
