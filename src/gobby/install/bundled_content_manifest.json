@@ -348,7 +348,6 @@
     "workflows/rules/context-handoff/inject-user-profile.yaml": "50f0c6bb2450267e6e30aa583fef12305436f85a053f89ded871d036d883d614",
     "workflows/rules/context-handoff/inject-wiki-overview.yaml": "593615a336536277d14fb42f65544b87d6d053f59a660f94473acc783ac95697",
     "workflows/rules/context-handoff/nudge-compact-on-context-pressure.yaml": "c0f0eb2c49a02a86448d958f039104857ca76ad77d990c284805bcad6accb444",
-    "workflows/rules/context-handoff/prepare-clear-handoff.yaml": "cadb2de5078f765593745ecd15e06a74c68c657ae1a93728398999d0a75c3768",
     "workflows/rules/context-handoff/preserve-context-on-compact.yaml": "d84428d6d7e0427cc61ad8376c264a1fd1c4fd8555ba4b7ccd6a18c5e7d2dad0",
     "workflows/rules/context7/block-and-teach-context7.yaml": "63e5e111cf393fc9b4728bbeed07bbd3c59d83011fb67455447cfc7c855c20ec",
     "workflows/rules/error-recovery/inject-tool-error-recovery.yaml": "f829027568216d651a12fc089ddfd1ce62fc37257dc6e3b0adc5ce6bd46aa106",

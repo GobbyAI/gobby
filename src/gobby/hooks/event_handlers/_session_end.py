@@ -165,8 +165,7 @@ class SessionEndMixin(EventHandlersBase):
                     end_reason: SessionEndReason = SessionEndReason(event.data.get("reason"))
                 except (TypeError, ValueError):
                     end_reason = SessionEndReason.OTHER
-                handoff_reasons = {SessionEndReason.CLEAR, SessionEndReason.COMPACT}
-                if end_reason in handoff_reasons:
+                if end_reason == SessionEndReason.COMPACT:
                     end_status = "handoff_ready"
                 elif (
                     end_reason == SessionEndReason.IDLE

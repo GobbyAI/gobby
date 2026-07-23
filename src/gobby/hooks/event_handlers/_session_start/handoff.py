@@ -23,14 +23,13 @@ def find_parent_session(
     project_id: str,
     cli_source: str,
 ) -> tuple[str | None, str]:
-    """Find parent session and normalize the handoff source marker."""
+    """Find a compact parent session and normalize its handoff source marker."""
     parent_session_id = input_data.get("parent_session_id")
 
-    if (
-        parent_session_id
-        or not handler._session_manager
-        or session_source not in ("clear", "compact")
-    ):
+    if session_source == "clear":
+        return None, session_source
+
+    if parent_session_id or not handler._session_manager or session_source != "compact":
         return parent_session_id, session_source
 
     child_terminal_context = input_data.get("terminal_context")
@@ -85,7 +84,7 @@ def find_parent_session(
                 parent.id
             )
             handoff_source = parent_vars.get("handoff_source")
-            if handoff_source in ("clear", "compact"):
+            if handoff_source == "compact":
                 session_source = handoff_source
                 input_data["source"] = session_source
     except Exception as e:
@@ -100,8 +99,13 @@ def populate_handoff_session_variables(
     parent_session_id: str | None,
     session_source: str,
 ) -> None:
-    """Populate summary and task handoff variables for a new child session."""
-    if not parent_session_id or not session_id or not handler._session_manager:
+    """Populate compact summary and task handoff variables for a new child session."""
+    if (
+        session_source != "compact"
+        or not parent_session_id
+        or not session_id
+        or not handler._session_manager
+    ):
         return
 
     from gobby.workflows.state_manager import SessionVariableManager
@@ -143,10 +147,8 @@ def populate_handoff_session_variables(
         sv_mgr.merge_variables(session_id, handoff_vars)
 
     parent_vars = sv_mgr.get_variables(parent_session_id)
-    if session_source == "compact":
-        _preserve_compact_resume_required_skills(sv_mgr, session_id, parent_vars)
-    if session_source in ("compact", "clear"):
-        _preserve_task_claim_state(handler, sv_mgr, session_id, parent_session_id, parent_vars)
+    _preserve_compact_resume_required_skills(sv_mgr, session_id, parent_vars)
+    _preserve_task_claim_state(handler, sv_mgr, session_id, parent_session_id, parent_vars)
 
 
 def _bound_handoff_summary(summary: str, parent: Any) -> str:

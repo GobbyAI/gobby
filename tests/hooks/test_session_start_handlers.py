@@ -841,11 +841,12 @@ class TestSessionStartNewSession:
     """Test SESSION_START handling for new sessions."""
 
     @patch("gobby.workflows.state_manager.SessionVariableManager")
-    def test_new_session_with_parent_on_handoff(
+    def test_clear_session_starts_without_handoff(
         self, mock_sv_mgr_cls: MagicMock, mock_dependencies: dict[str, Any]
     ) -> None:
-        """Test new session finds parent when source is 'clear'."""
-        mock_sv_mgr_cls.return_value = MagicMock(get_variables=MagicMock(return_value={}))
+        """A native clear start creates an independent session."""
+        mock_sv_mgr = MagicMock(get_variables=MagicMock(return_value={}))
+        mock_sv_mgr_cls.return_value = mock_sv_mgr
 
         mock_parent = MagicMock()
         mock_parent.id = "parent-sess-123"
@@ -869,14 +870,25 @@ class TestSessionStartNewSession:
         )
         event.machine_id = "machine-123"
 
-        response = handlers.handle_session_start(event)
+        with patch.object(handlers, "_activate_default_agent", return_value=None):
+            response = handlers.handle_session_start(event)
 
         assert response.decision == "allow"
-        assert "Parent session: parent-sess-123" in response.context
-        mock_dependencies["session_storage"].find_parent.assert_called_once()
-        mock_dependencies["session_manager"].mark_session_expired.assert_called_once_with(
-            "parent-sess-123"
-        )
+        assert "_parent_session_id" not in event.metadata
+        mock_dependencies["session_storage"].find_parent.assert_not_called()
+        register_kwargs = mock_dependencies["session_manager"].register_session.call_args.kwargs
+        assert register_kwargs["parent_session_id"] is None
+        mock_dependencies["session_manager"].mark_session_expired.assert_not_called()
+        mock_dependencies["task_manager"].claim_task.assert_not_called()
+        copied_keys = {
+            "session_summary",
+            "full_session_summary",
+            "handoff_summary_injectable",
+            "task_claimed",
+            "claimed_tasks",
+        }
+        for args, _kwargs in mock_sv_mgr.merge_variables.call_args_list:
+            assert copied_keys.isdisjoint(args[1])
 
     def test_startup_session_does_not_adopt_stale_parent(
         self, mock_dependencies: dict[str, Any], mock_empty_session_variable_manager: MagicMock
@@ -993,7 +1005,7 @@ class TestSessionStartNewSession:
             HookEventType.SESSION_START,
             session_id="ext-db-error",
             data={
-                "source": "clear",
+                "source": "compact",
                 "cwd": "/some/dir",
                 "skip_default_agent_activation": True,
             },
@@ -1068,7 +1080,7 @@ class TestSessionStartNewSession:
         event = make_event(
             HookEventType.SESSION_START,
             session_id="ext-123",
-            data={"source": "clear", "cwd": "/some/dir"},
+            data={"source": "compact", "cwd": "/some/dir"},
         )
 
         response = handlers.handle_session_start(event)
@@ -1099,7 +1111,7 @@ class TestSessionStartNewSession:
             HookEventType.SESSION_START,
             session_id="ext-123",
             data={
-                "source": "clear",
+                "source": "compact",
                 "terminal_context": {"tmux_pane": "%12", "tmux_socket_path": "/tmp/tmux"},
             },
         )

@@ -200,7 +200,7 @@ class TestHandleSessionEnd:
         handler._message_processor.unregister_session.assert_called_with("sess-1")
         handler._session_manager.update_status.assert_called_with("sess-1", "expired")
 
-    def test_handle_session_end_handoff_ready(self) -> None:
+    def test_handle_session_end_clear_expires(self) -> None:
         handler = _TestHandler()
         event = _make_event(event_type=HookEventType.SESSION_END, data={"reason": "clear"})
         event.metadata["_platform_session_id"] = "sess-1"
@@ -211,7 +211,7 @@ class TestHandleSessionEnd:
 
         resp = handler.handle_session_end(event)
         assert resp.decision == "allow"
-        handler._session_manager.update_status.assert_called_with("sess-1", "handoff_ready")
+        handler._session_manager.update_status.assert_called_with("sess-1", "expired")
 
     def test_handle_session_end_missing_platform_session_id(self) -> None:
         handler = _TestHandler()
@@ -690,7 +690,7 @@ class TestSessionMoreCoverage:
             event_type=HookEventType.SESSION_START,
             session_id="ext-3",
             data={
-                "source": "clear",
+                "source": "compact",
                 "agent_depth": "2",
                 "terminal_context": {"tmux_pane": "%12", "tmux_socket_path": "/tmp/tmux"},
             },
@@ -714,7 +714,7 @@ class TestSessionMoreCoverage:
             patch(
                 "gobby.workflows.state_manager.SessionVariableManager.get_variables",
                 return_value={
-                    "handoff_source": "clear",
+                    "handoff_source": "compact",
                     "task_claimed": True,
                     "claimed_tasks": {"task-1": "#1"},
                 },
@@ -729,7 +729,7 @@ class TestSessionMoreCoverage:
 
             handler.handle_session_start(event)
 
-            # Should read handoff source, update source to 'clear', create new session with parent
+            # Should read handoff source and create the compact session with a parent
             handler._session_manager.register_session.assert_called_with(
                 external_id="ext-3",
                 machine_id=handler._get_machine_id(),
@@ -762,7 +762,9 @@ class TestSessionMoreCoverage:
     def test_empty_parent_backoff(self) -> None:
         handler = _TestHandler()
         event = _make_event(
-            event_type=HookEventType.SESSION_START, session_id="ext-4", data={"source": "clear"}
+            event_type=HookEventType.SESSION_START,
+            session_id="ext-4",
+            data={"source": "compact"},
         )
         handler._session_manager.get.return_value = None
 

@@ -259,10 +259,10 @@ class TestSessionEndHandling:
         )
 
     @patch("gobby.workflows.state_manager.SessionVariableManager")
-    def test_session_end_marks_handoff_ready_with_clear_reason(
+    def test_session_end_marks_expired_with_clear_reason(
         self, mock_sv_mgr_cls: MagicMock, mock_dependencies: dict
     ) -> None:
-        """Test SESSION_END marks handoff_ready when event reason is 'clear'."""
+        """Test SESSION_END marks expired when event reason is 'clear'."""
         mock_session = MagicMock()
         mock_session.created_at = "2024-01-01T00:00:00Z"
         mock_session.agent_run_id = None
@@ -281,7 +281,7 @@ class TestSessionEndHandling:
 
         assert response.decision == "allow"
         mock_dependencies["session_storage"].update_status.assert_called_once_with(
-            "sess-123", "handoff_ready"
+            "sess-123", "expired"
         )
 
     def test_session_end_marks_handoff_ready_with_compact_reason(

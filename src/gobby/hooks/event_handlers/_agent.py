@@ -162,8 +162,7 @@ class AgentEventHandlerMixin(EventHandlersBase):
                     except Exception as e:
                         self.logger.warning("Failed to update session status: %s", e)
 
-            # Handle /clear command - generate boundary summaries before clear/exit
-            # and set handoff_source so session-end marks the session handoff_ready.
+            # Generate boundary summaries before clear/exit.
             if prompt_lower in ("/clear", "/exit"):
                 self.logger.debug("Detected %s - generating session summaries", prompt_lower)
                 try:
@@ -173,17 +172,6 @@ class AgentEventHandlerMixin(EventHandlersBase):
                     self.logger.warning(
                         "Failed to generate session summaries on %s: %s", prompt_lower, e
                     )
-                # Belt-and-suspenders: set handoff_source directly in addition to
-                # the prepare-clear-handoff rule, so session-end marks handoff_ready
-                # even if the rule engine is slow or disabled.
-                if self._session_manager:
-                    try:
-                        from gobby.workflows.state_manager import SessionVariableManager
-
-                        sv_mgr = SessionVariableManager(self._session_manager.db)
-                        sv_mgr.set_variable(session_id, "handoff_source", prompt_lower.lstrip("/"))
-                    except Exception as e:
-                        self.logger.warning("Failed to set handoff_source: %s", e)
 
         # Skill interception — runs before lifecycle workflows
         if self._skill_manager and stripped_prompt:
@@ -570,7 +558,7 @@ class AgentEventHandlerMixin(EventHandlersBase):
         trigger = event.data.get("trigger", "auto")
         session_id = event.metadata.get("_platform_session_id")
 
-        is_handoff_trigger = trigger in {"manual", "user", "clear", "compact"}
+        is_handoff_trigger = trigger in {"manual", "user", "compact"}
 
         if session_id:
             self.logger.debug("PRE_COMPACT (%s): session %s", trigger, session_id)

@@ -34,7 +34,6 @@ CONTEXT_HANDOFF_RULES = {
     "inject-compact-handoff",
     "inject-task-context-on-start",
     "inject-wiki-overview",
-    "prepare-clear-handoff",
     "preserve-context-on-compact",
     "nudge-compact-on-context-pressure",
     "auto-compact-after-task-close",
@@ -302,31 +301,36 @@ class TestInjectTaskContextOnStart:
         assert "resume" in body.when
 
 
-# ═══════════════════════════════════════════════════════════════════════
-# prepare-clear-handoff
-# ═══════════════════════════════════════════════════════════════════════
+def test_authoritative_sync_retires_prepare_clear_handoff(db, manager) -> None:
+    """Removing the bundled template soft-deletes the installed rule."""
+    manager.create(
+        name="prepare-clear-handoff",
+        definition_json=json.dumps(
+            {
+                "event": "turn_start",
+                "effects": [
+                    {
+                        "type": "set_variable",
+                        "variable": "handoff_source",
+                        "value": "clear",
+                    }
+                ],
+            }
+        ),
+        workflow_type="rule",
+        enabled=True,
+        source="installed",
+        tags=["gobby", "context-handoff"],
+    )
 
+    result = _sync_bundled(db)
 
-class TestPrepareClearHandoff:
-    """Prepare clear/exit handoff on turn_start."""
-
-    def test_event_and_effect(self, db, manager) -> None:
-        _sync_bundled(db)
-        row = manager.get_by_name("prepare-clear-handoff")
-        assert row is not None
-        body = RuleDefinitionBody.model_validate_json(row.definition_json)
-        assert body.event.value == "turn_start"
-        assert body.effects[0].type == "set_variable"
-        assert body.effects[0].variable == "handoff_source"
-        assert body.effects[0].value == "clear"
-
-    def test_has_clear_and_exit_when_condition(self, db, manager) -> None:
-        _sync_bundled(db)
-        row = manager.get_by_name("prepare-clear-handoff")
-        body = RuleDefinitionBody.model_validate_json(row.definition_json)
-        assert body.when is not None
-        assert "/clear" in body.when
-        assert "/exit" in body.when
+    assert result["orphaned"] >= 1
+    assert manager.get_by_name("prepare-clear-handoff") is None
+    retired = manager.get_by_name("prepare-clear-handoff", include_deleted=True)
+    assert retired is not None
+    assert retired.deleted_at is not None
+    assert retired.enabled is True
 
 
 # ═══════════════════════════════════════════════════════════════════════

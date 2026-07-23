@@ -144,13 +144,16 @@ class TestHandleBeforeAgent:
             metadata={"_platform_session_id": "sess-1"},
         )
 
-        handler.handle_before_agent(event)
+        with patch("gobby.workflows.state_manager.SessionVariableManager") as mock_svm_cls:
+            handler.handle_before_agent(event)
+
         handler._dispatch_session_summaries_fn.assert_called_once_with(
             "sess-1",
             False,
             None,
             False,
         )
+        mock_svm_cls.return_value.set_variable.assert_not_called()
         assert handler._dispatch_session_summaries_fn.call_count == 1
         assert handler._dispatch_session_summaries_fn.call_args is not None
 
@@ -1014,14 +1017,15 @@ class TestHandlePreCompact:
             False,
         )
 
-    def test_auto_claude_summarizes_without_handoff_status(self) -> None:
+    @pytest.mark.parametrize("trigger", ["auto", "clear"])
+    def test_non_handoff_compact_trigger_summarizes_without_status(self, trigger: str) -> None:
         handler = _TestHandler()
         handler._dispatch_session_summaries_fn = MagicMock()
         event = _make_event(
             event_type=HookEventType.PRE_COMPACT,
             source=SessionSource.CLAUDE,
             metadata={"_platform_session_id": "sess-1"},
-            data={"trigger": "auto"},
+            data={"trigger": trigger},
         )
 
         result = handler.handle_pre_compact(event)
