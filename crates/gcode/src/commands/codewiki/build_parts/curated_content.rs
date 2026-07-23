@@ -15,6 +15,8 @@
 use std::collections::{BTreeMap, BTreeSet};
 use std::fmt::Write as _;
 
+use gobby_core::vault::mermaid::{escape_label as mermaid_label, is_valid_mermaid};
+
 use super::super::*;
 
 #[cfg(test)]
@@ -610,6 +612,21 @@ struct ResolvedFlowStages {
     component_owner: BTreeMap<String, usize>,
 }
 
+const MAX_CHILD_FLOW_STAGES: usize = 10;
+const MAX_CONTAINMENT_NODES: usize = 12;
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+struct ChildFlowInputs {
+    modules: Vec<String>,
+    files: Vec<String>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+struct ContainmentNode {
+    key: String,
+    label: String,
+}
+
 /// Bounded source-excerpt budget (chars per file) scanned for a documented
 /// data-flow chain. Keeps the hint grounded in real excerpts without pulling
 /// whole files into the scan.
@@ -644,6 +661,13 @@ pub(crate) struct CuratedFlowContext<'a, 'doc> {
     pub(super) progress: &'a mut CodewikiProgress,
 }
 
+struct CuratedFlowEvidenceContext<'a, 'doc> {
+    module_lookup: &'a BTreeMap<&'doc str, &'doc ModuleDoc>,
+    file_lookup: &'a BTreeMap<&'doc str, &'doc FileDoc>,
+    leading_chunks: &'a BTreeMap<String, LeadingChunk>,
+    graph_edges: &'a [CodewikiGraphEdge],
+}
+
 pub(crate) fn curated_flow_diagram(
     member_modules: &[String],
     member_files: &[String],
@@ -659,45 +683,89 @@ pub(crate) fn curated_flow_diagram(
         diagram_stats,
         progress,
     } = context;
-    let stages = resolve_flow_stages(member_modules, member_files, module_lookup, file_lookup);
-    let components = stages.components;
-    if components.len() < 2 {
-        diagram_stats.record(
-            page_path,
-            DiagramKind::CuratedFlow,
-            &DiagramOutcome::SparseEvidence,
-            progress,
-        );
-        return None;
-    }
-
-    let hint = flow_hint_text(
-        member_modules,
-        member_files,
+    let mut stages = resolve_flow_stages(member_modules, member_files, module_lookup, file_lookup);
+    let evidence_context = CuratedFlowEvidenceContext {
         module_lookup,
         file_lookup,
         leading_chunks,
-    );
-    let evidence = curated_flow_evidence(&components, &hint, &stages.component_owner, graph_edges);
-    let degraded = components.iter().any(|component| component.role.is_none());
-
-    let outcome = compose_flowchart(
+        graph_edges,
+    };
+    let mut outcome = compose_curated_flow_attempt(
+        &stages,
+        member_modules,
+        member_files,
+        &evidence_context,
         generate,
-        &evidence,
-        "how this page's subsystems behave together",
     );
-    diagram_stats.record(page_path, DiagramKind::CuratedFlow, &outcome, progress);
+    let mut pass = "pass 1 member evidence";
+    let mut child_rollup = false;
+
+    if matches!(outcome, DiagramOutcome::SparseEvidence) {
+        let child_inputs = child_flow_inputs(member_modules, module_lookup, file_lookup);
+        stages = resolve_flow_stages(
+            &child_inputs.modules,
+            &child_inputs.files,
+            module_lookup,
+            file_lookup,
+        );
+        outcome = compose_curated_flow_attempt(
+            &stages,
+            &child_inputs.modules,
+            &child_inputs.files,
+            &evidence_context,
+            generate,
+        );
+        pass = "pass 2 child evidence";
+        child_rollup = true;
+    }
+
+    if matches!(&outcome, DiagramOutcome::Emitted(_)) {
+        diagram_stats.record_named_pass(
+            page_path,
+            DiagramKind::CuratedFlow,
+            &outcome,
+            pass,
+            progress,
+        );
+    }
     let DiagramOutcome::Emitted(block) = outcome else {
-        return None;
+        diagram_stats.record_named_pass(
+            page_path,
+            DiagramKind::CuratedFlow,
+            &outcome,
+            "pass 3 containment fallback",
+            progress,
+        );
+        return containment_structure_section(
+            page_path,
+            member_modules,
+            member_files,
+            module_lookup,
+            &outcome,
+        );
     };
 
+    let degraded = stages
+        .components
+        .iter()
+        .any(|component| component.role.is_none());
+
     let mut section = String::from("## Conceptual flow\n\n");
-    section.push_str(
-        "> _Conceptual flow_ — how this page's subsystems behave together, \
+    if child_rollup {
+        section.push_str(
+            "> _Conceptual flow_ — child-level roll-up of this page's module tree, \
+composed by the model from supplied evidence only: the data flow documented in \
+the child summaries plus child-level call/import edges from the code index. Every \
+arrow is verified against that evidence before the diagram is emitted.\n\n",
+        );
+    } else {
+        section.push_str(
+            "> _Conceptual flow_ — how this page's subsystems behave together, \
 composed by the model from supplied evidence only: the data flow documented in \
 the sources plus member-level call/import edges from the code index. Every \
 arrow is verified against that evidence before the diagram is emitted.\n\n",
-    );
+        );
+    }
     if degraded {
         section.push_str(
             "> _Degraded:_ one or more subsystems had no indexed summary, so it \
@@ -708,6 +776,195 @@ appears by name only.\n\n",
     if !section.ends_with('\n') {
         section.push('\n');
     }
+    section.push('\n');
+    Some(section)
+}
+
+fn compose_curated_flow_attempt(
+    stages: &ResolvedFlowStages,
+    member_modules: &[String],
+    member_files: &[String],
+    context: &CuratedFlowEvidenceContext<'_, '_>,
+    generate: &mut Option<&mut TextGenerator<'_>>,
+) -> DiagramOutcome {
+    if stages.components.len() < 2 {
+        return DiagramOutcome::SparseEvidence;
+    }
+    let hint = flow_hint_text(
+        member_modules,
+        member_files,
+        context.module_lookup,
+        context.file_lookup,
+        context.leading_chunks,
+    );
+    let evidence = curated_flow_evidence(
+        &stages.components,
+        &hint,
+        &stages.component_owner,
+        context.graph_edges,
+    );
+    compose_flowchart(
+        generate,
+        &evidence,
+        "how this page's subsystems behave together",
+    )
+}
+
+fn child_flow_inputs(
+    member_modules: &[String],
+    module_lookup: &BTreeMap<&str, &ModuleDoc>,
+    file_lookup: &BTreeMap<&str, &FileDoc>,
+) -> ChildFlowInputs {
+    let mut module_scores: BTreeMap<String, usize> = BTreeMap::new();
+    let mut direct_files: BTreeSet<String> = BTreeSet::new();
+    for member in member_modules.iter().collect::<BTreeSet<_>>() {
+        let Some(doc) = module_lookup.get(member.as_str()) else {
+            continue;
+        };
+        for child in &doc.child_modules {
+            let Some(child_doc) = module_lookup.get(child.module.as_str()) else {
+                continue;
+            };
+            module_scores
+                .entry(child.module.clone())
+                .and_modify(|score| *score = (*score).max(child_doc.direct_files.len()))
+                .or_insert(child_doc.direct_files.len());
+        }
+        direct_files.extend(
+            doc.direct_files
+                .iter()
+                .filter(|file| file_lookup.contains_key(file.path.as_str()))
+                .map(|file| file.path.clone()),
+        );
+    }
+
+    let mut ranked_modules: Vec<(String, usize)> = module_scores.into_iter().collect();
+    ranked_modules.sort_by(|(left_name, left_files), (right_name, right_files)| {
+        right_files
+            .cmp(left_files)
+            .then_with(|| left_name.cmp(right_name))
+    });
+    let modules: Vec<String> = ranked_modules
+        .into_iter()
+        .take(MAX_CHILD_FLOW_STAGES)
+        .map(|(module, _)| module)
+        .collect();
+    let files = if modules.len() < 2 {
+        direct_files
+            .into_iter()
+            .take(MAX_CHILD_FLOW_STAGES.saturating_sub(modules.len()))
+            .collect()
+    } else {
+        Vec::new()
+    };
+    ChildFlowInputs { modules, files }
+}
+
+fn containment_structure_section(
+    page_path: &str,
+    member_modules: &[String],
+    member_files: &[String],
+    module_lookup: &BTreeMap<&str, &ModuleDoc>,
+    trigger: &DiagramOutcome,
+) -> Option<String> {
+    let reason = match trigger {
+        DiagramOutcome::SparseEvidence => {
+            "no cross-member call/import edges were found in the index."
+        }
+        DiagramOutcome::NoGenerator => "no diagram generator was available.",
+        DiagramOutcome::Rejected => {
+            "the generated flow diagram failed verification and was discarded."
+        }
+        DiagramOutcome::Emitted(_) => return None,
+    };
+
+    let mut members: BTreeMap<String, String> = BTreeMap::new();
+    let mut children: BTreeMap<String, BTreeMap<String, String>> = BTreeMap::new();
+    for module in member_modules {
+        let key = format!("module:{module}");
+        members.insert(key.clone(), module.clone());
+        if let Some(doc) = module_lookup.get(module.as_str()) {
+            let child_nodes = children.entry(key).or_default();
+            for child in &doc.child_modules {
+                child_nodes.insert(format!("module:{}", child.module), child.module.clone());
+            }
+            for file in &doc.direct_files {
+                child_nodes.insert(format!("file:{}", file.path), file.path.clone());
+            }
+        }
+    }
+    for file in member_files {
+        members.insert(format!("file:{file}"), file.clone());
+    }
+
+    let mut nodes = vec![ContainmentNode {
+        key: "page".to_string(),
+        label: page_path.to_string(),
+    }];
+    let mut edges: BTreeSet<(String, String)> = BTreeSet::new();
+    let mut selected_members = Vec::new();
+    for (key, label) in members {
+        if nodes.len() == MAX_CONTAINMENT_NODES {
+            break;
+        }
+        edges.insert(("page".to_string(), key.clone()));
+        selected_members.push(key.clone());
+        nodes.push(ContainmentNode { key, label });
+    }
+    let mut selected_keys: BTreeSet<String> = nodes.iter().map(|node| node.key.clone()).collect();
+    for member in selected_members {
+        let Some(member_children) = children.get(&member) else {
+            continue;
+        };
+        for (key, label) in member_children {
+            if selected_keys.contains(key) {
+                edges.insert((member.clone(), key.clone()));
+                continue;
+            }
+            if nodes.len() == MAX_CONTAINMENT_NODES {
+                break;
+            }
+            selected_keys.insert(key.clone());
+            edges.insert((member.clone(), key.clone()));
+            nodes.push(ContainmentNode {
+                key: key.clone(),
+                label: label.clone(),
+            });
+        }
+        if nodes.len() == MAX_CONTAINMENT_NODES {
+            break;
+        }
+    }
+
+    let node_ids: BTreeMap<&str, String> = nodes
+        .iter()
+        .enumerate()
+        .map(|(index, node)| (node.key.as_str(), format!("n{index}")))
+        .collect();
+    let mut block = String::from("```mermaid\nflowchart TD\n");
+    for node in &nodes {
+        let id = node_ids.get(node.key.as_str())?;
+        let _ = writeln!(block, "    {id}[\"{}\"]", mermaid_label(&node.label));
+    }
+    for (parent, child) in edges {
+        let (Some(parent_id), Some(child_id)) =
+            (node_ids.get(parent.as_str()), node_ids.get(child.as_str()))
+        else {
+            continue;
+        };
+        let _ = writeln!(block, "    {parent_id} --> {child_id}");
+    }
+    block.push_str("```\n");
+    if !is_valid_mermaid(&block) {
+        return None;
+    }
+
+    let mut section = String::from("## Conceptual flow\n\n");
+    let _ = writeln!(
+        section,
+        "> Structure map — containment from the module tree; {reason} This shows structure, not runtime flow.\n"
+    );
+    section.push_str(&block);
     section.push('\n');
     Some(section)
 }

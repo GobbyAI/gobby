@@ -92,7 +92,7 @@ const RENDER_VERSION_INFRASTRUCTURE: u32 = 21;
 const RENDER_VERSION_FEATURES: u32 = 21;
 const RENDER_VERSION_DEPRECATIONS: u32 = 21;
 const RENDER_VERSION_MISC: u32 = 21;
-const RENDER_VERSION_CURATED: u32 = 21;
+const RENDER_VERSION_CURATED: u32 = 22;
 const RENDER_VERSION_CHANGES: u32 = 21;
 
 /// Returns the render-version constant for a doc page path. Each page category

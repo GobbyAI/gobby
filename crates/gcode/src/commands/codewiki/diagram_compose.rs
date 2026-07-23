@@ -91,6 +91,28 @@ impl DiagramStats {
         outcome: &DiagramOutcome,
         progress: &mut CodewikiProgress,
     ) {
+        self.record_with_pass(page_path, kind, outcome, None, progress);
+    }
+
+    pub(crate) fn record_named_pass(
+        &mut self,
+        page_path: &str,
+        kind: DiagramKind,
+        outcome: &DiagramOutcome,
+        pass: &str,
+        progress: &mut CodewikiProgress,
+    ) {
+        self.record_with_pass(page_path, kind, outcome, Some(pass), progress);
+    }
+
+    fn record_with_pass(
+        &mut self,
+        page_path: &str,
+        kind: DiagramKind,
+        outcome: &DiagramOutcome,
+        pass: Option<&str>,
+        progress: &mut CodewikiProgress,
+    ) {
         if !self.recorded_slots.insert((page_path.to_string(), kind)) {
             return;
         }
@@ -100,10 +122,11 @@ impl DiagramStats {
             DiagramOutcome::NoGenerator => self.no_generator += 1,
             DiagramOutcome::Rejected => self.rejected += 1,
         }
+        let pass = pass.map_or(String::new(), |pass| format!(" ({pass})"));
         progress.emit(format!(
-            "diagram {page_path} [{}]: {}",
+            "diagram {page_path} [{}]: {}{pass}",
             kind.label(),
-            outcome.label()
+            outcome.label(),
         ));
     }
 

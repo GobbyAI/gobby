@@ -32,6 +32,22 @@ fn file_doc(path: &str, summary: &str) -> FileDoc {
     }
 }
 
+fn module_link(name: &str) -> ModuleLink {
+    ModuleLink {
+        module: name.to_string(),
+        summary: format!("{name} summary"),
+        source_spans: Vec::new(),
+    }
+}
+
+fn file_link(path: &str) -> FileLink {
+    FileLink {
+        path: path.to_string(),
+        summary: format!("{path} summary"),
+        source_spans: Vec::new(),
+    }
+}
+
 fn module_lookup(docs: &[ModuleDoc]) -> BTreeMap<&str, &ModuleDoc> {
     docs.iter().map(|doc| (doc.module.as_str(), doc)).collect()
 }
@@ -139,6 +155,299 @@ fn compose_flow(
     )
 }
 
+fn compose_flow_with_observability(
+    responses: &[&str],
+    member_modules: &[String],
+    member_files: &[String],
+    modules: &[ModuleDoc],
+    files: &[FileDoc],
+    graph_edges: &[CodewikiGraphEdge],
+) -> (Option<String>, DiagramStats, Vec<String>) {
+    let mut responses: Vec<String> = responses.iter().map(|s| s.to_string()).collect();
+    let mut generator = move |_prompt: &str, system: &str, _tier: PromptTier| {
+        assert_eq!(system, prompts::FLOW_DIAGRAM_SYSTEM);
+        (!responses.is_empty()).then(|| responses.remove(0))
+    };
+    let mut generate: Option<&mut TextGenerator<'_>> = Some(&mut generator);
+    let mut diagram_stats = DiagramStats::default();
+    let mut progress = CodewikiProgress::capture();
+    let module_lookup = module_lookup(modules);
+    let file_lookup = file_lookup(files);
+    let leading_chunks = BTreeMap::new();
+    let flow = curated_flow_diagram(
+        member_modules,
+        member_files,
+        &mut generate,
+        CuratedFlowContext {
+            page_path: "code/concepts/test.md",
+            module_lookup: &module_lookup,
+            file_lookup: &file_lookup,
+            leading_chunks: &leading_chunks,
+            graph_edges,
+            diagram_stats: &mut diagram_stats,
+            progress: &mut progress,
+        },
+    );
+    (flow, diagram_stats, progress.into_lines())
+}
+
+fn mermaid_fence(section: &str) -> &str {
+    let start = section.find("```mermaid").expect("mermaid fence");
+    let closing = section[start + "```mermaid".len()..]
+        .find("```")
+        .expect("closing mermaid fence");
+    &section[start..start + "```mermaid".len() + closing + "```".len()]
+}
+
+fn mermaid_node_count(section: &str) -> usize {
+    section
+        .lines()
+        .filter(|line| line.trim_start().contains("[\"") && !line.contains("-->"))
+        .count()
+}
+
+#[test]
+fn curated_flow_child_evidence_pass_emits_one_final_slot_outcome() {
+    let mut root = module_doc("root", "Groups two internal stages.");
+    root.child_modules = vec![module_link("root::b"), module_link("root::a")];
+    let mut child_a = module_doc("root::a", "Discovers candidate files.");
+    child_a.direct_files = vec![file_link("src/a.rs")];
+    let mut child_b = module_doc("root::b", "Parses candidate files.");
+    child_b.direct_files = vec![file_link("src/b.rs")];
+    let modules = [root, child_b, child_a];
+
+    let mut file_a = file_doc("src/a.rs", "Discovers candidates.");
+    file_a.module = "root::a".to_string();
+    file_a.component_ids = vec!["component_a".to_string()];
+    let mut file_b = file_doc("src/b.rs", "Parses candidates.");
+    file_b.module = "root::b".to_string();
+    file_b.component_ids = vec!["component_b".to_string()];
+    let files = [file_a, file_b];
+    let member_modules = ["root".to_string()];
+    let graph_edges = [CodewikiGraphEdge::call("component_a", "component_b")];
+
+    let (section, stats, progress) = compose_flow_with_observability(
+        &["flowchart LR\n    s0 --> s1\n"],
+        &member_modules,
+        &[],
+        &modules,
+        &files,
+        &graph_edges,
+    );
+    let section = section.expect("child-level evidence should draw the flow");
+
+    assert!(section.contains("child-level roll-up"), "{section}");
+    assert!(is_valid_mermaid(mermaid_fence(&section)), "{section}");
+    assert_eq!(stats.emitted, 1);
+    assert_eq!(stats.total(), 1);
+    assert_eq!(
+        progress,
+        vec![
+            "codewiki: diagram code/concepts/test.md [curated_flow]: emitted (pass 2 child evidence)"
+        ]
+    );
+}
+
+#[test]
+fn child_flow_inputs_rank_by_direct_file_count_and_cap_ten() {
+    let mut root = module_doc("root", "Groups many internal stages.");
+    root.child_modules = (0..12)
+        .rev()
+        .map(|index| module_link(&format!("root::child_{index:02}")))
+        .collect();
+    let mut modules = vec![root];
+    modules.extend((0..12).map(|index| {
+        let mut child = module_doc(&format!("root::child_{index:02}"), "Child stage.");
+        child.direct_files = (0..index)
+            .map(|file| file_link(&format!("src/child_{index:02}_{file:02}.rs")))
+            .collect();
+        child
+    }));
+    let lookup = module_lookup(&modules);
+
+    let inputs = child_flow_inputs(&["root".to_string()], &lookup, &file_lookup(&[]));
+
+    assert_eq!(inputs.modules.len(), 10);
+    assert_eq!(
+        inputs.modules.first().map(String::as_str),
+        Some("root::child_11")
+    );
+    assert_eq!(
+        inputs.modules.last().map(String::as_str),
+        Some("root::child_02")
+    );
+    assert!(inputs.files.is_empty());
+}
+
+#[test]
+fn curated_flow_sparse_fallback_is_valid_bounded_and_skips_the_generator() {
+    let mut root = module_doc("root", "Groups edge-free children.");
+    root.child_modules = (0..15)
+        .rev()
+        .map(|index| module_link(&format!("root::child_{index:02}")))
+        .collect();
+    let mut modules = vec![root];
+    modules.extend(
+        (0..15).map(|index| module_doc(&format!("root::child_{index:02}"), "Child stage.")),
+    );
+    let member_modules = ["root".to_string()];
+    let mut generator = |_prompt: &str, _system: &str, _tier: PromptTier| -> Option<String> {
+        panic!("sparse evidence must not call the generator")
+    };
+    let mut generate: Option<&mut TextGenerator<'_>> = Some(&mut generator);
+    let mut stats = DiagramStats::default();
+    let mut progress = CodewikiProgress::capture();
+    let module_lookup = module_lookup(&modules);
+    let file_lookup = file_lookup(&[]);
+    let leading_chunks = BTreeMap::new();
+
+    let section = curated_flow_diagram(
+        &member_modules,
+        &[],
+        &mut generate,
+        CuratedFlowContext {
+            page_path: "code/concepts/test.md",
+            module_lookup: &module_lookup,
+            file_lookup: &file_lookup,
+            leading_chunks: &leading_chunks,
+            graph_edges: &[],
+            diagram_stats: &mut stats,
+            progress: &mut progress,
+        },
+    )
+    .expect("edge-free pages should receive a containment map");
+
+    assert!(section.contains(
+        "> Structure map — containment from the module tree; no cross-member call/import edges were found in the index. This shows structure, not runtime flow."
+    ));
+    assert_eq!(mermaid_node_count(&section), 12, "{section}");
+    assert!(is_valid_mermaid(mermaid_fence(&section)), "{section}");
+    assert_eq!(stats.sparse_evidence, 1);
+    assert_eq!(stats.total(), 1);
+    assert_eq!(
+        progress.into_lines(),
+        vec![
+            "codewiki: diagram code/concepts/test.md [curated_flow]: sparse_evidence (pass 3 containment fallback)"
+        ]
+    );
+}
+
+#[test]
+fn curated_flow_no_generator_fallback_has_reason_aware_caption() {
+    let modules = [
+        module_doc("walker", "Discovers files. Flow: walker -> parser."),
+        module_doc("parser", "Extracts the AST."),
+    ];
+    let member_modules = ["walker".to_string(), "parser".to_string()];
+    let mut generate: Option<&mut TextGenerator<'_>> = None;
+    let mut stats = DiagramStats::default();
+    let mut progress = CodewikiProgress::capture();
+    let module_lookup = module_lookup(&modules);
+    let file_lookup = file_lookup(&[]);
+    let leading_chunks = BTreeMap::new();
+
+    let section = curated_flow_diagram(
+        &member_modules,
+        &[],
+        &mut generate,
+        CuratedFlowContext {
+            page_path: "code/concepts/test.md",
+            module_lookup: &module_lookup,
+            file_lookup: &file_lookup,
+            leading_chunks: &leading_chunks,
+            graph_edges: &[],
+            diagram_stats: &mut stats,
+            progress: &mut progress,
+        },
+    )
+    .expect("AI-off pages should receive a containment map");
+
+    assert!(section.contains(
+        "> Structure map — containment from the module tree; no diagram generator was available. This shows structure, not runtime flow."
+    ));
+    assert!(!section.contains("no cross-member call/import edges"));
+    assert!(is_valid_mermaid(mermaid_fence(&section)), "{section}");
+    assert_eq!(stats.no_generator, 1);
+    assert_eq!(stats.total(), 1);
+    assert_eq!(
+        progress.into_lines(),
+        vec![
+            "codewiki: diagram code/concepts/test.md [curated_flow]: no_generator (pass 3 containment fallback)"
+        ]
+    );
+}
+
+#[test]
+fn curated_flow_rejected_fallback_has_reason_aware_caption_and_one_outcome() {
+    let modules = [
+        module_doc("walker", "Discovers files. Flow: walker -> parser."),
+        module_doc("parser", "Extracts the AST."),
+    ];
+    let member_modules = ["walker".to_string(), "parser".to_string()];
+    let invalid = "flowchart TD\n    ghost --> s0\n";
+    let (section, stats, progress) = compose_flow_with_observability(
+        &[invalid, invalid],
+        &member_modules,
+        &[],
+        &modules,
+        &[],
+        &[],
+    );
+    let section = section.expect("rejected diagrams should receive a containment map");
+
+    assert!(section.contains(
+        "> Structure map — containment from the module tree; the generated flow diagram failed verification and was discarded. This shows structure, not runtime flow."
+    ));
+    assert!(!section.contains("no cross-member call/import edges"));
+    assert!(is_valid_mermaid(mermaid_fence(&section)), "{section}");
+    assert_eq!(stats.rejected, 1);
+    assert_eq!(stats.total(), 1);
+    assert_eq!(
+        progress,
+        vec![
+            "codewiki: diagram code/concepts/test.md [curated_flow]: rejected (pass 3 containment fallback)"
+        ]
+    );
+}
+
+#[test]
+fn curated_flow_containment_fallback_is_permutation_invariant() {
+    let mut root_a = module_doc("root", "Groups edge-free children.");
+    root_a.child_modules = vec![module_link("root::zeta"), module_link("root::alpha")];
+    root_a.direct_files = vec![file_link("src/z.rs"), file_link("src/a.rs")];
+    let mut root_b = module_doc("root", "Groups edge-free children.");
+    root_b.child_modules = vec![module_link("root::alpha"), module_link("root::zeta")];
+    root_b.direct_files = vec![file_link("src/a.rs"), file_link("src/z.rs")];
+    let child_alpha = module_doc("root::alpha", "Alpha child.");
+    let child_zeta = module_doc("root::zeta", "Zeta child.");
+    let member_modules = ["root".to_string()];
+
+    let first = compose_flow(
+        &[],
+        &member_modules,
+        &[],
+        &[root_a, child_zeta, child_alpha],
+        &[],
+        &[],
+    )
+    .expect("first containment map");
+    let second = compose_flow(
+        &[],
+        &member_modules,
+        &[],
+        &[
+            root_b,
+            module_doc("root::alpha", "Alpha child."),
+            module_doc("root::zeta", "Zeta child."),
+        ],
+        &[],
+        &[],
+    )
+    .expect("second containment map");
+
+    assert_eq!(first, second);
+}
+
 #[test]
 fn composes_flow_when_a_data_flow_is_documented() {
     let modules = [
@@ -185,7 +494,7 @@ fn composes_flow_when_a_data_flow_is_documented() {
 }
 
 #[test]
-fn suppressed_without_any_evidenced_edges() {
+fn uses_structure_fallback_without_any_evidenced_edges() {
     // Two grounded members but no `A -> B` chain and no code-index edges:
     // any diagram would fabricate a flow, so the composer is never invoked.
     let modules = [
@@ -203,7 +512,9 @@ fn suppressed_without_any_evidenced_edges() {
         &[],
     );
 
-    assert!(flow.is_none(), "{flow:?}");
+    let flow = flow.expect("edge-free page should receive containment fallback");
+    assert!(flow.contains("no cross-member call/import edges were found in the index"));
+    assert!(is_valid_mermaid(mermaid_fence(&flow)), "{flow}");
 }
 
 #[test]
@@ -400,17 +711,20 @@ fn diagram_outcomes_record_sparse_curated_flow_slots() {
             progress: &mut progress,
         },
     );
-    assert!(flow.is_none());
+    let flow = flow.expect("sparse slot should receive containment fallback");
+    assert!(flow.contains("no cross-member call/import edges were found in the index"));
     assert_eq!(diagram_stats.sparse_evidence, 1);
     assert_eq!(diagram_stats.total(), 1);
     assert_eq!(
         progress.into_lines(),
-        vec!["codewiki: diagram code/concepts/walker.md [curated_flow]: sparse_evidence"]
+        vec![
+            "codewiki: diagram code/concepts/walker.md [curated_flow]: sparse_evidence (pass 3 containment fallback)"
+        ]
     );
 }
 
 #[test]
-fn omitted_for_a_single_member() {
+fn single_member_gets_containment_fallback() {
     let modules = [module_doc("walker", "Discovers files.")];
     let flow = compose_flow(
         &["flowchart LR\n    s0 --> s1\n"],
@@ -420,13 +734,14 @@ fn omitted_for_a_single_member() {
         &[],
         &[],
     );
-    assert!(flow.is_none());
+    let flow = flow.expect("single-member page should receive containment fallback");
+    assert!(flow.contains("n0 --> n1"), "{flow}");
 }
 
 #[test]
-fn omitted_when_no_generator_is_available() {
-    // AI off: documented evidence exists, but with no composer there is no
-    // diagram — deterministic chaining would bypass the LLM-composed contract.
+fn no_generator_uses_structure_fallback() {
+    // AI off: documented flow evidence cannot be composed, so the page draws
+    // only the deterministic containment structure and names that reason.
     let modules = [
         module_doc("walker", "Discovers files. Flow: walker -> parser."),
         module_doc("parser", "Extracts the AST."),
@@ -452,7 +767,13 @@ fn omitted_when_no_generator_is_available() {
             progress: &mut progress,
         },
     );
-    assert!(flow.is_none());
+    let flow = flow.expect("AI-off page should receive containment fallback");
+    assert!(
+        flow.contains("no diagram generator was available"),
+        "{flow}"
+    );
+    assert_eq!(diagram_stats.no_generator, 1);
+    assert_eq!(diagram_stats.total(), 1);
 }
 
 #[test]
