@@ -78,8 +78,16 @@ instructions: |
     merge_subset | abort.
   - Execute: for each step, dispatch merge-worker via spawn_agent (or
     dispatch_batch for parallel-safe steps), include the step's verify command
-    in the worker prompt when one exists, and wait with
-    gobby-agents:wait_for_agent. Workers run verify_in_worktree before
+    in the worker prompt when one exists, and capture every successful run id.
+    For a single worker, call gobby-agents:wait_for_agent once to subscribe once.
+    If it returns completed=false, end the turn. On the daemon wake, re-call
+    `gobby-agents:wait_for_agent` first with the saved run id so the terminal
+    payload updates workflow state. For dispatch_batch, use
+    current_batch_run_ids: subscribe once for every captured id, then end the
+    turn. On each wake, re-call `gobby-agents:wait_for_agent` first for the woken
+    id, then sweep every id still in current_batch_run_ids. Do not inspect merge
+    state or spawn replacement workers until that list is empty. Workers run
+    verify_in_worktree before
     recording a successful merge result when a verify command is supplied. Use
     final=true only on the last campaign-level verification. Append a lifecycle
     event per step.
@@ -167,8 +175,10 @@ instructions: |
   - Workers cannot spawn workers — the depth-5 cap is enforced by the
     runtime. Plan accordingly.
   - Do NOT use Bash sleep loops, tmux polling loops, or provider Monitor for
-    worker waits. Use gobby-agents:wait_for_agent, then get_agent_result only
-    if you need to re-read the final report.
+    worker waits. Use gobby-agents:wait_for_agent to subscribe once, end the
+    turn while the run is active, and on wake re-call
+    `gobby-agents:wait_for_agent` first. Use get_agent_result only if you need
+    to re-read the final report.
   - Always use `uv run` for any Python invocation that ends up inside
     verify_in_worktree commands.
   - Use context-aware progressive discovery: call leased known tools directly; fetch schemas directly for known unleased tools; use list_tools only for unknown tool names and list_mcp_servers only for server or registry inspection.
@@ -196,6 +206,7 @@ step_variables:
   new_status_signature: ""
   pending_count_int: 0
   merge_status_made_no_progress: false
+  current_batch_run_ids: []
   last_worker_run_id: ""
 
 steps:
@@ -413,6 +424,27 @@ steps:
         variable: post_worker_merge_status_checked
         value: false
       - server: gobby-agents
+        tool: spawn_agent
+        when: "bool(tool_output.get('run_id') or tool_output.get('result', {}).get('run_id'))"
+        action: set_variable
+        variable: last_worker_run_id
+        value: "str(tool_output.get('run_id') or tool_output.get('result', {}).get('run_id'))"
+      - server: gobby-agents
+        tool: dispatch_batch
+        action: set_variable
+        variable: merge_worker_completed
+        value: false
+      - server: gobby-agents
+        tool: dispatch_batch
+        action: set_variable
+        variable: post_worker_merge_status_checked
+        value: false
+      - server: gobby-agents
+        tool: dispatch_batch
+        action: set_variable
+        variable: current_batch_run_ids
+        value: "(vars.get('current_batch_run_ids') or []) + [r.get('run_id') for r in ((tool_output.get('result') or tool_output).get('results') or []) if r.get('success') and r.get('run_id') and r.get('run_id') not in (vars.get('current_batch_run_ids') or [])]"
+      - server: gobby-agents
         tool: wait_for_agent
         when: "tool_output.get('completed') is True or (tool_output.get('completed') is None and tool_output.get('result', {}).get('completed') is True)"
         action: set_variable
@@ -430,21 +462,27 @@ steps:
         action: set_variable
         variable: last_worker_run_id
         value: "str(tool_output.get('run_id') or tool_output.get('result', {}).get('run_id'))"
+      - server: gobby-agents
+        tool: wait_for_agent
+        when: "tool_output.get('completed') is True or (tool_output.get('completed') is None and tool_output.get('result', {}).get('completed') is True)"
+        action: set_variable
+        variable: current_batch_run_ids
+        value: "[r for r in (vars.get('current_batch_run_ids') or []) if r != str(tool_output.get('run_id') or tool_output.get('result', {}).get('run_id'))]"
       - server: gobby-merge
         tool: inspect_merge_state
-        when: "vars.get('merge_worker_completed') is True and not tool_output.get('active_resolution_id')"
+        when: "vars.get('merge_worker_completed') is True and not vars.get('current_batch_run_ids') and not tool_output.get('active_resolution_id')"
         action: set_variable
         variable: post_worker_merge_status_checked
         value: true
       - server: gobby-merge
         tool: inspect_merge_state
-        when: "vars.get('merge_worker_completed') is True and not tool_output.get('active_resolution_id')"
+        when: "vars.get('merge_worker_completed') is True and not vars.get('current_batch_run_ids') and not tool_output.get('active_resolution_id')"
         action: set_variable
         variable: last_merge_status_signature
         value: "'no-active-resolution:' + str(tool_output.get('state')) + ':' + str(tool_output.get('conflicted_files'))"
       - server: gobby-merge
         tool: inspect_merge_state
-        when: "vars.get('merge_worker_completed') is True and not tool_output.get('active_resolution_id') and tool_output.get('can_resume')"
+        when: "vars.get('merge_worker_completed') is True and not vars.get('current_batch_run_ids') and not tool_output.get('active_resolution_id') and tool_output.get('can_resume')"
         action: set_variable
         variable: no_progress_merge_status_count
         value: 1
@@ -462,7 +500,7 @@ steps:
         tool: merge_status
         action: set_variable
         variable: merge_status_made_no_progress
-        value: "vars.get('merge_worker_completed') is True and vars.get('last_merge_status_signature') == vars.get('new_status_signature') and vars.get('pending_count_int', 0) > 0"
+        value: "not vars.get('current_batch_run_ids') and vars.get('merge_worker_completed') is True and vars.get('last_merge_status_signature') == vars.get('new_status_signature') and vars.get('pending_count_int', 0) > 0"
       - server: gobby-merge
         tool: merge_status
         when: "vars.get('merge_status_made_no_progress') is True"
@@ -490,6 +528,18 @@ steps:
         when: "tool_input.final is True"
         action: set_variable
         variable: execution_complete
+        value: true
+      - server: gobby-merge
+        tool: verify_in_worktree
+        when: "tool_input.final is True and tool_output.get('success') is True and int(tool_output.get('exit_code', 1)) == 0"
+        action: set_variable
+        variable: verification_evidence
+        value: "(vars.get('verification_evidence') or []) + [{'evidence_type': 'validation_command', 'success': True, 'command': tool_input.get('command'), 'summary': 'merge-orchestrator final verify_in_worktree passed', 'tool_name': 'gobby-merge:verify_in_worktree'}]"
+      - server: gobby-merge
+        tool: verify_in_worktree
+        when: "tool_input.final is True and tool_output.get('success') is True and int(tool_output.get('exit_code', 1)) == 0"
+        action: set_variable
+        variable: verification_evidence_recorded
         value: true
       - server: gobby-tasks-ops
         tool: record_merge_result
@@ -527,15 +577,19 @@ steps:
       - server: gobby-agents
         tool: spawn_agent
         action: block
-        when: "vars.get('merge_worker_completed') is True and not vars.get('post_worker_merge_status_checked', False)"
+        when: "bool(vars.get('current_batch_run_ids')) or (vars.get('merge_worker_completed') is True and not vars.get('post_worker_merge_status_checked', False))"
         reason: |
-          A merge-worker completed, but merge_status has not been checked yet.
-          Before spawning another worker, call gobby-merge:inspect_merge_state.
-          If it returns active_resolution_id, call gobby-merge:merge_status for
-          that resolution and compare resolved_count/pending_count. If it
-          returns no active_resolution_id, do not call merge_status with an empty
-          id; verify clean state, record a failed merge result, or escalate
-          instead of redispatching blindly.
+          A merge-worker batch is still outstanding, or
+          merge_status has not been checked for a completed worker. For an
+          outstanding batch,
+          re-call wait_for_agent for the woken run first and sweep every run id
+          still in current_batch_run_ids; do not spawn until the list is empty.
+          Otherwise, call gobby-merge:inspect_merge_state before spawning. If it
+          returns active_resolution_id, call gobby-merge:merge_status for that
+          resolution and compare resolved_count/pending_count. If it returns no
+          active_resolution_id, do not call merge_status with an empty id;
+          verify clean state, record a failed merge result, or escalate instead
+          of redispatching blindly.
       - server: gobby-agents
         tool: spawn_agent
         action: block

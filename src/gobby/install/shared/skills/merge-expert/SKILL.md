@@ -183,11 +183,17 @@ Iterate the plan in order. For each step:
    unresolved ids/files, then terminate through its normal `end_agent_run`
    step. Never ask the worker to use Read/Bash or synthesize manual `resolved_content`
    from file inspection.
-3. **Wait for the worker.** Workers terminate themselves via `end_agent_run`;
-   call `gobby-agents:wait_for_agent(run_id=...)` to wait for completion, then
-   call `gobby-agents:get_agent_result` only if you need to re-read the final
-   report. Do not use Bash sleep loops, tmux polling loops, or provider Monitor
-   for worker waits.
+3. **Wait for the worker.** Workers terminate themselves via `end_agent_run`.
+   Call `gobby-agents:wait_for_agent(run_id=...)` to subscribe once. If the run
+   is active, end the turn. On the daemon wake,
+   re-call `gobby-agents:wait_for_agent` first for the woken run. Its terminal
+   payload updates workflow state. For a batch, subscribe once for every
+   successful run id, end the turn, then process the woken id first and sweep
+   every outstanding id after each wake. Do not inspect merge state or spawn
+   replacements until the outstanding batch is empty. Call
+   `gobby-agents:get_agent_result` only to
+   re-read a final report. Do not use Bash sleep loops, tmux polling loops, or
+   provider Monitor for worker waits.
 4. **Verify.** Prefer worker-side verification: pass the step's
    `verify_command` to the merge-worker and require it to run
    `gobby-merge:verify_in_worktree` before `record_merge_result`. Treat exit

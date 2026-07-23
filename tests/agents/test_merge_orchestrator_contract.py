@@ -6,7 +6,7 @@ import json
 import uuid
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 
 import pytest
 import yaml
@@ -209,7 +209,7 @@ def _agent() -> dict[str, Any]:
 def _step(agent: dict[str, Any], name: str) -> dict[str, Any]:
     matches = [step for step in agent["steps"] if step["name"] == name]
     assert len(matches) == 1
-    return matches[0]
+    return cast(dict[str, Any], matches[0])
 
 
 def _create_session(
@@ -353,14 +353,22 @@ def test_execute_allow_list_matches_merge_expert_contract() -> None:
     assert "Workers terminate themselves via `kill_agent`" not in skill
 
 
-def test_merge_orchestrator_uses_bounded_agent_waits() -> None:
+def test_merge_orchestrator_uses_wake_driven_agent_waits() -> None:
     agent = _agent()
     instructions = agent["instructions"]
     execute = _step(agent, "execute")
+    skill = SKILL_PATH.read_text(encoding="utf-8")
 
     assert "gobby-agents:wait_for_agent" in instructions
     assert "Do NOT use Bash sleep loops" in instructions
     assert "provider Monitor" in instructions
+    assert "subscribe once" in instructions
+    assert "end the turn" in instructions
+    assert "re-call `gobby-agents:wait_for_agent` first" in instructions
+    assert "current_batch_run_ids" in instructions
+    assert "subscribe once" in skill
+    assert "end the turn" in skill
+    assert "re-call `gobby-agents:wait_for_agent` first" in skill
     assert "gobby-agents:wait_for_agent" in execute["allowed_mcp_tools"]
     assert "worker returns success" in instructions
     assert "unresolved merge state" in instructions
@@ -370,6 +378,7 @@ def test_merge_orchestrator_uses_bounded_agent_waits() -> None:
     assert "historical delivery campaign failures" in instructions
     assert "continue the active resolution" in instructions
     assert "no_progress_merge_status_count" in agent["step_variables"]
+    assert agent["step_variables"]["current_batch_run_ids"] == []
 
 
 def test_merge_orchestrator_allows_already_implemented_close_path() -> None:
@@ -809,20 +818,64 @@ async def test_execute_blocks_no_progress_worker_redispatch(db: HubDatabase) -> 
 
 
 @pytest.mark.asyncio
-async def test_execute_accepts_normalized_wait_for_agent_output(db: HubDatabase) -> None:
+async def test_execute_rechecks_agent_status_after_wake(db: HubDatabase) -> None:
     manager = _install_workflow(db, current_step="execute")
     engine = RuleEngine(db)
     variables: dict[str, Any] = {}
+
+    for name in ("merge_worker_completed", "post_worker_merge_status_checked"):
+        await engine.evaluate(
+            _after_set_variable(name, True),
+            session_id="aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaa3001",
+            variables=variables,
+        )
+
+    await engine.evaluate(
+        _after_mcp_tool(
+            "gobby-agents:spawn_agent",
+            tool_output={"success": True, "result": {"run_id": "run-worker"}},
+        ),
+        session_id="aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaa3001",
+        variables=variables,
+    )
+    instance = manager.get_instance("aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaa3001", "merge-orchestrator")
+    assert instance is not None
+    assert instance.variables["merge_worker_completed"] is False
+    assert instance.variables["post_worker_merge_status_checked"] is False
+    assert instance.variables["last_worker_run_id"] == "run-worker"
 
     await engine.evaluate(
         _after_mcp_tool(
             "gobby-agents:wait_for_agent",
             tool_output={
                 "success": True,
-                "completed": True,
+                "completed": False,
                 "run_id": "run-worker",
-                "status": "success",
-                "result": "",
+                "status": "running",
+            },
+        ),
+        session_id="aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaa3001",
+        variables=variables,
+    )
+    instance = manager.get_instance("aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaa3001", "merge-orchestrator")
+    assert instance is not None
+    assert instance.variables["merge_worker_completed"] is False
+    assert instance.variables["post_worker_merge_status_checked"] is False
+    assert instance.variables["last_worker_run_id"] == "run-worker"
+
+    # A fresh engine models a new turn after the daemon wake.
+    engine = RuleEngine(db)
+    await engine.evaluate(
+        _after_mcp_tool(
+            "gobby-agents:wait_for_agent",
+            tool_output={
+                "success": True,
+                "result": {
+                    "completed": True,
+                    "run_id": "run-worker",
+                    "status": "success",
+                    "result": "",
+                },
             },
         ),
         session_id="aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaa3001",
@@ -834,6 +887,194 @@ async def test_execute_accepts_normalized_wait_for_agent_output(db: HubDatabase)
     assert instance.variables["merge_worker_completed"] is True
     assert instance.variables["post_worker_merge_status_checked"] is False
     assert instance.variables["last_worker_run_id"] == "run-worker"
+
+
+@pytest.mark.parametrize(
+    "batch_output",
+    [
+        pytest.param(
+            {
+                "results": [
+                    {"success": True, "run_id": "run-one"},
+                    {"success": False, "run_id": "run-failed"},
+                    {"success": True, "run_id": "run-two"},
+                    {"success": True, "run_id": ""},
+                ]
+            },
+            id="flat",
+        ),
+        pytest.param(
+            {
+                "success": True,
+                "result": {
+                    "dispatched": 3,
+                    "results": [
+                        {"success": True, "run_id": "run-one"},
+                        {"success": False, "run_id": "run-failed"},
+                        {"success": True, "run_id": "run-two"},
+                        {"success": True, "run_id": ""},
+                    ],
+                },
+            },
+            id="nested-proxy",
+        ),
+    ],
+)
+@pytest.mark.asyncio
+async def test_execute_tracks_batch_waits_across_wakes(
+    db: HubDatabase,
+    batch_output: dict[str, Any],
+) -> None:
+    session_id = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaa3001"
+    manager = _install_workflow(db, current_step="execute", session_id=session_id)
+    engine = RuleEngine(db)
+    variables: dict[str, Any] = {}
+
+    await engine.evaluate(
+        _after_mcp_tool(
+            "gobby-agents:wait_for_agent",
+            tool_output={"completed": True, "run_id": "run-stale", "status": "success"},
+        ),
+        session_id=session_id,
+        variables=variables,
+    )
+    await engine.evaluate(
+        _after_mcp_tool(
+            "gobby-merge:merge_status",
+            arguments={"resolution_id": "mr-1"},
+            tool_output={"result": {"resolved_count": 5, "pending_count": 12}},
+        ),
+        session_id=session_id,
+        variables=variables,
+    )
+    instance = manager.get_instance(session_id, "merge-orchestrator")
+    assert instance is not None
+    assert instance.variables["merge_worker_completed"] is True
+    assert instance.variables["post_worker_merge_status_checked"] is True
+    assert instance.variables["last_merge_status_signature"] == "mr-1:5/12"
+
+    await engine.evaluate(
+        _after_mcp_tool("gobby-agents:dispatch_batch", tool_output=batch_output),
+        session_id=session_id,
+        variables=variables,
+    )
+    instance = manager.get_instance(session_id, "merge-orchestrator")
+    assert instance is not None
+    assert instance.variables["merge_worker_completed"] is False
+    assert instance.variables["post_worker_merge_status_checked"] is False
+    assert instance.variables["current_batch_run_ids"] == ["run-one", "run-two"]
+
+    for run_id in ("run-one", "run-two"):
+        await engine.evaluate(
+            _after_mcp_tool(
+                "gobby-agents:wait_for_agent",
+                tool_output={"completed": False, "run_id": run_id, "status": "running"},
+            ),
+            session_id=session_id,
+            variables=variables,
+        )
+    instance = manager.get_instance(session_id, "merge-orchestrator")
+    assert instance is not None
+    assert instance.variables["merge_worker_completed"] is False
+    assert instance.variables["current_batch_run_ids"] == ["run-one", "run-two"]
+
+    # A fresh engine models the next turn after the first worker wake.
+    engine = RuleEngine(db)
+    await engine.evaluate(
+        _after_mcp_tool(
+            "gobby-agents:wait_for_agent",
+            tool_output={
+                "success": True,
+                "result": {"completed": True, "run_id": "run-one", "status": "success"},
+            },
+        ),
+        session_id=session_id,
+        variables=variables,
+    )
+    instance = manager.get_instance(session_id, "merge-orchestrator")
+    assert instance is not None
+    assert instance.variables["merge_worker_completed"] is True
+    assert instance.variables["last_worker_run_id"] == "run-one"
+    assert instance.variables["current_batch_run_ids"] == ["run-two"]
+
+    await engine.evaluate(
+        _after_mcp_tool(
+            "gobby-agents:wait_for_agent",
+            tool_output={"completed": False, "run_id": "run-two", "status": "running"},
+        ),
+        session_id=session_id,
+        variables=variables,
+    )
+    await engine.evaluate(
+        _after_mcp_tool(
+            "gobby-merge:inspect_merge_state",
+            tool_output={"state": "clean", "conflicted_files": [], "can_resume": False},
+        ),
+        session_id=session_id,
+        variables=variables,
+    )
+    instance = manager.get_instance(session_id, "merge-orchestrator")
+    assert instance is not None
+    assert instance.variables["post_worker_merge_status_checked"] is False
+    assert instance.variables["last_merge_status_signature"] == "mr-1:5/12"
+
+    await engine.evaluate(
+        _after_mcp_tool(
+            "gobby-merge:merge_status",
+            arguments={"resolution_id": "mr-1"},
+            tool_output={"result": {"resolved_count": 5, "pending_count": 12}},
+        ),
+        session_id=session_id,
+        variables=variables,
+    )
+    instance = manager.get_instance(session_id, "merge-orchestrator")
+    assert instance is not None
+    assert instance.variables["last_worker_run_id"] == "run-one"
+    assert instance.variables["current_batch_run_ids"] == ["run-two"]
+    assert instance.variables["last_merge_status_signature"] == "mr-1:5/12"
+    assert instance.variables["merge_status_made_no_progress"] is False
+    assert instance.variables["no_progress_merge_status_count"] == 0
+
+    response = await engine.evaluate(
+        _before_mcp_tool("gobby-agents:spawn_agent"),
+        session_id=session_id,
+        variables=variables,
+    )
+    assert response.decision == "block"
+    assert "batch" in (response.reason or "").lower()
+
+    await engine.evaluate(
+        _after_mcp_tool(
+            "gobby-agents:wait_for_agent",
+            tool_output={"completed": True, "run_id": "run-two", "status": "success"},
+        ),
+        session_id=session_id,
+        variables=variables,
+    )
+    instance = manager.get_instance(session_id, "merge-orchestrator")
+    assert instance is not None
+    assert instance.variables["last_worker_run_id"] == "run-two"
+    assert instance.variables["current_batch_run_ids"] == []
+
+    await engine.evaluate(
+        _after_mcp_tool(
+            "gobby-merge:inspect_merge_state",
+            tool_output={"state": "clean", "conflicted_files": [], "can_resume": False},
+        ),
+        session_id=session_id,
+        variables=variables,
+    )
+    instance = manager.get_instance(session_id, "merge-orchestrator")
+    assert instance is not None
+    assert instance.variables["post_worker_merge_status_checked"] is True
+    assert instance.variables["last_merge_status_signature"] == "no-active-resolution:clean:[]"
+
+    response = await engine.evaluate(
+        _before_mcp_tool("gobby-agents:spawn_agent"),
+        session_id=session_id,
+        variables=variables,
+    )
+    assert response.decision == "allow"
 
 
 @pytest.mark.asyncio
