@@ -341,7 +341,17 @@ async def _async_storage_call[ResultT](
     *args: object,
     **kwargs: object,
 ) -> ResultT:
-    return await asyncio.to_thread(callback, *args, **kwargs)
+    from gobby.agents.agent_cleanup import (
+        run_terminal_delivery_offload,
+        shielded_terminal_delivery,
+    )
+
+    run_id = next((value for value in args if isinstance(value, str)), "capture")
+
+    async def operation() -> ResultT:
+        return await run_terminal_delivery_offload(callback, *args, **kwargs)
+
+    return cast(ResultT, await shielded_terminal_delivery(run_id, operation))
 
 
 async def capture_then_kill_async(

@@ -27,12 +27,25 @@ async def cleanup_failed_spawn(
     handler: Any,
     spawn_config: Any,
     *,
+    completion_registry: Any | None,
     cleanup_isolation: bool,
     child_session_id: str | None = None,
 ) -> None:
     run_storage = getattr(runner, "run_storage", None)
     if run_storage is not None:
         child_session_id = _fail_run(run_storage, run_id, error, child_session_id)
+        from gobby.agents.agent_cleanup import (
+            deliver_existing_terminal_run,
+            run_terminal_delivery_offload,
+        )
+
+        await deliver_existing_terminal_run(
+            db=run_storage.db,
+            agent_run_manager=run_storage,
+            completion_registry=completion_registry,
+            run_id=run_id,
+            run_db=run_terminal_delivery_offload,
+        )
     await cleanup_created_isolation(handler, spawn_config, cleanup=cleanup_isolation)
     _delete_child_session(runner, run_storage, run_id, child_session_id)
 
@@ -43,6 +56,7 @@ async def start_run_or_cleanup(
     handler: Any,
     spawn_config: Any,
     *,
+    completion_registry: Any | None,
     cleanup_isolation: bool,
     child_session_id: str | None,
 ) -> dict[str, Any] | None:
@@ -57,6 +71,7 @@ async def start_run_or_cleanup(
             error,
             handler,
             spawn_config,
+            completion_registry=completion_registry,
             cleanup_isolation=cleanup_isolation,
             child_session_id=child_session_id,
         )
@@ -77,6 +92,7 @@ async def start_run_or_cleanup(
         error,
         handler,
         spawn_config,
+        completion_registry=completion_registry,
         cleanup_isolation=cleanup_isolation,
         child_session_id=child_session_id,
     )

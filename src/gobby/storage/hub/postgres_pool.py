@@ -64,24 +64,15 @@ def pool_connection(
     pool: ConnectionPool[Any],
     pool_stats: Callable[[], dict[str, Any]],
 ) -> Iterator[psycopg.Connection[Any]]:
-    """Acquire a pooled connection, checking and retrying once after a timeout."""
+    """Acquire a pooled connection, retrying once after a timeout."""
     with ExitStack() as stack:
         try:
             conn = stack.enter_context(pool.connection())
         except PoolTimeout:
             logger.warning(
-                "PostgreSQL hub pool acquisition timed out; checking pool before retry: "
-                "pool_stats=%s",
+                "PostgreSQL hub pool acquisition timed out; retrying once: pool_stats=%s",
                 pool_stats(),
             )
-            try:
-                pool.check()
-            except Exception:
-                logger.warning(
-                    "PostgreSQL hub pool check failed after acquisition timeout: pool_stats=%s",
-                    pool_stats(),
-                    exc_info=True,
-                )
             try:
                 conn = stack.enter_context(pool.connection())
             except PoolTimeout:

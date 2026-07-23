@@ -203,7 +203,8 @@ class TestSearchSkillsTool:
             if connection_count is not None:
                 assert connection_count <= 1 + executor.max_workers
         finally:
-            executor.shutdown(wait=True)
+            executor.shutdown()
+            executor.join()
 
     @pytest.mark.asyncio
     async def test_search_skills_returns_scores(self, registry):

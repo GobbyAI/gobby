@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import errno
 import os
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Protocol, cast
 
@@ -55,6 +56,16 @@ class PidFileClaim:
         finally:
             os.close(self._lock_fd)
             self._released = True
+
+
+@dataclass(frozen=True)
+class FailOpenPidOwnership:
+    """Explicit ownership resolution when advisory PID locking is unavailable."""
+
+    error: str
+
+
+PidOwnershipResolution = PidFileClaim | FailOpenPidOwnership
 
 
 def _lock_file(lock_fd: int) -> None:
@@ -163,4 +174,10 @@ def probe_daemon_lock(pid_file: Path) -> int | None:
         os.close(lock_fd)
 
 
-__all__ = ["PidFileClaim", "claim_pid_file", "probe_daemon_lock"]
+__all__ = [
+    "FailOpenPidOwnership",
+    "PidFileClaim",
+    "PidOwnershipResolution",
+    "claim_pid_file",
+    "probe_daemon_lock",
+]

@@ -505,6 +505,7 @@ def create_spawn_agent_registry(
             initial_variables=initial_variables,
             session_manager=session_manager,
             db=db,
+            completion_registry=completion_registry,
             daemon_config=daemon_config,
             code_index=code_index,
         )

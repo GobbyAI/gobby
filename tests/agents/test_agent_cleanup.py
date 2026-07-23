@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import asyncio
+from contextlib import nullcontext
 from dataclasses import replace
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
@@ -17,6 +19,51 @@ from tests.agents.test_capture import FakeCaptureStorage
 pytestmark = pytest.mark.unit
 
 
+async def test_shielded_terminal_delivery_settles_before_cancellation_propagates() -> None:
+    started = asyncio.Event()
+    release = asyncio.Event()
+    settled = asyncio.Event()
+
+    async def operation() -> str:
+        started.set()
+        await release.wait()
+        settled.set()
+        return "delivered"
+
+    owner = asyncio.create_task(agent_cleanup.shielded_terminal_delivery("run-shielded", operation))
+    await started.wait()
+    owner.cancel()
+    await asyncio.sleep(0)
+
+    assert not owner.done()
+    assert not settled.is_set()
+
+    release.set()
+    with pytest.raises(asyncio.CancelledError):
+        await owner
+
+    assert settled.is_set()
+    await agent_cleanup.drain_shielded_terminal_deliveries()
+
+
+async def test_terminal_delivery_admission_close_blocks_new_scope() -> None:
+    invoked = False
+
+    async def operation() -> str:
+        nonlocal invoked
+        invoked = True
+        return "unexpected"
+
+    agent_cleanup.close_terminal_delivery_admission()
+    try:
+        result = await agent_cleanup.shielded_terminal_delivery("run-closed", operation)
+    finally:
+        agent_cleanup.reopen_terminal_delivery_admission()
+
+    assert result is None
+    assert invoked is False
+
+
 class RecordingDb:
     def __init__(self) -> None:
         self.executed: list[tuple[str, tuple[object, ...]]] = []
@@ -24,6 +71,9 @@ class RecordingDb:
     def execute(self, sql: str, params: tuple[object, ...] = ()) -> SimpleNamespace:
         self.executed.append((sql, params))
         return SimpleNamespace(rowcount=1)
+
+    def bounded_transaction(self):
+        return nullcontext()
 
 
 class RecordingCompletionRegistry:
@@ -390,6 +440,77 @@ async def test_terminal_delivery_orders_remove_and_cleanup_after_awaited_notify(
     )
 
     assert events == ["notify", "remove", "cleanup"]
+
+
+@pytest.mark.asyncio
+async def test_acknowledged_stale_sweeps_deliver_each_transitioned_run() -> None:
+    run_manager = MagicMock()
+    run_manager.cleanup_stale_runs.return_value = ["run-timeout"]
+    run_manager.cleanup_stale_pending_runs.return_value = ["run-pending"]
+    run_manager.get.side_effect = [
+        SimpleNamespace(id="run-timeout", status="timeout", error="stale running"),
+        SimpleNamespace(id="run-pending", status="error", error="stale pending"),
+    ]
+    registry = MagicMock()
+    handler = _handler(
+        MagicMock(),
+        agent_run_manager=run_manager,
+        completion_registry=registry,
+    )
+
+    with patch.object(
+        agent_cleanup,
+        "deliver_and_cleanup_terminal_run",
+        new_callable=AsyncMock,
+    ) as deliver:
+        run_ids = await handler.run_acknowledged_stale_sweeps(
+            running_timeout_minutes=30,
+            pending_timeout_minutes=60,
+        )
+
+    assert run_ids == ["run-timeout", "run-pending"]
+    run_manager.cleanup_stale_runs.assert_called_once_with(default_timeout_minutes=30)
+    run_manager.cleanup_stale_pending_runs.assert_called_once_with(
+        timeout_minutes=60,
+        long_timeout_minutes=1440,
+    )
+    assert [call.kwargs["result"] for call in deliver.await_args_list] == [
+        {"status": "timeout", "run_id": "run-timeout", "error": "stale running"},
+        {"status": "error", "run_id": "run-pending", "error": "stale pending"},
+    ]
+
+
+@pytest.mark.asyncio
+async def test_deliver_existing_terminal_run_rereads_and_synthesizes_payload() -> None:
+    manager = MagicMock()
+    manager.get.return_value = SimpleNamespace(
+        id="run-terminal",
+        status="cancelled",
+        error="cancelled by user",
+    )
+
+    async def run_db(func, *args, **kwargs):
+        return func(*args, **kwargs)
+
+    with patch.object(
+        agent_cleanup,
+        "deliver_and_cleanup_terminal_run",
+        new_callable=AsyncMock,
+    ) as deliver:
+        delivered = await agent_cleanup.deliver_existing_terminal_run(
+            db=MagicMock(),
+            agent_run_manager=manager,
+            completion_registry=MagicMock(),
+            run_id="run-terminal",
+            run_db=run_db,
+        )
+
+    assert delivered is True
+    assert deliver.await_args.kwargs["result"] == {
+        "status": "cancelled",
+        "run_id": "run-terminal",
+        "error": "cancelled by user",
+    }
 
 
 @pytest.mark.asyncio

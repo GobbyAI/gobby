@@ -164,8 +164,10 @@ async def test_resume_agent_run_skips_started_side_effects_when_start_transition
         tmux_session_name: str | None,
         *,
         reason: str,
+        completion_registry: object | None,
     ) -> None:
         assert reason == "agent_run_start_skipped"
+        assert completion_registry is None
         killed_tmux_sessions.append((run_id, tmux_session_name))
 
     monkeypatch.setattr(
@@ -229,6 +231,12 @@ async def test_resume_agent_run_fails_before_spawn_when_task_claim_conflicts(
     spawner = MagicMock()
     task_manager = MagicMock()
     task_manager.get_task.return_value = {"claimed_by_session_id": "other-owner"}
+    completion_registry = object()
+    delivered: list[tuple[str, object]] = []
+
+    async def deliver_terminal_run(**kwargs: Any) -> bool:
+        delivered.append((kwargs["run_id"], kwargs["completion_registry"]))
+        return True
 
     monkeypatch.setattr(
         resume_executor,
@@ -236,6 +244,11 @@ async def test_resume_agent_run_fails_before_spawn_when_task_claim_conflicts(
         lambda **_kwargs: SimpleNamespace(session_id="child-new", env_vars={}),
     )
     monkeypatch.setattr(resume_executor, "_tmux_spawner", lambda *_args: spawner)
+    monkeypatch.setattr(
+        resume_executor,
+        "_deliver_existing_terminal_run_unshielded",
+        deliver_terminal_run,
+    )
 
     result = await resume_executor.resume_agent_run(
         original_run,
@@ -243,12 +256,14 @@ async def test_resume_agent_run_fails_before_spawn_when_task_claim_conflicts(
         runner=runner,
         session_manager=MagicMock(),
         task_manager=task_manager,
+        completion_registry=completion_registry,
     )
 
     assert result.success is False
     assert result.error == "resume_task_claim_conflict"
     spawner.spawn.assert_not_called()
     run_storage.fail.assert_called_once_with(result.run_id, error="resume_task_claim_conflict")
+    assert delivered == [(result.run_id, completion_registry)]
 
 
 @pytest.mark.asyncio

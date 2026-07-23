@@ -55,7 +55,8 @@ async def test_database_executor_limits_worker_count() -> None:
         assert max_active <= 2
         assert len(thread_ids) <= 2
     finally:
-        executor.shutdown(wait=True)
+        executor.shutdown()
+        executor.join()
 
 
 @pytest.mark.asyncio
@@ -96,7 +97,8 @@ async def test_database_executor_inherits_ambient_transaction(
         assert row is not None
         assert row["value"] == 1
     finally:
-        executor.shutdown(wait=True)
+        executor.shutdown()
+        executor.join()
         temp_db.execute("DROP TABLE IF EXISTS executor_transaction_isolation")
 
 
@@ -104,7 +106,39 @@ async def test_database_executor_inherits_ambient_transaction(
 async def test_database_executor_rejects_after_shutdown() -> None:
     """run() rejects work submitted after shutdown."""
     executor = DatabaseExecutor(max_workers=1)
-    executor.shutdown(wait=True)
+    executor.shutdown()
+    executor.join()
 
     with pytest.raises(RuntimeError, match="shut down"):
         await executor.run(lambda: 1)
+
+
+def test_database_executor_submit_returns_future() -> None:
+    executor = DatabaseExecutor(max_workers=1)
+    try:
+        future = executor.submit(lambda value: value + 1, 41)
+        assert future.result(timeout=2) == 42
+    finally:
+        executor.shutdown()
+        executor.join()
+
+
+def test_database_executor_shutdown_revokes_queued_submit() -> None:
+    executor = DatabaseExecutor(max_workers=1)
+    started = threading.Event()
+    release = threading.Event()
+
+    def blocking() -> None:
+        started.set()
+        release.wait(timeout=2)
+
+    running = executor.submit(blocking)
+    assert started.wait(timeout=2)
+    queued = executor.submit(lambda: "queued")
+
+    executor.shutdown(cancel_futures=True)
+    release.set()
+    running.result(timeout=2)
+    executor.join()
+
+    assert queued.cancelled()

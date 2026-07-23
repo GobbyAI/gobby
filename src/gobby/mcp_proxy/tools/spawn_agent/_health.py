@@ -19,6 +19,8 @@ _health_check_tasks: set[asyncio.Task[None]] = set()
 
 
 class _RunStorageForHealth(Protocol):
+    db: Any
+
     def get(self, run_id: str) -> Any | None: ...
 
     def fail(
@@ -40,6 +42,15 @@ def cancel_health_checks() -> None:
     for task in _health_check_tasks:
         task.cancel()
     _health_check_tasks.clear()
+
+
+async def cancel_and_await_health_checks() -> None:
+    """Cancel deferred health checks and await shielded terminal settlements."""
+    tasks = tuple(_health_check_tasks)
+    for task in tasks:
+        task.cancel()
+    if tasks:
+        await asyncio.gather(*tasks, return_exceptions=True)
 
 
 # Seconds to wait before checking if tmux session survived spawn.
@@ -85,6 +96,7 @@ async def _deferred_tmux_health_check(
     socket_name: str | None,
     socket_path: str | None,
     delay: float,
+    completion_registry: Any | None = None,
 ) -> None:
     try:
         await asyncio.sleep(delay)
@@ -103,10 +115,23 @@ async def _deferred_tmux_health_check(
                 tmux_session_name,
             )
             try:
-                runner.run_storage.fail(
+                failed = runner.run_storage.fail(
                     run_id,
                     error="Agent process exited immediately after spawn",
                 )
+                if failed is not None:
+                    from gobby.agents.agent_cleanup import (
+                        deliver_existing_terminal_run,
+                        run_terminal_delivery_offload,
+                    )
+
+                    await deliver_existing_terminal_run(
+                        db=runner.run_storage.db,
+                        agent_run_manager=runner.run_storage,
+                        completion_registry=completion_registry,
+                        run_id=run_id,
+                        run_db=run_terminal_delivery_offload,
+                    )
             except psycopg.Error as e:
                 logger.warning("Failed to mark agent_run %s as failed: %s", run_id, e)
     except asyncio.CancelledError:
@@ -121,6 +146,7 @@ def schedule_tmux_health_check(
     tmux_session_name: str,
     socket_name: str | None,
     socket_path: str | None,
+    completion_registry: Any | None = None,
     delay: float = TMUX_HEALTH_CHECK_DELAY,
 ) -> None:
     """Schedule a post-spawn tmux liveness check."""
@@ -132,6 +158,7 @@ def schedule_tmux_health_check(
             socket_name,
             socket_path,
             delay,
+            completion_registry,
         ),
         name=f"tmux-health-{run_id}",
     )

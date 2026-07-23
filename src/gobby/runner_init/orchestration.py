@@ -223,6 +223,7 @@ def init_orchestration(runner: GobbyRunner) -> None:
         tmux_sender=_send_tmux_session_wake,
         tmux_pane_sender=_send_tmux_pane_wake,
         agent_run_manager=agent_run_manager,
+        run_db=runner.db_executor.run,
     )
 
     runner.completion_registry = CompletionEventRegistry(

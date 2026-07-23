@@ -8,6 +8,11 @@ import logging
 from collections.abc import Awaitable, Callable, Sequence
 from typing import Any, cast
 
+from gobby.agents.agent_cleanup import (
+    _deliver_existing_terminal_run_unshielded,
+    run_terminal_delivery_offload,
+    shielded_terminal_delivery,
+)
 from gobby.dispatch.actions import SpawnAgentAction
 from gobby.dispatch.mutex import RuntimeDispatchMutex, RuntimeDispatchMutexError
 from gobby.dispatch.spawn import (
@@ -69,6 +74,7 @@ async def execute_spawn_action(
                 mutex=mutex,
                 db=db,
                 error=f"artifact persistence failed after spawn: {exc}",
+                completion_registry=getattr(services, "completion_registry", None),
                 cleanup_unattached_spawned_run=cleanup_unattached_spawned_run,
                 quarantine_unterminated_spawned_run=quarantine_unterminated_spawned_run,
             )
@@ -92,6 +98,7 @@ async def execute_spawn_action(
                 mutex=mutex,
                 db=db,
                 error=f"dispatch mutex attach failed: {exc}",
+                completion_registry=getattr(services, "completion_registry", None),
                 cleanup_unattached_spawned_run=cleanup_unattached_spawned_run,
                 quarantine_unterminated_spawned_run=quarantine_unterminated_spawned_run,
             )
@@ -115,6 +122,7 @@ async def execute_spawn_action(
                 mutex=mutex,
                 db=db,
                 error=error,
+                completion_registry=getattr(services, "completion_registry", None),
                 cleanup_unattached_spawned_run=cleanup_unattached_spawned_run,
                 quarantine_unterminated_spawned_run=quarantine_unterminated_spawned_run,
             )
@@ -133,6 +141,7 @@ async def _cleanup_or_quarantine_spawned_run(
     mutex: RuntimeDispatchMutex,
     db: HubDatabase,
     error: str,
+    completion_registry: Any | None,
     cleanup_unattached_spawned_run: AsyncCallback,
     quarantine_unterminated_spawned_run: AsyncCallback,
 ) -> bool:
@@ -140,7 +149,14 @@ async def _cleanup_or_quarantine_spawned_run(
 
     async def cleanup() -> bool:
         try:
-            terminated = bool(await cleanup_unattached_spawned_run(run_id, db=db, error=error))
+            terminated = bool(
+                await cleanup_unattached_spawned_run(
+                    run_id,
+                    db=db,
+                    error=error,
+                    completion_registry=completion_registry,
+                )
+            )
         except asyncio.CancelledError:
             await quarantine_unterminated_spawned_run(
                 action,
@@ -180,44 +196,62 @@ async def cleanup_unattached_spawned_run(
     *,
     db: HubDatabase,
     error: str,
+    completion_registry: Any | None = None,
 ) -> bool:
     run_storage = LocalAgentRunManager(db)
-    run = run_storage.get(run_id)
-    if run is None or run.status not in ("pending", "running"):
-        return True
 
-    try:
-        from gobby.agents.kill import kill_agent
+    async def cleanup() -> bool:
+        try:
+            run = await run_terminal_delivery_offload(run_storage.get, run_id)
+            if run is None or run.status not in ("pending", "running"):
+                return True
 
-        result = await kill_agent(run, db, close_terminal=True)
-    except Exception:
-        logger.exception(
-            "Failed to terminate unattached spawned agent run %s",
-            run_id,
-        )
-        return False
-    if not bool(result.get("success")):
-        logger.error(
-            "Could not confirm termination of unattached spawned agent run %s: %s",
-            run_id,
-            result.get("error") or result,
-        )
-        return False
+            try:
+                from gobby.agents.kill import kill_agent
 
-    try:
-        failed = run_storage.fail(run_id, error=f"dispatch spawn cleanup: {error}")
-    except Exception:
-        logger.exception(
-            "Terminated unattached spawned agent run %s but failed to persist terminal status",
-            run_id,
-        )
-        return False
-    if failed is None:
-        logger.debug(
-            "Unattached spawned agent run %s was already terminal during cleanup",
-            run_id,
-        )
-    return True
+                result = await kill_agent(run, db, close_terminal=True)
+            except Exception:
+                logger.exception(
+                    "Failed to terminate unattached spawned agent run %s",
+                    run_id,
+                )
+                return False
+            if not bool(result.get("success")):
+                logger.error(
+                    "Could not confirm termination of unattached spawned agent run %s: %s",
+                    run_id,
+                    result.get("error") or result,
+                )
+                return False
+
+            try:
+                failed = await run_terminal_delivery_offload(
+                    run_storage.fail,
+                    run_id,
+                    error=f"dispatch spawn cleanup: {error}",
+                )
+            except Exception:
+                logger.exception(
+                    "Terminated unattached spawned agent run %s but failed to persist terminal status",
+                    run_id,
+                )
+                return False
+            if failed is None:
+                logger.debug(
+                    "Unattached spawned agent run %s was already terminal during cleanup",
+                    run_id,
+                )
+            return True
+        finally:
+            await _deliver_existing_terminal_run_unshielded(
+                db=db,
+                agent_run_manager=run_storage,
+                completion_registry=completion_registry,
+                run_id=run_id,
+                run_db=run_terminal_delivery_offload,
+            )
+
+    return bool(await shielded_terminal_delivery(run_id, cleanup))
 
 
 async def quarantine_unterminated_spawned_run(

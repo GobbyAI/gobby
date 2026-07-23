@@ -7,7 +7,7 @@ import contextvars
 import functools
 import threading
 from collections.abc import Callable
-from concurrent.futures import ThreadPoolExecutor
+from concurrent.futures import Future, ThreadPoolExecutor
 from dataclasses import dataclass
 from typing import Any, TypeVar, cast
 
@@ -59,15 +59,18 @@ class DatabaseExecutor:
 
     async def run(self, func: Callable[..., T], *args: Any, **kwargs: Any) -> T:
         """Run blocking database work on the bounded executor."""
+        future = self.submit(func, *args, **kwargs)
+        return cast(T, await asyncio.wrap_future(future))
+
+    def submit(self, func: Callable[..., T], *args: Any, **kwargs: Any) -> Future[T]:
+        """Submit blocking database work for synchronous callers."""
+        call = functools.partial(self._execute, func, *args, **kwargs)
+        context = contextvars.copy_context()
         with self._lock:
             if self._shutdown:
                 raise RuntimeError("DatabaseExecutor is shut down")
             self._submitted += 1
-
-        call = functools.partial(self._execute, func, *args, **kwargs)
-        context = contextvars.copy_context()
-        loop = asyncio.get_running_loop()
-        return cast(T, await loop.run_in_executor(self._executor, context.run, call))
+            return self._executor.submit(context.run, call)
 
     def _execute(self, func: Callable[..., T], *args: Any, **kwargs: Any) -> T:
         with self._lock:
@@ -102,10 +105,14 @@ class DatabaseExecutor:
             shutdown=shutdown,
         )
 
-    def shutdown(self, *, wait: bool = True, cancel_futures: bool = False) -> None:
-        """Stop accepting work and shut down the underlying executor."""
+    def shutdown(self, *, cancel_futures: bool = True) -> None:
+        """Atomically stop admission and revoke queued work without blocking."""
         with self._lock:
             if self._shutdown:
                 return
             self._shutdown = True
-        self._executor.shutdown(wait=wait, cancel_futures=cancel_futures)
+            self._executor.shutdown(wait=False, cancel_futures=cancel_futures)
+
+    def join(self) -> None:
+        """Wait for running work after shutdown; callers must keep this off-loop."""
+        self._executor.shutdown(wait=True, cancel_futures=False)

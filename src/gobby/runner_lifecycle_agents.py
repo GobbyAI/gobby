@@ -348,9 +348,15 @@ async def _cleanup_missing_tmux_agent_run(
 
 async def _cancel_active_agent_runs_for_shutdown(runner: GobbyRunner) -> int:
     """Cancel live agent runs before subsystem teardown on daemon shutdown."""
-    if runner.agent_lifecycle_monitor is None or runner.agent_runner is None:
+    lifecycle_monitor = runner.agent_lifecycle_monitor
+    agent_runner = runner.agent_runner
+    if lifecycle_monitor is None or agent_runner is None:
         return 0
 
+    from gobby.agents.agent_cleanup import (
+        _deliver_existing_terminal_run_unshielded,
+        shielded_terminal_delivery,
+    )
     from gobby.agents.kill import kill_agent as _kill_agent_process
 
     cancelled = 0
@@ -360,24 +366,45 @@ async def _cancel_active_agent_runs_for_shutdown(runner: GobbyRunner) -> int:
             run.id,
             continuation_prompt=getattr(run, "continuation_prompt", None),
         )
-        result = await _kill_agent_process(
-            run,
-            runner.database,
-            signal_name="TERM",
-            close_terminal=True,
-        )
-        if not result.get("success") and result.get("error") != "No target PID found":
-            logger.warning(
-                "Failed to stop active agent %s during shutdown: %s",
-                run.id,
-                result.get("error"),
-            )
-            continue
 
-        transitioned = await runner.agent_lifecycle_monitor.terminalize_cancelled_run(
-            run.id,
-            terminal_reason="daemon_stop",
-        )
+        async def cancel_and_deliver(run: Any = run) -> bool:
+            try:
+                result = await _kill_agent_process(
+                    run,
+                    runner.database,
+                    signal_name="TERM",
+                    close_terminal=True,
+                )
+                if not result.get("success") and result.get("error") != "No target PID found":
+                    logger.warning(
+                        "Failed to stop active agent %s during shutdown; retaining its row and "
+                        "completion subscriptions for next-boot recovery: %s",
+                        run.id,
+                        result.get("error"),
+                    )
+                    return False
+
+                return bool(
+                    await lifecycle_monitor.terminalize_cancelled_run(
+                        run.id,
+                        terminal_reason="daemon_stop",
+                    )
+                )
+            finally:
+                await _deliver_existing_terminal_run_unshielded(
+                    db=runner.database,
+                    agent_run_manager=agent_runner.run_storage,
+                    completion_registry=runner.completion_registry,
+                    run_id=run.id,
+                    run_db=lambda func, *args, **kwargs: _run_db(
+                        runner,
+                        func,
+                        *args,
+                        **kwargs,
+                    ),
+                )
+
+        transitioned = bool(await shielded_terminal_delivery(run.id, cancel_and_deliver))
         if transitioned:
             cancelled += 1
 

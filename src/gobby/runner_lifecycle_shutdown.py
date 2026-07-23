@@ -5,9 +5,17 @@ from __future__ import annotations
 import asyncio
 import logging
 import os
+import threading
 from collections.abc import Awaitable, Callable
 from typing import TYPE_CHECKING, Any, Protocol
 
+from gobby.agents.agent_cleanup import (
+    close_terminal_delivery_admission,
+    detach_shielded_terminal_deliveries,
+    drain_shielded_terminal_deliveries,
+    reset_terminal_delivery_offload,
+)
+from gobby.mcp_proxy.tools.spawn_agent._health import cancel_and_await_health_checks
 from gobby.runner_lifecycle_agents import _list_active_agent_runs_once
 from gobby.shutdown_intent import ShutdownIntent, coerce_shutdown_intent, get_shutdown_marker_path
 
@@ -25,6 +33,10 @@ _HTTP_CONNECTION_GRACE_SECONDS = 0.25
 _HTTP_REQUEST_TASK_CANCEL_TIMEOUT_SECONDS = 1.0
 _GRACEFUL_SHUTDOWN_BUDGET_SECONDS = 14.0
 _OVERALL_SHUTDOWN_DEADLINE_SECONDS = 17.0
+_HEALTH_CHECK_SETTLE_SECONDS = 2.0
+_TERMINAL_DELIVERY_SETTLE_SECONDS = 6.0
+_DATABASE_EXECUTOR_JOIN_SECONDS = 6.0
+_FINALIZER_SETTLE_SECONDS = 10.0
 _GOBBY_SHUTDOWN_DRAIN_MESSAGE = "Gobby shutdown drain"
 
 
@@ -565,16 +577,133 @@ async def _close_managers_and_storage(runner: GobbyRunner) -> None:
 
 
 async def _shutdown_database_executor(db_executor: Any) -> None:
-    """Stop queued database work without stranding the event-loop executor."""
+    """Revoke queued database work and join bounded operations off-loop."""
+    if getattr(db_executor, "_gobby_shutdown_joined", False):
+        return
     try:
-        # ThreadPoolExecutor.shutdown(wait=False) is non-blocking. Running
-        # operations are allowed to finish while queued operations are
-        # cancelled. Do not put wait=True in asyncio's default executor: a
-        # timed-out to_thread call keeps running, and asyncio.run() waits for
-        # that worker again while closing the event loop.
-        db_executor.shutdown(wait=False, cancel_futures=True)
+        db_executor.shutdown(cancel_futures=True)
     except Exception as e:
         logger.warning("Database executor shutdown failed: %s", e)
+        return
+
+    loop = asyncio.get_running_loop()
+    joined: asyncio.Future[None] = loop.create_future()
+
+    def finish_join(exc: Exception | None = None) -> None:
+        if joined.done():
+            return
+        if exc is None:
+            joined.set_result(None)
+        else:
+            joined.set_exception(exc)
+
+    def join_executor() -> None:
+        try:
+            db_executor.join()
+        except Exception as exc:
+            loop.call_soon_threadsafe(finish_join, exc)
+        else:
+            loop.call_soon_threadsafe(finish_join)
+
+    threading.Thread(target=join_executor, name="gobby-db-join", daemon=True).start()
+    try:
+        await asyncio.wait_for(joined, timeout=_DATABASE_EXECUTOR_JOIN_SECONDS)
+        db_executor._gobby_shutdown_joined = True
+    except TimeoutError:
+        logger.error("Database executor did not settle before the shutdown deadline")
+    except Exception as e:
+        logger.warning("Database executor join failed: %s", e)
+
+
+async def _settle_terminal_delivery_barrier() -> None:
+    """Close delivery admission and settle all health and delivery producers."""
+    close_terminal_delivery_admission()
+    try:
+        await asyncio.wait_for(
+            cancel_and_await_health_checks(),
+            timeout=_HEALTH_CHECK_SETTLE_SECONDS,
+        )
+    except TimeoutError:
+        logger.error("Agent health checks did not settle before shutdown")
+
+    try:
+        await asyncio.wait_for(
+            drain_shielded_terminal_deliveries(),
+            timeout=_TERMINAL_DELIVERY_SETTLE_SECONDS,
+        )
+    except TimeoutError:
+        detached = detach_shielded_terminal_deliveries()
+        logger.error(
+            "Detached overdue terminal deliveries for next-boot recovery: %s",
+            detached,
+        )
+
+
+async def _run_terminal_delivery_finalizers(runner: GobbyRunner) -> None:
+    """Settle delivery scopes and revoke/join their owned executor."""
+    await _settle_terminal_delivery_barrier()
+    db_executor = getattr(runner, "db_executor", None)
+    if db_executor is not None:
+        await _shutdown_database_executor(db_executor)
+    reset_terminal_delivery_offload()
+
+
+async def _settle_finalizers_under_cancellation(
+    runner: GobbyRunner,
+) -> asyncio.CancelledError | None:
+    """Defer caller cancellation until the bounded finalizer has settled."""
+    loop = asyncio.get_running_loop()
+    deadline = loop.time() + _FINALIZER_SETTLE_SECONDS
+    owned = asyncio.create_task(
+        _run_terminal_delivery_finalizers(runner),
+        name="terminal-delivery-finalizer",
+    )
+    cancellation: asyncio.CancelledError | None = None
+    while not owned.done() and loop.time() < deadline:
+        try:
+            await asyncio.wait_for(
+                asyncio.shield(owned),
+                timeout=max(0.0, deadline - loop.time()),
+            )
+        except asyncio.CancelledError as exc:
+            cancellation = cancellation or exc
+        except TimeoutError:
+            break
+
+    if owned.done():
+        try:
+            owned.result()
+        except asyncio.CancelledError:
+            logger.error("Terminal delivery finalizer was cancelled internally")
+        except Exception:
+            logger.warning("Terminal delivery finalizer failed", exc_info=True)
+        return cancellation
+
+    detached = detach_shielded_terminal_deliveries()
+    logger.error(
+        "Terminal delivery finalizer exceeded %.1fs; detached work for next-boot recovery: %s",
+        _FINALIZER_SETTLE_SECONDS,
+        detached,
+    )
+
+    def consume_detached_result(task: asyncio.Task[None]) -> None:
+        try:
+            task.exception()
+        except asyncio.CancelledError:
+            pass
+
+    owned.add_done_callback(consume_detached_result)
+    owned.cancel()
+    db_executor = getattr(runner, "db_executor", None)
+    if db_executor is not None:
+        try:
+            db_executor.shutdown(cancel_futures=True)
+        except Exception:
+            logger.warning(
+                "Database executor revocation failed after finalizer expiry", exc_info=True
+            )
+    reset_terminal_delivery_offload()
+    return cancellation
 
 
 async def _run_graceful_shutdown_sequence(
@@ -689,6 +818,7 @@ async def _run_async_shutdown_cleanup(
     shutdown_telemetry: Callable[[], None],
 ) -> None:
     """Run bounded asynchronous cleanup before the synchronous finalizers."""
+    await _settle_terminal_delivery_barrier()
     preserved_agent_pids = (
         await _preserved_agent_terminal_pids(runner) if shutdown_intent.preserve_agents else set()
     )
@@ -707,6 +837,7 @@ async def _run_async_shutdown_cleanup(
             lambda: _shutdown_database_executor(db_executor),
             "Database executor shutdown",
         )
+    reset_terminal_delivery_offload()
 
 
 async def shutdown_daemon_services(
@@ -785,6 +916,8 @@ async def shutdown_daemon_services(
                 _OVERALL_SHUTDOWN_DEADLINE_SECONDS,
             )
     finally:
+        deferred_cancellation = await _settle_finalizers_under_cancellation(runner)
+
         try:
             runner.database.close()
         except Exception as e:
@@ -802,4 +935,6 @@ async def shutdown_daemon_services(
                     pass
                 except OSError as e:
                     logger.debug("Failed to remove shutdown marker during shutdown: %s", e)
+        if deferred_cancellation is not None:
+            raise deferred_cancellation
     logger.info("Shutdown complete")

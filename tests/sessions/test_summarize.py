@@ -334,7 +334,8 @@ class TestGenerateSessionSummaries:
             if connection_count is not None:
                 assert connection_count <= 1 + executor.max_workers
         finally:
-            executor.shutdown(wait=True)
+            executor.shutdown()
+            executor.join()
 
     @pytest.mark.asyncio
     async def test_full_generation_persists_revision_metadata_without_existing_watermark(

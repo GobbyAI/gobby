@@ -3,9 +3,11 @@ from __future__ import annotations
 import asyncio
 import logging
 import os
-from collections.abc import Awaitable, Callable
-from typing import TYPE_CHECKING, Any, cast
+from collections.abc import Awaitable, Callable, Coroutine
+from concurrent.futures import Future
+from typing import TYPE_CHECKING, Any, Protocol, cast
 
+from gobby.storage.agents import TERMINAL_AGENT_RUN_STATUSES
 from gobby.storage.attention import run_attention_entry_id
 
 if TYPE_CHECKING:
@@ -31,6 +33,141 @@ logger = logging.getLogger(__name__)
 SESSION_STATS_LOOKUP_TIMEOUT_SECONDS = 2.0
 
 
+class _TerminalRunStorage(Protocol):
+    db: Any
+
+    def get(self, run_id: str) -> Any | None: ...
+
+
+_terminal_delivery_admission_open = True
+_in_flight_terminal_deliveries: dict[asyncio.Task[Any], str] = {}
+
+
+async def _default_terminal_delivery_offload[T](
+    callback: Callable[..., T],
+    *args: object,
+    **kwargs: object,
+) -> T:
+    return await asyncio.to_thread(callback, *args, **kwargs)
+
+
+_terminal_delivery_offload: Callable[..., Awaitable[Any]] = _default_terminal_delivery_offload
+_terminal_delivery_submit: Callable[..., Future[Any]] | None = None
+
+
+def configure_terminal_delivery_offload(
+    *,
+    async_offload: Callable[..., Awaitable[Any]],
+    sync_submit: Callable[..., Future[Any]] | None = None,
+) -> None:
+    """Route terminal storage work through the owned daemon executor."""
+    global _terminal_delivery_offload, _terminal_delivery_submit
+    _terminal_delivery_offload = async_offload
+    _terminal_delivery_submit = sync_submit
+
+
+def reset_terminal_delivery_offload() -> None:
+    """Restore default executor seams for tests and pre-daemon callers."""
+    global _terminal_delivery_offload, _terminal_delivery_submit
+    _terminal_delivery_offload = _default_terminal_delivery_offload
+    _terminal_delivery_submit = None
+
+
+async def run_terminal_delivery_offload[T](
+    callback: Callable[..., T],
+    *args: object,
+    **kwargs: object,
+) -> T:
+    """Run blocking terminal storage work through the configured async seam."""
+    return cast(T, await _terminal_delivery_offload(callback, *args, **kwargs))
+
+
+def submit_terminal_delivery_offload[T](
+    callback: Callable[..., T],
+    *args: object,
+    **kwargs: object,
+) -> Future[T]:
+    """Submit terminal storage work from a synchronous hook thread."""
+    if _terminal_delivery_submit is not None:
+        return cast(Future[T], _terminal_delivery_submit(callback, *args, **kwargs))
+    future: Future[T] = Future()
+    try:
+        future.set_result(callback(*args, **kwargs))
+    except BaseException as exc:
+        future.set_exception(exc)
+    return future
+
+
+def close_terminal_delivery_admission() -> None:
+    """Prevent new terminal transition-and-delivery scopes from starting."""
+    global _terminal_delivery_admission_open
+    _terminal_delivery_admission_open = False
+
+
+def reopen_terminal_delivery_admission() -> None:
+    """Open terminal delivery admission for a newly-owned daemon lifecycle."""
+    if _in_flight_terminal_deliveries:
+        raise RuntimeError("Cannot reopen terminal delivery admission with work in flight")
+    global _terminal_delivery_admission_open
+    _terminal_delivery_admission_open = True
+
+
+async def shielded_terminal_delivery[T](
+    run_id: str,
+    operation: Callable[[], Coroutine[Any, Any, T]],
+) -> T | None:
+    """Settle one owned terminal transition-and-delivery operation under cancellation."""
+    if not _terminal_delivery_admission_open:
+        logger.info("Terminal delivery admission is closed for agent %s", run_id)
+        return None
+
+    owned: asyncio.Task[T] = asyncio.create_task(
+        operation(),
+        name=f"terminal-delivery:{run_id}",
+    )
+    _in_flight_terminal_deliveries[owned] = run_id
+    owned.add_done_callback(lambda task: _in_flight_terminal_deliveries.pop(task, None))
+
+    cancellation: asyncio.CancelledError | None = None
+    while not owned.done():
+        try:
+            await asyncio.shield(owned)
+        except asyncio.CancelledError as exc:
+            if cancellation is None:
+                cancellation = exc
+
+    if cancellation is not None:
+        try:
+            owned.result()
+        except BaseException:
+            logger.warning(
+                "Terminal delivery failed while caller cancellation settled for agent %s",
+                run_id,
+                exc_info=True,
+            )
+        raise cancellation
+    return owned.result()
+
+
+async def drain_shielded_terminal_deliveries() -> None:
+    """Await tracked terminal delivery scopes until the set is stably empty."""
+    while _in_flight_terminal_deliveries:
+        snapshot = tuple(_in_flight_terminal_deliveries)
+        await asyncio.gather(
+            *(asyncio.shield(task) for task in snapshot),
+            return_exceptions=True,
+        )
+
+
+def detach_shielded_terminal_deliveries() -> list[str]:
+    """Cancel overdue delivery work and retain durable rows for next-boot recovery."""
+    detached = list(_in_flight_terminal_deliveries.values())
+    for task in tuple(_in_flight_terminal_deliveries):
+        task.cancel()
+        _in_flight_terminal_deliveries.pop(task, None)
+    return detached
+
+
 async def deliver_and_cleanup_terminal_run(
     *,
     db: HubDatabase,
@@ -52,21 +189,26 @@ async def deliver_and_cleanup_terminal_run(
         except Exception:
             logger.warning("Failed to notify completion for %s", run_id, exc_info=True)
 
-    delivered_session_ids = [
-        session_id for session_id, delivered in (delivery or {}).items() if delivered
-    ]
+    delivered_session_ids = (
+        [session_id for session_id, delivered in delivery.items() if delivered]
+        if isinstance(delivery, dict)
+        else []
+    )
     try:
         if delivered_session_ids:
             from gobby.agents.completion_subscribers import (
                 remove_agent_completion_subscribers,
             )
 
-            await run_db(
-                remove_agent_completion_subscribers,
-                db=db,
-                run_id=run_id,
-                session_ids=delivered_session_ids,
-            )
+            def remove_delivered_subscribers() -> None:
+                with db.bounded_transaction():
+                    remove_agent_completion_subscribers(
+                        db=db,
+                        run_id=run_id,
+                        session_ids=delivered_session_ids,
+                    )
+
+            await run_db(remove_delivered_subscribers)
     except Exception:
         logger.warning(
             "Failed to remove delivered completion subscribers for agent %s",
@@ -76,6 +218,64 @@ async def deliver_and_cleanup_terminal_run(
     finally:
         completion_registry.cleanup(run_id)
     return delivery
+
+
+async def _deliver_existing_terminal_run_unshielded(
+    *,
+    db: HubDatabase,
+    agent_run_manager: _TerminalRunStorage,
+    completion_registry: CompletionEventRegistry | None,
+    run_id: str,
+    run_db: Callable[..., Awaitable[Any]],
+    message: str | None = None,
+) -> bool:
+    """Re-read one terminal run under bounds and deliver it without opening a scope."""
+
+    def read_terminal_run() -> AgentRun | None:
+        with db.bounded_transaction():
+            return agent_run_manager.get(run_id)
+
+    db_run = await run_db(read_terminal_run)
+    if db_run is None or db_run.status not in TERMINAL_AGENT_RUN_STATUSES:
+        return False
+    result = {
+        "status": db_run.status,
+        "run_id": db_run.id,
+        "error": db_run.error,
+    }
+    await deliver_and_cleanup_terminal_run(
+        db=db,
+        completion_registry=completion_registry,
+        run_id=run_id,
+        result=result,
+        message=message or f"Agent {run_id} {db_run.status}",
+        run_db=run_db,
+    )
+    return True
+
+
+async def deliver_existing_terminal_run(
+    *,
+    db: HubDatabase,
+    agent_run_manager: _TerminalRunStorage,
+    completion_registry: CompletionEventRegistry | None,
+    run_id: str,
+    run_db: Callable[..., Awaitable[Any]],
+    message: str | None = None,
+) -> bool:
+    """Shield a terminal re-read and acknowledged delivery from caller cancellation."""
+
+    async def operation() -> bool:
+        return await _deliver_existing_terminal_run_unshielded(
+            db=db,
+            agent_run_manager=agent_run_manager,
+            completion_registry=completion_registry,
+            run_id=run_id,
+            run_db=run_db,
+            message=message,
+        )
+
+    return bool(await shielded_terminal_delivery(run_id, operation))
 
 
 def cleanup_merged_task_artifacts_after_agent_exit(
@@ -438,6 +638,26 @@ class AgentCleanupHandler:
         message: str,
         completion_result: str | None = None,
     ) -> bool:
+        """Complete an active run through the cancellation-shielded delivery scope."""
+
+        async def operation() -> bool:
+            return await self._terminalize_successful_run_unshielded(
+                run_id,
+                notify_result=notify_result,
+                message=message,
+                completion_result=completion_result,
+            )
+
+        return bool(await shielded_terminal_delivery(run_id, operation))
+
+    async def _terminalize_successful_run_unshielded(
+        self,
+        run_id: str,
+        *,
+        notify_result: dict[str, Any],
+        message: str,
+        completion_result: str | None = None,
+    ) -> bool:
         """Complete an active run, notify subscribers, and clean child-owned state.
 
         Args:
@@ -511,6 +731,22 @@ class AgentCleanupHandler:
         return True
 
     async def terminalize_cancelled_run(
+        self,
+        run_id: str,
+        *,
+        terminal_reason: AgentRunTerminalReason,
+    ) -> bool:
+        """Cancel an active run through the cancellation-shielded delivery scope."""
+
+        async def operation() -> bool:
+            return await self._terminalize_cancelled_run_unshielded(
+                run_id,
+                terminal_reason=terminal_reason,
+            )
+
+        return bool(await shielded_terminal_delivery(run_id, operation))
+
+    async def _terminalize_cancelled_run_unshielded(
         self,
         run_id: str,
         *,
@@ -599,9 +835,54 @@ class AgentCleanupHandler:
 
     async def cleanup_stale_pending_runs(self) -> int:
         """Clean up agent runs stuck in pending status after daemon restart."""
-        return cast(
-            int,
-            await self._run_db(self._agent_run_manager.cleanup_stale_pending_runs),
+        run_ids = await self.run_acknowledged_stale_sweeps(pending_timeout_minutes=60)
+        return len(run_ids)
+
+    async def run_acknowledged_stale_sweeps(
+        self,
+        *,
+        running_timeout_minutes: int | None = None,
+        pending_timeout_minutes: int | None = None,
+        pending_long_timeout_minutes: int = 1440,
+    ) -> list[str]:
+        """Transition stale runs and await subscriber delivery for every returned ID."""
+
+        async def operation() -> list[str]:
+            transitioned: list[str] = []
+            if running_timeout_minutes is not None:
+                transitioned.extend(
+                    await self._run_db(
+                        self._agent_run_manager.cleanup_stale_runs,
+                        default_timeout_minutes=running_timeout_minutes,
+                    )
+                )
+            if pending_timeout_minutes is not None:
+                transitioned.extend(
+                    await self._run_db(
+                        self._agent_run_manager.cleanup_stale_pending_runs,
+                        timeout_minutes=pending_timeout_minutes,
+                        long_timeout_minutes=pending_long_timeout_minutes,
+                    )
+                )
+
+            run_ids = list(dict.fromkeys(transitioned))
+            for run_id in run_ids:
+                delivered = await _deliver_existing_terminal_run_unshielded(
+                    db=self._db,
+                    agent_run_manager=self._agent_run_manager,
+                    completion_registry=self._completion_registry,
+                    run_id=run_id,
+                    run_db=self._run_db,
+                )
+                if not delivered:
+                    logger.warning(
+                        "Stale sweep returned non-terminal agent run %s; retaining subscribers",
+                        run_id,
+                    )
+            return run_ids
+
+        return list(
+            await shielded_terminal_delivery("stale-sweeps", operation) or [],
         )
 
     async def cleanup_agent(

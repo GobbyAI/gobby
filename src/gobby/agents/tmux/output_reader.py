@@ -54,7 +54,7 @@ class TmuxOutputReader:
         self._session_names: dict[str, str] = {}  # run_id → tmux session
         self._lock = asyncio.Lock()
 
-    def set_output_callback(self, callback: OutputCallback) -> None:
+    def set_output_callback(self, callback: OutputCallback | None) -> None:
         """Set the async callback invoked with ``(run_id, text)``."""
         self._output_callback = callback
 

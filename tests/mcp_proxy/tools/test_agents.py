@@ -686,6 +686,11 @@ class TestStopAgent:
                     workflow_instance_rows=1,
                 ),
             ) as cleanup,
+            patch(
+                "gobby.agents.agent_cleanup._deliver_existing_terminal_run_unshielded",
+                new_callable=AsyncMock,
+                return_value=True,
+            ),
         ):
             result = await stop_agent(run_id="run-123")
 
@@ -1401,7 +1406,12 @@ class TestEndAgentRun:
             parent_session_id="aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaa4001",
         )
         runner.run_storage.get_by_session.return_value = mock_run
-        runner.get_run.return_value = mock_run
+        runner.get_run.return_value = _make_mock_agent_run(
+            run_id="run-123",
+            session_id="sess-456",
+            parent_session_id="aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaa4001",
+            status="success",
+        )
         runner.complete_run.return_value = True
         completion_registry = MagicMock()
         completion_registry.get_result.return_value = None
@@ -1425,7 +1435,7 @@ class TestEndAgentRun:
         runner.complete_run.assert_called_once_with("run-123", result=None)
         completion_registry.notify.assert_awaited_once_with(
             "run-123",
-            {"status": "success", "run_id": "run-123"},
+            result={"status": "success", "run_id": "run-123"},
             message="Agent run-123 completed",
         )
 

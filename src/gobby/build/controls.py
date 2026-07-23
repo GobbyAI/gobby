@@ -7,6 +7,11 @@ from dataclasses import asdict, dataclass, field, replace
 from datetime import UTC, datetime, timedelta
 from typing import Any, Literal, cast
 
+from gobby.agents.agent_cleanup import (
+    _deliver_existing_terminal_run_unshielded,
+    run_terminal_delivery_offload,
+    shielded_terminal_delivery,
+)
 from gobby.agents.kill import kill_agent
 from gobby.build.branch_cleanup import delete_orphan_build_branches
 from gobby.build.control_artifacts import (
@@ -505,31 +510,55 @@ async def _cancel_active_agents(
     services: object | None,
 ) -> None:
     lifecycle_monitor = getattr(services, "agent_lifecycle_monitor", None)
+    completion_registry = getattr(services, "completion_registry", None)
     run_manager = LocalAgentRunManager(db)
 
     for run in agents:
-        try:
-            result = await kill_agent(
-                run,
-                db,
-                signal_name="TERM",
-                timeout=5.0,
-                close_terminal=True,
-            )
-            if not result.get("success"):
-                logger.info("agent_kill_noop", extra={"run_id": run.id, "result": result})
-        except Exception as exc:
-            logger.warning("Failed to kill active build agent %s: %s", run.id, exc)
 
-        if lifecycle_monitor is not None:
-            transitioned = await lifecycle_monitor.terminalize_cancelled_run(
-                run.id,
-                terminal_reason="user_cancelled",
-            )
-        else:
-            transitioned = run_manager.cancel(run.id, terminal_reason="user_cancelled") is not None
-        if not transitioned:
-            logger.debug("Agent %s was already terminal while stopping build", run.id)
+        async def cancel_and_deliver(run: AgentRun = run) -> None:
+            try:
+                try:
+                    result = await kill_agent(
+                        run,
+                        db,
+                        signal_name="TERM",
+                        timeout=5.0,
+                        close_terminal=True,
+                    )
+                    if not result.get("success"):
+                        logger.info(
+                            "agent_kill_noop",
+                            extra={"run_id": run.id, "result": result},
+                        )
+                except Exception as exc:
+                    logger.warning("Failed to kill active build agent %s: %s", run.id, exc)
+
+                if lifecycle_monitor is not None:
+                    transitioned = await lifecycle_monitor.terminalize_cancelled_run(
+                        run.id,
+                        terminal_reason="user_cancelled",
+                    )
+                else:
+                    transitioned = (
+                        await run_terminal_delivery_offload(
+                            run_manager.cancel,
+                            run.id,
+                            terminal_reason="user_cancelled",
+                        )
+                        is not None
+                    )
+                if not transitioned:
+                    logger.debug("Agent %s was already terminal while stopping build", run.id)
+            finally:
+                await _deliver_existing_terminal_run_unshielded(
+                    db=db,
+                    agent_run_manager=run_manager,
+                    completion_registry=completion_registry,
+                    run_id=run.id,
+                    run_db=run_terminal_delivery_offload,
+                )
+
+        await shielded_terminal_delivery(run.id, cancel_and_deliver)
 
 
 def _clear_stale_dispatch_mutexes(

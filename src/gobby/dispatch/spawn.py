@@ -244,6 +244,7 @@ async def spawn_agent(
         initial_variables=initial_variables,
         session_manager=session_manager,
         db=db,
+        completion_registry=getattr(services, "completion_registry", None),
         daemon_config=getattr(services, "config", None),
         code_index=getattr(services, "code_indexer", None),
         held_task_mutex=mutex,

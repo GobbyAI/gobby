@@ -7,6 +7,7 @@ import gc
 import logging
 import weakref
 from dataclasses import dataclass
+from typing import Any
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
@@ -58,6 +59,61 @@ def tmux_sender() -> AsyncMock:
 
 class TestWakeDispatch:
     """Route wake messages based on session type."""
+
+    @pytest.mark.asyncio
+    async def test_wake_routes_database_work_through_owned_executor(
+        self,
+        session_manager: MagicMock,
+        ism_manager: MagicMock,
+    ) -> None:
+        session_manager.get.return_value = FakeSession(id=WAKE_SESSION_ID, agent_depth=0)
+        offloaded: list[str] = []
+
+        async def run_db(func: Any, *args: Any, **kwargs: Any) -> Any:
+            offloaded.append(func.__name__)
+            return func(*args, **kwargs)
+
+        dispatcher = WakeDispatcher(
+            session_manager=session_manager,
+            ism_manager=ism_manager,
+            run_db=run_db,
+        )
+
+        result = await dispatcher.wake(WAKE_SESSION_ID, "done", {"status": "completed"})
+
+        assert result["ism_persisted"] is True
+        assert offloaded == ["read_session", "persist_notification"]
+
+    @pytest.mark.asyncio
+    async def test_live_wake_client_timeout_returns_structured_failure(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+        session_manager: MagicMock,
+        ism_manager: MagicMock,
+    ) -> None:
+        session_manager.get.return_value = FakeSession(
+            id=WAKE_SESSION_ID,
+            agent_depth=0,
+            terminal_context={"tmux_pane": "%1"},
+        )
+
+        async def blocked_sender(*_args: object, **_kwargs: object) -> None:
+            await asyncio.Event().wait()
+
+        monkeypatch.setattr("gobby.events.wake.LIVE_WAKE_TIMEOUT_SECONDS", 0.01)
+        dispatcher = WakeDispatcher(
+            session_manager=session_manager,
+            ism_manager=ism_manager,
+            tmux_pane_sender=blocked_sender,
+        )
+
+        result = await asyncio.wait_for(
+            dispatcher.dispatch_live_wake(WAKE_SESSION_ID),
+            timeout=0.2,
+        )
+
+        assert result["delivered"] is False
+        assert result["error_code"] == "tmux_pane_wake_failed"
 
     @pytest.mark.asyncio
     async def test_interactive_session_gets_ism(

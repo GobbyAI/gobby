@@ -7,12 +7,47 @@ from collections.abc import Mapping, Sequence
 from typing import Protocol
 
 from gobby.agents.resume_metadata import dump_resume_metadata
+from gobby.deployment import deployment_advisory_key
+from gobby.storage.hub._ambient import ambient_transaction
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.utils.datetime import utc_now
 
 from ._constants import TERMINAL_AGENT_RUN_STATUSES, AgentRunTerminalReason, logger
 from ._helpers import _positive_rowcount
 from ._models import AgentRun
+
+
+class TerminalTransitionNestedError(RuntimeError):
+    """Raised when a terminal transition is attempted inside an ambient transaction."""
+
+
+def terminal_fence_key() -> int:
+    """Return the deployment-scoped fence shared by terminal writers and boot recovery."""
+    return deployment_advisory_key("agent-terminal-transition")
+
+
+def _execute_terminal_transition(
+    host: _AgentRunLifecycleHost,
+    *,
+    run_id: str,
+    sql: str,
+    params: Sequence[object],
+) -> AgentRun | None:
+    if ambient_transaction(host.db) is not None:
+        raise TerminalTransitionNestedError(
+            f"Terminal transition for agent {run_id} cannot run inside a transaction"
+        )
+
+    with host.db.bounded_transaction() as txn:
+        txn.execute(
+            "SELECT pg_advisory_xact_lock_shared(%s)",
+            (terminal_fence_key(),),
+        )
+        cursor = txn.execute(sql, params)
+        if not _positive_rowcount(cursor):
+            return None
+        host._expire_sessions_for_run_ids([run_id])
+        return host.get(run_id)
 
 
 class _AgentRunLifecycleHost(Protocol):
@@ -129,6 +164,7 @@ class _AgentRunLifecycleMixin:
         if not _positive_rowcount(cursor):
             return None
         return self.get(run_id)
+        return self.get(run_id)
 
     def _expire_sessions_for_run_ids(
         self: _AgentRunLifecycleHost,
@@ -210,8 +246,10 @@ class _AgentRunLifecycleMixin:
             Updated AgentRun.
         """
         now = utc_now()
-        cursor = self.db.execute(
-            """
+        return _execute_terminal_transition(
+            self,
+            run_id=run_id,
+            sql="""
             UPDATE agent_runs
             SET status = 'success',
                 result = COALESCE(%s, result),
@@ -228,12 +266,8 @@ class _AgentRunLifecycleMixin:
             WHERE id = %s
               AND status IN ('pending', 'running')
             """,
-            (result, tool_calls_count, turns_used, now, now, run_id),
+            params=(result, tool_calls_count, turns_used, now, now, run_id),
         )
-        if not _positive_rowcount(cursor):
-            return None
-        self._expire_sessions_for_run_ids([run_id])
-        return self.get(run_id)
 
     def fail(
         self: _AgentRunLifecycleHost,
@@ -256,8 +290,10 @@ class _AgentRunLifecycleMixin:
             Updated AgentRun.
         """
         now = utc_now()
-        cursor = self.db.execute(
-            """
+        return _execute_terminal_transition(
+            self,
+            run_id=run_id,
+            sql="""
             UPDATE agent_runs
             SET status = 'error',
                 error = %s,
@@ -275,12 +311,8 @@ class _AgentRunLifecycleMixin:
             WHERE id = %s
               AND status IN ('pending', 'running')
             """,
-            (error, result, tool_calls_count, turns_used, now, now, run_id),
+            params=(error, result, tool_calls_count, turns_used, now, now, run_id),
         )
-        if not _positive_rowcount(cursor):
-            return None
-        self._expire_sessions_for_run_ids([run_id])
-        return self.get(run_id)
 
     def timeout(
         self: _AgentRunLifecycleHost,
@@ -292,8 +324,10 @@ class _AgentRunLifecycleMixin:
     ) -> AgentRun | None:
         """Mark agent run as timed out."""
         now = utc_now()
-        cursor = self.db.execute(
-            """
+        return _execute_terminal_transition(
+            self,
+            run_id=run_id,
+            sql="""
             UPDATE agent_runs
             SET status = 'timeout',
                 error = %s,
@@ -311,12 +345,8 @@ class _AgentRunLifecycleMixin:
             WHERE id = %s
               AND status IN ('pending', 'running')
             """,
-            (error, result, tool_calls_count, turns_used, now, now, run_id),
+            params=(error, result, tool_calls_count, turns_used, now, now, run_id),
         )
-        if not _positive_rowcount(cursor):
-            return None
-        self._expire_sessions_for_run_ids([run_id])
-        return self.get(run_id)
 
     def cancel(
         self: _AgentRunLifecycleHost,
@@ -327,8 +357,10 @@ class _AgentRunLifecycleMixin:
     ) -> AgentRun | None:
         """Mark agent run as cancelled."""
         now = utc_now()
-        cursor = self.db.execute(
-            """
+        return _execute_terminal_transition(
+            self,
+            run_id=run_id,
+            sql="""
             UPDATE agent_runs
             SET status = 'cancelled',
                 terminal_reason = %s,
@@ -343,9 +375,5 @@ class _AgentRunLifecycleMixin:
             WHERE id = %s
               AND status IN ('pending', 'running')
             """,
-            (terminal_reason, result, now, now, run_id),
+            params=(terminal_reason, result, now, now, run_id),
         )
-        if not _positive_rowcount(cursor):
-            return None
-        self._expire_sessions_for_run_ids([run_id])
-        return self.get(run_id)

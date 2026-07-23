@@ -5,9 +5,9 @@ from __future__ import annotations
 import atexit
 import importlib.resources
 import logging
-import os
 import re
 import threading
+import uuid
 from collections.abc import AsyncIterator, Callable, Iterable, Iterator, Mapping, Sequence
 from contextlib import asynccontextmanager, contextmanager
 from typing import Any, Literal, cast
@@ -17,6 +17,7 @@ from psycopg.rows import dict_row
 from psycopg_pool import ConnectionPool
 
 from gobby.config.postgres_pool import DEFAULT_POSTGRES_POOL_CONFIG, PostgresPoolConfig
+from gobby.deployment import deployment_token
 from gobby.storage.hub import postgres_pool as _postgres_pool
 from gobby.storage.hub._ambient import ambient_transaction
 from gobby.storage.hub.protocol import (
@@ -183,7 +184,8 @@ class PostgresHubDatabase:
         pool_config: PostgresPoolConfig = DEFAULT_POSTGRES_POOL_CONFIG,
     ) -> None:
         self._conninfo = _postgres_pool._conninfo_with_utc_session_timezone(dsn)
-        self._application_name = os.getenv("PGAPPNAME", "gobby")
+        self._deployment_token = deployment_token()
+        self._application_name = f"gobby-hub-{self._deployment_token}-{uuid.uuid4().hex[:8]}"
         self._pool = ConnectionPool(
             conninfo=self._conninfo,
             open=False,
@@ -192,6 +194,11 @@ class PostgresHubDatabase:
             timeout=pool_config.acquire_timeout_seconds,
             kwargs={
                 "application_name": self._application_name,
+                "connect_timeout": 10,
+                "keepalives": 1,
+                "keepalives_idle": 30,
+                "keepalives_interval": 10,
+                "keepalives_count": 3,
                 "prepare_threshold": None,
                 "row_factory": dict_row,
             },
@@ -206,6 +213,11 @@ class PostgresHubDatabase:
     def conninfo(self) -> str:
         """Return the normalized connection string without exposing the sync pool."""
         return self._conninfo
+
+    @property
+    def application_name(self) -> str:
+        """Return this lifecycle's unique hub-backend marker."""
+        return self._application_name
 
     def open(self, *, wait: bool = True, timeout: float | None = None) -> None:
         """Open the lazy connection pool before first use."""
@@ -249,6 +261,21 @@ class PostgresHubDatabase:
     @contextmanager
     def transaction(self) -> Iterator[Transaction]:
         with _postgres_pool.transaction(self, self._native_transaction) as txn:
+            yield txn
+
+    @contextmanager
+    def bounded_transaction(
+        self,
+        *,
+        statement_timeout_ms: int = 5_000,
+        lock_timeout_ms: int = 5_000,
+    ) -> Iterator[Transaction]:
+        """Open a transaction with server-enforced local operation bounds."""
+        if statement_timeout_ms <= 0 or lock_timeout_ms <= 0:
+            raise ValueError("Transaction bounds must be positive milliseconds")
+        with self.transaction() as txn:
+            txn.execute(f"SET LOCAL statement_timeout = '{statement_timeout_ms}ms'")
+            txn.execute(f"SET LOCAL lock_timeout = '{lock_timeout_ms}ms'")
             yield txn
 
     @contextmanager

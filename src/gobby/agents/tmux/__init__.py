@@ -43,6 +43,8 @@ __all__ = [
     "get_tmux_pane_monitor",
     "get_tmux_session_manager",
     "needs_wsl",
+    "reset_tmux_globals",
+    "reset_tmux_output_callback",
     "set_tmux_pane_monitor",
 ]
 
@@ -121,3 +123,20 @@ def set_tmux_pane_monitor(monitor: TmuxPaneMonitor | None) -> None:
     global _pane_monitor
     with _lock:
         _pane_monitor = monitor
+
+
+def reset_tmux_globals() -> None:
+    """Clear daemon-owned tmux singletons after failed construction."""
+    global _configured_tmux_config, _output_reader, _pane_monitor, _session_manager
+    with _lock:
+        _configured_tmux_config = None
+        _session_manager = None
+        _output_reader = None
+        _pane_monitor = None
+
+
+def reset_tmux_output_callback() -> None:
+    """Clear the output callback without constructing daemon tmux state."""
+    with _lock:
+        if _output_reader is not None:
+            _output_reader.set_output_callback(None)

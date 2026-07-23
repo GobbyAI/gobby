@@ -9,6 +9,10 @@ from typing import TYPE_CHECKING, Any
 from uuid import uuid4
 
 from gobby.agents import kill as agent_kill
+from gobby.agents.agent_cleanup import (
+    _deliver_existing_terminal_run_unshielded,
+    shielded_terminal_delivery,
+)
 from gobby.agents.sandbox import web_chat_sandbox_config, web_chat_sandbox_policy_hash
 from gobby.servers.websocket.db import run_db
 from gobby.servers.websocket.handlers.session_observe_support import (
@@ -50,7 +54,28 @@ async def _release_source_session(
             run = arm.get_by_session(source_session_id)
             if run:
                 logger.info("Killing agent %s before resume", run.id)
-                await agent_kill.kill_agent(run, session_manager.db, close_terminal=True)
+
+                async def run_storage(func: Any, *args: Any, **kwargs: Any) -> Any:
+                    return await run_db(mixin, func, *args, **kwargs)
+
+                async def kill_and_deliver() -> None:
+                    try:
+                        await agent_kill.kill_agent(run, session_manager.db, close_terminal=True)
+                        await run_storage(
+                            arm.cancel,
+                            run.id,
+                            terminal_reason="user_cancelled",
+                        )
+                    finally:
+                        await _deliver_existing_terminal_run_unshielded(
+                            db=session_manager.db,
+                            agent_run_manager=arm,
+                            completion_registry=mixin.completion_registry,
+                            run_id=run.id,
+                            run_db=run_storage,
+                        )
+
+                await shielded_terminal_delivery(run.id, kill_and_deliver)
                 killed = True
                 await asyncio.sleep(_POST_KILL_SETTLE_SECONDS)
         except Exception as exc:

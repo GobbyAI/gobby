@@ -13,7 +13,7 @@ from typing import TYPE_CHECKING, Any
 import yaml
 from fastapi import APIRouter, HTTPException, Query
 from fastapi.responses import Response
-from pydantic import BaseModel, ValidationError, field_validator
+from pydantic import BaseModel, Field, ValidationError, field_validator
 
 from gobby.agents.reasoning import normalize_reasoning_effort
 from gobby.storage.hub.protocol import WorkflowDefinitionMutation
@@ -133,6 +133,12 @@ class UpdateAgentDefinitionRequest(BaseModel):
         if value is None:
             return None
         return normalize_reasoning_effort(str(value))
+
+
+class CleanupAgentRunsRequest(BaseModel):
+    """Parameters for daemon-owned stale agent cleanup."""
+
+    timeout_minutes: int = Field(default=30, ge=1)
 
 
 async def _batch_load_session_info(
@@ -713,10 +719,26 @@ def create_agents_router(server: "HTTPServer") -> APIRouter:
             logger.exception("Error getting agent run detail: %s", e)
             raise HTTPException(status_code=500, detail="Internal server error") from e
 
+    @router.post("/cleanup")
+    async def cleanup_agent_runs(request: CleanupAgentRunsRequest) -> dict[str, Any]:
+        """Run stale transitions and subscriber delivery inside the daemon lifecycle."""
+        monitor = server.services.agent_lifecycle_monitor
+        if monitor is None:
+            raise HTTPException(status_code=503, detail="Agent lifecycle monitor is unavailable")
+        run_ids = await monitor.run_acknowledged_stale_sweeps(
+            running_timeout_minutes=request.timeout_minutes,
+            pending_timeout_minutes=60,
+        )
+        return {"run_ids": run_ids}
+
     @router.post("/runs/{run_id}/cancel")
     async def cancel_agent_run(run_id: str) -> dict[str, Any]:
         """Cancel a running agent."""
         try:
+            from gobby.agents.agent_cleanup import (
+                _deliver_existing_terminal_run_unshielded,
+                shielded_terminal_delivery,
+            )
             from gobby.agents.kill import kill_agent
             from gobby.storage.agents import LocalAgentRunManager
 
@@ -731,12 +753,30 @@ def create_agents_router(server: "HTTPServer") -> APIRouter:
                     detail=f"Agent run '{run_id}' is not active (status={run.status})",
                 )
 
-            try:
-                result = await kill_agent(run, db, signal_name="TERM")
-            finally:
-                _reconcile_cancelled_agent_run(manager, run_id)
+            async def cancel_and_deliver() -> dict[str, Any]:
+                try:
+                    result = await kill_agent(run, db, signal_name="TERM")
+                finally:
+                    try:
+                        await server.services.run_db(
+                            _reconcile_cancelled_agent_run,
+                            manager,
+                            run_id,
+                        )
+                    finally:
+                        await _deliver_existing_terminal_run_unshielded(
+                            db=db,
+                            agent_run_manager=manager,
+                            completion_registry=server.services.completion_registry,
+                            run_id=run_id,
+                            run_db=server.services.run_db,
+                        )
+                return {"status": "success", "result": result}
 
-            return {"status": "success", "result": result}
+            response = await shielded_terminal_delivery(run_id, cancel_and_deliver)
+            if response is None:
+                raise HTTPException(status_code=503, detail="Daemon shutdown is in progress")
+            return response
         except HTTPException:
             raise
         except Exception as e:

@@ -410,7 +410,13 @@ class TestRecoverTaskFromFailedAgent:
     async def test_cleanup_stale_pending_runs(self) -> None:
         """Tests that cleanup_stale_pending_runs calls the manager method correctly."""
         mock_run_mgr = MagicMock()
-        mock_run_mgr.cleanup_stale_pending_runs.return_value = 5
+        mock_run_mgr.cleanup_stale_pending_runs.return_value = [
+            "run-1",
+            "run-2",
+            "run-3",
+            "run-4",
+            "run-5",
+        ]
 
         monitor = AgentLifecycleMonitor(
             detection_registry=DETECTION_REGISTRY,

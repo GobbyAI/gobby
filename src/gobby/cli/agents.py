@@ -841,8 +841,17 @@ def cleanup_agents(timeout: int, dry_run: bool) -> None:
         for row in stale_pending[:5]:
             click.echo(f"  {row['id']}: created {row['created_at']}")
     else:
-        with agent_run_manager_context() as manager:
-            timed_out = manager.cleanup_stale_runs(default_timeout_minutes=timeout)
-            failed = manager.cleanup_stale_pending_runs(timeout_minutes=60)
+        try:
+            response = get_daemon_client().call_http_api(
+                "/api/agents/cleanup",
+                json_data={"timeout_minutes": timeout},
+            )
+            response.raise_for_status()
+            payload = response.json()
+            run_ids = payload["run_ids"]
+            if not isinstance(run_ids, list) or not all(isinstance(item, str) for item in run_ids):
+                raise ValueError("Daemon cleanup response has invalid run_ids")
+        except (httpx.HTTPError, KeyError, TypeError, ValueError) as exc:
+            raise click.ClickException(f"Agent cleanup failed: {exc}") from exc
 
-        click.echo(f"Cleaned up {timed_out} timed-out runs and {failed} stale pending runs.")
+        click.echo(f"Cleaned up {len(run_ids)} stale agent runs.")

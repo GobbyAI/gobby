@@ -301,6 +301,8 @@ class TestContinueInChatTerminalKill:
         host._pending_projects = {}
         host._pending_providers = {}
         host._pending_inject_contexts = {}
+        host.completion_registry = None
+        host.run_db = AsyncMock(side_effect=lambda func, *args, **kwargs: func(*args, **kwargs))
         return host
 
     @pytest.mark.asyncio
@@ -498,6 +500,11 @@ class TestContinueInChatTerminalKill:
                 new_callable=AsyncMock,
                 return_value=None,
             ),
+            patch(
+                "gobby.servers.websocket.handlers.session_observe_continue."
+                "_deliver_existing_terminal_run_unshielded",
+                new=AsyncMock(return_value=True),
+            ) as deliver_terminal_run,
         ):
             mock_arm_cls.return_value.get_by_session.return_value = mock_run
             await SessionControlMixin._handle_continue_in_chat(
@@ -516,6 +523,7 @@ class TestContinueInChatTerminalKill:
         mock_kill_terminal.assert_not_called()
         assert mock_kill_terminal.call_count == 0
         assert not mock_kill_terminal.called
+        assert deliver_terminal_run.await_args.kwargs["run_id"] == mock_run.id
         session_manager.update_parent_session_id.assert_not_called()
         assert session_manager.update_parent_session_id.call_count == 0
         assert not session_manager.update_parent_session_id.called

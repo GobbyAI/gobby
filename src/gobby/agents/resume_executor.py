@@ -13,6 +13,11 @@ from typing import Any, Protocol
 
 import psycopg
 
+from gobby.agents.agent_cleanup import (
+    _deliver_existing_terminal_run_unshielded,
+    run_terminal_delivery_offload,
+    shielded_terminal_delivery,
+)
 from gobby.agents.capture import CaptureStorage, capture_then_kill_async
 from gobby.agents.resume_metadata import merge_resume_metadata_env
 from gobby.agents.sandbox import coerce_sandbox_config, get_sandbox_resolver
@@ -46,6 +51,8 @@ class _ResumePreflightError(RuntimeError):
 
 
 class _RunStorage(CaptureStorage, Protocol):
+    db: Any
+
     def update_resume_metadata(self, run_id: str, metadata: dict[str, Any]) -> Any: ...
 
     def update_child_session(self, run_id: str, child_session_id: str) -> Any: ...
@@ -89,6 +96,7 @@ async def resume_agent_run(
     task_manager: Any | None = None,
     worktree_manager: Any | None = None,
     daemon_config: Any | None = None,
+    completion_registry: Any | None = None,
 ) -> ResumeAgentResult:
     """Start a provider-native resume process for a daemon-stop run.
 
@@ -177,7 +185,7 @@ async def resume_agent_run(
         )
     except _ResumePreflightError as exc:
         error = str(exc)
-        _fail_run(runner, run_id, error)
+        await _fail_run(runner, run_id, error, completion_registry=completion_registry)
         return ResumeAgentResult(False, run_id=run_id, error=error)
     except (ValueError, psycopg.Error) as exc:
         error = f"resume_preflight_failed:{type(exc).__name__}"
@@ -187,7 +195,7 @@ async def resume_agent_run(
             exc_info=True,
             extra={"run_id": run_id, "original_run_id": original_run.id, "error": str(exc)},
         )
-        _fail_run(runner, run_id, error)
+        await _fail_run(runner, run_id, error, completion_registry=completion_registry)
         return ResumeAgentResult(False, run_id=run_id, error=error)
 
     env = merge_resume_metadata_env(resume_metadata.get("env"))
@@ -202,7 +210,12 @@ async def resume_agent_run(
                 resolver = get_sandbox_resolver(provider)
             except ValueError:
                 error = f"resume_sandbox_unsupported:{provider}"
-                _fail_run(runner, run_id, error)
+                await _fail_run(
+                    runner,
+                    run_id,
+                    error,
+                    completion_registry=completion_registry,
+                )
                 return ResumeAgentResult(False, run_id=run_id, error=error)
         daemon_port = int(getattr(daemon_config, "daemon_port", 60887))
         websocket = getattr(daemon_config, "websocket", None)
@@ -221,7 +234,7 @@ async def resume_agent_run(
             )
         except (OSError, ValueError, SrtRuntimeError) as exc:
             error = f"resume_sandbox_failed_closed:{type(exc).__name__}:{exc}"
-            _fail_run(runner, run_id, error)
+            await _fail_run(runner, run_id, error, completion_registry=completion_registry)
             return ResumeAgentResult(False, run_id=run_id, error=error)
     env.update(launch.provider_env)
     update_sandbox_enabled = getattr(runner.child_session_manager, "update_sandbox_enabled", None)
@@ -276,15 +289,20 @@ async def resume_agent_run(
         logger.warning("Failed to persist resumed launch metadata for %s", run_id, exc_info=True)
 
     pre_approve_directory(provider, cwd)
-    terminal_result = await asyncio.to_thread(
-        _tmux_spawner(daemon_config, resume_metadata).spawn,
-        command=command,
-        cwd=cwd,
-        env=env,
-    )
+    try:
+        terminal_result = await asyncio.to_thread(
+            _tmux_spawner(daemon_config, resume_metadata).spawn,
+            command=command,
+            cwd=cwd,
+            env=env,
+        )
+    except Exception as exc:
+        error = f"resume_spawn_failed:{type(exc).__name__}:{exc}"
+        await _fail_run(runner, run_id, error, completion_registry=completion_registry)
+        return ResumeAgentResult(False, run_id=run_id, error=error)
     if not terminal_result.success:
         error = terminal_result.error or terminal_result.message or "resume_spawn_failed"
-        _fail_run(runner, run_id, error)
+        await _fail_run(runner, run_id, error, completion_registry=completion_registry)
         return ResumeAgentResult(False, run_id=run_id, error=error)
 
     tmux_session_name = getattr(terminal_result, "tmux_session_name", None)
@@ -305,9 +323,8 @@ async def resume_agent_run(
             run_id,
             tmux_session_name,
             reason=error,
+            completion_registry=completion_registry,
         )
-        if not tmux_session_name:
-            _fail_run(runner, run_id, error)
         return ResumeAgentResult(False, run_id=run_id, error=error)
     if started_run is None:
         await _kill_spawned_tmux_session(
@@ -315,6 +332,7 @@ async def resume_agent_run(
             run_id,
             tmux_session_name,
             reason="agent_run_start_skipped",
+            completion_registry=completion_registry,
         )
         return ResumeAgentResult(False, run_id=run_id, error="agent_run_start_skipped")
     _fire_resume_started(original_run, run_id, provider, terminal_result, parent_session_id)
@@ -442,44 +460,63 @@ def _worktree_manager_from_runner(runner: _ResumeRunner) -> Any | None:
 
 
 async def _kill_spawned_tmux_session(
-    storage: CaptureStorage,
+    storage: _RunStorage,
     run_id: str,
     tmux_session_name: str | None,
     *,
     reason: str,
+    completion_registry: Any | None,
 ) -> None:
-    if not tmux_session_name:
-        return
-    try:
-        from gobby.agents.tmux import get_tmux_session_manager
+    async def operation() -> None:
+        try:
+            if not tmux_session_name:
+                await run_terminal_delivery_offload(storage.fail, run_id, error=reason)
+                return
 
-        run = await asyncio.to_thread(storage.get, run_id)
-        if run is None:
-            logger.warning(
-                "Refusing raw tmux kill for missing resumed run %s",
-                run_id,
+            from gobby.agents.tmux import get_tmux_session_manager
+
+            run = await run_terminal_delivery_offload(storage.get, run_id)
+            if run is None:
+                logger.warning(
+                    "Refusing raw tmux kill for missing resumed run %s",
+                    run_id,
+                )
+                return
+            tmux = get_tmux_session_manager()
+            session_name = str(tmux_session_name)
+            result = await capture_then_kill_async(
+                storage=storage,
+                run_id=run.id,
+                session_name=session_name,
+                action="fail",
+                reason=reason,
+                session_alive=lambda: tmux.has_session(session_name),
+                capture=lambda: tmux.capture_full_pane(session_name),
+                kill=lambda: tmux.kill_session(session_name, missing_ok=True),
             )
-            return
-        tmux = get_tmux_session_manager()
-        session_name = str(tmux_session_name)
-        result = await capture_then_kill_async(
-            storage=storage,
-            run_id=run.id,
-            session_name=session_name,
-            action="fail",
-            reason=reason,
-            session_alive=lambda: tmux.has_session(session_name),
-            capture=lambda: tmux.capture_full_pane(session_name),
-            kill=lambda: tmux.kill_session(session_name, missing_ok=True),
-        )
-        if not result.success:
-            raise RuntimeError(f"{result.error_code}: {result.error}")
-    except Exception as exc:
-        logger.warning(
-            "Failed to kill tmux session after resume persistence failure",
-            exc_info=True,
-            extra={"run_id": run_id, "tmux_session_name": tmux_session_name, "error": str(exc)},
-        )
+            if not result.success:
+                raise RuntimeError(f"{result.error_code}: {result.error}")
+        except Exception as exc:
+            logger.warning(
+                "Failed to kill tmux session after resume persistence failure",
+                exc_info=True,
+                extra={
+                    "run_id": run_id,
+                    "tmux_session_name": tmux_session_name,
+                    "error": str(exc),
+                },
+            )
+            await run_terminal_delivery_offload(storage.fail, run_id, error=reason)
+        finally:
+            await _deliver_existing_terminal_run_unshielded(
+                db=storage.db,
+                agent_run_manager=storage,
+                completion_registry=completion_registry,
+                run_id=run_id,
+                run_db=run_terminal_delivery_offload,
+            )
+
+    await shielded_terminal_delivery(run_id, operation)
 
 
 def _fire_resume_started(
@@ -509,11 +546,28 @@ def _fire_resume_started(
         logger.warning("Failed to fire resumed agent_started event for %s: %s", run_id, exc)
 
 
-def _fail_run(runner: Any, run_id: str, error: str) -> None:
-    try:
-        runner.run_storage.fail(run_id, error=error)
-    except Exception as exc:
-        logger.warning("Failed to mark resumed agent run %s failed: %s", run_id, exc)
+async def _fail_run(
+    runner: Any,
+    run_id: str,
+    error: str,
+    *,
+    completion_registry: Any | None,
+) -> None:
+    async def operation() -> None:
+        try:
+            await run_terminal_delivery_offload(runner.run_storage.fail, run_id, error=error)
+        except Exception:
+            logger.warning("Failed to mark resumed agent run %s failed", run_id, exc_info=True)
+        finally:
+            await _deliver_existing_terminal_run_unshielded(
+                db=runner.run_storage.db,
+                agent_run_manager=runner.run_storage,
+                completion_registry=completion_registry,
+                run_id=run_id,
+                run_db=run_terminal_delivery_offload,
+            )
+
+    await shielded_terminal_delivery(run_id, operation)
 
 
 def _tmux_spawner(daemon_config: Any | None, metadata: dict[str, Any]) -> TmuxSpawner:

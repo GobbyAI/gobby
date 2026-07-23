@@ -80,6 +80,7 @@ class WebSocketServer(
         internal_manager: Any = None,
         web_chat_session_registry: WebChatSessionRegistry | None = None,
         tool_proxy_getter: Callable[[], Any | None] | None = None,
+        completion_registry: Any = None,
     ):
         """
         Initialize WebSocket server.
@@ -103,6 +104,7 @@ class WebSocketServer(
         self.stop_registry = stop_registry
         self.internal_manager = internal_manager
         self.tool_proxy_getter = tool_proxy_getter
+        self.completion_registry = completion_registry
         self.session_manager = cast(Any, session_manager)
         self.db_executor = db_executor
         self.daemon_config = daemon_config

@@ -362,6 +362,7 @@ def create_agent_spawn_router(server: HTTPServer) -> APIRouter:
             initial_variables=initial_variables,
             session_manager=server.services.session_manager,
             db=server.services.database,
+            completion_registry=server.services.completion_registry,
             daemon_config=server.services.config,
         )
 

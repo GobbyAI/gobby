@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from contextlib import nullcontext
 from unittest.mock import ANY, AsyncMock, MagicMock, patch
 
 import pytest
@@ -48,9 +49,13 @@ async def test_terminalize_cancelled_agent_run_fallback_recovers_task_claim() ->
     runner.cancel_run.return_value = True
     runner.run_storage = MagicMock()
     cancelled_run = MagicMock()
+    cancelled_run.id = "run-123"
+    cancelled_run.status = "cancelled"
+    cancelled_run.error = None
+    runner.run_storage.db.bounded_transaction.return_value = nullcontext()
     runner.run_storage.get.return_value = cancelled_run
     completion_registry = MagicMock()
-    completion_registry.notify = AsyncMock()
+    completion_registry.notify = AsyncMock(return_value={})
     task_manager = MagicMock()
 
     with patch("gobby.mcp_proxy.tools.agent_cancellation.TaskRecoveryHandler") as recovery_cls:
@@ -70,7 +75,10 @@ async def test_terminalize_cancelled_agent_run_fallback_recovers_task_claim() ->
     assert transitioned is True
     assert isinstance(transitioned, bool)
     runner.cancel_run.assert_called_once_with("run-123")
-    runner.run_storage.get.assert_called_once_with("run-123")
+    assert runner.run_storage.get.call_args_list == [
+        (("run-123",), {}),
+        (("run-123",), {}),
+    ]
     recovery_cls.assert_called_once_with(task_manager, runner.run_storage, ANY)
     recovery.recover_task_from_terminal_agent.assert_awaited_once_with(
         cancelled_run,
@@ -78,10 +86,10 @@ async def test_terminalize_cancelled_agent_run_fallback_recovers_task_claim() ->
     )
     completion_registry.notify.assert_awaited_once_with(
         "run-123",
-        {
+        result={
             "status": "cancelled",
-            "terminal_reason": "user_cancelled",
             "run_id": "run-123",
+            "error": None,
         },
         message="Agent run-123 cancelled",
     )
@@ -121,8 +129,15 @@ async def test_terminalize_killed_agent_run_error_recovers_claim_and_notifies() 
         async def notify(self, run_id: str, result: dict[str, str], *, message: str) -> None:
             notifications.append((run_id, result, message))
 
+        def cleanup(self, _run_id: str) -> None:
+            pass
+
     runner = MagicMock()
     failed_run = MagicMock()
+    failed_run.id = "run-123"
+    failed_run.status = "error"
+    failed_run.error = "Agent self-reported error"
+    runner.run_storage.db.bounded_transaction.return_value = nullcontext()
     runner.run_storage.fail.return_value = failed_run
     runner.run_storage.get.return_value = failed_run
     completion_registry = RecordingCompletionRegistry()
@@ -150,7 +165,11 @@ async def test_terminalize_killed_agent_run_error_recovers_claim_and_notifies() 
     assert notifications == [
         (
             "run-123",
-            {"status": "error", "error": "Agent self-reported error"},
+            {
+                "status": "error",
+                "error": "Agent self-reported error",
+                "run_id": "run-123",
+            },
             "Agent run-123 failed",
         )
     ]
@@ -168,7 +187,7 @@ async def test_stop_agent_run_happy_path_call_order() -> None:
     runner = MagicMock()
     runner.get_run.return_value = run
     agent_run_manager = MagicMock()
-    agent_run_manager.db = object()
+    agent_run_manager.db.bounded_transaction.return_value = nullcontext()
 
     async def kill_side_effect(*_args: object, **_kwargs: object) -> dict[str, bool]:
         call_order.append("kill")

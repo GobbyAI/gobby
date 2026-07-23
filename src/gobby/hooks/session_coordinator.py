@@ -17,6 +17,8 @@ import logging
 import re
 import threading
 import time
+from concurrent.futures import CancelledError as FutureCancelledError
+from concurrent.futures import TimeoutError as FutureTimeoutError
 from typing import TYPE_CHECKING, Any
 from weakref import WeakValueDictionary
 
@@ -345,6 +347,41 @@ class SessionCoordinator:
             return False
 
     def _terminate_agent_run(
+        self,
+        *,
+        run_id: str,
+        agent_run: Any,
+        action: TerminalAction,
+        reason: str | None,
+        result_prefix: str,
+        tool_calls_count: int,
+        turns_used: int,
+    ) -> Any | None:
+        """Run the terminal storage chain on the managed executor."""
+        from gobby.agents.agent_cleanup import submit_terminal_delivery_offload
+
+        try:
+            future = submit_terminal_delivery_offload(
+                self._terminate_agent_run_inline,
+                run_id=run_id,
+                agent_run=agent_run,
+                action=action,
+                reason=reason,
+                result_prefix=result_prefix,
+                tool_calls_count=tool_calls_count,
+                turns_used=turns_used,
+            )
+            return future.result(timeout=5)
+        except (FutureCancelledError, FutureTimeoutError, RuntimeError):
+            self.logger.warning(
+                "Deferred terminalization for agent run %s because the database executor "
+                "was unavailable",
+                run_id,
+                exc_info=True,
+            )
+            return None
+
+    def _terminate_agent_run_inline(
         self,
         *,
         run_id: str,
@@ -754,8 +791,22 @@ class SessionCoordinator:
         if not self._completion_registry:
             return
         try:
+            from gobby.agents.agent_cleanup import (
+                deliver_and_cleanup_terminal_run,
+                run_terminal_delivery_offload,
+            )
+
             result = {"status": status, "run_id": run_id}
-            coro = self._completion_registry.notify(run_id, result)
+            if self._agent_run_manager is None:
+                return
+            coro = deliver_and_cleanup_terminal_run(
+                db=self._agent_run_manager.db,
+                completion_registry=self._completion_registry,
+                run_id=run_id,
+                result=result,
+                message=f"Agent {run_id} completed with status {status}",
+                run_db=run_terminal_delivery_offload,
+            )
 
             # Prefer the current running loop (if we happen to be in async context)
             try:

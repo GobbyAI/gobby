@@ -142,6 +142,7 @@ def init_servers(runner: GobbyRunner) -> None:
             internal_manager=runner.http_server._internal_manager,
             web_chat_session_registry=web_chat_session_registry,
             tool_proxy_getter=tool_proxy_getter,
+            completion_registry=runner.completion_registry,
         )
         runner.websocket_server.web_chat_runtime_manager = services.web_chat_runtime_manager
         attention_manager = services.attention_manager

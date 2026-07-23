@@ -22,8 +22,15 @@ from gobby.telemetry.providers import (
 def cleanup_providers() -> None:
     """Ensure providers are cleared after each test."""
     shutdown_providers()
+    providers._TRACER_PROVIDER = None
+    providers._METER_PROVIDER = None
     yield
     shutdown_providers()
+    for provider in (providers._TRACER_PROVIDER, providers._METER_PROVIDER):
+        if provider is not None:
+            provider.shutdown()
+    providers._TRACER_PROVIDER = None
+    providers._METER_PROVIDER = None
 
 
 def test_get_tracer_provider(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -47,11 +54,12 @@ def test_add_span_storage_exporter_is_idempotent(monkeypatch: pytest.MonkeyPatch
     batch_processors: list[object] = []
 
     def fake_batch_processor(exporter: object) -> object:
-        batch_processors.append(exporter)
-        return exporter
+        processor = MagicMock(exporter=exporter)
+        batch_processors.append(processor)
+        return processor
 
     monkeypatch.setattr(providers, "_TRACER_PROVIDER", provider)
-    monkeypatch.setattr(providers, "_SPAN_STORAGE_EXPORTER_REGISTERED", False)
+    monkeypatch.setattr(providers, "_SPAN_STORAGE_PROCESSOR", None)
     monkeypatch.setattr(providers, "BatchSpanProcessor", fake_batch_processor)
 
     providers.add_span_storage_exporter(MagicMock(), broadcast_callback=MagicMock())
@@ -62,8 +70,13 @@ def test_add_span_storage_exporter_is_idempotent(monkeypatch: pytest.MonkeyPatch
 
     providers.shutdown_providers()
 
-    provider.shutdown.assert_called_once()
-    assert providers._SPAN_STORAGE_EXPORTER_REGISTERED is False
+    batch_processors[0].shutdown.assert_called_once()
+    provider.shutdown.assert_not_called()
+    assert providers._SPAN_STORAGE_PROCESSOR is None
+
+    providers.add_span_storage_exporter(MagicMock())
+    assert provider.add_span_processor.call_count == 2
+    assert len(batch_processors) == 2
 
 
 def test_get_meter_provider(
@@ -89,31 +102,41 @@ def test_get_meter_provider(
     assert "Cannot call collect on a MetricReader" not in caplog.text
 
 
-def test_shutdown_providers() -> None:
-    """Test shutdown of trace and meter providers."""
+def test_provider_acquisition_reuses_api_global_providers(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    tracer_provider = TracerProvider()
+    meter_provider = MeterProvider()
+    monkeypatch.setattr(providers.trace, "get_tracer_provider", lambda: tracer_provider)
+    monkeypatch.setattr(providers.metrics, "get_meter_provider", lambda: meter_provider)
+
+    config = TelemetrySettings()
+
+    assert get_tracer_provider(config) is tracer_provider
+    assert get_meter_provider(config) is meter_provider
+
+
+def test_shutdown_providers_preserves_interpreter_providers() -> None:
+    """Lifecycle shutdown preserves interpreter-latched providers."""
     config = TelemetrySettings()
     p_trace = get_tracer_provider(config)
     p_meter = get_meter_provider(config)
 
     shutdown_providers()
 
-    # Getting them again should create new instances
-    assert get_tracer_provider(config) is not p_trace
-    assert get_meter_provider(config) is not p_meter
+    assert get_tracer_provider(config) is p_trace
+    assert get_meter_provider(config) is p_meter
 
 
-def test_shutdown_providers_logs_and_continues_after_provider_exception(
+def test_shutdown_providers_logs_processor_exception(
     caplog: pytest.LogCaptureFixture,
 ) -> None:
-    tracer_provider = MagicMock()
-    meter_provider = MagicMock()
-    tracer_provider.shutdown.side_effect = RuntimeError("tracer shutdown failed")
-    providers._TRACER_PROVIDER = tracer_provider
-    providers._METER_PROVIDER = meter_provider
+    processor = MagicMock()
+    processor.shutdown.side_effect = RuntimeError("processor shutdown failed")
+    providers._SPAN_STORAGE_PROCESSOR = processor
 
     with caplog.at_level("ERROR", logger="gobby.telemetry.providers"):
         shutdown_providers()
 
-    tracer_provider.shutdown.assert_called_once_with()
-    meter_provider.shutdown.assert_called_once_with()
-    assert "Failed to shut down tracer telemetry provider" in caplog.text
+    processor.shutdown.assert_called_once_with()
+    assert "Failed to shut down span storage processor telemetry provider" in caplog.text

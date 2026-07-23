@@ -14,7 +14,7 @@ import json
 import logging
 import time
 import weakref
-from collections.abc import Callable, Coroutine
+from collections.abc import Awaitable, Callable, Coroutine
 from typing import TYPE_CHECKING, Any, Protocol, cast
 
 from gobby.agents.tmux.text_injection import TmuxExpectedTextInjectionError
@@ -34,6 +34,13 @@ CONTINUE_WAKE_SIGNAL = f"{CONTINUE_WAKE_MESSAGE}\n"
 # idle on the same turn, suppress redundant tmux send-keys after the first wake.
 # The 30s ceiling guarantees we resume nudging if turn_count signals get missed.
 PANE_WAKE_DEBOUNCE_SECONDS = 30.0
+LIVE_WAKE_TIMEOUT_SECONDS = 5.0
+
+RunDb = Callable[..., Awaitable[Any]]
+
+
+async def _default_run_db(func: Callable[..., Any], *args: Any, **kwargs: Any) -> Any:
+    return await asyncio.to_thread(func, *args, **kwargs)
 
 
 class TmuxSender(Protocol):
@@ -87,6 +94,7 @@ class WakeDispatcher:
         sdk_resumer: SdkResumer | None = None,
         agent_run_manager: LocalAgentRunManager | None = None,
         web_chat_session_registry: WebChatSessionRegistryProtocol | None = None,
+        run_db: RunDb | None = None,
     ) -> None:
         self._session_manager = session_manager
         self._ism_manager = ism_manager
@@ -95,6 +103,7 @@ class WakeDispatcher:
         self._sdk_resumer = sdk_resumer
         self._agent_run_manager = agent_run_manager
         self._web_chat_session_registry = web_chat_session_registry
+        self._run_db = run_db or _default_run_db
         # session_id -> (turn_count_at_last_wake, monotonic_ts_at_last_wake)
         self._last_live_wake: dict[str, tuple[int, float]] = {}
         self._live_wake_locks: weakref.WeakValueDictionary[str, asyncio.Lock] = (
@@ -121,7 +130,12 @@ class WakeDispatcher:
             message: Human-readable notification message
             result: Structured result data
         """
-        session = self._session_manager.get(session_id)
+
+        def read_session() -> Any | None:
+            with self._session_manager.db.bounded_transaction():
+                return self._session_manager.get(session_id)
+
+        session = await self._run_db(read_session)
         if session is None:
             logger.warning("Cannot wake session %s: not found", session_id)
             failure = self._live_wake_failure(
@@ -132,7 +146,7 @@ class WakeDispatcher:
             )
             return {**failure, "ism_persisted": False}
 
-        if not self._send_ism(session_id, message, result):
+        if not await self._send_ism(session_id, message, result):
             failure = self._live_wake_failure(
                 session_id,
                 method="ism",
@@ -165,7 +179,13 @@ class WakeDispatcher:
         session: Any | None = None,
     ) -> dict[str, Any]:
         """Send a live wake signal while holding the per-session wake lock."""
-        session = session or self._session_manager.get(session_id)
+        if session is None:
+
+            def read_session() -> Any | None:
+                with self._session_manager.db.bounded_transaction():
+                    return self._session_manager.get(session_id)
+
+            session = await self._run_db(read_session)
         if session is None:
             logger.warning("Cannot wake session %s: not found", session_id)
             return {
@@ -226,12 +246,15 @@ class WakeDispatcher:
                 return self._live_wake_debounced_result(session_id, method="tmux_pane")
             tmux_socket_path = self._parse_tmux_socket_path(terminal_context)
             try:
-                await self._tmux_pane_sender(
-                    tmux_pane,
-                    CONTINUE_WAKE_MESSAGE,
-                    tmux_socket_path,
-                    submit=True,
-                    escape_before_submit=True,
+                await asyncio.wait_for(
+                    self._tmux_pane_sender(
+                        tmux_pane,
+                        CONTINUE_WAKE_MESSAGE,
+                        tmux_socket_path,
+                        submit=True,
+                        escape_before_submit=True,
+                    ),
+                    timeout=LIVE_WAKE_TIMEOUT_SECONDS,
                 )
                 self._record_live_wake(session_id, session)
                 return {
@@ -276,11 +299,14 @@ class WakeDispatcher:
             tmux_session_name = self._parse_tmux_session(terminal_context)
             if tmux_session_name:
                 try:
-                    await self._tmux_sender(
-                        tmux_session_name,
-                        CONTINUE_WAKE_MESSAGE,
-                        submit=True,
-                        escape_before_submit=True,
+                    await asyncio.wait_for(
+                        self._tmux_sender(
+                            tmux_session_name,
+                            CONTINUE_WAKE_MESSAGE,
+                            submit=True,
+                            escape_before_submit=True,
+                        ),
+                        timeout=LIVE_WAKE_TIMEOUT_SECONDS,
                     )
                     self._record_live_wake(session_id, session)
                     return {
@@ -301,12 +327,15 @@ class WakeDispatcher:
             if tmux_pane:
                 tmux_socket_path = self._parse_tmux_socket_path(terminal_context)
                 try:
-                    await self._tmux_pane_sender(
-                        tmux_pane,
-                        CONTINUE_WAKE_MESSAGE,
-                        tmux_socket_path,
-                        submit=True,
-                        escape_before_submit=True,
+                    await asyncio.wait_for(
+                        self._tmux_pane_sender(
+                            tmux_pane,
+                            CONTINUE_WAKE_MESSAGE,
+                            tmux_socket_path,
+                            submit=True,
+                            escape_before_submit=True,
+                        ),
+                        timeout=LIVE_WAKE_TIMEOUT_SECONDS,
                     )
                     self._record_live_wake(session_id, session)
                     return {
@@ -333,10 +362,13 @@ class WakeDispatcher:
 
         # SDK agent → try resume via sdk_session_id
         if self._sdk_resumer:
-            sdk_session_id = self._resolve_sdk_session_id(session_id)
+            sdk_session_id = await self._resolve_sdk_session_id(session_id)
             if sdk_session_id:
                 try:
-                    await self._sdk_resumer(sdk_session_id, CONTINUE_WAKE_SIGNAL)
+                    await asyncio.wait_for(
+                        self._sdk_resumer(sdk_session_id, CONTINUE_WAKE_SIGNAL),
+                        timeout=LIVE_WAKE_TIMEOUT_SECONDS,
+                    )
                     self._record_live_wake(session_id, session)
                     return {
                         "session_id": session_id,
@@ -388,7 +420,10 @@ class WakeDispatcher:
             return self._web_chat_no_live_result(session_id)
 
         try:
-            result = await self._web_chat_session_registry.wake_session(session_id)
+            result = await asyncio.wait_for(
+                self._web_chat_session_registry.wake_session(session_id),
+                timeout=LIVE_WAKE_TIMEOUT_SECONDS,
+            )
         except Exception as exc:
             logger.warning(
                 "web_chat wake failed for session %s: %s",
@@ -473,23 +508,25 @@ class WakeDispatcher:
         current_turn = int(getattr(session, "turn_count", 0) or 0)
         self._last_live_wake[session_id] = (current_turn, time.monotonic())
 
-    def _resolve_sdk_session_id(self, session_id: str) -> str | None:
+    async def _resolve_sdk_session_id(self, session_id: str) -> str | None:
         """Look up the SDK session ID for a session via agent_runs.
 
         Checks if the session is a child of an agent run that captured
         an sdk_session_id during execution.
         """
-        if not self._agent_run_manager:
+        agent_run_manager = self._agent_run_manager
+        if agent_run_manager is None:
             return None
         try:
-            # Check if session itself has an external_id (SDK session)
-            session = self._session_manager.get(session_id)
-            if session and getattr(session, "external_id", None):
-                return cast(str | None, session.external_id)
 
-            # Check agent_runs where this session is the child
-            sdk_id = self._agent_run_manager.get_sdk_session_id_for_session(session_id)
-            return sdk_id
+            def resolve_sdk_session_id() -> str | None:
+                with agent_run_manager.db.bounded_transaction():
+                    session = self._session_manager.get(session_id)
+                    if session and getattr(session, "external_id", None):
+                        return cast(str | None, session.external_id)
+                    return agent_run_manager.get_sdk_session_id_for_session(session_id)
+
+            return cast(str | None, await self._run_db(resolve_sdk_session_id))
         except Exception:
             logger.debug(
                 "Could not resolve sdk_session_id for session %s",
@@ -498,9 +535,15 @@ class WakeDispatcher:
             )
             return None
 
-    def _send_ism(self, session_id: str, message: str, result: dict[str, Any]) -> bool:
+    async def _send_ism(
+        self,
+        session_id: str,
+        message: str,
+        result: dict[str, Any],
+    ) -> bool:
         """Send an InterSessionMessage as durable notification."""
-        try:
+
+        def persist_notification() -> bool:
             content = str(
                 result.get("signoff_message")
                 or result.get("continuation_prompt")
@@ -513,17 +556,25 @@ class WakeDispatcher:
             completion_id = self._notification_completion_id(metadata)
             if completion_id and "completion_id" not in metadata:
                 metadata["completion_id"] = completion_id
-            if completion_id and self._notification_exists(session_id, message_type, completion_id):
-                return True
-            self._ism_manager.create_message(
-                from_session=from_session,
-                to_session=session_id,
-                content=content,
-                message_type=message_type,
-                priority="high",
-                metadata_json=json.dumps(metadata, default=str, sort_keys=True),
-            )
+            with self._ism_manager.db.bounded_transaction():
+                if completion_id and self._notification_exists(
+                    session_id,
+                    message_type,
+                    completion_id,
+                ):
+                    return True
+                self._ism_manager.create_message(
+                    from_session=from_session,
+                    to_session=session_id,
+                    content=content,
+                    message_type=message_type,
+                    priority="high",
+                    metadata_json=json.dumps(metadata, default=str, sort_keys=True),
+                )
             return True
+
+        try:
+            return bool(await self._run_db(persist_notification))
         except Exception:
             logger.exception(
                 "Failed to send ISM to session %s",

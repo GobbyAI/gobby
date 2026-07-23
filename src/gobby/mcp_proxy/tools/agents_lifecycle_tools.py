@@ -245,42 +245,65 @@ def register_agent_lifecycle_tools(
                 ),
             )
 
-        result = cast(
-            dict[str, Any],
-            await agents._kill_agent_process(
-                db_run,
-                kill_db,
-                signal_name=signal,
-                close_terminal=not debug,
-            ),
-        )
-        if not result.get("success") and result.get("error_code") != KILL_ERROR_NO_TARGET_PID:
-            return result
-
-        if not stop:
-            result["workflow_stopped"] = False
-            return result
-
-        result.update(
-            await terminalize_killed_agent_run(
-                runner=ctx.runner,
-                run_id=run_id,
-                effective_status=effective_status,
-                lifecycle_monitor=ctx.lifecycle_monitor,
-                completion_registry=ctx.completion_registry,
-                task_manager=ctx.task_manager,
-            )
+        from gobby.agents.agent_cleanup import (
+            _deliver_existing_terminal_run_unshielded,
+            run_terminal_delivery_offload,
+            shielded_terminal_delivery,
         )
 
-        await agents._cleanup_terminal_artifacts(
-            run_id=run_id,
-            db=kill_db,
-            tmux_session_name=tmux_session_name,
-            agent_session_id=agent_session_id,
-            debug=debug,
-            session_manager=ctx.session_manager,
-            hook_manager_resolver=ctx.hook_manager_resolver,
-            result=result,
-        )
+        async def kill_and_deliver() -> dict[str, Any]:
+            try:
+                result = cast(
+                    dict[str, Any],
+                    await agents._kill_agent_process(
+                        db_run,
+                        kill_db,
+                        signal_name=signal,
+                        close_terminal=not debug,
+                    ),
+                )
+                if (
+                    not result.get("success")
+                    and result.get("error_code") != KILL_ERROR_NO_TARGET_PID
+                ):
+                    return result
 
-        return result
+                if not stop:
+                    result["workflow_stopped"] = False
+                    return result
+
+                result.update(
+                    await terminalize_killed_agent_run(
+                        runner=ctx.runner,
+                        run_id=run_id,
+                        effective_status=effective_status,
+                        lifecycle_monitor=ctx.lifecycle_monitor,
+                        completion_registry=ctx.completion_registry,
+                        task_manager=ctx.task_manager,
+                    )
+                )
+
+                await agents._cleanup_terminal_artifacts(
+                    run_id=run_id,
+                    db=kill_db,
+                    tmux_session_name=tmux_session_name,
+                    agent_session_id=agent_session_id,
+                    debug=debug,
+                    session_manager=ctx.session_manager,
+                    hook_manager_resolver=ctx.hook_manager_resolver,
+                    result=result,
+                )
+                return result
+            finally:
+                await _deliver_existing_terminal_run_unshielded(
+                    db=kill_db,
+                    agent_run_manager=ctx.agent_run_manager,
+                    completion_registry=ctx.completion_registry,
+                    run_id=run_id,
+                    run_db=run_terminal_delivery_offload,
+                )
+
+        response = await shielded_terminal_delivery(run_id, kill_and_deliver)
+        if response is None:
+            return {"success": False, "error": "Daemon shutdown is in progress"}
+        return response

@@ -35,6 +35,14 @@ def init_summarizer_config(
     _llm_service = llm_service
 
 
+def reset_summarizer_config() -> None:
+    """Clear daemon-owned summarizer state after failed construction."""
+    global _config, _loader, _llm_service
+    _config = None
+    _loader = None
+    _llm_service = None
+
+
 def _get_config() -> ToolSummarizerConfig:
     """Get the current config, with fallback to defaults."""
     if _config is not None:

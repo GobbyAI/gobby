@@ -130,6 +130,7 @@ def register_testing_routes(router: APIRouter, server: "HTTPServer") -> None:
         Returns:
             Registration confirmation
         """
+        from gobby.agents.agent_cleanup import deliver_existing_terminal_run
         from gobby.storage.agents import LocalAgentRunManager
 
         # Guard: Only available in test mode
@@ -172,6 +173,15 @@ def register_testing_routes(router: APIRouter, server: "HTTPServer") -> None:
             elif request.status == STATUS_TIMEOUT:
                 arm.timeout(request.run_id)
 
+            if request.status in TERMINAL_AGENT_RUN_STATUSES:
+                await deliver_existing_terminal_run(
+                    db=db,
+                    agent_run_manager=arm,
+                    completion_registry=server.services.completion_registry,
+                    run_id=request.run_id,
+                    run_db=server.services.run_db,
+                )
+
             run = arm.get(request.run_id)
             response_time_ms = (time.perf_counter() - start_time) * 1000
 
@@ -199,6 +209,7 @@ def register_testing_routes(router: APIRouter, server: "HTTPServer") -> None:
         Returns:
             Unregistration confirmation
         """
+        from gobby.agents.agent_cleanup import deliver_existing_terminal_run
         from gobby.storage.agents import LocalAgentRunManager
 
         # Guard: Only available in test mode
@@ -218,6 +229,13 @@ def register_testing_routes(router: APIRouter, server: "HTTPServer") -> None:
 
             if run:
                 arm.fail(run_id, error="Unregistered via test endpoint")
+                await deliver_existing_terminal_run(
+                    db=db,
+                    agent_run_manager=arm,
+                    completion_registry=server.services.completion_registry,
+                    run_id=run_id,
+                    run_db=server.services.run_db,
+                )
                 return {
                     "status": "success",
                     "message": f"Unregistered test agent {run_id}",

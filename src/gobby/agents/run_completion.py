@@ -2,15 +2,23 @@
 
 from __future__ import annotations
 
-import asyncio
-import logging
 from typing import TYPE_CHECKING, Any
+
+from gobby.agents.agent_cleanup import (
+    configure_terminal_delivery_offload as configure_terminal_delivery_offload,
+)
+from gobby.agents.agent_cleanup import (
+    deliver_and_cleanup_terminal_run,
+    run_terminal_delivery_offload,
+    shielded_terminal_delivery,
+)
+from gobby.agents.agent_cleanup import (
+    reset_terminal_delivery_offload as reset_terminal_delivery_offload,
+)
 
 if TYPE_CHECKING:
     from gobby.agents.runner import AgentRunner
     from gobby.events.completion_registry import CompletionEventRegistry
-
-logger = logging.getLogger(__name__)
 
 
 async def complete_and_notify_agent_run(
@@ -24,23 +32,35 @@ async def complete_and_notify_agent_run(
 ) -> bool:
     """Mark an agent run complete, then wake any waiters registered on it."""
 
-    completed = await asyncio.to_thread(
-        runner.complete_run,
-        run_id,
-        result=completion_result,
-    )
-
-    if not completed:
-        logger.debug(
-            "Skipping completion notify for run %s; terminal state already recorded",
+    async def complete_and_deliver() -> bool:
+        completed = await run_terminal_delivery_offload(
+            runner.complete_run,
             run_id,
+            result=completion_result,
         )
-        return False
 
-    if completion_registry and notify_result is not None:
-        try:
-            await completion_registry.notify(run_id, notify_result, message=message)
-        except Exception:
-            logger.debug("Failed to notify completion registry for run %s", run_id, exc_info=True)
+        def read_terminal_run() -> Any:
+            with runner.run_storage.db.bounded_transaction():
+                return runner.get_run(run_id)
 
-    return True
+        current = await run_terminal_delivery_offload(read_terminal_run)
+        if current is None or current.status not in {"success", "error", "timeout", "cancelled"}:
+            return completed
+
+        result = notify_result or {
+            "status": current.status,
+            "run_id": run_id,
+            "error": getattr(current, "error", None),
+        }
+        await deliver_and_cleanup_terminal_run(
+            db=runner.run_storage.db,
+            completion_registry=completion_registry,
+            run_id=run_id,
+            result=result,
+            message=message,
+            run_db=run_terminal_delivery_offload,
+        )
+        return completed
+
+    settled = await shielded_terminal_delivery(run_id, complete_and_deliver)
+    return bool(settled)

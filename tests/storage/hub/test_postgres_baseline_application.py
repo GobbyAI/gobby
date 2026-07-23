@@ -280,7 +280,7 @@ def test_postgres_pool_opens_lazily(monkeypatch: pytest.MonkeyPatch) -> None:
     assert calls["constructor_timeout"] == 5.0
     pool_kwargs = calls["pool_kwargs"]
     assert isinstance(pool_kwargs, dict)
-    assert pool_kwargs["application_name"] == "gobby"
+    assert pool_kwargs["application_name"].startswith("gobby-hub-")
     assert pool_kwargs["prepare_threshold"] is None
     assert pool_kwargs["row_factory"] is module.dict_row
     assert "opened" not in calls
@@ -331,11 +331,16 @@ def test_postgres_pool_uses_injected_config(monkeypatch: pytest.MonkeyPatch) -> 
     assert calls["constructor_min_size"] == 4
     assert calls["constructor_max_size"] == 24
     assert calls["constructor_timeout"] == 7.5
-    assert calls["pool_kwargs"]["application_name"] == "gobby-tests"
+    assert calls["pool_kwargs"]["application_name"].startswith("gobby-hub-")
+    assert calls["pool_kwargs"]["connect_timeout"] == 10
+    assert calls["pool_kwargs"]["keepalives"] == 1
+    assert calls["pool_kwargs"]["keepalives_idle"] == 30
+    assert calls["pool_kwargs"]["keepalives_interval"] == 10
+    assert calls["pool_kwargs"]["keepalives_count"] == 3
     assert calls["opened"] == (True, 12.5)
 
 
-def test_transaction_pool_timeout_checks_pool_and_retries(
+def test_transaction_pool_timeout_retries_without_pool_check(
     monkeypatch: pytest.MonkeyPatch,
     caplog: pytest.LogCaptureFixture,
 ) -> None:
@@ -355,7 +360,7 @@ def test_transaction_pool_timeout_checks_pool_and_retries(
 
     class TimeoutConnectionContext:
         def __enter__(self):
-            raise module.PoolTimeout("couldn't get a connection after 5.00 sec")
+            raise module._postgres_pool.PoolTimeout("couldn't get a connection after 5.00 sec")
 
         def __exit__(self, exc_type, exc, tb) -> None:
             return None
@@ -400,8 +405,8 @@ def test_transaction_pool_timeout_checks_pool_and_retries(
 
     pool = pool_holder["pool"]
     assert pool.connection_calls == 2
-    assert pool.check_calls == 1
-    assert "checking pool before retry" in caplog.text
+    assert pool.check_calls == 0
+    assert "retrying once" in caplog.text
     assert "pool_size" in caplog.text
 
 
@@ -414,7 +419,7 @@ def test_transaction_pool_timeout_retry_failure_logs_stats_and_raises(
 
     class TimeoutConnectionContext:
         def __enter__(self):
-            raise module.PoolTimeout("couldn't get a connection after 5.00 sec")
+            raise module._postgres_pool.PoolTimeout("couldn't get a connection after 5.00 sec")
 
         def __exit__(self, exc_type, exc, tb) -> None:
             return None
@@ -445,15 +450,49 @@ def test_transaction_pool_timeout_retry_failure_logs_stats_and_raises(
     db = module.PostgresHubDatabase("postgresql://gobby:secret@localhost/gobby")
 
     with caplog.at_level(logging.WARNING, logger=module.__name__):
-        with pytest.raises(module.PoolTimeout):
+        with pytest.raises(module._postgres_pool.PoolTimeout):
             with db.transaction():
                 pass
 
     pool = pool_holder["pool"]
     assert pool.connection_calls == 2
-    assert pool.check_calls == 1
+    assert pool.check_calls == 0
     assert "retry failed" in caplog.text
     assert "pool_size" in caplog.text
+
+
+def test_bounded_transaction_sets_local_bounds_before_body(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    module = _postgres_module()
+    db = object.__new__(module.PostgresHubDatabase)
+    statements: list[tuple[str, tuple[object, ...]]] = []
+
+    class Transaction:
+        def execute(
+            self,
+            sql: str,
+            params: tuple[object, ...] = (),
+        ) -> object:
+            statements.append((sql, params))
+            return object()
+
+    transaction = Transaction()
+
+    @contextmanager
+    def fake_transaction(_self):
+        yield transaction
+
+    monkeypatch.setattr(module.PostgresHubDatabase, "transaction", fake_transaction)
+
+    with db.bounded_transaction(statement_timeout_ms=1234, lock_timeout_ms=567) as bounded:
+        bounded.execute("SELECT 1")
+
+    assert statements == [
+        ("SET LOCAL statement_timeout = '1234ms'", ()),
+        ("SET LOCAL lock_timeout = '567ms'", ()),
+        ("SELECT 1", ()),
+    ]
 
 
 def test_postgres_close_is_idempotent(monkeypatch: pytest.MonkeyPatch) -> None:

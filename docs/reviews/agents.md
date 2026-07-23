@@ -74,9 +74,9 @@
 - **Confidence:** high on mechanism; med on severity (threat model).
 
 ### [BLOCKER] Completion-registry entries and `completion_subscribers` rows are never cleaned up on normal completion — unbounded memory and DB growth
-- **Where:** registration on every spawn (`dispatch/spawn.py:274`, `mcp_proxy/tools/spawn_agent/_factory.py:502` → `completion_subscribers.py:60-89`: in-memory `completion_registry.register` + durable insert via `storage/pipelines.py:813-826`); `notify()` stores results and wakes but removes nothing (`events/completion_registry.py:63-102`); `cleanup()` and `remove_completion_subscribers` are invoked only on restart paths (`runner_lifecycle_agents.py:49-51`, `runner_lifecycle_subsystems.py:441-442` — verified the only call sites); `AgentCleanupHandler.post_terminal_cleanup` (`agent_cleanup.py:104-189`) never touches either; restart recovery re-registers only *active* runs, so completed runs' rows are never deleted.
+- **Where:** registration remains eager on every spawn, but terminal producers now converge on `deliver_and_cleanup_terminal_run`: it awaits notification, removes only successfully delivered durable subscribers in a bounded transaction, and cleans the in-memory registry. Startup and periodic stale sweeps return transitioned run IDs and pass each through the same acknowledged-delivery path.
 - **Failure mode:** Per spawned agent, the daemon permanently retains an `asyncio.Event`, result dict, subscriber list, and continuation prompt; `completion_subscribers` rows accumulate forever and survive restarts.
-- **Minimal fix:** In `post_terminal_cleanup` (or after a successful terminal `notify()`), call `completion_registry.cleanup(run_id)` and `remove_completion_subscribers(run_id)`; add a startup sweep for rows whose run is terminal.
+- **Resolution:** Implemented with cancellation-shielded transition-and-delivery scopes, bounded terminal re-reads, shared acknowledged stale sweeps, and shutdown admission/drain barriers. Failed wake delivery deliberately retains its durable subscriber row for retry on the next boot.
 - **Confidence:** high.
 
 ### [BLOCKER] Droid agents record `sandbox_enabled=True` while no sandbox is ever applied

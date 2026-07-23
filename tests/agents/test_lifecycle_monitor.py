@@ -3993,7 +3993,8 @@ async def test_lifecycle_monitor_db_paths_stay_on_bounded_executor(
         if connection_count is not None:
             assert connection_count <= 1 + executor.max_workers
     finally:
-        executor.shutdown(wait=True)
+        executor.shutdown()
+        executor.join()
 
 
 class TestCleanupStalePendingRuns:
@@ -4005,10 +4006,11 @@ class TestCleanupStalePendingRuns:
         monitor: AgentLifecycleMonitor,
     ) -> None:
         """cleanup_stale_pending_runs delegates to agent_run_manager."""
+        stale_ids = [str(uuid.uuid4()) for _ in range(3)]
         with patch.object(
             monitor._agent_run_manager,
             "cleanup_stale_pending_runs",
-            return_value=3,
+            return_value=stale_ids,
         ):
             result = await monitor.cleanup_stale_pending_runs()
         assert result == 3

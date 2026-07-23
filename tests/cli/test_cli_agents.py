@@ -1472,40 +1472,45 @@ class TestAgentsCleanupCommand:
         assert "--timeout" in result.output
         assert "--dry-run" in result.output
 
-    @patch("gobby.cli.agents.get_agent_run_manager")
+    @patch("gobby.cli.agents.get_daemon_client")
     def test_cleanup_default(
         self,
-        mock_get_manager: MagicMock,
+        mock_get_client: MagicMock,
         runner: CliRunner,
     ) -> None:
         """Test cleanup with default options."""
-        mock_manager = MagicMock()
-        mock_manager.cleanup_stale_runs.return_value = 3
-        mock_manager.cleanup_stale_pending_runs.return_value = 2
-        mock_get_manager.return_value = mock_manager
+        response = mock_get_client.return_value.call_http_api.return_value
+        response.json.return_value = {
+            "run_ids": ["timeout-1", "timeout-2", "timeout-3", "pending-1", "pending-2"]
+        }
 
         result = runner.invoke(cli, ["agents", "cleanup"])
 
         assert result.exit_code == 0
-        assert "Cleaned up 3 timed-out runs" in result.output
-        assert "2 stale pending runs" in result.output
+        assert "Cleaned up 5 stale agent runs" in result.output
+        mock_get_client.return_value.call_http_api.assert_called_once_with(
+            "/api/agents/cleanup",
+            json_data={"timeout_minutes": 30},
+        )
+        response.raise_for_status.assert_called_once_with()
 
-    @patch("gobby.cli.agents.get_agent_run_manager")
+    @patch("gobby.cli.agents.get_daemon_client")
     def test_cleanup_custom_timeout(
         self,
-        mock_get_manager: MagicMock,
+        mock_get_client: MagicMock,
         runner: CliRunner,
     ) -> None:
         """Test cleanup with custom timeout."""
-        mock_manager = MagicMock()
-        mock_manager.cleanup_stale_runs.return_value = 1
-        mock_manager.cleanup_stale_pending_runs.return_value = 0
-        mock_get_manager.return_value = mock_manager
+        response = mock_get_client.return_value.call_http_api.return_value
+        response.json.return_value = {"run_ids": ["timeout-1"]}
 
         result = runner.invoke(cli, ["agents", "cleanup", "--timeout", "60"])
 
         assert result.exit_code == 0
-        mock_manager.cleanup_stale_runs.assert_called_once_with(default_timeout_minutes=60)
+        mock_get_client.return_value.call_http_api.assert_called_once_with(
+            "/api/agents/cleanup",
+            json_data={"timeout_minutes": 60},
+        )
 
     @patch("gobby.cli.agents.require_cli_database")
     def test_cleanup_dry_run(

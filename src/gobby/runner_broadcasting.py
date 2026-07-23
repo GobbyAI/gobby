@@ -247,6 +247,17 @@ def setup_agent_event_broadcasting(websocket_server: WebSocketServer) -> None:
     logger.debug("Agent event broadcasting and PTY reading enabled")
 
 
+def reset_agent_event_broadcasting() -> None:
+    """Remove lifecycle-owned callbacks published during runner construction."""
+    from gobby.agents.pty_reader import reset_pty_output_callback
+    from gobby.agents.tmux import reset_tmux_output_callback
+
+    global _agent_event_callback
+    _agent_event_callback = None
+    reset_pty_output_callback()
+    reset_tmux_output_callback()
+
+
 def fire_agent_event(event_type: str, run_id: str, data: dict[str, Any]) -> None:
     """Fire an agent lifecycle event for broadcasting.
 

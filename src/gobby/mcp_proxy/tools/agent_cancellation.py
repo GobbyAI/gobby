@@ -64,6 +64,11 @@ async def terminalize_cancelled_agent_run(
     message: str | None = None,
 ) -> bool:
     """Cancel an agent run and recover its task claim even without lifecycle monitor wiring."""
+    from gobby.agents.agent_cleanup import (
+        deliver_existing_terminal_run,
+        run_terminal_delivery_offload,
+    )
+
     if lifecycle_monitor is not None:
         return bool(
             await lifecycle_monitor.terminalize_cancelled_run(
@@ -82,16 +87,14 @@ async def terminalize_cancelled_agent_run(
         run_id=run_id,
         outcome="cancelled",
     )
-    if completion_registry is not None:
-        await completion_registry.notify(
-            run_id,
-            {
-                "status": "cancelled",
-                "terminal_reason": terminal_reason,
-                "run_id": run_id,
-            },
-            message=message,
-        )
+    await deliver_existing_terminal_run(
+        db=runner.run_storage.db,
+        agent_run_manager=runner.run_storage,
+        completion_registry=completion_registry,
+        run_id=run_id,
+        run_db=run_terminal_delivery_offload,
+        message=message,
+    )
     return True
 
 
@@ -105,6 +108,11 @@ async def terminalize_killed_agent_run(
     task_manager: Any | None,
 ) -> dict[str, Any]:
     """Apply workflow terminal state after an explicit parent-side kill."""
+    from gobby.agents.agent_cleanup import (
+        deliver_existing_terminal_run,
+        run_terminal_delivery_offload,
+    )
+
     if effective_status == "error":
         error = "Agent self-reported error"
         failed_run = runner.run_storage.fail(run_id, error=error)
@@ -122,12 +130,14 @@ async def terminalize_killed_agent_run(
                 run_id=run_id,
                 outcome="failed",
             )
-            if completion_registry is not None:
-                await completion_registry.notify(
-                    run_id,
-                    {"status": "error", "error": error},
-                    message=f"Agent {run_id} failed",
-                )
+        await deliver_existing_terminal_run(
+            db=runner.run_storage.db,
+            agent_run_manager=runner.run_storage,
+            completion_registry=completion_registry,
+            run_id=run_id,
+            run_db=run_terminal_delivery_offload,
+            message=f"Agent {run_id} failed",
+        )
         return {"status": "error", "workflow_stopped": True}
 
     log_prefix = "Cancelled" if effective_status == "cancelled" else "Fallback cancelled"
@@ -169,6 +179,12 @@ async def stop_agent_run(
     cleanup_terminal_artifacts: Any,
 ) -> dict[str, Any]:
     """Stop one agent run through the shared cancellation lifecycle."""
+    from gobby.agents.agent_cleanup import (
+        _deliver_existing_terminal_run_unshielded,
+        run_terminal_delivery_offload,
+        shielded_terminal_delivery,
+    )
+
     run = runner.get_run(run_id)
     if not run:
         return {"success": False, "error": f"Agent run {run_id} not found"}
@@ -176,49 +192,65 @@ async def stop_agent_run(
         return {"success": False, "error": f"Cannot stop agent in status: {run.status}"}
 
     kill_db = db or agent_run_manager.db
-    result = cast(
-        dict[str, Any],
-        await kill_agent_process(
-            run,
-            kill_db,
-            signal_name="TERM",
-            close_terminal=True,
-        ),
-    )
-    if not result.get("success") and result.get("error_code") != KILL_ERROR_NO_TARGET_PID:
-        return result
 
-    transitioned = await terminalize_cancelled_agent_run(
-        runner=runner,
-        run_id=run_id,
-        terminal_reason="user_cancelled",
-        lifecycle_monitor=lifecycle_monitor,
-        completion_registry=completion_registry,
-        task_manager=task_manager,
-        message=f"Agent {run_id} cancelled",
-    )
-    if not transitioned:
-        current = runner.get_run(run_id)
-        logger.debug(
-            "stop_agent_run no-op for run %s; current status=%s",
-            run_id,
-            current.status if current else "missing",
-        )
+    async def stop_and_deliver() -> dict[str, Any]:
+        try:
+            result = cast(
+                dict[str, Any],
+                await kill_agent_process(
+                    run,
+                    kill_db,
+                    signal_name="TERM",
+                    close_terminal=True,
+                ),
+            )
+            if not result.get("success") and result.get("error_code") != KILL_ERROR_NO_TARGET_PID:
+                return result
 
-    await cleanup_terminal_artifacts(
-        run_id=run.id,
-        db=kill_db,
-        tmux_session_name=run.tmux_session_name,
-        agent_session_id=run.child_session_id,
-        debug=False,
-        session_manager=session_manager,
-        hook_manager_resolver=hook_manager_resolver,
-        result=result,
-    )
-    return {
-        "success": True,
-        "message": f"Agent run {run_id} stopped",
-        "run_id": run_id,
-        "status": "cancelled",
-        "terminal_reason": "user_cancelled",
-    }
+            transitioned = await terminalize_cancelled_agent_run(
+                runner=runner,
+                run_id=run_id,
+                terminal_reason="user_cancelled",
+                lifecycle_monitor=lifecycle_monitor,
+                completion_registry=completion_registry,
+                task_manager=task_manager,
+                message=f"Agent {run_id} cancelled",
+            )
+            if not transitioned:
+                current = runner.get_run(run_id)
+                logger.debug(
+                    "stop_agent_run no-op for run %s; current status=%s",
+                    run_id,
+                    current.status if current else "missing",
+                )
+
+            await cleanup_terminal_artifacts(
+                run_id=run.id,
+                db=kill_db,
+                tmux_session_name=run.tmux_session_name,
+                agent_session_id=run.child_session_id,
+                debug=False,
+                session_manager=session_manager,
+                hook_manager_resolver=hook_manager_resolver,
+                result=result,
+            )
+            return {
+                "success": True,
+                "message": f"Agent run {run_id} stopped",
+                "run_id": run_id,
+                "status": "cancelled",
+                "terminal_reason": "user_cancelled",
+            }
+        finally:
+            await _deliver_existing_terminal_run_unshielded(
+                db=kill_db,
+                agent_run_manager=agent_run_manager,
+                completion_registry=completion_registry,
+                run_id=run_id,
+                run_db=run_terminal_delivery_offload,
+            )
+
+    response = await shielded_terminal_delivery(run_id, stop_and_deliver)
+    if response is None:
+        return {"success": False, "error": "Daemon shutdown is in progress"}
+    return response

@@ -62,7 +62,6 @@ from gobby.mcp_proxy.tools.workflows._pipeline_execution import (
     _execute_pipeline_background,
     _register_background_task,
 )
-from gobby.storage.agents import LocalAgentRunManager
 from gobby.storage.hub.protocol import AgentCapAdmission, HubDatabase
 from gobby.storage.tasks._ancestor_gate import find_child_development_ancestor_gate
 from gobby.storage.tasks._artifacts import TaskArtifacts
@@ -220,9 +219,13 @@ async def _run_heartbeat_unlocked(
     reclaimed = await run_db(sweep_stale_claims, resolved_db, project_id=project_id)
     if reclaimed:
         logger.info("Dispatcher reclaimed %d task(s) from dead sessions", reclaimed)
-    pending_reaped = await run_db(LocalAgentRunManager(resolved_db).cleanup_stale_pending_runs)
-    if pending_reaped:
-        logger.info("Dispatcher failed %d stale pending agent run(s)", pending_reaped)
+    lifecycle_monitor = getattr(services, "agent_lifecycle_monitor", None)
+    if lifecycle_monitor is not None:
+        pending_reaped = await lifecycle_monitor.run_acknowledged_stale_sweeps(
+            pending_timeout_minutes=60,
+        )
+        if pending_reaped:
+            logger.info("Dispatcher failed %d stale pending agent run(s)", len(pending_reaped))
 
     cap = MAX_ACTIVE_AGENTS if max_active_agents is None else max_active_agents
     candidates = await run_db(
@@ -486,8 +489,14 @@ async def _cleanup_unattached_spawned_run(
     *,
     db: HubDatabase,
     error: str,
+    completion_registry: object | None = None,
 ) -> bool:
-    return await _spawn_actions.cleanup_unattached_spawned_run(run_id, db=db, error=error)
+    return await _spawn_actions.cleanup_unattached_spawned_run(
+        run_id,
+        db=db,
+        error=error,
+        completion_registry=completion_registry,
+    )
 
 
 async def _quarantine_unterminated_spawned_run(

@@ -334,6 +334,15 @@ class HubDatabase(Protocol):
         """Open a transaction and yield a backend-neutral executor."""
         ...
 
+    def bounded_transaction(
+        self,
+        *,
+        statement_timeout_ms: int = 5_000,
+        lock_timeout_ms: int = 5_000,
+    ) -> AbstractContextManager[Transaction]:
+        """Open a transaction with transaction-local statement and lock bounds."""
+        ...
+
     def transaction_immediate(
         self,
         lock: LockTarget,

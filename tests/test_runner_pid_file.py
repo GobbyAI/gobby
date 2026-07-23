@@ -12,8 +12,8 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 
 import gobby.runner_lifecycle as runner_lifecycle
-from gobby.runner import GobbyRunner, main
-from gobby.runner_pid_file import claim_pid_file, probe_daemon_lock
+from gobby.runner import GobbyRunner, main, run_gobby
+from gobby.runner_pid_file import FailOpenPidOwnership, claim_pid_file, probe_daemon_lock
 from tests.runner_helpers import create_base_patches
 
 pytestmark = [pytest.mark.unit, pytest.mark.usefixtures("fast_stop_hook_grace_window")]
@@ -76,30 +76,21 @@ def test_probe_daemon_lock_reports_owner_while_held(tmp_path: Path) -> None:
         claim.release()
 
 
-async def test_run_daemon_contention_returns_cleanly(
-    mock_config: MagicMock,
+async def test_run_gobby_contention_returns_before_runner_construction(
     tmp_path: Path,
     caplog: pytest.LogCaptureFixture,
 ) -> None:
-    """A losing daemon logs the owner and returns; no RuntimeError, no init."""
-    import logging
+    """A losing daemon returns before any mutable subsystem is constructed."""
+    with (
+        patch("gobby.cli.utils.get_gobby_home", return_value=tmp_path),
+        patch("gobby.runner_pid_file.claim_pid_file", return_value=None),
+        patch("gobby.runner_pid_file.probe_daemon_lock", return_value=4242),
+        patch("gobby.runner.GobbyRunner") as runner_cls,
+        caplog.at_level(logging.INFO, logger="gobby.runner"),
+    ):
+        await run_gobby()
 
-    patches = create_base_patches(mock_config=mock_config)
-    with ExitStack() as stack:
-        [stack.enter_context(item) for item in patches]
-        stack.enter_context(patch("gobby.cli.utils.get_gobby_home", return_value=tmp_path))
-        stack.enter_context(patch("gobby.runner_maintenance.setup_signal_handlers"))
-        stack.enter_context(patch("gobby.runner_lifecycle.claim_pid_file", return_value=None))
-        stack.enter_context(patch("gobby.runner_lifecycle.probe_daemon_lock", return_value=4242))
-        init_subsystems = stack.enter_context(
-            patch.object(runner_lifecycle, "_init_subsystems", AsyncMock())
-        )
-        runner = GobbyRunner()
-
-        with caplog.at_level(logging.INFO, logger="gobby.runner_lifecycle"):
-            await runner_lifecycle.run_daemon(runner)
-
-    init_subsystems.assert_not_awaited()
+    runner_cls.assert_not_called()
     assert "4242" in caplog.text
     assert "exiting cleanly" in caplog.text
 
@@ -143,7 +134,7 @@ def test_main_passes_early_claim_to_run_gobby(tmp_path: Path) -> None:
         mock_run_gobby.return_value = None
         main()
 
-    assert mock_run_gobby.call_args.kwargs["pid_claim"] is claim
+    assert mock_run_gobby.call_args.kwargs["ownership_resolution"] is claim
     assert claim.release_count == 1
 
 
@@ -188,7 +179,7 @@ async def test_serve_failure_cleans_up_and_exits_zero_when_winner_is_healthy(
         runner = GobbyRunner()
 
         with caplog.at_level(logging.ERROR, logger="gobby.runner_lifecycle"):
-            await runner.run()
+            await runner.run(ownership_resolution=FailOpenPidOwnership("test"))
 
     shutdown.assert_awaited_once()
     cleanup_pid_file.assert_called_once()

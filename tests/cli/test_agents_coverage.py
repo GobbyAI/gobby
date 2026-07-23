@@ -390,26 +390,24 @@ class TestCleanupAgents:
         assert "Stale running runs" in result.output
         assert "Stale pending runs" in result.output
 
-    @patch("gobby.cli.agents.get_agent_run_manager")
-    def test_cleanup_execute(self, mock_mgr_fn: MagicMock, runner: CliRunner) -> None:
-        mgr = MagicMock()
-        mgr.cleanup_stale_runs.return_value = 2
-        mgr.cleanup_stale_pending_runs.return_value = 1
-        mock_mgr_fn.return_value = mgr
+    @patch("gobby.cli.agents.get_daemon_client")
+    def test_cleanup_execute(self, mock_client_fn: MagicMock, runner: CliRunner) -> None:
+        response = mock_client_fn.return_value.call_http_api.return_value
+        response.json.return_value = {"run_ids": ["run-1", "run-2", "run-3"]}
         result = runner.invoke(agents, ["cleanup"])
         assert result.exit_code == 0
-        assert "2 timed-out runs" in result.output
-        assert "1 stale pending" in result.output
+        assert "3 stale agent runs" in result.output
 
-    @patch("gobby.cli.agents.get_agent_run_manager")
-    def test_cleanup_with_timeout(self, mock_mgr_fn: MagicMock, runner: CliRunner) -> None:
-        mgr = MagicMock()
-        mgr.cleanup_stale_runs.return_value = 0
-        mgr.cleanup_stale_pending_runs.return_value = 0
-        mock_mgr_fn.return_value = mgr
+    @patch("gobby.cli.agents.get_daemon_client")
+    def test_cleanup_with_timeout(self, mock_client_fn: MagicMock, runner: CliRunner) -> None:
+        response = mock_client_fn.return_value.call_http_api.return_value
+        response.json.return_value = {"run_ids": []}
         result = runner.invoke(agents, ["cleanup", "--timeout", "60"])
         assert result.exit_code == 0
-        mgr.cleanup_stale_runs.assert_called_once_with(default_timeout_minutes=60)
+        mock_client_fn.return_value.call_http_api.assert_called_once_with(
+            "/api/agents/cleanup",
+            json_data={"timeout_minutes": 60},
+        )
 
 
 # =============================================================================

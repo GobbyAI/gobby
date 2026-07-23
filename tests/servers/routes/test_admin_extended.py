@@ -30,6 +30,12 @@ class TestAdminRoutesExtended:
 
         server.services = MagicMock()
 
+        async def run_db(func, *args, **kwargs):
+            return func(*args, **kwargs)
+
+        server.services.run_db = AsyncMock(side_effect=run_db)
+        server.services.completion_registry = None
+
         # Mock internal manager for workflows/reload
         server._internal_manager = MagicMock()
         mock_registry = AsyncMock()

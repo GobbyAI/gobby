@@ -1240,19 +1240,24 @@ async def test_heartbeat_reaps_stale_pending_runs_before_agent_cap(
     _task(temp_db, sample_project)
     calls: list[str] = []
 
-    class FakeAgentRunManager:
-        def __init__(self, _db: HubDatabase) -> None:
-            pass
-
-        def cleanup_stale_pending_runs(self) -> int:
+    class FakeLifecycleMonitor:
+        async def run_acknowledged_stale_sweeps(
+            self,
+            *,
+            pending_timeout_minutes: int,
+        ) -> list[str]:
+            assert pending_timeout_minutes == 60
             calls.append("cleanup")
-            return 1
+            return ["run-stale"]
 
-    monkeypatch.setattr(dispatcher, "LocalAgentRunManager", FakeAgentRunManager)
     monkeypatch.setattr(dispatcher, "count_active_agents", lambda *args, **kwargs: 2)
     monkeypatch.setattr(dispatcher, "MAX_ACTIVE_AGENTS", 2)
 
-    result = await dispatcher.run_heartbeat(db=temp_db, project_id=sample_project["id"])
+    result = await dispatcher.run_heartbeat(
+        db=temp_db,
+        project_id=sample_project["id"],
+        services=SimpleNamespace(agent_lifecycle_monitor=FakeLifecycleMonitor()),
+    )
 
     assert result.cap_reached is True
     assert calls == ["cleanup"]
@@ -1867,9 +1872,11 @@ async def test_spawn_attach_failure_terminalizes_created_run(
         *,
         db: HubDatabase,
         error: str,
+        completion_registry: object | None,
     ) -> bool:
         killed.append(run_id)
         assert db is temp_db
+        assert completion_registry is None
         assert "disappeared before attach" in error
         run_storage.fail(run_id, error=f"dispatch mutex attach failed: {error}")
         return True
@@ -3707,6 +3714,7 @@ async def test_inner_spawn_cleanup_cancellation_quarantines_without_spinning(
             mutex=MagicMock(),
             db=MagicMock(),
             error="post-spawn cleanup failed",
+            completion_registry=None,
             cleanup_unattached_spawned_run=cancelled_cleanup,
             quarantine_unterminated_spawned_run=quarantine,
         )
@@ -5180,3 +5188,45 @@ async def test_run_heartbeat_closes_owned_database_when_dispatch_fails(
     assert run_db_calls == ["enter_context", "close"]
     assert database_context.entered is True
     assert database_context.exited is True
+
+
+@pytest.mark.asyncio
+async def test_unattached_spawn_cleanup_delivers_terminal_run(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from gobby.dispatch import spawn_actions
+
+    run = SimpleNamespace(id="run-1", status="running")
+    storage = MagicMock()
+    storage.get.return_value = run
+    storage.fail.return_value = SimpleNamespace(id=run.id, status="error")
+    completion_registry = object()
+    delivered: list[tuple[str, object]] = []
+
+    async def deliver_terminal_run(**kwargs: Any) -> bool:
+        delivered.append((kwargs["run_id"], kwargs["completion_registry"]))
+        return True
+
+    async def kill_terminal_run(*_args: Any, **_kwargs: Any) -> dict[str, bool]:
+        return {"success": True}
+
+    monkeypatch.setattr(spawn_actions, "LocalAgentRunManager", lambda _db: storage)
+    monkeypatch.setattr(
+        "gobby.agents.kill.kill_agent",
+        kill_terminal_run,
+    )
+    monkeypatch.setattr(
+        spawn_actions,
+        "_deliver_existing_terminal_run_unshielded",
+        deliver_terminal_run,
+    )
+
+    cleaned = await spawn_actions.cleanup_unattached_spawned_run(
+        run.id,
+        db=MagicMock(),
+        error="attach failed",
+        completion_registry=completion_registry,
+    )
+
+    assert cleaned is True
+    assert delivered == [(run.id, completion_registry)]

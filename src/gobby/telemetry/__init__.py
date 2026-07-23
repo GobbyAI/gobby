@@ -94,11 +94,13 @@ def init_telemetry(
 
     # 1. Tracing
     tracer_provider = get_tracer_provider(config)
-    trace.set_tracer_provider(tracer_provider)
+    if trace.get_tracer_provider() is not tracer_provider:
+        trace.set_tracer_provider(tracer_provider)
 
     # 2. Metrics
     meter_provider = get_meter_provider(config)
-    metrics.set_meter_provider(meter_provider)
+    if metrics.get_meter_provider() is not meter_provider:
+        metrics.set_meter_provider(meter_provider)
 
     # 3. Rotating formatted log files
     setup_file_logging(logging_config, verbose=verbose)
@@ -136,6 +138,6 @@ def get_meter(name: str, version: str | None = None) -> Meter:
 
 
 def shutdown_telemetry() -> None:
-    """Shutdown trace and meter providers and clear their caches."""
+    """Disable lifecycle telemetry without tearing down interpreter providers."""
     configure_health_metrics(enabled=False)
     shutdown_providers()

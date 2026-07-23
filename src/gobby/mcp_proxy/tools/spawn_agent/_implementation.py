@@ -191,6 +191,7 @@ async def spawn_agent_impl(
     initial_variables: dict[str, Any] | None = None,
     session_manager: Any | None = None,  # SessionManager
     db: Any | None = None,  # HubDatabase
+    completion_registry: Any | None = None,
     daemon_config: Any | None = None,  # DaemonConfig
     code_index: Any | None = None,  # CodeIndexContext
     held_task_mutex: Any | None = None,
@@ -703,6 +704,7 @@ async def spawn_agent_impl(
                 str(exc),
                 handler,
                 spawn_config,
+                completion_registry=completion_registry,
                 cleanup_isolation=cleanup_isolation_on_failure,
             )
             return {"success": False, "error": str(exc), "reasoning": reasoning.to_dict()}
@@ -717,6 +719,7 @@ async def spawn_agent_impl(
                     error,
                     handler,
                     spawn_config,
+                    completion_registry=completion_registry,
                     cleanup_isolation=cleanup_isolation_on_failure,
                     child_session_id=spawn_result.child_session_id,
                 )
@@ -759,6 +762,7 @@ async def spawn_agent_impl(
                 run_id,
                 handler,
                 spawn_config,
+                completion_registry=completion_registry,
                 cleanup_isolation=cleanup_isolation_on_failure,
                 child_session_id=spawn_result.child_session_id,
             )
@@ -783,6 +787,7 @@ async def spawn_agent_impl(
                 run_id,
                 handler,
                 spawn_config,
+                completion_registry=completion_registry,
                 cleanup_isolation=cleanup_isolation_on_failure,
                 child_session_id=spawn_result.child_session_id,
             )
@@ -897,6 +902,7 @@ async def spawn_agent_impl(
                 tmux_session_name,
                 tmux_socket_name,
                 tmux_socket_path,
+                completion_registry,
             )
     else:
         task_spawn_lease.release_unattached()
@@ -906,6 +912,7 @@ async def spawn_agent_impl(
             spawn_result.error or "Spawn failed",
             handler,
             spawn_config,
+            completion_registry=completion_registry,
             cleanup_isolation=cleanup_isolation_on_failure,
             child_session_id=spawn_result.child_session_id,
         )

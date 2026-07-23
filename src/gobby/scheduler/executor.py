@@ -334,6 +334,7 @@ class CronExecutor:
             parent_session_id=job.project_id,  # Cron jobs use project as parent context
             session_manager=getattr(self.agent_runner, "child_session_manager", None),
             db=self.storage.db,
+            completion_registry=getattr(self.services, "completion_registry", None),
         )
 
         if result.get("success") is True:

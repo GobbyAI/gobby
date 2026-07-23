@@ -9,7 +9,7 @@ from gobby.storage.sql_dialect import elapsed_seconds_greater_than_expr, older_t
 from gobby.utils.datetime import utc_now
 
 from ._constants import logger
-from ._helpers import _positive_rowcount
+from ._lifecycle import terminal_fence_key
 from ._models import AgentRun
 
 
@@ -26,7 +26,10 @@ class _AgentRunCleanupHost(Protocol):
 
 
 class _AgentRunCleanupMixin:
-    def cleanup_stale_runs(self: _AgentRunCleanupHost, default_timeout_minutes: int = 30) -> int:
+    def cleanup_stale_runs(
+        self: _AgentRunCleanupHost,
+        default_timeout_minutes: int = 30,
+    ) -> list[str]:
         """Mark stale running agent runs as timed out and expire their sessions.
 
         Uses per-agent timeout_seconds when set, falls back to default_timeout_minutes.
@@ -35,7 +38,7 @@ class _AgentRunCleanupMixin:
             default_timeout_minutes: Fallback timeout for runs without timeout_seconds.
 
         Returns:
-            Number of runs timed out.
+            IDs of runs successfully transitioned to timeout.
         """
         explicit_timeout_sql = elapsed_seconds_greater_than_expr(
             self.db,
@@ -84,7 +87,7 @@ class _AgentRunCleanupMixin:
 
         explicit_count = 0
         default_count = 0
-        timed_out = 0
+        timed_out_ids: list[str] = []
         for row in stale_runs:
             timeout_seconds = row["timeout_seconds"]
             error = (
@@ -92,39 +95,48 @@ class _AgentRunCleanupMixin:
                 if timeout_seconds is not None
                 else f"Exceeded default timeout ({default_timeout_minutes}m)"
             )
-            updated = self.timeout(
-                row["id"],
-                turns_used=row["turns_used"] or 0,
-                error=error,
-                tool_calls_count=row["tool_calls_count"] or 0,
-            )
+            run_id = str(row["id"])
+            try:
+                updated = self.timeout(
+                    run_id,
+                    turns_used=row["turns_used"] or 0,
+                    error=error,
+                    tool_calls_count=row["tool_calls_count"] or 0,
+                )
+            except Exception:
+                logger.warning("Failed to timeout stale agent run %s", run_id, exc_info=True)
+                continue
             if updated is None:
                 continue
-            timed_out += 1
+            timed_out_ids.append(run_id)
             if timeout_seconds is not None:
                 explicit_count += 1
             else:
                 default_count += 1
 
-        if timed_out:
+        if timed_out_ids:
             logger.info(
                 "Timed out %s stale agent runs (%s explicit, %s default)",
-                timed_out,
+                len(timed_out_ids),
                 explicit_count,
                 default_count,
             )
 
-        return timed_out
+        return timed_out_ids
 
     def cleanup_stale_pending_runs(
         self: _AgentRunCleanupHost,
         timeout_minutes: int = 60,
         long_timeout_minutes: int = 1440,
-    ) -> int:
-        """Mark stale pending agent runs as failed."""
+    ) -> list[str]:
+        """Mark stale pending agent runs as failed and return transitioned IDs."""
         now = utc_now()
         pending_timeout_sql = older_than_now_expr(self.db, "created_at", "%s", "minute")
-        with self.db.transaction() as conn:
+        with self.db.bounded_transaction() as conn:
+            conn.execute(
+                "SELECT pg_advisory_xact_lock_shared(%s)",
+                (terminal_fence_key(),),
+            )
             cursor = conn.execute(
                 f"""
                 UPDATE agent_runs
@@ -147,15 +159,16 @@ class _AgentRunCleanupMixin:
                         AND {pending_timeout_sql}
                     )
                 )
+                RETURNING id
                 """,  # nosec B608 # timeout expression is selected by storage dialect.
                 (now, now, timeout_minutes, long_timeout_minutes),
             )
-        count = _positive_rowcount(cursor)
-        if count > 0:
+            run_ids = [str(row["id"]) for row in cursor.fetchall()]
+        if run_ids:
             logger.info(
                 "Failed %s stale pending agent runs (>%sm; tmux >%sm)",
-                count,
+                len(run_ids),
                 timeout_minutes,
                 long_timeout_minutes,
             )
-        return count
+        return run_ids

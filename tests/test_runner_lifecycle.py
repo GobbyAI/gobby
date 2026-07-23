@@ -20,6 +20,7 @@ import gobby.runner_lifecycle_subsystems as runner_lifecycle_subsystems
 from gobby.agents.readiness import spawn_readiness_blocker
 from gobby.app_context import clear_app_context, get_app_context
 from gobby.runner import GobbyRunner, main, run_gobby
+from gobby.runner_pid_file import FailOpenPidOwnership
 from gobby.shutdown_intent import ShutdownIntent
 from tests.runner_helpers import create_base_patches
 
@@ -106,7 +107,7 @@ class TestGobbyRunnerRun:
                 mock_server_cls.return_value = mock_server
 
                 with patch("gobby.runner_maintenance.setup_signal_handlers"):
-                    await runner.run()
+                    await runner.run(ownership_resolution=FailOpenPidOwnership("test"))
 
             mock_mcp_manager.connect_all.assert_called_once()
             mock_mcp_manager.disconnect_all.assert_called_once()
@@ -138,7 +139,7 @@ class TestGobbyRunnerRun:
                 mock_server_cls.return_value = mock_server
 
                 with patch("gobby.runner_maintenance.setup_signal_handlers"):
-                    await runner.run()
+                    await runner.run(ownership_resolution=FailOpenPidOwnership("test"))
 
             assert mock_mcp_manager.disconnect_all.await_count == 1
             assert runner.database.close.called is True
@@ -167,7 +168,7 @@ class TestGobbyRunnerRun:
                 mock_server_cls.return_value = mock_server
 
                 with patch("gobby.runner_maintenance.setup_signal_handlers"):
-                    await runner.run()
+                    await runner.run(ownership_resolution=FailOpenPidOwnership("test"))
 
             assert mock_mcp_manager.disconnect_all.await_count == 1
             assert runner.database.close.called is True
@@ -212,7 +213,7 @@ class TestGobbyRunnerRun:
                 mock_server_cls.return_value = mock_server
 
                 with patch("gobby.runner_maintenance.setup_signal_handlers"):
-                    await runner.run()
+                    await runner.run(ownership_resolution=FailOpenPidOwnership("test"))
 
             mock_ws_server.start.assert_not_awaited()
             assert runner._shutdown_requested is True
@@ -1327,15 +1328,14 @@ class TestShutdownDaemonServices:
         async def reap_children(**_kwargs: object) -> None:
             events.append("reap")
 
-        def shutdown_executor(*, wait: bool, cancel_futures: bool = False) -> None:
-            assert wait is False
+        def shutdown_executor(*, cancel_futures: bool = True) -> None:
             assert cancel_futures is True
             events.append("db-executor")
 
         runner.cron_scheduler = SimpleNamespace(stop=fail_cron_stop)
         runner.message_processor = SimpleNamespace(stop=stop_message_processor)
         runner.mcp_proxy.disconnect_all = disconnect_mcp
-        runner.db_executor = SimpleNamespace(shutdown=shutdown_executor)
+        runner.db_executor = SimpleNamespace(shutdown=shutdown_executor, join=lambda: None)
         runner.database.close.side_effect = lambda: events.append("database")
         server = SimpleNamespace(should_exit=False)
 
@@ -1417,16 +1417,22 @@ class TestShutdownDaemonServices:
     async def test_db_executor_shutdown_cancels_queued_work_without_default_executor(
         self,
     ) -> None:
-        shutdown_calls: list[tuple[bool, bool]] = []
+        shutdown_calls: list[bool] = []
+        join_calls = 0
 
-        def shutdown_executor(*, wait: bool, cancel_futures: bool = False) -> None:
-            shutdown_calls.append((wait, cancel_futures))
+        def shutdown_executor(*, cancel_futures: bool = True) -> None:
+            shutdown_calls.append(cancel_futures)
+
+        def join_executor() -> None:
+            nonlocal join_calls
+            join_calls += 1
 
         await runner_lifecycle_shutdown._shutdown_database_executor(
-            SimpleNamespace(shutdown=shutdown_executor)
+            SimpleNamespace(shutdown=shutdown_executor, join=join_executor)
         )
 
-        assert shutdown_calls == [(False, True)]
+        assert shutdown_calls == [True]
+        assert join_calls == 1
 
     @pytest.mark.asyncio
     async def test_hung_db_call_does_not_block_database_close(self) -> None:
@@ -1452,7 +1458,7 @@ class TestShutdownDaemonServices:
         try:
             await asyncio.wait_for(asyncio.to_thread(worker_started.wait), timeout=1.0)
 
-            await asyncio.wait_for(
+            shutdown_task = asyncio.create_task(
                 runner_lifecycle_shutdown.shutdown_daemon_services(
                     runner,
                     server,
@@ -1464,17 +1470,19 @@ class TestShutdownDaemonServices:
                     reap_remaining_child_processes=AsyncMock(),
                     shutdown_telemetry=MagicMock(),
                     cleanup_pid_file=MagicMock(),
-                ),
-                timeout=0.5,
+                )
             )
+            await asyncio.sleep(0.05)
+            runner.database.close.assert_not_called()
+            release_worker.set()
+            await asyncio.wait_for(shutdown_task, timeout=1.0)
 
             runner.database.close.assert_called_once_with()
             executor_stats = runner.db_executor.stats()
             assert executor_stats.shutdown is True
-            assert executor_stats.active == 1
+            assert executor_stats.active == 0
             assert server.should_exit is True
-            assert release_worker.is_set() is False
-            assert not db_call.done()
+            assert release_worker.is_set() is True
         finally:
             release_worker.set()
             await asyncio.wait_for(db_call, timeout=1.0)
@@ -1489,15 +1497,17 @@ class TestShutdownDaemonServices:
             import asyncio
             import threading
 
-            from gobby.runner_lifecycle_shutdown import _shutdown_database_executor
+            import gobby.runner_lifecycle_shutdown as shutdown
 
             class BlockingExecutor:
-                def shutdown(self, *, wait: bool, cancel_futures: bool = False) -> None:
-                    if wait:
-                        threading.Event().wait()
+                def shutdown(self, *, cancel_futures: bool = True) -> None:
                     assert cancel_futures is True
 
-            asyncio.run(_shutdown_database_executor(BlockingExecutor()))
+                def join(self) -> None:
+                    threading.Event().wait()
+
+            shutdown._DATABASE_EXECUTOR_JOIN_SECONDS = 0.01
+            asyncio.run(shutdown._shutdown_database_executor(BlockingExecutor()))
             """
         )
 
@@ -1925,13 +1935,42 @@ class TestRunGobbyFunction:
             mock_runner.run = AsyncMock()
             mock_runner_cls.return_value = mock_runner
 
-            await run_gobby(config_path=Path("/tmp/config.yaml"), verbose=True)
+            ownership = FailOpenPidOwnership("test")
+            await run_gobby(
+                config_path=Path("/tmp/config.yaml"),
+                verbose=True,
+                ownership_resolution=ownership,
+            )
 
             mock_runner_cls.assert_called_once_with(
                 config_path=Path("/tmp/config.yaml"), verbose=True
             )
-            mock_runner.run.assert_called_once()
+            mock_runner.run.assert_called_once_with(ownership_resolution=ownership)
             assert mock_runner.run.await_count == 1
+
+    def test_runner_construction_failure_rolls_back_storage(self) -> None:
+        database = MagicMock()
+        db_executor = MagicMock()
+
+        def init_storage(runner: object, *_args: object) -> None:
+            runner.database = database  # type: ignore[attr-defined]
+            runner.db_executor = db_executor  # type: ignore[attr-defined]
+
+        with (
+            patch("gobby.runner_init.init_storage_and_config", side_effect=init_storage),
+            patch("gobby.runner_init.init_services", side_effect=RuntimeError("init failed")),
+            patch("gobby.runner_init.init_orchestration"),
+            patch("gobby.runner_init.init_servers"),
+            patch("gobby.agents.pty_reader.PTYReaderManager") as pty_reader_manager,
+            pytest.raises(RuntimeError, match="init failed"),
+        ):
+            GobbyRunner()
+
+        db_executor.shutdown.assert_called_once_with()
+        db_executor.join.assert_called_once_with()
+        database.close.assert_called_once_with()
+        pty_reader_manager.assert_not_called()
+        assert get_app_context() is None
 
 
 class TestMainFunction:
@@ -2854,6 +2893,7 @@ class TestShutdownLoop:
                 port=8765,
                 services=SimpleNamespace(shutdown_in_progress=False),
             ),
+            db_executor=SimpleNamespace(run=AsyncMock(), submit=MagicMock()),
         )
 
     @pytest.mark.asyncio
@@ -2897,7 +2937,10 @@ class TestShutdownLoop:
             )
 
             await asyncio.wait_for(
-                runner_lifecycle.run_daemon(runner, pid_claim=MagicMock()),
+                runner_lifecycle.run_daemon(
+                    runner,
+                    ownership_resolution=FailOpenPidOwnership("test"),
+                ),
                 timeout=1.0,
             )
 
@@ -2937,7 +2980,10 @@ class TestShutdownLoop:
                         "gobby.runner_lifecycle.asyncio.sleep",
                         side_effect=trigger_shutdown,
                     ):
-                        await asyncio.wait_for(runner.run(), timeout=5.0)
+                        await asyncio.wait_for(
+                            runner.run(ownership_resolution=FailOpenPidOwnership("test")),
+                            timeout=5.0,
+                        )
 
                     assert main_loop_slept is True
                     assert runner._shutdown_requested is True
@@ -2963,15 +3009,10 @@ class TestShutdownLoop:
                 raise failure
 
             server.serve = AsyncMock(side_effect=serve)
-            pid_claim = MagicMock()
-
             stack.enter_context(patch("uvicorn.Config"))
             stack.enter_context(patch("uvicorn.Server", return_value=server))
             stack.enter_context(patch("gobby.runner_maintenance.setup_signal_handlers"))
             stack.enter_context(patch("gobby.runner_maintenance.cleanup_pid_file"))
-            stack.enter_context(
-                patch("gobby.runner_lifecycle.claim_pid_file", return_value=pid_claim)
-            )
             init_subsystems = stack.enter_context(patch("gobby.runner_lifecycle._init_subsystems"))
             start_periodic_tasks = stack.enter_context(
                 patch("gobby.runner_lifecycle._start_periodic_tasks")
@@ -2987,7 +3028,10 @@ class TestShutdownLoop:
             with caplog.at_level(logging.ERROR, logger="gobby.runner_lifecycle"):
                 with pytest.raises(SystemExit) as exc_info:
                     await asyncio.wait_for(
-                        runner_lifecycle.run_daemon(runner),
+                        runner_lifecycle.run_daemon(
+                            runner,
+                            ownership_resolution=FailOpenPidOwnership("test"),
+                        ),
                         timeout=1.0,
                     )
 
@@ -3024,15 +3068,10 @@ class TestShutdownLoop:
                 raise failure
 
             server.serve = AsyncMock(side_effect=serve)
-            pid_claim = MagicMock()
-
             stack.enter_context(patch("uvicorn.Config"))
             stack.enter_context(patch("uvicorn.Server", return_value=server))
             stack.enter_context(patch("gobby.runner_maintenance.setup_signal_handlers"))
             stack.enter_context(patch("gobby.runner_maintenance.cleanup_pid_file"))
-            stack.enter_context(
-                patch("gobby.runner_lifecycle.claim_pid_file", return_value=pid_claim)
-            )
             init_subsystems = stack.enter_context(patch("gobby.runner_lifecycle._init_subsystems"))
             clear_shutdown_intent = stack.enter_context(
                 patch("gobby.runner_lifecycle.clear_active_shutdown_intent")
@@ -3055,7 +3094,10 @@ class TestShutdownLoop:
             with caplog.at_level(logging.ERROR, logger="gobby.runner_lifecycle"):
                 with pytest.raises(SystemExit) as exc_info:
                     await asyncio.wait_for(
-                        runner_lifecycle.run_daemon(runner),
+                        runner_lifecycle.run_daemon(
+                            runner,
+                            ownership_resolution=FailOpenPidOwnership("test"),
+                        ),
                         timeout=1.0,
                     )
 
@@ -3661,19 +3703,33 @@ class TestAgentRestartRecoveryHelpers:
 
     @pytest.mark.asyncio
     async def test_cancel_active_agent_runs_for_shutdown_kills_and_cancels(self) -> None:
-        run = SimpleNamespace(id="ac314d27-4314-5fe3-a0ab-01645086e137")
+        from gobby.agents.agent_cleanup import reopen_terminal_delivery_admission
+
+        reopen_terminal_delivery_admission()
+        run = SimpleNamespace(
+            id="ac314d27-4314-5fe3-a0ab-01645086e137",
+            status="cancelled",
+            error=None,
+        )
         runner = SimpleNamespace(
             agent_lifecycle_monitor=SimpleNamespace(
                 terminalize_cancelled_run=AsyncMock(return_value=True)
             ),
             agent_runner=SimpleNamespace(
-                run_storage=SimpleNamespace(list_active=MagicMock(return_value=[run]))
+                run_storage=SimpleNamespace(
+                    list_active=MagicMock(return_value=[run]),
+                    get=MagicMock(return_value=run),
+                )
             ),
             pipeline_execution_manager=SimpleNamespace(
                 get_completion_subscribers=MagicMock(return_value=["sess-1"]),
                 remove_completion_subscribers=MagicMock(),
             ),
-            completion_registry=SimpleNamespace(register=MagicMock(), cleanup=MagicMock()),
+            completion_registry=SimpleNamespace(
+                register=MagicMock(),
+                notify=AsyncMock(return_value={}),
+                cleanup=MagicMock(),
+            ),
             database=MagicMock(),
         )
 
@@ -3697,7 +3753,9 @@ class TestAgentRestartRecoveryHelpers:
             terminal_reason="daemon_stop",
         )
         runner.pipeline_execution_manager.remove_completion_subscribers.assert_not_called()
-        runner.completion_registry.cleanup.assert_not_called()
+        runner.completion_registry.cleanup.assert_called_once_with(
+            "ac314d27-4314-5fe3-a0ab-01645086e137"
+        )
 
     @pytest.mark.asyncio
     async def test_stop_shutdown_policy_cancels_active_agents(self) -> None:
@@ -3815,3 +3873,53 @@ class TestAgentRestartRecoveryHelpers:
             )
 
         assert "Cron scheduler shutdown timed out" in caplog.text
+
+    @pytest.mark.asyncio
+    async def test_async_shutdown_quiesces_terminal_delivery_before_executor(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        events: list[str] = []
+
+        async def cancel_health_checks() -> None:
+            events.append("health")
+
+        async def drain_deliveries() -> None:
+            events.append("drain")
+
+        async def shutdown_executor(_executor: object) -> None:
+            events.append("executor")
+
+        async def reap_children(**_kwargs: object) -> None:
+            events.append("reap")
+
+        monkeypatch.setattr(
+            runner_lifecycle_shutdown,
+            "close_terminal_delivery_admission",
+            lambda: events.append("close"),
+        )
+        monkeypatch.setattr(
+            runner_lifecycle_shutdown,
+            "cancel_and_await_health_checks",
+            cancel_health_checks,
+        )
+        monkeypatch.setattr(
+            runner_lifecycle_shutdown,
+            "drain_shielded_terminal_deliveries",
+            drain_deliveries,
+        )
+        monkeypatch.setattr(
+            runner_lifecycle_shutdown,
+            "_shutdown_database_executor",
+            shutdown_executor,
+        )
+
+        await runner_lifecycle_shutdown._run_async_shutdown_cleanup(
+            SimpleNamespace(db_executor=object()),
+            shutdown_intent=ShutdownIntent.STOP,
+            reap_remaining_child_processes=reap_children,
+            shutdown_telemetry=lambda: events.append("telemetry"),
+        )
+
+        assert events[:3] == ["close", "health", "drain"]
+        assert events[-1] == "executor"

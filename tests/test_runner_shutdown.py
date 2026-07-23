@@ -11,6 +11,7 @@ from gobby import app_context, runner_lifecycle_shutdown
 from gobby.hooks.event_handlers import EventHandlers
 from gobby.hooks.events import HookEventType
 from gobby.runner import GobbyRunner
+from gobby.runner_pid_file import FailOpenPidOwnership
 from gobby.shutdown_intent import ShutdownIntent
 from tests.hooks._event_handler_helpers import make_event
 from tests.runner_helpers import create_base_patches
@@ -90,7 +91,7 @@ class TestGobbyRunnerShutdown:
                 mock_server_cls.return_value = mock_server
 
                 with patch("gobby.runner_maintenance.setup_signal_handlers"):
-                    await runner.run()
+                    await runner.run(ownership_resolution=FailOpenPidOwnership("test"))
 
             mock_process.children.assert_called_once_with(recursive=True)
             assert http_shutdown_complete is True
@@ -121,7 +122,9 @@ class TestGobbyRunnerShutdown:
                 mock_server_cls.return_value = mock_server
 
                 with patch("gobby.runner_maintenance.setup_signal_handlers"):
-                    await asyncio.wait_for(runner.run(), timeout=25.0)
+                    await asyncio.wait_for(
+                        runner.run(ownership_resolution=FailOpenPidOwnership("test")), timeout=25.0
+                    )
 
             assert mock_server.should_exit is True
             assert runner.database.close.called is True
@@ -161,7 +164,9 @@ class TestGobbyRunnerShutdown:
                 mock_server_cls.return_value = mock_server
 
                 with patch("gobby.runner_maintenance.setup_signal_handlers"):
-                    await asyncio.wait_for(runner.run(), timeout=10.0)
+                    await asyncio.wait_for(
+                        runner.run(ownership_resolution=FailOpenPidOwnership("test")), timeout=10.0
+                    )
 
             assert mock_lifecycle_manager.stop.await_count == 1
             assert runner.database.close.called is True
@@ -223,7 +228,9 @@ class TestGobbyRunnerShutdown:
                 mock_server_cls.return_value = mock_server
 
                 with patch("gobby.runner_maintenance.setup_signal_handlers"):
-                    await asyncio.wait_for(runner.run(), timeout=10.0)
+                    await asyncio.wait_for(
+                        runner.run(ownership_resolution=FailOpenPidOwnership("test")), timeout=10.0
+                    )
 
             assert lifecycle_stopped is True
             assert mock_server.serve.await_count == 1
@@ -278,7 +285,9 @@ class TestGobbyRunnerShutdown:
                 mock_server_cls.return_value = mock_server
 
                 with patch("gobby.runner_maintenance.setup_signal_handlers"):
-                    await asyncio.wait_for(runner.run(), timeout=10.0)
+                    await asyncio.wait_for(
+                        runner.run(ownership_resolution=FailOpenPidOwnership("test")), timeout=10.0
+                    )
 
             fast_stop_hook_grace_window.assert_awaited_once()
             runner.http_server._cleanup_pending_interactions.assert_awaited_once()
@@ -325,7 +334,9 @@ class TestGobbyRunnerShutdown:
                 mock_server_cls.return_value = mock_server
 
                 with patch("gobby.runner_maintenance.setup_signal_handlers"):
-                    await asyncio.wait_for(runner.run(), timeout=10.0)
+                    await asyncio.wait_for(
+                        runner.run(ownership_resolution=FailOpenPidOwnership("test")), timeout=10.0
+                    )
 
             assert mock_message_processor.stop.await_count == 1
             assert runner.database.close.called is True
@@ -354,7 +365,9 @@ class TestGobbyRunnerShutdown:
                 mock_server_cls.return_value = mock_server
 
                 with patch("gobby.runner_maintenance.setup_signal_handlers"):
-                    await asyncio.wait_for(runner.run(), timeout=10.0)
+                    await asyncio.wait_for(
+                        runner.run(ownership_resolution=FailOpenPidOwnership("test")), timeout=10.0
+                    )
 
             assert mock_mcp_manager.disconnect_all.await_count == 1
             assert runner.database.close.called is True
@@ -413,7 +426,7 @@ class TestGobbyRunnerShutdown:
                 mock_server_cls.return_value = mock_server
 
                 with patch("gobby.runner_maintenance.setup_signal_handlers"):
-                    await runner.run()
+                    await runner.run(ownership_resolution=FailOpenPidOwnership("test"))
 
             mock_message_processor.start.assert_called_once()
             assert mock_message_processor.start.await_count == 1
@@ -453,7 +466,7 @@ class TestGobbyRunnerShutdown:
                 mock_server_cls.return_value = mock_server
 
                 with patch("gobby.runner_maintenance.setup_signal_handlers"):
-                    await runner.run()
+                    await runner.run(ownership_resolution=FailOpenPidOwnership("test"))
 
             runner.metrics_manager.cleanup_old_metrics.assert_called()
             assert runner.metrics_manager.cleanup_old_metrics.call_count >= 1
@@ -495,7 +508,7 @@ class TestGobbyRunnerShutdown:
                 mock_server_cls.return_value = mock_server
 
                 with patch("gobby.runner_maintenance.setup_signal_handlers"):
-                    await runner.run()
+                    await runner.run(ownership_resolution=FailOpenPidOwnership("test"))
 
             assert runner.metrics_manager.cleanup_old_metrics.call_count == 1
             assert runner.database.close.called is True
@@ -524,7 +537,7 @@ class TestGobbyRunnerShutdown:
                 ),
                 pytest.raises(SystemExit) as exc_info,
             ):
-                await runner.run()
+                await runner.run(ownership_resolution=FailOpenPidOwnership("test"))
 
             assert exc_info.value.code == 1
 
@@ -552,7 +565,7 @@ class TestGobbyRunnerShutdown:
                 mock_server_cls.return_value = mock_server
 
                 with patch("gobby.runner_maintenance.setup_signal_handlers"):
-                    await runner.run()
+                    await runner.run(ownership_resolution=FailOpenPidOwnership("test"))
 
             assert (
                 runner._metrics_cleanup_task is None
@@ -605,7 +618,9 @@ class TestWebSocketServerShutdown:
                     patch("gobby.runner_maintenance.setup_signal_handlers"),
                     patch("gobby.runner_lifecycle._init_subsystems", side_effect=init_subsystems),
                 ):
-                    await asyncio.wait_for(runner.run(), timeout=10.0)
+                    await asyncio.wait_for(
+                        runner.run(ownership_resolution=FailOpenPidOwnership("test")), timeout=10.0
+                    )
 
             assert mock_ws_server.start.await_count == 1
             assert websocket_started.is_set()
@@ -664,7 +679,9 @@ class TestWebSocketServerShutdown:
                         side_effect=shutdown_websocket_server,
                     ),
                 ):
-                    await asyncio.wait_for(runner.run(), timeout=15.0)
+                    await asyncio.wait_for(
+                        runner.run(ownership_resolution=FailOpenPidOwnership("test")), timeout=15.0
+                    )
 
             assert mock_ws_server.start.await_count == 1
             assert websocket_started.is_set()
@@ -703,7 +720,9 @@ class TestMetricsCleanupTaskShutdown:
 
                     shutdown_task = asyncio.create_task(delayed_shutdown())
 
-                    await asyncio.wait_for(runner.run(), timeout=10.0)
+                    await asyncio.wait_for(
+                        runner.run(ownership_resolution=FailOpenPidOwnership("test")), timeout=10.0
+                    )
                     await shutdown_task
 
             assert runner._metrics_cleanup_task is None or runner._metrics_cleanup_task.done()
@@ -737,7 +756,7 @@ class TestGobbyRunnerShutdownExtended:
                 mock_server_cls.return_value = mock_server
 
                 with patch("gobby.runner_maintenance.setup_signal_handlers"):
-                    await runner.run()
+                    await runner.run(ownership_resolution=FailOpenPidOwnership("test"))
 
             mock_mcp_manager.disconnect_all.assert_called_once()
             assert mock_mcp_manager.disconnect_all.await_count == 1
@@ -776,7 +795,7 @@ class TestGobbyRunnerShutdownExtended:
                 mock_server_cls.return_value = mock_server
 
                 with patch("gobby.runner_maintenance.setup_signal_handlers"):
-                    await runner.run()
+                    await runner.run(ownership_resolution=FailOpenPidOwnership("test"))
 
             assert events == ["telemetry", "database"]
             assert runner.database.close.call_count == 1
@@ -810,7 +829,7 @@ class TestGobbyRunnerShutdownExtended:
                 mock_server_cls.return_value = mock_server
 
                 with patch("gobby.runner_maintenance.setup_signal_handlers"):
-                    await runner.run()
+                    await runner.run(ownership_resolution=FailOpenPidOwnership("test"))
 
             assert events == ["database"]
             runner.code_indexer.close_graph_client.assert_not_called()

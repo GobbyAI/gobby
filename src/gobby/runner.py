@@ -40,7 +40,7 @@ if TYPE_CHECKING:
     from gobby.mcp_proxy.metrics_events import MetricsEventStore
     from gobby.memory.manager import MemoryManager
     from gobby.memory.vectorstore import VectorStore
-    from gobby.runner_pid_file import PidFileClaim
+    from gobby.runner_pid_file import PidOwnershipResolution
     from gobby.scheduler.scheduler import CronScheduler
     from gobby.servers.http import HTTPServer
     from gobby.servers.websocket.server import WebSocketServer
@@ -198,20 +198,31 @@ class GobbyRunner:
             init_services,
             init_storage_and_config,
         )
+        from gobby.runner_rollback import (
+            ConstructionRollbackLedger,
+            rollback_runner_resources,
+        )
 
         self.degraded_services = set()
         # Captured by run_daemon once the daemon's long-lived loop is running;
         # dispatch uses it to keep fire-and-forget work off short-lived loops.
         self.main_loop: asyncio.AbstractEventLoop | None = None
-        init_storage_and_config(self, config_path, verbose)
-        init_services(self)
-        init_orchestration(self)
-        init_servers(self)
+        ledger = ConstructionRollbackLedger()
+        ledger.add("runner resources", lambda: rollback_runner_resources(self))
+        try:
+            init_storage_and_config(self, config_path, verbose)
+            init_services(self)
+            init_orchestration(self)
+            init_servers(self)
+        except BaseException:
+            ledger.rollback()
+            raise
+        ledger.commit()
 
-    async def run(self, pid_claim: PidFileClaim | None = None) -> None:
+    async def run(self, *, ownership_resolution: PidOwnershipResolution) -> None:
         from gobby.runner_lifecycle import run_daemon
 
-        await run_daemon(self, pid_claim=pid_claim)
+        await run_daemon(self, ownership_resolution=ownership_resolution)
 
     def request_shutdown(self, intent: ShutdownIntent | None = None) -> None:
         """Request daemon shutdown and optionally set the semantic intent."""
@@ -226,10 +237,33 @@ class GobbyRunner:
 async def run_gobby(
     config_path: Path | None = None,
     verbose: bool = False,
-    pid_claim: PidFileClaim | None = None,
+    ownership_resolution: PidOwnershipResolution | None = None,
 ) -> None:
+    from gobby.cli.utils import get_gobby_home
+    from gobby.runner_pid_file import (
+        FailOpenPidOwnership,
+        claim_pid_file,
+        probe_daemon_lock,
+    )
+
+    if ownership_resolution is None:
+        pid_file = get_gobby_home() / "gobby.pid"
+        try:
+            ownership_resolution = claim_pid_file(pid_file)
+        except OSError as exc:
+            ownership_resolution = FailOpenPidOwnership(str(exc))
+            logger.warning("Could not claim PID file %s at startup: %s", pid_file, exc)
+        if ownership_resolution is None:
+            owner = probe_daemon_lock(pid_file)
+            logger.info(
+                "PID file %s is owned by another live daemon (PID %s); exiting cleanly",
+                pid_file,
+                owner or "unknown",
+            )
+            return
+
     runner = GobbyRunner(config_path=config_path, verbose=verbose)
-    await runner.run(pid_claim=pid_claim)
+    await runner.run(ownership_resolution=ownership_resolution)
 
 
 def _healthy_daemon_running(port: int, host: str = "localhost") -> bool:
@@ -306,16 +340,20 @@ def main(config_path: Path | None = None, verbose: bool = False) -> None:
     # racing a live daemon must lose here and exit 0 so
     # KeepAlive.SuccessfulExit=false never hot-loops it.
     from gobby.cli.utils import get_gobby_home
-    from gobby.runner_pid_file import claim_pid_file, probe_daemon_lock
+    from gobby.runner_pid_file import (
+        FailOpenPidOwnership,
+        claim_pid_file,
+        probe_daemon_lock,
+    )
 
     pid_file = get_gobby_home() / "gobby.pid"
-    pid_claim: PidFileClaim | None = None
+    ownership_resolution: PidOwnershipResolution | None = None
     contended = False
     try:
-        pid_claim = claim_pid_file(pid_file)
-        contended = pid_claim is None
+        ownership_resolution = claim_pid_file(pid_file)
+        contended = ownership_resolution is None
     except OSError as e:
-        # Advisory locking unavailable — run_daemon retries and fails open.
+        ownership_resolution = FailOpenPidOwnership(str(e))
         logger.warning("Could not claim PID file %s at startup: %s", pid_file, e)
     if contended:
         owner = probe_daemon_lock(pid_file)
@@ -326,7 +364,14 @@ def main(config_path: Path | None = None, verbose: bool = False) -> None:
         sys.exit(0)
 
     try:
-        asyncio.run(run_gobby(config_path=config_path, verbose=verbose, pid_claim=pid_claim))
+        assert ownership_resolution is not None
+        asyncio.run(
+            run_gobby(
+                config_path=config_path,
+                verbose=verbose,
+                ownership_resolution=ownership_resolution,
+            )
+        )
     except KeyboardInterrupt:
         sys.exit(0)
     except Exception as e:
@@ -335,8 +380,11 @@ def main(config_path: Path | None = None, verbose: bool = False) -> None:
     finally:
         # run_daemon releases the claim during shutdown; release() is
         # idempotent, so this only matters when asyncio.run never ran it.
-        if pid_claim is not None:
-            pid_claim.release()
+        if ownership_resolution is not None and not isinstance(
+            ownership_resolution,
+            FailOpenPidOwnership,
+        ):
+            ownership_resolution.release()
 
 
 if __name__ == "__main__":

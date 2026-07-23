@@ -989,6 +989,27 @@ class TestSingletons:
         r2 = mod.get_tmux_output_reader()
         assert r1 is r2
 
+    def test_reset_output_callback_does_not_construct_reader(self) -> None:
+        import gobby.agents.tmux as mod
+
+        mod.reset_tmux_output_callback()
+
+        assert mod._output_reader is None
+
+    def test_reset_output_callback_clears_existing_reader(self) -> None:
+        import gobby.agents.tmux as mod
+
+        async def callback(_run_id: str, _text: str) -> None:
+            return None
+
+        mod.configure_tmux(TmuxConfig())
+        reader = mod.get_tmux_output_reader()
+        reader.set_output_callback(callback)
+
+        mod.reset_tmux_output_callback()
+
+        assert reader._output_callback is None
+
 
 # =============================================================================
 # DaemonConfig integration

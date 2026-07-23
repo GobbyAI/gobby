@@ -74,6 +74,7 @@ async def try_resume_daemon_stop_run(
         session_manager=session_manager,
         task_manager=getattr(services, "task_manager", None),
         daemon_config=getattr(services, "config", None),
+        completion_registry=getattr(services, "completion_registry", None),
     )
     if resume_result.success and resume_result.run_id:
         mutex.attach(str(resume_result.run_id))

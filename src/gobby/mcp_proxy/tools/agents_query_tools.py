@@ -509,11 +509,32 @@ def register_agent_query_tools(
         description="Mark an active agent run as cancelled/unregistered (internal use).",
     )
     async def unregister_agent(run_id: str) -> dict[str, Any]:
+        from gobby.agents.agent_cleanup import (
+            deliver_existing_terminal_run,
+            run_terminal_delivery_offload,
+        )
+
         run = ctx.agent_run_manager.get(run_id)
         if run and run.status in ("running", "pending"):
             if ctx.runner.cancel_run(run_id):
+                if ctx.db is not None:
+                    await deliver_existing_terminal_run(
+                        db=ctx.db,
+                        agent_run_manager=ctx.agent_run_manager,
+                        completion_registry=ctx.completion_registry,
+                        run_id=run_id,
+                        run_db=run_terminal_delivery_offload,
+                    )
                 return {"success": True, "message": f"Unregistered agent {run_id}"}
             run = ctx.agent_run_manager.get(run_id)
+        if run and run.status in facade()._TERMINAL_AGENT_STATUSES and ctx.db is not None:
+            await deliver_existing_terminal_run(
+                db=ctx.db,
+                agent_run_manager=ctx.agent_run_manager,
+                completion_registry=ctx.completion_registry,
+                run_id=run_id,
+                run_db=run_terminal_delivery_offload,
+            )
         if run:
             return {"success": True, "message": f"Agent {run_id} already in status {run.status}"}
         return {"success": False, "error": f"No agent found with ID {run_id}"}

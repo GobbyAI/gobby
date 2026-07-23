@@ -87,7 +87,13 @@ async def test_stop_disables_leaf_automation_preserves_unattended_and_cancels_ac
     )
     run_manager.start(run.id)
 
-    with patch("gobby.build.controls.kill_agent", new=AsyncMock(return_value={"success": True})):
+    with (
+        patch("gobby.build.controls.kill_agent", new=AsyncMock(return_value={"success": True})),
+        patch(
+            "gobby.build.controls._deliver_existing_terminal_run_unshielded",
+            new=AsyncMock(return_value=True),
+        ) as deliver_terminal_run,
+    ):
         result = await build_stop_target(
             f"#{task.seq_num}",
             db=temp_db,
@@ -102,6 +108,8 @@ async def test_stop_disables_leaf_automation_preserves_unattended_and_cancels_ac
     assert updated.unattended is True
     assert cancelled is not None
     assert cancelled.status == "cancelled"
+    assert deliver_terminal_run.await_args.kwargs["run_id"] == run.id
+    assert deliver_terminal_run.await_args.kwargs["completion_registry"] is None
 
 
 @pytest.mark.asyncio

@@ -48,7 +48,7 @@ class PTYReaderManager:
         self._stop_events: dict[str, asyncio.Event] = {}
         self._lock = asyncio.Lock()
 
-    def set_output_callback(self, callback: OutputCallback) -> None:
+    def set_output_callback(self, callback: OutputCallback | None) -> None:
         """Set the output callback for terminal data."""
         self._output_callback = callback
 
@@ -203,3 +203,9 @@ def get_pty_reader_manager() -> PTYReaderManager:
     if _pty_reader_manager is None:
         _pty_reader_manager = PTYReaderManager()
     return _pty_reader_manager
+
+
+def reset_pty_output_callback() -> None:
+    """Clear the callback only when the singleton was already constructed."""
+    if _pty_reader_manager is not None:
+        _pty_reader_manager.set_output_callback(None)

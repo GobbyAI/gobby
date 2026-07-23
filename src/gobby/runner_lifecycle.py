@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import asyncio
 import logging
-import os
 import sys
 from functools import partial
 from typing import TYPE_CHECKING, Any
@@ -12,6 +11,7 @@ from typing import TYPE_CHECKING, Any
 import uvicorn
 
 from gobby.app_context import clear_app_context
+from gobby.runner_gate import acquire_runner_gate
 from gobby.runner_lifecycle_agents import (
     _cancel_active_agent_runs_for_shutdown,
     _reconcile_agent_runs_after_restart,
@@ -32,7 +32,7 @@ from gobby.runner_lifecycle_startup import (
     _refresh_provider_model_catalog,
 )
 from gobby.runner_lifecycle_subsystems import init_subsystems
-from gobby.runner_pid_file import PidFileClaim, claim_pid_file, probe_daemon_lock
+from gobby.runner_pid_file import FailOpenPidOwnership, PidFileClaim, PidOwnershipResolution
 from gobby.shutdown_intent import clear_active_shutdown_intent
 from gobby.telemetry import shutdown_telemetry
 
@@ -108,11 +108,14 @@ async def _serve_http(server: uvicorn.Server) -> BaseException | None:
     return None
 
 
-async def run_daemon(runner: GobbyRunner, pid_claim: PidFileClaim | None = None) -> None:
+async def run_daemon(
+    runner: GobbyRunner,
+    *,
+    ownership_resolution: PidOwnershipResolution,
+) -> None:
     """Main daemon startup, event loop, and shutdown sequence.
 
-    ``pid_claim`` carries a singleton lock already claimed by ``main()``;
-    when absent (embedded/test callers), the claim happens here.
+    ``ownership_resolution`` proves singleton ownership was resolved before construction.
     """
     from gobby.runner_maintenance import (
         bin_freshness_loop,
@@ -139,8 +142,8 @@ async def run_daemon(runner: GobbyRunner, pid_claim: PidFileClaim | None = None)
         try:
             cleanup_pid_file()
         finally:
-            if pid_claim is not None:
-                pid_claim.release()
+            if isinstance(ownership_resolution, PidFileClaim):
+                ownership_resolution.release()
 
     try:
         global _startup_tracker
@@ -157,30 +160,44 @@ async def run_daemon(runner: GobbyRunner, pid_claim: PidFileClaim | None = None)
             shutdown_intent_callback=runner.request_shutdown,
         )
 
-        from gobby.cli.utils import get_gobby_home
+        if isinstance(ownership_resolution, FailOpenPidOwnership):
+            logger.warning(
+                "Running without PID-file ownership after advisory lock failure: %s",
+                ownership_resolution.error,
+            )
 
-        pid_file = get_gobby_home() / "gobby.pid"
-        if pid_claim is None:
-            contended = False
+        database = getattr(runner, "database", None)
+        conninfo = getattr(database, "conninfo", None)
+        if isinstance(conninfo, str) and conninfo:
             try:
-                pid_claim = claim_pid_file(pid_file)
-                contended = pid_claim is None
-            except OSError as e:
-                # Advisory locking unavailable — fail open and run unlocked.
-                logger.warning("Could not claim PID file %s: %s", pid_file, e)
-            if contended:
-                # A held flock means a live owner (locks die with their
-                # process). Exit 0 so launchd (KeepAlive.SuccessfulExit=false)
-                # never hot-loops the loser, healthy or not.
-                owner = probe_daemon_lock(pid_file)
-                logger.info(
-                    "PID file %s is owned by another live daemon (PID %s); exiting cleanly",
-                    pid_file,
-                    owner or "unknown",
+                application_name = getattr(database, "application_name", None)
+                if not isinstance(application_name, str) or not application_name:
+                    raise RuntimeError(
+                        "PostgreSQL runner gate requires a lifecycle application name"
+                    )
+                await acquire_runner_gate(
+                    conninfo,
+                    successor_application_name=application_name,
                 )
-                return
-        if pid_claim is not None:
-            logger.info("Wrote PID file: %s (PID %s)", pid_file, os.getpid())
+            except BaseException as gate_error:
+                from gobby.runner_rollback import rollback_runner_resources
+
+                rollback_runner_resources(runner)
+                cleanup_owned_pid_file()
+                if isinstance(gate_error, asyncio.CancelledError):
+                    raise
+                raise SystemExit(1) from gate_error
+
+        from gobby.agents.agent_cleanup import (
+            configure_terminal_delivery_offload,
+            reopen_terminal_delivery_admission,
+        )
+
+        reopen_terminal_delivery_admission()
+        configure_terminal_delivery_offload(
+            async_offload=runner.db_executor.run,
+            sync_submit=runner.db_executor.submit,
+        )
 
         from gobby.runner_service_readiness import require_managed_services_ready
 

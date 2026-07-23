@@ -114,7 +114,8 @@ async def test_expired_isolation_loop_uses_bounded_db_runner(
         assert stats.queued == 0
         assert stats.threads <= executor.max_workers
     finally:
-        executor.shutdown(wait=True)
+        executor.shutdown()
+        executor.join()
 
 
 @pytest.mark.asyncio

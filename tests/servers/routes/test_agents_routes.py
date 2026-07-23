@@ -10,6 +10,7 @@ import json
 import threading
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
+from types import SimpleNamespace
 from typing import Any
 from unittest.mock import AsyncMock, patch
 
@@ -1124,3 +1125,27 @@ class TestCancelAgentRun:
 
         assert response.status_code == 404
         kill.assert_not_awaited()
+
+
+class TestCleanupAgentRuns:
+    def test_cleanup_routes_through_lifecycle_acknowledgement(
+        self,
+        client: TestClient,
+        server,
+    ) -> None:
+        sweep = AsyncMock(return_value=["run-timeout", "run-pending"])
+        server.services.agent_lifecycle_monitor = SimpleNamespace(
+            run_acknowledged_stale_sweeps=sweep,
+        )
+
+        response = client.post(
+            "/api/agents/cleanup",
+            json={"timeout_minutes": 45},
+        )
+
+        assert response.status_code == 200
+        assert response.json() == {"run_ids": ["run-timeout", "run-pending"]}
+        sweep.assert_awaited_once_with(
+            running_timeout_minutes=45,
+            pending_timeout_minutes=60,
+        )

@@ -363,9 +363,11 @@ class AgentLifecycleMonitor:
 
                 if iteration > 0 and iteration % 10 == 0:
                     try:
-                        cleaned = await self._run_db(self._agent_run_manager.cleanup_stale_runs)
+                        cleaned = await self.run_acknowledged_stale_sweeps(
+                            running_timeout_minutes=30,
+                        )
                         if cleaned:
-                            logger.info("Cleaned up %s stale agent runs", cleaned)
+                            logger.info("Cleaned up %s stale agent runs", len(cleaned))
                     except Exception as e:
                         logger.warning("Stale run cleanup failed: %s", e)
 
@@ -735,6 +737,18 @@ class AgentLifecycleMonitor:
     async def cleanup_stale_pending_runs(self) -> int:
         """Clean up agent runs stuck in pending status after daemon restart."""
         return await self._cleanup_handler.cleanup_stale_pending_runs()
+
+    async def run_acknowledged_stale_sweeps(
+        self,
+        *,
+        running_timeout_minutes: int | None = None,
+        pending_timeout_minutes: int | None = None,
+    ) -> list[str]:
+        """Run stale transitions through acknowledged completion delivery."""
+        return await self._cleanup_handler.run_acknowledged_stale_sweeps(
+            running_timeout_minutes=running_timeout_minutes,
+            pending_timeout_minutes=pending_timeout_minutes,
+        )
 
     # Delegates for backward compatibility and test stability
     async def _cleanup_agent(self, *args: Any, **kwargs: Any) -> None:

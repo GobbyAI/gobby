@@ -56,6 +56,7 @@ class SessionControlMixin:
     inter_session_msg_manager: Any | None
     session_manager: AttachmentSessionManager | None
     daemon_config: DaemonConfig | None
+    completion_registry: Any | None
 
     # Provided by ChatMixin / HandlerMixin – declared for type checking only.
     if TYPE_CHECKING:

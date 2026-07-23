@@ -7,10 +7,80 @@ from unittest.mock import MagicMock, patch
 import pytest
 
 from gobby.storage.agents import AgentRun, LocalAgentRunManager
+from gobby.storage.agents import _lifecycle as agents_lifecycle
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.sessions import SessionManager
 
 pytestmark = pytest.mark.unit
+
+
+@pytest.mark.parametrize(
+    ("method_name", "kwargs", "terminal_status"),
+    [
+        ("complete", {"result": "done"}, "success"),
+        ("fail", {"error": "failed"}, "error"),
+        ("timeout", {}, "timeout"),
+        ("cancel", {}, "cancelled"),
+    ],
+)
+def test_terminal_transition_rolls_back_when_post_update_step_fails(
+    agent_manager: LocalAgentRunManager,
+    sample_session: dict,
+    method_name: str,
+    kwargs: dict[str, str],
+    terminal_status: str,
+) -> None:
+    run = agent_manager.create(
+        parent_session_id=sample_session["id"],
+        provider="claude",
+        prompt=f"Atomic {method_name}",
+    )
+
+    with patch.object(
+        agent_manager,
+        "_expire_sessions_for_run_ids",
+        side_effect=RuntimeError("post-update failure"),
+    ):
+        with pytest.raises(RuntimeError, match="post-update failure"):
+            getattr(agent_manager, method_name)(run.id, **kwargs)
+
+    unchanged = agent_manager.get(run.id)
+    assert unchanged is not None
+    assert unchanged.status == "pending"
+
+    transitioned = getattr(agent_manager, method_name)(run.id, **kwargs)
+    assert transitioned is not None
+    assert transitioned.status == terminal_status
+
+
+@pytest.mark.parametrize(
+    ("method_name", "kwargs"),
+    [
+        ("complete", {"result": "done"}),
+        ("fail", {"error": "failed"}),
+        ("timeout", {}),
+        ("cancel", {}),
+    ],
+)
+def test_terminal_transition_rejects_ambient_transaction(
+    agent_manager: LocalAgentRunManager,
+    sample_session: dict,
+    method_name: str,
+    kwargs: dict[str, str],
+) -> None:
+    run = agent_manager.create(
+        parent_session_id=sample_session["id"],
+        provider="claude",
+        prompt=f"Nested {method_name}",
+    )
+
+    with agent_manager.db.transaction():
+        with pytest.raises(agents_lifecycle.TerminalTransitionNestedError):
+            getattr(agent_manager, method_name)(run.id, **kwargs)
+
+    unchanged = agent_manager.get(run.id)
+    assert unchanged is not None
+    assert unchanged.status == "pending"
 
 
 @pytest.fixture
@@ -1309,8 +1379,8 @@ class TestLocalAgentRunManager:
             (run1.id,),
         )
 
-        count = agent_manager.cleanup_stale_runs(default_timeout_minutes=30)
-        assert count == 1
+        run_ids = agent_manager.cleanup_stale_runs(default_timeout_minutes=30)
+        assert run_ids == [run1.id]
 
         cleaned = agent_manager.get(run1.id)
         assert cleaned.status == "timeout"
@@ -1337,9 +1407,9 @@ class TestLocalAgentRunManager:
             (run.id,),
         )
 
-        count = agent_manager.cleanup_stale_runs(default_timeout_minutes=30)
+        run_ids = agent_manager.cleanup_stale_runs(default_timeout_minutes=30)
 
-        assert count == 0
+        assert run_ids == []
         stale_live = agent_manager.get(run.id)
         assert stale_live is not None
         assert stale_live.status == "running"
@@ -1375,9 +1445,9 @@ class TestLocalAgentRunManager:
             (run.id,),
         )
 
-        count = agent_manager.cleanup_stale_runs(default_timeout_minutes=30)
+        run_ids = agent_manager.cleanup_stale_runs(default_timeout_minutes=30)
 
-        assert count == 0
+        assert run_ids == []
         refreshed = agent_manager.get(run.id)
         assert refreshed is not None
         assert refreshed.status == "running"
@@ -1387,7 +1457,7 @@ class TestLocalAgentRunManager:
         agent_manager: LocalAgentRunManager,
         sample_session: dict,
     ) -> None:
-        """Test cleanup_stale_runs returns 0 when no stale runs."""
+        """Test cleanup_stale_runs returns no IDs when no runs are stale."""
         run = agent_manager.create(
             parent_session_id=sample_session["id"],
             provider="claude",
@@ -1395,8 +1465,8 @@ class TestLocalAgentRunManager:
         )
         agent_manager.start(run.id)
 
-        count = agent_manager.cleanup_stale_runs(default_timeout_minutes=30)
-        assert count == 0
+        run_ids = agent_manager.cleanup_stale_runs(default_timeout_minutes=30)
+        assert run_ids == []
 
         # Verify run is still running
         fresh = agent_manager.get(run.id)
@@ -1427,8 +1497,8 @@ class TestLocalAgentRunManager:
         )
 
         with patch("gobby.storage.agents._cleanup.logger") as mock_logger:
-            count = agent_manager.cleanup_stale_runs(default_timeout_minutes=30)
-            assert count == 1
+            run_ids = agent_manager.cleanup_stale_runs(default_timeout_minutes=30)
+            assert run_ids == [run.id]
             mock_logger.info.assert_called_once_with(
                 "Timed out %s stale agent runs (%s explicit, %s default)",
                 1,
@@ -1464,8 +1534,36 @@ class TestLocalAgentRunManager:
             (pending.id, completed.id),
         )
 
-        count = agent_manager.cleanup_stale_runs(default_timeout_minutes=30)
-        assert count == 0
+        run_ids = agent_manager.cleanup_stale_runs(default_timeout_minutes=30)
+        assert run_ids == []
+
+    def test_cleanup_stale_runs_continues_after_transition_failure(
+        self,
+        agent_manager: LocalAgentRunManager,
+    ) -> None:
+        """One failed transition must not hide earlier or later transitioned run IDs."""
+        stale_rows = [
+            {
+                "id": run_id,
+                "timeout_seconds": None,
+                "tool_calls_count": 0,
+                "turns_used": 0,
+            }
+            for run_id in ("run-first", "run-failed", "run-last")
+        ]
+        with (
+            patch.object(agent_manager.db, "fetchall", return_value=stale_rows),
+            patch.object(
+                agent_manager,
+                "timeout",
+                side_effect=[MagicMock(), RuntimeError("transition failed"), MagicMock()],
+            ),
+            patch("gobby.storage.agents._cleanup.logger") as mock_logger,
+        ):
+            run_ids = agent_manager.cleanup_stale_runs(default_timeout_minutes=30)
+
+        assert run_ids == ["run-first", "run-last"]
+        mock_logger.warning.assert_called_once()
 
     def test_cleanup_stale_pending_runs(
         self,
@@ -1489,8 +1587,8 @@ class TestLocalAgentRunManager:
             (12345, pending.id),
         )
 
-        count = agent_manager.cleanup_stale_pending_runs(timeout_minutes=60)
-        assert count == 1
+        run_ids = agent_manager.cleanup_stale_pending_runs(timeout_minutes=60)
+        assert run_ids == [pending.id]
 
         cleaned = agent_manager.get(pending.id)
         assert cleaned.status == "error"
@@ -1503,15 +1601,15 @@ class TestLocalAgentRunManager:
         agent_manager: LocalAgentRunManager,
         sample_session: dict,
     ) -> None:
-        """Test cleanup_stale_pending_runs returns 0 when no stale pending runs."""
+        """Test cleanup_stale_pending_runs returns no IDs when no runs are stale."""
         pending = agent_manager.create(
             parent_session_id=sample_session["id"],
             provider="claude",
             prompt="Fresh pending",
         )
 
-        count = agent_manager.cleanup_stale_pending_runs(timeout_minutes=60)
-        assert count == 0
+        run_ids = agent_manager.cleanup_stale_pending_runs(timeout_minutes=60)
+        assert run_ids == []
 
         # Verify run is still pending
         fresh = agent_manager.get(pending.id)
@@ -1533,13 +1631,13 @@ class TestLocalAgentRunManager:
             (pending.id,),
         )
 
-        assert agent_manager.cleanup_stale_pending_runs(timeout_minutes=60) == 0
+        assert agent_manager.cleanup_stale_pending_runs(timeout_minutes=60) == []
 
         agent_manager.db.execute(
             "UPDATE agent_runs SET created_at = NOW() - INTERVAL '25 hours' WHERE id = %s",
             (pending.id,),
         )
-        assert agent_manager.cleanup_stale_pending_runs(timeout_minutes=60) == 1
+        assert agent_manager.cleanup_stale_pending_runs(timeout_minutes=60) == [pending.id]
         cleaned = agent_manager.get(pending.id)
         assert cleaned.status == "error"
         assert cleaned.error == "Pending tmux-initialized run never started"
@@ -1563,8 +1661,8 @@ class TestLocalAgentRunManager:
         )
 
         with patch("gobby.storage.agents._cleanup.logger") as mock_logger:
-            count = agent_manager.cleanup_stale_pending_runs(timeout_minutes=60)
-            assert count == 1
+            run_ids = agent_manager.cleanup_stale_pending_runs(timeout_minutes=60)
+            assert run_ids == [pending.id]
             mock_logger.info.assert_called_once()
             assert mock_logger.info.call_args.args == (
                 "Failed %s stale pending agent runs (>%sm; tmux >%sm)",
@@ -1602,8 +1700,8 @@ class TestLocalAgentRunManager:
             (running.id, completed.id),
         )
 
-        count = agent_manager.cleanup_stale_pending_runs(timeout_minutes=60)
-        assert count == 0
+        run_ids = agent_manager.cleanup_stale_pending_runs(timeout_minutes=60)
+        assert run_ids == []
 
 
 class TestAgentRunStatuses:
@@ -1862,22 +1960,23 @@ class TestAgentRunEdgeCases:
         self,
         agent_manager: LocalAgentRunManager,
     ) -> None:
-        """Test cleanup_stale_runs handles cursor with None rowcount."""
+        """Test cleanup_stale_runs returns no IDs when its query finds no rows."""
         mock_cursor = MagicMock()
         mock_cursor.rowcount = None
 
         with patch.object(agent_manager.db, "execute", return_value=mock_cursor):
-            count = agent_manager.cleanup_stale_runs(default_timeout_minutes=30)
-            assert count == 0
+            run_ids = agent_manager.cleanup_stale_runs(default_timeout_minutes=30)
+            assert run_ids == []
 
     def test_cleanup_stale_pending_runs_cursor_rowcount_none(
         self,
         agent_manager: LocalAgentRunManager,
     ) -> None:
-        """Test cleanup_stale_pending_runs handles cursor with None rowcount."""
+        """Test cleanup_stale_pending_runs handles a cursor with no returned IDs."""
         mock_cursor = MagicMock()
         mock_cursor.rowcount = None
+        mock_cursor.fetchall.return_value = []
 
         with patch.object(agent_manager.db, "execute", return_value=mock_cursor):
-            count = agent_manager.cleanup_stale_pending_runs(timeout_minutes=60)
-            assert count == 0
+            run_ids = agent_manager.cleanup_stale_pending_runs(timeout_minutes=60)
+            assert run_ids == []
