@@ -1797,6 +1797,60 @@ class TestCompleteSelfTerminatedRunSignoffMessage:
     """
 
     @pytest.mark.asyncio
+    async def test_self_termination_removes_acknowledged_subscription(
+        self,
+        temp_db: HubDatabase,
+    ) -> None:
+        from gobby.mcp_proxy.tools.agents import _complete_self_terminated_run
+
+        run = _make_mock_agent_run(
+            run_id=_WAIT_RUN_ID,
+            session_id=None,
+            status="running",
+        )
+        run.tmux_session_name = None
+        terminal_run = _make_mock_agent_run(
+            run_id=_WAIT_RUN_ID,
+            session_id=None,
+            status="success",
+        )
+        runner = MagicMock()
+        runner.run_storage.db = temp_db
+        runner.complete_run.return_value = True
+        runner.get_run.return_value = terminal_run
+        wake_callback = AsyncMock(return_value={"ism_persisted": True})
+        completion_registry = CompletionEventRegistry(wake_callback=wake_callback)
+        completion_registry.register(_WAIT_RUN_ID, subscribers=[_WAIT_ROOT_SESSION_ID])
+        subscribers = CompletionSubscriberManager(temp_db)
+        subscribers.add_completion_subscribers(_WAIT_RUN_ID, [_WAIT_ROOT_SESSION_ID])
+
+        with (
+            patch(
+                "gobby.mcp_proxy.tools.agents._kill_agent_process",
+                new_callable=AsyncMock,
+                return_value={"success": True},
+            ),
+            patch(
+                "gobby.mcp_proxy.tools.agents._cleanup_terminal_artifacts",
+                new_callable=AsyncMock,
+            ),
+        ):
+            result = await _complete_self_terminated_run(
+                runner=runner,
+                run=run,
+                kill_db=temp_db,
+                completion_registry=completion_registry,
+                session_manager=None,
+                hook_manager_resolver=None,
+            )
+
+        assert result["success"] is True
+        assert subscribers.get_completion_subscribers(_WAIT_RUN_ID) == []
+        assert not completion_registry.is_registered(_WAIT_RUN_ID)
+        wake_callback.assert_awaited_once()
+        assert wake_callback.call_args.args[2]["run_id"] == _WAIT_RUN_ID
+
+    @pytest.mark.asyncio
     async def test_signoff_message_set_when_adversary_verdict_present(self) -> None:
         from gobby.mcp_proxy.tools.agents import _complete_self_terminated_run
 

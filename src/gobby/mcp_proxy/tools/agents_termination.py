@@ -109,7 +109,7 @@ async def _complete_self_terminated_run(
     signal: str = "TERM",
     debug: bool = False,
 ) -> dict[str, Any]:
-    """Terminate the caller's process and finalize the run as success."""
+    """Terminate the caller after acknowledged completion delivery and cleanup."""
     agents = facade()
     agent_session_id = run.child_session_id
     result: dict[str, Any] = {}
@@ -126,6 +126,17 @@ async def _complete_self_terminated_run(
         except Exception as e:
             agents.logger.debug("Failed to read adversary_verdict for %s: %s", agent_session_id, e)
 
+    async def complete_with_acknowledged_delivery() -> bool:
+        return bool(
+            await agents.complete_and_notify_agent_run(
+                runner,
+                run.id,
+                completion_registry=completion_registry,
+                notify_result=notify_result,
+                message=f"Agent {run.id} completed",
+            )
+        )
+
     if run.tmux_session_name and not debug:
         from gobby.agents.capture import capture_then_kill_async
         from gobby.agents.tmux import get_tmux_session_manager
@@ -139,13 +150,7 @@ async def _complete_self_terminated_run(
             _action: TerminalAction,
             _reason: str | None,
         ) -> Any | None:
-            await agents.complete_and_notify_agent_run(
-                runner,
-                run.id,
-                completion_registry=completion_registry,
-                notify_result=notify_result,
-                message=f"Agent {run.id} completed",
-            )
+            await complete_with_acknowledged_delivery()
             return runner.get_run(run.id)
 
         termination = await capture_then_kill_async(
@@ -168,13 +173,7 @@ async def _complete_self_terminated_run(
         result["status"] = "success"
         result["tmux_session_killed"] = True
     else:
-        completed = await agents.complete_and_notify_agent_run(
-            runner,
-            run.id,
-            completion_registry=completion_registry,
-            notify_result=notify_result,
-            message=f"Agent {run.id} completed",
-        )
+        completed = await complete_with_acknowledged_delivery()
         if not completed:
             current = runner.get_run(run.id)
             result["status"] = current.status if current else "unknown"

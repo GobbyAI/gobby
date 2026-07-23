@@ -141,3 +141,19 @@ def test_equal_trust_direct_result_conflict_is_unknown() -> None:
     assert outcome.status is ToolOutcomeStatus.UNKNOWN
     assert outcome.exit_code is None
     assert outcome.provenance == ("conflicting_outcomes:tool_output.success|tool_output.exitCode")
+
+
+def test_canonical_tool_output_precedes_response_envelope_status() -> None:
+    data = {
+        "tool_name": "mcp__gobby__call_tool",
+        "tool_output": {"success": False, "error": "Invalid arguments"},
+        "tool_response": {
+            "structuredContent": {"success": False, "error": "Invalid arguments"},
+            "isError": False,
+        },
+    }
+
+    outcome = normalize_tool_outcome(data)
+
+    assert outcome.status is ToolOutcomeStatus.FAILED
+    assert outcome.provenance == "tool_output.success"

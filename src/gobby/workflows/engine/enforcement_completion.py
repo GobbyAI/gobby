@@ -9,6 +9,7 @@ from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any
 
 from gobby.hooks.events import HookEvent
+from gobby.hooks.normalization import normalize_tool_fields
 from gobby.hooks.tool_outcomes import tool_outcome_from_data
 from gobby.storage.agents import LocalAgentRunManager
 from gobby.storage.hub.protocol import HubDatabase
@@ -168,10 +169,15 @@ class EnforcementCompletionMixin:
         # is treated as unavailable so workflow completion uses the runner path.
         cleanup_agent_runtime_state = _facade_attr("cleanup_agent_runtime_state")
         if inspect.iscoroutinefunction(terminalize_successful_run):
-            await terminalize_successful_run(
+            terminalized = await terminalize_successful_run(
                 run_id,
                 notify_result=notify_result,
                 message=message,
+            )
+            logger.debug(
+                "Workflow lifecycle terminalization settled acknowledged delivery for %s: %s",
+                run_id,
+                terminalized,
             )
             await asyncio.to_thread(
                 cleanup_agent_runtime_state,
@@ -237,11 +243,12 @@ class EnforcementCompletionMixin:
         else:
             return None
 
+        outcome = tool_outcome_from_data(event.data)
+        if outcome.succeeded is None:
+            normalize_tool_fields(event.data)
+            outcome = tool_outcome_from_data(event.data)
         tool_output = event.data.get("tool_output")
-        tool_failed = (
-            bool(event.metadata.get("is_failure", False))
-            or tool_outcome_from_data(event.data).succeeded is False
-        )
+        tool_failed = bool(event.metadata.get("is_failure", False)) or outcome.succeeded is False
         if not tool_failed:
             await asyncio.to_thread(
                 self._audit_step_tool_call,

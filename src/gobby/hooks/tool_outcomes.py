@@ -326,17 +326,22 @@ def normalize_tool_outcome(
             _OutcomeTrust.DIRECT_RESULT,
         )
 
-    for field in ("tool_output", "tool_result", "tool_response", "contentItems"):
-        if field in data:
-            _collect_output_signals(
-                data[field],
-                field,
-                signals,
-                unknown_provenance,
-                trust=(
-                    _OutcomeTrust.NESTED_RESULT if wrapper_tool else _OutcomeTrust.DIRECT_RESULT
-                ),
-            )
+    output_field = next(
+        (
+            field
+            for field in ("tool_output", "tool_result", "tool_response", "contentItems")
+            if field in data
+        ),
+        None,
+    )
+    if output_field is not None:
+        _collect_output_signals(
+            data[output_field],
+            output_field,
+            signals,
+            unknown_provenance,
+            trust=(_OutcomeTrust.NESTED_RESULT if wrapper_tool else _OutcomeTrust.DIRECT_RESULT),
+        )
 
     if explicit_success is not None:
         matching_exit = next(

@@ -18,6 +18,7 @@ from gobby.events.completion_registry import CompletionEventRegistry
 from gobby.hooks.events import HookEvent, HookEventType, SessionSource
 from gobby.storage.agents import LocalAgentRunManager
 from gobby.storage.hub.protocol import HubDatabase
+from gobby.storage.pipeline_subscribers import CompletionSubscriberManager
 from gobby.storage.sessions import SessionManager
 from gobby.storage.tasks import LocalTaskManager, TaskDispatchMutexManager
 from gobby.storage.workflow_definitions import LocalWorkflowDefinitionManager
@@ -262,6 +263,8 @@ class TestAgentWorkflowCompletion:
         runner.agent_lifecycle_monitor = MagicMock()
         runner.agent_lifecycle_monitor.terminalize_successful_run = AsyncMock(return_value=True)
         runner.complete_run.return_value = True
+        runner.run_storage.db = db
+        runner.get_run.return_value = MagicMock(status="success", error=None)
         completion_registry = MagicMock()
         completion_registry.get_result.return_value = None
         completion_registry.notify = AsyncMock()
@@ -303,6 +306,8 @@ class TestAgentWorkflowCompletion:
             id="ff807256-1906-55de-b7b3-94163bb18352"
         )
         runner.complete_run.return_value = True
+        runner.run_storage.db = db
+        runner.get_run.return_value = MagicMock(status="success", error=None)
         completion_registry = MagicMock()
         completion_registry.get_result.return_value = None
         completion_registry.notify = AsyncMock()
@@ -363,6 +368,8 @@ class TestAgentWorkflowCompletion:
             id="ff807256-1906-55de-b7b3-94163bb18352"
         )
         runner.complete_run.return_value = True
+        runner.run_storage.db = db
+        runner.get_run.return_value = MagicMock(status="success", error=None)
         completion_registry = MagicMock()
         completion_registry.get_result.return_value = None
         completion_registry.notify = AsyncMock()
@@ -446,6 +453,8 @@ class TestAgentWorkflowCompletion:
             id="ff807256-1906-55de-b7b3-94163bb18352"
         )
         runner.complete_run.return_value = True
+        runner.run_storage.db = db
+        runner.get_run.return_value = MagicMock(status="success", error=None)
         completion_registry = MagicMock()
         completion_registry.get_result.return_value = None
         completion_registry.notify = AsyncMock()
@@ -490,6 +499,8 @@ class TestAgentWorkflowCompletion:
         runner.agent_lifecycle_monitor = MagicMock()
         runner.agent_lifecycle_monitor.terminalize_successful_run = AsyncMock(return_value=True)
         runner.complete_run.return_value = True
+        runner.run_storage.db = db
+        runner.get_run.return_value = MagicMock(status="success", error=None)
         completion_registry = MagicMock()
         completion_registry.get_result.return_value = None
         completion_registry.notify = AsyncMock()
@@ -604,8 +615,14 @@ class TestAgentWorkflowCompletion:
             id="ff807256-1906-55de-b7b3-94163bb18352"
         )
         runner.complete_run.return_value = True
-        completion_registry = CompletionEventRegistry()
-        completion_registry.register("ff807256-1906-55de-b7b3-94163bb18352", subscribers=[])
+        runner.run_storage.db = db
+        runner.get_run.return_value = MagicMock(status="success", error=None)
+        wake_callback = AsyncMock(return_value={"ism_persisted": True})
+        completion_registry = CompletionEventRegistry(wake_callback=wake_callback)
+        completion_registry.register(
+            "ff807256-1906-55de-b7b3-94163bb18352",
+            subscribers=[AGENT_SESSION_ID],
+        )
 
         engine = RuleEngine(db, runner=runner, completion_registry=completion_registry)
 
@@ -613,10 +630,12 @@ class TestAgentWorkflowCompletion:
         # must still wake the parent wait path immediately.
         await engine.evaluate(_after_tool_event(), session_id=AGENT_SESSION_ID, variables={})
 
-        result = await completion_registry.wait("ff807256-1906-55de-b7b3-94163bb18352", timeout=0.1)
+        wake_callback.assert_awaited_once()
+        result = wake_callback.call_args.args[2]
         assert result["status"] == "success"
         assert result["via"] == "workflow_terminate"
         assert result["workflow"] == "plan-adversary-steps"
+        assert not completion_registry.is_registered("ff807256-1906-55de-b7b3-94163bb18352")
 
     @pytest.mark.asyncio
     @pytest.mark.integration
@@ -676,6 +695,7 @@ class TestAgentWorkflowCompletion:
         runner = MagicMock()
         runner.run_storage = run_manager
         runner.agent_lifecycle_monitor = AgentLifecycleMonitor(
+            detection_registry=MagicMock(),
             agent_run_manager=run_manager,
             db=db,
             session_manager=sessions,
@@ -706,6 +726,83 @@ class TestAgentWorkflowCompletion:
         assert WorkflowInstanceManager(db).get_active_instances(child.id) == []
 
     @pytest.mark.asyncio
+    @pytest.mark.integration
+    @pytest.mark.parametrize("with_lifecycle_monitor", [True, False])
+    async def test_workflow_completion_removes_acknowledged_subscription(
+        self,
+        db: HubDatabase,
+        with_lifecycle_monitor: bool,
+    ) -> None:
+        db.execute(
+            """
+            INSERT INTO projects (id, name, created_at)
+            VALUES (%s, %s, CURRENT_TIMESTAMP)
+            ON CONFLICT (id) DO NOTHING
+            """,
+            (PROJECT_ID, "test-project"),
+        )
+        sessions = SessionManager(db)
+        parent = sessions.register(
+            external_id=f"workflow-parent-{with_lifecycle_monitor}",
+            machine_id="machine-1",
+            source="claude",
+            project_id=PROJECT_ID,
+        )
+        child = sessions.register(
+            external_id=f"workflow-child-{with_lifecycle_monitor}",
+            machine_id="machine-1",
+            source="codex",
+            project_id=PROJECT_ID,
+            parent_session_id=parent.id,
+            agent_depth=1,
+        )
+        _register_agent_workflow(db, session_id=child.id)
+
+        run_manager = LocalAgentRunManager(db)
+        run = run_manager.create(
+            parent_session_id=parent.id,
+            child_session_id=child.id,
+            provider="codex",
+            prompt="do work",
+            run_id=str(uuid.uuid4()),
+        )
+        run_manager.start(run.id)
+        wake_callback = AsyncMock(return_value={"ism_persisted": True})
+        completion_registry = CompletionEventRegistry(wake_callback=wake_callback)
+        completion_registry.register(run.id, subscribers=[parent.id])
+        subscribers = CompletionSubscriberManager(db)
+        subscribers.add_completion_subscribers(run.id, [parent.id])
+
+        runner = MagicMock()
+        runner.run_storage = run_manager
+        runner.complete_run = run_manager.complete
+        runner.get_run = run_manager.get
+        runner.agent_lifecycle_monitor = (
+            AgentLifecycleMonitor(
+                detection_registry=MagicMock(),
+                agent_run_manager=run_manager,
+                db=db,
+                session_manager=sessions,
+                completion_registry=completion_registry,
+                task_manager=LocalTaskManager(db),
+                tmux_config=TmuxConfig(),
+            )
+            if with_lifecycle_monitor
+            else None
+        )
+        engine = RuleEngine(db, runner=runner, completion_registry=completion_registry)
+
+        await engine.evaluate(
+            _after_tool_event(session_id=child.id),
+            session_id=child.id,
+            variables={},
+        )
+
+        assert subscribers.get_completion_subscribers(run.id) == []
+        assert not completion_registry.is_registered(run.id)
+        wake_callback.assert_awaited_once()
+
+    @pytest.mark.asyncio
     async def test_on_mcp_success_when_condition_checks_tool_argument(
         self, db: HubDatabase
     ) -> None:
@@ -730,6 +827,8 @@ class TestAgentWorkflowCompletion:
             id="ff807256-1906-55de-b7b3-94163bb18352"
         )
         runner.complete_run.return_value = True
+        runner.run_storage.db = db
+        runner.get_run.return_value = MagicMock(status="success", error=None)
         completion_registry = MagicMock()
         completion_registry.get_result.return_value = None
         completion_registry.notify = AsyncMock()
