@@ -95,7 +95,9 @@ async def test_gateway_exposes_expected_methods() -> None:
         "ask",
         "read",
         "graph",
+        "graph_artifacts",
         "pages",
+        "export_pages",
         "backlinks",
         "ingest_file",
         "ingest_url",
@@ -136,6 +138,46 @@ async def test_graph_builds_stdout_include_argv(monkeypatch: pytest.MonkeyPatch)
             "--format",
             "json",
         )
+    ]
+
+
+async def test_agent_export_methods_build_file_writing_argv(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    calls = _patch_subprocess(
+        monkeypatch,
+        [
+            FakeProcess(stdout=_json_bytes({"status": "completed"})),
+            FakeProcess(stdout=_json_bytes({"status": "completed"})),
+        ],
+    )
+    gateway = _gateway()
+
+    await gateway.export_pages()
+    await gateway.graph_artifacts()
+
+    assert calls == [
+        (
+            "/bin/gwiki",
+            "export",
+            "pages",
+            "--project",
+            "/repo",
+            "--topic",
+            "docs",
+            "--format",
+            "json",
+        ),
+        (
+            "/bin/gwiki",
+            "graph",
+            "--project",
+            "/repo",
+            "--topic",
+            "docs",
+            "--format",
+            "json",
+        ),
     ]
 
 
@@ -1069,9 +1111,11 @@ async def test_vault_lock_key_unifies_repo_root_and_vault_dir(tmp_path: Path) ->
     )
 
 
-async def test_index_serializes_watcher_and_cron_gateways_on_same_vault(
+@pytest.mark.parametrize("method_name", ["index", "export_pages", "graph_artifacts"])
+async def test_write_commands_serialize_gateways_on_same_vault(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
+    method_name: str,
 ) -> None:
     repo = tmp_path / "repo"
     vault = _make_vault(repo)
@@ -1103,10 +1147,10 @@ async def test_index_serializes_watcher_and_cron_gateways_on_same_vault(
     monkeypatch.setattr(cron_gateway, "_run_command", stub_run_command("cron", release_first))
     monkeypatch.setattr(watcher_gateway, "_run_command", stub_run_command("watcher", None))
 
-    cron_index = asyncio.create_task(cron_gateway.index())
+    cron_command = asyncio.create_task(getattr(cron_gateway, method_name)())
     await asyncio.wait_for(first_entered.wait(), timeout=2.0)
 
-    watcher_index = asyncio.create_task(watcher_gateway.index())
+    watcher_command = asyncio.create_task(getattr(watcher_gateway, method_name)())
     # One full loop turn: the watcher task runs as far as it can — with the
     # shared per-vault lock held it must park on acquire, not enter the stub.
     turn = asyncio.Event()
@@ -1114,11 +1158,11 @@ async def test_index_serializes_watcher_and_cron_gateways_on_same_vault(
     await turn.wait()
 
     assert entered == ["cron"]
-    assert not watcher_index.done()
+    assert not watcher_command.done()
 
     release_first.set()
-    await cron_index
-    await watcher_index
+    await cron_command
+    await watcher_command
     assert entered == ["cron", "watcher"]
 
 

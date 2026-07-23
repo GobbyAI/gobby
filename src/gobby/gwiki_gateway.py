@@ -37,6 +37,8 @@ SERIALIZED_WRITE_COMMANDS = frozenset(
         "recap",
         "write_page",
         "delete_page",
+        "export_pages",
+        "graph_artifacts",
     }
 )
 
@@ -242,6 +244,12 @@ class GwikiGateway:
 
     async def graph(self, *, include: str = "all") -> dict[str, Any]:
         return await self._run_json("graph", ["graph", "--stdout", "--include", include])
+
+    async def export_pages(self) -> dict[str, Any]:
+        return await self._run_json("export_pages", ["export", "pages"])
+
+    async def graph_artifacts(self) -> dict[str, Any]:
+        return await self._run_json("graph_artifacts", ["graph"])
 
     async def pages(self, *, prefix: str | None = None) -> dict[str, Any]:
         args = ["pages"]

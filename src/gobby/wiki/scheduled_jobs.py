@@ -14,6 +14,7 @@ from gobby.storage.cron_models import CronJob
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.projects import LocalProjectManager
 from gobby.wiki.prune_job import guard_project_cron_handler
+from gobby.wiki.scheduled_exports import create_wiki_exports_handler
 from gobby.wiki.scheduled_jobs_history import (
     _health_history_output,
     _history_output,
@@ -38,6 +39,7 @@ WikiCronHandler = Callable[[CronJob], Awaitable[str]]
 
 WIKI_REFRESH_INTERVAL_SECONDS = 60 * 60
 WIKI_HEALTH_INTERVAL_SECONDS = 30 * 60
+WIKI_EXPORTS_INTERVAL_SECONDS = 6 * 60 * 60
 WIKI_AUDIT_INTERVAL_SECONDS = 24 * 60 * 60
 WIKI_SYNC_SESSIONS_INTERVAL_SECONDS = 24 * 60 * 60
 WIKI_UPKEEP_INTERVAL_SECONDS = 24 * 60 * 60
@@ -77,6 +79,10 @@ class WikiGatewayProtocol(Protocol):
     ) -> dict[str, Any]: ...
 
     async def health(self) -> dict[str, Any]: ...
+
+    async def export_pages(self) -> dict[str, Any]: ...
+
+    async def graph_artifacts(self) -> dict[str, Any]: ...
 
     async def audit(self) -> dict[str, Any]: ...
 
@@ -453,6 +459,13 @@ def _wiki_command_specs(
             WIKI_HEALTH_INTERVAL_SECONDS,
             None,
             create_wiki_health_handler(gateway=gateway, scope=scope),
+        ),
+        (
+            "exports",
+            "Scheduled agent export refresh",
+            WIKI_EXPORTS_INTERVAL_SECONDS,
+            None,
+            create_wiki_exports_handler(gateway=gateway, scope=scope),
         ),
         (
             "audit",

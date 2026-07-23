@@ -22,6 +22,7 @@ from gobby.wiki.scheduled_jobs import (
     _create_gateway,
     _previous_utc_day,
     create_wiki_audit_handler,
+    create_wiki_exports_handler,
     create_wiki_health_handler,
     create_wiki_librarian_handler,
     create_wiki_recap_handler,
@@ -35,6 +36,7 @@ from gobby.wiki.update_coordinator import WikiUpdateCoordinator
 
 WIKI_JOB_COMMANDS = (
     "audit",
+    "exports",
     "health",
     "librarian",
     "recap",
@@ -75,6 +77,14 @@ class RecordingGateway:
     async def health(self) -> dict[str, Any]:
         self.calls.append(("health", {}))
         return _result("health", {"status": "healthy", "checked": 4})
+
+    async def export_pages(self) -> dict[str, Any]:
+        self.calls.append(("export_pages", {}))
+        return _result("export_pages", {"status": "completed"})
+
+    async def graph_artifacts(self) -> dict[str, Any]:
+        self.calls.append(("graph_artifacts", {}))
+        return _result("graph_artifacts", {"status": "completed"})
 
     async def audit(self) -> dict[str, Any]:
         self.calls.append(("audit", {}))
@@ -848,6 +858,91 @@ async def test_upkeep_synthesis_failures_record_failed_cron_run(
     assert len(output["result"]["clusters"]) == 2
 
 
+class FailingExportsGateway(RecordingGateway):
+    def __init__(self, failed_steps: set[str]) -> None:
+        super().__init__()
+        self.failed_steps = failed_steps
+
+    async def export_pages(self) -> dict[str, Any]:
+        self.calls.append(("export_pages", {}))
+        if "export_pages" in self.failed_steps:
+            return {"ok": False, "command": "export_pages", "error": "pages failed"}
+        return _result("export_pages", {"status": "completed"})
+
+    async def graph_artifacts(self) -> dict[str, Any]:
+        self.calls.append(("graph_artifacts", {}))
+        if "graph_artifacts" in self.failed_steps:
+            raise RuntimeError("graph failed")
+        return _result("graph_artifacts", {"status": "completed"})
+
+
+@pytest.mark.asyncio
+async def test_exports_handler_records_per_step_success() -> None:
+    gateway = RecordingGateway()
+    handler = create_wiki_exports_handler(
+        gateway=gateway,
+        scope="project:alpha",
+    )
+
+    output = json.loads(await handler(_job("exports")))
+
+    assert gateway.calls == [("export_pages", {}), ("graph_artifacts", {})]
+    assert output == {
+        "command": "exports",
+        "ok": True,
+        "purpose": "Refresh agent-facing wiki exports",
+        "result": {
+            "steps": {
+                "export_pages": {"ok": True, "status": "completed"},
+                "graph_artifacts": {"ok": True, "status": "completed"},
+            }
+        },
+        "scope": "project:alpha",
+        "status": "completed",
+    }
+
+
+@pytest.mark.parametrize(
+    ("failed_step", "expected_error"),
+    [("export_pages", "pages failed"), ("graph_artifacts", "graph failed")],
+)
+@pytest.mark.asyncio
+async def test_exports_handler_degrades_after_one_failed_step(
+    failed_step: str,
+    expected_error: str,
+) -> None:
+    gateway = FailingExportsGateway({failed_step})
+    handler = create_wiki_exports_handler(
+        gateway=gateway,
+        scope="project:alpha",
+    )
+
+    output = json.loads(await handler(_job("exports")))
+
+    assert [call[0] for call in gateway.calls] == ["export_pages", "graph_artifacts"]
+    assert output["ok"] is True
+    assert output["status"] == "degraded"
+    steps = output["result"]["steps"]
+    assert steps[failed_step]["ok"] is False
+    assert steps[failed_step]["error"] == expected_error
+    successful_step = ({"export_pages", "graph_artifacts"} - {failed_step}).pop()
+    assert steps[successful_step] == {"ok": True, "status": "completed"}
+
+
+@pytest.mark.asyncio
+async def test_exports_handler_raises_after_both_steps_fail() -> None:
+    gateway = FailingExportsGateway({"export_pages", "graph_artifacts"})
+    handler = create_wiki_exports_handler(
+        gateway=gateway,
+        scope="project:alpha",
+    )
+
+    with pytest.raises(RuntimeError, match="pages failed.*graph failed"):
+        await handler(_job("exports"))
+
+    assert [call[0] for call in gateway.calls] == ["export_pages", "graph_artifacts"]
+
+
 @pytest.mark.asyncio
 async def test_scheduled_jobs_use_gateway() -> None:
     gateway = RecordingGateway()
@@ -863,6 +958,13 @@ async def test_scheduled_jobs_use_gateway() -> None:
             ),
         ),
         ("health", create_wiki_health_handler(gateway=gateway, scope="project:alpha")),
+        (
+            "exports",
+            create_wiki_exports_handler(
+                gateway=gateway,
+                scope="project:alpha",
+            ),
+        ),
         (
             "audit",
             create_wiki_audit_handler(
@@ -918,6 +1020,8 @@ async def test_scheduled_jobs_use_gateway() -> None:
     assert [call[0] for call in gateway.calls] == [
         "refresh",
         "health",
+        "export_pages",
+        "graph_artifacts",
         "audit",
         "sync-sessions",
         "upkeep",
@@ -951,8 +1055,8 @@ async def test_wiki_cron_handlers_registered(
 
     expected_handlers = {f"wiki:{command}:project:alpha" for command in WIKI_JOB_COMMANDS}
     assert set(executor.handlers) == expected_handlers
-    assert created == 7
-    assert repeated == 7
+    assert created == len(WIKI_JOB_COMMANDS)
+    assert repeated == len(WIKI_JOB_COMMANDS)
 
     jobs = cron_storage.list_jobs(project_id=project_id)
     assert sorted(job.name for job in jobs) == [
@@ -969,6 +1073,9 @@ async def test_wiki_cron_handlers_registered(
     assert recap_job.cron_expr == WIKI_RECAP_SCHEDULE_CRON
     interval_jobs = [job for job in jobs if job.name != recap_job.name]
     assert all(job.schedule_type == "interval" for job in interval_jobs)
+    exports_job = cron_storage.get_job_by_name("gobby:wiki-exports:project:alpha")
+    assert exports_job is not None
+    assert exports_job.interval_seconds == 6 * 60 * 60
 
 
 @pytest.mark.asyncio
@@ -1211,8 +1318,8 @@ async def test_disabled_non_system_row_takeover_preserves_enabled_and_marks_syst
         gateway_factory=lambda _scope: RecordingGateway(),
     )
 
-    assert created == 7
-    assert repeated == 7
+    assert created == len(WIKI_JOB_COMMANDS)
+    assert repeated == len(WIKI_JOB_COMMANDS)
     taken_over = cron_storage.get_job(legacy.id)
     assert taken_over is not None
     assert taken_over.is_system is True
@@ -1286,7 +1393,7 @@ async def test_non_system_bare_scope_row_does_not_abort_registration(
         gateway_factory=lambda _scope: RecordingGateway(),
     )
 
-    assert created == 7
+    assert created == len(WIKI_JOB_COMMANDS)
     assert set(executor.handlers) == {
         f"wiki:{command}:project:{project_id}" for command in WIKI_JOB_COMMANDS
     }
@@ -1322,8 +1429,8 @@ async def test_startup_registers_handlers_for_other_projects_enabled_rows(
         gateway_factory=lambda _scope: RecordingGateway(),
     )
 
-    # 7 configured-scope handlers plus 7 swept from the other project's rows.
-    assert registered == 14
+    # Configured-scope handlers plus the same set swept from the other project's rows.
+    assert registered == 2 * len(WIKI_JOB_COMMANDS)
     assert set(executor.handlers) == {
         f"wiki:{command}:project:{project_id}" for command in WIKI_JOB_COMMANDS
     } | {f"wiki:{command}:project:{other_project}" for command in WIKI_JOB_COMMANDS}
@@ -1358,7 +1465,7 @@ async def test_startup_parks_rows_for_unresolvable_scope(
         gateway_factory=lambda _scope: RecordingGateway(),
     )
 
-    assert registered == 7
+    assert registered == len(WIKI_JOB_COMMANDS)
     assert set(executor.handlers) == {
         f"wiki:{command}:project:{project_id}" for command in WIKI_JOB_COMMANDS
     }
@@ -1401,7 +1508,7 @@ async def test_startup_disables_rows_for_soft_deleted_project(
         gateway_factory=lambda _scope: RecordingGateway(),
     )
 
-    assert registered == 7
+    assert registered == len(WIKI_JOB_COMMANDS)
     for command in WIKI_JOB_COMMANDS:
         job = cron_storage.get_job_by_name(f"gobby:wiki-{command}:project:{dead_project}")
         assert job is not None
@@ -1420,7 +1527,7 @@ async def test_startup_disables_rows_for_soft_deleted_project(
         scopes=[f"project:{project_id}"],
         gateway_factory=lambda _scope: RecordingGateway(),
     )
-    assert rerun == 7
+    assert rerun == len(WIKI_JOB_COMMANDS)
     for command in WIKI_JOB_COMMANDS:
         job = cron_storage.get_job_by_name(f"gobby:wiki-{command}:project:{dead_project}")
         assert job is not None
@@ -1497,7 +1604,7 @@ async def test_sweep_wakes_parked_rows_when_scope_resolves(
         gateway_factory=lambda _scope: RecordingGateway(),
     )
 
-    assert registered == 14
+    assert registered == 2 * len(WIKI_JOB_COMMANDS)
     for command in WIKI_JOB_COMMANDS:
         job = cron_storage.get_job_by_name(f"gobby:wiki-{command}:project:{other_project}")
         assert job is not None
@@ -1564,7 +1671,7 @@ async def test_parked_other_project_scope_keeps_handlers_registered(
 
     # Parked system rows remain enabled but have no next run, so their handlers
     # stay registered even though the scheduler will not claim them.
-    assert registered == 14
+    assert registered == 2 * len(WIKI_JOB_COMMANDS)
     assert set(executor.handlers) == {
         f"wiki:{command}:{scope}"
         for command in WIKI_JOB_COMMANDS
@@ -1595,7 +1702,7 @@ async def test_registration_without_startup_project_sweeps_enabled_rows(
         gateway_factory=lambda _scope: RecordingGateway(),
     )
 
-    assert registered == 7
+    assert registered == len(WIKI_JOB_COMMANDS)
     assert set(executor.handlers) == {
         f"wiki:{command}:project:{project_id}" for command in WIKI_JOB_COMMANDS
     }
@@ -1781,7 +1888,7 @@ async def test_multi_scope_registration_files_per_scope_tasks(
         task_manager=task_manager,
     )
 
-    assert created == 14
+    assert created == 2 * len(WIKI_JOB_COMMANDS)
     job_names = sorted(job.name for job in cron_storage.list_jobs(project_id=project_id))
     assert job_names == sorted(
         [f"gobby:wiki-{command}:project:alpha" for command in WIKI_JOB_COMMANDS]
