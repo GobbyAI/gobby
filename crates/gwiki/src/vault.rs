@@ -75,6 +75,7 @@ preserved.\n\n\
 ## Machine-readable exports (`outputs/`)\n\n\
 - `outputs/pages/<page>.json` — per-page metadata sibling: frontmatter, outbound links, lifecycle, confidence, audit claim classification (`gwiki export pages`).\n\
 - `outputs/graph.jsonld`, `outputs/llms.txt`, `outputs/llms-full.txt` — schema.org document graph and llms.txt indexes (`gwiki graph`).\n\n\
+The daemon refreshes these exports on a schedule.\n\n\
 ## Trust signals\n\n\
 - Frontmatter `lifecycle`: `draft | reviewed | verified | stale | archived`. Archived pages and quarantined candidates (`candidate: true`) are excluded from agent surfaces.\n\
 - Page confidence (0-100, derived): cited-source credibility, freshness half-life, and backlinks; surfaced by `gwiki health`, `gwiki trust`, and per-page JSON.\n\
@@ -333,6 +334,11 @@ mod tests {
                 *contents
             );
         }
+    }
+
+    #[test]
+    fn export_health_ai_readme_mentions_scheduled_refresh() {
+        assert!(AI_README_TEMPLATE.contains("daemon refreshes these exports on a schedule"));
     }
 
     #[test]

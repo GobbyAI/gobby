@@ -1,6 +1,7 @@
 use std::collections::{BTreeMap, BTreeSet};
 use std::fs;
 use std::path::{Path, PathBuf};
+use std::time::{Duration, SystemTime};
 
 use aho_corasick::AhoCorasick;
 use chrono::{DateTime, NaiveDate, NaiveDateTime, Utc};
@@ -25,6 +26,29 @@ const LOW_CONFIDENCE_THRESHOLD: u8 = 40;
 /// Cap on low-confidence entries listed in the report; the summary always
 /// carries the full count.
 const LOW_CONFIDENCE_LIST_CAP: usize = 10;
+pub const EXPORT_STALENESS_SLACK_SECONDS: u64 = 24 * 60 * 60;
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ExportArtifactStatus {
+    Missing,
+    Stale,
+}
+
+impl ExportArtifactStatus {
+    fn as_str(self) -> &'static str {
+        match self {
+            Self::Missing => "missing",
+            Self::Stale => "stale",
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct ExportArtifactIssue {
+    pub artifact: String,
+    pub status: ExportArtifactStatus,
+}
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct HealthReport {
@@ -32,6 +56,7 @@ pub struct HealthReport {
     pub scope: ScopeIdentity,
     pub root: PathBuf,
     pub stale_pages: Vec<PathBuf>,
+    pub stale_exports: Option<Vec<ExportArtifactIssue>>,
     pub stale_citations: Vec<HealthSourceIssue>,
     pub uncited_sources: Vec<HealthSourceIssue>,
     pub broken_links: Vec<crate::lint::LinkIssue>,
@@ -150,6 +175,7 @@ fn report_from_pages_for_health(
     let page_confidence =
         page_confidence_summary(pages, &manifest.entries, &provenance, &needle_index);
     let stale_pages = stale_pages(pages);
+    let stale_exports = stale_exports(vault_root, pages)?;
     let stale_citations = manifest
         .entries
         .iter()
@@ -175,6 +201,7 @@ fn report_from_pages_for_health(
         scope,
         root: vault_root.to_path_buf(),
         stale_pages,
+        stale_exports,
         stale_citations,
         uncited_sources,
         broken_links: lint_report.broken_links,
@@ -309,6 +336,7 @@ fn page_age_days(path: &Path) -> Option<u16> {
 pub fn render_text(report: &HealthReport) -> String {
     let mut text = format!("# Wiki health report\n\nScope: {}\n", report.scope);
     render_paths(&mut text, "Stale pages", &report.stale_pages);
+    render_stale_exports(&mut text, report.stale_exports.as_deref());
     render_sources(&mut text, "Stale citations", &report.stale_citations);
     render_sources(&mut text, "Uncited sources", &report.uncited_sources);
     render_broken_links(&mut text, &report.broken_links);
@@ -317,6 +345,140 @@ pub fn render_text(report: &HealthReport) -> String {
     render_sources(&mut text, "Uncompiled sources", &report.uncompiled_sources);
     render_page_confidence(&mut text, &report.page_confidence);
     text
+}
+
+fn render_stale_exports(text: &mut String, issues: Option<&[ExportArtifactIssue]>) {
+    let Some(issues) = issues else {
+        return;
+    };
+    text.push_str("\n## Stale agent exports\n");
+    for issue in issues {
+        text.push_str(&format!(
+            "- {}: {}\n",
+            issue.status.as_str(),
+            issue.artifact
+        ));
+    }
+}
+
+fn stale_exports(
+    vault_root: &Path,
+    pages: &[WikiPage],
+) -> Result<Option<Vec<ExportArtifactIssue>>, WikiError> {
+    let newest_page = newest_page_modified(pages)?;
+    let artifacts = [
+        (
+            "outputs/pages/",
+            newest_page_export_modified(&vault_root.join("outputs/pages"))?,
+        ),
+        (
+            "outputs/graph.jsonld",
+            file_modified(&vault_root.join("outputs/graph.jsonld"))?,
+        ),
+        (
+            "outputs/llms.txt",
+            file_modified(&vault_root.join("outputs/llms.txt"))?,
+        ),
+        (
+            "outputs/llms-full.txt",
+            file_modified(&vault_root.join("outputs/llms-full.txt"))?,
+        ),
+    ];
+    let issues = artifacts
+        .into_iter()
+        .filter_map(|(artifact, modified)| {
+            let status = match modified {
+                None => ExportArtifactStatus::Missing,
+                Some(modified) if export_is_stale(newest_page, modified) => {
+                    ExportArtifactStatus::Stale
+                }
+                Some(_) => return None,
+            };
+            Some(ExportArtifactIssue {
+                artifact: artifact.to_string(),
+                status,
+            })
+        })
+        .collect::<Vec<_>>();
+    Ok((!issues.is_empty()).then_some(issues))
+}
+
+fn newest_page_modified(pages: &[WikiPage]) -> Result<Option<SystemTime>, WikiError> {
+    let mut newest = None;
+    for page in pages {
+        if let Some(modified) = file_modified(&page.path)? {
+            newest = Some(newest.map_or(modified, |current: SystemTime| current.max(modified)));
+        }
+    }
+    Ok(newest)
+}
+
+fn newest_page_export_modified(directory: &Path) -> Result<Option<SystemTime>, WikiError> {
+    let entries = match fs::read_dir(directory) {
+        Ok(entries) => entries,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+        Err(error) => {
+            return Err(WikiError::Io {
+                action: "read page export directory",
+                path: Some(directory.to_path_buf()),
+                source: error,
+            });
+        }
+    };
+    let mut newest = None;
+    for entry in entries {
+        let entry = entry.map_err(|error| WikiError::Io {
+            action: "read page export directory entry",
+            path: Some(directory.to_path_buf()),
+            source: error,
+        })?;
+        let path = entry.path();
+        let file_type = entry.file_type().map_err(|error| WikiError::Io {
+            action: "inspect page export directory entry",
+            path: Some(path.clone()),
+            source: error,
+        })?;
+        let modified = if file_type.is_dir() {
+            newest_page_export_modified(&path)?
+        } else if file_type.is_file() && path.extension().is_some_and(|value| value == "json") {
+            file_modified(&path)?
+        } else {
+            None
+        };
+        if let Some(modified) = modified {
+            newest = Some(newest.map_or(modified, |current: SystemTime| current.max(modified)));
+        }
+    }
+    Ok(newest)
+}
+
+fn file_modified(path: &Path) -> Result<Option<SystemTime>, WikiError> {
+    let metadata = match fs::metadata(path) {
+        Ok(metadata) => metadata,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+        Err(error) => {
+            return Err(WikiError::Io {
+                action: "inspect export artifact",
+                path: Some(path.to_path_buf()),
+                source: error,
+            });
+        }
+    };
+    metadata
+        .modified()
+        .map(Some)
+        .map_err(|error| WikiError::Io {
+            action: "read export artifact modification time",
+            path: Some(path.to_path_buf()),
+            source: error,
+        })
+}
+
+fn export_is_stale(newest_page: Option<SystemTime>, artifact: SystemTime) -> bool {
+    newest_page.is_some_and(|page| {
+        page.duration_since(artifact)
+            .is_ok_and(|age| age > Duration::from_secs(EXPORT_STALENESS_SLACK_SECONDS))
+    })
 }
 
 fn render_page_confidence(text: &mut String, summary: &PageConfidenceSummary) {
@@ -898,6 +1060,9 @@ fn render_duplicate_sources(text: &mut String, duplicates: &[DuplicateSource]) {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::fs::FileTimes;
+    use std::time::{Duration, UNIX_EPOCH};
+
     use crate::frontmatter::{WikiLifecycle, parse_frontmatter};
     use crate::sources::{IngestionMethod, SourceDraft, SourceKind, SourceManifest};
 
@@ -1090,6 +1255,144 @@ mod tests {
         let markdown =
             std::fs::read_to_string(root.join("meta/health/latest.md")).expect("health markdown");
         assert!(markdown.starts_with("# Wiki health report\n\nScope: topic:ops\n"));
+    }
+
+    #[test]
+    fn export_health_reports_each_missing_artifact() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        write_export_health_page(temp.path(), 100_000);
+
+        let report = inspect(temp.path(), ScopeIdentity::project("proj")).expect("health");
+
+        assert_eq!(
+            export_issues(&report),
+            vec![
+                ("outputs/pages/", ExportArtifactStatus::Missing),
+                ("outputs/graph.jsonld", ExportArtifactStatus::Missing),
+                ("outputs/llms.txt", ExportArtifactStatus::Missing),
+                ("outputs/llms-full.txt", ExportArtifactStatus::Missing),
+            ],
+        );
+        let rendered = render_text(&report);
+        assert!(rendered.contains("## Stale agent exports"));
+        assert!(rendered.contains("- missing: outputs/pages/"));
+    }
+
+    #[test]
+    fn export_health_is_none_when_every_artifact_is_fresh() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        write_export_health_page(temp.path(), 100_000);
+        write_export_artifacts(temp.path(), [200_000; 4]);
+
+        let report = inspect(temp.path(), ScopeIdentity::project("proj")).expect("health");
+
+        assert_eq!(report.stale_exports, None);
+    }
+
+    #[test]
+    fn export_health_reports_artifacts_older_than_the_latest_page() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let artifact_time = 100_000;
+        write_export_health_page(
+            temp.path(),
+            artifact_time + EXPORT_STALENESS_SLACK_SECONDS + 1,
+        );
+        write_export_artifacts(temp.path(), [artifact_time; 4]);
+
+        let report = inspect(temp.path(), ScopeIdentity::project("proj")).expect("health");
+
+        assert_eq!(
+            export_issues(&report),
+            vec![
+                ("outputs/pages/", ExportArtifactStatus::Stale),
+                ("outputs/graph.jsonld", ExportArtifactStatus::Stale),
+                ("outputs/llms.txt", ExportArtifactStatus::Stale),
+                ("outputs/llms-full.txt", ExportArtifactStatus::Stale),
+            ],
+        );
+    }
+
+    #[test]
+    fn export_health_keeps_partial_refreshes_independent() {
+        let page_time = 200_000;
+        let stale_time = page_time - EXPORT_STALENESS_SLACK_SECONDS - 1;
+
+        let pages_fresh = tempfile::tempdir().expect("tempdir");
+        write_export_health_page(pages_fresh.path(), page_time);
+        write_export_artifacts(
+            pages_fresh.path(),
+            [page_time, stale_time, stale_time, stale_time],
+        );
+        let report =
+            inspect(pages_fresh.path(), ScopeIdentity::project("pages-fresh")).expect("health");
+        assert_eq!(
+            export_issues(&report),
+            vec![
+                ("outputs/graph.jsonld", ExportArtifactStatus::Stale),
+                ("outputs/llms.txt", ExportArtifactStatus::Stale),
+                ("outputs/llms-full.txt", ExportArtifactStatus::Stale),
+            ],
+        );
+
+        let graph_fresh = tempfile::tempdir().expect("tempdir");
+        write_export_health_page(graph_fresh.path(), page_time);
+        write_export_artifacts(
+            graph_fresh.path(),
+            [stale_time, page_time, page_time, page_time],
+        );
+        let report =
+            inspect(graph_fresh.path(), ScopeIdentity::project("graph-fresh")).expect("health");
+        assert_eq!(
+            export_issues(&report),
+            vec![("outputs/pages/", ExportArtifactStatus::Stale)]
+        );
+    }
+
+    fn export_issues(report: &HealthReport) -> Vec<(&str, ExportArtifactStatus)> {
+        report
+            .stale_exports
+            .as_ref()
+            .expect("expected stale export findings")
+            .iter()
+            .map(|issue| (issue.artifact.as_str(), issue.status))
+            .collect()
+    }
+
+    fn write_export_health_page(root: &Path, modified_seconds: u64) {
+        let relative = "knowledge/concepts/export-health.md";
+        write_page(
+            root,
+            relative,
+            "---\ntitle: Export health\n---\n\nCurrent source page.\n",
+        );
+        set_modified(&root.join(relative), modified_seconds);
+    }
+
+    fn write_export_artifacts(root: &Path, modified_seconds: [u64; 4]) {
+        for (relative, seconds) in [
+            (
+                "outputs/pages/knowledge/concepts/export-health.json",
+                modified_seconds[0],
+            ),
+            ("outputs/graph.jsonld", modified_seconds[1]),
+            ("outputs/llms.txt", modified_seconds[2]),
+            ("outputs/llms-full.txt", modified_seconds[3]),
+        ] {
+            let path = root.join(relative);
+            std::fs::create_dir_all(path.parent().expect("artifact parent"))
+                .expect("create artifact parent");
+            std::fs::write(&path, "artifact").expect("write artifact");
+            set_modified(&path, seconds);
+        }
+    }
+
+    fn set_modified(path: &Path, seconds: u64) {
+        let file = std::fs::OpenOptions::new()
+            .write(true)
+            .open(path)
+            .expect("open timestamp target");
+        file.set_times(FileTimes::new().set_modified(UNIX_EPOCH + Duration::from_secs(seconds)))
+            .expect("set modified time");
     }
 
     #[test]

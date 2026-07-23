@@ -510,6 +510,7 @@ mod tests {
             scope: scope.clone(),
             root: "wiki-root".into(),
             stale_pages: Vec::new(),
+            stale_exports: None,
             stale_citations: Vec::new(),
             uncited_sources: Vec::new(),
             broken_links: vec![
