@@ -3601,6 +3601,7 @@ class TestHooksEndpoints:
             if handler_layer == "value_error"
             else RuntimeError("hook pipeline unavailable")
         )
+        failure_patch: Any
         if handler_layer == "outer":
             failure_patch = patch(
                 "gobby.servers.routes.mcp.hooks.claim_envelope_processing",

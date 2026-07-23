@@ -91,7 +91,9 @@ class WorkflowEvaluationRuntime:
             asyncio.set_event_loop(loop)
             with self._lock:
                 self._loop = loop
-            self._ready.set()
+            # Signal readiness from inside the running loop so __init__ cannot
+            # return while run() would still see loop.is_running() as False.
+            loop.call_soon(self._ready.set)
             loop.run_forever()
         except BaseException as exc:
             self._startup_error = exc

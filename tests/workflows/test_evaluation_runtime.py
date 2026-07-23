@@ -5,6 +5,7 @@ import threading
 import time
 from datetime import UTC, datetime
 from pathlib import Path
+from unittest.mock import patch
 
 import pytest
 
@@ -51,6 +52,42 @@ def test_stalled_to_thread_dependency_respects_evaluation_timeout(tmp_path: Path
     finally:
         release.set()
         handler.shutdown()
+
+
+def test_init_waits_for_loop_start_so_immediate_run_succeeds() -> None:
+    gate = threading.Event()
+    real_new_event_loop = asyncio.new_event_loop
+
+    def gated_loop() -> asyncio.AbstractEventLoop:
+        loop = real_new_event_loop()
+        original_run_forever = loop.run_forever
+
+        def gated_run_forever() -> None:
+            gate.wait(timeout=1)
+            original_run_forever()
+
+        loop.run_forever = gated_run_forever  # type: ignore[method-assign]
+        return loop
+
+    release_timer = threading.Timer(0.05, gate.set)
+    release_timer.start()
+    try:
+        with patch(
+            "gobby.workflows.evaluation_runtime.asyncio.new_event_loop",
+            side_effect=gated_loop,
+        ):
+            runtime = WorkflowEvaluationRuntime(max_workers=1)
+
+        async def probe() -> str:
+            return "ok"
+
+        try:
+            assert runtime.run(probe()) == "ok"
+        finally:
+            runtime.shutdown()
+    finally:
+        gate.set()
+        release_timer.cancel()
 
 
 def test_runtime_propagates_exceptions_and_rejects_work_after_shutdown() -> None:
