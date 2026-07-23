@@ -199,15 +199,15 @@
 - **Confidence:** med.
 
 ### [IMPORTANT] Restart replay/rehydration loops paginate without an offset — only the first 500 rows are ever processed
-- **Where:** `runner_lifecycle_agents.py:57-88,184-205,234-303` (each iteration re-issues `list_active(limit=500)`/`list_by_status(..., limit=500)` with no offset; second page is the first page again → loop exits). The correct cursor pattern exists 40 lines away in `lifecycle_monitor.py:357-372`.
+- **Where:** Every replay/rehydration loop in `runner_lifecycle_agents.py` now threads an offset through its pagination (`offset += len(batch)` at `:90`, `:149`, `:199`, `:317`), matching the cursor pattern in `lifecycle_monitor.py`.
 - **Failure mode:** Beyond row 500, no completion-event rehydration, tmux reconnection, or cancellation replay after restart — silent partial recovery at scale.
-- **Minimal fix:** Thread an offset through each loop.
+- **Resolution:** Fixed as part of the event-driven `wait_for_agent` epic's boot-recovery restructuring: active-run rehydration and the acknowledged terminal sweep paginate with explicit offsets.
 - **Confidence:** high (shape); low-med (impact at default scale).
 
 ### [IMPORTANT] `subscribe_agent_completion` re-registers unconditionally — `register()` replaces the Event and drops existing waiters
-- **Where:** `completion_subscribers.py:70-71`; `events/completion_registry.py:50-56` (replace-on-collision, warning only). Sibling call sites check `is_registered` first (`mcp_proxy/tools/tasks/_expansion.py`).
+- **Where:** `CompletionEventRegistry.register` (`events/completion_registry.py`) now merges on collision — subscribers and continuation prompts are combined into the existing entry, and the return value reports fresh-create vs merge for callers that need it (`subscribe_agent_completion`'s `created_fresh_entry`).
 - **Failure mode:** A second subscription for an already-registered run discards the first registration's subscribers; a coroutine blocked in `wait()` on the old Event never wakes.
-- **Minimal fix:** Check `is_registered` → `subscribe`, or make `register()` merge.
+- **Resolution:** Fixed in the event-driven `wait_for_agent` epic: `register()` merges instead of replacing, no waiter is dropped, and repeat `wait_for_agent` calls rely on the merge semantics plus ISM dedup for idempotency.
 - **Confidence:** med (collisions rare today).
 
 ### [IMPORTANT] Bundled-agent orphan cleanup uses a weaker ownership filter than updates — soft-deletes rows sync doesn't own
