@@ -28,7 +28,10 @@ runs:
       - action: fix_actionable_coordination_bug
       - action: monitor_agents
       - action: check_context_health
-      - action: compact_self_or_wait_for_agent
+      - action: compact_self_before_agent_wait
+      - action: wait_for_agent_once_to_subscribe
+      - action: end_turn_until_wake
+      - action: recheck_wait_for_agent_then_sweep
       - action: verify_build_bugs_closed
       - action: close_target
         task: "#12345"
@@ -51,7 +54,10 @@ assertions:
     - fix_actionable_coordination_bug
     - monitor_agents
     - check_context_health
-    - compact_self_or_wait_for_agent
+    - compact_self_before_agent_wait
+    - wait_for_agent_once_to_subscribe
+    - end_turn_until_wake
+    - recheck_wait_for_agent_then_sweep
     - verify_build_bugs_closed
     - close_target
     - close_coordination_epic

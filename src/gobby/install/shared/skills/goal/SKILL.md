@@ -206,9 +206,11 @@ leaves.
    Progress Log). Compact on context pressure or after finishing your own
    work item.
 7. **Idle** — only when workers are running and nothing is actionable:
-   `gobby-agents:wait_for_agent` for a specific run with a bounded five-minute
-   wait (`timeout_seconds=300`), then a full sweep. Do not use Bash sleep
-   loops, tmux polling loops, or provider monitors for worker waits.
+   subscribe once by calling `gobby-agents:wait_for_agent(run_id)`. If the run
+   remains active, end the turn. On the daemon wake, re-call
+   `gobby-agents:wait_for_agent(run_id)` first for the terminal snapshot, then
+   run a full status and health sweep. Do not use Bash sleep loops, tmux polling
+   loops, or provider monitors for worker waits.
 
 ## Resume
 
@@ -330,7 +332,10 @@ during the run is fixed, committed, and closed under the coordination epic.
    automation only after blocking bugs are fixed. Daemon or build-system
    fixes pass the Post-Fix Daemon Restart Gate before releasing blockers.
 4. compact_self after finishing a coordination bug or on context pressure.
-5. Idle only via bounded wait_for_agent (timeout_seconds=300); then go to 2.
+5. Idle only when workers are running and nothing is actionable: subscribe once
+   by calling wait_for_agent(run_id). If the run remains active, end the turn.
+   On the daemon wake, re-call wait_for_agent(run_id) first for the terminal
+   snapshot, then go to 2 for a full status and health sweep.
 6. Build done: verify the build-coordinator Completion Gates, close the
    anchor, set status: done, clear variables.
 

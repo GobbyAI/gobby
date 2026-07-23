@@ -60,22 +60,24 @@ def test_plan_compacts_after_every_review_agent_launch(body: str) -> None:
     assert "every adversarial review round" in adversary_handoff
 
 
-def test_spawned_run_waiting_policy_is_shared_and_bounded(body: str) -> None:
+def test_spawned_run_waiting_policy_is_shared_and_wake_driven(body: str) -> None:
     section = body[body.index("## Waiting on Spawned Runs") : body.index("## Changelog Contract")]
     normalized = " ".join(section.split())
 
     independent_work = section.index("Keep doing useful independent work")
-    bounded_wait = section.index("wait_for_agent(run_id, timeout_seconds=300)")
-    completion_message = section.index("run completion message")
-    assert independent_work < completion_message < bounded_wait
+    subscribe = section.index("wait_for_agent(run_id)")
+    end_turn = section.index("end the turn")
+    terminal_snapshot = section.index("re-call `gobby-agents:wait_for_agent(run_id)`")
+    status_sweep = section.index("full status and health sweep")
+    assert independent_work < subscribe < end_turn < terminal_snapshot < status_sweep
 
-    assert "re-wait at most once" in normalized
-    assert "never turn blocking waits into an unbounded loop" in normalized
-    assert "get_agent_result(run_id)" in normalized
+    assert "subscribe once by calling `gobby-agents:wait_for_agent(run_id)`" in normalized
+    assert "daemon wake" in normalized
+    assert "get_agent_result(run_id)` only if" in normalized
     assert "mandatory post-launch `gobby-sessions:compact_self`" in normalized
-    assert "already known to be terminal skips watching and waiting" in normalized
-    assert "watcher must exit on every terminal state" in normalized
-    assert "current harness offers no background watcher mechanism" in normalized
+    assert "already known to be terminal skips subscribing and waiting" in normalized
+    assert "timeout_seconds" not in section
+    assert "background watcher" not in section
     assert "/loop" not in section
     assert "/schedule" not in section
 

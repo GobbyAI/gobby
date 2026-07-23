@@ -106,10 +106,10 @@ loop order is:
    high or when you have not compacted recently. Always compact after completing a coordination bug task
    before the next coordinator-loop iteration or agent wait.
 6. Use `gobby-agents:wait_for_agent` as the last idle action only when agents
-   are running and no actionable work remains. Wait for a specific run result
-with a bounded five-minute wait (`timeout_seconds=300`), then run another
-full status and health sweep. Shorter waits
-   are for diagnostics or recovery only.
+   are running and no actionable work remains; subscribe once by calling it for
+   a specific run id. If the run remains active, end the turn.
+   On the daemon wake, re-call `gobby-agents:wait_for_agent` first to retrieve
+   the terminal snapshot, then run a full status and health sweep.
 
 Do not keep the build moving by repeatedly manual-ticking the dispatcher. A
 normal build is daemon-owned automation. Use resume or explicit ticks only after

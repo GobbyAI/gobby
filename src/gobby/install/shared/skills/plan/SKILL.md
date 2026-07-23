@@ -117,26 +117,18 @@ which runs after approval and before the unchanged adversary gate.
 Use this same policy for enhancer and adversary runs after completing the
 mandatory post-launch `gobby-sessions:compact_self` call:
 
-1. Arm a background watcher loop for the run: a coarse-interval loop that
-   exits when the run reaches any terminal state, producing a single
-   completion notification (for example, a backgrounded `until`-loop that
-   polls run status via `gobby-agents:get_running_agent` or process liveness
-   every 10-30 seconds). The watcher must exit on every terminal state —
-   success, failure, and cancellation — never only on success.
-2. Keep doing useful independent work while the watcher is armed. When no
-   actionable independent work remains, end the turn and resume from the
-   watcher notification or the daemon's run completion message — spawned-run
-   results are also delivered as messages on completion.
-3. Retrieve the terminal payload with `gobby-agents:get_agent_result(run_id)`
-   before using the result.
-4. Blocking `gobby-agents:wait_for_agent(run_id, timeout_seconds=300)` is a
-   last resort — use it only when the current harness offers no background
-   watcher mechanism. If a bounded wait times out while the run is healthy,
-   re-wait at most once; never turn blocking waits into an unbounded loop.
+1. Keep doing useful independent work while the run is active.
+2. When workers are running and no actionable independent work remains,
+   subscribe once by calling `gobby-agents:wait_for_agent(run_id)`. If the run
+   remains active, end the turn and let the daemon wake resume the session.
+3. On the daemon wake, re-call `gobby-agents:wait_for_agent(run_id)` first to
+   retrieve the terminal snapshot, then perform a full status and health sweep.
+   Call `gobby-agents:get_agent_result(run_id)` only if you need to re-read the
+   final report.
 
 The mandatory compaction immediately after each launch takes priority over
-arming watchers, independent work, and waiting. A run already known to be
-terminal skips watching and waiting and goes directly to `get_agent_result`.
+independent work and waiting. A run already known to be
+terminal skips subscribing and waiting and goes directly to `get_agent_result`.
 
 ## Changelog Contract
 

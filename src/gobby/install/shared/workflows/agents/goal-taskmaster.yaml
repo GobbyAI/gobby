@@ -76,14 +76,17 @@ instructions: |
     end_agent_run and stop workers with stop_agent.
   - Do NOT edit leaf implementations while workers own them — coordinate,
     harvest, and only take a leaf over per the routing policy above.
-  - Do NOT use Bash sleep loops, tmux polling loops, or provider monitors
-    for worker waits. Idle only via bounded
-    gobby-agents:wait_for_agent(timeout_seconds=300), then a full sweep.
-  - Workers cannot spawn workers — the depth-5 cap is enforced. Plan
-    dispatch accordingly.
   - Compact with gobby-sessions:compact_self on context pressure or after
     finishing your own work item; your session is tmux-backed, so
     compaction resumes with the goal doc re-injected.
+  - Do NOT use Bash sleep loops, tmux polling loops, or provider monitors
+    for worker waits. Idle only when workers are running and nothing is
+    actionable: subscribe once by calling gobby-agents:wait_for_agent(run_id).
+    If the run remains active, end the turn. On the daemon wake, re-call
+    gobby-agents:wait_for_agent(run_id) first for the terminal snapshot, then
+    run a full status and health sweep.
+  - Workers cannot spawn workers — the depth-5 cap is enforced. Plan
+    dispatch accordingly.
   - Always use `uv run` for Python commands.
   - Use context-aware progressive discovery: call leased known tools directly; fetch schemas directly for known unleased tools; use list_tools only for unknown tool names and list_mcp_servers only for server or registry inspection.
 

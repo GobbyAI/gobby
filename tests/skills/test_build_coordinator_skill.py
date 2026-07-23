@@ -122,8 +122,12 @@ def test_build_coordinator_documents_unattended_build_discipline() -> None:
         "the last idle action only when agents are running and no actionable work remains"
         in normalized
     )
-    assert "five-minute wait (`timeout_seconds=300`)" in body
-    assert "Shorter waits are for diagnostics or recovery only" in normalized
+    assert "subscribe once by calling" in normalized
+    assert "end the turn" in normalized
+    assert "daemon wake" in normalized
+    assert "re-call `gobby-agents:wait_for_agent`" in normalized
+    assert "full status and health sweep" in normalized
+    assert "timeout_seconds" not in body
 
 
 def test_build_coordinator_orders_compaction_before_agent_waits() -> None:
@@ -139,6 +143,8 @@ def test_build_coordinator_orders_compaction_before_agent_waits() -> None:
         "Use `gobby-agents:wait_for_agent` as the last idle action only when agents are running "
         "and no actionable work remains" in normalized
     )
+    assert "subscribe once by calling" in normalized
+    assert "end the turn" in normalized
 
 
 def test_build_coordinator_documents_compact_self_tool_path() -> None:
@@ -146,7 +152,7 @@ def test_build_coordinator_documents_compact_self_tool_path() -> None:
     normalized = _normalized_body()
 
     assert "gobby-sessions:compact_self" in body
-    assert 'list_tools(server_name="gobby-sessions")' in body
+    assert 'list_tools(server_name="gobby-sessions")' not in body
     assert 'get_tool_schema(server_name="gobby-sessions", tool_name="compact_self")' in body
     assert 'call_tool("gobby-sessions", "compact_self", {})' in body
     assert "top-level `call_tool.session_id`" in body
