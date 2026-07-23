@@ -96,6 +96,34 @@ fn config_value_for<'a>(
 }
 
 #[test]
+fn production_ai_sources_use_effective_config_helpers() {
+    let sources = [
+        (
+            "codewiki generation",
+            include_str!("../commands/codewiki/text/generation.rs"),
+        ),
+        ("symbols", include_str!("../commands/symbols.rs")),
+        (
+            "code symbol embeddings",
+            include_str!("../vector/code_symbols/embedding.rs"),
+        ),
+    ];
+
+    for (name, source) in sources {
+        for forbidden in [
+            "AiConfigSource::with_primary(",
+            "AiConfigSource::with_primary_from_gobby_home(",
+            "LocalAiConfigSource::from_gobby_home(",
+        ] {
+            assert!(
+                !source.contains(forbidden),
+                "{name} still constructs an AI source through {forbidden}"
+            );
+        }
+    }
+}
+
+#[test]
 #[serial_test::serial]
 fn adapter_env_precedence_and_json_decode() {
     with_service_env(&[("GOBBY_FALKORDB_HOST", Some("env-falkor.local"))], || {

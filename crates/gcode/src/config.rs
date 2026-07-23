@@ -1,6 +1,7 @@
 //! Configuration resolution for gcode.
 
 mod context;
+mod layers;
 mod services;
 
 #[cfg(test)]
@@ -16,9 +17,8 @@ pub use context::{
 };
 
 pub(crate) use context::validate_parent_code_index;
-pub(crate) use services::{
-    EmbeddingConfigDetails, read_standalone_config_optional, resolve_embedding_config_details,
-};
+pub(crate) use layers::read_config_layers;
+pub(crate) use services::{EmbeddingConfigDetails, resolve_embedding_config_details};
 
 #[cfg(test)]
 pub(crate) use services::resolve_embedding_config_from_source;

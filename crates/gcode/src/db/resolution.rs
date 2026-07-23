@@ -1,6 +1,7 @@
 use std::path::{Path, PathBuf};
 
 use anyhow::{Context as _, bail};
+use gobby_core::ai::effective_config::EffectiveConfigError;
 use gobby_core::bootstrap::HubDatabaseBootstrap;
 use gobby_core::provisioning::{GCORE_CONFIG_FILENAME, StandaloneConfig};
 
@@ -22,6 +23,7 @@ pub fn resolve_database_url() -> anyhow::Result<String> {
     resolve_database_url_from_sources_with_identity_and_reachability(
         &home,
         |name| std::env::var(name).ok(),
+        gobby_core::ai::effective_config::daemon_dsn,
         |url| gobby_core::postgres::connect_readonly(url).is_ok(),
         gobby_core::provisioning::probe_postgres_hub_identity,
     )
@@ -31,11 +33,13 @@ pub fn resolve_database_url() -> anyhow::Result<String> {
 fn resolve_database_url_from_sources(
     home: &Path,
     get_var: impl FnMut(&str) -> Option<String>,
+    daemon_dsn: impl FnOnce() -> Result<Option<String>, EffectiveConfigError>,
     database_reachable: impl FnMut(&str) -> bool,
 ) -> anyhow::Result<String> {
     resolve_database_url_from_sources_with_identity_and_reachability(
         home,
         get_var,
+        daemon_dsn,
         database_reachable,
         gobby_core::provisioning::probe_postgres_hub_identity,
     )
@@ -45,12 +49,14 @@ fn resolve_database_url_from_sources(
 fn resolve_database_url_from_sources_with_identity(
     home: &Path,
     get_var: impl FnMut(&str) -> Option<String>,
+    daemon_dsn: impl FnOnce() -> Result<Option<String>, EffectiveConfigError>,
     database_reachable: impl FnMut(&str) -> bool,
     identity_probe: impl FnMut(&str) -> anyhow::Result<gobby_core::provisioning::HubIdentityProbeResult>,
 ) -> anyhow::Result<String> {
     resolve_database_url_from_sources_with_identity_and_reachability(
         home,
         get_var,
+        daemon_dsn,
         database_reachable,
         identity_probe,
     )
@@ -59,6 +65,7 @@ fn resolve_database_url_from_sources_with_identity(
 fn resolve_database_url_from_sources_with_identity_and_reachability(
     home: &Path,
     get_var: impl FnMut(&str) -> Option<String>,
+    daemon_dsn: impl FnOnce() -> Result<Option<String>, EffectiveConfigError>,
     mut database_reachable: impl FnMut(&str) -> bool,
     mut identity_probe: impl FnMut(
         &str,
@@ -68,6 +75,10 @@ fn resolve_database_url_from_sources_with_identity_and_reachability(
     let path = home.join("bootstrap.yaml");
 
     if let Some(database_url) = resolve_database_url_from_env(get_var) {
+        return Ok(database_url);
+    }
+
+    if let Some(database_url) = non_empty_trimmed(daemon_dsn()?) {
         return Ok(database_url);
     }
 
@@ -227,11 +238,89 @@ mod tests {
                 GCODE_DATABASE_URL_ENV => Some("postgresql://env/db".to_string()),
                 _ => None,
             },
+            || panic!("environment must bypass daemon DSN resolution"),
             |_| true,
         )
         .expect("resolve database url");
 
         assert_eq!(resolved, "postgresql://env/db");
+    }
+
+    #[test]
+    fn database_url_sources_prefer_daemon_before_bootstrap_and_gcore() {
+        let home = tempfile::tempdir().expect("temp home");
+        std::fs::write(
+            home.path().join("bootstrap.yaml"),
+            "hub_backend: postgres\ndatabase_url: postgresql://bootstrap/db\n",
+        )
+        .expect("write bootstrap");
+        std::fs::write(
+            home.path().join(GCORE_CONFIG_FILENAME),
+            "databases.postgres.dsn: postgresql://gcore/db\n",
+        )
+        .expect("write gcore config");
+
+        let resolved = resolve_database_url_from_sources(
+            home.path(),
+            |_| None,
+            || Ok(Some(" postgresql://daemon/db ".to_string())),
+            |_| true,
+        )
+        .expect("resolve database url");
+
+        assert_eq!(resolved, "postgresql://daemon/db");
+    }
+
+    #[test]
+    fn blank_daemon_dsn_preserves_bootstrap_precedence() {
+        let home = tempfile::tempdir().expect("temp home");
+        std::fs::write(
+            home.path().join("bootstrap.yaml"),
+            "hub_backend: postgres\ndatabase_url: postgresql://bootstrap/db\n",
+        )
+        .expect("write bootstrap");
+
+        let resolved = resolve_database_url_from_sources(
+            home.path(),
+            |_| None,
+            || Ok(Some(" \n\t".to_string())),
+            |_| true,
+        )
+        .expect("resolve database url");
+
+        assert_eq!(resolved, "postgresql://bootstrap/db");
+    }
+
+    #[test]
+    fn daemon_dsn_error_stops_before_bootstrap_and_gcore() {
+        let home = tempfile::tempdir().expect("temp home");
+        std::fs::write(
+            home.path().join("bootstrap.yaml"),
+            "hub_backend: postgres\ndatabase_url: postgresql://bootstrap/db\n",
+        )
+        .expect("write bootstrap");
+        std::fs::write(
+            home.path().join(GCORE_CONFIG_FILENAME),
+            "databases.postgres.dsn: postgresql://gcore/db\n",
+        )
+        .expect("write gcore config");
+
+        let error = resolve_database_url_from_sources(
+            home.path(),
+            |_| None,
+            || {
+                Err(
+                    gobby_core::ai::effective_config::EffectiveConfigError::Contract {
+                        key: "databases.postgres.dsn".to_string(),
+                        reason: "test contract failure",
+                    },
+                )
+            },
+            |_| true,
+        )
+        .expect_err("daemon DSN error must propagate");
+
+        assert!(error.to_string().contains("test contract failure"));
     }
 
     #[test]
@@ -243,8 +332,9 @@ mod tests {
         )
         .expect("write bootstrap");
 
-        let resolved = resolve_database_url_from_sources(home.path(), |_| None, |_| true)
-            .expect("resolve database url");
+        let resolved =
+            resolve_database_url_from_sources(home.path(), |_| None, || Ok(None), |_| true)
+                .expect("resolve database url");
 
         assert_eq!(resolved, "postgresql://inline/db");
     }
@@ -258,8 +348,9 @@ mod tests {
         )
         .expect("write gcore config");
 
-        let resolved = resolve_database_url_from_sources(home.path(), |_| None, |_| true)
-            .expect("resolve database url");
+        let resolved =
+            resolve_database_url_from_sources(home.path(), |_| None, || Ok(None), |_| true)
+                .expect("resolve database url");
 
         assert_eq!(resolved, "postgresql://gcore/db");
     }
@@ -276,6 +367,7 @@ mod tests {
         let resolved = resolve_database_url_from_sources_with_identity(
             home.path(),
             |_| None,
+            || Ok(None),
             |_| true,
             |_| {
                 Ok(gobby_core::provisioning::HubIdentityProbeResult::Known(

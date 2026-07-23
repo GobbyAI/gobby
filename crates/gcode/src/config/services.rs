@@ -15,18 +15,23 @@ use crate::config::context::{
     GOBBY_FALKORDB_HOST_ENV, GOBBY_FALKORDB_PASSWORD_ENV, GOBBY_FALKORDB_PORT_ENV,
     IndexingSettings,
 };
+use crate::config::layers::{ConfigLayers, ServiceSource};
 use crate::{db, secrets};
 
 struct PostgresConfigSource<'a> {
     conn: &'a mut Client,
 }
 
-trait ServiceConfigSource {
+pub(super) trait ServiceConfigSource {
     fn config_value(&mut self, key: &str) -> anyhow::Result<Option<String>>;
     fn resolve_value(&mut self, value: &str) -> anyhow::Result<String>;
+
+    fn hit_source(&self, _key: &str) -> Option<&'static str> {
+        None
+    }
 }
 
-fn service_env_value(key: &str) -> Option<String> {
+pub(super) fn service_env_value(key: &str) -> Option<String> {
     let env_key = match key {
         FALKORDB_HOST_CONFIG_KEY => GOBBY_FALKORDB_HOST_ENV,
         FALKORDB_PORT_CONFIG_KEY => GOBBY_FALKORDB_PORT_ENV,
@@ -61,50 +66,23 @@ impl ServiceConfigSource for PostgresConfigSource<'_> {
     }
 }
 
-struct FallbackConfigSource<'a> {
-    postgres: PostgresConfigSource<'a>,
-    standalone: Option<StandaloneConfig>,
-}
-
-impl ServiceConfigSource for FallbackConfigSource<'_> {
-    fn config_value(&mut self, key: &str) -> anyhow::Result<Option<String>> {
-        if let Some(value) = service_env_value(key) {
-            return Ok(Some(value));
-        }
-        if let Some(value) = ServiceConfigSource::config_value(&mut self.postgres, key)? {
-            return Ok(Some(value));
-        }
-        Ok(self
-            .standalone
-            .as_mut()
-            .and_then(|standalone| standalone.config_value(key)))
-    }
-
-    fn resolve_value(&mut self, value: &str) -> anyhow::Result<String> {
-        ServiceConfigSource::resolve_value(&mut self.postgres, value)
-    }
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub(crate) struct EmbeddingConfigDetails {
-    pub config: super::EmbeddingConfig,
-    pub namespace: &'static str,
-    pub source: &'static str,
-}
-
-struct TracingFallbackConfigSource<'a> {
+pub(super) struct FallbackConfigSource<'a> {
     postgres: PostgresConfigSource<'a>,
     standalone: Option<StandaloneConfig>,
     hits: HashMap<String, &'static str>,
 }
 
-impl TracingFallbackConfigSource<'_> {
-    fn hit_source(&self, key: &str) -> Option<&'static str> {
-        self.hits.get(key).copied()
+impl<'a> FallbackConfigSource<'a> {
+    pub(super) fn new(conn: &'a mut Client, standalone: Option<StandaloneConfig>) -> Self {
+        Self {
+            postgres: PostgresConfigSource { conn },
+            standalone,
+            hits: HashMap::new(),
+        }
     }
 }
 
-impl ServiceConfigSource for TracingFallbackConfigSource<'_> {
+impl ServiceConfigSource for FallbackConfigSource<'_> {
     fn config_value(&mut self, key: &str) -> anyhow::Result<Option<String>> {
         if let Some(value) = service_env_value(key) {
             self.hits.insert(key.to_string(), "env");
@@ -127,6 +105,17 @@ impl ServiceConfigSource for TracingFallbackConfigSource<'_> {
     fn resolve_value(&mut self, value: &str) -> anyhow::Result<String> {
         ServiceConfigSource::resolve_value(&mut self.postgres, value)
     }
+
+    fn hit_source(&self, key: &str) -> Option<&'static str> {
+        self.hits.get(key).copied()
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct EmbeddingConfigDetails {
+    pub config: super::EmbeddingConfig,
+    pub namespace: &'static str,
+    pub source: &'static str,
 }
 
 struct ErrorCapturingConfigSource<'a, S> {
@@ -388,13 +377,10 @@ where
 /// `_quiet` is reserved for future verbosity control; config resolution is currently silent.
 pub(super) fn resolve_falkordb_config(
     conn: &mut Client,
-    standalone: Option<StandaloneConfig>,
+    layers: &ConfigLayers,
     _quiet: bool,
 ) -> anyhow::Result<Option<FalkorConfig>> {
-    let mut source = FallbackConfigSource {
-        postgres: PostgresConfigSource { conn },
-        standalone,
-    };
+    let mut source = ServiceSource::new(conn, layers);
     resolve_falkordb_config_from_source(&mut source)
 }
 
@@ -420,13 +406,10 @@ fn resolve_falkordb_config_from_source(
 /// `_quiet` is reserved for future verbosity control; config resolution is currently silent.
 pub(super) fn resolve_qdrant_config(
     conn: &mut Client,
-    standalone: Option<StandaloneConfig>,
+    layers: &ConfigLayers,
     _quiet: bool,
 ) -> anyhow::Result<Option<QdrantConfig>> {
-    let mut source = FallbackConfigSource {
-        postgres: PostgresConfigSource { conn },
-        standalone,
-    };
+    let mut source = ServiceSource::new(conn, layers);
     resolve_qdrant_config_from_source(&mut source)
 }
 
@@ -500,26 +483,25 @@ fn resolve_service_port(
 /// `_quiet` is reserved for future verbosity control; config resolution is currently silent.
 pub(super) fn resolve_embedding_config(
     conn: &mut Client,
-    standalone: Option<StandaloneConfig>,
+    layers: &ConfigLayers,
     _quiet: bool,
 ) -> anyhow::Result<Option<super::EmbeddingConfig>> {
-    let mut source = FallbackConfigSource {
-        postgres: PostgresConfigSource { conn },
-        standalone,
-    };
+    let mut source = ServiceSource::new(conn, layers);
     resolve_embedding_config_from_service_source(None, &mut source)
 }
 
 pub(crate) fn resolve_embedding_config_details(
     conn: &mut Client,
-    standalone: Option<StandaloneConfig>,
+    layers: &ConfigLayers,
 ) -> anyhow::Result<Option<EmbeddingConfigDetails>> {
-    let mut source = TracingFallbackConfigSource {
-        postgres: PostgresConfigSource { conn },
-        standalone,
-        hits: HashMap::new(),
-    };
-    let Some(config) = resolve_embedding_config_from_service_source(None, &mut source)? else {
+    let mut source = ServiceSource::new(conn, layers);
+    resolve_embedding_config_details_from_service_source(&mut source)
+}
+
+pub(super) fn resolve_embedding_config_details_from_service_source(
+    source: &mut impl ServiceConfigSource,
+) -> anyhow::Result<Option<EmbeddingConfigDetails>> {
+    let Some(config) = resolve_embedding_config_from_service_source(None, source)? else {
         return Ok(None);
     };
     let source_name = source
@@ -577,23 +559,17 @@ fn embedding_binding_uses_openai_http(binding: &CapabilityBinding) -> bool {
 
 pub(super) fn resolve_code_vector_settings(
     conn: &mut Client,
-    standalone: Option<StandaloneConfig>,
+    layers: &ConfigLayers,
 ) -> Result<CodeVectorSettings, CodeVectorConfigError> {
-    let mut source = FallbackConfigSource {
-        postgres: PostgresConfigSource { conn },
-        standalone,
-    };
+    let mut source = ServiceSource::new(conn, layers);
     resolve_code_vector_settings_from_source(&mut source)
 }
 
 pub(super) fn resolve_indexing_settings(
     conn: &mut Client,
-    standalone: Option<StandaloneConfig>,
+    layers: &ConfigLayers,
 ) -> anyhow::Result<IndexingSettings> {
-    let mut source = FallbackConfigSource {
-        postgres: PostgresConfigSource { conn },
-        standalone,
-    };
+    let mut source = ServiceSource::new(conn, layers);
     let mut source = ErrorCapturingConfigSource {
         source: &mut source,
         first_error: None,

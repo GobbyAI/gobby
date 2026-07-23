@@ -4,11 +4,12 @@ use std::sync::{Mutex, OnceLock};
 use crate::config::{Context, EmbeddingConfig};
 use crate::db;
 use crate::models::Symbol;
-use crate::secrets;
-use gobby_core::ai::{daemon, effective_route};
-use gobby_core::ai_context::{
-    AiConfigSource, AiContext, NoPrimaryAiConfigSource, PostgresAiConfigSource,
+use gobby_core::ai::{
+    daemon,
+    effective_config::{ai_source_for_conn, ai_source_without_primary},
+    effective_route,
 };
+use gobby_core::ai_context::AiContext;
 use gobby_core::ai_types::AiError;
 use gobby_core::config::AiCapability;
 
@@ -121,7 +122,7 @@ impl EmbeddingBackend {
 }
 
 pub fn embedding_source_from_context(ctx: &Context) -> Option<EmbeddingSource> {
-    let resolved = resolve_embedding_ai_context(ctx);
+    let resolved = resolve_embedding_ai_context(ctx)?;
     embedding_source_from_resolved_ai_context(resolved.context, resolved.direct_config)
 }
 
@@ -144,23 +145,33 @@ struct ResolvedEmbeddingAiContext {
     direct_config: Option<EmbeddingConfig>,
 }
 
-fn resolve_embedding_ai_context(ctx: &Context) -> ResolvedEmbeddingAiContext {
-    let standalone = crate::config::read_standalone_config_optional();
+fn resolve_embedding_ai_context(ctx: &Context) -> Option<ResolvedEmbeddingAiContext> {
     if let Ok(mut conn) = db::connect_readonly(&ctx.database_url) {
-        let primary = PostgresAiConfigSource::new(&mut conn, secrets::resolve_config_value);
-        let mut source = AiConfigSource::with_primary(primary, standalone);
+        let mut source = match ai_source_for_conn(&mut conn) {
+            Ok(source) => source,
+            Err(error) => {
+                log::warn!("failed to resolve effective AI config: {error}");
+                return None;
+            }
+        };
         let context = AiContext::resolve(Some(ctx.project_id.clone()), &mut source);
         let direct_config = gobby_core::config::resolve_embedding_config_from_binding(
             &mut source,
             context.binding(AiCapability::Embed),
         );
-        return ResolvedEmbeddingAiContext {
+        return Some(ResolvedEmbeddingAiContext {
             context,
             direct_config,
-        };
+        });
     }
 
-    let mut source = AiConfigSource::with_primary(NoPrimaryAiConfigSource, standalone);
+    let mut source = match ai_source_without_primary() {
+        Ok(source) => source,
+        Err(error) => {
+            log::warn!("failed to resolve effective AI config: {error}");
+            return None;
+        }
+    };
     let mut context = AiContext::resolve(Some(ctx.project_id.clone()), &mut source);
     if let Some(embedding) = &ctx.embedding {
         context.bindings.embed.api_base = Some(embedding.api_base.clone());
@@ -172,10 +183,10 @@ fn resolve_embedding_ai_context(ctx: &Context) -> ResolvedEmbeddingAiContext {
         context.binding(AiCapability::Embed),
     )
     .or_else(|| ctx.embedding.clone());
-    ResolvedEmbeddingAiContext {
+    Some(ResolvedEmbeddingAiContext {
         context,
         direct_config,
-    }
+    })
 }
 
 pub fn embedding_client(

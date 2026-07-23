@@ -13,9 +13,10 @@ use gobby_core::project::{find_project_root, read_project_id};
 use postgres::Client;
 use uuid::Uuid;
 
+use super::layers::read_config_layers;
 use super::services::{
-    read_standalone_config_optional, resolve_code_vector_settings, resolve_embedding_config,
-    resolve_falkordb_config, resolve_indexing_settings, resolve_qdrant_config,
+    resolve_code_vector_settings, resolve_embedding_config, resolve_falkordb_config,
+    resolve_indexing_settings, resolve_qdrant_config,
 };
 use crate::db;
 use crate::git::{self, WorktreeKind};
@@ -259,27 +260,27 @@ impl Context {
         let index_scope = identity.index_scope;
 
         // Resolve service configs from config_store (best-effort).
-        let standalone_config = read_standalone_config_optional();
+        let layers = read_config_layers()?;
         let mut conn = db::connect_readonly(&database_url)?;
         validate_parent_code_index(&mut conn, &index_scope)?;
         let falkordb = if services.falkordb {
-            resolve_falkordb_config(&mut conn, standalone_config.clone(), quiet)?
+            resolve_falkordb_config(&mut conn, &layers, quiet)?
         } else {
             None
         };
         let qdrant = if services.qdrant {
-            resolve_qdrant_config(&mut conn, standalone_config.clone(), quiet)?
+            resolve_qdrant_config(&mut conn, &layers, quiet)?
         } else {
             None
         };
         let embedding = if services.embedding {
-            resolve_embedding_config(&mut conn, standalone_config.clone(), quiet)?
+            resolve_embedding_config(&mut conn, &layers, quiet)?
         } else {
             None
         };
-        let indexing = resolve_indexing_settings(&mut conn, standalone_config.clone())?;
+        let indexing = resolve_indexing_settings(&mut conn, &layers)?;
         let code_vectors = if services.code_vectors {
-            resolve_code_vector_settings(&mut conn, standalone_config)?
+            resolve_code_vector_settings(&mut conn, &layers)?
         } else {
             CodeVectorSettings::default()
         };
@@ -310,26 +311,26 @@ impl Context {
         let project_id = normalize_project_id(project_id)?;
         let database_url = db::resolve_database_url()?;
 
-        let standalone_config = read_standalone_config_optional();
+        let layers = read_config_layers()?;
         let mut conn = db::connect_readonly(&database_url)?;
         let falkordb = if services.falkordb {
-            resolve_falkordb_config(&mut conn, standalone_config.clone(), quiet)?
+            resolve_falkordb_config(&mut conn, &layers, quiet)?
         } else {
             None
         };
         let qdrant = if services.qdrant {
-            resolve_qdrant_config(&mut conn, standalone_config.clone(), quiet)?
+            resolve_qdrant_config(&mut conn, &layers, quiet)?
         } else {
             None
         };
         let embedding = if services.embedding {
-            resolve_embedding_config(&mut conn, standalone_config.clone(), quiet)?
+            resolve_embedding_config(&mut conn, &layers, quiet)?
         } else {
             None
         };
-        let indexing = resolve_indexing_settings(&mut conn, standalone_config.clone())?;
+        let indexing = resolve_indexing_settings(&mut conn, &layers)?;
         let code_vectors = if services.code_vectors {
-            resolve_code_vector_settings(&mut conn, standalone_config)?
+            resolve_code_vector_settings(&mut conn, &layers)?
         } else {
             CodeVectorSettings::default()
         };

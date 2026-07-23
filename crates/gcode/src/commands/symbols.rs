@@ -1,17 +1,21 @@
 use std::collections::{BTreeMap, HashSet};
 
-use gobby_core::ai::{daemon::generate_via_daemon, effective_route, text::generate_text};
-use gobby_core::ai_context::{AiConfigSource, AiContext, PostgresAiConfigSource};
+use gobby_core::ai::{
+    daemon::generate_via_daemon,
+    effective_config::{ai_source_for_conn, ai_source_without_primary},
+    effective_route,
+    text::generate_text,
+};
+use gobby_core::ai_context::AiContext;
 use gobby_core::config::{AiCapability, AiRouting};
 
 use crate::commands::scope;
-use crate::config::{self, Context};
+use crate::config::Context;
 use crate::db;
 use crate::index::languages;
 use crate::models::Symbol;
 use crate::output::{self, Format};
 use crate::savings;
-use crate::secrets;
 use crate::utils::short_id;
 use crate::visibility;
 
@@ -106,19 +110,23 @@ fn resolve_outline_ai_context(
     ctx: &Context,
     conn: Option<&mut postgres::Client>,
 ) -> anyhow::Result<AiContext> {
-    let standalone = config::read_standalone_config_optional();
     if let Some(conn) = conn {
-        let primary = PostgresAiConfigSource::new(conn, secrets::resolve_config_value);
-        let mut source = AiConfigSource::with_primary(primary, standalone);
+        let mut source = ai_source_for_conn(conn)?;
         return Ok(AiContext::resolve(
             Some(ctx.project_id.clone()),
             &mut source,
         ));
     }
 
-    let mut conn = db::connect_readonly(&ctx.database_url)?;
-    let primary = PostgresAiConfigSource::new(&mut conn, secrets::resolve_config_value);
-    let mut source = AiConfigSource::with_primary(primary, standalone);
+    if let Ok(mut conn) = db::connect_readonly(&ctx.database_url) {
+        let mut source = ai_source_for_conn(&mut conn)?;
+        return Ok(AiContext::resolve(
+            Some(ctx.project_id.clone()),
+            &mut source,
+        ));
+    }
+
+    let mut source = ai_source_without_primary()?;
     Ok(AiContext::resolve(
         Some(ctx.project_id.clone()),
         &mut source,

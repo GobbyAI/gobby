@@ -10,10 +10,11 @@ use gobby_core::ai::generation::{
 use gobby_core::ai::{
     AiNoticeKind,
     daemon::{GenerationBudget, generate_via_daemon_with_max_tokens},
+    effective_config::ai_source_for_conn,
     effective_route, resolve_route_observed,
     text::generate_text,
 };
-use gobby_core::ai_context::{AiConfigSource, AiContext, AiContextOptions, PostgresAiConfigSource};
+use gobby_core::ai_context::{AiContext, AiContextOptions};
 use gobby_core::ai_types::{AiError, TokenUsage};
 use gobby_core::config::{AiCapability, AiRouting};
 
@@ -22,8 +23,8 @@ use crate::commands::codewiki::{
     DEFAULT_VERIFY_PROFILE, PromptTier, SyncTextGenerator, SyncTextVerifier, TextGenerator,
     prompts,
 };
-use crate::config::{self, Context};
-use crate::{db, secrets};
+use crate::config::Context;
+use crate::db;
 
 /// Backoff between generation attempts; the array length bounds the retries.
 pub(super) const GENERATION_RETRY_BACKOFF: [Duration; 2] =
@@ -286,9 +287,13 @@ fn resolve_direct_tier_targets(
             standard: DirectGenerationTarget::default(),
         };
     };
-    let standalone = config::read_standalone_config_optional();
-    let primary = PostgresAiConfigSource::new(&mut conn, secrets::resolve_config_value);
-    let mut source = AiConfigSource::with_primary(primary, standalone);
+    let Ok(mut source) = ai_source_for_conn(&mut conn) else {
+        return DirectTierTargets {
+            aggregate: DirectGenerationTarget::default(),
+            module: DirectGenerationTarget::default(),
+            standard: DirectGenerationTarget::default(),
+        };
+    };
     DirectTierTargets {
         aggregate: resolve_direct_generation_target(
             &mut source,
@@ -417,9 +422,7 @@ fn retryable_generation_error(error: &AiError) -> bool {
 
 fn resolve_ai_context(ctx: &Context, ai: Option<AiRouting>) -> anyhow::Result<AiContext> {
     let mut conn = db::connect_readonly(&ctx.database_url)?;
-    let standalone = config::read_standalone_config_optional();
-    let primary = PostgresAiConfigSource::new(&mut conn, secrets::resolve_config_value);
-    let mut source = AiConfigSource::with_primary(primary, standalone);
+    let mut source = ai_source_for_conn(&mut conn)?;
     Ok(AiContext::resolve_with_options(
         Some(ctx.project_id.clone()),
         &mut source,
@@ -978,9 +981,9 @@ fn resolve_aggregate_direct_target(
     let Ok(mut conn) = db::connect_readonly(&ctx.database_url) else {
         return DirectGenerationTarget::default();
     };
-    let standalone = config::read_standalone_config_optional();
-    let primary = PostgresAiConfigSource::new(&mut conn, secrets::resolve_config_value);
-    let mut source = AiConfigSource::with_primary(primary, standalone);
+    let Ok(mut source) = ai_source_for_conn(&mut conn) else {
+        return DirectGenerationTarget::default();
+    };
     resolve_direct_generation_target(
         &mut source,
         &profile_for_tier(GenerationTier::Aggregate, aggregate_override),
