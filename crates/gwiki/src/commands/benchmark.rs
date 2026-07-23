@@ -1,9 +1,9 @@
-use gobby_core::ai_context::{AiConfigSource, AiContext};
+use gobby_core::ai::effective_config::ai_source_for_conn;
+use gobby_core::ai_context::AiContext;
 
 use crate::benchmark;
 use crate::commands::run_analysis_command;
 use crate::support::env::database_url_for;
-use crate::support::search as search_support;
 use crate::{
     BenchmarkOptions, CommandOutcome, ScopeIdentity, ScopeKind, ScopeSelection, WikiError,
 };
@@ -50,14 +50,7 @@ fn run_attached(
     options: BenchmarkOptions,
 ) -> Result<benchmark::BenchmarkReport, WikiError> {
     let optional = {
-        let gobby_home = gobby_core::gobby_home().map_err(|error| WikiError::Config {
-            detail: format!("failed to resolve Gobby home for gwiki benchmark: {error}"),
-        })?;
-        let mut source = AiConfigSource::with_primary_from_gobby_home(
-            search_support::PostgresConfigSource { conn },
-            &gobby_home,
-        )
-        .map_err(|error| WikiError::Config {
+        let mut source = ai_source_for_conn(conn).map_err(|error| WikiError::Config {
             detail: format!("failed to resolve config for gwiki benchmark: {error}"),
         })?;
         let ai_context = AiContext::resolve(None, &mut source);

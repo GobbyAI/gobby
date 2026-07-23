@@ -1,10 +1,9 @@
 use std::collections::{BTreeMap, BTreeSet, HashSet};
 use std::path::{Path, PathBuf};
 
-use gobby_core::ai_context::AiConfigSource;
+use gobby_core::ai::effective_config::ai_source_for_conn;
 use gobby_core::config::FalkorConfig;
 use gobby_core::degradation::DegradationKind;
-use gobby_core::gobby_home;
 use gobby_core::graph_analytics::{
     self, AnalyticsEdge, AnalyticsGraph, AnalyticsNode, CentralityScore, NodeRef,
 };
@@ -15,7 +14,6 @@ use crate::provenance::ProvenanceGraph;
 use crate::search::SearchScope;
 use crate::support::env::database_url_for;
 use crate::support::scope::resolve_selection_context;
-use crate::support::search::PostgresConfigSource;
 use crate::support::text::sanitize_code_path;
 use crate::{
     CommandOutcome, ReviewReportOptions, ScopeIdentity, ScopeSelection, WikiError, exports,
@@ -612,16 +610,9 @@ fn is_graph_blocking_degraded_source(source: &str) -> bool {
 }
 
 fn optional_falkor_config(conn: &mut postgres::Client) -> Result<Option<FalkorConfig>, WikiError> {
-    let gobby_home = gobby_home().map_err(|error| WikiError::Config {
-        detail: format!("failed to resolve Gobby home for gwiki review-report: {error}"),
+    let mut source = ai_source_for_conn(conn).map_err(|error| WikiError::Config {
+        detail: format!("failed to resolve optional review-report config: {error}"),
     })?;
-    let primary = PostgresConfigSource { conn };
-    let mut source =
-        AiConfigSource::with_primary_from_gobby_home(primary, &gobby_home).map_err(|error| {
-            WikiError::Config {
-                detail: format!("failed to resolve optional review-report config: {error}"),
-            }
-        })?;
     Ok(gobby_core::config::resolve_falkordb_config(&mut source))
 }
 

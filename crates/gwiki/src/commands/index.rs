@@ -1,8 +1,9 @@
 use std::path::{Path, PathBuf};
 
+use gobby_core::ai::effective_config::{ai_source_for_conn, ai_source_without_primary};
 #[cfg(feature = "ai")]
 use gobby_core::ai::effective_route;
-use gobby_core::ai_context::{AiConfigSource, AiContext, LocalAiConfigSource};
+use gobby_core::ai_context::AiContext;
 use gobby_core::config::{
     AiCapability, AiRouting, ConfigSource, resolve_embedding_config, resolve_falkordb_config,
     resolve_qdrant_config,
@@ -22,7 +23,6 @@ use crate::support::scope::{
     resolve_command_scope, resolved_scope_identity, search_scope_for_resolved,
     store_scope_for_search,
 };
-use crate::support::search::PostgresConfigSource;
 use crate::support::text::degradation_label;
 use crate::support::time::collect_timestamp;
 use crate::{
@@ -169,18 +169,15 @@ pub(crate) fn execute_ingest_file(
     }
     let output_scope = resolved_scope_identity(&scope);
     let project_id = ai_project_id(&output_scope);
-    let gobby_home = gobby_home()?;
     let fetched_at = collect_timestamp()?;
     let mut progress = StderrWikiProgress::new(run_options.quiet);
     let mut progress_options = ProgressOptions::with_sink(&mut progress);
     if let Some(database_url) = database_url_for("gwiki ingest-file")? {
         let mut conn = connect_postgres_index(&database_url, "gwiki ingest-file")?;
         let (ai_context, options) = {
-            let primary = PostgresConfigSource { conn: &mut conn };
-            let mut source = AiConfigSource::with_primary_from_gobby_home(primary, &gobby_home)
-                .map_err(|error| WikiError::Config {
-                    detail: format!("failed to resolve AI config for gwiki ingest-file: {error}"),
-                })?;
+            let mut source = ai_source_for_conn(&mut conn).map_err(|error| WikiError::Config {
+                detail: format!("failed to resolve AI config for gwiki ingest-file: {error}"),
+            })?;
             resolve_ingest_ai_context(project_id, &options, &mut source)?
         };
         let search_scope = search_scope_for_resolved(&scope);
@@ -212,10 +209,9 @@ pub(crate) fn execute_ingest_file(
         return Ok(render_ingest_file(&path, output_scope, &result, counts));
     }
 
-    let mut source =
-        LocalAiConfigSource::from_gobby_home(&gobby_home).map_err(|error| WikiError::Config {
-            detail: format!("failed to resolve AI config for gwiki ingest-file: {error}"),
-        })?;
+    let mut source = ai_source_without_primary().map_err(|error| WikiError::Config {
+        detail: format!("failed to resolve AI config for gwiki ingest-file: {error}"),
+    })?;
     let (ai_context, options) = resolve_ingest_ai_context(project_id, &options, &mut source)?;
     let mut store = store::MemoryWikiStore::default();
     let result = ingest::file::ingest_path(
@@ -328,21 +324,17 @@ pub(crate) fn resolve_ingest_file_ai_context(
     command: &str,
 ) -> Result<(AiContext, IngestFileOptions), WikiError> {
     let project_id = ai_project_id(scope);
-    let gobby_home = gobby_home()?;
     if let Some(database_url) = database_url_for(command)? {
         let mut conn = connect_postgres_index(&database_url, command)?;
-        let primary = PostgresConfigSource { conn: &mut conn };
-        let mut source = AiConfigSource::with_primary_from_gobby_home(primary, &gobby_home)
-            .map_err(|error| WikiError::Config {
-                detail: format!("failed to resolve AI config for {command}: {error}"),
-            })?;
+        let mut source = ai_source_for_conn(&mut conn).map_err(|error| WikiError::Config {
+            detail: format!("failed to resolve AI config for {command}: {error}"),
+        })?;
         return resolve_ingest_ai_context(project_id, options, &mut source);
     }
 
-    let mut source =
-        LocalAiConfigSource::from_gobby_home(&gobby_home).map_err(|error| WikiError::Config {
-            detail: format!("failed to resolve AI config for {command}: {error}"),
-        })?;
+    let mut source = ai_source_without_primary().map_err(|error| WikiError::Config {
+        detail: format!("failed to resolve AI config for {command}: {error}"),
+    })?;
     resolve_ingest_ai_context(project_id, options, &mut source)
 }
 
@@ -383,12 +375,6 @@ fn ai_project_id_for_search(scope: &SearchScope) -> Option<String> {
     }
 }
 
-fn gobby_home() -> Result<PathBuf, WikiError> {
-    gobby_core::gobby_home().map_err(|error| WikiError::Config {
-        detail: format!("failed to resolve Gobby home for gwiki AI config: {error}"),
-    })
-}
-
 pub(crate) fn connect_postgres_index(
     database_url: &str,
     command: &str,
@@ -411,14 +397,9 @@ pub(crate) fn sync_falkor_graph(
     command: &'static str,
     progress: &mut ProgressOptions<'_>,
 ) -> Result<Option<DegradationKind>, WikiError> {
-    let gobby_home = gobby_home()?;
-    let primary = PostgresConfigSource { conn };
-    let mut source =
-        AiConfigSource::with_primary_from_gobby_home(primary, &gobby_home).map_err(|error| {
-            WikiError::Config {
-                detail: format!("failed to resolve FalkorDB config for {command}: {error}"),
-            }
-        })?;
+    let mut source = ai_source_for_conn(conn).map_err(|error| WikiError::Config {
+        detail: format!("failed to resolve FalkorDB config for {command}: {error}"),
+    })?;
     let Some(falkor) = resolve_falkordb_config(&mut source) else {
         log::warn!("{command}: FalkorDB config not found; skipping gwiki graph sync");
         return Ok(Some(not_configured_degradation(FALKORDB_SERVICE)));
@@ -460,13 +441,10 @@ fn sync_qdrant_vectors_inner(
     command: &'static str,
     progress: &mut ProgressOptions<'_>,
 ) -> Result<Option<DegradationKind>, WikiError> {
-    let gobby_home = gobby_home()?;
     let (embedding, qdrant) = {
-        let primary = PostgresConfigSource { conn };
-        let mut source = AiConfigSource::with_primary_from_gobby_home(primary, &gobby_home)
-            .map_err(|error| WikiError::Config {
-                detail: format!("failed to resolve AI config for {command}: {error}"),
-            })?;
+        let mut source = ai_source_for_conn(conn).map_err(|error| WikiError::Config {
+            detail: format!("failed to resolve AI config for {command}: {error}"),
+        })?;
         let ai_context = AiContext::resolve(ai_project_id_for_search(search_scope), &mut source);
         let embedding = resolve_vector_embedding(&ai_context, &mut source);
         let qdrant = resolve_qdrant_config(&mut source).filter(qdrant_config_has_url);

@@ -7,11 +7,12 @@
 //! availability picture from one resolver instead of re-implementing the
 //! config plumbing.
 
+use gobby_core::ai::effective_config::ai_source_for_conn;
 use gobby_core::ai::generation::{
     GenerationTier, profile_for_tier, resolve_direct_generation_target,
 };
 use gobby_core::ai::resolve_route_observed;
-use gobby_core::ai_context::{AiConfigSource, AiContext, AiContextOptions};
+use gobby_core::ai_context::{AiContext, AiContextOptions};
 use gobby_core::config::{
     AiCapability, AiRouting, EmbeddingConfig, FalkorConfig, QdrantConfig, resolve_embedding_config,
     resolve_falkordb_config, resolve_qdrant_config,
@@ -83,14 +84,9 @@ pub(crate) fn probe_runtime_services(command: &'static str) -> Result<RuntimeSer
             detail: format!("failed to connect to PostgreSQL for {command}: {error}"),
         }
     })?;
-    let home = gobby_home(command)?;
-    let primary = crate::support::search::PostgresConfigSource { conn: &mut conn };
-    let mut source =
-        AiConfigSource::with_primary_from_gobby_home(primary, &home).map_err(|error| {
-            WikiError::Config {
-                detail: format!("failed to resolve runtime config for {command}: {error}"),
-            }
-        })?;
+    let mut source = ai_source_for_conn(&mut conn).map_err(|error| WikiError::Config {
+        detail: format!("failed to resolve runtime config for {command}: {error}"),
+    })?;
     let falkor = resolve_falkordb_config(&mut source);
     let qdrant =
         resolve_qdrant_config(&mut source).filter(crate::support::config::qdrant_config_has_url);
@@ -198,10 +194,4 @@ fn effective_embedding_route(context: &AiContext) -> AiRouting {
             }
         }
     }
-}
-
-fn gobby_home(command: &'static str) -> Result<std::path::PathBuf, WikiError> {
-    gobby_core::gobby_home().map_err(|error| WikiError::Config {
-        detail: format!("failed to resolve Gobby home for {command}: {error}"),
-    })
 }

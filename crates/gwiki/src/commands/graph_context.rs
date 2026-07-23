@@ -1,13 +1,11 @@
-use gobby_core::ai_context::AiConfigSource;
+use gobby_core::ai::effective_config::ai_source_for_conn;
 use gobby_core::config::FalkorConfig;
-use gobby_core::gobby_home;
 
 use crate::graph::context::{GraphContextOptions, build_context_pack};
 use crate::search::SearchScope;
 use crate::support::config::shared_code_graph_limits_from_conn;
 use crate::support::env::database_url_for;
 use crate::support::scope::resolve_selection_context;
-use crate::support::search::PostgresConfigSource;
 use crate::{CommandOutcome, ScopeSelection, WikiError};
 
 pub(crate) fn execute(selection: ScopeSelection) -> Result<CommandOutcome, WikiError> {
@@ -83,16 +81,9 @@ pub(crate) fn execute(selection: ScopeSelection) -> Result<CommandOutcome, WikiE
 }
 
 fn optional_falkor_config(conn: &mut postgres::Client) -> Result<Option<FalkorConfig>, WikiError> {
-    let gobby_home = gobby_home().map_err(|error| WikiError::Config {
-        detail: format!("failed to resolve Gobby home for gwiki graph-context: {error}"),
+    let mut source = ai_source_for_conn(conn).map_err(|error| WikiError::Config {
+        detail: format!("failed to resolve optional graph-context config: {error}"),
     })?;
-    let primary = PostgresConfigSource { conn };
-    let mut source =
-        AiConfigSource::with_primary_from_gobby_home(primary, &gobby_home).map_err(|error| {
-            WikiError::Config {
-                detail: format!("failed to resolve optional graph-context config: {error}"),
-            }
-        })?;
 
     Ok(gobby_core::config::resolve_falkordb_config(&mut source))
 }

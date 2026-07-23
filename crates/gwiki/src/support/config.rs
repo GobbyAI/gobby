@@ -1,5 +1,9 @@
+use gobby_core::ai::effective_config::{
+    EffectiveConfigLayers, ai_source_with_primary, daemon_mode_layers,
+};
 use gobby_core::config::{
-    ConfigSource, EnvOnlySource, LayeredConfigSource, QdrantConfig, resolve_indexing_config,
+    ConfigSource, DaemonOrPrimary, EnvOnlySource, LayeredConfigSource, QdrantConfig,
+    resolve_indexing_config,
 };
 use gobby_core::provisioning::{StandaloneConfig, gcore_config_path};
 use postgres::Client;
@@ -8,6 +12,9 @@ use crate::indexer::IndexOptions;
 use crate::{WikiError, indexer};
 
 use super::search::PostgresConfigSource;
+
+type HubAiConfigSource = gobby_core::ai_context::AiConfigSource<DaemonOrPrimary<HubPrimary>>;
+type HubPrimaryFactory<'a> = Box<dyn FnOnce() -> anyhow::Result<HubPrimary> + 'a>;
 
 /// Hub-backed primary AI config layer with an owned, optional connection.
 ///
@@ -43,19 +50,24 @@ impl ConfigSource for HubPrimary {
     }
 }
 
-pub(crate) fn hub_ai_config_source(
-    command: &str,
-) -> Result<gobby_core::ai_context::AiConfigSource<HubPrimary>, WikiError> {
-    let gobby_home = gobby_core::gobby_home().map_err(|error| WikiError::Config {
-        detail: format!("failed to resolve Gobby home for {command} config: {error}"),
-    })?;
-    let conn = super::env::database_url_for(command)?
-        .and_then(|url| gobby_core::postgres::connect_readwrite(&url).ok());
-    gobby_core::ai_context::AiConfigSource::with_primary_from_gobby_home(
-        HubPrimary { conn },
-        &gobby_home,
+pub(crate) fn hub_ai_config_source(command: &str) -> Result<HubAiConfigSource, WikiError> {
+    hub_ai_config_source_with(
+        command,
+        Box::new(move || {
+            let conn = super::env::database_url_for(command)?
+                .and_then(|url| gobby_core::postgres::connect_readwrite(&url).ok());
+            Ok(HubPrimary { conn })
+        }),
+        ai_source_with_primary,
     )
-    .map_err(|error| WikiError::Config {
+}
+
+fn hub_ai_config_source_with<'a>(
+    command: &str,
+    primary: HubPrimaryFactory<'a>,
+    build_source: impl FnOnce(HubPrimaryFactory<'a>) -> anyhow::Result<HubAiConfigSource>,
+) -> Result<HubAiConfigSource, WikiError> {
+    build_source(primary).map_err(|error| WikiError::Config {
         detail: format!("failed to resolve AI config for {command}: {error}"),
     })
 }
@@ -80,16 +92,20 @@ impl Default for SharedCodeGraphLimits {
 }
 
 pub(crate) fn local_index_options() -> Result<IndexOptions, WikiError> {
-    let standalone = read_standalone_config()?;
-    let mut source = LayeredConfigSource::new(Some(EnvOnlySource), standalone);
-    resolve_index_options(&mut source)
+    resolve_index_options_from_layers(
+        read_effective_config_layers()?,
+        EnvOnlySource,
+        read_standalone_config,
+    )
 }
 
 pub(crate) fn index_options_from_conn(conn: &mut Client) -> Result<IndexOptions, WikiError> {
-    let standalone = read_standalone_config()?;
     let primary = PostgresConfigSource { conn };
-    let mut source = LayeredConfigSource::new(Some(primary), standalone);
-    resolve_index_options(&mut source)
+    resolve_index_options_from_layers(
+        read_effective_config_layers()?,
+        primary,
+        read_standalone_config,
+    )
 }
 
 #[cfg(test)]
@@ -104,10 +120,12 @@ pub(crate) fn local_shared_code_graph_limits() -> Result<SharedCodeGraphLimits, 
 pub(crate) fn shared_code_graph_limits_from_conn(
     conn: &mut Client,
 ) -> Result<SharedCodeGraphLimits, WikiError> {
-    let standalone = read_standalone_config()?;
     let primary = PostgresConfigSource { conn };
-    let mut source = LayeredConfigSource::new(Some(primary), standalone);
-    resolve_shared_code_graph_limits(&mut source)
+    resolve_shared_code_graph_limits_from_layers(
+        read_effective_config_layers()?,
+        primary,
+        read_standalone_config,
+    )
 }
 
 pub(crate) fn qdrant_config_has_url(config: &QdrantConfig) -> bool {
@@ -124,6 +142,46 @@ fn read_standalone_config() -> Result<Option<StandaloneConfig>, WikiError> {
     StandaloneConfig::read_at(&gcore_config_path(&home)).map_err(|error| WikiError::Config {
         detail: format!("failed to read gwiki indexing config: {error}"),
     })
+}
+
+fn read_effective_config_layers() -> Result<Option<EffectiveConfigLayers>, WikiError> {
+    daemon_mode_layers().map_err(|error| WikiError::Config {
+        detail: format!("failed to read daemon effective config for gwiki: {error}"),
+    })
+}
+
+fn resolve_index_options_from_layers<P: ConfigSource>(
+    layers: Option<EffectiveConfigLayers>,
+    primary: P,
+    standalone: impl FnOnce() -> Result<Option<StandaloneConfig>, WikiError>,
+) -> Result<IndexOptions, WikiError> {
+    match layers {
+        Some((served, routing_overrides)) => {
+            let mut source = LayeredConfigSource::new(Some(served), routing_overrides);
+            resolve_index_options(&mut source)
+        }
+        None => {
+            let mut source = LayeredConfigSource::new(Some(primary), standalone()?);
+            resolve_index_options(&mut source)
+        }
+    }
+}
+
+fn resolve_shared_code_graph_limits_from_layers<P: ConfigSource>(
+    layers: Option<EffectiveConfigLayers>,
+    primary: P,
+    standalone: impl FnOnce() -> Result<Option<StandaloneConfig>, WikiError>,
+) -> Result<SharedCodeGraphLimits, WikiError> {
+    match layers {
+        Some((served, routing_overrides)) => {
+            let mut source = LayeredConfigSource::new(Some(served), routing_overrides);
+            resolve_shared_code_graph_limits(&mut source)
+        }
+        None => {
+            let mut source = LayeredConfigSource::new(Some(primary), standalone()?);
+            resolve_shared_code_graph_limits(&mut source)
+        }
+    }
 }
 
 fn resolve_index_options(
@@ -171,9 +229,12 @@ fn resolve_limit(source: &mut impl ConfigSource, key: &'static str) -> Result<us
 
 #[cfg(test)]
 mod tests {
+    use std::cell::Cell;
     use std::collections::BTreeMap;
     use std::path::Path;
     use std::sync::{Mutex, MutexGuard};
+
+    use gobby_core::config::{DaemonOrPrimary, DaemonServedConfig, routing_overrides_only};
 
     use crate::store::MemoryWikiStore;
 
@@ -331,6 +392,68 @@ mod tests {
         let options = local_index_options().expect("index options");
 
         assert!(!options.respect_gitignore);
+    }
+
+    #[test]
+    fn daemon_index_options_prefer_served_values_over_full_yaml() {
+        let served = DaemonServedConfig::new(BTreeMap::from([(
+            "indexing.respect_gitignore".to_string(),
+            "false".to_string(),
+        )]));
+        let full_yaml = StandaloneConfig::from_yaml_str_raw(
+            "indexing:\n  respect_gitignore: true\nai:\n  routing: direct\n",
+        )
+        .expect("full yaml");
+        let routing = Some(routing_overrides_only(full_yaml));
+
+        let options = resolve_index_options_from_layers(
+            Some((served, routing)),
+            TestSource::default(),
+            || panic!("daemon mode must not read full standalone config"),
+        )
+        .expect("daemon index options");
+
+        assert!(!options.respect_gitignore);
+    }
+
+    #[test]
+    fn daemon_index_options_ignore_malformed_full_yaml_fallback() {
+        let served = DaemonServedConfig::new(BTreeMap::from([(
+            "indexing.respect_gitignore".to_string(),
+            "false".to_string(),
+        )]));
+
+        let options =
+            resolve_index_options_from_layers(Some((served, None)), TestSource::default(), || {
+                Err(WikiError::Config {
+                    detail: "malformed routing yaml".to_string(),
+                })
+            })
+            .expect("daemon index options");
+
+        assert!(!options.respect_gitignore);
+    }
+
+    #[test]
+    fn daemon_hub_ai_source_does_not_open_database_connection() {
+        let connection_attempted = Cell::new(false);
+
+        let _source = hub_ai_config_source_with(
+            "test",
+            Box::new(|| {
+                connection_attempted.set(true);
+                anyhow::bail!("database connection factory must stay lazy")
+            }),
+            |_primary| {
+                Ok(gobby_core::ai_context::AiConfigSource::with_primary(
+                    DaemonOrPrimary::Daemon(DaemonServedConfig::new(BTreeMap::new())),
+                    None,
+                ))
+            },
+        )
+        .expect("daemon AI source");
+
+        assert!(!connection_attempted.get());
     }
 
     #[test]

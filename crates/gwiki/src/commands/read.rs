@@ -32,6 +32,15 @@ fn read_path(
     scope: ScopeIdentity,
     requested_path: PathBuf,
 ) -> Result<ReadOutput, WikiError> {
+    read_path_with_max_bytes(root, scope, requested_path, configured_read_max_bytes())
+}
+
+fn read_path_with_max_bytes(
+    root: &Path,
+    scope: ScopeIdentity,
+    requested_path: PathBuf,
+    max_bytes: usize,
+) -> Result<ReadOutput, WikiError> {
     let requested = ReadRequested::path(requested_path.display().to_string());
     let wiki_path = match normalize_requested_path(&requested_path) {
         Ok(path) => path,
@@ -53,7 +62,7 @@ fn read_path(
         ));
     }
 
-    read_existing_path(root, scope, requested, wiki_path)
+    read_existing_path(root, scope, requested, wiki_path, max_bytes)
 }
 
 /// Read a vault document for the compile tool loop, returning a bounded
@@ -113,7 +122,13 @@ fn read_title(root: &Path, scope: ScopeIdentity, title: String) -> Result<ReadOu
         )),
         Ordering::Equal => {
             let candidate = candidates.remove(0);
-            read_existing_path(root, scope, requested, candidate.wiki_path)
+            read_existing_path(
+                root,
+                scope,
+                requested,
+                candidate.wiki_path,
+                configured_read_max_bytes(),
+            )
         }
         Ordering::Greater => Ok(ReadOutput::ambiguous(scope, requested, candidates)),
     }
@@ -124,9 +139,9 @@ fn read_existing_path(
     scope: ScopeIdentity,
     requested: ReadRequested,
     wiki_path: PathBuf,
+    max_bytes: usize,
 ) -> Result<ReadOutput, WikiError> {
     let absolute_path = root.join(&wiki_path);
-    let max_bytes = configured_read_max_bytes();
     let bytes = std::fs::read(&absolute_path).map_err(|error| WikiError::Io {
         action: "read wiki document",
         path: Some(absolute_path.clone()),
@@ -153,8 +168,12 @@ fn read_existing_path(
 }
 
 fn configured_read_max_bytes() -> usize {
-    std::env::var(READ_MAX_BYTES_ENV)
-        .ok()
+    let value = std::env::var(READ_MAX_BYTES_ENV).ok();
+    read_max_bytes_from(value.as_deref())
+}
+
+fn read_max_bytes_from(value: Option<&str>) -> usize {
+    value
         .and_then(|value| value.parse::<usize>().ok())
         .filter(|value| *value > 0)
         .unwrap_or(DEFAULT_READ_MAX_BYTES)
@@ -579,24 +598,26 @@ impl ReadDegradation {
 mod tests {
     use super::*;
 
-    static READ_TEST_ENV_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+    #[test]
+    fn read_max_bytes_parses_positive_values_and_defaults_invalid_values() {
+        assert_eq!(read_max_bytes_from(Some("12")), 12);
+        assert_eq!(read_max_bytes_from(Some("0")), DEFAULT_READ_MAX_BYTES);
+        assert_eq!(read_max_bytes_from(Some("invalid")), DEFAULT_READ_MAX_BYTES);
+        assert_eq!(read_max_bytes_from(None), DEFAULT_READ_MAX_BYTES);
+    }
 
     #[test]
     fn read_path_caps_content_and_marks_truncated() {
-        let _guard = READ_TEST_ENV_LOCK.lock().expect("env lock");
-        // SAFETY: READ_TEST_ENV_LOCK serializes this process-wide env mutation.
-        unsafe {
-            std::env::set_var(READ_MAX_BYTES_ENV, "12");
-        }
         let temp = tempfile::tempdir().expect("tempdir");
         let path = temp.path().join("knowledge/topics/large.md");
         std::fs::create_dir_all(path.parent().expect("parent")).expect("topic dir");
         std::fs::write(&path, "# Large\n0123456789abcdef").expect("large markdown");
 
-        let output = read_path(
+        let output = read_path_with_max_bytes(
             temp.path(),
             ScopeIdentity::topic("field-work"),
             PathBuf::from("knowledge/topics/large.md"),
+            12,
         )
         .expect("read path");
 
@@ -611,15 +632,10 @@ mod tests {
                 gobby_core::indexing::content_hash("# Large\n0123456789abcdef".as_bytes()).as_str()
             )
         );
-        // SAFETY: READ_TEST_ENV_LOCK serializes this process-wide env mutation.
-        unsafe {
-            std::env::remove_var(READ_MAX_BYTES_ENV);
-        }
     }
 
     #[test]
     fn outputs_paths_are_readable() {
-        let _guard = READ_TEST_ENV_LOCK.lock().expect("env lock");
         let temp = tempfile::tempdir().expect("tempdir");
         let path = temp.path().join("outputs/reports/health.md");
         std::fs::create_dir_all(path.parent().expect("parent")).expect("outputs dir");

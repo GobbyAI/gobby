@@ -1,15 +1,14 @@
 use std::path::Path;
 
-use gobby_core::ai_context::{AiConfigSource, AiContext};
+use gobby_core::ai::effective_config::ai_source_for_conn;
+use gobby_core::ai_context::AiContext;
 use gobby_core::config::{AiRouting, ConfigSource, resolve_embedding_config};
-use gobby_core::gobby_home;
 use serde_json::json;
 
 use crate::graph::{GraphExportOptions, WikiGraphFacts};
 use crate::support::config::qdrant_config_has_url;
 use crate::support::env::database_url_for;
 use crate::support::scope::resolve_selection_context;
-use crate::support::search::PostgresConfigSource;
 use crate::{
     CommandOutcome, GraphCommandOptions, ScopeIdentity, ScopeSelection, WikiError, exports, vault,
 };
@@ -94,16 +93,9 @@ fn graph_outcome(
 }
 
 fn degraded_optional_sources(conn: &mut postgres::Client) -> Result<Vec<String>, WikiError> {
-    let gobby_home = gobby_home().map_err(|error| WikiError::Config {
-        detail: format!("failed to resolve Gobby home for gwiki graph: {error}"),
+    let mut source = ai_source_for_conn(conn).map_err(|error| WikiError::Config {
+        detail: format!("failed to resolve optional graph export config: {error}"),
     })?;
-    let primary = PostgresConfigSource { conn };
-    let mut source =
-        AiConfigSource::with_primary_from_gobby_home(primary, &gobby_home).map_err(|error| {
-            WikiError::Config {
-                detail: format!("failed to resolve optional graph export config: {error}"),
-            }
-        })?;
 
     Ok(degraded_optional_sources_from_config(&mut source))
 }

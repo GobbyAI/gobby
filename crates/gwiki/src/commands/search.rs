@@ -1,6 +1,7 @@
 use std::path::PathBuf;
 
-use gobby_core::ai_context::{AiConfigSource, AiContext};
+use gobby_core::ai::effective_config::ai_source_for_conn;
+use gobby_core::ai_context::AiContext;
 #[cfg(test)]
 use gobby_core::config::QdrantConfig;
 use gobby_core::config::{resolve_falkordb_config, resolve_qdrant_config};
@@ -124,30 +125,23 @@ fn run_search_attached(
             detail: format!("failed to connect to PostgreSQL for gwiki search: {error}"),
         }
     })?;
-    let gobby_home = gobby_home()?;
     let embedding = {
-        let primary = search_support::PostgresConfigSource { conn: &mut conn };
-        let mut source = AiConfigSource::with_primary_from_gobby_home(primary, &gobby_home)
-            .map_err(|error| WikiError::Config {
-                detail: format!("failed to resolve AI config for gwiki search: {error}"),
-            })?;
+        let mut source = ai_source_for_conn(&mut conn).map_err(|error| WikiError::Config {
+            detail: format!("failed to resolve AI config for gwiki search: {error}"),
+        })?;
         let ai_context = AiContext::resolve(None, &mut source);
         crate::support::services::resolve_semantic_embedding(&ai_context, &mut source)
     };
     let qdrant = {
-        let primary = search_support::PostgresConfigSource { conn: &mut conn };
-        let mut source = AiConfigSource::with_primary_from_gobby_home(primary, &gobby_home)
-            .map_err(|error| WikiError::Config {
-                detail: format!("failed to resolve Qdrant config for gwiki search: {error}"),
-            })?;
+        let mut source = ai_source_for_conn(&mut conn).map_err(|error| WikiError::Config {
+            detail: format!("failed to resolve Qdrant config for gwiki search: {error}"),
+        })?;
         resolve_qdrant_config(&mut source)
     };
     let falkor = {
-        let primary = search_support::PostgresConfigSource { conn: &mut conn };
-        let mut source = AiConfigSource::with_primary_from_gobby_home(primary, &gobby_home)
-            .map_err(|error| WikiError::Config {
-                detail: format!("failed to resolve FalkorDB config for gwiki search: {error}"),
-            })?;
+        let mut source = ai_source_for_conn(&mut conn).map_err(|error| WikiError::Config {
+            detail: format!("failed to resolve FalkorDB config for gwiki search: {error}"),
+        })?;
         resolve_falkordb_config(&mut source)
     };
     let embedding = embedding.ok_or_else(|| required_search_config("embedding endpoint"))?;
@@ -205,12 +199,6 @@ fn required_search_config(service: &'static str) -> WikiError {
             "gwiki search requires {service}; run `gwiki setup --standalone` or attach to Gobby's full datastore stack"
         ),
     }
-}
-
-fn gobby_home() -> Result<std::path::PathBuf, WikiError> {
-    gobby_core::gobby_home().map_err(|error| WikiError::Config {
-        detail: format!("failed to resolve Gobby home for gwiki search config: {error}"),
-    })
 }
 
 struct SearchExecutionInput {

@@ -1,4 +1,4 @@
-use gobby_core::ai_context::AiConfigSource;
+use gobby_core::ai::effective_config::ai_source_for_conn;
 use gobby_core::config::{
     FalkorConfig, QdrantConfig, resolve_falkordb_config, resolve_qdrant_config,
 };
@@ -12,7 +12,6 @@ use crate::support::postgres::require_postgres_index_readwrite;
 use crate::support::scope::{
     resolve_command_scope, resolved_scope_identity, search_scope_for_resolved,
 };
-use crate::support::search::PostgresConfigSource;
 use crate::{CommandOutcome, PurgeTarget, ScopeIdentity, WikiError};
 
 const COMMAND: &str = "gwiki purge";
@@ -184,26 +183,16 @@ pub(crate) fn optional_backend_configs(
     conn: &mut Client,
     command: &'static str,
 ) -> Result<BackendConfigs, WikiError> {
-    let gobby_home = gobby_core::gobby_home().map_err(|error| WikiError::Config {
-        detail: format!("failed to resolve Gobby home for {command} config: {error}"),
-    })?;
-
     let qdrant = {
-        let primary = PostgresConfigSource { conn: &mut *conn };
-        let mut source = AiConfigSource::with_primary_from_gobby_home(primary, &gobby_home)
-            .map_err(|error| WikiError::Config {
-                detail: format!("failed to resolve optional Qdrant config for {command}: {error}"),
-            })?;
+        let mut source = ai_source_for_conn(&mut *conn).map_err(|error| WikiError::Config {
+            detail: format!("failed to resolve optional Qdrant config for {command}: {error}"),
+        })?;
         resolve_qdrant_config(&mut source)
     };
     let falkor = {
-        let primary = PostgresConfigSource { conn: &mut *conn };
-        let mut source = AiConfigSource::with_primary_from_gobby_home(primary, &gobby_home)
-            .map_err(|error| WikiError::Config {
-                detail: format!(
-                    "failed to resolve optional FalkorDB config for {command}: {error}"
-                ),
-            })?;
+        let mut source = ai_source_for_conn(&mut *conn).map_err(|error| WikiError::Config {
+            detail: format!("failed to resolve optional FalkorDB config for {command}: {error}"),
+        })?;
         resolve_falkordb_config(&mut source)
     };
 
