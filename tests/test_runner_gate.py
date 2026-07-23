@@ -155,3 +155,117 @@ async def test_gate_cancellation_reaps_child_before_propagating() -> None:
 
     assert process.killed is True
     assert process.waited is True
+
+
+class TestRunnerGateLiveFence:
+    """Plan 1.4.21: live advisory-fence scenarios against the test cluster."""
+
+    @pytest.mark.asyncio
+    async def test_perpetual_shared_holder_fails_closed_with_diagnostic(
+        self, postgres_database_url: str, tmp_path: Any
+    ) -> None:
+        import time
+
+        import psycopg
+
+        from gobby.deployment import deployment_token
+        from gobby.runner_gate import RunnerGateError, acquire_runner_gate
+
+        token = deployment_token(tmp_path)
+        fence_key = runner_gate._terminal_fence_key(token)
+
+        with psycopg.connect(postgres_database_url) as holder:
+            holder.execute("SELECT pg_advisory_xact_lock_shared(%s)", (fence_key,))
+            started = time.monotonic()
+            with pytest.raises(RunnerGateError, match="fence deadline expired"):
+                await acquire_runner_gate(
+                    postgres_database_url,
+                    successor_application_name=f"gobby-hub-{token}-successor",
+                    data_root=tmp_path,
+                    deadline_seconds=4.0,
+                )
+            assert time.monotonic() - started < 20.0
+
+    @pytest.mark.asyncio
+    async def test_gate_blocks_until_shared_holder_resolves_then_acquires(
+        self, postgres_database_url: str, tmp_path: Any
+    ) -> None:
+        import psycopg
+
+        from gobby.deployment import deployment_token
+        from gobby.runner_gate import acquire_runner_gate
+
+        token = deployment_token(tmp_path)
+        fence_key = runner_gate._terminal_fence_key(token)
+
+        holder = psycopg.connect(postgres_database_url)
+        probe = psycopg.connect(postgres_database_url, autocommit=True)
+        try:
+            holder.execute("SELECT pg_advisory_xact_lock_shared(%s)", (fence_key,))
+            gate = asyncio.ensure_future(
+                acquire_runner_gate(
+                    postgres_database_url,
+                    successor_application_name=f"gobby-hub-{token}-successor",
+                    data_root=tmp_path,
+                    deadline_seconds=30.0,
+                )
+            )
+            # Release only after the child is observed waiting on the fence.
+            classid = (fence_key >> 32) & 0xFFFFFFFF
+            objid = fence_key & 0xFFFFFFFF
+            for _ in range(200):
+                waiting = probe.execute(
+                    """
+                    SELECT count(*) FROM pg_locks
+                    WHERE locktype = 'advisory' AND NOT granted
+                      AND classid = %s AND objid = %s
+                    """,
+                    (classid, objid),
+                ).fetchone()
+                if waiting and waiting[0]:
+                    break
+                await asyncio.sleep(0.1)
+            else:
+                pytest.fail("gate child never blocked on the shared fence")
+            assert not gate.done()
+            holder.commit()
+            await asyncio.wait_for(gate, timeout=25.0)
+        finally:
+            holder.close()
+            probe.close()
+
+    @pytest.mark.asyncio
+    async def test_severance_terminates_predecessor_markers_and_spares_successor(
+        self, postgres_database_url: str, tmp_path: Any
+    ) -> None:
+        import psycopg
+
+        from gobby.deployment import deployment_token
+        from gobby.runner_gate import acquire_runner_gate
+
+        token = deployment_token(tmp_path)
+        successor_name = f"gobby-hub-{token}-successor"
+
+        predecessor = psycopg.connect(
+            postgres_database_url,
+            autocommit=True,
+            application_name=f"gobby-hub-{token}-predecessor",
+        )
+        successor_marker = psycopg.connect(
+            postgres_database_url,
+            autocommit=True,
+            application_name=successor_name,
+        )
+        try:
+            await acquire_runner_gate(
+                postgres_database_url,
+                successor_application_name=successor_name,
+                data_root=tmp_path,
+                deadline_seconds=30.0,
+            )
+            with pytest.raises(psycopg.OperationalError):
+                predecessor.execute("SELECT 1")
+            assert successor_marker.execute("SELECT 1").fetchone() == (1,)
+        finally:
+            predecessor.close()
+            successor_marker.close()

@@ -73,6 +73,11 @@ def _sever_predecessor_backends(
 ) -> None:
     """Terminate and verify every other lifecycle backend under the fence."""
     while True:
+        # pg_stat_activity is a per-transaction snapshot; without clearing it,
+        # a re-query inside the fence transaction can never observe a
+        # terminated backend's exit and the verified-dead loop spins to the
+        # gate deadline.
+        conn.execute("SELECT pg_stat_clear_snapshot()").fetchone()
         predecessor_pids = _predecessor_pids(
             conn,
             hub_prefix=hub_prefix,
