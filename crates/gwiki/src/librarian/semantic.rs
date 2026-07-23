@@ -2,7 +2,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
 
 use crate::frontmatter::parse_frontmatter;
-use crate::links::canonical_target_key;
+use crate::links::{canonical_target_key, is_concept_worthy};
 use crate::lint;
 use crate::search::semantic::SemanticSearchRequest;
 use crate::support::text::degradation_label;
@@ -307,7 +307,7 @@ pub(super) fn unresolved_link_clusters(
             continue;
         }
         let key = canonical_target_key(&issue.target);
-        if key.is_empty() {
+        if !is_concept_worthy(&key) {
             continue;
         }
         clusters

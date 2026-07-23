@@ -446,6 +446,35 @@ fn broken_link_classification_excludes_upkeep_convergent_mentions() {
 }
 
 #[test]
+fn concept_worthiness_gates_broken_link_classification() {
+    let digest_pages: BTreeSet<PathBuf> = [
+        PathBuf::from("knowledge/sources/src-aaaa.md"),
+        PathBuf::from("knowledge/sources/src-bbbb.md"),
+    ]
+    .into();
+    let issues = vec![
+        link_issue("knowledge/sources/src-aaaa.md", "awk"),
+        link_issue("knowledge/sources/src-bbbb.md", "AWK"),
+        link_issue("knowledge/concepts/overview.md", "awk"),
+        link_issue("knowledge/sources/src-aaaa.md", "FalkorDB"),
+        link_issue("knowledge/sources/src-bbbb.md", "falkordb"),
+    ];
+
+    let scan = classify_broken_links(&issues, &digest_pages, &BTreeSet::new());
+
+    assert_eq!(scan.pending_clusters, 1);
+    assert_eq!(scan.pending_singleton_mentions, 0);
+    assert_eq!(
+        scan.repair_pages,
+        vec![
+            PathBuf::from("knowledge/concepts/overview.md"),
+            PathBuf::from("knowledge/sources/src-aaaa.md"),
+            PathBuf::from("knowledge/sources/src-bbbb.md"),
+        ]
+    );
+}
+
+#[test]
 fn broken_link_classification_keeps_dead_links_as_repair_debt() {
     let digest_pages: BTreeSet<PathBuf> = [PathBuf::from("knowledge/sources/src-aaaa.md")].into();
     let manifest_ids: BTreeSet<String> = ["src-aaaa".to_string()].into();
@@ -543,6 +572,24 @@ fn unresolved_link_clusters_fold_case_and_require_multiple_mentions() {
         unresolved_link_clusters(&issues),
         vec![UnresolvedLinkCluster {
             target: "Widget Factory".to_string(),
+            mentions: 2,
+        }]
+    );
+}
+
+#[test]
+fn concept_worthiness_gates_semantic_link_clusters() {
+    let issues = vec![
+        link_issue("a.md", "awk"),
+        link_issue("b.md", "AWK"),
+        link_issue("a.md", "FalkorDB"),
+        link_issue("b.md", "falkordb"),
+    ];
+
+    assert_eq!(
+        unresolved_link_clusters(&issues),
+        vec![UnresolvedLinkCluster {
+            target: "FalkorDB".to_string(),
             mentions: 2,
         }]
     );

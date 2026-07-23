@@ -5,7 +5,7 @@ use serde::Serialize;
 use serde_json::Value;
 
 use crate::frontmatter::parse_frontmatter;
-use crate::links::{canonical_target_key, is_entity_key};
+use crate::links::{canonical_target_key, is_concept_worthy};
 use crate::paths::derived_markdown_path;
 use crate::provenance::ProvenanceGraph;
 use crate::search::SearchScope;
@@ -415,7 +415,7 @@ fn classify_broken_links(
             continue;
         }
         let key = canonical_target_key(&issue.target);
-        if is_entity_key(&key) {
+        if is_concept_worthy(&key) {
             *digest_mentions.entry(key).or_default() += 1;
         }
     }
@@ -432,7 +432,7 @@ fn classify_broken_links(
             }
             continue;
         }
-        if is_entity_key(&key) && digest_mentions.contains_key(&key) {
+        if is_concept_worthy(&key) && digest_mentions.contains_key(&key) {
             continue;
         }
         repair_pages.insert(issue.path.clone());

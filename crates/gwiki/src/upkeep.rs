@@ -26,7 +26,10 @@ use serde::Serialize;
 
 use crate::compile::{CompileRequest, WikiCompileOptions, compile_to_wiki_with_options, select};
 use crate::explainer::ExplainerGenerator;
-use crate::links::{LinkKind, canonical_target_key, extract_links, is_entity_key};
+use crate::links::{
+    LinkKind, canonical_target_key, concept_rejection_reason, extract_links, is_concept_worthy,
+    is_entity_key,
+};
 use crate::lint::page_match_keys;
 use crate::search::SearchScope;
 use crate::search::semantic::{SemanticSearchBackend, SemanticSearchRequest};
@@ -169,6 +172,9 @@ pub struct UpkeepReport {
     pub reconciled_no_synthesis: Vec<String>,
     /// Long-stale pages archived this run (would-be archives on dry runs).
     pub archived_pages: Vec<PathBuf>,
+    /// Concept pages rejected by deterministic key-quality rules. Dry runs
+    /// report the same entries without applying lifecycle transitions.
+    pub unworthy_archived: Vec<UnworthyConceptArchive>,
     /// Quarantined candidates promoted this run: corroborated by at least
     /// [`CANDIDATE_PROMOTION_BACKLINKS`] other knowledge pages (#17727).
     pub candidates_promoted: Vec<PathBuf>,
@@ -176,6 +182,13 @@ pub struct UpkeepReport {
     /// anymore, so they were archived (#17727).
     pub candidates_discarded: Vec<PathBuf>,
     pub notes: Vec<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct UnworthyConceptArchive {
+    pub page: PathBuf,
+    pub key: String,
+    pub reason: String,
 }
 
 /// Accumulated mentions for one case-folded unresolved target.
@@ -290,7 +303,7 @@ fn run_with_clock(
         // convergence (#17652). Their mentioning digests reconcile as
         // reviewed-no-synthesis below.
         let key = canonical_target_key(&issue.target);
-        if !is_entity_key(&key) {
+        if !is_concept_worthy(&key) {
             continue;
         }
         counted_mentions.insert((source_index, key.clone()));
@@ -314,7 +327,7 @@ fn run_with_clock(
     for (digest_path, &source_index) in &digest_records {
         for entity in healed_mentions.entities_for(digest_path) {
             let key = canonical_target_key(entity);
-            if !is_entity_key(&key) || !counted_mentions.insert((source_index, key.clone())) {
+            if !is_concept_worthy(&key) || !counted_mentions.insert((source_index, key.clone())) {
                 continue;
             }
             let accumulator = accumulators.entry(key).or_default();
@@ -403,6 +416,7 @@ fn run_with_clock(
         skipped_over_budget: skipped_over_budget.clone(),
         reconciled_no_synthesis: Vec::new(),
         archived_pages: Vec::new(),
+        unworthy_archived: Vec::new(),
         candidates_promoted: Vec::new(),
         candidates_discarded: Vec::new(),
         notes: Vec::new(),
@@ -602,11 +616,18 @@ fn run_with_clock(
     // promotes a quarantined candidate out of quarantine; a candidate no page
     // links to anymore is an orphan and is discarded via the archive
     // transition. Runs after healing so this run's own link rewrites count.
+    // Discover before candidate governance so dry-run and applied reports
+    // agree even when governance archives an orphaned junk candidate. The
+    // lifecycle transition itself remains a post-govern step below.
+    let unworthy_concepts = find_unworthy_concepts(&vault_root)?;
     let (candidates_promoted, candidates_discarded) = if options.dry_run {
         (Vec::new(), Vec::new())
     } else {
         govern_candidates(&vault_root, &scope, timestamp)?
     };
+
+    let unworthy_archived =
+        archive_unworthy_concepts(&vault_root, &scope, options.dry_run, unworthy_concepts)?;
 
     // Archive long-stale pages before catalog regeneration so the regenerated
     // indexes already reflect the exclusions.
@@ -650,6 +671,7 @@ fn run_with_clock(
     report.pending_after = pending_after;
     report.reconciled_no_synthesis = reconciled_no_synthesis;
     report.archived_pages = archived_pages;
+    report.unworthy_archived = unworthy_archived;
     report.candidates_promoted = candidates_promoted;
     report.candidates_discarded = candidates_discarded;
     report.notes = notes;
@@ -665,11 +687,12 @@ fn run_with_clock(
                 scope,
                 action: crate::log::ACTION_UPKEEP_COMPLETED.to_string(),
                 summary: format!(
-                    "created={} updated={} failed={} archived={} reconciled={} pending_after={}",
+                    "created={} updated={} failed={} archived={} unworthy_archived={} reconciled={} pending_after={}",
                     report.pages_created,
                     report.pages_updated,
                     report.failures,
                     report.archived_pages.len(),
+                    report.unworthy_archived.len(),
                     report.reconciled_no_synthesis.len(),
                     report.pending_after,
                 ),
@@ -1042,6 +1065,84 @@ fn archive_long_stale_pages(
         archived.push(page.relative_path.clone());
     }
     archived.sort();
+    Ok(archived)
+}
+
+fn find_unworthy_concepts(vault_root: &Path) -> Result<Vec<UnworthyConceptArchive>, WikiError> {
+    use crate::frontmatter::WikiLifecycle;
+
+    let mut archived = Vec::new();
+    for page in lint::collect_pages(vault_root)? {
+        if !page
+            .relative_path
+            .starts_with(Path::new("knowledge/concepts"))
+            || page.parsed.frontmatter.lifecycle == Some(WikiLifecycle::Archived)
+        {
+            continue;
+        }
+        // Catalog-generated folder contexts share `_context.md` with the
+        // structural-artifact key. Their `generated_by` stamp distinguishes
+        // them from a synthesized junk concept at the same path.
+        if page
+            .relative_path
+            .file_name()
+            .and_then(|name| name.to_str())
+            == Some("_context.md")
+        {
+            let generated_by_catalog =
+                page.parsed.frontmatter.generated_by.as_deref() == Some("gwiki-catalog");
+            if page.parsed.frontmatter.title.is_none() || generated_by_catalog {
+                continue;
+            }
+        }
+
+        let rejected = page_match_keys(&page)
+            .into_iter()
+            .filter(|key| is_entity_key(key))
+            .map(|key| concept_rejection_reason(&key).map(|reason| (key, reason.to_string())))
+            .collect::<Option<Vec<_>>>();
+        let Some(rejected) = rejected else {
+            continue;
+        };
+        let Some((key, reason)) = rejected.into_iter().next() else {
+            continue;
+        };
+        archived.push(UnworthyConceptArchive {
+            page: page.relative_path,
+            key,
+            reason,
+        });
+    }
+    archived.sort_by(|left, right| {
+        left.page
+            .cmp(&right.page)
+            .then_with(|| left.key.cmp(&right.key))
+    });
+    Ok(archived)
+}
+
+fn archive_unworthy_concepts(
+    vault_root: &Path,
+    scope: &ScopeIdentity,
+    dry_run: bool,
+    archived: Vec<UnworthyConceptArchive>,
+) -> Result<Vec<UnworthyConceptArchive>, WikiError> {
+    use crate::frontmatter::WikiLifecycle;
+
+    if !dry_run {
+        for candidate in &archived {
+            crate::lifecycle::apply_lifecycle_transition(
+                vault_root,
+                scope,
+                &candidate.page,
+                WikiLifecycle::Archived,
+                &format!(
+                    "upkeep: unworthy concept key `{}` ({})",
+                    candidate.key, candidate.reason
+                ),
+            )?;
+        }
+    }
     Ok(archived)
 }
 
@@ -1455,6 +1556,21 @@ pub fn render_text(report: &UpkeepReport) -> String {
             display_paths(&report.candidates_discarded)
         ));
     }
+    if !report.unworthy_archived.is_empty() {
+        text.push_str(if report.dry_run {
+            "Unworthy concepts to archive:\n"
+        } else {
+            "Unworthy concepts archived:\n"
+        });
+        for archived in &report.unworthy_archived {
+            text.push_str(&format!(
+                "- {} [{}]: {}\n",
+                archived.page.display(),
+                archived.key,
+                archived.reason
+            ));
+        }
+    }
     for note in &report.notes {
         text.push_str("Note: ");
         text.push_str(note);
@@ -1579,6 +1695,179 @@ mod tests {
             .expect("read page");
         assert_eq!(after, markdown);
         assert!(!temp.path().join("log.md").exists());
+    }
+
+    #[test]
+    fn concept_worthiness_gates_candidates_before_clustering() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let root = temp.path();
+        for source in ["src-a", "src-b"] {
+            seed_source(
+                root,
+                source,
+                "See [[awk]], [[issue861]], [[task-16289]], [[fts5]], and [[FalkorDB]].\n",
+            );
+        }
+
+        let report = run(
+            research_scope(root),
+            scope(),
+            &Options::default(),
+            None,
+            None,
+            TIMESTAMP,
+        )
+        .expect("upkeep run");
+
+        let targets = report
+            .clusters
+            .iter()
+            .map(|cluster| cluster.target.as_str())
+            .collect::<BTreeSet<_>>();
+        assert_eq!(targets, BTreeSet::from(["FalkorDB", "fts5"]));
+        for junk in ["awk", "issue861", "task-16289"] {
+            assert!(
+                !root.join(format!("knowledge/concepts/{junk}.md")).exists(),
+                "junk concept `{junk}` was minted"
+            );
+        }
+    }
+
+    #[test]
+    fn concept_worthiness_archive_reports_are_stable_and_idempotent() {
+        use crate::frontmatter::{WikiLifecycle, parse_frontmatter};
+
+        let temp = tempfile::tempdir().expect("tempdir");
+        let root = temp.path();
+        for (relative, title) in [
+            ("knowledge/concepts/_context.md", "_context"),
+            ("knowledge/concepts/awk.md", "awk"),
+            ("knowledge/concepts/task-16289.md", "task-16289"),
+            ("knowledge/concepts/fts5.md", "fts5"),
+            ("knowledge/concepts/bm25.md", "bm25"),
+            ("knowledge/concepts/falkordb.md", "FalkorDB"),
+            ("knowledge/concepts/agy.md", "AGY"),
+        ] {
+            write_file(
+                root,
+                relative,
+                &format!("---\ntitle: {title}\nlifecycle: reviewed\n---\n\nBody.\n"),
+            );
+        }
+        write_file(
+            root,
+            "knowledge/concepts/log.md",
+            "---\ntitle: log\nlifecycle: draft\ncandidate: true\n---\n\nOrphaned candidate.\n",
+        );
+        // Generated folder contexts have no concept frontmatter. They share
+        // this reserved filename and must remain catalog-owned.
+        write_file(
+            root,
+            "knowledge/topics/_context.md",
+            "# Topics\n\nGenerated folder context.\n",
+        );
+
+        let before = snapshot(root);
+        let dry_run = run(
+            research_scope(root),
+            scope(),
+            &Options {
+                dry_run: true,
+                ..Options::default()
+            },
+            None,
+            None,
+            TIMESTAMP,
+        )
+        .expect("dry-run upkeep");
+        assert_eq!(snapshot(root), before, "dry run changed vault bytes");
+        assert_eq!(
+            dry_run.unworthy_archived,
+            vec![
+                UnworthyConceptArchive {
+                    page: PathBuf::from("knowledge/concepts/_context.md"),
+                    key: "_context".to_string(),
+                    reason: "leading_non_alphanumeric".to_string(),
+                },
+                UnworthyConceptArchive {
+                    page: PathBuf::from("knowledge/concepts/awk.md"),
+                    key: "awk".to_string(),
+                    reason: "generic_word".to_string(),
+                },
+                UnworthyConceptArchive {
+                    page: PathBuf::from("knowledge/concepts/log.md"),
+                    key: "log".to_string(),
+                    reason: "generic_word".to_string(),
+                },
+                UnworthyConceptArchive {
+                    page: PathBuf::from("knowledge/concepts/task-16289.md"),
+                    key: "task-16289".to_string(),
+                    reason: "artifact_id".to_string(),
+                },
+            ]
+        );
+        let dry_text = render_text(&dry_run);
+        assert!(
+            dry_text
+                .contains("- knowledge/concepts/_context.md [_context]: leading_non_alphanumeric"),
+            "{dry_text}"
+        );
+
+        let applied = run(
+            research_scope(root),
+            scope(),
+            &Options::default(),
+            None,
+            None,
+            TIMESTAMP,
+        )
+        .expect("applied upkeep");
+        assert_eq!(applied.unworthy_archived, dry_run.unworthy_archived);
+
+        for relative in [
+            "knowledge/concepts/awk.md",
+            "knowledge/concepts/task-16289.md",
+        ] {
+            let markdown = fs::read_to_string(root.join(relative)).expect("archived page");
+            let parsed = parse_frontmatter(&markdown).expect("archived frontmatter");
+            assert_eq!(parsed.metadata.lifecycle, Some(WikiLifecycle::Archived));
+        }
+        let log = fs::read_to_string(root.join("log.md")).expect("upkeep log");
+        assert!(
+            log.contains(
+                "knowledge/concepts/_context.md: reviewed -> archived (upkeep: unworthy concept key `_context` (leading_non_alphanumeric))"
+            ),
+            "{log}"
+        );
+        for relative in [
+            "knowledge/concepts/fts5.md",
+            "knowledge/concepts/bm25.md",
+            "knowledge/concepts/falkordb.md",
+            "knowledge/concepts/agy.md",
+        ] {
+            let markdown = fs::read_to_string(root.join(relative)).expect("active page");
+            let parsed = parse_frontmatter(&markdown).expect("active frontmatter");
+            assert_eq!(parsed.metadata.lifecycle, Some(WikiLifecycle::Reviewed));
+        }
+        let index = fs::read_to_string(root.join("knowledge/INDEX.md")).expect("knowledge index");
+        assert!(!index.contains("concepts/awk"), "{index}");
+        assert!(!index.contains("concepts/task-16289"), "{index}");
+        assert!(index.contains("concepts/agy"), "{index}");
+
+        let rerun = run(
+            research_scope(root),
+            scope(),
+            &Options::default(),
+            None,
+            None,
+            TIMESTAMP,
+        )
+        .expect("second upkeep");
+        assert!(
+            rerun.unworthy_archived.is_empty(),
+            "{:?}",
+            rerun.unworthy_archived
+        );
     }
 
     /// Register a pending source: manifest entry, raw body, and digest page.
