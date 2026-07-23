@@ -714,6 +714,7 @@ class TestCloseTask:
             )
 
         assert result["success"] is True
+        assert result["recurring_validation_candidates"] == []
         task_validator.validate_task.assert_awaited_once()
         validation_kwargs = task_validator.validate_task.await_args.kwargs
         assert validation_kwargs["task_id"] == task.id

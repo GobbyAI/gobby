@@ -59,6 +59,9 @@ class _NoBackoffDB:
     def fetchone(self, *_args: object, **_kwargs: object) -> None:
         return None
 
+    def fetchall(self, *_args: object, **_kwargs: object) -> list[object]:
+        return []
+
     @contextlib.contextmanager
     def transaction(self) -> Iterator[_NoBackoffConn]:
         yield _NoBackoffConn()
@@ -144,7 +147,7 @@ async def test_valid_structured_verdict_ignores_failure_vocabulary(narrative: st
     assert result.validation_status == "valid"
     assert result.validation_feedback == narrative
     assert result.reset_reason == "llm_valid"
-    assert result.extra is None
+    assert result.extra == {"recurring_validation_candidates": []}
     manager.update_task.assert_not_called()
     manager.increment_validation_failure.assert_not_called()
 

@@ -41,6 +41,13 @@ criteria or failing/missing gates in `blocking_reasons`; an `invalid` verdict wi
 empty `blocking_reasons` list is not allowed. When you return `valid`, `blocking_reasons`
 MUST be an empty list.
 
+Return an `issues` list containing one structured object for each concrete issue on an
+`invalid` or `pending` verdict; return an empty list when status is `valid`. Every issue
+object has `title`, `type`, `severity`, and `location`. `type` MUST be one of
+`test_failure`, `lint_error`, `acceptance_gap`, `type_error`, or `security`. `severity`
+MUST be one of `blocker`, `major`, or `minor`. `location` names the concrete file or
+symbol anchor where the issue occurs.
+
 `current_failure_evidence` is required on every verdict. Populate it with one string
 for each currently failing state you attest exists, and return an empty array when
 nothing is currently failing. A current failure does not include TDD red-phase
@@ -89,11 +96,15 @@ IMPORTANT: Return ONLY a JSON object, nothing else. No explanation, no preamble.
 The object has "status" (one of "valid", "invalid", "pending"), "feedback" (a short
 justification), "blocking_reasons" (a list naming the specific unmet criteria or
 failing/missing gates — empty when status is "valid", non-empty when status is "invalid"
-or "pending"), and "current_failure_evidence" (the required current-failure array
-defined above).
-Format: {"status": "valid", "feedback": "...", "blocking_reasons": [],
+or "pending"), "issues" (the structured issue list defined above), and
+"current_failure_evidence" (the required current-failure array defined above).
+Format: {"status": "valid", "feedback": "...", "blocking_reasons": [], "issues": [],
 "current_failure_evidence": []},
 {"status": "invalid", "feedback": "...", "blocking_reasons": ["..."],
+"issues": [{"title": "...", "type": "test_failure", "severity": "major",
+"location": "path/to/file.py:Symbol"}],
 "current_failure_evidence": ["..."]},
 or {"status": "pending", "feedback": "...", "blocking_reasons": ["..."],
+"issues": [{"title": "...", "type": "acceptance_gap", "severity": "major",
+"location": "path/to/file.py:Symbol"}],
 "current_failure_evidence": []}

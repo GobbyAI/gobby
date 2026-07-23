@@ -2,14 +2,18 @@
 
 from __future__ import annotations
 
+import logging
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
 from typing import Literal, cast
 
 from gobby.failure_categories import FailureCategory, classify_failure
+from gobby.tasks.validation_models import Issue
 
 _NULLISH_FAILURE_EVIDENCE = frozenset({"n/a", "none", "null"})
 _VERDICT_STATUSES = frozenset({"valid", "invalid", "pending"})
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass
@@ -19,6 +23,7 @@ class ValidationResult:
     status: Literal["valid", "invalid", "pending", "error"]
     feedback: str | None = None
     blocking_reasons: list[str] = field(default_factory=list)
+    issues: list[Issue] = field(default_factory=list)
     verdict_override: dict[str, object] | None = None
     failure_category: FailureCategory | None = None
 
@@ -29,6 +34,31 @@ def _coerce_blocking_reasons(value: object) -> list[str]:
     if isinstance(value, str) and value.strip():
         return [value.strip()]
     return []
+
+
+def _coerce_issues(value: object) -> list[Issue]:
+    """Parse optional validator issues without invalidating the verdict."""
+    if value is None:
+        return []
+    if not isinstance(value, list):
+        logger.warning("dropping non-list issues payload from validation verdict")
+        return []
+
+    issues: list[Issue] = []
+    for index, item in enumerate(value):
+        try:
+            if not isinstance(item, dict):
+                raise TypeError("issue must be an object")
+            title = item.get("title")
+            location = item.get("location")
+            if not isinstance(title, str) or not title.strip():
+                raise TypeError("issue title must be a non-empty string")
+            if location is not None and not isinstance(location, str):
+                raise TypeError("issue location must be a string or null")
+            issues.append(Issue.from_dict(item))
+        except (KeyError, TypeError, ValueError) as exc:
+            logger.warning("dropping malformed validation issue at index %d: %s", index, exc)
+    return issues
 
 
 def filter_failure_evidence(raw: object) -> list[str]:
@@ -88,6 +118,7 @@ def _validation_result_from_data(result_data: Mapping[str, object]) -> Validatio
     feedback = normalized.get("feedback")
     if not isinstance(feedback, str):
         feedback = None
+    issues = _coerce_issues(normalized.get("issues"))
     if status == "valid":
         reasons = []
     elif not reasons:
@@ -105,6 +136,7 @@ def _validation_result_from_data(result_data: Mapping[str, object]) -> Validatio
         status=cast(Literal["valid", "invalid", "pending", "error"], status),
         feedback=feedback,
         blocking_reasons=reasons,
+        issues=issues,
         verdict_override=override,
         failure_category=failure_category,
     )

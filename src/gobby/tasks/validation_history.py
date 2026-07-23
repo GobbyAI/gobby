@@ -287,24 +287,40 @@ class ValidationHistoryManager:
         Returns:
             True if any issue recurs at least `threshold` times.
         """
-        history = self.get_iteration_history(task_id)
-        if not history:
-            return False
+        summary = self.get_recurring_issue_summary(
+            task_id,
+            threshold=threshold,
+            similarity_threshold=similarity_threshold,
+        )
+        return bool(summary["recurring_issues"])
 
-        # Collect all issues from all iterations
-        all_issues: list[Issue] = []
+    def _group_failing_iteration_issues(
+        self,
+        history: list[ValidationIteration],
+        similarity_threshold: float,
+    ) -> list[list[tuple[int, Issue]]]:
+        """Group issues while retaining distinct failing-iteration provenance."""
+        groups: list[list[tuple[int, Issue]]] = []
         for iteration in history:
-            if iteration.issues:
-                all_issues.extend(iteration.issues)
+            if iteration.status != "invalid" or not iteration.issues:
+                continue
 
-        if not all_issues:
-            return False
+            unique_issues: list[Issue] = []
+            for issue in iteration.issues:
+                if not any(
+                    self._issues_are_similar(issue, existing, similarity_threshold)
+                    for existing in unique_issues
+                ):
+                    unique_issues.append(issue)
 
-        # Group similar issues
-        groups = self.group_similar_issues(all_issues, similarity_threshold)
-
-        # Check if any group exceeds the threshold
-        return any(len(group) >= threshold for group in groups)
+            for issue in unique_issues:
+                for group in groups:
+                    if self._issues_are_similar(issue, group[0][1], similarity_threshold):
+                        group.append((iteration.iteration, issue))
+                        break
+                else:
+                    groups.append([(iteration.iteration, issue)])
+        return groups
 
     def get_recurring_issue_summary(
         self,
@@ -332,33 +348,41 @@ class ValidationHistoryManager:
                 "total_iterations": 0,
             }
 
-        # Collect all issues
-        all_issues: list[Issue] = []
-        for iteration in history:
-            if iteration.issues:
-                all_issues.extend(iteration.issues)
+        groups = self._group_failing_iteration_issues(history, similarity_threshold)
 
-        # Group similar issues
-        groups = self.group_similar_issues(all_issues, similarity_threshold)
-
-        # Filter to only recurring issues (meeting threshold)
-        recurring_issues = []
+        recurring_issues: list[dict[str, Any]] = []
         for group in groups:
-            if len(group) >= threshold:
-                # Use the first issue as the representative
-                representative = group[0]
+            iteration_ids = sorted({iteration_id for iteration_id, _issue in group})
+            if len(iteration_ids) >= threshold:
+                representative = group[0][1]
+                titles = sorted({issue.title for _iteration_id, issue in group})
+                anchors = sorted(
+                    {
+                        issue.location.strip()
+                        for _iteration_id, issue in group
+                        if issue.location and issue.location.strip()
+                    }
+                )
                 recurring_issues.append(
                     {
                         "title": representative.title,
+                        "titles": titles,
                         "type": representative.issue_type.value,
                         "severity": representative.severity.value,
-                        "location": representative.location,
-                        "count": len(group),
+                        "location": anchors[0] if anchors else None,
+                        "anchors": anchors,
+                        "count": len(iteration_ids),
+                        "distinct_iteration_count": len(iteration_ids),
+                        "failed_iterations": iteration_ids,
                     }
                 )
 
-        # Sort by count descending
-        recurring_issues.sort(key=lambda x: int(x["count"] or 0), reverse=True)
+        recurring_issues.sort(
+            key=lambda issue: (
+                -int(issue["distinct_iteration_count"]),
+                str(issue["title"]).casefold(),
+            )
+        )
 
         return {
             "recurring_issues": recurring_issues,

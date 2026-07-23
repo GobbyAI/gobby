@@ -9,6 +9,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
+from gobby.config.tasks import TaskValidationConfig
 from gobby.failure_categories import (
     INFRASTRUCTURE_FAILURE_CATEGORIES,
     FailureCategory,
@@ -21,11 +22,11 @@ from gobby.storage.tasks import Task, TaskStaleStateError
 from gobby.storage.tasks._validation_backoff import TaskValidationBackoffStore
 from gobby.tasks.state_semantics import get_claimed_session_id, is_task_closed
 from gobby.tasks.validation_history import ValidationHistoryManager
+from gobby.tasks.validation_models import Issue
 from gobby.tasks.validation_verdict import format_close_validation_message
 from gobby.utils.datetime import utc_now
 
 if TYPE_CHECKING:
-    from gobby.config.tasks import TaskValidationConfig
     from gobby.mcp_proxy.tools.tasks._context import RegistryContext
     from gobby.storage.tasks import LocalTaskManager
     from gobby.tasks.validation import TaskValidator
@@ -75,20 +76,24 @@ def _record_validation_iteration(
     context_type: str,
     validator_type: str = "llm",
     failure_category: FailureCategory | None = None,
-) -> None:
+    issues: list[Issue] | None = None,
+) -> int:
     """Record one live validation attempt with a monotonic task-local number."""
     history_manager = ValidationHistoryManager(ctx.task_manager.db)
     latest = history_manager.get_latest_iteration(task.id)
+    iteration = latest.iteration + 1 if latest else 1
     history_manager.record_iteration(
         task_id=task.id,
-        iteration=latest.iteration + 1 if latest else 1,
+        iteration=iteration,
         status=status,
         feedback=feedback,
+        issues=issues,
         context_type=context_type,
         context_summary="Live close-task validation",
         validator_type=validator_type,
         failure_category=failure_category,
     )
+    return iteration
 
 
 def _path_matches_reference(path: str, reference: str) -> bool:
@@ -523,6 +528,7 @@ async def validate_leaf_task_with_llm(
             feedback=result.feedback,
             context_type="validation_evidence_gate",
             failure_category=failure_category,
+            issues=result.issues,
         )
         retry_at = state.next_retry_at.isoformat() if state.next_retry_at else "later"
         if state.should_escalate():
@@ -620,6 +626,7 @@ async def validate_leaf_task_with_llm(
                 feedback=message,
                 context_type="validation_evidence_gate",
                 failure_category=failure_category,
+                issues=result.issues,
             )
             retry_at = state.next_retry_at.isoformat() if state.next_retry_at else "later"
             if state.should_escalate():
@@ -688,6 +695,7 @@ async def validate_leaf_task_with_llm(
             feedback=message,
             context_type="validation_evidence_gate",
             failure_category=failure_category,
+            issues=result.issues,
         )
         threshold = (
             validation_config.close_validation_escalation_threshold
@@ -746,18 +754,37 @@ async def validate_leaf_task_with_llm(
         )
 
     # A real valid verdict clears any prior infrastructure outage state.
+    recurring_validation_candidates: list[dict[str, Any]] = []
     if not read_only:
         if backoff_state is not None:
             backoff_store.clear(task.id)
-        _record_validation_iteration(
+        passing_iteration = _record_validation_iteration(
             task,
             ctx,
             status=validation_status,
             feedback=original_feedback,
             context_type="validation_evidence_gate",
+            issues=result.issues,
         )
+        configured = validation_config or TaskValidationConfig()
+        summary = ValidationHistoryManager(ctx.task_manager.db).get_recurring_issue_summary(
+            task.id,
+            threshold=configured.recurring_issue_threshold,
+            similarity_threshold=configured.issue_similarity_threshold,
+        )
+        passing_evidence = {
+            "iteration": passing_iteration,
+            "status": "valid",
+            "feedback": original_feedback,
+        }
+        recurring_validation_candidates = [
+            {**issue, "passing_iteration": passing_evidence}
+            for issue in summary["recurring_issues"]
+            if issue["anchors"]
+        ]
     return ValidationResult(
         can_close=True,
+        extra={"recurring_validation_candidates": recurring_validation_candidates},
         validation_status="valid",
         validation_feedback=original_feedback,
         reset_reason="llm_valid",
