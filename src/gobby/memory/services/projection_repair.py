@@ -13,6 +13,10 @@ from gobby.storage.projects import GLOBAL_PROJECT_ID
 
 logger = logging.getLogger(__name__)
 
+# list_memories requires a positive limit (limit=None raises), so the graph
+# repair walks the full set in pages.
+_GRAPH_REPAIR_PAGE_SIZE = 500
+
 
 class FalkorQueryProtocol(Protocol):
     async def query(
@@ -107,33 +111,38 @@ class ProjectionScopeRepairService:
         )
 
     async def _repair_falkor_memories(self, falkor: FalkorQueryProtocol) -> int:
-        memories = await self._run_db(
-            self.storage.list_memories,
-            scope=ALL_MEMORIES,
-            limit=None,
-            visibility="all",
-        )
         repaired = 0
-        for memory in memories:
-            rows = await falkor.query(
-                """
-                MATCH (m:Memory {memory_id: $memory_id})
-                WHERE NOT exists(m.project_id)
-                   OR NOT exists(m.is_global)
-                   OR m.project_id <> $project_id
-                   OR m.is_global <> $is_global
-                SET m.project_id = $project_id, m.is_global = $is_global
-                RETURN count(m) AS repaired
-                """,
-                {
-                    "memory_id": memory.id,
-                    "project_id": memory.project_id,
-                    "is_global": memory.is_global,
-                },
+        offset = 0
+        while True:
+            memories = await self._run_db(
+                self.storage.list_memories,
+                scope=ALL_MEMORIES,
+                limit=_GRAPH_REPAIR_PAGE_SIZE,
+                offset=offset,
+                visibility="all",
             )
-            if rows:
-                repaired += int(rows[0].get("repaired", 0))
-        return repaired
+            for memory in memories:
+                rows = await falkor.query(
+                    """
+                    MATCH (m:Memory {memory_id: $memory_id})
+                    WHERE NOT exists(m.project_id)
+                       OR NOT exists(m.is_global)
+                       OR m.project_id <> $project_id
+                       OR m.is_global <> $is_global
+                    SET m.project_id = $project_id, m.is_global = $is_global
+                    RETURN count(m) AS repaired
+                    """,
+                    {
+                        "memory_id": memory.id,
+                        "project_id": memory.project_id,
+                        "is_global": memory.is_global,
+                    },
+                )
+                if rows:
+                    repaired += int(rows[0].get("repaired", 0))
+            if len(memories) < _GRAPH_REPAIR_PAGE_SIZE:
+                return repaired
+            offset += len(memories)
 
     @staticmethod
     async def _repair_falkor_entities(falkor: FalkorQueryProtocol) -> int:

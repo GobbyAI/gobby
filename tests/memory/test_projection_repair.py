@@ -111,3 +111,55 @@ async def test_repair_preserves_pending_work_and_reports_retryable_failures() ->
             "error": "falkor unavailable",
         },
     ]
+
+
+@pytest.mark.asyncio
+async def test_graph_repair_paginates_list_memories_with_positive_limit(monkeypatch) -> None:
+    """limit=None crashed list_memories; the graph sweep must page instead."""
+    from gobby.memory.services import projection_repair as module
+
+    monkeypatch.setattr(module, "_GRAPH_REPAIR_PAGE_SIZE", 2)
+
+    def _memory(idx: int) -> SimpleNamespace:
+        return SimpleNamespace(
+            id=f"memory-{idx}",
+            content=f"content {idx}",
+            project_id="project-1",
+            is_global=False,
+            memory_type=MemoryType.FACT,
+        )
+
+    full_page = [_memory(1), _memory(2)]
+    partial_page = [_memory(3)]
+    storage = MagicMock()
+    storage.list_vector_reindex_ids = MagicMock(return_value=[])
+
+    def _list_memories(
+        scope: Any = ALL_MEMORIES,
+        memory_type: Any = None,
+        limit: int = 50,
+        offset: int = 0,
+        **kwargs: Any,
+    ) -> list[SimpleNamespace]:
+        # Same guard as the real storage layer: a None limit must never arrive.
+        if limit <= 0:
+            return []
+        return {0: full_page, 2: partial_page}.get(offset, [])
+
+    storage.list_memories = MagicMock(side_effect=_list_memories)
+    falkor = MagicMock()
+    falkor.query = AsyncMock(return_value=[{"repaired": 1}])
+    service = ProjectionScopeRepairService(
+        storage_provider=lambda: storage,
+        run_db=_run_db,
+        restore_memory_indices=AsyncMock(return_value=True),
+        falkor_client_provider=lambda: falkor,
+    )
+
+    result = await service.repair()
+
+    assert result.failures == []
+    assert result.graph_memories_repaired == 3
+    list_calls = storage.list_memories.call_args_list
+    assert [call.kwargs["offset"] for call in list_calls] == [0, 2]
+    assert all(call.kwargs["limit"] == 2 for call in list_calls)
