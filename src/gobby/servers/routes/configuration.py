@@ -15,6 +15,7 @@ from fastapi import APIRouter
 
 from gobby.servers.routes import configuration_validation_detection as validation_detection_routes
 from gobby.servers.routes.configuration_context import ConfigurationRouteContext
+from gobby.servers.routes.configuration_effective import register_effective_routes
 from gobby.servers.routes.configuration_import_export import register_import_export_routes
 from gobby.servers.routes.configuration_models import (
     ImportConfigRequest,
@@ -53,6 +54,7 @@ def create_configuration_router(server: "HTTPServer") -> APIRouter:
     context = ConfigurationRouteContext(server)
 
     validation_detection_routes.register_validation_detection_routes(router, context)
+    register_effective_routes(router, context)
     register_value_routes(router, context)
     register_template_routes(router, context)
     register_secret_routes(router, context)
