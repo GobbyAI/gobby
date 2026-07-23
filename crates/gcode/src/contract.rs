@@ -315,6 +315,7 @@ pub fn contract() -> CliContract {
                     FlagContract::repeatable_value("--scope", "PATH"),
                     FlagContract::switch("--complete-scope"),
                     FlagContract::value("--since", "GIT_REF"),
+                    FlagContract::value("--compare-to", "GIT_REF[:META_PATH]"),
                     ai_flag(),
                     ai_depth_flag(),
                     FlagContract::value("--ai-aggregate-profile", "PROFILE"),
@@ -331,10 +332,11 @@ pub fn contract() -> CliContract {
                     FlagContract::value("--max-workers", "N"),
                     FlagContract::switch("--repair-citations"),
                 ],
-                // Two JSON shapes: a generation run-summary, or — under
-                // `--repair-citations` — the no-LLM citation-repair summary
+                // Three JSON shapes: a generation run-summary; under
+                // `--repair-citations`, the no-LLM citation-repair summary
                 // (`pages_scanned`..`citations_unresolved`, frozen by the repair
-                // routine). The declared key set is their union.
+                // routine); or under `--compare-to`, the metadata comparison
+                // summary. The declared key set is their union.
                 json_output_keys: vec![
                     "command",
                     "project_id",
@@ -348,6 +350,11 @@ pub fn contract() -> CliContract {
                     "symbols",
                     "ai_enabled",
                     "degraded_pages",
+                    "base",
+                    "current",
+                    "added",
+                    "removed",
+                    "changed",
                     "pages_scanned",
                     "pages_repaired",
                     "citations_repaired",

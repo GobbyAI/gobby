@@ -895,19 +895,33 @@ implementation target). Depends on 4.4 solely to serialize edits to codewiki/mod
 (review round 7 WGC-UNSERIALIZED-SHARED-FILES: 4.4 bumps `RENDER_VERSION_CURATED` in the
 same file, and without the edge both leaves are dispatchable concurrently after 4.3).
 
-CI diff mode consuming 6.1's stamps: `gcode codewiki --compare-to <ref>`, where `<ref>` is
-a Git ref in the SOURCE repository. Baseline definition (review round 2
-WGC-COMPARE-BASELINE): the baseline doc set is the output-relative `_meta/codewiki.json`
-snapshot loaded from that ref (`git show <ref>:<output-rel>/_meta/codewiki.json` —
-requires the output dir to be tracked, as ./wiki/ is), validated before use. The command
-diffs the baseline's path-keyed doc metadata (commit stamps + source hashes) against the
-current snapshot and emits the changed-docs summary without regenerating pages: `removed`
-comes from baseline keys absent in the current snapshot — the committed baseline snapshot
-is the complete data source; current-page stamps alone cannot identify removed docs.
-Absent or malformed baseline metadata at the ref is a DISTINCT error exit (separate from
-ref-resolution failure), never an empty no-change report. Read-only; exit 0 on success.
-Scope deliberately minimal — a reporting consumer, not a second regeneration driver
-(`--since` already drives regeneration).
+CI diff mode consuming 6.1's stamps:
+`gcode codewiki --compare-to <ref>[:<meta-path>]`, where `<ref>` is a Git ref in
+the source repository and `<meta-path>` is an optional repository-relative path
+inside that Git tree. Baseline definition (review round 2
+WGC-COMPARE-BASELINE): omitting the path loads the output-relative
+`_meta/codewiki.json` snapshot (`git show <ref>:<output-rel>/_meta/codewiki.json`);
+an explicit path addresses publication trees whose vault root differs from the
+source worktree.
+
+In this repository, generated source-worktree output stays ignored under
+`wiki/`, so current metadata is `wiki/_meta/codewiki.json` and source history
+does not track the vault. The pre-push publication flow mirrors the contents of
+that directory into the root of the orphan `wiki` branch, where committed
+metadata is addressed as `wiki:_meta/codewiki.json`. CI consumers fetch the
+remote publication branch first with
+`git fetch origin wiki:refs/remotes/origin/wiki`, then compare against
+`origin/wiki:_meta/codewiki.json`.
+
+The command validates the baseline before use and diffs its path-keyed doc
+metadata (commit stamps + source hashes) against the current snapshot without
+regenerating pages. `removed` comes from baseline keys absent in the current
+snapshot — the committed baseline snapshot is the complete data source;
+current-page stamps alone cannot identify removed docs. Absent or malformed
+baseline metadata at the ref is a DISTINCT error exit (separate from
+ref-resolution failure), never an empty no-change report. Read-only; exit 0 on
+success. Scope deliberately minimal — a reporting consumer, not a second
+regeneration driver (`--since` already drives regeneration).
 
 Output contract (enhancement E5), pinned for CI consumers: JSON with base/current commit
 metadata; path-sorted `added`/`removed`/`changed` record arrays; dirty and unstamped pages
@@ -918,11 +932,15 @@ absent/malformed baseline metadata), committing BOTH the baseline and current sn
 **Acceptance:**
 
 - 6.2.1 - `--compare-to` emits a changed-docs summary without writing pages. test: `crates/gcode/src/commands/codewiki/tests/incremental.rs`.
-- 6.2.2 - Flag wired in the codewiki CLI. file: `crates/gcode/src/cli.rs`.
+- 6.2.2 - Flag wired as `GIT_REF[:META_PATH]` in the codewiki CLI. file:
+  `crates/gcode/src/cli.rs`.
 - 6.2.3 - Golden fixtures commit baseline + current snapshots and pin the deterministic
   JSON contract incl. unstamped/dirty pages, removed-doc detection from the baseline
   snapshot, and the bad-ref vs absent/malformed-baseline vs no-change distinctions.
   test: `crates/gcode/src/commands/codewiki/tests/incremental.rs`.
+- 6.2.4 - Source-worktree metadata at `wiki/_meta/codewiki.json` compares
+  against publication-branch metadata at `_meta/codewiki.json`; invalid
+  explicit paths are rejected and comparison leaves Git status clean.
 
 ### 6.3 Concept worthiness gate and recurring archive pass [category: code]
 

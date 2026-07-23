@@ -1241,6 +1241,14 @@
           "repeatable": false
         },
         {
+          "name": "--compare-to",
+          "takes_value": true,
+          "value_name": "GIT_REF[:META_PATH]",
+          "allowed_values": [],
+          "required": false,
+          "repeatable": false
+        },
+        {
           "name": "--ai",
           "takes_value": true,
           "value_name": "auto|daemon|direct|off",
@@ -1370,6 +1378,11 @@
         "symbols",
         "ai_enabled",
         "degraded_pages",
+        "base",
+        "current",
+        "added",
+        "removed",
+        "changed",
         "pages_scanned",
         "pages_repaired",
         "citations_repaired",

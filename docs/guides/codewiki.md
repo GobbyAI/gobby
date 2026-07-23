@@ -353,6 +353,39 @@ regenerates only the pages whose sources or cross-file neighbors changed, plus
 aggregate pages whose model digest changed. Out-of-scope pages and `_meta` are
 preserved either way; omitting `--since` runs the full content-hash scan.
 
+## Compare Against a Published Baseline
+
+`--compare-to` reads current metadata from local `--out` and reads baseline
+metadata from Git without writing pages:
+
+```bash
+gcode codewiki --out wiki --compare-to 'wiki:_meta/codewiki.json' --format json
+```
+
+The argument is `GIT_REF[:META_PATH]`. When `META_PATH` is omitted, it defaults
+to `<output-relative>/_meta/codewiki.json`. An explicit path is
+repository-relative to the selected Git tree and can differ from the local
+output path.
+
+Gobby keeps source-worktree output under the ignored `wiki/` directory, so
+current metadata is `wiki/_meta/codewiki.json`. The pre-push publisher mirrors
+the vault contents into the root of the orphan `wiki` branch, where the
+committed metadata object is `_meta/codewiki.json`. The source branch therefore
+does not carry the generated vault.
+
+CI consumers must fetch the publication branch before comparing:
+
+```bash
+git fetch origin wiki:refs/remotes/origin/wiki
+gcode codewiki --out wiki \
+  --compare-to 'origin/wiki:_meta/codewiki.json' \
+  --format json
+```
+
+The JSON result contains `base`, `current`, and path-sorted `added`, `removed`,
+and `changed` arrays. Missing baseline metadata, malformed metadata, invalid
+metadata paths, and unresolved refs remain distinct errors.
+
 ## Graph-Degraded Output
 
 FalkorDB is required for graph-derived codewiki structure. In explicitly

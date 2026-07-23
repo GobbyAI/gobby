@@ -798,6 +798,14 @@ fn committed_compare_repo(
     baseline_raw: Option<String>,
     current_raw: String,
 ) -> (tempfile::TempDir, String) {
+    committed_compare_repo_at("_meta/codewiki.json", baseline_raw, current_raw)
+}
+
+fn committed_compare_repo_at(
+    baseline_meta_path: &str,
+    baseline_raw: Option<String>,
+    current_raw: String,
+) -> (tempfile::TempDir, String) {
     let project = tempfile::tempdir().expect("project");
     let root = project.path();
     compare_git_ok(root, &["init", "-q"]);
@@ -805,9 +813,10 @@ fn committed_compare_repo(
     compare_git_ok(root, &["config", "user.name", "Test"]);
     std::fs::write(root.join("README.md"), "compare fixture\n").expect("write fixture marker");
     if let Some(raw) = baseline_raw {
-        let meta_dir = root.join("wiki/_meta");
-        std::fs::create_dir_all(&meta_dir).expect("baseline metadata dir");
-        std::fs::write(meta_dir.join("codewiki.json"), raw).expect("write baseline metadata");
+        let baseline_meta = root.join(baseline_meta_path);
+        std::fs::create_dir_all(baseline_meta.parent().expect("baseline metadata parent"))
+            .expect("baseline metadata dir");
+        std::fs::write(baseline_meta, raw).expect("write baseline metadata");
     }
     compare_git_ok(root, &["add", "."]);
     compare_git_ok(root, &["commit", "-q", "-m", "baseline"]);
@@ -1032,8 +1041,8 @@ fn compare_to_matches_path_sorted_json_goldens_without_writing_pages() {
         let (project, baseline_ref) = committed_compare_case(&baseline, &current);
         let current_path = project.path().join("wiki/_meta/codewiki.json");
         let before = std::fs::read(&current_path).expect("read current metadata before compare");
-        let summary =
-            compare_to(project.path(), Some("wiki"), &baseline_ref).expect("compare succeeds");
+        let target = format!("{baseline_ref}:_meta/codewiki.json");
+        let summary = compare_to(project.path(), Some("wiki"), &target).expect("compare succeeds");
         assert_eq!(
             serde_json::to_value(summary).expect("serialize compare summary"),
             expected,
@@ -1052,15 +1061,39 @@ fn compare_to_matches_path_sorted_json_goldens_without_writing_pages() {
 }
 
 #[test]
+fn compare_to_defaults_to_output_relative_baseline_metadata() {
+    let current = compare_meta(Some("same-run"), Some(false), serde_json::json!({}));
+    let raw = serde_json::to_string_pretty(&current).expect("serialize metadata") + "\n";
+    let (project, baseline_ref) =
+        committed_compare_repo_at("wiki/_meta/codewiki.json", Some(raw.clone()), raw);
+
+    let summary =
+        compare_to(project.path(), Some("wiki"), &baseline_ref).expect("default compare succeeds");
+    let value = serde_json::to_value(summary).expect("serialize compare summary");
+    assert_eq!(value["added"], serde_json::json!([]));
+    assert_eq!(value["removed"], serde_json::json!([]));
+    assert_eq!(value["changed"], serde_json::json!([]));
+    assert!(
+        compare_git_ok(project.path(), &["status", "--porcelain"]).is_empty(),
+        "default compare must leave the repository clean"
+    );
+}
+
+#[test]
 fn compare_to_distinguishes_bad_ref_and_invalid_baseline_metadata() {
     let current = compare_meta(Some("current-run"), Some(false), serde_json::json!({}));
     let current_raw = serde_json::to_string_pretty(&current).expect("serialize current") + "\n";
 
     let (valid_project, baseline_ref) =
         committed_compare_repo(Some(current_raw.clone()), current_raw.clone());
-    compare_to(valid_project.path(), Some("wiki"), &baseline_ref).expect("no-change succeeds");
-    let bad_ref = compare_to(valid_project.path(), Some("wiki"), "does-not-exist")
-        .expect_err("bad ref fails");
+    let valid_target = format!("{baseline_ref}:_meta/codewiki.json");
+    compare_to(valid_project.path(), Some("wiki"), &valid_target).expect("no-change succeeds");
+    let bad_ref = compare_to(
+        valid_project.path(),
+        Some("wiki"),
+        "does-not-exist:_meta/codewiki.json",
+    )
+    .expect_err("bad ref fails");
     assert!(
         bad_ref
             .to_string()
@@ -1069,7 +1102,8 @@ fn compare_to_distinguishes_bad_ref_and_invalid_baseline_metadata() {
     );
 
     let (absent_project, absent_ref) = committed_compare_repo(None, current_raw.clone());
-    let absent = compare_to(absent_project.path(), Some("wiki"), &absent_ref)
+    let absent_target = format!("{absent_ref}:_meta/codewiki.json");
+    let absent = compare_to(absent_project.path(), Some("wiki"), &absent_target)
         .expect_err("absent baseline fails");
     assert!(
         absent
@@ -1080,7 +1114,8 @@ fn compare_to_distinguishes_bad_ref_and_invalid_baseline_metadata() {
 
     let (malformed_project, malformed_ref) =
         committed_compare_repo(Some("{malformed".to_string()), current_raw.clone());
-    let malformed = compare_to(malformed_project.path(), Some("wiki"), &malformed_ref)
+    let malformed_target = format!("{malformed_ref}:_meta/codewiki.json");
+    let malformed = compare_to(malformed_project.path(), Some("wiki"), &malformed_target)
         .expect_err("malformed baseline fails");
     assert!(
         malformed
@@ -1091,12 +1126,29 @@ fn compare_to_distinguishes_bad_ref_and_invalid_baseline_metadata() {
 
     let (malformed_current_project, valid_ref) =
         committed_compare_repo(Some(current_raw.clone()), "{malformed".to_string());
-    let malformed_current = compare_to(malformed_current_project.path(), Some("wiki"), &valid_ref)
-        .expect_err("malformed current metadata fails");
+    let valid_target = format!("{valid_ref}:_meta/codewiki.json");
+    let malformed_current = compare_to(
+        malformed_current_project.path(),
+        Some("wiki"),
+        &valid_target,
+    )
+    .expect_err("malformed current metadata fails");
     assert!(
         malformed_current
             .to_string()
             .contains("current metadata is malformed at"),
         "unexpected malformed-current error: {malformed_current:#}"
     );
+
+    for invalid_path in ["", "/_meta/codewiki.json", "../_meta/codewiki.json"] {
+        let invalid_target = format!("{baseline_ref}:{invalid_path}");
+        let invalid = compare_to(valid_project.path(), Some("wiki"), &invalid_target)
+            .expect_err("invalid explicit metadata path fails");
+        assert!(
+            invalid
+                .to_string()
+                .contains("metadata path must be repository-relative"),
+            "unexpected invalid-path error for {invalid_path:?}: {invalid:#}"
+        );
+    }
 }

@@ -168,6 +168,31 @@ fn codewiki_declares_repair_citations_flag() {
 }
 
 #[test]
+fn codewiki_declares_compare_to_flag_and_output_keys() {
+    let contract = serde_json::to_value(gobby_code::contract::contract()).expect("contract json");
+    let codewiki = command(&contract, "codewiki");
+
+    let compare_to = codewiki["flags"]
+        .as_array()
+        .expect("flags array")
+        .iter()
+        .find(|flag| flag["name"] == Value::String("--compare-to".to_string()))
+        .expect("codewiki must declare the --compare-to flag");
+    assert_eq!(
+        compare_to["value_name"],
+        Value::String("GIT_REF[:META_PATH]".to_string())
+    );
+
+    let keys = output_keys(&contract, "codewiki");
+    for expected in ["base", "current", "added", "removed", "changed"] {
+        assert!(
+            keys.contains(&expected.to_string()),
+            "codewiki output surface missing {expected}"
+        );
+    }
+}
+
+#[test]
 fn invalidate_declares_project_id_flag() {
     let contract = serde_json::to_value(gobby_code::contract::contract()).expect("contract json");
     let invalidate = command(&contract, "invalidate");

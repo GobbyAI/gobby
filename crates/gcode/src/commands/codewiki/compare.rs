@@ -55,12 +55,18 @@ pub fn run_compare(ctx: &Context, out: Option<String>, base_ref: &str) -> anyhow
 pub(crate) fn compare_to(
     project_root: &Path,
     out: Option<&str>,
-    base_ref: &str,
+    compare_target: &str,
 ) -> anyhow::Result<CodewikiCompareSummary> {
     let paths = compare_paths(project_root, out)?;
+    let target = parse_compare_target(compare_target, &paths.default_git_meta)?;
     let current = read_current_meta(&paths.current_meta)?;
-    let resolved_ref = resolve_commit(project_root, base_ref)?;
-    let baseline = read_baseline_meta(project_root, base_ref, &resolved_ref, &paths.git_meta)?;
+    let resolved_ref = resolve_commit(project_root, target.base_ref)?;
+    let baseline = read_baseline_meta(
+        project_root,
+        target.base_ref,
+        &resolved_ref,
+        &target.git_meta,
+    )?;
 
     let all_paths = baseline
         .docs
@@ -102,6 +108,11 @@ pub(crate) fn compare_to(
 
 struct ComparePaths {
     current_meta: PathBuf,
+    default_git_meta: String,
+}
+
+struct CompareTarget<'a> {
+    base_ref: &'a str,
     git_meta: String,
 }
 
@@ -135,8 +146,46 @@ fn compare_paths(project_root: &Path, out: Option<&str>) -> anyhow::Result<Compa
         .replace('\\', "/");
     Ok(ComparePaths {
         current_meta: project_root.join(relative_meta),
-        git_meta,
+        default_git_meta: git_meta,
     })
+}
+
+fn parse_compare_target<'a>(
+    target: &'a str,
+    default_git_meta: &str,
+) -> anyhow::Result<CompareTarget<'a>> {
+    let (base_ref, git_meta) = match target.split_once(':') {
+        Some((base_ref, explicit_git_meta)) => {
+            (base_ref, normalize_explicit_git_meta(explicit_git_meta)?)
+        }
+        None => (target, default_git_meta.to_string()),
+    };
+    if base_ref.is_empty() {
+        anyhow::bail!("codewiki compare ref '' does not resolve to a commit");
+    }
+    Ok(CompareTarget { base_ref, git_meta })
+}
+
+fn normalize_explicit_git_meta(path: &str) -> anyhow::Result<String> {
+    let mut normalized = PathBuf::new();
+    for component in Path::new(path).components() {
+        match component {
+            Component::Normal(part) => normalized.push(part),
+            Component::CurDir => {}
+            Component::ParentDir | Component::RootDir | Component::Prefix(_) => {
+                anyhow::bail!(
+                    "codewiki --compare-to metadata path must be repository-relative: '{path}'"
+                );
+            }
+        }
+    }
+    if normalized.as_os_str().is_empty() {
+        anyhow::bail!("codewiki --compare-to metadata path must be repository-relative: '{path}'");
+    }
+    Ok(normalized
+        .to_str()
+        .context("codewiki --compare-to metadata path is not valid UTF-8")?
+        .replace('\\', "/"))
 }
 
 fn resolve_commit(project_root: &Path, base_ref: &str) -> anyhow::Result<String> {

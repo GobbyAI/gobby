@@ -471,11 +471,12 @@ pub(crate) enum Command {
         /// `_meta` are preserved either way.
         #[arg(long, value_name = "GIT_REF")]
         since: Option<String>,
-        /// Compare the tracked current CodeWiki metadata with the snapshot at
-        /// this source-repository Git ref and emit a read-only JSON summary.
+        /// Compare current CodeWiki metadata with a Git snapshot. An optional
+        /// repository-relative metadata path addresses publication branches
+        /// whose vault is rooted differently from --out.
         #[arg(
             long,
-            value_name = "GIT_REF",
+            value_name = "GIT_REF[:META_PATH]",
             conflicts_with_all = [
                 "purge",
                 "force",

@@ -226,13 +226,15 @@ fn parse_codewiki_max_workers_flag() {
 
 #[test]
 fn parse_codewiki_compare_to_flag() {
-    let cli = Cli::try_parse_from(["gcode", "codewiki", "--compare-to", "origin/main"])
-        .expect("codewiki --compare-to parses");
-    match cli.command {
-        Command::Codewiki { compare_to, .. } => {
-            assert_eq!(compare_to.as_deref(), Some("origin/main"));
+    for target in ["origin/main", "wiki:_meta/codewiki.json"] {
+        let cli = Cli::try_parse_from(["gcode", "codewiki", "--compare-to", target])
+            .expect("codewiki --compare-to parses");
+        match cli.command {
+            Command::Codewiki { compare_to, .. } => {
+                assert_eq!(compare_to.as_deref(), Some(target));
+            }
+            _ => panic!("expected codewiki command"),
         }
-        _ => panic!("expected codewiki command"),
     }
 
     assert!(
