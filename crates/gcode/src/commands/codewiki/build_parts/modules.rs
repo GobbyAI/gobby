@@ -6,17 +6,22 @@ use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 pub(crate) fn build_module_docs(
     files: &[FileDoc],
     leading_chunks: &BTreeMap<String, LeadingChunk>,
+    graph_edges: &[CodewikiGraphEdge],
+    graph_availability: CodewikiGraphAvailability,
     generate: &mut Option<&mut TextGenerator<'_>>,
     reuse: &mut Option<&mut ReusePlan>,
+    diagram_stats: &mut DiagramStats,
     progress: &mut CodewikiProgress,
     emit: &mut dyn FnMut(&ModuleDoc) -> anyhow::Result<()>,
 ) -> anyhow::Result<Vec<ModuleDoc>> {
     build_module_docs_with_filter(
         files,
         leading_chunks,
-        &[],
+        graph_edges,
+        graph_availability,
         generate,
         reuse,
+        diagram_stats,
         progress,
         &|_: &str| true,
         emit,
@@ -28,8 +33,10 @@ pub(crate) fn build_module_docs_with_filter(
     files: &[FileDoc],
     leading_chunks: &BTreeMap<String, LeadingChunk>,
     graph_edges: &[CodewikiGraphEdge],
+    graph_availability: CodewikiGraphAvailability,
     generate: &mut Option<&mut TextGenerator<'_>>,
     reuse: &mut Option<&mut ReusePlan>,
+    diagram_stats: &mut DiagramStats,
     progress: &mut CodewikiProgress,
     module_filter: &dyn Fn(&str) -> bool,
     emit: &mut dyn FnMut(&ModuleDoc) -> anyhow::Result<()>,
@@ -116,6 +123,20 @@ pub(crate) fn build_module_docs_with_filter(
             })
             .collect::<Vec<_>>();
         let prompt_component_ids = prompt_component_ids_for_module(files, &module);
+        let dependency_outcome =
+            render_module_dependency_mermaid(&module, files, graph_edges, graph_availability);
+        diagram_stats.record(
+            &module_doc_path(&module),
+            DiagramKind::ModuleDependency,
+            &dependency_outcome,
+            progress,
+        );
+        let dependency_diagram = match dependency_outcome {
+            DiagramOutcome::Emitted(diagram) => Some(diagram),
+            DiagramOutcome::SparseEvidence
+            | DiagramOutcome::NoGenerator
+            | DiagramOutcome::Rejected => None,
+        };
         let fallback = structural_module_summary(&module, &direct_files, &child_modules);
         let source_spans = collect_link_spans(&direct_files, &child_modules);
         // A module's provenance rolls up every file under it (child spans
@@ -130,6 +151,9 @@ pub(crate) fn build_module_docs_with_filter(
         // while its Child Modules links dangle (#17731). Child names also
         // feed the brief prompt, so a changed child set regenerates the page
         // instead of patching links.
+        // Dependency edges intentionally stay out of the reuse key: the graph
+        // query is a bounded, order-unstable sample with the same staleness
+        // envelope as the relationship-facts prose above.
         let reused =
             reused.filter(|(page, _)| reused_module_child_links_current(page, &child_modules));
         progress.emit(format!(
@@ -206,6 +230,7 @@ pub(crate) fn build_module_docs_with_filter(
             source_spans,
             direct_files,
             child_modules,
+            dependency_diagram,
             degraded,
             degraded_sources: degraded_sources.into_iter().collect(),
             verify_notes: Vec::new(),

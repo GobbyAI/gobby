@@ -20,6 +20,11 @@ pub(crate) fn render_module_doc(module: &ModuleDoc) -> String {
         None => doc.push_str("Parent: [[code/repo|Repository Overview]]\n\n"),
     }
     write_section(&mut doc, "Overview", &module.summary);
+    if let Some(diagram) = &module.dependency_diagram {
+        doc.push_str("## Dependencies\n\n");
+        doc.push_str(diagram);
+        doc.push('\n');
+    }
     if !module.child_modules.is_empty() {
         doc.push_str("## Child Modules\n\n");
         write_markdown_table_header(&mut doc, &["Module", "Summary"]);

@@ -7,6 +7,7 @@ fn module_doc(name: &str, summary: &str) -> ModuleDoc {
         source_spans: Vec::new(),
         direct_files: Vec::new(),
         child_modules: Vec::new(),
+        dependency_diagram: None,
         degraded: false,
         degraded_sources: Vec::new(),
         verify_notes: Vec::new(),

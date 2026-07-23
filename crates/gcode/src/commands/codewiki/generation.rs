@@ -306,8 +306,10 @@ pub(crate) fn generate_hierarchical_docs(
         &file_docs,
         &input.leading_chunks,
         &input.graph_edges,
+        input.graph_availability,
         generate,
         reuse,
+        &mut diagram_stats,
         progress,
         &|module| doc_scope.includes_module(module),
         &mut |module| {

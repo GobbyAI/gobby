@@ -16,13 +16,17 @@ fn module_docs_include_physical_direct_files_for_ancestor_modules() {
         reused_page: None,
     }];
     let mut generate = None;
+    let mut diagram_stats = DiagramStats::default();
     let mut progress = CodewikiProgress::silent();
 
     let docs = build_module_docs(
         &files,
         &std::collections::BTreeMap::new(),
+        &[],
+        CodewikiGraphAvailability::Available,
         &mut generate,
         &mut None,
+        &mut diagram_stats,
         &mut progress,
         &mut |_| Ok(()),
     )
@@ -54,6 +58,7 @@ fn scoped_run_emits_module_pages_for_synthetic_cluster_link_targets() {
         file_doc_with_symbol("src/ai/chunk.rs", "src/source_execute", "chunk"),
     ];
     let mut generate = None;
+    let mut diagram_stats = DiagramStats::default();
     let mut progress = CodewikiProgress::silent();
     let mut emitted = Vec::new();
 
@@ -76,8 +81,10 @@ fn scoped_run_emits_module_pages_for_synthetic_cluster_link_targets() {
         &files,
         &std::collections::BTreeMap::new(),
         &[],
+        CodewikiGraphAvailability::Available,
         &mut generate,
         &mut None,
+        &mut diagram_stats,
         &mut progress,
         &scope_filter,
         &mut |doc| {
@@ -105,13 +112,17 @@ fn module_page_drops_component_id_dump_keeps_navigation() {
         file_doc_with_symbol("src/commands/run.rs", "src/commands", "leaf-component"),
     ];
     let mut generate = None;
+    let mut diagram_stats = DiagramStats::default();
     let mut progress = CodewikiProgress::silent();
 
     let docs = build_module_docs(
         &files,
         &std::collections::BTreeMap::new(),
+        &[],
+        CodewikiGraphAvailability::Available,
         &mut generate,
         &mut None,
+        &mut diagram_stats,
         &mut progress,
         &mut |_| Ok(()),
     )
@@ -132,6 +143,136 @@ fn module_page_drops_component_id_dump_keeps_navigation() {
     // key components.
     assert!(parent_rendered.contains("## Files"));
     assert!(parent_rendered.contains("[[code/modules/src/commands\\|src/commands]]"));
+}
+
+#[test]
+fn module_dependency_diagrams_emit_valid_sections_and_observable_empty_slots() {
+    let (files, edges) = dependency_fixture(2);
+    let mut generate = None;
+    let mut diagram_stats = DiagramStats::default();
+    let mut progress = CodewikiProgress::silent();
+
+    let docs = build_module_docs(
+        &files,
+        &std::collections::BTreeMap::new(),
+        &edges,
+        CodewikiGraphAvailability::Available,
+        &mut generate,
+        &mut None,
+        &mut diagram_stats,
+        &mut progress,
+        &mut |_| Ok(()),
+    )
+    .expect("module docs build");
+    let core = docs
+        .iter()
+        .find(|doc| doc.module == "src/core")
+        .expect("core module is documented");
+    let rendered = render_module_doc(core);
+    let fence = mermaid_fence(
+        core.dependency_diagram
+            .as_deref()
+            .expect("dependency diagram"),
+    );
+
+    assert!(rendered.contains("## Dependencies\n\n```mermaid\n"));
+    assert!(fence.contains("src/core"));
+    assert!(fence.contains("src/dep00"));
+    assert!(fence.contains("src/dep01"));
+    assert!(
+        is_valid_mermaid(fence),
+        "invalid dependency fence:\n{fence}"
+    );
+    assert_eq!(diagram_stats.total(), docs.len());
+    assert_eq!(diagram_stats.emitted, docs.len());
+
+    let files = vec![file_doc_with_symbol("src/lib.rs", "src", "root")];
+    let mut diagram_stats = DiagramStats::default();
+    let docs = build_module_docs(
+        &files,
+        &std::collections::BTreeMap::new(),
+        &[],
+        CodewikiGraphAvailability::Available,
+        &mut generate,
+        &mut None,
+        &mut diagram_stats,
+        &mut progress,
+        &mut |_| Ok(()),
+    )
+    .expect("edge-free module docs build");
+    let rendered = render_module_doc(&docs[0]);
+
+    assert!(!rendered.contains("## Dependencies"));
+    assert_eq!(diagram_stats.sparse_evidence, 1);
+    assert_eq!(diagram_stats.total(), 1);
+}
+
+#[test]
+fn module_dependency_diagrams_are_bounded_and_permutation_invariant() {
+    let (files, edges) = dependency_fixture(25);
+    let DiagramOutcome::Emitted(available) = render_module_dependency_mermaid(
+        "src/core",
+        &files,
+        &edges,
+        CodewikiGraphAvailability::Available,
+    ) else {
+        panic!("available dependency diagram was not emitted");
+    };
+    assert!(available.contains(
+        "_Simplified diagram: showing top 20 of 25 module dependency edge(s) within diagram bounds._"
+    ));
+    assert!(is_valid_mermaid(mermaid_fence(&available)));
+
+    let DiagramOutcome::Emitted(truncated) = render_module_dependency_mermaid(
+        "src/core",
+        &files,
+        &edges,
+        CodewikiGraphAvailability::Truncated,
+    ) else {
+        panic!("truncated dependency diagram was not emitted");
+    };
+    assert!(truncated.contains(
+        "_Simplified diagram: showing top 20 of 25 available module dependency edge(s); source graph was truncated._"
+    ));
+
+    let mut reordered_files = files.clone();
+    reordered_files.reverse();
+    let mut reordered_edges = edges.clone();
+    reordered_edges.reverse();
+    let DiagramOutcome::Emitted(reordered) = render_module_dependency_mermaid(
+        "src/core",
+        &reordered_files,
+        &reordered_edges,
+        CodewikiGraphAvailability::Available,
+    ) else {
+        panic!("reordered dependency diagram was not emitted");
+    };
+
+    assert_eq!(available, reordered);
+}
+
+fn dependency_fixture(edge_count: usize) -> (Vec<FileDoc>, Vec<CodewikiGraphEdge>) {
+    let mut files = vec![file_doc_with_symbol("src/core.rs", "src/core", "root")];
+    let mut edges = Vec::new();
+    for index in 0..edge_count {
+        let component = format!("dep-{index:02}");
+        files.push(file_doc_with_symbol(
+            &format!("src/dep{index:02}.rs"),
+            &format!("src/dep{index:02}"),
+            &component,
+        ));
+        edges.push(if index % 2 == 0 {
+            CodewikiGraphEdge::import("root", component)
+        } else {
+            CodewikiGraphEdge::call("root", component)
+        });
+    }
+    (files, edges)
+}
+
+fn mermaid_fence(diagram: &str) -> &str {
+    let start = diagram.find("```mermaid").expect("mermaid fence");
+    &diagram[start..]
 }
 
 fn file_doc_with_symbol(path: &str, module: &str, component_id: &str) -> FileDoc {

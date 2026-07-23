@@ -229,7 +229,8 @@ pub(crate) use diagram_compose::{
 pub(crate) use render::{
     build_repo_doc, collect_subsystem_dependency_edges, render_architecture_doc,
     render_deprecations_doc, render_feature_catalog_doc, render_file_doc, render_hotspots_doc,
-    render_infrastructure_doc, render_module_doc, render_onboarding_doc,
+    render_infrastructure_doc, render_module_dependency_mermaid, render_module_doc,
+    render_onboarding_doc,
 };
 // Reuse of unchanged docs without regeneration.
 #[cfg(test)]

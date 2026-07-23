@@ -358,7 +358,7 @@ fn clusters_without_falkordb() {
 }
 
 #[test]
-fn module_pages_no_longer_emit_mermaid_diagrams() {
+fn module_pages_emit_deterministic_dependency_diagrams_without_graph_degradation() {
     let input = CodewikiInput {
         leading_chunks: std::collections::BTreeMap::new(),
         files: vec![
@@ -420,9 +420,12 @@ fn module_pages_no_longer_emit_mermaid_diagrams() {
         .get("code/modules/src/api.md")
         .expect("api module doc");
 
-    // The auto-generated code-graph diagrams are gone; graph availability is
-    // informational only and never degrades the page.
-    assert!(!rendered.contains("```mermaid"));
+    // Dependency diagrams are deterministic projections of indexed edges;
+    // graph availability remains informational and does not degrade the page.
+    assert!(rendered.contains("## Dependencies"));
+    assert!(rendered.contains("```mermaid\n"));
+    assert!(rendered.contains("src/api"));
+    assert!(rendered.contains("src/domain"));
     assert!(!rendered.contains("## Dependency Diagram"));
     assert!(!rendered.contains("## Call Diagram"));
     assert!(!rendered.contains("graph-truncated"));
@@ -497,7 +500,7 @@ fn empty_available_graph_does_not_emit_degradation_marker() {
 }
 
 #[test]
-fn truncated_graph_does_not_degrade_module_or_emit_diagram() {
+fn truncated_graph_keeps_module_healthy_and_labels_simplified_diagram() {
     let input = CodewikiInput {
         leading_chunks: std::collections::BTreeMap::new(),
         files: vec![
@@ -533,10 +536,12 @@ fn truncated_graph_does_not_degrade_module_or_emit_diagram() {
         .get("code/modules/src/api.md")
         .expect("module doc still renders");
 
-    // A truncated graph is informational only: the page is not degraded and no
-    // diagram (or "simplified diagram" note) is emitted.
+    // A truncated graph stays non-degrading while the deterministic diagram
+    // discloses that its source sample was incomplete.
     assert!(!module.contains("graph-truncated"));
-    assert!(!module.contains("Simplified diagram"));
-    assert!(!module.contains("```mermaid"));
+    assert!(module.contains("## Dependencies"));
+    assert!(module.contains("Simplified diagram"));
+    assert!(module.contains("source graph was truncated"));
+    assert!(module.contains("```mermaid"));
     assert!(!module.contains("## Dependency Diagram"));
 }

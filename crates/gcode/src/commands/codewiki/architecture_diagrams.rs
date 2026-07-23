@@ -311,7 +311,9 @@ fn service_edge_label(kind: ServiceKind) -> &'static str {
 mod tests {
     use super::super::types::PromptTier;
     use super::*;
+    use crate::commands::codewiki::render::render_module_dependency_mermaid;
     use crate::commands::codewiki::system_model::{Crate, ServiceBoundary};
+    use crate::commands::codewiki::types::{CodewikiGraphAvailability, CodewikiGraphEdge, FileDoc};
     use std::collections::BTreeMap;
 
     /// A realistic three-binary + foundation model resembling the real
@@ -660,6 +662,38 @@ mod tests {
         };
         doc.push('\n');
         doc.push_str(&flow);
+
+        // Deterministic module dependency block: exercises the same real
+        // Mermaid parser gate as model-composed architecture diagrams.
+        let dependency_files = [
+            ("src/core.rs", "src/core", "core"),
+            ("src/api.rs", "src/api", "api"),
+        ]
+        .into_iter()
+        .map(|(path, module, component)| FileDoc {
+            path: path.to_string(),
+            module: module.to_string(),
+            summary: String::new(),
+            body: String::new(),
+            source_spans: Vec::new(),
+            symbols: Vec::new(),
+            component_ids: vec![component.to_string()],
+            degraded: false,
+            degraded_sources: Vec::new(),
+            verify_notes: Vec::new(),
+            reused_page: None,
+        })
+        .collect::<Vec<_>>();
+        let DiagramOutcome::Emitted(dependency) = render_module_dependency_mermaid(
+            "src/core",
+            &dependency_files,
+            &[CodewikiGraphEdge::call("core", "api")],
+            CodewikiGraphAvailability::Available,
+        ) else {
+            panic!("dependency diagram was not emitted");
+        };
+        doc.push('\n');
+        doc.push_str(&dependency);
 
         let dir = tempfile::tempdir().expect("tempdir");
         let input = dir.path().join("emitted.md");
