@@ -24,6 +24,8 @@ instructions: |
   2. LOAD_SKILLS: Before calling task/review tools, load these exact QA session
      skills: code-index, task-transitions, review-learning, and proportionality.
   3. REVIEW: Perform ordered leaf review:
+     Push-injected `qa-miss` lessons are the mandatory first-pass checklist at review start.
+     Apply them before evaluating the diff.
      a. spec_compliance: compare task description, validation criteria, coverage labels,
         required files/tests, and diff. Reject immediately on missing or incorrect
         required behavior.
@@ -185,6 +187,8 @@ steps:
     status_message: |
       Review the code changes for the assigned task.
       Do not call claim_task or get_workflow_status in REVIEW.
+      Apply push-injected `qa-miss` lessons as a mandatory first-pass checklist
+      at review start before evaluating the diff.
       1. spec_compliance: compare task description, validation criteria, coverage labels,
          required files/tests, and diff. Reject before code_quality if required behavior
          is missing or incorrect.

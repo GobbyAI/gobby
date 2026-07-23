@@ -130,6 +130,52 @@ rejection patterns, call `gobby-review-learning.record_review_lesson` before the
 verdict with `source_kind=qa_rejection`; do not record one-off, stale, or invalid
 findings.
 
+## Epic Lesson Recording
+
+Keep every reusable `## Epic Findings` entry through rejection and re-review
+with this finding/confirmation schema:
+
+- `check_key`: an explicit kebab-case key. Call `list_check_keys` and consult the
+  existing catalog before selecting it; the recorder performs final validation.
+- `lesson_classes`: one or both of `qa-miss` and `validation-miss`, supported by
+  the cited leaf evidence.
+- At least one of `principle` or `root_cause`, plus a non-empty `prevention`.
+- A concrete anchor containing both `leaf_task_ref` and `path`.
+- `confirmed_fix_evidence`: the commit or changed files and focused passing
+  validation that prove the fix on re-review.
+- `finding_fingerprint`: a stable identity for the epic finding.
+
+Incomplete entries mint nothing. This includes a missing or invalid
+`check_key`, an empty `lesson_classes` value, neither `principle` nor
+`root_cause`, missing `prevention`, either missing anchor component, missing
+`confirmed_fix_evidence`, or missing `finding_fingerprint`. Keep an incomplete
+entry in the verdict for remediation; never send it to
+`record_review_lesson`.
+
+Mint only when the fix is confirmed on re-review. Record each proven class
+independently:
+
+- `qa-miss`: leaf QA approved the cited leaf while the epic finding remained.
+  Use `guardrail_target=checklist`.
+- `validation-miss`: leaf validation passed while the epic finding remained.
+  Use `guardrail_target=validation`.
+
+For both classes, use `source_kind=qa_rejection`, `source="epic-reviewer"`,
+`decision=confirmed`, and a stable
+`source_review="epic-qa:<epic-ref>:<re-review-id>"`. Use the class-scoped
+identity `pattern_id=epic-qa:<lesson_type>:<check-key>` and
+`finding_fingerprint=<stable-finding-id>:<lesson_type>`, then derive the
+occurrence identity with
+`build_occurrence_key(source_review, finding_fingerprint)`. Record the cited
+file as both `finding.path` and in `evidence.files`, with
+`leaf_task_ref` and `confirmed_fix_evidence` in evidence. The normalized lesson
+must carry `lesson-domain:code` and path tags from the cited files.
+
+One finding that proves both classes produces two lesson records with separate
+pattern keys, occurrence keys, and occurrence counts. A class without complete
+proof records nothing while another proven class remains independently
+recordable.
+
 ## Decision Mapping
 
 Map the verdict to task lifecycle tools exactly:

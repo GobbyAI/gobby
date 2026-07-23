@@ -36,6 +36,10 @@ instructions: |
   attribution through `### N.N` plan sections when present, or through child
   task references for docs/build epics that use a Discovery Brief plus
   descendant task set as the review scope.
+  Preserve reusable findings using the epic-review finding/confirmation schema.
+  At the confirm point (fix confirmed on re-review), record every fully proven
+  `qa-miss` and `validation-miss` class independently. Incomplete entries mint
+  nothing.
 
   CLOSED-EPIC REVIEW:
   If the assigned epic is already closed, run a post-hoc review: do not
@@ -178,6 +182,8 @@ steps:
       commands, and supported-language test-quality audit output are present
       before approval. Missing baseline is not a skip reason; outside Gobby,
       unsupported-language warnings require focused repo-native validation.
+      When a fix is confirmed on re-review, follow the epic-review lesson
+      schema and record each fully proven class before emitting the verdict.
       Record the epic-review verdict with complete_stage(stage_name="epic_qa",
       validation_override_reason="epic_qa approved by epic-reviewer"),
       fail_stage(stage_name="epic_qa"), or escalate_task.
