@@ -10,7 +10,9 @@ import pytest
 
 from gobby.events.completion_registry import CompletionEventRegistry
 from gobby.events.wake import CONTINUE_WAKE_MESSAGE, CONTINUE_WAKE_SIGNAL, WakeDispatcher
+from gobby.mcp_proxy.tools.agents import create_agents_registry
 from gobby.storage.hub.protocol import HubDatabase
+from gobby.utils.session_context import session_context_for_test
 
 pytestmark = pytest.mark.unit
 
@@ -236,6 +238,57 @@ class TestRegistryWakeCallback:
         )
         wake_mock.assert_any_await(
             "e3c98b06-11a5-5e52-9b82-b47a220be090", "Pipeline done", {"status": "completed"}
+        )
+
+    @pytest.mark.asyncio
+    async def test_wait_for_agent_registration_wakes_on_completion(self, db: HubDatabase) -> None:
+        run_id = "796ce97e-38ee-508a-bdc0-f3ce2dded342"
+        session_id = "12313230-63a9-5fd2-bdbb-f793325d2c16"
+        run = MagicMock(
+            id=run_id,
+            status="running",
+            result=None,
+            error=None,
+            provider="claude",
+            model="opus",
+            prompt="wake me",
+            tool_calls_count=0,
+            turns_used=0,
+            started_at=None,
+            completed_at=None,
+            child_session_id="child-session",
+            terminal_reason=None,
+        )
+        runner = MagicMock()
+        runner.get_run.return_value = run
+        session_manager = MagicMock()
+        session_manager.get.return_value = None
+        wake_mock = AsyncMock()
+        completion_registry = CompletionEventRegistry(wake_callback=wake_mock)
+        registry = create_agents_registry(
+            runner,
+            session_manager=session_manager,
+            db=db,
+            completion_registry=completion_registry,
+        )
+
+        with session_context_for_test(session_id):
+            wait_result = await registry._tools["wait_for_agent"].func(run_id)
+        await completion_registry.notify(
+            run_id,
+            {"status": "success", "result": "done"},
+            message="Agent done",
+        )
+
+        assert wait_result["success"] is True
+        assert wait_result["completed"] is False
+        assert wait_result["notification_registered"] is True
+        assert wait_result["notification_session_id"] == session_id
+        assert completion_registry.get_subscribers(run_id) == [session_id]
+        wake_mock.assert_awaited_once_with(
+            session_id,
+            "Agent done",
+            {"status": "success", "result": "done"},
         )
 
 

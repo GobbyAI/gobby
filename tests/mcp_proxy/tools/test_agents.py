@@ -19,6 +19,8 @@ This file tests the agent-related MCP tools:
 
 from __future__ import annotations
 
+import asyncio
+import inspect
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
@@ -26,17 +28,26 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
+from gobby.agents.completion_subscribers import (
+    SubscriptionPersistenceError,
+    remove_agent_completion_subscribers,
+)
 from gobby.agents.runtime_cleanup import AgentRuntimeCleanupResult
 from gobby.events import CompletionEventRegistry
 from gobby.events.wake import WakeDispatcher
 from gobby.mcp_proxy.tools.agents import create_agents_registry
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.inter_session_messages import InterSessionMessageManager
+from gobby.storage.pipeline_subscribers import CompletionSubscriberManager
+from gobby.utils.session_context import session_context_for_test
 
 pytestmark = pytest.mark.unit
 
 _RUN_STARTED_AT = datetime(2026, 5, 20, tzinfo=UTC)
 _RUN_COMPLETED_AT = datetime(2026, 5, 20, 0, 1, tzinfo=UTC)
+_WAIT_RUN_ID = "796ce97e-38ee-508a-bdc0-f3ce2dded342"
+_WAIT_ROOT_SESSION_ID = "12313230-63a9-5fd2-bdbb-f793325d2c16"
+_WAIT_CALLER_SESSION_ID = "e3c98b06-11a5-5e52-9b82-b47a220be090"
 
 
 def _make_mock_agent_run(
@@ -220,203 +231,328 @@ class TestGetAgentResult:
 
 
 class TestWaitForAgent:
-    """Tests for wait_for_agent MCP tool."""
+    """Tests for the subscribe-and-return wait_for_agent contract."""
 
-    @pytest.mark.asyncio
-    async def test_completed_run_returns_immediately(self) -> None:
-        mock_run = MagicMock()
-        mock_run.id = "run-123"
-        mock_run.status = "success"
-        mock_run.result = "done"
-        mock_run.error = None
-        mock_run.provider = "claude"
-        mock_run.model = "opus"
-        mock_run.prompt = "merge"
-        mock_run.tool_calls_count = 4
-        mock_run.turns_used = 2
-        mock_run.started_at = _RUN_STARTED_AT
-        mock_run.completed_at = _RUN_COMPLETED_AT
-        mock_run.child_session_id = "child-session"
-        mock_run.terminal_reason = None
+    @staticmethod
+    def _run(status: str = "running", *, result: str | None = None) -> MagicMock:
+        run = MagicMock()
+        run.id = _WAIT_RUN_ID
+        run.status = status
+        run.result = result
+        run.error = None
+        run.provider = "claude"
+        run.model = "opus"
+        run.prompt = "merge"
+        run.tool_calls_count = 1
+        run.turns_used = 1
+        run.started_at = _RUN_STARTED_AT
+        run.completed_at = _RUN_COMPLETED_AT if status == "success" else None
+        run.child_session_id = "child-session"
+        run.terminal_reason = None
+        return run
 
+    @staticmethod
+    def _session_manager(*, lineage: bool = False) -> MagicMock:
+        session_manager = MagicMock()
+        if not lineage:
+            session_manager.get.return_value = None
+            return session_manager
+
+        root = MagicMock(id=_WAIT_ROOT_SESSION_ID, parent_session_id=None)
+        caller = MagicMock(
+            id=_WAIT_CALLER_SESSION_ID,
+            parent_session_id=_WAIT_ROOT_SESSION_ID,
+        )
+        sessions = {
+            _WAIT_ROOT_SESSION_ID: root,
+            _WAIT_CALLER_SESSION_ID: caller,
+        }
+        session_manager.get.side_effect = sessions.get
+        return session_manager
+
+    @staticmethod
+    def _registry(
+        runner: MagicMock,
+        db: HubDatabase,
+        completion_registry: CompletionEventRegistry,
+        *,
+        lineage: bool = False,
+    ) -> Any:
+        return create_agents_registry(
+            runner,
+            session_manager=TestWaitForAgent._session_manager(lineage=lineage),
+            db=db,
+            completion_registry=completion_registry,
+        )
+
+    def test_public_signature_only_accepts_run_id(self) -> None:
         runner = MagicMock()
-        runner.get_run.return_value = mock_run
-
         registry = create_agents_registry(runner)
         wait_for_agent = registry._tools["wait_for_agent"].func
 
-        result = await wait_for_agent(run_id="run-123", timeout_seconds=0)
+        assert list(inspect.signature(wait_for_agent).parameters) == ["run_id"]
+
+    @pytest.mark.asyncio
+    async def test_completed_run_returns_without_subscription(self) -> None:
+        runner = MagicMock()
+        runner.get_run.return_value = self._run("success", result="done")
+        completion_registry = CompletionEventRegistry()
+        registry = create_agents_registry(runner, completion_registry=completion_registry)
+
+        result = await registry._tools["wait_for_agent"].func(_WAIT_RUN_ID)
 
         assert result["success"] is True
         assert result["completed"] is True
-        assert result["status"] == "success"
+        assert result["notification_registered"] is False
         assert result["result"] == "done"
-        assert "prompt" not in result
-        assert result["tool_calls_count"] == 4
-        assert result["turns_used"] == 2
+        assert not completion_registry.is_registered(_WAIT_RUN_ID)
 
     @pytest.mark.asyncio
-    async def test_running_run_times_out_with_latest_status(self) -> None:
-        mock_run = MagicMock()
-        mock_run.id = "run-123"
-        mock_run.status = "running"
-        mock_run.result = None
-        mock_run.error = None
-        mock_run.provider = "claude"
-        mock_run.model = "opus"
-        mock_run.prompt = "merge"
-        mock_run.tool_calls_count = 1
-        mock_run.turns_used = 1
-        mock_run.started_at = _RUN_STARTED_AT
-        mock_run.completed_at = None
-        mock_run.child_session_id = "child-session"
-        mock_run.terminal_reason = None
-
+    async def test_unknown_run_returns_error(self) -> None:
         runner = MagicMock()
-        runner.get_run.return_value = mock_run
-
+        runner.get_run.return_value = None
         registry = create_agents_registry(runner)
-        wait_for_agent = registry._tools["wait_for_agent"].func
 
-        result = await wait_for_agent(run_id="run-123", timeout_seconds=0)
+        result = await registry._tools["wait_for_agent"].func(_WAIT_RUN_ID)
 
-        assert result["success"] is True
-        assert result["completed"] is False
-        assert result["status"] == "running"
-        assert result["timeout_seconds"] == 0.0
-        assert result["requested_timeout_seconds"] == 0.0
-        assert "prompt" not in result
-        assert result["tool_calls_count"] == 1
-        assert result["turns_used"] == 1
+        assert result == {
+            "success": False,
+            "error": f"Agent run {_WAIT_RUN_ID} not found",
+        }
 
     @pytest.mark.asyncio
-    @pytest.mark.parametrize("requested_timeout", [120, 300])
-    async def test_long_running_wait_honors_requested_timeout(
-        self,
-        requested_timeout: int,
-    ) -> None:
-        mock_run = MagicMock()
-        mock_run.id = "run-123"
-        mock_run.status = "running"
-        mock_run.result = None
-        mock_run.error = None
-        mock_run.provider = "claude"
-        mock_run.model = "opus"
-        mock_run.prompt = "merge"
-        mock_run.tool_calls_count = 1
-        mock_run.turns_used = 1
-        mock_run.started_at = _RUN_STARTED_AT
-        mock_run.completed_at = None
-        mock_run.child_session_id = "child-session"
-        mock_run.terminal_reason = None
-
+    async def test_active_run_requires_session_context(self, temp_db: HubDatabase) -> None:
         runner = MagicMock()
-        runner.get_run.return_value = mock_run
+        runner.get_run.return_value = self._run()
+        registry = self._registry(runner, temp_db, CompletionEventRegistry())
 
+        result = await registry._tools["wait_for_agent"].func(_WAIT_RUN_ID)
+
+        assert result["success"] is False
+        assert result["error_code"] == "missing_session_context"
+
+    @pytest.mark.asyncio
+    async def test_active_run_requires_completion_services(self) -> None:
+        runner = MagicMock()
+        runner.get_run.return_value = self._run()
         registry = create_agents_registry(runner)
-        wait_for_agent = registry._tools["wait_for_agent"].func
 
-        with patch(
-            "gobby.mcp_proxy.tools.agents.time.monotonic",
-            side_effect=[0.0, float(requested_timeout) + 1.0],
+        with session_context_for_test(_WAIT_CALLER_SESSION_ID):
+            result = await registry._tools["wait_for_agent"].func(_WAIT_RUN_ID)
+
+        assert result["success"] is False
+        assert result["error_code"] == "completion_services_unavailable"
+
+    @pytest.mark.asyncio
+    async def test_persistence_failure_returns_structured_error(self, temp_db: HubDatabase) -> None:
+        runner = MagicMock()
+        runner.get_run.return_value = self._run()
+        registry = self._registry(runner, temp_db, CompletionEventRegistry())
+
+        with (
+            session_context_for_test(_WAIT_CALLER_SESSION_ID),
+            patch(
+                "gobby.mcp_proxy.tools.agents_query_tools.subscribe_agent_completion",
+                side_effect=SubscriptionPersistenceError("boom"),
+            ),
         ):
-            result = await wait_for_agent(
-                run_id="run-123",
-                timeout_seconds=requested_timeout,
-                poll_interval_seconds=5,
-            )
+            result = await registry._tools["wait_for_agent"].func(_WAIT_RUN_ID)
+
+        assert result["success"] is False
+        assert result["error_code"] == "subscription_persistence_failed"
+
+    @pytest.mark.asyncio
+    async def test_active_run_registers_durable_notification(self, temp_db: HubDatabase) -> None:
+        runner = MagicMock()
+        runner.get_run.return_value = self._run()
+        completion_registry = CompletionEventRegistry()
+        registry = self._registry(runner, temp_db, completion_registry)
+
+        with session_context_for_test(_WAIT_CALLER_SESSION_ID):
+            result = await registry._tools["wait_for_agent"].func(_WAIT_RUN_ID)
 
         assert result["success"] is True
         assert result["completed"] is False
-        assert result["status"] == "running"
-        assert result["timeout_seconds"] == float(requested_timeout)
-        assert result["requested_timeout_seconds"] == float(requested_timeout)
+        assert result["notification_registered"] is True
+        assert result["notification_session_id"] == _WAIT_CALLER_SESSION_ID
+        assert completion_registry.get_subscribers(_WAIT_RUN_ID) == [_WAIT_CALLER_SESSION_ID]
+        assert CompletionSubscriberManager(temp_db).get_completion_subscribers(_WAIT_RUN_ID) == [
+            _WAIT_CALLER_SESSION_ID
+        ]
 
     @pytest.mark.asyncio
-    async def test_shorter_wait_timeout_is_not_reduced(self) -> None:
-        mock_run = MagicMock()
-        mock_run.id = "run-123"
-        mock_run.status = "running"
-        mock_run.result = None
-        mock_run.error = None
-        mock_run.provider = "claude"
-        mock_run.model = "opus"
-        mock_run.prompt = "merge"
-        mock_run.tool_calls_count = 1
-        mock_run.turns_used = 1
-        mock_run.started_at = _RUN_STARTED_AT
-        mock_run.completed_at = None
-        mock_run.child_session_id = "child-session"
-        mock_run.terminal_reason = None
-
+    async def test_in_region_transition_cleans_only_fresh_owned_rows(
+        self, temp_db: HubDatabase
+    ) -> None:
+        active = self._run()
+        terminal = self._run("success", result="done")
         runner = MagicMock()
-        runner.get_run.return_value = mock_run
+        runner.get_run.side_effect = [active, active, terminal]
+        wake = AsyncMock()
+        completion_registry = CompletionEventRegistry(wake_callback=wake)
+        subscribers = CompletionSubscriberManager(temp_db)
+        subscribers.add_completion_subscribers(_WAIT_RUN_ID, [_WAIT_ROOT_SESSION_ID])
+        registry = self._registry(
+            runner,
+            temp_db,
+            completion_registry,
+            lineage=True,
+        )
 
-        registry = create_agents_registry(runner)
-        wait_for_agent = registry._tools["wait_for_agent"].func
+        with session_context_for_test(_WAIT_CALLER_SESSION_ID):
+            result = await registry._tools["wait_for_agent"].func(_WAIT_RUN_ID)
 
-        with patch("gobby.mcp_proxy.tools.agents.time.monotonic", side_effect=[0.0, 5.1]):
-            result = await wait_for_agent(
-                run_id="run-123",
-                timeout_seconds=5,
-                poll_interval_seconds=1,
-            )
-
-        assert result["success"] is True
-        assert result["completed"] is False
-        assert result["status"] == "running"
-        assert result["timeout_seconds"] == 5.0
-        assert result["requested_timeout_seconds"] == 5.0
-
-    @pytest.mark.asyncio
-    async def test_wait_polls_until_run_completes(self) -> None:
-        running_run = MagicMock()
-        running_run.id = "run-123"
-        running_run.status = "running"
-        running_run.result = None
-        running_run.error = None
-        running_run.provider = "claude"
-        running_run.model = "opus"
-        running_run.prompt = "merge"
-        running_run.tool_calls_count = 1
-        running_run.turns_used = 1
-        running_run.started_at = _RUN_STARTED_AT
-        running_run.completed_at = None
-        running_run.child_session_id = "child-session"
-        running_run.terminal_reason = None
-
-        completed_run = MagicMock()
-        completed_run.id = "run-123"
-        completed_run.status = "success"
-        completed_run.result = "done"
-        completed_run.error = None
-        completed_run.provider = "claude"
-        completed_run.model = "opus"
-        completed_run.prompt = "merge"
-        completed_run.tool_calls_count = 3
-        completed_run.turns_used = 2
-        completed_run.started_at = _RUN_STARTED_AT
-        completed_run.completed_at = _RUN_COMPLETED_AT
-        completed_run.child_session_id = "child-session"
-        completed_run.terminal_reason = None
-
-        runner = MagicMock()
-        runner.get_run.side_effect = [running_run, completed_run]
-
-        registry = create_agents_registry(runner)
-        wait_for_agent = registry._tools["wait_for_agent"].func
-
-        with patch("gobby.mcp_proxy.tools.agents.asyncio.sleep", new_callable=AsyncMock) as sleep:
-            result = await wait_for_agent(
-                run_id="run-123",
-                timeout_seconds=5,
-                poll_interval_seconds=0.1,
-            )
-
-        assert result["success"] is True
         assert result["completed"] is True
-        assert result["status"] == "success"
-        sleep.assert_awaited_once()
+        assert result["notification_registered"] is False
+        assert subscribers.get_completion_subscribers(_WAIT_RUN_ID) == [_WAIT_ROOT_SESSION_ID]
+        assert not completion_registry.is_registered(_WAIT_RUN_ID)
+        await completion_registry.notify(_WAIT_RUN_ID, {"status": "success"})
+        wake.assert_not_awaited()
+
+    @pytest.mark.asyncio
+    async def test_in_region_transition_leaves_merged_entry_for_pending_notify(
+        self, temp_db: HubDatabase
+    ) -> None:
+        active = self._run()
+        terminal = self._run("success", result="done")
+        runner = MagicMock()
+        runner.get_run.side_effect = [active, active, terminal]
+        wake = AsyncMock()
+        completion_registry = CompletionEventRegistry(wake_callback=wake)
+        completion_registry.register(_WAIT_RUN_ID, subscribers=[_WAIT_ROOT_SESSION_ID])
+        subscribers = CompletionSubscriberManager(temp_db)
+        subscribers.add_completion_subscribers(_WAIT_RUN_ID, [_WAIT_ROOT_SESSION_ID])
+        registry = self._registry(
+            runner,
+            temp_db,
+            completion_registry,
+            lineage=True,
+        )
+
+        with session_context_for_test(_WAIT_CALLER_SESSION_ID):
+            result = await registry._tools["wait_for_agent"].func(_WAIT_RUN_ID)
+
+        assert result["completed"] is True
+        assert completion_registry.get_subscribers(_WAIT_RUN_ID) == [
+            _WAIT_ROOT_SESSION_ID,
+            _WAIT_CALLER_SESSION_ID,
+        ]
+        assert subscribers.get_completion_subscribers(_WAIT_RUN_ID) == [
+            _WAIT_ROOT_SESSION_ID,
+            _WAIT_CALLER_SESSION_ID,
+        ]
+
+        await completion_registry.notify(_WAIT_RUN_ID, {"status": "success"})
+
+        assert wake.await_count == 2
+        wake.assert_any_await(_WAIT_ROOT_SESSION_ID, "", {"status": "success"})
+        wake.assert_any_await(_WAIT_CALLER_SESSION_ID, "", {"status": "success"})
+
+    @pytest.mark.asyncio
+    async def test_late_notify_snapshot_does_not_gain_waiter(self, temp_db: HubDatabase) -> None:
+        active = self._run()
+        terminal = self._run("success", result="done")
+        runner = MagicMock()
+        runner.get_run.side_effect = [active, terminal]
+        overlay_started = asyncio.Event()
+        overlay_release = asyncio.Event()
+        notify_snapshot_taken = asyncio.Event()
+        notify_release = asyncio.Event()
+
+        async def overlay(run: MagicMock, _reader: Any) -> MagicMock:
+            if run is active:
+                overlay_started.set()
+                await overlay_release.wait()
+            return run
+
+        async def wake(_session_id: str, _message: str, _result: dict[str, Any]) -> None:
+            notify_snapshot_taken.set()
+            await notify_release.wait()
+
+        completion_registry = CompletionEventRegistry(wake_callback=wake)
+        completion_registry.register(_WAIT_RUN_ID, subscribers=[_WAIT_ROOT_SESSION_ID])
+        subscribers = CompletionSubscriberManager(temp_db)
+        subscribers.add_completion_subscribers(_WAIT_RUN_ID, [_WAIT_ROOT_SESSION_ID])
+        registry = self._registry(runner, temp_db, completion_registry)
+
+        async def notify_and_cleanup() -> None:
+            await completion_registry.notify(_WAIT_RUN_ID, {"status": "success"})
+            remove_agent_completion_subscribers(db=temp_db, run_id=_WAIT_RUN_ID)
+            completion_registry.cleanup(_WAIT_RUN_ID)
+
+        with (
+            session_context_for_test(_WAIT_CALLER_SESSION_ID),
+            patch(
+                "gobby.mcp_proxy.tools.agents_query_tools.overlay_live_activity",
+                side_effect=overlay,
+            ),
+        ):
+            wait_task = asyncio.create_task(registry._tools["wait_for_agent"].func(_WAIT_RUN_ID))
+            await overlay_started.wait()
+            notify_task = asyncio.create_task(notify_and_cleanup())
+            await notify_snapshot_taken.wait()
+            overlay_release.set()
+            result = await wait_task
+
+        assert result["completed"] is True
+        assert result["notification_registered"] is False
+        assert completion_registry.get_subscribers(_WAIT_RUN_ID) == [_WAIT_ROOT_SESSION_ID]
+        assert subscribers.get_completion_subscribers(_WAIT_RUN_ID) == [_WAIT_ROOT_SESSION_ID]
+        notify_release.set()
+        await notify_task
+        assert subscribers.get_completion_subscribers(_WAIT_RUN_ID) == []
+
+    @pytest.mark.asyncio
+    async def test_completed_notify_retained_retry_row_is_untouched(
+        self, temp_db: HubDatabase
+    ) -> None:
+        active = self._run()
+        terminal = self._run("success", result="done")
+        runner = MagicMock()
+        runner.get_run.side_effect = [active, terminal]
+        overlay_started = asyncio.Event()
+        overlay_release = asyncio.Event()
+
+        async def overlay(run: MagicMock, _reader: Any) -> MagicMock:
+            if run is active:
+                overlay_started.set()
+                await overlay_release.wait()
+            return run
+
+        completion_registry = CompletionEventRegistry(wake_callback=AsyncMock())
+        completion_registry.register(_WAIT_RUN_ID, subscribers=[_WAIT_ROOT_SESSION_ID])
+        subscribers = CompletionSubscriberManager(temp_db)
+        subscribers.add_completion_subscribers(
+            _WAIT_RUN_ID,
+            [_WAIT_ROOT_SESSION_ID, _WAIT_CALLER_SESSION_ID],
+        )
+        registry = self._registry(runner, temp_db, completion_registry)
+
+        async def notify_and_retain_failed_delivery() -> None:
+            await completion_registry.notify(_WAIT_RUN_ID, {"status": "success"})
+            remove_agent_completion_subscribers(
+                db=temp_db,
+                run_id=_WAIT_RUN_ID,
+                session_ids=[_WAIT_ROOT_SESSION_ID],
+            )
+            completion_registry.cleanup(_WAIT_RUN_ID)
+
+        with (
+            session_context_for_test(_WAIT_CALLER_SESSION_ID),
+            patch(
+                "gobby.mcp_proxy.tools.agents_query_tools.overlay_live_activity",
+                side_effect=overlay,
+            ),
+        ):
+            wait_task = asyncio.create_task(registry._tools["wait_for_agent"].func(_WAIT_RUN_ID))
+            await overlay_started.wait()
+            await notify_and_retain_failed_delivery()
+            overlay_release.set()
+            result = await wait_task
+
+        assert result["completed"] is True
+        assert result["notification_registered"] is False
+        assert subscribers.get_completion_subscribers(_WAIT_RUN_ID) == [_WAIT_CALLER_SESSION_ID]
 
 
 class TestListAgentRuns:

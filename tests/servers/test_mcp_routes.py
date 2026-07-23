@@ -1245,6 +1245,12 @@ class TestCallMCPTool:
                 FakeInternalRegistry(
                     name="gobby-agents",
                     tools=[{"name": "wait_for_agent", "description": "Wait for an agent"}],
+                    result={
+                        "success": True,
+                        "completed": False,
+                        "notification_registered": True,
+                        "notification_session_id": "session-123",
+                    },
                 ),
             ]
         )
@@ -1256,14 +1262,18 @@ class TestCallMCPTool:
                 json={
                     "server_name": "gobby-agents",
                     "tool_name": "wait_for_agent",
-                    "arguments": {"run_id": "run-123", "timeout_seconds": 300},
+                    "arguments": {"run_id": "run-123"},
                 },
             )
 
         assert response.status_code == 200
         data = response.json()
         assert data["success"] is True
-        assert data["result"] == {"tool": "wait_for_agent"}
+        assert data["result"] == {
+            "completed": False,
+            "notification_registered": True,
+            "notification_session_id": "session-123",
+        }
 
     def test_call_tool_ignores_explicit_stale_wait_wrapper_fingerprint(
         self, session_storage: SessionManager
@@ -1293,7 +1303,7 @@ class TestCallMCPTool:
                 json={
                     "server_name": "gobby-agents",
                     "tool_name": "wait_for_agent",
-                    "arguments": {"run_id": "run-123", "timeout_seconds": 300},
+                    "arguments": {"run_id": "run-123"},
                 },
             )
 
@@ -2443,7 +2453,7 @@ class TestMCPProxy:
         with TestClient(server.app) as client:
             response = client.post(
                 "/api/mcp/gobby-agents/tools/wait_for_agent",
-                json={"run_id": "run-123", "timeout_seconds": 300},
+                json={"run_id": "run-123"},
             )
 
         assert response.status_code == 200
@@ -2474,7 +2484,7 @@ class TestMCPProxy:
             response = client.post(
                 "/api/mcp/gobby-agents/tools/wait_for_agent",
                 headers={MCP_WRAPPER_FINGERPRINT_HEADER: "stale-wrapper"},
-                json={"run_id": "run-123", "timeout_seconds": 300},
+                json={"run_id": "run-123"},
             )
 
         assert response.status_code == 200
@@ -2506,7 +2516,7 @@ class TestMCPProxy:
             response = client.post(
                 "/api/mcp/gobby-agents/tools/wait_for_agent",
                 headers={MCP_WRAPPER_FINGERPRINT_HEADER: mcp_wrapper_current_source_fingerprint()},
-                json={"run_id": "run-123", "timeout_seconds": 300},
+                json={"run_id": "run-123"},
             )
 
         assert response.status_code == 200

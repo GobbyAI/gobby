@@ -9,6 +9,11 @@ from collections.abc import Mapping
 from typing import Any, cast
 from uuid import UUID
 
+from gobby.agents.completion_subscribers import (
+    SubscriptionPersistenceError,
+    remove_agent_completion_subscribers,
+    subscribe_agent_completion,
+)
 from gobby.agents.detection.safe_regex import (
     InvalidPatternError,
     RegexOutcome,
@@ -113,47 +118,107 @@ def register_agent_query_tools(
     @registry.tool(
         name="wait_for_agent",
         description=(
-            "Block until an agent run reaches a terminal status or the timeout expires. "
-            "Use this instead of shell sleeps, tmux polling, or provider Monitor waits."
+            "Subscribe to an agent run once, then end the turn. The daemon wakes this session "
+            "with the result when the run completes; no polling or timeout is needed."
         ),
     )
-    async def wait_for_agent(
-        run_id: str,
-        timeout_seconds: float = MCP_WRAPPER_WAIT_TOOL_TIMEOUT_SECONDS,
-        poll_interval_seconds: float = 2.0,
-    ) -> dict[str, Any]:
+    async def wait_for_agent(run_id: str) -> dict[str, Any]:
         agents = facade()
-        requested_timeout = clamp_wait_tool_timeout(
-            "wait_for_agent",
-            timeout_seconds,
-            default=MCP_WRAPPER_WAIT_TOOL_TIMEOUT_SECONDS,
-        )
-        timeout = requested_timeout
-        interval = max(0.1, min(float(poll_interval_seconds), 30.0))
-        deadline = agents.time.monotonic() + timeout
-
-        while True:
-            run = ctx.runner.get_run(run_id)
-            if not run:
-                return {"success": False, "error": f"Agent run {run_id} not found"}
-
+        run = ctx.runner.get_run(run_id)
+        if run is None:
+            return {"success": False, "error": f"Agent run {run_id} not found"}
+        if run.status in agents._TERMINAL_AGENT_STATUSES:
             payload = _agent_result_payload(
-                await overlay_live_activity(run, ctx.transcript_reader), include_prompt=False
+                await overlay_live_activity(run, ctx.transcript_reader),
+                include_prompt=False,
             )
-            if run.status in agents._TERMINAL_AGENT_STATUSES:
-                return {"success": True, "completed": True, **payload}
+            return {
+                "success": True,
+                "completed": True,
+                "notification_registered": False,
+                **payload,
+            }
 
-            remaining = deadline - agents.time.monotonic()
-            if remaining <= 0:
+        session_id = ctx.get_current_session_id()
+        if session_id is None:
+            return {
+                "success": False,
+                "error": "wait_for_agent requires an active MCP session",
+                "error_code": "missing_session_context",
+            }
+        if ctx.completion_registry is None or ctx.session_manager is None or ctx.db is None:
+            return {
+                "success": False,
+                "error": "Agent completion notification services are unavailable",
+                "error_code": "completion_services_unavailable",
+            }
+
+        payload = _agent_result_payload(
+            await overlay_live_activity(run, ctx.transcript_reader),
+            include_prompt=False,
+        )
+
+        # INVARIANT: this handler runs on the completion registry's owning event loop.
+        # The region from this status re-read through conditional cleanup contains no
+        # await, so notify cannot start, resume, or snapshot subscribers inside it.
+        # Every terminal producer commits its DB transition before scheduling or
+        # resuming notify/delivery on this loop; the §1.4 terminal-producer contract
+        # owns that ordering. The first and post-registration reads therefore cover
+        # transitions before and during this region without enumerating producers.
+        run = ctx.runner.get_run(run_id)
+        if run is None:
+            return {"success": False, "error": f"Agent run {run_id} not found"}
+        terminal = run if run.status in agents._TERMINAL_AGENT_STATUSES else None
+        if terminal is None:
+            try:
+                subscription = subscribe_agent_completion(
+                    completion_registry=ctx.completion_registry,
+                    run_id=run_id,
+                    subscriber_session_id=session_id,
+                    session_manager=ctx.session_manager,
+                    db=ctx.db,
+                    strict=True,
+                )
+            except SubscriptionPersistenceError:
                 return {
-                    "success": True,
-                    "completed": False,
-                    "timeout_seconds": timeout,
-                    "requested_timeout_seconds": requested_timeout,
-                    **payload,
+                    "success": False,
+                    "error": "Failed to persist agent completion subscription",
+                    "error_code": "subscription_persistence_failed",
                 }
 
-            await agents.asyncio.sleep(min(interval, remaining))
+            latest_run = ctx.runner.get_run(run_id)
+            terminal = (
+                latest_run
+                if latest_run is not None and latest_run.status in agents._TERMINAL_AGENT_STATUSES
+                else None
+            )
+            if terminal is not None and subscription.created_fresh_entry:
+                remove_agent_completion_subscribers(
+                    db=ctx.db,
+                    run_id=run_id,
+                    session_ids=subscription.inserted_session_ids,
+                )
+                ctx.completion_registry.cleanup(run_id)
+        # ---- end of no-await critical region ----
+
+        if terminal is not None:
+            payload = _agent_result_payload(
+                await overlay_live_activity(terminal, ctx.transcript_reader),
+                include_prompt=False,
+            )
+            return {
+                "success": True,
+                "completed": True,
+                "notification_registered": False,
+                **payload,
+            }
+        return {
+            "success": True,
+            "completed": False,
+            "notification_registered": True,
+            "notification_session_id": session_id,
+            **payload,
+        }
 
     @registry.tool(
         name="wait_for_output",

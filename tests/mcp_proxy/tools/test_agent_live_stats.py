@@ -5,6 +5,7 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
+from gobby.events import CompletionEventRegistry
 from gobby.mcp_proxy.tools import agent_live_activity
 from gobby.mcp_proxy.tools.agents import create_agents_registry
 from gobby.storage.agents import LocalAgentRunManager
@@ -184,12 +185,12 @@ async def test_list_running_agents_overlays_transcript_activity_when_session_sta
 
 
 @pytest.mark.asyncio
-async def test_wait_for_agent_timeout_overlays_transcript_activity(
+async def test_wait_for_agent_subscription_overlays_transcript_activity(
     temp_db: HubDatabase,
     session_manager: SessionManager,
     sample_project: dict,
 ) -> None:
-    """wait_for_agent timeout payload includes live transcript activity."""
+    """wait_for_agent subscription payload includes live transcript activity."""
     parent_id = _register_session(session_manager, sample_project, "mcp-parent-wait")
     child_id = _register_session(
         session_manager,
@@ -213,13 +214,21 @@ async def test_wait_for_agent_timeout_overlays_transcript_activity(
     transcript_reader = _FakeTranscriptReader(
         {"message_count": 41, "turn_count": 5, "tool_call_count": 17}
     )
-    registry = create_agents_registry(runner, transcript_reader=transcript_reader)
+    registry = create_agents_registry(
+        runner,
+        session_manager=session_manager,
+        db=temp_db,
+        completion_registry=CompletionEventRegistry(),
+        transcript_reader=transcript_reader,
+    )
     wait_for_agent = registry._tools["wait_for_agent"].func
 
-    result = await wait_for_agent(run.id, timeout_seconds=0, poll_interval_seconds=0.1)
+    with session_context_for_test(parent_id):
+        result = await wait_for_agent(run.id)
 
     assert result["success"] is True
     assert result["completed"] is False
+    assert result["notification_registered"] is True
     assert result["tool_calls_count"] == 17
     assert result["turns_used"] == 5
     assert transcript_reader.session_ids == [child_id]
@@ -259,10 +268,11 @@ async def test_wait_for_agent_terminal_error_overlays_transcript_activity(
     registry = create_agents_registry(runner, transcript_reader=transcript_reader)
     wait_for_agent = registry._tools["wait_for_agent"].func
 
-    result = await wait_for_agent(run.id, timeout_seconds=0, poll_interval_seconds=0.1)
+    result = await wait_for_agent(run.id)
 
     assert result["success"] is True
     assert result["completed"] is True
+    assert result["notification_registered"] is False
     assert result["status"] == "error"
     assert result["tool_calls_count"] == 17
     assert result["turns_used"] == 5
