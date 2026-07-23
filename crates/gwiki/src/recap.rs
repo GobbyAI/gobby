@@ -27,6 +27,7 @@ use crate::explainer::{
 };
 use crate::frontmatter::parse_frontmatter;
 use crate::sources::{SourceKind, SourceManifest, SourceRecord};
+use crate::support::time::{ParsedTimestamp, parse_timestamp};
 use crate::synthesis::{ArticleKind, SynthesisInput, SynthesisSource, relative_path, wiki_link};
 use crate::{ScopeIdentity, WikiError, catalog, paths};
 
@@ -230,8 +231,8 @@ fn select_sessions(
         let (body, started_at) = digest.unwrap_or_default();
         let Some(instant) = started_at
             .as_deref()
-            .and_then(parse_instant)
-            .or_else(|| parse_instant(&record.fetched_at))
+            .and_then(timestamp_for_ordering)
+            .or_else(|| timestamp_for_ordering(&record.fetched_at))
         else {
             notes.push(format!(
                 "session source {} has no parseable timestamp",
@@ -276,24 +277,14 @@ fn read_digest(path: &Path) -> Option<(String, Option<String>)> {
     }
 }
 
-/// Parse `unix-ms:<millis>`, RFC 3339, or a bare `YYYY-MM-DD` prefix into a
-/// UTC instant.
-fn parse_instant(value: &str) -> Option<DateTime<Utc>> {
-    let value = value.trim();
-    if let Some(millis) = value.strip_prefix("unix-ms:") {
-        return millis
-            .parse::<i64>()
-            .ok()
-            .and_then(DateTime::<Utc>::from_timestamp_millis);
+fn timestamp_for_ordering(value: &str) -> Option<DateTime<Utc>> {
+    match parse_timestamp(value) {
+        ParsedTimestamp::Instant(instant) => Some(instant),
+        ParsedTimestamp::DateOnly(date) | ParsedTimestamp::DatePrefix { date, .. } => Some(
+            DateTime::from_naive_utc_and_offset(date.and_hms_opt(0, 0, 0)?, Utc),
+        ),
+        ParsedTimestamp::Unparseable(_) => None,
     }
-    if let Ok(parsed) = DateTime::parse_from_rfc3339(value) {
-        return Some(parsed.with_timezone(&Utc));
-    }
-    let date = NaiveDate::parse_from_str(value.get(..10)?, "%Y-%m-%d").ok()?;
-    Some(DateTime::from_naive_utc_and_offset(
-        date.and_hms_opt(0, 0, 0)?,
-        Utc,
-    ))
 }
 
 fn fallback_overview() -> String {
@@ -686,28 +677,28 @@ mod tests {
     }
 
     #[test]
-    fn parse_instant_handles_unix_ms_rfc3339_and_bare_dates() {
+    fn timestamp_for_ordering_handles_unix_ms_rfc3339_and_date_prefixes() {
         assert_eq!(
-            parse_instant(TIMESTAMP)
+            timestamp_for_ordering(TIMESTAMP)
                 .expect("unix-ms parses")
                 .date_naive(),
             target_date()
         );
         assert_eq!(
-            parse_instant("2026-07-04T23:59:59-01:00")
+            timestamp_for_ordering("2026-07-04T23:59:59-01:00")
                 .expect("rfc3339 parses")
                 .date_naive(),
             NaiveDate::from_ymd_opt(2026, 7, 5).expect("valid date"),
             "offsets normalize to UTC"
         );
         assert_eq!(
-            parse_instant("2026-07-04 (approximate)")
+            timestamp_for_ordering("2026-07-04 (approximate)")
                 .expect("bare date prefix parses")
                 .date_naive(),
             target_date()
         );
-        assert!(parse_instant("unix-ms:not-a-number").is_none());
-        assert!(parse_instant("last tuesday").is_none());
-        assert!(parse_instant("").is_none());
+        assert!(timestamp_for_ordering("unix-ms:not-a-number").is_none());
+        assert!(timestamp_for_ordering("last tuesday").is_none());
+        assert!(timestamp_for_ordering("").is_none());
     }
 }

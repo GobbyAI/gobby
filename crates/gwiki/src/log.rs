@@ -2,7 +2,10 @@ use std::fs::{self, OpenOptions};
 use std::io::Write;
 use std::path::{Path, PathBuf};
 
+use chrono::FixedOffset;
+
 use crate::sources::SourceRecord;
+use crate::support::time::{ParsedTimestamp, format_timestamp, local_offset_for, parse_timestamp};
 use crate::{ScopeIdentity, WikiError};
 
 /// Log action names written by production call sites.
@@ -167,9 +170,25 @@ fn append_log_entries_to_file(path: &Path, entries: &[LogEntry]) -> Result<(), W
 #[allow(dead_code, reason = "reserved gwiki CLI/API split")]
 // One entry per line so the log stays greppable (`grep page_created log.md`).
 fn render_entry(entry: &LogEntry) -> String {
+    let timestamp = parse_timestamp(&entry.timestamp);
+    let offset = local_offset_for(&timestamp);
+    render_entry_at_offset(entry, &timestamp, offset)
+}
+
+#[cfg(test)]
+fn render_entry_with_offset(entry: &LogEntry, offset: FixedOffset) -> String {
+    let timestamp = parse_timestamp(&entry.timestamp);
+    render_entry_at_offset(entry, &timestamp, offset)
+}
+
+fn render_entry_at_offset(
+    entry: &LogEntry,
+    timestamp: &ParsedTimestamp,
+    offset: FixedOffset,
+) -> String {
     let mut rendered = format!(
         "- {} [{}] {}: {}",
-        single_line(&entry.timestamp),
+        single_line(&format_timestamp(timestamp, offset)),
         entry.scope,
         single_line(&entry.action),
         single_line(&entry.summary),
@@ -289,7 +308,7 @@ mod tests {
         fs::create_dir_all(&hub_root).expect("hub root");
 
         let entry = LogEntry {
-            timestamp: "2026-05-29T19:00:00Z".to_string(),
+            timestamp: "2026-05-29".to_string(),
             scope: ScopeIdentity::topic("rust"),
             action: "query".to_string(),
             summary: "Answered ownership question".to_string(),
@@ -304,7 +323,7 @@ mod tests {
         let scope_log = fs::read_to_string(scope_root.join("log.md")).expect("scope log");
         assert_eq!(
             scope_log,
-            "# Log\n\n- 2026-05-29T19:00:00Z [topic:rust] query: Answered ownership question \
+            "# Log\n\n- 2026-05-29 [topic:rust] query: Answered ownership question \
              (artifacts: outputs/query-ownership.md)\n"
         );
 
@@ -322,11 +341,13 @@ mod tests {
             artifacts: vec!["knowledge/topics/gcode.md".into()],
         };
 
-        let rendered = render_entry(&entry);
+        let offset = chrono::FixedOffset::west_opt(7 * 60 * 60).expect("valid offset");
+        let rendered = render_entry_with_offset(&entry, offset);
 
         assert_eq!(
             rendered,
-            "- unix-ms:1751500000000 [project:/repo] page_created: Gcode multi line summary \
+            "- 2025-07-02 16:46 -07:00 (unix-ms:1751500000000) [project:/repo] \
+             page_created: Gcode multi line summary \
              (artifacts: knowledge/topics/gcode.md)\n"
         );
         assert_eq!(rendered.matches('\n').count(), 1);

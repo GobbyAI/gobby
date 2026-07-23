@@ -13,6 +13,7 @@ use crate::ingest::{
 use crate::sources::{SourceDraft, SourceKind, SourceManifest};
 use crate::store::WikiIndexStore;
 use crate::support::env::max_inbox_item_bytes_from_env;
+use crate::support::time::{format_timestamp, local_offset_for, parse_timestamp};
 
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct CollectReport {
@@ -528,6 +529,9 @@ fn append_log(
 ) -> Result<(), WikiError> {
     let log_path = vault_root.join("log.md");
     let write_header = fs::metadata(&log_path).map_or(true, |metadata| metadata.len() == 0);
+    let parsed_timestamp = parse_timestamp(fetched_at);
+    let display_timestamp =
+        format_timestamp(&parsed_timestamp, local_offset_for(&parsed_timestamp));
     let mut log = String::new();
     if write_header {
         log.push_str("# Log\n\n");
@@ -536,7 +540,7 @@ fn append_log(
     }
     for action in &report.accepted {
         log.push_str("- ");
-        log.push_str(fetched_at);
+        log.push_str(&display_timestamp);
         log.push_str(" collect accepted `");
         log.push_str(&action.inbox_path);
         log.push('`');
@@ -554,7 +558,7 @@ fn append_log(
     }
     for action in &report.skipped {
         log.push_str("- ");
-        log.push_str(fetched_at);
+        log.push_str(&display_timestamp);
         log.push_str(" collect skipped `");
         log.push_str(&action.inbox_path);
         log.push_str("`: ");
@@ -973,9 +977,9 @@ mod tests {
         collect_inbox(temp.path(), "2026-05-29T18:10:00Z").expect("collect inbox items");
 
         let log = fs::read_to_string(temp.path().join("log.md")).expect("read log");
-        assert!(log.contains("2026-05-29T18:10:00Z collect accepted"));
+        assert!(log.contains("(unix-ms:1780078200000) collect accepted"));
         assert!(log.contains("inbox/note.txt"));
-        assert!(log.contains("2026-05-29T18:10:00Z collect skipped"));
+        assert!(log.contains("(unix-ms:1780078200000) collect skipped"));
         assert!(log.contains("inbox/mystery"));
     }
 

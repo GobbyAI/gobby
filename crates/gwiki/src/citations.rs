@@ -1,7 +1,10 @@
 use std::path::{Path, PathBuf};
 
+use chrono::FixedOffset;
+
 use crate::WikiError;
 use crate::sources::{SourceManifest, SourceRecord};
+use crate::support::time::{ParsedTimestamp, format_timestamp, local_offset_for, parse_timestamp};
 
 pub fn render_source_citations(
     vault_root: &Path,
@@ -54,6 +57,22 @@ pub fn source_record_matches_path(entry: &SourceRecord, vault_root: &Path, path:
 }
 
 fn render_source_citation(entry: &SourceRecord) -> String {
+    let fetched_at = parse_timestamp(&entry.fetched_at);
+    let offset = local_offset_for(&fetched_at);
+    render_source_citation_at_offset(entry, &fetched_at, offset)
+}
+
+#[cfg(test)]
+fn render_source_citation_with_offset(entry: &SourceRecord, offset: FixedOffset) -> String {
+    let fetched_at = parse_timestamp(&entry.fetched_at);
+    render_source_citation_at_offset(entry, &fetched_at, offset)
+}
+
+fn render_source_citation_at_offset(
+    entry: &SourceRecord,
+    fetched_at: &ParsedTimestamp,
+    offset: FixedOffset,
+) -> String {
     let mut parts = Vec::new();
     let primary = entry.citation.clone().unwrap_or_else(|| {
         entry
@@ -67,7 +86,7 @@ fn render_source_citation(entry: &SourceRecord) -> String {
         parts.push(format!("Source: {}", entry.location));
     }
     parts.push(format!("Kind: {}", entry.kind));
-    parts.push(format!("Fetched: {}", entry.fetched_at));
+    parts.push(format!("Fetched: {}", format_timestamp(fetched_at, offset)));
     if let Some(license) = &entry.license {
         parts.push(format!("License: {license}"));
     }
@@ -101,8 +120,59 @@ fn normalize_path_text(value: &str) -> String {
 
 #[cfg(test)]
 mod tests {
+    use chrono::FixedOffset;
+
     use super::*;
     use crate::sources::{SourceDraft, SourceManifest};
+
+    fn source_record(fetched_at: &str) -> SourceRecord {
+        SourceRecord {
+            id: "src".to_string(),
+            location: "raw/research/source.md".to_string(),
+            canonical_location: "raw/research/source.md".to_string(),
+            kind: crate::sources::SourceKind::Url,
+            fetched_at: fetched_at.to_string(),
+            content_hash: "hash".to_string(),
+            title: None,
+            citation: Some("Source citation".to_string()),
+            license: None,
+            ingestion_method: crate::sources::IngestionMethod::Manual,
+            compile_status: crate::sources::CompileStatus::Pending,
+            replay: None,
+        }
+    }
+
+    #[test]
+    fn citation_timestamps_use_injected_offsets_and_preserve_source_precision() {
+        let cases = [
+            (
+                FixedOffset::west_opt(7 * 60 * 60).expect("valid negative offset"),
+                "2026-07-04 18:30 -07:00 (unix-ms:1783215000000)",
+            ),
+            (
+                FixedOffset::east_opt(5 * 60 * 60 + 30 * 60).expect("valid positive offset"),
+                "2026-07-05 07:00 +05:30 (unix-ms:1783215000000)",
+            ),
+        ];
+
+        for (offset, expected_instant) in cases {
+            for instant in ["unix-ms:1783215000000", "2026-07-05T01:30:00Z"] {
+                let rendered = render_source_citation_with_offset(&source_record(instant), offset);
+                assert!(
+                    rendered.contains(&format!("Fetched: {expected_instant}")),
+                    "{rendered}"
+                );
+            }
+            for preserved in ["2026-07-05", "2026-07-05 (approximate)", "last tuesday"] {
+                let rendered =
+                    render_source_citation_with_offset(&source_record(preserved), offset);
+                assert!(
+                    rendered.contains(&format!("Fetched: {preserved}")),
+                    "{rendered}"
+                );
+            }
+        }
+    }
 
     #[test]
     fn renders_source_citations() {
@@ -128,7 +198,7 @@ mod tests {
         assert!(citations[0].contains("Example Docs, Compile Evidence"));
         assert!(citations[0].contains("raw/research/compile.md"));
         assert!(citations[0].contains("CC-BY-4.0"));
-        assert!(citations[0].contains("2026-05-29T15:00:00Z"));
+        assert!(citations[0].contains(" (unix-ms:"));
     }
 
     #[test]
