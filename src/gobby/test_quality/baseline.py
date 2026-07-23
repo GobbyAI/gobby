@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import json
+import os
+import tempfile
 from collections import Counter
 from dataclasses import dataclass
 from pathlib import Path
@@ -72,7 +74,7 @@ def load_baseline(path: str | Path) -> AuditBaseline:
     baseline_path = Path(path)
     data = json.loads(baseline_path.read_text(encoding="utf-8"))
     if data.get("schema_version") != BASELINE_SCHEMA_VERSION:
-        msg = f"unsupported test-quality baseline schema: {data.get('schema_version')!r}"
+        msg = f"unsupported audit baseline schema: {data.get('schema_version')!r}"
         raise ValueError(msg)
 
     issue_counts: Counter[str] = Counter()
@@ -81,7 +83,7 @@ def load_baseline(path: str | Path) -> AuditBaseline:
             continue
         occurrences = item.get("occurrences")
         if type(occurrences) is not int or occurrences < 1:
-            msg = "test-quality baseline issue occurrences must be positive integers"
+            msg = "audit baseline issue occurrences must be positive integers"
             raise ValueError(msg)
         issue_counts[item["fingerprint"]] += occurrences
     return AuditBaseline(path=str(baseline_path), issue_counts=dict(issue_counts))
@@ -100,7 +102,24 @@ def write_baseline(report: AuditReport, path: str | Path) -> None:
         "schema_version": BASELINE_SCHEMA_VERSION,
         "issues": list(entries.values()),
     }
-    baseline_path.write_text(json.dumps(payload, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+    serialized = json.dumps(payload, indent=2, sort_keys=True) + "\n"
+    temp_path: Path | None = None
+    try:
+        with tempfile.NamedTemporaryFile(
+            mode="w",
+            encoding="utf-8",
+            dir=baseline_path.parent,
+            prefix=f".{baseline_path.name}.",
+            suffix=".tmp",
+            delete=False,
+        ) as temp_file:
+            temp_path = Path(temp_file.name)
+            temp_file.write(serialized)
+        os.replace(temp_path, baseline_path)
+        temp_path = None
+    finally:
+        if temp_path is not None:
+            temp_path.unlink(missing_ok=True)
 
 
 def diff_report(

@@ -251,6 +251,15 @@ def builtin_validation_matchers() -> list[ValidationCommandMatcher]:
             ],
             forbidden_args_any=[*_MUTATING_VALIDATION_ARGS, "--install-types"],
         ),
+        ValidationCommandMatcher(
+            id="gobby-test-types-audit",
+            label="Gobby test-types ratchet",
+            languages=["python"],
+            categories=["type_check"],
+            prefixes=["gobby test-types audit"],
+            required_args_all=["--baseline", "--fail-on-new"],
+            non_executing_args_any=_NON_EXECUTING_VALIDATION_ARGS,
+        ),
         _matcher(
             "python-format-check",
             "Python format checks",

@@ -44,6 +44,7 @@ from .stages import stages
 from .sync import sync
 from .tasks import tasks
 from .test_quality import test_quality
+from .test_types import test_types
 from .tokens import tokens
 from .ui import ui
 from .utils import load_full_config_from_db
@@ -95,6 +96,7 @@ cli.add_command(install)
 cli.add_command(uninstall)
 cli.add_command(tasks)
 cli.add_command(test_quality)
+cli.add_command(test_types)
 cli.add_command(tokens)
 cli.add_command(memory)
 cli.add_command(observations)

@@ -65,6 +65,17 @@ def test_builtin_validation_detection_accepts_common_commands(
     assert match.matcher_id == matcher_id
 
 
+def test_test_types_ratchet_requires_baseline_and_fail_on_new() -> None:
+    match = classify_validation_command(
+        "uv run gobby test-types audit tests/ --baseline baseline.json --fail-on-new"
+    )
+
+    assert match is not None
+    assert match.matcher_id == "gobby-test-types-audit"
+    assert match.categories == ("type_check",)
+    assert classify_validation_command("gobby test-types audit tests/") is None
+
+
 @pytest.mark.parametrize(
     "command",
     [
