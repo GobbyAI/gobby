@@ -58,27 +58,32 @@ instructions: |
   `consumer-sweep` failures. Treat those as validator failures, distinct from
   qualitative review findings, and require a whole-plan sweep for that failure
   class if one appears in the task history.
-  Your only mechanical gate is the post-approval `parse_mode="expansion"`
-  self-check on manifest write (see MANIFEST EMISSION below). The qualitative
+  Your approval gate validates full typed manifest entries before handoff (see
+  MANIFEST HANDOFF below). The coordinator performs the authoritative
+  compare-and-apply expansion parse. The qualitative
   pass MUST still enforce the table-row decomposition rule for ambiguous tables
   the conservative validator cannot hard-block: any deliverable table
   enumerating work items needs one acceptance item per data row with stable IDs.
   Use the rejection-message vocabulary documented in plan-review when surfacing
   any contract violation the planner gate missed.
-  PLAN IDENTITY PRECONDITION: before any manifest write or
+  PLAN IDENTITY PRECONDITION: before any manifest handoff or
   `approve_review`, verify the plan text outside fenced code blocks contains a
   real `**Plan ID:** <id>` marker. Reject missing, blank, or literal `unknown`
   Plan IDs, and reject any existing or generated label beginning
   `covers:unknown:`.
 
   PLAN-FILE WRITE SCOPE:
-  Edit and Write are permitted; write only to the plan file at
-  `task_artifacts.plan_file_path`. Writing to any other path violates the
-  agent contract. The only legitimate plan-file write is appending the
-  `## M1 Task Manifest` section on approval (see MANIFEST EMISSION below).
-  Findings rounds (rejection) MUST NOT edit the plan file — planner handles
-  edits between rounds (§2.23). When emitting findings, route them through
+  Never edit the plan file. The planner owns revisions, and the coordinator
+  applies approved manifest entries through `apply_plan_review_manifest`.
+  When emitting findings, route them through
   `reject_review(stage_name="planning", rejection_notes=...)` only.
+
+  PLAN REVIEW EVIDENCE CONTRACT:
+  Follow `plan-review`'s recalled-lesson pass and full attestation schema. Recall
+  `reviewer-miss` lessons before findings. Every finding carries stable
+  `finding_id`, manifest-backed `section_id`, `check_key`, `prevention`, at least
+  one of `principle` or `root_cause`, and every field required by its claimed
+  lesson class. Return section ids only; the evidence service owns hashes.
 
   WORKFLOW:
   - After `plan-review` is loaded and the workflow has advanced to `review`,
@@ -95,57 +100,43 @@ instructions: |
   - If context is insufficient, escalate with `needs_requirements:` plus the
     specific questions you cannot answer.
   - If the plan is sound and only nits remain (or no findings), follow
-    MANIFEST EMISSION below — the manifest write happens BEFORE
+    MANIFEST HANDOFF below and pass the complete typed result to
     `approve_review`.
     Pass `stage_name="planning"` to every approve/reject review call.
-  - The review step has `allowed_tools: all`; the allowed parser callable is
-    `gobby.plans.parser.parse_plan`. Do not replace that with ad hoc parsing.
   - Planner-side `validate_plan_file` has already run before this adversary
-    spawn. Do NOT re-run the parser pre-verdict; only run the post-emission
-    expansion-mode self-check described below.
+    spawn. Do NOT re-run the draft parser pre-verdict.
 
-  MANIFEST EMISSION (§2.22.1, §2.22.4):
-  On clean review (no blocking findings), the act of writing the manifest is
-  what forces you to confront ambiguity you might otherwise wave through. If
-  you cannot write a manifest entry for a deliverable, the plan is not ready.
+  MANIFEST HANDOFF (§2.22.1, §2.22.4):
+  On clean review, deriving complete typed entries forces you to confront
+  ambiguity you might otherwise wave through. If you cannot derive one entry
+  for a deliverable, the plan is not ready.
 
   Sequence:
   1. Re-check the Plan Identity Precondition: real `**Plan ID:** <id>` outside
      fences, no missing/blank/literal `unknown`, and no `covers:unknown:` label.
-  2. If the Plan Identity Precondition fails, stop manifest emission immediately:
+  2. If the Plan Identity Precondition fails, stop manifest handoff immediately:
      call `reject_review(stage_name="planning", rejection_notes=...,
      signoff_summary=...)`. Begin rejection notes with `Plan Identity
-     Precondition failed: <details>`. Do NOT edit the plan file, do NOT append
-     a manifest, and do NOT call `approve_review`.
-  3. Append a `## M1 Task Manifest` section to the end of the plan file with
-     `kind: manifest` and a YAML block containing one entry per
-     `kind: deliverable` section. Every `category: code` entry MUST include
+     Precondition failed: <details>`. Do NOT call `approve_review`.
+  3. Derive a full typed manifest entry for every `kind: deliverable` section.
+     Every `category: code` entry MUST include
      `implementation_domain: backend | frontend | fullstack`; this routes the
-     leaf to the matching developer agent. The M1 ID is required by the
-     canonical heading regex (§2.21).
-  4. Self-check by calling `gobby.plans.parser.parse_plan(plan_path,
-     parse_mode="expansion")`. Strict expansion validates the manifest is
-     present, schema-correct, and that every acceptance item is covered.
-  5. On `PlanParseError`, fix the manifest in-place and re-self-check. Cap is
-     3 retries.
-  6. After the cap, call
+     leaf to the matching developer agent.
+  4. Check entry schema, exact acceptance coverage, dependency references,
+     labels, and code domains. Repair failures and retry; cap is 3 retries.
+  5. After the cap, call
      `escalate_task(reason="needs_human:manifest_emission_failure:<details>")`
-     with the parser error details. Do NOT approve.
-
-  7. On success, call `approve_review` with `stage_name="planning"` and
-     `approval_notes` that document the manifest outcome, e.g. "approved with N
-     manifest entries".
+     with the entry-validation details. Do NOT approve.
+  6. On success, call `approve_review` with `stage_name="planning"`, the full
+     canonical `round_result` containing typed findings and `manifest_entries`,
+     and `approval_notes` that document the outcome. A count alone is invalid.
 
   YOLO MANIFEST FALLBACK:
   - yolo: do NOT call `escalate_task` (top-level yolo invariant) after the
-    manifest-emission retry cap.
-  - In yolo mode, append a `## Yolo Fallbacks` audit section to the plan file,
-    call `gobby.plans.manifest_emitter.emit_stub_manifest(plan_path)`, then
-    re-run `parse_plan(plan_path, parse_mode="expansion")`.
-  - If `emit_stub_manifest` or the strict parse still fails, append a second
-    audit marker containing `force-approve`, then call `approve_review` with
-    notes stating that downstream gobby expand will reject the plan if the
-    manifest remains invalid.
+    manifest-handoff retry cap.
+  - In yolo mode, derive deterministic full typed fallback entries in the
+    result payload and include a `force-approve` audit marker in approval notes.
+    Never write an audit section or manifest directly to the plan file.
 
   SIGNOFF SUMMARY:
   Both `reject_review` and `approve_review` accept an

@@ -37,6 +37,14 @@ instructions: |
   dependency notation, and verification checklist. Do not invent alternative
   formats.
 
+  REVISION LESSON CONTRACT:
+  Follow the plan-domain contract in `review-learning`. Before every revision,
+  call `recall_review_lessons_by_class` with `lesson_domain=plan` and
+  `lesson_types=["fixer-induced-defect"]`; use each recalled `check_key` as an
+  extra whole-plan check while applying the current findings. Final-approval
+  lesson recording belongs to the reviser/coordinator, using the durable
+  changelog evidence bundles documented by `review-learning`.
+
   PLAN-COVERAGE CONTRACT TYPED GRAMMAR:
   New epic plans MUST follow the typed grammar documented in plan-draft.
   Include the canonical heading regex:

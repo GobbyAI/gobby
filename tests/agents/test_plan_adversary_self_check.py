@@ -1,19 +1,8 @@
-"""Wiring tests for plan-adversary.yaml self-check + retry + fallback (§2.22.4).
+"""Wiring tests for plan-adversary manifest handoff and fallback (§2.22.4).
 
-After writing the ``## M1 Task Manifest``, the adversary must validate the
-plan via ``parse_plan(parse_mode="expansion")``. On failure the adversary
-retries up to 3 times. After the cap is exhausted, behavior splits:
-
-  - non-yolo: escalate with ``needs_human:manifest_emission_failure:...``
-  - yolo: NEVER escalate; write a ``## Yolo Fallbacks`` audit, fall back to
-    ``emit_stub_manifest(plan_path)`` from §2.21a, re-run the strict parse.
-    If the stub also fails, append a second audit marker and force-approve
-    with ``approve_review``.
-
-Pre-verdict draft-mode parsing happens upstream in ``validate_plan_file``
-before each adversary spawn; the adversary itself does NOT re-parse
-pre-verdict and only runs the parser as the post-emission expansion-mode
-self-check (§2.21.3).
+The adversary validates full typed manifest entries without writing the plan.
+The coordinator performs the authoritative expansion parse through
+``apply_plan_review_manifest``. Entry repair is capped at three retries.
 """
 
 from __future__ import annotations
@@ -39,12 +28,14 @@ def agent() -> AgentDefinitionBody:
 
 
 class TestSelfCheckGate:
-    """Post-emission strict self-check uses parse_plan(parse_mode='expansion')."""
+    """Authoritative render and expansion parsing belong to compare-and-apply."""
 
-    def test_self_check_uses_parse_plan_expansion_mode(self, agent: AgentDefinitionBody) -> None:
+    def test_self_check_delegates_to_manifest_apply(self, agent: AgentDefinitionBody) -> None:
         instructions = agent.instructions or ""
-        assert "parse_plan" in instructions
-        assert 'parse_mode="expansion"' in instructions or "parse_mode='expansion'" in instructions
+        assert "apply_plan_review_manifest" in instructions
+        assert "authoritative" in instructions
+        assert "compare-and-apply expansion parse" in instructions
+        assert "Never edit the plan file" in instructions
 
     def test_pre_verdict_parsing_delegated_upstream(self, agent: AgentDefinitionBody) -> None:
         """Adversary does NOT re-parse pre-verdict — that's the planner-side
@@ -84,17 +75,18 @@ class TestYoloFallback:
         expected = "yolo: do not call `escalate_task` (top-level yolo invariant"
         assert expected in lowered
 
-    def test_yolo_falls_back_to_stub_emitter(self, agent: AgentDefinitionBody) -> None:
+    def test_yolo_uses_typed_fallback_entries(self, agent: AgentDefinitionBody) -> None:
         instructions = agent.instructions or ""
-        assert "emit_stub_manifest" in instructions
+        assert "deterministic full typed fallback entries" in instructions
+        assert "emit_stub_manifest" not in instructions
 
-    def test_yolo_writes_yolo_fallbacks_audit(self, agent: AgentDefinitionBody) -> None:
+    def test_yolo_keeps_audit_in_approval_notes(self, agent: AgentDefinitionBody) -> None:
         instructions = agent.instructions or ""
-        assert "Yolo Fallbacks" in instructions
+        assert "audit marker in approval notes" in instructions
+        assert "Never write an audit section" in instructions
 
-    def test_force_approve_when_stub_also_fails(self, agent: AgentDefinitionBody) -> None:
-        """If even the stub-emitter fallback fails, append a second audit
-        marker and approve the plan with approve_review."""
+    def test_force_approve_is_payload_only(self, agent: AgentDefinitionBody) -> None:
         instructions = agent.instructions or ""
         assert "force-approve" in instructions or "force_approve" in instructions
-        assert "downstream gobby expand will reject" in instructions
+        assert "result payload" in instructions
+        assert "Never write" in instructions

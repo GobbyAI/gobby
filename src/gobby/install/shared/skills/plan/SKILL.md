@@ -76,18 +76,24 @@ which runs after approval and before the unchanged adversary gate.
    5. Stop on `converged: true`, all suggestions declined, or the
       `max_enhancement_rounds` cap. The enhancer never gates; control then
       proceeds to the unchanged adversary gate in step 5.
-5. After the enhancement phase, spawn `plan-adversary-taskless` without
-   `task_id` and with `isolation="none"`. Pass `artifact_path`, `round_number`,
-   `max_review_rounds`, and the parent session id in the prompt or variables.
-   Immediately after every adversary launch, call
-   `gobby-sessions:compact_self` for the parent session before waiting or doing
-   any other work. This is mandatory on every adversarial review round.
+5. After the enhancement phase, call `prepare_plan_review_round` immediately
+before you spawn `plan-adversary-taskless` without `task_id` and with
+`isolation="none"`. Pass the prepared snapshot/evidence, `artifact_path`,
+`round_number`, `max_review_rounds`, and the parent session id in the prompt or
+variables. Immediately bind the interactive run id returned by `spawn_agent`
+with `bind_evidence_run`. If spawn or bind fails, call
+`expire_plan_review_evidence`; the next attempt prepares fresh evidence.
+Immediately after a successful bind, call `gobby-sessions:compact_self` for the
+parent session before waiting or doing any other work. This is mandatory on
+every adversarial review round.
 6. Wait as described in **Waiting on Spawned Runs** for the adversary run. Read
-   the run result and append a `## V1 Plan Changelog` entry with
-   `kind: verification`. Then, before any step 7 revision, present a ranked
-   summary of every finding, including its `id`, severity, location, impact,
-   effort, risk, and a one-line gist. Present each finding's full text verbatim,
-   including its description, finding detail, and metadata. When a finding
+the run result as the canonical round result; append a `## V1 Plan Changelog`
+entry, persist the exact fence returned by `render_v1_round_checkpoint`, then
+call `finalize_plan_review_evidence` with that same result. Before any step 7
+revision, present a ranked
+summary of every finding, including its `id`, severity, location, impact,
+effort, risk, and a one-line gist. Present each finding's full text verbatim,
+including its description, finding detail, and metadata. When a finding
    modifies existing text, quote the current plan sections it touches. Collect
    an individual accept/decline vote for each finding, and allow per-item
    exploration before recording its vote. Put the complete presentation and
@@ -96,11 +102,11 @@ which runs after approval and before the unchanged adversary gate.
    render. If the user declines an item with deferral, record a typed
    `kind: deferred` plan section that points to its follow-up task (section 2.3
    is the worked example).
-7. If the verdict is `needs_review`, revise the plan with the user, rerun
-   validation, and dispatch the next taskless adversary round until the review
-   cap is reached.
-8. If the verdict is `approved`, ensure `## M1 Task Manifest` exists and passes
-   expansion-mode validation:
+7. If the verdict is `needs_review`, recall `fixer-induced-defect` plan lessons
+before revising, revise the plan with the user, rerun validation, and dispatch
+the next taskless adversary round until the review cap is reached.
+8. If the verdict is `approved`, run the approval sequence below. Ensure the
+resulting `## M1 Task Manifest` passes expansion-mode validation:
 
    ```bash
    uv run gobby plans validate <plan-file> --mode expansion
@@ -108,9 +114,78 @@ which runs after approval and before the unchanged adversary gate.
 
 9. Hand the approved artifact to build:
 
-   ```bash
-   uv run gobby build <plan-file> --planning-seed-state approved --completed-plan-review-rounds <N>
-   ```
+```bash
+uv run gobby build <plan-file> --planning-seed-state approved --completed-plan-review-rounds <N>
+```
+
+## Interactive Review Evidence Protocol
+
+Use the adversary's canonical result as the sole round payload. Rejection
+results carry typed findings; approval results carry `findings` plus the full
+typed `manifest_entries` array. The adversary never edits the plan.
+
+Approval commit order is fixed, idempotent, and resumable:
+
+1. Call `apply_plan_review_manifest` with the complete approval result. This is
+the only manifest write. It calls `verify_plan_unchanged` at compare-and-apply,
+then persists the complete result as the durable pre-finalization approval
+intent in the same durable write as the manifest checkpoint. Reviewed-section
+drift before this intent refuses the round with the row unfinalized, the plan
+untouched by the apply, and no lesson mint.
+2. Call `render_v1_round_checkpoint` from the durable intent and persist the
+returned canonical fence byte-for-byte in `## V1 Plan Changelog`.
+3. Call `finalize_plan_review_evidence` with the durable result. Finalization is
+gated on the exact V1 fence and atomically stamps
+`lesson_mint_status=pending` with `finalized_at`.
+4. Mint proven plan lessons from prior finalized evidence, then call
+`checkpoint_plan_review_lesson_mint`: `minted` with lesson ids, `failed` with
+the recorder error, or `none` when no class is provable. Approval completes
+only after the status leaves `pending`.
+
+The freshness gate exists only in step 1. Plan drift after a completed step 1
+cannot block steps 2–4 because they read the immutable evidence row, durable
+intent, and persisted manifest entries. An identical step-1 retry returns its
+recorded result without another write. Finalize, mint, and mint checkpointing
+are also idempotent.
+
+A crash before step 1 records its intent leaves an incomplete approval: no
+proof, no mint, and no plan change. This incomplete-round rule also applies to
+rejection rounds whose canonical V1 checkpoint was never persisted. Every
+approval crash after the intent write is recovered:
+
+- `manifest_state=pending` with unchanged reviewed sections converges to
+  `applied`; recovery then persists the exact V1 fence, finalizes, and exposes
+  `pending_lesson_mint`.
+- `manifest_state=pending` with reviewed-section drift atomically becomes
+  `manifest_state=revoked`, clears `round_result`, leaves plan bytes untouched,
+  and expires after its bound run is terminal. Re-review is required.
+- `manifest_state=applied` resumes from step 2 even when later plan drift exists.
+- A durable V1 fence on an unfinalized row is reconciled losslessly at the next
+  preparation.
+- A finalized approval at `lesson_mint_status=pending` blocks preparation with
+  `pending_lesson_mint` until the surfaced payload is minted exactly once and
+  checkpointed.
+
+The next `prepare_plan_review_round` runs this recovery drain before creating a
+round. It converges pending applies, persists missing V1 bytes, finalizes from
+durable intent, and refuses new work while mint completion is pending.
+
+At final approval, classify lessons from changelog evidence:
+
+- `reviewer-miss` requires every id in `participating_section_ids` to be
+hash-unchanged since an earlier finalized reviewed round.
+- `fixer-induced-defect` requires changed hashes for every id in
+`causal_section_ids`, plus `causal_finding_id` and `introduced_in_round`.
+- Dual classification requires both complete bundles. An unproven class mints
+nothing for that class.
+
+Record with `source_kind=plan_review`, the class-scoped identity from
+`review-learning`, `guardrail_target=checklist`, and
+`finding.rule_id=plan-review:<adversary-category>`. Never use a plan-file path
+as the promotion anchor. Mint at most five lessons per plan with class-aware
+selection: reserve at least one slot for each present class; rank reviewer
+misses by rounds missed and fixer-induced defects by causal occurrences, then
+severity, `check_key` ascending, and `finding_id` ascending.
 
 ## Waiting on Spawned Runs
 
@@ -151,9 +226,14 @@ Every adversarial round appends a `kind: verification` entry to
 - reviewer_session: <session-id>
 - verdict: approved | needs_review | needs_requirements
 - findings:
-  - <finding id/severity/summary>
+- <finding id/severity/summary>
 - resolution_notes: <what changed or why no change was needed>
+
+<exact fenced JSON bytes returned by render_v1_round_checkpoint>
 ```
+
+The prose fields are a projection of the checkpoint payload. Paste the rendered
+fence verbatim; never hand-build, reformat, or reorder its JSON.
 
 Every enhancement round (step 4.5) appends a `kind: enhancement` entry to the
 same changelog:
@@ -176,9 +256,9 @@ Keep prior rounds. Do not overwrite history.
 
 ## Manifest Contract
 
-`## M1 Task Manifest` is the build bridge. It may be written by the approving
-adversary or by the interactive plan coordinator after the user accepts the
-final revision.
+`## M1 Task Manifest` is the build bridge. The approving adversary returns its
+full typed entries in the verdict payload. The coordinator writes them only
+through `apply_plan_review_manifest` after the user accepts the final revision.
 
 Each manifest entry maps one deliverable section to one expansion leaf. For
 `category: code`, include `implementation_domain`:

@@ -34,6 +34,13 @@ instructions: |
   Lifecycle events may include `turn_start`, `turn_end`, `before_agent`,
   `after_agent`, and `stop`; do not use them to mutate tasks.
 
+  PLAN REVIEW EVIDENCE CONTRACT:
+  Follow `plan-review`'s recalled-lesson pass and full attestation schema. Recall
+  `reviewer-miss` lessons before findings. Every finding carries stable
+  `finding_id`, manifest-backed `section_id`, `check_key`, `prevention`, at least
+  one of `principle` or `root_cause`, and every field required by its claimed
+  lesson class. Return section ids only; the evidence service owns hashes.
+
   If blocking findings remain, return a structured result to the parent session:
 
   ```yaml
@@ -41,26 +48,31 @@ instructions: |
   round: <N>
   reviewer_session: <session-id>
   findings:
-    - id: <stable-id>
+    - finding_id: <stable-id>
       severity: blocking
-      section: <section-id>
-      summary: <issue>
-      required_resolution: <fix>
+      category: <adversary-category>
+      section_id: <manifest-section-id>
+      check_key: <stable-check-key>
+      principle: <general rule>
+      root_cause: <cause, optional when principle is present>
+      prevention: <checklist action>
+      description: <issue>
+      suggested_fix: <fix>
   ```
 
   If requirements are insufficient, use `verdict: needs_requirements` and list
   the exact decisions needed.
 
-  PLAN IDENTITY PRECONDITION: before any manifest write or approval, verify the
+  PLAN IDENTITY PRECONDITION: before any manifest handoff or approval, verify the
   plan text outside fenced code blocks contains a real `**Plan ID:** <id>`
   marker. Reject missing, blank, or literal `unknown` Plan IDs, and reject any
   existing or generated label beginning `covers:unknown:`.
 
-  If the plan is ready, ensure `## M1 Task Manifest` exists. Write or repair
-  the manifest in the plan artifact, then run expansion-mode validation with
-  `gobby.plans.parser.parse_plan(plan_path, parse_mode="expansion")` or the
-  equivalent CLI validator. Code manifest entries must include
-  `implementation_domain: backend | frontend | fullstack`.
+  If the plan is ready, derive and validate the full typed `## M1 Task Manifest`
+  entries. Code entries include
+  `implementation_domain: backend | frontend | fullstack`. Return the entries to
+  the parent; never write the plan file. The parent applies them through
+  `apply_plan_review_manifest`.
 
   On approval, return:
 
@@ -68,10 +80,12 @@ instructions: |
   verdict: approved
   round: <N>
   reviewer_session: <session-id>
-  manifest_entries: <count>
+  manifest_entries:
+    - <full typed entry>
   findings: []
   ```
 
+  The approval payload contains full typed entries; a count alone is invalid.
   The parent appends `## V1 Plan Changelog`; do not overwrite prior changelog
   history. Terminate by calling end_agent_run after the structured result is in
   your final response or inter-agent message.
@@ -153,9 +167,11 @@ steps:
       - "gobby-agents:spawn_agent"
       - "gobby-agents:kill_agent"
     allowed_mcp_tools:
-      - "gobby-agents:end_agent_run"
-      - "gobby-agents:send_message"
-      - "gobby-skills:get_skill"
+    - "gobby-agents:end_agent_run"
+    - "gobby-agents:send_message"
+    - "gobby-review-learning:recall_review_lessons_by_class"
+    - "gobby-review-learning:list_check_keys"
+    - "gobby-skills:get_skill"
     on_mcp_success:
       - server: gobby-agents
         tool: end_agent_run

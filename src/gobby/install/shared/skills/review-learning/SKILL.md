@@ -60,6 +60,57 @@ Broad lessons are still useful as memories. Weak one-off findings stay
 memory-only unless they include enough implementation signal to build a
 guardrail task.
 
+## Plan Review Domain
+
+`source_kind=plan_review` uses the reserved lesson classes `reviewer-miss` and
+`fixer-induced-defect`. Treat this vocabulary as closed:
+
+- `reviewer-miss`: a defect remained present across one or more completed
+  adversary rounds.
+- `fixer-induced-defect`: a revision made for an earlier finding introduced a
+  distinct defect found in a later round.
+
+Plan lessons use the class-scoped identity
+`plan-review:<lesson_type>:<adversary-category>:<check_key>`. Supply the same
+explicit `check_key` in the finding. Before minting, call `list_check_keys` with
+`lesson_domain=plan` and the target class; reuse an existing key for the same
+check. Mint a new key only when no existing key represents the check.
+
+Canonical starter keys by adversary category are:
+
+- `missing-requirement` → `requirement-coverage`
+- `bad-sequencing` → `dependency-order`
+- `unhandled-edge` → `edge-case-coverage`
+- `weak-testability` → `acceptance-observability`
+- `traceability` → `requirement-traceability`
+- `over-engineering` → `proportionality`
+- `gobby-format` → `plan-contract`
+
+Every plan-domain finding uses `guardrail_target=checklist` and the synthetic
+promotion anchor `rule_id=plan-review:<adversary-category>`. Omit a plan-file
+`path`; section identity and durable evidence provide the location.
+
+Evidence bundles are class-specific:
+
+- `reviewer-miss` requires a non-empty `participating_section_ids` set naming
+  every section involved in the defect, the earlier and approval evidence ids,
+  and the number of completed rounds missed. Every participating section must
+  be hash-unchanged between the cited finalized round and final approval.
+- `fixer-induced-defect` requires a non-empty `causal_section_ids` set naming
+  every section changed by the causal fix, `causal_finding_id`,
+  `introduced_in_round`, and the causal and approval evidence ids. Every causal
+  section must have changed between those finalized rounds.
+- A dual-class lesson requires both complete bundles. An unproven class records
+  nothing for that class; one proven class remains independently recordable.
+
+Section sets contain ids only. Evidence services resolve and compare hashes
+from immutable manifests. Reject unknown ids, empty class-required sets, and
+partial cross-section proof.
+
+The reviser records the lesson after final approval because the reviser owns the
+changelog and causal history. The adversary emits typed attestations and never
+calls `record_review_lesson` for its own plan round.
+
 ## Decisions
 
 Use:

@@ -41,10 +41,10 @@ adversary is invoked, the typed grammar has already passed the draft-mode
 contract gate — re-running the parser pre-verdict is structural duplication
 that wastes a spawn round on syntax the planner already cleared.
 
-The adversary's only mechanical gate is the post-approval
-`parse_mode="expansion"` self-check on manifest write (see Manifest Emission
-below). It validates a different invariant: the appended `## M1 Task Manifest`
-is present, schema-correct, and covers every acceptance item exactly once.
+The adversary's approval gate validates the derived typed manifest entries
+against the expansion contract before returning them (see Manifest Handoff
+below). The coordinator's `apply_plan_review_manifest` call performs the
+authoritative render plus expansion parse before its atomic write.
 
 The rejection-message vocabulary and post-parse semantic checks below remain
 authoritative for qualitative findings. When surfacing a contract violation
@@ -145,6 +145,15 @@ The drafter already knows what they wrote. You add value by surfacing what they
 - Edge cases or failure paths the plan never handles.
 - Steps that assume a precondition the plan never establishes.
 - Tests or observability the plan silently omits.
+
+### Recalled-lesson pass
+
+At review start, call
+`gobby-review-learning.recall_review_lessons_by_class` with
+`lesson_domain=plan` and `lesson_types=["reviewer-miss"]`. Treat every recalled
+lesson as a mandatory extra review pass after the standard checks: apply its
+`check_key` to the current plan and emit any resulting finding in the typed
+schema below. Complete this pass even when ordinary review finds no defects.
 
 ---
 
@@ -282,60 +291,50 @@ never flagged. When justification is plausible, do not flag.
 
 ---
 
-## Manifest Emission on Approval
+## Manifest Handoff on Approval
 
 `## M1 Task Manifest` is the typed bridge between deliverable sections and the
-leaves the deterministic compiler emits. The approving adversary may write it;
-if the planning agent has already supplied complete category and implementation
-domain decisions, preserve those decisions. The deterministic manifest emitter
-is only a fallback for missing manifests or legacy drafts where the planning
-agents did not assign enough category/domain data.
+leaves the deterministic compiler emits. The approving adversary derives the
+full typed entries and returns them in `round_result.manifest_entries`. Preserve
+complete category and implementation-domain decisions already present in the
+narrative.
 
 See `docs/contracts/plan-coverage.md` (§ "Task Manifest") for the entry schema
-and parser-enforced invariants. This skill covers the adversary's emission
-**responsibility**; the schema lives in the contract.
+and parser-enforced invariants. This skill covers the adversary's handoff
+responsibility; the coordinator owns compare-and-apply.
 
 ### Plan Identity Precondition
 
-Before any manifest write or approval, verify the plan text outside fenced code
+Before any manifest handoff or approval, verify the plan text outside fenced code
 blocks contains a real `**Plan ID:** <id>` marker. Missing, blank, or literal
 `unknown` Plan IDs are blocking findings because they generate
 `covers:unknown:*` labels. Reject any existing or generated manifest that
-contains a label beginning `covers:unknown:` before writing the manifest or
-approving the plan.
+contains a label beginning `covers:unknown:` before approving the plan.
 
 ### Sequence on Clean Review
 
 When no blocking findings remain (zero findings or only nits):
 
 1. Re-check the Plan Identity Precondition above.
-2. Append a `## M1 Task Manifest` section to the end of the plan file with
-   `kind: manifest` and a YAML block carrying one entry per `kind: deliverable`
-   section. The `M1` heading ID is required by the canonical heading regex.
-   Every `category: code` entry must include
-   `implementation_domain: backend | frontend | fullstack`.
-3. Self-check via `parse_plan(plan_path, parse_mode="expansion")`. Strict
-   expansion validates that the manifest is present, schema-correct, and that
-   every acceptance item is covered by exactly one entry.
-4. On `PlanParseError`, fix the manifest in-place and re-self-check. Cap is
-   **3 retries**.
-5. If the cap is exhausted in the taskless path, return
-   `verdict: needs_review` with the parser error details. Do not approve. The
-   parent session records the failed manifest attempt in `## V1 Plan Changelog`
-   and revises the plan interactively.
-6. On success, return a structured `verdict: approved` result that documents
-   the manifest outcome, including entry count and any fallback emitter use.
+2. Derive one full typed manifest entry per `kind: deliverable` section. Every
+entry carries `title`, `source_section`, `covers`, `category`, `priority`,
+`task_type`, `tdd`, `labels`, `description`, and `validation_criteria`;
+`category: code` also carries
+`implementation_domain: backend | frontend | fullstack`.
+3. Validate the entries against the plan-coverage contract: every acceptance
+item is covered exactly once, dependencies resolve, labels use the real Plan
+ID, and every code domain is explicit. Return `verdict: needs_review` with
+specific entry errors when this check fails.
+4. On success, return `verdict: approved`, the full typed `manifest_entries`
+array, and the complete typed findings/attestations for the round. Entry count
+alone is insufficient.
 
 ### Plan-File Write Scope
 
-`Edit` and `Write` are permitted ONLY for the supplied plan file path. Writing
-to any other path violates the agent contract. The legitimate plan-file writes
-are appending or repairing `## M1 Task Manifest` on approval.
-
-**Rejection rounds MUST NOT edit the plan file.** Plan edits between rounds
-are the parent planner's responsibility. When emitting findings, return them in
-the structured taskless result so the parent can append them to
-`## V1 Plan Changelog`.
+The adversary never writes the plan file. Approval returns full typed entries;
+the coordinator calls `apply_plan_review_manifest`, which revalidates freshness
+and performs the only manifest write. Rejection returns typed findings. The
+coordinator owns `## V1 Plan Changelog`, and the planner owns revisions.
 
 ---
 
@@ -379,50 +378,63 @@ preserves every round in `## V1 Plan Changelog` for audit.
 
 ### Finding schema
 
-Each finding is a fenced block (or bullet entry) with these fields:
+Each finding is one typed attestation with these fields:
 
-- **severity** — `blocking` or `nit`
+- **finding_id** — stable across retries of the same round.
+- **section_id** — primary section anchor; it must exist in the prepared
+  evidence manifest.
+- **check_key** — stable review check identity. Reuse keys returned by
+  `list_check_keys`.
+- **severity** — `blocking` or `nit`.
 - **category** — one of:
-  - `missing-requirement`
-  - `bad-sequencing`
-  - `unhandled-edge`
-  - `weak-testability`
-  - `traceability`
-  - `over-engineering`
-  - `gobby-format`
-- **location** — phase/task reference (e.g., `Phase 2 / § 2.3` or `Phase header`)
+- `missing-requirement`
+- `bad-sequencing`
+- `unhandled-edge`
+- `weak-testability`
+- `traceability`
+- `over-engineering`
+- `gobby-format`
+- **principle** / **root_cause** — at least one must be non-empty. Both may be
+  present; each has one distinct wire field.
+- **prevention** — concrete checklist action that would catch recurrence.
+- **location** — human-readable phase/task reference.
 - **description** — one short paragraph; what is wrong or missing.
 - **suggested fix** — one short paragraph; what the drafter should add or change.
 
+When claiming `reviewer-miss`, add non-empty
+`participating_section_ids` containing every section that participates in the
+missed defect. When claiming `fixer-induced-defect`, add
+`introduced_in_round`, `causal_finding_id`, and non-empty
+`causal_section_ids` containing every section changed by the causal fix.
+`causal_finding_id` names the prior round's causal finding; never overload this
+finding's own `finding_id`.
+
+Section sets carry ids only. Hashes remain server-resolved. Reject an attestation
+when any id is absent from the prepared evidence manifest or when a
+class-required set is empty. A finding may carry both classes only when both
+evidence bundles are complete.
+
 ### Example
 
-```markdown
+````markdown
 ## Adversary Findings — Round 1
 
 ### F1 — blocking — unhandled-edge — Phase 2 / § 2.4
 
-Task 2.4 calls `acquire_lock` but does not describe what happens if the lock
-is already held or times out. Both cases are reachable from normal traffic.
-
-**Suggested fix:** add a "Lock contention" subsection to 2.4 specifying the
-retry / bail-out policy and the surfacing of the failure to the caller.
-
-### F2 — blocking — gobby-format — Phase header
-
-`## Phase 3 — Wire-up` is not a canonical expansion phase heading. The
-canonical form is `## P3: Wire-up`. Update before approval.
-
-### F3 — blocking — over-engineering — Phase 1 / § 1.2
-
-§ 1.2 introduces a `PlanEnhancerStrategyRegistry` with one registered strategy
-and no second strategy named anywhere in the plan. The registry adds two
-indirection hops (lookup + dispatch) with no consumer that needs them — mechanism
-disproportionate to a single-strategy goal.
-
-**Suggested fix:** delete the registry and call the one strategy directly as a
-module-level function; reintroduce a registry only when a second strategy is
-actually planned.
+```yaml
+finding_id: F1
+section_id: "2.4"
+check_key: lock-contention
+severity: blocking
+category: unhandled-edge
+principle: Every reachable lock outcome needs an explicit policy.
+root_cause: The task specified only the successful acquisition path.
+prevention: Check success, contention, timeout, and dependency-failure paths.
+location: Phase 2 / § 2.4
+description: The lock-held and timeout branches are unspecified.
+suggested_fix: Add retry, bail-out, and caller-visible failure behavior.
 ```
+````
 
 ---
 

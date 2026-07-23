@@ -557,6 +557,12 @@ Planner revision rounds run in fresh context. Read the current plan file,
 the cumulative `## V1 Plan Changelog`, and the latest taskless adversary
 findings supplied by the coordinator.
 
+Every adversary round entry embeds the pinned V1 checkpoint fence returned by
+`render_v1_round_checkpoint`. Paste those bytes verbatim. The canonical JSON
+contains exactly `evidence_id`, `round_number`, `plan_hash`, `session_id`, and
+`round_result`; surrounding prose bullets are only a projection of that
+payload. Never reconstruct, normalize, or reformat the fence.
+
 Apply surgical fixes: missing acceptance items, ambiguous wording, stale file
 paths, missing dependency annotations, and contradictions with the codebase.
 Do not redesign the plan in response to adversary findings. When a finding
