@@ -291,7 +291,7 @@ pub fn run(
     let mut sequential_verifier = shared_verifier
         .as_deref()
         .map(|verifier| move |prompt: &str, system: &str| verifier(prompt, system));
-    generation::generate_hierarchical_docs(
+    let diagram_stats = generation::generate_hierarchical_docs(
         &input,
         generation::GenerateDocsOptions {
             ownership: ownership_meta
@@ -338,6 +338,7 @@ pub fn run(
         .iter()
         .filter(|symbol| is_core_file(&symbol.file_path))
         .count();
+    sink.set_diagram_stats(diagram_stats);
     // Surface degraded pages (a failed AI pass fell back to the structural
     // body, #900) instead of letting them hide silently in the meta cache. Read
     // before `finish` consumes the sink.

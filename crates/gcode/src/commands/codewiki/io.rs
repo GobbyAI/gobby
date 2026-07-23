@@ -147,6 +147,7 @@ pub(crate) struct DocSink<'a> {
     /// keep their previous healthy meta. Surfaced via `degraded_docs()` so the
     /// run reports degradation instead of silently caching it.
     degraded_docs: Vec<String>,
+    diagram_stats: Option<DiagramStats>,
     /// Files git reported as possibly-changed since the `--since` ref (Leaf H,
     /// #893). When `Some`, a source-provenance page whose own sources and
     /// neighbors are all outside the diff is left exactly as it is on disk —
@@ -193,6 +194,7 @@ impl<'a> DocSink<'a> {
             previous_snapshot: previous.index_snapshot,
             prune_scope,
             degraded_docs: Vec::new(),
+            diagram_stats: None,
             since: None,
         })
     }
@@ -215,6 +217,11 @@ impl<'a> DocSink<'a> {
     pub(crate) fn with_since(mut self, since: Option<BTreeSet<String>>) -> Self {
         self.since = since;
         self
+    }
+
+    pub(crate) fn set_diagram_stats(&mut self, stats: DiagramStats) {
+        debug_assert_eq!(stats.total(), stats.recorded_slots_len());
+        self.diagram_stats = Some(stats);
     }
 
     /// Write one doc unless it is provably unchanged, then flush the meta log
@@ -440,6 +447,7 @@ impl<'a> DocSink<'a> {
             // one.
             index_snapshot: self.previous_snapshot.clone(),
             ai_mode: self.ai_mode.clone(),
+            diagram_stats: self.diagram_stats.clone(),
         };
         write_codewiki_meta(self.out_dir, &meta)
     }
@@ -529,6 +537,7 @@ impl<'a> DocSink<'a> {
             generated_docs: self.generated_docs.clone(),
             index_snapshot: index_snapshot.or(self.previous_snapshot),
             ai_mode: self.ai_mode,
+            diagram_stats: self.diagram_stats,
         };
         write_codewiki_meta(self.out_dir, &meta)?;
         Ok(self.generated_docs)
@@ -657,4 +666,35 @@ pub(crate) fn neighbor_hashes_for_doc(
         }
     }
     Ok(hashes)
+}
+
+#[cfg(test)]
+mod diagram_stats_tests {
+    use super::*;
+
+    #[test]
+    fn diagram_outcomes_are_persisted_in_codewiki_metadata() {
+        let project = tempfile::tempdir().expect("project tempdir");
+        let out = tempfile::tempdir().expect("output tempdir");
+        let mut progress = CodewikiProgress::capture();
+        let mut stats = DiagramStats::default();
+        stats.record(
+            "code/_architecture.md",
+            DiagramKind::CuratedFlow,
+            &DiagramOutcome::Rejected,
+            &mut progress,
+        );
+
+        let mut sink = DocSink::open(project.path(), out.path(), "off").expect("sink opens");
+        sink.set_diagram_stats(stats);
+        sink.finish(None).expect("sink finishes");
+
+        let meta = read_codewiki_meta(out.path()).expect("metadata reads");
+        let stats = meta.diagram_stats.expect("diagram stats persisted");
+        assert_eq!(stats.emitted, 0);
+        assert_eq!(stats.sparse_evidence, 0);
+        assert_eq!(stats.no_generator, 0);
+        assert_eq!(stats.rejected, 1);
+        assert_eq!(stats.total(), 1);
+    }
 }

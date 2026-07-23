@@ -16,6 +16,7 @@ pub(crate) fn build_architecture_doc(
     system_model: Option<&SystemModel>,
     generate: &mut Option<&mut TextGenerator<'_>>,
     tool_loop: &mut Option<&mut ToolLoopGenerator<'_>>,
+    diagram_stats: &mut DiagramStats,
     progress: &mut CodewikiProgress,
 ) -> anyhow::Result<ArchitectureDoc> {
     // Decomposition starts at meaningful units — the subsystem roots (a
@@ -185,7 +186,8 @@ pub(crate) fn build_architecture_doc(
     // gates the block. A sparse model, an AI-off run, or a composition that
     // fails verification yields `None`, which is normal and never touches
     // `degraded_sources`.
-    let diagrams = system_model.and_then(|model| render_architecture_diagrams(model, generate));
+    let diagrams = system_model
+        .and_then(|model| render_architecture_diagrams(model, generate, diagram_stats, progress));
 
     // Deterministic service matrix from the same model: the at-a-glance
     // required/degraded picture an evaluator needs. Same non-degrading contract

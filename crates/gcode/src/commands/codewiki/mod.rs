@@ -222,7 +222,9 @@ pub(crate) use architecture_diagrams::{render_architecture_diagrams, render_serv
 pub(crate) use gobby_core::vault::mermaid::is_valid_mermaid;
 // Evidence-grounded LLM diagram composition (#17521): the model composes,
 // deterministic code verifies every arrow against supplied evidence.
-pub(crate) use diagram_compose::{DiagramEvidence, NodeShape, compose_flowchart};
+pub(crate) use diagram_compose::{
+    DiagramEvidence, DiagramKind, DiagramOutcome, DiagramStats, NodeShape, compose_flowchart,
+};
 // Rendered markdown and graph-derived narrative analysis.
 pub(crate) use render::{
     build_repo_doc, collect_subsystem_dependency_edges, render_architecture_doc,

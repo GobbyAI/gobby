@@ -32,7 +32,10 @@
 use std::collections::BTreeSet;
 use std::fmt::Write as _;
 
-use super::diagram_compose::{DiagramEvidence, NodeShape, compose_flowchart};
+use super::CodewikiProgress;
+use super::diagram_compose::{
+    DiagramEvidence, DiagramKind, DiagramOutcome, DiagramStats, NodeShape, compose_flowchart,
+};
 use super::system_model::{Edge, RuntimeMode, ServiceKind, SystemModel};
 use super::types::TextGenerator;
 
@@ -45,9 +48,20 @@ use super::types::TextGenerator;
 pub(crate) fn render_architecture_diagrams(
     model: &SystemModel,
     generate: &mut Option<&mut TextGenerator<'_>>,
+    diagram_stats: &mut DiagramStats,
+    progress: &mut CodewikiProgress,
 ) -> Option<String> {
     let evidence = architecture_diagram_evidence(model);
-    let block = compose_flowchart(generate, &evidence, "the workspace architecture topology")?;
+    let outcome = compose_flowchart(generate, &evidence, "the workspace architecture topology");
+    diagram_stats.record(
+        "code/_architecture.md",
+        DiagramKind::CuratedFlow,
+        &outcome,
+        progress,
+    );
+    let DiagramOutcome::Emitted(block) = outcome else {
+        return None;
+    };
 
     let mut section = String::new();
     section.push_str("## Architecture Diagrams\n\n");
@@ -387,7 +401,9 @@ mod tests {
             (!responses.is_empty()).then(|| responses.remove(0))
         };
         let mut generate: Option<&mut TextGenerator<'_>> = Some(&mut generator);
-        render_architecture_diagrams(model, &mut generate)
+        let mut stats = DiagramStats::default();
+        let mut progress = CodewikiProgress::silent();
+        render_architecture_diagrams(model, &mut generate, &mut stats, &mut progress)
     }
 
     #[test]
@@ -519,10 +535,20 @@ mod tests {
     }
 
     #[test]
-    fn no_generator_or_empty_model_draws_nothing_but_is_not_an_error() {
+    fn diagram_outcomes_record_no_generator_and_sparse_architecture_slots() {
         let model = sample_model();
         let mut generate: Option<&mut TextGenerator<'_>> = None;
-        assert!(render_architecture_diagrams(&model, &mut generate).is_none());
+        let mut stats = DiagramStats::default();
+        let mut progress = CodewikiProgress::capture();
+        assert!(
+            render_architecture_diagrams(&model, &mut generate, &mut stats, &mut progress,)
+                .is_none()
+        );
+        assert_eq!(stats.no_generator, 1);
+        assert_eq!(
+            progress.into_lines(),
+            vec!["codewiki: diagram code/_architecture.md [curated_flow]: no_generator"]
+        );
 
         let empty = SystemModel {
             crates: Vec::new(),
@@ -533,7 +559,19 @@ mod tests {
             notes: vec!["cannot read workspace manifest".to_string()],
         };
         assert!(architecture_diagram_evidence(&empty).is_sparse());
-        assert!(compose_section(&empty, vec!["flowchart TD\n".to_string()]).is_none());
+        let mut empty_generate: Option<&mut TextGenerator<'_>> = None;
+        let mut empty_stats = DiagramStats::default();
+        let mut empty_progress = CodewikiProgress::silent();
+        assert!(
+            render_architecture_diagrams(
+                &empty,
+                &mut empty_generate,
+                &mut empty_stats,
+                &mut empty_progress,
+            )
+            .is_none()
+        );
+        assert_eq!(empty_stats.sparse_evidence, 1);
     }
 
     #[test]
@@ -615,8 +653,11 @@ mod tests {
             (!responses.is_empty()).then(|| responses.remove(0))
         };
         let mut generate: Option<&mut TextGenerator<'_>> = Some(&mut generator);
-        let flow =
-            compose_flowchart(&mut generate, &nasty, "escaped-label flow").expect("nasty flow");
+        let DiagramOutcome::Emitted(flow) =
+            compose_flowchart(&mut generate, &nasty, "escaped-label flow")
+        else {
+            panic!("nasty flow was not emitted");
+        };
         doc.push('\n');
         doc.push_str(&flow);
 

@@ -94,6 +94,7 @@ pub(crate) fn build_curated_navigation_docs(
     generate: &mut Option<&mut TextGenerator<'_>>,
     verify: &mut Option<&mut TextVerifier<'_>>,
     reuse: &mut Option<&mut ReusePlan>,
+    diagram_stats: &mut DiagramStats,
     progress: &mut CodewikiProgress,
 ) -> anyhow::Result<Vec<BuiltDoc>> {
     let all_spans = all_input_spans(files, modules);
@@ -212,5 +213,7 @@ pub(crate) fn build_curated_navigation_docs(
         tool_loop_dump_dir,
         generate,
         verify,
+        diagram_stats,
+        progress,
     )
 }

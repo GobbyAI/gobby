@@ -634,18 +634,40 @@ const FLOW_ROLE_WORDS: usize = 8;
 /// rejects any arrow the model draws that matches no supplied edge and keeps
 /// the result island-free. `None` is normal, never degradation. When a member
 /// lacks a grounded role the caption carries an honest degradation note.
+pub(crate) struct CuratedFlowContext<'a, 'doc> {
+    pub(super) page_path: &'a str,
+    pub(super) module_lookup: &'a BTreeMap<&'doc str, &'doc ModuleDoc>,
+    pub(super) file_lookup: &'a BTreeMap<&'doc str, &'doc FileDoc>,
+    pub(super) leading_chunks: &'a BTreeMap<String, LeadingChunk>,
+    pub(super) graph_edges: &'a [CodewikiGraphEdge],
+    pub(super) diagram_stats: &'a mut DiagramStats,
+    pub(super) progress: &'a mut CodewikiProgress,
+}
+
 pub(crate) fn curated_flow_diagram(
     member_modules: &[String],
     member_files: &[String],
-    module_lookup: &BTreeMap<&str, &ModuleDoc>,
-    file_lookup: &BTreeMap<&str, &FileDoc>,
-    leading_chunks: &BTreeMap<String, LeadingChunk>,
-    graph_edges: &[CodewikiGraphEdge],
     generate: &mut Option<&mut TextGenerator<'_>>,
+    context: CuratedFlowContext<'_, '_>,
 ) -> Option<String> {
+    let CuratedFlowContext {
+        page_path,
+        module_lookup,
+        file_lookup,
+        leading_chunks,
+        graph_edges,
+        diagram_stats,
+        progress,
+    } = context;
     let stages = resolve_flow_stages(member_modules, member_files, module_lookup, file_lookup);
     let components = stages.components;
     if components.len() < 2 {
+        diagram_stats.record(
+            page_path,
+            DiagramKind::CuratedFlow,
+            &DiagramOutcome::SparseEvidence,
+            progress,
+        );
         return None;
     }
 
@@ -659,11 +681,15 @@ pub(crate) fn curated_flow_diagram(
     let evidence = curated_flow_evidence(&components, &hint, &stages.component_owner, graph_edges);
     let degraded = components.iter().any(|component| component.role.is_none());
 
-    let block = compose_flowchart(
+    let outcome = compose_flowchart(
         generate,
         &evidence,
         "how this page's subsystems behave together",
-    )?;
+    );
+    diagram_stats.record(page_path, DiagramKind::CuratedFlow, &outcome, progress);
+    let DiagramOutcome::Emitted(block) = outcome else {
+        return None;
+    };
 
     let mut section = String::from("## Conceptual flow\n\n");
     section.push_str(

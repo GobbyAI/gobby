@@ -27,9 +27,94 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::fmt::Write as _;
 
 use gobby_core::vault::mermaid::{escape_label as mermaid_label, is_valid_mermaid};
+use serde::{Deserialize, Serialize};
 
 use super::types::TextGenerator;
-use super::{GenerationContent, ToolLoopGenerator, generate_aggregate, prompts};
+use super::{CodewikiProgress, GenerationContent, ToolLoopGenerator, generate_aggregate, prompts};
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) enum DiagramOutcome {
+    Emitted(String),
+    SparseEvidence,
+    NoGenerator,
+    Rejected,
+}
+
+impl DiagramOutcome {
+    fn label(&self) -> &'static str {
+        match self {
+            Self::Emitted(_) => "emitted",
+            Self::SparseEvidence => "sparse_evidence",
+            Self::NoGenerator => "no_generator",
+            Self::Rejected => "rejected",
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
+pub(crate) enum DiagramKind {
+    ModuleDependency,
+    ModuleCallSequence,
+    CuratedFlow,
+}
+
+impl DiagramKind {
+    const LABELS: [(Self, &'static str); 3] = [
+        (Self::ModuleDependency, "module_dependency"),
+        (Self::ModuleCallSequence, "module_call_sequence"),
+        (Self::CuratedFlow, "curated_flow"),
+    ];
+
+    fn label(self) -> &'static str {
+        Self::LABELS
+            .iter()
+            .find_map(|(kind, label)| (*kind == self).then_some(*label))
+            .expect("every diagram kind has a stable label")
+    }
+}
+
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub(crate) struct DiagramStats {
+    pub(crate) emitted: usize,
+    pub(crate) sparse_evidence: usize,
+    pub(crate) no_generator: usize,
+    pub(crate) rejected: usize,
+    #[serde(skip)]
+    recorded_slots: BTreeSet<(String, DiagramKind)>,
+}
+
+impl DiagramStats {
+    pub(crate) fn record(
+        &mut self,
+        page_path: &str,
+        kind: DiagramKind,
+        outcome: &DiagramOutcome,
+        progress: &mut CodewikiProgress,
+    ) {
+        if !self.recorded_slots.insert((page_path.to_string(), kind)) {
+            return;
+        }
+        match outcome {
+            DiagramOutcome::Emitted(_) => self.emitted += 1,
+            DiagramOutcome::SparseEvidence => self.sparse_evidence += 1,
+            DiagramOutcome::NoGenerator => self.no_generator += 1,
+            DiagramOutcome::Rejected => self.rejected += 1,
+        }
+        progress.emit(format!(
+            "diagram {page_path} [{}]: {}",
+            kind.label(),
+            outcome.label()
+        ));
+    }
+
+    pub(crate) fn total(&self) -> usize {
+        self.emitted + self.sparse_evidence + self.no_generator + self.rejected
+    }
+
+    pub(crate) fn recorded_slots_len(&self) -> usize {
+        self.recorded_slots.len()
+    }
+}
 
 /// Visual shape for an evidence node, applied deterministically at
 /// normalization so the model cannot unbalance a bracket pair.
@@ -553,9 +638,12 @@ pub(crate) fn compose_flowchart(
     generate: &mut Option<&mut TextGenerator<'_>>,
     evidence: &DiagramEvidence,
     context: &str,
-) -> Option<String> {
-    if evidence.is_sparse() || generate.is_none() {
-        return None;
+) -> DiagramOutcome {
+    if evidence.is_sparse() {
+        return DiagramOutcome::SparseEvidence;
+    }
+    if generate.is_none() {
+        return DiagramOutcome::NoGenerator;
     }
 
     let base_prompt = format!(
@@ -596,7 +684,9 @@ pub(crate) fn compose_flowchart(
         let (verified, issues) = verify_candidate(&candidate, evidence);
         if let Some(verified) = verified {
             if issues.is_empty() {
-                return normalize(&verified, evidence);
+                return normalize(&verified, evidence)
+                    .map(DiagramOutcome::Emitted)
+                    .unwrap_or(DiagramOutcome::Rejected);
             }
             // Verification dropped something: keep the survivors as the
             // deterministic-repair backstop, but give the model one chance to
@@ -619,10 +709,13 @@ pub(crate) fn compose_flowchart(
 
     // Deterministic repair: emit what survived edge verification, or nothing.
     best.and_then(|verified| normalize(&verified, evidence))
+        .map(DiagramOutcome::Emitted)
+        .unwrap_or(DiagramOutcome::Rejected)
 }
 
 #[cfg(test)]
 mod tests {
+    use super::super::CodewikiProgress;
     use super::super::types::PromptTier;
     use super::*;
 
@@ -643,7 +736,89 @@ mod tests {
             (!responses.is_empty()).then(|| responses.remove(0))
         };
         let mut generate: Option<&mut TextGenerator<'_>> = Some(&mut generator);
+        match compose_flowchart(&mut generate, evidence, "test flow") {
+            DiagramOutcome::Emitted(block) => Some(block),
+            DiagramOutcome::SparseEvidence
+            | DiagramOutcome::NoGenerator
+            | DiagramOutcome::Rejected => None,
+        }
+    }
+
+    fn compose_outcome_with(responses: Vec<String>, evidence: &DiagramEvidence) -> DiagramOutcome {
+        let mut responses = responses;
+        let mut generator = move |_prompt: &str, system: &str, _tier: PromptTier| {
+            assert_eq!(system, prompts::FLOW_DIAGRAM_SYSTEM);
+            (!responses.is_empty()).then(|| responses.remove(0))
+        };
+        let mut generate: Option<&mut TextGenerator<'_>> = Some(&mut generator);
         compose_flowchart(&mut generate, evidence, "test flow")
+    }
+
+    #[test]
+    fn diagram_outcomes_cover_every_terminal_state() {
+        let emitted =
+            compose_outcome_with(vec!["flowchart LR\n    a --> b\n".to_string()], &evidence());
+        assert!(matches!(emitted, DiagramOutcome::Emitted(_)));
+
+        let mut sparse = DiagramEvidence::default();
+        sparse.push_node("a", "Alpha", NodeShape::Box);
+        let sparse = compose_outcome_with(Vec::new(), &sparse);
+        assert_eq!(sparse, DiagramOutcome::SparseEvidence);
+
+        let mut generate: Option<&mut TextGenerator<'_>> = None;
+        assert_eq!(
+            compose_flowchart(&mut generate, &evidence(), "test flow"),
+            DiagramOutcome::NoGenerator
+        );
+
+        let prose = "Here is a diagram description instead of a diagram.".to_string();
+        let rejected = compose_outcome_with(vec![prose.clone(), prose], &evidence());
+        assert_eq!(rejected, DiagramOutcome::Rejected);
+    }
+
+    #[test]
+    fn diagram_outcomes_record_one_final_log_per_unique_slot() {
+        let mut stats = DiagramStats::default();
+        let mut progress = CodewikiProgress::capture();
+
+        stats.record(
+            "code/concepts/runtime.md",
+            DiagramKind::CuratedFlow,
+            &DiagramOutcome::SparseEvidence,
+            &mut progress,
+        );
+        stats.record(
+            "code/concepts/runtime.md",
+            DiagramKind::CuratedFlow,
+            &DiagramOutcome::Emitted("ignored duplicate".to_string()),
+            &mut progress,
+        );
+        stats.record(
+            "code/modules/runtime.md",
+            DiagramKind::ModuleDependency,
+            &DiagramOutcome::Emitted("diagram".to_string()),
+            &mut progress,
+        );
+        stats.record(
+            "code/modules/runtime.md",
+            DiagramKind::ModuleCallSequence,
+            &DiagramOutcome::NoGenerator,
+            &mut progress,
+        );
+
+        assert_eq!(stats.emitted, 1);
+        assert_eq!(stats.sparse_evidence, 1);
+        assert_eq!(stats.no_generator, 1);
+        assert_eq!(stats.rejected, 0);
+        assert_eq!(stats.total(), 3);
+        assert_eq!(
+            progress.into_lines(),
+            vec![
+                "codewiki: diagram code/concepts/runtime.md [curated_flow]: sparse_evidence",
+                "codewiki: diagram code/modules/runtime.md [module_dependency]: emitted",
+                "codewiki: diagram code/modules/runtime.md [module_call_sequence]: no_generator",
+            ]
+        );
     }
 
     #[test]
@@ -690,7 +865,11 @@ mod tests {
             (!responses.is_empty()).then(|| responses.remove(0))
         };
         let mut generate: Option<&mut TextGenerator<'_>> = Some(&mut generator);
-        let block = compose_flowchart(&mut generate, &evidence(), "test flow").expect("diagram");
+        let DiagramOutcome::Emitted(block) =
+            compose_flowchart(&mut generate, &evidence(), "test flow")
+        else {
+            panic!("diagram was not emitted");
+        };
 
         assert_eq!(prompts_seen.len(), 2, "one repair re-prompt");
         assert!(
@@ -748,7 +927,10 @@ mod tests {
     #[test]
     fn sparse_evidence_or_missing_generator_yields_none() {
         let mut generate: Option<&mut TextGenerator<'_>> = None;
-        assert_eq!(compose_flowchart(&mut generate, &evidence(), "test"), None);
+        assert_eq!(
+            compose_flowchart(&mut generate, &evidence(), "test"),
+            DiagramOutcome::NoGenerator
+        );
 
         let mut no_edges = DiagramEvidence::default();
         no_edges.push_node("a", "Alpha", NodeShape::Box);
@@ -797,7 +979,11 @@ mod tests {
             |_prompt: &str, _system: &str, _tier: PromptTier| responses.pop().flatten();
         let mut generate: Option<&mut TextGenerator<'_>> = Some(&mut generator);
 
-        let block = compose_flowchart(&mut generate, &evidence(), "test flow").expect("diagram");
+        let DiagramOutcome::Emitted(block) =
+            compose_flowchart(&mut generate, &evidence(), "test flow")
+        else {
+            panic!("diagram was not emitted");
+        };
 
         assert!(block.contains("a --> b"));
         assert!(!block.contains("c --> a"));
@@ -818,7 +1004,11 @@ mod tests {
         };
         let mut generate: Option<&mut TextGenerator<'_>> = Some(&mut generator);
 
-        let block = compose_flowchart(&mut generate, &evidence, "test flow").expect("diagram");
+        let DiagramOutcome::Emitted(block) =
+            compose_flowchart(&mut generate, &evidence, "test flow")
+        else {
+            panic!("diagram was not emitted");
+        };
 
         assert!(block.contains("a --> b"));
         assert!(

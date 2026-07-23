@@ -116,14 +116,24 @@ fn compose_flow(
         (!responses.is_empty()).then(|| responses.remove(0))
     };
     let mut generate: Option<&mut TextGenerator<'_>> = Some(&mut generator);
+    let mut diagram_stats = DiagramStats::default();
+    let mut progress = CodewikiProgress::silent();
+    let module_lookup = module_lookup(modules);
+    let file_lookup = file_lookup(files);
+    let leading_chunks = BTreeMap::new();
     curated_flow_diagram(
         member_modules,
         member_files,
-        &module_lookup(modules),
-        &file_lookup(files),
-        &BTreeMap::new(),
-        graph_edges,
         &mut generate,
+        CuratedFlowContext {
+            page_path: "code/concepts/test.md",
+            module_lookup: &module_lookup,
+            file_lookup: &file_lookup,
+            leading_chunks: &leading_chunks,
+            graph_edges,
+            diagram_stats: &mut diagram_stats,
+            progress: &mut progress,
+        },
     )
 }
 
@@ -365,6 +375,39 @@ fn marks_degraded_when_a_member_summary_is_missing() {
 }
 
 #[test]
+fn diagram_outcomes_record_sparse_curated_flow_slots() {
+    let modules = [module_doc("walker", "Discovers files.")];
+    let member_modules = ["walker".to_string()];
+    let mut generate: Option<&mut TextGenerator<'_>> = None;
+    let mut diagram_stats = DiagramStats::default();
+    let mut progress = CodewikiProgress::capture();
+    let module_lookup = module_lookup(&modules);
+    let file_lookup = file_lookup(&[]);
+    let leading_chunks = BTreeMap::new();
+    let flow = curated_flow_diagram(
+        &member_modules,
+        &[],
+        &mut generate,
+        CuratedFlowContext {
+            page_path: "code/concepts/walker.md",
+            module_lookup: &module_lookup,
+            file_lookup: &file_lookup,
+            leading_chunks: &leading_chunks,
+            graph_edges: &[],
+            diagram_stats: &mut diagram_stats,
+            progress: &mut progress,
+        },
+    );
+    assert!(flow.is_none());
+    assert_eq!(diagram_stats.sparse_evidence, 1);
+    assert_eq!(diagram_stats.total(), 1);
+    assert_eq!(
+        progress.into_lines(),
+        vec!["codewiki: diagram code/concepts/walker.md [curated_flow]: sparse_evidence"]
+    );
+}
+
+#[test]
 fn omitted_for_a_single_member() {
     let modules = [module_doc("walker", "Discovers files.")];
     let flow = compose_flow(
@@ -388,14 +431,24 @@ fn omitted_when_no_generator_is_available() {
     ];
     let member_modules = vec!["walker".to_string(), "parser".to_string()];
     let mut generate: Option<&mut TextGenerator<'_>> = None;
+    let mut diagram_stats = DiagramStats::default();
+    let mut progress = CodewikiProgress::silent();
+    let module_lookup = module_lookup(&modules);
+    let file_lookup = file_lookup(&[]);
+    let leading_chunks = BTreeMap::new();
     let flow = curated_flow_diagram(
         &member_modules,
         &[],
-        &module_lookup(&modules),
-        &file_lookup(&[]),
-        &BTreeMap::new(),
-        &[],
         &mut generate,
+        CuratedFlowContext {
+            page_path: "code/concepts/test.md",
+            module_lookup: &module_lookup,
+            file_lookup: &file_lookup,
+            leading_chunks: &leading_chunks,
+            graph_edges: &[],
+            diagram_stats: &mut diagram_stats,
+            progress: &mut progress,
+        },
     );
     assert!(flow.is_none());
 }

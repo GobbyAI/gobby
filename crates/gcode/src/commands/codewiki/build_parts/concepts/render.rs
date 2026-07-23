@@ -21,6 +21,8 @@ pub(super) fn render_curated_navigation_docs(
     tool_loop_dump_dir: Option<&std::path::Path>,
     generate: &mut Option<&mut TextGenerator<'_>>,
     verify: &mut Option<&mut TextVerifier<'_>>,
+    diagram_stats: &mut DiagramStats,
+    progress: &mut CodewikiProgress,
 ) -> anyhow::Result<Vec<BuiltDoc>> {
     let module_lookup = modules
         .iter()
@@ -134,6 +136,7 @@ pub(super) fn render_curated_navigation_docs(
     });
 
     for concept in &concepts {
+        let page_path = concept_doc_path(&concept.slug);
         let spans = item_spans(
             &concept.modules,
             &concept.files,
@@ -143,14 +146,19 @@ pub(super) fn render_curated_navigation_docs(
         let flow = curated_content::curated_flow_diagram(
             &concept.modules,
             &concept.files,
-            &module_lookup,
-            &file_lookup,
-            leading_chunks,
-            graph_edges,
             generate,
+            curated_content::CuratedFlowContext {
+                page_path: &page_path,
+                module_lookup: &module_lookup,
+                file_lookup: &file_lookup,
+                leading_chunks,
+                graph_edges,
+                diagram_stats,
+                progress,
+            },
         );
         docs.push(BuiltDoc {
-            path: concept_doc_path(&concept.slug),
+            path: page_path,
             content: render_concept_page(
                 concept,
                 &spans,
@@ -176,6 +184,7 @@ pub(super) fn render_curated_navigation_docs(
     }
 
     for (index, page) in narrative_pages.iter().enumerate() {
+        let page_path = narrative_doc_path(&page.slug);
         let spans = narrative_spans(page, &concepts, &module_lookup, &file_lookup);
         // Reciprocal neighbors in the ordered tour drive the Previous/Next nav.
         let prev = index
@@ -186,14 +195,19 @@ pub(super) fn render_curated_navigation_docs(
         let flow = curated_content::curated_flow_diagram(
             &flow_modules,
             &flow_files,
-            &module_lookup,
-            &file_lookup,
-            leading_chunks,
-            graph_edges,
             generate,
+            curated_content::CuratedFlowContext {
+                page_path: &page_path,
+                module_lookup: &module_lookup,
+                file_lookup: &file_lookup,
+                leading_chunks,
+                graph_edges,
+                diagram_stats,
+                progress,
+            },
         );
         docs.push(BuiltDoc {
-            path: narrative_doc_path(&page.slug),
+            path: page_path,
             content: render_narrative_page(
                 page,
                 &spans,

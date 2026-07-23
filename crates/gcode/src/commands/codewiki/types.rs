@@ -6,6 +6,7 @@ use serde::{Deserialize, Serialize};
 use crate::models::Symbol;
 
 use super::GenerationObservability;
+use super::diagram_compose::DiagramStats;
 use super::prompts;
 
 #[derive(Debug, Clone)]
@@ -561,6 +562,8 @@ pub(crate) struct CodewikiMeta {
     pub(crate) index_snapshot: Option<CodewikiIndexSnapshot>,
     #[serde(default)]
     pub(crate) ai_mode: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(crate) diagram_stats: Option<DiagramStats>,
 }
 
 #[derive(Debug, Clone, Default, Deserialize, Eq, PartialEq, Serialize)]

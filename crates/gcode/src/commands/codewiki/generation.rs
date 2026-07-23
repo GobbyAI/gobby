@@ -9,10 +9,10 @@ use crate::models::Symbol;
 
 use super::{
     AiDepth, AuditContext, BuiltDoc, CodewikiAiOutcome, CodewikiGraphEdge, CodewikiGraphEdgeKind,
-    CodewikiInput, CodewikiProgress, DocPruneScope, FeatureCatalogDoc, FileDoc, FileDocPosition,
-    LeadingChunk, ModuleDoc, OwnershipMeta, OwnershipOptions, PromptTier, RelationshipFacts,
-    ReusePlan, SourceSpan, SyncTextGenerator, SyncTextVerifier, SystemModel, TextGenerator,
-    TextVerifier, ToolLoopGenerator, VerifyScope, build_architecture_doc,
+    CodewikiInput, CodewikiProgress, DiagramStats, DocPruneScope, FeatureCatalogDoc, FileDoc,
+    FileDocPosition, LeadingChunk, ModuleDoc, OwnershipMeta, OwnershipOptions, PromptTier,
+    RelationshipFacts, ReusePlan, SourceSpan, SyncTextGenerator, SyncTextVerifier, SystemModel,
+    TextGenerator, TextVerifier, ToolLoopGenerator, VerifyScope, build_architecture_doc,
     build_curated_navigation_docs, build_deprecations_doc, build_file_doc, build_hotspots_doc,
     build_infrastructure_doc, build_module_docs_with_filter, build_onboarding_doc,
     build_ownership_doc, build_repo_doc, cluster, cluster_file_modules,
@@ -140,7 +140,7 @@ pub(crate) fn generate_hierarchical_docs(
     input: &CodewikiInput,
     options: GenerateDocsOptions<'_, '_>,
     emit: &mut dyn FnMut(BuiltDoc) -> anyhow::Result<()>,
-) -> anyhow::Result<()> {
+) -> anyhow::Result<DiagramStats> {
     let GenerateDocsOptions {
         ownership,
         system_model,
@@ -172,6 +172,7 @@ pub(crate) fn generate_hierarchical_docs(
             &mut silent_progress
         }
     };
+    let mut diagram_stats = DiagramStats::default();
     let unscoped_doc_scope;
     let doc_scope = match doc_scope {
         Some(doc_scope) => doc_scope,
@@ -331,7 +332,7 @@ pub(crate) fn generate_hierarchical_docs(
         },
     )?;
     if !doc_scope.is_unscoped() {
-        return Ok(());
+        return Ok(diagram_stats);
     }
     for doc in build_curated_navigation_docs(
         &file_docs,
@@ -342,6 +343,7 @@ pub(crate) fn generate_hierarchical_docs(
         generate,
         verify,
         reuse,
+        &mut diagram_stats,
         progress,
     )? {
         emit(doc)?;
@@ -459,6 +461,7 @@ pub(crate) fn generate_hierarchical_docs(
                 system_model,
                 generate,
                 tool_loop,
+                &mut diagram_stats,
                 progress,
             )?;
             BuiltDoc {
@@ -577,7 +580,7 @@ pub(crate) fn generate_hierarchical_docs(
             invalidation_key_requires_sources: true,
         })?;
     }
-    Ok(())
+    Ok(diagram_stats)
 }
 
 /// Emit one built file page. Shared by the serial and pooled paths so both
