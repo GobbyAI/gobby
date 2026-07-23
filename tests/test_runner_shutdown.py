@@ -1145,3 +1145,59 @@ class TestForceExitBackstop:
             finally:
                 runner_module._force_exit_after_expired_settlement()
         assert exits == [5]
+
+
+class TestExpiryBackstopSubprocess:
+    """Plan 1.4.19 subprocess shape: a wedged process still exits via the backstop."""
+
+    def test_backstop_forces_wedged_process_exit_with_pid_released(self, tmp_path) -> None:
+        import subprocess
+        import sys
+        import textwrap
+
+        pid_file = tmp_path / "gobby.pid"
+        script = textwrap.dedent(
+            f"""
+            import threading
+
+            from pathlib import Path
+
+            import gobby.runner_lifecycle_shutdown as shutdown
+            from gobby.runner import _force_exit_after_expired_settlement
+            from gobby.runner_pid_file import claim_pid_file
+
+            claim = claim_pid_file(Path({str(pid_file)!r}))
+            assert claim is not None
+
+            # A wedged non-daemon worker would block interpreter exit at the
+            # atexit thread join without the backstop.
+            threading.Thread(
+                target=threading.Event().wait, name="wedged-settlement-worker"
+            ).start()
+
+            shutdown._expiry_exit_backstop_required = True
+            try:
+                pass
+            finally:
+                claim.release()
+                _force_exit_after_expired_settlement()
+            print("UNREACHABLE")
+            """
+        )
+
+        completed = subprocess.run(
+            [sys.executable, "-c", script],
+            capture_output=True,
+            check=False,
+            text=True,
+            timeout=20.0,
+        )
+
+        assert completed.returncode == 0, completed.stderr
+        assert "UNREACHABLE" not in completed.stdout
+
+        from gobby.runner_pid_file import claim_pid_file
+
+        reclaim = claim_pid_file(pid_file)
+        assert reclaim is not None
+        reclaim.release()
