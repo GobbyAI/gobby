@@ -40,6 +40,20 @@ _QDRANT_CLIENT_CLOSE_ERRORS = (
 type QdrantClientLike = QdrantClient | AsyncQdrantClient
 
 
+def _accepts_timeout_kwarg(method: Any) -> bool:
+    """Only some qdrant client methods declare ``timeout``; the rest reject
+    unknown kwargs (e.g. ``upsert`` raises ``Unknown arguments: ['timeout']``)."""
+    try:
+        params = inspect.signature(method).parameters
+    except (TypeError, ValueError):
+        return False
+    param = params.get("timeout")
+    return param is not None and param.kind in (
+        inspect.Parameter.POSITIONAL_OR_KEYWORD,
+        inspect.Parameter.KEYWORD_ONLY,
+    )
+
+
 def _vector_size(vectors_cfg: Any) -> int | None:
     """Extract vector size from a Qdrant vectors config when available."""
     return vectors_cfg.size if isinstance(vectors_cfg, VectorParams) else None
@@ -105,7 +119,7 @@ class VectorStoreClient:
         budget = timeout if timeout is not None else float(QDRANT_CLIENT_TIMEOUT_SECONDS)
         if budget <= 0:
             raise TimeoutError(f"Qdrant {method_name} deadline expired")
-        if timeout_hint:
+        if timeout_hint and _accepts_timeout_kwarg(method):
             kwargs["timeout"] = max(1, math.ceil(budget))
         async with asyncio.timeout(budget):
             result = method(*args, **kwargs)

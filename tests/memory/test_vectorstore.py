@@ -998,3 +998,57 @@ async def test_get_collection_dimension_returns_none_on_client_error(caplog) -> 
 
     assert dimension is None
     assert "Failed to read Qdrant collection dimension" in caplog.text
+
+
+class TestRemoteTimeoutHint:
+    """The remote-call timeout hint must respect qdrant method signatures."""
+
+    def test_accepts_timeout_kwarg_matches_qdrant_signatures(self) -> None:
+        from qdrant_client import AsyncQdrantClient
+
+        from gobby.memory.vectorstore_client import _accepts_timeout_kwarg
+
+        assert not _accepts_timeout_kwarg(AsyncQdrantClient.upsert)
+        assert not _accepts_timeout_kwarg(AsyncQdrantClient.delete)
+        assert not _accepts_timeout_kwarg(AsyncQdrantClient.set_payload)
+        assert _accepts_timeout_kwarg(AsyncQdrantClient.query_points)
+        assert _accepts_timeout_kwarg(AsyncQdrantClient.retrieve)
+        assert _accepts_timeout_kwarg(AsyncQdrantClient.count)
+
+    @pytest.mark.asyncio
+    async def test_remote_call_injects_timeout_only_where_accepted(self) -> None:
+        import time
+
+        from qdrant_client import QdrantClient
+
+        from gobby.memory.vectorstore_client import VectorStoreClient
+
+        class _FakeRemoteClient:
+            """Mimics qdrant's unknown-kwargs rejection on upsert."""
+
+            def __init__(self) -> None:
+                self.calls: list[tuple[str, object]] = []
+
+            async def upsert(self, collection_name: str, points: list, **kwargs: object) -> str:
+                if kwargs:
+                    raise ValueError(f"Unknown arguments: {list(kwargs.keys())}")
+                self.calls.append(("upsert", None))
+                return "ok"
+
+            async def query_points(
+                self, collection_name: str, timeout: int | None = None, **kwargs: object
+            ) -> str:
+                self.calls.append(("query_points", timeout))
+                return "ok"
+
+        ops = VectorStoreClient(
+            SimpleNamespace(_url="http://qdrant:6333"),
+            time.monotonic,
+            local_client_factory=QdrantClient,
+            remote_client_factory=lambda **kwargs: None,
+        )
+        fake = _FakeRemoteClient()
+
+        assert await ops.call(fake, "upsert", collection_name="c", points=[]) == "ok"
+        assert await ops.call(fake, "query_points", collection_name="c") == "ok"
+        assert fake.calls == [("upsert", None), ("query_points", 5)]
