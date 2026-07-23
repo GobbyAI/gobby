@@ -356,23 +356,44 @@ class TestGobbyDaemonToolsCallTool:
         assert tools_handler.tool_proxy.call_tool.call_args is not None
 
     @pytest.mark.asyncio
-    async def test_call_tool_preserves_coordinator_wait_timeout(self, tools_handler):
-        """Coordinator wait_for_agent calls can use the required 300 second wait."""
+    async def test_call_tool_preserves_summary_wait_timeout(self, tools_handler):
+        """Summary waits retain the wrapper's blocking-wait guard."""
         tools_handler.tool_proxy.call_tool = AsyncMock(
             return_value={"success": True, "completed": False, "timeout_seconds": 300.0}
         )
 
         result = await tools_handler.call_tool(
-            server_name="gobby-agents",
-            tool_name="wait_for_agent",
-            arguments={"run_id": "run-123", "timeout_seconds": 300},
+            server_name="gobby-sessions",
+            tool_name="wait_for_summary",
+            arguments={"session_id": "session-123", "timeout_seconds": 300},
         )
 
         assert result == {"completed": False, "timeout_seconds": 300.0}
         tools_handler.tool_proxy.call_tool.assert_awaited_once_with(
+            "gobby-sessions",
+            "wait_for_summary",
+            {"session_id": "session-123", "timeout_seconds": 300},
+            None,
+        )
+
+    @pytest.mark.asyncio
+    async def test_call_tool_treats_wait_for_agent_as_ordinary(self, tools_handler):
+        tools_handler.tool_proxy.call_tool = AsyncMock(
+            return_value={"success": True, "completed": False}
+        )
+        arguments = {"run_id": "run-123", "timeout_seconds": 600}
+
+        result = await tools_handler.call_tool(
+            server_name="gobby-agents",
+            tool_name="wait_for_agent",
+            arguments=arguments,
+        )
+
+        assert result == {"completed": False}
+        tools_handler.tool_proxy.call_tool.assert_awaited_once_with(
             "gobby-agents",
             "wait_for_agent",
-            {"run_id": "run-123", "timeout_seconds": 300},
+            arguments,
             None,
         )
 
@@ -395,9 +416,9 @@ class TestGobbyDaemonToolsCallTool:
         ):
             result = await asyncio.wait_for(
                 tools_handler.call_tool(
-                    server_name="gobby-agents",
-                    tool_name="wait_for_agent",
-                    arguments={"run_id": "run-123", "timeout_seconds": 600},
+                    server_name="gobby-sessions",
+                    tool_name="wait_for_summary",
+                    arguments={"session_id": "session-123", "timeout_seconds": 600},
                 ),
                 timeout=0.2,
             )
@@ -408,7 +429,7 @@ class TestGobbyDaemonToolsCallTool:
             "effective_timeout_seconds": 0.02,
             "mcp_wrapper_timeout": True,
             "background_call_continues": True,
-            "tool_name": "wait_for_agent",
+            "tool_name": "wait_for_summary",
             "_mcp_metadata": {
                 "requested_timeout_seconds": 600.0,
                 "effective_timeout_seconds": 0.02,
@@ -416,9 +437,9 @@ class TestGobbyDaemonToolsCallTool:
             },
         }
         tools_handler.tool_proxy.call_tool.assert_awaited_once_with(
-            "gobby-agents",
-            "wait_for_agent",
-            {"run_id": "run-123", "timeout_seconds": 0.02},
+            "gobby-sessions",
+            "wait_for_summary",
+            {"session_id": "session-123", "timeout_seconds": 0.02},
             None,
         )
         release_call.set()

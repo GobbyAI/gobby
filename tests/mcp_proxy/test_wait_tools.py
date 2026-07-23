@@ -12,6 +12,7 @@ from gobby.mcp_proxy.wait_tools import (
     WAIT_TOOL_NAMES,
     call_with_wait_heartbeat,
     clamp_wait_tool_timeout,
+    prepare_client_guard,
     wait_tool_timeout_limit,
 )
 
@@ -19,7 +20,19 @@ pytestmark = pytest.mark.unit
 
 
 def test_wait_tool_names_only_include_implemented_tools() -> None:
-    assert WAIT_TOOL_NAMES == ("wait_for_agent", "wait_for_output", "wait_for_summary")
+    assert WAIT_TOOL_NAMES == ("wait_for_output", "wait_for_summary")
+
+
+def test_wait_for_agent_uses_ordinary_client_guard() -> None:
+    arguments = {"run_id": "run-123", "timeout_seconds": 600}
+
+    guard = prepare_client_guard(tool_name="wait_for_agent", arguments=arguments)
+
+    assert guard.arguments is arguments
+    assert guard.timeout is None
+    assert guard.requested_timeout_seconds is None
+    assert guard.effective_timeout_seconds is None
+    assert guard.wait_timeout_capped is False
 
 
 @pytest.mark.parametrize("tool_name", WAIT_TOOL_NAMES)
@@ -59,7 +72,7 @@ async def test_heartbeat_failure_does_not_replace_tool_result() -> None:
         result = await call_with_wait_heartbeat(
             tool_call(),
             ctx=ctx,
-            tool_name="wait_for_agent",
+            tool_name="wait_for_summary",
             timeout=1.0,
         )
 
@@ -85,7 +98,7 @@ async def test_heartbeat_failure_does_not_replace_tool_exception() -> None:
         await call_with_wait_heartbeat(
             call,
             ctx=ctx,
-            tool_name="wait_for_agent",
+            tool_name="wait_for_summary",
             timeout=1.0,
         )
 

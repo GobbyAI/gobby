@@ -68,12 +68,12 @@ def test_wait_tool_source_stale_result_detects_changed_file(tmp_path: Path) -> N
     source_path.write_text("after")
 
     with patch.object(wait_tools, "_MCP_WRAPPER_SOURCE_DIGESTS", startup_digests):
-        result = wait_tools.mcp_wrapper_source_stale_result("wait_for_agent")
+        result = wait_tools.mcp_wrapper_source_stale_result("wait_for_summary")
 
     assert result is not None
     assert result["success"] is False
     assert result["error_code"] == "GOBBY_MCP_WRAPPER_STALE"
-    assert result["tool_name"] == "wait_for_agent"
+    assert result["tool_name"] == "wait_for_summary"
     assert result["stale_source_paths"] == [str(source_path)]
     assert result["restart_required"] is True
 
@@ -95,12 +95,12 @@ def test_source_stale_result_ignores_non_wait_tool(tmp_path: Path) -> None:
 def test_wait_tool_fingerprint_stale_result_detects_missing_header() -> None:
     from gobby.mcp_proxy import wait_tools
 
-    result = wait_tools.mcp_wrapper_fingerprint_stale_result("wait_for_agent", None)
+    result = wait_tools.mcp_wrapper_fingerprint_stale_result("wait_for_summary", None)
 
     assert result is not None
     assert result["success"] is False
     assert result["error_code"] == "GOBBY_MCP_WRAPPER_STALE"
-    assert result["tool_name"] == "wait_for_agent"
+    assert result["tool_name"] == "wait_for_summary"
     assert result["provided_wrapper_fingerprint"] is None
     assert result["restart_required"] is True
 
@@ -109,7 +109,7 @@ def test_wait_tool_fingerprint_stale_result_accepts_current_fingerprint() -> Non
     from gobby.mcp_proxy import wait_tools
 
     result = wait_tools.mcp_wrapper_fingerprint_stale_result(
-        "wait_for_agent",
+        "wait_for_summary",
         wait_tools.mcp_wrapper_current_source_fingerprint(),
     )
 
@@ -1272,9 +1272,9 @@ class TestDaemonProxy:
                 mock_request.return_value = {"success": True}
 
                 result = await proxy.call_tool(
-                    "gobby-agents",
-                    "wait_for_agent",
-                    {"run_id": "run-123", "timeout_seconds": 120},
+                    "gobby-sessions",
+                    "wait_for_summary",
+                    {"session_id": "session-123", "timeout_seconds": 120},
                 )
 
                 assert result == {"success": True}
@@ -1283,9 +1283,9 @@ class TestDaemonProxy:
                     "POST",
                     "/api/mcp/tools/call",
                     json={
-                        "server_name": "gobby-agents",
-                        "tool_name": "wait_for_agent",
-                        "arguments": {"run_id": "run-123", "timeout_seconds": 120},
+                        "server_name": "gobby-sessions",
+                        "tool_name": "wait_for_summary",
+                        "arguments": {"session_id": "session-123", "timeout_seconds": 120},
                     },
                     timeout=150.0,
                     preflight=True,
@@ -1303,9 +1303,9 @@ class TestDaemonProxy:
                 mock_request.return_value = {"success": True}
 
                 result = await proxy.call_tool(
-                    "gobby-agents",
-                    "wait_for_agent",
-                    {"run_id": "run-123", "timeout": "5m"},
+                    "gobby-sessions",
+                    "wait_for_summary",
+                    {"session_id": "session-123", "timeout": "5m"},
                 )
 
                 assert result == {"success": True}
@@ -1314,13 +1314,35 @@ class TestDaemonProxy:
                     "POST",
                     "/api/mcp/tools/call",
                     json={
-                        "server_name": "gobby-agents",
-                        "tool_name": "wait_for_agent",
-                        "arguments": {"run_id": "run-123", "timeout": "5m"},
+                        "server_name": "gobby-sessions",
+                        "tool_name": "wait_for_summary",
+                        "arguments": {"session_id": "session-123", "timeout": "5m"},
                     },
                     timeout=330.0,
                     preflight=True,
                 )
+
+    @pytest.mark.asyncio
+    async def test_call_tool_treats_wait_for_agent_as_ordinary_tool(self) -> None:
+        from gobby.mcp_proxy.stdio import DaemonProxy
+
+        proxy = DaemonProxy(60887)
+        arguments = {"run_id": "run-123", "timeout_seconds": 600}
+        with patch("gobby.mcp_proxy.stdio.load_config") as mock_config:
+            mock_config.return_value = MagicMock(mcp_client_proxy=MagicMock(tool_timeouts={}))
+            with patch.object(proxy, "_request", new_callable=AsyncMock) as mock_request:
+                mock_request.return_value = {"success": True, "completed": False}
+
+                result = await proxy.call_tool("gobby-agents", "wait_for_agent", arguments)
+
+        assert result == {"success": True, "completed": False}
+        mock_request.assert_awaited_once_with(
+            "POST",
+            "/api/mcp/gobby-agents/tools/wait_for_agent",
+            json=arguments,
+            timeout=30.0,
+            preflight=True,
+        )
 
     @pytest.mark.asyncio
     async def test_call_tool_treats_wait_for_summary_as_wait_tool(self) -> None:
@@ -1945,9 +1967,9 @@ class TestMCPToolsWrapper:
             task: asyncio.Task[Any] = asyncio.create_task(
                 run_tool(
                     "call_tool",
-                    server_name="gobby-agents",
-                    tool_name="wait_for_agent",
-                    arguments={"run_id": "run-123", "timeout_seconds": 300},
+                    server_name="gobby-sessions",
+                    tool_name="wait_for_summary",
+                    arguments={"session_id": "session-123", "timeout_seconds": 300},
                     ctx=ctx,
                 )
             )
@@ -1959,9 +1981,9 @@ class TestMCPToolsWrapper:
 
         assert result == {"res": "call"}
         mock_proxy.call_tool.assert_awaited_once_with(
-            "gobby-agents",
-            "wait_for_agent",
-            {"run_id": "run-123", "timeout_seconds": 300},
+            "gobby-sessions",
+            "wait_for_summary",
+            {"session_id": "session-123", "timeout_seconds": 300},
             preflight_enabled=True,
         )
 
@@ -1972,7 +1994,7 @@ class TestMCPToolsWrapper:
             "success": False,
             "error_code": "GOBBY_MCP_WRAPPER_STALE",
             "error": "restart required",
-            "tool_name": "wait_for_agent",
+            "tool_name": "wait_for_summary",
             "stale_source_paths": ["/repo/src/gobby/mcp_proxy/wait_tools.py"],
             "restart_required": True,
         }
@@ -1983,9 +2005,9 @@ class TestMCPToolsWrapper:
         ):
             result = await run_tool(
                 "call_tool",
-                server_name="gobby-agents",
-                tool_name="wait_for_agent",
-                arguments={"run_id": "run-123", "timeout_seconds": 300},
+                server_name="gobby-sessions",
+                tool_name="wait_for_summary",
+                arguments={"session_id": "session-123", "timeout_seconds": 300},
             )
 
         assert result == stale_result
@@ -2011,9 +2033,9 @@ class TestMCPToolsWrapper:
             result = await asyncio.wait_for(
                 run_tool(
                     "call_tool",
-                    server_name="gobby-agents",
-                    tool_name="wait_for_agent",
-                    arguments={"run_id": "run-123", "timeout_seconds": 600},
+                    server_name="gobby-sessions",
+                    tool_name="wait_for_summary",
+                    arguments={"session_id": "session-123", "timeout_seconds": 600},
                 ),
                 timeout=0.2,
             )
@@ -2025,14 +2047,14 @@ class TestMCPToolsWrapper:
             "effective_timeout_seconds": 0.02,
             "mcp_wrapper_timeout": True,
             "background_call_continues": True,
-            "tool_name": "wait_for_agent",
+            "tool_name": "wait_for_summary",
             "requested_timeout_seconds": 600.0,
             "wait_timeout_capped_by_mcp_wrapper": True,
         }
         mock_proxy.call_tool.assert_awaited_once_with(
-            "gobby-agents",
-            "wait_for_agent",
-            {"run_id": "run-123", "timeout_seconds": 0.02},
+            "gobby-sessions",
+            "wait_for_summary",
+            {"session_id": "session-123", "timeout_seconds": 0.02},
             preflight_enabled=True,
         )
         release_call.set()
@@ -2231,6 +2253,42 @@ class TestMCPToolsWrapper:
         ctx.report_progress.assert_not_awaited()
         assert ctx.report_progress.await_count == 0
         assert ctx.report_progress.await_args is None
+
+    @pytest.mark.asyncio
+    async def test_call_tool_skips_wait_guard_for_wait_for_agent(self) -> None:
+        _, mock_proxy, run_tool = self._register_tools()
+        release_call = asyncio.Event()
+        ctx = MagicMock()
+        ctx.report_progress = AsyncMock()
+
+        async def _block_until_released(*_args: Any, **_kwargs: Any) -> dict[str, bool]:
+            await release_call.wait()
+            return {"completed": False}
+
+        mock_proxy.call_tool.side_effect = _block_until_released
+        with patch("gobby.mcp_proxy.wait_tools.WAIT_TOOL_HEARTBEAT_INTERVAL_SECONDS", 0.01):
+            task = asyncio.create_task(
+                run_tool(
+                    "call_tool",
+                    server_name="gobby-agents",
+                    tool_name="wait_for_agent",
+                    arguments={"run_id": "run-123", "timeout_seconds": 600},
+                    ctx=ctx,
+                )
+            )
+            try:
+                await asyncio.sleep(0.03)
+                ctx.report_progress.assert_not_awaited()
+            finally:
+                release_call.set()
+                await task
+
+        mock_proxy.call_tool.assert_awaited_once_with(
+            "gobby-agents",
+            "wait_for_agent",
+            {"run_id": "run-123", "timeout_seconds": 600},
+            preflight_enabled=True,
+        )
 
 
 class TestEnsureDaemonRunningFailures:
