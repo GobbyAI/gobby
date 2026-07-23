@@ -2444,16 +2444,16 @@ class TestMCPProxy:
         server._internal_manager = FakeInternalManager(
             [
                 FakeInternalRegistry(
-                    name="gobby-agents",
-                    tools=[{"name": "wait_for_agent", "description": "Wait for an agent"}],
+                    name="gobby-sessions",
+                    tools=[{"name": "wait_for_summary", "description": "Wait for a summary"}],
                 ),
             ]
         )
 
         with TestClient(server.app) as client:
             response = client.post(
-                "/api/mcp/gobby-agents/tools/wait_for_agent",
-                json={"run_id": "run-123"},
+                "/api/mcp/gobby-sessions/tools/wait_for_summary",
+                json={"session_id": "sess-123"},
             )
 
         assert response.status_code == 200
@@ -2474,17 +2474,17 @@ class TestMCPProxy:
         server._internal_manager = FakeInternalManager(
             [
                 FakeInternalRegistry(
-                    name="gobby-agents",
-                    tools=[{"name": "wait_for_agent", "description": "Wait for an agent"}],
+                    name="gobby-sessions",
+                    tools=[{"name": "wait_for_summary", "description": "Wait for a summary"}],
                 ),
             ]
         )
 
         with TestClient(server.app) as client:
             response = client.post(
-                "/api/mcp/gobby-agents/tools/wait_for_agent",
+                "/api/mcp/gobby-sessions/tools/wait_for_summary",
                 headers={MCP_WRAPPER_FINGERPRINT_HEADER: "stale-wrapper"},
-                json={"run_id": "run-123"},
+                json={"session_id": "sess-123"},
             )
 
         assert response.status_code == 200
@@ -2506,23 +2506,23 @@ class TestMCPProxy:
         server._internal_manager = FakeInternalManager(
             [
                 FakeInternalRegistry(
-                    name="gobby-agents",
-                    tools=[{"name": "wait_for_agent", "description": "Wait for an agent"}],
+                    name="gobby-sessions",
+                    tools=[{"name": "wait_for_summary", "description": "Wait for a summary"}],
                 ),
             ]
         )
 
         with TestClient(server.app) as client:
             response = client.post(
-                "/api/mcp/gobby-agents/tools/wait_for_agent",
+                "/api/mcp/gobby-sessions/tools/wait_for_summary",
                 headers={MCP_WRAPPER_FINGERPRINT_HEADER: mcp_wrapper_current_source_fingerprint()},
-                json={"run_id": "run-123"},
+                json={"session_id": "sess-123"},
             )
 
         assert response.status_code == 200
         data = response.json()
         assert data["success"] is True
-        assert data["result"] == {"tool": "wait_for_agent"}
+        assert data["result"] == {"tool": "wait_for_summary"}
 
     def test_proxy_internal_server_fallthrough(self, session_storage: SessionManager) -> None:
         """Test proxy falls through to MCP manager when no internal manager."""
