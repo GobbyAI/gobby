@@ -745,3 +745,358 @@ fn full_run_replaces_stubs_and_scoped_runs_never_replace_real_pages() {
         repo_before
     );
 }
+
+fn compare_meta(
+    commit: Option<&str>,
+    dirty: Option<bool>,
+    docs: serde_json::Value,
+) -> serde_json::Value {
+    serde_json::json!({
+        "docs": docs,
+        "generated_docs": [],
+        "commit": commit,
+        "commit_dirty": dirty,
+        "ai_mode": ""
+    })
+}
+
+fn compare_doc(
+    commit: Option<&str>,
+    dirty: Option<bool>,
+    source_hashes: serde_json::Value,
+) -> serde_json::Value {
+    serde_json::json!({
+        "source_hashes": source_hashes,
+        "commit": commit,
+        "commit_dirty": dirty
+    })
+}
+
+fn compare_git(root: &std::path::Path, args: &[&str]) -> std::process::Output {
+    std::process::Command::new("git")
+        .arg("-C")
+        .arg(root)
+        .args(args)
+        .output()
+        .expect("run git")
+}
+
+fn compare_git_ok(root: &std::path::Path, args: &[&str]) -> String {
+    let output = compare_git(root, args);
+    assert!(
+        output.status.success(),
+        "git {args:?} failed: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    String::from_utf8(output.stdout)
+        .expect("git output is UTF-8")
+        .trim()
+        .to_string()
+}
+
+fn committed_compare_repo(
+    baseline_raw: Option<String>,
+    current_raw: String,
+) -> (tempfile::TempDir, String) {
+    let project = tempfile::tempdir().expect("project");
+    let root = project.path();
+    compare_git_ok(root, &["init", "-q"]);
+    compare_git_ok(root, &["config", "user.email", "test@example.com"]);
+    compare_git_ok(root, &["config", "user.name", "Test"]);
+    std::fs::write(root.join("README.md"), "compare fixture\n").expect("write fixture marker");
+    if let Some(raw) = baseline_raw {
+        let meta_dir = root.join("wiki/_meta");
+        std::fs::create_dir_all(&meta_dir).expect("baseline metadata dir");
+        std::fs::write(meta_dir.join("codewiki.json"), raw).expect("write baseline metadata");
+    }
+    compare_git_ok(root, &["add", "."]);
+    compare_git_ok(root, &["commit", "-q", "-m", "baseline"]);
+    let baseline_ref = compare_git_ok(root, &["rev-parse", "HEAD"]);
+
+    let meta_dir = root.join("wiki/_meta");
+    std::fs::create_dir_all(&meta_dir).expect("current metadata dir");
+    std::fs::write(meta_dir.join("codewiki.json"), current_raw).expect("write current metadata");
+    compare_git_ok(root, &["add", "."]);
+    compare_git_ok(root, &["commit", "-q", "--allow-empty", "-m", "current"]);
+    (project, baseline_ref)
+}
+
+fn committed_compare_case(
+    baseline: &serde_json::Value,
+    current: &serde_json::Value,
+) -> (tempfile::TempDir, String) {
+    committed_compare_repo(
+        Some(serde_json::to_string_pretty(baseline).expect("serialize baseline") + "\n"),
+        serde_json::to_string_pretty(current).expect("serialize current") + "\n",
+    )
+}
+
+#[test]
+fn compare_to_matches_path_sorted_json_goldens_without_writing_pages() {
+    let clean_base_doc = compare_doc(
+        Some("base-page"),
+        Some(false),
+        serde_json::json!({"src/a.rs": "hash-a"}),
+    );
+    let cases = [
+        (
+            "no-change",
+            compare_meta(
+                Some("base-run"),
+                Some(false),
+                serde_json::json!({"code/a.md": clean_base_doc.clone()}),
+            ),
+            compare_meta(
+                Some("current-run"),
+                Some(false),
+                serde_json::json!({"code/a.md": clean_base_doc}),
+            ),
+            serde_json::json!({
+                "base": {"commit": "base-run", "dirty": false},
+                "current": {"commit": "current-run", "dirty": false},
+                "added": [],
+                "removed": [],
+                "changed": []
+            }),
+        ),
+        (
+            "added",
+            compare_meta(Some("base-run"), Some(false), serde_json::json!({})),
+            compare_meta(
+                Some("current-run"),
+                Some(false),
+                serde_json::json!({
+                    "code/z.md": compare_doc(
+                        Some("current-page"),
+                        Some(false),
+                        serde_json::json!({"src/z.rs": "hash-z"})
+                    ),
+                    "code/a.md": compare_doc(
+                        Some("current-page"),
+                        Some(false),
+                        serde_json::json!({"src/a.rs": "hash-a"})
+                    )
+                }),
+            ),
+            serde_json::json!({
+                "base": {"commit": "base-run", "dirty": false},
+                "current": {"commit": "current-run", "dirty": false},
+                "added": [
+                    {
+                        "path": "code/a.md",
+                        "commit": "current-page",
+                        "dirty": false,
+                        "source_hashes": {"src/a.rs": "hash-a"}
+                    },
+                    {
+                        "path": "code/z.md",
+                        "commit": "current-page",
+                        "dirty": false,
+                        "source_hashes": {"src/z.rs": "hash-z"}
+                    }
+                ],
+                "removed": [],
+                "changed": []
+            }),
+        ),
+        (
+            "removed",
+            compare_meta(
+                Some("base-run"),
+                Some(false),
+                serde_json::json!({
+                    "code/old.md": compare_doc(
+                        Some("base-page"),
+                        Some(false),
+                        serde_json::json!({"src/old.rs": "old-hash"})
+                    )
+                }),
+            ),
+            compare_meta(Some("current-run"), Some(false), serde_json::json!({})),
+            serde_json::json!({
+                "base": {"commit": "base-run", "dirty": false},
+                "current": {"commit": "current-run", "dirty": false},
+                "added": [],
+                "removed": [
+                    {
+                        "path": "code/old.md",
+                        "commit": "base-page",
+                        "dirty": false,
+                        "source_hashes": {"src/old.rs": "old-hash"}
+                    }
+                ],
+                "changed": []
+            }),
+        ),
+        (
+            "changed",
+            compare_meta(
+                Some("base-run"),
+                Some(false),
+                serde_json::json!({
+                    "code/a.md": compare_doc(
+                        Some("base-page"),
+                        Some(false),
+                        serde_json::json!({"src/a.rs": "old-hash"})
+                    )
+                }),
+            ),
+            compare_meta(
+                Some("current-run"),
+                Some(false),
+                serde_json::json!({
+                    "code/a.md": compare_doc(
+                        Some("current-page"),
+                        Some(false),
+                        serde_json::json!({"src/a.rs": "new-hash"})
+                    )
+                }),
+            ),
+            serde_json::json!({
+                "base": {"commit": "base-run", "dirty": false},
+                "current": {"commit": "current-run", "dirty": false},
+                "added": [],
+                "removed": [],
+                "changed": [{
+                    "path": "code/a.md",
+                    "base": {
+                        "commit": "base-page",
+                        "dirty": false,
+                        "source_hashes": {"src/a.rs": "old-hash"}
+                    },
+                    "current": {
+                        "commit": "current-page",
+                        "dirty": false,
+                        "source_hashes": {"src/a.rs": "new-hash"}
+                    }
+                }]
+            }),
+        ),
+        (
+            "unstamped",
+            compare_meta(Some("base-run"), Some(false), serde_json::json!({})),
+            compare_meta(
+                None,
+                None,
+                serde_json::json!({
+                    "code/legacy.md": compare_doc(
+                        None,
+                        None,
+                        serde_json::json!({"src/legacy.rs": "legacy-hash"})
+                    )
+                }),
+            ),
+            serde_json::json!({
+                "base": {"commit": "base-run", "dirty": false},
+                "current": {"commit": null, "dirty": null},
+                "added": [{
+                    "path": "code/legacy.md",
+                    "commit": null,
+                    "dirty": null,
+                    "source_hashes": {"src/legacy.rs": "legacy-hash"}
+                }],
+                "removed": [],
+                "changed": []
+            }),
+        ),
+        (
+            "dirty",
+            compare_meta(Some("base-run"), Some(false), serde_json::json!({})),
+            compare_meta(
+                Some("current-run"),
+                Some(true),
+                serde_json::json!({
+                    "code/dirty.md": compare_doc(
+                        Some("current-page"),
+                        Some(true),
+                        serde_json::json!({"src/dirty.rs": "dirty-hash"})
+                    )
+                }),
+            ),
+            serde_json::json!({
+                "base": {"commit": "base-run", "dirty": false},
+                "current": {"commit": "current-run", "dirty": true},
+                "added": [{
+                    "path": "code/dirty.md",
+                    "commit": "current-page",
+                    "dirty": true,
+                    "source_hashes": {"src/dirty.rs": "dirty-hash"}
+                }],
+                "removed": [],
+                "changed": []
+            }),
+        ),
+    ];
+
+    for (name, baseline, current, expected) in cases {
+        let (project, baseline_ref) = committed_compare_case(&baseline, &current);
+        let current_path = project.path().join("wiki/_meta/codewiki.json");
+        let before = std::fs::read(&current_path).expect("read current metadata before compare");
+        let summary =
+            compare_to(project.path(), Some("wiki"), &baseline_ref).expect("compare succeeds");
+        assert_eq!(
+            serde_json::to_value(summary).expect("serialize compare summary"),
+            expected,
+            "{name} golden mismatch"
+        );
+        assert_eq!(
+            std::fs::read(&current_path).expect("read current metadata after compare"),
+            before,
+            "{name} compare must not write metadata"
+        );
+        assert!(
+            compare_git_ok(project.path(), &["status", "--porcelain"]).is_empty(),
+            "{name} compare must leave the repository clean"
+        );
+    }
+}
+
+#[test]
+fn compare_to_distinguishes_bad_ref_and_invalid_baseline_metadata() {
+    let current = compare_meta(Some("current-run"), Some(false), serde_json::json!({}));
+    let current_raw = serde_json::to_string_pretty(&current).expect("serialize current") + "\n";
+
+    let (valid_project, baseline_ref) =
+        committed_compare_repo(Some(current_raw.clone()), current_raw.clone());
+    compare_to(valid_project.path(), Some("wiki"), &baseline_ref).expect("no-change succeeds");
+    let bad_ref = compare_to(valid_project.path(), Some("wiki"), "does-not-exist")
+        .expect_err("bad ref fails");
+    assert!(
+        bad_ref
+            .to_string()
+            .contains("compare ref 'does-not-exist' does not resolve to a commit"),
+        "unexpected bad-ref error: {bad_ref:#}"
+    );
+
+    let (absent_project, absent_ref) = committed_compare_repo(None, current_raw.clone());
+    let absent = compare_to(absent_project.path(), Some("wiki"), &absent_ref)
+        .expect_err("absent baseline fails");
+    assert!(
+        absent
+            .to_string()
+            .contains("baseline metadata is absent at ref"),
+        "unexpected absent-baseline error: {absent:#}"
+    );
+
+    let (malformed_project, malformed_ref) =
+        committed_compare_repo(Some("{malformed".to_string()), current_raw.clone());
+    let malformed = compare_to(malformed_project.path(), Some("wiki"), &malformed_ref)
+        .expect_err("malformed baseline fails");
+    assert!(
+        malformed
+            .to_string()
+            .contains("baseline metadata is malformed at ref"),
+        "unexpected malformed-baseline error: {malformed:#}"
+    );
+
+    let (malformed_current_project, valid_ref) =
+        committed_compare_repo(Some(current_raw.clone()), "{malformed".to_string());
+    let malformed_current = compare_to(malformed_current_project.path(), Some("wiki"), &valid_ref)
+        .expect_err("malformed current metadata fails");
+    assert!(
+        malformed_current
+            .to_string()
+            .contains("current metadata is malformed at"),
+        "unexpected malformed-current error: {malformed_current:#}"
+    );
+}

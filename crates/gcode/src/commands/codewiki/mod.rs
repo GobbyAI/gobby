@@ -138,6 +138,7 @@ pub(crate) const DEFAULT_VERIFY_PROFILE: &str = "feature_mid";
 mod architecture_diagrams;
 mod build;
 mod cluster;
+mod compare;
 mod diagram_compose;
 mod doc_paths;
 mod frontmatter;
@@ -228,6 +229,12 @@ pub(crate) use diagram_compose::{
     DiagramEvidence, DiagramKind, DiagramOutcome, DiagramStats, NodeShape, compose_flowchart,
 };
 // Rendered markdown and graph-derived narrative analysis.
+#[cfg(test)]
+pub(crate) use compare::compare_to;
+pub use compare::{
+    CodewikiChangedDoc, CodewikiCommitMetadata, CodewikiCompareDoc, CodewikiCompareSummary,
+    run_compare,
+};
 pub(crate) use render::{
     build_repo_doc, collect_subsystem_dependency_edges, render_architecture_doc,
     render_deprecations_doc, render_feature_catalog_doc, render_file_doc, render_hotspots_doc,

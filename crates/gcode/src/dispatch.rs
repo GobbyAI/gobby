@@ -84,7 +84,15 @@ fn service_config_selection(command: &Command) -> config::ServiceConfigSelection
         Command::Index { .. } => ServiceConfigSelection::all(),
         Command::Status => ServiceConfigSelection::projection_cleanup(),
         Command::Invalidate { .. } => ServiceConfigSelection::projection_cleanup(),
-        Command::Codewiki { purge: true, .. } => ServiceConfigSelection::projection_cleanup(),
+        Command::Codewiki {
+            purge: true,
+            compare_to: None,
+            ..
+        }
+        | Command::Codewiki {
+            compare_to: Some(_),
+            ..
+        } => ServiceConfigSelection::projection_cleanup(),
         Command::Graph { .. }
         | Command::Codewiki { .. }
         | Command::Callers { .. }
@@ -584,9 +592,13 @@ fn run() -> anyhow::Result<()> {
             edge_limit,
             include_docs,
             since,
+            compare_to,
             max_workers,
             repair_citations,
         } => {
+            if let Some(base_ref) = compare_to {
+                return commands::codewiki::run_compare(&ctx, out, &base_ref);
+            }
             if purge {
                 return commands::codewiki::run_purge(&ctx, out, force, format);
             }

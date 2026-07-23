@@ -225,6 +225,31 @@ fn parse_codewiki_max_workers_flag() {
 }
 
 #[test]
+fn parse_codewiki_compare_to_flag() {
+    let cli = Cli::try_parse_from(["gcode", "codewiki", "--compare-to", "origin/main"])
+        .expect("codewiki --compare-to parses");
+    match cli.command {
+        Command::Codewiki { compare_to, .. } => {
+            assert_eq!(compare_to.as_deref(), Some("origin/main"));
+        }
+        _ => panic!("expected codewiki command"),
+    }
+
+    assert!(
+        Cli::try_parse_from([
+            "gcode",
+            "codewiki",
+            "--compare-to",
+            "origin/main",
+            "--since",
+            "HEAD~1",
+        ])
+        .is_err(),
+        "compare mode must reject generation flags"
+    );
+}
+
+#[test]
 fn parse_setup_standalone() {
     let cli = Cli::try_parse_from([
         "gcode",

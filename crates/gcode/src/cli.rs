@@ -403,6 +403,7 @@ pub(crate) enum Command {
                 "since",
                 "max_workers",
                 "repair_citations",
+                "compare_to",
             ]
         )]
         purge: bool,
@@ -470,6 +471,32 @@ pub(crate) enum Command {
         /// `_meta` are preserved either way.
         #[arg(long, value_name = "GIT_REF")]
         since: Option<String>,
+        /// Compare the tracked current CodeWiki metadata with the snapshot at
+        /// this source-repository Git ref and emit a read-only JSON summary.
+        #[arg(
+            long,
+            value_name = "GIT_REF",
+            conflicts_with_all = [
+                "purge",
+                "force",
+                "scope",
+                "complete_scope",
+                "ai",
+                "ai_depth",
+                "ai_aggregate_profile",
+                "ai_aggregate_candidate",
+                "ai_verify_profile",
+                "ai_verify_scope",
+                "ai_prose_depth",
+                "ai_register",
+                "edge_limit",
+                "include_docs",
+                "since",
+                "max_workers",
+                "repair_citations",
+            ]
+        )]
+        compare_to: Option<String>,
         /// Bounded worker pool for Standard-tier (file) page generation. The
         /// default 1 keeps generation fully sequential; N>1 fans per-file
         /// symbol/narrative LLM calls out to N workers while page writes stay
