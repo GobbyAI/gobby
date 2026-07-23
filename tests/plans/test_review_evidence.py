@@ -20,6 +20,7 @@ from gobby.storage.hub.protocol import HubDatabase, Transaction
 from gobby.storage.projects import LocalProjectManager
 from gobby.storage.sessions import SessionManager
 from gobby.storage.tasks import LocalTaskManager
+from tests.review_coverage_helpers import coverage_attestation
 
 
 @pytest.fixture
@@ -213,10 +214,28 @@ def test_stale_write_guard_and_lifecycle(
         service.verify_plan_unchanged(prepared.evidence_id, plan_path)
 
     plan_path.write_bytes(original)
-    checkpoint = service.render_v1_round_checkpoint(
-        prepared.evidence_id,
-        {"verdict": "needs_review", "findings": [{"message": "fix it"}]},
-    )
+    with pytest.raises(ReviewEvidenceError) as replayed_coverage:
+        service.render_v1_round_checkpoint(
+            prepared.evidence_id,
+            {
+                "verdict": "needs_review",
+                "findings": [],
+                "coverage_attestation": coverage_attestation(
+                    evidence_id="another-evidence",
+                    shadow_valid=False,
+                ),
+            },
+        )
+    assert replayed_coverage.value.code == "coverage_evidence_mismatch"
+    rejection = {
+        "verdict": "needs_review",
+        "findings": [{"message": "fix it"}],
+        "coverage_attestation": coverage_attestation(
+            evidence_id=prepared.evidence_id,
+            shadow_valid=False,
+        ),
+    }
+    checkpoint = service.render_v1_round_checkpoint(prepared.evidence_id, rejection)
     ensure_checkpoint(plan_path, checkpoint)
     next_round = service.prepare_plan_review_round(
         project_id=project_id,
@@ -227,10 +246,7 @@ def test_stale_write_guard_and_lifecycle(
     recovered = service.get_evidence(prepared.evidence_id)
     assert recovered.finalized_at is not None
     assert recovered.expired_at is None
-    assert recovered.round_result == {
-        "verdict": "needs_review",
-        "findings": [{"message": "fix it"}],
-    }
+    assert recovered.round_result == rejection
     assert next_round.evidence_id != prepared.evidence_id
 
     dead_path = plan_path.with_name("dead-attempt.md")
@@ -431,7 +447,14 @@ def test_path_boundary_and_binding_validation(
     assert current.evidence_id == prepared.evidence_id
     finalized = service.finalize_plan_review_evidence(
         prepared.evidence_id,
-        {"verdict": "needs_review", "findings": []},
+        {
+            "verdict": "needs_review",
+            "findings": [],
+            "coverage_attestation": coverage_attestation(
+                evidence_id=prepared.evidence_id,
+                shadow_valid=False,
+            ),
+        },
     )
     replay = service.authorize_current_attempt(
         prepared.evidence_id,
@@ -472,26 +495,50 @@ def test_manifest_compare_and_apply(
         prompt="review",
     )
     service.bind_evidence_run(prepared.evidence_id, run.id)
-    approval = {
-        "verdict": "approved",
-        "findings": [],
-        "manifest_entries": [
-            {
-                "title": "Implement example",
-                "source_section": "1.1",
-                "covers": ["1.1.1"],
-                "category": "code",
-                "implementation_domain": "backend",
-                "priority": 2,
-                "task_type": "feature",
-                "tdd": False,
-                "labels": ["covers:review-evidence:1.1:1.1.1"],
-                "description": "Implement the example.",
-                "validation_criteria": "Example behavior is tested.",
-            }
-        ],
-    }
+
+    def canonical_approval(evidence_id: str) -> dict[str, object]:
+        derived = service.derive_plan_review_manifest(
+            evidence_id,
+            routing_decisions={},
+        )
+        manifest_entries = derived["manifest_entries"]
+        assert isinstance(manifest_entries, list)
+        return {
+            "verdict": "approved",
+            "findings": [],
+            "routing_decisions": {},
+            "manifest_entries": manifest_entries,
+            "coverage_attestation": coverage_attestation(
+                evidence_id=evidence_id,
+                manifest_entries=manifest_entries,
+            ),
+        }
+
+    approval = canonical_approval(prepared.evidence_id)
     original_bytes = plan_path.read_bytes()
+    invalid_shadow = service.derive_plan_review_manifest(
+        prepared.evidence_id,
+        routing_decisions={"missing": {}},
+    )
+    assert invalid_shadow["status"] == "invalid"
+    assert plan_path.read_bytes() == original_bytes
+    assert service.get_evidence(prepared.evidence_id).manifest_state is None
+
+    approval_entries = approval["manifest_entries"]
+    assert isinstance(approval_entries, list)
+    tampered_entries = [dict(entry) for entry in approval_entries if isinstance(entry, dict)]
+    tampered_entries[0]["title"] = "Caller-controlled drift"
+    tampered = {**approval, "manifest_entries": tampered_entries}
+    with pytest.raises(ReviewEvidenceError) as noncanonical:
+        service.apply_plan_review_manifest(
+            prepared.evidence_id,
+            tampered,
+            plan_path=plan_path,
+            run_id=run.id,
+        )
+    assert noncanonical.value.code == "noncanonical_manifest"
+    assert plan_path.read_bytes() == original_bytes
+    assert service.get_evidence(prepared.evidence_id).manifest_state is None
 
     def crash_atomic_write(_path: Path, _content: bytes) -> None:
         raise OSError("simulated crash")
@@ -561,6 +608,7 @@ def test_manifest_compare_and_apply(
         prompt="review landed",
     )
     service.bind_evidence_run(landed_prepared.evidence_id, landed_run.id)
+    landed_approval = canonical_approval(landed_prepared.evidence_id)
     complete_manifest_apply = service.store.complete_manifest_apply
 
     def crash_before_checkpoint(
@@ -576,7 +624,7 @@ def test_manifest_compare_and_apply(
     with pytest.raises(RuntimeError, match="simulated checkpoint crash"):
         service.apply_plan_review_manifest(
             landed_prepared.evidence_id,
-            approval,
+            landed_approval,
             plan_path=landed_path,
             run_id=landed_run.id,
         )
@@ -590,7 +638,7 @@ def test_manifest_compare_and_apply(
     )
     service.apply_plan_review_manifest(
         landed_prepared.evidence_id,
-        approval,
+        landed_approval,
         plan_path=landed_path,
         run_id=landed_run.id,
     )
@@ -611,6 +659,7 @@ def test_manifest_compare_and_apply(
         prompt="review drift",
     )
     service.bind_evidence_run(drift_prepared.evidence_id, drift_run.id)
+    drift_approval = canonical_approval(drift_prepared.evidence_id)
     monkeypatch.setattr(
         "gobby.plans.review_evidence.atomic_write_bytes",
         crash_atomic_write,
@@ -618,7 +667,7 @@ def test_manifest_compare_and_apply(
     with pytest.raises(OSError, match="simulated crash"):
         service.apply_plan_review_manifest(
             drift_prepared.evidence_id,
-            approval,
+            drift_approval,
             plan_path=drift_path,
             run_id=drift_run.id,
         )
@@ -633,19 +682,19 @@ def test_manifest_compare_and_apply(
     with pytest.raises(ReviewEvidenceError, match="reviewed plan sections changed"):
         service.apply_plan_review_manifest(
             drift_prepared.evidence_id,
-            approval,
+            drift_approval,
             plan_path=drift_path,
             run_id=drift_run.id,
         )
     revoked = service.get_evidence(drift_prepared.evidence_id)
     assert revoked.manifest_state == "revoked"
     assert revoked.round_result is None
-    assert revoked.manifest_payload == approval
+    assert revoked.manifest_payload == drift_approval
     assert drift_path.read_bytes() == drifted_bytes
     with pytest.raises(ReviewEvidenceError, match="manifest intent was revoked"):
         service.apply_plan_review_manifest(
             drift_prepared.evidence_id,
-            approval,
+            drift_approval,
             plan_path=drift_path,
             run_id=drift_run.id,
         )
@@ -733,24 +782,21 @@ def test_interactive_mint_status_lifecycle(
         round_number=1,
         session_id=session_id,
     )
+    derived = service.derive_plan_review_manifest(
+        prepared.evidence_id,
+        routing_decisions={},
+    )
+    manifest_entries = derived["manifest_entries"]
+    assert isinstance(manifest_entries, list)
     approval = {
         "verdict": "approved",
         "findings": [],
-        "manifest_entries": [
-            {
-                "title": "Implement example",
-                "source_section": "1.1",
-                "covers": ["1.1.1"],
-                "category": "code",
-                "implementation_domain": "backend",
-                "priority": 2,
-                "task_type": "feature",
-                "tdd": False,
-                "labels": ["covers:review-evidence:1.1:1.1.1"],
-                "description": "Implement the example.",
-                "validation_criteria": "Example behavior is tested.",
-            }
-        ],
+        "routing_decisions": {},
+        "manifest_entries": manifest_entries,
+        "coverage_attestation": coverage_attestation(
+            evidence_id=prepared.evidence_id,
+            manifest_entries=manifest_entries,
+        ),
     }
     with pytest.raises(ReviewEvidenceError, match="V1 checkpoint"):
         service.finalize_plan_review_evidence(prepared.evidence_id, approval)

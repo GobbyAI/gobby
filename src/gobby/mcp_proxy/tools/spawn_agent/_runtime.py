@@ -43,7 +43,7 @@ def _normalize_optional_model(value: str | None) -> str | None:
     if value is None:
         return None
     value = value.strip()
-    return value or None
+    return value if value and value.lower() != "inherit" else None
 
 
 def _persist_spawn_runtime(

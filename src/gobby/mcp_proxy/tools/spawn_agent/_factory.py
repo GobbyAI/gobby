@@ -16,6 +16,7 @@ from gobby.utils.project_context import get_project_context
 from gobby.workflows.definitions import AgentDefinitionBody
 
 from ._implementation import spawn_agent_impl
+from ._provider_resolution import parent_session_provider, resolve_spawn_provider
 from ._spawn_guards import max_active_agents_for_project
 
 if TYPE_CHECKING:
@@ -212,6 +213,7 @@ def _load_agent_body(
     name: str,
     db: HubDatabase | None,
     project_id: str | None = None,
+    cli_source: str | None = None,
 ) -> AgentDefinitionBody | None:
     """Load an agent definition from workflow_definitions via direct lookup.
 
@@ -219,6 +221,7 @@ def _load_agent_body(
         name: Agent name to look up.
         db: Database connection.
         project_id: Optional project id for scoped agents.
+        cli_source: Effective parent provider used to resolve ``provider: inherit``.
 
     Returns:
         AgentDefinitionBody if found, None otherwise.
@@ -228,7 +231,7 @@ def _load_agent_body(
 
     from gobby.workflows.agent_resolver import resolve_agent
 
-    return resolve_agent(name, db, project_id=project_id)
+    return resolve_agent(name, db, cli_source=cli_source, project_id=project_id)
 
 
 def _register_agent_step_workflow(
@@ -364,7 +367,20 @@ def create_spawn_agent_registry(
             db=db,
         )
         project_id = _project_id_from_context(spawn_project_ctx)
-        agent_body = _load_agent_body(agent, db, project_id=project_id)
+        parent_provider = resolve_spawn_provider(
+            explicit_provider=None,
+            agent_provider="inherit",
+            parent_provider=parent_session_provider(
+                session_manager,
+                resolved_parent_session_id,
+            ),
+        )
+        agent_body = _load_agent_body(
+            agent,
+            db,
+            project_id=project_id,
+            cli_source=parent_provider,
+        )
         if agent_body is None and agent != "default":
             return {"success": False, "error": f"Agent '{agent}' not found"}
 
@@ -431,12 +447,11 @@ def create_spawn_agent_registry(
                     classifier=StallClassifier(detection_registry),
                 )
 
-                def _resolve_provider(p: str | None) -> str:
-                    if p is None or p == "inherit":
-                        return "claude"
-                    return p
-
-                agent_provider = _resolve_provider(agent_body.provider)
+                agent_provider = resolve_spawn_provider(
+                    explicit_provider=None,
+                    agent_provider=agent_body.provider,
+                    parent_provider=parent_provider,
+                )
 
                 if agent_provider in failed_providers:
                     visited: set[str] = {agent_body.name}
@@ -454,10 +469,19 @@ def create_spawn_agent_registry(
                                 )
                             break
                         visited.add(candidate_name)
-                        candidate = _load_agent_body(candidate_name, db, project_id=project_id)
+                        candidate = _load_agent_body(
+                            candidate_name,
+                            db,
+                            project_id=project_id,
+                            cli_source=parent_provider,
+                        )
                         if not candidate:
                             break
-                        candidate_provider = _resolve_provider(candidate.provider)
+                        candidate_provider = resolve_spawn_provider(
+                            explicit_provider=None,
+                            agent_provider=candidate.provider,
+                            parent_provider=parent_provider,
+                        )
                         if candidate_provider not in failed_providers:
                             fallback_body = candidate
                             break

@@ -1,0 +1,122 @@
+name: plan-review-researcher-taskless
+description: |
+  Read-only taskless specialist for one immutable plan-review research lane.
+  Returns candidate issues to the parent adversary and owns no verdict state.
+
+version: "1.0"
+enabled: true
+priority: 20
+surfaces: [spawn]
+provider: inherit
+reasoning_effort: high
+reasoning_required: false
+isolation: none
+blocked_tools:
+  - "Edit"
+  - "Write"
+  - "NotebookEdit"
+  - "Task"
+blocked_mcp_tools:
+  - "gobby-agents:spawn_agent"
+  - "gobby-agents:kill_agent"
+  - "gobby-tasks:create_task"
+  - "gobby-tasks:claim_task"
+  - "gobby-tasks:update_task"
+  - "gobby-tasks:close_task"
+  - "gobby-tasks:reopen_task"
+  - "gobby-tasks:delete_task"
+  - "gobby-tasks:escalate_task"
+  - "gobby-tasks-ops:submit_for_review"
+  - "gobby-tasks-ops:approve_review"
+  - "gobby-tasks-ops:reject_review"
+  - "gobby-plans:prepare_plan_review_round"
+  - "gobby-plans:bind_evidence_run"
+  - "gobby-plans:expire_plan_review_evidence"
+  - "gobby-plans:apply_plan_review_manifest"
+  - "gobby-plans:finalize_plan_review_evidence"
+  - "gobby-plans:checkpoint_plan_review_lesson_mint"
+
+instructions: |
+  You are a taskless read-only specialist for exactly one plan-review lane.
+  The prompt provides exactly one `review_lane: <canonical-lane-id>` marker,
+  evidence_id, and parent_session_id. Read only the
+  immutable snapshot returned by `get_plan_review_snapshot(evidence_id)` and
+  repository evidence needed for that lane. Use gcode for code discovery.
+
+  Lane scopes:
+  - requirements_traceability: requirements, acceptance coverage,
+    dependencies, and manifest parity.
+  - repository_blast_radius: callers, consumers, constructors, destructures,
+    implementations, fakes, exhaustive matches, test seams, migration/registry
+    inventories, and source-size constraints.
+  - runtime_invariants: inputs, outcomes, state transitions, wrappers,
+    sync/async boundaries, retries, races, bounds, serialization, and recovery.
+
+  Return one structured lane result:
+
+  ```yaml
+  lane_id: <assigned canonical lane>
+  status: completed
+  section_ids_checked: [<every deliverable section id>]
+  source_citations:
+    - path: <repository-relative path>
+      sha256: <lowercase SHA-256>
+      line_start: <positive integer, optional>
+      line_end: <positive integer, optional>
+  candidate_issues:
+    - candidate_id: <stable lane-local id>
+      section_ids: [<affected deliverable ids>]
+      violated_invariant: <specific invariant>
+      source_citations: [<same citation schema>]
+      suggested_fix: <concrete plan fix>
+      adjacent_sites_checked: [<callers/variants checked>]
+      confidence: <0 through 1>
+  ```
+
+  Candidate issues are research leads. Do not emit findings, dismiss candidates,
+  classify lessons, derive/apply manifests, issue a verdict, edit files, mutate
+  lifecycle state, create/claim tasks, or spawn agents. Send the lane result to
+  parent_session_id with `gobby-agents:send_message`, then call
+  `gobby-agents:end_agent_run`.
+
+  Use only Gobby agent tools for coordination. Always use context-aware
+  progressive discovery. Use `uv run` for Python commands.
+
+workflows:
+  rule_selectors:
+    include:
+      - "tag:default"
+      - "tag:worker-safety"
+    exclude:
+      - "tag:sync"
+      - "tag:task-skill-gates"
+
+step_variables:
+  result_sent: false
+  run_complete: false
+
+steps:
+  - name: research
+    description: "Research one immutable review lane and return candidates"
+    status_message: |
+      Read the evidence snapshot, complete the assigned lane, send its structured
+      candidate result to the parent, then call end_agent_run.
+    allowed_tools: "all"
+    allowed_mcp_tools:
+      - "gobby-plans:get_plan_review_snapshot"
+      - "gobby-agents:send_message"
+      - "gobby-agents:end_agent_run"
+    on_mcp_success:
+      - server: gobby-agents
+        tool: send_message
+        action: set_variable
+        variable: result_sent
+        value: true
+      - server: gobby-agents
+        tool: end_agent_run
+        when: "vars.result_sent"
+        action: set_variable
+        variable: run_complete
+        value: true
+
+exit_condition: "vars.run_complete"

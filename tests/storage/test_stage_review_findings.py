@@ -21,6 +21,7 @@ from gobby.storage.sessions import SessionManager
 from gobby.storage.tasks import LocalTaskManager
 from gobby.storage.tasks._artifacts import TaskArtifactManager
 from gobby.storage.tasks._dispatch_mutex import TaskDispatchMutexManager
+from tests.review_coverage_helpers import coverage_attestation
 from tests.storage.tasks._stage_test_helpers import (
     lifecycle_events,
     set_stage_state,
@@ -227,6 +228,10 @@ def test_fence_round_trip(stage_review_setup: StageReviewSetup) -> None:
             stage_review_setup.task_id,
             "planning",
             findings=invalid,
+            coverage_attestation=coverage_attestation(
+                evidence_id=evidence_id,
+                shadow_valid=False,
+            ),
             evidence_id=evidence_id,
             round_number=1,
             dispatch_run_id=run_id,
@@ -237,6 +242,10 @@ def test_fence_round_trip(stage_review_setup: StageReviewSetup) -> None:
         stage_review_setup.task_id,
         "planning",
         findings=findings,
+        coverage_attestation=coverage_attestation(
+            evidence_id=evidence_id,
+            shadow_valid=False,
+        ),
         evidence_id=evidence_id,
         round_number=1,
         dispatch_run_id=run_id,
@@ -248,7 +257,14 @@ def test_fence_round_trip(stage_review_setup: StageReviewSetup) -> None:
     assert "principle" not in findings[0]
     assert findings[1]["causal_finding_id"] == "F1"
     evidence = stage_review_setup.evidence.get_evidence(evidence_id)
-    assert evidence.round_result == {"verdict": "needs_review", "findings": findings}
+    assert evidence.round_result == {
+        "verdict": "needs_review",
+        "findings": findings,
+        "coverage_attestation": coverage_attestation(
+            evidence_id=evidence_id,
+            shadow_valid=False,
+        ),
+    }
 
 
 def test_server_side_evidence_resolution(stage_review_setup: StageReviewSetup) -> None:
@@ -261,6 +277,10 @@ def test_server_side_evidence_resolution(stage_review_setup: StageReviewSetup) -
         stage_review_setup.task_id,
         "planning",
         findings=_findings(),
+        coverage_attestation=coverage_attestation(
+            evidence_id=evidence_id,
+            shadow_valid=False,
+        ),
         evidence_id=evidence_id,
         round_number=1,
         dispatch_run_id=run_id,
@@ -279,6 +299,10 @@ def test_server_side_evidence_resolution(stage_review_setup: StageReviewSetup) -
             stage_review_setup.task_id,
             "planning",
             findings=_findings(),
+            coverage_attestation=coverage_attestation(
+                evidence_id=evidence_id,
+                shadow_valid=False,
+            ),
             evidence_id=evidence_id,
             round_number=2,
             dispatch_run_id=run_id,
@@ -303,6 +327,10 @@ def test_server_side_evidence_resolution(stage_review_setup: StageReviewSetup) -
             other_task.id,
             "planning",
             findings=_findings(),
+            coverage_attestation=coverage_attestation(
+                evidence_id=evidence_id,
+                shadow_valid=False,
+            ),
             evidence_id=evidence_id,
             round_number=1,
             dispatch_run_id=run_id,
@@ -345,6 +373,10 @@ async def test_pre_spawn_snapshot_transport(
                 stage_review_setup.task_id,
                 "planning",
                 findings=_findings(),
+                coverage_attestation=coverage_attestation(
+                    evidence_id=prepared.evidence_id,
+                    shadow_valid=False,
+                ),
                 evidence_id=prepared.evidence_id,
                 round_number=1,
                 dispatch_run_id=run_id,
@@ -411,6 +443,10 @@ async def test_pre_spawn_snapshot_transport(
         stage_review_setup.task_id,
         "planning",
         findings=_findings(),
+        coverage_attestation=coverage_attestation(
+            evidence_id=prepared.evidence_id,
+            shadow_valid=False,
+        ),
         evidence_id=prepared.evidence_id,
         round_number=1,
         dispatch_run_id=run_id,
@@ -486,6 +522,10 @@ def test_rejection_finalizes_evidence(
             stage_review_setup.task_id,
             "planning",
             findings=_findings(),
+            coverage_attestation=coverage_attestation(
+                evidence_id=evidence_id,
+                shadow_valid=False,
+            ),
             evidence_id=evidence_id,
             round_number=1,
             dispatch_run_id=run_id,
@@ -508,6 +548,10 @@ def test_rejection_finalizes_evidence(
         stage_review_setup.task_id,
         "planning",
         findings=_findings(),
+        coverage_attestation=coverage_attestation(
+            evidence_id=evidence_id,
+            shadow_valid=False,
+        ),
         evidence_id=evidence_id,
         round_number=1,
         dispatch_run_id=run_id,
@@ -523,6 +567,10 @@ def test_rejection_finalizes_evidence(
         stage_review_setup.task_id,
         "planning",
         findings=_findings(),
+        coverage_attestation=coverage_attestation(
+            evidence_id=evidence_id,
+            shadow_valid=False,
+        ),
         evidence_id=evidence_id,
         round_number=1,
         dispatch_run_id=run_id,
@@ -538,6 +586,10 @@ def test_rejection_finalizes_evidence(
             stage_review_setup.task_id,
             "planning",
             findings=_findings(),
+            coverage_attestation=coverage_attestation(
+                evidence_id=evidence_id,
+                shadow_valid=False,
+            ),
             evidence_id=evidence_id,
             round_number=1,
             dispatch_run_id="wrong-run",

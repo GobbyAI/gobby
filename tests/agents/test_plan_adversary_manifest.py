@@ -1,16 +1,4 @@
-"""Wiring tests for plan-adversary.yaml manifest-emission contract (§2.22.1, §2.22.3).
-
-The plan-adversary agent must emit the ``## M1 Task Manifest`` YAML at the end
-of the plan file before calling ``approve_review``. The act of
-writing the manifest forces the adversary to confront ambiguity it might
-otherwise wave through.
-
-These tests lock in:
-  - the M1 heading ID (required by the canonical heading regex § 2.21),
-  - the order: emit manifest BEFORE review approval,
-  - Edit/Write are documented as permitted tools for the review step,
-  - instructions scope writes to the plan file path only (§ 2.22.3).
-"""
+"""Wiring tests for canonical plan-adversary manifest handoff."""
 
 from __future__ import annotations
 
@@ -46,22 +34,33 @@ class TestManifestEmissionOnApproval:
         instructions = agent.instructions or ""
         assert "MANIFEST HANDOFF" in instructions
         assert "manifest_entries" in instructions
+        assert "routing_decisions" in instructions
+        assert "coverage_attestation" in instructions
         assert "approve_review" in instructions
 
     def test_instructions_require_canonical_round_result(self, agent: AgentDefinitionBody) -> None:
         instructions = agent.instructions or ""
         assert "canonical `round_result`" in instructions
-        for field in ("`round_number`", "`findings`", "`manifest_entries`", "`evidence_id`"):
+        for field in (
+            "`round_number`",
+            "`findings`",
+            "`manifest_entries`",
+            "`routing_decisions`",
+            "`coverage_attestation`",
+            "`evidence_id`",
+        ):
             assert field in instructions
 
     def test_manifest_emission_precedes_review_approval(self, agent: AgentDefinitionBody) -> None:
         """Typed manifest derivation must precede the approval call."""
         instructions = agent.instructions or ""
-        manifest_index = instructions.find("Derive a full typed manifest entry")
+        manifest_index = instructions.find("Record routing decisions")
+        derive_index = instructions.find("derive_plan_review_manifest", manifest_index)
         approval_index = instructions.find("On success, call `approve_review`")
         assert manifest_index >= 0
+        assert derive_index >= 0
         assert approval_index >= 0
-        assert manifest_index < approval_index, (
+        assert manifest_index < derive_index < approval_index, (
             "manifest derivation must be described before review approval in instructions"
         )
 
@@ -73,7 +72,7 @@ class TestManifestEmissionOnApproval:
         normalized = " ".join(instructions.split())
         guard_index = normalized.find("If the Plan Identity Precondition fails")
         reject_index = normalized.find("Plan Identity Precondition failed")
-        manifest_index = normalized.find("Derive a full typed manifest entry")
+        manifest_index = normalized.find("Record routing decisions")
         assert guard_index >= 0
         assert reject_index >= 0
         assert manifest_index >= 0
@@ -86,7 +85,7 @@ class TestManifestEmissionOnApproval:
         self, agent: AgentDefinitionBody
     ) -> None:
         instructions = agent.instructions or ""
-        manifest_index = instructions.find("Derive a full typed manifest entry")
+        manifest_index = instructions.find("Record routing decisions")
         reject_index = instructions.find("If the Plan Identity Precondition fails")
         assert reject_index >= 0
         assert manifest_index >= 0

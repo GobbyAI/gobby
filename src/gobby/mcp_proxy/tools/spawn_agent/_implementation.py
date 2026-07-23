@@ -45,7 +45,12 @@ from ._code_index import (
 from ._failure_cleanup import cleanup_created_isolation, cleanup_failed_spawn, start_run_or_cleanup
 from ._health import _check_tmux_session_alive, schedule_tmux_health_check
 from ._idempotency import non_actionable_task_spawn_response
-from ._provider_resolution import defaulted_provider, provider_prefixed_model
+from ._provider_resolution import (
+    concrete_provider,
+    parent_session_provider,
+    provider_prefixed_model,
+    resolve_spawn_provider,
+)
 from ._runtime import (
     _build_spawn_success_response,
     _normalize_optional_model,
@@ -224,14 +229,18 @@ async def spawn_agent_impl(
         _raw_isolation if _raw_isolation in ("none", "worktree", "clone") else "none",
     )
 
-    provider_was_overridden = provider is not None
     model_from_prefix = provider_prefixed_model(_normalize_optional_model(model))
-    _raw_provider: str | None = provider
-    if _raw_provider is None and model_from_prefix is not None:
-        _raw_provider = model_from_prefix[0]
-    if _raw_provider is None and agent_body:
-        _raw_provider = agent_body.provider
-    effective_provider = defaulted_provider(_raw_provider)
+    explicit_provider = concrete_provider(provider)
+    if explicit_provider is None and model_from_prefix is not None:
+        explicit_provider = model_from_prefix[0]
+    parent_provider = parent_session_provider(session_manager, parent_session_id)
+    agent_provider = agent_body.provider if agent_body else None
+    effective_provider = resolve_spawn_provider(
+        explicit_provider=explicit_provider,
+        agent_provider=agent_provider,
+        parent_provider=parent_provider,
+    )
+    provider_was_overridden = explicit_provider is not None
 
     if provider_was_overridden and model_from_prefix and model_from_prefix[0] != effective_provider:
         return {
@@ -245,7 +254,10 @@ async def spawn_agent_impl(
 
     provider_differs_from_agent = False
     if provider_was_overridden and agent_body:
-        provider_differs_from_agent = effective_provider != defaulted_provider(agent_body.provider)
+        concrete_agent_provider = concrete_provider(agent_body.provider)
+        provider_differs_from_agent = (
+            concrete_agent_provider is not None and effective_provider != concrete_agent_provider
+        )
 
     effective_model = (
         model_from_prefix[1] if model_from_prefix else _normalize_optional_model(model)

@@ -168,6 +168,8 @@ class PlanReviewEvidence:
 
 def validate_round_result(raw: Mapping[str, object]) -> dict[str, object]:
     """Validate and canonicalize the stable round-result envelope."""
+    from gobby.plans.review_coverage import validate_coverage_attestation
+
     payload = canonical_json_object(raw)
     verdict = payload.get("verdict")
     if verdict not in {"approved", "needs_review"}:
@@ -186,6 +188,10 @@ def validate_round_result(raw: Mapping[str, object]) -> dict[str, object]:
             "invalid_round_result",
             "round_result.findings entries must be objects",
         )
+    payload["coverage_attestation"] = validate_coverage_attestation(
+        payload.get("coverage_attestation"),
+        verdict=str(verdict),
+    )
     if verdict == "approved":
         entries = payload.get("manifest_entries")
         if not isinstance(entries, list) or not entries:
@@ -197,6 +203,12 @@ def validate_round_result(raw: Mapping[str, object]) -> dict[str, object]:
             raise ReviewEvidenceError(
                 "invalid_round_result",
                 "round_result.manifest_entries entries must be objects",
+            )
+        routing_decisions = payload.get("routing_decisions")
+        if not isinstance(routing_decisions, dict):
+            raise ReviewEvidenceError(
+                "invalid_round_result",
+                "approved round_result requires routing_decisions",
             )
     return payload
 

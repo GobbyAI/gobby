@@ -1,0 +1,59 @@
+"""Small builders for valid plan-review coverage payloads in focused tests."""
+
+from __future__ import annotations
+
+import hashlib
+import json
+from collections.abc import Mapping, Sequence
+
+from gobby.plans.review_coverage import REVIEW_LANES
+
+
+def manifest_digest(entries: Sequence[Mapping[str, object]]) -> str:
+    """Return the canonical digest used by the review manifest service."""
+    return hashlib.sha256(
+        json.dumps(list(entries), sort_keys=True, separators=(",", ":")).encode()
+    ).hexdigest()
+
+
+def coverage_attestation(
+    *,
+    evidence_id: str = "test-evidence",
+    manifest_entries: Sequence[Mapping[str, object]] | None = None,
+    shadow_valid: bool = True,
+) -> dict[str, object]:
+    """Build a canonical signed attestation for tests outside coverage validation."""
+    shadow: dict[str, object]
+    if shadow_valid:
+        entries = list(manifest_entries or [])
+        shadow = {
+            "status": "valid",
+            "manifest_digest": manifest_digest(entries),
+            "entry_count": len(entries),
+        }
+    else:
+        shadow = {
+            "status": "invalid",
+            "diagnostics": [{"code": "test_shadow_failure", "message": "invalid"}],
+        }
+    payload: dict[str, object] = {
+        "version": 1,
+        "evidence_id": evidence_id,
+        "lanes": [
+            {"lane_id": lane_id, "status": "completed", "candidate_count": 0}
+            for lane_id in REVIEW_LANES
+        ],
+        "source_digest": "0" * 64,
+        "disposition_counts": {
+            "total": 0,
+            "emitted_findings": 0,
+            "dismissed": 0,
+        },
+        "cross_lane_interaction_complete": True,
+        "adjacent_variant_complete": True,
+        "shadow_manifest_status": shadow,
+    }
+    payload["attestation_digest"] = hashlib.sha256(
+        json.dumps(payload, sort_keys=True, separators=(",", ":")).encode()
+    ).hexdigest()
+    return payload

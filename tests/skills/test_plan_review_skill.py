@@ -158,3 +158,30 @@ class TestPlanReviewContent:
         """The finding schema the interactive planner parses."""
         for field in ("severity", "category", "location", "description", "suggested fix"):
             assert field in body.lower(), f"Finding schema missing: {field}"
+
+    def test_three_lane_coverage_and_complexity_thresholds(self, body: str) -> None:
+        for lane in (
+            "requirements_traceability",
+            "repository_blast_radius",
+            "runtime_invariants",
+        ):
+            assert lane in body
+        for threshold in ("8 deliverables", "24 acceptance", "12 distinct target", "4 sections"):
+            assert threshold in body
+        assert "one worker per lane" in body.lower()
+        assert "15 minutes" in body
+
+    def test_parent_dispositions_and_adjacent_variant_closure(self, body: str) -> None:
+        assert "candidate_dispositions" in body
+        assert "emitted_finding" in body
+        assert "dismissed" in body
+        assert "cross-lane interaction" in body.lower()
+        assert "adjacent-variant" in body.lower()
+        assert "prior finding" in body.lower()
+
+    def test_shadow_manifest_and_source_drift_contract(self, body: str) -> None:
+        assert "derive_plan_review_manifest" in body
+        assert "validate_plan_review_coverage" in body
+        assert "coverage_attestation" in body
+        assert "inconclusive/source_drift" in body
+        assert "needs_human:unstable_review_source:<paths>" in body

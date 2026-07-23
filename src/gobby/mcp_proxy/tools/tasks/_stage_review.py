@@ -306,6 +306,8 @@ def register_review_stage_tools(registry: InternalToolRegistry, ctx: RegistryCon
         round_number: int | None = None,
         findings: list[dict[str, object]] | None = None,
         manifest_entries: list[dict[str, object]] | None = None,
+        routing_decisions: dict[str, object] | None = None,
+        coverage_attestation: dict[str, object] | None = None,
         evidence_id: str | None = None,
         signoff_summary: str | None = None,
     ) -> dict[str, Any]:
@@ -348,6 +350,10 @@ def register_review_stage_tools(registry: InternalToolRegistry, ctx: RegistryCon
             approval_kwargs["findings"] = findings
         if manifest_entries is not None:
             approval_kwargs["manifest_entries"] = manifest_entries
+        if routing_decisions is not None:
+            approval_kwargs["routing_decisions"] = routing_decisions
+        if coverage_attestation is not None:
+            approval_kwargs["coverage_attestation"] = coverage_attestation
         if evidence_id is not None:
             approval_kwargs["evidence_id"] = evidence_id
         try:
@@ -456,6 +462,8 @@ def register_review_stage_tools(registry: InternalToolRegistry, ctx: RegistryCon
                     "type": ["array", "null"],
                     "items": {"type": "object"},
                 },
+                "routing_decisions": {"type": ["object", "null"]},
+                "coverage_attestation": {"type": ["object", "null"]},
                 "evidence_id": {"type": ["string", "null"]},
                 "signoff_summary": {"type": ["string", "null"]},
             },
@@ -471,6 +479,7 @@ def register_review_stage_tools(registry: InternalToolRegistry, ctx: RegistryCon
         rejection_notes: str | None = None,
         round_number: int | None = None,
         findings: list[dict[str, object]] | None = None,
+        coverage_attestation: dict[str, object] | None = None,
         evidence_id: str | None = None,
         signoff_summary: str | None = None,
     ) -> dict[str, Any]:
@@ -499,6 +508,8 @@ def register_review_stage_tools(registry: InternalToolRegistry, ctx: RegistryCon
         }
         if findings is not None:
             review_kwargs["findings"] = findings
+        if coverage_attestation is not None:
+            review_kwargs["coverage_attestation"] = coverage_attestation
         if evidence_id is not None:
             review_kwargs["evidence_id"] = evidence_id
         try:
@@ -642,6 +653,7 @@ def register_review_stage_tools(registry: InternalToolRegistry, ctx: RegistryCon
                         "additionalProperties": False,
                     },
                 },
+                "coverage_attestation": {"type": ["object", "null"]},
                 "evidence_id": {"type": ["string", "null"]},
                 "signoff_summary": {"type": ["string", "null"]},
             },

@@ -7,9 +7,9 @@ version: "1.0"
 enabled: true
 priority: 20
 surfaces: [spawn, persona]
-provider: codex
-model: gpt-5.6-sol
-reasoning_effort: xhigh
+provider: inherit
+reasoning_effort: high
+reasoning_required: false
 isolation: none
 blocked_mcp_tools:
   - "gobby-agents:kill_agent"
@@ -85,6 +85,28 @@ instructions: |
   one of `principle` or `root_cause`, and every field required by its claimed
   lesson class. Return section ids only; the evidence service owns hashes.
 
+  THREE-LANE COVERAGE PROTOCOL:
+  Always complete requirements_traceability, repository_blast_radius, and
+  runtime_invariants against `get_plan_review_snapshot(evidence_id)`. The lane
+  scopes, candidate schema, parent verification/disposition rules, cross-lane
+  interaction pass, adjacent-variant closure, complexity thresholds, worker
+  fallback rules, and shadow-manifest gate are authoritative in `plan-review`.
+  In sequential mode, execute all three lanes yourself. In parallel mode, spawn at most one
+  `plan-review-researcher-taskless` per lane through Gobby tools only, without
+  task_id, with isolation="none", timeout=900, and no provider/model override.
+  Put exactly one `review_lane: <canonical-lane-id>` marker in each worker prompt.
+  Capacity shortage, timeout, worker failure, or malformed output sends that
+  lane back to sequential execution in this parent. You remain the sole verdict,
+  evidence, lesson, and manifest owner.
+
+  Call `derive_plan_review_manifest` during every round. Call
+  `validate_plan_review_coverage` before approve/reject and pass its
+  `coverage_attestation` to the lifecycle tool. Approval also passes the exact
+  server-derived routing_decisions and manifest_entries. On first source drift,
+  rerun affected lanes once. Repeated drift must expire evidence and call
+  `escalate_task(reason="needs_human:unstable_review_source:<paths>")`; do not
+  approve, reject, append findings, advance the round, or mint lessons.
+
   WORKFLOW:
   - After `plan-review` is loaded and the workflow has advanced to `review`,
     review the plan artifact referenced in your prompt against the parent task
@@ -118,7 +140,9 @@ instructions: |
      call `reject_review(stage_name="planning", rejection_notes=...,
      signoff_summary=...)`. Begin rejection notes with `Plan Identity
      Precondition failed: <details>`. Do NOT call `approve_review`.
-  3. Derive a full typed manifest entry for every `kind: deliverable` section.
+  3. Record routing decisions for every `kind: deliverable` section and call
+     `derive_plan_review_manifest`; do not hand-author server-owned labels,
+     source sections, titles, or validation criteria.
      Every `category: code` entry MUST include
      `implementation_domain: backend | frontend | fullstack`; this routes the
      leaf to the matching developer agent.
@@ -129,7 +153,8 @@ instructions: |
      with the entry-validation details. Do NOT approve.
   6. On success, call `approve_review` with `stage_name="planning"`,
      `round_number`, the complete typed `findings` list, the complete typed
-     `manifest_entries` list, the current `evidence_id`, and `approval_notes`
+     `routing_decisions`, `manifest_entries`, `coverage_attestation`, the
+     current `evidence_id`, and `approval_notes`
      that document the outcome. The tool builds the canonical `round_result`;
      a count alone is invalid.
 
@@ -189,6 +214,8 @@ step_variables:
   review_complete: false
   lesson_backfill_required: false
   lesson_backfill_failed: false
+  review_worker_run_ids: []
+  review_worker_lanes: []
 
 steps:
   - name: claim
@@ -266,7 +293,8 @@ steps:
       Review the plan artifact. If blocking issues remain, reject review with
       reject_review(stage_name="planning"). If the plan is sound, approve it with
       approve_review(stage_name="planning", round_number=..., findings=[],
-      manifest_entries=[...], evidence_id=...). If approval returns
+      routing_decisions={...}, manifest_entries=[...],
+      coverage_attestation={...}, evidence_id=...). If approval returns
       lesson_mint_status=failed or pending, the workflow requires exactly one
       backfill_plan_review_lessons call before termination. Use escalate_task only for
       `needs_requirements:` or true human-intervention blockers.
@@ -277,7 +305,6 @@ steps:
       - "gobby-tasks-ops:submit_for_review"
       - "gobby-tasks:reopen_task"
       - "gobby-agents:end_agent_run"
-      - "gobby-agents:spawn_agent"
       - "gobby-agents:kill_agent"
     on_mcp_success:
       - server: gobby-tasks-ops
@@ -306,6 +333,22 @@ steps:
         action: set_variable
         variable: review_complete
         value: true
+      - server: gobby-agents
+        tool: spawn_agent
+        action: set_variable
+        variable: review_worker_run_ids
+        value: "(vars.get('review_worker_run_ids') or []) + [str((tool_output.get('result') or tool_output).get('run_id'))]"
+      - server: gobby-agents
+        tool: spawn_agent
+        action: set_variable
+        variable: review_worker_lanes
+        value: >-
+          (vars.get('review_worker_lanes') or []) +
+          [('requirements_traceability'
+            if 'review_lane: requirements_traceability' in str(tool_input.get('prompt') or '')
+            else 'repository_blast_radius'
+            if 'review_lane: repository_blast_radius' in str(tool_input.get('prompt') or '')
+            else 'runtime_invariants')]
     on_mcp_error:
       - server: gobby-tasks-ops
         tool: approve_review
@@ -325,6 +368,54 @@ steps:
         action: set_variable
         variable: review_complete
         value: true
+    on_mcp_before:
+      - server: gobby-agents
+        tool: spawn_agent
+        action: block
+        when: >-
+          tool_input.get('agent') != 'plan-review-researcher-taskless'
+          or bool(tool_input.get('task_id'))
+          or tool_input.get('isolation') not in [None, 'none']
+        reason: "Plan review fanout is limited to taskless, isolation-none review researchers."
+      - server: gobby-agents
+        tool: spawn_agent
+        action: block
+        when: >-
+          not (
+            'review_lane: requirements_traceability' in str(tool_input.get('prompt') or '')
+            or 'review_lane: repository_blast_radius' in str(tool_input.get('prompt') or '')
+            or 'review_lane: runtime_invariants' in str(tool_input.get('prompt') or '')
+          )
+          or (
+            'review_lane: requirements_traceability' in str(tool_input.get('prompt') or '')
+            and 'review_lane: repository_blast_radius' in str(tool_input.get('prompt') or '')
+          )
+          or (
+            'review_lane: requirements_traceability' in str(tool_input.get('prompt') or '')
+            and 'review_lane: runtime_invariants' in str(tool_input.get('prompt') or '')
+          )
+          or (
+            'review_lane: repository_blast_radius' in str(tool_input.get('prompt') or '')
+            and 'review_lane: runtime_invariants' in str(tool_input.get('prompt') or '')
+          )
+          or (
+            'review_lane: requirements_traceability' in str(tool_input.get('prompt') or '')
+            and 'requirements_traceability' in (vars.get('review_worker_lanes') or [])
+          )
+          or (
+            'review_lane: repository_blast_radius' in str(tool_input.get('prompt') or '')
+            and 'repository_blast_radius' in (vars.get('review_worker_lanes') or [])
+          )
+          or (
+            'review_lane: runtime_invariants' in str(tool_input.get('prompt') or '')
+            and 'runtime_invariants' in (vars.get('review_worker_lanes') or [])
+          )
+        reason: "Each review lane may launch exactly one researcher worker."
+      - server: gobby-agents
+        tool: spawn_agent
+        action: block
+        when: "len(vars.get('review_worker_run_ids') or []) >= 3"
+        reason: "Plan review fanout is capped at one worker per lane."
     transitions:
       - to: backfill_lessons
         when: "vars.lesson_backfill_required"

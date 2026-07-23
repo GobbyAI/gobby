@@ -2,16 +2,19 @@
 
 from __future__ import annotations
 
+from types import SimpleNamespace
+from typing import cast
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
+from gobby.agents.detection.registry import DetectionManifestRegistry
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.workflow_definitions import LocalWorkflowDefinitionManager
 from gobby.workflows.definitions import AgentDefinitionBody
 from tests.agents.detection_test_support import BundledDetectionRegistry
 
-DETECTION_REGISTRY = BundledDetectionRegistry()
+DETECTION_REGISTRY = cast(DetectionManifestRegistry, BundledDetectionRegistry())
 
 pytestmark = pytest.mark.unit
 
@@ -89,6 +92,60 @@ class TestFallbackAgent:
             assert call_kwargs["agent_body"].model == "opus"
 
     @pytest.mark.asyncio
+    async def test_inherited_provider_rotation_uses_parent_session_source(
+        self,
+        db: HubDatabase,
+        manager: LocalWorkflowDefinitionManager,
+    ) -> None:
+        self._create_agent(
+            manager,
+            "dev-inherit",
+            provider="inherit",
+            fallback_agent="dev-claude-inherit",
+        )
+        self._create_agent(manager, "dev-claude-inherit", provider="claude")
+        session_manager = MagicMock()
+        session_manager.resolve_session_reference.return_value = "parent-session"
+        session_manager.get.return_value = SimpleNamespace(source="codex", project_id=None)
+
+        with (
+            patch(
+                "gobby.mcp_proxy.tools.spawn_agent._factory.get_project_context",
+                return_value={"id": "11111111-1111-4111-8111-111111110001"},
+            ),
+            patch(
+                "gobby.agents.provider_rotation.get_failed_providers_for_task",
+                return_value=["codex"],
+            ),
+            patch(
+                "gobby.mcp_proxy.tools.spawn_agent._factory.spawn_agent_impl",
+                new_callable=AsyncMock,
+                return_value={"success": True, "run_id": "run-inherit"},
+            ) as mock_impl,
+        ):
+            from gobby.mcp_proxy.tools.spawn_agent._factory import (
+                create_spawn_agent_registry,
+            )
+
+            registry = create_spawn_agent_registry(
+                MagicMock(),
+                db=db,
+                detection_registry=DETECTION_REGISTRY,
+                session_manager=session_manager,
+            )
+            tool_fn = registry.get_tool("spawn_agent")
+            assert tool_fn is not None
+
+            await tool_fn(
+                prompt="review",
+                agent="dev-inherit",
+                task_id="task-123",
+                parent_session_id="parent-session",
+            )
+
+        assert mock_impl.call_args.kwargs["agent_body"].name == "dev-claude-inherit"
+
+    @pytest.mark.asyncio
     async def test_no_fallback_when_provider_not_failed(
         self, db: HubDatabase, manager: LocalWorkflowDefinitionManager
     ) -> None:
@@ -121,6 +178,7 @@ class TestFallbackAgent:
                 runner, db=db, detection_registry=DETECTION_REGISTRY
             )
             tool_fn = registry.get_tool("spawn_agent")
+            assert tool_fn is not None
 
             await tool_fn(
                 prompt="fix the bug",
@@ -161,6 +219,7 @@ class TestFallbackAgent:
                 runner, db=db, detection_registry=DETECTION_REGISTRY
             )
             tool_fn = registry.get_tool("spawn_agent")
+            assert tool_fn is not None
 
             await tool_fn(
                 prompt="fix the bug",
@@ -200,6 +259,7 @@ class TestFallbackAgent:
                 runner, db=db, detection_registry=DETECTION_REGISTRY
             )
             tool_fn = registry.get_tool("spawn_agent")
+            assert tool_fn is not None
 
             await tool_fn(
                 prompt="fix the bug",

@@ -20,6 +20,7 @@ from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.projects import LocalProjectManager
 from gobby.storage.sessions import SessionManager
 from gobby.storage.tasks import LocalTaskManager
+from tests.review_coverage_helpers import coverage_attestation
 
 pytest_plugins = ("tests.storage.test_stage_review_findings",)
 
@@ -80,9 +81,15 @@ def _row(
     round_result: dict[str, object] = {
         "verdict": verdict,
         "findings": findings,
+        "coverage_attestation": coverage_attestation(
+            evidence_id=evidence_id or f"evidence-{round_number}-{task_id}",
+            shadow_valid=verdict == "approved",
+            manifest_entries=[{"source_section": "A"}] if verdict == "approved" else None,
+        ),
     }
     if verdict == "approved":
         round_result["manifest_entries"] = [{"source_section": "A"}]
+        round_result["routing_decisions"] = {}
     return PlanReviewEvidence(
         evidence_id=evidence_id or f"evidence-{round_number}-{task_id}",
         project_id=project_id,
@@ -389,6 +396,16 @@ def _persist_round(
     result: dict[str, object] = {"verdict": verdict, "findings": findings}
     if verdict == "approved":
         result["manifest_entries"] = [{"source_section": "1.1"}]
+        result["routing_decisions"] = {}
+        result["coverage_attestation"] = coverage_attestation(
+            evidence_id=prepared.evidence_id,
+            manifest_entries=[{"source_section": "1.1"}],
+        )
+    else:
+        result["coverage_attestation"] = coverage_attestation(
+            evidence_id=prepared.evidence_id,
+            shadow_valid=False,
+        )
     lineage.service.finalize_plan_review_evidence(prepared.evidence_id, result)
     return prepared.evidence_id
 
@@ -531,23 +548,20 @@ def test_approval_evidence_finalization(
 
     setup = stage_review_setup
     evidence_id, run_id = _prepare_bound(setup)
+    derived = setup.evidence.derive_plan_review_manifest(
+        evidence_id,
+        routing_decisions={},
+    )
+    manifest_entries = derived["manifest_entries"]
+    assert isinstance(manifest_entries, list)
     approval = {
         "findings": [],
-        "manifest_entries": [
-            {
-                "title": "Implement",
-                "source_section": "1.1",
-                "covers": ["1.1.1"],
-                "category": "code",
-                "implementation_domain": "backend",
-                "priority": 2,
-                "task_type": "feature",
-                "tdd": False,
-                "labels": ["covers:review:1.1:1.1.1"],
-                "description": "Implement.",
-                "validation_criteria": "Tested.",
-            }
-        ],
+        "routing_decisions": {},
+        "manifest_entries": manifest_entries,
+        "coverage_attestation": coverage_attestation(
+            evidence_id=evidence_id,
+            manifest_entries=manifest_entries,
+        ),
     }
 
     with pytest.raises(ReviewEvidenceError) as wrong_round:

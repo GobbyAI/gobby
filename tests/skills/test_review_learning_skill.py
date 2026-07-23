@@ -3,19 +3,22 @@
 from __future__ import annotations
 
 from pathlib import Path
+from typing import cast
 
 import pytest
 
 from gobby.plans.review_evidence import PlanReviewEvidenceService
 from gobby.plans.review_evidence_io import atomic_write_bytes, ensure_checkpoint
 from gobby.plans.review_evidence_models import ReviewEvidenceError
-from gobby.review_learning.service import ReviewLearningService
+from gobby.review_learning.promotion import PromotionTaskManager
+from gobby.review_learning.service import ReviewLearningMemoryManager, ReviewLearningService
 from gobby.skills.loader import SkillLoader
 from gobby.skills.parser import parse_skill_file
 from gobby.storage.agents import LocalAgentRunManager
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.projects import LocalProjectManager
 from gobby.storage.sessions import SessionManager
+from tests.review_coverage_helpers import coverage_attestation
 from tests.review_learning.conftest import FakeMemoryManager, FakeTaskManager
 
 pytestmark = pytest.mark.unit
@@ -167,11 +170,22 @@ def _bind_run(
     return run.id
 
 
-def _approval(stem: str) -> dict[str, object]:
+def _approval(
+    service: PlanReviewEvidenceService,
+    evidence_id: str,
+) -> dict[str, object]:
+    derived = service.derive_plan_review_manifest(evidence_id, routing_decisions={})
+    entries = derived["manifest_entries"]
+    assert isinstance(entries, list)
     return {
         "verdict": "approved",
         "findings": [],
-        "manifest_entries": _manifest_entries(stem),
+        "routing_decisions": {},
+        "manifest_entries": entries,
+        "coverage_attestation": coverage_attestation(
+            evidence_id=evidence_id,
+            manifest_entries=entries,
+        ),
     }
 
 
@@ -214,6 +228,20 @@ def test_review_learning_skill_documents_record_skip_and_ladder_rules() -> None:
     assert "`no-fix-policy`, second or later occurrence" in body
     assert "`checklist` or `tool-config`" in body
     assert "The task is not the guardrail" in body
+
+
+def test_plan_skill_documents_provider_neutral_parallel_review_contract() -> None:
+    body = _skill_body(PLAN_SKILL)
+    for phrase in (
+        "Omit provider and model",
+        "current requirements context",
+        "changed_section_ids",
+        "review_complexity",
+        "researcher results, timeouts, and sequential lane fallbacks",
+        "inconclusive/source_drift",
+        "coverage_attestation",
+    ):
+        assert phrase in body
 
 
 def test_review_producer_hooks_reference_review_learning() -> None:
@@ -262,7 +290,10 @@ async def test_plan_loop_recording_contract(monkeypatch: pytest.MonkeyPatch) -> 
         lambda: "plan-loop-project",
     )
     memories = FakeMemoryManager()
-    service = ReviewLearningService(memories, FakeTaskManager())
+    service = ReviewLearningService(
+        cast(ReviewLearningMemoryManager, memories),
+        cast(PromotionTaskManager, FakeTaskManager()),
+    )
     events: list[str] = []
 
     await service.record(
@@ -392,6 +423,10 @@ def test_interactive_approval_sequence(
     _bind_run(service, session_id, rejected.evidence_id, "reject round")
     rejection = {
         "verdict": "needs_review",
+        "coverage_attestation": coverage_attestation(
+            evidence_id=rejected.evidence_id,
+            shadow_valid=False,
+        ),
         "findings": [
             {
                 "finding_id": "round-1-miss",
@@ -418,7 +453,7 @@ def test_interactive_approval_sequence(
         session_id=session_id,
     )
     run_id = _bind_run(service, session_id, prepared.evidence_id, "approve round")
-    approval = _approval("approval-sequence")
+    approval = _approval(service, prepared.evidence_id)
     applied = service.apply_plan_review_manifest(
         prepared.evidence_id,
         approval,
@@ -479,7 +514,7 @@ def test_interactive_approval_sequence(
     with pytest.raises(ReviewEvidenceError, match="reviewed plan sections changed"):
         stale_service.apply_plan_review_manifest(
             stale.evidence_id,
-            _approval("pre-apply-drift"),
+            _approval(stale_service, stale.evidence_id),
             plan_path=stale_path,
             run_id=stale_run,
         )
@@ -513,7 +548,7 @@ def test_interactive_approval_sequence(
     with pytest.raises(OSError, match="simulated apply crash"):
         pending_service.apply_plan_review_manifest(
             pending.evidence_id,
-            _approval("pending-drift"),
+            _approval(pending_service, pending.evidence_id),
             plan_path=pending_path,
             run_id=pending_run,
         )
@@ -527,7 +562,7 @@ def test_interactive_approval_sequence(
     with pytest.raises(ReviewEvidenceError, match="reviewed plan sections changed"):
         pending_service.apply_plan_review_manifest(
             pending.evidence_id,
-            _approval("pending-drift"),
+            _approval(pending_service, pending.evidence_id),
             plan_path=pending_path,
             run_id=pending_run,
         )
@@ -564,7 +599,7 @@ def test_interactive_approval_sequence(
     with pytest.raises(OSError, match="simulated apply crash"):
         recovery_service.apply_plan_review_manifest(
             recovery.evidence_id,
-            _approval("pending-recovery"),
+            _approval(recovery_service, recovery.evidence_id),
             plan_path=recovery_path,
             run_id=recovery_run,
         )

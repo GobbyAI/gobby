@@ -78,18 +78,29 @@ which runs after approval and before the unchanged adversary gate.
       proceeds to the unchanged adversary gate in step 5.
 5. After the enhancement phase, call `prepare_plan_review_round` immediately
 before you spawn `plan-adversary-taskless` without `task_id` and with
-`isolation="none"`. Pass the prepared snapshot/evidence, `artifact_path`,
+`isolation="none"`. Omit provider and model by default so the adversary inherits
+the invoking session provider and that provider's default model; concrete
+operator overrides remain valid. Pass the prepared snapshot/evidence, `artifact_path`,
 `round_number`, `max_review_rounds`, and the parent session id in the prompt or
-variables. Immediately bind the interactive run id returned by `spawn_agent`
+variables, together with the current requirements context. The adversary reads
+`changed_section_ids` and `review_complexity` from that evidence snapshot.
+The coordinator waits only for the parent adversary result; the adversary owns
+researcher results, timeouts, and sequential lane fallbacks. Immediately bind
+the interactive run id returned by `spawn_agent`
 with `bind_evidence_run`. If spawn or bind fails, call
 `expire_plan_review_evidence`; the next attempt prepares fresh evidence.
 Immediately after a successful bind, call `gobby-sessions:compact_self` for the
 parent session before waiting or doing any other work. This is mandatory on
 every adversarial review round.
 6. Wait as described in **Waiting on Spawned Runs** for the adversary run. Read
-the run result as the canonical round result; append a `## V1 Plan Changelog`
-entry, persist the exact fence returned by `render_v1_round_checkpoint`, then
-call `finalize_plan_review_evidence` with that same result. Before any step 7
+the run result as the canonical round result. It must contain the
+`coverage_attestation` returned by `validate_plan_review_coverage`; approval
+also contains exact server-derived `routing_decisions` and `manifest_entries`.
+For `inconclusive/source_drift`, expire evidence and respawn the same display
+round without appending a changelog entry, incrementing the round, finalizing
+evidence, or minting lessons. Otherwise append a `## V1 Plan Changelog` entry,
+persist the exact fence returned by `render_v1_round_checkpoint`, then call
+`finalize_plan_review_evidence` with that same result. Before any step 7
 revision, present a ranked
 summary of every finding, including its `id`, severity, location, impact,
 effort, risk, and a one-line gist. Present each finding's full text verbatim,
@@ -120,9 +131,11 @@ uv run gobby build <plan-file> --planning-seed-state approved --completed-plan-r
 
 ## Interactive Review Evidence Protocol
 
-Use the adversary's canonical result as the sole round payload. Rejection
-results carry typed findings; approval results carry `findings` plus the full
-typed `manifest_entries` array. The adversary never edits the plan.
+Use the adversary's canonical result as the sole round payload. Every conclusive
+result carries trusted three-lane `coverage_attestation`. Rejection results
+carry typed findings and shadow-manifest status; approval results carry
+`findings`, routing decisions, and exact server-derived manifest entries. The
+adversary never edits the plan.
 
 Approval commit order is fixed, idempotent, and resumable:
 

@@ -169,6 +169,71 @@ def register_review_evidence_tools(
         func=verify_plan_unchanged,
     )
 
+    def derive_plan_review_manifest(
+        evidence_id: str,
+        routing_decisions: Mapping[str, object],
+    ) -> dict[str, object]:
+        try:
+            result = service.derive_plan_review_manifest(evidence_id, routing_decisions)
+        except ReviewEvidenceError as exc:
+            return exc.to_dict()
+        return {"ok": True, **result}
+
+    registry.register(
+        name="derive_plan_review_manifest",
+        description="Read-only canonical shadow-manifest derivation for a review snapshot.",
+        input_schema={
+            "type": "object",
+            "properties": {
+                "evidence_id": {"type": "string"},
+                "routing_decisions": {"type": "object"},
+            },
+            "required": ["evidence_id", "routing_decisions"],
+        },
+        func=derive_plan_review_manifest,
+    )
+
+    def validate_plan_review_coverage(
+        evidence_id: str,
+        lane_results: list[object],
+        candidate_dispositions: Mapping[str, object],
+        shadow_manifest_status: Mapping[str, object],
+    ) -> dict[str, object]:
+        try:
+            attestation = service.validate_plan_review_coverage(
+                evidence_id,
+                lane_results,
+                candidate_dispositions,
+                shadow_manifest_status,
+            )
+        except ReviewEvidenceError as exc:
+            return exc.to_dict()
+        return {"ok": True, "coverage_attestation": attestation}
+
+    registry.register(
+        name="validate_plan_review_coverage",
+        description="Read-only validation of all review lanes, dispositions, and source hashes.",
+        input_schema={
+            "type": "object",
+            "properties": {
+                "evidence_id": {"type": "string"},
+                "lane_results": {
+                    "type": "array",
+                    "items": {"type": "object"},
+                },
+                "candidate_dispositions": {"type": "object"},
+                "shadow_manifest_status": {"type": "object"},
+            },
+            "required": [
+                "evidence_id",
+                "lane_results",
+                "candidate_dispositions",
+                "shadow_manifest_status",
+            ],
+        },
+        func=validate_plan_review_coverage,
+    )
+
     def apply_plan_review_manifest(
         evidence_id: str,
         plan_path: str,

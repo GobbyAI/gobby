@@ -15,6 +15,7 @@ from gobby.plans.manifest_emitter import (
     ManifestSynthesisError,
     _has_manifest_section,
     _strip_manifest_section,
+    derive_manifest_entries,
     emit_stub_manifest,
 )
 from gobby.plans.parser import (
@@ -59,6 +60,77 @@ def _plan_two_deliverables(tmp_path: Path, name: str = "plan.md") -> Path:
         - 1.2.1 — Doc exists. file: `docs/foundation.md`
         """,
     )
+
+
+def test_canonical_derivation_preserves_acceptance_order_and_reviewed_routing(
+    tmp_path: Path,
+) -> None:
+    plan = _write(
+        tmp_path / "canonical.md",
+        """
+        > **Plan ID:** canonical-plan
+
+        ## P1 Phase
+        `kind: framing`
+
+        ### 1.1 API Contract [category: code]
+        `kind: deliverable`
+
+        Implement the contract.
+
+        **Acceptance:**
+        - 1.1.1 — First exact requirement. file: `src/contract.py`
+        - 1.1.2 — Second exact requirement. test: `tests/test_contract.py`
+        """,
+    )
+    document = parse_plan(plan, parse_mode="draft")
+    section = next(section for section in document.sections if section.section_id == "1.1")
+    routing = {
+        "1.1": {
+            "category": "docs",
+            "assigned_agent": "documentation-writer",
+            "depends_on": ["bootstrap"],
+            "task_type": "chore",
+            "tdd": False,
+        }
+    }
+
+    entries = derive_manifest_entries(document, routing)
+
+    assert len(entries) == 1
+    entry = entries[0]
+    assert entry["source_section"] == "1.1"
+    assert entry["category"] == "docs"
+    assert entry["assigned_agent"] == "documentation-writer"
+    assert entry["depends_on"] == ["bootstrap"]
+    assert entry["task_type"] == "chore"
+    assert entry["tdd"] is False
+    assert entry["validation_criteria"] == "\n".join(
+        f"{item.item_id}: {item.prose}" for item in section.acceptance_items
+    )
+    assert entry["labels"] == [
+        f"covers:canonical-plan:1.1:{item.item_id}" for item in section.acceptance_items
+    ]
+
+
+@pytest.mark.parametrize(
+    "routing",
+    [
+        {"missing": {}},
+        {"1.1": {"labels": ["caller-controlled"]}},
+        {"1.1": "not-an-object"},
+        {"1.1": {"assigned_agent": "backend-developer"}},
+        {"1.1": {"category": "docs", "implementation_domain": "backend"}},
+    ],
+)
+def test_canonical_derivation_rejects_non_routing_input(
+    tmp_path: Path,
+    routing: dict[str, object],
+) -> None:
+    document = parse_plan(_plan_two_deliverables(tmp_path), parse_mode="draft")
+
+    with pytest.raises(ManifestSynthesisError):
+        derive_manifest_entries(document, routing)
 
 
 def _valid_manifest_yaml(plan_id: str = "demo-plan") -> str:

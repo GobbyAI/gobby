@@ -439,6 +439,8 @@ def approve_review(
     round_number: int | None = None,
     findings: list[dict[str, object]] | None = None,
     manifest_entries: list[dict[str, object]] | None = None,
+    routing_decisions: dict[str, object] | None = None,
+    coverage_attestation: dict[str, object] | None = None,
     evidence_id: str | None = None,
     by_session_id: str | None = None,
     dispatch_run_id: str | None = None,
@@ -460,6 +462,8 @@ def approve_review(
             round_number=round_number,
             findings=findings,
             manifest_entries=manifest_entries,
+            routing_decisions=routing_decisions,
+            coverage_attestation=coverage_attestation,
             evidence_id=evidence_id,
             by_session_id=by_session_id,
             dispatch_run_id=dispatch_run_id,
@@ -493,6 +497,8 @@ def _approve_plan_review(
     round_number: int | None,
     findings: list[dict[str, object]] | None,
     manifest_entries: list[dict[str, object]] | None,
+    routing_decisions: dict[str, object] | None,
+    coverage_attestation: dict[str, object] | None,
     evidence_id: str | None,
     by_session_id: str | None,
     dispatch_run_id: str | None,
@@ -517,6 +523,16 @@ def _approve_plan_review(
             "missing_manifest_entries",
             "planning-stage approval requires typed manifest_entries",
         )
+    if routing_decisions is None:
+        raise ReviewEvidenceError(
+            "missing_routing_decisions",
+            "planning-stage approval requires routing_decisions",
+        )
+    if coverage_attestation is None:
+        raise ReviewEvidenceError(
+            "missing_coverage_attestation",
+            "planning-stage approval requires coverage_attestation",
+        )
     artifacts = TaskArtifactManager(db).get_artifacts(task.id)
     if not artifacts.plan_file_path:
         raise ReviewEvidenceError(
@@ -540,6 +556,8 @@ def _approve_plan_review(
             "verdict": "approved",
             "findings": validated_findings,
             "manifest_entries": manifest_entries,
+            "routing_decisions": routing_decisions,
+            "coverage_attestation": coverage_attestation,
         }
     )
     replay = _recorded_approval_replay(
@@ -626,6 +644,7 @@ def reject_review(
     rejection_notes: str | None = None,
     round_number: int | None = None,
     findings: list[dict[str, object]] | None = None,
+    coverage_attestation: dict[str, object] | None = None,
     evidence_id: str | None = None,
     plan_hash: str | None = None,
     cited_subtasks: list[str] | None = None,
@@ -654,6 +673,7 @@ def reject_review(
             stage_name=stage_name,
             round_number=normalized_round,
             findings=findings,
+            coverage_attestation=coverage_attestation,
             evidence_id=evidence_id,
             by_session_id=by_session_id,
             dispatch_run_id=dispatch_run_id,
@@ -713,6 +733,7 @@ def _reject_review_with_findings(
     stage_name: str,
     round_number: int | None,
     findings: list[dict[str, object]],
+    coverage_attestation: dict[str, object] | None,
     evidence_id: str | None,
     by_session_id: str | None,
     dispatch_run_id: str | None,
@@ -731,6 +752,11 @@ def _reject_review_with_findings(
         raise ReviewEvidenceError(
             "missing_evidence_id",
             "structured findings require evidence_id",
+        )
+    if coverage_attestation is None:
+        raise ReviewEvidenceError(
+            "missing_coverage_attestation",
+            "structured findings require coverage_attestation",
         )
     artifacts = TaskArtifactManager(db).get_artifacts(task.id)
     if not artifacts.plan_file_path:
@@ -755,7 +781,11 @@ def _reject_review_with_findings(
         evidence=evidence,
     )
     round_result = validate_round_result(
-        {"verdict": "needs_review", "findings": validated_findings}
+        {
+            "verdict": "needs_review",
+            "findings": validated_findings,
+            "coverage_attestation": coverage_attestation,
+        }
     )
     replay = _recorded_rejection_replay(
         db,

@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import logging
 import re
+from collections.abc import Mapping
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Literal
@@ -42,7 +43,7 @@ EmitOutcome = Literal[
     "fallback_force_approve",
 ]
 
-__all__ = ["EmitOutcome", "emit_stub_manifest"]
+__all__ = ["EmitOutcome", "derive_manifest_entries", "emit_stub_manifest"]
 
 _HEADING_LINE_RE = re.compile(r"^(?P<marks>#{2,6})\s+")
 _CATEGORY_RE = re.compile(r"\[category:\s*(?P<value>[a-z_]+)\]")
@@ -68,10 +69,105 @@ _AGENT_BY_CATEGORY: dict[str, str] = {
 }
 _DEFAULT_AGENT_FALLBACK = "backend-developer"
 _DEFAULT_TASK_TYPE = "feature"
+_ROUTING_FIELDS = frozenset(
+    {
+        "assigned_agent",
+        "category",
+        "depends_on",
+        "implementation_domain",
+        "task_type",
+        "tdd",
+    }
+)
 
 
 class ManifestSynthesisError(ValueError):
     """Raised when deterministic manifest synthesis cannot produce valid dependencies."""
+
+
+def derive_manifest_entries(
+    document: PlanDocument,
+    routing_decisions: Mapping[str, object],
+) -> list[dict[str, object]]:
+    """Derive canonical manifest entries from plan-owned facts and reviewed routing."""
+    plan_id = resolve_plan_id(document.plan_id)
+    deliverables = [section for section in document.sections if section.kind is Kind.deliverable]
+    deliverable_ids = {section.section_id for section in deliverables}
+    unknown_sections = sorted(set(routing_decisions) - deliverable_ids)
+    if unknown_sections:
+        raise ManifestSynthesisError(
+            "routing decisions reference unknown deliverables: " + ", ".join(unknown_sections)
+        )
+    dependencies_by_section = _synthesized_dependencies(document, deliverables)
+    entries: list[dict[str, object]] = []
+    for section in deliverables:
+        raw_decision = routing_decisions.get(section.section_id, {})
+        if not isinstance(raw_decision, Mapping):
+            raise ManifestSynthesisError(
+                f"routing decision for {section.section_id!r} must be an object"
+            )
+        decision = dict(raw_decision)
+        unknown_fields = sorted(set(decision) - _ROUTING_FIELDS)
+        if unknown_fields:
+            raise ManifestSynthesisError(
+                f"routing decision for {section.section_id!r} has unsupported fields: "
+                + ", ".join(unknown_fields)
+            )
+        entry = _synthesize_entry(
+            plan_id,
+            section,
+            dependencies_by_section[section.section_id],
+        )
+        category = decision.get("category", entry["category"])
+        if not isinstance(category, str) or not category:
+            raise ManifestSynthesisError(
+                f"routing decision for {section.section_id!r} has invalid category"
+            )
+        entry["category"] = category
+        for field in ("task_type", "depends_on", "tdd"):
+            if field in decision:
+                entry[field] = decision[field]
+        entry["validation_criteria"] = "\n".join(
+            f"{item.item_id}: {item.prose}" for item in section.acceptance_items
+        )
+        entry["labels"] = [
+            f"covers:{plan_id}:{section.section_id}:{item.item_id}"
+            for item in section.acceptance_items
+        ]
+        entry.pop("assigned_agent", None)
+        entry.pop("implementation_domain", None)
+        if category == "code":
+            if "assigned_agent" in decision:
+                raise ManifestSynthesisError(
+                    f"routing decision for {section.section_id!r} must use "
+                    "implementation_domain for category code"
+                )
+            domain = decision.get("implementation_domain")
+            if domain is None:
+                domain = _implementation_domain_for(
+                    section,
+                    str(entry["title"]),
+                    str(entry["validation_criteria"]),
+                )
+            entry["implementation_domain"] = domain
+        else:
+            if "implementation_domain" in decision:
+                raise ManifestSynthesisError(
+                    f"routing decision for {section.section_id!r} must use "
+                    f"assigned_agent for category {category}"
+                )
+            agent = decision.get("assigned_agent")
+            if agent is None:
+                agent = _agent_for(
+                    category,
+                    section,
+                    str(entry["title"]),
+                    str(entry["validation_criteria"]),
+                )
+            entry["assigned_agent"] = agent
+        entry["tdd"] = decision.get("tdd", category in TDD_ELIGIBLE_CATEGORIES)
+        entries.append(entry)
+    return entries
 
 
 def emit_stub_manifest(
@@ -214,7 +310,6 @@ def _emit_fresh(
     plan_kind: PlanKind,
     plan_id: str | None,
 ) -> EmitOutcome:
-    plan_id = resolve_plan_id(document.plan_id)
     deliverables = [section for section in document.sections if section.kind is Kind.deliverable]
     if not deliverables:
         _append_yolo_fallback(
@@ -225,11 +320,7 @@ def _emit_fresh(
         return "fallback_force_approve"
 
     try:
-        dependencies_by_section = _synthesized_dependencies(document, deliverables)
-        entries = [
-            _synthesize_entry(plan_id, section, dependencies_by_section[section.section_id])
-            for section in deliverables
-        ]
+        entries = derive_manifest_entries(document, {})
     except ManifestSynthesisError as exc:
         _append_yolo_fallback(path, by_actor=by_actor, reason=str(exc))
         return "fallback_force_approve"

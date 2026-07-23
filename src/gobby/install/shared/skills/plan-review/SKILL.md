@@ -291,13 +291,66 @@ never flagged. When justification is plausible, do not flag.
 
 ---
 
+## Exhaustive Three-Lane Coverage
+
+Every round completes exactly three lanes against the immutable evidence
+snapshot:
+
+1. `requirements_traceability` — requirements, acceptance coverage,
+   dependencies, and manifest parity.
+2. `repository_blast_radius` — use gcode to sweep callers, consumers,
+   constructors, destructures, implementations, fakes, exhaustive matches,
+   test seams, migration/registry inventories, and source-size constraints.
+3. `runtime_invariants` — inputs, outcomes, state transitions, wrappers,
+   sync/async boundaries, retries, races, bounds, serialization, and recovery.
+
+`get_plan_review_snapshot` supplies deterministic complexity counts. Run lanes
+in parallel when the snapshot has at least 8 deliverables, 24 acceptance items,
+12 distinct target files, or 4 sections changed since the prior finalized round.
+Otherwise run the same lanes sequentially in the parent. Parallel fanout is
+limited to one worker per lane, using `plan-review-researcher-taskless` through
+`gobby-agents:spawn_agent`, with no task id, `isolation="none"`,
+`timeout=900` seconds (15 minutes), and inherited provider/default model. Check capacity
+before each spawn.
+Capacity shortage, timeout, worker failure, or malformed output moves that lane
+to sequential parent review.
+
+Workers return candidates; the parent adversary owns findings and verdicts.
+Each completed lane names every deliverable in `section_ids_checked`, supplies
+hashed repository-relative citations, and returns candidate issues with stable
+candidate id, affected section ids, violated invariant, suggested fix,
+adjacent sites checked, confidence, and citations. The parent must:
+
+1. Verify and deduplicate every candidate.
+2. Record exactly one `emitted_finding` or `dismissed` entry in
+   `candidate_dispositions`, with a reason.
+3. Perform a cross-lane interaction pass.
+4. Complete a class-wide adjacent-variant sweep, including the causal sweep for
+   any prior finding touched by this round's changes.
+
+Call `derive_plan_review_manifest` during every round, including rejection.
+Then call `validate_plan_review_coverage` with the three lanes, all
+dispositions, and the exact shadow-manifest result. The returned
+`coverage_attestation` is mandatory in `round_result`; it contains exactly
+three completed lanes, source digest, disposition counts, cross-lane and
+adjacent-variant completion, and shadow-manifest status.
+
+If cited source hashes drift, rerun only affected lanes once during the same
+review run. Repeated drift yields `inconclusive/source_drift`. Interactive
+coordination expires evidence and retries the same display round without a
+changelog checkpoint or lesson mint. Stage-native review expires evidence and
+escalates with `needs_human:unstable_review_source:<paths>`.
+
+---
+
 ## Manifest Handoff on Approval
 
 `## M1 Task Manifest` is the typed bridge between deliverable sections and the
-leaves the deterministic compiler emits. The approving adversary derives the
-full typed entries and returns them in `round_result.manifest_entries`. Preserve
-complete category and implementation-domain decisions already present in the
-narrative.
+leaves the deterministic compiler emits. The adversary records reviewed routing
+decisions. `derive_plan_review_manifest` generates canonical entries, including
+titles, source sections, exact covers labels, and validation criteria. Each
+criteria string contains every covered acceptance item in source order as
+`<item-id>: <full acceptance text>`.
 
 See `docs/contracts/plan-coverage.md` (§ "Task Manifest") for the entry schema
 and parser-enforced invariants. This skill covers the adversary's handoff
@@ -316,24 +369,21 @@ contains a label beginning `covers:unknown:` before approving the plan.
 When no blocking findings remain (zero findings or only nits):
 
 1. Re-check the Plan Identity Precondition above.
-2. Derive one full typed manifest entry per `kind: deliverable` section. Every
-entry carries `title`, `source_section`, `covers`, `category`, `priority`,
-`task_type`, `tdd`, `labels`, `description`, and `validation_criteria`;
-`category: code` also carries
-`implementation_domain: backend | frontend | fullstack`.
-3. Validate the entries against the plan-coverage contract: every acceptance
-item is covered exactly once, dependencies resolve, labels use the real Plan
-ID, and every code domain is explicit. Return `verdict: needs_review` with
-specific entry errors when this check fails.
-4. On success, return `verdict: approved`, the full typed `manifest_entries`
-array, and the complete typed findings/attestations for the round. Entry count
-alone is insufficient.
+2. Record routing decisions for each deliverable: category, task type,
+dependencies, TDD, and assigned agent or implementation domain.
+3. Call `derive_plan_review_manifest` with those decisions. Treat typed
+diagnostics as rejection evidence. Never summarize or hand-author server-owned
+labels or validation criteria.
+4. Call `validate_plan_review_coverage`, then return `verdict: approved` with
+the exact routing decisions, derived `manifest_entries`, and canonical
+`coverage_attestation`. Entry count alone is insufficient.
 
 ### Plan-File Write Scope
 
-The adversary never writes the plan file. Approval returns full typed entries;
-the coordinator calls `apply_plan_review_manifest`, which revalidates freshness
-and performs the only manifest write. Rejection returns typed findings. The
+The adversary never writes the plan file. `apply_plan_review_manifest`
+re-derives entries from the evidence snapshot and routing decisions, rejects
+any differing payload, revalidates freshness, and performs the only manifest
+write. Rejection returns typed findings plus shadow-manifest diagnostics. The
 coordinator owns `## V1 Plan Changelog`, and the planner owns revisions.
 
 ---

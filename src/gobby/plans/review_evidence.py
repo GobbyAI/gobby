@@ -3,10 +3,15 @@
 from __future__ import annotations
 
 import hashlib
+import json
 from collections.abc import Mapping
 from datetime import UTC, datetime
 from pathlib import Path
+from tempfile import TemporaryDirectory
 
+from gobby.plans.manifest_emitter import ManifestSynthesisError, derive_manifest_entries
+from gobby.plans.parser import PlanDocument, PlanParseError, parse_plan
+from gobby.plans.review_coverage import review_complexity, validate_review_coverage
 from gobby.plans.review_evidence_io import (
     atomic_write_bytes,
     build_section_manifest,
@@ -179,12 +184,114 @@ class PlanReviewEvidenceService:
 
     def snapshot_payload(self, evidence_id: str) -> dict[str, object]:
         evidence = self.get_evidence(evidence_id)
+        document = self._snapshot_document(evidence)
+        changed_sections = self._changed_sections_since_prior_round(evidence)
         return {
             "evidence_id": evidence.evidence_id,
             "plan_hash": evidence.plan_hash,
             "sections": [section.to_dict() for section in evidence.section_manifest],
             "snapshot": evidence.snapshot,
+            "changed_section_ids": changed_sections,
+            "review_complexity": review_complexity(
+                document,
+                changed_section_count=len(changed_sections),
+            ),
         }
+
+    def derive_plan_review_manifest(
+        self,
+        evidence_id: str,
+        routing_decisions: Mapping[str, object],
+    ) -> dict[str, object]:
+        """Derive a canonical shadow manifest without writing the plan."""
+        evidence = self.get_evidence(evidence_id)
+        routing = dict(routing_decisions)
+        try:
+            document = self._snapshot_document(evidence)
+            entries = derive_manifest_entries(document, routing)
+            with TemporaryDirectory(prefix="gobby-plan-review-") as temp_dir:
+                snapshot_path = Path(temp_dir) / Path(evidence.plan_path).name
+                snapshot_path.write_bytes(evidence.snapshot)
+                render_manifest_plan(snapshot_path, evidence.snapshot, entries)
+        except ManifestSynthesisError as exc:
+            return {
+                "status": "invalid",
+                "routing_decisions": routing,
+                "diagnostics": [
+                    {
+                        "code": "invalid_routing_decisions",
+                        "message": str(exc),
+                    }
+                ],
+            }
+        except PlanParseError as exc:
+            return {
+                "status": "invalid",
+                "routing_decisions": routing,
+                "diagnostics": [
+                    {
+                        "code": "invalid_plan_snapshot",
+                        "line": line,
+                        "message": message,
+                    }
+                    for line, message in exc.errors
+                ],
+            }
+        except ReviewEvidenceError as exc:
+            return {
+                "status": "invalid",
+                "routing_decisions": routing,
+                "diagnostics": [
+                    {
+                        "code": exc.code,
+                        "message": str(exc),
+                    }
+                ],
+            }
+        manifest_digest = hashlib.sha256(
+            json.dumps(entries, sort_keys=True, separators=(",", ":")).encode()
+        ).hexdigest()
+        return {
+            "status": "valid",
+            "routing_decisions": routing,
+            "manifest_entries": entries,
+            "manifest_digest": manifest_digest,
+            "entry_count": len(entries),
+        }
+
+    def validate_plan_review_coverage(
+        self,
+        evidence_id: str,
+        lane_results: list[object],
+        candidate_dispositions: Mapping[str, object],
+        shadow_manifest_status: Mapping[str, object],
+    ) -> dict[str, object]:
+        """Validate all research lanes and return a canonical coverage attestation."""
+        evidence = self.get_evidence(evidence_id)
+        shadow = dict(shadow_manifest_status)
+        routing = shadow.get("routing_decisions")
+        if not isinstance(routing, Mapping):
+            raise ReviewEvidenceError(
+                "invalid_shadow_manifest",
+                "shadow_manifest_status.routing_decisions must be an object",
+            )
+        expected_shadow = self.derive_plan_review_manifest(evidence_id, routing)
+        project = self.projects.get(evidence.project_id)
+        if project is None or project.repo_path is None:
+            raise ReviewEvidenceError(
+                "project_not_found",
+                f"project has no local repository: {evidence.project_id}",
+            )
+        return validate_review_coverage(
+            evidence_id=evidence_id,
+            project_root=Path(project.repo_path),
+            document=self._snapshot_document(evidence),
+            plan_hash=evidence.plan_hash,
+            lane_results=lane_results,
+            candidate_dispositions=candidate_dispositions,
+            shadow_manifest_status=shadow,
+            expected_shadow_manifest_status=expected_shadow,
+        )
 
     def verify_plan_unchanged(
         self,
@@ -409,7 +516,7 @@ class PlanReviewEvidenceService:
                 )
             payload = evidence.round_result
         else:
-            payload = validate_round_result(round_result)
+            payload = self._round_result_for_evidence(evidence_id, round_result)
             if evidence.round_result is not None and evidence.round_result != payload:
                 raise ReviewEvidenceError(
                     "round_result_conflict",
@@ -429,7 +536,7 @@ class PlanReviewEvidenceService:
         round_result: Mapping[str, object],
     ) -> PlanReviewEvidence:
         evidence = self.get_evidence(evidence_id)
-        payload = validate_round_result(round_result)
+        payload = self._round_result_for_evidence(evidence_id, round_result)
         if evidence.round_result is not None and evidence.round_result != payload:
             raise ReviewEvidenceError(
                 "round_result_conflict",
@@ -475,7 +582,7 @@ class PlanReviewEvidenceService:
         run_id: str,
     ) -> dict[str, object]:
         evidence = self.get_evidence(evidence_id)
-        payload = validate_round_result(round_result)
+        payload = self._round_result_for_evidence(evidence_id, round_result)
         if payload["verdict"] != "approved":
             raise ReviewEvidenceError(
                 "invalid_manifest",
@@ -494,8 +601,46 @@ class PlanReviewEvidenceService:
             stage=evidence.stage,
             run_id=run_id,
         )
+        routing = payload.get("routing_decisions")
+        if not isinstance(routing, Mapping):
+            raise ReviewEvidenceError(
+                "invalid_manifest",
+                "approved round result requires routing_decisions",
+            )
+        canonical_manifest = self.derive_plan_review_manifest(evidence_id, routing)
+        if canonical_manifest["status"] != "valid":
+            raise ReviewEvidenceError(
+                "invalid_manifest",
+                "canonical manifest derivation failed",
+                details={"diagnostics": canonical_manifest.get("diagnostics", [])},
+            )
+        entries = canonical_manifest["manifest_entries"]
+        if payload.get("manifest_entries") != entries:
+            raise ReviewEvidenceError(
+                "noncanonical_manifest",
+                "round_result.manifest_entries differs from canonical derivation",
+            )
+        attestation = payload["coverage_attestation"]
+        if not isinstance(attestation, dict):  # validated above; narrows for mypy.
+            raise ReviewEvidenceError(
+                "invalid_coverage_attestation",
+                "coverage_attestation must be an object",
+            )
+        shadow_status = attestation["shadow_manifest_status"]
+        if not isinstance(shadow_status, dict):  # validated above; narrows for mypy.
+            raise ReviewEvidenceError(
+                "invalid_coverage_attestation",
+                "shadow_manifest_status must be an object",
+            )
+        if (
+            shadow_status.get("manifest_digest") != canonical_manifest["manifest_digest"]
+            or shadow_status.get("entry_count") != canonical_manifest["entry_count"]
+        ):
+            raise ReviewEvidenceError(
+                "shadow_manifest_mismatch",
+                "coverage attestation does not bind the canonical manifest",
+            )
         digest = hashlib.sha256(canonical_json_bytes(payload)).hexdigest()
-        entries = payload["manifest_entries"]
         if not isinstance(entries, list):  # validated above; narrows for mypy.
             raise ReviewEvidenceError("invalid_manifest", "manifest_entries must be an array")
         resolved = self._evidence_path(evidence)
@@ -573,6 +718,51 @@ class PlanReviewEvidenceService:
                 result=result,
             )
         return completed.manifest_result or result
+
+    def _snapshot_document(self, evidence: PlanReviewEvidence) -> PlanDocument:
+        with TemporaryDirectory(prefix="gobby-plan-review-") as temp_dir:
+            snapshot_path = Path(temp_dir) / Path(evidence.plan_path).name
+            snapshot_path.write_bytes(evidence.snapshot)
+            return parse_plan(snapshot_path, parse_mode="draft")
+
+    @staticmethod
+    def _round_result_for_evidence(
+        evidence_id: str,
+        round_result: Mapping[str, object],
+    ) -> dict[str, object]:
+        payload = validate_round_result(round_result)
+        coverage = payload["coverage_attestation"]
+        if not isinstance(coverage, dict) or coverage.get("evidence_id") != evidence_id:
+            raise ReviewEvidenceError(
+                "coverage_evidence_mismatch",
+                "coverage attestation belongs to a different review evidence snapshot",
+            )
+        return payload
+
+    def _changed_sections_since_prior_round(
+        self,
+        evidence: PlanReviewEvidence,
+    ) -> list[str]:
+        prior_rows = [
+            row
+            for row in self.store.list_for_path(
+                project_id=evidence.project_id,
+                plan_path=evidence.plan_path,
+            )
+            if row.finalized_at is not None
+            and row.expired_at is None
+            and row.round_number < evidence.round_number
+        ]
+        if not prior_rows:
+            return []
+        prior = prior_rows[-1]
+        current_hashes = reviewed_section_hashes(evidence.section_manifest)
+        prior_hashes = reviewed_section_hashes(prior.section_manifest)
+        return sorted(
+            section_id
+            for section_id in set(current_hashes) | set(prior_hashes)
+            if current_hashes.get(section_id) != prior_hashes.get(section_id)
+        )
 
     def checkpoint_plan_review_lesson_mint(
         self,
