@@ -28,7 +28,10 @@ _SHELL_CHAIN_TOKENS = frozenset({"&&", "||", ";", "|", "&", "\n"})
 # read-only filter (``gcode symbol <id> | jq``) is still navigation; one joined to
 # another command via these is not, so those stay classified as ``execute``.
 _SHELL_SEQUENCING_TOKENS = frozenset({"&&", "||", ";", "&", "\n"})
-_SHELL_INPUT_REDIRECTION_TOKENS = frozenset({"<", "<<", "<<<"})
+_SHELL_INPUT_REDIRECTION_TOKENS = frozenset({"<", "<<", "<<-", "<<<"})
+# Heredoc openers queue a delimiter; everything from the next command-terminating
+# newline to the delimiter line is stdin data, not shell syntax.
+_HEREDOC_OPERATORS = frozenset({"<<", "<<-"})
 # ``>&`` (csh-style redirect stdout+stderr to a file) only reaches token form when
 # it is *not* followed by digits or ``-``; those forms scan as fd duplication.
 _SHELL_OUTPUT_REDIRECTION_TOKENS = frozenset(
@@ -68,11 +71,18 @@ def tokenize_shell_command(command: str) -> list[ShellToken]:
     in_single_quote = False
     in_double_quote = False
     escaped = False
+    # Heredoc delimiters awaiting their body: (delimiter, strip_leading_tabs).
+    pending_heredocs: list[tuple[str, bool]] = []
+    heredoc_operator: str | None = None
 
     def flush() -> None:
-        nonlocal quoted
+        nonlocal quoted, heredoc_operator
         if current or quoted:
-            tokens.append(ShellToken("".join(current), quoted=quoted))
+            value = "".join(current)
+            tokens.append(ShellToken(value, quoted=quoted))
+            if heredoc_operator is not None:
+                pending_heredocs.append((value, heredoc_operator == "<<-"))
+                heredoc_operator = None
             current.clear()
             quoted = False
 
@@ -130,6 +140,11 @@ def tokenize_shell_command(command: str) -> list[ShellToken]:
         if operator:
             flush()
             tokens.append(ShellToken(operator))
+            if operator == "\n" and pending_heredocs:
+                index = _skip_heredoc_bodies(command, index + 1, pending_heredocs)
+                continue
+            if operator in _HEREDOC_OPERATORS:
+                heredoc_operator = operator
             index += len(operator)
             continue
 
@@ -146,6 +161,31 @@ def tokenize_shell_command(command: str) -> list[ShellToken]:
 
     flush()
     return tokens
+
+
+def _skip_heredoc_bodies(
+    command: str,
+    index: int,
+    pending_heredocs: list[tuple[str, bool]],
+) -> int:
+    """Advance past heredoc body lines, consuming pending delimiters in order.
+
+    An unterminated heredoc swallows the rest of the command, matching how the
+    shell would refuse to execute anything after it.
+    """
+    while pending_heredocs and index < len(command):
+        delimiter, strip_tabs = pending_heredocs[0]
+        line_end = command.find("\n", index)
+        if line_end == -1:
+            line_end = len(command)
+            next_index = line_end
+        else:
+            next_index = line_end + 1
+        line = command[index:line_end]
+        if (line.lstrip("\t") if strip_tabs else line) == delimiter:
+            pending_heredocs.pop(0)
+        index = next_index
+    return index
 
 
 def _scan_unquoted_shell_operator(command: str, index: int) -> str | None:
@@ -167,7 +207,22 @@ def _scan_unquoted_shell_operator(command: str, index: int) -> str | None:
         if command.startswith(">", cursor):
             return f"{command[index:cursor]}>"
         return None
-    for operator in ("<<<", "&>>", "&&", "||", "<<", ">>", "&>", ";", "|", "&", "<", ">&", ">"):
+    for operator in (
+        "<<<",
+        "<<-",
+        "&>>",
+        "&&",
+        "||",
+        "<<",
+        ">>",
+        "&>",
+        ";",
+        "|",
+        "&",
+        "<",
+        ">&",
+        ">",
+    ):
         if command.startswith(operator, index):
             return operator
     return None

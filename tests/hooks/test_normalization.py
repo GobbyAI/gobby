@@ -1142,6 +1142,44 @@ class TestCanonicalToolMetadata:
         assert data["canonical_tool_kind"] == "write"
         assert data["canonical_file_path"] == "src/app.py"
 
+    def test_quoted_heredoc_append_attributes_only_redirect_target(self) -> None:
+        # Heredoc bodies are stdin data; lines like ``-> None:`` must never
+        # scan as output redirections that mint fake edited-file paths.
+        command = (
+            "cat >> tests/foo.py <<'EOF'\n"
+            "def make(row) -> None:\n"
+            "    ns: SimpleNamespace = SimpleNamespace()\n"
+            "    items: list[SimpleNamespace] = []\n"
+            "    mapping: dict[str, int] = {}\n"
+            "    assert row >= 3\n"
+            "EOF"
+        )
+        data = {"tool_name": "Bash", "tool_input": {"command": command}}
+
+        normalize_tool_fields(data)
+
+        assert data["canonical_tool_kind"] == "write"
+        assert data["canonical_repo_mutation"] is True
+        assert data["canonical_file_paths"] == ["tests/foo.py"]
+
+    def test_command_after_heredoc_body_still_classifies(self) -> None:
+        command = "cat > notes.txt <<'EOF'\nplain > text\nEOF\nsed -i 's/a/b/' src/app.py"
+        data = {"tool_name": "Bash", "tool_input": {"command": command}}
+
+        normalize_tool_fields(data)
+
+        assert data["canonical_tool_kind"] == "write"
+        assert data["canonical_file_paths"] == ["notes.txt", "src/app.py"]
+
+    def test_tab_indented_heredoc_body_is_skipped(self) -> None:
+        command = "cat <<-EOF > src/app.py\n\tvalue > threshold\n\tEOF"
+        data = {"tool_name": "Bash", "tool_input": {"command": command}}
+
+        normalize_tool_fields(data)
+
+        assert data["canonical_tool_kind"] == "write"
+        assert data["canonical_file_paths"] == ["src/app.py"]
+
     def test_exec_command_sed_in_place_sets_canonical_write_fields(self) -> None:
         data = {
             "tool_name": "exec_command",
@@ -1417,6 +1455,63 @@ class TestFdDuplicationTokens:
         stripped = shell_token_values(strip_output_redirections(tokens))
 
         assert stripped == ["rg", "pattern", "src"]
+
+
+class TestHeredocTokenization:
+    """Heredoc bodies are stdin data and must never tokenize as shell syntax."""
+
+    def test_heredoc_body_lines_are_not_tokenized(self) -> None:
+        command = "cat >> tests/foo.py <<'EOF'\ndef f(x) -> None:\n    y >= 2\nEOF\necho done"
+
+        tokens = tokenize_shell_command(command)
+
+        assert shell_token_values(tokens) == [
+            "cat",
+            ">>",
+            "tests/foo.py",
+            "<<",
+            "EOF",
+            "\n",
+            "echo",
+            "done",
+        ]
+
+    def test_multiple_heredocs_consume_delimiters_in_order(self) -> None:
+        command = "cat <<A <<B\nbody > a\nA\nbody > b\nB\nls"
+
+        tokens = tokenize_shell_command(command)
+
+        assert shell_token_values(tokens) == ["cat", "<<", "A", "<<", "B", "\n", "ls"]
+
+    def test_unterminated_heredoc_swallows_remaining_lines(self) -> None:
+        command = "cat <<EOF > out.txt\nstill > body\nnever closed"
+
+        tokens = tokenize_shell_command(command)
+
+        assert shell_token_values(tokens) == ["cat", "<<", "EOF", ">", "out.txt", "\n"]
+
+    def test_herestring_does_not_open_a_heredoc(self) -> None:
+        command = "sort <<< 'b a'\necho done > out.txt"
+
+        tokens = tokenize_shell_command(command)
+
+        assert shell_token_values(tokens) == [
+            "sort",
+            "<<<",
+            "b a",
+            "\n",
+            "echo",
+            "done",
+            ">",
+            "out.txt",
+        ]
+
+    def test_quoted_newline_does_not_start_heredoc_body(self) -> None:
+        command = 'cat <<EOF "first\nsecond"\nbody\nEOF'
+
+        tokens = tokenize_shell_command(command)
+
+        assert shell_token_values(tokens) == ["cat", "<<", "EOF", "first\nsecond", "\n"]
 
 
 class TestToolErrorDetection:
