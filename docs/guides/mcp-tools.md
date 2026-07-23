@@ -721,7 +721,7 @@ registry is the runtime side.
 | Tool | Description |
 | :--- | :--- |
 | `get_agent_result` | Final result of a completed run. |
-| `wait_for_agent` | Wait for a running agent to complete (wrapper-capped timeout). |
+| `wait_for_agent` | Return the current status immediately. Active runs register a durable completion notification delivered through the parent inbox plus a live wake nudge. |
 | `list_agent_runs` | Runs for a parent session. |
 | `list_running_agents` | All currently running agents. |
 | `get_running_agent` | Process state for a running agent. |
