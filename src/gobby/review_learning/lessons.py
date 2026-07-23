@@ -1,4 +1,10 @@
-"""Lesson normalization, tagging, and markdown rendering."""
+"""Lesson normalization, tagging, and markdown rendering.
+
+Reserved canonical ``lesson_type`` values are ``reviewer-miss``,
+``fixer-induced-defect``, ``recurring-validation-failure``, ``qa-miss``, and
+``validation-miss``. Other values remain valid for existing and future
+single-class recorders.
+"""
 
 from __future__ import annotations
 
@@ -17,7 +23,10 @@ SourceKind = Literal[
     "qa_rejection",
     "static_analysis",
     "test_failure",
+    "plan_review",
+    "task_validation",
 ]
+LessonDomain = Literal["code", "plan"]
 Decision = Literal["confirmed", "no-fix-policy", "stale", "invalid"]
 GuardrailTarget = Literal[
     "helper",
@@ -38,6 +47,18 @@ VALID_SOURCE_KINDS: set[str] = {
     "qa_rejection",
     "static_analysis",
     "test_failure",
+    "plan_review",
+    "task_validation",
+}
+SOURCE_KIND_DOMAIN: dict[str, str] = {
+    "review_comment": "code",
+    "ci_check": "code",
+    "agent_review": "code",
+    "qa_rejection": "code",
+    "static_analysis": "code",
+    "test_failure": "code",
+    "plan_review": "plan",
+    "task_validation": "code",
 }
 VALID_DECISIONS: set[str] = {"confirmed", "no-fix-policy", "stale", "invalid"}
 VALID_GUARDRAIL_TARGETS: set[str] = {
@@ -52,8 +73,10 @@ VALID_GUARDRAIL_TARGETS: set[str] = {
 }
 VALID_RISKS: set[str] = {"low", "medium", "high"}
 CI_SOURCE_KINDS: set[str] = {"ci_check", "static_analysis", "test_failure"}
+CODE_DOMAIN_EXCLUDED_TAGS = ("lesson-domain:plan",)
 
 _SLUG_RE = re.compile(r"[^a-z0-9]+")
+_CHECK_KEY_RE = re.compile(r"^[a-z0-9]+(?:-[a-z0-9]+)*$")
 
 
 @dataclass(frozen=True)
@@ -71,6 +94,7 @@ class NormalizedLesson:
     """Validated lesson ready for memory storage."""
 
     source_kind: SourceKind
+    lesson_domain: LessonDomain
     source: str
     source_review: str
     decision: Decision
@@ -92,6 +116,24 @@ def validate_source_kind(value: str) -> SourceKind:
     if value not in VALID_SOURCE_KINDS:
         raise ValueError(f"Invalid source_kind: {value}")
     return cast(SourceKind, value)
+
+
+def derive_lesson_domain(source_kind: str) -> LessonDomain:
+    try:
+        lesson_domain = SOURCE_KIND_DOMAIN[source_kind]
+    except KeyError as exc:
+        raise ValueError(f"Unmapped lesson source kind: {source_kind}") from exc
+    if lesson_domain not in {"code", "plan"}:
+        raise ValueError(
+            f"Invalid lesson domain mapping for source kind {source_kind}: {lesson_domain}"
+        )
+    return cast(LessonDomain, lesson_domain)
+
+
+def validate_check_key(value: str) -> str:
+    if not isinstance(value, str) or _CHECK_KEY_RE.fullmatch(value) is None:
+        raise ValueError(f"Invalid check key: {value!r}")
+    return value
 
 
 def validate_decision(value: str) -> Decision:
@@ -135,6 +177,11 @@ def derive_lesson_identity(finding: dict[str, Any]) -> LessonIdentity:
     lesson_type = slugify(finding.get("lesson_type") or "review-signal", max_length=40)
     explicit = _clean_text(finding.get("pattern_id"))
     if explicit:
+        _validate_class_scoped_identity(
+            pattern_id=explicit,
+            lesson_type=lesson_type,
+            finding=finding,
+        )
         return LessonIdentity(
             pattern_id=explicit,
             pattern_key=pattern_key_for(explicit),
@@ -163,6 +210,31 @@ def derive_lesson_identity(finding: dict[str, Any]) -> LessonIdentity:
     )
 
 
+def _validate_class_scoped_identity(
+    *,
+    pattern_id: str,
+    lesson_type: str,
+    finding: dict[str, Any],
+) -> None:
+    if not pattern_id.startswith(("plan-review:", "epic-qa:")):
+        return
+
+    raw_check_key = finding.get("check_key")
+    if not isinstance(raw_check_key, str):
+        raise ValueError("Class-scoped lesson identity requires an explicit check_key")
+    check_key = validate_check_key(raw_check_key)
+
+    if pattern_id.startswith("plan-review:"):
+        category = _clean_text(finding.get("category"))
+        if not category:
+            raise ValueError("plan-review lesson identity requires an explicit category")
+        expected = f"plan-review:{lesson_type}:{slugify(category)}:{check_key}"
+    else:
+        expected = f"epic-qa:{lesson_type}:{check_key}"
+    if pattern_id != expected:
+        raise ValueError(f"Class-scoped pattern_id must be {expected!r}")
+
+
 def has_verified_fix(evidence: dict[str, Any]) -> bool:
     """Return whether evidence proves a CI/static/test signal was fixed."""
     keys = ("verified_fix", "verified_fix_ref", "fix_ref", "commit", "commit_sha", "changes_id")
@@ -172,6 +244,7 @@ def has_verified_fix(evidence: dict[str, Any]) -> bool:
 def build_tags(
     *,
     source_kind: SourceKind,
+    lesson_domain: LessonDomain,
     source: str,
     decision: Decision,
     identity: LessonIdentity,
@@ -186,12 +259,18 @@ def build_tags(
         "review-lesson",
         decision,
         f"source-kind:{source_kind}",
+        f"lesson-domain:{lesson_domain}",
         f"source:{slugify(source)}",
         f"pattern:{identity.pattern_key}",
         fingerprint_tag(finding_fingerprint),
         occurrence_tag(occurrence_key),
         f"lesson-type:{identity.lesson_type}",
     ]
+    if "check_key" in finding:
+        tags.append(f"check-key:{validate_check_key(finding['check_key'])}")
+    category = _clean_text(finding.get("category"))
+    if category:
+        tags.append(f"category:{slugify(category)}")
     tags.extend(_optional_tags(finding=finding, repo=repo, language=language))
     tags.extend(
         tag
@@ -216,14 +295,21 @@ def normalize_lesson(
     repo: str | None,
     language: str | None,
     risk: str,
+    lesson_domain: LessonDomain | None = None,
 ) -> NormalizedLesson:
     validated_source_kind = validate_source_kind(source_kind)
+    derived_lesson_domain = derive_lesson_domain(validated_source_kind)
+    if lesson_domain is not None and lesson_domain != derived_lesson_domain:
+        raise ValueError(
+            f"Lesson domain {lesson_domain!r} does not match source kind {validated_source_kind!r}"
+        )
     validated_decision = validate_decision(decision)
     validated_risk = validate_risk(risk)
     guardrail_target = validate_guardrail_target(_clean_text(finding.get("guardrail_target")))
     identity = derive_lesson_identity(finding)
     tags = build_tags(
         source_kind=validated_source_kind,
+        lesson_domain=derived_lesson_domain,
         source=source,
         decision=validated_decision,
         identity=identity,
@@ -251,6 +337,7 @@ def normalize_lesson(
     )
     return NormalizedLesson(
         source_kind=validated_source_kind,
+        lesson_domain=derived_lesson_domain,
         source=source,
         source_review=source_review,
         decision=validated_decision,

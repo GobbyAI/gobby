@@ -22,9 +22,11 @@ from gobby.review_learning.fingerprint import (
 from gobby.review_learning.guidance import format_review_lesson_guidance
 from gobby.review_learning.lessons import (
     CI_SOURCE_KINDS,
+    derive_lesson_domain,
     has_verified_fix,
     normalize_lesson,
     validate_decision,
+    validate_source_kind,
 )
 from gobby.review_learning.promotion import (
     PromotionMemoryManager,
@@ -200,6 +202,8 @@ class ReviewLearningService:
         risk: str = "medium",
     ) -> dict[str, Any]:
         """Record a review lesson memory and promote repeated patterns."""
+        validated_source_kind = validate_source_kind(source_kind)
+        lesson_domain = derive_lesson_domain(validated_source_kind)
         validated_decision = validate_decision(decision)
         if validated_decision in {"stale", "invalid"}:
             return {
@@ -212,7 +216,7 @@ class ReviewLearningService:
         finding_fingerprint = derive_finding_fingerprint(finding)
         occurrence_key = build_occurrence_key(source_review, finding_fingerprint)
         normalized = normalize_lesson(
-            source_kind=source_kind,
+            source_kind=validated_source_kind,
             source=source,
             source_review=source_review,
             decision=validated_decision,
@@ -223,6 +227,7 @@ class ReviewLearningService:
             repo=repo,
             language=language,
             risk=risk,
+            lesson_domain=lesson_domain,
         )
 
         lock = ReviewLearningPatternMutation(

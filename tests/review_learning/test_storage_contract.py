@@ -4,6 +4,8 @@ import pytest
 
 from gobby.config.persistence import MemoryConfig
 from gobby.memory.manager import MemoryManager
+from gobby.review_learning.file_paths import path_tag
+from gobby.review_learning.fingerprint import fingerprint_tag, occurrence_tag
 from gobby.review_learning.service import ReviewLearningService
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.projects import LocalProjectManager
@@ -56,6 +58,18 @@ async def test_storage_backed_dedupe_and_count_ignore_large_unrelated_window(
         first_memory = memory_manager.storage.get_memory(first["lesson_id"])
         assert first_memory is not None
         pattern_tag = next(tag for tag in (first_memory.tags or []) if tag.startswith("pattern:"))
+        legacy_tags = {
+            "review-lesson",
+            "confirmed",
+            "source-kind:agent_review",
+            "source:code-reviewer",
+            "pattern:durable-write-after-state-change",
+            fingerprint_tag(first["finding_fingerprint"]),
+            occurrence_tag(first["occurrence_key"]),
+            "lesson-type:durable-writes",
+            path_tag("src/gobby/tasks/state.py"),
+        }
+        assert set(first_memory.tags or []) == legacy_tags | {"lesson-domain:code"}
 
         for index in range(NOISE_MEMORY_COUNT):
             memory_manager.storage.create_memory(
@@ -87,7 +101,7 @@ async def test_storage_backed_dedupe_and_count_ignore_large_unrelated_window(
             evidence={"commit": "def"},
         )
 
-        target_memories = memory_manager.storage.list_memories(
+        target_memories = memory_manager.list_memories(
             project_id=project.id,
             memory_type="pattern",
             tags_all=["review-lesson", "confirmed", pattern_tag],
