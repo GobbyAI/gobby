@@ -12,6 +12,7 @@ import pytest
 from gobby.hooks.events import HookEvent, HookEventType, HookResponse, SessionSource
 from gobby.hooks.rule_evaluator import WorkflowRuleEvaluator
 from gobby.servers.routes.mcp.hooks import _run_adapter_hook
+from gobby.workflows.evaluation_runtime import WorkflowEvaluationRuntime
 from gobby.workflows.hooks import WorkflowEvaluationTimeout, WorkflowHookHandler
 
 pytestmark = pytest.mark.unit
@@ -29,7 +30,12 @@ def _event(tmp_path: Path, *, session_id: str = "platform-session") -> HookEvent
     )
 
 
-def _handler(evaluate: Any, *, timeout: float) -> WorkflowHookHandler:
+def _handler(
+    evaluate: Any,
+    *,
+    timeout: float,
+    runtime: WorkflowEvaluationRuntime,
+) -> WorkflowHookHandler:
     rule_engine = MagicMock()
     rule_engine.db = MagicMock()
     rule_engine.evaluate = evaluate
@@ -40,7 +46,7 @@ def _handler(evaluate: Any, *, timeout: float) -> WorkflowHookHandler:
         "session_edited_files": [],
     }
 
-    handler = WorkflowHookHandler(loop=None, timeout=timeout)
+    handler = WorkflowHookHandler(timeout=timeout, evaluation_runtime=runtime)
     handler.rule_engine = rule_engine
     handler._session_var_manager = session_vars
     return handler
@@ -63,10 +69,11 @@ async def test_concurrent_sync_evaluations_keep_daemon_loop_responsive(tmp_path:
             started += 1
             if started == worker_count:
                 all_started.set()
-        release.wait(timeout=1)
+        await asyncio.to_thread(release.wait, 1)
         return HookResponse(decision="allow")
 
-    handler = WorkflowHookHandler(loop=asyncio.get_running_loop(), timeout=0.8)
+    runtime = WorkflowEvaluationRuntime(max_workers=worker_count)
+    handler = WorkflowHookHandler(timeout=0.8, evaluation_runtime=runtime)
     handler._evaluate_rules = blocking_evaluation
     event = _event(tmp_path)
     adapter = MagicMock()
@@ -82,10 +89,13 @@ async def test_concurrent_sync_evaluations_keep_daemon_loop_responsive(tmp_path:
     finally:
         release.set()
 
-    results = await asyncio.gather(*evaluations)
-    assert [result.decision for result in results] == ["allow"] * worker_count
-    assert evaluation_threads
-    assert all(thread_id != daemon_thread for thread_id in evaluation_threads)
+    try:
+        results = await asyncio.gather(*evaluations)
+        assert [result.decision for result in results] == ["allow"] * worker_count
+        assert evaluation_threads
+        assert all(thread_id != daemon_thread for thread_id in evaluation_threads)
+    finally:
+        handler.shutdown()
 
 
 @pytest.mark.asyncio
@@ -108,42 +118,46 @@ async def test_internal_timeout_cancels_evaluation_and_releases_session_lock(
         finally:
             cancelled.set()
 
-    handler = _handler(slow_evaluate, timeout=evaluation_timeout)
+    runtime = WorkflowEvaluationRuntime()
+    handler = _handler(slow_evaluate, timeout=evaluation_timeout, runtime=runtime)
     event = _event(tmp_path)
     adapter = MagicMock()
     adapter.handle_native.side_effect = lambda *_args: handler.evaluate(event)
 
-    with pytest.raises(WorkflowEvaluationTimeout) as raised:
-        await _run_adapter_hook(adapter, {}, MagicMock(), timeout_seconds=1.0)
+    try:
+        with pytest.raises(WorkflowEvaluationTimeout) as raised:
+            await _run_adapter_hook(adapter, {}, MagicMock(), timeout_seconds=1.0)
 
-    error = raised.value
-    assert cancelled.wait(timeout=0.5)
-    assert error.event_type == HookEventType.BEFORE_TOOL.value
-    assert error.session_id == "platform-session"
-    assert error.timeout_seconds == evaluation_timeout
-    assert error.queue_duration_seconds is not None
-    assert error.queue_duration_seconds >= 0
-    assert error.execution_duration_seconds is not None
-    assert error.execution_duration_seconds >= evaluation_timeout
-    with handler._eval_locks_lock:
-        lock_state = handler._eval_locks["platform-session"]
-        assert lock_state.references == 0
-        assert lock_state.lock.acquire(blocking=False)
-        lock_state.lock.release()
+        error = raised.value
+        assert cancelled.wait(timeout=0.5)
+        assert error.event_type == HookEventType.BEFORE_TOOL.value
+        assert error.session_id == "platform-session"
+        assert error.timeout_seconds == evaluation_timeout
+        assert error.queue_duration_seconds is not None
+        assert error.queue_duration_seconds >= 0
+        assert error.execution_duration_seconds is not None
+        assert error.execution_duration_seconds >= evaluation_timeout
+        with handler._eval_locks_lock:
+            lock_state = handler._eval_locks["platform-session"]
+            assert lock_state.references == 0
+            assert lock_state.lock.acquire(blocking=False)
+            lock_state.lock.release()
 
-    async def fast_evaluate(
-        *,
-        event: HookEvent,
-        session_id: str,
-        variables: dict[str, Any],
-        eval_context: dict[str, Any] | None = None,
-    ) -> HookResponse:
-        del event, session_id, variables, eval_context
-        return HookResponse(decision="allow")
+        async def fast_evaluate(
+            *,
+            event: HookEvent,
+            session_id: str,
+            variables: dict[str, Any],
+            eval_context: dict[str, Any] | None = None,
+        ) -> HookResponse:
+            del event, session_id, variables, eval_context
+            return HookResponse(decision="allow")
 
-    handler.rule_engine.evaluate = fast_evaluate
-    response = await _run_adapter_hook(adapter, {}, MagicMock(), timeout_seconds=0.5)
-    assert response.decision == "allow"
+        handler.rule_engine.evaluate = fast_evaluate
+        response = await _run_adapter_hook(adapter, {}, MagicMock(), timeout_seconds=0.5)
+        assert response.decision == "allow"
+    finally:
+        handler.shutdown()
 
 
 @pytest.mark.asyncio
@@ -169,7 +183,8 @@ async def test_timeout_while_waiting_for_session_lock_never_executes_queued_even
             await asyncio.to_thread(release_first.wait, 1)
         return HookResponse(decision="allow")
 
-    handler = _handler(evaluate, timeout=0.5)
+    runtime = WorkflowEvaluationRuntime()
+    handler = _handler(evaluate, timeout=0.5, runtime=runtime)
     first_event = _event(tmp_path)
     first_event.data["name"] = "first"
     second_event = _event(tmp_path)
@@ -177,28 +192,32 @@ async def test_timeout_while_waiting_for_session_lock_never_executes_queued_even
     adapter = MagicMock()
     adapter.handle_native.side_effect = lambda payload, _manager: handler.evaluate(payload["event"])
 
-    first = asyncio.create_task(
-        _run_adapter_hook(
-            adapter,
-            {"event": first_event},
-            MagicMock(),
-            timeout_seconds=0.6,
+    try:
+        first = asyncio.create_task(
+            _run_adapter_hook(
+                adapter,
+                {"event": first_event},
+                MagicMock(),
+                timeout_seconds=0.6,
+            )
         )
-    )
-    assert await asyncio.to_thread(first_started.wait, 0.2)
+        assert await asyncio.to_thread(first_started.wait, 0.2)
 
-    handler.timeout = 0.02
-    with pytest.raises(WorkflowEvaluationTimeout):
-        await _run_adapter_hook(
-            adapter,
-            {"event": second_event},
-            MagicMock(),
-            timeout_seconds=0.5,
-        )
+        handler.timeout = 0.02
+        with pytest.raises(WorkflowEvaluationTimeout):
+            await _run_adapter_hook(
+                adapter,
+                {"event": second_event},
+                MagicMock(),
+                timeout_seconds=0.5,
+            )
 
-    assert entered == ["first"]
-    release_first.set()
-    assert (await first).decision == "allow"
+        assert entered == ["first"]
+        release_first.set()
+        assert (await first).decision == "allow"
+    finally:
+        release_first.set()
+        handler.shutdown()
 
 
 def test_rule_evaluator_propagates_workflow_timeout_without_logging() -> None:

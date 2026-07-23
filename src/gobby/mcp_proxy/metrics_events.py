@@ -2,6 +2,8 @@
 
 import json
 import logging
+from collections.abc import Iterable
+from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from typing import Any
 
@@ -60,6 +62,21 @@ def _bucket_timestamp(value: Any, bucket_label: str) -> str:
     return timestamp.strftime("%Y-%m-%d")
 
 
+@dataclass(frozen=True, slots=True)
+class MetricsEventRecord:
+    """Values for one metrics_events row."""
+
+    event_type: str
+    name: str
+    project_id: str | None = None
+    session_id: str | None = None
+    server_name: str | None = None
+    success: bool = True
+    latency_ms: float | None = None
+    result: str | None = None
+    metadata: dict[str, Any] | None = None
+
+
 class MetricsEventStore:
     """
     Event log storage for metrics.
@@ -86,24 +103,49 @@ class MetricsEventStore:
         metadata: dict[str, Any] | None = None,
     ) -> None:
         """Record a raw metrics event."""
-        self.db.execute(
+        self.record_events(
+            [
+                MetricsEventRecord(
+                    event_type=event_type,
+                    name=name,
+                    project_id=project_id,
+                    session_id=session_id,
+                    server_name=server_name,
+                    success=success,
+                    latency_ms=latency_ms,
+                    result=result,
+                    metadata=metadata,
+                )
+            ]
+        )
+
+    def record_events(self, events: Iterable[MetricsEventRecord]) -> None:
+        """Record metrics events in one database transaction."""
+        rows = [
+            (
+                event.event_type,
+                event.project_id or None,
+                event.session_id or None,
+                event.server_name,
+                event.name,
+                bool(event.success),
+                event.latency_ms,
+                event.result,
+                json.dumps(event.metadata) if event.metadata else None,
+            )
+            for event in events
+        ]
+        if not rows:
+            return
+
+        self.db.executemany(
             """
             INSERT INTO metrics_events (
                 event_type, project_id, session_id, server_name,
                 name, success, latency_ms, result, metadata_json
             ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)
             """,
-            (
-                event_type,
-                project_id or None,
-                session_id or None,
-                server_name,
-                name,
-                bool(success),
-                latency_ms,
-                result,
-                json.dumps(metadata) if metadata else None,
-            ),
+            rows,
         )
 
     def get_session_tool_breakdown(self, session_id: str) -> list[dict[str, Any]]:

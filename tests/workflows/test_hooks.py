@@ -5,7 +5,7 @@ to be callable from synchronous hooks. It handles the sync/async bridge with var
 threading scenarios:
 - Main thread with running loop
 - Worker thread with external loop
-- No loop running (uses asyncio.run)
+- No runtime configured for synchronous evaluation
 - Exception handling in all cases
 """
 
@@ -22,6 +22,7 @@ import pytest
 
 from gobby.hooks.events import HookEvent, HookEventType, HookResponse, SessionSource
 from gobby.storage.hub.protocol import HubDatabase
+from gobby.workflows.evaluation_runtime import WorkflowEvaluationRuntime
 from gobby.workflows.git_utils import DirtyFiles
 from gobby.workflows.hooks import WorkflowHookHandler
 from tests._timing import wait_forever
@@ -64,21 +65,19 @@ class TestWorkflowHookHandlerInit:
 
         assert handler._enabled is False
 
-    def test_init_with_explicit_loop(self) -> None:
-        """Test initialization with explicit event loop."""
-        loop = asyncio.new_event_loop()
+    def test_init_with_evaluation_runtime(self) -> None:
+        """Test initialization with an isolated evaluation runtime."""
+        runtime = WorkflowEvaluationRuntime()
+        handler = WorkflowHookHandler(evaluation_runtime=runtime)
         try:
-            handler = WorkflowHookHandler(loop=loop)
-            assert handler._loop == loop
+            assert handler._evaluation_runtime is runtime
         finally:
-            loop.close()
+            handler.shutdown()
 
-    def test_init_without_loop_tries_to_get_running(self) -> None:
-        """Test that init tries to get running loop if none provided."""
-        with patch("asyncio.get_running_loop", side_effect=RuntimeError):
-            handler = WorkflowHookHandler()
-            # Should handle the RuntimeError gracefully
-            assert handler._loop is None
+    def test_init_without_evaluation_runtime(self) -> None:
+        """Test initialization without a synchronous evaluation runtime."""
+        handler = WorkflowHookHandler()
+        assert handler._evaluation_runtime is None
 
 
 class TestWorkflowHookHandlerDisabled:
@@ -126,27 +125,19 @@ class TestHandleAllLifecycles:
             data={},
         )
 
-    def test_evaluate_no_loop_uses_asyncio_run(self, event) -> None:
-        """Test that asyncio.run is used when no loop is running."""
-        with patch("asyncio.run") as mock_run:
-            mock_run.return_value = HookResponse(decision="deny")
-            with patch("asyncio.get_running_loop", side_effect=RuntimeError):
-                handler = WorkflowHookHandler()
-                handler._loop = None
-
-                result = handler.evaluate(event)
-
-                assert result.decision == "deny"
-                mock_run.assert_called_once()
+    def test_evaluate_without_runtime_raises(self, event) -> None:
+        """Test that synchronous evaluation requires a runtime."""
+        with patch("asyncio.get_running_loop", side_effect=RuntimeError):
+            handler = WorkflowHookHandler()
+            with pytest.raises(RuntimeError, match="requires a runtime"):
+                handler.evaluate(event)
 
     def test_evaluate_thread_safe_with_external_loop(self, event) -> None:
-        """Test thread-safe execution with external event loop."""
-        loop = asyncio.new_event_loop()
-        t_loop = threading.Thread(target=loop.run_forever)
-        t_loop.start()
+        """Test thread-safe execution with the workflow runtime."""
+        runtime = WorkflowEvaluationRuntime()
 
         try:
-            handler = WorkflowHookHandler(loop=loop)
+            handler = WorkflowHookHandler(evaluation_runtime=runtime)
 
             result_holder = {}
 
@@ -163,9 +154,7 @@ class TestHandleAllLifecycles:
             assert result.decision in ("allow", "deny")
 
         finally:
-            loop.call_soon_threadsafe(loop.stop)
-            t_loop.join()
-            loop.close()
+            runtime.shutdown()
 
     @pytest.mark.asyncio
     async def test_evaluate_main_thread_with_running_loop(self, event):
@@ -173,7 +162,7 @@ class TestHandleAllLifecycles:
 
         This tests the main thread guard that prevents deadlock.
         """
-        handler = WorkflowHookHandler(loop=asyncio.get_running_loop())
+        handler = WorkflowHookHandler()
 
         # This test must run on main thread for coverage
         if threading.current_thread() is threading.main_thread():
@@ -188,7 +177,6 @@ class TestHandleAllLifecycles:
         Tests the case where we detect a running loop but didn't have one stored.
         """
         handler = WorkflowHookHandler()
-        handler._loop = None
 
         # Mock get_running_loop to return a loop (not raise RuntimeError)
         mock_loop = type("MockLoop", (), {})()
@@ -203,40 +191,28 @@ class TestHandleAllLifecycles:
         Exceptions now propagate (not swallowed) so the caller
         (_evaluate_workflow_rules) can log to hook-manager.log and fail-open.
         """
-        handler = WorkflowHookHandler()
-        handler._loop = None
+        runtime = MagicMock()
+        runtime.run.side_effect = Exception("Test error")
+        handler = WorkflowHookHandler(evaluation_runtime=runtime)
 
-        with patch("asyncio.run", side_effect=Exception("Test error")):
-            with patch("asyncio.get_running_loop", side_effect=RuntimeError):
-                with pytest.raises(Exception, match="Test error"):
-                    handler.evaluate(event)
+        with patch("asyncio.get_running_loop", side_effect=RuntimeError):
+            with pytest.raises(Exception, match="Test error"):
+                handler.evaluate(event)
 
     def test_evaluate_timeout_exception(self, event) -> None:
         """Test timeout exception in thread-safe execution.
 
         TimeoutError propagates (not swallowed) so the caller can handle it.
         """
-        loop = asyncio.new_event_loop()
-        t_loop = threading.Thread(target=loop.run_forever)
-        t_loop.start()
+        runtime = WorkflowEvaluationRuntime()
 
         try:
-            handler = WorkflowHookHandler(loop=loop, timeout=0.001)
+            handler = WorkflowHookHandler(evaluation_runtime=runtime, timeout=0.001)
 
             # Make the coroutine hang by patching _evaluate_rules
             async def slow_coroutine(event):
                 await wait_forever()
                 return HookResponse(decision="allow")
-
-            async def cancel_pending_tasks() -> None:
-                current = asyncio.current_task()
-                pending = [
-                    task for task in asyncio.all_tasks() if task is not current and not task.done()
-                ]
-                for task in pending:
-                    task.cancel()
-                if pending:
-                    await asyncio.gather(*pending, return_exceptions=True)
 
             handler._evaluate_rules = slow_coroutine
 
@@ -257,11 +233,7 @@ class TestHandleAllLifecycles:
             assert isinstance(error_holder["error"], TimeoutError)
 
         finally:
-            cleanup = asyncio.run_coroutine_threadsafe(cancel_pending_tasks(), loop)
-            cleanup.result(timeout=2)
-            loop.call_soon_threadsafe(loop.stop)
-            t_loop.join()
-            loop.close()
+            runtime.shutdown()
 
 
 class TestHandle:
@@ -278,31 +250,23 @@ class TestHandle:
             data={"tool_name": "Edit"},
         )
 
-    def test_handle_no_loop_uses_asyncio_run(self, event) -> None:
-        """Test that asyncio.run is used when no loop is running."""
-        with patch("asyncio.run") as mock_run:
-            mock_run.return_value = HookResponse(decision="deny")
-            with patch("asyncio.get_running_loop", side_effect=RuntimeError):
-                handler = WorkflowHookHandler()
-                handler._loop = None
-
-                result = handler.handle(event)
-
-                assert result.decision == "deny"
-                mock_run.assert_called_once()
+    def test_handle_without_runtime_raises(self, event) -> None:
+        """Test that synchronous evaluation requires an isolated runtime."""
+        with patch("asyncio.get_running_loop", side_effect=RuntimeError):
+            handler = WorkflowHookHandler()
+            with pytest.raises(RuntimeError, match="requires a runtime"):
+                handler.handle(event)
 
     def test_handle_thread_safe_with_external_loop(self, event) -> None:
-        """Test thread-safe execution with external event loop.
+        """Test thread-safe execution with the workflow runtime.
 
         handle() delegates to evaluate() which calls _evaluate_rules().
         Without a rule engine, it returns allow.
         """
-        loop = asyncio.new_event_loop()
-        t_loop = threading.Thread(target=loop.run_forever)
-        t_loop.start()
+        runtime = WorkflowEvaluationRuntime()
 
         try:
-            handler = WorkflowHookHandler(loop=loop)
+            handler = WorkflowHookHandler(evaluation_runtime=runtime)
 
             result_holder = {}
 
@@ -318,14 +282,12 @@ class TestHandle:
             assert result.decision == "allow"
 
         finally:
-            loop.call_soon_threadsafe(loop.stop)
-            t_loop.join()
-            loop.close()
+            runtime.shutdown()
 
     @pytest.mark.asyncio
     async def test_handle_main_thread_with_running_loop(self, event):
         """Test that code path goes through main thread guard."""
-        handler = WorkflowHookHandler(loop=asyncio.get_running_loop())
+        handler = WorkflowHookHandler()
 
         if threading.current_thread() is threading.main_thread():
             result = handler.handle(event)
@@ -336,7 +298,6 @@ class TestHandle:
     def test_handle_loop_running_but_no_stored_loop(self, event) -> None:
         """Test when a loop is running but not stored in handler."""
         handler = WorkflowHookHandler()
-        handler._loop = None
 
         mock_loop = type("MockLoop", (), {})()
         with patch("asyncio.get_running_loop", return_value=mock_loop):
@@ -350,13 +311,13 @@ class TestHandle:
         Exceptions now propagate so the caller (_evaluate_workflow_rules)
         can log to hook-manager.log and fail-open at the right level.
         """
-        handler = WorkflowHookHandler()
-        handler._loop = None
+        runtime = MagicMock()
+        runtime.run.side_effect = ValueError("Unexpected error")
+        handler = WorkflowHookHandler(evaluation_runtime=runtime)
 
-        with patch("asyncio.run", side_effect=ValueError("Unexpected error")):
-            with patch("asyncio.get_running_loop", side_effect=RuntimeError):
-                with pytest.raises(ValueError, match="Unexpected error"):
-                    handler.handle(event)
+        with patch("asyncio.get_running_loop", side_effect=RuntimeError):
+            with pytest.raises(ValueError, match="Unexpected error"):
+                handler.handle(event)
 
 
 class TestEdgeCases:
@@ -405,12 +366,10 @@ class TestEdgeCases:
 
     def test_concurrent_handler_calls(self, event) -> None:
         """Test multiple concurrent calls to the handler."""
-        loop = asyncio.new_event_loop()
-        t_loop = threading.Thread(target=loop.run_forever)
-        t_loop.start()
+        runtime = WorkflowEvaluationRuntime()
 
         try:
-            handler = WorkflowHookHandler(loop=loop)
+            handler = WorkflowHookHandler(evaluation_runtime=runtime)
             results = []
             threads = []
 
@@ -433,9 +392,7 @@ class TestEdgeCases:
                 assert result.decision == "allow"
 
         finally:
-            loop.call_soon_threadsafe(loop.stop)
-            t_loop.join()
-            loop.close()
+            runtime.shutdown()
 
     def test_response_passthrough(self, event) -> None:
         """Test that response attributes are correctly passed through."""
@@ -449,33 +406,31 @@ class TestEdgeCases:
             metadata={"extra": "data"},
         )
 
-        with patch("asyncio.run", return_value=mock_response):
-            with patch("asyncio.get_running_loop", side_effect=RuntimeError):
-                handler = WorkflowHookHandler()
-                handler._loop = None
+        runtime = MagicMock()
+        runtime.run.return_value = mock_response
+        with patch("asyncio.get_running_loop", side_effect=RuntimeError):
+            handler = WorkflowHookHandler(evaluation_runtime=runtime)
 
-                result = handler.handle(event)
+            result = handler.handle(event)
 
-                assert result.decision == "block"
-                assert result.context == "Blocking context"
-                assert result.system_message == "User visible message"
-                assert result.reason == "Blocked for testing"
+            assert result.decision == "block"
+            assert result.context == "Blocking context"
+            assert result.system_message == "User visible message"
+            assert result.reason == "Blocked for testing"
 
     def test_handler_reuse(self, event) -> None:
         """Test that a handler can be reused for multiple calls."""
-        with patch("asyncio.run") as mock_run:
-            mock_run.return_value = HookResponse(decision="allow")
-            with patch("asyncio.get_running_loop", side_effect=RuntimeError):
-                handler = WorkflowHookHandler()
-                handler._loop = None
+        runtime = MagicMock()
+        runtime.run.return_value = HookResponse(decision="allow")
+        with patch("asyncio.get_running_loop", side_effect=RuntimeError):
+            handler = WorkflowHookHandler(evaluation_runtime=runtime)
 
-                # Multiple calls
-                result1 = handler.handle(event)
-                result2 = handler.evaluate(event)
+            result1 = handler.handle(event)
+            result2 = handler.evaluate(event)
 
-                assert result1.decision == "allow"
-                assert result2.decision == "allow"
-                assert mock_run.call_count == 2
+            assert result1.decision == "allow"
+            assert result2.decision == "allow"
+            assert runtime.run.call_count == 2
 
 
 class TestThreadingScenarios:
@@ -492,60 +447,39 @@ class TestThreadingScenarios:
             data={},
         )
 
-    def test_loop_not_running_in_main_thread(self, event) -> None:
-        """Test behavior when loop stored but not running."""
-        loop = asyncio.new_event_loop()
-        # Don't start the loop - it's not running
-
-        handler = WorkflowHookHandler(loop=loop)
-
-        # Since loop is not running, should fall through to get_running_loop check
+    def test_missing_runtime_in_worker_thread(self, event) -> None:
+        """Test behavior when synchronous evaluation has no runtime."""
+        handler = WorkflowHookHandler()
         with patch("asyncio.get_running_loop", side_effect=RuntimeError):
-            with patch("asyncio.run") as mock_run:
-                mock_run.return_value = HookResponse(decision="allow")
-                result = handler.handle(event)
-                assert result.decision == "allow"
+            with pytest.raises(RuntimeError, match="requires a runtime"):
+                handler.handle(event)
 
-        loop.close()
+    def test_worker_thread_with_stopped_runtime(self, event) -> None:
+        """Test worker thread after the evaluation runtime has stopped."""
+        runtime = WorkflowEvaluationRuntime()
+        runtime.shutdown()
+        handler = WorkflowHookHandler(evaluation_runtime=runtime)
+        error_holder = {}
 
-    def test_worker_thread_with_stopped_loop(self, event) -> None:
-        """Test worker thread when loop has stopped."""
-        loop = asyncio.new_event_loop()
-        t_loop = threading.Thread(target=loop.run_forever)
-        t_loop.start()
-
-        # Stop the loop
-        loop.call_soon_threadsafe(loop.stop)
-        t_loop.join()
-
-        handler = WorkflowHookHandler(loop=loop)
-
-        # Now loop is stopped but we're trying to use it
-        result_holder = {}
-
-        def run_handle():
-            result_holder["res"] = handler.handle(event)
+        def run_handle() -> None:
+            try:
+                handler.handle(event)
+            except Exception as exc:
+                error_holder["error"] = exc
 
         t_worker = threading.Thread(target=run_handle)
         t_worker.start()
         t_worker.join()
 
-        # Should handle gracefully via exception path
-        result = result_holder.get("res")
-        assert result is not None
-        assert result.decision == "allow"
+        assert isinstance(error_holder.get("error"), RuntimeError)
 
-        loop.close()
-
-    def test_multiple_handlers_same_loop(self, event) -> None:
-        """Test multiple handlers sharing the same event loop."""
-        loop = asyncio.new_event_loop()
-        t_loop = threading.Thread(target=loop.run_forever)
-        t_loop.start()
+    def test_multiple_handlers_same_runtime(self, event) -> None:
+        """Test multiple handlers sharing the same evaluation runtime."""
+        runtime = WorkflowEvaluationRuntime()
 
         try:
-            handler1 = WorkflowHookHandler(loop=loop)
-            handler2 = WorkflowHookHandler(loop=loop)
+            handler1 = WorkflowHookHandler(evaluation_runtime=runtime)
+            handler2 = WorkflowHookHandler(evaluation_runtime=runtime)
 
             results = []
 
@@ -568,9 +502,7 @@ class TestThreadingScenarios:
                 assert result.decision == "allow"
 
         finally:
-            loop.call_soon_threadsafe(loop.stop)
-            t_loop.join()
-            loop.close()
+            runtime.shutdown()
 
 
 class TestCancelledErrorHandling:
@@ -588,42 +520,42 @@ class TestCancelledErrorHandling:
     def test_cancelled_error_blocks_stop_evaluate(self) -> None:
         """CancelledError on STOP event should block (fail-closed)."""
         event = self._make_event(HookEventType.STOP)
-        with patch("asyncio.run", side_effect=concurrent.futures.CancelledError()):
-            with patch("asyncio.get_running_loop", side_effect=RuntimeError):
-                handler = WorkflowHookHandler()
-                handler._loop = None
-                result = handler.evaluate(event)
-                assert result.decision == "block"
+        runtime = MagicMock()
+        runtime.run.side_effect = concurrent.futures.CancelledError()
+        with patch("asyncio.get_running_loop", side_effect=RuntimeError):
+            handler = WorkflowHookHandler(evaluation_runtime=runtime)
+            result = handler.evaluate(event)
+            assert result.decision == "block"
 
     def test_cancelled_error_allows_non_stop_evaluate(self) -> None:
         """CancelledError on non-STOP event should allow (fail-open)."""
         event = self._make_event(HookEventType.BEFORE_TOOL)
-        with patch("asyncio.run", side_effect=concurrent.futures.CancelledError()):
-            with patch("asyncio.get_running_loop", side_effect=RuntimeError):
-                handler = WorkflowHookHandler()
-                handler._loop = None
-                result = handler.evaluate(event)
-                assert result.decision == "allow"
+        runtime = MagicMock()
+        runtime.run.side_effect = concurrent.futures.CancelledError()
+        with patch("asyncio.get_running_loop", side_effect=RuntimeError):
+            handler = WorkflowHookHandler(evaluation_runtime=runtime)
+            result = handler.evaluate(event)
+            assert result.decision == "allow"
 
     def test_cancelled_error_blocks_stop_handle(self) -> None:
         """CancelledError on STOP event should block in handle()."""
         event = self._make_event(HookEventType.STOP)
-        with patch("asyncio.run", side_effect=concurrent.futures.CancelledError()):
-            with patch("asyncio.get_running_loop", side_effect=RuntimeError):
-                handler = WorkflowHookHandler()
-                handler._loop = None
-                result = handler.handle(event)
-                assert result.decision == "block"
+        runtime = MagicMock()
+        runtime.run.side_effect = concurrent.futures.CancelledError()
+        with patch("asyncio.get_running_loop", side_effect=RuntimeError):
+            handler = WorkflowHookHandler(evaluation_runtime=runtime)
+            result = handler.handle(event)
+            assert result.decision == "block"
 
     def test_cancelled_error_allows_non_stop_handle(self) -> None:
         """CancelledError on non-STOP event should allow in handle()."""
         event = self._make_event(HookEventType.SESSION_START)
-        with patch("asyncio.run", side_effect=concurrent.futures.CancelledError()):
-            with patch("asyncio.get_running_loop", side_effect=RuntimeError):
-                handler = WorkflowHookHandler()
-                handler._loop = None
-                result = handler.handle(event)
-                assert result.decision == "allow"
+        runtime = MagicMock()
+        runtime.run.side_effect = concurrent.futures.CancelledError()
+        with patch("asyncio.get_running_loop", side_effect=RuntimeError):
+            handler = WorkflowHookHandler(evaluation_runtime=runtime)
+            result = handler.handle(event)
+            assert result.decision == "allow"
 
 
 class TestVariablePersistence:
@@ -1574,7 +1506,7 @@ class TestCodexToolContextRehydration:
         rule_engine.evaluate = AsyncMock(return_value=HookResponse(decision="allow"))
         rule_engine.db = MagicMock()
 
-        handler = WorkflowHookHandler(loop=None)
+        handler = WorkflowHookHandler()
         handler.rule_engine = rule_engine
         handler._session_var_manager = MagicMock()
         handler._session_var_manager.get_variables.return_value = {
@@ -1800,7 +1732,7 @@ class TestProjectPathResolution:
         rule_engine.db = db
         rule_engine.evaluate = AsyncMock(return_value=HookResponse(decision="allow"))
 
-        handler = WorkflowHookHandler(loop=None)
+        handler = WorkflowHookHandler()
         handler.rule_engine = rule_engine
         handler._session_var_manager = MagicMock()
         handler._session_var_manager.get_variables.return_value = {}
@@ -1860,7 +1792,7 @@ class TestHookBlockingWorkOffload:
 
         rule_engine.evaluate = AsyncMock(side_effect=evaluate)
 
-        handler = WorkflowHookHandler(loop=None)
+        handler = WorkflowHookHandler()
         handler.rule_engine = rule_engine
         handler._session_var_manager = session_var_manager
 

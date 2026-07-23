@@ -16,6 +16,7 @@ if TYPE_CHECKING:
     from gobby.storage.session_tasks import SessionTaskManager
     from gobby.storage.sessions import SessionManager
     from gobby.storage.tasks import LocalTaskManager
+    from gobby.workflows.evaluation_runtime import WorkflowEvaluationRuntime
 
     from .engine import RuleEngine
 
@@ -140,7 +141,6 @@ class WorkflowHookHandler:
 
     def __init__(
         self,
-        loop: asyncio.AbstractEventLoop | None = None,
         timeout: float = DEFAULT_EVALUATION_TIMEOUT_SECONDS,
         enabled: bool = True,
         rule_engine: "RuleEngine | None" = None,
@@ -148,13 +148,14 @@ class WorkflowHookHandler:
         session_manager: "SessionManager | None" = None,
         session_task_manager: "SessionTaskManager | None" = None,
         config: Any | None = None,
+        evaluation_runtime: "WorkflowEvaluationRuntime | None" = None,
     ):
         self.rule_engine = rule_engine
         self._task_manager = task_manager
         self._session_manager = session_manager
         self._session_task_manager = session_task_manager
         self._config = config
-        self._loop = loop
+        self._evaluation_runtime = evaluation_runtime
         self.timeout = timeout if timeout > 0 else None
         self._enabled = enabled
 
@@ -164,12 +165,6 @@ class WorkflowHookHandler:
             from gobby.workflows.state_manager import SessionVariableManager
 
             self._session_var_manager = SessionVariableManager(rule_engine.db)
-
-        if not self._loop:
-            try:
-                self._loop = asyncio.get_running_loop()
-            except RuntimeError:
-                pass
 
         # Some CLIs omit tool_input on AFTER_TOOL. Track the prior BEFORE_TOOL
         # context so progressive-discovery and task observers still see parity.
@@ -959,11 +954,11 @@ class WorkflowHookHandler:
                 logger.warning("Could not run workflow engine: Event loop is already running.")
                 return HookResponse(decision="allow")
             except RuntimeError:
-                # HTTP adapters already run this synchronous entry point in the
-                # bounded adapter executor. Keep evaluation, blocking DB work,
-                # and its asyncio loop in that worker instead of resubmitting
-                # the coroutine to the daemon loop.
-                return asyncio.run(self.evaluate_async(event))
+                if self._evaluation_runtime is None:
+                    raise RuntimeError(
+                        "Synchronous workflow evaluation requires a runtime"
+                    ) from None
+                return self._evaluation_runtime.run(self.evaluate_async(event))
 
         except (asyncio.CancelledError, concurrent.futures.CancelledError):
             return self._handle_cancelled(event)
@@ -972,6 +967,11 @@ class WorkflowHookHandler:
         except Exception as e:
             logger.exception("Error evaluating rules: %s: %s", type(e).__name__, e)
             raise
+
+    def shutdown(self) -> None:
+        """Shut down the isolated evaluation runtime, if configured."""
+        if self._evaluation_runtime is not None:
+            self._evaluation_runtime.shutdown()
 
     def handle(self, event: HookEvent) -> HookResponse:
         """Handle a hook event by evaluating declarative rules."""

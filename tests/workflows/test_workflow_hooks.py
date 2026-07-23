@@ -1,4 +1,5 @@
 import subprocess
+from collections.abc import Iterator
 from datetime import UTC, datetime
 from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock, patch
@@ -9,6 +10,7 @@ from gobby.config.app import DaemonConfig
 from gobby.hooks.events import HookEvent, HookEventType, HookResponse, SessionSource
 from gobby.hooks.hook_manager import HookManager
 from gobby.storage.projects import GLOBAL_PROJECT_ID, ORPHANED_PROJECT_ID, PERSONAL_PROJECT_ID
+from gobby.workflows.evaluation_runtime import WorkflowEvaluationRuntime
 from gobby.workflows.git_utils import DirtyFiles
 from gobby.workflows.hooks import (
     _NO_REPO_SYSTEM_PROJECTS,
@@ -25,8 +27,12 @@ MOCK_TIMESTAMP = datetime.now(UTC)
 
 
 @pytest.fixture
-def workflow_handler() -> WorkflowHookHandler:
-    return WorkflowHookHandler(loop=None)
+def workflow_handler() -> Iterator[WorkflowHookHandler]:
+    handler = WorkflowHookHandler(evaluation_runtime=WorkflowEvaluationRuntime())
+    try:
+        yield handler
+    finally:
+        handler.shutdown()
 
 
 def _handler_with_variables(
@@ -36,7 +42,7 @@ def _handler_with_variables(
     mock_engine.evaluate = AsyncMock(return_value=HookResponse(decision="allow"))
     mock_engine.db = MagicMock()
 
-    handler = WorkflowHookHandler(loop=None)
+    handler = WorkflowHookHandler()
     handler.rule_engine = mock_engine
     handler._session_var_manager = MagicMock()
     handler._session_var_manager.get_variables.return_value = variables
@@ -171,7 +177,7 @@ class TestWorkflowHookHandlerDisabled:
 
     def test_handle_disabled_returns_allow(self) -> None:
         """When enabled=False, handle() returns allow."""
-        handler = WorkflowHookHandler(loop=None, enabled=False)
+        handler = WorkflowHookHandler(enabled=False)
 
         event = HookEvent(
             event_type=HookEventType.BEFORE_TOOL,
@@ -186,7 +192,7 @@ class TestWorkflowHookHandlerDisabled:
 
     def test_evaluate_disabled_returns_allow(self) -> None:
         """When enabled=False, evaluate() returns allow."""
-        handler = WorkflowHookHandler(loop=None, enabled=False)
+        handler = WorkflowHookHandler(enabled=False)
 
         event = HookEvent(
             event_type=HookEventType.SESSION_START,
@@ -201,12 +207,15 @@ class TestWorkflowHookHandlerDisabled:
 
     def test_enabled_by_default(self) -> None:
         """WorkflowHookHandler is enabled by default."""
-        handler = WorkflowHookHandler(loop=None)
+        handler = WorkflowHookHandler()
         assert handler._enabled is True
 
     def test_enabled_true_evaluates_rules(self) -> None:
         """When enabled=True (explicit), handle() evaluates rules."""
-        handler = WorkflowHookHandler(loop=None, enabled=True)
+        handler = WorkflowHookHandler(
+            enabled=True,
+            evaluation_runtime=WorkflowEvaluationRuntime(),
+        )
 
         event = HookEvent(
             event_type=HookEventType.BEFORE_TOOL,
@@ -216,8 +225,11 @@ class TestWorkflowHookHandlerDisabled:
             data={},
         )
 
-        response = handler.handle(event)
-        assert response.decision == "allow"
+        try:
+            response = handler.handle(event)
+            assert response.decision == "allow"
+        finally:
+            handler.shutdown()
 
 
 class TestProjectPathResolution:
@@ -290,7 +302,7 @@ class TestProjectPathResolution:
         worktree_path = tmp_path / "agent-worktree-123"
         worktree_path.mkdir()
         subprocess.run(["git", "init"], cwd=worktree_path, check=True, capture_output=True)
-        handler = WorkflowHookHandler(loop=None)
+        handler = WorkflowHookHandler()
         # Wire up a mock rule engine with async evaluate
         mock_engine = MagicMock()
         mock_engine.evaluate = AsyncMock(return_value=HookResponse(decision="allow"))
@@ -332,7 +344,7 @@ class TestProjectPathResolution:
         repo = tmp_path / "repo"
         repo.mkdir()
         subprocess.run(["git", "init"], cwd=repo, check=True, capture_output=True)
-        handler = WorkflowHookHandler(loop=None)
+        handler = WorkflowHookHandler()
         mock_engine = MagicMock()
         mock_engine.evaluate = AsyncMock(return_value=HookResponse(decision="allow"))
         mock_engine.db = MagicMock()
@@ -373,7 +385,7 @@ class TestProjectPathResolution:
         caplog: pytest.LogCaptureFixture,
         enable_log_propagation: None,
     ) -> None:
-        handler = WorkflowHookHandler(loop=None)
+        handler = WorkflowHookHandler()
         mock_engine = MagicMock()
         mock_engine.evaluate = AsyncMock(return_value=HookResponse(decision="allow"))
         mock_engine.db = MagicMock()
@@ -424,7 +436,7 @@ class TestProjectPathResolution:
         # (see src/gobby/telemetry/logging.py); without enable_log_propagation,
         # caplog can't capture the warning and the assertion silently fails
         # depending on test ordering.
-        handler = WorkflowHookHandler(loop=None)
+        handler = WorkflowHookHandler()
         mock_engine = MagicMock()
         mock_engine.evaluate = AsyncMock(return_value=HookResponse(decision="allow"))
         mock_engine.db = MagicMock()

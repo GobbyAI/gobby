@@ -517,6 +517,7 @@ class HookManagerFactory:
     ) -> _WorkflowComponents:
         from gobby.mcp_proxy.metrics_events import MetricsEventStore
         from gobby.workflows.engine.core import RuleEngine
+        from gobby.workflows.evaluation_runtime import WorkflowEvaluationRuntime
         from gobby.workflows.templates import TemplateEngine
 
         loader = WorkflowLoader(db=database)
@@ -575,21 +576,21 @@ class HookManagerFactory:
             workflow_timeout = config.workflow.timeout
             workflow_enabled = config.workflow.enabled
 
+        evaluation_runtime = WorkflowEvaluationRuntime()
         try:
-            _loop = asyncio.get_running_loop()
-        except RuntimeError:
-            _loop = None
-
-        handler = WorkflowHookHandler(
-            loop=_loop,
-            timeout=workflow_timeout,
-            enabled=workflow_enabled,
-            rule_engine=rule_engine,
-            task_manager=storage.task,
-            session_manager=storage.session,
-            session_task_manager=storage.session_task,
-            config=config,
-        )
+            handler = WorkflowHookHandler(
+                timeout=workflow_timeout,
+                enabled=workflow_enabled,
+                rule_engine=rule_engine,
+                task_manager=storage.task,
+                session_manager=storage.session,
+                session_task_manager=storage.session_task,
+                config=config,
+                evaluation_runtime=evaluation_runtime,
+            )
+        except Exception:
+            evaluation_runtime.shutdown()
+            raise
         return _WorkflowComponents(
             loader=loader,
             template_engine=template_engine,

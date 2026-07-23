@@ -58,7 +58,7 @@ def _handler_with_fake_engine(evaluate: EvalFn) -> WorkflowHookHandler:
         "session_edited_files": [],
     }
 
-    handler = WorkflowHookHandler(loop=None)
+    handler = WorkflowHookHandler()
     handler.rule_engine = rule_engine
     handler._session_var_manager = session_vars
     return handler

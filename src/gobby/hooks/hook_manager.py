@@ -822,6 +822,7 @@ class HookManager:
 
         self._close_webhook_dispatcher_sync()
         self._drain_memory_recall_tasks_sync()
+        self._workflow_handler.shutdown()
 
         if self._owns_database and hasattr(self, "_database"):
             self._database.close()
@@ -842,6 +843,7 @@ class HookManager:
 
         await self._close_webhook_dispatcher_async()
         await self._drain_memory_recall_tasks_async()
+        self._workflow_handler.shutdown()
 
         if self._owns_database and hasattr(self, "_database"):
             self._database.close()

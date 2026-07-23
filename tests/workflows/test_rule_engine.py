@@ -14,6 +14,7 @@ import pytest
 from jinja2.exceptions import SecurityError
 
 from gobby.hooks.events import HookEvent, HookEventType, SessionSource
+from gobby.mcp_proxy.metrics_events import MetricsEventStore
 from gobby.skills.formatting import skill_fetch_directive
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.projects import LocalProjectManager
@@ -208,6 +209,40 @@ async def _assert_evaluation(
     if expected_reason_contains:
         assert expected_reason_contains in (response.reason or "")
     return response
+
+
+@pytest.mark.asyncio
+async def test_rule_evaluation_metrics_are_flushed_once_per_evaluation(
+    db: HubDatabase,
+    manager: LocalWorkflowDefinitionManager,
+) -> None:
+    _insert_rule(
+        manager,
+        "metric-rule-one",
+        RuleDefinitionBody(
+            event=RuleTriggerEvent.BEFORE_TOOL,
+            effects=[RuleEffect(type="set_variable", variable="metric_one", value=True)],
+        ),
+    )
+    _insert_rule(
+        manager,
+        "metric-rule-two",
+        RuleDefinitionBody(
+            event=RuleTriggerEvent.BEFORE_TOOL,
+            effects=[RuleEffect(type="set_variable", variable="metric_two", value=True)],
+        ),
+    )
+    metrics = MetricsEventStore(db)
+    engine = RuleEngine(db, metrics_event_store=metrics)
+    event = _make_event(HookEventType.BEFORE_TOOL, data={"tool_name": "Read"})
+
+    with patch.object(metrics, "record_events", wraps=metrics.record_events) as record_events:
+        response = await engine.evaluate(event, session_id=SESSION_ID, variables={})
+
+    assert response.decision == "allow"
+    record_events.assert_called_once()
+    records = record_events.call_args.args[0]
+    assert {record.name for record in records} == {"metric-rule-one", "metric-rule-two"}
 
 
 class TestRuleEngineLoadRules:

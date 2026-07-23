@@ -10,7 +10,7 @@ from unittest.mock import MagicMock, call, patch
 
 import pytest
 
-from gobby.mcp_proxy.metrics_events import MetricsEventStore
+from gobby.mcp_proxy.metrics_events import MetricsEventRecord, MetricsEventStore
 
 if TYPE_CHECKING:
     from gobby.mcp_proxy.tools.internal import InternalToolRegistry
@@ -87,6 +87,57 @@ class TestRecordEvent:
         )
         events = event_store.query_events()
         assert events[0]["success"] == 0
+
+    def test_record_events_uses_one_batch_transaction(
+        self,
+        event_store: MetricsEventStore,
+    ) -> None:
+        records = [
+            MetricsEventRecord(
+                event_type="rule_eval",
+                name="rule-one",
+                session_id=SESSION_ID_1,
+                latency_ms=1.5,
+                result="allow",
+            ),
+            MetricsEventRecord(
+                event_type="rule_eval",
+                name="rule-two",
+                session_id=SESSION_ID_1,
+                success=False,
+                latency_ms=2.5,
+                result="block",
+                metadata={"source": "test"},
+            ),
+        ]
+
+        with patch.object(
+            event_store.db,
+            "executemany",
+            wraps=event_store.db.executemany,
+        ) as execute_many:
+            event_store.record_events(records)
+
+        execute_many.assert_called_once()
+        events = event_store.query_events(
+            event_type="rule_eval",
+            session_id=SESSION_ID_1,
+        )
+        assert {event["name"] for event in events} == {"rule-one", "rule-two"}
+        blocked = next(event for event in events if event["name"] == "rule-two")
+        assert blocked["success"] == 0
+        assert blocked["result"] == "block"
+
+    def test_record_events_empty_batch_does_not_write(
+        self,
+        event_store: MetricsEventStore,
+    ) -> None:
+        events_before = event_store.query_events()
+        with patch.object(event_store.db, "executemany") as execute_many:
+            event_store.record_events([])
+
+        execute_many.assert_not_called()
+        assert event_store.query_events() == events_before
 
 
 class TestSessionToolBreakdown:

@@ -25,6 +25,7 @@ This module tests the MCP endpoints in src/gobby/servers/routes/mcp.py including
 import asyncio
 import concurrent.futures
 import threading
+import time
 from collections.abc import Iterator
 from datetime import UTC, datetime
 from pathlib import Path
@@ -38,7 +39,7 @@ from starlette.requests import ClientDisconnect
 from gobby.adapters.qwen import QwenAdapter
 from gobby.app_context import ServiceContainer
 from gobby.config.app import DaemonConfig
-from gobby.hooks.events import HookResponse
+from gobby.hooks.events import HookEvent, HookEventType, HookResponse, SessionSource
 from gobby.hooks.runtime_compat import SUPPORTED_HOOK_ENVELOPE_SCHEMA_VERSION
 from gobby.mcp_proxy.lazy import CircuitBreakerOpen
 from gobby.mcp_proxy.models import MCPError
@@ -57,7 +58,8 @@ from gobby.servers.routes.mcp.hooks import (
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.projects import LocalProjectManager
 from gobby.storage.sessions import SessionManager
-from gobby.workflows.hooks import WorkflowEvaluationTimeout
+from gobby.workflows.evaluation_runtime import WorkflowEvaluationRuntime
+from gobby.workflows.hooks import WorkflowEvaluationTimeout, WorkflowHookHandler
 from tests.servers.conftest import create_http_server
 
 pytestmark = pytest.mark.unit
@@ -3344,6 +3346,96 @@ class TestHooksEndpoints:
         data = response.json()
         assert data["continue"] is True
         assert "timed out after 0.01s" in data["systemMessage"]
+
+    def test_stalled_workflow_dependencies_do_not_starve_control_plane(
+        self,
+        session_storage: SessionManager,
+    ) -> None:
+        server = create_http_server(
+            port=60887,
+            test_mode=True,
+            session_manager=session_storage,
+        )
+        server.app.state.hook_manager = _mock_hook_manager()
+        runtime = WorkflowEvaluationRuntime(max_workers=2)
+        handler = WorkflowHookHandler(timeout=0.05, evaluation_runtime=runtime)
+        started_count = 0
+        started_lock = threading.Lock()
+        all_started = threading.Event()
+        release = threading.Event()
+
+        def stalled_dependency() -> None:
+            nonlocal started_count
+            with started_lock:
+                started_count += 1
+                if started_count == 2:
+                    all_started.set()
+            release.wait(timeout=1)
+
+        async def evaluate(_event: HookEvent) -> HookResponse:
+            await asyncio.to_thread(stalled_dependency)
+            return HookResponse(decision="allow")
+
+        handler._evaluate_rules = evaluate  # type: ignore[method-assign]
+
+        def run_workflow(payload: dict[str, Any], _manager: Any) -> dict[str, bool]:
+            session_id = str(payload.get("session_id") or "workflow-stall")
+            event = HookEvent(
+                event_type=HookEventType.BEFORE_TOOL,
+                session_id=session_id,
+                source=SessionSource.DROID,
+                timestamp=datetime.now(UTC),
+                data=payload,
+                metadata={"_platform_session_id": session_id},
+            )
+            handler.evaluate(event)
+            return {"continue": True}
+
+        try:
+            with (
+                TestClient(server.app) as client,
+                patch(
+                    "gobby.adapters.droid.DroidAdapter.handle_native",
+                    side_effect=run_workflow,
+                ),
+                patch(
+                    "gobby.servers.routes.mcp.hooks.NON_CRITICAL_HOOK_TIMEOUT_SECONDS",
+                    0.5,
+                ),
+                concurrent.futures.ThreadPoolExecutor(max_workers=2) as requests,
+            ):
+                hook_futures = [
+                    requests.submit(
+                        client.post,
+                        "/api/hooks/execute",
+                        json=_hook_envelope(
+                            hook_type=hook_type,
+                            source="droid",
+                            input_data={
+                                "session_id": f"stalled-{index}",
+                                "tool_name": "Read",
+                            },
+                        ),
+                    )
+                    for index, hook_type in enumerate(("PreToolUse", "UserPromptSubmit"))
+                ]
+                assert all_started.wait(timeout=0.5)
+
+                control_started = time.perf_counter()
+                health_response = client.get("/api/admin/health")
+                mcp_response = client.get("/api/mcp/status")
+                control_elapsed = time.perf_counter() - control_started
+
+                hook_responses = [future.result(timeout=1) for future in hook_futures]
+
+            assert health_response.status_code == 200
+            assert mcp_response.status_code == 200
+            assert control_elapsed < 0.5
+            assert all(response.status_code == 200 for response in hook_responses)
+            assert all(response.json()["continue"] is True for response in hook_responses)
+        finally:
+            release.set()
+            handler.shutdown()
 
     @pytest.mark.asyncio
     async def test_adapter_executor_bounds_and_releases_hung_evaluation_workers(self) -> None:

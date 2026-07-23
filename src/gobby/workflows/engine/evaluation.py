@@ -8,6 +8,7 @@ from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any
 
 from gobby.hooks.events import HookEvent, HookResponse
+from gobby.mcp_proxy.metrics_events import MetricsEventRecord
 from gobby.storage.workflow_definitions import WorkflowDefinitionRow
 from gobby.workflows.definitions import RuleDefinitionBody, RuleEffect
 from gobby.workflows.engine.blocked_tool_recovery import (
@@ -231,6 +232,7 @@ class EvaluationMixin:
         aggregate_blocks: bool,
     ) -> list[BlockGate]:
         block_gates: list[BlockGate] = []
+        metric_records: list[MetricsEventRecord] = []
 
         for row, body in rules:
             # Pre-filter: skip rule if tools field doesn't match current tool
@@ -368,9 +370,8 @@ class EvaluationMixin:
             # Record rule evaluation metric
             if self._event_store:
                 rule_latency = (time.perf_counter() - rule_start) * 1000
-                try:
-                    await asyncio.to_thread(
-                        self._event_store.record_event,
+                metric_records.append(
+                    MetricsEventRecord(
                         event_type="rule_eval",
                         name=row.name,
                         session_id=evaluation.session_id,
@@ -378,13 +379,18 @@ class EvaluationMixin:
                         result="block" if rule_blocked else "allow",
                         latency_ms=rule_latency,
                     )
-                except Exception as e:
-                    logger.debug("Metrics recording failed: %s", e, exc_info=True)
+                )
 
             if rule_blocked:
                 # First block runs normal effects; later aggregation is read-only.
                 if not aggregate_blocks:
                     break
+
+        if self._event_store and metric_records:
+            try:
+                await asyncio.to_thread(self._event_store.record_events, metric_records)
+            except Exception as e:
+                logger.debug("Metrics recording failed: %s", e, exc_info=True)
 
         return block_gates
 
