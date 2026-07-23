@@ -200,9 +200,9 @@ else
 fi
 echo ""
 
-# Mypy - strict via [tool.mypy] in pyproject.toml
-echo ">>> Running mypy (strict via pyproject)..."
-if uv_run mypy src/ --no-incremental 2>&1 | tee "$REPORTS_DIR/mypy-$TIMESTAMP.txt"; then
+# Mypy - strict mode
+echo ">>> Running mypy (strict)..."
+if uv_run mypy src/ --no-incremental --strict 2>&1 | tee "$REPORTS_DIR/mypy-$TIMESTAMP.txt"; then
     echo "✓ Mypy passed"
 else
     echo "✗ Mypy failed"
