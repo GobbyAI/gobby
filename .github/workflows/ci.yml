@@ -167,6 +167,9 @@ jobs:
       - name: Run mypy
         run: uv run mypy src/
 
+      - name: Audit test types
+        run: uv run gobby test-types audit tests/ --baseline .gobby/test-types-baseline.json --fail-on-new
+
   typecheck-frontend:
     name: Type Check (Frontend)
     needs: changes
