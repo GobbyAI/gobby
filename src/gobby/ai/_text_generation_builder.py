@@ -5,6 +5,11 @@ from __future__ import annotations
 from gobby.ai import _text_generation_adapters as _adapters
 from gobby.ai._text_generation_contracts import TextGenerateAdapter, TextGenerateAdapterFactory
 from gobby.ai._text_generation_service import TextGenerationService
+from gobby.ai.codex_endpoint import (
+    codex_endpoint_config_overrides,
+    codex_endpoint_env,
+)
+from gobby.ai.endpoints import endpoint_provider
 from gobby.ai.registry import AICapabilityRegistry, build_daemon_ai_capability_registry
 from gobby.config.app import DaemonConfig
 
@@ -41,14 +46,43 @@ def _daemon_text_generation_adapter_factories(
         ),
         "qwen": lambda: _adapters._QwenCLITextGenerateAdapter(
             timeout_seconds=config.ai.generation.timeout_seconds,
-            openai_endpoints=config.ai.generation.local.endpoints,
+            openai_endpoints={
+                name: endpoint
+                for name, endpoint in config.ai.generation.endpoints.items()
+                if endpoint.wire_api == "chat-completions"
+            },
         ),
         "droid": _adapters.DroidCLITextGenerateAdapter,
     }
-    for endpoint_name in config.ai.generation.local.endpoints:
-        provider = f"local:{endpoint_name}"
-        factories[provider] = _local_text_generate_adapter_factory(config, endpoint_name)
+    for endpoint_name, endpoint in config.ai.generation.endpoints.items():
+        provider = endpoint_provider(endpoint_name)
+        if endpoint.wire_api == "responses":
+            factories[provider] = _responses_text_generate_adapter_factory(
+                config,
+                endpoint_name,
+            )
+        else:
+            factories[provider] = _local_text_generate_adapter_factory(
+                config,
+                endpoint_name,
+            )
     return factories
+
+
+def _responses_text_generate_adapter_factory(
+    config: DaemonConfig,
+    endpoint_name: str,
+) -> TextGenerateAdapterFactory:
+    endpoint = config.ai.generation.endpoints[endpoint_name]
+
+    def create_adapter() -> TextGenerateAdapter:
+        return _adapters.CodexCLITextGenerateAdapter(
+            timeout_seconds=config.ai.generation.timeout_seconds,
+            env=codex_endpoint_env(endpoint),
+            config_overrides=codex_endpoint_config_overrides(endpoint_name, endpoint),
+        )
+
+    return create_adapter
 
 
 def _local_text_generate_adapter_factory(

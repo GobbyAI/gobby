@@ -26,6 +26,7 @@ from gobby.ai._text_generation_helpers import (
     _parse_json_text,
     _with_one_shot_directive,
 )
+from gobby.ai.codex_endpoint import codex_model_config_override
 from gobby.config.app import DaemonConfig
 from gobby.llm.textgen_cwd import neutral_textgen_cwd
 
@@ -518,10 +519,12 @@ class CodexCLITextGenerateAdapter:
         command_path: str | None = None,
         timeout_seconds: float = 600.0,
         env: Mapping[str, str] | None = None,
+        config_overrides: tuple[str, ...] | None = None,
     ) -> None:
         self._command_path = command_path
         self._timeout_seconds = timeout_seconds
         self._env = dict(env or {})
+        self._config_overrides = tuple(config_overrides or ())
 
     def _resolve_command_path(self) -> str:
         path = self._command_path or shutil.which("codex")
@@ -534,19 +537,32 @@ class CodexCLITextGenerateAdapter:
             self._resolve_command_path(),
             "--ask-for-approval",
             "never",
-            "exec",
-            "--ephemeral",
-            # One-shot generation runs in a neutral temp dir, which is not a Git
-            # repository. Codex aborts outside a Git repo unless this flag is set.
-            "--skip-git-repo-check",
-            "--ignore-user-config",
-            "--ignore-rules",
-            "--sandbox",
-            "read-only",
-            "--output-last-message",
-            str(output_path),
         ]
+        overrides = self._config_overrides
         if request.model:
+            overrides = tuple(
+                override for override in overrides if not override.startswith("model=")
+            )
+        for override in overrides:
+            command.extend(["-c", override])
+        if request.model and self._config_overrides:
+            command.extend(["-c", codex_model_config_override(request.model)])
+        command.extend(
+            [
+                "exec",
+                "--ephemeral",
+                # One-shot generation runs in a neutral temp dir, which is not a Git
+                # repository. Codex aborts outside a Git repo unless this flag is set.
+                "--skip-git-repo-check",
+                "--ignore-user-config",
+                "--ignore-rules",
+                "--sandbox",
+                "read-only",
+                "--output-last-message",
+                str(output_path),
+            ]
+        )
+        if request.model and not self._config_overrides:
             command.extend(["--model", request.model])
         _extend_reasoning_args(command, "codex", request.reasoning_effort)
         # Intentionally no ``--cd``: one-shot generation runs in a neutral temp dir,

@@ -9,7 +9,7 @@ import httpx
 import pytest
 
 from gobby.agents import local_model
-from gobby.config.ai import LocalGenerationEndpointConfig
+from gobby.config.ai import GenerationEndpointConfig
 
 pytestmark = pytest.mark.unit
 
@@ -73,7 +73,7 @@ class _FakeAsyncClient:
 
 @pytest.mark.asyncio
 async def test_openai_compatible_preflight_does_not_manage_models() -> None:
-    endpoint = LocalGenerationEndpointConfig(
+    endpoint = GenerationEndpointConfig(
         api_base="http://localhost:8000/v1",
         model="local-model",
     )
@@ -112,8 +112,8 @@ async def test_lmstudio_preflight_uses_native_model_api(
         }
     )
     monkeypatch.setattr(local_model.httpx, "AsyncClient", lambda: fake_client)
-    endpoint = LocalGenerationEndpointConfig(
-        provider="lmstudio",
+    endpoint = GenerationEndpointConfig(
+        protocol="lmstudio",
         api_base="http://localhost:1234/v1",
         model="google/gemma-4-26b-a4b",
         api_key="token",
@@ -175,8 +175,8 @@ async def test_ollama_preflight_swaps_models_with_keep_alive(
         }
     )
     monkeypatch.setattr(local_model.httpx, "AsyncClient", lambda: fake_client)
-    endpoint = LocalGenerationEndpointConfig(
-        provider="ollama",
+    endpoint = GenerationEndpointConfig(
+        protocol="ollama",
         api_base="http://localhost:11434/v1",
         model="qwen3",
     )

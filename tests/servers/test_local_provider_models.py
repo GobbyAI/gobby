@@ -7,7 +7,7 @@ from unittest.mock import MagicMock
 import httpx
 import pytest
 
-from gobby.config.ai import LocalGenerationEndpointConfig
+from gobby.config.ai import GenerationEndpointConfig
 from gobby.servers.local_provider_models import discover_local_endpoint_model_group
 
 pytestmark = pytest.mark.unit
@@ -26,7 +26,7 @@ async def test_ollama_detail_fanout_is_bounded_to_four(
 
     async def fake_details(
         _client: Any,
-        _endpoint: LocalGenerationEndpointConfig,
+        _endpoint: GenerationEndpointConfig,
         model_id: str,
     ) -> tuple[bool, dict[str, Any]]:
         nonlocal active, max_active
@@ -39,8 +39,8 @@ async def test_ollama_detail_fanout_is_bounded_to_four(
         return True, {"model": model_id}
 
     monkeypatch.setattr(local_provider_models, "_ollama_model_details", fake_details)
-    endpoint = LocalGenerationEndpointConfig(
-        provider="ollama",
+    endpoint = GenerationEndpointConfig(
+        protocol="ollama",
         api_base="http://localhost:11434",
         model="model-0",
     )
@@ -117,8 +117,8 @@ class _FakeAsyncClient:
 
 @pytest.mark.asyncio
 async def test_discovers_lmstudio_llm_models(monkeypatch: pytest.MonkeyPatch) -> None:
-    endpoint = LocalGenerationEndpointConfig(
-        provider="lmstudio",
+    endpoint = GenerationEndpointConfig(
+        protocol="lmstudio",
         api_base="http://localhost:1234/v1",
         model="google/gemma-4-26b-a4b-qat",
     )
@@ -152,13 +152,13 @@ async def test_discovers_lmstudio_llm_models(monkeypatch: pytest.MonkeyPatch) ->
     assert group.display_name == "Local: LM Studio"
     assert group.models == [
         {
-            "value": "local:lm-studio",
+            "value": "endpoint:lm-studio",
             "label": "Default (google/gemma-4-26b-a4b-qat)",
             "canonical_id": "google/gemma-4-26b-a4b-qat",
             "is_default": True,
         },
         {
-            "value": "local:lm-studio/google/gemma-4-26b-a4b-qat",
+            "value": "endpoint:lm-studio/google/gemma-4-26b-a4b-qat",
             "label": "Gemma 4",
             "canonical_id": "google/gemma-4-26b-a4b-qat",
             "context_length": 131072,
@@ -171,8 +171,8 @@ async def test_discovers_lmstudio_llm_models(monkeypatch: pytest.MonkeyPatch) ->
 async def test_lmstudio_rejects_an_ineligible_configured_default(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    endpoint = LocalGenerationEndpointConfig(
-        provider="lmstudio",
+    endpoint = GenerationEndpointConfig(
+        protocol="lmstudio",
         api_base="http://localhost:1234/v1",
         model="embed-small",
     )
@@ -198,8 +198,8 @@ async def test_lmstudio_rejects_an_ineligible_configured_default(
 
 @pytest.mark.asyncio
 async def test_discovers_ollama_native_models(monkeypatch: pytest.MonkeyPatch) -> None:
-    endpoint = LocalGenerationEndpointConfig(
-        provider="ollama",
+    endpoint = GenerationEndpointConfig(
+        protocol="ollama",
         api_base="http://localhost:11434",
         model="llama3.2:latest",
     )
@@ -262,7 +262,7 @@ async def test_discovers_ollama_native_models(monkeypatch: pytest.MonkeyPatch) -
         "nomic-embed-text:latest",
         "llama3.2:latest",
     ]
-    assert group.models[1]["value"] == "local:ollama/qwen3-coder:latest"
+    assert group.models[1]["value"] == "endpoint:ollama/qwen3-coder:latest"
     assert group.models[1]["capabilities"] == {
         "family": "qwen3",
         "parameter_size": "30B",
@@ -275,8 +275,8 @@ async def test_discovers_ollama_native_models(monkeypatch: pytest.MonkeyPatch) -
 async def test_ollama_rejects_a_default_without_completion_capability(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    endpoint = LocalGenerationEndpointConfig(
-        provider="ollama",
+    endpoint = GenerationEndpointConfig(
+        protocol="ollama",
         api_base="http://localhost:11434",
         model="nomic-embed-text:latest",
     )
@@ -314,8 +314,8 @@ async def test_ollama_rejects_a_default_without_completion_capability(
 async def test_ollama_falls_back_to_openai_compatible_models(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    endpoint = LocalGenerationEndpointConfig(
-        provider="ollama",
+    endpoint = GenerationEndpointConfig(
+        protocol="ollama",
         api_base="http://localhost:11434",
         model="llama3.2:latest",
     )
@@ -343,7 +343,7 @@ async def test_ollama_falls_back_to_openai_compatible_models(
     assert group.source == "live"
     assert group.models == [
         {
-            "value": "local:ollama/ollama-cloud/qwen3-coder",
+            "value": "endpoint:ollama/ollama-cloud/qwen3-coder",
             "label": "ollama-cloud/qwen3-coder",
             "canonical_id": "ollama-cloud/qwen3-coder",
         }
@@ -352,8 +352,8 @@ async def test_ollama_falls_back_to_openai_compatible_models(
 
 @pytest.mark.asyncio
 async def test_discovers_openai_compatible_models(monkeypatch: pytest.MonkeyPatch) -> None:
-    endpoint = LocalGenerationEndpointConfig(
-        provider="openai-compatible",
+    endpoint = GenerationEndpointConfig(
+        protocol="openai-compatible",
         api_base="http://localhost:8000/v1",
         model="configured-model",
         api_key="token",
@@ -386,13 +386,13 @@ async def test_discovers_openai_compatible_models(monkeypatch: pytest.MonkeyPatc
     assert group.source == "live"
     assert group.models == [
         {
-            "value": "local:local-openai",
+            "value": "endpoint:local-openai",
             "label": "Default (configured-model)",
             "canonical_id": "configured-model",
             "is_default": True,
         },
         {
-            "value": "local:local-openai/qwen/qwen3-coder",
+            "value": "endpoint:local-openai/qwen/qwen3-coder",
             "label": "Qwen Coder",
             "canonical_id": "qwen/qwen3-coder",
             "context_length": 32768,
@@ -406,8 +406,8 @@ async def test_discovers_openai_compatible_models(monkeypatch: pytest.MonkeyPatc
 async def test_openai_compatible_empty_discovery_uses_config_fallback(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    endpoint = LocalGenerationEndpointConfig(
-        provider="openai-compatible",
+    endpoint = GenerationEndpointConfig(
+        protocol="openai-compatible",
         api_base="http://localhost:8000/v1",
         model="configured-model",
     )
@@ -430,7 +430,7 @@ async def test_openai_compatible_empty_discovery_uses_config_fallback(
     assert group.error is None
     assert group.models == [
         {
-            "value": "local:local-openai",
+            "value": "endpoint:local-openai",
             "label": "Default (configured-model)",
             "canonical_id": "configured-model",
             "is_default": True,
@@ -442,8 +442,8 @@ async def test_openai_compatible_empty_discovery_uses_config_fallback(
 async def test_discovery_failure_falls_back_to_configured_default(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    endpoint = LocalGenerationEndpointConfig(
-        provider="lmstudio",
+    endpoint = GenerationEndpointConfig(
+        protocol="lmstudio",
         api_base="http://localhost:1234/v1",
         model="gemma-local",
     )

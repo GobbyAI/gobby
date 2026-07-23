@@ -15,7 +15,7 @@ from claude_agent_sdk import (
 )
 from claude_agent_sdk.types import StreamEvent
 
-from gobby.config.ai import LocalGenerationEndpointConfig
+from gobby.config.ai import GenerationEndpointConfig
 from gobby.llm.claude_models import (
     DoneEvent,
     TextChunk,
@@ -298,8 +298,8 @@ class TestChatSessionSendMessage:
 
     @pytest.mark.asyncio
     async def test_switch_model_uses_selected_local_model(self, session: ChatSession) -> None:
-        endpoint = LocalGenerationEndpointConfig(
-            provider="openai-compatible",
+        endpoint = GenerationEndpointConfig(
+            protocol="openai-compatible",
             api_base="http://localhost:1234/v1",
             model="qwen3-coder:latest",
         )
@@ -308,7 +308,7 @@ class TestChatSessionSendMessage:
             def __init__(self) -> None:
                 self.calls = 0
 
-            def endpoint_with_selected_model(self) -> LocalGenerationEndpointConfig:
+            def endpoint_with_selected_model(self) -> GenerationEndpointConfig:
                 self.calls += 1
                 return endpoint
 
@@ -317,17 +317,17 @@ class TestChatSessionSendMessage:
 
         with (
             patch(
-                "gobby.ai.local_endpoints.resolve_local_generation_endpoint_selector",
+                "gobby.ai.endpoints.resolve_generation_endpoint_selector",
                 return_value=selection,
             ),
             patch("gobby.agents.local_model.ensure_local_model", ensure_local_model),
         ):
-            await session.switch_model("local:lmstudio")
+            await session.switch_model("endpoint:lmstudio")
 
         assert selection.calls == 1
         ensure_local_model.assert_awaited_once_with(endpoint, run_manager=None)
         session._client.set_model.assert_awaited_once_with("qwen3-coder:latest")
-        assert session.model == "local:lmstudio"
+        assert session.model == "endpoint:lmstudio"
 
     @pytest.mark.asyncio
     async def test_send_message_reconnects_when_reasoning_effort_changes(

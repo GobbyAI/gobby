@@ -17,7 +17,7 @@ from gobby.adapters.codex_impl.item_normalization import (
 )
 from gobby.agents.local_model import LocalModelError, ensure_local_model
 from gobby.agents.sandbox import CodexSandboxResolver, SandboxConfig
-from gobby.config.ai import LocalGenerationEndpointConfig
+from gobby.config.ai import GenerationEndpointConfig
 from gobby.llm.claude_models import ChatEvent, DoneEvent, TextChunk
 from gobby.servers.chat_session_helpers import (
     _BASH_WRITE_PATTERNS,
@@ -285,13 +285,13 @@ class CodexWebChatBackend:
         self,
         *,
         client: CodexAppServerClient | None = None,
-        local_endpoint: LocalGenerationEndpointConfig | None = None,
+        generation_endpoint: GenerationEndpointConfig | None = None,
         transcript_retry_attempts: int = _CODEX_TRANSCRIPT_RETRY_ATTEMPTS,
         transcript_retry_delay_seconds: float = _CODEX_TRANSCRIPT_RETRY_DELAY_SECONDS,
         sandbox_config: SandboxConfig | None = None,
     ) -> None:
         self._client = client
-        self._local_endpoint = local_endpoint
+        self._generation_endpoint = generation_endpoint
         self._sandbox_config = sandbox_config
         self._health = ProviderBackendHealth(
             provider=self.provider,
@@ -384,8 +384,11 @@ class CodexWebChatBackend:
         if not self._health.available or self._client is None:
             raise RuntimeError(self._health.startup_error or "Codex backend unavailable")
 
-        if self._local_endpoint is not None:
-            local_endpoint = self._local_endpoint
+        if (
+            self._generation_endpoint is not None
+            and self._generation_endpoint.wire_api == "chat-completions"
+        ):
+            local_endpoint = self._generation_endpoint
             if session._model:
                 local_endpoint = local_endpoint.model_copy(update={"model": session._model})
             try:
@@ -393,7 +396,7 @@ class CodexWebChatBackend:
             except LocalModelError as exc:
                 raise RuntimeError(
                     "Codex local model pre-flight failed "
-                    f"(provider={local_endpoint.provider}, "
+                    f"(protocol={local_endpoint.protocol}, "
                     f"model={local_endpoint.model})"
                 ) from exc
 

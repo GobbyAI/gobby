@@ -190,8 +190,7 @@ class DaemonConfig(BaseModel):
                 raise ValueError("memory_sync config has been removed. Use memory_backup instead.")
             if "local" in data:
                 raise ValueError(
-                    "local config has been removed. Use "
-                    "ai.generation.local.endpoints.<name> instead."
+                    "local config has been removed. Use ai.generation.endpoints.<name> instead."
                 )
         return data
 

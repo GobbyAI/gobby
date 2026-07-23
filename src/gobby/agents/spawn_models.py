@@ -41,6 +41,7 @@ class SpawnRequest:
     model: str | None = None
     is_local: bool = False
     codex_oss_provider: str | None = None
+    codex_config_overrides: tuple[str, ...] = ()
     api_base: str | None = None
     api_token: str | None = None
     requested_reasoning_effort: str | None = None

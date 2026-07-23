@@ -23,7 +23,7 @@ from gobby.ai._tool_chat_spawn import (
     CodexSpawnToolChatAdapter,
     DroidSpawnToolChatAdapter,
 )
-from gobby.ai.local_endpoints import resolve_local_generation_endpoint
+from gobby.ai.endpoints import resolve_generation_endpoint
 from gobby.ai.registry import (
     AIAdapterStyle,
     AICapabilityRegistry,
@@ -64,6 +64,7 @@ def _daemon_tool_chat_adapter_factories(
         ),
         AIAdapterStyle.DAEMON: lambda: CodexSpawnToolChatAdapter(
             timeout_seconds=config.ai.generation.timeout_seconds,
+            config=config,
         ),
         AIAdapterStyle.CLI: lambda: DroidSpawnToolChatAdapter(
             timeout_seconds=config.ai.generation.timeout_seconds,
@@ -84,7 +85,7 @@ def _local_client_factory(config: DaemonConfig) -> OpenAIClientFactory:
         endpoint_name = binding.metadata.get("endpoint")
         if not endpoint_name:
             raise ValueError("openai_compatible tool_chat binding is missing 'endpoint' metadata")
-        local_cfg = resolve_local_generation_endpoint(config, str(endpoint_name))
+        local_cfg = resolve_generation_endpoint(config, str(endpoint_name))
         client = getattr(create_local_provider_adapter(local_cfg), "client", None)
         if client is None:
             raise RuntimeError(f"Local client for endpoint {endpoint_name!r} is unavailable")

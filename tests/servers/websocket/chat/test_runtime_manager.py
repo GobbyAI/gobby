@@ -17,7 +17,7 @@ from gobby.adapters import acp_client_requests
 from gobby.adapters.acp_client import StreamEvent
 from gobby.agents.local_model import LocalModelError
 from gobby.agents.sandbox import SandboxConfig
-from gobby.config.ai import LocalGenerationEndpointConfig
+from gobby.config.ai import GenerationEndpointConfig
 from gobby.config.app import DaemonConfig
 from gobby.llm.claude_models import DoneEvent, TextChunk, ToolCallEvent, ToolResultEvent
 from gobby.servers.chat_session import ChatSession
@@ -127,13 +127,11 @@ class TestWebChatRuntimeManager:
         config = DaemonConfig(
             ai={
                 "generation": {
-                    "local": {
-                        "endpoints": {
-                            "ollama": {
-                                "provider": "ollama",
-                                "api_base": "http://localhost:11434",
-                                "model": "llama3.2:latest",
-                            }
+                    "endpoints": {
+                        "ollama": {
+                            "protocol": "ollama",
+                            "api_base": "http://localhost:11434",
+                            "model": "llama3.2:latest",
                         }
                     }
                 }
@@ -144,12 +142,12 @@ class TestWebChatRuntimeManager:
         session = manager.create_session(
             provider="codex",
             conversation_id="conv-codex-local",
-            model="local:ollama/ollama/qwen3-coder",
+            model="endpoint:ollama/ollama/qwen3-coder",
         )
 
         assert isinstance(session, CodexManagedChatSession)
         assert session._model == "ollama/qwen3-coder"
-        local_backend = manager._codex_local_backends["ollama"]
+        local_backend = manager._codex_endpoint_backends["ollama"]
         assert session._backend is local_backend
         assert local_backend.client is not None
         assert local_backend.client._global_args == (
@@ -617,7 +615,7 @@ class TestQwenBackend:
         client.is_started = True
         client.create_session = AsyncMock(return_value={"sessionId": "sess-qwen"})
 
-        endpoint = LocalGenerationEndpointConfig(
+        endpoint = GenerationEndpointConfig(
             api_base="http://localhost:1234/v1",
             model="qwen3.6-35b-a3b-q8-local",
             api_key="endpoint-token",
@@ -850,13 +848,13 @@ class TestCodexBackend:
         client.start_thread = AsyncMock(
             return_value=SimpleNamespace(id="thread-1", path="/tmp/codex.jsonl")
         )
-        endpoint = LocalGenerationEndpointConfig(
-            provider="ollama",
+        endpoint = GenerationEndpointConfig(
+            protocol="ollama",
             api_base="http://localhost:11434",
             model="llama3.2:latest",
         )
 
-        backend = CodexWebChatBackend(client=client, local_endpoint=endpoint)
+        backend = CodexWebChatBackend(client=client, generation_endpoint=endpoint)
         await backend.start()
 
         session = CodexManagedChatSession(conversation_id="conv-codex", _backend=backend)
@@ -891,13 +889,13 @@ class TestCodexBackend:
         client.start_thread = AsyncMock(
             return_value=SimpleNamespace(id="thread-1", path="/tmp/codex.jsonl")
         )
-        endpoint = LocalGenerationEndpointConfig(
-            provider="ollama",
+        endpoint = GenerationEndpointConfig(
+            protocol="ollama",
             api_base="http://localhost:11434",
             model="llama3.2:latest",
             api_key="secret-token",
         )
-        backend = CodexWebChatBackend(client=client, local_endpoint=endpoint)
+        backend = CodexWebChatBackend(client=client, generation_endpoint=endpoint)
         await backend.start()
         session = CodexManagedChatSession(conversation_id="conv-codex", _backend=backend)
         session.project_path = "/tmp/project"
@@ -914,7 +912,7 @@ class TestCodexBackend:
 
         ensure_local_model.assert_awaited_once()
         message = str(exc_info.value)
-        assert "provider=ollama" in message
+        assert "protocol=ollama" in message
         assert "model=ollama/qwen3-coder" in message
         assert "api_base=http://localhost:11434" not in message
         assert "model not loaded" not in message

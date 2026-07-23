@@ -81,7 +81,7 @@ class _FakeClient:
 def _binding() -> CapabilityBinding:
     return CapabilityBinding(
         capability=AICapability.TOOL_CHAT,
-        provider="local:lm-studio",
+        provider="endpoint:lm-studio",
         adapter_style=AIAdapterStyle.OPENAI_COMPATIBLE,
         available=True,
         models=("gemma",),
@@ -128,7 +128,7 @@ async def test_openai_loop_executes_tool_then_returns_narrative(
     result = await adapter.chat(_request(), _binding())
 
     assert result.text == "## Auth\n\nGrounded narrative."
-    assert result.provider == "local:lm-studio"
+    assert result.provider == "endpoint:lm-studio"
     assert result.model == "gemma"
     assert result.tool_use_count == 1
     assert result.turns == 2

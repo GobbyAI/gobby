@@ -19,6 +19,7 @@ from gobby.agents.agent_cleanup import (
     shielded_terminal_delivery,
 )
 from gobby.agents.capture import CaptureStorage, capture_then_kill_async
+from gobby.agents.codex_oss import codex_oss_provider_for_local_endpoint
 from gobby.agents.resume_metadata import merge_resume_metadata_env
 from gobby.agents.sandbox import coerce_sandbox_config, get_sandbox_resolver
 from gobby.agents.spawn import prepare_terminal_spawn
@@ -30,6 +31,11 @@ from gobby.agents.srt_runtime import (
 )
 from gobby.agents.tmux.spawner import TmuxSpawner
 from gobby.agents.trust import pre_approve_directory
+from gobby.ai.codex_endpoint import (
+    codex_endpoint_config_overrides,
+    codex_endpoint_env,
+)
+from gobby.ai.endpoints import resolve_generation_endpoint_selector
 from gobby.config.tmux import TmuxConfig
 from gobby.storage.agents import AgentRun
 from gobby.storage.worktrees import LocalWorktreeManager
@@ -114,6 +120,41 @@ async def resume_agent_run(
     if provider == "droid" and shutil.which("droid") is None:
         return ResumeAgentResult(False, error="droid CLI not found in PATH")
 
+    model_selector = _metadata_str(resume_metadata, "model")
+    resume_model = model_selector
+    endpoint_config_overrides: tuple[str, ...] = ()
+    endpoint_env: dict[str, str] = {}
+    codex_oss_provider: str | None = None
+    endpoint_api_base: str | None = None
+    endpoint_api_token: str | None = None
+    try:
+        endpoint_selection = resolve_generation_endpoint_selector(
+            daemon_config,
+            model_selector,
+        )
+    except ValueError as exc:
+        return ResumeAgentResult(False, error=str(exc))
+    if endpoint_selection is not None:
+        endpoint = endpoint_selection.endpoint_with_selected_model()
+        resume_model = endpoint_selection.selected_model
+        if endpoint.wire_api == "responses":
+            if provider != "codex":
+                return ResumeAgentResult(
+                    False,
+                    error="Responses generation endpoints require provider='codex'",
+                )
+            endpoint_config_overrides = codex_endpoint_config_overrides(
+                endpoint_selection.name,
+                endpoint,
+                model=resume_model,
+            )
+            endpoint_env.update(codex_endpoint_env(endpoint))
+        elif provider == "codex":
+            codex_oss_provider = codex_oss_provider_for_local_endpoint(endpoint)
+        else:
+            endpoint_api_base = endpoint.api_base
+            endpoint_api_token = endpoint.api_key
+
     native_session_id = _provider_native_session_id(
         original_run,
         resume_metadata,
@@ -160,7 +201,7 @@ async def resume_agent_run(
         title=_resume_title(original_run),
         git_branch=_metadata_str(resume_metadata, "branch_name"),
         prompt=prompt,
-        model=_metadata_str(resume_metadata, "model"),
+        model=resume_model,
         is_local=bool(getattr(original_run, "is_local", False)),
         agent_run_id=run_id,
         task_id=original_run.task_id,
@@ -200,6 +241,11 @@ async def resume_agent_run(
 
     env = merge_resume_metadata_env(resume_metadata.get("env"))
     env.update(spawn_context.env_vars)
+    env.update(endpoint_env)
+    if endpoint_api_base:
+        env["OPENAI_BASE_URL"] = endpoint_api_base
+    if endpoint_api_token:
+        env["OPENAI_API_KEY"] = endpoint_api_token
     env["GOBBY_MACHINE_ID"] = _metadata_str(resume_metadata, "machine_id") or "unknown"
     sandbox_config = coerce_sandbox_config(resume_metadata.get("sandbox_config"))
     launch = SandboxLaunch(backend="provider-native", enforced=False)
@@ -249,6 +295,14 @@ async def resume_agent_run(
         update_policy_hash(spawn_context.session_id, launch.policy_hash)
 
     sandbox_args = launch.provider_args
+    config_overrides = list(
+        dict.fromkeys(
+            [
+                *_str_list(resume_metadata.get("config_overrides")),
+                *endpoint_config_overrides,
+            ]
+        )
+    )
     command, _cmd_env = build_cli_command(
         cli=provider,
         prompt=None if provider == "claude" else prompt,
@@ -256,9 +310,10 @@ async def resume_agent_run(
         auto_approve=bool(resume_metadata.get("auto_approve", True)),
         working_directory=cwd if provider in {"codex", "droid", "grok"} else None,
         sandbox_args=None if provider == "claude" else sandbox_args,
-        model=_metadata_str(resume_metadata, "model"),
+        model=resume_model,
+        codex_oss_provider=codex_oss_provider,
         reasoning_effort=_metadata_str(resume_metadata, "effective_reasoning_effort"),
-        config_overrides=_str_list(resume_metadata.get("config_overrides")),
+        config_overrides=config_overrides,
     )
     if provider == "claude":
         claude_mcp_path = _metadata_str(resume_metadata, "mcp_path")
@@ -281,6 +336,7 @@ async def resume_agent_run(
     metadata["sandbox_args"] = list(launch.provider_args)
     metadata["sandbox_env"] = dict(launch.provider_env)
     metadata["sandbox"] = launch.metadata()
+    metadata["config_overrides"] = config_overrides
     try:
         update_resume_metadata = getattr(runner.run_storage, "update_resume_metadata", None)
         if callable(update_resume_metadata):

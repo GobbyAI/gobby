@@ -301,10 +301,13 @@ async def spawn_agent_impl(
             else:
                 effective_api_token = token
 
-    from gobby.mcp_proxy.tools.spawn_agent._local_endpoint import resolve_spawn_local_endpoint
+    requested_model_selector = effective_model
+    from gobby.mcp_proxy.tools.spawn_agent._generation_endpoint import (
+        resolve_spawn_generation_endpoint,
+    )
 
     try:
-        local_resolution = await resolve_spawn_local_endpoint(
+        endpoint_resolution = await resolve_spawn_generation_endpoint(
             model=effective_model,
             api_base=effective_api_base,
             api_token=effective_api_token,
@@ -314,10 +317,10 @@ async def spawn_agent_impl(
         )
     except ValueError as e:
         return {"success": False, "error": str(e)}
-    effective_model = local_resolution.model
-    effective_api_base = local_resolution.api_base
-    effective_api_token = local_resolution.api_token
-    is_local_run = local_resolution.is_local
+    effective_model = endpoint_resolution.model
+    effective_api_base = endpoint_resolution.api_base
+    effective_api_token = endpoint_resolution.api_token
+    is_local_run = endpoint_resolution.is_local
 
     effective_timeout = timeout
     if effective_timeout is None and agent_body and agent_body.timeout:
@@ -589,7 +592,7 @@ async def spawn_agent_impl(
     stage_state = effective_initial_variables.get("stage_state")
     resume_metadata = build_resume_metadata(
         provider=effective_provider,
-        model=effective_model,
+        model=requested_model_selector,
         requested_reasoning_effort=reasoning.requested_effort,
         effective_reasoning_effort=reasoning.effective_effort,
         reasoning_required=reasoning.reasoning_required,
@@ -639,7 +642,8 @@ async def spawn_agent_impl(
         machine_id=get_machine_id() or "unknown",
         model=effective_model,
         is_local=is_local_run,
-        codex_oss_provider=local_resolution.codex_oss_provider,
+        codex_oss_provider=endpoint_resolution.codex_oss_provider,
+        codex_config_overrides=endpoint_resolution.codex_config_overrides,
         api_base=effective_api_base,
         api_token=effective_api_token,
         requested_reasoning_effort=reasoning.requested_effort,
@@ -648,7 +652,11 @@ async def spawn_agent_impl(
         reasoning_status=reasoning.status,
         reasoning_message=reasoning.message,
         sandbox_config=effective_sandbox_config,
-        extra_env=code_index_preflight_env or None,
+        extra_env={
+            **code_index_preflight_env,
+            **(endpoint_resolution.child_env or {}),
+        }
+        or None,
         timeout_seconds=effective_timeout,
         daemon_config=daemon_config,
         resume_metadata_json=resume_metadata,

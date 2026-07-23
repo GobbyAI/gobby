@@ -43,48 +43,23 @@ function buildCatalog(qwenModels: { value: string; label: string }[] = []) {
 }
 
 function buildLocalCatalog() {
+  const catalog = buildCatalog();
   return {
-    providers: [
-      ...buildCatalog().providers,
-      {
-        provider: "local:lm-studio",
-        execution_provider: "codex",
-        available: true,
-        models: [
-          {
-            value: "local:lm-studio/qwen3-coder",
-            label: "Qwen3 Coder",
-          },
-        ],
-        source: "live",
-        display_name: "LM Studio",
-        supports_web_chat: true,
-      },
-      {
-        provider: "local:ollama",
-        execution_provider: "codex",
-        available: true,
-        models: [
-          {
-            value: "local:ollama/llama3.2",
-            label: "Llama 3.2",
-          },
-        ],
-        source: "live",
-        display_name: "Ollama",
-        supports_web_chat: true,
-      },
-      {
-        provider: "local:offline",
-        execution_provider: "codex",
-        available: false,
-        models: [],
-        source: "failed",
-        display_name: "Offline Local",
-        supports_web_chat: false,
-        unavailable_reason: "Local endpoint is unreachable",
-      },
-    ],
+    providers: catalog.providers.map((provider) =>
+      provider.provider === "codex"
+        ? {
+            ...provider,
+            models: [
+              ...provider.models,
+              {
+                value: "endpoint:openrouter/moonshotai/kimi-k3",
+                label: "OpenRouter: moonshotai/kimi-k3",
+                input_modalities: ["text", "image"],
+              },
+            ],
+          }
+        : provider,
+    ),
   };
 }
 
@@ -239,7 +214,7 @@ describe("ProviderPicker", () => {
     expect(onSwitchProvider).toHaveBeenCalledWith("codex");
   });
 
-  it("renders local catalog groups and routes selections through their execution provider", async () => {
+  it("groups a Responses endpoint under Codex and selects its endpoint model", async () => {
     const onSelect = vi.fn();
     global.fetch = vi.fn().mockResolvedValue({
       ok: true,
@@ -260,27 +235,18 @@ describe("ProviderPicker", () => {
       />,
     );
 
-    expect(await screen.findByText("LM Studio")).toBeTruthy();
-    expect(screen.getByText("Ollama")).toBeTruthy();
-    expect(screen.getByText("Offline Local")).toBeTruthy();
-    expect(screen.getByText("Local endpoint is unreachable")).toBeTruthy();
-
-    const disabledDefaults = screen
-      .getAllByRole("button", { name: "Default" })
-      .filter((button) => button.hasAttribute("disabled"));
-    expect(disabledDefaults).toHaveLength(1);
-    await userEvent.click(disabledDefaults[0]);
-    expect(onSelect).not.toHaveBeenCalled();
-
-    await userEvent.click(screen.getByRole("button", { name: "Qwen3 Coder" }));
+    expect(await screen.findByText("Codex")).toBeTruthy();
+    await userEvent.click(
+      screen.getByRole("button", { name: "OpenRouter: Moonshotai/Kimi K3" }),
+    );
 
     expect(onSelect).toHaveBeenCalledWith(
       "codex",
-      "local:lm-studio/qwen3-coder",
+      "endpoint:openrouter/moonshotai/kimi-k3",
     );
   });
 
-  it("maps an exact Codex local selector only to its owning catalog group", async () => {
+  it("marks a selected Responses endpoint as active in the Codex group", async () => {
     global.fetch = vi.fn().mockResolvedValue({
       ok: true,
       json: async () => buildLocalCatalog(),
@@ -291,7 +257,7 @@ describe("ProviderPicker", () => {
         open={true}
         onClose={vi.fn()}
         currentProvider="codex"
-        currentModel="local:lm-studio/qwen3-coder"
+        currentModel="endpoint:openrouter/moonshotai/kimi-k3"
         availableProviders={["claude", "codex"]}
         onModelChange={vi.fn()}
         onProviderChange={vi.fn()}
@@ -299,15 +265,14 @@ describe("ProviderPicker", () => {
       />,
     );
 
-    await screen.findByText("LM Studio");
+    await screen.findByText("Codex");
 
-    expect(getProviderHeader("LM Studio").getByText("active")).toBeTruthy();
-    expect(getProviderHeader("Codex").queryByText("active")).toBeNull();
-    expect(getProviderHeader("Ollama").queryByText("active")).toBeNull();
+    expect(getProviderHeader("Codex").getByText("active")).toBeTruthy();
     expect(
-      screen.getByRole("button", { name: "Qwen3 Coder●" }),
+      screen.getByRole("button", {
+          name: "OpenRouter: Moonshotai/Kimi K3●",
+      }),
     ).toBeTruthy();
-    expect(screen.getByRole("button", { name: "Llama 3.2" })).toBeTruthy();
     expect(screen.getByRole("button", { name: "GPT 5.4" })).toBeTruthy();
   });
 
@@ -335,11 +300,11 @@ describe("ProviderPicker", () => {
     );
 
     await userEvent.click(
-      await screen.findByRole("button", { name: "Qwen3 Coder" }),
+      await screen.findByRole("button", { name: "OpenRouter: Moonshotai/Kimi K3" }),
     );
 
     expect(screen.queryByText("Switch provider?")).toBeNull();
-    expect(onModelChange).toHaveBeenCalledWith("local:lm-studio/qwen3-coder");
+    expect(onModelChange).toHaveBeenCalledWith("endpoint:openrouter/moonshotai/kimi-k3");
     expect(onProviderChange).not.toHaveBeenCalled();
     expect(onSwitchProvider).not.toHaveBeenCalled();
   });
@@ -397,7 +362,7 @@ describe("ProviderPicker", () => {
     );
 
     await userEvent.click(
-      await screen.findByRole("button", { name: "Qwen3 Coder" }),
+      await screen.findByRole("button", { name: "OpenRouter: Moonshotai/Kimi K3" }),
     );
     expect(screen.getByText("Switch provider?")).toBeTruthy();
 
@@ -405,7 +370,7 @@ describe("ProviderPicker", () => {
 
     expect(onProviderChange).toHaveBeenCalledWith("codex");
     expect(onModelChange).toHaveBeenCalledWith(
-      "local:lm-studio/qwen3-coder",
+      "endpoint:openrouter/moonshotai/kimi-k3",
     );
     expect(onSwitchProvider).toHaveBeenCalledWith("codex");
   });
@@ -432,7 +397,7 @@ describe("ProviderPicker", () => {
     );
 
     await userEvent.click(
-      await screen.findByRole("button", { name: "Qwen3 Coder" }),
+      await screen.findByRole("button", { name: "OpenRouter: Moonshotai/Kimi K3" }),
     );
     expect(screen.getByText("Switch provider?")).toBeTruthy();
     expect(onSelect).not.toHaveBeenCalled();
@@ -441,7 +406,7 @@ describe("ProviderPicker", () => {
 
     expect(onSelect).toHaveBeenCalledWith(
       "codex",
-      "local:lm-studio/qwen3-coder",
+      "endpoint:openrouter/moonshotai/kimi-k3",
     );
   });
 

@@ -2,7 +2,7 @@
 
 Routes LLM calls to a configured local endpoint provider.
 
-Used when feature candidate routing selects a ``local:<endpoint>/<model>``
+Used when feature candidate routing selects an ``endpoint:<name>/<model>``
 candidate, giving lightweight, zero-cost inference while preserving profile
 fallback to the next configured candidate when the local server is down.
 """
@@ -10,9 +10,9 @@ fallback to the next configured candidate when the local server is down.
 import logging
 from typing import Any
 
-from gobby.ai.local_endpoints import (
-    local_endpoint_provider,
-    resolve_local_generation_endpoint,
+from gobby.ai.endpoints import (
+    endpoint_provider,
+    resolve_generation_endpoint,
 )
 from gobby.llm.base import AuthMode, LLMTextResult
 from gobby.llm.local_provider_adapters import create_local_provider_adapter
@@ -44,7 +44,7 @@ class LocalLLMProvider:
     """LLM provider for configured local endpoints.
 
     Feature and non-feature local generation pass a named
-    ``DaemonConfig.ai.generation.local`` endpoint:
+    ``DaemonConfig.ai.generation.endpoints`` entry:
     - ``provider``: Backend adapter (``openai-compatible``, ``lmstudio``, ``ollama``)
     - ``api_base``: Base URL (e.g. ``http://localhost:1234``)
     - ``model``: Default model name to request
@@ -71,8 +71,8 @@ class LocalLLMProvider:
         """
         if not endpoint_name:
             raise ValueError("Local LLM provider requires a named local generation endpoint")
-        local_cfg = resolve_local_generation_endpoint(config, endpoint_name)
-        self._provider_name = local_endpoint_provider(endpoint_name)
+        local_cfg = resolve_generation_endpoint(config, endpoint_name)
+        self._provider_name = endpoint_provider(endpoint_name)
 
         url = local_cfg.api_base
         model = local_cfg.model
@@ -85,7 +85,7 @@ class LocalLLMProvider:
         self._client: Any | None = self._adapter.client
         logger.debug(
             "Local LLM provider initialised (provider=%s, url=%s, model=%s)",
-            local_cfg.provider,
+            local_cfg.protocol,
             self._url,
             self._default_model,
         )

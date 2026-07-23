@@ -11,7 +11,7 @@ import httpx
 import pytest
 from openai import APIConnectionError, AuthenticationError, BadRequestError
 
-from gobby.config.ai import LocalGenerationEndpointConfig
+from gobby.config.ai import GenerationEndpointConfig
 from gobby.llm import local_provider_adapters as adapters
 from gobby.llm.base import (
     LLMProviderError,
@@ -95,8 +95,8 @@ class _FakeOpenAICompletions:
 
 
 def test_openai_compatible_adapter_uses_openai_sdk() -> None:
-    endpoint = LocalGenerationEndpointConfig(
-        provider="openai-compatible",
+    endpoint = GenerationEndpointConfig(
+        protocol="openai-compatible",
         api_base="http://localhost:8000/v1",
         model="local-model",
         api_key="test-key",
@@ -122,8 +122,8 @@ def test_openai_compatible_adapter_uses_openai_sdk() -> None:
 
 @pytest.mark.asyncio
 async def test_openai_compatible_adapter_forwards_reasoning_effort() -> None:
-    endpoint = LocalGenerationEndpointConfig(
-        provider="openai-compatible",
+    endpoint = GenerationEndpointConfig(
+        protocol="openai-compatible",
         api_base="http://localhost:8000/v1",
         model="local-model",
         api_key="test-key",
@@ -161,8 +161,8 @@ async def test_openai_compatible_adapter_forwards_reasoning_effort() -> None:
 async def test_openai_compatible_adapter_rejects_blank_text_content(
     content: str | None,
 ) -> None:
-    endpoint = LocalGenerationEndpointConfig(
-        provider="openai-compatible",
+    endpoint = GenerationEndpointConfig(
+        protocol="openai-compatible",
         api_base="http://localhost:8000/v1",
         model="local-model",
         api_key="test-key",
@@ -231,8 +231,8 @@ async def test_openai_compatible_adapter_rejects_blank_text_content(
 async def test_openai_compatible_json_retries_once_without_json_mode(
     json_mode_error: BadRequestError,
 ) -> None:
-    endpoint = LocalGenerationEndpointConfig(
-        provider="openai-compatible",
+    endpoint = GenerationEndpointConfig(
+        protocol="openai-compatible",
         api_base="http://localhost:8000/v1",
         model="local-model",
         api_key="test-key",
@@ -276,8 +276,8 @@ async def test_openai_compatible_json_retries_once_without_json_mode(
 
 @pytest.mark.asyncio
 async def test_openai_compatible_json_defaults_to_8000_tokens() -> None:
-    endpoint = LocalGenerationEndpointConfig(
-        provider="openai-compatible",
+    endpoint = GenerationEndpointConfig(
+        protocol="openai-compatible",
         api_base="http://localhost:8000/v1",
         model="local-model",
     )
@@ -296,8 +296,8 @@ async def test_openai_compatible_json_defaults_to_8000_tokens() -> None:
 
 
 async def test_openai_compatible_json_does_not_retry_failed_fallback() -> None:
-    endpoint = LocalGenerationEndpointConfig(
-        provider="openai-compatible",
+    endpoint = GenerationEndpointConfig(
+        protocol="openai-compatible",
         api_base="http://localhost:8000/v1",
         model="local-model",
         api_key="test-key",
@@ -369,8 +369,8 @@ async def test_openai_compatible_json_does_not_retry_failed_fallback() -> None:
 async def test_openai_compatible_json_unrelated_errors_do_not_retry(
     request_error: Exception,
 ) -> None:
-    endpoint = LocalGenerationEndpointConfig(
-        provider="openai-compatible",
+    endpoint = GenerationEndpointConfig(
+        protocol="openai-compatible",
         api_base="http://localhost:8000/v1",
         model="local-model",
         api_key="test-key",
@@ -411,8 +411,8 @@ async def test_lmstudio_adapter_posts_native_chat(
         }
     )
     monkeypatch.setattr(adapters.httpx, "AsyncClient", lambda: fake_client)
-    endpoint = LocalGenerationEndpointConfig(
-        provider="lmstudio",
+    endpoint = GenerationEndpointConfig(
+        protocol="lmstudio",
         api_base="http://localhost:1234/v1",
         model="google/gemma",
         api_key="token",
@@ -474,8 +474,8 @@ async def test_ollama_adapter_posts_native_chat(
         }
     )
     monkeypatch.setattr(adapters.httpx, "AsyncClient", lambda: fake_client)
-    endpoint = LocalGenerationEndpointConfig(
-        provider="ollama",
+    endpoint = GenerationEndpointConfig(
+        protocol="ollama",
         api_base="http://localhost:11434/v1",
         model="qwen3",
     )
@@ -530,8 +530,8 @@ async def test_ollama_adapter_requests_json_format(
         }
     )
     monkeypatch.setattr(adapters.httpx, "AsyncClient", lambda: fake_client)
-    endpoint = LocalGenerationEndpointConfig(
-        provider="ollama",
+    endpoint = GenerationEndpointConfig(
+        protocol="ollama",
         api_base="http://localhost:11434",
         model="qwen3",
     )
@@ -562,8 +562,8 @@ async def test_lmstudio_json_forwards_max_tokens(monkeypatch: pytest.MonkeyPatch
         }
     )
     monkeypatch.setattr(adapters.httpx, "AsyncClient", lambda: fake_client)
-    endpoint = LocalGenerationEndpointConfig(
-        provider="lmstudio",
+    endpoint = GenerationEndpointConfig(
+        protocol="lmstudio",
         api_base="http://localhost:1234/v1",
         model="google/gemma",
     )
@@ -580,8 +580,8 @@ async def test_lmstudio_json_forwards_max_tokens(monkeypatch: pytest.MonkeyPatch
 
 
 def _vision_adapter(provider: str) -> Any:
-    endpoint = LocalGenerationEndpointConfig(
-        provider=provider,
+    endpoint = GenerationEndpointConfig(
+        protocol=provider,
         api_base={
             "openai-compatible": "http://localhost:8000/v1",
             "lmstudio": "http://localhost:1234/v1",

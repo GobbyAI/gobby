@@ -96,6 +96,7 @@ interface ChatInputProps {
   onAttachObservedSession?: () => void
   proxyDeliveryNotice?: string | null
   attachmentsDisabled?: boolean
+  imagesDisabled?: boolean
 }
 
 const LOCAL_ONLY_SLASH_COMMANDS = new Set([
@@ -194,6 +195,7 @@ export function ChatInput({
   onAttachObservedSession,
   proxyDeliveryNotice = null,
   attachmentsDisabled = false,
+  imagesDisabled = false,
 }: ChatInputProps) {
   const [input, setInput] = useState('')
   const [isDragOver, setIsDragOver] = useState(false)
@@ -211,7 +213,7 @@ export function ChatInput({
     queuedFiles,
     removeFile,
     retryFile,
-  } = useChatInputAttachments({ attachmentsDisabled, projectId })
+  } = useChatInputAttachments({ attachmentsDisabled, imagesDisabled, projectId })
 
   const showPalette = input.startsWith('/') && paletteItems.length > 0
 

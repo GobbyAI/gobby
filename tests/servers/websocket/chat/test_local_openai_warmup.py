@@ -10,7 +10,7 @@ from typing import Any
 import httpx
 import pytest
 
-from gobby.config.ai import LocalGenerationEndpointConfig
+from gobby.config.ai import GenerationEndpointConfig
 from gobby.servers.websocket.chat import local_openai_warmup as warmup
 
 pytestmark = pytest.mark.unit
@@ -82,13 +82,13 @@ def _write_qwen_settings(settings_path: Path, payload: dict[str, Any]) -> None:
 
 def _endpoint(
     *,
-    provider: str = "lmstudio",
+    protocol: str = "lmstudio",
     api_base: str = "http://localhost:1234/v1",
     model: str = "qwen3.6-35b-a3b-q8-local",
     api_key: str | None = "endpoint-token",
-) -> LocalGenerationEndpointConfig:
-    return LocalGenerationEndpointConfig(
-        provider=provider,
+) -> GenerationEndpointConfig:
+    return GenerationEndpointConfig(
+        protocol=protocol,
         api_base=api_base,
         model=model,
         api_key=api_key,
@@ -229,7 +229,7 @@ def test_resolve_qwen_local_openai_target_skips_openai_compatible_provider(
         project_path=None,
         local_generation_endpoints={
             "generic": _endpoint(
-                provider="openai-compatible",
+                protocol="openai-compatible",
                 api_base="http://localhost:8000/v1",
                 model="local-model",
             )
@@ -365,7 +365,7 @@ async def test_ensure_qwen_local_openai_model_ready_preloads_ollama_model(
         project_path=None,
         local_generation_endpoints={
             "ollama": _endpoint(
-                provider="ollama",
+                protocol="ollama",
                 api_base="http://localhost:1234/v1",
                 model="qwen3-coder:32b",
                 api_key=None,
@@ -418,7 +418,7 @@ def _resolve_lm_studio_target(
     settings_path: Path,
     monkeypatch: pytest.MonkeyPatch,
     *,
-    endpoint: LocalGenerationEndpointConfig | None = None,
+    endpoint: GenerationEndpointConfig | None = None,
 ) -> warmup.LocalOpenAIModelTarget | None:
     monkeypatch.setattr(warmup, "_QWEN_SETTINGS_PATH", settings_path)
     endpoints = {"lm-studio": endpoint or _endpoint()}
@@ -505,7 +505,7 @@ async def test_ensure_raises_actionable_error_on_lm_studio_401(
     message = str(exc_info.value)
     assert "401" in message
     assert "LM Studio API token" in message
-    assert "ai.generation.local.endpoints" in message
+    assert "ai.generation.endpoints" in message
     assert "disable API-key auth" in message
     # No model-load attempt once auth fails.
     assert all(call[0] != "POST" for call in fake_client.calls)

@@ -8,8 +8,8 @@ from typing import Any
 
 import httpx
 
-from gobby.ai.local_endpoints import LOCAL_ENDPOINT_PROVIDER_PREFIX
-from gobby.config.ai import LocalGenerationEndpointConfig, LocalGenerationProvider
+from gobby.ai.endpoints import ENDPOINT_PROVIDER_PREFIX
+from gobby.config.ai import GenerationEndpointConfig, GenerationEndpointProtocol
 
 LOCAL_PROVIDER_LABELS: dict[str, str] = {
     "lmstudio": "LM Studio",
@@ -24,7 +24,7 @@ class LocalEndpointModelGroup:
     """Discovered model rows for one configured local endpoint."""
 
     endpoint_name: str
-    provider_type: LocalGenerationProvider
+    provider_type: GenerationEndpointProtocol
     provider_label: str
     models: list[dict[str, Any]]
     source: str
@@ -32,7 +32,7 @@ class LocalEndpointModelGroup:
 
     @property
     def provider(self) -> str:
-        return f"{LOCAL_ENDPOINT_PROVIDER_PREFIX}{self.endpoint_name}"
+        return f"{ENDPOINT_PROVIDER_PREFIX}{self.endpoint_name}"
 
     @property
     def display_name(self) -> str:
@@ -41,24 +41,24 @@ class LocalEndpointModelGroup:
 
 async def discover_local_endpoint_model_group(
     endpoint_name: str,
-    endpoint: LocalGenerationEndpointConfig,
+    endpoint: GenerationEndpointConfig,
 ) -> LocalEndpointModelGroup:
     """Discover selectable models for one configured local generation endpoint."""
-    provider_label = local_provider_display_label(endpoint.provider)
+    provider_label = local_provider_display_label(endpoint.protocol)
     try:
-        if endpoint.provider == "lmstudio":
+        if endpoint.protocol == "lmstudio":
             discovered = await _discover_lmstudio_models(endpoint_name, endpoint)
-        elif endpoint.provider == "ollama":
+        elif endpoint.protocol == "ollama":
             discovered = await _discover_ollama_models(endpoint_name, endpoint)
         else:
             async with httpx.AsyncClient() as client:
                 discovered = await _openai_compatible_models(client, endpoint_name, endpoint)
         models = _merge_default_model(endpoint_name, endpoint, discovered)
-        capability_checked = endpoint.provider in {"lmstudio", "ollama"}
+        capability_checked = endpoint.protocol in {"lmstudio", "ollama"}
         source = "live" if discovered or capability_checked else "config"
         return LocalEndpointModelGroup(
             endpoint_name=endpoint_name,
-            provider_type=endpoint.provider,
+            provider_type=endpoint.protocol,
             provider_label=provider_label,
             models=models,
             source=source,
@@ -67,7 +67,7 @@ async def discover_local_endpoint_model_group(
     except Exception as exc:
         return LocalEndpointModelGroup(
             endpoint_name=endpoint_name,
-            provider_type=endpoint.provider,
+            provider_type=endpoint.protocol,
             provider_label=provider_label,
             models=_merge_default_model(endpoint_name, endpoint, []),
             source="config",
@@ -82,17 +82,17 @@ def local_provider_display_label(provider: str) -> str:
 
 def _merge_default_model(
     endpoint_name: str,
-    endpoint: LocalGenerationEndpointConfig,
+    endpoint: GenerationEndpointConfig,
     discovered: list[dict[str, Any]],
 ) -> list[dict[str, Any]]:
-    default_is_verified = endpoint.provider == "openai-compatible" or any(
+    default_is_verified = endpoint.protocol == "openai-compatible" or any(
         entry.get("canonical_id") == endpoint.model for entry in discovered
     )
     entries: list[dict[str, Any]] = []
     if default_is_verified:
         entries.append(
             {
-                "value": f"{LOCAL_ENDPOINT_PROVIDER_PREFIX}{endpoint_name}",
+                "value": f"{ENDPOINT_PROVIDER_PREFIX}{endpoint_name}",
                 "label": f"Default ({endpoint.model})",
                 "canonical_id": endpoint.model,
                 "is_default": True,
@@ -109,7 +109,7 @@ def _merge_default_model(
 
 async def _discover_lmstudio_models(
     endpoint_name: str,
-    endpoint: LocalGenerationEndpointConfig,
+    endpoint: GenerationEndpointConfig,
 ) -> list[dict[str, Any]]:
     async with httpx.AsyncClient() as client:
         response = await client.get(
@@ -141,7 +141,7 @@ async def _discover_lmstudio_models(
 
 async def _discover_ollama_models(
     endpoint_name: str,
-    endpoint: LocalGenerationEndpointConfig,
+    endpoint: GenerationEndpointConfig,
 ) -> list[dict[str, Any]]:
     async with httpx.AsyncClient() as client:
         native_available, native_models = await _ollama_native_models(client, endpoint)
@@ -167,7 +167,7 @@ async def _discover_ollama_models(
 
 async def _ollama_native_models(
     client: httpx.AsyncClient,
-    endpoint: LocalGenerationEndpointConfig,
+    endpoint: GenerationEndpointConfig,
 ) -> tuple[bool, list[tuple[dict[str, Any], str]]]:
     models_by_id: dict[str, dict[str, Any]] = {}
     native_available = False
@@ -205,7 +205,7 @@ async def _ollama_native_models(
 
 async def _validated_ollama_fallback_models(
     client: httpx.AsyncClient,
-    endpoint: LocalGenerationEndpointConfig,
+    endpoint: GenerationEndpointConfig,
     models: list[dict[str, Any]],
 ) -> list[dict[str, Any]]:
     model_items = [
@@ -225,7 +225,7 @@ async def _validated_ollama_fallback_models(
 
 async def _ollama_model_details_batch(
     client: httpx.AsyncClient,
-    endpoint: LocalGenerationEndpointConfig,
+    endpoint: GenerationEndpointConfig,
     model_ids: list[str],
 ) -> list[tuple[bool, dict[str, Any]]]:
     semaphore = asyncio.Semaphore(4)
@@ -239,7 +239,7 @@ async def _ollama_model_details_batch(
 
 async def _ollama_model_details(
     client: httpx.AsyncClient,
-    endpoint: LocalGenerationEndpointConfig,
+    endpoint: GenerationEndpointConfig,
     model_id: str,
 ) -> tuple[bool, dict[str, Any]]:
     try:
@@ -267,7 +267,7 @@ def _supports_ollama_completion(model: dict[str, Any]) -> bool:
 async def _openai_compatible_models(
     client: httpx.AsyncClient,
     endpoint_name: str,
-    endpoint: LocalGenerationEndpointConfig,
+    endpoint: GenerationEndpointConfig,
 ) -> list[dict[str, Any]]:
     response = await client.get(
         f"{_origin(endpoint.api_base)}/v1/models",
@@ -300,7 +300,7 @@ def _local_model_entry(
     capabilities: Any | None,
 ) -> dict[str, Any]:
     entry: dict[str, Any] = {
-        "value": f"{LOCAL_ENDPOINT_PROVIDER_PREFIX}{endpoint_name}/{model_id}",
+        "value": f"{ENDPOINT_PROVIDER_PREFIX}{endpoint_name}/{model_id}",
         "label": label,
         "canonical_id": model_id,
     }

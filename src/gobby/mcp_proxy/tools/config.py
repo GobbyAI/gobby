@@ -29,6 +29,7 @@ from gobby.config.embedding_keys import (
 from gobby.mcp_proxy.tools.internal import InternalToolRegistry
 from gobby.storage.config_store import (
     config_key_to_secret_name,
+    embedding_mutation_context,
     flatten_config,
     is_secret_key_name,
     unflatten_config,
@@ -107,6 +108,24 @@ def _dependent_default_keys_to_remove(
     if candidates_key in remaining_override_keys:
         return ()
     return (candidates_key,)
+
+
+def _unprobed_responses_endpoint_error(
+    keys: set[str],
+    config: DaemonConfig,
+) -> str | None:
+    prefix = "ai.generation.endpoints."
+    endpoint_names = {
+        key.removeprefix(prefix).partition(".")[0] for key in keys if key.startswith(prefix)
+    }
+    for endpoint_name in endpoint_names:
+        endpoint = config.ai.generation.endpoints.get(endpoint_name)
+        if endpoint is not None and endpoint.wire_api == "responses":
+            return (
+                f"Responses endpoint {endpoint_name!r} must be activated through "
+                f"PUT /api/config/generation-endpoints/{endpoint_name}/activate"
+            )
+    return None
 
 
 def create_config_registry(
@@ -250,6 +269,11 @@ def create_config_registry(
 
             # Validate by constructing a new DaemonConfig
             new_config = DaemonConfigCls(**current_dict)
+            if activation_error := _unprobed_responses_endpoint_error(
+                {runtime_key},
+                new_config,
+            ):
+                return {"success": False, "error": activation_error}
 
             if effective_is_secret:
                 actual_nested = unflatten_config({runtime_key: value})
@@ -358,6 +382,11 @@ def create_config_registry(
             actual_dict = before_config.model_dump(mode="json", by_alias=True)
             deep_merge(actual_dict, unflatten_config(flat_updates))
             new_config = DaemonConfigCls(**actual_dict)
+            if activation_error := _unprobed_responses_endpoint_error(
+                set(flat_updates),
+                new_config,
+            ):
+                return {"success": False, "error": activation_error}
 
             # Persist all keys atomically
             storage_plain_updates = runtime_embedding_config_entries_to_storage(plain_updates)
@@ -365,7 +394,7 @@ def create_config_registry(
                 from gobby.storage.secrets import SecretStore as SecretStoreCls
 
                 secret_store = SecretStoreCls(db)
-                with db.transaction():
+                with embedding_mutation_context(db):
                     for key, value in secret_updates.items():
                         storage_key = runtime_embedding_config_key_to_storage_key(key)
                         config_store.set_secret(storage_key, str(value), secret_store, source="mcp")

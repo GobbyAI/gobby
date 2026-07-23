@@ -4,6 +4,7 @@ import { AUTONOMOUS_CHAT_MODES } from "../../types/chat";
 import type { ChatState, VoiceProps } from "../../types/chat";
 import type { AgentDefInfo } from "../../hooks/useAgentDefinitions";
 import type { VoiceInputMode } from "../../hooks/useSettings";
+import { modelSupportsImageInput } from "../../lib/providerModels";
 import { AgentStatusBar } from "./AgentStatusBar";
 import { ChatInput } from "./ChatInput";
 import { CommandBar } from "./CommandBar";
@@ -101,6 +102,11 @@ export function ChatMainColumn({
     handleMainProviderSelection,
     handleReasoningChange,
   } = providerState;
+  const imagesDisabled = !modelSupportsImageInput(
+    providerModelCatalog,
+    effectiveInputProvider,
+    effectiveInputModel,
+  );
 
   return (
     <div className="chat-column flex flex-col flex-1 min-w-[320px]">
@@ -248,6 +254,7 @@ export function ChatMainColumn({
             }
             proxyDeliveryNotice={chat.proxyDeliveryNotice}
             attachmentsDisabled={isProxyAttached}
+            imagesDisabled={imagesDisabled}
           />
         )}
     </div>

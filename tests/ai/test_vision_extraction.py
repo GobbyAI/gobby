@@ -55,7 +55,7 @@ def _registry() -> AICapabilityRegistry:
         [
             CapabilityBinding(
                 capability=AICapability.VISION_EXTRACT,
-                provider="local:lm-studio",
+                provider="endpoint:lm-studio",
                 adapter_style=AIAdapterStyle.OPENAI_COMPATIBLE,
                 available=True,
                 models=("llava",),
@@ -73,12 +73,12 @@ def _registry() -> AICapabilityRegistry:
 @pytest.mark.asyncio
 async def test_vision_service_does_not_invent_ocr_text_from_description() -> None:
     adapter = _FakeVisionAdapter()
-    service = VisionExtractService(_registry(), {"local:lm-studio": adapter})
+    service = VisionExtractService(_registry(), {"endpoint:lm-studio": adapter})
 
     result = await service.extract(
         VisionExtractRequest(
             image_path="/tmp/image.png",
-            provider="local:lm-studio",
+            provider="endpoint:lm-studio",
             model="llava",
             context="screenshot",
         )
@@ -86,14 +86,14 @@ async def test_vision_service_does_not_invent_ocr_text_from_description() -> Non
 
     assert result.text == "extracted:/tmp/image.png"
     assert result.capability == AICapability.VISION_EXTRACT
-    assert result.provider == "local:lm-studio"
+    assert result.provider == "endpoint:lm-studio"
     assert result.model == "llava"
     assert result.ocr_text is None
     assert result.ocr_text != result.text
     assert adapter.requests == [
         VisionExtractRequest(
             image_path="/tmp/image.png",
-            provider="local:lm-studio",
+            provider="endpoint:lm-studio",
             model="llava",
             context="screenshot",
         )
@@ -112,13 +112,13 @@ async def test_vision_service_does_not_invent_ocr_text_from_description() -> Non
 )
 async def test_vision_service_never_returns_provider_error_sentinels(sentinel: str) -> None:
     registry = _registry()
-    service = VisionExtractService(registry, {"local:lm-studio": _FakeVisionAdapter(sentinel)})
+    service = VisionExtractService(registry, {"endpoint:lm-studio": _FakeVisionAdapter(sentinel)})
 
     with pytest.raises(VisionProviderError, match="error sentinel"):
         await service.extract(
             VisionExtractRequest(
                 image_path="/tmp/image.png",
-                provider="local:lm-studio",
+                provider="endpoint:lm-studio",
                 model="llava",
             )
         )
@@ -126,7 +126,7 @@ async def test_vision_service_never_returns_provider_error_sentinels(sentinel: s
 
 @pytest.mark.asyncio
 async def test_vision_service_rejects_unproven_provider() -> None:
-    service = VisionExtractService(_registry(), {"local:lm-studio": _FakeVisionAdapter()})
+    service = VisionExtractService(_registry(), {"endpoint:lm-studio": _FakeVisionAdapter()})
 
     with pytest.raises(CapabilityUnavailableError, match="proven image payload support"):
         await service.extract(VisionExtractRequest(image_path="/tmp/image.png", provider="droid"))

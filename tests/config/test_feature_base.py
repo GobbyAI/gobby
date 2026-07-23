@@ -212,10 +212,14 @@ class TestFeatureDefaultConfig:
             FeatureDefaultConfig(candidates=[candidate])
 
     def test_parses_named_local_candidate_with_slashed_model_id(self) -> None:
-        assert parse_feature_candidate("local:lm-studio/google/gemma-4-26b-a4b-qat") == (
-            "local:lm-studio",
+        assert parse_feature_candidate("endpoint:lm-studio/google/gemma-4-26b-a4b-qat") == (
+            "endpoint:lm-studio",
             "google/gemma-4-26b-a4b-qat",
         )
+
+    def test_rejects_removed_local_generation_selector(self) -> None:
+        with pytest.raises(ValueError, match=r"replace it with endpoint:\*"):
+            parse_feature_candidate("local:lm-studio/google/gemma")
 
 
 class TestGenerationProfileDefaults:
@@ -227,7 +231,7 @@ class TestGenerationProfileDefaults:
                         "feature_low": [
                             "codex/gpt-5.4-mini",
                             "claude/haiku",
-                            "local:lm-studio/google/gemma-4-26b-a4b-qat",
+                            "endpoint:lm-studio/google/gemma-4-26b-a4b-qat",
                         ],
                     }
                 }
@@ -237,7 +241,7 @@ class TestGenerationProfileDefaults:
         assert candidate_labels(config.session_summary.candidates) == (
             "codex/gpt-5.4-mini",
             "claude/haiku",
-            "local:lm-studio/google/gemma-4-26b-a4b-qat",
+            "endpoint:lm-studio/google/gemma-4-26b-a4b-qat",
         )
 
     def test_daemon_config_keeps_explicit_feature_candidates_authoritative(self) -> None:
@@ -251,7 +255,7 @@ class TestGenerationProfileDefaults:
                         "feature_low": [
                             "codex/gpt-5.4-mini",
                             "claude/haiku",
-                            "local:lm-studio/google/gemma-4-26b-a4b-qat",
+                            "endpoint:lm-studio/google/gemma-4-26b-a4b-qat",
                         ],
                     }
                 }

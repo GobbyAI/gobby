@@ -6,14 +6,18 @@ from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
 
 from gobby.agents.codex_oss import codex_oss_provider_for_local_endpoint
-from gobby.ai.local_endpoints import resolve_local_generation_endpoint_selector
+from gobby.ai.codex_endpoint import (
+    codex_endpoint_config_overrides,
+    codex_endpoint_env,
+)
+from gobby.ai.endpoints import resolve_generation_endpoint_selector
 
 if TYPE_CHECKING:
     from gobby.storage.agents import LocalAgentRunManager
 
 
 @dataclass(frozen=True)
-class SpawnLocalEndpointResolution:
+class SpawnGenerationEndpointResolution:
     """Resolved spawn runtime endpoint state."""
 
     model: str | None
@@ -21,9 +25,11 @@ class SpawnLocalEndpointResolution:
     api_token: str | None
     is_local: bool
     codex_oss_provider: str | None = None
+    codex_config_overrides: tuple[str, ...] = ()
+    child_env: dict[str, str] | None = None
 
 
-async def resolve_spawn_local_endpoint(
+async def resolve_spawn_generation_endpoint(
     *,
     model: str | None,
     api_base: str | None,
@@ -31,17 +37,16 @@ async def resolve_spawn_local_endpoint(
     daemon_config: Any | None,
     run_manager: LocalAgentRunManager | None,
     runtime_provider: str | None = None,
-) -> SpawnLocalEndpointResolution:
-    """Resolve model='local:<endpoint>' for a spawned CLI runtime."""
+) -> SpawnGenerationEndpointResolution:
+    """Resolve model='endpoint:<name>[/<model>]' for a spawned CLI runtime."""
     if model == "local":
-        raise ValueError(
-            "model: local has been removed. Use model: local:<endpoint> with "
-            "ai.generation.local.endpoints.<endpoint>."
-        )
+        raise ValueError("model: local has been removed; replace it with model: endpoint:<name>")
+    if model == "endpoint":
+        raise ValueError("model: endpoint must name an endpoint as endpoint:<name>")
 
-    selection = resolve_local_generation_endpoint_selector(daemon_config, model)
+    selection = resolve_generation_endpoint_selector(daemon_config, model)
     if selection is None:
-        return SpawnLocalEndpointResolution(
+        return SpawnGenerationEndpointResolution(
             model=model,
             api_base=api_base,
             api_token=api_token,
@@ -49,6 +54,22 @@ async def resolve_spawn_local_endpoint(
         )
 
     selected_endpoint = selection.endpoint_with_selected_model()
+    if selected_endpoint.wire_api == "responses":
+        if runtime_provider != "codex":
+            raise ValueError("Responses generation endpoints require provider='codex'")
+        return SpawnGenerationEndpointResolution(
+            model=selection.selected_model,
+            api_base=api_base,
+            api_token=api_token,
+            is_local=False,
+            codex_config_overrides=codex_endpoint_config_overrides(
+                selection.name,
+                selected_endpoint,
+                model=selection.selected_model,
+            ),
+            child_env=dict(codex_endpoint_env(selected_endpoint)),
+        )
+
     try:
         from gobby.agents.local_model import ensure_local_model
 
@@ -59,7 +80,7 @@ async def resolve_spawn_local_endpoint(
     if runtime_provider == "codex":
         # Codex OSS receives local routing through CLI flags while other runtimes
         # connect directly to the endpoint credentials returned below.
-        return SpawnLocalEndpointResolution(
+        return SpawnGenerationEndpointResolution(
             model=resolved_model,
             api_base=api_base,
             api_token=api_token,
@@ -67,7 +88,7 @@ async def resolve_spawn_local_endpoint(
             codex_oss_provider=codex_oss_provider_for_local_endpoint(selection.endpoint),
         )
 
-    return SpawnLocalEndpointResolution(
+    return SpawnGenerationEndpointResolution(
         model=resolved_model,
         api_base=selected_endpoint.api_base,
         api_token=selected_endpoint.api_key,

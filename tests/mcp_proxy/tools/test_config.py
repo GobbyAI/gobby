@@ -624,6 +624,21 @@ class TestConfigStoreSecrets:
         assert secret_store.get("provider_api_key") is None
         assert config_store.get_secret_keys() == []
 
+    def test_clear_secret_uses_explicit_secret_name(
+        self, config_store: ConfigStore, secret_store: SecretStore
+    ) -> None:
+        config_store.set_secret(
+            "ai.generation.endpoints.openrouter.api_key",
+            "sk-test-123",
+            secret_store,
+            secret_name="OPENROUTER_API_KEY",
+        )
+
+        config_store.clear_secret("ai.generation.endpoints.openrouter.api_key", secret_store)
+
+        assert config_store.get("ai.generation.endpoints.openrouter.api_key") is None
+        assert secret_store.get("OPENROUTER_API_KEY") is None
+
     def test_normal_set_does_not_mark_secret(self, config_store: ConfigStore) -> None:
         """Regular set() keeps is_secret=0."""
         config_store.set("daemon_port", 9999)
@@ -707,11 +722,11 @@ class TestSetConfigBatch:
         result = tool(
             entries=[
                 {
-                    "key": "ai.generation.local.endpoints.lm-studio.api_base",
+                    "key": "ai.generation.endpoints.lm-studio.api_base",
                     "value": "http://localhost:1234/v1",
                 },
                 {
-                    "key": "ai.generation.local.endpoints.lm-studio.model",
+                    "key": "ai.generation.endpoints.lm-studio.model",
                     "value": "qwen2.5-coder-7b",
                 },
             ]
@@ -719,20 +734,18 @@ class TestSetConfigBatch:
 
         assert result["success"] is True
         assert result["count"] == 2
-        assert "ai.generation.local.endpoints.lm-studio.api_base" in result["keys_set"]
-        assert "ai.generation.local.endpoints.lm-studio.model" in result["keys_set"]
+        assert "ai.generation.endpoints.lm-studio.api_base" in result["keys_set"]
+        assert "ai.generation.endpoints.lm-studio.model" in result["keys_set"]
 
         # Verify in DB
         assert (
-            config_store.get("ai.generation.local.endpoints.lm-studio.api_base")
+            config_store.get("ai.generation.endpoints.lm-studio.api_base")
             == "http://localhost:1234/v1"
         )
-        assert (
-            config_store.get("ai.generation.local.endpoints.lm-studio.model") == "qwen2.5-coder-7b"
-        )
+        assert config_store.get("ai.generation.endpoints.lm-studio.model") == "qwen2.5-coder-7b"
 
         # Verify in-memory config
-        endpoint = config_state["config"].ai.generation.local.endpoints["lm-studio"]
+        endpoint = config_state["config"].ai.generation.endpoints["lm-studio"]
         assert endpoint.api_base == "http://localhost:1234/v1"
         assert endpoint.model == "qwen2.5-coder-7b"
 
@@ -741,7 +754,7 @@ class TestSetConfigBatch:
     ) -> None:
         """Batch config writes allow profile-default candidate object lists."""
         candidates = [
-            {"candidate": "local:lm-studio/qwen-local", "reasoning_effort": "low"},
+            {"candidate": "endpoint:lm-studio/qwen-local", "reasoning_effort": "low"},
             "codex/gpt-5.4-mini",
         ]
         tool = config_registry.get_tool("set_config_batch")
@@ -757,7 +770,7 @@ class TestSetConfigBatch:
         assert config_store.get("ai.generation.profile_defaults.feature_low") == candidates
         profile_defaults = config_state["config"].ai.generation.profile_defaults[FeatureProfile.LOW]
         assert candidate_labels(profile_defaults) == (
-            "local:lm-studio/qwen-local",
+            "endpoint:lm-studio/qwen-local",
             "codex/gpt-5.4-mini",
         )
         assert profile_defaults[0].reasoning_effort == "low"
@@ -833,11 +846,11 @@ class TestSetConfigBatch:
         result = tool(
             entries=[
                 {
-                    "key": "ai.generation.local.endpoints.lm-studio.api_base",
+                    "key": "ai.generation.endpoints.lm-studio.api_base",
                     "value": "http://localhost:1234/v1",
                 },
                 {
-                    "key": "ai.generation.local.endpoints.lm-studio.model",
+                    "key": "ai.generation.endpoints.lm-studio.model",
                     "value": "qwen2.5-coder-7b",
                 },
                 {"key": "digest.profile", "value": "feature_mid"},
@@ -847,7 +860,7 @@ class TestSetConfigBatch:
 
         assert result["success"] is True
         assert result["count"] == 4
-        endpoint = config_state["config"].ai.generation.local.endpoints["lm-studio"]
+        endpoint = config_state["config"].ai.generation.endpoints["lm-studio"]
         assert endpoint.model == "qwen2.5-coder-7b"
         assert config_state["config"].digest.profile == "feature_mid"
         assert config_state["config"].digest.timeout == 45

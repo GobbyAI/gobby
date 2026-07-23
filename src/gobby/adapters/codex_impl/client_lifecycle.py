@@ -31,6 +31,7 @@ async def start(client: CodexAppServerClient, subprocess_module: Any) -> None:
 
     try:
         env = os.environ.copy()
+        env.update(client._env_overrides)
         # Prevent installed Codex hooks from registering nested daemon sessions.
         env["GOBBY_HOOKS_DISABLED"] = "1"
         command = [client._codex_command, *client._global_args, "app-server"]
@@ -83,6 +84,8 @@ async def start(client: CodexAppServerClient, subprocess_module: Any) -> None:
         await client._stderr_drain.wait_finished()
         stderr = client._stderr_drain.compact_text()
         failure_detail = f"{e}; stderr: {stderr}" if stderr else str(e)
+        for secret in client._redacted_env_values:
+            failure_detail = failure_detail.replace(secret, "[REDACTED]")
         logger.debug(
             "Failed to start Codex app-server: %s",
             failure_detail,

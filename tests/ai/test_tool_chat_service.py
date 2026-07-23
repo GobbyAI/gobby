@@ -25,7 +25,7 @@ from gobby.ai._tool_chat_builtins import (
 )
 from gobby.ai._tool_chat_contracts import ToolChatRequest, ToolChatResult, ToolPolicy
 from gobby.ai._tool_chat_service import ToolChatService
-from gobby.config.ai import AIConfig, GenerationConfig, LocalGenerationConfig
+from gobby.config.ai import AIConfig, GenerationConfig
 from gobby.config.app import DaemonConfig
 
 pytestmark = pytest.mark.unit
@@ -50,15 +50,13 @@ def _registry() -> AICapabilityRegistry:
         DaemonConfig(
             ai=AIConfig(
                 generation=GenerationConfig(
-                    local=LocalGenerationConfig(
-                        endpoints={
-                            "lm-studio": {
-                                "api_base": "http://localhost:1234/v1",
-                                "model": "gemma",
-                                "tool_chat": True,
-                            },
-                        }
-                    )
+                    endpoints={
+                        "lm-studio": {
+                            "api_base": "http://localhost:1234/v1",
+                            "model": "gemma",
+                            "tool_chat": True,
+                        },
+                    }
                 )
             ),
         ),
@@ -104,11 +102,11 @@ async def test_llm_provider_candidate_dispatches_to_llm_provider_adapter() -> No
 @pytest.mark.asyncio
 async def test_openai_compatible_candidate_dispatches_to_openai_adapter() -> None:
     service, llm, openai = _service()
-    result = await service.chat_result(_request(candidates=("local:lm-studio/gemma",)))
+    result = await service.chat_result(_request(candidates=("endpoint:lm-studio/gemma",)))
     assert result.adapter_style == "openai_compatible"
-    assert result.provider == "local:lm-studio"
+    assert result.provider == "endpoint:lm-studio"
     assert result.text == "narrative::openai_compatible"
-    assert [b.provider for b in openai.bindings] == ["local:lm-studio"]
+    assert [b.provider for b in openai.bindings] == ["endpoint:lm-studio"]
     assert llm.bindings == []
 
 
@@ -241,7 +239,7 @@ async def test_tool_chat_timeout_propagates_without_trying_next_candidate() -> N
         attempt_timeout_seconds=0.05,
     )
     with pytest.raises(_CandidateTimeoutError, match="timed out after"):
-        await service.chat_result(_request(candidates=("claude/haiku", "local:lm-studio/gemma")))
+        await service.chat_result(_request(candidates=("claude/haiku", "endpoint:lm-studio/gemma")))
     assert slow.calls == 1
     assert fast.bindings == []
 
@@ -258,7 +256,7 @@ async def test_tool_chat_runtime_error_propagates_without_trying_next_candidate(
     )
 
     with pytest.raises(RuntimeError, match="adapter broke"):
-        await service.chat_result(_request(candidates=("claude/haiku", "local:lm-studio/gemma")))
+        await service.chat_result(_request(candidates=("claude/haiku", "endpoint:lm-studio/gemma")))
 
     assert fast.bindings == []
 

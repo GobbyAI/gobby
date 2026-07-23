@@ -9,4 +9,4 @@ def _normalize(value: str | None) -> str:
 
 def is_local_agent_definition(provider: str | None, model: str | None) -> bool:
     """Detect local model intent from an agent definition or explicit spawn request."""
-    return _normalize(provider).startswith("local:") or _normalize(model).startswith("local:")
+    return _normalize(provider).startswith("endpoint:") or _normalize(model).startswith("endpoint:")

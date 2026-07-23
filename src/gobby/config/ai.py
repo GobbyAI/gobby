@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import logging
 import re
-from typing import Literal
+from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
@@ -17,28 +17,33 @@ from gobby.config.url_validation import validate_endpoint_url
 
 logger = logging.getLogger(__name__)
 
-_LOCAL_ENDPOINT_NAME_RE = re.compile(r"^[a-z0-9][a-z0-9_-]*$")
-LocalGenerationProvider = Literal["openai-compatible", "lmstudio", "ollama"]
+_GENERATION_ENDPOINT_NAME_RE = re.compile(r"^[a-z0-9][a-z0-9_-]*$")
+GenerationEndpointProtocol = Literal["openai-compatible", "lmstudio", "ollama"]
+GenerationWireAPI = Literal["chat-completions", "responses"]
 
 
-class LocalGenerationEndpointConfig(BaseModel):
-    """Local text generation endpoint profile."""
+class GenerationEndpointConfig(BaseModel):
+    """Text generation endpoint profile."""
 
     model_config = ConfigDict(extra="forbid")
 
-    provider: LocalGenerationProvider = Field(
+    protocol: GenerationEndpointProtocol = Field(
         default="openai-compatible",
-        description="Local provider adapter: openai-compatible, lmstudio, or ollama.",
+        description="Endpoint protocol adapter: openai-compatible, lmstudio, or ollama.",
+    )
+    wire_api: GenerationWireAPI = Field(
+        default="chat-completions",
+        description="Wire contract used by the endpoint.",
     )
     api_base: str = Field(
-        description="Provider API base URL, for example http://localhost:1234.",
+        description="Endpoint API base URL, for example https://openrouter.ai/api/v1.",
     )
     model: str = Field(
-        description="Default model name for this local generation endpoint.",
+        description="Default model name for this generation endpoint.",
     )
     api_key: str | None = Field(
         default=None,
-        description="API key for the local endpoint. Use $secret:NAME for encrypted storage.",
+        description="API key for the endpoint. Use $secret:NAME for encrypted storage.",
     )
     vision_extract: bool = Field(
         default=False,
@@ -50,44 +55,20 @@ class LocalGenerationEndpointConfig(BaseModel):
     )
 
     @model_validator(mode="after")
-    def validate_endpoint(self) -> LocalGenerationEndpointConfig:
+    def validate_endpoint(self) -> GenerationEndpointConfig:
         """Require endpoint URL and model names to be non-empty."""
         if not self.api_base.strip():
-            raise ValueError("api_base must be set for local generation endpoints")
+            raise ValueError("api_base must be set for generation endpoints")
         if not self.model.strip():
-            raise ValueError("model must be set for local generation endpoints")
+            raise ValueError("model must be set for generation endpoints")
+        if self.wire_api == "responses" and self.protocol != "openai-compatible":
+            raise ValueError("wire_api='responses' requires protocol='openai-compatible'")
         return self
 
     @field_validator("api_base")
     @classmethod
     def validate_api_base(cls, value: str) -> str:
         return validate_endpoint_url(value, field_name="api_base")
-
-
-class LocalGenerationConfig(BaseModel):
-    """Named local OpenAI-compatible text generation endpoints."""
-
-    model_config = ConfigDict(extra="forbid")
-
-    endpoints: dict[str, LocalGenerationEndpointConfig] = Field(
-        default_factory=dict,
-        description="Named local generation endpoints keyed by lowercase slug.",
-    )
-
-    @field_validator("endpoints")
-    @classmethod
-    def validate_endpoint_names(
-        cls,
-        endpoints: dict[str, LocalGenerationEndpointConfig],
-    ) -> dict[str, LocalGenerationEndpointConfig]:
-        """Require endpoint aliases to be stable provider suffixes."""
-        invalid = [name for name in endpoints if not _LOCAL_ENDPOINT_NAME_RE.fullmatch(name)]
-        if invalid:
-            joined = ", ".join(repr(name) for name in invalid)
-            raise ValueError(
-                f"local generation endpoint names must match [a-z0-9][a-z0-9_-]*: {joined}"
-            )
-        return endpoints
 
 
 class GenerationConfig(BaseModel):
@@ -124,14 +105,36 @@ class GenerationConfig(BaseModel):
         ge=1,
         description=("Host-wide maximum concurrent text-generation attempts on spawn-cold lanes."),
     )
-    local: LocalGenerationConfig = Field(
-        default_factory=LocalGenerationConfig,
-        description="Named local OpenAI-compatible generation endpoints.",
+    endpoints: dict[str, GenerationEndpointConfig] = Field(
+        default_factory=dict,
+        description="Named generation endpoints keyed by lowercase slug.",
     )
     profile_defaults: dict[FeatureProfile, list[FeatureCandidateConfig]] = Field(
         default_factory=dict,
         description="Profile default candidate overrides keyed by feature profile.",
     )
+
+    @model_validator(mode="before")
+    @classmethod
+    def reject_removed_local_config(cls, value: Any) -> Any:
+        if isinstance(value, dict) and "local" in value:
+            raise ValueError(
+                "ai.generation.local.* has been removed; replace it with ai.generation.endpoints.*"
+            )
+        return value
+
+    @field_validator("endpoints")
+    @classmethod
+    def validate_endpoint_names(
+        cls,
+        endpoints: dict[str, GenerationEndpointConfig],
+    ) -> dict[str, GenerationEndpointConfig]:
+        """Require endpoint aliases to be stable provider suffixes."""
+        invalid = [name for name in endpoints if not _GENERATION_ENDPOINT_NAME_RE.fullmatch(name)]
+        if invalid:
+            joined = ", ".join(repr(name) for name in invalid)
+            raise ValueError(f"generation endpoint names must match [a-z0-9][a-z0-9_-]*: {joined}")
+        return endpoints
 
     @model_validator(mode="after")
     def clamp_candidate_timeouts(self) -> GenerationConfig:

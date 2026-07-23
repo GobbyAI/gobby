@@ -80,13 +80,12 @@ function makeConfigValues(): Record<string, unknown> {
         timeout_seconds: 600,
         candidate_timeout_seconds: 60,
         cli_candidate_timeout_seconds: 150,
-        local: {
-          endpoints: {
-            lmstudio: {
-              provider: 'lmstudio',
-              api_base: 'http://localhost:1234',
-              model: 'gemma',
-            },
+        endpoints: {
+          lmstudio: {
+            protocol: 'lmstudio',
+            wire_api: 'chat-completions',
+            api_base: 'http://localhost:1234',
+            model: 'gemma',
           },
         },
         profile_defaults: { feature_mid: ['claude/sonnet'] },
@@ -177,7 +176,7 @@ describe('ProvidersModelsSection', () => {
 
     // Structured map editors surface their nested entries.
     expect(screen.getByLabelText('Context window override key 1')).toHaveValue('opus')
-    expect(screen.getByLabelText('Local endpoint key 1')).toHaveValue('lmstudio')
+    expect(screen.getByLabelText('Generation endpoint key 1')).toHaveValue('lmstudio')
     expect(screen.getByLabelText('API base (lmstudio)')).toHaveValue('http://localhost:1234')
     expect(screen.getByLabelText('Profile default key 1')).toHaveValue('feature_mid')
   })

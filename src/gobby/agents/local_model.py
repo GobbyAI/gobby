@@ -13,7 +13,7 @@ from urllib.parse import urlparse
 import httpx
 
 if TYPE_CHECKING:
-    from gobby.config.ai import LocalGenerationEndpointConfig
+    from gobby.config.ai import GenerationEndpointConfig
     from gobby.storage.agents import LocalAgentRunManager
 
 __all__ = ["ensure_local_model", "LocalModelError"]
@@ -97,7 +97,7 @@ def _lmstudio_loaded_instance_ids(models: list[dict[str, Any]]) -> list[str]:
 
 async def _lmstudio_models(
     client: httpx.AsyncClient,
-    config: LocalGenerationEndpointConfig,
+    config: GenerationEndpointConfig,
 ) -> list[dict[str, Any]]:
     response = await client.get(
         f"{_origin(config.api_base)}/api/v1/models",
@@ -114,7 +114,7 @@ async def _lmstudio_models(
 
 async def _load_lmstudio_model(
     client: httpx.AsyncClient,
-    config: LocalGenerationEndpointConfig,
+    config: GenerationEndpointConfig,
     model: str,
 ) -> None:
     response = await client.post(
@@ -129,7 +129,7 @@ async def _load_lmstudio_model(
 
 async def _unload_lmstudio_model(
     client: httpx.AsyncClient,
-    config: LocalGenerationEndpointConfig,
+    config: GenerationEndpointConfig,
     instance_id: str,
 ) -> None:
     response = await client.post(
@@ -160,7 +160,7 @@ def _ollama_running_model_names(payload: dict[str, Any]) -> list[str]:
 
 async def _get_ollama_loaded_models(
     client: httpx.AsyncClient,
-    config: LocalGenerationEndpointConfig,
+    config: GenerationEndpointConfig,
 ) -> list[str]:
     response = await client.get(f"{_origin(config.api_base)}/api/ps", timeout=10.0)
     response.raise_for_status()
@@ -169,7 +169,7 @@ async def _get_ollama_loaded_models(
 
 async def _set_ollama_keep_alive(
     client: httpx.AsyncClient,
-    config: LocalGenerationEndpointConfig,
+    config: GenerationEndpointConfig,
     model: str,
     keep_alive: int,
 ) -> None:
@@ -187,7 +187,7 @@ async def _set_ollama_keep_alive(
 
 
 async def ensure_local_model(
-    config: LocalGenerationEndpointConfig,
+    config: GenerationEndpointConfig,
     run_manager: LocalAgentRunManager | None = None,
 ) -> str:
     """Ensure the configured model is loaded at the local endpoint.
@@ -209,7 +209,7 @@ async def ensure_local_model(
     Raises:
         LocalModelError: If model cannot be loaded or conflict detected
     """
-    if config.provider == "openai-compatible":
+    if config.protocol == "openai-compatible":
         if config.model == "auto":
             raise LocalModelError(
                 "model: auto requires provider: lmstudio or provider: ollama so Gobby can "
@@ -219,25 +219,25 @@ async def ensure_local_model(
 
     async with httpx.AsyncClient() as client:
         try:
-            if config.provider == "lmstudio":
+            if config.protocol == "lmstudio":
                 return await _ensure_lmstudio_model(client, config, run_manager)
-            if config.provider == "ollama":
+            if config.protocol == "ollama":
                 return await _ensure_ollama_model(client, config, run_manager)
         except httpx.ConnectError as e:
             raise LocalModelError(
-                f"Cannot connect to local {config.provider} endpoint at {config.api_base}."
+                f"Cannot connect to local {config.protocol} endpoint at {config.api_base}."
             ) from e
         except httpx.HTTPStatusError as e:
             raise LocalModelError(
-                f"Local {config.provider} endpoint returned error: {e.response.status_code}"
+                f"Local {config.protocol} endpoint returned error: {e.response.status_code}"
             ) from e
 
-    raise LocalModelError(f"Unsupported local generation provider: {config.provider}")
+    raise LocalModelError(f"Unsupported generation endpoint protocol: {config.protocol}")
 
 
 async def _ensure_lmstudio_model(
     client: httpx.AsyncClient,
-    config: LocalGenerationEndpointConfig,
+    config: GenerationEndpointConfig,
     run_manager: LocalAgentRunManager | None,
 ) -> str:
     models = await _lmstudio_models(client, config)
@@ -293,7 +293,7 @@ async def _ensure_lmstudio_model(
 
 async def _ensure_ollama_model(
     client: httpx.AsyncClient,
-    config: LocalGenerationEndpointConfig,
+    config: GenerationEndpointConfig,
     run_manager: LocalAgentRunManager | None,
 ) -> str:
     loaded_ids = await _get_ollama_loaded_models(client, config)

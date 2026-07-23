@@ -510,10 +510,14 @@ class ConfigStore:
         plaintext_value: str,
         secret_store: SecretStore,
         source: str = "user",
+        *,
+        secret_name: str | None = None,
+        category: str = "general",
     ) -> None:
         """Encrypt a config value via SecretStore and store a reference.
 
-        Stores ``$secret:<natural_name>`` in config_store with ``is_secret=true``.
+        Stores ``$secret:<secret_name>`` in config_store with ``is_secret=true``.
+        When ``secret_name`` is omitted, it is derived from the config key.
         The actual value is encrypted in the ``secrets`` table.
         Both writes happen in a single transaction for consistency.
         """
@@ -521,12 +525,12 @@ class ConfigStore:
         with self._mutation_context():
             transaction = self.db
             self._assert_embedding_mutation_allowed((key,), transaction)
-            secret_name = config_key_to_secret_name(key)
-            ref = f"$secret:{secret_name}"
+            resolved_secret_name = secret_name or config_key_to_secret_name(key)
+            ref = f"$secret:{resolved_secret_name}"
             secret_store.set(
-                name=secret_name,
+                name=resolved_secret_name,
                 plaintext_value=plaintext_value,
-                category="general",
+                category=category,
                 description=f"Config secret for {key}",
             )
             self._upsert_value(
@@ -562,7 +566,11 @@ class ConfigStore:
         or both roll back.
         """
         _validate_storage_config_key(key)
-        secret_name = config_key_to_secret_name(key)
+        stored_value = self.get(key)
+        if isinstance(stored_value, str) and stored_value.startswith("$secret:"):
+            secret_name = stored_value.removeprefix("$secret:") or config_key_to_secret_name(key)
+        else:
+            secret_name = config_key_to_secret_name(key)
         with self._mutation_context():
             transaction = self.db
             self._assert_embedding_mutation_allowed((key,), transaction)

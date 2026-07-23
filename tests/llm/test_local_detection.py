@@ -10,11 +10,11 @@ pytestmark = pytest.mark.unit
 
 
 def test_agent_definition_detection_accepts_named_local_endpoint_provider() -> None:
-    assert is_local_agent_definition(provider="local:lm-studio", model="qwen2.5-coder") is True
+    assert is_local_agent_definition(provider="endpoint:lm-studio", model="qwen2.5-coder") is True
 
 
 def test_agent_definition_detection_accepts_named_local_endpoint_model() -> None:
-    assert is_local_agent_definition(provider="claude", model="local:lm-studio") is True
+    assert is_local_agent_definition(provider="claude", model="endpoint:lm-studio") is True
 
 
 @pytest.mark.parametrize(

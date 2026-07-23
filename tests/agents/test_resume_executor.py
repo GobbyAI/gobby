@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from datetime import UTC, datetime
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
@@ -11,6 +12,7 @@ import pytest
 
 from gobby.agents import resume_executor
 from gobby.agents.constants import CARGO_HOME, UV_CACHE_DIR
+from gobby.config.app import DaemonConfig
 from gobby.storage.agents import AgentRun
 
 pytestmark = pytest.mark.unit
@@ -121,6 +123,109 @@ async def test_resume_agent_run_persists_only_safe_cache_env(
         UV_CACHE_DIR: "/new/uv",
     }
     assert consumed_metadata["daemon_stop_resume_consumed_by_run_id"] == result.run_id
+
+
+@pytest.mark.asyncio
+async def test_resume_responses_endpoint_rebuilds_child_scoped_codex_config(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    original_run = AgentRun(
+        id="run-old",
+        parent_session_id="parent-old",
+        provider="codex",
+        prompt="Original prompt",
+        status="cancelled",
+        created_at=datetime(2026, 5, 30, tzinfo=UTC),
+        updated_at=datetime(2026, 5, 30, tzinfo=UTC),
+        continuation_prompt="Continue",
+        terminal_reason="daemon_stop",
+    )
+    model_selector = "endpoint:openrouter/moonshotai/kimi-k3"
+    provider_override = 'model_provider="gobby_endpoint_openrouter"'
+    resume_metadata: dict[str, Any] = {
+        "provider": "codex",
+        "provider_native_session_id": "native-123",
+        "cwd": "/repo",
+        "project_id": "proj-1",
+        "parent_session_id": "parent-1",
+        "machine_id": "machine-1",
+        "model": model_selector,
+        "config_overrides": [provider_override],
+    }
+    persisted_metadata: list[dict[str, Any]] = []
+    command_args: dict[str, Any] = {}
+
+    def fake_prepare_terminal_spawn(**kwargs: Any) -> SimpleNamespace:
+        return SimpleNamespace(
+            session_id="child-new",
+            env_vars={
+                "GOBBY_SESSION_ID": "child-new",
+                "GOBBY_AGENT_RUN_ID": kwargs["agent_run_id"],
+            },
+        )
+
+    class FakeSpawner:
+        env: dict[str, str]
+
+        def spawn(self, *, command: list[str], cwd: str, env: dict[str, str]) -> SimpleNamespace:
+            self.env = env
+            return SimpleNamespace(
+                success=True,
+                pid=123,
+                tmux_session_name="tmux-new",
+                error=None,
+                message=None,
+            )
+
+    def fake_build_cli_command(**kwargs: Any) -> tuple[list[str], dict[str, str]]:
+        command_args.update(kwargs)
+        return ["codex", "resume"], {}
+
+    def record_resume_metadata(_run_id: str, metadata: dict[str, Any]) -> object:
+        persisted_metadata.append(metadata)
+        return object()
+
+    run_storage = MagicMock()
+    run_storage.update_resume_metadata.side_effect = record_resume_metadata
+    runner = SimpleNamespace(
+        child_session_manager=MagicMock(),
+        run_storage=run_storage,
+    )
+    spawner = FakeSpawner()
+    monkeypatch.setattr(resume_executor, "prepare_terminal_spawn", fake_prepare_terminal_spawn)
+    monkeypatch.setattr(resume_executor, "build_cli_command", fake_build_cli_command)
+    monkeypatch.setattr(resume_executor, "_tmux_spawner", lambda *_args: spawner)
+    monkeypatch.setattr(resume_executor, "pre_approve_directory", lambda *_args: None)
+    monkeypatch.setattr(resume_executor, "_fire_resume_started", lambda *_args: None)
+
+    result = await resume_executor.resume_agent_run(
+        original_run,
+        resume_metadata=resume_metadata,
+        runner=runner,
+        session_manager=MagicMock(),
+        daemon_config=DaemonConfig(
+            ai={
+                "generation": {
+                    "endpoints": {
+                        "openrouter": {
+                            "protocol": "openai-compatible",
+                            "wire_api": "responses",
+                            "api_base": "https://openrouter.ai/api/v1",
+                            "api_key": "sk-openrouter-test",
+                            "model": "moonshotai/kimi-k3",
+                        }
+                    }
+                }
+            }
+        ),
+    )
+
+    assert result.success is True
+    assert command_args["model"] == "moonshotai/kimi-k3"
+    assert command_args["config_overrides"].count(provider_override) == 1
+    assert spawner.env["GOBBY_CODEX_ENDPOINT_API_KEY"] == "sk-openrouter-test"
+    assert "sk-openrouter-test" not in repr(command_args)
+    assert "sk-openrouter-test" not in repr(persisted_metadata)
 
 
 @pytest.mark.asyncio
@@ -468,10 +573,11 @@ async def test_resume_agent_run_uses_workspace_mcp_config_for_claude(
         parent_session_id="parent-old",
         provider="claude",
         prompt="Original prompt",
-        status="daemon_stopped",
-        created_at="2026-05-30T00:00:00Z",
-        updated_at="2026-05-30T00:00:00Z",
+        status="cancelled",
+        created_at=datetime(2026, 5, 30, tzinfo=UTC),
+        updated_at=datetime(2026, 5, 30, tzinfo=UTC),
         continuation_prompt="Continue",
+        terminal_reason="daemon_stop",
     )
     resume_metadata: dict[str, Any] = {
         "provider": "claude",
@@ -555,10 +661,11 @@ async def test_resume_agent_run_reuses_persisted_claude_mcp_config(
         parent_session_id="parent-old",
         provider="claude",
         prompt="Original prompt",
-        status="daemon_stopped",
-        created_at="2026-05-30T00:00:00Z",
-        updated_at="2026-05-30T00:00:00Z",
+        status="cancelled",
+        created_at=datetime(2026, 5, 30, tzinfo=UTC),
+        updated_at=datetime(2026, 5, 30, tzinfo=UTC),
         continuation_prompt="Continue",
+        terminal_reason="daemon_stop",
     )
     resume_metadata: dict[str, Any] = {
         "provider": "claude",

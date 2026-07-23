@@ -13,7 +13,7 @@ from urllib.parse import urlparse
 
 import httpx
 
-from gobby.config.ai import LocalGenerationEndpointConfig
+from gobby.config.ai import GenerationEndpointConfig
 from gobby.config.app import deep_merge
 
 logger = logging.getLogger(__name__)
@@ -127,7 +127,7 @@ def resolve_qwen_local_openai_target(
     model_value: str | None,
     *,
     project_path: str | None,
-    local_generation_endpoints: dict[str, LocalGenerationEndpointConfig] | None = None,
+    local_generation_endpoints: dict[str, GenerationEndpointConfig] | None = None,
 ) -> LocalOpenAIModelTarget | None:
     """Resolve a Qwen `(...openai)` model to a local backend target."""
     settings = _load_qwen_settings(project_path)
@@ -187,9 +187,9 @@ def resolve_qwen_local_openai_target(
     if endpoint is None:
         return None
 
-    if endpoint.provider == "lmstudio":
+    if endpoint.protocol == "lmstudio":
         backend: Literal["lmstudio", "ollama"] = "lmstudio"
-    elif endpoint.provider == "ollama":
+    elif endpoint.protocol == "ollama":
         backend = "ollama"
     else:
         return None
@@ -205,9 +205,9 @@ def resolve_qwen_local_openai_target(
 def _match_local_generation_endpoint(
     request_model: str,
     base_url: str,
-    endpoints: dict[str, LocalGenerationEndpointConfig],
-) -> LocalGenerationEndpointConfig | None:
-    best_endpoint: LocalGenerationEndpointConfig | None = None
+    endpoints: dict[str, GenerationEndpointConfig],
+) -> GenerationEndpointConfig | None:
+    best_endpoint: GenerationEndpointConfig | None = None
     best_score = 0
     ambiguous = False
 
@@ -304,7 +304,7 @@ async def _prepare_lm_studio_model(
             raise LocalOpenAIModelWarmupError(
                 f"LM Studio at {target.base_url} rejected the request "
                 f"({exc.response.status_code}). Set a valid LM Studio API token in "
-                "ai.generation.local.endpoints.<name>.api_key, or "
+                "ai.generation.endpoints.<name>.api_key, or "
                 "disable API-key auth in LM Studio's developer settings."
             ) from exc
         raise
@@ -408,7 +408,7 @@ async def ensure_qwen_local_openai_model_ready(
     model_value: str | None,
     *,
     project_path: str | None,
-    local_generation_endpoints: dict[str, LocalGenerationEndpointConfig] | None = None,
+    local_generation_endpoints: dict[str, GenerationEndpointConfig] | None = None,
 ) -> None:
     """Warm the local backend for a Qwen OpenAI-compatible model when needed."""
     target = await asyncio.to_thread(

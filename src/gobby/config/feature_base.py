@@ -34,6 +34,10 @@ class FeatureProfile(StrEnum):
 
 def _parse_feature_candidate_label(candidate: str) -> tuple[str, str]:
     provider, separator, model = candidate.partition("/")
+    if provider.strip().startswith("local:"):
+        raise ValueError(
+            f"{candidate!r} uses the removed local: selector; replace it with endpoint:*"
+        )
     if not separator or not provider.strip() or not model.strip():
         raise ValueError(f"feature candidate must use provider/model format: {candidate!r}")
     return provider.strip(), model.strip()
@@ -188,7 +192,9 @@ def validate_feature_candidates(
     for candidate in candidates:
         try:
             parsed.append(validate_feature_candidate(candidate))
-        except ValueError:
+        except ValueError as exc:
+            if "removed local: selector" in str(exc):
+                raise
             invalid.append(candidate)
     if invalid:
         joined = ", ".join(repr(candidate) for candidate in invalid)

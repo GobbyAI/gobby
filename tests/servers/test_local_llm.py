@@ -7,24 +7,24 @@ from unittest.mock import AsyncMock, patch
 import pytest
 from pydantic import ValidationError
 
-from gobby.config.ai import LocalGenerationConfig, LocalGenerationEndpointConfig
+from gobby.config.ai import GenerationConfig, GenerationEndpointConfig
 from gobby.config.app import DaemonConfig
 
 pytestmark = pytest.mark.unit
 
 
-class TestLocalGenerationConfig:
-    """Tests for ai.generation.local config."""
+class TestGenerationEndpointConfig:
+    """Tests for ai.generation.endpoints config."""
 
     def test_defaults(self) -> None:
-        cfg = LocalGenerationConfig()
+        cfg = GenerationConfig()
 
         assert cfg.endpoints == {}
 
     def test_endpoint_with_api_base_and_model(self) -> None:
-        cfg = LocalGenerationConfig(
+        cfg = GenerationConfig(
             endpoints={
-                "lm-studio": LocalGenerationEndpointConfig(
+                "lm-studio": GenerationEndpointConfig(
                     api_base="http://localhost:1234/v1",
                     model="qwen-coder",
                     api_key="local-key",
@@ -37,42 +37,42 @@ class TestLocalGenerationConfig:
         )
 
         assert cfg.endpoints["lm-studio"].api_base == "http://localhost:1234/v1"
-        assert cfg.endpoints["lm-studio"].provider == "openai-compatible"
+        assert cfg.endpoints["lm-studio"].protocol == "openai-compatible"
         assert cfg.endpoints["lm-studio"].model == "qwen-coder"
         assert cfg.endpoints["lm-studio"].api_key == "local-key"
         assert cfg.endpoints["lm-studio"].vision_extract is False
         assert cfg.endpoints["ollama"].model == "qwen2.5-coder"
 
-    @pytest.mark.parametrize("provider", ["openai-compatible", "lmstudio", "ollama"])
-    def test_endpoint_accepts_supported_providers(self, provider: str) -> None:
-        endpoint = LocalGenerationEndpointConfig(
-            provider=provider,
+    @pytest.mark.parametrize("protocol", ["openai-compatible", "lmstudio", "ollama"])
+    def test_endpoint_accepts_supported_protocols(self, protocol: str) -> None:
+        endpoint = GenerationEndpointConfig(
+            protocol=protocol,
             api_base="http://localhost:1234",
             model="qwen-coder",
         )
 
-        assert endpoint.provider == provider
+        assert endpoint.protocol == protocol
 
-    def test_endpoint_rejects_unknown_provider(self) -> None:
-        with pytest.raises(ValidationError, match="provider"):
-            LocalGenerationEndpointConfig(
-                provider="lm-studio",
+    def test_endpoint_rejects_unknown_protocol(self) -> None:
+        with pytest.raises(ValidationError, match="protocol"):
+            GenerationEndpointConfig(
+                protocol="lm-studio",
                 api_base="http://localhost:1234",
                 model="qwen-coder",
             )
 
     def test_endpoint_requires_api_base(self) -> None:
         with pytest.raises(ValidationError, match="api_base"):
-            LocalGenerationEndpointConfig(api_base="", model="qwen-coder")
+            GenerationEndpointConfig(api_base="", model="qwen-coder")
 
     def test_endpoint_requires_model(self) -> None:
         with pytest.raises(ValidationError, match="model"):
-            LocalGenerationEndpointConfig(api_base="http://localhost:1234/v1", model="")
+            GenerationEndpointConfig(api_base="http://localhost:1234/v1", model="")
 
     @pytest.mark.parametrize("name", ["", "lm/studio", "lm:studio", "LmStudio"])
     def test_endpoint_names_must_be_lowercase_slugs(self, name: str) -> None:
         with pytest.raises(ValidationError, match="endpoint names"):
-            LocalGenerationConfig(
+            GenerationConfig(
                 endpoints={
                     name: {
                         "api_base": "http://localhost:1234/v1",
@@ -81,10 +81,14 @@ class TestLocalGenerationConfig:
                 }
             )
 
-    def test_daemon_config_has_ai_generation_local(self) -> None:
+    def test_daemon_config_has_ai_generation_endpoints(self) -> None:
         config = DaemonConfig()
 
-        assert config.ai.generation.local.endpoints == {}
+        assert config.ai.generation.endpoints == {}
+
+    def test_daemon_config_rejects_removed_generation_local(self) -> None:
+        with pytest.raises(ValidationError, match=r"ai\.generation\.local"):
+            DaemonConfig(ai={"generation": {"local": {"endpoints": {}}}})
 
     def test_daemon_config_rejects_top_level_local(self) -> None:
         with pytest.raises(ValidationError, match="local config has been removed"):
@@ -92,7 +96,7 @@ class TestLocalGenerationConfig:
 
 
 class TestChatSessionLocalModel:
-    """Tests for explicit local:<endpoint> routing in ChatSession.start()."""
+    """Tests for explicit endpoint:<name> routing in ChatSession.start()."""
 
     @pytest.mark.asyncio
     async def test_named_local_endpoint_uses_configured_generation_endpoint(self) -> None:
@@ -102,13 +106,11 @@ class TestChatSessionLocalModel:
         config = DaemonConfig(
             ai={
                 "generation": {
-                    "local": {
-                        "endpoints": {
-                            "lm-studio": {
-                                "api_base": "http://localhost:1234/v1",
-                                "model": "qwen-coder-32b",
-                                "api_key": "test-local-key",
-                            }
+                    "endpoints": {
+                        "lm-studio": {
+                            "api_base": "http://localhost:1234/v1",
+                            "model": "qwen-coder-32b",
+                            "api_key": "test-local-key",
                         }
                     }
                 }
@@ -130,14 +132,14 @@ class TestChatSessionLocalModel:
             mock_client = AsyncMock()
             mock_sdk.return_value = mock_client
 
-            await session.start(model="local:lm-studio")
+            await session.start(model="endpoint:lm-studio")
 
             call_kwargs = mock_sdk.call_args
             options = call_kwargs.kwargs.get("options") or call_kwargs.args[0]
             assert options.model == "qwen-coder-32b"
             assert options.env.get("ANTHROPIC_BASE_URL") == "http://localhost:1234/v1"
             assert options.env.get("ANTHROPIC_AUTH_TOKEN") == "test-local-key"
-            assert session.model == "local:lm-studio"
+            assert session.model == "endpoint:lm-studio"
 
     @pytest.mark.asyncio
     async def test_model_local_is_rejected(self) -> None:

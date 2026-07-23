@@ -73,6 +73,36 @@ def _convert_existing_secret_keys(existing_secret_keys: set[str]) -> set[str]:
     return converted_secret_keys
 
 
+def _reject_unprobed_responses_endpoint_updates(
+    updates: dict[str, Any],
+    config: DaemonConfig,
+) -> None:
+    prefix = "ai.generation.endpoints."
+    touched_names = {
+        key.removeprefix(prefix).partition(".")[0] for key in updates if key.startswith(prefix)
+    }
+    for endpoint_name in touched_names:
+        endpoint = config.ai.generation.endpoints.get(endpoint_name)
+        if endpoint is not None and endpoint.wire_api == "responses":
+            raise HTTPException(
+                status_code=400,
+                detail=(
+                    f"Responses endpoint {endpoint_name!r} must be saved through "
+                    f"/api/config/generation-endpoints/{endpoint_name}/activate"
+                ),
+            )
+
+
+def _config_validation_detail(error: TypeError | ValueError) -> str:
+    message = str(error)
+    if (
+        "ai.generation.local.* has been removed" in message
+        or "uses the removed local: selector" in message
+    ):
+        return message
+    return "Invalid configuration values"
+
+
 def register_value_routes(router: APIRouter, context: ConfigurationRouteContext) -> None:
     """Register schema and structured config value routes."""
 
@@ -172,10 +202,14 @@ def register_value_routes(router: APIRouter, context: ConfigurationRouteContext)
             current = context.current_config_values()
             deep_merge(current, unflatten_config(validation_flat))
             try:
-                DaemonConfig(**current)
+                prospective_config = DaemonConfig(**current)
+                _reject_unprobed_responses_endpoint_updates(
+                    runtime_updates,
+                    prospective_config,
+                )
             except (TypeError, ValueError) as e:
                 logger.info("Invalid config save request: %s", e)
-                raise HTTPException(status_code=400, detail="Invalid configuration values") from e
+                raise HTTPException(status_code=400, detail=_config_validation_detail(e)) from e
 
             secret_store = context.get_secret_store()
             resolved_current = context.current_config_values()
@@ -189,7 +223,7 @@ def register_value_routes(router: APIRouter, context: ConfigurationRouteContext)
                 runtime_config = DaemonConfig(**resolved_current)
             except (TypeError, ValueError) as e:
                 logger.info("Invalid resolved config after save: %s", e)
-                raise HTTPException(status_code=400, detail="Invalid configuration values") from e
+                raise HTTPException(status_code=400, detail=_config_validation_detail(e)) from e
 
             count = 0
             with embedding_mutation_context(config_store.db):

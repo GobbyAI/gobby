@@ -16,11 +16,12 @@ from gobby.agents.sandbox import (
     web_chat_sandbox_config,
     web_chat_sandbox_policy_hash,
 )
-from gobby.ai.local_endpoints import (
-    _local_generation_endpoints,
-    parse_local_endpoint_model_selector,
+from gobby.ai.codex_endpoint import (
+    codex_endpoint_config_overrides,
+    codex_endpoint_env,
 )
-from gobby.config.ai import LocalGenerationEndpointConfig
+from gobby.ai.endpoints import parse_endpoint_model_selector
+from gobby.config.ai import GenerationEndpointConfig
 from gobby.config.app import DaemonConfig
 from gobby.servers.chat_session import ChatSession
 from gobby.servers.chat_session_base import ChatSessionProtocol
@@ -52,9 +53,13 @@ class WebChatRuntimeManager:
     ) -> None:
         self._sandbox_config = web_chat_sandbox_config(daemon_config)
         self._sandbox_policy_hash = web_chat_sandbox_policy_hash(daemon_config)
-        self._local_generation_endpoints: dict[str, LocalGenerationEndpointConfig] = {}
+        self._generation_endpoints: dict[str, GenerationEndpointConfig] = {}
         if daemon_config is not None:
-            self._local_generation_endpoints = _local_generation_endpoints(daemon_config)
+            ai_config = getattr(daemon_config, "ai", None)
+            generation = getattr(ai_config, "generation", None)
+            endpoints = getattr(generation, "endpoints", {})
+            if isinstance(endpoints, dict):
+                self._generation_endpoints = endpoints
         self._claude_backend = ClaudeWebChatBackend(
             sandbox_config=self._sandbox_config.model_copy(deep=True)
         )
@@ -64,16 +69,28 @@ class WebChatRuntimeManager:
             transcript_retry_delay_seconds=codex_transcript_retry_delay_seconds,
             sandbox_config=self._sandbox_config.model_copy(deep=True),
         )
-        self._codex_local_backends: dict[str, CodexWebChatBackend] = {}
-        for endpoint_name, endpoint in self._local_generation_endpoints.items():
-            try:
-                oss_provider = codex_oss_provider_for_local_endpoint(endpoint)
-            except ValueError:
-                continue
-            local_client = CodexAppServerClient(global_args=codex_oss_launch_args(oss_provider))
-            self._codex_local_backends[endpoint_name] = CodexWebChatBackend(
-                client=local_client,
-                local_endpoint=endpoint,
+        self._codex_endpoint_backends: dict[str, CodexWebChatBackend] = {}
+        for endpoint_name, endpoint in self._generation_endpoints.items():
+            if endpoint.wire_api == "responses":
+                endpoint_client = CodexAppServerClient(
+                    config_overrides=codex_endpoint_config_overrides(
+                        endpoint_name,
+                        endpoint,
+                    ),
+                    env_overrides=codex_endpoint_env(endpoint),
+                    global_args=("--ignore-user-config",),
+                )
+            else:
+                try:
+                    oss_provider = codex_oss_provider_for_local_endpoint(endpoint)
+                except ValueError:
+                    continue
+                endpoint_client = CodexAppServerClient(
+                    global_args=codex_oss_launch_args(oss_provider)
+                )
+            self._codex_endpoint_backends[endpoint_name] = CodexWebChatBackend(
+                client=endpoint_client,
+                generation_endpoint=endpoint,
                 transcript_retry_attempts=codex_transcript_retry_attempts,
                 transcript_retry_delay_seconds=codex_transcript_retry_delay_seconds,
                 sandbox_config=self._sandbox_config.model_copy(deep=True),
@@ -83,7 +100,11 @@ class WebChatRuntimeManager:
         )
         self._qwen_backend = QwenWebChatBackend(
             sandbox_config=self._sandbox_config.model_copy(deep=True),
-            local_generation_endpoints=self._local_generation_endpoints,
+            local_generation_endpoints={
+                name: endpoint
+                for name, endpoint in self._generation_endpoints.items()
+                if endpoint.wire_api == "chat-completions"
+            },
         )
         self._droid_backend = DroidWebChatBackend(
             sandbox_config=self._sandbox_config.model_copy(deep=True)
@@ -134,13 +155,13 @@ class WebChatRuntimeManager:
         """Start daemon-owned provider backends."""
         if background:
             await self._codex_backend.start(background=True)
-            for backend in self._codex_local_backends.values():
+            for backend in self._codex_endpoint_backends.values():
                 await backend.start(background=True)
             await self._droid_backend.start(background=True)
             return
 
         await self._codex_backend.start()
-        for backend in self._codex_local_backends.values():
+        for backend in self._codex_endpoint_backends.values():
             await backend.start()
         await self._grok_backend.start()
         await self._qwen_backend.start()
@@ -151,7 +172,7 @@ class WebChatRuntimeManager:
         await self._droid_backend.stop()
         await self._qwen_backend.stop()
         await self._grok_backend.stop()
-        for backend in self._codex_local_backends.values():
+        for backend in self._codex_endpoint_backends.values():
             await backend.stop()
         await self._codex_backend.stop()
 
@@ -271,14 +292,18 @@ class WebChatRuntimeManager:
         return session
 
     def _codex_backend_for_model(self, model: str | None) -> tuple[CodexWebChatBackend, str | None]:
-        selector = parse_local_endpoint_model_selector(model)
+        selector = parse_endpoint_model_selector(model)
         if selector is None:
             return self._codex_backend, model
-        endpoint = self._local_generation_endpoints.get(selector.endpoint_name)
+        endpoint = self._generation_endpoints.get(selector.endpoint_name)
         if endpoint is None:
-            raise RuntimeError(f"Unknown local generation endpoint: {selector.endpoint_name}")
-        backend = self._codex_local_backends.get(selector.endpoint_name)
+            raise RuntimeError(f"Unknown generation endpoint: {selector.endpoint_name}")
+        backend = self._codex_endpoint_backends.get(selector.endpoint_name)
         if backend is None:
+            if endpoint.wire_api == "responses":
+                raise RuntimeError(
+                    f"Codex Responses endpoint {selector.endpoint_name!r} is unavailable"
+                )
             raise RuntimeError(
                 f"Codex OSS local web chat supports {codex_oss_supported_provider_clause()}"
             )

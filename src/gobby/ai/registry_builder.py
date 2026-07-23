@@ -8,7 +8,7 @@ from functools import partial
 from typing import TYPE_CHECKING, Any
 
 from gobby.ai.embeddings import EmbeddingService
-from gobby.ai.local_endpoints import local_endpoint_provider
+from gobby.ai.endpoints import endpoint_provider
 
 # This builder is an internal split of gobby.ai.registry; reuse registry-private
 # normalization so binding comparisons keep the same semantics without a public API.
@@ -45,9 +45,9 @@ def build_daemon_ai_capability_registry(
     bindings: list[CapabilityBinding] = [
         _embedding_binding(config),
     ]
-    bindings.extend(_local_text_generate_endpoint_bindings(config, feature_models_by_provider))
-    bindings.extend(_local_tool_chat_endpoint_bindings(config, feature_models_by_provider))
-    bindings.extend(_local_vision_extract_endpoint_bindings(config, feature_models_by_provider))
+    bindings.extend(_generation_endpoint_text_bindings(config, feature_models_by_provider))
+    bindings.extend(_generation_endpoint_tool_bindings(config, feature_models_by_provider))
+    bindings.extend(_generation_endpoint_vision_bindings(config, feature_models_by_provider))
     bindings.extend(_audio_bindings(config, whisper_runtime_available))
 
     for entry in provider_metadata():
@@ -332,28 +332,37 @@ def _text_generate_binding(
     )
 
 
-def _local_text_generate_endpoint_bindings(
+def _generation_endpoint_text_bindings(
     config: DaemonConfig | None,
     feature_models_by_provider: Mapping[str, tuple[str, ...]],
 ) -> tuple[CapabilityBinding, ...]:
     if config is None:
         return ()
-    endpoints = config.ai.generation.local.endpoints
+    endpoints = config.ai.generation.endpoints
     bindings: list[CapabilityBinding] = []
     for name, endpoint in endpoints.items():
-        provider = local_endpoint_provider(name)
-        models = _local_endpoint_models(provider, endpoint.model, feature_models_by_provider)
+        provider = endpoint_provider(name)
+        models = _generation_endpoint_models(provider, endpoint.model, feature_models_by_provider)
         bindings.append(
             CapabilityBinding(
                 capability=AICapability.TEXT_GENERATE,
                 provider=provider,
-                adapter_style=AIAdapterStyle.OPENAI_COMPATIBLE,
+                adapter_style=(
+                    AIAdapterStyle.DAEMON
+                    if endpoint.wire_api == "responses"
+                    else AIAdapterStyle.OPENAI_COMPATIBLE
+                ),
                 available=True,
                 models=models,
                 metadata={
-                    "display_name": f"Local ({name})",
+                    "display_name": name,
                     "api_base": endpoint.api_base,
                     "endpoint": name,
+                    "execution_provider": (
+                        "codex" if endpoint.wire_api == "responses" else provider
+                    ),
+                    "protocol": endpoint.protocol,
+                    "wire_api": endpoint.wire_api,
                     "vision_extract": endpoint.vision_extract,
                 },
             )
@@ -361,7 +370,7 @@ def _local_text_generate_endpoint_bindings(
     return tuple(bindings)
 
 
-def _local_endpoint_models(
+def _generation_endpoint_models(
     provider: str,
     default_model: str,
     feature_models_by_provider: Mapping[str, tuple[str, ...]],
@@ -413,33 +422,42 @@ def _vision_extract_binding(
     )
 
 
-def _local_vision_extract_endpoint_bindings(
+def _generation_endpoint_vision_bindings(
     config: DaemonConfig | None,
     feature_models_by_provider: Mapping[str, tuple[str, ...]],
 ) -> tuple[CapabilityBinding, ...]:
     if config is None:
         return ()
-    endpoints = config.ai.generation.local.endpoints
+    endpoints = config.ai.generation.endpoints
     bindings: list[CapabilityBinding] = []
     for name, endpoint in endpoints.items():
         if not endpoint.vision_extract:
             continue
-        provider = local_endpoint_provider(name)
+        provider = endpoint_provider(name)
         bindings.append(
             CapabilityBinding(
                 capability=AICapability.VISION_EXTRACT,
                 provider=provider,
-                adapter_style=AIAdapterStyle.OPENAI_COMPATIBLE,
+                adapter_style=(
+                    AIAdapterStyle.DAEMON
+                    if endpoint.wire_api == "responses"
+                    else AIAdapterStyle.OPENAI_COMPATIBLE
+                ),
                 available=True,
-                models=_local_endpoint_models(
+                models=_generation_endpoint_models(
                     provider,
                     endpoint.model,
                     feature_models_by_provider,
                 ),
                 metadata={
-                    "display_name": f"Local ({name})",
+                    "display_name": name,
                     "api_base": endpoint.api_base,
                     "endpoint": name,
+                    "execution_provider": (
+                        "codex" if endpoint.wire_api == "responses" else provider
+                    ),
+                    "protocol": endpoint.protocol,
+                    "wire_api": endpoint.wire_api,
                     "vision_extract": True,
                 },
             )
@@ -550,30 +568,39 @@ def _tool_chat_binding(
     )
 
 
-def _local_tool_chat_endpoint_bindings(
+def _generation_endpoint_tool_bindings(
     config: DaemonConfig | None,
     feature_models_by_provider: Mapping[str, tuple[str, ...]],
 ) -> tuple[CapabilityBinding, ...]:
     if config is None:
         return ()
-    endpoints = config.ai.generation.local.endpoints
+    endpoints = config.ai.generation.endpoints
     bindings: list[CapabilityBinding] = []
     for name, endpoint in endpoints.items():
         if not endpoint.tool_chat:
             continue
-        provider = local_endpoint_provider(name)
-        models = _local_endpoint_models(provider, endpoint.model, feature_models_by_provider)
+        provider = endpoint_provider(name)
+        models = _generation_endpoint_models(provider, endpoint.model, feature_models_by_provider)
         bindings.append(
             CapabilityBinding(
                 capability=AICapability.TOOL_CHAT,
                 provider=provider,
-                adapter_style=AIAdapterStyle.OPENAI_COMPATIBLE,
+                adapter_style=(
+                    AIAdapterStyle.DAEMON
+                    if endpoint.wire_api == "responses"
+                    else AIAdapterStyle.OPENAI_COMPATIBLE
+                ),
                 available=True,
                 models=models,
                 metadata={
-                    "display_name": f"Local ({name})",
+                    "display_name": name,
                     "api_base": endpoint.api_base,
                     "endpoint": name,
+                    "execution_provider": (
+                        "codex" if endpoint.wire_api == "responses" else provider
+                    ),
+                    "protocol": endpoint.protocol,
+                    "wire_api": endpoint.wire_api,
                     "supports_tools": True,
                 },
             )

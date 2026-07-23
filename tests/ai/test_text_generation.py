@@ -194,7 +194,7 @@ async def test_text_generation_service_selects_available_registry_binding() -> N
     providers = {
         "claude": AIAdapterStyle.LLM_PROVIDER,
         "codex": AIAdapterStyle.DAEMON,
-        "local:lm-studio": AIAdapterStyle.OPENAI_COMPATIBLE,
+        "endpoint:lm-studio": AIAdapterStyle.OPENAI_COMPATIBLE,
         "grok": AIAdapterStyle.CLI,
         "qwen": AIAdapterStyle.CLI,
         "droid": AIAdapterStyle.CLI,
@@ -232,22 +232,24 @@ async def test_text_generation_service_generate_result_preserves_usage() -> None
         [
             CapabilityBinding(
                 capability=AICapability.TEXT_GENERATE,
-                provider="local:lm-studio",
+                provider="endpoint:lm-studio",
                 adapter_style=AIAdapterStyle.OPENAI_COMPATIBLE,
                 available=True,
             )
         ]
     )
     adapter = UsageAdapter()
-    service = TextGenerationService(registry, {"local:lm-studio": adapter})
+    service = TextGenerationService(registry, {"endpoint:lm-studio": adapter})
 
     result = await service.generate_result(
-        TextGenerationRequest(prompt="summarize", provider="local:lm-studio", model="local-model")
+        TextGenerationRequest(
+            prompt="summarize", provider="endpoint:lm-studio", model="local-model"
+        )
     )
 
     assert result.text == "Generated text"
     assert result.usage == {"prompt_tokens": 2, "completion_tokens": 3, "total_tokens": 5}
-    assert result.provider == "local:lm-studio"
+    assert result.provider == "endpoint:lm-studio"
     assert result.model == "local-model"
     assert adapter.requests[-1].prompt == "summarize"
 
@@ -260,7 +262,7 @@ async def test_successful_text_generation_omits_feature_llm_call_at_info(
         [
             CapabilityBinding(
                 capability=AICapability.TEXT_GENERATE,
-                provider="local:lm-studio",
+                provider="endpoint:lm-studio",
                 adapter_style=AIAdapterStyle.OPENAI_COMPATIBLE,
                 available=True,
             )
@@ -268,12 +270,14 @@ async def test_successful_text_generation_omits_feature_llm_call_at_info(
     )
     service = TextGenerationService(
         registry,
-        {"local:lm-studio": RecordingAdapter("local:lm-studio")},
+        {"endpoint:lm-studio": RecordingAdapter("endpoint:lm-studio")},
     )
     caplog.set_level(logging.INFO, logger=TEXT_GENERATION_LOGGER)
 
     await service.generate_result(
-        TextGenerationRequest(prompt="summarize", provider="local:lm-studio", model="local-model")
+        TextGenerationRequest(
+            prompt="summarize", provider="endpoint:lm-studio", model="local-model"
+        )
     )
 
     assert [record for record in caplog.records if record.getMessage() == "feature_llm_call"] == []
@@ -287,7 +291,7 @@ async def test_successful_text_generation_logs_feature_llm_call_at_debug(
         [
             CapabilityBinding(
                 capability=AICapability.TEXT_GENERATE,
-                provider="local:lm-studio",
+                provider="endpoint:lm-studio",
                 adapter_style=AIAdapterStyle.OPENAI_COMPATIBLE,
                 available=True,
             )
@@ -295,12 +299,14 @@ async def test_successful_text_generation_logs_feature_llm_call_at_debug(
     )
     service = TextGenerationService(
         registry,
-        {"local:lm-studio": RecordingAdapter("local:lm-studio")},
+        {"endpoint:lm-studio": RecordingAdapter("endpoint:lm-studio")},
     )
     caplog.set_level(logging.DEBUG, logger=TEXT_GENERATION_LOGGER)
 
     await service.generate_result(
-        TextGenerationRequest(prompt="summarize", provider="local:lm-studio", model="local-model")
+        TextGenerationRequest(
+            prompt="summarize", provider="endpoint:lm-studio", model="local-model"
+        )
     )
 
     records = [record for record in caplog.records if record.getMessage() == "feature_llm_call"]
@@ -317,14 +323,14 @@ async def test_recoverable_candidate_failure_logs_feature_llm_call_at_debug(
         [
             CapabilityBinding(
                 capability=AICapability.TEXT_GENERATE,
-                provider="local:bad",
+                provider="endpoint:bad",
                 adapter_style=AIAdapterStyle.OPENAI_COMPATIBLE,
                 available=True,
                 models=("bad-model",),
             ),
             CapabilityBinding(
                 capability=AICapability.TEXT_GENERATE,
-                provider="local:good",
+                provider="endpoint:good",
                 adapter_style=AIAdapterStyle.OPENAI_COMPATIBLE,
                 available=True,
                 models=("good-model",),
@@ -334,8 +340,8 @@ async def test_recoverable_candidate_failure_logs_feature_llm_call_at_debug(
     service = TextGenerationService(
         registry,
         {
-            "local:bad": FailingAdapter("temporary"),
-            "local:good": RecordingAdapter("local:good"),
+            "endpoint:bad": FailingAdapter("temporary"),
+            "endpoint:good": RecordingAdapter("endpoint:good"),
         },
     )
     caplog.set_level(logging.DEBUG, logger=TEXT_GENERATION_LOGGER)
@@ -343,11 +349,11 @@ async def test_recoverable_candidate_failure_logs_feature_llm_call_at_debug(
     result = await service.generate_result(
         TextGenerationRequest(
             prompt="summarize",
-            candidates=("local:bad/bad-model", "local:good/good-model"),
+            candidates=("endpoint:bad/bad-model", "endpoint:good/good-model"),
         )
     )
 
-    assert result.provider == "local:good"
+    assert result.provider == "endpoint:good"
     records = [record for record in caplog.records if record.getMessage() == "feature_llm_call"]
     assert [record.levelno for record in records] == [logging.DEBUG, logging.DEBUG]
     assert records[0].__dict__["success"] is False
@@ -362,19 +368,19 @@ async def test_failed_text_generation_logs_feature_llm_call_at_error(
         [
             CapabilityBinding(
                 capability=AICapability.TEXT_GENERATE,
-                provider="local:lm-studio",
+                provider="endpoint:lm-studio",
                 adapter_style=AIAdapterStyle.OPENAI_COMPATIBLE,
                 available=True,
             )
         ]
     )
-    service = TextGenerationService(registry, {"local:lm-studio": FailingAdapter("boom")})
+    service = TextGenerationService(registry, {"endpoint:lm-studio": FailingAdapter("boom")})
     caplog.set_level(logging.ERROR, logger=TEXT_GENERATION_LOGGER)
 
     with pytest.raises(RuntimeError, match="boom"):
         await service.generate_result(
             TextGenerationRequest(
-                prompt="summarize", provider="local:lm-studio", model="local-model"
+                prompt="summarize", provider="endpoint:lm-studio", model="local-model"
             )
         )
 
@@ -390,7 +396,7 @@ async def test_text_generation_service_falls_back_across_profile_candidates() ->
         [
             CapabilityBinding(
                 capability=AICapability.TEXT_GENERATE,
-                provider="local:lm-studio",
+                provider="endpoint:lm-studio",
                 adapter_style=AIAdapterStyle.OPENAI_COMPATIBLE,
                 available=True,
                 models=("qwen-local",),
@@ -406,13 +412,13 @@ async def test_text_generation_service_falls_back_across_profile_candidates() ->
     )
     local = FailingAdapter()
     claude = RecordingAdapter("claude")
-    service = TextGenerationService(registry, {"local:lm-studio": local, "claude": claude})
+    service = TextGenerationService(registry, {"endpoint:lm-studio": local, "claude": claude})
 
     result = await service.generate_result(
         TextGenerationRequest(
             prompt="summarize",
             profile="feature_low",
-            candidates=("local:lm-studio/qwen-local", "claude/haiku"),
+            candidates=("endpoint:lm-studio/qwen-local", "claude/haiku"),
         )
     )
 
@@ -468,7 +474,7 @@ async def test_text_generation_service_falls_back_when_candidate_returns_blank_o
         [
             CapabilityBinding(
                 capability=AICapability.TEXT_GENERATE,
-                provider="local:lm-studio",
+                provider="endpoint:lm-studio",
                 adapter_style=AIAdapterStyle.OPENAI_COMPATIBLE,
                 available=True,
                 models=("qwen-local",),
@@ -485,7 +491,7 @@ async def test_text_generation_service_falls_back_when_candidate_returns_blank_o
     claude = RecordingAdapter("claude")
     service = TextGenerationService(
         registry,
-        {"local:lm-studio": StaticTextAdapter("   "), "claude": claude},
+        {"endpoint:lm-studio": StaticTextAdapter("   "), "claude": claude},
     )
     caplog.set_level(logging.DEBUG, logger=TEXT_GENERATION_LOGGER)
 
@@ -493,7 +499,7 @@ async def test_text_generation_service_falls_back_when_candidate_returns_blank_o
         TextGenerationRequest(
             prompt="summarize",
             profile="feature_low",
-            candidates=("local:lm-studio/qwen-local", "claude/haiku"),
+            candidates=("endpoint:lm-studio/qwen-local", "claude/haiku"),
         )
     )
 
@@ -620,14 +626,14 @@ async def test_text_generation_service_falls_back_between_named_local_endpoints(
         [
             CapabilityBinding(
                 capability=AICapability.TEXT_GENERATE,
-                provider="local:lm-studio",
+                provider="endpoint:lm-studio",
                 adapter_style=AIAdapterStyle.OPENAI_COMPATIBLE,
                 available=True,
                 models=("qwen-lm",),
             ),
             CapabilityBinding(
                 capability=AICapability.TEXT_GENERATE,
-                provider="local:ollama",
+                provider="endpoint:ollama",
                 adapter_style=AIAdapterStyle.OPENAI_COMPATIBLE,
                 available=True,
                 models=("qwen-ollama",),
@@ -635,26 +641,26 @@ async def test_text_generation_service_falls_back_between_named_local_endpoints(
         ]
     )
     lm_studio = FailingAdapter("lm studio offline")
-    ollama = RecordingAdapter("local:ollama")
+    ollama = RecordingAdapter("endpoint:ollama")
     service = TextGenerationService(
         registry,
-        {"local:lm-studio": lm_studio, "local:ollama": ollama},
+        {"endpoint:lm-studio": lm_studio, "endpoint:ollama": ollama},
     )
 
     result = await service.generate_result(
         TextGenerationRequest(
             prompt="summarize",
             profile="feature_low",
-            candidates=("local:lm-studio/qwen-lm", "local:ollama/qwen-ollama"),
+            candidates=("endpoint:lm-studio/qwen-lm", "endpoint:ollama/qwen-ollama"),
         )
     )
 
-    assert result.text == "local:ollama:summarize"
-    assert result.provider == "local:ollama"
+    assert result.text == "endpoint:ollama:summarize"
+    assert result.provider == "endpoint:ollama"
     assert result.model == "qwen-ollama"
-    assert lm_studio.requests[0].provider == "local:lm-studio"
+    assert lm_studio.requests[0].provider == "endpoint:lm-studio"
     assert lm_studio.requests[0].model == "qwen-lm"
-    assert ollama.requests[0].provider == "local:ollama"
+    assert ollama.requests[0].provider == "endpoint:ollama"
     assert ollama.requests[0].model == "qwen-ollama"
 
 
@@ -665,28 +671,28 @@ async def test_text_generation_service_routes_named_local_candidate_with_slashed
         [
             CapabilityBinding(
                 capability=AICapability.TEXT_GENERATE,
-                provider="local:lm-studio",
+                provider="endpoint:lm-studio",
                 adapter_style=AIAdapterStyle.OPENAI_COMPATIBLE,
                 available=True,
                 models=(model,),
             ),
         ]
     )
-    local = RecordingAdapter("local:lm-studio")
-    service = TextGenerationService(registry, {"local:lm-studio": local})
+    local = RecordingAdapter("endpoint:lm-studio")
+    service = TextGenerationService(registry, {"endpoint:lm-studio": local})
 
     result = await service.generate_result(
         TextGenerationRequest(
             prompt="summarize",
             profile="feature_low",
-            candidates=(f"local:lm-studio/{model}",),
+            candidates=(f"endpoint:lm-studio/{model}",),
         )
     )
 
-    assert result.text == "local:lm-studio:summarize"
-    assert result.provider == "local:lm-studio"
+    assert result.text == "endpoint:lm-studio:summarize"
+    assert result.provider == "endpoint:lm-studio"
     assert result.model == model
-    assert local.requests[0].provider == "local:lm-studio"
+    assert local.requests[0].provider == "endpoint:lm-studio"
     assert local.requests[0].model == model
 
 
@@ -698,19 +704,19 @@ async def test_text_generation_service_rejects_bare_local_candidate() -> None:
                 AICapability.TEXT_GENERATE,
                 "local",
                 adapter_style=AIAdapterStyle.OPENAI_COMPATIBLE,
-                reason="Use a named local generation endpoint provider such as local:lm-studio.",
+                reason="Use a named local generation endpoint provider such as endpoint:lm-studio.",
             ),
             CapabilityBinding(
                 capability=AICapability.TEXT_GENERATE,
-                provider="local:ollama",
+                provider="endpoint:ollama",
                 adapter_style=AIAdapterStyle.OPENAI_COMPATIBLE,
                 available=True,
                 models=("qwen-ollama",),
             ),
         ]
     )
-    ollama = RecordingAdapter("local:ollama")
-    service = TextGenerationService(registry, {"local:ollama": ollama})
+    ollama = RecordingAdapter("endpoint:ollama")
+    service = TextGenerationService(registry, {"endpoint:ollama": ollama})
 
     with pytest.raises(CapabilityUnavailableError, match="named local generation endpoint"):
         await service.generate_result(
@@ -737,7 +743,7 @@ async def test_text_generation_service_explicit_provider_model_bypasses_profile_
             ),
             CapabilityBinding(
                 capability=AICapability.TEXT_GENERATE,
-                provider="local:lm-studio",
+                provider="endpoint:lm-studio",
                 adapter_style=AIAdapterStyle.OPENAI_COMPATIBLE,
                 available=True,
                 models=("qwen-local",),
@@ -745,20 +751,20 @@ async def test_text_generation_service_explicit_provider_model_bypasses_profile_
         ]
     )
     codex = RecordingAdapter("codex")
-    local = RecordingAdapter("local:lm-studio")
-    service = TextGenerationService(registry, {"codex": codex, "local:lm-studio": local})
+    local = RecordingAdapter("endpoint:lm-studio")
+    service = TextGenerationService(registry, {"codex": codex, "endpoint:lm-studio": local})
 
     result = await service.generate_result(
         TextGenerationRequest(
             prompt="summarize",
             profile="feature_low",
-            provider="local:lm-studio",
+            provider="endpoint:lm-studio",
             model="qwen-local",
         )
     )
 
-    assert result.text == "local:lm-studio:summarize"
-    assert result.provider == "local:lm-studio"
+    assert result.text == "endpoint:lm-studio:summarize"
+    assert result.provider == "endpoint:lm-studio"
     assert result.model == "qwen-local"
     assert codex.requests == []
     assert local.requests[0].profile == "feature_low"
@@ -781,15 +787,15 @@ async def test_text_generation_service_rejects_partial_explicit_routing(
         [
             CapabilityBinding(
                 capability=AICapability.TEXT_GENERATE,
-                provider="local:lm-studio",
+                provider="endpoint:lm-studio",
                 adapter_style=AIAdapterStyle.OPENAI_COMPATIBLE,
                 available=True,
                 models=("qwen/qwen3.6-35b-a3b",),
             )
         ]
     )
-    local = RecordingAdapter("local:lm-studio")
-    service = TextGenerationService(registry, {"local:lm-studio": local})
+    local = RecordingAdapter("endpoint:lm-studio")
+    service = TextGenerationService(registry, {"endpoint:lm-studio": local})
 
     with pytest.raises(ValueError, match="provider and model must be supplied together"):
         await service.generate_result(
@@ -882,7 +888,7 @@ async def test_text_generation_service_profile_only_uses_configured_profile_defa
             ),
             CapabilityBinding(
                 capability=AICapability.TEXT_GENERATE,
-                provider="local:lm-studio",
+                provider="endpoint:lm-studio",
                 adapter_style=AIAdapterStyle.OPENAI_COMPATIBLE,
                 available=True,
                 models=("qwen-local",),
@@ -895,7 +901,7 @@ async def test_text_generation_service_profile_only_uses_configured_profile_defa
                 "profile_defaults": {
                     FeatureProfile.LOW: [
                         {
-                            "candidate": "local:lm-studio/qwen-local",
+                            "candidate": "endpoint:lm-studio/qwen-local",
                             "reasoning_effort": "auto",
                         }
                     ],
@@ -904,10 +910,10 @@ async def test_text_generation_service_profile_only_uses_configured_profile_defa
         }
     )
     codex = RecordingAdapter("codex")
-    local = RecordingAdapter("local:lm-studio")
+    local = RecordingAdapter("endpoint:lm-studio")
     service = TextGenerationService(
         registry,
-        {"codex": codex, "local:lm-studio": local},
+        {"codex": codex, "endpoint:lm-studio": local},
         profile_defaults=config.ai.generation.profile_defaults,
     )
 
@@ -915,14 +921,14 @@ async def test_text_generation_service_profile_only_uses_configured_profile_defa
         TextGenerationRequest(prompt="summarize", profile="feature_low")
     )
 
-    assert result.text == "local:lm-studio:summarize"
-    assert result.provider == "local:lm-studio"
+    assert result.text == "endpoint:lm-studio:summarize"
+    assert result.provider == "endpoint:lm-studio"
     assert result.model == "qwen-local"
     assert codex.requests == []
     assert local.requests == [
         TextGenerationRequest(
             prompt="summarize",
-            provider="local:lm-studio",
+            provider="endpoint:lm-studio",
             profile="feature_low",
             model="qwen-local",
         )
@@ -1820,21 +1826,21 @@ async def test_text_generation_service_uses_native_json_adapter() -> None:
         [
             CapabilityBinding(
                 capability=AICapability.TEXT_GENERATE,
-                provider="local:lm-studio",
+                provider="endpoint:lm-studio",
                 adapter_style=AIAdapterStyle.OPENAI_COMPATIBLE,
                 available=True,
                 models=("qwen-local",),
             )
         ]
     )
-    adapter = JSONAdapter("local:lm-studio")
-    service = TextGenerationService(registry, {"local:lm-studio": adapter})
+    adapter = JSONAdapter("endpoint:lm-studio")
+    service = TextGenerationService(registry, {"endpoint:lm-studio": adapter})
 
     result = await service.generate_json(
-        TextGenerationRequest(prompt="classify", provider="local:lm-studio", model="qwen-local")
+        TextGenerationRequest(prompt="classify", provider="endpoint:lm-studio", model="qwen-local")
     )
 
-    assert result == {"provider": "local:lm-studio", "model": "qwen-local"}
+    assert result == {"provider": "endpoint:lm-studio", "model": "qwen-local"}
 
 
 @pytest.mark.asyncio
@@ -1891,7 +1897,7 @@ async def test_text_generation_service_json_parse_failure_reports_raw_preview() 
 
 @pytest.mark.asyncio
 async def test_text_generation_service_resolves_only_selected_adapter() -> None:
-    providers = ("claude", "codex", "local:lm-studio", "grok", "qwen", "droid")
+    providers = ("claude", "codex", "endpoint:lm-studio", "grok", "qwen", "droid")
     registry = AICapabilityRegistry(
         [
             CapabilityBinding(
@@ -1961,7 +1967,7 @@ async def test_text_generation_service_rejects_none_factory_result() -> None:
 
 
 def test_build_daemon_text_generation_service_defers_adapter_instantiation() -> None:
-    providers = ("claude", "codex", "local:lm-studio", "agy", "grok", "qwen", "droid")
+    providers = ("claude", "codex", "endpoint:lm-studio", "agy", "grok", "qwen", "droid")
     registry = AICapabilityRegistry(
         [
             CapabilityBinding(
@@ -1978,12 +1984,10 @@ def test_build_daemon_text_generation_service_defers_adapter_instantiation() -> 
         DaemonConfig(
             ai={
                 "generation": {
-                    "local": {
-                        "endpoints": {
-                            "lm-studio": {
-                                "api_base": "http://localhost:1234/v1",
-                                "model": "llama",
-                            }
+                    "endpoints": {
+                        "lm-studio": {
+                            "api_base": "http://localhost:1234/v1",
+                            "model": "llama",
                         }
                     }
                 }
@@ -2006,12 +2010,10 @@ def test_daemon_text_generation_builder_maps_feature_providers_to_one_shot_adapt
     config = DaemonConfig(
         ai={
             "generation": {
-                "local": {
-                    "endpoints": {
-                        "ollama": {
-                            "api_base": "http://localhost:11434/v1",
-                            "model": "llama3.2",
-                        }
+                "endpoints": {
+                    "ollama": {
+                        "api_base": "http://localhost:11434/v1",
+                        "model": "llama3.2",
                     }
                 }
             }
@@ -2357,6 +2359,56 @@ async def test_codex_cli_text_generate_adapter_runs_one_shot_exec(
     # Prompt is fed over stdin (codex reads '-'), not embedded in argv (#17457).
     assert command[-1] == "-"
     assert call["stdin_input"] == f"system prompt\n\n{ONE_SHOT_DIRECTIVE}\n\nuser prompt"
+
+
+@pytest.mark.asyncio
+async def test_codex_cli_endpoint_keeps_secret_out_of_argv(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    calls: list[tuple[list[str], dict[str, str]]] = []
+
+    async def fake_run_cli(
+        _provider_name: str,
+        command: list[str],
+        *,
+        neutral_cwd: Path,
+        timeout_seconds: float,
+        env_overrides: dict[str, str],
+        stdin_input: str | None = None,
+    ) -> str:
+        del timeout_seconds, stdin_input
+        Path(command[command.index("--output-last-message") + 1]).write_text("ok", encoding="utf-8")
+        assert neutral_cwd.exists()
+        calls.append((command, env_overrides))
+        return ""
+
+    monkeypatch.setattr(text_generation_adapters, "_run_cli_text_generation_command", fake_run_cli)
+    secret = "endpoint-child-secret"
+    adapter = CodexCLITextGenerateAdapter(
+        command_path="/bin/codex",
+        env={"GOBBY_CODEX_ENDPOINT_API_KEY": secret},
+        config_overrides=(
+            'model_provider="gobby_endpoint_openrouter"',
+            'model="moonshotai/kimi-k3"',
+            ('model_providers.gobby_endpoint_openrouter.env_key="GOBBY_CODEX_ENDPOINT_API_KEY"'),
+            'model_providers.gobby_endpoint_openrouter.wire_api="responses"',
+        ),
+    )
+
+    await adapter.generate(
+        TextGenerationRequest(
+            provider="codex",
+            model="moonshotai/kimi-k3",
+            prompt="hello",
+        )
+    )
+
+    command, child_env = calls[0]
+    assert command.count("-c") == 4
+    assert command.count('model="moonshotai/kimi-k3"') == 1
+    assert child_env == {"GOBBY_CODEX_ENDPOINT_API_KEY": secret}
+    assert secret not in repr(command)
+    assert "--model" not in command
 
 
 def test_cli_text_generate_adapters_treat_auto_reasoning_effort_as_unset() -> None:
@@ -2802,16 +2854,16 @@ async def test_fast_generation_lanes_bypass_spawn_cold_gate() -> None:
     state = GateProbeState(expected_started=3)
     service = TextGenerationService(
         _registry_for_text_generation(
-            ("local:lm-studio", AIAdapterStyle.OPENAI_COMPATIBLE, "local-model")
+            ("endpoint:lm-studio", AIAdapterStyle.OPENAI_COMPATIBLE, "local-model")
         ),
-        {"local:lm-studio": GateProbeAdapter(state, wait_prompts=prompts)},
+        {"endpoint:lm-studio": GateProbeAdapter(state, wait_prompts=prompts)},
         spawn_cold_max_concurrency=1,
     )
     tasks = [
         asyncio.create_task(
             service.generate_result(
                 TextGenerationRequest(
-                    provider="local:lm-studio",
+                    provider="endpoint:lm-studio",
                     model="local-model",
                     prompt=f"hold-{index}",
                 )
@@ -2917,8 +2969,8 @@ async def test_text_generation_service_times_out_slow_candidate_and_falls_back(
     caplog: pytest.LogCaptureFixture,
 ) -> None:
     service = TextGenerationService(
-        _two_candidate_registry("local:slow", "local:good"),
-        {"local:slow": SlowAdapter(), "local:good": RecordingAdapter("local:good")},
+        _two_candidate_registry("endpoint:slow", "endpoint:good"),
+        {"endpoint:slow": SlowAdapter(), "endpoint:good": RecordingAdapter("endpoint:good")},
         candidate_timeout_seconds=0.01,
     )
     caplog.set_level(logging.DEBUG, logger=TEXT_GENERATION_LOGGER)
@@ -2926,11 +2978,11 @@ async def test_text_generation_service_times_out_slow_candidate_and_falls_back(
     result = await service.generate_result(
         TextGenerationRequest(
             prompt="summarize",
-            candidates=("local:slow/slow-model", "local:good/good-model"),
+            candidates=("endpoint:slow/slow-model", "endpoint:good/good-model"),
         )
     )
 
-    assert result.provider == "local:good"
+    assert result.provider == "endpoint:good"
     records = [record for record in caplog.records if record.getMessage() == "feature_llm_call"]
     assert [record.levelno for record in records] == [logging.DEBUG, logging.DEBUG]
     assert records[0].__dict__["success"] is False
@@ -2942,8 +2994,8 @@ async def test_text_generation_service_times_out_slow_json_candidate_and_falls_b
     caplog: pytest.LogCaptureFixture,
 ) -> None:
     service = TextGenerationService(
-        _two_candidate_registry("local:slow", "local:good"),
-        {"local:slow": SlowAdapter(), "local:good": JSONAdapter("local:good")},
+        _two_candidate_registry("endpoint:slow", "endpoint:good"),
+        {"endpoint:slow": SlowAdapter(), "endpoint:good": JSONAdapter("endpoint:good")},
         candidate_timeout_seconds=0.01,
     )
     caplog.set_level(logging.DEBUG, logger=TEXT_GENERATION_LOGGER)
@@ -2951,11 +3003,11 @@ async def test_text_generation_service_times_out_slow_json_candidate_and_falls_b
     result = await service.generate_json(
         TextGenerationRequest(
             prompt="classify",
-            candidates=("local:slow/slow-model", "local:good/good-model"),
+            candidates=("endpoint:slow/slow-model", "endpoint:good/good-model"),
         )
     )
 
-    assert result == {"provider": "local:good", "model": "good-model"}
+    assert result == {"provider": "endpoint:good", "model": "good-model"}
     records = [record for record in caplog.records if record.getMessage() == "feature_llm_call"]
     assert records[0].__dict__["success"] is False
     assert "candidate timed out after 0.01s" in records[0].__dict__["error"]
@@ -2967,7 +3019,7 @@ async def test_text_generation_service_terminal_candidate_timeout_raises() -> No
         [
             CapabilityBinding(
                 capability=AICapability.TEXT_GENERATE,
-                provider="local:slow",
+                provider="endpoint:slow",
                 adapter_style=AIAdapterStyle.OPENAI_COMPATIBLE,
                 available=True,
                 models=("slow-model",),
@@ -2976,13 +3028,13 @@ async def test_text_generation_service_terminal_candidate_timeout_raises() -> No
     )
     service = TextGenerationService(
         registry,
-        {"local:slow": SlowAdapter()},
+        {"endpoint:slow": SlowAdapter()},
         candidate_timeout_seconds=0.01,
     )
 
     with pytest.raises(RuntimeError, match="candidate timed out after 0.01s"):
         await service.generate_result(
-            TextGenerationRequest(prompt="summarize", provider="local:slow", model="slow-model")
+            TextGenerationRequest(prompt="summarize", provider="endpoint:slow", model="slow-model")
         )
 
 
@@ -3002,14 +3054,14 @@ async def test_text_generation_service_total_timeout_cancels_active_generation()
         [
             CapabilityBinding(
                 capability=AICapability.TEXT_GENERATE,
-                provider="local:slow",
+                provider="endpoint:slow",
                 adapter_style=AIAdapterStyle.OPENAI_COMPATIBLE,
                 available=True,
                 models=("slow-model",),
             )
         ]
     )
-    service = TextGenerationService(registry, {"local:slow": CancelAwareAdapter()})
+    service = TextGenerationService(registry, {"endpoint:slow": CancelAwareAdapter()})
 
     with pytest.raises(
         FeatureGenerationUnavailableError,
@@ -3018,7 +3070,7 @@ async def test_text_generation_service_total_timeout_cancels_active_generation()
         await service.generate_result(
             TextGenerationRequest(
                 prompt="summarize",
-                provider="local:slow",
+                provider="endpoint:slow",
                 model="slow-model",
                 total_timeout_seconds=0.01,
             )
@@ -3033,17 +3085,17 @@ async def test_text_generation_service_no_candidate_timeout_when_unset() -> None
         [
             CapabilityBinding(
                 capability=AICapability.TEXT_GENERATE,
-                provider="local:slow",
+                provider="endpoint:slow",
                 adapter_style=AIAdapterStyle.OPENAI_COMPATIBLE,
                 available=True,
                 models=("slow-model",),
             )
         ]
     )
-    service = TextGenerationService(registry, {"local:slow": SlowAdapter(delay=0.05)})
+    service = TextGenerationService(registry, {"endpoint:slow": SlowAdapter(delay=0.05)})
 
     result = await service.generate_result(
-        TextGenerationRequest(prompt="summarize", provider="local:slow", model="slow-model")
+        TextGenerationRequest(prompt="summarize", provider="endpoint:slow", model="slow-model")
     )
 
     assert result.text == "slow text"
@@ -3301,21 +3353,21 @@ async def test_text_generation_service_cleans_up_timed_out_cli_candidate_and_fal
 
     monkeypatch.setattr(asyncio, "create_subprocess_exec", fake_create_subprocess_exec)
     monkeypatch.setattr(text_generation_adapters, "_signal_cli_process_group", lambda *_args: False)
-    registry = _two_candidate_registry("local:slow-cli", "local:good")
+    registry = _two_candidate_registry("endpoint:slow-cli", "endpoint:good")
     service = TextGenerationService(
         registry,
-        {"local:slow-cli": CLIAdapter(), "local:good": RecordingAdapter("local:good")},
+        {"endpoint:slow-cli": CLIAdapter(), "endpoint:good": RecordingAdapter("endpoint:good")},
         candidate_timeout_seconds=0.01,
     )
 
     result = await service.generate_result(
         TextGenerationRequest(
             prompt="summarize",
-            candidates=("local:slow-cli/slow-model", "local:good/good-model"),
+            candidates=("endpoint:slow-cli/slow-model", "endpoint:good/good-model"),
         )
     )
 
-    assert result.provider == "local:good"
+    assert result.provider == "endpoint:good"
     assert process.terminated is True
     assert process.killed is False
 
@@ -4004,12 +4056,12 @@ def test_is_feature_generation_infrastructure_error_classification() -> None:
 
 @pytest.mark.asyncio
 async def test_generate_json_raises_typed_infra_error_when_all_candidates_fail() -> None:
-    registry = _two_candidate_registry("local:a", "local:b")
+    registry = _two_candidate_registry("endpoint:a", "endpoint:b")
     service = TextGenerationService(
         registry,
         {
-            "local:a": ProviderFailureAdapter(_CandidateTimeoutError("a timed out")),
-            "local:b": ProviderFailureAdapter(_CandidateTimeoutError("b timed out")),
+            "endpoint:a": ProviderFailureAdapter(_CandidateTimeoutError("a timed out")),
+            "endpoint:b": ProviderFailureAdapter(_CandidateTimeoutError("b timed out")),
         },
     )
 
@@ -4017,7 +4069,7 @@ async def test_generate_json_raises_typed_infra_error_when_all_candidates_fail()
         await service.generate_json(
             TextGenerationRequest(
                 prompt="extract",
-                candidates=("local:a/slow-model", "local:b/good-model"),
+                candidates=("endpoint:a/slow-model", "endpoint:b/good-model"),
             )
         )
     # The terminal failure is classified as infrastructure (callers back off, not reject).

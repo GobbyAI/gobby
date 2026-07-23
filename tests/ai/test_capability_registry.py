@@ -13,7 +13,7 @@ from gobby.ai import (
     CapabilityUnavailableError,
     build_daemon_ai_capability_registry,
 )
-from gobby.config.ai import AIConfig, GenerationConfig, LocalGenerationConfig
+from gobby.config.ai import AIConfig, GenerationConfig
 from gobby.config.app import DaemonConfig
 from gobby.config.persistence import EmbeddingsConfig
 from gobby.config.voice import OpenAICompatibleAudioBindingConfig, VoiceConfig
@@ -89,14 +89,14 @@ def _local_family_registry() -> AICapabilityRegistry:
         [
             CapabilityBinding(
                 capability=AICapability.TEXT_GENERATE,
-                provider="local:lm-studio",
+                provider="endpoint:lm-studio",
                 adapter_style=AIAdapterStyle.OPENAI_COMPATIBLE,
                 available=True,
                 models=("qwen-lm",),
             ),
             CapabilityBinding(
                 capability=AICapability.TEXT_GENERATE,
-                provider="local:ollama",
+                provider="endpoint:ollama",
                 adapter_style=AIAdapterStyle.OPENAI_COMPATIBLE,
                 available=True,
                 models=("qwen-ollama",),
@@ -110,9 +110,11 @@ def test_select_named_local_provider_does_not_match_other_endpoints() -> None:
 
     with pytest.raises(
         CapabilityUnavailableError,
-        match="provider 'local:lm-studio' does not support requested model 'qwen-ollama'",
+        match="provider 'endpoint:lm-studio' does not support requested model 'qwen-ollama'",
     ):
-        registry.select(AICapability.TEXT_GENERATE, provider="local:lm-studio", model="qwen-ollama")
+        registry.select(
+            AICapability.TEXT_GENERATE, provider="endpoint:lm-studio", model="qwen-ollama"
+        )
 
 
 @pytest.mark.parametrize(
@@ -196,18 +198,16 @@ def test_daemon_registry_reports_text_generate_provider_bindings() -> None:
         DaemonConfig(
             ai=AIConfig(
                 generation=GenerationConfig(
-                    local=LocalGenerationConfig(
-                        endpoints={
-                            "lm-studio": {
-                                "api_base": "http://localhost:1234/v1",
-                                "model": "llama",
-                            },
-                            "ollama": {
-                                "api_base": "http://localhost:11434/v1",
-                                "model": "qwen2.5-coder",
-                            },
-                        }
-                    )
+                    endpoints={
+                        "lm-studio": {
+                            "api_base": "http://localhost:1234/v1",
+                            "model": "llama",
+                        },
+                        "ollama": {
+                            "api_base": "http://localhost:11434/v1",
+                            "model": "qwen2.5-coder",
+                        },
+                    }
                 )
             ),
         ),
@@ -217,8 +217,8 @@ def test_daemon_registry_reports_text_generate_provider_bindings() -> None:
     expected_styles = {
         "claude": AIAdapterStyle.LLM_PROVIDER,
         "codex": AIAdapterStyle.DAEMON,
-        "local:lm-studio": AIAdapterStyle.OPENAI_COMPATIBLE,
-        "local:ollama": AIAdapterStyle.OPENAI_COMPATIBLE,
+        "endpoint:lm-studio": AIAdapterStyle.OPENAI_COMPATIBLE,
+        "endpoint:ollama": AIAdapterStyle.OPENAI_COMPATIBLE,
         "grok": AIAdapterStyle.CLI,
         "qwen": AIAdapterStyle.CLI,
         "droid": AIAdapterStyle.CLI,
@@ -229,9 +229,9 @@ def test_daemon_registry_reports_text_generate_provider_bindings() -> None:
         assert binding.provider == provider
         assert binding.adapter_style == adapter_style
 
-    assert registry.binding(AICapability.TEXT_GENERATE, "local") is None
+    assert registry.binding(AICapability.TEXT_GENERATE, "endpoint") is None
 
-    lm_studio = registry.binding(AICapability.TEXT_GENERATE, "local:lm-studio")
+    lm_studio = registry.binding(AICapability.TEXT_GENERATE, "endpoint:lm-studio")
     assert lm_studio is not None
     assert lm_studio.models == ("llama",)
     assert lm_studio.metadata["endpoint"] == "lm-studio"
@@ -276,15 +276,13 @@ def test_daemon_registry_registers_tool_chat_capability_per_style() -> None:
         DaemonConfig(
             ai=AIConfig(
                 generation=GenerationConfig(
-                    local=LocalGenerationConfig(
-                        endpoints={
-                            "lm-studio": {
-                                "api_base": "http://localhost:1234/v1",
-                                "model": "gemma",
-                                "tool_chat": True,
-                            },
-                        }
-                    )
+                    endpoints={
+                        "lm-studio": {
+                            "api_base": "http://localhost:1234/v1",
+                            "model": "gemma",
+                            "tool_chat": True,
+                        },
+                    }
                 )
             ),
         ),
@@ -301,7 +299,7 @@ def test_daemon_registry_registers_tool_chat_capability_per_style() -> None:
     assert registry.select(AICapability.TOOL_CHAT, provider="claude") is claude
 
     # An openai_compatible local endpoint is tool-capable via the daemon loop.
-    lm_studio = registry.binding(AICapability.TOOL_CHAT, "local:lm-studio")
+    lm_studio = registry.binding(AICapability.TOOL_CHAT, "endpoint:lm-studio")
     assert lm_studio is not None
     assert lm_studio.adapter_style == AIAdapterStyle.OPENAI_COMPATIBLE
     assert lm_studio.available is True
@@ -313,21 +311,19 @@ def test_daemon_registry_excludes_local_tool_chat_without_opt_in() -> None:
         DaemonConfig(
             ai=AIConfig(
                 generation=GenerationConfig(
-                    local=LocalGenerationConfig(
-                        endpoints={
-                            "lm-studio": {
-                                "api_base": "http://localhost:1234/v1",
-                                "model": "gemma",
-                            },
-                        }
-                    )
+                    endpoints={
+                        "lm-studio": {
+                            "api_base": "http://localhost:1234/v1",
+                            "model": "gemma",
+                        },
+                    }
                 )
             ),
         ),
         provider_installed=lambda _entry: True,
     )
 
-    assert registry.binding(AICapability.TOOL_CHAT, "local:lm-studio") is None
+    assert registry.binding(AICapability.TOOL_CHAT, "endpoint:lm-studio") is None
 
 
 def test_daemon_registry_excludes_not_yet_supported_tool_chat_styles() -> None:
@@ -411,15 +407,13 @@ def test_daemon_registry_reports_only_proven_vision_extract_bindings_available()
         DaemonConfig(
             ai=AIConfig(
                 generation=GenerationConfig(
-                    local=LocalGenerationConfig(
-                        endpoints={
-                            "lm-studio": {
-                                "api_base": "http://localhost:1234/v1",
-                                "model": "llava",
-                                "vision_extract": True,
-                            }
+                    endpoints={
+                        "lm-studio": {
+                            "api_base": "http://localhost:1234/v1",
+                            "model": "llava",
+                            "vision_extract": True,
                         }
-                    )
+                    }
                 )
             ),
         ),
@@ -429,11 +423,11 @@ def test_daemon_registry_reports_only_proven_vision_extract_bindings_available()
     status = registry.status(AICapability.VISION_EXTRACT)
     available_providers = {binding.provider for binding in status.bindings if binding.available}
 
-    assert available_providers == {"claude", "local:lm-studio"}
+    assert available_providers == {"claude", "endpoint:lm-studio"}
 
     assert registry.binding(AICapability.VISION_EXTRACT, "local") is None
 
-    lm_studio = registry.binding(AICapability.VISION_EXTRACT, "local:lm-studio")
+    lm_studio = registry.binding(AICapability.VISION_EXTRACT, "endpoint:lm-studio")
     assert lm_studio is not None
     assert lm_studio.available is True
     assert lm_studio.adapter_style == AIAdapterStyle.OPENAI_COMPATIBLE

@@ -9,6 +9,11 @@ export interface ProviderModelOption {
   hidden?: boolean;
   is_default?: boolean;
   canonical_id?: string;
+  context_length?: number | null;
+  context_length_source?: string;
+  input_modalities?: string[];
+  supports_tools?: boolean;
+  execution_provider?: string;
   reasoning?: ProviderModelReasoning;
 }
 
@@ -91,6 +96,12 @@ function isProviderModelOption(value: unknown): value is ProviderModelOption {
     (value.hidden === undefined || typeof value.hidden === "boolean") &&
     (value.is_default === undefined || typeof value.is_default === "boolean") &&
     (value.canonical_id === undefined || typeof value.canonical_id === "string") &&
+    (value.input_modalities === undefined ||
+      (Array.isArray(value.input_modalities) &&
+        value.input_modalities.every((modality) => typeof modality === "string"))) &&
+    (value.supports_tools === undefined || typeof value.supports_tools === "boolean") &&
+    (value.execution_provider === undefined ||
+      typeof value.execution_provider === "string") &&
     (value.context_length === undefined ||
       value.context_length === null ||
       typeof value.context_length === "number") &&
@@ -275,6 +286,9 @@ export function resolveModelValueForProvider(
   provider: string | null | undefined,
   model: string | null | undefined,
 ): string | null {
+  if (model?.trim().startsWith("local:")) {
+    return null;
+  }
   const normalizedProvider = normalizeProvider(provider);
   if (!normalizedProvider) {
     return normalizeModelIdentifier(model);
@@ -286,6 +300,22 @@ export function resolveModelValueForProvider(
       model,
     )?.value ?? null
   );
+}
+
+export function modelSupportsImageInput(
+  catalog: ProviderModelEntry[],
+  provider: string | null | undefined,
+  model: string | null | undefined,
+): boolean {
+  const normalizedProvider = normalizeProvider(provider);
+  if (!normalizedProvider) return true;
+  const option = findMatchingModelOption(
+    getModelsForSelection(catalog, normalizedProvider, model),
+    model,
+  );
+  return option?.input_modalities
+    ? option.input_modalities.includes("image")
+    : true;
 }
 
 export function getReasoningOptionsForModel(
@@ -377,17 +407,20 @@ export function getPreferredModelForProvider(
   provider: string | null | undefined,
   preferredModel?: string | null,
 ): string | null {
+  const safePreferredModel = preferredModel?.trim().startsWith("local:")
+    ? null
+    : preferredModel;
   const normalizedProvider = provider?.trim();
   if (!normalizedProvider) {
-    return preferredModel?.trim() || null;
+    return safePreferredModel?.trim() || null;
   }
 
-  const models = getModelsForSelection(catalog, normalizedProvider, preferredModel);
+  const models = getModelsForSelection(catalog, normalizedProvider, safePreferredModel);
   if (models.length === 0) {
-    return preferredModel?.trim() || null;
+    return safePreferredModel?.trim() || null;
   }
 
-  const matchedModel = findMatchingModelOption(models, preferredModel);
+  const matchedModel = findMatchingModelOption(models, safePreferredModel);
   if (matchedModel) {
     return matchedModel.value;
   }
@@ -511,7 +544,7 @@ function parseClaudeModelInfo(model: ProviderModelOption): ParsedModelInfo {
 
 function parseCodexModelInfo(model: ProviderModelOption): ParsedModelInfo {
   const normalized = normalizeModelIdentifier(model.value) ?? "";
-  if (normalized.startsWith("local:")) {
+  if (normalized.startsWith("endpoint:")) {
     return parseGenericModelInfo(model);
   }
   const tokens = tokenizeModel(normalized);

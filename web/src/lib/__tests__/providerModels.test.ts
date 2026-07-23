@@ -6,6 +6,7 @@ import {
   getModelLabel,
   getModelsForProvider,
   getModelsForSelection,
+  modelSupportsImageInput,
   getOrderedProviders,
   getPreferredModelForProvider,
   getProviderDisplayName,
@@ -313,7 +314,7 @@ describe("providerModels", () => {
         source: "live",
         models: [
           {
-            value: "local:lm-studio/gpt-5.6-sol",
+            value: "endpoint:lm-studio/gpt-5.6-sol",
             label: "LM Studio: Sol Dev",
           },
         ],
@@ -322,9 +323,9 @@ describe("providerModels", () => {
 
     expect(getModelsForProvider(localCatalog, "codex")).toEqual([
       {
-        value: "local:lm-studio/gpt-5.6-sol",
+        value: "endpoint:lm-studio/gpt-5.6-sol",
         label: "LM Studio: Sol Dev",
-        match_identifiers: ["local:lm-studio/gpt-5.6-sol"],
+        match_identifiers: ["endpoint:lm-studio/gpt-5.6-sol"],
         _parsed: {
           displayLabel: "LM Studio: Sol Dev",
           strengthRank: 0,
@@ -334,7 +335,7 @@ describe("providerModels", () => {
       },
     ]);
     expect(
-      getModelLabel(localCatalog, "codex", "local:lm-studio/gpt-5.6-sol"),
+      getModelLabel(localCatalog, "codex", "endpoint:lm-studio/gpt-5.6-sol"),
     ).toBe("LM Studio: Sol Dev");
   });
 
@@ -424,6 +425,43 @@ describe("providerModels", () => {
         model: "claude-unknown-zzz",
       }),
     ).toEqual({ provider: "claude", model: "opus" });
+  });
+
+  it("rejects a stale local selector instead of silently switching providers", () => {
+    expect(getPreferredModelForProvider(catalog, "codex", "local:openrouter/kimi")).toBe(
+      "gpt-5.4",
+    );
+    expect(
+      resolveProviderModelPair(catalog, {
+        provider: "codex",
+        model: "local:openrouter/kimi",
+      }),
+    ).toEqual({ provider: "codex", model: "gpt-5.4" });
+  });
+
+  it("gates image input from endpoint model capabilities", () => {
+    const responseCatalog: ProviderModelEntry[] = [
+      {
+        provider: "codex",
+        available: true,
+        source: "live",
+        models: [
+          {
+            value: "endpoint:openrouter/moonshotai/kimi-k3",
+            label: "OpenRouter: moonshotai/kimi-k3",
+            input_modalities: ["text"],
+          },
+        ],
+      },
+    ];
+
+    expect(
+      modelSupportsImageInput(
+        responseCatalog,
+        "codex",
+        "endpoint:openrouter/moonshotai/kimi-k3",
+      ),
+    ).toBe(false);
   });
 
   it("logs and returns an empty catalog when the fetch fails", async () => {
@@ -529,11 +567,11 @@ describe("providerModels", () => {
 
   it("preserves nonblank execution-provider metadata and catalog identity", async () => {
     const validEntry: ProviderModelEntry = {
-      provider: "local:lm-studio",
+      provider: "endpoint:lm-studio",
       execution_provider: "codex",
       available: true,
       source: "live",
-      models: [{ value: "local:lm-studio/qwen3", label: "Qwen3" }],
+      models: [{ value: "endpoint:lm-studio/qwen3", label: "Qwen3" }],
     };
     expectTypeOf(validEntry.execution_provider).toEqualTypeOf<string | undefined>();
     const fetchSpy = vi.fn().mockResolvedValue({
@@ -541,17 +579,17 @@ describe("providerModels", () => {
       json: async () => ({
         providers: [
           validEntry,
-          { ...validEntry, provider: "local:blank", execution_provider: "" },
-          { ...validEntry, provider: "local:whitespace", execution_provider: "   " },
-          { ...validEntry, provider: "local:null", execution_provider: null },
-          { ...validEntry, provider: "local:number", execution_provider: 1 },
+          { ...validEntry, provider: "endpoint:blank", execution_provider: "" },
+          { ...validEntry, provider: "endpoint:whitespace", execution_provider: "   " },
+          { ...validEntry, provider: "endpoint:null", execution_provider: null },
+          { ...validEntry, provider: "endpoint:number", execution_provider: 1 },
         ],
       }),
     });
     vi.stubGlobal("fetch", fetchSpy);
 
     await expect(fetchProviderModelCatalog()).resolves.toEqual([validEntry]);
-    expect(validEntry.provider).toBe("local:lm-studio");
+    expect(validEntry.provider).toBe("endpoint:lm-studio");
   });
 
   it("clearProviderModelCache resets the cached catalog", async () => {
@@ -590,42 +628,45 @@ describe("providerModels", () => {
     expect(fetchSpy).toHaveBeenCalledTimes(2);
   });
 
-  it("preserves a separately cataloged local selector for Codex execution", () => {
-    const localSelector = "local:lm-studio/qwen3-coder";
-    const localCatalog: ProviderModelEntry[] = [
+  it("preserves a Responses endpoint selector grouped under Codex", () => {
+    const endpointSelector = "endpoint:openrouter/moonshotai/kimi-k3";
+    const endpointCatalog: ProviderModelEntry[] = [
       {
         provider: "codex",
         available: true,
         source: "static",
-        models: [{ value: "gpt-5.4", label: "GPT 5.4", is_default: true }],
-      },
-      {
-        provider: "local:lm-studio",
-        display_name: "LM Studio",
-        execution_provider: "codex",
-        available: true,
-        source: "live",
-        supports_web_chat: true,
         models: [
-          { value: localSelector, label: "Qwen3 Coder", is_default: true },
+          { value: "gpt-5.4", label: "GPT 5.4", is_default: true },
+          {
+            value: endpointSelector,
+            label: "OpenRouter: moonshotai/kimi-k3",
+            input_modalities: ["text", "image"],
+          },
         ],
       },
     ];
 
-    expect(getModelsForSelection(localCatalog, "codex", localSelector)).toEqual([
-      expect.objectContaining({ value: localSelector, label: "Qwen3 Coder" }),
-    ]);
     expect(
-      getPreferredModelForProvider(localCatalog, "codex", localSelector),
-    ).toBe(localSelector);
-    expect(getModelLabel(localCatalog, "codex", localSelector)).toBe(
-      "Qwen3 Coder",
+      getModelsForSelection(endpointCatalog, "codex", endpointSelector),
+    ).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          value: endpointSelector,
+          label: "OpenRouter: Moonshotai/Kimi K3",
+        }),
+      ]),
     );
     expect(
-      resolveProviderModelPair(localCatalog, {
+      getPreferredModelForProvider(endpointCatalog, "codex", endpointSelector),
+    ).toBe(endpointSelector);
+    expect(getModelLabel(endpointCatalog, "codex", endpointSelector)).toBe(
+      "OpenRouter: Moonshotai/Kimi K3",
+    );
+    expect(
+      resolveProviderModelPair(endpointCatalog, {
         provider: "codex",
-        model: localSelector,
+        model: endpointSelector,
       }),
-    ).toEqual({ provider: "codex", model: localSelector });
+    ).toEqual({ provider: "codex", model: endpointSelector });
   });
 });

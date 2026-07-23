@@ -10,7 +10,7 @@ fn daemon_profile_request_omits_standalone_binding_fields() {
     let _env = EnvGuard::set_home(home.path());
     write_daemon_files(home.path(), port, "text-token");
     let mut cfg = test_context(Some("project-123"));
-    cfg.bindings.text_generate.provider = Some("local:lm-studio".to_string());
+    cfg.bindings.text_generate.provider = Some("endpoint:lm-studio".to_string());
     cfg.bindings.text_generate.model = Some("qwen/qwen3.6-35b-a3b".to_string());
 
     let result = generate_via_daemon_with_max_tokens(
@@ -46,7 +46,7 @@ fn daemon_profile_request_omits_standalone_binding_fields() {
     let (port, request) = spawn_server(r#"{"text":"ok"}"#);
     write_daemon_files(home.path(), port, "text-token");
     let mut cfg = test_context(None);
-    cfg.bindings.text_generate.provider = Some("local:lm-studio".to_string());
+    cfg.bindings.text_generate.provider = Some("endpoint:lm-studio".to_string());
     cfg.bindings.text_generate.model = Some("qwen/qwen3.6-35b-a3b".to_string());
 
     generate_via_daemon(&cfg, "No project", None).unwrap();
@@ -129,7 +129,7 @@ fn lopsided_standalone_binding_is_ignored_by_daemon_routing() {
     let (port, request) = spawn_server(r#"{"text":"ok"}"#);
     write_daemon_files(home.path(), port, "text-token");
     let mut cfg = test_context(None);
-    cfg.bindings.text_generate.provider = Some("local:lm-studio".to_string());
+    cfg.bindings.text_generate.provider = Some("endpoint:lm-studio".to_string());
     cfg.bindings.text_generate.model = None;
     cfg.bindings.text_generate.profile = Some("feature_mid".to_string());
 
@@ -154,7 +154,7 @@ fn pinned_one_shot_forwards_explicit_candidates_and_omits_profile() {
     let mut cfg = test_context(Some("project-123"));
     // A configured binding profile/provider/model must not leak into a pinned
     // call: the explicit chain supersedes the whole binding.
-    cfg.bindings.text_generate.provider = Some("local:lm-studio".to_string());
+    cfg.bindings.text_generate.provider = Some("endpoint:lm-studio".to_string());
     cfg.bindings.text_generate.model = Some("qwen/qwen3.6-35b-a3b".to_string());
     cfg.bindings.text_generate.profile = Some("feature_low".to_string());
     let candidates = vec![

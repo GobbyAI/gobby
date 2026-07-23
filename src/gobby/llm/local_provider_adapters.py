@@ -9,7 +9,7 @@ from urllib.parse import urlparse
 
 import httpx
 
-from gobby.config.ai import LocalGenerationEndpointConfig
+from gobby.config.ai import GenerationEndpointConfig
 from gobby.llm.base import (
     LLMProviderError,
     LLMTextResult,
@@ -91,16 +91,16 @@ class LocalProviderAdapter(Protocol):
 
 
 def create_local_provider_adapter(
-    endpoint: LocalGenerationEndpointConfig,
+    endpoint: GenerationEndpointConfig,
 ) -> LocalProviderAdapter:
     """Build the configured local provider adapter."""
-    if endpoint.provider == "openai-compatible":
+    if endpoint.protocol == "openai-compatible":
         return OpenAICompatibleLocalProviderAdapter(endpoint)
-    if endpoint.provider == "lmstudio":
+    if endpoint.protocol == "lmstudio":
         return LMStudioLocalProviderAdapter(endpoint)
-    if endpoint.provider == "ollama":
+    if endpoint.protocol == "ollama":
         return OllamaLocalProviderAdapter(endpoint)
-    raise ValueError(f"Unsupported local generation provider: {endpoint.provider}")
+    raise ValueError(f"Unsupported generation endpoint protocol: {endpoint.protocol}")
 
 
 def _usage_dict(usage: Any) -> dict[str, int] | None:
@@ -217,7 +217,7 @@ def _lmstudio_usage(payload: dict[str, Any]) -> dict[str, int] | None:
 class OpenAICompatibleLocalProviderAdapter:
     """Local provider backed by the OpenAI-compatible SDK path."""
 
-    def __init__(self, endpoint: LocalGenerationEndpointConfig) -> None:
+    def __init__(self, endpoint: GenerationEndpointConfig) -> None:
         self._endpoint = endpoint
         self._client: Any | None = None
         api_key = endpoint.api_key or "not-needed"
@@ -369,7 +369,7 @@ class OpenAICompatibleLocalProviderAdapter:
 class LMStudioLocalProviderAdapter:
     """Local provider backed by LM Studio's native REST API."""
 
-    def __init__(self, endpoint: LocalGenerationEndpointConfig) -> None:
+    def __init__(self, endpoint: GenerationEndpointConfig) -> None:
         self._endpoint = endpoint
         self._origin = _origin(endpoint.api_base)
         self._headers = _headers(endpoint.api_key)
@@ -462,7 +462,7 @@ class LMStudioLocalProviderAdapter:
 class OllamaLocalProviderAdapter:
     """Local provider backed by Ollama's native REST API."""
 
-    def __init__(self, endpoint: LocalGenerationEndpointConfig) -> None:
+    def __init__(self, endpoint: GenerationEndpointConfig) -> None:
         self._endpoint = endpoint
         self._origin = _origin(endpoint.api_base)
 

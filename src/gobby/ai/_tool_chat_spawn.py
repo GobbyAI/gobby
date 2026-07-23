@@ -54,6 +54,10 @@ from gobby.ai._tool_chat_contracts import (
     _resolve_max_turns,
 )
 from gobby.ai._tool_chat_tools import validate_policy
+from gobby.ai.codex_endpoint import (
+    codex_endpoint_config_overrides,
+    codex_endpoint_env,
+)
 
 if TYPE_CHECKING:
     from collections.abc import Mapping
@@ -413,9 +417,11 @@ class CodexSpawnToolChatAdapter:
         *,
         command_path: str | None = None,
         timeout_seconds: float = _DEFAULT_SPAWN_TIMEOUT_SECONDS,
+        config: DaemonConfig | None = None,
     ) -> None:
         self._command_path = command_path
         self._timeout_seconds = timeout_seconds
+        self._config = config
 
     def _resolve_command_path(self) -> str:
         import shutil
@@ -431,24 +437,31 @@ class CodexSpawnToolChatAdapter:
         *,
         model: str | None,
         output_path: Path,
+        config_overrides: tuple[str, ...] = (),
     ) -> list[str]:
         command = [
             self._resolve_command_path(),
             "--ask-for-approval",
             "never",
-            "exec",
-            "--skip-git-repo-check",
-            "--ignore-user-config",
-            "--ignore-rules",
-            "--sandbox",
-            "workspace-write",
-            "-c",
-            "sandbox_workspace_write.network_access=true",
-            "--json",
-            "--output-last-message",
-            str(output_path),
         ]
-        if model:
+        for override in config_overrides:
+            command.extend(["-c", override])
+        command.extend(
+            [
+                "exec",
+                "--skip-git-repo-check",
+                "--ignore-user-config",
+                "--ignore-rules",
+                "--sandbox",
+                "workspace-write",
+                "-c",
+                "sandbox_workspace_write.network_access=true",
+                "--json",
+                "--output-last-message",
+                str(output_path),
+            ]
+        )
+        if model and not config_overrides:
             command.extend(["--model", model])
         _extend_reasoning_args(command, "codex", request.reasoning_effort)
         command.append("-")
@@ -460,13 +473,31 @@ class CodexSpawnToolChatAdapter:
             "Codex tool_chat cannot enforce request.limits; only wall-time timeout applies"
         )
         model = request.model or next(iter(binding.models), None)
+        config_overrides: tuple[str, ...] = ()
+        endpoint_env: dict[str, str] = {}
+        endpoint_name = binding.metadata.get("endpoint")
+        if binding.metadata.get("wire_api") == "responses":
+            if self._config is None or not isinstance(endpoint_name, str):
+                raise ValueError("Responses tool_chat binding is missing endpoint configuration")
+            endpoint = self._config.ai.generation.endpoints[endpoint_name]
+            config_overrides = codex_endpoint_config_overrides(
+                endpoint_name,
+                endpoint,
+                model=model,
+            )
+            endpoint_env.update(codex_endpoint_env(endpoint))
         with tempfile.TemporaryDirectory(prefix="tool-chat-codex-") as work_str:
             work = Path(work_str)
             output_path = work / "last-message.txt"
-            command = self._build_command(request, model=model, output_path=output_path)
+            command = self._build_command(
+                request,
+                model=model,
+                output_path=output_path,
+                config_overrides=config_overrides,
+            )
             # gcode (the read-only investigation surface) is installed in the
             # managed ~/.gobby/bin; merge_spawn_path puts it on the sandbox PATH.
-            env = {"PATH": merge_spawn_path(None)}
+            env = {"PATH": merge_spawn_path(None), **endpoint_env}
             stdout = await _run_cli_text_generation_command(
                 "Codex tool_chat",
                 command,
@@ -878,7 +909,11 @@ class ACPSpawnToolChatAdapter:
         self._grok = GrokSpawnToolChatAdapter(timeout_seconds=timeout)
         self._qwen = QwenSpawnToolChatAdapter(
             timeout_seconds=timeout,
-            openai_endpoints=config.ai.generation.local.endpoints,
+            openai_endpoints={
+                name: endpoint
+                for name, endpoint in config.ai.generation.endpoints.items()
+                if endpoint.wire_api == "chat-completions"
+            },
         )
 
     async def chat(self, request: ToolChatRequest, binding: CapabilityBinding) -> ToolChatResult:

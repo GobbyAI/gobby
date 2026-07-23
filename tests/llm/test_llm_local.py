@@ -37,12 +37,10 @@ def daemon_config() -> DaemonConfig:
     return DaemonConfig(
         ai={
             "generation": {
-                "local": {
-                    "endpoints": {
-                        "lm-studio": {
-                            "api_base": "http://localhost:1234/v1",
-                            "model": "qwen2.5-coder-7b",
-                        }
+                "endpoints": {
+                    "lm-studio": {
+                        "api_base": "http://localhost:1234/v1",
+                        "model": "qwen2.5-coder-7b",
                     }
                 }
             }
@@ -67,7 +65,7 @@ class TestLocalLLMProviderInit:
     def test_init_with_valid_config(self, daemon_config: DaemonConfig) -> None:
         with patch("openai.AsyncOpenAI"):
             p = LocalLLMProvider(daemon_config, endpoint_name="lm-studio")
-        assert p.provider_name == "local:lm-studio"
+        assert p.provider_name == "endpoint:lm-studio"
         assert p.auth_mode == "api_key"
         assert p._default_model == "qwen2.5-coder-7b"
         assert p._url == "http://localhost:1234/v1"
@@ -76,18 +74,16 @@ class TestLocalLLMProviderInit:
         config = DaemonConfig(
             ai={
                 "generation": {
-                    "local": {
-                        "endpoints": {
-                            "lm-studio": {
-                                "api_base": "http://localhost:1234/v1",
-                                "model": "qwen-coder",
-                                "api_key": "test-key",
-                            },
-                            "ollama": {
-                                "api_base": "http://localhost:11434/v1",
-                                "model": "qwen2.5-coder",
-                            },
-                        }
+                    "endpoints": {
+                        "lm-studio": {
+                            "api_base": "http://localhost:1234/v1",
+                            "model": "qwen-coder",
+                            "api_key": "test-key",
+                        },
+                        "ollama": {
+                            "api_base": "http://localhost:11434/v1",
+                            "model": "qwen2.5-coder",
+                        },
                     }
                 }
             }
@@ -96,13 +92,13 @@ class TestLocalLLMProviderInit:
         with patch("openai.AsyncOpenAI") as mock_cls:
             p = LocalLLMProvider(config, endpoint_name="lm-studio")
 
-        assert p.provider_name == "local:lm-studio"
+        assert p.provider_name == "endpoint:lm-studio"
         assert p._default_model == "qwen-coder"
         assert p._url == "http://localhost:1234/v1"
         _assert_bounded_openai_client(mock_cls, api_key="test-key")
 
     def test_unknown_named_generation_endpoint_raises(self) -> None:
-        with pytest.raises(ValueError, match="Unknown local generation endpoint"):
+        with pytest.raises(ValueError, match="Unknown generation endpoint"):
             LocalLLMProvider(DaemonConfig(), endpoint_name="lm-studio")
 
     def test_init_without_endpoint_name_raises(self, daemon_config: DaemonConfig) -> None:
@@ -110,7 +106,7 @@ class TestLocalLLMProviderInit:
             LocalLLMProvider(daemon_config, endpoint_name="")
 
     def test_init_without_matching_endpoint_raises(self) -> None:
-        with pytest.raises(ValueError, match="Unknown local generation endpoint"):
+        with pytest.raises(ValueError, match="Unknown generation endpoint"):
             LocalLLMProvider(DaemonConfig(), endpoint_name="lm-studio")
 
     def test_api_key_defaults_to_not_needed(self, daemon_config: DaemonConfig) -> None:
@@ -122,13 +118,11 @@ class TestLocalLLMProviderInit:
         config = DaemonConfig(
             ai={
                 "generation": {
-                    "local": {
-                        "endpoints": {
-                            "lm-studio": {
-                                "api_base": "http://localhost:1234/v1",
-                                "model": "test",
-                                "api_key": "my-secret-key",
-                            }
+                    "endpoints": {
+                        "lm-studio": {
+                            "api_base": "http://localhost:1234/v1",
+                            "model": "test",
+                            "api_key": "my-secret-key",
                         }
                     }
                 }

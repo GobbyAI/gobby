@@ -556,7 +556,10 @@ async def _spawn_codex_terminal(request: SpawnRequest) -> SpawnResult:
         return sandbox_failure
     assert launch is not None
 
-    config_overrides = _codex_mcp_config_overrides(request.project_path)
+    config_overrides = [
+        *_codex_mcp_config_overrides(request.project_path),
+        *request.codex_config_overrides,
+    ]
     cmd, _cmd_env = build_cli_command(
         cli="codex",
         prompt=request.prompt or "",

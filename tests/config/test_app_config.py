@@ -1136,7 +1136,7 @@ class TestLoadConfig:
             "chat.candidates": ["claude/fable"],
             "tool_summarizer.candidates": [
                 "claude/claude-haiku-4-5",
-                "local:lm-studio/google/gemma-4-26b-a4b-qat",
+                "endpoint:lm-studio/google/gemma-4-26b-a4b-qat",
             ],
             "recommend_tools.candidates": [
                 "codex/gpt-5.3-codex-spark",
@@ -1207,7 +1207,7 @@ class TestLoadConfig:
         assert candidate_labels(config.chat.candidates) == ("claude/fable",)
         assert candidate_labels(config.tool_summarizer.candidates) == (
             "claude/haiku",
-            "local:lm-studio/google/gemma-4-26b-a4b-qat",
+            "endpoint:lm-studio/google/gemma-4-26b-a4b-qat",
         )
         assert candidate_labels(config.recommend_tools.candidates) == (
             "codex/gpt-5.3-codex-spark",
@@ -1272,8 +1272,8 @@ class TestLoadConfig:
             runtime_embedding_key("provider"),
         ]
 
-    def test_legacy_local_generation_db_keys_are_deleted(self, temp_dir: Path) -> None:
-        """Old top-level local generation rows no longer affect runtime config."""
+    def test_legacy_local_generation_db_keys_are_rejected(self, temp_dir: Path) -> None:
+        """Old generation endpoint rows fail startup with the replacement path."""
 
         class DummyConfigStore:
             def __init__(self) -> None:
@@ -1296,13 +1296,13 @@ class TestLoadConfig:
 
         store = DummyConfigStore()
 
-        config = load_config(
-            config_file=str(temp_dir / "bootstrap.yaml"),
-            config_store=store,
-        )
+        with pytest.raises(ValueError, match=r"ai\.generation\.endpoints"):
+            load_config(
+                config_file=str(temp_dir / "bootstrap.yaml"),
+                config_store=store,
+            )
 
         assert sorted(store.deleted) == ["local", "local.model", "local.url"]
-        assert config.ai.generation.local.endpoints["lm-studio"].model == "named-model"
 
     def test_load_config_migrates_defaults_seeded_ui_mode_to_auto(self, temp_dir: Path) -> None:
         """Only defaults-sourced legacy ui.mode=production rows migrate to auto."""

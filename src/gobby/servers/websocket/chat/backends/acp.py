@@ -20,7 +20,7 @@ from gobby.adapters.acp_client import ACPClient, StreamEvent
 from gobby.adapters.acp_commands import normalize_available_commands
 from gobby.agents.sandbox import SandboxConfig
 from gobby.agents.trust import pre_approve_directory
-from gobby.config.ai import LocalGenerationEndpointConfig
+from gobby.config.ai import GenerationEndpointConfig
 from gobby.servers.websocket.chat.backends.base import (
     _BACKEND_START_TIMEOUT_SECONDS,
     ProviderBackendHealth,
@@ -47,7 +47,7 @@ class ACPWebChatBackend:
         client: ACPClient | None = None,
         default_model: str | None = None,
         sandbox_config: SandboxConfig | None = None,
-        local_generation_endpoints: dict[str, LocalGenerationEndpointConfig] | None = None,
+        local_generation_endpoints: dict[str, GenerationEndpointConfig] | None = None,
     ) -> None:
         if not self.provider or not self.display_name:
             raise TypeError(

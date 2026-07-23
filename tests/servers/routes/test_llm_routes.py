@@ -26,7 +26,7 @@ from gobby.ai import (
     VisionExtractResult,
     VisionExtractService,
 )
-from gobby.config.ai import AIConfig, GenerationConfig, LocalGenerationConfig
+from gobby.config.ai import AIConfig, GenerationConfig
 from gobby.config.app import DaemonConfig
 from gobby.config.feature_base import FeatureCandidateConfig
 from gobby.llm.base import LLMTextResult, VisionInputError, VisionProviderError
@@ -53,7 +53,7 @@ class _FakeVisionService:
         return VisionExtractResult(
             text=self.text,
             capability=AICapability.VISION_EXTRACT,
-            provider=request.provider or "local:lm-studio",
+            provider=request.provider or "endpoint:lm-studio",
             model=request.model or "llava",
             ocr_text=self.ocr_text,
         )
@@ -86,15 +86,13 @@ def server_with_llm() -> MagicMock:
     server.config = DaemonConfig(
         ai=AIConfig(
             generation=GenerationConfig(
-                local=LocalGenerationConfig(
-                    endpoints={
-                        "lm-studio": {
-                            "api_base": "http://localhost:1234/v1",
-                            "model": "llava",
-                            "vision_extract": True,
-                        }
+                endpoints={
+                    "lm-studio": {
+                        "api_base": "http://localhost:1234/v1",
+                        "model": "llava",
+                        "vision_extract": True,
                     }
-                )
+                }
             )
         )
     )
@@ -126,7 +124,7 @@ def test_llm_status_returns_registry_snapshot(client: TestClient) -> None:
         providers = {
             binding["provider"] for binding in data["capabilities"][capability]["bindings"]
         }
-        assert "local:lm-studio" in providers
+        assert "endpoint:lm-studio" in providers
 
 
 def test_create_llm_router_does_not_run_vision_temp_cleanup(
@@ -348,14 +346,14 @@ def test_generate_rejects_partial_explicit_routing(
             ),
             CapabilityBinding(
                 capability=AICapability.TEXT_GENERATE,
-                provider="local:lm-studio",
+                provider="endpoint:lm-studio",
                 adapter_style=AIAdapterStyle.OPENAI_COMPATIBLE,
                 available=True,
                 models=("qwen/qwen3.6-35b-a3b",),
             ),
         ]
     )
-    service = TextGenerationService(registry, {"droid": droid, "local:lm-studio": local})
+    service = TextGenerationService(registry, {"droid": droid, "endpoint:lm-studio": local})
     server_with_llm.services.text_generation_service = service
 
     response = client.post("/api/llm/generate", json=payload)
@@ -385,14 +383,14 @@ def test_generate_defaults_to_feature_low_and_accepts_system_alias(
             ),
             CapabilityBinding(
                 capability=AICapability.TEXT_GENERATE,
-                provider="local:lm-studio",
+                provider="endpoint:lm-studio",
                 adapter_style=AIAdapterStyle.OPENAI_COMPATIBLE,
                 available=True,
                 models=("Qwen3-Coder-30B-A3B-Instruct",),
             ),
         ]
     )
-    service = TextGenerationService(registry, {"codex": codex, "local:lm-studio": local})
+    service = TextGenerationService(registry, {"codex": codex, "endpoint:lm-studio": local})
     server_with_llm.services.text_generation_service = service
 
     response = client.post(
@@ -437,14 +435,14 @@ def test_generate_explicit_candidates_bypass_default_profile_and_provider(
             ),
             CapabilityBinding(
                 capability=AICapability.TEXT_GENERATE,
-                provider="local:lm-studio",
+                provider="endpoint:lm-studio",
                 adapter_style=AIAdapterStyle.OPENAI_COMPATIBLE,
                 available=True,
                 models=("Qwen3-Coder-30B-A3B-Instruct",),
             ),
         ]
     )
-    service = TextGenerationService(registry, {"codex": codex, "local:lm-studio": local})
+    service = TextGenerationService(registry, {"codex": codex, "endpoint:lm-studio": local})
     server_with_llm.services.text_generation_service = service
 
     response = client.post(
@@ -453,7 +451,7 @@ def test_generate_explicit_candidates_bypass_default_profile_and_provider(
             "prompt": "Summarize this",
             "provider": "codex",
             "model": "gpt-5.3-codex-spark",
-            "candidates": ["local:lm-studio/Qwen3-Coder-30B-A3B-Instruct"],
+            "candidates": ["endpoint:lm-studio/Qwen3-Coder-30B-A3B-Instruct"],
         },
     )
 
@@ -461,15 +459,15 @@ def test_generate_explicit_candidates_bypass_default_profile_and_provider(
     assert response.json() == {
         "text": "Generated text",
         "capability": "text_generate",
-        "provider": "local:lm-studio",
+        "provider": "endpoint:lm-studio",
         "model": "Qwen3-Coder-30B-A3B-Instruct",
     }
     assert codex.requests == []
     assert local.requests == [
         TextGenerationRequest(
             prompt="Summarize this",
-            provider="local:lm-studio",
-            candidates=("local:lm-studio/Qwen3-Coder-30B-A3B-Instruct",),
+            provider="endpoint:lm-studio",
+            candidates=("endpoint:lm-studio/Qwen3-Coder-30B-A3B-Instruct",),
             model="Qwen3-Coder-30B-A3B-Instruct",
             caller="llm-generate-route",
         )
@@ -482,19 +480,19 @@ def test_generate_selects_candidate_with_slashed_local_model_id(
 ) -> None:
     local = _FakeTextAdapter()
     model = "qwen/qwen3-coder-30b"
-    candidate = f"local:lm-studio/{model}"
+    candidate = f"endpoint:lm-studio/{model}"
     registry = AICapabilityRegistry(
         [
             CapabilityBinding(
                 capability=AICapability.TEXT_GENERATE,
-                provider="local:lm-studio",
+                provider="endpoint:lm-studio",
                 adapter_style=AIAdapterStyle.OPENAI_COMPATIBLE,
                 available=True,
                 models=(model,),
             )
         ]
     )
-    service = TextGenerationService(registry, {"local:lm-studio": local})
+    service = TextGenerationService(registry, {"endpoint:lm-studio": local})
     server_with_llm.services.text_generation_service = service
 
     response = client.post(
@@ -509,13 +507,13 @@ def test_generate_selects_candidate_with_slashed_local_model_id(
     assert response.json() == {
         "text": "Generated text",
         "capability": "text_generate",
-        "provider": "local:lm-studio",
+        "provider": "endpoint:lm-studio",
         "model": model,
     }
     assert local.requests == [
         TextGenerationRequest(
             prompt="Summarize this",
-            provider="local:lm-studio",
+            provider="endpoint:lm-studio",
             candidates=(candidate,),
             model=model,
             caller="llm-generate-route",
@@ -607,14 +605,14 @@ def test_generate_candidates_override_partial_top_level_provider(
             ),
             CapabilityBinding(
                 capability=AICapability.TEXT_GENERATE,
-                provider="local:lm-studio",
+                provider="endpoint:lm-studio",
                 adapter_style=AIAdapterStyle.OPENAI_COMPATIBLE,
                 available=True,
                 models=("Qwen3-Coder-30B-A3B-Instruct",),
             ),
         ]
     )
-    service = TextGenerationService(registry, {"droid": droid, "local:lm-studio": local})
+    service = TextGenerationService(registry, {"droid": droid, "endpoint:lm-studio": local})
     server_with_llm.services.text_generation_service = service
 
     response = client.post(
@@ -622,7 +620,7 @@ def test_generate_candidates_override_partial_top_level_provider(
         json={
             "prompt": "Summarize this",
             "provider": "droid",
-            "candidates": ["local:lm-studio/Qwen3-Coder-30B-A3B-Instruct"],
+            "candidates": ["endpoint:lm-studio/Qwen3-Coder-30B-A3B-Instruct"],
         },
     )
 
@@ -630,15 +628,15 @@ def test_generate_candidates_override_partial_top_level_provider(
     assert response.json() == {
         "text": "Generated text",
         "capability": "text_generate",
-        "provider": "local:lm-studio",
+        "provider": "endpoint:lm-studio",
         "model": "Qwen3-Coder-30B-A3B-Instruct",
     }
     assert droid.requests == []
     assert local.requests == [
         TextGenerationRequest(
             prompt="Summarize this",
-            provider="local:lm-studio",
-            candidates=("local:lm-studio/Qwen3-Coder-30B-A3B-Instruct",),
+            provider="endpoint:lm-studio",
+            candidates=("endpoint:lm-studio/Qwen3-Coder-30B-A3B-Instruct",),
             model="Qwen3-Coder-30B-A3B-Instruct",
             caller="llm-generate-route",
         )
@@ -705,21 +703,21 @@ def test_generate_includes_usage_when_available(
         [
             CapabilityBinding(
                 capability=AICapability.TEXT_GENERATE,
-                provider="local:lm-studio",
+                provider="endpoint:lm-studio",
                 adapter_style=AIAdapterStyle.OPENAI_COMPATIBLE,
                 available=True,
                 models=("local-model",),
             )
         ]
     )
-    service = TextGenerationService(registry, {"local:lm-studio": adapter})
+    service = TextGenerationService(registry, {"endpoint:lm-studio": adapter})
     server_with_llm.services.text_generation_service = service
 
     response = client.post(
         "/api/llm/generate",
         json={
             "prompt": "Summarize this",
-            "provider": "local:lm-studio",
+            "provider": "endpoint:lm-studio",
             "model": "local-model",
         },
     )
@@ -728,7 +726,7 @@ def test_generate_includes_usage_when_available(
     assert response.json() == {
         "text": "Generated text",
         "capability": "text_generate",
-        "provider": "local:lm-studio",
+        "provider": "endpoint:lm-studio",
         "model": "local-model",
         "usage": usage,
     }
@@ -1005,7 +1003,7 @@ def test_vision_status_lists_only_proven_providers_as_available(
         binding["provider"] for binding in data["bindings"] if binding["available"]
     }
     providers = {binding["provider"] for binding in data["bindings"]}
-    assert "local:lm-studio" in available_providers
+    assert "endpoint:lm-studio" in available_providers
     assert "local" not in providers
     assert not {"codex", "droid", "grok", "qwen"} & available_providers
 
@@ -1023,7 +1021,7 @@ def test_vision_extract_upload_executes_service(
         response = client.post(
             "/api/llm/vision/extract",
             data={
-                "provider": "local:lm-studio",
+                "provider": "endpoint:lm-studio",
                 "model": "llava",
                 "context": "settings screenshot",
             },
@@ -1040,12 +1038,12 @@ def test_vision_extract_upload_executes_service(
         "bytes": len(b"image bytes"),
         "content_type": "image/png",
         "capability": "vision_extract",
-        "provider": "local:lm-studio",
+        "provider": "endpoint:lm-studio",
         "model": "llava",
     }
 
     assert service.request is not None
-    assert service.request.provider == "local:lm-studio"
+    assert service.request.provider == "endpoint:lm-studio"
     assert service.request.model == "llava"
     assert service.request.context == "settings screenshot"
     assert Path(service.request.image_path).exists() is False
@@ -1063,7 +1061,7 @@ def test_vision_extract_upload_preserves_missing_ocr_text(
         response = client.post(
             "/api/llm/vision/extract",
             data={
-                "provider": "local:lm-studio",
+                "provider": "endpoint:lm-studio",
                 "model": "llava",
                 "context": "no visible text",
             },
@@ -1504,14 +1502,14 @@ def test_chat_completions_forwards_explicit_routing(
             "messages": [{"role": "user", "content": "Go."}],
             "project_path": "/repo",
             "tool_policy": _READONLY_TOOL_POLICY,
-            "provider": "local:lm-studio",
+            "provider": "endpoint:lm-studio",
             "model": "gemma",
         },
     )
 
     assert response.status_code == 200
     request = service.requests[0]
-    assert request.provider == "local:lm-studio"
+    assert request.provider == "endpoint:lm-studio"
     assert request.model == "gemma"
     # Explicit routing leaves the profile unset (no default override).
     assert request.profile is None

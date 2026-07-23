@@ -2,11 +2,18 @@
 
 from __future__ import annotations
 
+import asyncio
 from collections.abc import Mapping
 from dataclasses import dataclass
 from typing import Protocol
 
-from gobby.ai.local_endpoints import local_endpoint_provider
+from gobby.adapters.codex_impl.client import CodexAppServerClient
+from gobby.ai.codex_endpoint import (
+    codex_endpoint_config_overrides,
+    codex_endpoint_env,
+    codex_event_text,
+)
+from gobby.ai.endpoints import endpoint_provider
 from gobby.ai.registry import (
     AICapability,
     AICapabilityRegistry,
@@ -114,6 +121,60 @@ class LocalVisionExtractAdapter:
         )
 
 
+class CodexEndpointVisionExtractAdapter:
+    """Vision extraction through a dedicated Responses endpoint app-server."""
+
+    def __init__(self, config: DaemonConfig, endpoint_name: str) -> None:
+        self._endpoint = config.ai.generation.endpoints[endpoint_name]
+        self._client = CodexAppServerClient(
+            config_overrides=codex_endpoint_config_overrides(
+                endpoint_name,
+                self._endpoint,
+            ),
+            env_overrides=codex_endpoint_env(self._endpoint),
+            global_args=("--ignore-user-config",),
+        )
+        self._start_lock = asyncio.Lock()
+
+    async def _ensure_started(self) -> None:
+        if self._client.is_connected:
+            return
+        async with self._start_lock:
+            if not self._client.is_connected:
+                await self._client.start()
+
+    async def stop(self) -> None:
+        await self._client.stop()
+
+    async def extract(self, request: VisionExtractRequest) -> str:
+        await self._ensure_started()
+        thread = await self._client.start_thread(
+            model=request.model or self._endpoint.model,
+            approval_policy="never",
+            sandbox="read-only",
+            ephemeral=True,
+        )
+        prompt = request.context or "Describe this image accurately and concisely."
+        deltas: list[str] = []
+        completed: list[str] = []
+        async for event in self._client.run_turn(
+            thread.id,
+            prompt,
+            images=[str(request.image_path)],
+        ):
+            text = codex_event_text(event)
+            if not text:
+                continue
+            if event.get("type") == "item/agentMessage/delta":
+                deltas.append(text)
+            elif event.get("type") == "item/completed":
+                completed.append(text)
+        result = "".join(deltas).strip() or "".join(completed).strip()
+        if not result:
+            raise RuntimeError("Codex Responses vision extraction produced no text")
+        return result
+
+
 def build_daemon_vision_extract_service(
     config: DaemonConfig,
     *,
@@ -130,9 +191,14 @@ def _daemon_vision_extract_adapters(config: DaemonConfig) -> dict[str, VisionExt
     adapters: dict[str, VisionExtractAdapter] = {
         "claude": ClaudeVisionExtractAdapter(config),
     }
-    for name, endpoint in config.ai.generation.local.endpoints.items():
+    for name, endpoint in config.ai.generation.endpoints.items():
         if endpoint.vision_extract:
-            adapters[local_endpoint_provider(name)] = LocalVisionExtractAdapter(config, name)
+            adapter: VisionExtractAdapter
+            if endpoint.wire_api == "responses":
+                adapter = CodexEndpointVisionExtractAdapter(config, name)
+            else:
+                adapter = LocalVisionExtractAdapter(config, name)
+            adapters[endpoint_provider(name)] = adapter
     return adapters
 
 

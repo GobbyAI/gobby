@@ -4,11 +4,13 @@ import { deleteChatAttachment, uploadChatAttachment } from '../../lib/chatAttach
 
 interface UseChatInputAttachmentsOptions {
   attachmentsDisabled: boolean
+  imagesDisabled?: boolean
   projectId?: string | null
 }
 
 export function useChatInputAttachments({
   attachmentsDisabled,
+  imagesDisabled = false,
   projectId,
 }: UseChatInputAttachmentsOptions) {
   const [queuedFiles, setQueuedFiles] = useState<QueuedFile[]>([])
@@ -157,6 +159,7 @@ export function useChatInputAttachments({
     (files: FileList | null) => {
       if (!files || attachmentsDisabled) return
       Array.from(files).forEach((file) => {
+        if (imagesDisabled && file.type.startsWith('image/')) return
         const id = crypto.randomUUID()
         const isImage = file.type.startsWith('image/')
         const previewUrl = isImage ? URL.createObjectURL(file) : null
@@ -176,7 +179,7 @@ export function useChatInputAttachments({
         void uploadQueuedFile(id, file)
       })
     },
-    [attachmentsDisabled, uploadQueuedFile],
+    [attachmentsDisabled, imagesDisabled, uploadQueuedFile],
   )
 
   const removeFile = useCallback(

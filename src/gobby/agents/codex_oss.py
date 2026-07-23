@@ -9,8 +9,8 @@ CODEX_OSS_LOCAL_PROVIDERS = frozenset({"lmstudio", "ollama"})
 
 class CodexOSSLocalEndpoint(Protocol):
     @property
-    def provider(self) -> str | None:
-        """Return the configured local provider name."""
+    def protocol(self) -> str | None:
+        """Return the configured endpoint protocol name."""
         ...
 
 
@@ -21,17 +21,17 @@ def codex_oss_supported_provider_clause() -> str:
 
 def codex_oss_provider_for_local_endpoint(endpoint: CodexOSSLocalEndpoint) -> str:
     """Return Codex OSS local provider name for a local generation endpoint."""
-    provider = str(endpoint.provider).strip().lower() if endpoint.provider is not None else ""
-    if not provider:
+    protocol = str(endpoint.protocol).strip().lower() if endpoint.protocol is not None else ""
+    if not protocol:
         raise ValueError(
             f"Codex OSS local routing requires {codex_oss_supported_provider_clause()}"
         )
-    if provider not in CODEX_OSS_LOCAL_PROVIDERS:
+    if protocol not in CODEX_OSS_LOCAL_PROVIDERS:
         raise ValueError(
             f"Codex OSS local routing supports {codex_oss_supported_provider_clause()}; "
-            f"got provider={provider}"
+            f"got protocol={protocol}"
         )
-    return provider
+    return protocol
 
 
 def codex_oss_launch_args(oss_provider: str) -> list[str]:

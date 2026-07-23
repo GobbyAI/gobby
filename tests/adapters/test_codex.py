@@ -12,6 +12,7 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import os
 from collections.abc import AsyncIterator
 from datetime import UTC, datetime
 from pathlib import Path
@@ -428,6 +429,63 @@ class TestCodexAppServerClientStart:
             assert args.kwargs["env"]["GOBBY_HOOKS_DISABLED"] == "1"
 
         await client.stop()
+
+    @pytest.mark.asyncio
+    async def test_start_injects_endpoint_key_only_in_child_environment(self) -> None:
+        secret = "endpoint-child-secret"
+        client = CodexAppServerClient(
+            config_overrides=(
+                'model_provider="gobby_endpoint_openrouter"',
+                (
+                    "model_providers.gobby_endpoint_openrouter.env_key="
+                    '"GOBBY_CODEX_ENDPOINT_API_KEY"'
+                ),
+            ),
+            env_overrides={"GOBBY_CODEX_ENDPOINT_API_KEY": secret},
+        )
+        process = MagicMock()
+        process.stdin = MagicMock()
+        process.stdout = MagicMock()
+        process.stderr = MagicMock()
+        process.poll.return_value = None
+        process.stdout.readline.return_value = (
+            json.dumps({"jsonrpc": "2.0", "id": 1, "result": {"userAgent": "codex/1.0"}}) + "\n"
+        )
+
+        with (
+            patch(
+                "gobby.adapters.codex_impl.client.subprocess.Popen",
+                return_value=process,
+            ) as popen,
+            patch.dict(os.environ, {}, clear=False),
+        ):
+            os.environ.pop("GOBBY_CODEX_ENDPOINT_API_KEY", None)
+            await client.start()
+
+            command = popen.call_args.args[0]
+            child_env = popen.call_args.kwargs["env"]
+            assert child_env["GOBBY_CODEX_ENDPOINT_API_KEY"] == secret
+            assert "GOBBY_CODEX_ENDPOINT_API_KEY" not in os.environ
+            assert secret not in repr(command)
+
+        await client.stop()
+
+    @pytest.mark.asyncio
+    async def test_start_redacts_endpoint_key_from_serialized_error(self) -> None:
+        secret = "endpoint-child-secret"
+        client = CodexAppServerClient(env_overrides={"GOBBY_CODEX_ENDPOINT_API_KEY": secret})
+
+        with (
+            patch(
+                "gobby.adapters.codex_impl.client.subprocess.Popen",
+                side_effect=RuntimeError(f"failed with {secret}"),
+            ),
+            pytest.raises(RuntimeError) as exc_info,
+        ):
+            await client.start()
+
+        assert secret not in str(exc_info.value)
+        assert "[REDACTED]" in str(exc_info.value)
 
     @pytest.mark.asyncio
     async def test_start_places_global_args_before_app_server_subcommand(self) -> None:

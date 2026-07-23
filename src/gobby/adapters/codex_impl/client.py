@@ -11,7 +11,7 @@ import asyncio
 import logging
 import subprocess  # nosec B404 # subprocess needed for Codex app-server process
 import threading
-from collections.abc import AsyncIterator
+from collections.abc import AsyncIterator, Mapping
 from pathlib import Path
 from typing import Any
 
@@ -63,6 +63,7 @@ class CodexAppServerClient:
         enabled_features: tuple[str, ...] | list[str] | None = None,
         disabled_features: tuple[str, ...] | list[str] | None = None,
         global_args: tuple[str, ...] | list[str] | None = None,
+        env_overrides: Mapping[str, str] | None = None,
     ) -> None:
         """
         Initialize the Codex app-server client.
@@ -81,6 +82,12 @@ class CodexAppServerClient:
         self._enabled_features = tuple(enabled_features or ())
         self._disabled_features = tuple(disabled_features or ())
         self._global_args = tuple(global_args or ())
+        self._env_overrides = dict(env_overrides or {})
+        self._redacted_env_values = tuple(
+            value
+            for key, value in self._env_overrides.items()
+            if value and any(marker in key.upper() for marker in ("KEY", "TOKEN", "SECRET"))
+        )
 
         self._process: subprocess.Popen[str] | None = None
         self._state = CodexConnectionState.DISCONNECTED

@@ -10,6 +10,8 @@ from typing import TYPE_CHECKING, Any
 
 from fastapi import APIRouter
 
+from gobby.ai.codex_endpoint import codex_endpoint_display_name
+from gobby.ai.endpoints import endpoint_provider
 from gobby.providers import provider_metadata
 from gobby.servers.local_provider_models import (
     NO_COMPLETION_MODELS_ERROR,
@@ -109,7 +111,6 @@ _BASE_MODEL_CATALOG: dict[str, list[dict[str, Any]]] = {
 _PROVIDER_DEFS = [(entry.provider, entry.binary) for entry in provider_metadata()]
 _PROVIDER_META = {entry.provider: entry for entry in provider_metadata()}
 _LAZY_ACP_PROVIDERS = frozenset({"grok", "qwen"})
-_CODEX_LOCAL_PROVIDER_TYPES = frozenset({"lmstudio", "ollama"})
 _GENERIC_LOCAL_UNAVAILABLE_REASON = (
     "Generic OpenAI-compatible endpoints are unavailable for web chat"
 )
@@ -191,15 +192,19 @@ async def _local_generation_model_groups(
     config = getattr(getattr(server, "services", None), "config", None)
     ai_cfg = getattr(config, "ai", None) if config is not None else None
     generation_cfg = getattr(ai_cfg, "generation", None)
-    local_cfg = getattr(generation_cfg, "local", None)
-    endpoints = getattr(local_cfg, "endpoints", {})
+    endpoints = getattr(generation_cfg, "endpoints", {})
     if not isinstance(endpoints, dict):
         return []
+    chat_completion_endpoints = {
+        name: endpoint
+        for name, endpoint in endpoints.items()
+        if endpoint.wire_api == "chat-completions"
+    }
     return list(
         await asyncio.gather(
             *(
                 discover_local_endpoint_model_group(name, endpoint)
-                for name, endpoint in endpoints.items()
+                for name, endpoint in chat_completion_endpoints.items()
             )
         )
     )
@@ -211,22 +216,18 @@ def _local_generation_provider_entries(
     provider_type_counts = Counter(group.provider_type for group in groups)
     entries: list[dict[str, Any]] = []
     for group in groups:
-        codex_backed = group.provider_type in _CODEX_LOCAL_PROVIDER_TYPES
         if group.error:
             unavailable_reason = group.error
-        elif not codex_backed:
-            unavailable_reason = _GENERIC_LOCAL_UNAVAILABLE_REASON
         elif not group.models:
             unavailable_reason = NO_COMPLETION_MODELS_ERROR
         else:
-            unavailable_reason = None
-        supports_web_chat = unavailable_reason is None
+            unavailable_reason = _GENERIC_LOCAL_UNAVAILABLE_REASON
         display_name = group.provider_label
         if provider_type_counts[group.provider_type] > 1:
             display_name = f"{display_name} ({group.endpoint_name})"
         entry: dict[str, Any] = {
             "provider": group.provider,
-            "available": supports_web_chat,
+            "available": False,
             "models": group.models,
             "source": group.source,
             "startup_error": group.error,
@@ -234,12 +235,10 @@ def _local_generation_provider_entries(
             "installed": True,
             "deprecated": False,
             "deprecation_message": None,
-            "supports_web_chat": supports_web_chat,
+            "supports_web_chat": False,
             "supports_agent_spawn": False,
             "unavailable_reason": unavailable_reason,
         }
-        if codex_backed:
-            entry["execution_provider"] = "codex"
         entries.append(entry)
     return entries
 
@@ -302,39 +301,59 @@ def _provider_metadata_fields(name: str, path: str | None) -> dict[str, Any]:
     }
 
 
-def _configured_local_provider_entries(server: HTTPServer | None) -> list[dict[str, Any]]:
-    """Return provider-registry rows for configured local generation endpoints."""
+def _configured_endpoint_provider_entries(server: HTTPServer | None) -> list[dict[str, Any]]:
+    """Return provider rows for Chat Completions generation endpoints."""
     config = getattr(getattr(server, "services", None), "config", None)
-    endpoints = getattr(
-        getattr(getattr(getattr(config, "ai", None), "generation", None), "local", None),
-        "endpoints",
-        {},
-    )
+    generation = getattr(getattr(config, "ai", None), "generation", None)
+    endpoints = getattr(generation, "endpoints", {})
     if not isinstance(endpoints, dict):
         return []
 
     entries: list[dict[str, Any]] = []
     for endpoint_name, endpoint in endpoints.items():
-        provider_type = str(getattr(endpoint, "provider", "openai-compatible"))
-        supports_web_chat = provider_type in _CODEX_LOCAL_PROVIDER_TYPES
+        if endpoint.wire_api != "chat-completions":
+            continue
+        provider_type = str(getattr(endpoint, "protocol", "openai-compatible"))
         entries.append(
             {
-                "name": f"local:{endpoint_name}",
-                "available": supports_web_chat,
+                "name": endpoint_provider(endpoint_name),
+                "available": False,
                 "path": None,
                 "startup_error": None,
                 "display_name": f"Local: {local_provider_display_label(provider_type)}",
                 "installed": True,
                 "deprecated": False,
                 "deprecation_message": None,
-                "supports_web_chat": supports_web_chat,
+                "supports_web_chat": False,
                 "supports_agent_spawn": False,
-                "unavailable_reason": (
-                    None if supports_web_chat else _GENERIC_LOCAL_UNAVAILABLE_REASON
-                ),
+                "unavailable_reason": _GENERIC_LOCAL_UNAVAILABLE_REASON,
             }
         )
     return entries
+
+
+def _responses_endpoint_models(server: HTTPServer | None) -> list[dict[str, Any]]:
+    config = getattr(getattr(server, "services", None), "config", None)
+    generation = getattr(getattr(config, "ai", None), "generation", None)
+    endpoints = getattr(generation, "endpoints", {})
+    if not isinstance(endpoints, dict):
+        return []
+    models: list[dict[str, Any]] = []
+    for endpoint_name, endpoint in endpoints.items():
+        if endpoint.wire_api != "responses":
+            continue
+        modalities = ["text", "image"] if endpoint.vision_extract else ["text"]
+        models.append(
+            {
+                "value": f"{endpoint_provider(endpoint_name)}/{endpoint.model}",
+                "label": (f"{codex_endpoint_display_name(endpoint_name)}: {endpoint.model}"),
+                "canonical_id": endpoint.model,
+                "input_modalities": modalities,
+                "supports_tools": endpoint.tool_chat,
+                "execution_provider": "codex",
+            }
+        )
+    return models
 
 
 def create_providers_router(server: HTTPServer | None = None) -> APIRouter:
@@ -361,7 +380,7 @@ def create_providers_router(server: HTTPServer | None = None) -> APIRouter:
                     **_provider_metadata_fields(name, path),
                 }
             )
-        providers.extend(_configured_local_provider_entries(server))
+        providers.extend(_configured_endpoint_provider_entries(server))
         return {"providers": providers}
 
     @router.get("/models")
@@ -383,16 +402,18 @@ def create_providers_router(server: HTTPServer | None = None) -> APIRouter:
             available, startup_error = _provider_health(server, name, path)
             models, source = model_catalog.get(name, fallback_entry)
             filtered_models = _filter_models_for_web_chat(name, models)
-            result.append(
-                {
-                    "provider": name,
-                    "available": available,
-                    "models": filtered_models,
-                    "source": source,
-                    "startup_error": startup_error,
-                    **_provider_metadata_fields(name, path),
-                }
-            )
+            entry = {
+                "provider": name,
+                "available": available,
+                "models": filtered_models,
+                "source": source,
+                "startup_error": startup_error,
+                **_provider_metadata_fields(name, path),
+            }
+            if name == "codex":
+                entry["models"] = [*filtered_models, *_responses_endpoint_models(server)]
+                entry["execution_provider"] = "codex"
+            result.append(entry)
         result.extend(_local_generation_provider_entries(local_model_groups))
         return {"providers": result}
 

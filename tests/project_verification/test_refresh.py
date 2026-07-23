@@ -498,7 +498,7 @@ async def test_synthesis_uses_profile_candidates_and_accepts_evidenced_json(
             }
         }
     )
-    config = ProjectVerificationSynthesisConfig(candidates=["local:lm-studio/test-model"])
+    config = ProjectVerificationSynthesisConfig(candidates=["endpoint:lm-studio/test-model"])
 
     result = await synthesize_verification_commands(service, config, bundle, candidates)
 
@@ -535,7 +535,7 @@ async def test_synthesis_rejects_unsupported_or_mutating_commands(tmp_path: Path
 
     result = await synthesize_verification_commands(
         service,
-        ProjectVerificationSynthesisConfig(candidates=["local:lm-studio/test-model"]),
+        ProjectVerificationSynthesisConfig(candidates=["endpoint:lm-studio/test-model"]),
         bundle,
         candidates,
     )

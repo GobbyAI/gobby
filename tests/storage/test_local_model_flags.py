@@ -74,7 +74,7 @@ def test_count_active_local_agents_uses_run_manager_is_local_flag(
 
     active_local = run_manager.create(
         parent_session_id=session.id,
-        provider="local:lm-studio",
+        provider="endpoint:lm-studio",
         model="qwen2.5-coder",
         prompt="local run",
         is_local=True,
@@ -88,7 +88,7 @@ def test_count_active_local_agents_uses_run_manager_is_local_flag(
     )
     completed_local = run_manager.create(
         parent_session_id=session.id,
-        provider="local:lm-studio",
+        provider="endpoint:lm-studio",
         model="qwen2.5-coder",
         prompt="finished local run",
         is_local=True,

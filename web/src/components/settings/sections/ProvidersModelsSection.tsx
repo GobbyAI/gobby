@@ -87,22 +87,24 @@ const GENERATION_NUMBER_FIELDS: readonly { suffix: string; label: string }[] = [
 ]
 
 const GENERATION_PREFIX = 'ai.generation'
-const LOCAL_ENDPOINTS_PATH = `${GENERATION_PREFIX}.local.endpoints`
+const GENERATION_ENDPOINTS_PATH = `${GENERATION_PREFIX}.endpoints`
 const PROFILE_DEFAULTS_PATH = `${GENERATION_PREFIX}.profile_defaults`
 const CONTEXT_WINDOW_PATH = 'context_window_overrides'
 
-// `LocalGenerationEndpointConfig.provider` enum from the daemon schema.
-const LOCAL_PROVIDER_OPTIONS = [
+// `GenerationEndpointConfig.protocol` enum from the daemon schema.
+const ENDPOINT_PROTOCOL_OPTIONS = [
   { value: 'openai-compatible', label: 'OpenAI-compatible' },
   { value: 'lmstudio', label: 'LM Studio' },
   { value: 'ollama', label: 'Ollama' },
 ]
 
-interface LocalEndpoint {
-  provider?: string
+interface GenerationEndpoint {
+  protocol?: string
+  wire_api?: string
   api_base?: string
   model?: string
   api_key?: string | null
+  tool_chat?: boolean
   vision_extract?: boolean
 }
 
@@ -126,7 +128,7 @@ function featureOwnedPaths(spec: FeatureSpec): string[] {
 const OWNED_PATHS: readonly string[] = [
   ...FEATURE_SPECS.flatMap(featureOwnedPaths),
   ...GENERATION_NUMBER_FIELDS.map((field) => `${GENERATION_PREFIX}.${field.suffix}`),
-  LOCAL_ENDPOINTS_PATH,
+  GENERATION_ENDPOINTS_PATH,
   PROFILE_DEFAULTS_PATH,
   CONTEXT_WINDOW_PATH,
 ]
@@ -243,26 +245,26 @@ function FeatureGroup({ fields, spec }: { fields: SettingsSectionFields; spec: F
   )
 }
 
-function LocalEndpointEditor({
+function GenerationEndpointEditor({
   slug,
   value,
   onChange,
 }: {
   slug: string
-  value: LocalEndpoint
-  onChange: (next: LocalEndpoint) => void
+  value: GenerationEndpoint
+  onChange: (next: GenerationEndpoint) => void
 }) {
   const name = slug || 'new endpoint'
-  const patch = (partial: Partial<LocalEndpoint>) => onChange({ ...value, ...partial })
+  const patch = (partial: Partial<GenerationEndpoint>) => onChange({ ...value, ...partial })
 
   return (
     <div className="settings-endpoint-editor">
       <BoundedSelectField
-        label="Provider"
-        ariaLabel={`Provider (${name})`}
-        value={value.provider ?? 'openai-compatible'}
-        options={LOCAL_PROVIDER_OPTIONS}
-        onChange={(provider) => patch({ provider })}
+        label="Protocol"
+        ariaLabel={`Protocol (${name})`}
+        value={value.protocol ?? 'openai-compatible'}
+        options={ENDPOINT_PROTOCOL_OPTIONS}
+        onChange={(protocol) => patch({ protocol })}
       />
       <TextField
         label="API base"
@@ -285,6 +287,12 @@ function LocalEndpointEditor({
         onChange={(apiKey) => patch({ api_key: apiKey === '' ? null : apiKey })}
       />
       <SwitchField
+        label="Tool chat"
+        ariaLabel={`Tool chat (${name})`}
+        value={Boolean(value.tool_chat)}
+        onChange={(tool_chat) => patch({ tool_chat })}
+      />
+      <SwitchField
         label="Vision extract"
         ariaLabel={`Vision extract (${name})`}
         value={Boolean(value.vision_extract)}
@@ -298,7 +306,7 @@ function GenerationGroup({ fields }: { fields: SettingsSectionFields }) {
   return (
     <Subsection
       title="Generation"
-      hint="Timeouts and local OpenAI-compatible endpoints for daemon text generation."
+      hint="Timeouts and OpenAI-compatible endpoints for daemon text generation."
     >
       {GENERATION_NUMBER_FIELDS.map((field) => (
         <NumberConfigField
@@ -309,16 +317,21 @@ function GenerationGroup({ fields }: { fields: SettingsSectionFields }) {
           ariaLabel={`Generation ${field.label.toLowerCase()}`}
         />
       ))}
-      <KeyValueMapField<LocalEndpoint>
-        label="Local endpoints"
-        ariaLabel="Local endpoint"
-        value={asMap<LocalEndpoint>(fields.getValue(LOCAL_ENDPOINTS_PATH))}
+      <KeyValueMapField<GenerationEndpoint>
+        label="Generation endpoints"
+        ariaLabel="Generation endpoint"
+        value={asMap<GenerationEndpoint>(fields.getValue(GENERATION_ENDPOINTS_PATH))}
         keyPlaceholder="endpoint slug"
         addLabel="Add endpoint"
-        createValue={() => ({ provider: 'openai-compatible', api_base: '', model: '' })}
-        onChange={(next) => fields.setValue(LOCAL_ENDPOINTS_PATH, next)}
+        createValue={() => ({
+          protocol: 'openai-compatible',
+          wire_api: 'chat-completions',
+          api_base: '',
+          model: '',
+        })}
+        onChange={(next) => fields.setValue(GENERATION_ENDPOINTS_PATH, next)}
         renderValue={(endpoint, onValueChange, key) => (
-          <LocalEndpointEditor slug={key} value={endpoint} onChange={onValueChange} />
+          <GenerationEndpointEditor slug={key} value={endpoint} onChange={onValueChange} />
         )}
       />
       <KeyValueMapField<string[]>

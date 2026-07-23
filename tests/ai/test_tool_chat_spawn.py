@@ -470,6 +470,64 @@ async def test_codex_adapter_captures_narrative_and_counts_tools(
 
 
 @pytest.mark.asyncio
+async def test_codex_tool_chat_routes_responses_endpoint_with_scoped_secret(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    secret = "endpoint-child-secret"
+
+    async def fake_run(
+        _provider_name: str,
+        command: list[str],
+        *,
+        neutral_cwd: Path,
+        timeout_seconds: float,
+        env_overrides: dict[str, str],
+        stdin_input: str | None = None,
+    ) -> str:
+        del timeout_seconds, stdin_input
+        (neutral_cwd / "last-message.txt").write_text("tool response", encoding="utf-8")
+        assert env_overrides["GOBBY_CODEX_ENDPOINT_API_KEY"] == secret
+        assert 'model_provider="gobby_endpoint_openrouter"' in command
+        assert 'model_providers.gobby_endpoint_openrouter.wire_api="responses"' in command
+        assert secret not in repr(command)
+        return ""
+
+    monkeypatch.setattr(spawn, "_run_cli_text_generation_command", fake_run)
+    config = DaemonConfig(
+        ai={
+            "generation": {
+                "endpoints": {
+                    "openrouter": {
+                        "wire_api": "responses",
+                        "api_base": "https://openrouter.ai/api/v1",
+                        "api_key": secret,
+                        "model": "moonshotai/kimi-k3",
+                        "tool_chat": True,
+                    }
+                }
+            }
+        }
+    )
+    binding = CapabilityBinding(
+        capability=AICapability.TOOL_CHAT,
+        provider="codex",
+        adapter_style=AIAdapterStyle.DAEMON,
+        available=True,
+        models=("moonshotai/kimi-k3",),
+        metadata={"endpoint": "openrouter", "wire_api": "responses"},
+    )
+    adapter = CodexSpawnToolChatAdapter(command_path="codex", config=config)
+
+    result = await adapter.chat(
+        _request(model="moonshotai/kimi-k3"),
+        binding,
+    )
+
+    assert result.text == "tool response"
+    assert result.provider == "codex"
+
+
+@pytest.mark.asyncio
 async def test_codex_adapter_sends_argmax_sized_prompt_through_stdin(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

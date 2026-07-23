@@ -155,18 +155,17 @@ class ChatSession(ChatSessionHooksMixin, ChatSessionMessagesMixin, ChatSessionPe
     ) -> str | None:
         """Resolve special model aliases and mutate env for endpoint overrides."""
         if requested_model == "local":
-            raise RuntimeError(
-                "Model 'local' has been removed. Use model 'local:<endpoint>' "
-                "with ai.generation.local.endpoints.<endpoint>."
-            )
+            raise RuntimeError("Model 'local' has been removed; replace it with 'endpoint:<name>'")
 
-        from gobby.ai.local_endpoints import resolve_local_generation_endpoint_selector
+        from gobby.ai.endpoints import resolve_generation_endpoint_selector
 
-        selection = resolve_local_generation_endpoint_selector(self._config, requested_model)
+        selection = resolve_generation_endpoint_selector(self._config, requested_model)
         if selection is None:
             return requested_model or self._default_model
 
         endpoint = selection.endpoint_with_selected_model()
+        if endpoint.wire_api == "responses":
+            raise RuntimeError("Responses generation endpoints require provider='codex'")
 
         env["ANTHROPIC_BASE_URL"] = endpoint.api_base
         if endpoint.api_key:
@@ -337,15 +336,14 @@ class ChatSession(ChatSessionHooksMixin, ChatSessionMessagesMixin, ChatSessionPe
             raise RuntimeError("ChatSession not connected")
         resolved_model = new_model
         if new_model == "local":
-            raise RuntimeError(
-                "Model 'local' has been removed. Use model 'local:<endpoint>' "
-                "with ai.generation.local.endpoints.<endpoint>."
-            )
-        from gobby.ai.local_endpoints import resolve_local_generation_endpoint_selector
+            raise RuntimeError("Model 'local' has been removed; replace it with 'endpoint:<name>'")
+        from gobby.ai.endpoints import resolve_generation_endpoint_selector
 
-        selection = resolve_local_generation_endpoint_selector(self._config, new_model)
+        selection = resolve_generation_endpoint_selector(self._config, new_model)
         if selection is not None:
             endpoint = selection.endpoint_with_selected_model()
+            if endpoint.wire_api == "responses":
+                raise RuntimeError("Responses generation endpoints require provider='codex'")
             resolved_model = endpoint.model
             try:
                 from gobby.agents.local_model import LocalModelError, ensure_local_model

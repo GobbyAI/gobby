@@ -7,7 +7,7 @@ from collections.abc import Callable
 import pytest
 from pydantic import BaseModel, ValidationError
 
-from gobby.config.ai import LocalGenerationEndpointConfig
+from gobby.config.ai import GenerationEndpointConfig
 from gobby.config.communications import CommunicationsConfig
 from gobby.config.extensions import WebhookEndpointConfig
 from gobby.config.persistence import EmbeddingsConfig, QdrantConfig
@@ -23,7 +23,7 @@ UrlModelFactory = Callable[[str], BaseModel]
 
 
 def _local_generation_config(url: str) -> BaseModel:
-    return LocalGenerationEndpointConfig(api_base=url, model="local-model")
+    return GenerationEndpointConfig(api_base=url, model="local-model")
 
 
 def _communications_config(url: str) -> BaseModel:

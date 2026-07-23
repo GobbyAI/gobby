@@ -1,0 +1,80 @@
+"""Invocation-scoped Codex configuration for Responses generation endpoints."""
+
+from __future__ import annotations
+
+import json
+from collections.abc import Mapping
+from typing import Any
+
+from gobby.config.ai import GenerationEndpointConfig
+
+CODEX_ENDPOINT_API_KEY_ENV = "GOBBY_CODEX_ENDPOINT_API_KEY"
+
+
+def codex_endpoint_provider_id(endpoint_name: str) -> str:
+    """Return the stable Codex provider ID for a named generation endpoint."""
+    return f"gobby_endpoint_{endpoint_name}"
+
+
+def codex_endpoint_display_name(endpoint_name: str) -> str:
+    if endpoint_name == "openrouter":
+        return "OpenRouter"
+    return endpoint_name.replace("-", " ").replace("_", " ").title()
+
+
+def codex_endpoint_config_overrides(
+    endpoint_name: str,
+    endpoint: GenerationEndpointConfig,
+    *,
+    model: str | None = None,
+) -> tuple[str, ...]:
+    """Build secret-free Codex config overrides for a Responses endpoint."""
+    if endpoint.wire_api != "responses":
+        raise ValueError("Codex endpoint overrides require wire_api='responses'")
+    provider_id = codex_endpoint_provider_id(endpoint_name)
+    selected_model = model or endpoint.model
+    quote = json.dumps
+    return (
+        f"model_provider={quote(provider_id)}",
+        f"model={quote(selected_model)}",
+        f"model_providers.{provider_id}.name={quote(codex_endpoint_display_name(endpoint_name))}",
+        f"model_providers.{provider_id}.base_url={quote(endpoint.api_base)}",
+        f"model_providers.{provider_id}.env_key={quote(CODEX_ENDPOINT_API_KEY_ENV)}",
+        f"model_providers.{provider_id}.wire_api={quote('responses')}",
+    )
+
+
+def codex_model_config_override(model: str) -> str:
+    return f"model={json.dumps(model)}"
+
+
+def codex_event_text(event: Mapping[str, Any]) -> str:
+    """Extract assistant text from a Codex app-server event."""
+    delta = event.get("delta")
+    if isinstance(delta, str) and delta:
+        return delta
+    item = event.get("item")
+    if not isinstance(item, dict):
+        return ""
+    content = item.get("content")
+    if isinstance(content, str):
+        return content
+    if not isinstance(content, list):
+        return ""
+    chunks: list[str] = []
+    for block in content:
+        if isinstance(block, dict):
+            text = block.get("text") or block.get("delta")
+            if isinstance(text, str) and text:
+                chunks.append(text)
+    return "".join(chunks)
+
+
+def codex_endpoint_env(endpoint: GenerationEndpointConfig) -> Mapping[str, str]:
+    """Return the child-only API key environment for a Responses endpoint."""
+    api_key = endpoint.api_key
+    if not api_key or api_key.startswith("$secret:"):
+        raise ValueError(
+            "Generation endpoint API key is unavailable; configure its referenced secret"
+        )
+    return {CODEX_ENDPOINT_API_KEY_ENV: api_key}

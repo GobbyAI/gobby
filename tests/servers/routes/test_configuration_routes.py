@@ -17,6 +17,8 @@ import yaml
 from fastapi import APIRouter, FastAPI
 from starlette.testclient import TestClient
 
+from gobby.ai.endpoint_activation import EndpointActivationError, EndpointActivationResult
+from gobby.config.ai import GenerationEndpointConfig
 from gobby.config.app import DaemonConfig
 from gobby.config.embedding_keys import (
     AI_EMBEDDING_API_KEY_KEY,
@@ -228,6 +230,129 @@ class TestSaveConfigValues:
         data = response.json()
         assert data["ok"] is True
         assert data["requires_restart"] is True
+
+    def test_generic_save_rejects_unprobed_responses_endpoint(
+        self, client: TestClient, temp_db: Any
+    ) -> None:
+        response = client.put(
+            "/api/config/values",
+            json={
+                "values": {
+                    "ai": {
+                        "generation": {
+                            "endpoints": {
+                                "openrouter": {
+                                    "wire_api": "responses",
+                                    "api_base": "https://openrouter.ai/api/v1",
+                                    "api_key": "$secret:OPENROUTER_API_KEY",
+                                    "model": "moonshotai/kimi-k3",
+                                }
+                            }
+                        }
+                    }
+                }
+            },
+        )
+
+        assert response.status_code == 400
+        assert "/generation-endpoints/openrouter/activate" in response.json()["detail"]
+        assert ConfigStore(temp_db).get("ai.generation.endpoints.openrouter.wire_api") is None
+
+    def test_generic_save_rejects_removed_local_generation_config(
+        self, client: TestClient, temp_db: Any
+    ) -> None:
+        response = client.put(
+            "/api/config/values",
+            json={
+                "values": {
+                    "ai": {
+                        "generation": {
+                            "local": {
+                                "endpoints": {
+                                    "lm-studio": {
+                                        "api_base": "http://localhost:1234/v1",
+                                        "model": "llama",
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            },
+        )
+
+        assert response.status_code == 400
+        assert "replace it with ai.generation.endpoints.*" in response.json()["detail"]
+        assert ConfigStore(temp_db).get("ai.generation.local.endpoints.lm-studio.model") is None
+
+    def test_activate_responses_endpoint_reads_secret_at_probe_time_and_persists_reference(
+        self,
+        client: TestClient,
+        temp_db: Any,
+        server: Any,
+        mock_machine_id: Any,
+    ) -> None:
+        observed_key: list[str] = []
+
+        async def probe(
+            endpoint_name: str,
+            endpoint: GenerationEndpointConfig,
+            _daemon_config: DaemonConfig,
+        ) -> EndpointActivationResult:
+            assert endpoint_name == "openrouter"
+            observed_key.append(endpoint.api_key or "")
+            return EndpointActivationResult(endpoint=endpoint, vision_enabled=True)
+
+        with patch(
+            "gobby.servers.routes.configuration_generation_endpoints.probe_responses_endpoint",
+            side_effect=probe,
+        ):
+            response = client.put(
+                "/api/config/generation-endpoints/openrouter/activate",
+                json={
+                    "api_base": "https://openrouter.ai/api/v1",
+                    "api_key": "route-secret-key",
+                    "model": "moonshotai/kimi-k3",
+                    "tool_chat": True,
+                    "vision_extract": True,
+                },
+            )
+
+        assert response.status_code == 200
+        assert response.json()["provider"] == "codex"
+        assert response.json()["model"] == "endpoint:openrouter/moonshotai/kimi-k3"
+        assert observed_key == ["route-secret-key"]
+        store = ConfigStore(temp_db)
+        assert store.get("ai.generation.endpoints.openrouter.api_key") == (
+            "$secret:OPENROUTER_API_KEY"
+        )
+        assert store.get("ai.generation.endpoints.openrouter.wire_api") == "responses"
+        assert SecretStore(temp_db).get("OPENROUTER_API_KEY") == "route-secret-key"
+        runtime = server.services.config.ai.generation.endpoints["openrouter"]
+        assert runtime.api_key == "route-secret-key"
+
+    def test_failed_activation_does_not_persist_endpoint(
+        self,
+        client: TestClient,
+        temp_db: Any,
+        mock_machine_id: Any,
+    ) -> None:
+        with patch(
+            "gobby.servers.routes.configuration_generation_endpoints.probe_responses_endpoint",
+            side_effect=EndpointActivationError("Responses tool probe failed"),
+        ):
+            response = client.put(
+                "/api/config/generation-endpoints/openrouter/activate",
+                json={
+                    "api_base": "https://openrouter.ai/api/v1",
+                    "api_key": "route-secret-key",
+                    "model": "moonshotai/kimi-k3",
+                    "tool_chat": True,
+                },
+            )
+
+        assert response.status_code == 400
+        assert ConfigStore(temp_db).get("ai.generation.endpoints.openrouter.wire_api") is None
 
     def test_save_voice_audio_plaintext_api_key_is_rejected_before_storage(
         self, client: TestClient, temp_db: Any
