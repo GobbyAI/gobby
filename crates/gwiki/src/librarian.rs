@@ -21,7 +21,8 @@ mod semantic;
 mod tests;
 
 use proposals::{artifacts, persist_report, suggested_patch_diffs, suggested_tasks};
-use semantic::{SemanticGapScan, load_distinct_pairs, semantic_gap_scan, semantic_gaps_check};
+pub(crate) use semantic::load_distinct_pairs;
+use semantic::{SemanticGapScan, semantic_gap_scan, semantic_gaps_check};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Options {

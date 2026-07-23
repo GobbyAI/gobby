@@ -200,7 +200,7 @@ pub(super) fn expected_similarity_pair(
 /// page frontmatter, because entity recompiles regenerate frontmatter and
 /// would silently drop an in-page marker. A missing or unparseable file is an
 /// empty set.
-pub(super) fn load_distinct_pairs(vault_root: &Path) -> BTreeSet<(String, String)> {
+pub(crate) fn load_distinct_pairs(vault_root: &Path) -> BTreeSet<(String, String)> {
     #[derive(serde::Deserialize)]
     struct DistinctPairsFile {
         #[serde(default)]

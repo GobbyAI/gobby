@@ -13,6 +13,7 @@ use crate::credibility::{
     CredibilityScore, PageConfidence, PageConfidenceInput, credibility_input_for_source,
     half_life_days_for_content,
 };
+use crate::librarian::load_distinct_pairs;
 use crate::lint::{WikiPage, collect_pages, page_match_keys, report_from_pages, title_for_page};
 use crate::markdown::{MarkdownFence, markdown_fence_closes, markdown_fence_start};
 use crate::provenance::ProvenanceGraph;
@@ -98,6 +99,7 @@ pub struct HealthSourceIssue {
 pub struct DuplicateConcept {
     pub title: String,
     pub paths: Vec<PathBuf>,
+    pub reason: String,
 }
 
 /// Multiple `knowledge/sources/` pages that resolve to the same canonical source
@@ -188,7 +190,7 @@ fn report_from_pages_for_health(
         .filter(|entry| !citation_index.cites(&entry.id))
         .map(source_issue)
         .collect();
-    let duplicate_concepts = duplicate_concepts(pages);
+    let duplicate_concepts = duplicate_concepts(vault_root, pages);
     let duplicate_sources = duplicate_sources(pages);
     let uncompiled_sources = manifest
         .entries
@@ -904,25 +906,78 @@ fn source_issue(source: &SourceRecord) -> HealthSourceIssue {
     }
 }
 
-fn duplicate_concepts(pages: &[crate::lint::WikiPage]) -> Vec<DuplicateConcept> {
-    let mut by_title: BTreeMap<String, (String, Vec<PathBuf>)> = BTreeMap::new();
-    for page in pages {
-        if !page.relative_path.starts_with("knowledge/concepts") {
-            continue;
+fn duplicate_concepts(vault_root: &Path, pages: &[crate::lint::WikiPage]) -> Vec<DuplicateConcept> {
+    let distinct_pairs = load_distinct_pairs(vault_root);
+    let mut concepts = pages
+        .iter()
+        .filter(|page| page.relative_path.starts_with("knowledge/concepts"))
+        .map(|page| (page, title_for_page(page), page_match_keys(page)))
+        .collect::<Vec<_>>();
+    concepts.sort_by(|left, right| left.0.relative_path.cmp(&right.0.relative_path));
+
+    let mut duplicates = Vec::new();
+    for left_index in 0..concepts.len() {
+        let (left_page, left_title, left_keys) = &concepts[left_index];
+        for (right_page, right_title, right_keys) in &concepts[left_index + 1..] {
+            if distinct_pairs.contains(&normalized_health_page_pair(
+                &left_page.relative_path,
+                &right_page.relative_path,
+            )) {
+                continue;
+            }
+            let reason = if left_title.eq_ignore_ascii_case(right_title) {
+                "exact_title"
+            } else if !left_keys.is_disjoint(right_keys) {
+                "shared_key"
+            } else if is_title_prefix_pair(left_title, right_title) {
+                "title_prefix"
+            } else {
+                continue;
+            };
+            let title = if reason == "exact_title" {
+                left_title.clone()
+            } else {
+                format!("{left_title} / {right_title}")
+            };
+            duplicates.push(DuplicateConcept {
+                title,
+                paths: vec![
+                    left_page.relative_path.clone(),
+                    right_page.relative_path.clone(),
+                ],
+                reason: reason.to_owned(),
+            });
         }
-        let title = title_for_page(page);
-        by_title
-            .entry(title.to_ascii_lowercase())
-            .or_insert_with(|| (title, Vec::new()))
-            .1
-            .push(page.relative_path.clone());
     }
-    by_title
-        .into_values()
-        .filter_map(|(title, mut paths)| {
-            paths.sort();
-            (paths.len() > 1).then_some(DuplicateConcept { title, paths })
-        })
+    duplicates
+}
+
+fn normalized_health_page_pair(left: &Path, right: &Path) -> (String, String) {
+    let left = canonical_target_key(&left.with_extension("").display().to_string());
+    let right = canonical_target_key(&right.with_extension("").display().to_string());
+    if left <= right {
+        (left, right)
+    } else {
+        (right, left)
+    }
+}
+
+fn is_title_prefix_pair(left: &str, right: &str) -> bool {
+    let left = alphanumeric_title_key(left);
+    let right = alphanumeric_title_key(right);
+    let (shorter, longer) = if left.chars().count() <= right.chars().count() {
+        (&left, &right)
+    } else {
+        (&right, &left)
+    };
+    shorter.chars().count() >= 5 && shorter != longer && longer.starts_with(shorter)
+}
+
+fn alphanumeric_title_key(title: &str) -> String {
+    title
+        .chars()
+        .filter(|character| character.is_alphanumeric())
+        .flat_map(char::to_lowercase)
         .collect()
 }
 
@@ -984,6 +1039,9 @@ fn render_duplicate_concepts(text: &mut String, duplicates: &[DuplicateConcept])
     for duplicate in duplicates {
         text.push_str("- ");
         text.push_str(&duplicate.title);
+        text.push_str(" [");
+        text.push_str(&duplicate.reason);
+        text.push(']');
         text.push_str(": ");
         text.push_str(
             &duplicate
@@ -1255,6 +1313,85 @@ mod tests {
         let markdown =
             std::fs::read_to_string(root.join("meta/health/latest.md")).expect("health markdown");
         assert!(markdown.starts_with("# Wiki health report\n\nScope: topic:ops\n"));
+    }
+
+    #[test]
+    fn duplicate_concepts_detect_alias_prefix_and_distinct_pairs() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let root = temp.path();
+        for (relative, title, aliases) in [
+            ("knowledge/concepts/cache-a.md", "Cache", ""),
+            ("knowledge/concepts/cache-b.md", "Cache", ""),
+            (
+                "knowledge/concepts/alpha.md",
+                "Alpha",
+                "aliases:\n  - Shared Concept\n",
+            ),
+            (
+                "knowledge/concepts/beta.md",
+                "Beta",
+                "aliases:\n  - Shared Concept\n",
+            ),
+            ("knowledge/concepts/falkor.md", "Falkor", ""),
+            ("knowledge/concepts/falkordb.md", "FalkorDB", ""),
+            ("knowledge/concepts/session.md", "Session", ""),
+            (
+                "knowledge/concepts/session-manager.md",
+                "SessionManager",
+                "",
+            ),
+        ] {
+            write_page(
+                root,
+                relative,
+                &format!(
+                    "---\ntitle: {title}\nsource_kind: concept\n{aliases}---\n# {title}\n\nBody.\n"
+                ),
+            );
+        }
+        write_page(
+            root,
+            "meta/librarian/distinct-pairs.json",
+            r#"{"pairs":[{"left":"knowledge/concepts/session.md","right":"knowledge/concepts/session-manager"}]}"#,
+        );
+
+        let report = inspect(root, ScopeIdentity::project("test")).expect("health inspection");
+
+        assert!(report.duplicate_concepts.iter().any(|duplicate| {
+            duplicate.reason == "exact_title"
+                && duplicate.paths
+                    == vec![
+                        PathBuf::from("knowledge/concepts/cache-a.md"),
+                        PathBuf::from("knowledge/concepts/cache-b.md"),
+                    ]
+        }));
+        assert!(report.duplicate_concepts.iter().any(|duplicate| {
+            duplicate.reason == "shared_key"
+                && duplicate.paths
+                    == vec![
+                        PathBuf::from("knowledge/concepts/alpha.md"),
+                        PathBuf::from("knowledge/concepts/beta.md"),
+                    ]
+        }));
+        assert!(report.duplicate_concepts.iter().any(|duplicate| {
+            duplicate.reason == "title_prefix"
+                && duplicate.paths
+                    == vec![
+                        PathBuf::from("knowledge/concepts/falkor.md"),
+                        PathBuf::from("knowledge/concepts/falkordb.md"),
+                    ]
+        }));
+        assert!(!report.duplicate_concepts.iter().any(|duplicate| {
+            duplicate
+                .paths
+                .iter()
+                .any(|path| path == Path::new("knowledge/concepts/session.md"))
+        }));
+
+        let text = render_text(&report);
+        assert!(text.contains("[exact_title]"));
+        assert!(text.contains("[shared_key]"));
+        assert!(text.contains("[title_prefix]"));
     }
 
     #[test]
