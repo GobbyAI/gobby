@@ -1,4 +1,16 @@
-"""Deterministic, risk-ranked verification receipt prompt packets."""
+"""Deterministic, risk-ranked verification receipt prompt packets.
+
+Detail ranking: explicit receipts, then unresolved failures/conflicts (newer
+than the latest success), then successes, then resolved failures, then
+unknowns — recency within each group. Historical red-phase failures rank
+below the final green run without hiding a current failure.
+
+The refusal floor guarantees one representative catalog row per high-risk
+outcome (failure/conflicting/unknown) plus the completeness disclosure; the
+remaining high-risk receipts stay visible through aggregated tail tallies.
+``evidence_budget_exceeded`` fires only when that minimal disclosure itself
+cannot fit the budget.
+"""
 
 from __future__ import annotations
 
@@ -40,17 +52,24 @@ def _timestamp(receipt: VerificationReceipt) -> datetime:
 def _priority(
     receipt: VerificationReceipt,
     explicit_ids: frozenset[str],
+    latest_success_at: datetime | None,
 ) -> tuple[int, int, float, str]:
+    outcome = receipt.normalized_outcome
+    unresolved_failure = outcome in {"failure", "conflicting"} and (
+        latest_success_at is None or _timestamp(receipt) > latest_success_at
+    )
     if receipt.id in explicit_ids:
         group = 0
-    elif receipt.normalized_outcome == "success":
+    elif unresolved_failure:
         group = 1
-    elif receipt.normalized_outcome in {"failure", "conflicting"}:
+    elif outcome == "success":
         group = 2
-    elif receipt.normalized_outcome == "unknown":
+    elif outcome in {"failure", "conflicting"}:
         group = 3
-    else:
+    elif outcome == "unknown":
         group = 4
+    else:
+        group = 5
     return (
         0 if receipt.id in explicit_ids else 1,
         group,
@@ -172,7 +191,16 @@ def build_verification_receipt_packet(
         raise ValueError("budget_chars must be positive")
     projection = project_verification_outcomes(receipts)
     explicit_ids = frozenset(explicit_receipt_ids)
-    ordered = sorted(projection.receipts, key=lambda receipt: _priority(receipt, explicit_ids))
+    success_times = [
+        _timestamp(receipt)
+        for receipt in projection.receipts
+        if receipt.normalized_outcome == "success"
+    ]
+    latest_success_at = max(success_times) if success_times else None
+    ordered = sorted(
+        projection.receipts,
+        key=lambda receipt: _priority(receipt, explicit_ids, latest_success_at),
+    )
     per_outcome = projection.per_outcome
     mandatory: list[VerificationReceipt] = []
     represented_high_risk: set[str] = set()

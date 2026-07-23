@@ -62,13 +62,15 @@ cat .gobby/project.json | jq '.verification'
 Scope test runs to relevant files — do NOT run the full test suite unless
 explicitly asked.
 
-Successful validation commands such as `uv run pytest ...`,
-`uv run ruff format --check ...`, `uv run ruff check ...`,
-`uv run mypy ...`, and `npm test` are recorded automatically as
-`validation_command` evidence. A failed validation command blocks readiness
-until a later validation command succeeds. Manual evidence can satisfy readiness
-when no failed validation command is pending, but it cannot clear a failed
-validation command.
+Every terminal command run while you hold a claimed task is captured
+automatically as a durable `shell_command` receipt with its outcome and exit
+code — validation runs such as `uv run pytest ...`, `uv run ruff check ...`,
+`uv run mypy ...`, and `npm test` included. Mechanical readiness requires at
+least one successful command receipt; failed and unknown receipts do not
+block readiness but stay ranked first in the evidence packet, where the
+semantic close gate judges whether your successes actually cover the changed
+work. Manual evidence is limited to `manual_diff_review` and never replaces a
+shell command's outcome.
 
 Run each validation command as one native terminal invocation. Preserve the
 exact command and the full structured terminal result.
@@ -94,8 +96,9 @@ in the nested `exec_command` call, emit the complete structured result, and
 follow every `wait` or `write_stdin` token until it terminates. Do not replace
 machine-derived results with output excerpts or human summaries.
 
-Manual `validation_command` evidence is prohibited. Only a captured shell
-outcome with trusted provenance can satisfy the validation-command gate.
+Manual evidence cannot restate a shell command's outcome —
+`record_verification_evidence` accepts only `manual_diff_review`. Only a
+captured shell outcome with trusted provenance produces a command receipt.
 
 For a genuinely non-command artifact such as manual review or PR state, record
 evidence explicitly. Do not use manual evidence to restate or replace a shell

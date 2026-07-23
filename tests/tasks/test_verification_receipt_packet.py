@@ -28,7 +28,7 @@ def _receipt(
         provider="codex",
         execution_id=f"execution-{index}",
         source_event_id=f"event-{index}",
-        evidence_type="validation_command",
+        evidence_type="shell_command",
         command=f"uv run pytest {'x' * command_chars} {index}",
         cwd="/repo",
         normalized_outcome=outcome,
@@ -149,6 +149,18 @@ def test_latest_success_is_detailed_before_historical_failures() -> None:
     details = _payload(packet.text)["detailed_receipts"]
     assert details[0]["receipt_id"] == "receipt-0030"
     assert details[0]["outcome"] == "success"
+
+
+def test_current_failure_is_detailed_before_earlier_successes() -> None:
+    receipts = [_receipt(index) for index in range(30)]
+    receipts.append(_receipt(30, outcome="failure"))
+
+    packet = build_verification_receipt_packet(receipts)
+
+    assert packet.text is not None
+    details = _payload(packet.text)["detailed_receipts"]
+    assert details[0]["receipt_id"] == "receipt-0030"
+    assert details[0]["outcome"] == "failure"
 
 
 def test_packet_refuses_when_minimal_disclosure_exceeds_budget() -> None:
