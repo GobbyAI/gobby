@@ -26,6 +26,7 @@ def _coordinated_review_fixture(
     *,
     name: str,
     cross_project_coordinator: bool = False,
+    stage_name: str = "planning",
 ) -> tuple[InternalToolRegistry, Session, Session, Task]:
     from gobby.mcp_proxy.tools.tasks._context import RegistryContext
     from gobby.mcp_proxy.tools.tasks._stage_ops import create_stage_ops_registry
@@ -71,9 +72,9 @@ def _coordinated_review_fixture(
         task_type="review_anchor",
         category="planning",
     )
-    task_manager.initialize_task_manifest(task.id, stage_names=["planning"])
-    task_manager.stage_states.start_stage(task.id, "planning", by_session_id=reviewer.id)
-    task_manager.submit_for_review(task.id, "planning", by_session_id=reviewer.id)
+    task_manager.initialize_task_manifest(task.id, stage_names=[stage_name])
+    task_manager.stage_states.start_stage(task.id, stage_name, by_session_id=reviewer.id)
+    task_manager.submit_for_review(task.id, stage_name, by_session_id=reviewer.id)
     summary = {"coordinator_session_id": coordinator.id}
     if cross_project_coordinator:
         summary.update(
@@ -154,6 +155,7 @@ async def test_approve_review_relays_signoff_summary_to_build_coordinator(
     registry, coordinator, reviewer, task = _coordinated_review_fixture(
         temp_db,
         name="approve",
+        stage_name="development",
     )
 
     with (
@@ -165,7 +167,7 @@ async def test_approve_review_relays_signoff_summary_to_build_coordinator(
             "approve_review",
             {
                 "task_id": task.id,
-                "stage_name": "planning",
+                "stage_name": "development",
                 "signoff_summary": "APPROVED: round 2, no blocking findings",
             },
         )
@@ -183,7 +185,7 @@ async def test_approve_review_relays_signoff_summary_to_build_coordinator(
     assert metadata["action"] == "approve_review"
     assert metadata["signoff_message"] == "APPROVED: round 2, no blocking findings"
     assert metadata["task_id"] == task.id
-    assert metadata["stage_name"] == "planning"
+    assert metadata["stage_name"] == "development"
 
 
 @pytest.mark.asyncio
@@ -194,6 +196,7 @@ async def test_approve_review_relays_authorized_cross_project_signoff_to_coordin
         temp_db,
         name="approve-cross-project",
         cross_project_coordinator=True,
+        stage_name="development",
     )
 
     with (
@@ -205,7 +208,7 @@ async def test_approve_review_relays_authorized_cross_project_signoff_to_coordin
             "approve_review",
             {
                 "task_id": task.id,
-                "stage_name": "planning",
+                "stage_name": "development",
                 "signoff_summary": "APPROVED: cross-project coordinator authorized",
             },
         )

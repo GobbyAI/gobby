@@ -127,9 +127,11 @@ instructions: |
   5. After the cap, call
      `escalate_task(reason="needs_human:manifest_emission_failure:<details>")`
      with the entry-validation details. Do NOT approve.
-  6. On success, call `approve_review` with `stage_name="planning"`, the full
-     canonical `round_result` containing typed findings and `manifest_entries`,
-     and `approval_notes` that document the outcome. A count alone is invalid.
+  6. On success, call `approve_review` with `stage_name="planning"`,
+     `round_number`, the complete typed `findings` list, the complete typed
+     `manifest_entries` list, the current `evidence_id`, and `approval_notes`
+     that document the outcome. The tool builds the canonical `round_result`;
+     a count alone is invalid.
 
   YOLO MANIFEST FALLBACK:
   - yolo: do NOT call `escalate_task` (top-level yolo invariant) after the
@@ -185,6 +187,8 @@ step_variables:
   skill_loaded: false
   proportionality_loaded: false
   review_complete: false
+  lesson_backfill_required: false
+  lesson_backfill_failed: false
 
 steps:
   - name: claim
@@ -261,7 +265,10 @@ steps:
     status_message: |
       Review the plan artifact. If blocking issues remain, reject review with
       reject_review(stage_name="planning"). If the plan is sound, approve it with
-      approve_review(stage_name="planning"). Use escalate_task only for
+      approve_review(stage_name="planning", round_number=..., findings=[],
+      manifest_entries=[...], evidence_id=...). If approval returns
+      lesson_mint_status=failed or pending, the workflow requires exactly one
+      backfill_plan_review_lessons call before termination. Use escalate_task only for
       `needs_requirements:` or true human-intervention blockers.
     allowed_tools: "all"
     blocked_mcp_tools:
@@ -275,6 +282,17 @@ steps:
     on_mcp_success:
       - server: gobby-tasks-ops
         tool: approve_review
+        when: >-
+          (tool_output.get('result') or tool_output).get('lesson_mint_status')
+          in ['failed', 'pending']
+        action: set_variable
+        variable: lesson_backfill_required
+        value: true
+      - server: gobby-tasks-ops
+        tool: approve_review
+        when: >-
+          (tool_output.get('result') or tool_output).get('lesson_mint_status')
+          in ['minted', 'none']
         action: set_variable
         variable: review_complete
         value: true
@@ -304,6 +322,78 @@ steps:
       - server: gobby-tasks
         tool: escalate_task
         when: tool_output.error_code == "TASK_CLOSED"
+        action: set_variable
+        variable: review_complete
+        value: true
+    transitions:
+      - to: backfill_lessons
+        when: "vars.lesson_backfill_required"
+      - to: terminate
+        when: "vars.review_complete"
+
+  - name: backfill_lessons
+    description: "Retry a failed or pending plan-review lesson mint once"
+    status_message: |
+      Call gobby-tasks-ops:backfill_plan_review_lessons exactly once with the
+      assigned task_id and stage="planning". Do not call approve_review again.
+    allowed_tools:
+      - mcp__gobby__call_tool
+      - mcp__gobby__list_mcp_servers
+      - mcp__gobby__list_tools
+      - mcp__gobby__get_tool_schema
+    allowed_mcp_tools:
+      - "gobby-tasks-ops:backfill_plan_review_lessons"
+    on_mcp_success:
+      - server: gobby-tasks-ops
+        tool: backfill_plan_review_lessons
+        when: >-
+          (tool_output.get('result') or tool_output).get('lesson_mint_status')
+          in ['failed', 'pending']
+          or bool((tool_output.get('result') or tool_output).get('error'))
+        action: set_variable
+        variable: lesson_backfill_failed
+        value: true
+      - server: gobby-tasks-ops
+        tool: backfill_plan_review_lessons
+        when: >-
+          (tool_output.get('result') or tool_output).get('lesson_mint_status')
+          in ['minted', 'none']
+        action: set_variable
+        variable: review_complete
+        value: true
+    on_mcp_error:
+      - server: gobby-tasks-ops
+        tool: backfill_plan_review_lessons
+        action: set_variable
+        variable: lesson_backfill_failed
+        value: true
+    transitions:
+      - to: relay_backfill_failure
+        when: "vars.lesson_backfill_failed"
+      - to: terminate
+        when: "vars.review_complete"
+
+  - name: relay_backfill_failure
+    description: "Relay the remaining mint failure to the coordinator"
+    status_message: |
+      Send one gobby-agents:send_message to the parent coordinator with the
+      remaining plan-review lesson-mint failure, then terminate normally.
+    allowed_tools:
+      - mcp__gobby__call_tool
+      - mcp__gobby__list_mcp_servers
+      - mcp__gobby__list_tools
+      - mcp__gobby__get_tool_schema
+    allowed_mcp_tools:
+      - "gobby-agents:send_message"
+    on_mcp_success:
+      - server: gobby-agents
+        tool: send_message
+        action: set_variable
+        variable: review_complete
+        value: true
+    on_mcp_error:
+      - server: gobby-agents
+        tool: send_message
         action: set_variable
         variable: review_complete
         value: true

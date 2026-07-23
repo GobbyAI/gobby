@@ -1235,7 +1235,7 @@ class TestMarkTaskReviewApproved:
 
         result = await registry.call(
             "approve_review",
-            {"task_id": task.id, "stage_name": "planning"},
+            {"task_id": task.id, "stage_name": "development"},
         )
         assert "error" not in result
 
@@ -1248,7 +1248,7 @@ class TestMarkTaskReviewApproved:
 
         result = await registry.call(
             "approve_review",
-            {"task_id": task.id, "stage_name": "planning"},
+            {"task_id": task.id, "stage_name": "development"},
         )
         assert "error" in result
         assert "No current stage" in result["error"]
@@ -1264,14 +1264,14 @@ class TestMarkTaskReviewApproved:
             "approve_review",
             {
                 "task_id": task.id,
-                "stage_name": "planning",
+                "stage_name": "development",
                 "approval_notes": "Looks good",
             },
         )
         assert "error" not in result
         mock_task_manager.approve_review.assert_called_once_with(
             task.id,
-            "planning",
+            "development",
             approval_notes="Looks good",
             by_session_id=ANY,
         )
@@ -1293,7 +1293,7 @@ class TestMarkTaskReviewApproved:
         ):
             result = await registry.call(
                 "approve_review",
-                {"task_id": task.id, "stage_name": "planning"},
+                {"task_id": task.id, "stage_name": "development"},
             )
         assert "error" in result
         assert "Failed to approve" in result["error"]
@@ -1331,7 +1331,7 @@ class TestMarkTaskReviewApproved:
             registry = _create_stage_ops_registry(mock_task_manager)
             result = await registry.call(
                 "approve_review",
-                {"task_id": task_id, "stage_name": "planning"},
+                {"task_id": task_id, "stage_name": "development"},
             )
 
         assert "error" not in result

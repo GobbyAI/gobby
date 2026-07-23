@@ -119,6 +119,27 @@ class PlanReviewEvidenceStore:
         ).fetchall()
         return [PlanReviewEvidence.from_row(row) for row in rows]
 
+    def list_for_task_stage(
+        self,
+        *,
+        task_id: str,
+        stage: str,
+    ) -> list[PlanReviewEvidence]:
+        """Return finalized evidence rows that form one stage-native lineage."""
+        rows = self.db.execute(
+            """
+            SELECT *
+            FROM plan_review_evidence
+            WHERE task_id = %s
+              AND stage = %s
+              AND finalized_at IS NOT NULL
+              AND expired_at IS NULL
+            ORDER BY round_number, created_at, evidence_id
+            """,
+            (task_id, stage),
+        ).fetchall()
+        return [PlanReviewEvidence.from_row(row) for row in rows]
+
     def active_for_path(
         self,
         *,
@@ -355,9 +376,10 @@ class PlanReviewEvidenceStore:
             SET lesson_mint_status = %s,
                 lesson_mint_detail = %s::jsonb
             WHERE evidence_id = %s
-              AND lesson_mint_status = 'pending'
+              AND lesson_mint_status IN ('pending', 'failed')
               AND finalized_at IS NOT NULL
-              AND session_id IS NOT NULL
+              AND approval_result IS NOT NULL
+              AND (session_id IS NOT NULL OR task_id IS NOT NULL)
             RETURNING *
             """,
             (status, encoded, evidence_id),
@@ -367,12 +389,12 @@ class PlanReviewEvidenceStore:
         current = self.require(evidence_id, transaction=transaction, for_update=True)
         if current.lesson_mint_status == status and current.lesson_mint_detail == dict(detail):
             return current
-        if current.lesson_mint_status in {"minted", "failed", "none"}:
+        if current.lesson_mint_status in {"minted", "none"}:
             raise ReviewEvidenceError(
                 "lesson_mint_conflict",
                 f"lesson mint already checkpointed as {current.lesson_mint_status}",
             )
         raise ReviewEvidenceError(
             "invalid_lesson_mint_state",
-            "lesson mint checkpoint requires a finalized interactive approval row",
+            "lesson mint checkpoint requires a finalized approval row",
         )

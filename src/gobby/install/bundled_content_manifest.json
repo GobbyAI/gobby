@@ -309,7 +309,7 @@
     "workflows/agents/nightly-linter.yaml": "2747c9c66ef1d0e81efd652c4e20c9427a8ff1c645c84a93f81f5b20b27ad024",
     "workflows/agents/nightly-test-fixer.yaml": "8e38ae5210649eeb79026a3e1c2f61fb64c1c37326b75dfc725df69e3f9fbb65",
     "workflows/agents/plan-adversary-taskless.yaml": "5bdf0b0b56941e839f536afd56eb249d7cdd7210014f8d0ccb05dd4a404343bb",
-    "workflows/agents/plan-adversary.yaml": "9d3e97ba52a48a560c233444a253b232435bcddfc1421ff8420c87e093bba730",
+    "workflows/agents/plan-adversary.yaml": "7c30d982cfdafd5c6a97233f4f2626e857782b050fd4172cb1814a926441525a",
     "workflows/agents/plan-enhancer-taskless.yaml": "e2dab4bd190fdd41827c52fba8905acac2aa79b49ddfb27cbf11ef8f3d4adcb3",
     "workflows/agents/plan-enhancer.yaml": "6c4a3fd712ba0694c586b248fbea92dea720bb023e5937fc97d3e5a21ed61beb",
     "workflows/agents/planner.yaml": "6d1da803e51472c0312e563f23e509efb723dbbe1ee79ba141dd387844578209",

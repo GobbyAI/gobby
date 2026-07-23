@@ -38,62 +38,62 @@ def agent() -> AgentDefinitionBody:
 
 
 class TestManifestEmissionOnApproval:
-    """§2.22.1 — manifest emitted before approve_review on clean review."""
+    """§2.22.1 — typed manifest handed off through approve_review."""
 
-    def test_instructions_describe_manifest_emission_on_approval(
+    def test_instructions_describe_typed_manifest_handoff_on_approval(
         self, agent: AgentDefinitionBody
     ) -> None:
         instructions = agent.instructions or ""
-        assert "Task Manifest" in instructions
+        assert "MANIFEST HANDOFF" in instructions
+        assert "manifest_entries" in instructions
         assert "approve_review" in instructions
 
-    def test_instructions_reference_M1_heading_id(self, agent: AgentDefinitionBody) -> None:
-        """The canonical heading regex (§2.21) requires M1 as section ID."""
+    def test_instructions_require_canonical_round_result(self, agent: AgentDefinitionBody) -> None:
         instructions = agent.instructions or ""
-        assert "## M1 Task Manifest" in instructions
+        assert "canonical `round_result`" in instructions
+        for field in ("`round_number`", "`findings`", "`manifest_entries`", "`evidence_id`"):
+            assert field in instructions
 
     def test_manifest_emission_precedes_review_approval(self, agent: AgentDefinitionBody) -> None:
-        """Manifest write must come BEFORE the approval call in instruction order."""
+        """Typed manifest derivation must precede the approval call."""
         instructions = agent.instructions or ""
-        manifest_index = instructions.find("Append a `## M1 Task Manifest`")
+        manifest_index = instructions.find("Derive a full typed manifest entry")
         approval_index = instructions.find("On success, call `approve_review`")
         assert manifest_index >= 0
         assert approval_index >= 0
         assert manifest_index < approval_index, (
-            "manifest emission must be described before review approval in instructions"
+            "manifest derivation must be described before review approval in instructions"
         )
 
-    def test_invalid_plan_identity_rejects_before_manifest_write(
+    def test_invalid_plan_identity_rejects_before_manifest_derivation(
         self, agent: AgentDefinitionBody
     ) -> None:
-        """Identity failure must stop before any manifest append."""
+        """Identity failure must stop before typed manifest derivation."""
         instructions = agent.instructions or ""
         normalized = " ".join(instructions.split())
         guard_index = normalized.find("If the Plan Identity Precondition fails")
         reject_index = normalized.find("Plan Identity Precondition failed")
-        manifest_index = normalized.find("Append a `## M1 Task Manifest`")
+        manifest_index = normalized.find("Derive a full typed manifest entry")
         assert guard_index >= 0
         assert reject_index >= 0
         assert manifest_index >= 0
         assert reject_index < manifest_index
         identity_guard = normalized[guard_index:manifest_index]
         assert "reject_review" in identity_guard
-        assert "Do NOT edit the" in identity_guard
-        assert "do NOT call `approve_review`" in identity_guard
+        assert "Do NOT call `approve_review`" in identity_guard
 
-    def test_raw_instruction_order_keeps_identity_guard_before_manifest(
+    def test_raw_instruction_order_keeps_identity_guard_before_manifest_derivation(
         self, agent: AgentDefinitionBody
     ) -> None:
         instructions = agent.instructions or ""
-        manifest_index = instructions.find("Append a `## M1 Task Manifest`")
+        manifest_index = instructions.find("Derive a full typed manifest entry")
         reject_index = instructions.find("If the Plan Identity Precondition fails")
         assert reject_index >= 0
         assert manifest_index >= 0
         assert reject_index < manifest_index
         identity_guard = instructions[reject_index:manifest_index]
         assert "reject_review" in identity_guard
-        assert "Do NOT edit the" in identity_guard
-        assert "do NOT call `approve_review`" in identity_guard
+        assert "Do NOT call `approve_review`" in identity_guard
 
     def test_review_step_does_not_block_review_approval(self, agent: AgentDefinitionBody) -> None:
         """Sanity: the existing review approval wiring stays intact."""
@@ -103,27 +103,42 @@ class TestManifestEmissionOnApproval:
         assert "gobby-tasks-ops:approve_review" not in blocked
 
 
-class TestScopedEditWriteSurface:
-    """§2.22.3 — Edit/Write permission is documented and scoped to plan file path."""
-
-    def test_review_step_permits_edit_and_write(self, agent: AgentDefinitionBody) -> None:
-        """Edit and Write must be available so the adversary can append the manifest."""
+class TestLessonBackfill:
+    def test_failed_approval_mint_backfills_once_then_relays_remaining_failure(
+        self,
+        agent: AgentDefinitionBody,
+    ) -> None:
         review = find_step(agent.steps or [], "review")
+        backfill = find_step(agent.steps or [], "backfill_lessons")
+        relay = find_step(agent.steps or [], "relay_backfill_failure")
         assert review is not None
-        allowed = review.allowed_tools
-        if allowed == "all":
-            return
-        assert isinstance(allowed, list)
-        assert "Edit" in allowed
-        assert "Write" in allowed
+        assert backfill is not None
+        assert relay is not None
 
-    def test_instructions_scope_writes_to_plan_file_only(self, agent: AgentDefinitionBody) -> None:
-        instructions = agent.instructions or ""
-        assert "plan_file_path" in instructions or "plan file path" in instructions
-        assert "Edit" in instructions and "Write" in instructions
+        assert any(
+            transition.to == "backfill_lessons"
+            and transition.when == "vars.lesson_backfill_required"
+            for transition in review.transitions
+        )
+        assert backfill.allowed_mcp_tools == ["gobby-tasks-ops:backfill_plan_review_lessons"]
+        assert any(
+            transition.to == "relay_backfill_failure"
+            and transition.when == "vars.lesson_backfill_failed"
+            for transition in backfill.transitions
+        )
+        assert relay.allowed_mcp_tools == ["gobby-agents:send_message"]
+        assert any(transition.to == "terminate" for transition in relay.transitions)
 
-    def test_instructions_forbid_writes_outside_plan_file(self, agent: AgentDefinitionBody) -> None:
+
+class TestCoordinatorOwnedWrites:
+    """§2.22.3 — reviewer emits typed data; coordinator owns plan mutations."""
+
+    def test_instructions_forbid_direct_plan_edits(self, agent: AgentDefinitionBody) -> None:
         instructions = agent.instructions or ""
-        lowered = instructions.lower()
-        assert "only write to" in lowered or "write only to" in lowered
-        assert "plan file" in lowered or "plan_file_path" in lowered
+        assert "Never edit the plan file" in instructions
+        assert "Do NOT edit the plan file" in instructions
+
+    def test_instructions_delegate_manifest_application(self, agent: AgentDefinitionBody) -> None:
+        instructions = agent.instructions or ""
+        assert "coordinator" in instructions
+        assert "apply_plan_review_manifest" in instructions

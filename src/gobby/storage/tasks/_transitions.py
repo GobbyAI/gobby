@@ -18,7 +18,11 @@ from gobby.plans.review_findings import (
     validate_plan_review_findings,
 )
 from gobby.storage.agents import LocalAgentRunManager
-from gobby.storage.hub.protocol import HubDatabase, StageReviewRejectionMutation
+from gobby.storage.hub.protocol import (
+    HubDatabase,
+    StageReviewApprovalMutation,
+    StageReviewRejectionMutation,
+)
 from gobby.storage.tasks._artifacts import TaskArtifactManager
 from gobby.storage.tasks._dispatch_mutex import TaskDispatchMutexManager
 from gobby.storage.tasks._lifecycle_events import TaskLifecycleEventManager
@@ -432,6 +436,10 @@ def approve_review(
     stage_name: str | None = None,
     *,
     approval_notes: str | None = None,
+    round_number: int | None = None,
+    findings: list[dict[str, object]] | None = None,
+    manifest_entries: list[dict[str, object]] | None = None,
+    evidence_id: str | None = None,
     by_session_id: str | None = None,
     dispatch_run_id: str | None = None,
 ) -> Task:
@@ -443,6 +451,19 @@ def approve_review(
         if current is None:
             raise NoCurrentStageError(task_id)
         stage_name = current.stage_name
+    if stage_name == "planning":
+        return _approve_plan_review(
+            db,
+            task=task,
+            stage_name=stage_name,
+            approval_notes=approval_notes,
+            round_number=round_number,
+            findings=findings,
+            manifest_entries=manifest_entries,
+            evidence_id=evidence_id,
+            by_session_id=by_session_id,
+            dispatch_run_id=dispatch_run_id,
+        )
     stages.approve_review(
         task_id,
         stage_name,
@@ -460,6 +481,140 @@ def approve_review(
         description=description,
         claimed_by_session_id=None,
     )
+    return get_task(db, task_id)
+
+
+def _approve_plan_review(
+    db: HubDatabase,
+    *,
+    task: Task,
+    stage_name: str,
+    approval_notes: str | None,
+    round_number: int | None,
+    findings: list[dict[str, object]] | None,
+    manifest_entries: list[dict[str, object]] | None,
+    evidence_id: str | None,
+    by_session_id: str | None,
+    dispatch_run_id: str | None,
+) -> Task:
+    if round_number is None or round_number < 1:
+        raise ReviewEvidenceError(
+            "missing_round_number",
+            "planning-stage approval requires a positive round_number",
+        )
+    if not evidence_id:
+        raise ReviewEvidenceError(
+            "missing_evidence_id",
+            "planning-stage approval requires evidence_id",
+        )
+    if findings is None:
+        raise ReviewEvidenceError(
+            "missing_findings",
+            "planning-stage approval requires typed findings",
+        )
+    if not manifest_entries:
+        raise ReviewEvidenceError(
+            "missing_manifest_entries",
+            "planning-stage approval requires typed manifest_entries",
+        )
+    artifacts = TaskArtifactManager(db).get_artifacts(task.id)
+    if not artifacts.plan_file_path:
+        raise ReviewEvidenceError(
+            "plan_path_missing",
+            "planning-stage approval requires a plan artifact",
+        )
+    service = PlanReviewEvidenceService(db)
+    evidence = service.authorize_current_attempt(
+        evidence_id,
+        project_id=task.project_id,
+        plan_path=artifacts.plan_file_path,
+        round_number=round_number,
+        task_id=task.id,
+        stage=stage_name,
+        run_id=dispatch_run_id,
+        allow_approval_replay=True,
+    )
+    validated_findings = validate_plan_review_findings(findings, evidence=evidence)
+    round_result = validate_round_result(
+        {
+            "verdict": "approved",
+            "findings": validated_findings,
+            "manifest_entries": manifest_entries,
+        }
+    )
+    replay = _recorded_approval_replay(
+        db,
+        task.id,
+        evidence=evidence,
+        round_result=round_result,
+    )
+    if replay is not None:
+        return replay
+
+    service.apply_plan_review_manifest(
+        evidence_id,
+        round_result,
+        plan_path=artifacts.plan_file_path,
+        run_id=dispatch_run_id or "",
+    )
+    with db.transaction_immediate(StageReviewApprovalMutation(task_id=task.id)):
+        evidence = service.authorize_current_attempt(
+            evidence_id,
+            project_id=task.project_id,
+            plan_path=artifacts.plan_file_path,
+            round_number=round_number,
+            task_id=task.id,
+            stage=stage_name,
+            run_id=dispatch_run_id,
+            allow_approval_replay=True,
+        )
+        replay = _recorded_approval_replay(
+            db,
+            task.id,
+            evidence=evidence,
+            round_result=round_result,
+        )
+        if replay is not None:
+            return replay
+        if evidence.manifest_state != "applied" or evidence.manifest_payload != round_result:
+            raise ReviewEvidenceError(
+                "manifest_apply_incomplete",
+                "approval manifest must be durably applied before the approval commit",
+            )
+        _stage_states(db).approve_review(
+            task.id,
+            stage_name,
+            by_session_id=by_session_id,
+            notes=approval_notes,
+            dispatch_run_id=dispatch_run_id,
+        )
+        description: MaybeUnset[str | None] = UNSET
+        if approval_notes:
+            description = (task.description or "") + f"\n\n[Approval Notes]\n{approval_notes}"
+        update_task(
+            db,
+            task.id,
+            description=description,
+            claimed_by_session_id=None,
+        )
+        service.finalize_plan_review_evidence(evidence_id, round_result)
+    return get_task(db, task.id)
+
+
+def _recorded_approval_replay(
+    db: HubDatabase,
+    task_id: str,
+    *,
+    evidence: PlanReviewEvidence,
+    round_result: dict[str, object],
+) -> Task | None:
+    if evidence.finalized_at is None:
+        return None
+    if evidence.approval_result != round_result:
+        raise ReviewEvidenceError(
+            "approval_result_conflict",
+            "approval retry conflicts with the durable approval result",
+        )
     return get_task(db, task_id)
 
 

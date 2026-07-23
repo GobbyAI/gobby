@@ -28,6 +28,16 @@ def _postgres_pool_module():
     return importlib.import_module("gobby.storage.hub.postgres_pool")
 
 
+def test_stage_review_approval_lock_key_is_task_scoped() -> None:
+    from gobby.storage.hub.protocol import StageReviewApprovalMutation
+
+    pool_module = _postgres_pool_module()
+
+    assert pool_module._advisory_lock_keys(StageReviewApprovalMutation(task_id="task-1")) == (
+        "stage_review_approval:task-1",
+    )
+
+
 def test_postgres_transaction_is_closed_when_context_exits(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -347,7 +357,6 @@ def test_advisory_lock_connection_reuses_pool_session_options(
     pool_module = _postgres_pool_module()
     calls: dict[str, object] = {}
     connection = object()
-    monkeypatch.setenv("PGAPPNAME", "gobby-advisory-test")
 
     def fake_connect(conninfo: str, **kwargs: object) -> object:
         calls["conninfo"] = conninfo
@@ -372,7 +381,7 @@ def test_advisory_lock_connection_reuses_pool_session_options(
         "-cstatement_timeout=5000 -ctimezone=UTC"
     )
     assert calls["kwargs"] == {
-        "application_name": "gobby-advisory-test",
+        "application_name": db.application_name,
         "autocommit": True,
         "prepare_threshold": None,
         "row_factory": pool_module.dict_row,

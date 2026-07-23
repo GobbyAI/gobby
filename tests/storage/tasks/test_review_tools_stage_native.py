@@ -46,6 +46,13 @@ def _planning_task(temp_db, sample_project, *, state: str = "in_progress"):
     return task
 
 
+def _development_task(temp_db, sample_project, *, state: str = "in_progress"):
+    task = create_task(temp_db, sample_project, task_type="feature")
+    initialize_manifest(temp_db, task.id, [spec("development", 1), spec("pr", 2)])
+    set_stage_state(temp_db, task.id, "development", state)
+    return task
+
+
 def test_needs_review_submits_for_review_on_same_row(temp_db, sample_project) -> None:
     task = _planning_task(temp_db, sample_project, state="in_progress")
 
@@ -57,23 +64,23 @@ def test_needs_review_submits_for_review_on_same_row(temp_db, sample_project) ->
 
 
 def test_approved_advances_to_review_approved_on_same_row(temp_db, sample_project) -> None:
-    task = _planning_task(temp_db, sample_project, state="needs_review")
+    task = _development_task(temp_db, sample_project, state="needs_review")
 
     updated = approve_review(temp_db, task.id, approval_notes="approved")
 
     _assert_open_task(updated)
-    assert stage_row(temp_db, task.id, "planning")["state"] == "review_approved"
+    assert stage_row(temp_db, task.id, "development")["state"] == "review_approved"
 
 
 def test_approved_does_not_advance_to_next_stage(temp_db, sample_project) -> None:
-    task = _planning_task(temp_db, sample_project, state="needs_review")
+    task = _development_task(temp_db, sample_project, state="needs_review")
 
     approve_review(temp_db, task.id)
 
     rows = stage_rows(temp_db, task.id)
     assert [(row["stage_name"], row["state"]) for row in rows] == [
-        ("planning", "review_approved"),
-        ("development", "ready"),
+        ("development", "review_approved"),
+        ("pr", "ready"),
     ]
 
 
@@ -144,12 +151,12 @@ def test_no_current_stage_errors(temp_db, sample_project) -> None:
 
 
 def test_wrong_source_state_errors_no_mutation(temp_db, sample_project) -> None:
-    task = _planning_task(temp_db, sample_project, state="ready")
+    task = _development_task(temp_db, sample_project, state="ready")
 
     with pytest.raises(IllegalStageTransitionError):
         approve_review(temp_db, task.id)
 
-    assert stage_row(temp_db, task.id, "planning")["state"] == "ready"
+    assert stage_row(temp_db, task.id, "development")["state"] == "ready"
 
 
 def test_fresh_feature_task_planning_review_path_uses_registry_policy(
@@ -287,7 +294,7 @@ def test_needs_review_calls_submit_for_review_no_legacy_writes(
 def test_approved_calls_approve_review_no_legacy_writes(
     temp_db, sample_project, monkeypatch
 ) -> None:
-    task = _planning_task(temp_db, sample_project, state="needs_review")
+    task = _development_task(temp_db, sample_project, state="needs_review")
     calls: list[str] = []
     original = StageStatesManager.approve_review
 
@@ -299,7 +306,7 @@ def test_approved_calls_approve_review_no_legacy_writes(
 
     approve_review(temp_db, task.id)
 
-    assert calls == ["planning"]
+    assert calls == ["development"]
     assert "status" not in _task_columns(temp_db)
 
 

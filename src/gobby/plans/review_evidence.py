@@ -307,6 +307,7 @@ class PlanReviewEvidenceService:
         stage: str | None = None,
         run_id: str | None = None,
         allow_rejection_replay: bool = False,
+        allow_approval_replay: bool = False,
     ) -> PlanReviewEvidence:
         evidence = self.get_evidence(evidence_id)
         _, relative_path = self._resolve_plan_path(project_id, plan_path)
@@ -324,6 +325,15 @@ class PlanReviewEvidenceService:
             and evidence.finalized_at is not None
             and evidence.round_result is not None
             and evidence.round_result.get("verdict") == "needs_review"
+            and token_matches
+            and run_matches
+        ):
+            return evidence
+        if (
+            allow_approval_replay
+            and evidence.finalized_at is not None
+            and evidence.approval_result is not None
+            and evidence.approval_result.get("verdict") == "approved"
             and token_matches
             and run_matches
         ):
@@ -578,14 +588,14 @@ class PlanReviewEvidenceService:
             )
         evidence = self.get_evidence(evidence_id)
         if (
-            not evidence.is_interactive
+            (evidence.session_id is None and evidence.task_id is None)
             or evidence.finalized_at is None
             or evidence.round_result is None
             or evidence.round_result.get("verdict") != "approved"
         ):
             raise ReviewEvidenceError(
                 "invalid_lesson_mint_state",
-                "lesson mint checkpoint requires a finalized interactive approval row",
+                "lesson mint checkpoint requires a finalized approval row",
             )
         mutation = PlanReviewEvidenceMutation(
             project_id=evidence.project_id,

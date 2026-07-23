@@ -1,0 +1,72 @@
+"""Post-commit plan-review mint tail for the stage approval tool."""
+
+from __future__ import annotations
+
+import asyncio
+import logging
+
+from gobby.mcp_proxy.tools.tasks._context import RegistryContext
+from gobby.plans.review_evidence import PlanReviewEvidenceService
+from gobby.review_learning.recorders import (
+    mint_plan_review_lessons,
+    plan_review_mint_result,
+)
+
+logger = logging.getLogger(__name__)
+
+
+def complete_plan_review_mint(
+    ctx: RegistryContext,
+    *,
+    task_id: str,
+    stage: str,
+    evidence_id: str,
+    session_id: str,
+    replay: bool,
+) -> dict[str, object]:
+    """Await the fail-open mint tail or return a replayed durable result."""
+    evidence_service = PlanReviewEvidenceService(ctx.task_manager.db)
+    evidence = evidence_service.get_evidence(evidence_id)
+    if replay:
+        return plan_review_mint_result(evidence)
+    recorder = ctx.review_learning_service
+    if recorder is None:
+        return _checkpoint_failure(
+            evidence_service,
+            evidence_id,
+            "Review-learning service is unavailable",
+        )
+    try:
+        return asyncio.run(
+            mint_plan_review_lessons(
+                task_id,
+                stage,
+                db=ctx.task_manager.db,
+                review_learning_service=recorder,
+                session_id=session_id,
+            )
+        )
+    except Exception as error:
+        logger.warning(
+            "plan_review_approval_mint_tail_failed",
+            extra={"task_id": task_id, "stage": stage, "evidence_id": evidence_id},
+            exc_info=True,
+        )
+        return _checkpoint_failure(
+            evidence_service,
+            evidence_id,
+            f"{type(error).__name__}: {error}",
+        )
+
+
+def _checkpoint_failure(
+    service: PlanReviewEvidenceService,
+    evidence_id: str,
+    detail: str,
+) -> dict[str, object]:
+    evidence = service.checkpoint_plan_review_lesson_mint(
+        evidence_id,
+        status="failed",
+        detail={"minted_lesson_ids": [], "detail": detail},
+    )
+    return plan_review_mint_result(evidence)

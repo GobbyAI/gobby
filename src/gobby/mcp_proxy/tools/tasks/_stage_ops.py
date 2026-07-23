@@ -17,6 +17,9 @@ from gobby.mcp_proxy.tools.tasks._dispatch_mutex_release import (
 from gobby.mcp_proxy.tools.tasks._escalation_coordinator import (
     clear_prior_claim_session_variables,
 )
+from gobby.mcp_proxy.tools.tasks._plan_review_backfill import (
+    register_plan_review_backfill_tool,
+)
 from gobby.mcp_proxy.tools.tasks._resolution import resolve_task_id_for_mcp
 from gobby.mcp_proxy.tools.tasks._stage_review import register_review_stage_tools
 from gobby.storage.delivery import TaskDeliveryStateManager
@@ -386,6 +389,7 @@ def create_stage_ops_registry(ctx: RegistryContext) -> InternalToolRegistry:
     )
 
     register_review_stage_tools(registry, ctx)
+    register_plan_review_backfill_tool(registry, ctx)
 
     def add_stage(task_id: str, stage_name: str, position: int) -> dict[str, Any]:
         """Insert a future ready stage into a task manifest."""

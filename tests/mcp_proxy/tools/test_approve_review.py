@@ -31,7 +31,7 @@ def mock_task_manager():
 def _stage_state(
     task_id: str,
     *,
-    stage_name: str = "planning",
+    stage_name: str = "development",
     state: str = "needs_review",
 ) -> StageState:
     return StageState(
@@ -79,7 +79,7 @@ def _task(
         closed_at="2024-01-02T00:00:00Z" if status == "closed" else None,
         stages=(
             {
-                "stage_name": "planning",
+                "stage_name": "development",
                 "position": 0,
                 "state": stage_state,
             },
@@ -146,13 +146,13 @@ class TestMarkTaskReviewApproved:
         tool_func = stage_ops_registry._tools["approve_review"].func
         result = tool_func(
             task_id=sample_task_needs_review.id,
-            stage_name="planning",
+            stage_name="development",
         )
 
         assert "error" not in result
         mock_task_manager.approve_review.assert_called_once_with(
             sample_task_needs_review.id,
-            "planning",
+            "development",
             approval_notes=None,
             by_session_id=ANY,
         )
@@ -167,7 +167,7 @@ class TestMarkTaskReviewApproved:
         tool_func = stage_ops_registry._tools["approve_review"].func
         result = tool_func(
             task_id=sample_task_in_progress.id,
-            stage_name="planning",
+            stage_name="development",
         )
 
         assert "error" not in result
@@ -182,7 +182,7 @@ class TestMarkTaskReviewApproved:
         tool_func = stage_ops_registry._tools["approve_review"].func
         result = tool_func(
             task_id=sample_task_open.id,
-            stage_name="planning",
+            stage_name="development",
         )
 
         assert "error" in result
@@ -198,7 +198,7 @@ class TestMarkTaskReviewApproved:
         tool_func = stage_ops_registry._tools["approve_review"].func
         result = tool_func(
             task_id=closed_task.id,
-            stage_name="planning",
+            stage_name="development",
         )
 
         assert "error" in result
@@ -219,14 +219,14 @@ class TestMarkTaskReviewApproved:
         tool_func = stage_ops_registry._tools["approve_review"].func
         result = tool_func(
             task_id=sample_task_needs_review.id,
-            stage_name="planning",
+            stage_name="development",
             approval_notes="Looks good, all tests pass.",
         )
 
         assert "error" not in result
         mock_task_manager.approve_review.assert_called_once_with(
             sample_task_needs_review.id,
-            "planning",
+            "development",
             approval_notes="Looks good, all tests pass.",
             by_session_id=ANY,
         )
@@ -244,7 +244,7 @@ class TestMarkTaskReviewApproved:
             tool_func = stage_ops_registry._tools["approve_review"].func
             result = tool_func(
                 task_id="#999",
-                stage_name="planning",
+                stage_name="development",
             )
 
         assert "error" in result
@@ -273,7 +273,7 @@ class TestMarkTaskReviewApproved:
             tool_func = stage_ops_registry._tools["approve_review"].func
             result = tool_func(
                 task_id=sample_task_needs_review.id,
-                stage_name="planning",
+                stage_name="development",
             )
 
         assert "error" not in result
@@ -309,7 +309,7 @@ class TestMarkTaskReviewApproved:
             tool_func = stage_ops_registry._tools["approve_review"].func
             result = tool_func(
                 task_id=sample_task_needs_review.id,
-                stage_name="planning",
+                stage_name="development",
             )
 
         assert "error" not in result
@@ -355,7 +355,7 @@ class TestApproveSignoffSummary:
         tool_func = registry._tools["approve_review"].func
         result = tool_func(
             task_id=sample_task_needs_review.id,
-            stage_name="planning",
+            stage_name="development",
             signoff_summary="APPROVED: round 13, no blocking findings",
         )
 
@@ -378,7 +378,7 @@ class TestApproveSignoffSummary:
         )
 
         tool_func = registry._tools["approve_review"].func
-        result = tool_func(task_id=sample_task_needs_review.id, stage_name="planning")
+        result = tool_func(task_id=sample_task_needs_review.id, stage_name="development")
 
         assert "error" not in result
         ctx.session_var_manager.set_variable.assert_called_once_with(

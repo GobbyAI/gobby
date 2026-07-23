@@ -30,6 +30,7 @@ __all__ = [
     "SessionRegistration",
     "SessionSeqMutation",
     "SessionVariableMutation",
+    "StageReviewApprovalMutation",
     "StageReviewRejectionMutation",
     "SystemSessionBootstrap",
     "TaskDependencyMutation",
@@ -139,6 +140,14 @@ class TaskDependencyMutation:
     """
 
     PRIORITY: ClassVar[int] = 275
+
+
+@dataclass(frozen=True)
+class StageReviewApprovalMutation:
+    """Outer lock for atomic stage approval and evidence finalization."""
+
+    PRIORITY: ClassVar[int] = 290
+    task_id: str
 
 
 @dataclass(frozen=True)

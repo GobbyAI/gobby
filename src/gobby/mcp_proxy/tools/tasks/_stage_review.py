@@ -20,7 +20,9 @@ from gobby.mcp_proxy.tools.tasks._escalation_coordinator import (
 )
 from gobby.mcp_proxy.tools.tasks._lifecycle_status import _lifecycle_value_error
 from gobby.mcp_proxy.tools.tasks._notifications import notify_parent_on_task_state_change
+from gobby.mcp_proxy.tools.tasks._plan_review_approval import complete_plan_review_mint
 from gobby.mcp_proxy.tools.tasks._resolution import resolve_task_id_for_mcp
+from gobby.plans.review_evidence import PlanReviewEvidenceService
 from gobby.plans.review_evidence_models import ReviewEvidenceError
 from gobby.storage.tasks import TaskNotFoundError
 from gobby.storage.tasks._stage_views import stage_state_operation_view
@@ -301,6 +303,10 @@ def register_review_stage_tools(registry: InternalToolRegistry, ctx: RegistryCon
         task_id: str,
         stage_name: str,
         approval_notes: str | None = None,
+        round_number: int | None = None,
+        findings: list[dict[str, object]] | None = None,
+        manifest_entries: list[dict[str, object]] | None = None,
+        evidence_id: str | None = None,
         signoff_summary: str | None = None,
     ) -> dict[str, Any]:
         """Approve review on a stage."""
@@ -320,18 +326,59 @@ def register_review_stage_tools(registry: InternalToolRegistry, ctx: RegistryCon
             return task_error(f"Task {task_id} not found", TaskToolErrorCode.TASK_NOT_FOUND)
         prior_owner_session_id = get_claimed_session_id(task)
         dispatch_kwargs = _dispatch_run_kwargs(ctx, resolved_id, resolved_session_id)
+        replay = False
+        if stage_name == "planning" and evidence_id:
+            try:
+                replay = (
+                    PlanReviewEvidenceService(ctx.task_manager.db)
+                    .get_evidence(evidence_id)
+                    .finalized_at
+                    is not None
+                )
+            except ReviewEvidenceError:
+                replay = False
+        approval_kwargs: dict[str, Any] = {
+            "approval_notes": approval_notes,
+            "by_session_id": resolved_session_id,
+            **dispatch_kwargs,
+        }
+        if round_number is not None:
+            approval_kwargs["round_number"] = round_number
+        if findings is not None:
+            approval_kwargs["findings"] = findings
+        if manifest_entries is not None:
+            approval_kwargs["manifest_entries"] = manifest_entries
+        if evidence_id is not None:
+            approval_kwargs["evidence_id"] = evidence_id
         try:
             updated = ctx.task_manager.approve_review(
                 resolved_id,
                 stage_name,
-                approval_notes=approval_notes,
-                by_session_id=resolved_session_id,
-                **dispatch_kwargs,
+                **approval_kwargs,
             )
+        except ReviewEvidenceError as e:
+            return e.to_dict()
         except ValueError as e:
             return _lifecycle_value_error(str(e))
         if not updated:
             return {"error": f"Failed to approve review for stage {stage_name} on task {task_id}"}
+
+        mint_result: dict[str, object] | None = None
+        if stage_name == "planning":
+            if evidence_id is None:
+                raise RuntimeError("planning approval succeeded without evidence_id")
+            mint_result = complete_plan_review_mint(
+                ctx,
+                task_id=resolved_id,
+                stage=stage_name,
+                evidence_id=evidence_id,
+                session_id=resolved_session_id,
+                replay=replay,
+            )
+            if replay:
+                response = _operation_response(ctx, resolved_id, stage_name)
+                response.update(mint_result)
+                return response
 
         _auto_link_session_commits(
             ctx,
@@ -383,7 +430,10 @@ def register_review_stage_tools(registry: InternalToolRegistry, ctx: RegistryCon
             project_id=task.project_id,
             reason="approve_review",
         )
-        return _operation_response(ctx, resolved_id, stage_name)
+        response = _operation_response(ctx, resolved_id, stage_name)
+        if mint_result is not None:
+            response.update(mint_result)
+        return response
 
     registry.register(
         name="approve_review",
@@ -397,6 +447,16 @@ def register_review_stage_tools(registry: InternalToolRegistry, ctx: RegistryCon
                 "task_id": {"type": "string"},
                 "stage_name": {"type": "string"},
                 "approval_notes": {"type": ["string", "null"]},
+                "round_number": {"type": ["integer", "null"], "minimum": 1},
+                "findings": {
+                    "type": ["array", "null"],
+                    "items": {"type": "object"},
+                },
+                "manifest_entries": {
+                    "type": ["array", "null"],
+                    "items": {"type": "object"},
+                },
+                "evidence_id": {"type": ["string", "null"]},
                 "signoff_summary": {"type": ["string", "null"]},
             },
             "required": ["task_id", "stage_name"],
