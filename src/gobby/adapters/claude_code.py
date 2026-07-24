@@ -42,6 +42,8 @@ _AGGREGATED_RULE_NAME_RE = re.compile(r"^aggregated:(\d+)-gates$")
 _AGGREGATED_GATE_LINE_RE = re.compile(r"^\s*(\d+)\.\s+\[([^\]]+)\]\s*(.*)$")
 _GET_SKILL_RE = re.compile(r'get_skill\(name=(["\']).+?\1\)')
 _COMMAND_CALL_RE = re.compile(r"\b[a-z_][a-z0-9_]*\([^)]*\)")
+_ACTION_FIRST_PREFIXES = ("Retry ", "Use ", "Run ", "Call ", "If ")
+_DENY_REASON_MAX_CHARS = 300
 
 DECISION_STYLES_ALLOWED_TO_CONTINUE_ON_DENY = frozenset(
     {
@@ -91,12 +93,12 @@ def _compact_aggregated_claude_pre_tool_deny_reason(rule_name: str, body: str) -
         gate_body = gate_match.group(3).strip()
         compact_gate = _compact_single_claude_pre_tool_deny_reason(
             gate_rule, gate_body
-        ).removeprefix("Gobby blocked ")
+        ).removeprefix("Gobby ")
         lines.append(f"{gate_number}. {compact_gate}")
 
     if not lines:
         return _compact_single_claude_pre_tool_deny_reason(rule_name, body)
-    return f"Gobby blocked [{rule_name}]:\n" + "\n".join(lines)
+    return f"Gobby [{rule_name}]:\n" + "\n".join(lines)
 
 
 def _compact_single_claude_pre_tool_deny_reason(rule_name: str, body: str) -> str:
@@ -106,31 +108,32 @@ def _compact_single_claude_pre_tool_deny_reason(rule_name: str, body: str) -> st
     body = " ".join(line.strip() for line in body.splitlines() if line.strip())
     body = re.sub(r"\s+", " ", body).strip()
 
-    action = ""
-    skill_match = _GET_SKILL_RE.search(body)
-    if skill_match:
-        start = body.rfind(".", 0, skill_match.start()) + 1
-        end = body.find(".", skill_match.end())
-        action = body[start : end + 1 if end != -1 else len(body)].strip()
-    else:
-        for marker in ("Retry ", "Use ", "Run ", "Call "):
-            idx = body.find(marker)
-            if idx > 0:
-                action = _first_sentence(body[idx:])
-                break
-        if not action:
-            command_match = _COMMAND_CALL_RE.search(body)
-            if command_match:
-                action = command_match.group(0)
+    is_redirect = (
+        body.startswith(_ACTION_FIRST_PREFIXES)
+        or _GET_SKILL_RE.match(body) is not None
+        or _COMMAND_CALL_RE.match(body) is not None
+    )
+    if is_redirect:
+        action = _first_sentence(body)
+        remainder = body[len(action) :].strip()
+        short_reason = _first_sentence(remainder) if remainder else ""
+        action_message = f"Gobby [{rule_name}]: {action}"
+        if not short_reason or len(action_message) >= _DENY_REASON_MAX_CHARS:
+            return action_message
+
+        reason_budget = _DENY_REASON_MAX_CHARS - len(action_message) - len(" ()")
+        if reason_budget <= 0:
+            return action_message
+        if len(short_reason) > reason_budget:
+            short_reason = f"{short_reason[: reason_budget - 1]}…"
+        return f"{action_message} ({short_reason})"
 
     short_reason = _first_sentence(body)
-    if action and short_reason == action:
-        action = ""
-
-    if action:
-        short_reason = short_reason.rstrip(".!?")
-        return f"Gobby blocked [{rule_name}]: {short_reason}; {action}"
-    return f"Gobby blocked [{rule_name}]: {short_reason}"
+    prefix = f"Gobby blocked [{rule_name}]: "
+    reason_budget = _DENY_REASON_MAX_CHARS - len(prefix)
+    if len(short_reason) > reason_budget:
+        short_reason = f"{short_reason[: reason_budget - 1]}…"
+    return f"{prefix}{short_reason}"
 
 
 class ClaudeCodeAdapter(BaseAdapter):

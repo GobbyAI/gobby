@@ -12,6 +12,7 @@ from unittest.mock import MagicMock
 
 import pytest
 
+import gobby.adapters.claude_code as claude_code
 from gobby.adapters.base import ADAPTER_EMPTY_BLOCK_REASON_SENTINEL
 from gobby.adapters.claude_code import ClaudeCodeAdapter
 from gobby.adapters.claude_contract import (
@@ -572,7 +573,7 @@ class TestTranslateFromHookResponse:
         assert hso["hookEventName"] == "PreToolUse"
         assert hso["permissionDecision"] == "deny"
         assert hso["permissionDecisionReason"] == (
-            "Gobby blocked [prefer-gcode-for-code-search]: "
+            "Gobby [prefer-gcode-for-code-search]: "
             'Use `gcode grep "pattern" [PATH...] -m 50` for exact text search, '
             'or `gcode search-content "query" [PATH...]` for ranked content search.'
         )
@@ -615,7 +616,7 @@ class TestTranslateFromHookResponse:
         result = adapter.translate_from_hook_response(response, hook_type="pre-tool-use")
 
         assert result["hookSpecificOutput"]["permissionDecisionReason"] == (
-            f"Gobby blocked [require-code-index-skill]: {compacted_directive}"
+            f"Gobby [require-code-index-skill]: {compacted_directive} (Then continue.)"
         )
 
     def test_pre_tool_use_source_read_block_preserves_gcode_replacements(self) -> None:
@@ -634,7 +635,8 @@ class TestTranslateFromHookResponse:
         result = adapter.translate_from_hook_response(response, hook_type="pre-tool-use")
 
         assert result["hookSpecificOutput"]["permissionDecisionReason"] == (
-            f"Gobby blocked [prefer-gcode-for-source-read]: {guidance}"
+            f"Gobby [prefer-gcode-for-source-read]: {guidance} "
+            "(Keep follow-up line reads to 40 lines or fewer.)"
         )
 
     def test_pre_tool_use_aggregate_block_preserves_each_gate_action(self) -> None:
@@ -654,14 +656,139 @@ class TestTranslateFromHookResponse:
         result = adapter.translate_from_hook_response(response, hook_type="pre-tool-use")
 
         assert result["hookSpecificOutput"]["permissionDecisionReason"] == (
-            "Gobby blocked [aggregated:2-gates]:\n"
+            "Gobby [aggregated:2-gates]:\n"
             '1. [require-code-index-skill]: Call get_skill(name="code-index") on '
-            "gobby-skills directly through mcp__gobby__call_tool.\n"
+            "gobby-skills directly through mcp__gobby__call_tool. (Then continue.)\n"
             '2. [prefer-gcode-for-code-search]: Use `gcode grep "pattern" [PATH...] '
             "-m 50` for exact text search."
         )
 
-    def test_pre_tool_use_block_compacts_rule_reason_and_preserves_action(self) -> None:
+    @pytest.mark.parametrize(
+        ("rule_name", "reason", "expected"),
+        [
+            pytest.param(
+                "require-code-index-skill",
+                'Call get_skill(name="code-index") on gobby-skills directly. Then continue.',
+                'Gobby [require-code-index-skill]: Call get_skill(name="code-index") '
+                "on gobby-skills directly. (Then continue.)",
+                id="call",
+            ),
+            pytest.param(
+                "require-uv",
+                "Use `uv pip …` or `uv run python -m pip …` — uv manages this "
+                "project's Python environment.",
+                "Gobby [require-uv]: Use `uv pip …` or `uv run python -m pip …` — "
+                "uv manages this project's Python environment.",
+                id="use",
+            ),
+            pytest.param(
+                "no-full-pytest",
+                "Run targeted tests: `pytest tests/path/test_file.py` or `-k 'pattern'` "
+                "— full-suite runs are reserved for the user.",
+                "Gobby [no-full-pytest]: Run targeted tests: "
+                "`pytest tests/path/test_file.py` or `-k 'pattern'` — full-suite runs "
+                "are reserved for the user.",
+                id="run",
+            ),
+            pytest.param(
+                "retry-edit",
+                "Retry this edit after claiming a task.",
+                "Gobby [retry-edit]: Retry this edit after claiming a task.",
+                id="retry",
+            ),
+            pytest.param(
+                "context7",
+                "If this edit touches third-party APIs, load current docs first: "
+                'get_skill(name="context7"). For internal edits, simply retry.',
+                "Gobby [context7]: If this edit touches third-party APIs, load current "
+                'docs first: get_skill(name="context7"). (For internal edits, simply retry.)',
+                id="if",
+            ),
+            pytest.param(
+                "skill-call",
+                'get_skill(name="context7") before editing. Then retry.',
+                'Gobby [skill-call]: get_skill(name="context7") before editing. (Then retry.)',
+                id="get-skill",
+            ),
+            pytest.param(
+                "task-call",
+                "create_task(title, category, claim=True). Then retry.",
+                "Gobby [task-call]: create_task(title, category, claim=True). (Then retry.)",
+                id="command-call",
+            ),
+        ],
+    )
+    def test_pre_tool_use_action_first_reason_uses_redirect_framing(
+        self,
+        rule_name: str,
+        reason: str,
+        expected: str,
+    ) -> None:
+        assert (
+            claude_code._compact_single_claude_pre_tool_deny_reason(rule_name, reason) == expected
+        )
+
+    def test_pre_tool_use_mid_body_action_keeps_blocked_framing(self) -> None:
+        assert (
+            claude_code._compact_single_claude_pre_tool_deny_reason(
+                "no-force-kill",
+                "Force-killing processes is not allowed. Use graceful signals.",
+            )
+            == "Gobby blocked [no-force-kill]: Force-killing processes is not allowed."
+        )
+
+    def test_pre_tool_use_redirect_budget_preserves_action_before_reason(self) -> None:
+        action = f"Use {'target ' * 35}now."
+        reason = "This explanatory reason is intentionally much longer than the remaining budget."
+
+        result = claude_code._compact_single_claude_pre_tool_deny_reason(
+            "long-redirect",
+            f"{action} {reason}",
+        )
+
+        assert action in result
+        assert reason not in result
+        assert len(result) == claude_code._DENY_REASON_MAX_CHARS
+
+    def test_pre_tool_use_redirect_budget_never_truncates_action(self) -> None:
+        action = f"Use {'target ' * 60}now."
+
+        result = claude_code._compact_single_claude_pre_tool_deny_reason(
+            "long-action",
+            f"{action} This reason should be omitted.",
+        )
+
+        assert result == f"Gobby [long-action]: {action}"
+        assert len(result) > claude_code._DENY_REASON_MAX_CHARS
+
+    def test_pre_tool_use_aggregate_block_preserves_mixed_child_framing(self) -> None:
+        adapter = ClaudeCodeAdapter()
+        response = HookResponse(
+            decision="block",
+            reason=(
+                "Rule enforced by Gobby: [aggregated:2-gates]\n"
+                "Multiple gates blocked while retrying Edit.\n"
+                '1. [prefer-gcode-for-code-search] Use `gcode grep "pattern" -m 50` or '
+                "`gcode search-content` — the code index has full access to this repo "
+                "and returns ranked, token-cheap results.\n"
+                "2. [no-force-kill] Force-killing processes is not allowed. "
+                "Use graceful signals."
+            ),
+        )
+
+        result = adapter.translate_from_hook_response(response, hook_type="pre-tool-use")
+
+        assert result["hookSpecificOutput"]["permissionDecisionReason"] == (
+            "Gobby [aggregated:2-gates]:\n"
+            '1. [prefer-gcode-for-code-search]: Use `gcode grep "pattern" -m 50` or '
+            "`gcode search-content` — the code index has full access to this repo and "
+            "returns ranked, token-cheap results.\n"
+            "2. blocked [no-force-kill]: Force-killing processes is not allowed."
+        )
+
+    def test_pre_tool_use_block_compacts_legacy_reason_without_mid_body_action(
+        self,
+    ) -> None:
         adapter = ClaudeCodeAdapter()
         response = HookResponse(
             decision="block",
@@ -680,13 +807,14 @@ class TestTranslateFromHookResponse:
                 "permissionDecision": "deny",
                 "permissionDecisionReason": (
                     "Gobby blocked [require-task-creation-skill-loaded]: "
-                    "Task lifecycle tools require the task creation skill; "
-                    'Call get_skill(name="task-creation") on gobby-skills directly through mcp__gobby__call_tool'
+                    "Task lifecycle tools require the task creation skill."
                 ),
             },
         }
 
-    def test_pre_tool_use_block_preserves_command_call_fallback_action(self) -> None:
+    def test_pre_tool_use_block_ignores_mid_body_command_call_for_classification(
+        self,
+    ) -> None:
         adapter = ClaudeCodeAdapter()
         response = HookResponse(
             decision="block",
@@ -700,8 +828,7 @@ class TestTranslateFromHookResponse:
 
         assert result["hookSpecificOutput"]["permissionDecisionReason"] == (
             "Gobby blocked [require-task-before-edit]: "
-            "Create or claim a Gobby task before editing source files; "
-            "create_task(title, category, claim=True)"
+            "Create or claim a Gobby task before editing source files."
         )
 
     def test_block_decision(self) -> None:
