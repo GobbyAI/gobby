@@ -10,6 +10,9 @@ fn source_reference_is_present(markdown: &str, needle: &str) -> bool {
         .any(|matched| has_text_match_boundaries(&markdown, matched.start(), matched.end()))
 }
 
+use aho_corasick::AhoCorasick;
+
+use super::citations::{has_text_match_boundaries, markdown_without_fenced_code};
 use super::*;
 use std::fs::FileTimes;
 use std::time::{Duration, UNIX_EPOCH};
