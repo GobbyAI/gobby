@@ -219,7 +219,7 @@ pub fn contract() -> CliContract {
             CommandContract {
                 daemon_consumed: true,
                 positionals: vec![PositionalContract::repeatable("URL")],
-                flags: vec![],
+                flags: vec![FlagContract::value("--max-age-hours", "HOURS")],
                 json_output_keys: scoped_keys(vec![
                     "results",
                     "path",

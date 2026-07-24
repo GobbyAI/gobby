@@ -43,7 +43,14 @@ pub(super) fn command_from_cli(
                 text_routing,
             },
         }),
-        CliCommand::IngestUrl { urls } => Ok(Command::IngestUrl { urls, scope }),
+        CliCommand::IngestUrl {
+            urls,
+            max_age_hours,
+        } => Ok(Command::IngestUrl {
+            urls,
+            scope,
+            max_age_hours,
+        }),
         CliCommand::SyncSessions(args) => Ok(Command::SyncSessions {
             scope,
             options: SyncSessionsOptions {

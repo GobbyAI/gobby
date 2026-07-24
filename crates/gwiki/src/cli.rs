@@ -162,6 +162,9 @@ enum CliCommand {
     IngestUrl {
         #[arg(value_name = "URL", num_args = 1..)]
         urls: Vec<String>,
+        /// Reuse an existing URL capture no older than this many hours.
+        #[arg(long, value_name = "HOURS", default_value_t = 24)]
+        max_age_hours: u64,
     },
     /// Sync archived Gobby session transcripts into the wiki vault.
     SyncSessions(SyncSessionsArgs),

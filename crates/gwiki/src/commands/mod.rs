@@ -58,7 +58,11 @@ fn dispatch(command: Command, run_options: RunOptions) -> Result<CommandOutcome,
             scope,
             options,
         } => index::execute_ingest_file(path, scope, options, run_options),
-        Command::IngestUrl { urls, scope } => index::execute_ingest_url(urls, scope, run_options),
+        Command::IngestUrl {
+            urls,
+            scope,
+            max_age_hours,
+        } => index::execute_ingest_url(urls, scope, max_age_hours, run_options),
         Command::SyncSessions { scope, options } => {
             session_sync::execute(scope, options, run_options)
         }

@@ -446,31 +446,32 @@ fn ingest_url_cli_accepts_multiple_urls() {
     ])
     .expect("parse ingest-url command");
     assert_eq!(cli.scope.topic.as_deref(), Some("rust"));
-    let CliCommand::IngestUrl { urls } = cli.command else {
+    let CliCommand::IngestUrl {
+        urls,
+        max_age_hours,
+    } = &cli.command
+    else {
         panic!("expected parsed ingest-url command");
     };
-    assert_eq!(
+    assert_eq!(*max_age_hours, 24);
+    let expected_urls = [
+        "https://example.test/one".to_string(),
+        "https://example.test/two".to_string(),
+    ];
+    assert_eq!(urls.as_slice(), expected_urls.as_slice(),);
+
+    let command = command_from_cli(cli.command, ScopeSelection::topic("rust"))
+        .expect("map ingest-url command");
+
+    let Command::IngestUrl {
         urls,
-        vec![
-            "https://example.test/one".to_string(),
-            "https://example.test/two".to_string()
-        ]
-    );
-
-    let command = command_from_cli(
-        CliCommand::IngestUrl {
-            urls: vec![
-                "https://example.test/one".to_string(),
-                "https://example.test/two".to_string(),
-            ],
-        },
-        ScopeSelection::topic("rust"),
-    )
-    .expect("map ingest-url command");
-
-    let Command::IngestUrl { urls, scope } = command else {
+        scope,
+        max_age_hours,
+    } = command
+    else {
         panic!("expected ingest-url command");
     };
+    assert_eq!(max_age_hours, 24);
     assert_eq!(
         urls,
         vec![
@@ -479,6 +480,49 @@ fn ingest_url_cli_accepts_multiple_urls() {
         ]
     );
     assert_eq!(scope.topic_name(), Some("rust"));
+}
+
+#[test]
+fn ingest_url_cli_forwards_explicit_max_age_hours() {
+    let cli = Cli::try_parse_from([
+        "gwiki",
+        "ingest-url",
+        "--max-age-hours",
+        "0",
+        "https://example.test/source",
+    ])
+    .expect("parse ingest-url command");
+
+    let command = command_from_cli(cli.command, ScopeSelection::project("/repo"))
+        .expect("map ingest-url command");
+    let Command::IngestUrl {
+        urls,
+        max_age_hours,
+        ..
+    } = command
+    else {
+        panic!("expected ingest-url command");
+    };
+
+    assert_eq!(urls, vec!["https://example.test/source".to_string()]);
+    assert_eq!(max_age_hours, 0);
+}
+
+#[test]
+fn ingest_url_cli_command_literal_carries_max_age_hours() {
+    let command = command_from_cli(
+        CliCommand::IngestUrl {
+            urls: vec!["https://example.test/source".to_string()],
+            max_age_hours: 12,
+        },
+        ScopeSelection::detect(),
+    )
+    .expect("map ingest-url command");
+
+    let Command::IngestUrl { max_age_hours, .. } = command else {
+        panic!("expected ingest-url command");
+    };
+    assert_eq!(max_age_hours, 12);
 }
 
 #[test]

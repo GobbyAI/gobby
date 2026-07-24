@@ -35,6 +35,7 @@ fn dispatch_classification_pins_every_persistent_writer_arm() {
         Command::IngestUrl {
             urls: vec!["https://example.com".to_string()],
             scope: scope(),
+            max_age_hours: 24,
         },
         Command::SyncSessions {
             scope: scope(),

@@ -74,7 +74,7 @@ impl UrlBatchIngest {
     }
 
     pub fn exit_code(&self) -> u8 {
-        u8::from(self.accepted.is_empty())
+        u8::from(self.accepted.is_empty() && self.cached.is_empty())
     }
 }
 
@@ -180,6 +180,7 @@ pub(crate) fn ingest_urls(
     store: &mut impl WikiIndexStore,
     urls: &[String],
     fetched_at: &str,
+    max_age_hours: u64,
     progress: &mut crate::progress::ProgressOptions<'_>,
 ) -> Result<UrlBatchIngest, WikiError> {
     ingest_urls_with_fetcher(
@@ -187,7 +188,7 @@ pub(crate) fn ingest_urls(
         store,
         urls,
         fetched_at,
-        0,
+        max_age_hours,
         fetch::fetch_url_snapshot,
         progress,
     )

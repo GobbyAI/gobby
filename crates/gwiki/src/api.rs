@@ -31,6 +31,7 @@ pub enum Command {
     IngestUrl {
         urls: Vec<String>,
         scope: ScopeSelection,
+        max_age_hours: u64,
     },
     SyncSessions {
         scope: ScopeSelection,

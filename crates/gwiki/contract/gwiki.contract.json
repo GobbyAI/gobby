@@ -522,7 +522,16 @@
           "repeatable": true
         }
       ],
-      "flags": [],
+      "flags": [
+        {
+          "name": "--max-age-hours",
+          "takes_value": true,
+          "value_name": "HOURS",
+          "allowed_values": [],
+          "required": false,
+          "repeatable": false
+        }
+      ],
       "json_output_keys": [
         "command",
         "scope",
