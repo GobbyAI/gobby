@@ -107,7 +107,9 @@ class TestToolHygieneSync:
         assert deleted.deleted_at is not None
 
 
-REQUIRE_UV_REASON = "Python package management must use uv. Use uv pip or uv run python -m pip."
+REQUIRE_UV_REASON = (
+    "Use `uv pip …` or `uv run python -m pip …` — uv manages this project's Python environment."
+)
 REQUIRE_UV_COMMAND_PATTERN = (
     r"(^|(?<=[;&|]))\s*(?:sudo\s+)?"
     r"(?:pip3?\b|python(?:\d+(?:\.\d+)?)?\s+-m\s+pip\b)"
@@ -289,7 +291,7 @@ class TestClaudeMemoryHygieneRules:
 
         assert response.decision == "block"
         assert response.reason is not None
-        assert "Do not read from Claude Code's file-based memory" in response.reason
+        assert "Use gobby-memory" in response.reason
 
     @pytest.mark.asyncio
     async def test_blocks_shell_search_workaround(self, db) -> None:
@@ -300,7 +302,7 @@ class TestClaudeMemoryHygieneRules:
 
         assert response.decision == "block"
         assert response.reason is not None
-        assert "Do not search Claude Code's file-based memory" in response.reason
+        assert "Use gobby-memory" in response.reason
 
     @pytest.mark.asyncio
     async def test_blocks_shell_write_workaround(self, db) -> None:
@@ -315,7 +317,7 @@ class TestClaudeMemoryHygieneRules:
 
         assert response.decision == "block"
         assert response.reason is not None
-        assert "Do not use Claude Code's file-based memory system" in response.reason
+        assert "Use gobby-memory" in response.reason
 
 
 def _make_bash_event(command: str, source: SessionSource = SessionSource.CLAUDE) -> HookEvent:

@@ -25,9 +25,9 @@ rules:
           - "gobby-tasks-ops:close_linked_github_issue"
           - "gobby-merge:merge_apply"
         reason: |
-          {{ completion_evidence_diagnostic(variables, tool_input.get('task_id')) }}
-
-          Run project-appropriate verification commands for the changed work, such as tests, linters, formatting checks, type checks, builds, or other project-defined checks.
+          Run project-appropriate verification and record results, then retry — {{ completion_evidence_diagnostic(variables, tool_input.get('task_id')) }}
+          Use tests, linters, formatting checks, type checks, builds, or other
+          project-defined checks appropriate to the changed work.
           Every terminal command is recorded automatically as a durable shell_command receipt.
           Readiness requires at least one successful verification receipt; failed and unknown
           receipts stay ranked first in the evidence packet for the semantic close gate.
@@ -55,5 +55,5 @@ rules:
           - "set_variable"
           - "mcp__gobby__set_variable"
         reason: |
+          Run a validation command or use gobby-sessions:record_verification_evidence —
           verification_evidence_recorded and verification_evidence are managed by Gobby.
-          Run a validation command or use gobby-sessions:record_verification_evidence.

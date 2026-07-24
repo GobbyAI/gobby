@@ -316,10 +316,10 @@ rules:
         assert result2["synced"] == 0
         assert result2["skipped"] == 1
 
-    def test_changed_rule_updated(
+    def test_message_only_change_updates_reason_and_preserves_enabled_toggle(
         self, db: HubDatabase, manager: LocalWorkflowDefinitionManager, rules_dir: Path
     ) -> None:
-        """Syncing a changed rule should update the row."""
+        """Syncing message drift should update the row and retain the operator toggle."""
         (rules_dir / "changing.yaml").write_text(
             """
 rules:

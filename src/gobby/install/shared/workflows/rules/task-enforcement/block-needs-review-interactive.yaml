@@ -15,7 +15,7 @@ rules:
           - "gobby-tasks-ops:approve_review"
           - "gobby-tasks-ops:reject_review"
         reason: |
-          Interactive sessions should use close_task directly — the user is already present.
+          Use close_task directly — the user is already present.
           Review status transitions (needs_review, review_approved, review_rejected) are for spawned/pipeline
           agents where a separate QA step reviews. Interactive agents can: open, claim,
           escalate, de_escalate, reopen, close, and delete tasks when the user explicitly

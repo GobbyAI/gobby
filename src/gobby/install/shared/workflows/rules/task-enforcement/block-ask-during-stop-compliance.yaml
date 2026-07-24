@@ -11,7 +11,7 @@ rules:
       - type: block
         tools: [AskUserQuestion]
         reason: |
-          Do not ask — act on the hook directive:
+          Use one of the numbered actions:
           1. git commit -m "[{{ project.name }}-#N] description"
           2. close_task(task_id="#N", commit_sha="<sha>")
           3. Then stop.

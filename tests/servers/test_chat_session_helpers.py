@@ -131,8 +131,8 @@ class TestHookResponseConverters:
                 "decision": "block",
                 "reason": (
                     "Rule enforced by Gobby: [require-uv]\n"
-                    "Python package management must use uv. "
-                    "Use uv pip or uv run python -m pip."
+                    "Use `uv pip …` or `uv run python -m pip …` — "
+                    "uv manages this project's Python environment."
                 ),
                 "modified_input": {"command": "uv run python script.py"},
                 "auto_approve": True,

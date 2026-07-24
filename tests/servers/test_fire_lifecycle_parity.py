@@ -17,6 +17,7 @@ from gobby.hooks.events import HookEvent, HookEventType, HookResponse
 from gobby.servers.websocket.chat import ChatMixin
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.workflows.engine.core import RuleEngine
+from gobby.workflows.evaluation_runtime import WorkflowEvaluationRuntime
 from gobby.workflows.hooks import WorkflowHookHandler
 from gobby.workflows.state_manager import SessionVariableManager
 from gobby.workflows.sync_rules import get_bundled_rules_path, sync_bundled_rules
@@ -717,23 +718,28 @@ class TestFireLifecycleRequireUvRule:
         SessionVariableManager(rules_db).merge_variables(SESSION_ID, {"require_uv": True})
 
         host._chat_sessions["conv-1"] = _make_session()
-        host.workflow_handler = WorkflowHookHandler(rule_engine=RuleEngine(rules_db))
-
-        result = await host._fire_lifecycle(
-            "conv-1",
-            HookEventType.BEFORE_TOOL,
-            {
-                "tool_name": "exec_command",
-                "tool_input": {"command": "python3.13 -m pip install requests"},
-            },
+        host.workflow_handler = WorkflowHookHandler(
+            rule_engine=RuleEngine(rules_db),
+            evaluation_runtime=WorkflowEvaluationRuntime(),
         )
+        try:
+            result = await host._fire_lifecycle(
+                "conv-1",
+                HookEventType.BEFORE_TOOL,
+                {
+                    "tool_name": "exec_command",
+                    "tool_input": {"command": "python3.13 -m pip install requests"},
+                },
+            )
+        finally:
+            host.workflow_handler.shutdown()
 
         assert result is not None
         assert result["decision"] == "block"
         assert result["reason"] == (
             "Rule enforced by Gobby: [require-uv]\n"
-            "Python package management must use uv. "
-            "Use uv pip or uv run python -m pip."
+            "Use `uv pip …` or `uv run python -m pip …` — "
+            "uv manages this project's Python environment."
         )
         assert "modified_input" not in result
         assert "auto_approve" not in result

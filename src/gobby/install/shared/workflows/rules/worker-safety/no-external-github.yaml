@@ -11,6 +11,6 @@ rules:
         tools: [Bash]
         command_pattern: "gh\\s+issue\\s+create\\b.*(?:--repo\\b|-R\\b)|gh\\s+(?:--repo\\s+\\S+|-R\\s+\\S+)\\s+issue\\s+create\\b"
         reason: |
-          Creating issues on external GitHub repos is not allowed without explicit user approval.
-          Create a gobby-task instead to track the work, and let the user handle the GitHub interaction:
+          Use create_task(…) to track it as a gobby-task — external GitHub issue
+          creation stays with the user:
             call_tool("gobby-tasks", "create_task", {"title": "...", "task_type": "bug", ...})

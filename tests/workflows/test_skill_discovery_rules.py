@@ -1808,10 +1808,7 @@ class TestRequireJavaSkillStructure:
 
         assert len(body.effects) == 1
         assert body.effects[0].type == "block"
-        assert body.effects[0].reason == (
-            'Load the java skill before editing Java files: call get_skill(name="java") '
-            "on gobby-skills, then continue."
-        )
+        assert body.effects[0].reason == skill_fetch_directive("java")
 
 
 # --- require-java-skill condition evaluation ---

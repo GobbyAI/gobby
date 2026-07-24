@@ -1253,7 +1253,7 @@ class TestBlockReopenTask:
         )
 
         assert claimed_response.decision == "block"
-        assert "reopen_task is blocked" in (claimed_response.reason or "")
+        assert "Use escalate_task" in (claimed_response.reason or "")
 
         unclaimed_event = _make_reopen_event("#2")
         unclaimed_response = await engine.evaluate(

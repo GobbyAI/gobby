@@ -18,13 +18,8 @@ rules:
       - type: block
         acknowledge_variable: context7_nudge_fired
         reason: >
-          One-time nudge: if this edit touches third-party APIs or an unfamiliar
-          framework surface, use context7 to check the current docs before writing.
-          For internal, pure logic, type-only, stdlib-only, or refactor-only edits,
-          retry after this nudge without loading context7.
-          When docs are relevant, call get_skill(name="context7") on gobby-skills,
-          then continue.
-          Call it directly through mcp__gobby__call_tool:
+          If this edit touches third-party APIs, load current docs first:
+          get_skill(name="context7") on gobby-skills through mcp__gobby__call_tool:
           call_tool("gobby-skills", "get_skill", {"name": "context7"}).
-          Use only mcp__gobby__call_tool while loading the skill; do not
-          use native Skill, GitHub/app connector, or Computer Use tools.
+          For internal/stdlib/refactor edits, simply retry — this one-time nudge
+          is now cleared.

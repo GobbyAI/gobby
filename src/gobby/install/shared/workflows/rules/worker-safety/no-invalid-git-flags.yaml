@@ -11,4 +11,4 @@ rules:
       - type: block
         tools: [Bash]
         command_pattern: "git\\s+(show|log)\\s+.*--no-stat"
-        reason: "--no-stat is not a valid flag for git show/log. Stat output is off by default — just omit the flag. For diffs, use git diff --no-stat instead."
+        reason: "Run the command without `--no-stat` — stat output is off by default for git show/log; for diffs, use `git diff --no-stat`."

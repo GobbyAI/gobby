@@ -11,4 +11,4 @@ rules:
       - type: block
         tools: [Bash]
         command_pattern: "(^|(?<=[;&|]))\\s*(?:sudo\\s+)?(?:pip3?\\b|python(?:\\d+(?:\\.\\d+)?)?\\s+-m\\s+pip\\b)"
-        reason: "Python package management must use uv. Use uv pip or uv run python -m pip."
+        reason: "Use `uv pip …` or `uv run python -m pip …` — uv manages this project's Python environment."

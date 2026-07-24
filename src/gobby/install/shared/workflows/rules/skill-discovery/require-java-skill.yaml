@@ -16,4 +16,4 @@ rules:
       )
     effects:
       - type: block
-        reason: 'Load the java skill before editing Java files: call get_skill(name="java") on gobby-skills, then continue.'
+        reason: 'Call get_skill(name="java") on gobby-skills directly through mcp__gobby__call_tool: call_tool("gobby-skills", "get_skill", {"name": "java"}). Then continue.'

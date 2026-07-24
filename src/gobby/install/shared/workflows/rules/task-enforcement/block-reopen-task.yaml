@@ -21,6 +21,5 @@ rules:
     effects:
       - type: block
         reason: |
-          reopen_task is blocked for tasks claimed by this session. Do not use it to bounce your own active work or silently drop ownership.
-          If work is blocked, use escalate_task.
-          If an escalated task is ready to resume, use de_escalate_task instead of reopen_task.
+          Use escalate_task when work is blocked, or de_escalate_task to resume —
+          reopen_task does not apply to your own claimed task.

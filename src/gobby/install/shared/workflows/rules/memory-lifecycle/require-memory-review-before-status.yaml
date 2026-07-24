@@ -19,13 +19,9 @@ rules:
           - "gobby-tasks-ops:approve_review"
           - "gobby-tasks-ops:reject_review"
         reason: |
-          Consider saving any valuable memories from this task before closing.
-          Use `create_memory` (via gobby-memory MCP) for insights worth preserving.
-
-          Also verify any stale memories you encountered during this session were
-          cleaned up. Stale memories (outdated facts, references to fixed bugs,
-          superseded patterns) cause harmful feedback loops — future agents treat
-          them as current truth. Use `delete_memory` to remove them.
+          Use `create_memory` (gobby-memory) for insights worth preserving and
+          `delete_memory` for stale memories you encountered — then retry the
+          status change.
 
           If nothing new was learned and no stale memories remain, clear the gate:
           `set_variable(name="memory_review_completed", value=true, session_id="<your Gobby Session ID>")`

@@ -12,5 +12,5 @@ rules:
     effects:
       - type: block
         reason: |
-          Task commit and diff tools must resolve explicit project_path through
-          resolve_task_repo_path or _get_task_and_repo_path before passing cwd to Git helpers.
+          Call resolve_task_repo_path or _get_task_and_repo_path to resolve explicit
+          project_path before passing cwd to Git helpers.

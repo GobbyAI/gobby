@@ -14,6 +14,5 @@ rules:
     effects:
       - type: block
         reason: |
-          You must create or claim a task before editing files.
-          - create_task(title, category, claim=True)
-          - claim_task(task_id)
+          Use create_task(title, category, claim=True) or claim_task(task_id) to
+          unlock file edits — then retry this edit.

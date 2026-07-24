@@ -55,7 +55,7 @@ rules:
       and event.data.get('canonical_code_navigation_repo_scope') is not False
     effects:
       - type: block
-        reason: 'Use `gcode grep "pattern" [PATH...] -m 50` for exact text search, or `gcode search-content "query" [PATH...]` for ranked content search.'
+        reason: 'Use `gcode grep "pattern" -m 50` or `gcode search-content` — the code index has full access to this repo and returns ranked, token-cheap results.'
 
   prefer-gcode-for-source-read:
     description: "Block broad source reads in indexed projects after code-index is loaded"
@@ -75,4 +75,4 @@ rules:
       )
     effects:
       - type: block
-        reason: 'Use `gcode outline path/to/file` to inspect file structure or `gcode symbol <id>` to retrieve a target symbol before broad source reads. To read a file directly, pass an explicit line window -- Read with a `limit`/`offset`, or a bounded `sed -n` range: up to 40 lines is always allowed, and wider windows are allowed once you have run a gcode navigation this turn (a piped `gcode ... | jq` now counts). A full-file read with no line limit stays blocked; retrieve the symbol with `gcode symbol <id>` instead.'
+        reason: 'Use `gcode outline <file>` then `gcode symbol <id>` — ranged Read (offset/limit, ≤40 lines) is always available.'

@@ -13,9 +13,8 @@ rules:
         command_pattern: "\\bpytest\\b"
         command_not_pattern: "\\bpytest\\s+\\S+\\.py\\b|\\bpytest\\s+\\S*tests/\\w+[/\\s]|\\bpytest\\s.*-k\\s"
         reason: >-
-          Running the full pytest suite is not allowed for agents.
-          Target specific test files (pytest tests/path/test_file.py)
-          or use filters (pytest -k 'pattern').
+          Run targeted tests: `pytest tests/path/test_file.py` or `-k 'pattern'`
+          — full-suite runs are reserved for the user.
 
   no-full-vitest-suite:
     description: "Block spawned agents from running the full vitest suite."
@@ -29,8 +28,8 @@ rules:
         command_pattern: "\\b(vitest|jest)\\b"
         command_not_pattern: "\\b(vitest|jest)\\b[^;&|]*(?:__tests__/\\S+\\.(ts|js|tsx|jsx)|\\S+\\.(test|spec)\\.(ts|js|tsx|jsx))\\b|\\b(vitest|jest)\\b[^;&|]*(-t|--testNamePattern|--testPathPattern)(\\s+|=)"
         reason: >-
-          Running the full test suite is not allowed for agents.
-          Target specific test files or use filters.
+          Run targeted tests: name specific test files or use `-t` /
+          `--testNamePattern` filters.
 
   no-full-cargo-test:
     description: "Block spawned agents from running the full Cargo test suite."
@@ -44,8 +43,7 @@ rules:
         command_pattern: "\\bcargo\\s+test\\b"
         command_not_pattern: "\\bcargo\\s+test\\b[^;&|]*(?:\\s(?:-p|--package|--test|--bin)\\s+\\S+|\\s(?!-)[^\\s;&|]+)"
         reason: >-
-          Running the full Cargo test suite is not allowed for agents.
-          Target specific tests or packages (cargo test <name>, cargo test -p <package>).
+          Run targeted tests: `cargo test <name>` or `cargo test -p <package>`.
 
   no-full-go-test:
     description: "Block spawned agents from running the full go test suite."
@@ -58,5 +56,4 @@ rules:
         tools: [Bash]
         command_pattern: "\\bgo\\s+test\\s+\\./\\.\\.\\.\\b"
         reason: >-
-          Running 'go test ./...' is not allowed for agents.
-          Target specific packages (go test ./pkg/...).
+          Run targeted tests: `go test ./pkg/...`.

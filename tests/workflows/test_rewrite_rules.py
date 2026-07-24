@@ -3,12 +3,15 @@
 from __future__ import annotations
 
 import json
+import re
 from datetime import UTC, datetime
 from typing import Any
 
 import pytest
+import yaml
 
 from gobby.hooks.events import HookEvent, HookEventType, SessionSource
+from gobby.skills.formatting import skill_fetch_directive
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.workflow_definitions import LocalWorkflowDefinitionManager
 from gobby.workflows.definitions import (
@@ -103,6 +106,200 @@ def _load_bundled_rule(
         enabled = metadata.get("enabled", True)
         return _insert_rule(manager, rule_name, body, priority=priority, enabled=enabled)
     raise AssertionError(f"Bundled rule {rule_name!r} not found under {rules_path}")
+
+
+REDIRECT_RULES = frozenset(
+    {
+        "block-and-teach-context7",
+        "block-ask-during-stop-compliance",
+        "block-claude-memory-read",
+        "block-claude-memory-search",
+        "block-claude-memory-write",
+        "block-direct-verification-evidence-variable-set",
+        "block-edits-plan-mode",
+        "block-gobby-tasks-cli",
+        "block-native-task-tools-unclaimed",
+        "block-native-todo-write",
+        "block-needs-review-interactive",
+        "block-reopen-task",
+        "block-writes-outside-plan-artifact",
+        "enforce-tdd-block",
+        "no-bash-sleep",
+        "no-external-github-issues",
+        "no-full-cargo-test",
+        "no-full-go-test",
+        "no-full-pytest-suite",
+        "no-full-vitest-suite",
+        "no-invalid-git-flags",
+        "prefer-gcode-for-code-search",
+        "prefer-gcode-for-source-read",
+        "require-bash-skill",
+        "require-build-coordinator-for-gobby-build",
+        "require-c-skill",
+        "require-claimed-task-required-skills",
+        "require-clean-tree-before-status",
+        "require-code-index-skill",
+        "require-commit-before-status",
+        "require-completion-readiness-evidence",
+        "require-cpp-skill",
+        "require-csharp-skill",
+        "require-current-context-schema-before-call",
+        "require-dart-skill",
+        "require-elixir-skill",
+        "require-go-skill",
+        "require-java-skill",
+        "require-javascript-skill",
+        "require-json-skill",
+        "require-kotlin-skill",
+        "require-lua-skill",
+        "require-memory-review-before-status",
+        "require-objc-skill",
+        "require-php-skill",
+        "require-python-skill",
+        "require-restraint-skill",
+        "require-ruby-skill",
+        "require-rust-skill",
+        "require-scala-skill",
+        "require-swift-skill",
+        "require-task-before-edit",
+        "require-task-creation-skill-loaded",
+        "require-task-creation-skill-on-schema",
+        "require-task-transitions-skill-loaded",
+        "require-task-transitions-skill-on-lifecycle",
+        "require-typescript-skill",
+        "require-uv",
+        "require-yaml-skill",
+        "task-commit-project-path-allowlist-before-git",
+    }
+)
+
+TRUE_RESTRICTION_RULES = frozenset(
+    {
+        "no-agent-spawn-for-merge",
+        "no-brew-install",
+        "no-cargo-add",
+        "no-cargo-publish",
+        "no-cargo-publish-interactive",
+        "no-curl-upload",
+        "no-daemon-management",
+        "no-daemon-management-http",
+        "no-dd",
+        "no-dd-interactive",
+        "no-destructive-git",
+        "no-destructive-git-interactive",
+        "no-force-kill",
+        "no-force-kill-interactive",
+        "no-force-push",
+        "no-force-push-interactive",
+        "no-gem-install",
+        "no-gem-push",
+        "no-gem-push-interactive",
+        "no-npm-install",
+        "no-npm-publish",
+        "no-npm-publish-interactive",
+        "no-npx",
+        "no-pip-install",
+        "no-push",
+        "no-push-for-workers",
+        "no-recursive-permissions",
+        "no-recursive-permissions-interactive",
+        "no-recursive-rm",
+        "no-recursive-rm-interactive",
+        "no-remote-copy",
+        "no-remote-exec",
+        "no-secret-read",
+        "no-secure-delete",
+        "no-secure-delete-interactive",
+        "no-truncate",
+        "no-truncate-interactive",
+        "no-twine-upload",
+        "no-twine-upload-interactive",
+        "no-uv-add",
+        "no-wget-upload",
+        "no-yarn-add",
+    }
+)
+
+_ACTION_FIRST_PREFIXES = ("Retry ", "Use ", "Run ", "Call ", "If ")
+_GET_SKILL_RE = re.compile(r'get_skill\(name=(["\']).+?\1\)')
+_COMMAND_CALL_RE = re.compile(r"\b[a-z_][a-z0-9_]*\([^)]*\)")
+_SKILL_FETCH_TEMPLATE = "{{ skill_fetch_directive(first_unloaded_claimed_task_required_skill(tool_input, event.data)) }}"
+
+
+def _bundled_before_tool_block_reasons() -> dict[str, str]:
+    reasons: dict[str, str] = {}
+    rules_path = get_bundled_rules_path()
+    for yaml_file in sorted(rules_path.rglob("*.yaml")):
+        if "deprecated" in yaml_file.relative_to(rules_path).parts:
+            continue
+        data: Any = yaml.safe_load(yaml_file.read_text(encoding="utf-8"))
+        if not isinstance(data, dict):
+            continue
+        rules: Any = data.get("rules") or {}
+        if not isinstance(rules, dict):
+            continue
+        for rule_name, rule_data in rules.items():
+            if not isinstance(rule_name, str) or not isinstance(rule_data, dict):
+                continue
+            if rule_data.get("event") != "before_tool":
+                continue
+            raw_effects = rule_data.get("effects")
+            if raw_effects is None:
+                raw_effect = rule_data.get("effect")
+                raw_effects = [raw_effect] if raw_effect is not None else []
+            block_effects = [
+                effect
+                for effect in raw_effects
+                if isinstance(effect, dict) and effect.get("type") == "block"
+            ]
+            if not block_effects:
+                continue
+            assert len(block_effects) == 1, f"{rule_name} must have one block reason"
+            reason = block_effects[0].get("reason")
+            assert isinstance(reason, str), f"{rule_name} must have a string block reason"
+            assert rule_name not in reasons, f"duplicate live block rule: {rule_name}"
+            reasons[rule_name] = reason
+    return reasons
+
+
+def _is_action_first_reason(reason: str) -> bool:
+    return (
+        reason.startswith(_ACTION_FIRST_PREFIXES)
+        or _GET_SKILL_RE.match(reason) is not None
+        or _COMMAND_CALL_RE.match(reason) is not None
+    )
+
+
+class TestBundledBlockReasonFraming:
+    def test_every_live_before_tool_block_is_classified_once(self) -> None:
+        reasons = _bundled_before_tool_block_reasons()
+
+        assert REDIRECT_RULES.isdisjoint(TRUE_RESTRICTION_RULES)
+        assert set(reasons) == REDIRECT_RULES | TRUE_RESTRICTION_RULES
+
+    def test_redirect_reasons_open_with_frozen_action_marker(self) -> None:
+        reasons = _bundled_before_tool_block_reasons()
+
+        for rule_name in sorted(REDIRECT_RULES - {"require-claimed-task-required-skills"}):
+            reason = reasons[rule_name]
+            assert _is_action_first_reason(reason), f"{rule_name}: {reason!r}"
+            assert not reason.lower().startswith(("do not", "blocked", "disabled"))
+
+    def test_skill_fetch_template_is_the_only_marker_exception(self) -> None:
+        reasons = _bundled_before_tool_block_reasons()
+
+        assert reasons["require-claimed-task-required-skills"] == _SKILL_FETCH_TEMPLATE
+        assert skill_fetch_directive("python").startswith("Call ")
+
+    def test_critical_redirects_retain_literal_offset_zero_actions(self) -> None:
+        reasons = _bundled_before_tool_block_reasons()
+
+        assert reasons["require-code-index-skill"].startswith('Call get_skill(name="code-index")')
+        assert reasons["require-java-skill"].startswith('Call get_skill(name="java")')
+        assert reasons["no-invalid-git-flags"].startswith("Run the command without `--no-stat`")
+        completion_reason = reasons["require-completion-readiness-evidence"]
+        assert completion_reason.startswith("Run project-appropriate verification")
+        assert completion_reason.index("{{ completion_evidence_diagnostic") > 0
 
 
 class TestMCPRewriteNesting:
@@ -368,7 +565,9 @@ REQUIRE_UV_COMMAND_PATTERN = (
     r"(^|(?<=[;&|]))\s*(?:sudo\s+)?"
     r"(?:pip3?\b|python(?:\d+(?:\.\d+)?)?\s+-m\s+pip\b)"
 )
-REQUIRE_UV_REASON = "Python package management must use uv. Use uv pip or uv run python -m pip."
+REQUIRE_UV_REASON = (
+    "Use `uv pip …` or `uv run python -m pip …` — uv manages this project's Python environment."
+)
 
 
 def _insert_require_uv_block_rule(manager: LocalWorkflowDefinitionManager) -> None:

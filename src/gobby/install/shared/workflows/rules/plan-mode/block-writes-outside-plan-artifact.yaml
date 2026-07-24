@@ -30,8 +30,6 @@ rules:
       - type: block
         tools: [Edit, Write, NotebookEdit]
         reason: |
-          A planning session is in progress — only the current plan artifact
-          (variables.artifact_path), the active provider's user directory, and
-          OS temporary directories may be edited by structured file tools. Every
-          target must qualify. A missing artifact_path still permits approved
-          scratch paths and blocks all other writes.
+          Use the writable surfaces (plan file, provider user directory, OS temp)
+          while planning. Every target must qualify; a missing artifact_path still
+          permits approved scratch paths. Other edits resume after ExitPlanMode.

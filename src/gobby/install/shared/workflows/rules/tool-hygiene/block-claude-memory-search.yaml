@@ -13,7 +13,6 @@ rules:
       type: block
       tools: [Glob, Grep, Bash]
       reason: |
-        Do not search Claude Code's file-based memory.
-        Use gobby-memory MCP instead:
-        - search_memories(query) — semantic search
-        - list_memories(tags_any=[...]) — filter by tags
+        Use gobby-memory — your memories live there with full read/search/write
+        access: search_memories(query), list_memories(), get_memory(id),
+        create_memory(...).

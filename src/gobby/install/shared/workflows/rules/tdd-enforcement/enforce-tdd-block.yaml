@@ -24,5 +24,6 @@ rules:
       - type: block
         tools: [Write, Bash]
         reason: |
-          TDD enforcement: Write a test first before creating {{ first_tdd_code_path(event.data, tool_input).split('/')[-1] }}.
-          Create a test file (in tests/ directory or with test_ prefix) that covers the expected behavior, then retry creating this file.
+          Use a test-first flow: create a test file (in tests/ or with a test_
+          prefix) covering the expected behavior, then retry creating
+          {{ first_tdd_code_path(event.data, tool_input).split('/')[-1] }}.

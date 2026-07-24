@@ -13,8 +13,6 @@ rules:
       - type: block
         tools: [Edit, Write, NotebookEdit]
         reason: |
-          Plan mode is active — file edits are blocked.
-          Structured file tools may edit the plan file, the active provider's
-          user directory, or an OS temporary directory. Every target in a
-          multi-file operation must qualify.
-          Use ExitPlanMode when your plan is finalized.
+          Use the writable surfaces (plan file, provider user directory, OS temp)
+          while plan mode is active. Every target in a multi-file operation must
+          qualify. Other edits resume after ExitPlanMode.

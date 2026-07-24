@@ -13,8 +13,6 @@ rules:
       type: block
       tools: [Write, Edit, Bash]
       reason: |
-        Do not use Claude Code's file-based memory system.
-        Use gobby-memory MCP instead:
-        - create_memory(content, tags) — store new memory
-        - update_memory(memory_id, content) — update existing
-        - search_memories(query) — find relevant memories
+        Use gobby-memory — your memories live there with full read/search/write
+        access: search_memories(query), list_memories(), get_memory(id),
+        create_memory(...).

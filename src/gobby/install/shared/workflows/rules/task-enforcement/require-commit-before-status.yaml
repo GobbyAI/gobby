@@ -20,11 +20,9 @@ rules:
           - "gobby-tasks-ops:approve_review"
           - "gobby-tasks-ops:reject_review"
         reason: |
-          Uncommitted changes detected. Stage and commit dirty files before changing task status.
-          1. git add <files>
-          2. git commit -m "[{{ project.name }}-#N] description"
-
-          Note: After committing, Gobby auto-detects the commit. If it doesn't, pass commit_sha to close_task().
+          Run `git add <files>` then `git commit -m "[{{ project.name }}-#N] description"` —
+          uncommitted changes must be committed before a status change.
+          Gobby auto-detects the commit; pass commit_sha to close_task() if needed.
 
   require-commit-before-status:
     description: "Block status transitions when no commit is linked to the task"
@@ -46,10 +44,10 @@ rules:
           - "gobby-tasks-ops:approve_review"
           - "gobby-tasks-ops:reject_review"
         reason: |
-          No commit linked to this task. Gobby auto-detects commits from Bash `git commit`
-          and from `link_commit()`. If you already committed, try again — if the issue
-          persists, pass `commit_sha` explicitly to `close_task()` before changing lifecycle state.
+          Retry the status change after committing — Gobby auto-detects commits
+          from Bash `git commit` and `link_commit()`. If detection misses the commit,
+          pass `commit_sha` explicitly to `close_task()`.
 
-          If you have no code changes at all, pass a reason to skip the commit requirement:
+          For a task with no code changes, pass a reason to skip the commit requirement:
           close_task(task_id="#N", reason="obsolete")
           Valid reasons: obsolete, duplicate, wont_fix, already_implemented, out_of_repo

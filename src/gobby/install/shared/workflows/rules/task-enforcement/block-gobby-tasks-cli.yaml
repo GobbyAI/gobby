@@ -11,16 +11,14 @@ rules:
         tools: [Bash]
         command_pattern: "\\b(uv\\s+run\\s+)?gobby\\s+tasks\\s+(create|update|close|reopen|delete|de_escalate|claim|sync|compact|import|clean)\\b"
         reason: |
-          The `gobby tasks` CLI bypasses MCP-side enforcement (validation gates,
-          progressive discovery, hook policy). Mutations must go through the
-          gobby-tasks MCP server so those guarantees hold. For a known unleased
-          task tool, call get_tool_schema(server_name='gobby-tasks',
+          Use the MCP equivalents (create_task, claim_task, update_task, close_task)
+          so validation gates, discovery, and hook policy remain active. For a
+          known unleased task tool, call get_tool_schema(server_name='gobby-tasks',
           tool_name='<tool>') directly, then call_tool(server_name='gobby-tasks',
           tool_name='<tool>', args={...}). Use list_tools only if the task tool
           name is unknown.
-          Common equivalents: create_task, claim_task, update_task, close_task.
 
-          Read-only subcommands stay open via Bash for ad-hoc use:
+          Read-only `gobby tasks` subcommands remain available:
             - `gobby tasks list`, `ready`, `blocked`, `stats`, `show`
             - `gobby tasks expand validate-plan <path>`
             - `gobby tasks validation_history`, `doctor`
