@@ -3,7 +3,7 @@ use std::sync::Arc;
 
 use serde_json::Value;
 
-use crate::lint::{WikiPage, line_number};
+use crate::lint::{WikiPage, is_structural_page_path, line_number};
 use crate::markdown::{
     MarkdownFence, markdown_fence_closes, markdown_fence_start, parse_atx_heading,
 };
@@ -29,7 +29,7 @@ pub(super) fn analyze_claims(
     options: &AuditOptions,
 ) -> PageClaimAnalysis {
     if is_manifest_backed_source_digest(page, manifest_hashes)
-        || is_catalog_page(page)
+        || is_structural_page_path(&page.relative_path)
         || is_recap_page(page)
         || is_generated_code_projection_page(page)
     {
@@ -141,25 +141,6 @@ fn daemon_synthesis_attributed_sections(page: &WikiPage) -> BTreeSet<String> {
         }
     }
     attributed
-}
-
-/// Catalogs, per-folder context surfaces, and the wiki-research review backlog
-/// are navigation or triage artifacts rather than synthesized knowledge. The
-/// audit skips them the same way it skips manifest-backed source digests.
-const CATALOG_PAGES: &[&str] = &[
-    "_index.md",
-    "knowledge/INDEX.md",
-    "code/INDEX.md",
-    "knowledge/topics/wiki-research-backlog.md",
-];
-
-fn is_catalog_page(page: &WikiPage) -> bool {
-    let page_path = page.relative_path.to_string_lossy().replace('\\', "/");
-    CATALOG_PAGES.contains(&page_path.as_str())
-        || page
-            .relative_path
-            .file_name()
-            .is_some_and(|name| name == "_context.md")
 }
 
 /// Daily recap pages under `recaps/` (marked by `recap_date` frontmatter) are

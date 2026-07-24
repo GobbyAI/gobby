@@ -172,6 +172,20 @@ pub(crate) fn relative_path(root: &Path, path: &Path) -> PathBuf {
     path.strip_prefix(root).unwrap_or(path).to_path_buf()
 }
 
+/// Generated navigation and triage surfaces that aggregate wiki content
+/// without representing an ordinary knowledge page.
+pub(crate) fn is_structural_page_path(path: &Path) -> bool {
+    let normalized = path.to_string_lossy().replace('\\', "/");
+    matches!(
+        normalized.as_str(),
+        "_index.md"
+            | "knowledge/INDEX.md"
+            | "code/INDEX.md"
+            | "knowledge/topics/wiki-research-backlog.md"
+    ) || normalized == "_context.md"
+        || normalized.ends_with("/_context.md")
+}
+
 pub(crate) fn title_for_page(page: &WikiPage) -> String {
     page.parsed
         .frontmatter

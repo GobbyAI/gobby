@@ -111,10 +111,9 @@ pub(super) fn near_duplicate_pairs(
         search_scope,
     } = probe;
     let mut best_scores: BTreeMap<(PathBuf, PathBuf), f64> = BTreeMap::new();
-    for page in pages
-        .iter()
-        .filter(|page| is_knowledge_page(page) && !is_folder_context(&page.relative_path))
-    {
+    for page in pages.iter().filter(|page| {
+        is_knowledge_page(page) && !lint::is_structural_page_path(&page.relative_path)
+    }) {
         let query = near_duplicate_query(page);
         if query.is_empty() {
             continue;
@@ -136,7 +135,7 @@ pub(super) fn near_duplicate_pairs(
             if hit.score < NEAR_DUPLICATE_COSINE
                 || hit.path == page.relative_path
                 || !hit.path.starts_with("knowledge")
-                || is_folder_context(&hit.path)
+                || lint::is_structural_page_path(&hit.path)
             {
                 continue;
             }
@@ -274,14 +273,6 @@ pub(super) fn cites_source_digest(citing: Option<&lint::WikiPage>, source: &Path
 
 pub(super) fn is_knowledge_page(page: &lint::WikiPage) -> bool {
     page.relative_path.starts_with("knowledge")
-}
-
-/// Generated per-folder navigation files (`_context.md`, #17730). They share
-/// one template, so sibling folders' contexts always score as near-duplicates
-/// — and merging generated navigation is meaningless, so the scan skips them
-/// on both the probe and hit sides (#17782).
-pub(super) fn is_folder_context(path: &Path) -> bool {
-    path.file_name().is_some_and(|name| name == "_context.md")
 }
 
 pub(super) fn near_duplicate_query(page: &lint::WikiPage) -> String {

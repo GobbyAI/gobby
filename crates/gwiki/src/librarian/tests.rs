@@ -10,7 +10,7 @@ use crate::support::test_env::EnvGuard;
 
 use super::semantic::{
     DISTINCT_PAIRS_RELATIVE_PATH, NearDuplicatePair, UnresolvedLinkCluster,
-    expected_similarity_pair, near_duplicate_pairs, unresolved_link_clusters,
+    expected_similarity_pair, near_duplicate_pairs, near_duplicate_query, unresolved_link_clusters,
 };
 use super::*;
 
@@ -805,6 +805,42 @@ fn near_duplicates_skip_generated_folder_contexts() {
     assert_eq!(pairs, Vec::new());
 }
 
+#[test]
+fn near_duplicates_skip_structural_backlog_as_query_and_hit() {
+    let topic = knowledge_page(
+        "knowledge/topics/hacker-news-rowboat-and-lowfat-2026-07-17.md",
+        "# Hacker News: Rowboat and Lowfat\n\nA focused research topic.\n",
+    );
+    let backlog = knowledge_page(
+        "knowledge/topics/wiki-research-backlog.md",
+        "# Wiki Research Backlog\n\nA structural research triage surface.\n",
+    );
+    let expected_query = near_duplicate_query(&topic);
+    let mut backend = RecordingSemanticBackend {
+        hits: vec![
+            semantic_hit(
+                "knowledge/topics/hacker-news-rowboat-and-lowfat-2026-07-17.md",
+                0.91,
+            ),
+            semantic_hit("knowledge/topics/wiki-research-backlog.md", 0.91),
+        ],
+        queries: Vec::new(),
+    };
+
+    let pairs = near_duplicate_pairs(
+        &[topic, backlog],
+        SemanticProbe {
+            backend: &mut backend,
+            search_scope: SearchScope::topic("ops"),
+        },
+        &BTreeSet::new(),
+    )
+    .expect("scan succeeds");
+
+    assert_eq!(pairs, Vec::new());
+    assert_eq!(backend.queries, vec![expected_query]);
+}
+
 struct FixedSemanticBackend {
     hits: Vec<crate::search::WikiSearchResult>,
 }
@@ -814,6 +850,24 @@ impl SemanticSearchBackend for FixedSemanticBackend {
         &mut self,
         _request: SemanticSearchRequest,
     ) -> Result<crate::search::semantic::SemanticSearchOutcome, crate::search::SearchError> {
+        Ok(crate::search::semantic::SemanticSearchOutcome {
+            hits: self.hits.clone(),
+            degradation: None,
+        })
+    }
+}
+
+struct RecordingSemanticBackend {
+    hits: Vec<crate::search::WikiSearchResult>,
+    queries: Vec<String>,
+}
+
+impl SemanticSearchBackend for RecordingSemanticBackend {
+    fn search_semantic(
+        &mut self,
+        request: SemanticSearchRequest,
+    ) -> Result<crate::search::semantic::SemanticSearchOutcome, crate::search::SearchError> {
+        self.queries.push(request.query);
         Ok(crate::search::semantic::SemanticSearchOutcome {
             hits: self.hits.clone(),
             degradation: None,
