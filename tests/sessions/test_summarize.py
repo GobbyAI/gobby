@@ -12,6 +12,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 
 from gobby.config.sessions import SessionSummaryConfig
+from gobby.sessions.analyzer import HandoffContext
 from gobby.sessions.summarize import (
     TRANSCRIPT_FALLBACK_MAX_CHARS,
     TRANSCRIPT_FALLBACK_MAX_TURNS,
@@ -252,6 +253,59 @@ async def test_build_summary_prompt_context_strips_no_digest_fallback_inputs() -
     assert "Injected by Gobby" not in result["last_messages"]
     assert "/Users/josh/Projects/gobby" not in result["transcript_summary"]
     assert "Real prompt" in result["transcript_summary"]
+
+
+@pytest.mark.asyncio
+async def test_build_summary_prompt_context_loads_unresolved_errors_off_loop() -> None:
+    session = _make_session(
+        session_id="sess-errors",
+        digest_markdown="### Turn 1\nDigest source.",
+    )
+    handoff_ctx = HandoffContext()
+    db = MagicMock()
+    manager = MagicMock()
+    manager.db = db
+    records = [
+        {
+            "tool": "gobby-tasks/close_task",
+            "target_key": "args:12345678",
+            "error": "validation failed",
+            "first_at": "2026-07-23T00:00:00+00:00",
+            "last_at": "2026-07-23T00:00:01+00:00",
+            "count": 2,
+        }
+    ]
+    main_thread = threading.get_ident()
+    loader_threads: list[int] = []
+
+    def load_records(_db: object, session_id: str) -> list[dict[str, object]]:
+        assert session_id == session.id
+        loader_threads.append(threading.get_ident())
+        return records
+
+    with (
+        patch("gobby.workflows.git_utils.get_file_changes", return_value=[]),
+        patch("gobby.workflows.git_utils.get_git_diff_summary", return_value=""),
+        patch("gobby.sessions.summary_context._get_claimed_tasks", return_value=""),
+        patch("gobby.sessions.summary_context._get_session_memories", return_value=""),
+        patch(
+            "gobby.sessions.summary_context.load_open_tool_errors",
+            side_effect=load_records,
+        ),
+    ):
+        result = await _build_summary_prompt_context(
+            session=session,
+            turns=[],
+            handoff_ctx=handoff_ctx,
+            db=db,
+            session_manager=manager,
+            project_path="/tmp",
+        )
+
+    assert handoff_ctx.unresolved_errors == records
+    assert "Unresolved Tool Errors:" in result["structured_context"]
+    assert "gobby-tasks/close_task" in result["structured_context"]
+    assert loader_threads and loader_threads[0] != main_thread
 
 
 class TestGenerateSessionSummaries:

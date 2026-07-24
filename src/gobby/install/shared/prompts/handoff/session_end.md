@@ -87,6 +87,11 @@ Each bullet should name the file and describe the specific change.]
 ## Problems Encountered
 [Errors, failed approaches, exact error messages.]
 
+## Unresolved Errors
+[This section is mandatory when Structured Session Data lists unresolved tool errors.
+Render ONE record per line and copy the stored tool, target, and error values exactly as given.
+Do not introduce headings or fences inside this section.]
+
 ## What Didn't Work
 [Approaches that were tried and abandoned, and WHY they failed.
 Different from Problems Encountered (which are blockers).

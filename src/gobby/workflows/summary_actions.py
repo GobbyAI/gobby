@@ -15,6 +15,7 @@ from typing import TYPE_CHECKING, Any, Literal, cast
 import aiofiles
 
 from gobby.hooks.background_tasks import create_background_task
+from gobby.hooks.tool_error_tracker import load_open_tool_errors
 from gobby.memory.title_heuristics import normalize_title_candidate
 from gobby.sessions.summary_context import load_summary_prompt_template
 from gobby.sessions.summary_transcripts import (
@@ -47,6 +48,20 @@ logger = logging.getLogger(__name__)
 _UNRESOLVED_SESSION_REF_RE = re.compile(
     r"(?<![a-z0-9_])(?:#session_ref|#\{session_ref\}|\{session_ref\})(?![a-z0-9_])"
 )
+
+
+def format_unresolved_errors(records: list[dict[str, Any]]) -> str:
+    """Render normalized unresolved errors as one bounded line per record."""
+    if not records:
+        return ""
+    lines = [
+        (
+            f"- tool: {record['tool']} | target: {record['target_key']} | "
+            f"error: {record['error']} | count: {record['count']}"
+        )
+        for record in records
+    ]
+    return "Unresolved Tool Errors:\n" + "\n".join(lines)
 
 
 def _get_result_truncation_limit(content_str: str) -> int:
@@ -216,6 +231,9 @@ def _format_structured_context(ctx: HandoffContext) -> str:
 
     if ctx.initial_goal:
         sections.append(f"Original Goal: {ctx.initial_goal[:500]}")
+
+    if ctx.unresolved_errors:
+        sections.append(format_unresolved_errors(ctx.unresolved_errors))
 
     if ctx.files_modified:
         sections.append("Files Modified:\n" + "\n".join(f"  - {f}" for f in ctx.files_modified))
@@ -732,6 +750,11 @@ async def generate_summary(
         asyncio.to_thread(get_file_changes, project_path),
         asyncio.to_thread(get_git_diff_summary, 8000, project_path),
     )
+    unresolved_errors = await asyncio.to_thread(
+        load_open_tool_errors,
+        getattr(session_manager, "db", None),
+        session_id,
+    )
 
     # Use digest as structured context if available (cheaper than transcript analysis)
     digest_markdown = getattr(current_session, "digest_markdown", None)
@@ -757,10 +780,23 @@ async def generate_summary(
             handoff_ctx.git_status = git_status
         structured_context = _format_structured_context(handoff_ctx)
 
-    structured_context = _truncate_markdown(
-        structured_context,
-        TRANSCRIPT_FALLBACK_MAX_CHARS,
-    )
+    if unresolved_errors:
+        unresolved_errors_block = format_unresolved_errors(unresolved_errors)
+        base_budget = TRANSCRIPT_FALLBACK_MAX_CHARS - len(unresolved_errors_block) - 2
+        structured_context = _truncate_markdown(
+            structured_context,
+            base_budget,
+        )[:base_budget]
+        structured_context = (
+            f"{structured_context}\n\n{unresolved_errors_block}"
+            if structured_context
+            else unresolved_errors_block
+        )
+    else:
+        structured_context = _truncate_markdown(
+            structured_context,
+            TRANSCRIPT_FALLBACK_MAX_CHARS,
+        )
 
     # 3. Call LLM
     try:

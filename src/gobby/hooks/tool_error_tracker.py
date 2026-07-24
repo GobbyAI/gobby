@@ -7,7 +7,10 @@ import json
 import re
 from collections.abc import Mapping, Sequence
 from datetime import UTC, datetime
-from typing import Any, Protocol
+from typing import TYPE_CHECKING, Any, Protocol
+
+if TYPE_CHECKING:
+    from gobby.storage.hub.protocol import HubDatabase
 
 MAX_IDENTITY_COMPONENT_CHARS = 130
 MAX_ERROR_CHARS = 300
@@ -297,6 +300,17 @@ def normalize_open_tool_error_records(raw: object) -> list[dict[str, Any]]:
         normalized.append((last[1], record))
     normalized.sort(key=lambda pair: pair[0])
     return [record for _, record in normalized[-MAX_OPEN_TOOL_ERRORS:]]
+
+
+def load_open_tool_errors(db: HubDatabase | None, session_id: str) -> list[dict[str, Any]]:
+    """Load and re-normalize unresolved errors from session state."""
+    if db is None:
+        return []
+
+    from gobby.workflows.state_manager import SessionVariableManager
+
+    variables = SessionVariableManager(db).get_variables(session_id)
+    return normalize_open_tool_error_records(variables.get("open_tool_errors", []))
 
 
 def track_tool_outcome(

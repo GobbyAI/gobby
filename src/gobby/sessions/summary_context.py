@@ -7,6 +7,7 @@ import logging
 from collections.abc import Awaitable, Callable
 from typing import TYPE_CHECKING, Any
 
+from gobby.hooks.tool_error_tracker import load_open_tool_errors
 from gobby.sessions.summary_transcripts import (
     TRANSCRIPT_FALLBACK_MAX_CHARS,
     _digest_markdown_for_summary,
@@ -143,6 +144,11 @@ async def _build_summary_prompt_context(
 
     resolved_db = _summary_context_db(db, session_manager)
     run_db_fn = _facade_attr("_run_db")
+    handoff_ctx.unresolved_errors = (
+        await run_db_fn(run_db, load_open_tool_errors, resolved_db, session.id)
+        if resolved_db
+        else []
+    )
     claimed_tasks = (
         await run_db_fn(run_db, _get_claimed_tasks, session.id, resolved_db) if resolved_db else ""
     )

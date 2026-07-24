@@ -109,6 +109,16 @@ def test_body_uses_only_shared_substitution_subset() -> None:
     )
 
 
+def test_unresolved_errors_output_contract() -> None:
+    _, body = _frontmatter_and_body()
+
+    assert "## Unresolved Errors" in body
+    assert "mandatory when Structured Session Data lists unresolved tool errors" in body
+    assert "ONE record per line" in body
+    assert "copy the stored tool, target, and error values exactly as given" in body
+    assert "Do not introduce headings or fences inside this section" in body
+
+
 def test_golden_render_is_byte_locked() -> None:
     """``render_summary_prompt(body, GOLDEN_CONTEXT)`` is pinned to the golden fixture.
 

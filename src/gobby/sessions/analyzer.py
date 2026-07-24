@@ -33,6 +33,7 @@ class HandoffContext:
     initial_goal: str = ""
     recent_activity: list[str] = field(default_factory=list)
     key_decisions: list[str] | None = None
+    unresolved_errors: list[dict[str, Any]] = field(default_factory=list)
     active_worktree: dict[str, Any] | None = None
     """Worktree context if session is operating in a worktree."""
     # Note: active_skills field removed - redundant with _build_skill_injection_context()

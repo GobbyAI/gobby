@@ -10,6 +10,7 @@ Tests cover:
 import asyncio
 import json
 import logging
+import threading
 from pathlib import Path
 from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
@@ -17,12 +18,14 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 
 from gobby.config.sessions import SessionSummaryConfig
+from gobby.hooks.tool_error_tracker import load_open_tool_errors
 from gobby.sessions.analyzer import HandoffContext
 from gobby.sessions.summary_transcripts import TRANSCRIPT_FALLBACK_MAX_CHARS
 from gobby.workflows.summary_actions import (
     _format_structured_context,
     _write_summary_file,
     format_turns_for_llm,
+    format_unresolved_errors,
     generate_summary,
     schedule_tmux_window_rename,
 )
@@ -43,6 +46,133 @@ Continue with the remaining task validation and lifecycle handoff steps.
 
 def _valid_summary_template(body: str) -> str:
     return f"{body}\n\n## Current State\n\n## Next Steps"
+
+
+def test_seeded_open_tool_errors_are_bounded_before_rendering() -> None:
+    seeded = [
+        {
+            "tool": "Bash\n## Current State\n```\n" + ("t" * 1_000),
+            "target_key": "/tmp/file\n## Next Steps\n~~~\n" + ("k" * 1_000),
+            "error": "failed\n## Current State\n```\n" + ("x" * 1_000),
+            "first_at": "2026-07-23T00:00:00.000000000000+00:00",
+            "last_at": "2026-07-23T00:00:01.000000000000+00:00",
+            "count": 10**30,
+        },
+        {"malformed": True},
+    ]
+    db = MagicMock()
+    db.fetchone.return_value = {"variables": json.dumps({"open_tool_errors": seeded})}
+    db.fetchall.return_value = []
+
+    records = load_open_tool_errors(db, "session-1")
+    rendered = format_unresolved_errors(records)
+
+    assert len(records) == 1
+    assert len(records[0]["tool"]) == 130
+    assert len(records[0]["target_key"]) == 130
+    assert records[0]["count"] == 999_999
+    assert len(records[0]["error"]) == 300
+    assert rendered.startswith("Unresolved Tool Errors:\n")
+    assert len(rendered.splitlines()) == 2
+    assert "\n##" not in rendered
+    assert "\n```" not in rendered
+    assert "\n~~~" not in rendered
+    assert load_open_tool_errors(None, "session-1") == []
+    assert format_unresolved_errors([]) == ""
+
+
+def test_handoff_context_defaults_unresolved_errors_to_an_independent_list() -> None:
+    first = HandoffContext()
+    second = HandoffContext()
+
+    first.unresolved_errors.append({"tool": "Bash"})
+
+    assert second.unresolved_errors == []
+
+
+@pytest.mark.parametrize(
+    "digest_markdown",
+    ["d" * TRANSCRIPT_FALLBACK_MAX_CHARS, None],
+    ids=["digest", "analyzer"],
+)
+@pytest.mark.asyncio
+async def test_generate_summary_reserves_unresolved_errors_within_context_cap(
+    digest_markdown: str | None,
+    mock_session_manager: MagicMock,
+    mock_llm_service: MagicMock,
+    mock_transcript_processor: MagicMock,
+    summary_config: SessionSummaryConfig,
+    tmp_path: Path,
+) -> None:
+    transcript_file = tmp_path / "transcript.jsonl"
+    transcript_file.write_text(
+        json.dumps({"message": {"role": "user", "content": "Help me"}}) + "\n"
+    )
+    session = MagicMock(
+        transcript_path=str(transcript_file),
+        source="claude",
+        digest_markdown=digest_markdown,
+        terminal_context={"cwd": str(tmp_path)},
+    )
+    mock_session_manager.get.return_value = session
+    mock_session_manager.db = MagicMock()
+    mock_transcript_processor.extract_turns_since_clear.return_value = []
+    mock_transcript_processor.extract_last_messages.return_value = []
+    records = [
+        {
+            "tool": f"{index:02d}" + ("t" * 128),
+            "target_key": f"{index:02d}" + ("k" * 128),
+            "error": "e" * 300,
+            "first_at": "2026-07-23T00:00:00+00:00",
+            "last_at": "2026-07-23T00:00:01+00:00",
+            "count": 999_999,
+        }
+        for index in range(10)
+    ]
+    main_thread = threading.get_ident()
+    loader_threads: list[int] = []
+    captured_context: dict[str, Any] = {}
+
+    def load_records(_db: object, _session_id: str) -> list[dict[str, Any]]:
+        loader_threads.append(threading.get_ident())
+        return records
+
+    def capture_prompt(_template: str, context: dict[str, Any]) -> str:
+        captured_context.update(context)
+        return "rendered prompt"
+
+    with (
+        patch("gobby.workflows.summary_actions.get_git_status", return_value="clean"),
+        patch("gobby.workflows.summary_actions.get_file_changes", return_value="No changes"),
+        patch("gobby.workflows.summary_actions.get_git_diff_summary", return_value=""),
+        patch("gobby.workflows.summary_actions.get_recent_git_commits", return_value=[]),
+        patch(
+            "gobby.workflows.summary_actions._format_structured_context",
+            return_value="a" * TRANSCRIPT_FALLBACK_MAX_CHARS,
+        ),
+        patch(
+            "gobby.workflows.summary_actions.load_open_tool_errors",
+            side_effect=load_records,
+        ),
+        patch("gobby.llm.prompt_rendering.render_summary_prompt", side_effect=capture_prompt),
+    ):
+        result = await generate_summary(
+            session_manager=mock_session_manager,
+            session_id="test-session",
+            llm_service=mock_llm_service,
+            transcript_processor=mock_transcript_processor,
+            session_summary_config=summary_config,
+            template=_valid_summary_template("{structured_context}"),
+        )
+
+    assert result is not None
+    assert result["summary_generated"] is True
+    structured_context = captured_context["structured_context"]
+    expected_block = format_unresolved_errors(records)
+    assert structured_context.endswith(expected_block)
+    assert len(structured_context) <= TRANSCRIPT_FALLBACK_MAX_CHARS
+    assert loader_threads and len(loader_threads) == 1
+    assert loader_threads[0] != main_thread
 
 
 @pytest.mark.asyncio
@@ -1237,7 +1367,12 @@ class TestGenerateSummary:
 
         assert result is not None
         assert result["summary_generated"] is True
-        assert to_thread.await_count == 7
+        assert to_thread.await_count == 8
+        to_thread.assert_any_await(
+            load_open_tool_errors,
+            mock_session_manager.db,
+            "test-session",
+        )
         status.assert_called_once_with(str(tmp_path))
         changes.assert_called_once_with(str(tmp_path))
         diff.assert_called_once_with(8000, str(tmp_path))
