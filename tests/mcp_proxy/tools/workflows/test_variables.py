@@ -157,6 +157,25 @@ class TestSetVariableScoped:
         assert "managed by the workflow runtime" in result["error"]
         mocks["session_var_manager"].set_variable.assert_not_called()
 
+    def test_set_variable_blocks_open_tool_errors_in_workflow_scope(self) -> None:
+        from gobby.mcp_proxy.tools.workflows._variables import set_variable
+
+        mocks = _make_mocks()
+
+        result = set_variable(
+            mocks["session_manager"],
+            mocks["db"],
+            name="open_tool_errors",
+            value=[],
+            session_id="#1",
+            workflow="dev",
+            instance_manager=mocks["instance_manager"],
+        )
+
+        assert result["success"] is False
+        assert "managed by the workflow runtime" in result["error"]
+        mocks["instance_manager"].merge_instance_variables.assert_not_called()
+
     def test_set_variable_with_workflow_not_found(self) -> None:
         """set_variable(workflow='unknown') errors if no instance found."""
         from gobby.mcp_proxy.tools.workflows._variables import set_variable

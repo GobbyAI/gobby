@@ -1336,6 +1336,7 @@ class TestDaemonProxy:
                 result = await proxy.call_tool("gobby-agents", "wait_for_agent", arguments)
 
         assert result == {"success": True, "completed": False}
+        assert result["completed"] is False
         mock_request.assert_awaited_once_with(
             "POST",
             "/api/mcp/gobby-agents/tools/wait_for_agent",
@@ -2014,6 +2015,53 @@ class TestMCPToolsWrapper:
         mock_proxy.call_tool.assert_not_awaited()
 
     @pytest.mark.asyncio
+    async def test_call_tool_local_failures_never_delegate_but_failure_result_does(
+        self,
+    ) -> None:
+        _, mock_proxy, run_tool = self._register_tools()
+        mock_proxy.call_tool.return_value = {
+            "success": False,
+            "error": "delegated failure",
+        }
+        stale_result = {
+            "success": False,
+            "error_code": "GOBBY_MCP_WRAPPER_STALE",
+            "error": "restart required",
+        }
+
+        malformed = await run_tool("call_tool", arguments="{not-json")
+        missing_route = await run_tool("call_tool", arguments={})
+        with patch(
+            "gobby.mcp_proxy.stdio.mcp_wrapper_source_stale_result",
+            return_value=stale_result,
+        ):
+            stale = await run_tool(
+                "call_tool",
+                server_name="gobby-sessions",
+                tool_name="wait_for_summary",
+                arguments={"session_id": "session-123"},
+            )
+
+        mock_proxy.call_tool.assert_not_awaited()
+        delegated = await run_tool(
+            "call_tool",
+            server_name="server-a",
+            tool_name="run",
+            arguments={"command": "false"},
+        )
+
+        assert malformed["success"] is False
+        assert missing_route["success"] is False
+        assert stale == stale_result
+        assert delegated == {"success": False, "error": "delegated failure"}
+        mock_proxy.call_tool.assert_awaited_once_with(
+            "server-a",
+            "run",
+            {"command": "false"},
+            preflight_enabled=True,
+        )
+
+    @pytest.mark.asyncio
     async def test_call_tool_returns_wrapper_timeout_for_stuck_wait_tool(self) -> None:
         _, mock_proxy, run_tool = self._register_tools()
         release_call = asyncio.Event()
@@ -2257,11 +2305,13 @@ class TestMCPToolsWrapper:
     @pytest.mark.asyncio
     async def test_call_tool_skips_wait_guard_for_wait_for_agent(self) -> None:
         _, mock_proxy, run_tool = self._register_tools()
+        call_started = asyncio.Event()
         release_call = asyncio.Event()
         ctx = MagicMock()
         ctx.report_progress = AsyncMock()
 
         async def _block_until_released(*_args: Any, **_kwargs: Any) -> dict[str, bool]:
+            call_started.set()
             await release_call.wait()
             return {"completed": False}
 
@@ -2277,12 +2327,13 @@ class TestMCPToolsWrapper:
                 )
             )
             try:
-                await asyncio.sleep(0.03)
+                await asyncio.wait_for(call_started.wait(), timeout=0.2)
                 ctx.report_progress.assert_not_awaited()
             finally:
                 release_call.set()
-                await task
+                result = await task
 
+        assert result == {"completed": False}
         mock_proxy.call_tool.assert_awaited_once_with(
             "gobby-agents",
             "wait_for_agent",

@@ -219,6 +219,29 @@ async def test_proxy_namespace_recursion_finalizes_exactly_once() -> None:
 
 
 @pytest.mark.asyncio
+async def test_internal_registry_failure_is_tracked_once_as_executed() -> None:
+    proxy, mcp_manager, internal_manager = _proxy(result={"success": True})
+    registry = MagicMock()
+    registry.call = AsyncMock(return_value={"success": False, "error": "pipeline failed"})
+    internal_manager.is_internal.return_value = True
+    internal_manager.get_registry.return_value = registry
+
+    with patch("gobby.mcp_proxy.services.tool_execution.track_proxy_outcome") as tracking:
+        result = await proxy.call_tool(
+            "gobby-pipelines",
+            "run",
+            {"pipeline": "build"},
+            session_id="session-1",
+        )
+
+    assert result == {"success": False, "error": "pipeline failed"}
+    assert tracking.call_count == 1
+    assert tracking.call_args.args[-1] == "executed"
+    registry.call.assert_awaited_once_with("run", {"pipeline": "build"})
+    mcp_manager.call_tool.assert_not_awaited()
+
+
+@pytest.mark.asyncio
 @pytest.mark.parametrize(
     ("server_name", "internal"),
     [
