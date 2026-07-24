@@ -137,7 +137,7 @@ async def test_apply_before_tool_enforcement_leaves_skip_validation_for_close_ta
         variables={"task_has_commits": True},
     )
 
-    server_name, tool_name, arguments, error = await apply_before_tool_enforcement(
+    server_name, tool_name, arguments, error, _ = await apply_before_tool_enforcement(
         service,
         "gobby-tasks",
         "close_task",
@@ -166,7 +166,7 @@ async def test_apply_before_tool_enforcement_passthrough_without_commits(
         variables={"task_has_commits": False},
     )
 
-    server_name, tool_name, arguments, error = await apply_before_tool_enforcement(
+    server_name, tool_name, arguments, error, _ = await apply_before_tool_enforcement(
         service,
         "gobby-tasks",
         "close_task",
@@ -193,7 +193,7 @@ async def test_apply_before_tool_enforcement_marks_duplicate_pending_cli_context
         pending_tool_context=True,
     )
 
-    _, _, _, error = await apply_before_tool_enforcement(
+    _, _, _, error, _ = await apply_before_tool_enforcement(
         service,
         "gobby-merge",
         "merge_resolve",

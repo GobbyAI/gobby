@@ -15,6 +15,7 @@ from .resource_operations import (
     read_resource as read_resource_impl,
 )
 from .result_handling import (
+    BeforeToolOutcome,
     apply_after_tool_workflow,
     apply_before_tool_enforcement,
     build_before_tool_event,
@@ -205,7 +206,13 @@ class ToolProxyService:
         tool_name: str,
         arguments: dict[str, Any],
         session_id: str | None,
-    ) -> tuple[str, str, dict[str, Any], dict[str, Any] | None]:
+    ) -> tuple[
+        str,
+        str,
+        dict[str, Any],
+        dict[str, Any] | None,
+        BeforeToolOutcome | None,
+    ]:
         """Run workflow before_tool evaluation for direct MCP tool execution."""
         return await apply_before_tool_enforcement(
             self,

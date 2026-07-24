@@ -8,7 +8,9 @@ from typing import Any
 from gobby.hooks._normalization_canonical import CANONICAL_WRITE_TOOL_NAMES
 from gobby.hooks.event_handlers._base import EventHandlersBase
 from gobby.hooks.events import HookEvent, HookResponse
+from gobby.hooks.tool_error_tracker import is_wrapper_echo_event, track_tool_outcome
 from gobby.skills.formatting import format_skill_fetch_context
+from gobby.workflows.state_manager import SessionVariableManager
 
 logger = logging.getLogger(__name__)
 
@@ -165,6 +167,22 @@ class ToolEventHandlerMixin(EventHandlersBase):
         status = "FAIL" if is_failure else "OK"
         if session_id:
             self.logger.debug("AFTER_TOOL [%s]: %s, session %s", status, tool_name, session_id)
+            if not is_wrapper_echo_event(event):
+                try:
+                    db = getattr(self._session_manager, "db", None)
+                    if db is not None:
+                        track_tool_outcome(
+                            SessionVariableManager(db),
+                            session_id,
+                            event,
+                        )
+                except Exception as exc:
+                    self.logger.debug(
+                        "Failed to track native tool outcome for %s: %s",
+                        tool_name,
+                        exc,
+                        exc_info=True,
+                    )
             self._record_autonomous_tool_progress(event, session_id, tool_name)
 
             # Track edits for session high-water mark

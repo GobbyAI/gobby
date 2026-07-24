@@ -12,6 +12,7 @@ RESERVED_WORKFLOW_VARIABLES = frozenset(
         "consecutive_tool_blocks",
         "listed_servers",
         "max_consecutive_blocked_tool_attempts",
+        "open_tool_errors",
         "servers_listed",
         "step_workflow_complete",
         "tool_block_pending",

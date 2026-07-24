@@ -134,7 +134,7 @@ class _Service:
 async def test_codex_close_reconciles_transcript_before_completion_rules() -> None:
     service = _Service(SessionSource.CODEX, shell_exit_code=0, require_ready=True)
 
-    _, _, _, error = await apply_before_tool_enforcement(
+    _, _, _, error, _ = await apply_before_tool_enforcement(
         service,
         "gobby-tasks",
         "close_task",
@@ -152,7 +152,7 @@ async def test_codex_close_reconciles_transcript_before_completion_rules() -> No
 async def test_codex_close_stays_blocked_when_reconciled_result_failed() -> None:
     service = _Service(SessionSource.CODEX, shell_exit_code=1, require_ready=True)
 
-    _, _, _, error = await apply_before_tool_enforcement(
+    _, _, _, error, _ = await apply_before_tool_enforcement(
         service,
         "gobby-tasks",
         "close_task",
@@ -184,7 +184,7 @@ async def test_codex_close_reconciliation_timeout_remains_fail_closed(
     )
     monkeypatch.setattr(result_handling, "_CODEX_RECONCILE_TIMEOUT_SECONDS", 0.01)
 
-    _, _, _, error = await apply_before_tool_enforcement(
+    _, _, _, error, _ = await apply_before_tool_enforcement(
         service,
         "gobby-tasks",
         "close_task",
@@ -311,7 +311,7 @@ async def test_non_codex_close_calls_do_not_reconcile(
 ) -> None:
     service = _Service(source)
 
-    _, _, _, error = await apply_before_tool_enforcement(
+    _, _, _, error, _ = await apply_before_tool_enforcement(
         service,
         server_name,
         tool_name,

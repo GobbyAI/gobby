@@ -6,6 +6,7 @@ import json
 import threading
 import uuid
 from concurrent.futures import ThreadPoolExecutor
+from datetime import UTC, datetime, timedelta
 from typing import Any
 from unittest.mock import MagicMock
 
@@ -524,6 +525,173 @@ def test_claim_set_variable_values_serializes_concurrent_claims(db: Any) -> None
     assert mgr.get_variables(S1)["injected"] == ["shared"]
 
 
+def test_open_tool_error_upsert_deduplicates_and_resolves_exact_target(db: Any) -> None:
+    from gobby.workflows.state_manager import SessionVariableManager
+
+    mgr = SessionVariableManager(db)
+    first_at = datetime(2026, 7, 23, 12, 0, tzinfo=UTC)
+    mgr.upsert_open_tool_error(
+        S1,
+        "gobby-tasks/close_task",
+        "args:aaaaaaaa",
+        "first",
+        occurred_at=first_at,
+    )
+    mgr.upsert_open_tool_error(
+        S1,
+        "gobby-tasks/close_task",
+        "args:aaaaaaaa",
+        "second",
+        occurred_at=first_at + timedelta(seconds=1),
+    )
+    mgr.upsert_open_tool_error(
+        S1,
+        "gobby-tasks/close_task",
+        "args:bbbbbbbb",
+        "other target",
+        occurred_at=first_at + timedelta(seconds=2),
+    )
+
+    records = mgr.get_variables(S1)["open_tool_errors"]
+    assert len(records) == 2
+    assert records[0] == {
+        "tool": "gobby-tasks/close_task",
+        "target_key": "args:aaaaaaaa",
+        "error": "second",
+        "first_at": "2026-07-23T12:00:00+00:00",
+        "last_at": "2026-07-23T12:00:01+00:00",
+        "count": 2,
+    }
+
+    mgr.resolve_open_tool_errors(S1, "gobby-tasks/close_task", "args:aaaaaaaa")
+
+    remaining = mgr.get_variables(S1)["open_tool_errors"]
+    assert [record["target_key"] for record in remaining] == ["args:bbbbbbbb"]
+
+
+def test_open_tool_error_upsert_caps_oldest_and_saturates_count(db: Any) -> None:
+    from gobby.hooks.tool_error_tracker import MAX_OPEN_TOOL_ERRORS, MAX_TOOL_ERROR_COUNT
+    from gobby.workflows.state_manager import SessionVariableManager
+
+    mgr = SessionVariableManager(db)
+    first_at = datetime(2026, 7, 23, 12, 0, tzinfo=UTC)
+    for index in range(MAX_OPEN_TOOL_ERRORS + 2):
+        mgr.upsert_open_tool_error(
+            S1,
+            "Bash",
+            f"args:{index:08x}",
+            f"failure {index}",
+            occurred_at=first_at + timedelta(seconds=index),
+        )
+
+    records = mgr.get_variables(S1)["open_tool_errors"]
+    assert len(records) == MAX_OPEN_TOOL_ERRORS
+    assert records[0]["target_key"] == "args:00000002"
+
+    records[-1]["count"] = MAX_TOOL_ERROR_COUNT
+    mgr.set_variable(S1, "open_tool_errors", records)
+    mgr.upsert_open_tool_error(
+        S1,
+        "Bash",
+        records[-1]["target_key"],
+        "again",
+        occurred_at=first_at + timedelta(minutes=1),
+    )
+    assert mgr.get_variables(S1)["open_tool_errors"][-1]["count"] == MAX_TOOL_ERROR_COUNT
+
+
+def test_open_tool_error_concurrent_upserts_merge_counts(db: Any) -> None:
+    from gobby.workflows.state_manager import SessionVariableManager
+
+    mgr = SessionVariableManager(db)
+    barrier = threading.Barrier(3)
+    occurred_at = datetime(2026, 7, 23, 12, 0, tzinfo=UTC)
+
+    def upsert() -> None:
+        barrier.wait()
+        mgr.upsert_open_tool_error(
+            S1,
+            "Edit",
+            "/repo/a.py#12345678",
+            "failed",
+            occurred_at=occurred_at,
+        )
+
+    with ThreadPoolExecutor(max_workers=2) as executor:
+        futures = [executor.submit(upsert) for _ in range(2)]
+        barrier.wait()
+        for future in futures:
+            future.result()
+
+    records = mgr.get_variables(S1)["open_tool_errors"]
+    assert len(records) == 1
+    assert records[0]["count"] == 2
+
+
+def test_open_tool_error_concurrent_resolve_and_upsert_never_duplicate(db: Any) -> None:
+    from gobby.workflows.state_manager import SessionVariableManager
+
+    mgr = SessionVariableManager(db)
+    occurred_at = datetime(2026, 7, 23, 12, 0, tzinfo=UTC)
+    mgr.upsert_open_tool_error(
+        S1,
+        "Edit",
+        "/repo/a.py#12345678",
+        "initial",
+        occurred_at=occurred_at,
+    )
+    barrier = threading.Barrier(3)
+
+    def upsert() -> None:
+        barrier.wait()
+        mgr.upsert_open_tool_error(
+            S1,
+            "Edit",
+            "/repo/a.py#12345678",
+            "again",
+            occurred_at=occurred_at + timedelta(seconds=1),
+        )
+
+    def resolve() -> None:
+        barrier.wait()
+        mgr.resolve_open_tool_errors(S1, "Edit", "/repo/a.py#12345678")
+
+    with ThreadPoolExecutor(max_workers=2) as executor:
+        futures = [executor.submit(upsert), executor.submit(resolve)]
+        barrier.wait()
+        for future in futures:
+            future.result()
+
+    records = mgr.get_variables(S1)["open_tool_errors"]
+    assert len(records) <= 1
+    assert len({(record["tool"], record["target_key"]) for record in records}) == len(records)
+
+
+def test_open_tool_error_sanitized_raw_identity_resolves_canonical_record(db: Any) -> None:
+    from gobby.workflows.state_manager import SessionVariableManager
+
+    mgr = SessionVariableManager(db)
+    occurred_at = datetime(2026, 7, 23, 12, 0, tzinfo=UTC)
+    raw_tool = "## Next Steps\r\nEdit"
+    raw_target = "```\x00/repo/a.py"
+    mgr.upsert_open_tool_error(
+        S1,
+        raw_tool,
+        raw_target,
+        "~~~\nfailed",
+        occurred_at=occurred_at,
+    )
+
+    record = mgr.get_variables(S1)["open_tool_errors"][0]
+    assert record["tool"] == "\\#\\# Next Steps Edit"
+    assert record["target_key"] == "\\``` /repo/a.py"
+    assert record["error"] == "\\~~~ failed"
+
+    mgr.resolve_open_tool_errors(S1, raw_tool, raw_target)
+
+    assert mgr.get_variables(S1)["open_tool_errors"] == []
+
+
 def test_append_to_set_variable_and_conditional_merge_resets_evidence(db: Any) -> None:
     """Edited-file tracking and verification reset happen in one atomic update."""
     from gobby.workflows.state_manager import SessionVariableManager
@@ -711,3 +879,52 @@ def test_record_edited_file_does_not_guess_with_multiple_claims(db: Any) -> None
     variables = mgr.get_variables(S1)
     assert variables["session_edited_files"] == ["src/app.py"]
     assert "task_edited_files" not in variables
+
+
+def test_upsert_bounded_list_variable_replaces_identity_and_updates_readiness(
+    db: Any,
+) -> None:
+    from gobby.workflows.state_manager import SessionVariableManager
+
+    mgr = SessionVariableManager(db)
+    mgr.merge_variables(
+        S1,
+        {
+            "verification_evidence": [
+                {
+                    "evidence_type": "receipt_projection",
+                    "task_id": "task-1",
+                    "receipt_count": 1,
+                },
+                {
+                    "evidence_type": "manual_diff_review",
+                    "task_id": "task-1",
+                },
+            ],
+            "verification_evidence_recorded": False,
+        },
+    )
+
+    mgr.upsert_bounded_list_variable(
+        S1,
+        "verification_evidence",
+        {
+            "evidence_type": "receipt_projection",
+            "task_id": "task-1",
+            "receipt_count": 2,
+        },
+        identity={"evidence_type": "receipt_projection", "task_id": "task-1"},
+        max_items=50,
+        updates={"verification_evidence_recorded": True},
+    )
+
+    variables = mgr.get_variables(S1)
+    assert variables["verification_evidence"] == [
+        {"evidence_type": "manual_diff_review", "task_id": "task-1"},
+        {
+            "evidence_type": "receipt_projection",
+            "task_id": "task-1",
+            "receipt_count": 2,
+        },
+    ]
+    assert variables["verification_evidence_recorded"] is True

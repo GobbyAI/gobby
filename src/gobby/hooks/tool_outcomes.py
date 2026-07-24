@@ -367,6 +367,30 @@ def normalize_tool_outcome(
     return outcome
 
 
+def classify_raw_tool_result(result: object) -> ToolOutcome:
+    """Classify a proxy result through the canonical structured authority."""
+    if result is None:
+        return ToolOutcome(
+            ToolOutcomeStatus.FAILED,
+            provenance="raw_result.missing",
+        )
+
+    model_dump = getattr(result, "model_dump", None)
+    output = model_dump(by_alias=True) if callable(model_dump) else result
+    data: dict[str, Any] = {"tool_output": output}
+    outcome = normalize_tool_outcome(data)
+    if outcome.status is not ToolOutcomeStatus.UNKNOWN:
+        return outcome
+
+    # Internal tools routinely return payload mappings without a success flag,
+    # while external SDKs may return plain strings. Reaching a non-null result
+    # with no structural failure signal is the established success contract.
+    return ToolOutcome(
+        ToolOutcomeStatus.SUCCEEDED,
+        provenance="raw_result.default_success",
+    )
+
+
 def tool_outcome_from_data(data: Mapping[str, Any] | None) -> ToolOutcome:
     """Read a normalized outcome, preserving fail-closed behavior."""
     if not isinstance(data, Mapping):

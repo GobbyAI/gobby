@@ -1,10 +1,11 @@
 """Hook event helpers for the tool proxy service."""
 
 import asyncio
+import inspect
 import logging
 from copy import deepcopy
 from datetime import UTC, datetime
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, Literal
 
 from gobby.mcp_proxy.models import ToolProxyErrorCode
 
@@ -15,6 +16,22 @@ logger = logging.getLogger("gobby.mcp.server")
 
 _CODEX_RECONCILE_TIMEOUT_SECONDS = 60.0
 _CODEX_RECONCILE_TASKS: dict[str, asyncio.Task[Any]] = {}
+
+BeforeToolOutcome = Literal["policy_denied", "failed_pre_dispatch"]
+
+
+async def _evaluate_workflow_handler(workflow_handler: Any, event: "HookEvent") -> Any:
+    """Use the async workflow API when the caller already owns an event loop."""
+    evaluate_async = getattr(workflow_handler, "evaluate_async", None)
+    if inspect.iscoroutinefunction(evaluate_async):
+        return await evaluate_async(event)
+
+    from gobby.app_context import get_app_context
+
+    app_context = get_app_context()
+    if app_context is not None and app_context.db_executor is not None:
+        return await app_context.run_db(workflow_handler.evaluate, event)
+    return await asyncio.to_thread(workflow_handler.evaluate, event)
 
 
 def _cleanup_codex_reconcile_task(session_id: str, task: asyncio.Task[Any]) -> None:
@@ -168,16 +185,22 @@ async def apply_before_tool_enforcement(
     tool_name: str,
     arguments: dict[str, Any],
     session_id: str | None,
-) -> tuple[str, str, dict[str, Any], dict[str, Any] | None]:
+) -> tuple[
+    str,
+    str,
+    dict[str, Any],
+    dict[str, Any] | None,
+    BeforeToolOutcome | None,
+]:
     """Run workflow before_tool evaluation for direct MCP tool execution."""
     effective_session_id = await asyncio.to_thread(service._get_effective_session_id, session_id)
     if not effective_session_id:
-        return server_name, tool_name, arguments, None
+        return server_name, tool_name, arguments, None, None
 
     hook_manager = service._resolve_hook_manager()
     workflow_handler = getattr(hook_manager, "_workflow_handler", None) if hook_manager else None
     if workflow_handler is None:
-        return server_name, tool_name, arguments, None
+        return server_name, tool_name, arguments, None, None
 
     event = await asyncio.to_thread(
         service._build_before_tool_event,
@@ -217,6 +240,7 @@ async def apply_before_tool_enforcement(
                 "tool_name": tool_name,
                 "retryable": True,
             },
+            "failed_pre_dispatch",
         )
     has_pending_context = getattr(workflow_handler, "has_pending_tool_context", None)
     if callable(has_pending_context):
@@ -234,13 +258,7 @@ async def apply_before_tool_enforcement(
                 exc_info=True,
             )
     try:
-        from gobby.app_context import get_app_context
-
-        app_context = get_app_context()
-        if app_context is not None and app_context.db_executor is not None:
-            response = await app_context.run_db(workflow_handler.evaluate, event)
-        else:
-            response = await asyncio.to_thread(workflow_handler.evaluate, event)
+        response = await _evaluate_workflow_handler(workflow_handler, event)
     except Exception as exc:
         logger.warning(
             "Workflow evaluation failed for %s/%s: %s",
@@ -260,6 +278,7 @@ async def apply_before_tool_enforcement(
                 "server_name": server_name,
                 "tool_name": tool_name,
             },
+            "failed_pre_dispatch",
         )
 
     if response.decision != "allow":
@@ -274,11 +293,12 @@ async def apply_before_tool_enforcement(
                 "server_name": server_name,
                 "tool_name": tool_name,
             },
+            "policy_denied",
         )
 
     modified_input = response.modified_input
     if not isinstance(modified_input, dict):
-        return server_name, tool_name, arguments, None
+        return server_name, tool_name, arguments, None, None
 
     updated_server_name = modified_input.get("server_name", server_name)
     updated_tool_name = modified_input.get("tool_name", tool_name)
@@ -287,9 +307,9 @@ async def apply_before_tool_enforcement(
     if error is not None:
         error["server_name"] = str(updated_server_name)
         error["tool_name"] = str(updated_tool_name)
-        return server_name, tool_name, arguments, error
+        return server_name, tool_name, arguments, error, "failed_pre_dispatch"
 
-    return str(updated_server_name), str(updated_tool_name), updated_arguments or {}, None
+    return str(updated_server_name), str(updated_tool_name), updated_arguments or {}, None, None
 
 
 async def apply_after_tool_workflow(
@@ -320,13 +340,7 @@ async def apply_after_tool_workflow(
         tool_output=tool_output,
     )
     try:
-        from gobby.app_context import get_app_context
-
-        app_context = get_app_context()
-        if app_context is not None and app_context.db_executor is not None:
-            response = await app_context.run_db(workflow_handler.evaluate, event)
-        else:
-            response = await asyncio.to_thread(workflow_handler.evaluate, event)
+        response = await _evaluate_workflow_handler(workflow_handler, event)
     except Exception as exc:
         logger.warning(
             "Workflow after_tool evaluation failed for %s/%s: %s",

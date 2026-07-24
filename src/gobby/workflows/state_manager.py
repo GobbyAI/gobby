@@ -379,6 +379,110 @@ class SessionVariableManager:
                 )
         return len(bounded_items)
 
+    def upsert_open_tool_error(
+        self,
+        session_id: str,
+        tool: str,
+        target_key: str,
+        error: str,
+        *,
+        occurred_at: datetime,
+    ) -> None:
+        """Atomically insert or increment one canonical unresolved tool error."""
+        from gobby.hooks.tool_error_tracker import (
+            MAX_TOOL_ERROR_COUNT,
+            normalize_open_tool_error_records,
+        )
+
+        if occurred_at.tzinfo is None or occurred_at.utcoffset() is None:
+            raise ValueError("occurred_at must be timezone-aware")
+        timestamp = occurred_at.astimezone(UTC).isoformat(timespec="seconds")
+        incoming = normalize_open_tool_error_records(
+            [
+                {
+                    "tool": tool,
+                    "target_key": target_key,
+                    "error": error,
+                    "first_at": timestamp,
+                    "last_at": timestamp,
+                    "count": 1,
+                }
+            ]
+        )[0]
+        now = datetime.now(UTC).isoformat()
+        with self.db.transaction_immediate(SessionVariableMutation(session_id=session_id)) as conn:
+            row = conn.execute(
+                "SELECT variables FROM session_variables WHERE session_id = %s",
+                (session_id,),
+            ).fetchone()
+            current_vars = _decode_variables_payload(row["variables"]) if row else {}
+            records = normalize_open_tool_error_records(current_vars.get("open_tool_errors", []))
+            match = next(
+                (
+                    record
+                    for record in records
+                    if record["tool"] == incoming["tool"]
+                    and record["target_key"] == incoming["target_key"]
+                ),
+                None,
+            )
+            if match is None:
+                records.append(incoming)
+            else:
+                match["error"] = incoming["error"]
+                match["last_at"] = max(match["last_at"], incoming["last_at"])
+                match["count"] = min(MAX_TOOL_ERROR_COUNT, match["count"] + 1)
+            current_vars["open_tool_errors"] = normalize_open_tool_error_records(records)
+
+            if row:
+                conn.execute(
+                    "UPDATE session_variables SET variables = %s, updated_at = %s "
+                    "WHERE session_id = %s",
+                    (_encode_variables_payload(current_vars), now, session_id),
+                )
+            else:
+                conn.execute(
+                    "INSERT INTO session_variables (session_id, variables, updated_at) "
+                    "VALUES (%s, %s, %s)",
+                    (session_id, _encode_variables_payload(current_vars), now),
+                )
+
+    def resolve_open_tool_errors(
+        self,
+        session_id: str,
+        tool: str,
+        target_key: str,
+    ) -> None:
+        """Atomically remove the exact canonical tool-and-target error."""
+        from gobby.hooks.tool_error_tracker import (
+            normalize_open_tool_error_records,
+            render_bounded_identity,
+            sanitize_record_text,
+        )
+
+        canonical_tool = render_bounded_identity(sanitize_record_text(tool))
+        canonical_target = render_bounded_identity(sanitize_record_text(target_key))
+        now = datetime.now(UTC).isoformat()
+        with self.db.transaction_immediate(SessionVariableMutation(session_id=session_id)) as conn:
+            row = conn.execute(
+                "SELECT variables FROM session_variables WHERE session_id = %s",
+                (session_id,),
+            ).fetchone()
+            if not row:
+                return
+            current_vars = _decode_variables_payload(row["variables"])
+            records = normalize_open_tool_error_records(current_vars.get("open_tool_errors", []))
+            current_vars["open_tool_errors"] = [
+                record
+                for record in records
+                if (record["tool"], record["target_key"]) != (canonical_tool, canonical_target)
+            ]
+            conn.execute(
+                "UPDATE session_variables SET variables = %s, updated_at = %s "
+                "WHERE session_id = %s",
+                (_encode_variables_payload(current_vars), now, session_id),
+            )
+
     def append_to_set_variable(self, session_id: str, name: str, values: list[str]) -> bool:
         """Atomically append strings to a string-list variable (deduped, sorted).
 

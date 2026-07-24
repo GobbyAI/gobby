@@ -1,13 +1,20 @@
 """Tool and schema execution operations for the tool proxy service."""
 
 import asyncio
+import json
 import logging
+from collections.abc import Mapping
+from copy import deepcopy
+from dataclasses import dataclass
+from enum import StrEnum
 from typing import Any, cast
 
+from gobby.hooks.tool_error_tracker import track_proxy_outcome
 from gobby.mcp_proxy.models import MCPError, ToolProxyErrorCode
 from gobby.mcp_proxy.tools.internal import normalize_internal_success_result
 from gobby.utils.project_context import get_project_context
 from gobby.utils.session_refs import try_resolve_session_field
+from gobby.workflows.state_manager import SessionVariableManager
 
 from .schema_guidance import build_invalid_arguments_response
 from .tool_proxy_utils import safe_truncate
@@ -15,6 +22,67 @@ from .tool_proxy_utils import safe_truncate
 logger = logging.getLogger("gobby.mcp.server")
 
 PARENT_SESSION_TOOLS = frozenset({"dispatch_batch", "evaluate_spawn", "spawn_agent"})
+
+
+class ProxyOutcomeClass(StrEnum):
+    POLICY_DENIED = "policy_denied"
+    INVALID_CALL = "invalid_call"
+    FAILED_PRE_DISPATCH = "failed_pre_dispatch"
+    EXECUTED = "executed"
+
+
+@dataclass(frozen=True, slots=True)
+class _CallToolOutcome:
+    result: Any
+    outcome_class: ProxyOutcomeClass
+    effective_session_id: str | None
+    server_name: str
+    tool_name: str
+    arguments: dict[str, Any]
+
+
+def _identity_arguments(arguments: str | dict[str, Any] | None) -> dict[str, Any]:
+    if isinstance(arguments, Mapping):
+        return deepcopy(dict(arguments))
+    if isinstance(arguments, str):
+        try:
+            parsed = json.loads(arguments)
+        except (json.JSONDecodeError, TypeError, ValueError):
+            return {}
+        if isinstance(parsed, Mapping):
+            return deepcopy(dict(parsed))
+    return {}
+
+
+def _tracking_variable_manager(service: Any) -> SessionVariableManager | None:
+    hook_manager = service._resolve_hook_manager()
+    if hook_manager is None:
+        return None
+    db = getattr(hook_manager, "_database", None)
+    if db is None:
+        db = getattr(getattr(hook_manager, "_session_manager", None), "db", None)
+    return SessionVariableManager(db) if db is not None else None
+
+
+def _server_is_dispatchable(service: Any, server_name: str) -> bool:
+    internal_manager = service._internal_manager
+    if internal_manager is not None and internal_manager.is_internal(server_name):
+        return internal_manager.get_registry(server_name) is not None
+    return bool(service._mcp_manager.has_server(server_name))
+
+
+def _unknown_server_result(service: Any, server_name: str, tool_name: str) -> dict[str, Any]:
+    error = f"Server '{server_name}' not found"
+    suggestion = service._get_server_suggestion(server_name)
+    if suggestion:
+        error += f". Did you mean '{suggestion}'?"
+    return {
+        "success": False,
+        "error": error,
+        "error_code": ToolProxyErrorCode.SERVER_NOT_FOUND.value,
+        "server_name": server_name,
+        "tool_name": tool_name,
+    }
 
 
 def _schema_requires_session_id(input_schema: dict[str, Any]) -> bool:
@@ -177,6 +245,59 @@ async def call_tool(
     timeout: float | None = None,
 ) -> Any:
     """Execute a tool with optional pre-validation."""
+    caller_identity = (
+        server_name,
+        tool_name,
+        _identity_arguments(arguments),
+    )
+    outcome = await _call_tool_impl(
+        service,
+        server_name,
+        tool_name,
+        arguments,
+        session_id,
+        strip_unknown,
+        enforce_workflow,
+        timeout,
+    )
+    try:
+        sv_mgr = _tracking_variable_manager(service)
+        if sv_mgr is not None:
+            await asyncio.to_thread(
+                track_proxy_outcome,
+                sv_mgr,
+                outcome.effective_session_id,
+                caller_identity,
+                (
+                    outcome.server_name,
+                    outcome.tool_name,
+                    deepcopy(outcome.arguments),
+                ),
+                outcome.result,
+                outcome.outcome_class.value,
+            )
+    except Exception as exc:
+        logger.debug(
+            "Failed to track proxy tool outcome for %s/%s: %s",
+            server_name,
+            tool_name,
+            exc,
+            exc_info=True,
+        )
+    return outcome.result
+
+
+async def _call_tool_impl(
+    service: Any,
+    server_name: str,
+    tool_name: str,
+    arguments: str | dict[str, Any] | None = None,
+    session_id: str | None = None,
+    strip_unknown: bool = False,
+    enforce_workflow: bool = True,
+    timeout: float | None = None,
+) -> _CallToolOutcome:
+    """Execute one proxy route and return its structural outcome."""
     server_name = service._resolve_server_name(server_name)
     prepared_arguments, error = service._prepare_arguments(arguments)
     if error is not None:
@@ -187,7 +308,7 @@ async def call_tool(
                 input_schema = schema_result.get("tool", {}).get("inputSchema", {})
         except Exception as schema_error:
             logger.debug("Could not fetch schema for argument preparation error: %s", schema_error)
-        return await asyncio.to_thread(
+        result = await asyncio.to_thread(
             build_invalid_arguments_response,
             service,
             server_name=server_name,
@@ -196,6 +317,14 @@ async def call_tool(
             input_schema=input_schema,
             session_id=session_id,
             error_message=error.get("error"),
+        )
+        return _CallToolOutcome(
+            result,
+            ProxyOutcomeClass.INVALID_CALL,
+            None,
+            server_name,
+            tool_name,
+            {},
         )
     arguments = cast("dict[str, Any]", prepared_arguments or {})
 
@@ -220,7 +349,8 @@ async def call_tool(
     if service._is_proxy_namespace(server_name):
         resolved = service._resolve_server_for_tool(tool_name)
         if resolved:
-            return await service.call_tool(
+            return await _call_tool_impl(
+                service,
                 resolved,
                 tool_name,
                 arguments,
@@ -229,7 +359,7 @@ async def call_tool(
                 enforce_workflow=enforce_workflow,
                 timeout=timeout,
             )
-        return {
+        result = {
             "success": False,
             "error": (
                 f"Tool '{tool_name}' not found on any server "
@@ -240,48 +370,92 @@ async def call_tool(
             "server_name": server_name,
             "tool_name": tool_name,
         }
+        return _CallToolOutcome(
+            result,
+            ProxyOutcomeClass.INVALID_CALL,
+            None,
+            server_name,
+            tool_name,
+            arguments,
+        )
+
+    if not _server_is_dispatchable(service, server_name):
+        return _CallToolOutcome(
+            _unknown_server_result(service, server_name, tool_name),
+            ProxyOutcomeClass.INVALID_CALL,
+            None,
+            server_name,
+            tool_name,
+            arguments,
+        )
 
     try:
         effective_session_id = await asyncio.to_thread(
             service._get_effective_session_id, session_id
         )
     except ValueError as exc:
-        return {
+        result = {
             "success": False,
             "error": f"Invalid session reference {session_id!r}: {exc}",
             "error_code": ToolProxyErrorCode.INVALID_ARGUMENTS.value,
             "server_name": server_name,
             "tool_name": tool_name,
         }
+        return _CallToolOutcome(
+            result,
+            ProxyOutcomeClass.INVALID_CALL,
+            None,
+            server_name,
+            tool_name,
+            arguments,
+        )
 
     if enforce_workflow:
         (
             server_name,
             tool_name,
-            arguments,
+            enforced_arguments,
             workflow_error,
+            before_outcome,
         ) = await service._apply_before_tool_enforcement(
             server_name=server_name,
             tool_name=tool_name,
             arguments=arguments,
             session_id=effective_session_id,
         )
+        arguments = cast("dict[str, Any]", enforced_arguments)
         if workflow_error is not None:
-            return workflow_error
-        arguments = cast("dict[str, Any]", arguments)
+            if before_outcome is None:
+                raise AssertionError("before-tool failure missing outcome class")
+            return _CallToolOutcome(
+                workflow_error,
+                ProxyOutcomeClass(before_outcome),
+                effective_session_id,
+                server_name,
+                tool_name,
+                arguments,
+            )
 
     if service._tool_filter and effective_session_id:
         allowed, reason = await asyncio.to_thread(
             service._tool_filter.is_tool_allowed, tool_name, effective_session_id
         )
         if not allowed:
-            return {
+            result = {
                 "success": False,
                 "error": reason,
                 "error_code": ToolProxyErrorCode.TOOL_BLOCKED.value,
                 "server_name": server_name,
                 "tool_name": tool_name,
             }
+            return _CallToolOutcome(
+                result,
+                ProxyOutcomeClass.POLICY_DENIED,
+                effective_session_id,
+                server_name,
+                tool_name,
+                arguments,
+            )
 
     should_check_schema = service._validate_arguments
     if should_check_schema:
@@ -312,7 +486,7 @@ async def call_tool(
                         missing = [r for r in required if r not in arguments]
                         if missing:
                             error_message = f"Missing required parameters: {missing}"
-                    return await asyncio.to_thread(
+                    result = await asyncio.to_thread(
                         build_invalid_arguments_response,
                         service,
                         server_name=server_name,
@@ -322,8 +496,16 @@ async def call_tool(
                         session_id=effective_session_id,
                         error_message=error_message,
                     )
+                    return _CallToolOutcome(
+                        result,
+                        ProxyOutcomeClass.INVALID_CALL,
+                        effective_session_id,
+                        server_name,
+                        tool_name,
+                        arguments,
+                    )
 
-    return await _execute_tool_dispatch(
+    result = await _execute_tool_dispatch(
         service=service,
         server_name=server_name,
         tool_name=tool_name,
@@ -331,6 +513,14 @@ async def call_tool(
         effective_session_id=effective_session_id,
         emit_after_workflow=enforce_workflow,
         timeout=timeout,
+    )
+    return _CallToolOutcome(
+        result,
+        ProxyOutcomeClass.EXECUTED,
+        effective_session_id,
+        server_name,
+        tool_name,
+        arguments,
     )
 
 

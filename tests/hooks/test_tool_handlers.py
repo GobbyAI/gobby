@@ -144,6 +144,41 @@ class TestToolHandlerEdgeCases:
 
         assert response.decision == "allow"
 
+    def test_after_tool_tracks_native_outcome_and_skips_wrapper_echo(
+        self,
+        mock_dependencies: dict,
+    ) -> None:
+        handlers = EventHandlers(**mock_dependencies)
+        native_event = make_event(
+            HookEventType.AFTER_TOOL,
+            data={
+                "tool_name": "Edit",
+                "tool_input": {"file_path": "/repo/a.py"},
+                "tool_output": {"success": False, "error": "failed"},
+            },
+            metadata={"_platform_session_id": "sess-123", "is_failure": True},
+        )
+        wrapper_event = make_event(
+            HookEventType.AFTER_TOOL,
+            data={
+                "tool_name": "mcp__gobby__call_tool",
+                "tool_input": {
+                    "server_name": "gobby-tasks",
+                    "tool_name": "close_task",
+                    "arguments": {"task_id": "#123"},
+                },
+                "tool_output": {"success": False, "error": "failed"},
+            },
+            metadata={"_platform_session_id": "sess-123", "is_failure": True},
+        )
+
+        with patch("gobby.hooks.event_handlers._tool.track_tool_outcome") as track_outcome:
+            handlers.handle_after_tool(native_event)
+            handlers.handle_after_tool(wrapper_event)
+
+        assert track_outcome.call_count == 1
+        assert track_outcome.call_args.args[1:] == ("sess-123", native_event)
+
     def test_after_tool_no_session_id(self, mock_dependencies: dict) -> None:
         """Test AFTER_TOOL handles missing session_id."""
         handlers = EventHandlers(**mock_dependencies)
@@ -528,7 +563,10 @@ class TestToolHandlerEdgeCases:
         assert mock_dependencies["session_storage"].mark_had_edits.call_count == 0
         assert not mock_dependencies["session_storage"].mark_had_edits.called
 
-    def test_after_tool_edit_skips_relative_gobby_path(self, mock_dependencies: dict) -> None:
+    def test_after_tool_edit_skips_relative_gobby_path(
+        self,
+        mock_dependencies: dict[str, MagicMock],
+    ) -> None:
         """Test AFTER_TOOL does NOT mark had_edits for relative .gobby/ paths."""
         mock_dependencies["task_manager"].list_tasks.return_value = [
             MagicMock()

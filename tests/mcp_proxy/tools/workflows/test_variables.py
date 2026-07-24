@@ -134,6 +134,7 @@ class TestSetVariableScoped:
             "unlocked_tools",
             "listed_servers",
             "consecutive_tool_blocks",
+            "open_tool_errors",
             "_last_blocked_tool",
             "edit_write_stop_blocks",
         ],

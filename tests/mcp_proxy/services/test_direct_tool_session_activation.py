@@ -173,7 +173,7 @@ async def test_direct_mcp_review_tool_reconciles_spawned_session_before_rules(
     assert session is not None
     service = _DirectToolService(temp_db, session_manager, session.project_id, tmp_path)
 
-    _, _, _, error = await apply_before_tool_enforcement(
+    _, _, _, error, _ = await apply_before_tool_enforcement(
         service,
         "gobby-tasks-ops",
         "approve_review",
@@ -200,7 +200,7 @@ async def test_direct_mcp_review_tool_still_blocks_interactive_session(
     assert session is not None
     service = _DirectToolService(temp_db, session_manager, session.project_id, tmp_path)
 
-    _, _, _, error = await apply_before_tool_enforcement(
+    _, _, _, error, _ = await apply_before_tool_enforcement(
         service,
         "gobby-tasks-ops",
         "approve_review",
