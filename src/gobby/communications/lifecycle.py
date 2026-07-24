@@ -6,6 +6,7 @@ import asyncio
 import logging
 import re
 import uuid
+from dataclasses import replace
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any
 
@@ -142,6 +143,8 @@ class AdapterLifecycleOperations:
         for value in channel.config_json.values():
             if isinstance(value, str) and value.startswith("$secret:"):
                 secret_refs.add(value)
+        if channel.webhook_secret and channel.webhook_secret.startswith("$secret:"):
+            secret_refs.add(channel.webhook_secret)
         secret_refs.update(_DEFAULT_CHANNEL_SECRET_REFS.get(channel.channel_type, ()))
         resolved_secret_refs: dict[str, str | None] = {}
         for ref in secret_refs:
@@ -154,6 +157,11 @@ class AdapterLifecycleOperations:
             return resolved_secret_refs.get(ref)
 
         init_channel = channel_for_adapter_init(channel, adapter, manager._config.webhook_base_url)
+        if init_channel.webhook_secret and init_channel.webhook_secret.startswith("$secret:"):
+            resolved_webhook_secret = resolve_secret_ref(init_channel.webhook_secret)
+            if resolved_webhook_secret is None:
+                raise ValueError(f"Webhook secret for channel {channel.name!r} is not configured")
+            init_channel = replace(init_channel, webhook_secret=resolved_webhook_secret)
         await adapter.initialize(init_channel, resolve_secret_ref)
         return adapter
 

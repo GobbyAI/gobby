@@ -25,8 +25,8 @@ def test_comms_status_success(mock_daemon_client):
             "name": "test-channel",
             "channel_type": "telegram",
             "enabled": True,
-            "status": "connected",
-            "stats": {"inbound": 5, "outbound": 10},
+            "active": True,
+            "init_error": None,
         }
     ]
     mock_daemon_client.call_http_api.return_value = mock_response
@@ -36,10 +36,8 @@ def test_comms_status_success(mock_daemon_client):
     assert result.exit_code == 0
     assert "test-channel" in result.output
     assert "telegram" in result.output
-    assert "5 / 10" in result.output
-    mock_daemon_client.call_http_api.assert_called_once_with(
-        "/api/comms/channels?status=true", method="GET"
-    )
+    assert "active" in result.output
+    mock_daemon_client.call_http_api.assert_called_once_with("/api/comms/channels", method="GET")
 
 
 def test_comms_send_success(mock_daemon_client):
@@ -98,7 +96,7 @@ def test_comms_channels_add_telegram(mock_daemon_client):
         json_data={
             "name": "my-tg",
             "channel_type": "telegram",
-            "config": {"chat_id": "mychatid"},
+            "config": {"default_destination": "mychatid"},
             "secrets": {"bot_token": "mytoken"},
         },
     )
@@ -124,8 +122,34 @@ def test_comms_channels_add_slack(mock_daemon_client):
         json_data={
             "name": "my-slack",
             "channel_type": "slack",
-            "config": {"channel_id": "C12345"},
+            "config": {"default_destination": "C12345"},
             "secrets": {"bot_token": "xoxb-token", "signing_secret": "signing-sec"},
+        },
+    )
+
+
+def test_comms_channels_add_discord(mock_daemon_client: MagicMock) -> None:
+    runner = CliRunner()
+
+    mock_response = MagicMock(spec=httpx.Response)
+    mock_response.status_code = 201
+    mock_daemon_client.call_http_api.return_value = mock_response
+
+    result = runner.invoke(
+        comms,
+        ["channels", "add", "discord", "my-discord"],
+        input="discord-token\n123456789\n",
+    )
+
+    assert result.exit_code == 0
+    mock_daemon_client.call_http_api.assert_called_once_with(
+        "/api/comms/channels",
+        method="POST",
+        json_data={
+            "name": "my-discord",
+            "channel_type": "discord",
+            "config": {"default_destination": "123456789"},
+            "secrets": {"bot_token": "discord-token"},
         },
     )
 
@@ -247,7 +271,7 @@ def test_comms_channels_add_custom_rejects_non_object_config(mock_daemon_client)
     mock_daemon_client.call_http_api.assert_not_called()
 
 
-def test_comms_channels_remove(mock_daemon_client):
+def test_comms_channels_remove(mock_daemon_client: MagicMock) -> None:
     runner = CliRunner()
 
     # First response for listing

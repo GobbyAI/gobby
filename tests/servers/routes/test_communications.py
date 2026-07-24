@@ -162,6 +162,30 @@ def test_send_message(client, comms_manager):
     )
 
 
+def test_send_message_reports_adapter_failure(
+    client: TestClient,
+    comms_manager: MagicMock,
+) -> None:
+    message = CommsMessage(
+        id="msg1",
+        channel_id="ch1",
+        direction="outbound",
+        content="hello",
+        status="failed",
+        error="Telegram rejected the destination",
+        created_at="2023-01-01T00:00:00Z",
+    )
+    comms_manager.send_message = AsyncMock(return_value=message)
+
+    response = client.post(
+        "/api/comms/send",
+        json={"channel_name": "alerts", "content": "hello"},
+    )
+
+    assert response.status_code == 502
+    assert response.json() == {"detail": "Telegram rejected the destination"}
+
+
 def test_send_message_unknown_channel(client, comms_manager):
     comms_manager.send_message = AsyncMock(
         side_effect=ValueError("Channel 'missing' not found or not active")
@@ -404,13 +428,15 @@ def test_get_channel_status(client, comms_manager):
     assert response.json()["status"] == "active"
 
 
-def test_list_messages(client, comms_manager):
+def test_list_messages(client: TestClient, comms_manager: MagicMock) -> None:
+    from datetime import UTC, datetime
+
     msg = CommsMessage(
         id="msg1",
         channel_id="ch1",
         direction="outbound",
         content="test",
-        created_at="2023-01-01T00:00:00Z",
+        created_at=datetime(2023, 1, 1, tzinfo=UTC),
     )
     comms_manager.list_messages.return_value = [msg]
 

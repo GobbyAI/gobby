@@ -112,6 +112,11 @@ def create_communications_router(server: HTTPServer) -> APIRouter:
         except ValueError as e:
             raise HTTPException(status_code=404, detail=str(e)) from e
 
+        if message.status != "sent":
+            raise HTTPException(
+                status_code=502,
+                detail=message.error or "Message delivery failed",
+            )
         return asdict(message)
 
     @router.get("/channels")

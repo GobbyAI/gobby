@@ -211,6 +211,31 @@ async def test_telegram_init_uses_global_webhook_url_as_inbound_source():
 
 
 @pytest.mark.asyncio
+async def test_telegram_init_resolves_webhook_secret_reference() -> None:
+    channel = make_channel(
+        channel_type="telegram",
+        config_json={},
+        webhook_secret="$secret:COMMS_TELEGRAM_WEBHOOK_SECRET_MY_TELEGRAM",
+    )
+    store = make_store([channel])
+    secret_store = make_secret_store()
+    secret_store.get.return_value = "resolved-webhook-secret"
+    manager = CommunicationsManager(make_config(), store, secret_store, MagicMock())
+    adapter = make_adapter(channel_type="telegram", supports_webhooks=True, supports_polling=True)
+
+    with patch(
+        "gobby.communications.manager.get_adapter_class",
+        return_value=MagicMock(return_value=adapter),
+    ):
+        await manager.start()
+
+    init_channel = adapter.initialize.call_args.args[0]
+    assert channel.webhook_secret == "$secret:COMMS_TELEGRAM_WEBHOOK_SECRET_MY_TELEGRAM"
+    assert init_channel.webhook_secret == "resolved-webhook-secret"
+    secret_store.get.assert_called_once_with("COMMS_TELEGRAM_WEBHOOK_SECRET_MY_TELEGRAM")
+
+
+@pytest.mark.asyncio
 async def test_telegram_init_removes_stale_channel_webhook_url_when_polling():
     """Telegram polling setup cannot leave a channel-level webhook registered."""
     channel = make_channel(
@@ -765,6 +790,7 @@ async def test_handle_inbound_resolves_webhook_secret_ref():
     with patch("gobby.communications.manager.get_adapter_class", return_value=mock_adapter_cls):
         await manager.start()
 
+    secret_store.get.reset_mock()
     messages = await manager.handle_inbound("test-channel", b"payload", {"X-Signature": "ok"})
 
     assert messages == []
@@ -1603,6 +1629,30 @@ async def test_send_message_propagates_thread_id():
 
 
 @pytest.mark.asyncio
+async def test_send_message_explicit_thread_id_overrides_tracked_thread() -> None:
+    channel = make_channel(webhook_secret=None)
+    store = make_store([channel])
+    manager = CommunicationsManager(make_config(), store, make_secret_store(), MagicMock())
+    mock_adapter = make_adapter()
+
+    with patch(
+        "gobby.communications.manager.get_adapter_class",
+        return_value=MagicMock(return_value=mock_adapter),
+    ):
+        await manager.start()
+
+    manager._thread_manager.track_thread("chan-1", "session-123", "tracked-thread")
+    message = await manager.send_message(
+        "test-channel",
+        "Explicit reply",
+        session_id="session-123",
+        metadata={"thread_id": "explicit-thread"},
+    )
+
+    assert message.platform_thread_id == "explicit-thread"
+
+
+@pytest.mark.asyncio
 async def test_handle_inbound_deduplicates_platform_message_and_returns_it_for_ack() -> None:
     channel = make_channel()
     store = make_store([channel])
@@ -1702,7 +1752,7 @@ async def test_handle_inbound_populates_thread_map_and_handles_reactions():
     assert manager.reaction_handler.handle_reaction.await_args is not None
 
 
-def test_thread_map_lru_eviction_order():
+def test_thread_map_lru_eviction_order() -> None:
     """Unit test of internal LRU thread map — no public API exposes this behavior."""
     store = make_store()
     manager = CommunicationsManager(make_config(), store, make_secret_store(), MagicMock())
@@ -1725,7 +1775,7 @@ def test_thread_map_lru_eviction_order():
     assert manager._get_thread_id("ch", "s4") == "t4"  # Newly added
 
 
-def test_thread_map_move_to_end_on_track():
+def test_thread_map_move_to_end_on_track() -> None:
     """Unit test of internal LRU refresh — no public API exposes this behavior."""
     store = make_store()
     manager = CommunicationsManager(make_config(), store, make_secret_store(), MagicMock())

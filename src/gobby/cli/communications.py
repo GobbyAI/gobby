@@ -53,7 +53,7 @@ def status_cmd(ctx: click.Context) -> None:
     client = get_daemon_client(ctx)
 
     try:
-        response = client.call_http_api("/api/comms/channels?status=true", method="GET")
+        response = client.call_http_api("/api/comms/channels", method="GET")
         if response.status_code != 200:
             print_error(f"Failed to fetch channel status: {response.text}")
             ctx.exit(1)
@@ -68,8 +68,10 @@ def status_cmd(ctx: click.Context) -> None:
 
         table_data = []
         for ch in channels:
-            status = ch.get("status", "unknown")
-            color = "green" if status == "connected" else "red" if status == "error" else "yellow"
+            status = (
+                "error" if ch.get("init_error") else "active" if ch.get("active") else "inactive"
+            )
+            color = "green" if status == "active" else "red" if status == "error" else "yellow"
             status_text = click.style(status, fg=color)
 
             table_data.append(
@@ -78,7 +80,6 @@ def status_cmd(ctx: click.Context) -> None:
                     "Type": ch.get("channel_type", ""),
                     "Enabled": "Yes" if ch.get("enabled") else "No",
                     "Status": status_text,
-                    "Messages (In/Out)": f"{ch.get('stats', {}).get('inbound', 0)} / {ch.get('stats', {}).get('outbound', 0)}",
                 }
             )
 
@@ -173,13 +174,13 @@ def channels_add_cmd(ctx: click.Context, channel_type: str, name: str) -> None:
     if channel_type == "slack":
         secrets["bot_token"] = click.prompt("Bot Token", hide_input=True)
         secrets["signing_secret"] = click.prompt("Signing Secret", hide_input=True)
-        config["channel_id"] = click.prompt("Channel ID (optional)", default="")
+        config["default_destination"] = click.prompt("Channel ID (optional)", default="")
     elif channel_type == "telegram":
         secrets["bot_token"] = click.prompt("Bot Token", hide_input=True)
-        config["chat_id"] = click.prompt("Chat ID (optional)", default="")
+        config["default_destination"] = click.prompt("Chat ID (optional)", default="")
     elif channel_type == "discord":
         secrets["bot_token"] = click.prompt("Bot Token", hide_input=True)
-        config["channel_id"] = click.prompt("Channel ID (optional)", default="")
+        config["default_destination"] = click.prompt("Channel ID (optional)", default="")
     elif channel_type == "teams":
         secrets["app_id"] = click.prompt("App ID", hide_input=True)
         secrets["app_password"] = click.prompt("App Password", hide_input=True)
