@@ -2,10 +2,13 @@
 
 from __future__ import annotations
 
+from typing import Any, cast
+
 import pytest
 
+from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.sql_dialect import table_column_names
-from gobby.storage.tasks import LocalTaskManager
+from gobby.storage.tasks import LocalTaskManager, Task
 from gobby.storage.tasks._stage_states import (
     IllegalStageTransitionError,
     NoCurrentStageError,
@@ -46,8 +49,13 @@ def _planning_task(temp_db, sample_project, *, state: str = "in_progress"):
     return task
 
 
-def _development_task(temp_db, sample_project, *, state: str = "in_progress"):
-    task = create_task(temp_db, sample_project, task_type="feature")
+def _development_task(
+    temp_db: HubDatabase,
+    sample_project: dict[str, Any],
+    *,
+    state: str = "in_progress",
+) -> Task:
+    task = cast(Task, create_task(temp_db, sample_project, task_type="feature"))
     initialize_manifest(temp_db, task.id, [spec("development", 1), spec("pr", 2)])
     set_stage_state(temp_db, task.id, "development", state)
     return task

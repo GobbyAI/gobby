@@ -1,5 +1,6 @@
 """Tests for Responses endpoint activation policy."""
 
+import asyncio
 from types import SimpleNamespace
 
 import pytest
@@ -97,7 +98,7 @@ async def test_activation_retries_transient_errors_three_times_and_honors_retry_
     async def fake_sleep(delay: float) -> None:
         delays.append(delay)
 
-    monkeypatch.setattr(endpoint_activation.asyncio, "sleep", fake_sleep)
+    monkeypatch.setattr(asyncio, "sleep", fake_sleep)
 
     result = await endpoint_activation._retry_activation(operation)
 

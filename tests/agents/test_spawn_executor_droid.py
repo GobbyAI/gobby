@@ -11,6 +11,7 @@ import subprocess  # nosec B404 # integration test launches local CLIs.
 import sys
 import time
 from pathlib import Path
+from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -23,8 +24,8 @@ from gobby.utils.daemon_client import DaemonClient
 pytestmark = pytest.mark.unit
 
 
-def _droid_request(**overrides) -> SpawnRequest:
-    values = {
+def _droid_request(**overrides: Any) -> SpawnRequest:
+    values: dict[str, Any] = {
         "prompt": "Test",
         "cwd": "/tmp/wt",
         "provider": "droid",

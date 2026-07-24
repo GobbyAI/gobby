@@ -5,13 +5,14 @@ from __future__ import annotations
 import logging
 from pathlib import Path
 from types import SimpleNamespace
-from typing import Any
+from typing import Any, cast
 
 import pytest
 from pytest_mock import MockerFixture
 
 from gobby.config.tasks import TaskValidationConfig
 from gobby.llm import LLMService
+from gobby.mcp_proxy.tools.tasks._context import RegistryContext
 from gobby.mcp_proxy.tools.tasks._lifecycle_validation import validate_leaf_task_with_llm
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.tasks import LocalTaskManager
@@ -63,15 +64,18 @@ async def _successful_validation(
 ) -> list[dict[str, Any]]:
     result = await validate_leaf_task_with_llm(
         task,
-        _StubValidator(ValidationResult(status="valid", feedback="Focused validation passes")),
+        cast(
+            TaskValidator,
+            _StubValidator(ValidationResult(status="valid", feedback="Focused validation passes")),
+        ),
         "structured evidence",
-        SimpleNamespace(task_manager=manager),
+        cast(RegistryContext, SimpleNamespace(task_manager=manager)),
         task.id,
         config,
     )
     assert result.can_close is True
     assert result.extra is not None
-    return result.extra["recurring_validation_candidates"]
+    return cast(list[dict[str, Any]], result.extra["recurring_validation_candidates"])
 
 
 @pytest.mark.asyncio
@@ -106,7 +110,7 @@ async def test_issue_persistence_real_path(
         task,
         validator,
         "structured evidence",
-        SimpleNamespace(task_manager=manager),
+        cast(RegistryContext, SimpleNamespace(task_manager=manager)),
         task.id,
         config,
     )

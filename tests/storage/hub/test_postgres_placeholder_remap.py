@@ -8,6 +8,7 @@ from collections.abc import Iterator
 from contextlib import contextmanager
 from dataclasses import dataclass
 from datetime import UTC, date, datetime, timedelta, timezone
+from types import ModuleType
 from typing import ClassVar
 
 import pytest
@@ -24,7 +25,7 @@ def _postgres_module():
     return importlib.import_module("gobby.storage.hub.postgres")
 
 
-def _postgres_pool_module():
+def _postgres_pool_module() -> ModuleType:
     return importlib.import_module("gobby.storage.hub.postgres_pool")
 
 

@@ -7,6 +7,7 @@ import uuid
 from collections.abc import AsyncGenerator
 from pathlib import Path
 from types import SimpleNamespace
+from typing import cast
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import httpx
@@ -1020,7 +1021,7 @@ class TestRemoteTimeoutHint:
     async def test_remote_call_injects_timeout_only_where_accepted(self) -> None:
         import time
 
-        from qdrant_client import QdrantClient
+        from qdrant_client import AsyncQdrantClient, QdrantClient
 
         from gobby.memory.vectorstore_client import VectorStoreClient
 
@@ -1055,10 +1056,11 @@ class TestRemoteTimeoutHint:
             remote_client_factory=lambda **kwargs: None,
         )
         fake = _FakeRemoteClient()
+        client = cast(AsyncQdrantClient, fake)
 
-        assert await ops.call(fake, "upsert", collection_name="c", points=[]) == "ok"
-        assert await ops.call(fake, "get_collection", collection_name="c") == "ok"
-        assert await ops.call(fake, "query_points", collection_name="c") == "ok"
+        assert await ops.call(client, "upsert", collection_name="c", points=[]) == "ok"
+        assert await ops.call(client, "get_collection", collection_name="c") == "ok"
+        assert await ops.call(client, "query_points", collection_name="c") == "ok"
         assert fake.calls == [
             ("upsert", None),
             ("get_collection", None),
