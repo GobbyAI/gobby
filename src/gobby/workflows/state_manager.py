@@ -33,6 +33,28 @@ def _decode_variables_payload(variables: Any) -> dict[str, Any]:
     return {}
 
 
+def _sanitize_variables_payload(value: Any) -> Any:
+    """Replace PostgreSQL-incompatible NUL characters in JSON-compatible values."""
+    if isinstance(value, str):
+        return value.replace("\x00", "\ufffd")
+    if isinstance(value, dict):
+        return {
+            _sanitize_variables_payload(key) if isinstance(key, str) else key: (
+                _sanitize_variables_payload(item)
+            )
+            for key, item in value.items()
+        }
+    if isinstance(value, list):
+        return [_sanitize_variables_payload(item) for item in value]
+    if isinstance(value, tuple):
+        return tuple(_sanitize_variables_payload(item) for item in value)
+    return value
+
+
+def _encode_variables_payload(variables: Any) -> str:
+    return json.dumps(_sanitize_variables_payload(variables))
+
+
 def _normalize_string_list(value: Any) -> list[str]:
     """Return the string entries from a stored list variable."""
     if not isinstance(value, list):
@@ -103,7 +125,7 @@ class WorkflowInstanceManager:
                 instance.step_entered_at.isoformat() if instance.step_entered_at else None,
                 instance.step_action_count,
                 instance.total_action_count,
-                json.dumps(instance.variables),
+                _encode_variables_payload(instance.variables),
                 instance.context_injected,
                 instance.created_at.isoformat(),
                 now,
@@ -134,7 +156,7 @@ class WorkflowInstanceManager:
                     updated_at = %s
                 WHERE session_id = %s AND workflow_name = %s
                 """,
-                (json.dumps(updates), now, session_id, workflow_name),
+                (_encode_variables_payload(updates), now, session_id, workflow_name),
             )
             return cursor.rowcount > 0
 
@@ -267,13 +289,13 @@ class SessionVariableManager:
                 conn.execute(
                     "UPDATE session_variables SET variables = %s, updated_at = %s "
                     "WHERE session_id = %s",
-                    (json.dumps(current), now, session_id),
+                    (_encode_variables_payload(current), now, session_id),
                 )
             else:
                 conn.execute(
                     "INSERT INTO session_variables (session_id, variables, updated_at) "
                     "VALUES (%s, %s, %s)",
-                    (session_id, json.dumps(updates), now),
+                    (session_id, _encode_variables_payload(updates), now),
                 )
         return True
 
@@ -307,13 +329,13 @@ class SessionVariableManager:
                 conn.execute(
                     "UPDATE session_variables SET variables = %s, updated_at = %s "
                     "WHERE session_id = %s",
-                    (json.dumps(current_vars), now, session_id),
+                    (_encode_variables_payload(current_vars), now, session_id),
                 )
             else:
                 conn.execute(
                     "INSERT INTO session_variables (session_id, variables, updated_at) "
                     "VALUES (%s, %s, %s)",
-                    (session_id, json.dumps(current_vars), now),
+                    (session_id, _encode_variables_payload(current_vars), now),
                 )
         return count
 
@@ -347,13 +369,13 @@ class SessionVariableManager:
                 conn.execute(
                     "UPDATE session_variables SET variables = %s, updated_at = %s "
                     "WHERE session_id = %s",
-                    (json.dumps(current_vars), now, session_id),
+                    (_encode_variables_payload(current_vars), now, session_id),
                 )
             else:
                 conn.execute(
                     "INSERT INTO session_variables (session_id, variables, updated_at) "
                     "VALUES (%s, %s, %s)",
-                    (session_id, json.dumps(current_vars), now),
+                    (session_id, _encode_variables_payload(current_vars), now),
                 )
         return len(bounded_items)
 
@@ -389,13 +411,13 @@ class SessionVariableManager:
                 conn.execute(
                     "UPDATE session_variables SET variables = %s, updated_at = %s "
                     "WHERE session_id = %s",
-                    (json.dumps(current_vars), now, session_id),
+                    (_encode_variables_payload(current_vars), now, session_id),
                 )
             else:
                 conn.execute(
                     "INSERT INTO session_variables (session_id, variables, updated_at) "
                     "VALUES (%s, %s, %s)",
-                    (session_id, json.dumps(current_vars), now),
+                    (session_id, _encode_variables_payload(current_vars), now),
                 )
         return True
 
@@ -436,13 +458,13 @@ class SessionVariableManager:
                 conn.execute(
                     "UPDATE session_variables SET variables = %s, updated_at = %s "
                     "WHERE session_id = %s",
-                    (json.dumps(current_vars), now, session_id),
+                    (_encode_variables_payload(current_vars), now, session_id),
                 )
             else:
                 conn.execute(
                     "INSERT INTO session_variables (session_id, variables, updated_at) "
                     "VALUES (%s, %s, %s)",
-                    (session_id, json.dumps(current_vars), now),
+                    (session_id, _encode_variables_payload(current_vars), now),
                 )
         return claimed
 
@@ -484,13 +506,13 @@ class SessionVariableManager:
                 conn.execute(
                     "UPDATE session_variables SET variables = %s, updated_at = %s "
                     "WHERE session_id = %s",
-                    (json.dumps(current_vars), now, session_id),
+                    (_encode_variables_payload(current_vars), now, session_id),
                 )
             else:
                 conn.execute(
                     "INSERT INTO session_variables (session_id, variables, updated_at) "
                     "VALUES (%s, %s, %s)",
-                    (session_id, json.dumps(current_vars), now),
+                    (session_id, _encode_variables_payload(current_vars), now),
                 )
         return True
 
@@ -545,13 +567,13 @@ class SessionVariableManager:
                 conn.execute(
                     "UPDATE session_variables SET variables = %s, updated_at = %s "
                     "WHERE session_id = %s",
-                    (json.dumps(current_vars), now, session_id),
+                    (_encode_variables_payload(current_vars), now, session_id),
                 )
             else:
                 conn.execute(
                     "INSERT INTO session_variables (session_id, variables, updated_at) "
                     "VALUES (%s, %s, %s)",
-                    (session_id, json.dumps(current_vars), now),
+                    (session_id, _encode_variables_payload(current_vars), now),
                 )
         return True
 
@@ -579,12 +601,12 @@ class SessionVariableManager:
                 conn.execute(
                     "UPDATE session_variables SET variables = %s, updated_at = %s "
                     "WHERE session_id = %s",
-                    (json.dumps(current_vars), now, session_id),
+                    (_encode_variables_payload(current_vars), now, session_id),
                 )
             else:
                 conn.execute(
                     "INSERT INTO session_variables (session_id, variables, updated_at) "
                     "VALUES (%s, %s, %s)",
-                    (session_id, json.dumps(current_vars), now),
+                    (session_id, _encode_variables_payload(current_vars), now),
                 )
         return "full"

@@ -351,6 +351,56 @@ def test_complex_variable_types(db: Any) -> None:
     assert result["bool_val"] is False
 
 
+def test_merge_variables_sanitizes_scalar_nul_and_preserves_ordinary_values(db: Any) -> None:
+    from gobby.workflows.state_manager import SessionVariableManager
+
+    mgr = SessionVariableManager(db)
+    ordinary = {"list": [1, True, None], "nested": {"text": "unchanged"}}
+
+    assert mgr.merge_variables(
+        S1,
+        {"command_output": "tracked.py\x00untracked.py", "ordinary": ordinary},
+    )
+
+    variables = mgr.get_variables(S1)
+    assert variables["command_output"] == "tracked.py\ufffduntracked.py"
+    assert variables["ordinary"] == ordinary
+
+
+def test_rule_evidence_persistence_sanitizes_nested_nul_delimited_output(db: Any) -> None:
+    from gobby.workflows.state_manager import SessionVariableManager
+
+    mgr = SessionVariableManager(db)
+    evidence = {
+        "command": "git status --porcelain=v1 -z",
+        "output": " M tracked.py\x00?? untracked.py\x00",
+        "details": {
+            "streams": ["ordinary", {"stderr": "warning\x00detail"}],
+        },
+    }
+
+    count = mgr.append_to_bounded_list_variable(
+        S1,
+        "verification_evidence",
+        evidence,
+        max_items=5,
+        updates={"verification_evidence_recorded": True},
+    )
+
+    assert count == 1
+    variables = mgr.get_variables(S1)
+    assert variables["verification_evidence"] == [
+        {
+            "command": "git status --porcelain=v1 -z",
+            "output": " M tracked.py\ufffd?? untracked.py\ufffd",
+            "details": {
+                "streams": ["ordinary", {"stderr": "warning\ufffddetail"}],
+            },
+        }
+    ]
+    assert variables["verification_evidence_recorded"] is True
+
+
 # --- append_to_set_variable tests ---
 
 
