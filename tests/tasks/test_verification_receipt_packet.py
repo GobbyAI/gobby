@@ -17,29 +17,33 @@ def _receipt(
     outcome: VerificationOutcome = "success",
     task_id: str | None = "task-1",
     command_chars: int = 32,
+    command: str | None = None,
+    execution_id: str | None = None,
+    outcome_provenance: str = "structured_exit_code",
+    output: str | None = None,
 ) -> VerificationReceipt:
     timestamp = utc_now() + timedelta(seconds=index)
-    output = f"output-{index}"
+    receipt_output = output if output is not None else f"output-{index}"
     return VerificationReceipt(
         id=f"receipt-{index:04d}",
         project_id="project-1",
         session_id="session-1",
         task_id=task_id,
         provider="codex",
-        execution_id=f"execution-{index}",
+        execution_id=execution_id or f"execution-{index}",
         source_event_id=f"event-{index}",
         evidence_type="shell_command",
-        command=f"uv run pytest {'x' * command_chars} {index}",
+        command=command or f"uv run pytest {'x' * command_chars} {index}",
         cwd="/repo",
         normalized_outcome=outcome,
-        outcome_provenance="structured_exit_code",
+        outcome_provenance=outcome_provenance,
         exit_code=0 if outcome == "success" else 1 if outcome == "failure" else None,
         started_at=timestamp,
         completed_at=timestamp,
-        output_first_4k=output,
-        output_last_4k=output,
-        output_sha256=hashlib.sha256(output.encode()).hexdigest(),
-        output_bytes=len(output),
+        output_first_4k=receipt_output,
+        output_last_4k=receipt_output,
+        output_sha256=hashlib.sha256(receipt_output.encode()).hexdigest(),
+        output_bytes=len(receipt_output),
         details={"index": index},
         attribution_source="sole_claim" if task_id else "unassigned",
         attribution_actor="session-1" if task_id else None,
@@ -177,9 +181,58 @@ def test_empty_packet_reports_zero_completeness() -> None:
     assert packet.text is not None
     assert packet.disclosure.to_dict() == {
         "total": 0,
+        "effective_total": 0,
         "detailed": 0,
         "catalogued": 0,
         "aggregated": 0,
         "unassigned": 4,
         "per_outcome": {},
+        "effective_per_outcome": {},
+        "superseded_total": 0,
     }
+
+
+def test_packet_uses_effective_receipts_and_resolves_explicit_superseded_id() -> None:
+    command = "uv run pytest tests/focused.py"
+    candidate = _receipt(
+        1,
+        outcome="unknown",
+        command=command,
+        execution_id="exec-wrapper",
+        outcome_provenance="before_tool",
+        output="2 passed\n",
+    )
+    authority = _receipt(
+        2,
+        command=command,
+        execution_id="call-authority:0",
+        output="2 passed\n",
+    )
+
+    packet = build_verification_receipt_packet(
+        [authority, candidate],
+        explicit_receipt_ids=[candidate.id],
+    )
+
+    assert packet.error is None
+    assert packet.text is not None
+    assert packet.projection.to_dict()["per_outcome"] == {"success": 1}
+    assert packet.projection.to_dict()["raw_per_outcome"] == {
+        "success": 1,
+        "unknown": 1,
+    }
+    assert packet.disclosure.to_dict() == {
+        "total": 2,
+        "effective_total": 1,
+        "detailed": 1,
+        "catalogued": 1,
+        "aggregated": 0,
+        "unassigned": 0,
+        "per_outcome": {"success": 1, "unknown": 1},
+        "effective_per_outcome": {"success": 1},
+        "superseded_total": 1,
+    }
+    assert packet.detailed_receipt_ids == (authority.id,)
+    assert packet.catalogued_receipt_ids == (authority.id,)
+    assert candidate.id not in packet.text
+    assert authority.id in packet.text

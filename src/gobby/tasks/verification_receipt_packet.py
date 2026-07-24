@@ -81,20 +81,26 @@ def _priority(
 @dataclass(frozen=True)
 class EvidenceCompleteness:
     total: int
+    effective_total: int
     detailed: int
     catalogued: int
     aggregated: int
     unassigned: int
     per_outcome: dict[str, int]
+    effective_per_outcome: dict[str, int]
+    superseded_total: int
 
     def to_dict(self) -> dict[str, Any]:
         return {
             "total": self.total,
+            "effective_total": self.effective_total,
             "detailed": self.detailed,
             "catalogued": self.catalogued,
             "aggregated": self.aggregated,
             "unassigned": self.unassigned,
             "per_outcome": self.per_outcome,
+            "effective_per_outcome": self.effective_per_outcome,
+            "superseded_total": self.superseded_total,
         }
 
 
@@ -152,20 +158,21 @@ def _aggregate(receipts: Sequence[VerificationReceipt]) -> dict[str, Any] | None
 def _render(
     *,
     projection: VerificationOutcomeProjection,
-    total: int,
     unassigned: int,
-    per_outcome: dict[str, int],
     details: Sequence[dict[str, Any]],
     catalog: Sequence[dict[str, Any]],
     aggregated_receipts: Sequence[VerificationReceipt],
 ) -> tuple[str, EvidenceCompleteness]:
     disclosure = EvidenceCompleteness(
-        total=total,
+        total=projection.raw_total,
+        effective_total=projection.total,
         detailed=len(details),
         catalogued=len(catalog),
         aggregated=len(aggregated_receipts),
         unassigned=unassigned,
-        per_outcome=per_outcome,
+        per_outcome=projection.raw_per_outcome,
+        effective_per_outcome=projection.per_outcome,
+        superseded_total=projection.superseded_total,
     )
     payload: dict[str, Any] = {
         "canonical_outcome_projection": projection.to_dict(),
@@ -190,7 +197,9 @@ def build_verification_receipt_packet(
     if budget_chars <= 0:
         raise ValueError("budget_chars must be positive")
     projection = project_verification_outcomes(receipts)
-    explicit_ids = frozenset(explicit_receipt_ids)
+    explicit_ids = frozenset(
+        projection.resolve_receipt_id(receipt_id) for receipt_id in explicit_receipt_ids
+    )
     success_times = [
         _timestamp(receipt)
         for receipt in projection.receipts
@@ -201,7 +210,6 @@ def build_verification_receipt_packet(
         projection.receipts,
         key=lambda receipt: _priority(receipt, explicit_ids, latest_success_at),
     )
-    per_outcome = projection.per_outcome
     mandatory: list[VerificationReceipt] = []
     represented_high_risk: set[str] = set()
     for receipt in ordered:
@@ -215,9 +223,7 @@ def build_verification_receipt_packet(
     tail = [receipt for receipt in ordered if receipt.id not in mandatory_ids]
     floor_text, floor_disclosure = _render(
         projection=projection,
-        total=len(ordered),
         unassigned=unassigned_count,
-        per_outcome=per_outcome,
         details=[],
         catalog=catalog,
         aggregated_receipts=tail,
@@ -238,9 +244,7 @@ def build_verification_receipt_packet(
         candidate_details = [*details, _detail(receipt)]
         candidate_text, _ = _render(
             projection=projection,
-            total=len(ordered),
             unassigned=unassigned_count,
-            per_outcome=per_outcome,
             details=candidate_details,
             catalog=catalog,
             aggregated_receipts=tail,
@@ -258,9 +262,7 @@ def build_verification_receipt_packet(
         ]
         candidate_text, _ = _render(
             projection=projection,
-            total=len(ordered),
             unassigned=unassigned_count,
-            per_outcome=per_outcome,
             details=details,
             catalog=candidate_catalog,
             aggregated_receipts=candidate_tail,
@@ -273,9 +275,7 @@ def build_verification_receipt_packet(
 
     text, disclosure = _render(
         projection=projection,
-        total=len(ordered),
         unassigned=unassigned_count,
-        per_outcome=per_outcome,
         details=details,
         catalog=catalog,
         aggregated_receipts=tail,
