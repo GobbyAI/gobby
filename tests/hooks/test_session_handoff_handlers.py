@@ -11,11 +11,13 @@ import pytest
 
 from gobby.hooks.event_handlers import EventHandlers
 from gobby.hooks.event_handlers._session_start.handoff import (
+    _bound_handoff_summary,
     _preserve_compact_resume_required_skills,
     find_parent_session,
     populate_handoff_session_variables,
 )
 from gobby.hooks.events import HookEventType
+from gobby.llm.sdk_utils import HANDOFF_SUMMARY_INJECT_BUDGET
 from gobby.sessions.compact_continuation import (
     COMPACT_SELF_CONTINUE_PROMPT,
     COMPACT_SELF_CONTINUE_VARIABLE,
@@ -224,6 +226,28 @@ class TestSessionStartHandoff:
         assert injectable.startswith("# Big Summary")
         assert "get_handoff_context" in injectable
         assert "#42" in injectable
+
+    def test_section_budget_keeps_next_steps_and_names_omissions(self) -> None:
+        next_steps = "## Next Steps\n- Preserve this exact action.\n"
+        summary = (
+            "Compact handoff preamble.\n\n"
+            "## Current State\nEverything important is stable.\n"
+            "## Key Technical Decisions\nUse deterministic allocation.\n"
+            "## Problems Encountered\nNo open blocker.\n"
+            + next_steps
+            + "## Files Changed\n"
+            + ("F" * 8_000)
+            + "\n## What Was Accomplished\n"
+            + ("W" * 8_000)
+        )
+
+        result = _bound_handoff_summary(summary, MagicMock(seq_num=42))
+
+        assert len(result) <= HANDOFF_SUMMARY_INJECT_BUDGET
+        assert next_steps in result
+        assert "## What Was Accomplished" not in result
+        assert "Omitted sections:" in result
+        assert "What Was Accomplished" in result
 
     @patch("gobby.workflows.state_manager.SessionVariableManager")
     def test_session_start_compact_sets_compact_session_summary_variable(

@@ -1,16 +1,20 @@
 """Tests for shared SDK utilities in gobby.llm.sdk_utils."""
 
 import logging
+from types import SimpleNamespace
 
 import pytest
 
+from gobby.hooks.event_handlers._session_start.handoff import _bound_handoff_summary
 from gobby.llm.sdk_utils import (
     ADDITIONAL_CONTEXT_LIMIT,
     HANDOFF_SUMMARY_INJECT_BUDGET,
+    allocate_section_budget,
     format_exception_group,
     head_with_breadcrumb,
     parse_server_name,
     sanitize_error,
+    split_markdown_sections,
     truncate_additional_context,
 )
 
@@ -175,3 +179,162 @@ class TestHeadWithBreadcrumb:
         result = head_with_breadcrumb("x" * 500, budget=3, breadcrumb="MORE")
         assert result == "MOR"
         assert len(result) == 3
+
+
+class TestMarkdownSectionBudget:
+    PRIORITIES = {
+        "next steps": 10,
+        "current state": 20,
+        "unresolved errors": 30,
+        "key technical decisions": 40,
+        "problems encountered": 50,
+        "what didn't work": 55,
+        "files changed": 70,
+        "what was accomplished": 80,
+    }
+
+    def test_split_sections_preserves_preamble_and_casefolds_titles(self) -> None:
+        text = "Preamble.\n\n## Current STATE\nReady.\n## Files Changed\n- a.py\n"
+
+        sections = split_markdown_sections(text)
+
+        assert [section.title for section in sections] == ["", "current state", "files changed"]
+        assert [section.order for section in sections] == [0, 1, 2]
+        assert "".join(section.text for section in sections) == text
+
+    def test_headingless_handoff_matches_previous_head_cut_bytes(self) -> None:
+        summary = "# Summary\n\n" + ("paragraph contents.\n\n" * 600)
+        parent = SimpleNamespace(seq_num=42)
+        result = _bound_handoff_summary(summary, parent)
+        breadcrumb_start = result.index("> ⚠️")
+        breadcrumb = result[breadcrumb_start:]
+
+        assert result == head_with_breadcrumb(
+            summary,
+            budget=HANDOFF_SUMMARY_INJECT_BUDGET,
+            breadcrumb=breadcrumb,
+        )
+
+    def test_mandatory_sections_survive_combined_overflow(self) -> None:
+        summary = "## Next Steps\n" + ("N" * 8_000) + "\n## Current State\n" + ("C" * 8_000)
+
+        result = allocate_section_budget(
+            split_markdown_sections(summary),
+            self.PRIORITIES,
+            1_000,
+        )
+
+        assert len(result.text) <= 1_000
+        assert "## Next Steps" in result.text
+        assert "## Current State" in result.text
+        assert result.text.count("[section trimmed]") == 2
+        assert result.omitted_titles == ("Next Steps", "Current State")
+
+    def test_single_mandatory_section_gets_full_guarantee(self) -> None:
+        next_steps = ("K" * 500) + "\n"
+        summary = "## What Was Accomplished\n" + ("W" * 8_000) + "\n## Next Steps\n" + next_steps
+
+        result = allocate_section_budget(
+            split_markdown_sections(summary),
+            self.PRIORITIES,
+            700,
+        )
+
+        assert len(result.text) <= 700
+        assert f"## Next Steps\n{next_steps}" in result.text
+        assert "## What Was Accomplished" not in result.text
+
+    def test_skewed_mandatory_split_does_not_starve_shorter_body(self) -> None:
+        summary = "## Next Steps\n" + ("N" * 19_800) + "\n## Current State\n" + ("C" * 200)
+
+        result = allocate_section_budget(
+            split_markdown_sections(summary),
+            self.PRIORITIES,
+            1_000,
+        )
+
+        assert "C" * 200 in result.text
+        assert "## Next Steps" in result.text
+        assert "## Current State" in result.text
+        assert len(result.text) <= 1_000
+
+    @pytest.mark.parametrize("fence", ["```", "~~~"])
+    def test_fenced_pseudo_headings_do_not_create_sections(self, fence: str) -> None:
+        fenced_headings = "\n".join(f"## Pseudo {index}" for index in range(40))
+        summary = (
+            f"## Notes\n{fence}markdown\n"
+            "## Next Steps\n"
+            f"{fenced_headings}\n"
+            f"{fence}\n"
+            "## Current State\nReal state.\n"
+        )
+
+        sections = split_markdown_sections(summary)
+
+        assert [section.title for section in sections] == ["", "notes", "current state"]
+        assert "## Next Steps" in sections[1].body
+        assert fenced_headings in sections[1].body
+
+    def test_first_duplicate_mandatory_heading_owns_guarantee(self) -> None:
+        summary = "## Next Steps\n" + ("FIRST" * 1_000) + "\n## Next Steps\n" + ("SECOND" * 1_000)
+
+        result = allocate_section_budget(
+            split_markdown_sections(summary),
+            self.PRIORITIES,
+            700,
+        )
+
+        assert "FIRST" in result.text
+        assert "SECOND" not in result.text
+        assert result.text.count("## Next Steps") == 1
+
+    def test_many_real_sections_keep_mandatory_sections_near_tail(self) -> None:
+        optional = "".join(f"## Section {index}\n" + ("x" * 300) + "\n" for index in range(31))
+        summary = (
+            optional
+            + "## Next Steps\nDo the next exact thing.\n"
+            + "## Current State\nThe current state is known.\n"
+        )
+
+        result = _bound_handoff_summary(summary, SimpleNamespace(seq_num=42))
+
+        assert len(result) <= HANDOFF_SUMMARY_INJECT_BUDGET
+        assert "## Next Steps\nDo the next exact thing.\n" in result
+        assert "## Current State\nThe current state is known." in result
+
+    def test_pathological_titles_keep_bounded_handoff_breadcrumb(self) -> None:
+        long_sections = "".join(f"## {str(index) * 5_000}\nbody\n" for index in range(20))
+        summary = (
+            long_sections
+            + "## Next Steps\nMandatory next step.\n"
+            + "## Current State\nMandatory current state.\n"
+        )
+
+        result = _bound_handoff_summary(summary, SimpleNamespace(seq_num=42))
+
+        assert len(result) <= HANDOFF_SUMMARY_INJECT_BUDGET
+        assert "## Next Steps\nMandatory next step.\n" in result
+        assert "## Current State\nMandatory current state." in result
+        omission_line = next(line for line in result.splitlines() if line.startswith("Omitted"))
+        assert len(omission_line) < 600
+        assert "+9 more" in omission_line
+
+    def test_mandatory_only_handoff_budgets_actual_breadcrumb(self) -> None:
+        summary = "## Next Steps\n" + ("N" * 8_000) + "\n## Current State\n" + ("C" * 8_000)
+
+        result = _bound_handoff_summary(summary, SimpleNamespace(seq_num=42))
+
+        assert len(result) <= HANDOFF_SUMMARY_INJECT_BUDGET
+        assert "## Next Steps" in result
+        assert "## Current State" in result
+        assert "Omitted sections: Next Steps, Current State" in result
+
+    def test_oversized_next_steps_alone_keeps_heading_and_marker(self) -> None:
+        summary = "## Next Steps\n" + ("N" * 10_000)
+
+        result = _bound_handoff_summary(summary, SimpleNamespace(seq_num=42))
+
+        assert len(result) <= HANDOFF_SUMMARY_INJECT_BUDGET
+        assert result.startswith("## Next Steps\n")
+        assert "[section trimmed]" in result
+        assert "Omitted sections: Next Steps" in result

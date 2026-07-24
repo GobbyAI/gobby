@@ -5,7 +5,12 @@ from __future__ import annotations
 import time
 from typing import Any
 
-from gobby.llm.sdk_utils import HANDOFF_SUMMARY_INJECT_BUDGET, head_with_breadcrumb
+from gobby.llm.sdk_utils import (
+    HANDOFF_SUMMARY_INJECT_BUDGET,
+    allocate_section_budget,
+    head_with_breadcrumb,
+    split_markdown_sections,
+)
 from gobby.sessions.handoff_identity import terminal_context_matches_session
 from gobby.tasks.state_semantics import (
     ACTIVE_STAGE_STATES,
@@ -13,6 +18,33 @@ from gobby.tasks.state_semantics import (
     is_task_actionable,
 )
 from gobby.utils.injected_context import strip_injected_context
+
+_SECTION_PRIORITIES = {
+    "next steps": 10,
+    "current state": 20,
+    "unresolved errors": 30,
+    "key technical decisions": 40,
+    "problems encountered": 50,
+    "what didn't work": 55,
+    "files changed": 70,
+    "what was accomplished": 80,
+}
+_OMISSION_TITLE_LIMIT = 10
+_OMISSION_TITLE_CHARS = 40
+
+
+def _format_omission_titles(titles: tuple[str, ...]) -> str:
+    displayed = [title[:_OMISSION_TITLE_CHARS] for title in titles[:_OMISSION_TITLE_LIMIT]]
+    if len(titles) > _OMISSION_TITLE_LIMIT:
+        displayed.append(f"+{len(titles) - _OMISSION_TITLE_LIMIT} more")
+    return ", ".join(displayed)
+
+
+def _omission_line(titles: tuple[str, ...]) -> str:
+    return (
+        f"Omitted sections: {_format_omission_titles(titles)} "
+        "— full summary via get_handoff_context."
+    )
 
 
 def find_parent_session(
@@ -170,9 +202,30 @@ def _bound_handoff_summary(summary: str, parent: Any) -> str:
         "budget. Call get_handoff_context (gobby-sessions)"
         f"{ref_clause} or with no arguments to load the full summary."
     )
-    return head_with_breadcrumb(
-        summary, budget=HANDOFF_SUMMARY_INJECT_BUDGET, breadcrumb=breadcrumb
+    sections = split_markdown_sections(summary)
+    real_sections = [section for section in sections if section.heading]
+    has_mandatory_section = any(
+        section.title in {"next steps", "current state"} for section in real_sections
     )
+    if not real_sections or not has_mandatory_section:
+        return head_with_breadcrumb(
+            summary,
+            budget=HANDOFF_SUMMARY_INJECT_BUDGET,
+            breadcrumb=breadcrumb,
+        )
+
+    worst_case_titles = tuple(
+        section.display_title[:_OMISSION_TITLE_CHARS].ljust(_OMISSION_TITLE_CHARS, "x")
+        for section in sections
+    )
+    worst_case_suffix = f"\n\n{breadcrumb}\n{_omission_line(worst_case_titles)}"
+    available = max(0, HANDOFF_SUMMARY_INJECT_BUDGET - len(worst_case_suffix))
+    allocation = allocate_section_budget(sections, _SECTION_PRIORITIES, available)
+
+    suffix = f"\n\n{breadcrumb}"
+    if allocation.omitted_titles:
+        suffix = f"{suffix}\n{_omission_line(allocation.omitted_titles)}"
+    return f"{allocation.text.rstrip()}{suffix}"
 
 
 def _preserve_compact_resume_required_skills(
