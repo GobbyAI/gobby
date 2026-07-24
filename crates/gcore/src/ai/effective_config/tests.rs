@@ -19,7 +19,7 @@ use crate::test_http::{RequestHandle, spawn_json_response, spawn_json_response_w
 
 struct EnvGuard {
     _lock: MutexGuard<'static, ()>,
-    original_gobby_home: Option<OsString>,
+    original_values: Vec<(&'static str, Option<OsString>)>,
 }
 
 impl EnvGuard {
@@ -28,23 +28,53 @@ impl EnvGuard {
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner);
         fs::write(home.join(LOCAL_CLI_TOKEN_FILENAME), token).expect("write local CLI token");
-        let original_gobby_home = std::env::var_os("GOBBY_HOME");
-        // SAFETY: TEST_ENV_LOCK serializes every test mutation of GOBBY_HOME.
-        unsafe { std::env::set_var("GOBBY_HOME", home) };
-        Self {
+        let mut guard = Self {
             _lock: lock,
-            original_gobby_home,
+            original_values: Vec::new(),
+        };
+        guard.set_value("GOBBY_HOME", home.as_os_str());
+        guard
+    }
+
+    fn and_set(mut self, key: &'static str, value: &str) -> Self {
+        self.set_value(key, value.as_ref());
+        self
+    }
+
+    fn set_value(&mut self, key: &'static str, value: &std::ffi::OsStr) {
+        if !self
+            .original_values
+            .iter()
+            .any(|(stored, _)| *stored == key)
+        {
+            self.original_values.push((key, std::env::var_os(key)));
         }
+        // SAFETY: TEST_ENV_LOCK serializes every test mutation of these variables.
+        unsafe { std::env::set_var(key, value) };
+    }
+
+    fn remove_value(&mut self, key: &'static str) {
+        if !self
+            .original_values
+            .iter()
+            .any(|(stored, _)| *stored == key)
+        {
+            self.original_values.push((key, std::env::var_os(key)));
+        }
+        // SAFETY: TEST_ENV_LOCK serializes every test mutation of these variables.
+        unsafe { std::env::remove_var(key) };
     }
 }
 
 impl Drop for EnvGuard {
     fn drop(&mut self) {
-        // SAFETY: this guard still owns TEST_ENV_LOCK while restoring GOBBY_HOME.
+        // SAFETY: this guard still owns TEST_ENV_LOCK while restoring variables.
         unsafe {
-            match &self.original_gobby_home {
-                Some(value) => std::env::set_var("GOBBY_HOME", value),
-                None => std::env::remove_var("GOBBY_HOME"),
+            for (key, original) in self.original_values.iter().rev() {
+                match original {
+                    Some(value) => std::env::set_var(*key, value),
+                    None => std::env::remove_var(*key),
+                }
             }
         }
     }
@@ -290,6 +320,34 @@ fn daemon_source_resolves_served_binding_and_embedding_settings_end_to_end() {
         resolve_embedding_config_from_binding(&mut source, &binding).expect("embedding config");
     assert_eq!(embedding.model, "served-embed");
     assert_eq!(embedding.query_prefix.as_deref(), Some("search:"));
+}
+
+#[test]
+fn disable_env_is_consulted_before_the_cached_daemon_state() {
+    let home = temp_home();
+    let (base_url, request) =
+        spawn_json_response(r#"{"config":{"databases.postgres.dsn":"postgresql://daemon/gobby"}}"#)
+            .expect("spawn daemon");
+    let mut env = EnvGuard::set_gobby_home(home.path(), "effective-token")
+        .and_set("GOBBY_DAEMON_URL", &base_url);
+
+    // Prime the process-global cache with daemon mode through the ambient path.
+    assert!(
+        daemon_mode_layers()
+            .expect("fetch effective config")
+            .is_some()
+    );
+    join_request(request);
+
+    env = env.and_set(DAEMON_CONFIG_DISABLE_ENV, "1");
+    assert_eq!(daemon_mode_layers().expect("disabled layers read"), None);
+    assert_eq!(daemon_dsn().expect("disabled dsn read"), None);
+
+    env.remove_value(DAEMON_CONFIG_DISABLE_ENV);
+    assert_eq!(
+        daemon_dsn().expect("cached dsn read"),
+        Some("postgresql://daemon/gobby".to_string())
+    );
 }
 
 #[test]

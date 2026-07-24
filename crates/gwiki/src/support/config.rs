@@ -232,46 +232,16 @@ mod tests {
     use std::cell::Cell;
     use std::collections::BTreeMap;
     use std::path::Path;
-    use std::sync::{Mutex, MutexGuard};
 
     use gobby_core::config::{DaemonOrPrimary, DaemonServedConfig, routing_overrides_only};
 
     use crate::store::MemoryWikiStore;
+    use crate::support::test_env::EnvGuard;
 
     use super::*;
 
-    static ENV_LOCK: Mutex<()> = Mutex::new(());
-
-    struct EnvGuard {
-        _lock: MutexGuard<'static, ()>,
-        previous: Option<std::ffi::OsString>,
-    }
-
-    impl EnvGuard {
-        fn set_gobby_home(path: &Path) -> Self {
-            let lock = ENV_LOCK
-                .lock()
-                .unwrap_or_else(|poisoned| poisoned.into_inner());
-            let previous = std::env::var_os("GOBBY_HOME");
-            // SAFETY: This test-only guard holds ENV_LOCK across the mutation and restores
-            // GOBBY_HOME on Drop, so support/config.rs tests do not race each other.
-            unsafe { std::env::set_var("GOBBY_HOME", path) };
-            Self {
-                _lock: lock,
-                previous,
-            }
-        }
-    }
-
-    impl Drop for EnvGuard {
-        fn drop(&mut self) {
-            match self.previous.as_ref() {
-                // SAFETY: ENV_LOCK serializes test-only process environment restoration.
-                Some(value) => unsafe { std::env::set_var("GOBBY_HOME", value) },
-                // SAFETY: ENV_LOCK serializes test-only process environment restoration.
-                None => unsafe { std::env::remove_var("GOBBY_HOME") },
-            }
-        }
+    fn guard_gobby_home(path: &Path) -> EnvGuard {
+        EnvGuard::set("GOBBY_HOME", path)
     }
 
     fn write_file(root: &Path, rel: &str, contents: &str) {
@@ -350,7 +320,7 @@ mod tests {
             "gcore.yaml",
             "gwiki:\n  shared_code:\n    call_edge_limit: 31\n    import_edge_limit: 32\n",
         );
-        let _guard = EnvGuard::set_gobby_home(home.path());
+        let _guard = guard_gobby_home(home.path());
 
         let limits = local_shared_code_graph_limits().expect("limits");
 
@@ -387,7 +357,7 @@ mod tests {
             "gcore.yaml",
             "indexing:\n  respect_gitignore: false\n",
         );
-        let _guard = EnvGuard::set_gobby_home(home.path());
+        let _guard = guard_gobby_home(home.path());
 
         let options = local_index_options().expect("index options");
 
@@ -465,7 +435,7 @@ mod tests {
             "gcore.yaml",
             "indexing:\n  respect_gitignore: false\n",
         );
-        let _guard = EnvGuard::set_gobby_home(home.path());
+        let _guard = guard_gobby_home(home.path());
 
         let vault = tempfile::tempdir().expect("vault");
         std::fs::create_dir(vault.path().join(".git")).expect("git dir");

@@ -152,7 +152,22 @@ pub fn ai_source_for_conn(
     })
 }
 
+/// Environment variable that disables daemon-served effective config when set
+/// to any non-empty value, forcing the standalone stack. It is consulted on
+/// every cached state read — before the process-global cache — so test
+/// environment guards behave deterministically even after another thread has
+/// already cached a live daemon fetch.
+pub const DAEMON_CONFIG_DISABLE_ENV: &str = "GOBBY_DAEMON_CONFIG_DISABLE";
+
+fn daemon_config_disabled() -> bool {
+    std::env::var_os(DAEMON_CONFIG_DISABLE_ENV).is_some_and(|value| !value.is_empty())
+}
+
 fn effective_config_state() -> &'static EffectiveConfigState {
+    static DISABLED_STATE: EffectiveConfigState = EffectiveConfigState::Unavailable;
+    if daemon_config_disabled() {
+        return &DISABLED_STATE;
+    }
     EFFECTIVE_CONFIG_STATE.get_or_init(|| {
         let Ok(gobby_home) = crate::gobby_home() else {
             return EffectiveConfigState::Unavailable;
