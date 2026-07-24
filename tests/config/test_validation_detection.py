@@ -79,6 +79,20 @@ def test_test_types_ratchet_requires_baseline_and_fail_on_new() -> None:
 @pytest.mark.parametrize(
     "command",
     [
+        "uv run gobby test-types audit tests/",
+        "uv run gobby test-types audit tests/ --baseline baseline.json",
+        "uv run gobby test-types audit tests/ --fail-on-new",
+    ],
+)
+def test_test_types_ratchet_rejects_wrapped_commands_missing_required_flags(
+    command: str,
+) -> None:
+    assert classify_validation_command(command) is None
+
+
+@pytest.mark.parametrize(
+    "command",
+    [
         "git status",
         "git diff",
         "git diff --stat",

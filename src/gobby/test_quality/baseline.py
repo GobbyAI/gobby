@@ -103,6 +103,8 @@ def write_baseline(report: AuditReport, path: str | Path) -> None:
         "issues": list(entries.values()),
     }
     serialized = json.dumps(payload, indent=2, sort_keys=True) + "\n"
+    current_umask = os.umask(0)
+    os.umask(current_umask)
     temp_path: Path | None = None
     try:
         with tempfile.NamedTemporaryFile(
@@ -115,6 +117,7 @@ def write_baseline(report: AuditReport, path: str | Path) -> None:
         ) as temp_file:
             temp_path = Path(temp_file.name)
             temp_file.write(serialized)
+        temp_path.chmod(0o666 & ~current_umask)
         os.replace(temp_path, baseline_path)
         temp_path = None
     finally:

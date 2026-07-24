@@ -112,9 +112,13 @@ def parse_mypy_output(output: str, *, root: Path) -> tuple[MypyDiagnostic, ...]:
         code_match = _CODE_RE.search(body)
         code = code_match.group("code") if code_match is not None else "unknown"
         message = body[: code_match.start()].rstrip() if code_match is not None else body
+        try:
+            path = normalize_reported_path(match.group("path"), root=root)
+        except ValueError:
+            continue
         diagnostics.append(
             MypyDiagnostic(
-                path=normalize_reported_path(match.group("path"), root=root),
+                path=path,
                 line=int(match.group("location").split(":", maxsplit=1)[0]),
                 code=f"mypy:{code}",
                 message=message,
@@ -158,6 +162,9 @@ def run_mypy(
             stderr=completed.stderr,
         )
 
+    has_error_line = any(
+        _ERROR_RE.match(line) is not None for line in completed.stdout.splitlines()
+    )
     try:
         diagnostics = parse_mypy_output(completed.stdout, root=root)
     except ValueError as exc:
@@ -166,7 +173,7 @@ def run_mypy(
             stdout=completed.stdout,
             stderr=completed.stderr,
         ) from exc
-    if completed.returncode == 1 and not diagnostics:
+    if completed.returncode == 1 and not has_error_line:
         raise MypyInvocationError(
             "mypy exit code 1 produced no parseable errors",
             stdout=completed.stdout,

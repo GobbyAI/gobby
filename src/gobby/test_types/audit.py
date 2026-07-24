@@ -8,6 +8,17 @@ from pathlib import Path
 from gobby.test_quality.models import AuditIssue, AuditReport, AuditWarning
 from gobby.test_types._mypy import run_mypy
 
+_EXCLUDED_DIRECTORY_NAMES = frozenset(
+    {
+        ".git",
+        ".mypy_cache",
+        ".venv",
+        "__pycache__",
+        "dist",
+        "node_modules",
+        "target",
+    }
+)
 _PYTHON_SUFFIXES = {".py", ".pyi"}
 
 
@@ -82,7 +93,13 @@ def _relative_path(path: Path, *, root: Path) -> str:
 def _discover_python_files(targets: tuple[Path, ...], *, root: Path) -> tuple[Path, ...]:
     files: set[Path] = set()
     for target in targets:
-        candidates = (target,) if target.is_file() else target.rglob("*") if target.is_dir() else ()
+        candidates: Iterable[Path]
+        if target.is_file():
+            candidates = (target,)
+        elif target.is_dir() and not _is_excluded_directory(target, root=root):
+            candidates = _walk_python_files(target, root=root)
+        else:
+            candidates = ()
         for candidate in candidates:
             if not candidate.is_file() or candidate.suffix not in _PYTHON_SUFFIXES:
                 continue
@@ -91,8 +108,26 @@ def _discover_python_files(targets: tuple[Path, ...], *, root: Path) -> tuple[Pa
                 resolved.relative_to(root)
             except ValueError:
                 continue
+            if _is_excluded_directory(resolved.parent, root=root):
+                continue
             files.add(resolved)
     return tuple(sorted(files))
+
+
+def _walk_python_files(target: Path, *, root: Path) -> Iterable[Path]:
+    for directory, dirnames, filenames in target.walk():
+        dirnames[:] = [
+            dirname
+            for dirname in dirnames
+            if not _is_excluded_directory(directory / dirname, root=root)
+        ]
+        for filename in filenames:
+            yield directory / filename
+
+
+def _is_excluded_directory(path: Path, *, root: Path) -> bool:
+    relative_parts = path.relative_to(root).parts
+    return not _EXCLUDED_DIRECTORY_NAMES.isdisjoint(relative_parts)
 
 
 def _is_requested_path(path: Path, targets: tuple[Path, ...]) -> bool:
