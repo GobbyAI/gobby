@@ -5,6 +5,7 @@ from __future__ import annotations
 import os
 import time
 import uuid
+from datetime import UTC, datetime
 from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -215,6 +216,38 @@ def test_attachment_crud(comms_store: LocalCommunicationsStore) -> None:
 
     comms_store.delete_attachment(saved.id)
     assert comms_store.get_attachment(saved.id) is None
+
+
+def test_create_message_with_attachments_links_rows_atomically(
+    comms_store: LocalCommunicationsStore,
+) -> None:
+    channel_id = _create_test_channel(comms_store)
+    message = CommsMessage(
+        id="",
+        channel_id=channel_id,
+        direction="inbound",
+        content="document caption",
+        content_type="attachment",
+        created_at=datetime(2024, 1, 1, tzinfo=UTC),
+    )
+    attachment = CommsAttachment(
+        id="",
+        message_id="",
+        filename="report.pdf",
+        content_type="application/pdf",
+        size_bytes=17,
+        local_path="/tmp/report.pdf",
+        created_at=datetime(2024, 1, 1, tzinfo=UTC),
+    )
+
+    persisted, saved_attachments = comms_store.create_message_with_attachments(
+        message,
+        [attachment],
+    )
+
+    assert len(saved_attachments) == 1
+    assert saved_attachments[0].message_id == persisted.id
+    assert comms_store.list_attachments(persisted.id) == saved_attachments
 
 
 def test_attachment_list_multiple(comms_store: LocalCommunicationsStore) -> None:

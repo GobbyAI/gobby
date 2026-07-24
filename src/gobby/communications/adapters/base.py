@@ -13,6 +13,7 @@ from typing import TYPE_CHECKING, Any
 import httpx
 
 if TYPE_CHECKING:
+    from gobby.communications.attachments import AttachmentManager
     from gobby.communications.models import (
         ChannelCapabilities,
         ChannelConfig,
@@ -97,6 +98,14 @@ class BaseChannelAdapter(ABC):
         Default raises NotImplementedError. Override in adapters that support files.
         """
         raise NotImplementedError(f"{self.channel_type} adapter does not support file attachments")
+
+    async def download_inbound_attachments(
+        self,
+        message: CommsMessage,
+        attachment_manager: AttachmentManager,
+    ) -> list[CommsAttachment]:
+        """Download attachments referenced by an inbound message."""
+        return []
 
     async def send_proactive(
         self,

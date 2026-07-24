@@ -17,7 +17,12 @@ from gobby.communications.adapters.sms import SMSAdapter
 from gobby.communications.adapters.teams import TeamsAdapter
 from gobby.communications.adapters.telegram import TelegramAdapter
 from gobby.communications.manager import CommunicationsManager
-from gobby.communications.models import ChannelConfig, CommsIdentity, CommsMessage
+from gobby.communications.models import (
+    ChannelConfig,
+    CommsAttachment,
+    CommsIdentity,
+    CommsMessage,
+)
 from gobby.communications.rate_limiter import RateLimitWaitExceeded
 from gobby.config.communications import ChannelDefaults, CommunicationsConfig
 from gobby.storage.communications import LocalCommunicationsStore
@@ -61,6 +66,16 @@ def make_store(channels: list[ChannelConfig] | None = None) -> MagicMock:
     )
     store.get_routing_rules.return_value = []
     store.create_message.side_effect = lambda message: message
+
+    def create_message_with_attachments(
+        message: CommsMessage,
+        attachments: list[CommsAttachment],
+    ) -> tuple[CommsMessage, list[CommsAttachment]]:
+        for attachment in attachments:
+            attachment.message_id = message.id
+        return message, attachments
+
+    store.create_message_with_attachments.side_effect = create_message_with_attachments
     store.create_channel.return_value = None
     store.get_message_by_platform_id.return_value = None
 
@@ -94,6 +109,7 @@ def make_adapter(
     adapter.send_proactive = AsyncMock(return_value="platform-proactive-id-1")
     adapter.shutdown = AsyncMock()
     adapter.parse_webhook.return_value = []
+    adapter.download_inbound_attachments = AsyncMock(return_value=[])
     adapter.verify_webhook.return_value = True
     return adapter
 
@@ -568,6 +584,53 @@ async def test_handle_inbound_stores_messages():
     assert len(stored) == 1
     assert stored[0].content == "Hi there!"
     store.create_message.assert_called_once()
+
+
+@pytest.mark.asyncio
+async def test_handle_inbound_persists_downloaded_attachments() -> None:
+    channel = make_channel(webhook_secret=None)
+    store = make_store([channel])
+    manager = CommunicationsManager(make_config(), store, make_secret_store(), MagicMock())
+    parsed_msg = CommsMessage(
+        id="msg-1",
+        channel_id="",
+        direction="inbound",
+        content="document caption",
+        content_type="attachment",
+        created_at=datetime(2024, 1, 1, tzinfo=UTC),
+    )
+    attachment = CommsAttachment(
+        id="attachment-1",
+        message_id="",
+        filename="report.pdf",
+        content_type="application/pdf",
+        size_bytes=17,
+        local_path="/tmp/report.pdf",
+    )
+    mock_adapter = make_adapter()
+    mock_adapter.parse_webhook.return_value = [parsed_msg]
+    mock_adapter.download_inbound_attachments.return_value = [attachment]
+
+    with patch(
+        "gobby.communications.manager.get_adapter_class",
+        return_value=MagicMock(return_value=mock_adapter),
+    ):
+        await manager.start()
+
+    stored = await manager.handle_inbound(
+        "test-channel",
+        {"data": "payload"},
+        {},
+        raw_body=b'{"data":"payload"}',
+    )
+
+    assert len(stored) == 1
+    mock_adapter.download_inbound_attachments.assert_awaited_once_with(
+        stored[0],
+        manager.attachment_manager,
+    )
+    assert attachment.message_id == stored[0].id
+    store.create_message_with_attachments.assert_called_once_with(stored[0], [attachment])
 
 
 @pytest.mark.asyncio

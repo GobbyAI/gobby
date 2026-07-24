@@ -6,7 +6,7 @@ import asyncio
 import logging
 from typing import TYPE_CHECKING, Any
 
-from gobby.communications.models import CommsMessage
+from gobby.communications.models import CommsAttachment, CommsMessage
 from gobby.communications.webhook_verification import verify_webhook_with_timeout
 
 if TYPE_CHECKING:
@@ -30,10 +30,12 @@ class InboundCommunications:
         channel = manager._channel_by_name.get(channel_name)
         if channel is None:
             raise ValueError(f"Channel {channel_name!r} not found or not active")
+        adapter = manager._adapters.get(channel_name)
 
         handled: list[CommsMessage] = []
         stored: list[CommsMessage] = []
         for message in messages:
+            downloaded_attachments: list[CommsAttachment] = []
             try:
                 platform_channel_id = (
                     message.metadata_json.get("platform_channel_id")
@@ -90,10 +92,44 @@ class InboundCommunications:
                         channel.id, message.session_id, message.platform_thread_id
                     )
 
-                persisted = await asyncio.to_thread(manager._store.create_message, message)
+                if adapter is not None:
+                    downloaded_attachments = await adapter.download_inbound_attachments(
+                        message,
+                        manager.attachment_manager,
+                    )
+                if downloaded_attachments:
+                    persisted, saved_attachments = await asyncio.to_thread(
+                        manager._store.create_message_with_attachments,
+                        message,
+                        downloaded_attachments,
+                    )
+                    saved_attachment_ids = {attachment.id for attachment in saved_attachments}
+                    orphan_paths = [
+                        attachment.local_path
+                        for attachment in downloaded_attachments
+                        if attachment.id not in saved_attachment_ids and attachment.local_path
+                    ]
+                    if orphan_paths:
+                        await asyncio.to_thread(
+                            manager.attachment_manager.delete_paths,
+                            orphan_paths,
+                        )
+                else:
+                    persisted = await asyncio.to_thread(manager._store.create_message, message)
+                downloaded_attachments = []
                 stored.append(persisted)
                 handled.append(persisted)
             except Exception as e:
+                local_paths = [
+                    attachment.local_path
+                    for attachment in downloaded_attachments
+                    if attachment.local_path
+                ]
+                if local_paths:
+                    await asyncio.to_thread(
+                        manager.attachment_manager.delete_paths,
+                        local_paths,
+                    )
                 logger.exception("Failed to process inbound message: %s", e)
 
         if manager.event_callback is not None:

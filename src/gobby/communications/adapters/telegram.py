@@ -8,10 +8,10 @@ import hmac
 import json
 import logging
 import uuid
-from collections.abc import Callable
+from collections.abc import Callable, Mapping
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 import httpx
 
@@ -24,7 +24,83 @@ from gobby.communications.models import (
     CommsMessage,
 )
 
+if TYPE_CHECKING:
+    from gobby.communications.attachments import AttachmentManager
+
 logger = logging.getLogger(__name__)
+
+
+def _file_size(value: object) -> int:
+    if isinstance(value, bool) or not isinstance(value, int) or value < 0:
+        return 0
+    return value
+
+
+def _telegram_media_attachment(msg_data: Mapping[str, Any]) -> dict[str, Any] | None:
+    media_type: str
+    media: Mapping[str, Any]
+    default_content_type: str
+    default_extension: str
+
+    photos = msg_data.get("photo")
+    if isinstance(photos, list):
+        candidates = [
+            (index, photo)
+            for index, photo in enumerate(photos)
+            if isinstance(photo, Mapping) and isinstance(photo.get("file_id"), str)
+        ]
+        if not candidates:
+            return None
+        _, media = max(
+            candidates,
+            key=lambda item: (_file_size(item[1].get("file_size")), item[0]),
+        )
+        media_type = "photo"
+        default_content_type = "image/jpeg"
+        default_extension = "jpg"
+    else:
+        media = {}
+        media_type = ""
+        default_content_type = ""
+        default_extension = ""
+        for candidate_type, candidate_content_type, candidate_extension in (
+            ("document", "application/octet-stream", "bin"),
+            ("voice", "audio/ogg", "ogg"),
+            ("video", "video/mp4", "mp4"),
+        ):
+            candidate = msg_data.get(candidate_type)
+            if isinstance(candidate, Mapping):
+                media = candidate
+                media_type = candidate_type
+                default_content_type = candidate_content_type
+                default_extension = candidate_extension
+                break
+
+    file_id = media.get("file_id")
+    if not isinstance(file_id, str) or not file_id:
+        return None
+
+    raw_filename = media.get("file_name")
+    if isinstance(raw_filename, str) and raw_filename:
+        filename = raw_filename
+    else:
+        unique_id = media.get("file_unique_id")
+        identifier = unique_id if isinstance(unique_id, str) and unique_id else file_id
+        filename = f"{media_type}_{identifier}.{default_extension}"
+
+    raw_content_type = media.get("mime_type")
+    content_type = (
+        raw_content_type
+        if isinstance(raw_content_type, str) and raw_content_type
+        else default_content_type
+    )
+    return {
+        "file_id": file_id,
+        "filename": filename,
+        "content_type": content_type,
+        "size_bytes": _file_size(media.get("file_size")),
+        "media_type": media_type,
+    }
 
 
 class TelegramAdapter(BaseChannelAdapter):
@@ -216,6 +292,77 @@ class TelegramAdapter(BaseChannelAdapter):
             return str(result["result"]["message_id"])
         return None
 
+    async def download_inbound_attachments(
+        self,
+        message: CommsMessage,
+        attachment_manager: AttachmentManager,
+    ) -> list[CommsAttachment]:
+        """Download Telegram media referenced by an inbound message."""
+        raw_attachment = message.metadata_json.get("telegram_attachment")
+        if not isinstance(raw_attachment, dict):
+            return []
+        if not self._client or not self._api_base or not self._bot_token:
+            raise RuntimeError("Adapter not initialized")
+
+        file_id = raw_attachment.get("file_id")
+        filename = raw_attachment.get("filename")
+        content_type = raw_attachment.get("content_type")
+        if not isinstance(file_id, str) or not file_id:
+            raise ValueError("Telegram attachment file_id is missing")
+        if not isinstance(filename, str) or not filename:
+            raise ValueError("Telegram attachment filename is missing")
+        if not isinstance(content_type, str) or not content_type:
+            raise ValueError("Telegram attachment content_type is missing")
+
+        client = self._client
+        try:
+            file_info_response = await self._retry_request(
+                functools.partial(
+                    client.post,
+                    f"{self._api_base}/getFile",
+                    json={"file_id": file_id},
+                )
+            )
+        except httpx.HTTPStatusError as exc:
+            raise self._redacted_status_error(exc) from None
+
+        file_info = file_info_response.json()
+        result = file_info.get("result")
+        if not file_info.get("ok") or not isinstance(result, dict):
+            description = file_info.get("description", "unknown Telegram API error")
+            raise RuntimeError(f"Telegram getFile failed: {description}")
+        telegram_file_path = result.get("file_path")
+        if not isinstance(telegram_file_path, str) or not telegram_file_path:
+            raise RuntimeError("Telegram getFile response did not include file_path")
+
+        download_url = (
+            f"https://api.telegram.org/file/bot{self._bot_token}/{telegram_file_path.lstrip('/')}"
+        )
+        try:
+            file_response = await self._retry_request(functools.partial(client.get, download_url))
+        except httpx.HTTPStatusError as exc:
+            raise self._redacted_status_error(exc) from None
+
+        size_bytes = len(file_response.content)
+        if not attachment_manager.validate_size(size_bytes, self.channel_type):
+            limit = attachment_manager.get_size_limit(self.channel_type)
+            raise ValueError(
+                f"Telegram attachment size {size_bytes} exceeds limit of {limit} bytes"
+            )
+        local_path = await attachment_manager.store(file_response.content, filename)
+        return [
+            CommsAttachment(
+                id=str(uuid.uuid4()),
+                message_id=message.id,
+                filename=filename,
+                content_type=content_type,
+                size_bytes=size_bytes,
+                local_path=str(local_path),
+                platform_url=f"telegram://{telegram_file_path.lstrip('/')}",
+                created_at=datetime.now(UTC),
+            )
+        ]
+
     async def shutdown(self) -> None:
         """Cleanly close connections."""
         if self._client:
@@ -245,9 +392,12 @@ class TelegramAdapter(BaseChannelAdapter):
             return []
 
         msg_data = payload_dict["message"]
-        text = msg_data.get("text")
-        if not text:
-            # We only support text messages currently
+        raw_text = msg_data.get("text")
+        text = raw_text if isinstance(raw_text, str) else ""
+        raw_caption = msg_data.get("caption")
+        caption = raw_caption if isinstance(raw_caption, str) else ""
+        attachment = _telegram_media_attachment(msg_data)
+        if not text and attachment is None:
             return []
 
         chat = msg_data.get("chat", {})
@@ -272,6 +422,8 @@ class TelegramAdapter(BaseChannelAdapter):
             "username": username,
             "external_username": username or user_id,
         }
+        if attachment is not None:
+            metadata["telegram_attachment"] = attachment
 
         platform_thread_id = (
             str(msg_data.get("message_thread_id"))
@@ -284,8 +436,8 @@ class TelegramAdapter(BaseChannelAdapter):
                 id=str(uuid.uuid4()),
                 channel_id="",  # Will be set by the orchestrator
                 direction="inbound",
-                content=text,
-                content_type="text",
+                content=text if text else caption,
+                content_type="attachment" if attachment is not None else "text",
                 platform_message_id=message_id,
                 platform_thread_id=platform_thread_id,
                 identity_id=user_id,

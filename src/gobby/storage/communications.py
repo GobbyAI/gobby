@@ -23,7 +23,7 @@ from gobby.utils.datetime import (
 )
 
 if TYPE_CHECKING:
-    pass
+    from gobby.storage.hub.protocol import Transaction
 
 logger = logging.getLogger(__name__)
 
@@ -247,8 +247,20 @@ class LocalCommunicationsStore:
 
     def create_message(self, message: CommsMessage) -> CommsMessage:
         """Save a new message to the database."""
+        persisted, _ = self.create_message_with_attachments(message, [])
+        return persisted
+
+    def create_message_with_attachments(
+        self,
+        message: CommsMessage,
+        attachments: list[CommsAttachment],
+    ) -> tuple[CommsMessage, list[CommsAttachment]]:
+        """Save a message and its attachments in one transaction."""
         if not message.id:
             message.id = str(uuid.uuid4())
+        for attachment in attachments:
+            if not attachment.id:
+                attachment.id = str(uuid.uuid4())
 
         with self.db.transaction() as conn:
             row = conn.execute(
@@ -279,6 +291,7 @@ class LocalCommunicationsStore:
                     message.created_at,
                 ),
             ).fetchone()
+            inserted = row is not None
             if row is None and message.platform_message_id is not None:
                 row = conn.execute(
                     """
@@ -288,9 +301,18 @@ class LocalCommunicationsStore:
                     """,
                     (message.channel_id, message.platform_message_id),
                 ).fetchone()
-        if row is None:
-            raise RuntimeError("Failed to create communications message")
-        return CommsMessage.from_row(row)
+            if row is None:
+                raise RuntimeError("Failed to create communications message")
+
+            persisted = CommsMessage.from_row(row)
+            saved_attachments: list[CommsAttachment] = []
+            if inserted:
+                for attachment in attachments:
+                    attachment.message_id = persisted.id
+                    self._insert_attachment(conn, attachment)
+                    saved_attachments.append(attachment)
+
+        return persisted, saved_attachments
 
     def get_message(self, message_id: str) -> CommsMessage | None:
         """Get a message by ID."""
@@ -478,30 +500,34 @@ SELECT
 
     # --- Attachments ---
 
+    @staticmethod
+    def _insert_attachment(conn: Transaction, attachment: CommsAttachment) -> None:
+        conn.execute(
+            """
+            INSERT INTO comms_attachments (
+                id, message_id, filename, content_type, size_bytes,
+                local_path, platform_url, created_at
+            ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
+            """,
+            (
+                attachment.id,
+                attachment.message_id,
+                attachment.filename,
+                attachment.content_type,
+                attachment.size_bytes,
+                attachment.local_path,
+                attachment.platform_url,
+                attachment.created_at,
+            ),
+        )
+
     def create_attachment(self, attachment: CommsAttachment) -> CommsAttachment:
         """Save a new attachment to the database."""
         if not attachment.id:
             attachment.id = str(uuid.uuid4())
 
         with self.db.transaction() as conn:
-            conn.execute(
-                """
-                INSERT INTO comms_attachments (
-                    id, message_id, filename, content_type, size_bytes,
-                    local_path, platform_url, created_at
-                ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
-                """,
-                (
-                    attachment.id,
-                    attachment.message_id,
-                    attachment.filename,
-                    attachment.content_type,
-                    attachment.size_bytes,
-                    attachment.local_path,
-                    attachment.platform_url,
-                    attachment.created_at,
-                ),
-            )
+            self._insert_attachment(conn, attachment)
         return attachment
 
     def get_attachment(self, attachment_id: str) -> CommsAttachment | None:

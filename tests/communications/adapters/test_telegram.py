@@ -4,12 +4,14 @@ from __future__ import annotations
 
 from collections.abc import Callable
 from datetime import UTC, datetime
+from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import httpx
 import pytest
 
 from gobby.communications.adapters.telegram import TelegramAdapter
+from gobby.communications.attachments import AttachmentManager
 from gobby.communications.models import ChannelConfig, CommsMessage
 
 
@@ -306,6 +308,184 @@ def test_parse_group_webhook_sets_conversation_reference(adapter: TelegramAdapte
     assert messages[0].metadata_json["conversation_reference"] == {
         "conversation_id": "-1002222222",
     }
+
+
+@pytest.mark.parametrize(
+    ("media", "caption", "expected_attachment"),
+    [
+        pytest.param(
+            {
+                "photo": [
+                    {
+                        "file_id": "photo-small",
+                        "file_unique_id": "photo-small-unique",
+                        "file_size": 100,
+                    },
+                    {
+                        "file_id": "photo-large",
+                        "file_unique_id": "photo-large-unique",
+                        "file_size": 400,
+                    },
+                ]
+            },
+            "photo caption",
+            {
+                "file_id": "photo-large",
+                "filename": "photo_photo-large-unique.jpg",
+                "content_type": "image/jpeg",
+                "size_bytes": 400,
+                "media_type": "photo",
+            },
+            id="photo",
+        ),
+        pytest.param(
+            {
+                "document": {
+                    "file_id": "document-id",
+                    "file_unique_id": "document-unique",
+                    "file_name": "report.pdf",
+                    "mime_type": "application/pdf",
+                    "file_size": 512,
+                }
+            },
+            "document caption",
+            {
+                "file_id": "document-id",
+                "filename": "report.pdf",
+                "content_type": "application/pdf",
+                "size_bytes": 512,
+                "media_type": "document",
+            },
+            id="document",
+        ),
+        pytest.param(
+            {
+                "voice": {
+                    "file_id": "voice-id",
+                    "file_unique_id": "voice-unique",
+                    "mime_type": "audio/ogg",
+                    "file_size": 256,
+                }
+            },
+            "",
+            {
+                "file_id": "voice-id",
+                "filename": "voice_voice-unique.ogg",
+                "content_type": "audio/ogg",
+                "size_bytes": 256,
+                "media_type": "voice",
+            },
+            id="voice",
+        ),
+        pytest.param(
+            {
+                "video": {
+                    "file_id": "video-id",
+                    "file_unique_id": "video-unique",
+                    "mime_type": "video/mp4",
+                    "file_size": 1024,
+                }
+            },
+            "video caption",
+            {
+                "file_id": "video-id",
+                "filename": "video_video-unique.mp4",
+                "content_type": "video/mp4",
+                "size_bytes": 1024,
+                "media_type": "video",
+            },
+            id="video",
+        ),
+    ],
+)
+def test_parse_webhook_media(
+    adapter: TelegramAdapter,
+    media: dict[str, object],
+    caption: str,
+    expected_attachment: dict[str, object],
+) -> None:
+    payload = {
+        "update_id": 10001,
+        "message": {
+            "message_id": 1366,
+            "from": {"id": 1111111, "username": "testuser"},
+            "chat": {"id": 2222222, "type": "private"},
+            "caption": caption,
+            **media,
+        },
+    }
+
+    messages = adapter.parse_webhook(payload, {})
+
+    assert len(messages) == 1
+    assert messages[0].content == caption
+    assert messages[0].content_type == "attachment"
+    assert messages[0].metadata_json["telegram_attachment"] == expected_attachment
+
+
+@pytest.mark.asyncio
+async def test_download_inbound_attachments_uses_get_file_and_attachment_storage(
+    adapter: TelegramAdapter,
+    tmp_path: Path,
+) -> None:
+    payload = {
+        "message": {
+            "message_id": 1366,
+            "from": {"id": 1111111, "username": "testuser"},
+            "chat": {"id": 2222222, "type": "private"},
+            "caption": "document caption",
+            "document": {
+                "file_id": "document-id",
+                "file_unique_id": "document-unique",
+                "file_name": "report.pdf",
+                "mime_type": "application/pdf",
+                "file_size": 512,
+            },
+        }
+    }
+    message = adapter.parse_webhook(payload, {})[0]
+    message.id = "message-id"
+
+    get_file_response = httpx.Response(
+        200,
+        json={"ok": True, "result": {"file_path": "documents/report.pdf"}},
+        request=httpx.Request("POST", "https://api.telegram.org/getFile"),
+    )
+    file_response = httpx.Response(
+        200,
+        content=b"downloaded report",
+        request=httpx.Request("GET", "https://api.telegram.org/file"),
+    )
+    mock_client = MagicMock()
+    mock_client.post = AsyncMock(return_value=get_file_response)
+    mock_client.get = AsyncMock(return_value=file_response)
+    adapter._client = mock_client
+    adapter._api_base = "https://api.telegram.org/bottest-token"
+    adapter._bot_token = "test-token"
+
+    attachments = await adapter.download_inbound_attachments(
+        message,
+        AttachmentManager(tmp_path),
+    )
+
+    assert len(attachments) == 1
+    attachment = attachments[0]
+    assert attachment.message_id == "message-id"
+    assert attachment.filename == "report.pdf"
+    assert attachment.content_type == "application/pdf"
+    assert attachment.size_bytes == len(b"downloaded report")
+    assert attachment.platform_url == "telegram://documents/report.pdf"
+    assert attachment.local_path is not None
+    local_path = Path(attachment.local_path)
+    assert tmp_path in local_path.parents
+    assert local_path.read_bytes() == b"downloaded report"
+    mock_client.post.assert_awaited_once_with(
+        "https://api.telegram.org/bottest-token/getFile",
+        json={"file_id": "document-id"},
+    )
+    mock_client.get.assert_awaited_once_with(
+        "https://api.telegram.org/file/bottest-token/documents/report.pdf"
+    )
 
 
 def test_verify_webhook(adapter: TelegramAdapter) -> None:
