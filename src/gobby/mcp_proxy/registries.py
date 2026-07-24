@@ -172,6 +172,19 @@ def setup_internal_registries(
         manager.add_registry(profiles_registry)
         logger.debug("Profiles registry initialized")
 
+        if _config is not None:
+            offload_config = _config.get_tool_result_offload_config()
+            if offload_config.enabled is True:
+                from gobby.mcp_proxy.tools.results import create_results_registry
+
+                results_registry = create_results_registry(
+                    db,
+                    offload_config,
+                    default_project_id=project_id,
+                )
+                manager.add_registry(results_registry)
+                logger.debug("Results registry initialized")
+
     # Initialize sessions registry (messages + session CRUD)
     if session_manager is not None:
         from gobby.mcp_proxy.tools.sessions import create_session_messages_registry

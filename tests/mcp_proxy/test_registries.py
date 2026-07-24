@@ -4,6 +4,7 @@ from uuid import uuid4
 
 import pytest
 
+from gobby.config.features import ToolResultOffloadConfig
 from gobby.mcp_proxy.registries import setup_internal_registries
 from gobby.storage.worktrees import LocalWorktreeManager
 
@@ -226,6 +227,28 @@ def test_setup_hub_registry_not_created_without_active_database() -> None:
 
     registry_names = [r.name for r in manager.get_all_registries()]
     assert "gobby-hub" not in registry_names
+
+
+def test_setup_results_registry_requires_database_and_enabled_config(temp_db: Any) -> None:
+    enabled_config = MagicMock()
+    enabled_config.get_gobby_tasks_config.return_value.enabled = False
+    enabled_config.get_tool_result_offload_config.return_value = ToolResultOffloadConfig()
+
+    without_database = setup_internal_registries(_config=enabled_config)
+    with_database = setup_internal_registries(_config=enabled_config, db=temp_db)
+
+    assert without_database.get_registry("gobby-results") is None
+    assert with_database.get_registry("gobby-results") is not None
+
+
+def test_setup_results_registry_omitted_when_offload_disabled(temp_db: Any) -> None:
+    config = MagicMock()
+    config.get_gobby_tasks_config.return_value.enabled = False
+    config.get_tool_result_offload_config.return_value = ToolResultOffloadConfig(enabled=False)
+
+    manager = setup_internal_registries(_config=config, db=temp_db)
+
+    assert manager.get_registry("gobby-results") is None
 
 
 def test_setup_tasks_disabled_by_config() -> None:

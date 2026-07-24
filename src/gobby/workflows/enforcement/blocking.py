@@ -20,6 +20,8 @@ DISCOVERY_TOOLS = {
     "list_tools",
     "get_tool_schema",
     "search_tools",
+    "search_tool_result",
+    "get_tool_result",
     "recommend_tools",
     "list_skills",
     "get_skill",
