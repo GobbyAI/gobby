@@ -131,6 +131,13 @@ class AdapterLifecycleOperations:
             lambda msgs: manager.handle_inbound_messages(channel.name, msgs)
         )
 
+        async def update_config(values: dict[str, Any]) -> None:
+            channel.config_json.update(values)
+            channel.updated_at = datetime.now(UTC)
+            await asyncio.to_thread(manager._store.update_channel, channel)
+
+        adapter.set_config_update_callback(update_config)
+
         secret_refs: set[str] = set()
         for value in channel.config_json.values():
             if isinstance(value, str) and value.startswith("$secret:"):

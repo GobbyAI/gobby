@@ -39,6 +39,7 @@ class BaseChannelAdapter(ABC):
         self._inbound_callback: (
             Callable[[list[CommsMessage]], Awaitable[list[CommsMessage]]] | None
         ) = None
+        self._config_update_callback: Callable[[dict[str, Any]], Awaitable[None]] | None = None
 
     @property
     @abstractmethod
@@ -147,6 +148,20 @@ class BaseChannelAdapter(ABC):
     ) -> None:
         """Set a callback invoked when an adapter receives inbound messages directly."""
         self._inbound_callback = callback
+
+    def set_config_update_callback(
+        self,
+        callback: Callable[[dict[str, Any]], Awaitable[None]],
+    ) -> None:
+        """Set a callback that persists adapter-owned channel configuration."""
+        self._config_update_callback = callback
+
+    async def _update_channel_config(self, values: dict[str, Any]) -> bool:
+        """Persist channel configuration values through the owning manager."""
+        if self._config_update_callback is None:
+            return False
+        await self._config_update_callback(values)
+        return True
 
     async def _handle_inbound_messages(self, messages: list[CommsMessage]) -> list[CommsMessage]:
         """Forward adapter-received inbound messages to the manager."""

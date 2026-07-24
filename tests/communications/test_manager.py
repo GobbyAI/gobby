@@ -5,6 +5,7 @@ from __future__ import annotations
 import logging
 import threading
 from collections.abc import Callable
+from datetime import UTC, datetime
 from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -61,6 +62,7 @@ def make_store(channels: list[ChannelConfig] | None = None) -> MagicMock:
     store.get_routing_rules.return_value = []
     store.create_message.side_effect = lambda message: message
     store.create_channel.return_value = None
+    store.get_message_by_platform_id.return_value = None
 
     def delete_channel(channel_id: str) -> None:
         store.list_channels.return_value = [
@@ -143,6 +145,29 @@ async def test_start_polls_poll_only_adapter_with_global_webhook_url():
 
 
 @pytest.mark.asyncio
+async def test_adapter_config_updates_persist_through_channel_store() -> None:
+    channel = make_channel(
+        channel_type="telegram",
+        config_json={"bot_token": "$secret:telegram-token"},
+    )
+    store = make_store([channel])
+    manager = CommunicationsManager(make_config(), store, make_secret_store(), MagicMock())
+    adapter = make_adapter(channel_type="telegram")
+    adapter_cls = MagicMock(return_value=adapter)
+
+    with patch("gobby.communications.manager.get_adapter_class", return_value=adapter_cls):
+        await manager._init_adapter(channel)
+
+    persist_config = adapter.set_config_update_callback.call_args.args[0]
+    await persist_config({"poll_offset": 501})
+
+    assert channel.config_json == {
+        "bot_token": "$secret:telegram-token",
+        "poll_offset": 501,
+    }
+    store.update_channel.assert_called_once_with(channel)
+
+
 async def test_telegram_init_uses_global_webhook_url_as_inbound_source():
     """Telegram webhook setup follows the manager's global inbound mode decision."""
     channel = make_channel(channel_type="telegram", config_json={})
@@ -1447,6 +1472,44 @@ async def test_send_message_propagates_thread_id():
 
 
 @pytest.mark.asyncio
+async def test_handle_inbound_deduplicates_platform_message_and_returns_it_for_ack() -> None:
+    channel = make_channel()
+    store = make_store([channel])
+    store.get_message_by_platform_id.return_value = CommsMessage(
+        id="stored-message",
+        channel_id=channel.id,
+        direction="inbound",
+        content="already handled",
+        platform_message_id="platform-message-1",
+        created_at=datetime(2024, 1, 1, tzinfo=UTC),
+    )
+    manager = CommunicationsManager(make_config(), store, make_secret_store(), MagicMock())
+    manager._channel_by_name[channel.name] = channel
+    manager._identity_manager = MagicMock()
+    manager.event_callback = AsyncMock()
+
+    duplicate = CommsMessage(
+        id="duplicate-delivery",
+        channel_id="platform-chat-1",
+        direction="inbound",
+        content="already handled",
+        platform_message_id="platform-message-1",
+        identity_id="platform-user-1",
+        metadata_json={"telegram_update_id": 501},
+        created_at=datetime(2024, 1, 1, tzinfo=UTC),
+    )
+
+    handled = await manager.handle_inbound_messages(channel.name, [duplicate])
+
+    assert handled == [duplicate]
+    store.get_message_by_platform_id.assert_called_once_with(
+        channel.name, duplicate.platform_message_id
+    )
+    store.create_message.assert_not_called()
+    manager._identity_manager.resolve_identity.assert_not_called()
+    manager.event_callback.assert_not_awaited()
+
+
 async def test_handle_inbound_populates_thread_map_and_handles_reactions():
     """handle_inbound_messages() should populate thread map and dispatch reactions."""
     channel = make_channel(webhook_secret=None)

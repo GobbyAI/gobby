@@ -31,6 +31,7 @@ class InboundCommunications:
         if channel is None:
             raise ValueError(f"Channel {channel_name!r} not found or not active")
 
+        handled: list[CommsMessage] = []
         stored: list[CommsMessage] = []
         for message in messages:
             try:
@@ -56,6 +57,16 @@ class InboundCommunications:
                             logger.exception("Failed to handle reaction: %s", e)
                     continue
 
+                if message.platform_message_id:
+                    existing = await asyncio.to_thread(
+                        manager._store.get_message_by_platform_id,
+                        channel_name,
+                        message.platform_message_id,
+                    )
+                    if existing is not None:
+                        handled.append(message)
+                        continue
+
                 if message.identity_id:
                     external_username = message.metadata_json.get("external_username")
                     identity_meta: dict[str, Any] = {}
@@ -79,7 +90,9 @@ class InboundCommunications:
                         channel.id, message.session_id, message.platform_thread_id
                     )
 
-                stored.append(await asyncio.to_thread(manager._store.create_message, message))
+                persisted = await asyncio.to_thread(manager._store.create_message, message)
+                stored.append(persisted)
+                handled.append(persisted)
             except Exception as e:
                 logger.exception("Failed to process inbound message: %s", e)
 
@@ -94,7 +107,7 @@ class InboundCommunications:
                         exc_info=True,
                     )
 
-        return stored
+        return handled
 
     async def handle_webhook(
         self,

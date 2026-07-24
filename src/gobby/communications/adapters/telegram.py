@@ -37,6 +37,7 @@ class TelegramAdapter(BaseChannelAdapter):
         self._bot_token: str | None = None
         self._api_base: str | None = None
         self._offset: int = 0
+        self._persisted_offset: int = 0
         self._pending_update_ids: list[int] = []
         self._acknowledged_update_ids: set[int] = set()
 
@@ -48,6 +49,12 @@ class TelegramAdapter(BaseChannelAdapter):
             self._offset = max(self._offset, update_id + 1)
             self._pending_update_ids.pop(0)
             self._acknowledged_update_ids.discard(update_id)
+
+    async def _persist_poll_offset(self) -> None:
+        if self._offset == self._persisted_offset:
+            return
+        if await self._update_channel_config({"poll_offset": self._offset}):
+            self._persisted_offset = self._offset
 
     def _redact_bot_token(self, value: str) -> str:
         """Replace the resolved Telegram bot token in error strings."""
@@ -115,6 +122,12 @@ class TelegramAdapter(BaseChannelAdapter):
 
         if not self._bot_token:
             raise ValueError("Could not resolve Telegram bot token")
+
+        poll_offset = config.config_json.get("poll_offset", 0)
+        if isinstance(poll_offset, bool) or not isinstance(poll_offset, int) or poll_offset < 0:
+            raise ValueError("Telegram poll_offset must be a non-negative integer")
+        self._offset = poll_offset
+        self._persisted_offset = poll_offset
 
         self._api_base = f"https://api.telegram.org/bot{self._bot_token}"
         self._client = httpx.AsyncClient(timeout=30.0)
@@ -319,6 +332,7 @@ class TelegramAdapter(BaseChannelAdapter):
             messages.extend(msg_list)
 
         self._advance_acknowledged_offset()
+        await self._persist_poll_offset()
         return messages
 
     async def acknowledge_messages(self, messages: list[CommsMessage]) -> None:
@@ -329,6 +343,7 @@ class TelegramAdapter(BaseChannelAdapter):
                 self._acknowledged_update_ids.add(update_id)
 
         self._advance_acknowledged_offset()
+        await self._persist_poll_offset()
 
 
 # Register the adapter

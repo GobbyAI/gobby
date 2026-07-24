@@ -456,6 +456,37 @@ async def test_poll_ignores_non_message_updates_for_offset_tracking(
 
 
 @pytest.mark.asyncio
+async def test_poll_offset_restores_and_persists_after_acknowledgement(
+    adapter: TelegramAdapter,
+    channel_config: ChannelConfig,
+    secret_resolver: Callable[[str], str | None],
+) -> None:
+    channel_config.config_json["poll_offset"] = 500
+    persist_config = AsyncMock()
+    adapter.set_config_update_callback(persist_config)
+
+    with patch("httpx.AsyncClient") as mock_client:
+        mock_client.return_value.post = AsyncMock()
+        await adapter.initialize(channel_config, secret_resolver)
+
+    assert adapter._offset == 500
+
+    adapter._pending_update_ids = [500]
+    message = CommsMessage(
+        id="message-500",
+        channel_id=channel_config.id,
+        direction="inbound",
+        content="hello",
+        metadata_json={"telegram_update_id": 500},
+        created_at=datetime.now(UTC),
+    )
+
+    await adapter.acknowledge_messages([message])
+
+    assert adapter._offset == 501
+    persist_config.assert_awaited_once_with({"poll_offset": 501})
+
+
 async def test_shutdown(
     adapter: TelegramAdapter,
     channel_config: ChannelConfig,

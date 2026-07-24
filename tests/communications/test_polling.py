@@ -21,6 +21,7 @@ def mock_manager():
 def mock_adapter():
     adapter = MagicMock()
     adapter.poll = AsyncMock(return_value=[])
+    adapter.acknowledge_messages = AsyncMock()
     return adapter
 
 
@@ -78,6 +79,7 @@ async def test_poll_loop_calls_adapter(polling_manager, mock_adapter, mock_manag
     """poll loop should call adapter.poll() and handle messages."""
     msg1 = MagicMock()
     call_count = 0
+    mock_manager.handle_inbound_messages.return_value = [msg1]
 
     async def poll_side_effect():
         nonlocal call_count
@@ -91,8 +93,8 @@ async def test_poll_loop_calls_adapter(polling_manager, mock_adapter, mock_manag
     polling_manager.start_polling("test-channel", mock_adapter, interval=0)
 
     await wait_for_async_condition(
-        lambda: mock_manager.handle_inbound_messages.called,
-        description="inbound message handling",
+        lambda: mock_adapter.acknowledge_messages.called,
+        description="inbound message acknowledgement",
     )
 
     polling_manager.stop_all()
@@ -102,6 +104,7 @@ async def test_poll_loop_calls_adapter(polling_manager, mock_adapter, mock_manag
 
     # Verify messages were passed to manager
     mock_manager.handle_inbound_messages.assert_called_once_with("test-channel", [msg1])
+    mock_adapter.acknowledge_messages.assert_awaited_once_with([msg1])
 
 
 @pytest.mark.asyncio
