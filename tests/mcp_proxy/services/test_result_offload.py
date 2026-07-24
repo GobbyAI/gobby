@@ -1,0 +1,603 @@
+"""Tests for bounded oversized MCP tool-result offloading."""
+
+from __future__ import annotations
+
+import json
+from typing import Any, NamedTuple, cast
+from unittest.mock import MagicMock, patch
+
+import pytest
+from mcp.types import CallToolResult, ImageContent, TextContent
+
+from gobby.config.features import ToolResultOffloadConfig
+from gobby.mcp_proxy.services.result_offload import (
+    _WRAPPER_MUTATION_RESERVE,
+    ToolResultOffloader,
+)
+from gobby.search.keyword import MAX_PG_SEARCH_QUERY_CHARS, SearchHit, SearchQuerySyntaxError
+from gobby.storage.hub.protocol import HubDatabase
+from gobby.storage.tool_results import ToolResultStore
+
+RESULT_ID = "11111111-1111-1111-1111-111111111111"
+PROJECT_ID = "22222222-2222-2222-2222-222222222222"
+
+
+class OffloadHarness(NamedTuple):
+    offloader: ToolResultOffloader
+    store: MagicMock
+    db: MagicMock
+    search: MagicMock
+    config: ToolResultOffloadConfig
+
+
+class ExplodingString:
+    def __str__(self) -> str:
+        raise RuntimeError("cannot render")
+
+
+def _config(**overrides: Any) -> ToolResultOffloadConfig:
+    values: dict[str, Any] = {
+        "threshold_chars": 3_000,
+        "max_envelope_chars": 2_000,
+        "preview_chars": 400,
+        "chunk_chars": 500,
+        "max_stored_chars": 10_000,
+        "intent_match_limit": 5,
+        "retention_days": 9,
+        "exempt_tools": ["gobby-results/*", "safe/small_*"],
+    }
+    values.update(overrides)
+    return ToolResultOffloadConfig(**values)
+
+
+def _harness(
+    *,
+    config: ToolResultOffloadConfig | None = None,
+    project_id: str | None = PROJECT_ID,
+) -> OffloadHarness:
+    resolved_config = config or _config()
+    store = MagicMock(spec=ToolResultStore)
+    store.save.return_value = RESULT_ID
+    db = MagicMock(spec=HubDatabase)
+    search = MagicMock()
+    with patch(
+        "gobby.mcp_proxy.services.result_offload.BM25SearchBackend",
+        return_value=search,
+    ):
+        offloader = ToolResultOffloader(
+            cast(ToolResultStore, store),
+            cast(HubDatabase, db),
+            resolved_config,
+            lambda: project_id,
+        )
+    return OffloadHarness(offloader, store, db, search, resolved_config)
+
+
+def _serialized_size(value: object) -> int:
+    return len(json.dumps(value, ensure_ascii=False, default=str))
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("config", "server_name", "tool_name"),
+    [
+        (_config(enabled=False), "server", "tool"),
+        (_config(), "gobby-results", "search_tool_result"),
+        (_config(), "safe", "small_lookup"),
+    ],
+)
+async def test_disabled_and_exempt_results_pass_through_untouched(
+    config: ToolResultOffloadConfig,
+    server_name: str,
+    tool_name: str,
+) -> None:
+    harness = _harness(config=config)
+    result = {"payload": "x" * 4_000}
+
+    actual = await harness.offloader.maybe_offload(
+        server_name=server_name,
+        tool_name=tool_name,
+        result=result,
+        session_id="session",
+        intent=None,
+    )
+
+    assert actual is result
+    harness.store.save.assert_not_called()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "result",
+    [
+        {"error": "boom", "hint": "r" * 4_000, "schema": {"type": "object"}},
+        {"result": {"content": [{"type": "text", "text": "boom"}], "isError": True}},
+        CallToolResult(
+            content=[TextContent(type="text", text="boom")],
+            isError=True,
+        ),
+    ],
+)
+async def test_error_results_use_shared_classifier_and_bypass_offloading(result: object) -> None:
+    harness = _harness()
+
+    actual = await harness.offloader.maybe_offload(
+        server_name="server",
+        tool_name="tool",
+        result=result,
+        session_id="session",
+        intent="find boom",
+    )
+
+    assert actual is result
+    harness.store.save.assert_not_called()
+    harness.search.search.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_call_tool_result_with_non_text_content_passes_through() -> None:
+    harness = _harness()
+    result = CallToolResult(
+        content=[
+            ImageContent(
+                type="image",
+                data="a" * 4_000,
+                mimeType="image/png",
+            )
+        ]
+    )
+
+    actual = await harness.offloader.maybe_offload(
+        server_name="server",
+        tool_name="tool",
+        result=result,
+        session_id="session",
+        intent=None,
+    )
+
+    assert actual is result
+    harness.store.save.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_under_threshold_result_returns_original_object() -> None:
+    harness = _harness()
+    result = {"payload": "small"}
+
+    actual = await harness.offloader.maybe_offload(
+        server_name="server",
+        tool_name="tool",
+        result=result,
+        session_id="session",
+        intent=None,
+    )
+
+    assert actual is result
+    harness.store.save.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_oversized_result_is_stored_and_returns_configured_envelope() -> None:
+    harness = _harness()
+    result = {"docs": ["x" * 4_000], "meta": {"source": "test"}}
+
+    actual = await harness.offloader.maybe_offload(
+        server_name="server",
+        tool_name="tool",
+        result=result,
+        session_id="session",
+        intent=None,
+    )
+
+    serialized = json.dumps(result, indent=2, default=str)
+    harness.store.save.assert_called_once_with(
+        project_id=PROJECT_ID,
+        session_id="session",
+        server_name="server",
+        tool_name="tool",
+        content=serialized,
+        content_kind="json",
+        total_chars=len(serialized),
+    )
+    assert actual["offloaded"] is True
+    assert actual["result_id"] == RESULT_ID
+    assert actual["retrieval_available"] is True
+    assert actual["content_kind"] == "json"
+    assert actual["structure"] == {
+        "type": "object",
+        "keys": {"docs": "list[1]", "meta": "object"},
+    }
+    assert actual["preview"] == serialized[: harness.config.preview_chars]
+    assert "3,000 chars" not in actual["guidance"]
+    assert "3000 chars" in actual["guidance"]
+    assert "retrievable for 9 days" in actual["guidance"]
+    assert "matches" not in actual
+
+
+@pytest.mark.asyncio
+async def test_intent_search_returns_ranked_chunk_matches() -> None:
+    harness = _harness()
+    harness.search.search.return_value = [
+        SearchHit(id="chunk-1", score=8.1),
+        SearchHit(id="chunk-2", score=4.2),
+    ]
+    harness.db.fetchone.side_effect = [
+        {
+            "ordinal": 17,
+            "start_offset": 34120,
+            "end_offset": 36080,
+            "content": "matched first section",
+        },
+        {
+            "ordinal": 3,
+            "start_offset": 6000,
+            "end_offset": 7000,
+            "content": "matched second section",
+        },
+    ]
+
+    actual = await harness.offloader.maybe_offload(
+        server_name="server",
+        tool_name="tool",
+        result="x" * 4_000,
+        session_id="session",
+        intent="find configuration",
+    )
+
+    harness.search.search.assert_called_once_with(
+        "find configuration",
+        5,
+        filters={"result_id": RESULT_ID},
+    )
+    assert actual["matches"] == [
+        {
+            "ordinal": 17,
+            "start_offset": 34120,
+            "end_offset": 36080,
+            "score": 8.1,
+            "content": "matched first section",
+        },
+        {
+            "ordinal": 3,
+            "start_offset": 6000,
+            "end_offset": 7000,
+            "score": 4.2,
+            "content": "matched second section",
+        },
+    ]
+
+
+@pytest.mark.asyncio
+async def test_persistence_failure_returns_bounded_non_retrievable_envelope() -> None:
+    harness = _harness()
+    harness.store.save.side_effect = RuntimeError("database unavailable")
+
+    actual = await harness.offloader.maybe_offload(
+        server_name="server",
+        tool_name="tool",
+        result={"payload": "x" * 4_000},
+        session_id="session",
+        intent="find payload",
+    )
+
+    assert actual["offloaded"] is True
+    assert actual["retrieval_available"] is False
+    assert actual["stored_chars"] == 0
+    assert "result_id" not in actual
+    assert "matches" not in actual
+    assert "cannot be retrieved" in actual["guidance"]
+    assert _serialized_size(actual) <= (
+        harness.config.max_envelope_chars - _WRAPPER_MUTATION_RESERVE
+    )
+    harness.search.search.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_genuine_serialization_failure_passes_through_verbatim() -> None:
+    harness = _harness()
+    result: list[object] = []
+    result.append(result)
+
+    actual = await harness.offloader.maybe_offload(
+        server_name="server",
+        tool_name="tool",
+        result=result,
+        session_id="session",
+        intent=None,
+    )
+
+    assert actual is result
+    harness.store.save.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_default_string_serialization_failure_passes_through_verbatim() -> None:
+    harness = _harness()
+    result = ExplodingString()
+
+    actual = await harness.offloader.maybe_offload(
+        server_name="server",
+        tool_name="tool",
+        result=result,
+        session_id="session",
+        intent=None,
+    )
+
+    assert actual is result
+    harness.store.save.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_storage_bound_and_guidance_report_non_retrievable_tail() -> None:
+    harness = _harness()
+    result = "x" * 12_000
+
+    actual = await harness.offloader.maybe_offload(
+        server_name="server",
+        tool_name="tool",
+        result=result,
+        session_id="session",
+        intent=None,
+    )
+
+    save_kwargs = harness.store.save.call_args.kwargs
+    assert len(save_kwargs["content"]) == 10_000
+    assert save_kwargs["total_chars"] == 12_000
+    assert actual["stored_chars"] == 10_000
+    assert actual["total_chars"] == 12_000
+    assert "tail is not retrievable" in actual["guidance"]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("persistence_fails", [False, True])
+async def test_pathological_identity_fields_are_digest_bounded(
+    persistence_fails: bool,
+) -> None:
+    harness = _harness()
+    if persistence_fails:
+        harness.store.save.side_effect = RuntimeError("database unavailable")
+    server_name = "server-" + ("s" * 20_000)
+    tool_name = "tool-" + ("t" * 20_000)
+
+    actual = await harness.offloader.maybe_offload(
+        server_name=server_name,
+        tool_name=tool_name,
+        result="x" * 4_000,
+        session_id="session",
+        intent=None,
+    )
+
+    assert len(actual["server_name"]) == 130
+    assert len(actual["tool_name"]) == 130
+    assert "…#" in actual["server_name"]
+    assert "…#" in actual["tool_name"]
+    assert _serialized_size(actual) <= (
+        harness.config.max_envelope_chars - _WRAPPER_MUTATION_RESERVE
+    )
+
+
+@pytest.mark.asyncio
+async def test_intent_is_bounded_before_sanitization_and_search() -> None:
+    harness = _harness()
+    seen: list[str] = []
+
+    def capture(value: str) -> str:
+        seen.append(value)
+        return "bounded intent"
+
+    with patch(
+        "gobby.mcp_proxy.services.result_offload.sanitize_pg_search_query",
+        side_effect=capture,
+    ):
+        actual = await harness.offloader.maybe_offload(
+            server_name="server",
+            tool_name="tool",
+            result="x" * 4_000,
+            session_id="session",
+            intent="q" * 2_000_000,
+        )
+
+    assert actual["retrieval_available"] is True
+    assert len(seen) == 1
+    assert len(seen[0]) == MAX_PG_SEARCH_QUERY_CHARS
+    harness.search.search.assert_called_once_with(
+        "bounded intent",
+        5,
+        filters={"result_id": RESULT_ID},
+    )
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("intent", ["", "   ", "!!! ???"])
+async def test_empty_or_sanitized_empty_intent_skips_search(intent: str) -> None:
+    harness = _harness()
+
+    actual = await harness.offloader.maybe_offload(
+        server_name="server",
+        tool_name="tool",
+        result="x" * 4_000,
+        session_id="session",
+        intent=intent,
+    )
+
+    harness.search.search.assert_not_called()
+    assert "matches" not in actual
+
+
+@pytest.mark.asyncio
+async def test_top_level_list_uses_json_serialization_and_reports_length() -> None:
+    harness = _harness()
+    result = ["x" * 4_000, {"nested": True}]
+
+    actual = await harness.offloader.maybe_offload(
+        server_name="server",
+        tool_name="tool",
+        result=result,
+        session_id="session",
+        intent=None,
+    )
+
+    assert actual["content_kind"] == "json"
+    assert actual["structure"] == {"type": "list", "length": 2}
+    assert harness.store.save.call_args.kwargs["content"] == json.dumps(
+        result,
+        indent=2,
+        default=str,
+    )
+
+
+@pytest.mark.asyncio
+async def test_oversized_bare_scalar_uses_json_serialization() -> None:
+    harness = _harness()
+    result = int("9" * 3_500)
+
+    actual = await harness.offloader.maybe_offload(
+        server_name="server",
+        tool_name="tool",
+        result=result,
+        session_id="session",
+        intent=None,
+    )
+
+    assert actual["content_kind"] == "json"
+    assert harness.store.save.call_args.kwargs["content"] == json.dumps(
+        result,
+        indent=2,
+        default=str,
+    )
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "search_error",
+    [SearchQuerySyntaxError("bad query"), RuntimeError("backend unavailable")],
+)
+async def test_post_store_search_failure_keeps_persisted_envelope(
+    search_error: Exception,
+) -> None:
+    harness = _harness()
+    harness.search.search.side_effect = search_error
+
+    actual = await harness.offloader.maybe_offload(
+        server_name="server",
+        tool_name="tool",
+        result="x" * 4_000,
+        session_id="session",
+        intent="find section",
+    )
+
+    assert actual["retrieval_available"] is True
+    assert actual["result_id"] == RESULT_ID
+    assert "matches" not in actual
+
+
+@pytest.mark.asyncio
+async def test_envelope_budget_trims_matches_and_preserves_invariant() -> None:
+    harness = _harness()
+    harness.search.search.return_value = [
+        SearchHit(id=f"chunk-{index}", score=10.0 - index) for index in range(5)
+    ]
+    harness.db.fetchone.side_effect = [
+        {
+            "ordinal": index,
+            "start_offset": index * 2_000,
+            "end_offset": (index + 1) * 2_000,
+            "content": "m" * 2_000,
+        }
+        for index in range(5)
+    ]
+
+    actual = await harness.offloader.maybe_offload(
+        server_name="server",
+        tool_name="tool",
+        result={"k" * 5_000: ["x" * 4_000]},
+        session_id="session",
+        intent="find matches",
+    )
+
+    assert _serialized_size(actual) <= (
+        harness.config.max_envelope_chars - _WRAPPER_MUTATION_RESERVE
+    )
+    assert len(actual["matches"]) < 5
+    assert actual["structure"]["type"] == "object"
+
+
+@pytest.mark.asyncio
+async def test_envelope_budget_reserves_the_intent_matches_field() -> None:
+    harness = _harness(config=_config(preview_chars=1_800))
+
+    actual = await harness.offloader.maybe_offload(
+        server_name="server-" + ("s" * 20_000),
+        tool_name="tool-" + ("t" * 20_000),
+        result="x" * 4_000,
+        session_id="session",
+        intent="find matches",
+    )
+
+    assert actual["matches"] == []
+    assert _serialized_size(actual) <= (
+        harness.config.max_envelope_chars - _WRAPPER_MUTATION_RESERVE
+    )
+
+
+@pytest.mark.asyncio
+async def test_structured_call_tool_result_serializes_mapping_payload() -> None:
+    harness = _harness()
+    payload = {"docs": ["x" * 4_000]}
+    result = CallToolResult(
+        content=[TextContent(type="text", text="short")],
+        structuredContent=payload,
+    )
+
+    actual = await harness.offloader.maybe_offload(
+        server_name="server",
+        tool_name="tool",
+        result=result,
+        session_id="session",
+        intent=None,
+    )
+
+    serialized = json.dumps(payload, indent=2, default=str)
+    assert actual["content_kind"] == "json"
+    assert actual["preview"] == serialized[: harness.config.preview_chars]
+    assert harness.store.save.call_args.kwargs["content"] == serialized
+
+
+@pytest.mark.asyncio
+async def test_text_call_tool_result_joins_and_stores_text_parts() -> None:
+    harness = _harness()
+    result = CallToolResult(
+        content=[
+            TextContent(type="text", text="a" * 2_000),
+            TextContent(type="text", text="b" * 2_000),
+        ]
+    )
+
+    actual = await harness.offloader.maybe_offload(
+        server_name="server",
+        tool_name="tool",
+        result=result,
+        session_id="session",
+        intent=None,
+    )
+
+    serialized = f"{'a' * 2_000}\n{'b' * 2_000}"
+    assert actual["content_kind"] == "text"
+    assert harness.store.save.call_args.kwargs["content"] == serialized
+
+
+@pytest.mark.asyncio
+async def test_under_threshold_call_tool_result_keeps_original_object() -> None:
+    harness = _harness()
+    result = CallToolResult(content=[TextContent(type="text", text="small")])
+
+    actual = await harness.offloader.maybe_offload(
+        server_name="server",
+        tool_name="tool",
+        result=result,
+        session_id="session",
+        intent=None,
+    )
+
+    assert actual is result
+    harness.store.save.assert_not_called()

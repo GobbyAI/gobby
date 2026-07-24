@@ -4,6 +4,7 @@ from unittest.mock import AsyncMock, MagicMock, Mock, patch
 import pytest
 
 from gobby.config.app import DaemonConfig
+from gobby.hooks.tool_outcomes import classify_raw_tool_result
 from gobby.mcp_proxy.manager import MCPClientManager
 from gobby.mcp_proxy.server import GobbyDaemonTools
 
@@ -261,22 +262,25 @@ async def test_call_tool_returns_mcp_error_on_validation_failure(daemon_tools):
     from mcp.types import CallToolResult, TextContent
 
     # Mock tool_proxy.call_tool to return an error dict
-    daemon_tools.tool_proxy.call_tool = AsyncMock(
-        return_value={
-            "success": False,
-            "error": "Invalid arguments: ['Missing required parameter foo']",
-            "hint": "Review the schema below and retry with correct parameters",
-            "schema": {
-                "type": "object",
-                "required": ["foo"],
-                "properties": {"foo": {"type": "string"}},
-            },
-        }
-    )
+    error_result = {
+        "error": "Invalid arguments: ['Missing required parameter foo']",
+        "hint": "Review the schema below and retry with correct parameters",
+        "schema": {
+            "type": "object",
+            "required": ["foo"],
+            "properties": {"foo": {"type": "string"}},
+        },
+    }
+    daemon_tools.tool_proxy.call_tool = AsyncMock(return_value=error_result)
 
-    result = await daemon_tools.call_tool("gobby-tasks", "create_task", {"wrong": "arg"})
+    with patch(
+        "gobby.mcp_proxy.server.classify_raw_tool_result",
+        wraps=classify_raw_tool_result,
+    ) as classifier:
+        result = await daemon_tools.call_tool("gobby-tasks", "create_task", {"wrong": "arg"})
 
     # Should return CallToolResult with isError=True
+    classifier.assert_called_once_with(error_result)
     assert isinstance(result, CallToolResult)
     assert result.isError is True
     assert len(result.content) == 1

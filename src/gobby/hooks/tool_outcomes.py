@@ -377,6 +377,11 @@ def classify_raw_tool_result(result: object) -> ToolOutcome:
 
     model_dump = getattr(result, "model_dump", None)
     output = model_dump(by_alias=True) if callable(model_dump) else result
+    if isinstance(output, Mapping) and "error" in output and "success" not in output:
+        return ToolOutcome(
+            ToolOutcomeStatus.FAILED,
+            provenance="raw_result.error",
+        )
     data: dict[str, Any] = {"tool_output": output}
     outcome = normalize_tool_outcome(data)
     if outcome.status is not ToolOutcomeStatus.UNKNOWN:

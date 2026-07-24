@@ -13,6 +13,7 @@ from mcp.types import CallToolResult, TextContent
 from pydantic import Field
 
 from gobby.config.app import DaemonConfig
+from gobby.hooks.tool_outcomes import ToolOutcomeStatus, classify_raw_tool_result
 from gobby.mcp_proxy._call_tool_wrapper import (
     CallToolWrapperInputError,
     canonicalize_call_tool_wrapper,
@@ -314,31 +315,31 @@ class GobbyDaemonTools:
             )
             result["_mcp_metadata"] = metadata
 
-        # Check if result indicates an error:
-        # - Old pattern: {"success": False, "error": ...}
-        # - New pattern: {"error": ...} (no success field)
-        if isinstance(result, dict):
-            is_error = result.get("success") is False or (
-                "error" in result and "success" not in result
-            )
-            if is_error:
-                # Build helpful error message with schema hint if available
+        outcome = classify_raw_tool_result(result)
+        if outcome.status is ToolOutcomeStatus.FAILED:
+            if isinstance(result, CallToolResult):
+                return result
+            if isinstance(result, dict):
                 error_msg = result.get("error", "Unknown error")
                 hint = result.get("hint", "")
                 schema = result.get("schema")
+            else:
+                error_msg = "Tool returned no result"
+                hint = ""
+                schema = None
 
-                parts = [f"Error: {error_msg}"]
-                if hint:
-                    parts.append(f"\n{hint}")
-                if schema:
-                    parts.append(f"\nCorrect schema:\n{json.dumps(schema, indent=2)}")
+            parts = [f"Error: {error_msg}"]
+            if hint:
+                parts.append(f"\n{hint}")
+            if schema:
+                parts.append(f"\nCorrect schema:\n{json.dumps(schema, indent=2)}")
 
-                # Return MCP error response with isError=True
-                return CallToolResult(
-                    content=[TextContent(type="text", text="\n".join(parts))],
-                    isError=True,
-                )
+            return CallToolResult(
+                content=[TextContent(type="text", text="\n".join(parts))],
+                isError=True,
+            )
 
+        if isinstance(result, dict):
             # Strip redundant success field from successful responses
             if "success" in result:
                 result = {k: v for k, v in result.items() if k != "success"}
