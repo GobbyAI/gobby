@@ -187,7 +187,7 @@ async def test_session_end_cleanup_unblocks_session_targeted_read_only_calls(
     assert tokens.resolved_session_id == parent_session_id
 
     try:
-        _, _, _, parent_allowed = await tool_proxy._apply_before_tool_enforcement(
+        _, _, _, parent_allowed, _ = await tool_proxy._apply_before_tool_enforcement(
             server_name="gobby-sessions",
             tool_name=tool_name,
             arguments={"session_id": child_session_id},
@@ -196,7 +196,7 @@ async def test_session_end_cleanup_unblocks_session_targeted_read_only_calls(
 
         assert parent_allowed is None
 
-        _, _, _, blocked = await tool_proxy._apply_before_tool_enforcement(
+        _, _, _, blocked, _ = await tool_proxy._apply_before_tool_enforcement(
             server_name="gobby-sessions",
             tool_name=tool_name,
             arguments={"session_id": child_session_id},
@@ -215,7 +215,7 @@ async def test_session_end_cleanup_unblocks_session_targeted_read_only_calls(
         assert response.decision == "allow"
         assert instance_manager.get_active_instances(child_session_id) == []
 
-        _, _, _, allowed = await tool_proxy._apply_before_tool_enforcement(
+        _, _, _, allowed, _ = await tool_proxy._apply_before_tool_enforcement(
             server_name="gobby-sessions",
             tool_name=tool_name,
             arguments={"session_id": child_session_id},
