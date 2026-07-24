@@ -111,6 +111,12 @@ _TABLE_CONFIGS: dict[str, _TableConfig] = {
         postgres_columns=("content",),
         filters={"project_id": "project_id", "file_path": "file_path"},
     ),
+    "tool_result_chunks": _TableConfig(
+        table="tool_result_chunks",
+        postgres_columns=("content",),
+        filters={"result_id": "result_id"},
+        tie_break_columns=("ordinal", "id"),
+    ),
 }
 
 _TABLE_ALIAS_TO_TABLE = {
@@ -437,6 +443,10 @@ def _table_config(table: str) -> _TableConfig:
         return _TABLE_CONFIGS[table]
     except KeyError as exc:
         raise ValueError(f"unsupported keyword search table: {table}") from exc
+
+
+MAX_PG_SEARCH_QUERY_CHARS = 1_000
+"""Maximum caller-controlled query length accepted by offload search surfaces."""
 
 
 def sanitize_pg_search_query(query: str) -> str:
