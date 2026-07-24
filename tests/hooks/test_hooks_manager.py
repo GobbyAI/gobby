@@ -475,6 +475,28 @@ class TestHookManagerBeforeAgent:
         response = hook_manager_with_mocks.handle(event)
         assert response.decision == "allow"
 
+    def test_before_agent_schedules_memory_recall(
+        self,
+        hook_manager_with_mocks: HookManager,
+        sample_session_start_event: HookEvent,
+    ) -> None:
+        hook_manager_with_mocks.handle(sample_session_start_event)
+        dispatcher = MagicMock()
+        hook_manager_with_mocks._memory_recall_dispatcher = dispatcher
+        event = HookEvent(
+            event_type=HookEventType.BEFORE_AGENT,
+            session_id="test-external-id-123",
+            source=SessionSource.CLAUDE,
+            timestamp=datetime.now(UTC),
+            data={"prompt": "Help me write a function"},
+            machine_id="test-machine-id",
+        )
+
+        response = hook_manager_with_mocks.handle(event)
+
+        assert response.decision == "allow"
+        dispatcher.schedule.assert_called_once_with(event)
+
 
 class TestHookManagerToolEvents:
     """Tests for tool event handling."""
@@ -512,7 +534,7 @@ class TestHookManagerToolEvents:
             session_id="test-external-id-123",
             source=SessionSource.CLAUDE,
             timestamp=datetime.now(UTC),
-            data={"tool_name": "bash", "tool_output": "file1.txt\nfile2.txt"},
+            data={"tool_name": "Read", "tool_output": "file1.txt\nfile2.txt"},
             machine_id="test-machine-id",
         )
 
@@ -537,39 +559,6 @@ class TestHookManagerShutdown:
 
         # Should be marked as shutdown in the health monitor
         assert manager._health_monitor._is_shutdown is True
-
-    def test_shutdown_drain_uses_shared_memory_recall_deadline(
-        self, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
-        import concurrent.futures
-        import threading
-
-        manager = object.__new__(HookManager)
-        manager.logger = MagicMock()
-        manager._memory_recall_lock = threading.Lock()
-        manager._memory_recall_closing = False
-        manager._memory_recall_tasks = {}
-        timeouts: list[float] = []
-
-        class RecordingFuture(concurrent.futures.Future[None]):
-            def cancel(self) -> bool:
-                return False
-
-            def result(self, timeout: float | None = None) -> None:
-                assert timeout is not None
-                timeouts.append(timeout)
-                raise concurrent.futures.TimeoutError
-
-        registry = manager._memory_recall_task_registry()
-        registry[("first", 1)] = RecordingFuture()
-        registry[("second", 2)] = RecordingFuture()
-        registry[("third", 3)] = RecordingFuture()
-        clock = iter([100.0, 100.0, 102.0, 106.0])
-        monkeypatch.setattr("gobby.hooks.hook_manager.time.monotonic", lambda: next(clock))
-
-        manager._drain_memory_recall_tasks_sync()
-
-        assert timeouts == [5.0, 3.0, 0.0]
 
 
 class TestHookManagerGetEventHandler:

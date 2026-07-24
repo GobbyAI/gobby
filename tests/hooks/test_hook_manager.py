@@ -360,7 +360,7 @@ class TestHandleNonSessionStart:
                 "_evaluate_blocking_webhooks",
                 return_value=None,
             ) as evaluate_webhooks,
-            patch("gobby.hooks.hook_manager.time.monotonic", return_value=100.0),
+            patch("gobby.hooks.effect_deadline.time.monotonic", return_value=100.0),
         ):
             manager._handle_internal(make_event(event_type=HookEventType.BEFORE_TOOL))
 
@@ -1115,10 +1115,12 @@ class TestShutdown:
         """shutdown stops the health monitor."""
         manager = manager_with_mocks
         manager._webhook_dispatcher.close = AsyncMock()
+        manager._memory_recall_dispatcher = MagicMock()
 
         manager.shutdown()
 
         manager._health_monitor.stop.assert_called_once()
+        manager._memory_recall_dispatcher.shutdown.assert_called_once()
         assert manager._health_monitor.stop.call_count == 1
         assert manager._health_monitor.stop.call_args is not None
 
@@ -1152,12 +1154,16 @@ class TestShutdown:
 
             manager._webhook_dispatcher.close = AsyncMock()
             manager._webhook_dispatcher.close.side_effect = close_dispatcher
+            manager._memory_recall_dispatcher = MagicMock()
+            manager._memory_recall_dispatcher.shutdown_async = AsyncMock()
             manager.logger = MagicMock()
 
             await manager.shutdown_async()
 
             assert closed.is_set()
+            assert manager._shutdown_complete is True
             manager._webhook_dispatcher.close.assert_awaited_once()
+            manager._memory_recall_dispatcher.shutdown_async.assert_awaited_once()
             manager.logger.warning.assert_not_called()
 
         asyncio.run(run_shutdown())

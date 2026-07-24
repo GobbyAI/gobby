@@ -7,10 +7,8 @@ to :mod:`gobby.hooks.event_handlers`.  See :class:`HookManager` for details.
 import asyncio
 import concurrent.futures
 import copy
-import json
 import logging
 import threading
-import time
 from typing import TYPE_CHECKING, Any, cast
 
 import psycopg
@@ -22,6 +20,7 @@ from gobby.hooks.effect_deadline import new_blocking_effect_deadline
 from gobby.hooks.events import HookEvent, HookEventType, HookResponse
 from gobby.hooks.factory import HookManagerFactory
 from gobby.hooks.health_gate import ensure_daemon_ready, ensure_daemon_ready_async
+from gobby.hooks.memory_recall_dispatcher import MemoryRecallDispatcher
 from gobby.hooks.project_context import ProjectIdResolver, resolve_hook_project_context
 from gobby.hooks.rule_evaluator import WorkflowRuleEvaluator
 from gobby.hooks.session_activation import reconcile_session_activation
@@ -31,7 +30,6 @@ from gobby.hooks.session_ref_resolution import (
 from gobby.hooks.session_summary_dispatcher import SessionSummaryDispatcher
 from gobby.hooks.session_types import HookSessionManager
 from gobby.hooks.verification_receipt_stage import ingest_hook_verification_receipt
-from gobby.memory.recall_constants import MEMORY_RECALL_PRODUCER
 from gobby.servers.routes.sessions.statusline_activity import record_session_activity
 from gobby.storage.machines import LocalMachineManager, normalize_machine_id
 from gobby.telemetry.tracing import create_span
@@ -103,9 +101,6 @@ class HookManager:
         # Track sessions that have received full metadata injection
         # Key: "{platform_session_id}:{source}" - cleared on daemon restart
         self._injected_sessions: set[str] = set()
-        self._memory_recall_tasks: dict[tuple[str, int], concurrent.futures.Future[Any]] = {}
-        self._memory_recall_lock = threading.Lock()
-        self._memory_recall_closing = False
 
         # Create all subsystems via factory
         components = HookManagerFactory.create(
@@ -166,6 +161,15 @@ class HookManager:
                 self._inter_session_msg_manager = InterSessionMessageManager(self._database)
             except Exception as e:
                 self.logger.warning("Failed to create InterSessionMessageManager: %s", e)
+        self._memory_recall_dispatcher = MemoryRecallDispatcher(
+            config=self._config,
+            database=self._database,
+            memory_manager=self._memory_manager,
+            llm_service=self._llm_service,
+            message_manager=self._inter_session_msg_manager,
+            loop=self._loop,
+            logger=self.logger,
+        )
 
         # Response metadata enrichment service
         from gobby.hooks.event_enrichment import EventEnricher
@@ -409,7 +413,7 @@ class HookManager:
                     event, blocking_response, workflow_context, preserve_original=True
                 )
             if event.event_type == HookEventType.BEFORE_AGENT:
-                workflow_context = self._append_memory_recall_context(event, workflow_context)
+                self._memory_recall_dispatcher.schedule(event)
 
             webhook_block = self._evaluate_blocking_webhooks(event, blocking_deadline)
             if webhook_block:
@@ -527,165 +531,6 @@ class HookManager:
     ) -> tuple[str | None, HookResponse | None]:
         """Evaluate workflow rules and dispatch mcp_call effects."""
         return self._create_rule_evaluator(blocking_deadline).evaluate(event)
-
-    def _append_memory_recall_context(
-        self,
-        event: HookEvent,
-        workflow_context: str | None,
-    ) -> str | None:
-        """Schedule daemon-owned memory recall for deferred delivery."""
-        session_id = event.metadata.get("_platform_session_id")
-        if not isinstance(session_id, str) or not session_id:
-            return workflow_context
-        config = getattr(self._config, "memory_recall", None)
-        if config is None or self._memory_manager is None or self._database is None:
-            return workflow_context
-
-        try:
-            from gobby.workflows.state_manager import SessionVariableManager
-
-            variables = SessionVariableManager(self._database).get_variables(session_id)
-            parent_turn_seq = variables.get("parent_turn_seq")
-            if not isinstance(parent_turn_seq, int) or isinstance(parent_turn_seq, bool):
-                return workflow_context
-
-            key = (session_id, parent_turn_seq)
-            event_snapshot = copy.deepcopy(event)
-            with self._memory_recall_lock:
-                if self._memory_recall_closing:
-                    self.logger.debug("Skipping deferred memory recall during shutdown")
-                    return workflow_context
-                registry = self._memory_recall_task_registry()
-                self._prune_memory_recall_tasks(registry, session_id, parent_turn_seq)
-                if key in registry:
-                    self.logger.debug(
-                        "Memory recall already scheduled for session=%s parent_turn_seq=%s",
-                        session_id,
-                        parent_turn_seq,
-                    )
-                    return workflow_context
-
-                future = self._schedule_memory_recall_task(
-                    key,
-                    self._run_deferred_memory_recall(
-                        event_snapshot,
-                        session_id,
-                        dict(variables),
-                    ),
-                )
-                if future is not None:
-                    registry[key] = future
-        except Exception as exc:  # noqa: BLE001 - recall must fail open at hook boundary
-            self.logger.warning("Daemon memory recall scheduling failed: %s", exc)
-            return workflow_context
-
-        return workflow_context
-
-    def _memory_recall_task_registry(
-        self,
-    ) -> dict[tuple[str, int], concurrent.futures.Future[Any]]:
-        registry = getattr(self, "_memory_recall_tasks", None)
-        if registry is None:
-            registry = {}
-            self._memory_recall_tasks = registry
-        return registry
-
-    @staticmethod
-    def _prune_memory_recall_tasks(
-        registry: dict[tuple[str, int], concurrent.futures.Future[Any]],
-        session_id: str,
-        parent_turn_seq: int,
-    ) -> None:
-        for key, future in list(registry.items()):
-            key_session_id, key_turn_seq = key
-            if key_session_id == session_id and key_turn_seq < parent_turn_seq and future.done():
-                del registry[key]
-
-    def _schedule_memory_recall_task(
-        self,
-        key: tuple[str, int],
-        coro: Any,
-    ) -> concurrent.futures.Future[Any] | None:
-        loop = self._loop
-        if loop is None or loop.is_closed() or not loop.is_running():
-            close = getattr(coro, "close", None)
-            if callable(close):
-                close()
-            self.logger.debug(
-                "Skipping deferred memory recall scheduling without a running event loop: %s",
-                key,
-            )
-            return None
-
-        try:
-            future = asyncio.run_coroutine_threadsafe(coro, loop)
-        except RuntimeError:
-            close = getattr(coro, "close", None)
-            if callable(close):
-                close()
-            self.logger.debug("Skipping deferred memory recall scheduling; loop unavailable")
-            return None
-
-        future.add_done_callback(lambda done: self._log_memory_recall_task_result(key, done))
-        return future
-
-    def _log_memory_recall_task_result(
-        self,
-        key: tuple[str, int],
-        future: concurrent.futures.Future[Any] | asyncio.Future[Any],
-    ) -> None:
-        try:
-            future.result()
-        except (asyncio.CancelledError, concurrent.futures.CancelledError):
-            self.logger.debug("Deferred memory recall cancelled: %s", key)
-        except Exception as exc:  # noqa: BLE001 - background recall must fail open
-            self.logger.warning("Deferred memory recall failed for %s: %s", key, exc)
-
-    async def _run_deferred_memory_recall(
-        self,
-        event: HookEvent,
-        session_id: str,
-        variables: dict[str, Any],
-    ) -> None:
-        try:
-            from gobby.memory.recall import MemoryRecallRunner
-            from gobby.storage.inter_session_messages import InterSessionMessageManager
-
-            config = getattr(self._config, "memory_recall", None)
-            if config is None or self._memory_manager is None or self._database is None:
-                return
-            runner = MemoryRecallRunner(
-                db=self._database,
-                memory_manager=self._memory_manager,
-                llm_service=self._llm_service,
-                config=config,
-                log=self.logger,
-            )
-            result = await runner.run(event, session_id, variables, require_same_turn=False)
-            if result is None or not result.memories:
-                return
-
-            payload = {
-                "type": "memory_recall",
-                "producer": MEMORY_RECALL_PRODUCER,
-                "origin_turn_seq": result.origin_turn_seq,
-                "recall_request_id": result.recall_request_id,
-                "project_id": event.project_id,
-                "memories": result.memories,
-            }
-            payload_json = json.dumps(payload)
-            message_manager = self._inter_session_msg_manager
-            if message_manager is None:
-                message_manager = InterSessionMessageManager(self._database)
-            message_manager.create_message(
-                from_session=session_id,
-                to_session=session_id,
-                content=payload_json,
-                message_type="memory_recall",
-                metadata_json=payload_json,
-            )
-        except Exception as exc:  # noqa: BLE001 - recall must fail open at hook boundary
-            self.logger.warning("Deferred daemon memory recall failed: %s", exc)
 
     def _create_rule_evaluator(
         self,
@@ -827,7 +672,7 @@ class HookManager:
         self._health_monitor.stop()
 
         self._close_webhook_dispatcher_sync()
-        self._drain_memory_recall_tasks_sync()
+        self._memory_recall_dispatcher.shutdown()
         self._workflow_handler.shutdown()
 
         if self._owns_database and hasattr(self, "_database"):
@@ -848,7 +693,7 @@ class HookManager:
         self._health_monitor.stop()
 
         await self._close_webhook_dispatcher_async()
-        await self._drain_memory_recall_tasks_async()
+        await self._memory_recall_dispatcher.shutdown_async()
         self._workflow_handler.shutdown()
 
         if self._owns_database and hasattr(self, "_database"):
@@ -897,75 +742,6 @@ class HookManager:
             message,
             exc_info=True,
         )
-
-    def _take_memory_recall_tasks_for_shutdown(
-        self,
-    ) -> list[tuple[tuple[str, int], concurrent.futures.Future[Any]]]:
-        with self._memory_recall_lock:
-            self._memory_recall_closing = True
-            registry = self._memory_recall_task_registry()
-            items = list(registry.items())
-            registry.clear()
-        for _key, future in items:
-            if not future.done():
-                future.cancel()
-        return items
-
-    def _drain_memory_recall_tasks_sync(self) -> None:
-        items = self._take_memory_recall_tasks_for_shutdown()
-        if not items:
-            return
-
-        try:
-            running_loop = asyncio.get_running_loop()
-        except RuntimeError:
-            running_loop = None
-        if running_loop is not None and running_loop.is_running():
-            for key, future in items:
-                wrapped = asyncio.wrap_future(future)
-
-                def log_done(
-                    done: asyncio.Future[Any],
-                    *,
-                    recall_key: tuple[str, int] = key,
-                ) -> None:
-                    self._log_memory_recall_task_result(recall_key, done)
-
-                wrapped.add_done_callback(log_done)
-            return
-
-        deadline = time.monotonic() + 5.0
-        for key, future in items:
-            try:
-                remaining = max(0.0, deadline - time.monotonic())
-                future.result(timeout=remaining)
-            except concurrent.futures.TimeoutError:
-                self.logger.warning("Timed out cancelling deferred memory recall: %s", key)
-            except (asyncio.CancelledError, concurrent.futures.CancelledError):
-                self.logger.debug("Deferred memory recall cancelled: %s", key)
-            except Exception as exc:  # noqa: BLE001 - shutdown should continue
-                self.logger.warning("Deferred memory recall failed during shutdown: %s", exc)
-
-    async def _drain_memory_recall_tasks_async(self) -> None:
-        items = self._take_memory_recall_tasks_for_shutdown()
-        if not items:
-            return
-        futures: list[asyncio.Future[Any]] = []
-        for _key, future in items:
-            futures.append(asyncio.wrap_future(future))
-        try:
-            results = await asyncio.wait_for(
-                asyncio.gather(*futures, return_exceptions=True),
-                timeout=5.0,
-            )
-        except TimeoutError:
-            self.logger.warning("Timed out cancelling deferred memory recall tasks")
-            return
-        for result in results:
-            if isinstance(result, (asyncio.CancelledError, concurrent.futures.CancelledError)):
-                continue
-            if isinstance(result, Exception):
-                self.logger.warning("Deferred memory recall failed during shutdown: %s", result)
 
     # ==================== HELPER METHODS ====================
 

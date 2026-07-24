@@ -4,20 +4,19 @@ import asyncio
 import concurrent.futures
 import json
 import logging
-import threading
 from datetime import UTC, datetime
 from types import SimpleNamespace
-from typing import Any
+from typing import Any, cast
 from uuid import UUID
 
 import pytest
 
 from gobby.config.sessions import MemoryRecallConfig
 from gobby.hooks.events import HookEvent, HookEventType, SessionSource
-from gobby.hooks.hook_manager import HookManager
+from gobby.hooks.memory_recall_dispatcher import MemoryRecallDispatcher
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.inter_session_messages import InterSessionMessageManager
-from gobby.storage.memories import Memory
+from gobby.storage.memories import Memory, MemoryType
 from gobby.workflows.state_manager import SessionVariableManager
 
 # sessions.id, session_variables.session_id, and projects.id are native uuid columns.
@@ -64,10 +63,10 @@ class FakeLLMService:
 def _memory(memory_id: str, content: str, similarity: Any) -> Memory:
     return Memory(
         id=memory_id,
-        memory_type="fact",
+        memory_type=MemoryType.FACT,
         content=content,
-        created_at="2026-01-01T00:00:00+00:00",
-        updated_at="2026-01-01T00:00:00+00:00",
+        created_at=datetime(2026, 1, 1, tzinfo=UTC),
+        updated_at=datetime(2026, 1, 1, tzinfo=UTC),
         tags=["test"],
         similarity=similarity,
         search_via="semantic",
@@ -100,33 +99,27 @@ def _create_session(db: HubDatabase, session_id: str = SESSION_ID) -> None:
     )
 
 
-def _make_manager(
+def _make_dispatcher(
     temp_db: HubDatabase,
     memory_manager: FakeMemoryManager,
     llm_service: FakeLLMService,
-) -> HookManager:
-    def _dedup_memory_results(result: dict[str, Any], _session_id: str) -> dict[str, Any]:
-        return result
-
-    manager = HookManager.__new__(HookManager)
-    manager._config = SimpleNamespace(
-        memory_recall=MemoryRecallConfig(candidate_limit=8, selected_limit=3, min_score=0.7)
+) -> MemoryRecallDispatcher:
+    return MemoryRecallDispatcher(
+        config=SimpleNamespace(
+            memory_recall=MemoryRecallConfig(candidate_limit=8, selected_limit=3, min_score=0.7)
+        ),
+        database=temp_db,
+        memory_manager=cast(Any, memory_manager),
+        llm_service=cast(Any, llm_service),
+        message_manager=InterSessionMessageManager(temp_db),
+        loop=None,
+        logger=logging.getLogger("tests.memory_recall_dispatcher"),
     )
-    manager._database = temp_db
-    manager._memory_manager = memory_manager
-    manager._llm_service = llm_service
-    manager._inter_session_msg_manager = InterSessionMessageManager(temp_db)
-    manager._memory_recall_tasks = {}
-    manager._memory_recall_lock = threading.Lock()
-    manager._memory_recall_closing = False
-    manager._loop = None
-    manager.logger = logging.getLogger("tests.memory_recall_context")
-    manager._dedup_memory_results = _dedup_memory_results  # type: ignore[method-assign]
-    return manager
 
 
-def test_turn_start_memory_recall_schedules_deferred_message(
+def test_schedule_delivers_deferred_message(
     temp_db: HubDatabase,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     _create_session(temp_db)
     SessionVariableManager(temp_db).set_variable(SESSION_ID, "parent_turn_seq", 3)
@@ -137,10 +130,10 @@ def test_turn_start_memory_recall_schedules_deferred_message(
         ]
     )
     llm_service = FakeLLMService({"memory_ids": ["weak", "strong"]})
-    manager = _make_manager(temp_db, memory_manager, llm_service)
+    dispatcher = _make_dispatcher(temp_db, memory_manager, llm_service)
     scheduled: dict[str, Any] = {}
 
-    def _schedule_memory_recall_task(
+    def schedule_task(
         key: tuple[str, int],
         coro: Any,
     ) -> concurrent.futures.Future[Any]:
@@ -150,11 +143,10 @@ def test_turn_start_memory_recall_schedules_deferred_message(
         future.set_result(None)
         return future
 
-    manager._schedule_memory_recall_task = _schedule_memory_recall_task  # type: ignore[method-assign]
+    monkeypatch.setattr(dispatcher, "_schedule_task", schedule_task)
 
-    context = manager._append_memory_recall_context(_event(), "existing workflow context")
+    dispatcher.schedule(_event())
 
-    assert context == "existing workflow context"
     assert scheduled["key"] == (SESSION_ID, 3)
     assert memory_manager.calls == []
     assert llm_service.calls == []
@@ -182,19 +174,20 @@ def test_turn_start_memory_recall_schedules_deferred_message(
     assert '"weak"' not in llm_service.calls[0]["prompt"]
 
 
-def test_memory_recall_context_skips_duplicate_turn_schedule(
+def test_schedule_skips_duplicate_turn(
     temp_db: HubDatabase,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     _create_session(temp_db)
     SessionVariableManager(temp_db).set_variable(SESSION_ID, "parent_turn_seq", 3)
-    manager = _make_manager(
+    dispatcher = _make_dispatcher(
         temp_db,
         FakeMemoryManager([]),
         FakeLLMService({"memory_ids": []}),
     )
     scheduled: list[tuple[str, int]] = []
 
-    def _schedule_memory_recall_task(
+    def schedule_task(
         key: tuple[str, int],
         coro: Any,
     ) -> concurrent.futures.Future[Any]:
@@ -206,11 +199,43 @@ def test_memory_recall_context_skips_duplicate_turn_schedule(
         future.set_result(None)
         return future
 
-    manager._schedule_memory_recall_task = _schedule_memory_recall_task  # type: ignore[method-assign]
+    monkeypatch.setattr(dispatcher, "_schedule_task", schedule_task)
 
-    first = manager._append_memory_recall_context(_event(), "existing context")
-    second = manager._append_memory_recall_context(_event(), "existing context")
+    dispatcher.schedule(_event())
+    dispatcher.schedule(_event())
 
-    assert first == "existing context"
-    assert second == "existing context"
     assert scheduled == [(SESSION_ID, 3)]
+
+
+def test_shutdown_uses_shared_deadline(
+    temp_db: HubDatabase,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    dispatcher = _make_dispatcher(
+        temp_db,
+        FakeMemoryManager([]),
+        FakeLLMService({"memory_ids": []}),
+    )
+    timeouts: list[float] = []
+
+    class RecordingFuture(concurrent.futures.Future[None]):
+        def cancel(self) -> bool:
+            return False
+
+        def result(self, timeout: float | None = None) -> None:
+            assert timeout is not None
+            timeouts.append(timeout)
+            raise concurrent.futures.TimeoutError
+
+    dispatcher._tasks[("first", 1)] = RecordingFuture()
+    dispatcher._tasks[("second", 2)] = RecordingFuture()
+    dispatcher._tasks[("third", 3)] = RecordingFuture()
+    clock = iter([100.0, 100.0, 102.0, 106.0])
+    monkeypatch.setattr(
+        "gobby.hooks.memory_recall_dispatcher.time.monotonic",
+        lambda: next(clock),
+    )
+
+    dispatcher.shutdown()
+
+    assert timeouts == [5.0, 3.0, 0.0]
