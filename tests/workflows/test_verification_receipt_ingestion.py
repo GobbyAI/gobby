@@ -9,9 +9,10 @@ from gobby.storage.sessions import SessionManager
 from gobby.storage.tasks import LocalTaskManager
 from gobby.storage.verification_receipts import VerificationReceiptStore
 from gobby.utils.datetime import utc_now
+from gobby.workflows.state_manager import SessionVariableManager
 from gobby.workflows.verification_receipt_ingestion import (
     ensure_verification_execution_identity,
-    persist_verification_receipt,
+    ingest_verification_receipt,
 )
 
 
@@ -87,20 +88,23 @@ def test_native_before_after_pair_is_one_terminal_receipt_for_each_provider(
         exit_code=0,
     )
 
-    variables = {"active_task_id": task.id}
-    persist_verification_receipt(
+    variable_manager = SessionVariableManager(temp_db)
+    variable_manager.set_variable(session.id, "active_task_id", task.id)
+    ingest_verification_receipt(
         before,
-        variables,
         session.id,
         db=temp_db,
     )
-    persist_verification_receipt(
+    result = ingest_verification_receipt(
         after,
-        variables,
         session.id,
         db=temp_db,
     )
 
+    assert result is not None
+    assert result.acknowledged is True
+    assert result.task_id == task.id
+    variables = variable_manager.get_variables(session.id)
     receipts = VerificationReceiptStore(temp_db).list_for_task(sample_project["id"], task.id)
     assert len(receipts) == 1
     receipt = receipts[0]
@@ -142,8 +146,10 @@ def test_terminal_receipt_without_machine_outcome_is_unknown(
         execution_id="unknown-outcome",
     )
 
-    persist_verification_receipt(event, {}, session.id, db=temp_db)
+    result = ingest_verification_receipt(event, session.id, db=temp_db)
 
+    assert result is not None
+    assert result.acknowledged is True
     receipts, total = VerificationReceiptStore(temp_db).list_page(
         project_id=sample_project["id"],
         session_id=session.id,

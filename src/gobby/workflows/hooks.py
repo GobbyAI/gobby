@@ -567,19 +567,6 @@ class WorkflowHookHandler:
                 session_task_manager=self._session_task_manager,
             )
 
-        if event.event_type in (HookEventType.BEFORE_TOOL, HookEventType.AFTER_TOOL):
-            from .verification_receipt_ingestion import persist_verification_receipt
-
-            if self._session_var_manager is not None:
-                run_observer(
-                    "persist_verification_receipt",
-                    persist_verification_receipt,
-                    event,
-                    variables,
-                    session_id,
-                    db=self._session_var_manager.db,
-                )
-
         # Task claim/release tracking (AFTER_TOOL for gobby-tasks calls)
         if event.event_type == HookEventType.AFTER_TOOL:
             run_observer(

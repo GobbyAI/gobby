@@ -30,6 +30,7 @@ from gobby.hooks.session_ref_resolution import (
 )
 from gobby.hooks.session_summary_dispatcher import SessionSummaryDispatcher
 from gobby.hooks.session_types import HookSessionManager
+from gobby.hooks.verification_receipt_stage import ingest_hook_verification_receipt
 from gobby.memory.recall_constants import MEMORY_RECALL_PRODUCER
 from gobby.servers.routes.sessions.statusline_activity import record_session_activity
 from gobby.storage.machines import LocalMachineManager, normalize_machine_id
@@ -345,6 +346,11 @@ class HookManager:
             # Resolve platform session_id from CLI external_id
             self._session_lookup.resolve(event)  # side-effect: enriches event.metadata
             self._record_session_activity_pulse(event)
+            ingest_hook_verification_receipt(
+                event,
+                database=self._database,
+                logger=self.logger,
+            )
 
         # Translate #N session references to UUIDs for MCP tool calls.
         # #N is human-friendly but ambiguous across projects (seq_num is per-project).

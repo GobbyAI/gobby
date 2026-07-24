@@ -165,6 +165,23 @@ def claim_envelope_processing(envelope_id: str, *, processed_dir: Path | None = 
     return True
 
 
+def release_envelope_processing_claim(
+    envelope_id: str,
+    *,
+    processed_dir: Path | None = None,
+) -> bool:
+    """Release a live processing claim so a retry can reclaim the envelope."""
+    marker = _processed_marker_path(envelope_id, processed_dir=processed_dir)
+    record = read_envelope_marker(envelope_id, processed_dir=processed_dir)
+    if record is None or record.get("status") != "processing":
+        return False
+    try:
+        marker.unlink()
+    except FileNotFoundError:
+        return False
+    return True
+
+
 def read_envelope_marker(
     envelope_id: str,
     *,

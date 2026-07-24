@@ -16,6 +16,7 @@ from gobby.hooks.envelope_dedupe import (
     is_envelope_processed,
     mark_envelope_processed,
     read_envelope_marker,
+    release_envelope_processing_claim,
 )
 from gobby.hooks.inbox import (
     _compute_sleep_seconds,
@@ -394,3 +395,13 @@ def test_quarantine_missing_file_is_handled_as_race(
 def test_compute_sleep_seconds_clamps_negative_jitter() -> None:
     with patch("gobby.hooks.inbox._JITTER_RANDOM.uniform", return_value=-10.0):
         assert _compute_sleep_seconds(interval_seconds=5, jitter_seconds=10.0) == 0.0
+
+
+def test_release_envelope_processing_claim_allows_retry(tmp_path: Path) -> None:
+    processed_dir = tmp_path / "processed"
+    envelope_id = "n-0000000000001-retry"
+    assert claim_envelope_processing(envelope_id, processed_dir=processed_dir) is True
+
+    assert release_envelope_processing_claim(envelope_id, processed_dir=processed_dir) is True
+    assert read_envelope_marker(envelope_id, processed_dir=processed_dir) is None
+    assert claim_envelope_processing(envelope_id, processed_dir=processed_dir) is True

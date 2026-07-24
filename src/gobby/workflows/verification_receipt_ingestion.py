@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+from dataclasses import dataclass
 from typing import Any
 
 from gobby.hooks.events import HookEvent, HookEventType
@@ -11,19 +12,27 @@ from gobby.hooks.normalization import _SHELL_TOOLS
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.verification_receipts import (
     VerificationOutcome,
+    VerificationReceipt,
     VerificationReceiptStore,
     VerificationReceiptWrite,
 )
-from gobby.tasks.verification_outcome_projection import project_verification_outcomes
+from gobby.tasks.verification_outcome_projection import (
+    VerificationOutcomeProjection,
+    project_verification_outcomes,
+)
 from gobby.workflows.observer_utils import (
     _extract_shell_command,
     _extract_shell_output_text,
     _shell_tool_outcome,
 )
+from gobby.workflows.state_manager import SessionVariableManager
 from gobby.workflows.verification_evidence import (
+    MAX_VERIFICATION_EVIDENCE_ITEMS,
     VERIFICATION_EVIDENCE_RECORDED_VARIABLE,
+    VERIFICATION_EVIDENCE_TYPE_RECEIPT_PROJECTION,
     VERIFICATION_EVIDENCE_VARIABLE,
-    merge_receipt_projection_evidence,
+    append_verification_evidence,
+    receipt_projection_evidence,
 )
 
 _NATIVE_EXECUTION_ID_KEYS = (
@@ -38,6 +47,36 @@ _NATIVE_EXECUTION_ID_KEYS = (
     "id",
 )
 _SOURCE_EVENT_ID_KEYS = ("source_event_id", "event_id", "eventId", "delivery_id", "deliveryId")
+
+
+@dataclass(frozen=True)
+class VerificationReceiptIngestionResult:
+    """Acknowledgment that one receipt and any task projection are durable."""
+
+    receipt: VerificationReceipt
+    normalized_outcome: VerificationOutcome
+    task_id: str | None
+    attribution_source: str
+    projection: VerificationOutcomeProjection | None
+    replayed: bool
+    acknowledged: bool = True
+
+
+class VerificationReceiptIngestionError(RuntimeError):
+    """Retryable failure while durably ingesting a terminal shell outcome."""
+
+    def __init__(self, identity: str | None) -> None:
+        super().__init__("verification receipt ingestion failed")
+        self.identity = identity
+
+
+def is_verification_receipt_candidate(event: HookEvent) -> bool:
+    """Return whether this event represents a shell execution boundary."""
+    return bool(
+        event.event_type in (HookEventType.BEFORE_TOOL, HookEventType.AFTER_TOOL)
+        and event.data
+        and event.data.get("tool_name") in _SHELL_TOOLS
+    )
 
 
 def _string_value(mapping: dict[str, Any], keys: tuple[str, ...]) -> str | None:
@@ -79,6 +118,12 @@ def ensure_verification_execution_identity(event: HookEvent) -> None:
     event.data["verification_execution_id"] = execution_id
 
 
+def verification_receipt_identity(event: HookEvent) -> str | None:
+    """Return the stable execution identity attached during normalization."""
+    ensure_verification_execution_identity(event)
+    return _string_value(event.data, ("verification_execution_id",))
+
+
 def _extract_output(event: HookEvent) -> str:
     for field in ("tool_output", "tool_result", "tool_response", "contentItems"):
         output = _extract_shell_output_text(event.data.get(field))
@@ -94,27 +139,28 @@ def _project_id(db: HubDatabase, session_id: str, event: HookEvent) -> str | Non
     return str(row["project_id"]) if row and row.get("project_id") else None
 
 
-def persist_verification_receipt(
+def ingest_verification_receipt(
     event: HookEvent,
-    variables: dict[str, Any],
     session_id: str,
     *,
     db: HubDatabase,
-) -> None:
-    """Upsert every shell command, including provisional before-tool events."""
-    if not event.data or event.data.get("tool_name") not in _SHELL_TOOLS:
-        return
+) -> VerificationReceiptIngestionResult | None:
+    """Durably upsert one shell receipt and its task-scoped readiness projection."""
+    if not is_verification_receipt_candidate(event):
+        return None
     command = _extract_shell_command(event)
     if not command:
-        return
+        return None
 
     ensure_verification_execution_identity(event)
     execution_id = _string_value(event.data, ("verification_execution_id",))
     source_event_id = _string_value(event.data, ("verification_source_event_id",))
     project_id = _project_id(db, session_id, event)
     if execution_id is None or source_event_id is None or project_id is None:
-        return
+        return None
 
+    variable_manager = SessionVariableManager(db)
+    variables = variable_manager.get_variables(session_id)
     store = VerificationReceiptStore(db)
     active_task_ref = variables.get("active_task_id")
     task_id, attribution_source = store.resolve_attribution(
@@ -134,7 +180,7 @@ def persist_verification_receipt(
         else:
             normalized_outcome = "unknown"
 
-    store.upsert(
+    receipt = store.upsert(
         VerificationReceiptWrite(
             project_id=project_id,
             session_id=session_id,
@@ -157,12 +203,31 @@ def persist_verification_receipt(
             attributed_at=event.timestamp if task_id else None,
         )
     )
-    if task_id is not None:
-        projection = project_verification_outcomes(store.list_for_task(project_id, task_id))
-        variables[VERIFICATION_EVIDENCE_VARIABLE] = merge_receipt_projection_evidence(
-            variables.get(VERIFICATION_EVIDENCE_VARIABLE),
-            projection,
-            task_id=task_id,
+    projection: VerificationOutcomeProjection | None = None
+    if receipt.task_id is not None:
+        projection = project_verification_outcomes(store.list_for_task(project_id, receipt.task_id))
+        projection_item = append_verification_evidence(
+            [],
+            receipt_projection_evidence(projection, task_id=receipt.task_id),
             session_id=session_id,
+        )[0]
+        variable_manager.upsert_bounded_list_variable(
+            session_id,
+            VERIFICATION_EVIDENCE_VARIABLE,
+            projection_item,
+            identity={
+                "evidence_type": VERIFICATION_EVIDENCE_TYPE_RECEIPT_PROJECTION,
+                "task_id": receipt.task_id,
+            },
+            max_items=MAX_VERIFICATION_EVIDENCE_ITEMS,
+            updates={VERIFICATION_EVIDENCE_RECORDED_VARIABLE: projection.ready},
         )
-        variables[VERIFICATION_EVIDENCE_RECORDED_VARIABLE] = projection.ready
+
+    return VerificationReceiptIngestionResult(
+        receipt=receipt,
+        normalized_outcome=receipt.normalized_outcome,
+        task_id=receipt.task_id,
+        attribution_source=receipt.attribution_source,
+        projection=projection,
+        replayed=receipt.created_at != receipt.updated_at,
+    )

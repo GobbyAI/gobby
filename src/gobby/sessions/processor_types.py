@@ -22,6 +22,9 @@ if TYPE_CHECKING:
     from gobby.storage.context_usage_snapshot import ContextUsageSnapshot
     from gobby.storage.sessions import SessionManager
     from gobby.storage.unmodeled_observations import UnmodeledObservationStore
+    from gobby.workflows.verification_receipt_ingestion import (
+        VerificationReceiptIngestionResult,
+    )
 
 
 WINDOW_ONLY_CONTEXT_SOURCES = frozenset({"droid", "agy", "grok"})
@@ -96,7 +99,7 @@ class ProcessorHost(Protocol):
         self,
         session_id: str,
         outcomes: list[CodexNestedExecOutcome],
-    ) -> None: ...
+    ) -> list[VerificationReceiptIngestionResult]: ...
 
     async def _process_session(
         self,

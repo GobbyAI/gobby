@@ -279,7 +279,7 @@ def _decoded_exec_results(value: Any) -> list[dict[str, Any]]:
         return []
     if any(key in value for key in ("exit_code", "exitCode", "session_id", "sessionId")):
         return [value]
-    for wrapper_key in ("content", "output"):
+    for wrapper_key in ("content", "contentItems", "output"):
         wrapped = value.get(wrapper_key)
         if isinstance(wrapped, list):
             return _decoded_exec_results(wrapped)

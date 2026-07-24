@@ -25,6 +25,7 @@ from gobby.hooks.envelope_dedupe import (
     envelope_terminal_response,
     mark_envelope_processed,
     read_envelope_marker,
+    release_envelope_processing_claim,
 )
 from gobby.hooks.runtime_compat import SUPPORTED_HOOK_ENVELOPE_SCHEMA_VERSION
 from gobby.servers.responses import JSONResponse
@@ -38,6 +39,9 @@ from gobby.servers.tool_approvals import (
 from gobby.storage.config_store import ConfigStore
 from gobby.telemetry.instruments import inc_counter
 from gobby.workflows.hooks import WorkflowEvaluationTimeout
+from gobby.workflows.verification_receipt_ingestion import (
+    VerificationReceiptIngestionError,
+)
 
 if TYPE_CHECKING:
     from gobby.servers.http import HTTPServer
@@ -647,6 +651,10 @@ def create_hooks_router(server: "HTTPServer") -> APIRouter:
             platform_session_id = request.headers.get("X-Gobby-Session-Id", "").strip()
             if platform_session_id:
                 payload["_platform_session_id"] = platform_session_id
+            if envelope_id:
+                input_data = payload.get("input_data")
+                if isinstance(input_data, dict):
+                    input_data.setdefault("source_event_id", envelope_id)
 
             hook_type = payload.get("hook_type")
             source = payload.get("source")
@@ -793,6 +801,28 @@ def create_hooks_router(server: "HTTPServer") -> APIRouter:
                 )
 
                 return mark_processed_and_return(result)
+
+            except VerificationReceiptIngestionError as exc:
+                inc_counter("hooks_failed_total")
+                released = bool(envelope_id and release_envelope_processing_claim(envelope_id))
+                logger.error(
+                    "Retrying hook after verification receipt ingestion failure",
+                    extra=_hook_log_extra(
+                        hook_type,
+                        request_metadata,
+                        source=source,
+                        identity=exc.identity,
+                        envelope_id=envelope_id,
+                        processing_claim_released=released,
+                    ),
+                )
+                return JSONResponse(
+                    status_code=503,
+                    content={
+                        "status": "retry",
+                        "reason": "verification_receipt_ingestion_failed",
+                    },
+                )
 
             except ValueError as e:
                 # Invalid request - still return graceful response
