@@ -253,6 +253,7 @@ class TelegramAdapter(BaseChannelAdapter):
         metadata = {
             "chat_id": chat_id,
             "platform_channel_id": chat_id,
+            "conversation_reference": {"conversation_id": chat_id},
             "telegram_update_id": payload_dict.get("update_id"),
             "user_id": user_id,
             "username": username,

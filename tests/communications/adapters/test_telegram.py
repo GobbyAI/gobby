@@ -279,6 +279,33 @@ def test_parse_webhook(adapter: TelegramAdapter) -> None:
     assert msg.metadata_json["username"] == "testuser"
     assert msg.metadata_json["chat_id"] == "2222222"
     assert msg.metadata_json["platform_channel_id"] == "2222222"
+    assert msg.metadata_json["conversation_reference"] == {
+        "conversation_id": "2222222",
+    }
+
+
+def test_parse_group_webhook_sets_conversation_reference(adapter: TelegramAdapter) -> None:
+    payload = {
+        "update_id": 10001,
+        "message": {
+            "message_id": 1366,
+            "from": {"id": 1111111, "is_bot": False, "username": "testuser"},
+            "chat": {
+                "id": -1002222222,
+                "title": "Test group",
+                "type": "supergroup",
+            },
+            "date": 1441645532,
+            "text": "hello group",
+        },
+    }
+
+    messages = adapter.parse_webhook(payload, {})
+
+    assert len(messages) == 1
+    assert messages[0].metadata_json["conversation_reference"] == {
+        "conversation_id": "-1002222222",
+    }
 
 
 def test_verify_webhook(adapter: TelegramAdapter) -> None:

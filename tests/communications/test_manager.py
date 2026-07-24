@@ -1352,6 +1352,79 @@ async def test_send_message_injects_conversation_reference_destination():
 
 
 @pytest.mark.asyncio
+async def test_telegram_inbound_session_reply_resolves_chat_destination():
+    """A session auto-created from Telegram inbound can send back to the originating chat."""
+    channel = make_channel(channel_type="telegram", config_json={})
+    identities: list[CommsIdentity] = []
+    store = make_store([channel])
+    store.get_identity_by_external.side_effect = lambda channel_id, external_user_id: next(
+        (
+            identity
+            for identity in identities
+            if identity.channel_id == channel_id and identity.external_user_id == external_user_id
+        ),
+        None,
+    )
+
+    def create_identity(identity: CommsIdentity) -> CommsIdentity:
+        identities.append(identity)
+        return identity
+
+    store.create_identity.side_effect = create_identity
+    store.list_identities.side_effect = lambda channel_id=None: [
+        identity
+        for identity in identities
+        if channel_id is None or identity.channel_id == channel_id
+    ]
+
+    session_store = MagicMock()
+    session_store.register.return_value = MagicMock(id="telegram-session-1")
+    manager = CommunicationsManager(
+        make_config(),
+        store,
+        make_secret_store(),
+        session_store,
+    )
+    mock_adapter = make_adapter(channel_type="telegram")
+
+    with patch(
+        "gobby.communications.manager.get_adapter_class",
+        return_value=MagicMock(return_value=mock_adapter),
+    ):
+        await manager.start()
+
+    inbound = TelegramAdapter().parse_webhook(
+        {
+            "update_id": 10000,
+            "message": {
+                "message_id": 1365,
+                "from": {"id": 1111111, "is_bot": False, "username": "testuser"},
+                "chat": {"id": 2222222, "type": "private"},
+                "date": 1441645532,
+                "text": "hello",
+            },
+        },
+        {},
+    )
+    stored = await manager.handle_inbound_messages("test-channel", inbound)
+
+    assert stored[0].session_id == "telegram-session-1"
+
+    reply = await manager.send_message(
+        "test-channel",
+        "Hello!",
+        session_id="telegram-session-1",
+    )
+
+    assert reply.status == "sent"
+    sent_message = mock_adapter.send_message.await_args.args[0]
+    assert sent_message.metadata_json["platform_destination"] == "2222222"
+    assert sent_message.metadata_json["conversation_reference"] == {
+        "conversation_id": "2222222",
+    }
+
+
+@pytest.mark.asyncio
 async def test_send_message_propagates_thread_id():
     """send_message() should include platform_thread_id from thread map."""
     channel = make_channel(webhook_secret=None)
@@ -1476,7 +1549,7 @@ def test_thread_map_move_to_end_on_track():
     assert manager._get_thread_id("ch", "s3") == "t3"
 
 
-def test_routing_rule_crud_invalidates_cache():
+def test_routing_rule_crud_invalidates_cache() -> None:
     """Manager routing rule CRUD methods should invalidate router cache."""
     from gobby.communications.models import CommsRoutingRule
 
