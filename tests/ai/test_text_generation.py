@@ -621,6 +621,38 @@ async def test_text_generation_service_rejects_single_candidate_echo() -> None:
 
 
 @pytest.mark.asyncio
+async def test_text_generation_normalizes_codex_endpoint_selector() -> None:
+    registry = AICapabilityRegistry(
+        [
+            CapabilityBinding(
+                capability=AICapability.TEXT_GENERATE,
+                provider="endpoint:openrouter",
+                adapter_style=AIAdapterStyle.DAEMON,
+                available=True,
+                models=("moonshotai/kimi-k3",),
+                metadata={"execution_provider": "codex"},
+            )
+        ]
+    )
+    adapter = RecordingAdapter("endpoint:openrouter")
+    service = TextGenerationService(registry, {"endpoint:openrouter": adapter})
+
+    result = await service.generate_result(
+        TextGenerationRequest(
+            prompt="accept",
+            provider="codex",
+            model="endpoint:openrouter/moonshotai/kimi-k3",
+            reasoning_effort="high",
+        )
+    )
+
+    assert result.provider == "endpoint:openrouter"
+    assert result.model == "moonshotai/kimi-k3"
+    assert adapter.requests[0].provider == "endpoint:openrouter"
+    assert adapter.requests[0].model == "moonshotai/kimi-k3"
+    assert adapter.requests[0].reasoning_effort == "high"
+
+
 async def test_text_generation_service_falls_back_between_named_local_endpoints() -> None:
     registry = AICapabilityRegistry(
         [

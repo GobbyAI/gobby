@@ -17,6 +17,7 @@ from gobby.adapters.codex_impl.item_normalization import (
 )
 from gobby.agents.local_model import LocalModelError, ensure_local_model
 from gobby.agents.sandbox import CodexSandboxResolver, SandboxConfig
+from gobby.ai.endpoints import parse_endpoint_model_selector
 from gobby.config.ai import GenerationEndpointConfig
 from gobby.llm.claude_models import ChatEvent, DoneEvent, TextChunk
 from gobby.servers.chat_session_helpers import (
@@ -65,6 +66,7 @@ class CodexManagedChatSession(
 
     provider: str = field(default=_CODEX_PROVIDER_ID, init=False)
     chat_mode: str = field(default="plan")
+    _model_selector: str | None = field(default=None, repr=False)
     _thread_id: str | None = field(default=None, repr=False)
     _turn_id: str | None = field(default=None, repr=False)
     _transcript_path: str | None = field(default=None, repr=False)
@@ -89,6 +91,11 @@ class CodexManagedChatSession(
         default_factory=dict,
         repr=False,
     )
+
+    @property
+    def model(self) -> str | None:
+        """Return the UI-facing selector while keeping the wire model canonical."""
+        return self._model_selector or self._model
 
     def _reset_before_tool_state(self) -> None:
         """Clear per-turn pre-tool lifecycle dedup state."""
@@ -378,7 +385,7 @@ class CodexWebChatBackend:
         model: str | None = None,
     ) -> None:
         if model:
-            session._model = model
+            self._apply_requested_model(session, model)
 
         await self.start()
         if not self._health.available or self._client is None:
@@ -425,6 +432,33 @@ class CodexWebChatBackend:
         session._connected = True
         session.last_activity = datetime.now(UTC)
         self._sessions_by_thread[thread.id] = session
+
+    def _apply_requested_model(
+        self,
+        session: CodexManagedChatSession,
+        requested_model: str,
+    ) -> None:
+        selector = parse_endpoint_model_selector(requested_model)
+        if selector is None:
+            if session._model_selector is not None:
+                raise RuntimeError(
+                    "Switching between a generation endpoint and native Codex "
+                    "requires a new web-chat session"
+                )
+            session._model = requested_model
+            return
+
+        if self._generation_endpoint is None:
+            raise RuntimeError(
+                "Switching between native Codex and a generation endpoint "
+                "requires a new web-chat session"
+            )
+        active_selector = parse_endpoint_model_selector(session._model_selector)
+        if active_selector is not None and active_selector.endpoint_name != selector.endpoint_name:
+            raise RuntimeError("Switching generation endpoints requires a new web-chat session")
+
+        session._model_selector = requested_model
+        session._model = selector.model or self._generation_endpoint.model
 
     async def detach_session(self, session: CodexManagedChatSession) -> None:
         session._connected = False
@@ -649,7 +683,7 @@ class CodexWebChatBackend:
         session._turn_id = None
 
     async def switch_model(self, session: CodexManagedChatSession, new_model: str) -> None:
-        session._model = new_model
+        self._apply_requested_model(session, new_model)
 
     async def clear_session_context(self, session: CodexManagedChatSession) -> bool:
         """Reset the session's conversation context to a fresh Codex thread.

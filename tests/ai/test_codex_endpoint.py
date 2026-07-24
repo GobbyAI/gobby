@@ -1,9 +1,12 @@
 """Tests for scoped Codex Responses endpoint configuration."""
 
+from pathlib import Path
+
 import pytest
 
 from gobby.ai.codex_endpoint import (
     CODEX_ENDPOINT_API_KEY_ENV,
+    codex_endpoint_app_server_env,
     codex_endpoint_config_overrides,
     codex_endpoint_env,
     codex_endpoint_provider_id,
@@ -35,12 +38,29 @@ def test_openrouter_overrides_use_stable_secret_free_codex_provider() -> None:
         'model_providers.gobby_endpoint_openrouter.base_url="https://openrouter.ai/api/v1"',
         (f'model_providers.gobby_endpoint_openrouter.env_key="{CODEX_ENDPOINT_API_KEY_ENV}"'),
         'model_providers.gobby_endpoint_openrouter.wire_api="responses"',
+        f'shell_environment_policy.exclude=["{CODEX_ENDPOINT_API_KEY_ENV}"]',
+        "features.shell_snapshot=false",
     )
     assert "sk-test-secret" not in repr(overrides)
 
 
 def test_endpoint_key_is_exposed_only_through_child_environment() -> None:
     assert codex_endpoint_env(_endpoint()) == {CODEX_ENDPOINT_API_KEY_ENV: "sk-test-secret"}
+
+
+def test_endpoint_app_server_uses_isolated_codex_home(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("GOBBY_HOME", str(tmp_path))
+
+    env = codex_endpoint_app_server_env(_endpoint())
+
+    assert env == {
+        CODEX_ENDPOINT_API_KEY_ENV: "sk-test-secret",
+        "CODEX_HOME": str(tmp_path / "codex-endpoints"),
+    }
+    assert (tmp_path / "codex-endpoints").is_dir()
 
 
 @pytest.mark.parametrize("api_key", ["", "$secret:OPENROUTER_API_KEY"])

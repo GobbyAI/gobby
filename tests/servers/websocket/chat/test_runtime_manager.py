@@ -147,6 +147,7 @@ class TestWebChatRuntimeManager:
 
         assert isinstance(session, CodexManagedChatSession)
         assert session._model == "ollama/qwen3-coder"
+        assert session.model == "endpoint:ollama/ollama/qwen3-coder"
         local_backend = manager._codex_endpoint_backends["ollama"]
         assert session._backend is local_backend
         assert local_backend.client is not None
@@ -155,6 +156,47 @@ class TestWebChatRuntimeManager:
             "--local-provider",
             "ollama",
         )
+
+    async def test_codex_endpoint_selector_uses_canonical_wire_model(self) -> None:
+        config = DaemonConfig(
+            ai={
+                "generation": {
+                    "endpoints": {
+                        "openrouter": {
+                            "protocol": "openai-compatible",
+                            "api_base": "https://openrouter.ai/api/v1",
+                            "api_key": "test-openrouter-key",
+                            "model": "moonshotai/kimi-k3",
+                            "wire_api": "responses",
+                        }
+                    }
+                }
+            }
+        )
+        manager = WebChatRuntimeManager(codex_client=MagicMock(), daemon_config=config)
+        selector = "endpoint:openrouter/moonshotai/kimi-k3"
+        session = manager.create_session(
+            provider="codex",
+            conversation_id="conv-codex-responses",
+            model=selector,
+        )
+        assert isinstance(session, CodexManagedChatSession)
+
+        backend = manager._codex_endpoint_backends["openrouter"]
+        backend.start = AsyncMock()
+        backend._health.available = True
+        client = backend.client
+        assert client is not None
+        client.start_thread = AsyncMock(
+            return_value=SimpleNamespace(id="thread-responses", path=None)
+        )
+
+        await session.start(model=selector)
+
+        assert session.model == selector
+        assert session._model == "moonshotai/kimi-k3"
+        assert client.start_thread.await_args is not None
+        assert client.start_thread.await_args.kwargs["model"] == "moonshotai/kimi-k3"
 
     def test_create_session_applies_codex_transcript_retry_config(self) -> None:
         manager = WebChatRuntimeManager(

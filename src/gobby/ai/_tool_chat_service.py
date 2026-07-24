@@ -23,6 +23,7 @@ from gobby.ai._tool_chat_contracts import (
     ToolChatRequest,
     ToolChatResult,
 )
+from gobby.ai.endpoints import normalize_endpoint_routing
 from gobby.ai.registry import (
     AIAdapterStyle,
     AICapability,
@@ -174,6 +175,9 @@ class ToolChatService:
                     request.candidates, profile=request.profile
                 )
             )
+        provider, model = normalize_endpoint_routing(request.provider, request.model)
+        if provider != request.provider or model != request.model:
+            request = replace(request, provider=provider, model=model)
         has_provider = request.provider is not None
         has_model = request.model is not None
         if has_provider != has_model:
@@ -241,6 +245,7 @@ def _candidate_request(
     request: ToolChatRequest, candidate: FeatureCandidateConfig
 ) -> ToolChatRequest:
     provider, model = parse_feature_candidate(candidate.candidate)
+    provider, model = normalize_endpoint_routing(provider, model)
     reasoning_effort = (
         request.reasoning_effort
         if request.reasoning_effort is not None

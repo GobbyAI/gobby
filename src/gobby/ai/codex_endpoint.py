@@ -7,8 +7,10 @@ from collections.abc import Mapping
 from typing import Any
 
 from gobby.config.ai import GenerationEndpointConfig
+from gobby.paths import get_gobby_home
 
 CODEX_ENDPOINT_API_KEY_ENV = "GOBBY_CODEX_ENDPOINT_API_KEY"
+_CODEX_ENDPOINT_HOME_DIR = "codex-endpoints"
 
 
 def codex_endpoint_provider_id(endpoint_name: str) -> str:
@@ -41,6 +43,8 @@ def codex_endpoint_config_overrides(
         f"model_providers.{provider_id}.base_url={quote(endpoint.api_base)}",
         f"model_providers.{provider_id}.env_key={quote(CODEX_ENDPOINT_API_KEY_ENV)}",
         f"model_providers.{provider_id}.wire_api={quote('responses')}",
+        f"shell_environment_policy.exclude={quote([CODEX_ENDPOINT_API_KEY_ENV])}",
+        "features.shell_snapshot=false",
     )
 
 
@@ -78,3 +82,15 @@ def codex_endpoint_env(endpoint: GenerationEndpointConfig) -> Mapping[str, str]:
             "Generation endpoint API key is unavailable; configure its referenced secret"
         )
     return {CODEX_ENDPOINT_API_KEY_ENV: api_key}
+
+
+def codex_endpoint_app_server_env(
+    endpoint: GenerationEndpointConfig,
+) -> Mapping[str, str]:
+    """Return an isolated child environment for a Responses app-server."""
+    codex_home = get_gobby_home() / _CODEX_ENDPOINT_HOME_DIR
+    codex_home.mkdir(parents=True, exist_ok=True)
+    return {
+        **codex_endpoint_env(endpoint),
+        "CODEX_HOME": str(codex_home),
+    }

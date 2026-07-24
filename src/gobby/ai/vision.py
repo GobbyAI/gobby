@@ -9,8 +9,8 @@ from typing import Protocol
 
 from gobby.adapters.codex_impl.client import CodexAppServerClient
 from gobby.ai.codex_endpoint import (
+    codex_endpoint_app_server_env,
     codex_endpoint_config_overrides,
-    codex_endpoint_env,
     codex_event_text,
 )
 from gobby.ai.endpoints import endpoint_provider
@@ -131,8 +131,7 @@ class CodexEndpointVisionExtractAdapter:
                 endpoint_name,
                 self._endpoint,
             ),
-            env_overrides=codex_endpoint_env(self._endpoint),
-            global_args=("--ignore-user-config",),
+            env_overrides=codex_endpoint_app_server_env(self._endpoint),
         )
         self._start_lock = asyncio.Lock()
 

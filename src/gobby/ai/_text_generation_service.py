@@ -33,6 +33,7 @@ from gobby.ai._text_generation_helpers import (
     _parse_json_text,
     _validate_text_generation_output,
 )
+from gobby.ai.endpoints import normalize_endpoint_routing
 from gobby.ai.registry import (
     AIAdapterStyle,
     AICapability,
@@ -160,7 +161,13 @@ def _gate_reasoning_effort(
             f"{binding.provider}/{request.model or next(iter(binding.models), None)}"
         )
 
-    accepted_efforts = provider_reasoning_efforts(binding.provider)
+    execution_provider = binding.metadata.get("execution_provider")
+    reasoning_provider = (
+        execution_provider
+        if isinstance(execution_provider, str) and execution_provider
+        else binding.provider
+    )
+    accepted_efforts = provider_reasoning_efforts(reasoning_provider)
     if normalized not in accepted_efforts:
         accepted = ", ".join(sorted(accepted_efforts)) or "<none>"
         raise _ReasoningEffortRejectedError(
@@ -168,7 +175,7 @@ def _gate_reasoning_effort(
             f"{binding.provider!r}; accepted: {accepted}"
         )
 
-    if provider_reasoning_flag(binding.provider) is None:
+    if provider_reasoning_flag(reasoning_provider) is None:
         return replace(request, reasoning_effort=None)
 
     if normalized == request.reasoning_effort:
@@ -685,6 +692,9 @@ class TextGenerationService:
                     profile=request.profile,
                 )
             )
+        provider, model = normalize_endpoint_routing(request.provider, request.model)
+        if provider != request.provider or model != request.model:
+            request = replace(request, provider=provider, model=model)
         has_provider = request.provider is not None
         has_model = request.model is not None
         if has_provider != has_model:
@@ -710,6 +720,7 @@ class TextGenerationService:
         candidate: FeatureCandidateConfig,
     ) -> TextGenerationRequest:
         provider, model = _parse_candidate(candidate.candidate)
+        provider, model = normalize_endpoint_routing(provider, model)
         reasoning_effort = (
             request.reasoning_effort
             if request.reasoning_effort is not None

@@ -7,6 +7,7 @@ from gobby.agents.reasoning import (
     normalize_reasoning_effort,
     resolve_spawn_reasoning,
 )
+from gobby.config.ai import GenerationEndpointConfig
 from gobby.config.app import DaemonConfig
 
 pytestmark = pytest.mark.unit
@@ -120,6 +121,28 @@ def test_resolve_spawn_reasoning_applies_codex_gpt_56_sol_xhigh(
 
     assert result.status == "applied"
     assert result.effective_effort == "xhigh"
+    assert result.reasoning_required is True
+    assert result.message is None
+
+
+def test_resolve_spawn_reasoning_applies_high_to_codex_responses_endpoint() -> None:
+    config = DaemonConfig()
+    config.ai.generation.endpoints["openrouter"] = GenerationEndpointConfig(
+        api_base="https://openrouter.ai/api/v1",
+        model="moonshotai/kimi-k3",
+        wire_api="responses",
+    )
+
+    result = resolve_spawn_reasoning(
+        provider="codex",
+        model="endpoint:openrouter/moonshotai/kimi-k3",
+        requested_effort="high",
+        reasoning_required=True,
+        daemon_config=config,
+    )
+
+    assert result.status == "applied"
+    assert result.effective_effort == "high"
     assert result.reasoning_required is True
     assert result.message is None
 

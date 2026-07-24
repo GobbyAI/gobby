@@ -17,8 +17,8 @@ from gobby.agents.sandbox import (
     web_chat_sandbox_policy_hash,
 )
 from gobby.ai.codex_endpoint import (
+    codex_endpoint_app_server_env,
     codex_endpoint_config_overrides,
-    codex_endpoint_env,
 )
 from gobby.ai.endpoints import parse_endpoint_model_selector
 from gobby.config.ai import GenerationEndpointConfig
@@ -77,8 +77,7 @@ class WebChatRuntimeManager:
                         endpoint_name,
                         endpoint,
                     ),
-                    env_overrides=codex_endpoint_env(endpoint),
-                    global_args=("--ignore-user-config",),
+                    env_overrides=codex_endpoint_app_server_env(endpoint),
                 )
             else:
                 try:
@@ -270,6 +269,7 @@ class WebChatRuntimeManager:
                 conversation_id=conversation_id,
                 _backend=codex_backend,
                 _model=resolved_model,
+                _model_selector=model if parse_endpoint_model_selector(model) is not None else None,
                 reasoning_effort=reasoning_effort,
                 _transcript_retry_attempts=codex_backend.transcript_retry_attempts,
                 _transcript_retry_delay_seconds=codex_backend.transcript_retry_delay_seconds,

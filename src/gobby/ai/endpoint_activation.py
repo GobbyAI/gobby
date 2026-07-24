@@ -14,6 +14,7 @@ from gobby.adapters.codex_impl.client import CodexAppServerClient
 from gobby.ai._text_generation_adapters import CodexCLITextGenerateAdapter
 from gobby.ai._text_generation_contracts import TextGenerationRequest
 from gobby.ai.codex_endpoint import (
+    codex_endpoint_app_server_env,
     codex_endpoint_config_overrides,
     codex_endpoint_env,
     codex_endpoint_provider_id,
@@ -45,8 +46,7 @@ class EndpointActivationResult:
 def _client(endpoint_name: str, endpoint: GenerationEndpointConfig) -> CodexAppServerClient:
     return CodexAppServerClient(
         config_overrides=codex_endpoint_config_overrides(endpoint_name, endpoint),
-        env_overrides=codex_endpoint_env(endpoint),
-        global_args=("--ignore-user-config",),
+        env_overrides=codex_endpoint_app_server_env(endpoint),
     )
 
 

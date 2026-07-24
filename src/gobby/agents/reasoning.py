@@ -127,6 +127,22 @@ def _supported_efforts(models: list[dict[str, Any]], provider: str) -> set[str]:
     return set(provider_reasoning_efforts(provider))
 
 
+def _is_codex_responses_endpoint(
+    provider: str,
+    model: str | None,
+    daemon_config: DaemonConfig | None,
+) -> bool:
+    if provider != "codex" or daemon_config is None:
+        return False
+    from gobby.ai.endpoints import resolve_generation_endpoint_selector
+
+    try:
+        selection = resolve_generation_endpoint_selector(daemon_config, model)
+    except ValueError:
+        return False
+    return selection is not None and selection.endpoint.wire_api == "responses"
+
+
 def resolve_spawn_reasoning(
     *,
     provider: str,
@@ -146,7 +162,11 @@ def resolve_spawn_reasoning(
         )
 
     required = bool(reasoning_required)
-    models = _get_provider_models(provider, daemon_config)
+    models = (
+        []
+        if _is_codex_responses_endpoint(provider, model, daemon_config)
+        else _get_provider_models(provider, daemon_config)
+    )
     matched_models = _select_model_entries(models, model)
 
     if model and models and not matched_models:

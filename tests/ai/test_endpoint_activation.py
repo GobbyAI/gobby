@@ -108,6 +108,27 @@ async def test_activation_retries_transient_errors_three_times_and_honors_retry_
 
 
 @pytest.mark.asyncio
+async def test_activation_surfaces_terminal_429_after_retries(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    attempts = 0
+
+    async def operation() -> str:
+        nonlocal attempts
+        attempts += 1
+        raise RuntimeError("429 rate limited")
+
+    async def fake_sleep(_delay: float) -> None:
+        return None
+
+    monkeypatch.setattr(asyncio, "sleep", fake_sleep)
+
+    with pytest.raises(RuntimeError, match="429 rate limited"):
+        await endpoint_activation._retry_activation(operation)
+
+    assert attempts == 3
+
+
 async def test_activation_does_not_retry_non_transient_failure(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

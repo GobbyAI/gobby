@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Any
+from typing import Any, overload
 
 from gobby.config.ai import GenerationEndpointConfig
 
@@ -41,6 +41,32 @@ class GenerationEndpointSelector:
 
 def endpoint_provider(name: str) -> str:
     return f"{ENDPOINT_PROVIDER_PREFIX}{name}"
+
+
+@overload
+def normalize_endpoint_routing(provider: str, model: str) -> tuple[str, str]: ...
+
+
+@overload
+def normalize_endpoint_routing(
+    provider: str | None,
+    model: str | None,
+) -> tuple[str | None, str | None]: ...
+
+
+def normalize_endpoint_routing(
+    provider: str | None,
+    model: str | None,
+) -> tuple[str | None, str | None]:
+    """Map a Codex-facing endpoint selector to its logical capability binding."""
+    selector = parse_endpoint_model_selector(model)
+    if selector is None or provider is None:
+        return provider, model
+
+    logical_provider = endpoint_provider(selector.endpoint_name)
+    if provider not in {"codex", logical_provider}:
+        return provider, model
+    return logical_provider, selector.model
 
 
 def _reject_removed_local_selector(value: str) -> None:

@@ -39,8 +39,10 @@ class _RecordingAdapter:
     def __init__(self, label: str) -> None:
         self.label = label
         self.bindings: list[CapabilityBinding] = []
+        self.requests: list[ToolChatRequest] = []
 
     async def chat(self, request: ToolChatRequest, binding: CapabilityBinding) -> ToolChatResult:
+        self.requests.append(request)
         self.bindings.append(binding)
         return ToolChatResult(text=f"narrative::{self.label}", tool_use_count=2, turns=1)
 
@@ -111,6 +113,37 @@ async def test_openai_compatible_candidate_dispatches_to_openai_adapter() -> Non
 
 
 @pytest.mark.asyncio
+async def test_tool_chat_normalizes_codex_endpoint_selector() -> None:
+    adapter = _RecordingAdapter("daemon")
+    registry = AICapabilityRegistry(
+        [
+            CapabilityBinding(
+                capability=AICapability.TOOL_CHAT,
+                provider="endpoint:openrouter",
+                adapter_style=AIAdapterStyle.DAEMON,
+                available=True,
+                models=("moonshotai/kimi-k3",),
+            )
+        ]
+    )
+    service = ToolChatService(
+        registry,
+        adapters={AIAdapterStyle.DAEMON: adapter},
+    )
+
+    result = await service.chat_result(
+        _request(
+            provider="codex",
+            model="endpoint:openrouter/moonshotai/kimi-k3",
+        )
+    )
+
+    assert result.provider == "endpoint:openrouter"
+    assert result.model == "moonshotai/kimi-k3"
+    assert adapter.requests[0].provider == "endpoint:openrouter"
+    assert adapter.requests[0].model == "moonshotai/kimi-k3"
+
+
 async def test_disallowed_adapter_style_is_capability_unavailable() -> None:
     service, _, _ = _service()
 
