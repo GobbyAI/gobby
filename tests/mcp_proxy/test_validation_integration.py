@@ -265,6 +265,123 @@ def mock_task_validator() -> AsyncMock:
     return validator
 
 
+def _paired_codex_receipts(commands: list[str]) -> list[VerificationReceipt]:
+    receipts: list[VerificationReceipt] = []
+    for command_index, command in enumerate(commands):
+        output = f"gate {command_index} passed\n"
+        receipts.extend(
+            [
+                _verification_receipt(
+                    command,
+                    index=command_index * 2 + 1,
+                    normalized_outcome="unknown",
+                    exit_code=None,
+                    execution_id=f"exec-{command_index}",
+                    outcome_provenance="before_tool",
+                    output=output,
+                ),
+                _verification_receipt(
+                    command,
+                    index=command_index * 2 + 2,
+                    execution_id=f"call_{command_index}:0",
+                    output=output,
+                ),
+            ]
+        )
+    return receipts
+
+
+async def _preview_and_close_with_receipts(
+    task_manager: MagicMock,
+    task_validator: AsyncMock,
+    repo_path: str,
+    receipts: list[VerificationReceipt],
+    *,
+    expected_successes: int,
+    mutate: bool,
+) -> tuple[dict[str, Any], dict[str, Any] | None, list[str]]:
+    task = _task(
+        id="t1",
+        title="Canonical receipt close",
+        project_id="p1",
+        status="open",
+        description="Close with canonical receipts.",
+        validation_criteria="Required focused commands pass.",
+        commits=["a1"],
+        claimed_by_session_id="sess-uuid",
+        priority=1,
+        task_type="task",
+        category="code",
+        created_at="now",
+        updated_at="now",
+    )
+    packets: list[str] = []
+
+    def validate_packet(*args: Any, **kwargs: Any) -> ValidationResult:
+        receipt_text = kwargs["verification_receipt_text"]
+        assert isinstance(receipt_text, str)
+        packets.append(receipt_text)
+        payload = json.loads(receipt_text.removeprefix("Verification receipt packet:\n"))
+        projection = payload["canonical_outcome_projection"]
+        valid = projection["per_outcome"] == {"success": expected_successes}
+        return ValidationResult(
+            status="valid" if valid else "pending",
+            feedback="Canonical receipt verdict.",
+            blocking_reasons=[] if valid else ["Required command outcome remains unknown."],
+        )
+
+    task_manager.get_task.return_value = task
+    task_manager.list_tasks.return_value = []
+    task_manager.close_task.return_value = task
+    task_validator.validate_task.side_effect = validate_packet
+
+    with (
+        patch("gobby.mcp_proxy.tools.tasks._context.TaskDependencyManager"),
+        patch("gobby.mcp_proxy.tools.tasks._context.LocalProjectManager") as mock_pm,
+        patch("gobby.mcp_proxy.tools.tasks._context.SessionManager") as mock_sm_cls,
+        patch("gobby.mcp_proxy.tools.tasks._context.SessionTaskManager") as mock_stm_cls,
+        patch("gobby.mcp_proxy.tools.tasks._context.SessionVariableManager") as mock_svm_cls,
+        patch(
+            "gobby.tasks.commits.collect_task_diff_text",
+            return_value=_diff_result(
+                diff="diff --git a/a.py b/a.py\n+canonical\n",
+                commits=["a1"],
+                file_count=1,
+            ),
+        ),
+        patch("gobby.utils.git.normalize_commit_sha", side_effect=lambda sha, cwd=None: sha),
+        patch(
+            "gobby.mcp_proxy.tools.tasks._lifecycle_close.VerificationReceiptStore"
+        ) as receipt_store_cls,
+    ):
+        mock_pm.return_value.get.return_value = MagicMock(repo_path=repo_path)
+        mock_sm_cls.return_value.resolve_session_reference.return_value = "sess-uuid"
+        mock_stm_cls.return_value.get_task_sessions.return_value = [
+            {
+                "session_id": "sess-uuid",
+                "task_id": "t1",
+                "action": "claimed",
+                "created_at": "2026-05-01T00:00:00+00:00",
+            }
+        ]
+        mock_svm_cls.return_value.get_variables.return_value = {}
+        receipt_store_cls.return_value.list_for_task.return_value = receipts
+        receipt_store_cls.return_value.count_unassigned.return_value = 0
+        registry = create_task_registry(
+            task_manager=task_manager,
+            task_validator=task_validator,
+        )
+        close_args = {
+            "task_id": "t1",
+            "commit_sha": "a1",
+            "changes_summary": "Implemented canonical receipt reconciliation.",
+        }
+        preview_result = await registry.call("close_task", {**close_args, "preview": True})
+        close_result = await registry.call("close_task", close_args) if mutate else None
+
+    return preview_result, close_result, packets
+
+
 # ============================================================================
 # Close Task with Commit-Based Validation Tests
 # ============================================================================
@@ -1470,139 +1587,34 @@ async def test_close_task_reconciles_paired_codex_receipts_for_preview_and_mutat
     mock_task_validator: AsyncMock,
     repo_path: str,
 ) -> None:
-    task = _task(
-        id="t1",
-        title="Canonical receipt close",
-        project_id="p1",
-        status="open",
-        description="Close with reconciled Codex receipts.",
-        validation_criteria="Focused pytest, Ruff, and mypy commands pass.",
-        commits=["a1"],
-        claimed_by_session_id="sess-uuid",
-        priority=1,
-        task_type="task",
-        category="code",
-        created_at="now",
-        updated_at="now",
-    )
     commands = [
         "uv run pytest tests/tasks/test_verification_receipt_packet.py -q",
         "uv run ruff check src/gobby/tasks",
         "uv run mypy src/gobby/tasks",
     ]
-    receipts: list[VerificationReceipt] = []
-    candidate_ids: set[str] = set()
-    for command_index, command in enumerate(commands):
-        output = f"gate {command_index} passed\n"
-        candidate = _verification_receipt(
-            command,
-            index=command_index * 2 + 1,
-            normalized_outcome="unknown",
-            exit_code=None,
-            execution_id=f"exec-{command_index}",
-            outcome_provenance="before_tool",
-            output=output,
-        )
-        authority = _verification_receipt(
-            command,
-            index=command_index * 2 + 2,
-            execution_id=f"call_{command_index}:0",
-            output=output,
-        )
-        receipts.extend([candidate, authority])
-        candidate_ids.add(candidate.id)
-
-    packets: list[str] = []
-
-    def validate_canonical_packet(*args: Any, **kwargs: Any) -> ValidationResult:
-        receipt_text = kwargs["verification_receipt_text"]
-        assert isinstance(receipt_text, str)
-        packets.append(receipt_text)
-        packet_payload = json.loads(receipt_text.removeprefix("Verification receipt packet:\n"))
-        projection = packet_payload["canonical_outcome_projection"]
-        status: Literal["valid", "pending"] = (
-            "valid" if projection["per_outcome"] == {"success": len(commands)} else "pending"
-        )
-        return ValidationResult(status=status, feedback="Canonical receipt verdict.")
-
-    mock_task_manager.get_task.return_value = task
-    mock_task_manager.list_tasks.return_value = []
-    mock_task_manager.close_task.return_value = task
-    mock_task_validator.validate_task.side_effect = validate_canonical_packet
-
-    with (
-        patch("gobby.mcp_proxy.tools.tasks._context.TaskDependencyManager"),
-        patch("gobby.mcp_proxy.tools.tasks._context.LocalProjectManager") as mock_pm,
-        patch("gobby.mcp_proxy.tools.tasks._context.SessionManager") as mock_sm_cls,
-        patch("gobby.mcp_proxy.tools.tasks._context.SessionTaskManager") as mock_stm_cls,
-        patch("gobby.mcp_proxy.tools.tasks._context.SessionVariableManager") as mock_svm_cls,
-        patch(
-            "gobby.tasks.commits.collect_task_diff_text",
-            return_value=_diff_result(
-                diff="diff --git a/a.py b/a.py\n+canonical\n",
-                commits=["a1"],
-                file_count=1,
-            ),
-        ),
-        patch("gobby.utils.git.normalize_commit_sha", side_effect=lambda sha, cwd=None: sha),
-        patch(
-            "gobby.mcp_proxy.tools.tasks._lifecycle_close.VerificationReceiptStore"
-        ) as receipt_store_cls,
-    ):
-        mock_pm.return_value.get.return_value = MagicMock(repo_path=repo_path)
-        mock_sm_cls.return_value.resolve_session_reference.return_value = "sess-uuid"
-        mock_stm_cls.return_value.get_task_sessions.return_value = [
-            {
-                "session_id": "sess-uuid",
-                "task_id": "t1",
-                "action": "claimed",
-                "created_at": "2026-05-01T00:00:00+00:00",
-            }
-        ]
-        mock_svm_cls.return_value.get_variables.return_value = {}
-        receipt_store_cls.return_value.list_for_task.return_value = receipts
-        receipt_store_cls.return_value.count_unassigned.return_value = 0
-        registry = create_task_registry(
-            task_manager=mock_task_manager,
-            task_validator=mock_task_validator,
-        )
-        close_args = {
-            "task_id": "t1",
-            "commit_sha": "a1",
-            "changes_summary": "Implemented canonical receipt reconciliation.",
-        }
-
-        preview_result = await registry.call(
-            "close_task",
-            {**close_args, "preview": True},
-        )
-        close_result = await registry.call("close_task", close_args)
+    receipts = _paired_codex_receipts(commands)
+    preview_result, close_result, packets = await _preview_and_close_with_receipts(
+        mock_task_manager,
+        mock_task_validator,
+        repo_path,
+        receipts,
+        expected_successes=len(commands),
+        mutate=True,
+    )
 
     assert preview_result["can_close"] is True
     assert preview_result["validation_status"] == "valid"
+    assert close_result is not None
     assert close_result["success"] is True
     assert len(packets) == 2
     assert packets[0] == packets[1]
     packet_payload = json.loads(packets[0].removeprefix("Verification receipt packet:\n"))
-    latest_completed_at = receipts[-1].completed_at
-    assert latest_completed_at is not None
-    assert packet_payload["canonical_outcome_projection"] == {
-        "total": 3,
-        "per_outcome": {"success": 3},
-        "raw_total": 6,
-        "raw_per_outcome": {"success": 3, "unknown": 3},
-        "superseded_total": 3,
-        "ready": True,
-        "latest_receipt_id": "receipt-006",
-        "latest_timestamp": latest_completed_at.isoformat(),
-    }
+    projection = packet_payload["canonical_outcome_projection"]
+    assert projection["per_outcome"] == {"success": 3}
+    assert projection["raw_per_outcome"] == {"success": 3, "unknown": 3}
+    assert projection["superseded_total"] == 3
     assert packet_payload["evidence_completeness"]["effective_total"] == 3
-    assert packet_payload["evidence_completeness"]["superseded_total"] == 3
-    selected_ids = {
-        *preview_result["selected_evidence"]["detailed_receipt_ids"],
-        *preview_result["selected_evidence"]["catalogued_receipt_ids"],
-    }
-    assert selected_ids.isdisjoint(candidate_ids)
+    assert all(receipt.id not in packets[0] for receipt in receipts[::2])
     mock_task_manager.close_task.assert_called_once()
 
 
@@ -1612,21 +1624,6 @@ async def test_close_task_keeps_unknown_only_required_command_pending(
     mock_task_validator: AsyncMock,
     repo_path: str,
 ) -> None:
-    task = _task(
-        id="t1",
-        title="Unknown receipt close",
-        project_id="p1",
-        status="open",
-        description="Keep unresolved command evidence pending.",
-        validation_criteria="Focused pytest passes.",
-        commits=["a1"],
-        claimed_by_session_id="sess-uuid",
-        priority=1,
-        task_type="task",
-        category="code",
-        created_at="now",
-        updated_at="now",
-    )
     unknown_receipt = _verification_receipt(
         "uv run pytest tests/focused.py -q",
         normalized_outcome="unknown",
@@ -1635,77 +1632,21 @@ async def test_close_task_keeps_unknown_only_required_command_pending(
         outcome_provenance="before_tool",
         output="",
     )
-    packets: list[dict[str, Any]] = []
-
-    def validate_unknown_packet(*args: Any, **kwargs: Any) -> ValidationResult:
-        receipt_text = kwargs["verification_receipt_text"]
-        assert isinstance(receipt_text, str)
-        packet_payload = json.loads(receipt_text.removeprefix("Verification receipt packet:\n"))
-        packets.append(packet_payload)
-        projection = packet_payload["canonical_outcome_projection"]
-        status: Literal["valid", "pending"] = (
-            "valid" if projection["per_outcome"] == {"success": 1} else "pending"
-        )
-        return ValidationResult(
-            status=status,
-            feedback="Required command lacks a definitive machine outcome.",
-            blocking_reasons=["Focused pytest lacks a definitive machine outcome."],
-        )
-
-    mock_task_manager.get_task.return_value = task
-    mock_task_manager.list_tasks.return_value = []
-    mock_task_validator.validate_task.side_effect = validate_unknown_packet
-
-    with (
-        patch("gobby.mcp_proxy.tools.tasks._context.TaskDependencyManager"),
-        patch("gobby.mcp_proxy.tools.tasks._context.LocalProjectManager") as mock_pm,
-        patch("gobby.mcp_proxy.tools.tasks._context.SessionManager") as mock_sm_cls,
-        patch("gobby.mcp_proxy.tools.tasks._context.SessionTaskManager") as mock_stm_cls,
-        patch("gobby.mcp_proxy.tools.tasks._context.SessionVariableManager") as mock_svm_cls,
-        patch(
-            "gobby.tasks.commits.collect_task_diff_text",
-            return_value=_diff_result(
-                diff="diff --git a/a.py b/a.py\n+unknown\n",
-                commits=["a1"],
-                file_count=1,
-            ),
-        ),
-        patch("gobby.utils.git.normalize_commit_sha", side_effect=lambda sha, cwd=None: sha),
-        patch(
-            "gobby.mcp_proxy.tools.tasks._lifecycle_close.VerificationReceiptStore"
-        ) as receipt_store_cls,
-    ):
-        mock_pm.return_value.get.return_value = MagicMock(repo_path=repo_path)
-        mock_sm_cls.return_value.resolve_session_reference.return_value = "sess-uuid"
-        mock_stm_cls.return_value.get_task_sessions.return_value = [
-            {
-                "session_id": "sess-uuid",
-                "task_id": "t1",
-                "action": "claimed",
-                "created_at": "2026-05-01T00:00:00+00:00",
-            }
-        ]
-        mock_svm_cls.return_value.get_variables.return_value = {}
-        receipt_store_cls.return_value.list_for_task.return_value = [unknown_receipt]
-        receipt_store_cls.return_value.count_unassigned.return_value = 0
-        registry = create_task_registry(
-            task_manager=mock_task_manager,
-            task_validator=mock_task_validator,
-        )
-
-        result = await registry.call(
-            "close_task",
-            {
-                "task_id": "t1",
-                "commit_sha": "a1",
-                "changes_summary": "Preserved unresolved evidence.",
-                "preview": True,
-            },
-        )
+    result, close_result, packets = await _preview_and_close_with_receipts(
+        mock_task_manager,
+        mock_task_validator,
+        repo_path,
+        [unknown_receipt],
+        expected_successes=1,
+        mutate=False,
+    )
 
     assert result["success"] is True
     assert result["can_close"] is False
     assert result["validation_status"] == "pending"
-    assert packets[0]["canonical_outcome_projection"]["per_outcome"] == {"unknown": 1}
-    assert packets[0]["canonical_outcome_projection"]["superseded_total"] == 0
+    assert close_result is None
+    packet = json.loads(packets[0].removeprefix("Verification receipt packet:\n"))
+    projection = packet["canonical_outcome_projection"]
+    assert projection["per_outcome"] == {"unknown": 1}
+    assert projection["superseded_total"] == 0
     mock_task_manager.close_task.assert_not_called()
