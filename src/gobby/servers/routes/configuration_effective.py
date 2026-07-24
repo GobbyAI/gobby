@@ -10,13 +10,22 @@ from fastapi import APIRouter, Depends, HTTPException, Request
 
 from gobby.config._loading import expand_env_vars
 from gobby.config.app import DaemonConfig
+from gobby.config.embedding_keys import (
+    AI_EMBEDDING_API_BASE_KEY,
+    AI_EMBEDDING_API_KEY_KEY,
+    AI_EMBEDDING_CATALOG_KEY,
+    AI_EMBEDDING_DIM_KEY,
+    AI_EMBEDDING_MODEL_KEY,
+    AI_EMBEDDING_QUERY_PREFIX_KEY,
+    EMBEDDING_SWITCH_JOURNAL_KEY,
+)
 from gobby.servers.responses import JSONResponse
 from gobby.servers.routes.configuration_context import ConfigurationRouteContext
 
 logger = logging.getLogger(__name__)
 
 _SERVED_PREFIXES = ("ai.", "databases.", "indexing.", "gwiki.")
-_EXCLUDED_KEYS = {"ai.routing", "ai.embeddings.switch_run"}
+_EXCLUDED_KEYS = {"ai.routing", EMBEDDING_SWITCH_JOURNAL_KEY}
 _UNRESOLVED_ENV_PATTERN = re.compile(r"\$\{[^{}]*\}")
 
 
@@ -70,12 +79,12 @@ def _runtime_overlays(config: DaemonConfig) -> dict[str, object | None]:
     falkordb = config.databases.falkordb
     qdrant = config.databases.qdrant
     return {
-        "ai.embeddings.model": embeddings.model,
-        "ai.embeddings.dim": embeddings.dim,
-        "ai.embeddings.api_base": embeddings.api_base,
-        "ai.embeddings.api_key": embeddings.api_key,
-        "ai.embeddings.query_prefix": embeddings.query_prefix,
-        "ai.embeddings.catalog_key": embeddings.catalog_key,
+        AI_EMBEDDING_MODEL_KEY: embeddings.model,
+        AI_EMBEDDING_DIM_KEY: embeddings.dim,
+        AI_EMBEDDING_API_BASE_KEY: embeddings.api_base,
+        AI_EMBEDDING_API_KEY_KEY: embeddings.api_key,
+        AI_EMBEDDING_QUERY_PREFIX_KEY: embeddings.query_prefix,
+        AI_EMBEDDING_CATALOG_KEY: embeddings.catalog_key,
         "databases.falkordb.host": falkordb.host,
         "databases.falkordb.port": falkordb.port,
         "databases.falkordb.password": falkordb.password,
