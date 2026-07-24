@@ -29,6 +29,7 @@ __all__ = [
     "HookStageConfig",
     "HooksConfig",
     "SkillDescriptionConfig",
+    "ToolResultOffloadConfig",
 ]
 
 
@@ -120,6 +121,31 @@ class RecommendToolsConfig(FeatureDefaultConfig):
         default=None,
         description="Path to custom LLM recommendation prompt (e.g., 'features/recommend_tools_llm')",
     )
+
+
+class ToolResultOffloadConfig(BaseModel):
+    """Configuration for storing oversized MCP tool results out of band."""
+
+    enabled: bool = True
+    threshold_chars: int = Field(10_000, ge=1_000, le=10_000_000)
+    max_envelope_chars: int = Field(8_000, ge=2_000, le=1_000_000)
+    preview_chars: int = Field(2_000, ge=0, le=1_000_000)
+    chunk_chars: int = Field(2_000, ge=200, le=100_000)
+    max_stored_chars: int = Field(2_000_000, ge=10_000, le=100_000_000)
+    intent_match_limit: int = Field(5, ge=0, le=50)
+    retention_days: int = Field(7, ge=1, le=3_650)
+    exempt_tools: list[str] = Field(default_factory=lambda: ["gobby-results/*"])
+
+    @model_validator(mode="after")
+    def validate_size_relationships(self) -> "ToolResultOffloadConfig":
+        """Reject configurations that cannot produce a useful bounded envelope."""
+        if self.max_envelope_chars >= self.threshold_chars:
+            raise ValueError("max_envelope_chars must be less than threshold_chars")
+        if self.preview_chars > self.max_envelope_chars:
+            raise ValueError("preview_chars cannot exceed max_envelope_chars")
+        if self.max_stored_chars < self.threshold_chars:
+            raise ValueError("max_stored_chars cannot be less than threshold_chars")
+        return self
 
 
 class ImportMCPServerConfig(FeatureDefaultConfig):

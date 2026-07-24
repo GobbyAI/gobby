@@ -53,6 +53,7 @@ from gobby.config.features import (
     ProjectVerificationSynthesisConfig,
     RecommendToolsConfig,
     SkillDescriptionConfig,
+    ToolResultOffloadConfig,
     ToolSummarizerConfig,
 )
 from gobby.config.indexing import IndexingConfig
@@ -308,6 +309,10 @@ class DaemonConfig(BaseModel):
         default_factory=RecommendToolsConfig,
         description="Tool recommendation configuration",
     )
+    tool_result_offload: ToolResultOffloadConfig = Field(
+        default_factory=ToolResultOffloadConfig,
+        description="Oversized tool-result offload configuration",
+    )
     tool_summarizer: ToolSummarizerConfig = Field(
         default_factory=ToolSummarizerConfig,
         description="Tool description summarization configuration",
@@ -460,6 +465,10 @@ class DaemonConfig(BaseModel):
     def get_recommend_tools_config(self) -> RecommendToolsConfig:
         """Get recommend_tools configuration."""
         return self.recommend_tools
+
+    def get_tool_result_offload_config(self) -> ToolResultOffloadConfig:
+        """Get tool_result_offload configuration."""
+        return self.tool_result_offload
 
     def get_tool_summarizer_config(self) -> ToolSummarizerConfig:
         """Get tool_summarizer configuration."""
