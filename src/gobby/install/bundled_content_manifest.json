@@ -304,7 +304,7 @@
     "workflows/agents/frontend-developer.yaml": "bf4c0b3780630f76f78e37d52f5c25ceacc657cf8954830340e131bad2c7b3bf",
     "workflows/agents/fullstack-developer.yaml": "6feaf7d193ae1daf66987707ab171c0662daf83ead4a7b593b889752cc8dfbe7",
     "workflows/agents/goal-taskmaster.yaml": "b8b53db326636213767d4139a1847af0c549694e71273b945f2a913e33b3ffe6",
-    "workflows/agents/merge-orchestrator.yaml": "9ed9bab9bd02caf2d793e1dd6c6f77e642b0da70bd672d2f4730711755472279",
+    "workflows/agents/merge-orchestrator.yaml": "5b6591475851404290d0a932a74df6eddfa1ad632f684e16834931091dd9be67",
     "workflows/agents/merge-worker.yaml": "b9f4fc2fe19f20735d8e8aa8005655867bd3e57c64773d18533a92e701ee2c95",
     "workflows/agents/nightly-linter.yaml": "2747c9c66ef1d0e81efd652c4e20c9427a8ff1c645c84a93f81f5b20b27ad024",
     "workflows/agents/nightly-test-fixer.yaml": "8e38ae5210649eeb79026a3e1c2f61fb64c1c37326b75dfc725df69e3f9fbb65",
