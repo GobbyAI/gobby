@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
 
 from gobby.communications.models import CommsIdentity
@@ -14,6 +15,14 @@ if TYPE_CHECKING:
     from gobby.storage.sessions import SessionManager
 
 logger = logging.getLogger(__name__)
+
+
+@dataclass(frozen=True, slots=True)
+class IdentityResolution:
+    """Sender identity plus the session selected for one inbound message."""
+
+    identity: CommsIdentity
+    session_id: str | None
 
 
 class IdentityManager:
@@ -63,25 +72,70 @@ class IdentityManager:
         Returns:
             The resolved CommsIdentity.
         """
+        return self._resolve(
+            channel_id=channel_id,
+            external_user_id=external_user_id,
+            external_username=external_username,
+            metadata=metadata,
+            project_id=project_id,
+            group_chat_id=None,
+        ).identity
+
+    def resolve_inbound_identity(
+        self,
+        channel_id: str,
+        external_user_id: str,
+        external_username: str | None = None,
+        metadata: dict[str, Any] | None = None,
+        project_id: str | None = None,
+        group_chat_id: str | None = None,
+    ) -> IdentityResolution:
+        """Resolve sender attribution and the effective inbound conversation session."""
+        return self._resolve(
+            channel_id=channel_id,
+            external_user_id=external_user_id,
+            external_username=external_username,
+            metadata=metadata,
+            project_id=project_id,
+            group_chat_id=group_chat_id,
+        )
+
+    def _resolve(
+        self,
+        *,
+        channel_id: str,
+        external_user_id: str,
+        external_username: str | None,
+        metadata: dict[str, Any] | None,
+        project_id: str | None,
+        group_chat_id: str | None,
+    ) -> IdentityResolution:
         identity = self._store.get_identity_by_external(channel_id, external_user_id)
+        link_session_to_identity = group_chat_id is None
+        if link_session_to_identity:
+            session_external_id = f"comms:{channel_id}:{external_user_id}"
+            session_title = f"Comms: {external_username or external_user_id}"
+        else:
+            session_external_id = f"comms:{channel_id}:group:{group_chat_id}"
+            session_title = f"Comms group: {group_chat_id}"
 
         session_id = None
-        if identity and identity.session_id:
+        if link_session_to_identity and identity and identity.session_id:
             session_id = identity.session_id
 
         if not session_id and self._config.auto_create_sessions:
             session = self._session_store.register(
-                external_id=f"comms:{channel_id}:{external_user_id}",
+                external_id=session_external_id,
                 machine_id="comms",
                 source="comms",
                 project_id=project_id,
-                title=f"Comms: {external_username or external_user_id}",
+                title=session_title,
             )
             session_id = session.id
 
         if identity:
             needs_update = False
-            if session_id and identity.session_id != session_id:
+            if link_session_to_identity and session_id and identity.session_id != session_id:
                 identity.session_id = session_id
                 needs_update = True
             if external_username and identity.external_username != external_username:
@@ -105,14 +159,14 @@ class IdentityManager:
                 channel_id=channel_id,
                 external_user_id=external_user_id,
                 external_username=external_username,
-                session_id=session_id,
+                session_id=session_id if link_session_to_identity else None,
                 created_at=now,
                 updated_at=now,
                 metadata_json=metadata or {},
             )
             identity = self._store.create_identity(identity)
 
-        return identity
+        return IdentityResolution(identity=identity, session_id=session_id)
 
     def get_identity_by_session(self, channel_id: str, session_id: str) -> CommsIdentity | None:
         """Find the identity associated with a session on a specific channel."""

@@ -14,6 +14,21 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 _WEBHOOK_VERIFICATION_TIMEOUT_SECONDS = 5.0
+_GROUP_CONVERSATION_TYPES = frozenset({"group", "supergroup"})
+
+
+def _group_chat_id(metadata: dict[str, Any]) -> str | None:
+    """Return the stable group-chat key carried by an adapter message."""
+    if metadata.get("conversation_type") not in _GROUP_CONVERSATION_TYPES:
+        return None
+
+    value = metadata.get("chat_id")
+    if isinstance(value, bool) or not isinstance(value, (str, int)):
+        raise ValueError("Group communications message is missing chat_id")
+    normalized = str(value).strip()
+    if not normalized:
+        raise ValueError("Group communications message is missing chat_id")
+    return normalized
 
 
 class InboundCommunications:
@@ -79,15 +94,16 @@ class InboundCommunications:
                             "conversation_reference"
                         ]
 
-                    identity = await asyncio.to_thread(
-                        manager._identity_manager.resolve_identity,
+                    resolution = await asyncio.to_thread(
+                        manager._identity_manager.resolve_inbound_identity,
                         channel.id,
                         external_user_id,
                         external_username,
                         metadata=identity_meta,
+                        group_chat_id=_group_chat_id(message.metadata_json),
                     )
-                    message.session_id = identity.session_id
-                    message.identity_id = identity.id
+                    message.session_id = resolution.session_id
+                    message.identity_id = resolution.identity.id
 
                 if message.session_id and message.platform_thread_id:
                     manager._track_thread(

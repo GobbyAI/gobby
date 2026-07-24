@@ -16,6 +16,7 @@ from gobby.communications.adapters.slack import SlackAdapter
 from gobby.communications.adapters.sms import SMSAdapter
 from gobby.communications.adapters.teams import TeamsAdapter
 from gobby.communications.adapters.telegram import TelegramAdapter
+from gobby.communications.identities import IdentityResolution
 from gobby.communications.manager import CommunicationsManager
 from gobby.communications.models import (
     ChannelConfig,
@@ -773,8 +774,11 @@ async def test_handle_inbound_messages_continues_after_identity_resolution_failu
         updated_at="2024-01-01T00:00:00",
         session_id="session-ok",
     )
-    manager._identity_manager.resolve_identity = MagicMock(
-        side_effect=[RuntimeError("database unavailable"), identity]
+    manager._identity_manager.resolve_inbound_identity = MagicMock(
+        side_effect=[
+            RuntimeError("database unavailable"),
+            IdentityResolution(identity=identity, session_id="session-ok"),
+        ]
     )
 
     messages = [
@@ -1596,7 +1600,9 @@ async def test_handle_inbound_populates_thread_map_and_handles_reactions():
     )
 
     manager._identity_manager = MagicMock()
-    manager._identity_manager.resolve_identity = MagicMock(return_value=mock_identity)
+    manager._identity_manager.resolve_inbound_identity = MagicMock(
+        return_value=IdentityResolution(identity=mock_identity, session_id="session-123")
+    )
 
     manager.reaction_handler = AsyncMock()
 

@@ -74,6 +74,7 @@ def _adapter() -> MagicMock:
     adapter.supports_polling = False
     adapter.initialize = AsyncMock()
     adapter.send_message = AsyncMock(return_value="platform-msg-1")
+    adapter.download_inbound_attachments = AsyncMock(return_value=[])
     adapter.shutdown = AsyncMock()
     adapter.parse_webhook.return_value = []
     adapter.verify_webhook.return_value = True
