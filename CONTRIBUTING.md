@@ -219,13 +219,22 @@ If you have questions, feel free to:
 
 ## License
 
-Gobby is licensed under the Functional Source License, Version 1.1, with an
-Apache 2.0 future license (FSL-1.1-ALv2) — see [LICENSE](LICENSE). Each release
-automatically converts to Apache 2.0 two years after publication.
+Gobby is Fair Source software licensed under the Functional Source License,
+Version 1.1, with an Apache 2.0 future license (FSL-1.1-ALv2) — see
+[LICENSE](LICENSE). Each release automatically converts to Apache 2.0 two years
+after publication.
 
-By contributing to Gobby, you agree that your contributions will be licensed
-under the same terms. External contributions additionally require a Contributor
-License Agreement (CLA) granting the maintainer the right to license your
-contribution under the FSL, its Apache 2.0 future license, and commercial
-licenses. CLA tooling is not wired up yet; until it is, a maintainer will
-coordinate signing on your first pull request.
+External contributions require acceptance of the
+[Gobby Individual Contributor License Agreement](CLA.md). The CLA preserves
+your copyright while granting Josh Wilhelmi the rights needed to license your
+contribution under FSL-1.1-ALv2, its Apache 2.0 future license, and commercial
+or proprietary licenses.
+
+The `CLA Signature` check will prompt you on your first pull request. After
+reading the CLA, post this exact pull-request comment:
+
+> I have read the CLA Document and I hereby sign the CLA
+
+The automated signature applies to later contributions from the same GitHub
+identity. If your employer owns or controls rights in your work, contact the
+maintainer and obtain authorization before contributing or signing the CLA.

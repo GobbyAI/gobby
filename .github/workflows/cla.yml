@@ -1,0 +1,44 @@
+name: CLA Signature
+
+on:
+  pull_request_target:
+    types: [opened, synchronize, closed]
+  issue_comment:
+    types: [created]
+
+permissions:
+  actions: write
+  contents: write
+  pull-requests: write
+  statuses: write
+
+jobs:
+  cla:
+    name: CLA Signature
+    if: >-
+      github.event_name == 'pull_request_target' ||
+      (github.event_name == 'issue_comment' &&
+       github.event.issue.pull_request &&
+       (github.event.comment.body == 'I have read the CLA Document and I hereby sign the CLA' ||
+        github.event.comment.body == 'recheck'))
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check CLA signatures
+        uses: ribtoks/cla-github-action@f22feedd1f3f46f23fab3bc100081d349f9108af
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          path-to-signatures: signatures/v1/cla.json
+          path-to-document: https://github.com/GobbyAI/gobby/blob/main/CLA.md
+          branch: cla-signatures
+          allowlist: joshwilhelmi,dependabot[bot],github-actions[bot],claude
+          custom-notsigned-prcomment: >-
+            Thank you for contributing. Please read $pathToCLADocument (version 1.0),
+            then post this exact comment: I have read the CLA Document and I hereby sign the CLA
+          custom-pr-sign-comment: I have read the CLA Document and I hereby sign the CLA
+          custom-allsigned-prcomment: All contributors have signed the CLA.
+          create-file-commit-message: Create CLA version 1 signature ledger
+          signed-commit-message: >-
+            Record $contributorName CLA signature for $owner/$repo#$pullRequestNo
+          lock-pullrequest-aftermerge: true
+          suggest-recheck: true
