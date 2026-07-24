@@ -432,6 +432,8 @@ mod tests {
                 location: "/tmp/circuit.png".to_string(),
                 kind: SourceKind::Image,
                 fetched_at: "2026-05-29T20:45:00Z".to_string(),
+                last_verified_at: "2026-05-29T20:45:00Z".to_string(),
+                fetch_provenance: crate::sources::FetchProvenance::Stub,
                 content: b"image-bytes".to_vec(),
                 title: Some("circuit.png".to_string()),
                 citation: Some("/tmp/circuit.png".to_string()),

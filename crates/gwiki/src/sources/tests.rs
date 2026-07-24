@@ -120,6 +120,8 @@ fn local_file_replay_metadata_round_trips_through_manifest() {
             location: "notes/source.md".to_string(),
             kind: SourceKind::Markdown,
             fetched_at: "2026-06-02T00:00:00Z".to_string(),
+            last_verified_at: "2026-06-02T00:00:00Z".to_string(),
+            fetch_provenance: FetchProvenance::Stub,
             content: b"# Source\n".to_vec(),
             title: Some("Source".to_string()),
             citation: Some("notes/source.md".to_string()),

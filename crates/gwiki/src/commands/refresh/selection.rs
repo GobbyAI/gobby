@@ -261,6 +261,8 @@ mod tests {
             canonical_location: "notes/canonical.md".to_string(),
             kind: SourceKind::Markdown,
             fetched_at: "2026-06-08T00:00:00Z".to_string(),
+            last_verified_at: "2026-06-08T00:00:00Z".to_string(),
+            fetch_provenance: crate::sources::FetchProvenance::Stub,
             content_hash: "hash".to_string(),
             title: None,
             citation: None,

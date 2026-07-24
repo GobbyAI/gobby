@@ -24,6 +24,8 @@ pub(super) fn ingest_generic_file_without_index(
             location: location.to_string(),
             kind: kind.clone(),
             fetched_at: fetched_at.to_string(),
+            last_verified_at: fetched_at.to_string(),
+            fetch_provenance: crate::sources::FetchProvenance::Stub,
             content: &bytes,
             title: Some(title.clone()),
             citation: Some(location.to_string()),

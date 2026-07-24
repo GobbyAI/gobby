@@ -457,6 +457,8 @@ mod tests {
                 location: "/tmp/interview.wav".to_string(),
                 kind: SourceKind::Audio,
                 fetched_at: "2026-05-29T21:00:00Z".to_string(),
+                last_verified_at: "2026-05-29T21:00:00Z".to_string(),
+                fetch_provenance: crate::sources::FetchProvenance::Stub,
                 content: b"audio-bytes".to_vec(),
                 title: Some("interview.wav".to_string()),
                 citation: Some("/tmp/interview.wav".to_string()),

@@ -234,6 +234,8 @@ mod tests {
             canonical_location: "https://example.test/source".to_string(),
             kind: SourceKind::Url,
             fetched_at: "2026-01-01T00:00:00Z".to_string(),
+            last_verified_at: "2026-01-01T00:00:00Z".to_string(),
+            fetch_provenance: crate::sources::FetchProvenance::Stub,
             content_hash: "hash".to_string(),
             title: None,
             citation: None,

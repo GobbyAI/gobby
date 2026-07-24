@@ -5,7 +5,7 @@ use crate::commands::index;
 use crate::ingest;
 use crate::ingest::url::{UrlIngestFailure, UrlSnapshot};
 use crate::scope::ResolvedScope;
-use crate::sources::{CompileStatus, SourceManifest, SourceRecord};
+use crate::sources::{CompileStatus, FetchProvenance, SourceManifest, SourceRecord};
 use crate::{ScopeIdentity, WikiError};
 
 use super::model::{ChangedRefresh, RefreshFailure, RefreshResult, RefreshSinks, RefreshedSource};
@@ -26,6 +26,21 @@ pub(crate) fn refresh_url_candidate(
             let source_hash = gobby_core::indexing::content_hash(&snapshot.body);
             let raw_path = raw_source_path(&record.id)?;
             if source_hash == record.content_hash {
+                SourceManifest::update(vault_root, |manifest| {
+                    let entry = manifest
+                        .entries
+                        .iter_mut()
+                        .find(|entry| entry.id == record.id)
+                        .ok_or_else(|| WikiError::NotFound {
+                            resource: "source",
+                            id: record.id.clone(),
+                        })?;
+                    let changed = entry.last_verified_at != snapshot.fetched_at
+                        || entry.fetch_provenance != FetchProvenance::Fetched;
+                    entry.last_verified_at = snapshot.fetched_at.clone();
+                    entry.fetch_provenance = FetchProvenance::Fetched;
+                    Ok(changed)
+                })?;
                 unchanged.push(RefreshResult {
                     id: record.id.clone(),
                     location: record.location.clone(),

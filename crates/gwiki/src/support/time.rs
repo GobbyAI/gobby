@@ -76,6 +76,10 @@ pub(crate) fn unix_timestamp_ms() -> Result<u64, WikiError> {
     })
 }
 
+pub(crate) fn parse_unix_ms(value: &str) -> Option<u64> {
+    value.strip_prefix("unix-ms:")?.parse().ok()
+}
+
 #[cfg(test)]
 mod tests {
     use chrono::FixedOffset;
@@ -126,5 +130,16 @@ mod tests {
             (earliest_expected..=now).contains(&timestamp),
             "timestamp {timestamp} was outside expected range {earliest_expected}..={now}"
         );
+    }
+
+    #[test]
+    fn parse_unix_ms_accepts_only_prefixed_u64_values() {
+        assert_eq!(
+            parse_unix_ms("unix-ms:1783215000000"),
+            Some(1_783_215_000_000)
+        );
+        assert_eq!(parse_unix_ms("1783215000000"), None);
+        assert_eq!(parse_unix_ms("unix-ms:not-a-number"), None);
+        assert_eq!(parse_unix_ms("unix-ms:18446744073709551616"), None);
     }
 }

@@ -328,6 +328,8 @@ mod tests {
             canonical_location: format!("file:///vault/{id}.md"),
             kind: SourceKind::Markdown,
             fetched_at: "2026-07-05T00:00:00Z".to_string(),
+            last_verified_at: "2026-07-05T00:00:00Z".to_string(),
+            fetch_provenance: crate::sources::FetchProvenance::Stub,
             content_hash: format!("{id}-hash"),
             title: Some(title.to_string()),
             citation: None,

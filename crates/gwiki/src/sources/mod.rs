@@ -9,6 +9,7 @@ mod replay_repair;
 mod types;
 
 pub use manifest::*;
+pub(crate) use render::canonicalize_location;
 pub(crate) use replay_repair::*;
 pub use types::*;
 

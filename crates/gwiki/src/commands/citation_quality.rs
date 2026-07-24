@@ -809,6 +809,8 @@ mod tests {
             canonical_location: location.to_string(),
             kind: SourceKind::Url,
             fetched_at: fetched_at.to_string(),
+            last_verified_at: fetched_at.to_string(),
+            fetch_provenance: crate::sources::FetchProvenance::Stub,
             content_hash: "hash".to_string(),
             title: Some("Example report".to_string()),
             citation: Some("Example report".to_string()),

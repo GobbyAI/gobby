@@ -195,6 +195,8 @@ mod tests {
             canonical_location: canonical_location.to_string(),
             kind: SourceKind::Markdown,
             fetched_at: "2026-06-14T00:00:00Z".to_string(),
+            last_verified_at: "2026-06-14T00:00:00Z".to_string(),
+            fetch_provenance: crate::sources::FetchProvenance::Stub,
             content_hash: format!("{id}-hash"),
             title: title.map(str::to_string),
             citation: None,

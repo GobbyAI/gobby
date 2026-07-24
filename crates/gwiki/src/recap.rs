@@ -394,6 +394,8 @@ mod tests {
             canonical_location: format!("session:{id}"),
             kind: SourceKind::Session,
             fetched_at: fetched_at.to_string(),
+            last_verified_at: fetched_at.to_string(),
+            fetch_provenance: crate::sources::FetchProvenance::Stub,
             content_hash: format!("{id}-hash"),
             title: Some(format!("Session {id}")),
             citation: None,

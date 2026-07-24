@@ -1,7 +1,8 @@
 use super::*;
 use crate::IngestFileOptions;
 use crate::sources::{
-    CompileStatus, IngestionMethod, SourceDraft, SourceKind, SourceManifest, SourceReplay,
+    CompileStatus, FetchProvenance, IngestionMethod, SourceDraft, SourceKind, SourceManifest,
+    SourceReplay,
 };
 use std::fs;
 use std::path::PathBuf;
@@ -21,6 +22,8 @@ fn seed_url(root: &Path, location: &str, fetched_at: &str, body: &[u8]) -> Sourc
             location: location.to_string(),
             kind: SourceKind::Url,
             fetched_at: fetched_at.to_string(),
+            last_verified_at: fetched_at.to_string(),
+            fetch_provenance: crate::sources::FetchProvenance::Stub,
             content: body.to_vec(),
             title: Some("Example".to_string()),
             citation: Some(location.to_string()),
@@ -39,6 +42,8 @@ fn seed_file_without_replay(root: &Path) -> SourceRecord {
             location: "/tmp/source.txt".to_string(),
             kind: SourceKind::File,
             fetched_at: "2026-06-02T00:00:00Z".to_string(),
+            last_verified_at: "2026-06-02T00:00:00Z".to_string(),
+            fetch_provenance: crate::sources::FetchProvenance::Stub,
             content: b"file".to_vec(),
             title: Some("File".to_string()),
             citation: None,
@@ -69,6 +74,8 @@ fn seed_local_file(root: &Path, relative_path: &str, body: &[u8]) -> SourceRecor
             location: relative_path.to_string(),
             kind,
             fetched_at: "2026-06-02T00:00:00Z".to_string(),
+            last_verified_at: "2026-06-02T00:00:00Z".to_string(),
+            fetch_provenance: crate::sources::FetchProvenance::Stub,
             content: body.to_vec(),
             title: Some("Local file".to_string()),
             citation: Some(relative_path.to_string()),
@@ -111,6 +118,8 @@ fn seed_scratchpad_replay(root: &Path) -> SourceRecord {
             location: "scratchpad export".to_string(),
             kind: SourceKind::File,
             fetched_at: "2026-06-02T00:00:00Z".to_string(),
+            last_verified_at: "2026-06-02T00:00:00Z".to_string(),
+            fetch_provenance: crate::sources::FetchProvenance::Stub,
             content: b"scratchpad".to_vec(),
             title: Some("Scratchpad".to_string()),
             citation: None,
@@ -149,6 +158,8 @@ fn seed_unsupported_connector(root: &Path) -> SourceRecord {
             location: "stdin:source".to_string(),
             kind: SourceKind::Stdin,
             fetched_at: "2026-06-02T00:00:00Z".to_string(),
+            last_verified_at: "2026-06-02T00:00:00Z".to_string(),
+            fetch_provenance: crate::sources::FetchProvenance::Stub,
             content: b"stdin".to_vec(),
             title: Some("Stdin".to_string()),
             citation: None,
@@ -222,6 +233,66 @@ fn unchanged_content_does_not_rewrite_or_index() {
             .len(),
         1
     );
+}
+
+#[test]
+fn unchanged_url_refresh_promotes_and_advances_cache_freshness() {
+    let temp = tempfile::tempdir().expect("tempdir");
+    let project = temp.path().join("project");
+    fs::create_dir_all(project.join(".gobby")).expect("create project metadata");
+    fs::write(
+        project.join(".gobby/gcode.json"),
+        "{\n  \"id\": \"refresh-cache-test\"\n}\n",
+    )
+    .expect("write project identity");
+    let vault = project.join("wiki");
+    fs::create_dir_all(vault.join("_gwiki")).expect("create vault state");
+    fs::write(vault.join("_gwiki/scope.json"), "{}\n").expect("write vault identity");
+    let url = "https://example.test/refresh-cache";
+    let record = seed_url(&vault, url, "unix-ms:1", b"same");
+    let raw_path = crate::paths::raw_source_path(&record.id).expect("raw source path");
+    fs::create_dir_all(vault.join("raw")).expect("create raw directory");
+    fs::write(vault.join(&raw_path), "raw source").expect("write raw source");
+
+    execute_with_fetcher(
+        ScopeSelection::project(&project),
+        vec![record.id.clone()],
+        false,
+        |record, fetched_at| {
+            Ok(UrlSnapshot {
+                requested_url: record.location.clone(),
+                final_url: record.location.clone(),
+                fetched_at: fetched_at.to_string(),
+                body: b"same".to_vec(),
+                content_type: Some("text/html".to_string()),
+            })
+        },
+    )
+    .expect("refresh unchanged URL");
+
+    let refreshed = SourceManifest::read(&vault)
+        .expect("read refreshed manifest")
+        .entries
+        .into_iter()
+        .find(|entry| entry.id == record.id)
+        .expect("refreshed record");
+    assert_eq!(refreshed.fetch_provenance, FetchProvenance::Fetched);
+    assert_ne!(refreshed.last_verified_at, "unix-ms:1");
+    assert!(crate::support::time::parse_unix_ms(&refreshed.last_verified_at).is_some());
+
+    let mut store = crate::store::MemoryWikiStore::default();
+    let cached = crate::ingest::url::ingest_urls_with_fetcher(
+        &vault,
+        &mut store,
+        &[url.to_string()],
+        &refreshed.last_verified_at,
+        24,
+        |_, _| unreachable!("successful refresh must make URL cacheable"),
+        &mut crate::progress::ProgressOptions::default(),
+    )
+    .expect("ingest after refresh");
+    assert_eq!(cached.cached.len(), 1);
+    assert_eq!(cached.cached[0].source_id, record.id);
 }
 
 #[test]

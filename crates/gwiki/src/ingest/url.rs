@@ -1,9 +1,11 @@
+mod cache;
 mod fetch;
 mod render;
 
 #[cfg(test)]
 mod tests;
 
+use std::collections::HashMap;
 use std::path::Path;
 
 use scraper::Html;
@@ -13,7 +15,7 @@ use crate::ingest::{
     IngestResult, index_after_ingest, markdown_title, text_from_utf8_lossy, write_asset,
     write_raw_markdown,
 };
-use crate::sources::{SourceDraft, SourceManifest};
+use crate::sources::{FetchProvenance, SourceDraft, SourceManifest, canonicalize_location};
 use crate::store::WikiIndexStore;
 
 use self::render::{
@@ -45,14 +47,26 @@ pub struct UrlIngestFailure {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CachedUrlIngest {
+    pub requested_url: String,
+    pub source_id: String,
+    pub fetched_at: String,
+    pub age_hours: u64,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct UrlBatchIngest {
     pub accepted: Vec<AcceptedUrlIngest>,
+    pub cached: Vec<CachedUrlIngest>,
     pub failed: Vec<UrlIngestFailure>,
 }
 
 impl UrlBatchIngest {
     pub fn status(&self) -> &'static str {
-        match (self.accepted.is_empty(), self.failed.is_empty()) {
+        match (
+            self.accepted.is_empty() && self.cached.is_empty(),
+            self.failed.is_empty(),
+        ) {
             (false, true) => "ingested",
             (false, false) => "partial",
             (true, _) => "failed",
@@ -97,6 +111,7 @@ pub(crate) fn ingest_snapshot_without_index(
         snapshot.fetched_at.clone(),
         std::mem::take(&mut snapshot.body),
     )
+    .with_fetch_provenance(FetchProvenance::Fetched)
     .with_title(markdown_title(&title))
     .with_citation(snapshot.final_url.clone());
     let record = SourceManifest::register(vault_root, draft)?;
@@ -135,6 +150,7 @@ fn ingest_non_html_snapshot_without_index(
         snapshot.fetched_at.clone(),
         body.clone(),
     )
+    .with_fetch_provenance(FetchProvenance::Fetched)
     .with_title(title.clone())
     .with_citation(snapshot.final_url.clone());
     let record = SourceManifest::register(vault_root, draft)?;
@@ -171,6 +187,7 @@ pub(crate) fn ingest_urls(
         store,
         urls,
         fetched_at,
+        0,
         fetch::fetch_url_snapshot,
         progress,
     )
@@ -188,6 +205,7 @@ pub(crate) fn ingest_urls_with_fetcher(
     store: &mut impl WikiIndexStore,
     urls: &[String],
     fetched_at: &str,
+    max_age_hours: u64,
     mut fetch: impl FnMut(&str, &str) -> Result<UrlSnapshot, UrlIngestFailure>,
     progress: &mut crate::progress::ProgressOptions<'_>,
 ) -> Result<UrlBatchIngest, WikiError> {
@@ -198,14 +216,42 @@ pub(crate) fn ingest_urls_with_fetcher(
         });
     }
 
+    let manifest = SourceManifest::read(vault_root)?;
     let mut accepted = Vec::new();
+    let mut cached = Vec::new();
     let mut failed = Vec::new();
+    let mut completed = HashMap::new();
     let mut ingest_progress = crate::progress::ActiveProgress::new(
         progress,
         crate::progress::ProgressPhase::IngestUrl,
         urls.len(),
     );
     for url in urls {
+        let canonical_location = canonicalize_location(url);
+        if let Some(first) = completed.get(&canonical_location) {
+            match first {
+                CompletedUrl::Cached(entry) => {
+                    let mut entry = entry.clone();
+                    entry.requested_url = url.clone();
+                    cached.push(entry);
+                }
+                CompletedUrl::Failed(error) => {
+                    let mut error = error.clone();
+                    error.url = url.clone();
+                    failed.push(error);
+                }
+            }
+            ingest_progress.advance(url);
+            continue;
+        }
+        if let Some(entry) =
+            cache::cached_url(vault_root, &manifest, url, fetched_at, max_age_hours)?
+        {
+            cached.push(entry.clone());
+            completed.insert(canonical_location, CompletedUrl::Cached(entry));
+            ingest_progress.advance(url);
+            continue;
+        }
         match fetch(url, fetched_at) {
             Ok(snapshot) => {
                 let requested_url = snapshot.requested_url.clone();
@@ -218,15 +264,33 @@ pub(crate) fn ingest_urls_with_fetcher(
                     SourceManifest::supersede_location(vault_root, &result.record)?;
                     Ok(result)
                 }) {
-                    Ok(result) => accepted.push(AcceptedUrlIngest {
-                        requested_url,
-                        final_url,
-                        result,
-                    }),
-                    Err(error) => failed.push(UrlIngestFailure::from_wiki_error(url, error)),
+                    Ok(result) => {
+                        completed.insert(
+                            canonical_location,
+                            CompletedUrl::Cached(CachedUrlIngest {
+                                requested_url: url.clone(),
+                                source_id: result.record.id.clone(),
+                                fetched_at: result.record.fetched_at.clone(),
+                                age_hours: 0,
+                            }),
+                        );
+                        accepted.push(AcceptedUrlIngest {
+                            requested_url,
+                            final_url,
+                            result,
+                        });
+                    }
+                    Err(error) => {
+                        let error = UrlIngestFailure::from_wiki_error(url, error);
+                        completed.insert(canonical_location, CompletedUrl::Failed(error.clone()));
+                        failed.push(error);
+                    }
                 }
             }
-            Err(error) => failed.push(error),
+            Err(error) => {
+                completed.insert(canonical_location, CompletedUrl::Failed(error.clone()));
+                failed.push(error);
+            }
         }
         ingest_progress.advance(url);
     }
@@ -236,5 +300,15 @@ pub(crate) fn ingest_urls_with_fetcher(
         index_after_ingest(vault_root, store, progress)?;
     }
 
-    Ok(UrlBatchIngest { accepted, failed })
+    Ok(UrlBatchIngest {
+        accepted,
+        cached,
+        failed,
+    })
+}
+
+#[derive(Debug, Clone)]
+enum CompletedUrl {
+    Cached(CachedUrlIngest),
+    Failed(UrlIngestFailure),
 }

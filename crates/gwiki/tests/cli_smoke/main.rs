@@ -141,6 +141,8 @@ citation: Rust Reference, Ownership
             location: "raw/research/ownership-evidence.md".to_string(),
             kind: SourceKind::ResearchNote,
             fetched_at: "2026-05-30T00:00:00Z".to_string(),
+            last_verified_at: "2026-05-30T00:00:00Z".to_string(),
+            fetch_provenance: gobby_wiki::sources::FetchProvenance::Stub,
             content: b"Ownership evidence is grounded in accepted research notes.".to_vec(),
             title: Some("Ownership evidence".to_string()),
             citation: Some("Rust Reference, Ownership".to_string()),

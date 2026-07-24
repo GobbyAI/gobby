@@ -155,6 +155,8 @@ pub(crate) fn ingest_document_with_endpoint_without_index(
             location: snapshot.location.clone(),
             kind: snapshot.kind.clone(),
             fetched_at: snapshot.fetched_at.clone(),
+            last_verified_at: snapshot.fetched_at.clone(),
+            fetch_provenance: crate::sources::FetchProvenance::Stub,
             content: &snapshot.bytes,
             title: Some(title.clone()),
             citation: Some(snapshot.location.clone()),

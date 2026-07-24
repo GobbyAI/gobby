@@ -275,6 +275,8 @@ fn record_for(temp: &Path) -> SourceRecord {
             location: "/tmp/lecture.mp4".to_string(),
             kind: SourceKind::Video,
             fetched_at: "2026-05-29T21:30:00Z".to_string(),
+            last_verified_at: "2026-05-29T21:30:00Z".to_string(),
+            fetch_provenance: crate::sources::FetchProvenance::Stub,
             content: b"video-bytes".to_vec(),
             title: Some("lecture.mp4".to_string()),
             citation: Some("/tmp/lecture.mp4".to_string()),

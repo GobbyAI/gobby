@@ -11,7 +11,7 @@ use super::fetch::{
 use super::render::{escape_wikilink_delimiters, extract_title, html_to_markdownish_text};
 use super::*;
 use crate::ingest::text_from_utf8_lossy;
-use crate::sources::{SourceKind, SourceManifest};
+use crate::sources::{FetchProvenance, SourceKind, SourceManifest};
 use crate::store::{
     MemoryWikiStore, StoreError, WikiChunk, WikiDocument, WikiIndexStore, WikiIngestion, WikiLink,
     WikiSource,
@@ -225,6 +225,7 @@ fn batch_url_ingest_progress_reports_urls_and_index_phase() {
         &mut store,
         &urls,
         "2026-06-02T00:00:00Z",
+        0,
         |url, fetched_at| Ok(test_snapshot(url, url, url, fetched_at)),
         &mut crate::progress::ProgressOptions::with_sink(&mut progress),
     )
@@ -268,6 +269,7 @@ fn batch_url_ingest_accepts_successes_and_records_failures() {
         &mut store,
         &urls,
         "2026-06-02T00:00:00Z",
+        0,
         |url, fetched_at| {
             if url.ends_with("/accepted") {
                 Ok(test_snapshot(url, url, "Accepted URL", fetched_at))
@@ -301,6 +303,387 @@ fn batch_url_ingest_accepts_successes_and_records_failures() {
 }
 
 #[test]
+fn within_ttl_uses_manifest_cache_without_fetch_or_store() {
+    let temp = tempfile::tempdir().expect("tempdir");
+    let url = "https://example.test/cached";
+    let first = ingest_snapshot_without_index(
+        temp.path(),
+        test_snapshot(url, url, "Cached URL", "unix-ms:1783215000000"),
+    )
+    .expect("seed fetched URL");
+    let mut store = CountingStore::default();
+    let mut fetch_calls = 0;
+
+    let result = ingest_urls_with_fetcher(
+        temp.path(),
+        &mut store,
+        &[url.to_string()],
+        "unix-ms:1783222200000",
+        24,
+        |_, _| {
+            fetch_calls += 1;
+            unreachable!("fresh URL must not be fetched")
+        },
+        &mut crate::progress::ProgressOptions::default(),
+    )
+    .expect("cached ingest");
+
+    assert!(result.accepted.is_empty());
+    assert!(result.failed.is_empty());
+    assert_eq!(fetch_calls, 0);
+    assert_eq!(
+        result.cached,
+        vec![CachedUrlIngest {
+            requested_url: url.to_string(),
+            source_id: first.record.id,
+            fetched_at: "unix-ms:1783215000000".to_string(),
+            age_hours: 2,
+        }]
+    );
+    assert_eq!(store.indexed_hash_reads, 0);
+    assert_eq!(store.indexed_hashes_reads, 0);
+}
+
+#[test]
+fn zero_ttl_forces_refetch_even_at_zero_age() {
+    let temp = tempfile::tempdir().expect("tempdir");
+    let url = "https://example.test/zero-ttl";
+    ingest_snapshot_without_index(
+        temp.path(),
+        test_snapshot(url, url, "Zero TTL", "unix-ms:1783215000000"),
+    )
+    .expect("seed fetched URL");
+    let mut store = MemoryWikiStore::default();
+    let mut fetch_calls = 0;
+
+    let result = ingest_urls_with_fetcher(
+        temp.path(),
+        &mut store,
+        &[url.to_string()],
+        "unix-ms:1783215000000",
+        0,
+        |url, fetched_at| {
+            fetch_calls += 1;
+            Ok(test_snapshot(url, url, "Zero TTL", fetched_at))
+        },
+        &mut crate::progress::ProgressOptions::default(),
+    )
+    .expect("zero-TTL ingest");
+
+    assert_eq!(fetch_calls, 1);
+    assert_eq!(result.accepted.len(), 1);
+    assert!(result.cached.is_empty());
+}
+
+#[test]
+fn expired_unchanged_refetch_touches_freshness_and_preserves_capture() {
+    let temp = tempfile::tempdir().expect("tempdir");
+    let url = "https://example.test/expired";
+    let first = ingest_snapshot_without_index(
+        temp.path(),
+        test_snapshot(url, url, "Expired", "unix-ms:1783215000000"),
+    )
+    .expect("seed fetched URL");
+    let first_raw =
+        std::fs::read(temp.path().join(&first.raw_path)).expect("read first raw capture");
+    let mut store = MemoryWikiStore::default();
+    let mut fetch_calls = 0;
+
+    let refreshed = ingest_urls_with_fetcher(
+        temp.path(),
+        &mut store,
+        &[url.to_string()],
+        "unix-ms:1783305000000",
+        24,
+        |url, fetched_at| {
+            fetch_calls += 1;
+            Ok(test_snapshot(url, url, "Expired", fetched_at))
+        },
+        &mut crate::progress::ProgressOptions::default(),
+    )
+    .expect("expired unchanged refetch");
+
+    assert_eq!(fetch_calls, 1);
+    assert_eq!(refreshed.accepted.len(), 1);
+    let refreshed_record = &refreshed.accepted[0].result.record;
+    assert_eq!(refreshed_record.id, first.record.id);
+    assert_eq!(refreshed_record.fetched_at, "unix-ms:1783215000000");
+    assert_eq!(refreshed_record.last_verified_at, "unix-ms:1783305000000");
+    assert_eq!(refreshed_record.fetch_provenance, FetchProvenance::Fetched);
+    assert_eq!(
+        std::fs::read(temp.path().join(&first.raw_path)).expect("read refreshed raw"),
+        first_raw
+    );
+
+    let cached = ingest_urls_with_fetcher(
+        temp.path(),
+        &mut store,
+        &[url.to_string()],
+        "unix-ms:1783308600000",
+        24,
+        |_, _| unreachable!("freshly verified URL must hit cache"),
+        &mut crate::progress::ProgressOptions::default(),
+    )
+    .expect("fresh follow-up");
+    assert_eq!(cached.cached.len(), 1);
+    assert_eq!(cached.cached[0].source_id, first.record.id);
+}
+
+#[test]
+fn missing_url_artifacts_and_invalid_freshness_refetch_for_self_healing() {
+    let html_root = tempfile::tempdir().expect("html tempdir");
+    let html_url = "https://example.test/missing-raw";
+    let html = ingest_snapshot_without_index(
+        html_root.path(),
+        test_snapshot(html_url, html_url, "Missing raw", "unix-ms:1783215000000"),
+    )
+    .expect("seed HTML URL");
+    std::fs::remove_file(html_root.path().join(&html.raw_path)).expect("remove raw");
+    let mut store = MemoryWikiStore::default();
+    let mut html_fetches = 0;
+    ingest_urls_with_fetcher(
+        html_root.path(),
+        &mut store,
+        &[html_url.to_string()],
+        "unix-ms:1783218600000",
+        24,
+        |url, fetched_at| {
+            html_fetches += 1;
+            Ok(test_snapshot(url, url, "Missing raw", fetched_at))
+        },
+        &mut crate::progress::ProgressOptions::default(),
+    )
+    .expect("self-heal missing raw");
+    assert_eq!(html_fetches, 1);
+    assert!(html_root.path().join(&html.raw_path).is_file());
+
+    let pdf_root = tempfile::tempdir().expect("pdf tempdir");
+    let pdf_url = "https://example.test/missing.pdf";
+    let pdf = ingest_snapshot_without_index(
+        pdf_root.path(),
+        pdf_snapshot(pdf_url, "unix-ms:1783215000000"),
+    )
+    .expect("seed PDF URL");
+    let asset_path = pdf.asset_path.clone().expect("PDF asset");
+    std::fs::remove_file(pdf_root.path().join(&asset_path)).expect("remove asset");
+    let mut pdf_fetches = 0;
+    ingest_urls_with_fetcher(
+        pdf_root.path(),
+        &mut store,
+        &[pdf_url.to_string()],
+        "unix-ms:1783218600000",
+        24,
+        |url, fetched_at| {
+            pdf_fetches += 1;
+            Ok(pdf_snapshot(url, fetched_at))
+        },
+        &mut crate::progress::ProgressOptions::default(),
+    )
+    .expect("self-heal missing asset");
+    assert_eq!(pdf_fetches, 1);
+    assert!(pdf_root.path().join(asset_path).is_file());
+
+    SourceManifest::update(pdf_root.path(), |manifest| {
+        manifest.entries[0].last_verified_at = "unix-ms:1784000000000".to_string();
+        Ok(true)
+    })
+    .expect("set future freshness");
+    ingest_urls_with_fetcher(
+        pdf_root.path(),
+        &mut store,
+        &[pdf_url.to_string()],
+        "unix-ms:1783218600000",
+        24,
+        |url, fetched_at| {
+            pdf_fetches += 1;
+            Ok(pdf_snapshot(url, fetched_at))
+        },
+        &mut crate::progress::ProgressOptions::default(),
+    )
+    .expect("future freshness is a miss");
+    SourceManifest::update(pdf_root.path(), |manifest| {
+        manifest.entries[0].last_verified_at = "corrupt".to_string();
+        Ok(true)
+    })
+    .expect("set corrupt freshness");
+    ingest_urls_with_fetcher(
+        pdf_root.path(),
+        &mut store,
+        &[pdf_url.to_string()],
+        "unix-ms:1783218601000",
+        24,
+        |url, fetched_at| {
+            pdf_fetches += 1;
+            Ok(pdf_snapshot(url, fetched_at))
+        },
+        &mut crate::progress::ProgressOptions::default(),
+    )
+    .expect("corrupt freshness is a miss");
+    assert_eq!(pdf_fetches, 3);
+}
+
+#[test]
+fn canonical_batch_duplicates_reuse_success_cache_age_and_failure() {
+    let first_url = "https://EXAMPLE.test/duplicate?b=2&a=1";
+    let duplicate_url = "https://example.test/duplicate?a=1&b=2";
+    let urls = vec![first_url.to_string(), duplicate_url.to_string()];
+
+    let fresh_root = tempfile::tempdir().expect("fresh tempdir");
+    let mut store = MemoryWikiStore::default();
+    let mut fetches = 0;
+    let fresh = ingest_urls_with_fetcher(
+        fresh_root.path(),
+        &mut store,
+        &urls,
+        "unix-ms:1783215000000",
+        0,
+        |url, fetched_at| {
+            fetches += 1;
+            Ok(test_snapshot(url, url, "Duplicate", fetched_at))
+        },
+        &mut crate::progress::ProgressOptions::default(),
+    )
+    .expect("dedup first fetch");
+    assert_eq!(fetches, 1);
+    assert_eq!(fresh.accepted.len(), 1);
+    assert_eq!(fresh.cached.len(), 1);
+    assert_eq!(fresh.cached[0].age_hours, 0);
+    assert_eq!(
+        fresh.cached[0].source_id,
+        fresh.accepted[0].result.record.id
+    );
+
+    let cached_root = tempfile::tempdir().expect("cached tempdir");
+    let seeded = ingest_snapshot_without_index(
+        cached_root.path(),
+        test_snapshot(first_url, first_url, "Duplicate", "unix-ms:1783215000000"),
+    )
+    .expect("seed cached URL");
+    let cached = ingest_urls_with_fetcher(
+        cached_root.path(),
+        &mut store,
+        &urls,
+        "unix-ms:1783222200000",
+        24,
+        |_, _| unreachable!("cache-hit duplicates must not fetch"),
+        &mut crate::progress::ProgressOptions::default(),
+    )
+    .expect("dedup cache hit");
+    assert_eq!(cached.cached.len(), 2);
+    assert!(cached.cached.iter().all(|entry| entry.age_hours == 2));
+    assert!(
+        cached
+            .cached
+            .iter()
+            .all(|entry| entry.source_id == seeded.record.id)
+    );
+
+    let failed_root = tempfile::tempdir().expect("failure tempdir");
+    let mut failed_fetches = 0;
+    let failed = ingest_urls_with_fetcher(
+        failed_root.path(),
+        &mut store,
+        &urls,
+        "unix-ms:1783215000000",
+        24,
+        |url, _| {
+            failed_fetches += 1;
+            Err(UrlIngestFailure::new(url, "http_status", "HTTP status 500"))
+        },
+        &mut crate::progress::ProgressOptions::default(),
+    )
+    .expect("dedup failure");
+    assert_eq!(failed_fetches, 1);
+    assert_eq!(failed.failed.len(), 2);
+}
+
+#[test]
+fn pre_field_record_promotes_once_and_collect_redrop_cannot_downgrade() {
+    let temp = tempfile::tempdir().expect("tempdir");
+    let url = "https://example.test/pre-field";
+    let seeded = ingest_snapshot_without_index(
+        temp.path(),
+        test_snapshot(url, url, "Pre-field", "unix-ms:1783215000000"),
+    )
+    .expect("seed fetched URL");
+    remove_freshness_fields_from_manifest(temp.path());
+    let legacy = SourceManifest::read(temp.path()).expect("read legacy manifest");
+    assert_eq!(legacy.entries[0].fetch_provenance, FetchProvenance::Stub);
+    assert_eq!(
+        legacy.entries[0].last_verified_at,
+        legacy.entries[0].fetched_at
+    );
+
+    let mut store = MemoryWikiStore::default();
+    let mut fetches = 0;
+    ingest_urls_with_fetcher(
+        temp.path(),
+        &mut store,
+        &[url.to_string()],
+        "unix-ms:1783218600000",
+        24,
+        |url, fetched_at| {
+            fetches += 1;
+            Ok(test_snapshot(url, url, "Pre-field", fetched_at))
+        },
+        &mut crate::progress::ProgressOptions::default(),
+    )
+    .expect("promote legacy record");
+    let promoted = SourceManifest::read(temp.path()).expect("read promoted manifest");
+    let fetched_record = promoted
+        .entries
+        .iter()
+        .find(|record| record.id == seeded.record.id)
+        .expect("promoted record");
+    assert_eq!(fetched_record.fetch_provenance, FetchProvenance::Fetched);
+
+    std::fs::create_dir_all(temp.path().join("inbox")).expect("create inbox");
+    std::fs::write(
+        temp.path().join("inbox/link.url"),
+        format!("[InternetShortcut]\nURL={url}\n"),
+    )
+    .expect("write collect stub");
+    crate::collect::collect_inbox(temp.path(), "unix-ms:1783219000000").expect("collect re-drop");
+    let cached = ingest_urls_with_fetcher(
+        temp.path(),
+        &mut store,
+        &[url.to_string()],
+        "unix-ms:1783220000000",
+        24,
+        |_, _| unreachable!("collect stub must not hide fetched record"),
+        &mut crate::progress::ProgressOptions::default(),
+    )
+    .expect("cache after collect re-drop");
+    assert_eq!(fetches, 1);
+    assert_eq!(cached.cached[0].source_id, seeded.record.id);
+}
+
+#[test]
+fn non_html_url_has_cache_parity_with_html() {
+    let temp = tempfile::tempdir().expect("tempdir");
+    let url = "https://example.test/paper.pdf";
+    let first =
+        ingest_snapshot_without_index(temp.path(), pdf_snapshot(url, "unix-ms:1783215000000"))
+            .expect("seed PDF URL");
+    assert_eq!(first.record.kind, SourceKind::Pdf);
+    let mut store = MemoryWikiStore::default();
+
+    let cached = ingest_urls_with_fetcher(
+        temp.path(),
+        &mut store,
+        &[url.to_string()],
+        "unix-ms:1783218600000",
+        24,
+        |_, _| unreachable!("fresh PDF URL must hit cache"),
+        &mut crate::progress::ProgressOptions::default(),
+    )
+    .expect("cached PDF");
+
+    assert_eq!(cached.cached.len(), 1);
+    assert_eq!(cached.cached[0].source_id, first.record.id);
+}
+
+#[test]
 fn reingesting_changed_url_supersedes_manifest_record() {
     let temp = tempfile::tempdir().expect("tempdir");
     let urls = vec!["https://example.test/changing".to_string()];
@@ -311,6 +694,7 @@ fn reingesting_changed_url_supersedes_manifest_record() {
         &mut store,
         &urls,
         "2026-07-01T00:00:00Z",
+        0,
         |url, fetched_at| Ok(test_snapshot(url, url, "First revision", fetched_at)),
         &mut crate::progress::ProgressOptions::default(),
     )
@@ -324,6 +708,7 @@ fn reingesting_changed_url_supersedes_manifest_record() {
         &mut store,
         &urls,
         "2026-07-02T00:00:00Z",
+        0,
         |url, fetched_at| Ok(test_snapshot(url, url, "Second revision", fetched_at)),
         &mut crate::progress::ProgressOptions::default(),
     )
@@ -371,7 +756,10 @@ fn unchanged_html_url_reingest_reuses_raw_capture_and_record_timestamp() {
     let second_raw =
         std::fs::read_to_string(temp.path().join(&second.raw_path)).expect("second raw");
 
-    assert_eq!(second.record, first.record);
+    assert_eq!(second.record.id, first.record.id);
+    assert_eq!(second.record.fetched_at, first.record.fetched_at);
+    assert_eq!(second.record.last_verified_at, "2026-07-02T00:00:00Z");
+    assert_eq!(second.record.fetch_provenance, FetchProvenance::Fetched);
     assert_eq!(second.raw_path, first.raw_path);
     assert_eq!(second_raw, first_raw);
     assert!(second_raw.contains("2026-07-01T00:00:00Z"));
@@ -412,7 +800,10 @@ fn unchanged_non_html_url_reingest_reuses_raw_capture_and_asset() {
     let second_raw =
         std::fs::read_to_string(temp.path().join(&second.raw_path)).expect("second raw");
 
-    assert_eq!(second.record, first.record);
+    assert_eq!(second.record.id, first.record.id);
+    assert_eq!(second.record.fetched_at, first.record.fetched_at);
+    assert_eq!(second.record.last_verified_at, "2026-07-02T00:00:00Z");
+    assert_eq!(second.record.fetch_provenance, FetchProvenance::Fetched);
     assert_eq!(second.raw_path, first.raw_path);
     assert_eq!(second.asset_path.as_ref(), Some(&first_asset));
     assert_eq!(
@@ -438,6 +829,7 @@ fn batch_url_ingest_indexes_once_after_accepted_batch() {
         &mut store,
         &urls,
         "2026-06-02T00:00:00Z",
+        0,
         |url, fetched_at| Ok(test_snapshot(url, url, url, fetched_at)),
         &mut crate::progress::ProgressOptions::default(),
     )
@@ -551,6 +943,44 @@ fn test_snapshot(
         .into_bytes(),
         content_type: Some("text/html".to_string()),
     }
+}
+
+fn pdf_snapshot(url: &str, fetched_at: &str) -> UrlSnapshot {
+    UrlSnapshot {
+        requested_url: url.to_string(),
+        final_url: url.to_string(),
+        fetched_at: fetched_at.to_string(),
+        body: b"%PDF-1.7\ncached payload\n%%EOF\n".to_vec(),
+        content_type: Some("application/pdf".to_string()),
+    }
+}
+
+fn remove_freshness_fields_from_manifest(vault_root: &Path) {
+    let path = SourceManifest::index_path(vault_root);
+    let index = std::fs::read_to_string(&path).expect("read source index");
+    let rewritten = index
+        .lines()
+        .map(|line| {
+            let Some(marker_start) = line.find("<!-- gwiki-source:") else {
+                return line.to_string();
+            };
+            let json_start = marker_start + "<!-- gwiki-source:".len();
+            let marker_end = line[json_start..].rfind("-->").expect("marker end");
+            let json_end = json_start + marker_end;
+            let mut value: serde_json::Value =
+                serde_json::from_str(line[json_start..json_end].trim()).expect("parse marker");
+            let object = value.as_object_mut().expect("source record object");
+            object.remove("last_verified_at");
+            object.remove("fetch_provenance");
+            format!(
+                "{}{} -->",
+                &line[..json_start],
+                serde_json::to_string(&value).expect("serialize legacy marker")
+            )
+        })
+        .collect::<Vec<_>>()
+        .join("\n");
+    std::fs::write(path, format!("{rewritten}\n")).expect("write legacy source index");
 }
 
 #[derive(Default)]

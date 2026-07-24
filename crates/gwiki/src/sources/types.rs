@@ -29,6 +29,14 @@ pub enum SourceKind {
     GitRepository,
 }
 
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum FetchProvenance {
+    Fetched,
+    #[default]
+    Stub,
+}
+
 impl fmt::Display for SourceKind {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.write_str(match self {
@@ -89,6 +97,8 @@ pub struct SourceDraft {
     pub location: String,
     pub kind: SourceKind,
     pub fetched_at: String,
+    pub last_verified_at: String,
+    pub fetch_provenance: FetchProvenance,
     pub content: Vec<u8>,
     pub title: Option<String>,
     pub citation: Option<String>,
@@ -104,10 +114,13 @@ impl SourceDraft {
         fetched_at: impl Into<String>,
         content: impl Into<Vec<u8>>,
     ) -> Self {
+        let fetched_at = fetched_at.into();
         Self {
             location: location.into(),
             kind,
-            fetched_at: fetched_at.into(),
+            last_verified_at: fetched_at.clone(),
+            fetched_at,
+            fetch_provenance: FetchProvenance::Stub,
             content: content.into(),
             title: None,
             citation: None,
@@ -123,6 +136,11 @@ impl SourceDraft {
         content: impl Into<Vec<u8>>,
     ) -> Self {
         Self::new(location, SourceKind::Url, fetched_at, content)
+    }
+
+    pub fn with_fetch_provenance(mut self, provenance: FetchProvenance) -> Self {
+        self.fetch_provenance = provenance;
+        self
     }
 
     pub fn with_title(mut self, title: impl Into<String>) -> Self {
@@ -155,6 +173,8 @@ pub(crate) struct SourceDraftRef<'a> {
     pub location: String,
     pub kind: SourceKind,
     pub fetched_at: String,
+    pub last_verified_at: String,
+    pub fetch_provenance: FetchProvenance,
     pub content: &'a [u8],
     pub title: Option<String>,
     pub citation: Option<String>,
@@ -170,6 +190,10 @@ pub struct SourceRecord {
     pub canonical_location: String,
     pub kind: SourceKind,
     pub fetched_at: String,
+    #[serde(default)]
+    pub last_verified_at: String,
+    #[serde(default)]
+    pub fetch_provenance: FetchProvenance,
     pub content_hash: String,
     pub title: Option<String>,
     pub citation: Option<String>,

@@ -21,6 +21,8 @@ fn seed_source(
             location: format!("https://example.com/{label}"),
             kind: SourceKind::Url,
             fetched_at: "2026-05-30T00:00:00Z".to_string(),
+            last_verified_at: "2026-05-30T00:00:00Z".to_string(),
+            fetch_provenance: gobby_wiki::sources::FetchProvenance::Stub,
             content: format!("source body {label}").into_bytes(),
             title: Some(format!("Example source {label}")),
             citation: Some(format!("Example citation {label}")),

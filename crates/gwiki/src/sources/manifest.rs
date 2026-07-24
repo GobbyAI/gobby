@@ -11,7 +11,8 @@ use super::render::{
     canonicalize_location, existing_index_without_manifest, render_entry, source_id,
 };
 use super::types::{
-    CompileStatus, IngestionMethod, SourceDraft, SourceDraftRef, SourceKind, SourceRecord,
+    CompileStatus, FetchProvenance, IngestionMethod, SourceDraft, SourceDraftRef, SourceKind,
+    SourceRecord,
 };
 use super::{
     DEFAULT_SOURCE_MANIFEST_LOCK_TIMEOUT, GENERATED_SOURCE_MANIFEST_END,
@@ -54,11 +55,15 @@ impl SourceManifest {
                 });
             };
             let json = line[json_start..json_start + marker_end].trim();
-            let record = serde_json::from_str(json).map_err(|error| WikiError::Json {
-                action: "parse raw source index marker",
-                path: Some(index_path.clone()),
-                source: error,
-            })?;
+            let mut record: SourceRecord =
+                serde_json::from_str(json).map_err(|error| WikiError::Json {
+                    action: "parse raw source index marker",
+                    path: Some(index_path.clone()),
+                    source: error,
+                })?;
+            if record.last_verified_at.is_empty() {
+                record.last_verified_at = record.fetched_at.clone();
+            }
             entries.push(record);
         }
 
@@ -81,6 +86,8 @@ impl SourceManifest {
                 location: draft.location,
                 kind: draft.kind,
                 fetched_at: draft.fetched_at,
+                last_verified_at: draft.last_verified_at,
+                fetch_provenance: draft.fetch_provenance,
                 title: draft.title,
                 citation: draft.citation,
                 license: draft.license,
@@ -102,6 +109,8 @@ impl SourceManifest {
                 location: draft.location,
                 kind: draft.kind,
                 fetched_at: draft.fetched_at,
+                last_verified_at: draft.last_verified_at,
+                fetch_provenance: draft.fetch_provenance,
                 title: draft.title,
                 citation: draft.citation,
                 license: draft.license,
@@ -120,9 +129,16 @@ impl SourceManifest {
         with_manifest_lock(vault_root, || {
             let mut manifest = Self::read(vault_root)?;
             let canonical_location = canonicalize_location(&draft.location);
-            if let Some(existing) = manifest.entries.iter().find(|entry| {
+            if let Some(existing) = manifest.entries.iter_mut().find(|entry| {
                 entry.canonical_location == canonical_location && entry.content_hash == content_hash
             }) {
+                if draft.fetch_provenance == FetchProvenance::Fetched {
+                    existing.last_verified_at = draft.last_verified_at;
+                    existing.fetch_provenance = FetchProvenance::Fetched;
+                    let existing = existing.clone();
+                    manifest.write_unlocked(vault_root)?;
+                    return Ok(existing);
+                }
                 return Ok(existing.clone());
             }
 
@@ -132,6 +148,8 @@ impl SourceManifest {
                 canonical_location,
                 kind: draft.kind,
                 fetched_at: draft.fetched_at,
+                last_verified_at: draft.last_verified_at,
+                fetch_provenance: draft.fetch_provenance,
                 content_hash,
                 title: draft.title,
                 citation: draft.citation,
@@ -373,6 +391,8 @@ struct SourceRecordParts {
     location: String,
     kind: SourceKind,
     fetched_at: String,
+    last_verified_at: String,
+    fetch_provenance: FetchProvenance,
     title: Option<String>,
     citation: Option<String>,
     license: Option<String>,
