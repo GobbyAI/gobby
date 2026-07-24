@@ -7,6 +7,7 @@ import json
 import logging
 from collections.abc import Callable, Mapping
 from fnmatch import fnmatch
+from functools import partial
 from typing import Any, Literal, NamedTuple
 
 from mcp.types import CallToolResult, TextContent
@@ -341,10 +342,41 @@ def _serialized_size(value: object) -> int:
     return len(json.dumps(value, ensure_ascii=False, default=str))
 
 
+def _fit_text_to_budget(text: str, fits: Callable[[str], bool]) -> str:
+    if fits(text):
+        return text
+
+    low = 0
+    high = len(text)
+    while low < high:
+        midpoint = (low + high + 1) // 2
+        if fits(text[:midpoint]):
+            low = midpoint
+        else:
+            high = midpoint - 1
+    return text[:low]
+
+
 def _fits(envelope: dict[str, Any], key: str, value: object, limit: int) -> bool:
     candidate = dict(envelope)
     candidate[key] = value
     return _serialized_size(candidate) <= limit
+
+
+def _fits_match_content(
+    content: str,
+    *,
+    envelope: dict[str, Any],
+    fitted: list[dict[str, Any]],
+    candidate: dict[str, Any],
+    limit: int,
+) -> bool:
+    return _fits(
+        envelope,
+        "matches",
+        [*fitted, {**candidate, "content": content}],
+        limit,
+    )
 
 
 def _fit_structure(
@@ -376,17 +408,10 @@ def _fit_text_field(
     text: str,
     limit: int,
 ) -> str:
-    if _fits(envelope, key, text, limit):
-        return text
-    low = 0
-    high = len(text)
-    while low < high:
-        midpoint = (low + high + 1) // 2
-        if _fits(envelope, key, text[:midpoint], limit):
-            low = midpoint
-        else:
-            high = midpoint - 1
-    return text[:low]
+    return _fit_text_to_budget(
+        text,
+        lambda candidate: _fits(envelope, key, candidate, limit),
+    )
 
 
 def _fit_matches(
@@ -403,16 +428,16 @@ def _fit_matches(
         if not _fits(envelope, "matches", [*fitted, candidate], limit):
             break
         original_content = str(match.get("content", ""))
-        low = 0
-        high = len(original_content)
-        while low < high:
-            midpoint = (low + high + 1) // 2
-            candidate["content"] = original_content[:midpoint]
-            if _fits(envelope, "matches", [*fitted, candidate], limit):
-                low = midpoint
-            else:
-                high = midpoint - 1
-        candidate["content"] = original_content[:low]
+        candidate["content"] = _fit_text_to_budget(
+            original_content,
+            partial(
+                _fits_match_content,
+                envelope=envelope,
+                fitted=fitted,
+                candidate=candidate,
+                limit=limit,
+            ),
+        )
         fitted.append(candidate)
 
 

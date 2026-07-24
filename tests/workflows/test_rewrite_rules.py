@@ -8,7 +8,6 @@ from datetime import UTC, datetime
 from typing import Any
 
 import pytest
-import yaml
 
 from gobby.hooks.events import HookEvent, HookEventType, SessionSource
 from gobby.skills.formatting import skill_fetch_directive
@@ -23,6 +22,16 @@ from gobby.workflows.definitions import (
 from gobby.workflows.engine.core import RuleEngine
 from gobby.workflows.sync_rules import get_bundled_rules_path, sync_bundled_rules
 from gobby.workflows.templates import TemplateEngine
+from tests.framing_corpus import (
+    REDIRECT_RULES,
+    TRUE_RESTRICTION_RULES,
+)
+from tests.framing_corpus import (
+    SKILL_FETCH_REASON_TEMPLATE as _SKILL_FETCH_TEMPLATE,
+)
+from tests.framing_corpus import (
+    bundled_before_tool_block_reasons as _bundled_before_tool_block_reasons,
+)
 
 pytestmark = pytest.mark.unit
 
@@ -108,158 +117,9 @@ def _load_bundled_rule(
     raise AssertionError(f"Bundled rule {rule_name!r} not found under {rules_path}")
 
 
-REDIRECT_RULES = frozenset(
-    {
-        "block-and-teach-context7",
-        "block-ask-during-stop-compliance",
-        "block-claude-memory-read",
-        "block-claude-memory-search",
-        "block-claude-memory-write",
-        "block-direct-verification-evidence-variable-set",
-        "block-edits-plan-mode",
-        "block-gobby-tasks-cli",
-        "block-native-task-tools-unclaimed",
-        "block-native-todo-write",
-        "block-needs-review-interactive",
-        "block-reopen-task",
-        "block-writes-outside-plan-artifact",
-        "enforce-tdd-block",
-        "no-bash-sleep",
-        "no-external-github-issues",
-        "no-full-cargo-test",
-        "no-full-go-test",
-        "no-full-pytest-suite",
-        "no-full-vitest-suite",
-        "no-invalid-git-flags",
-        "prefer-gcode-for-code-search",
-        "prefer-gcode-for-source-read",
-        "require-bash-skill",
-        "require-build-coordinator-for-gobby-build",
-        "require-c-skill",
-        "require-claimed-task-required-skills",
-        "require-clean-tree-before-status",
-        "require-code-index-skill",
-        "require-commit-before-status",
-        "require-completion-readiness-evidence",
-        "require-cpp-skill",
-        "require-csharp-skill",
-        "require-current-context-schema-before-call",
-        "require-dart-skill",
-        "require-elixir-skill",
-        "require-go-skill",
-        "require-java-skill",
-        "require-javascript-skill",
-        "require-json-skill",
-        "require-kotlin-skill",
-        "require-lua-skill",
-        "require-memory-review-before-status",
-        "require-objc-skill",
-        "require-php-skill",
-        "require-python-skill",
-        "require-restraint-skill",
-        "require-ruby-skill",
-        "require-rust-skill",
-        "require-scala-skill",
-        "require-swift-skill",
-        "require-task-before-edit",
-        "require-task-creation-skill-loaded",
-        "require-task-creation-skill-on-schema",
-        "require-task-transitions-skill-loaded",
-        "require-task-transitions-skill-on-lifecycle",
-        "require-typescript-skill",
-        "require-uv",
-        "require-yaml-skill",
-        "task-commit-project-path-allowlist-before-git",
-    }
-)
-
-TRUE_RESTRICTION_RULES = frozenset(
-    {
-        "no-agent-spawn-for-merge",
-        "no-brew-install",
-        "no-cargo-add",
-        "no-cargo-publish",
-        "no-cargo-publish-interactive",
-        "no-curl-upload",
-        "no-daemon-management",
-        "no-daemon-management-http",
-        "no-dd",
-        "no-dd-interactive",
-        "no-destructive-git",
-        "no-destructive-git-interactive",
-        "no-force-kill",
-        "no-force-kill-interactive",
-        "no-force-push",
-        "no-force-push-interactive",
-        "no-gem-install",
-        "no-gem-push",
-        "no-gem-push-interactive",
-        "no-npm-install",
-        "no-npm-publish",
-        "no-npm-publish-interactive",
-        "no-npx",
-        "no-pip-install",
-        "no-push",
-        "no-push-for-workers",
-        "no-recursive-permissions",
-        "no-recursive-permissions-interactive",
-        "no-recursive-rm",
-        "no-recursive-rm-interactive",
-        "no-remote-copy",
-        "no-remote-exec",
-        "no-secret-read",
-        "no-secure-delete",
-        "no-secure-delete-interactive",
-        "no-truncate",
-        "no-truncate-interactive",
-        "no-twine-upload",
-        "no-twine-upload-interactive",
-        "no-uv-add",
-        "no-wget-upload",
-        "no-yarn-add",
-    }
-)
-
 _ACTION_FIRST_PREFIXES = ("Retry ", "Use ", "Run ", "Call ", "If ")
 _GET_SKILL_RE = re.compile(r'get_skill\(name=(["\']).+?\1\)')
 _COMMAND_CALL_RE = re.compile(r"\b[a-z_][a-z0-9_]*\([^)]*\)")
-_SKILL_FETCH_TEMPLATE = "{{ skill_fetch_directive(first_unloaded_claimed_task_required_skill(tool_input, event.data)) }}"
-
-
-def _bundled_before_tool_block_reasons() -> dict[str, str]:
-    reasons: dict[str, str] = {}
-    rules_path = get_bundled_rules_path()
-    for yaml_file in sorted(rules_path.rglob("*.yaml")):
-        if "deprecated" in yaml_file.relative_to(rules_path).parts:
-            continue
-        data: Any = yaml.safe_load(yaml_file.read_text(encoding="utf-8"))
-        if not isinstance(data, dict):
-            continue
-        rules: Any = data.get("rules") or {}
-        if not isinstance(rules, dict):
-            continue
-        for rule_name, rule_data in rules.items():
-            if not isinstance(rule_name, str) or not isinstance(rule_data, dict):
-                continue
-            if rule_data.get("event") != "before_tool":
-                continue
-            raw_effects = rule_data.get("effects")
-            if raw_effects is None:
-                raw_effect = rule_data.get("effect")
-                raw_effects = [raw_effect] if raw_effect is not None else []
-            block_effects = [
-                effect
-                for effect in raw_effects
-                if isinstance(effect, dict) and effect.get("type") == "block"
-            ]
-            if not block_effects:
-                continue
-            assert len(block_effects) == 1, f"{rule_name} must have one block reason"
-            reason = block_effects[0].get("reason")
-            assert isinstance(reason, str), f"{rule_name} must have a string block reason"
-            assert rule_name not in reasons, f"duplicate live block rule: {rule_name}"
-            reasons[rule_name] = reason
-    return reasons
 
 
 def _is_action_first_reason(reason: str) -> bool:

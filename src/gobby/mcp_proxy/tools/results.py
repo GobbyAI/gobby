@@ -2,14 +2,18 @@
 
 from __future__ import annotations
 
-import json
 import logging
 import uuid
 from collections.abc import Callable
+from functools import partial
 from typing import Any
 
 from gobby.config.features import ToolResultOffloadConfig
-from gobby.mcp_proxy.services.result_offload import _WRAPPER_MUTATION_RESERVE
+from gobby.mcp_proxy.services.result_offload import (
+    _WRAPPER_MUTATION_RESERVE,
+    _fit_text_to_budget,
+    _serialized_size,
+)
 from gobby.mcp_proxy.tools.internal import InternalToolRegistry
 from gobby.search.keyword import (
     MAX_PG_SEARCH_QUERY_CHARS,
@@ -265,6 +269,24 @@ def _hydrate_matches(
     return matches
 
 
+def _fits_search_match_content(
+    content: str,
+    *,
+    fitted: dict[str, Any],
+    match: dict[str, Any],
+    limit: int,
+) -> bool:
+    return (
+        _serialized_size(
+            {
+                **fitted,
+                "matches": [*fitted["matches"], {**match, "content": content}],
+            }
+        )
+        <= limit
+    )
+
+
 def _fit_search_result(result: dict[str, Any], limit: int) -> dict[str, Any]:
     if _serialized_size(result) <= limit:
         return result
@@ -282,20 +304,20 @@ def _fit_search_result(result: dict[str, Any], limit: int) -> dict[str, Any]:
             continue
 
         content = str(match["content"])
-        low = 0
-        high = len(content)
-        best: dict[str, Any] | None = None
-        while low <= high:
-            midpoint = (low + high) // 2
-            shortened = {**match, "content": content[:midpoint]}
-            candidate = {**fitted, "matches": [*fitted["matches"], shortened]}
-            if _serialized_size(candidate) <= limit:
-                best = candidate
-                low = midpoint + 1
-            else:
-                high = midpoint - 1
-        if best is not None and best["matches"][-1]["content"]:
-            fitted = best
+        fitted_content = _fit_text_to_budget(
+            content,
+            partial(
+                _fits_search_match_content,
+                fitted=fitted,
+                match=match,
+                limit=limit,
+            ),
+        )
+        if fitted_content:
+            fitted = {
+                **fitted,
+                "matches": [*fitted["matches"], {**match, "content": fitted_content}],
+            }
         break
     return fitted
 
@@ -305,23 +327,30 @@ def _fit_slice_result(result: ToolResultSlice, limit: int) -> dict[str, Any]:
         return dict(result)
 
     content = str(result["content"])
-    low = 0
-    high = len(content)
-    best = {**result, "content": "", "next_offset": result["offset"]}
-    while low <= high:
-        midpoint = (low + high) // 2
-        next_offset = result["offset"] + midpoint
-        candidate = {
-            **result,
-            "content": content[:midpoint],
-            "next_offset": (next_offset if next_offset < result["stored_chars"] else None),
-        }
-        if _serialized_size(candidate) <= limit:
-            best = candidate
-            low = midpoint + 1
-        else:
-            high = midpoint - 1
-    return best
+    fitted_content = _fit_text_to_budget(
+        content,
+        lambda shortened: _serialized_size(
+            {
+                **result,
+                "content": shortened,
+                "next_offset": (
+                    result["offset"] + len(shortened)
+                    if result["offset"] + len(shortened) < result["stored_chars"]
+                    else None
+                ),
+            }
+        )
+        <= limit,
+    )
+    if not fitted_content:
+        return {**result, "content": "", "next_offset": result["offset"]}
+
+    next_offset = result["offset"] + len(fitted_content)
+    return {
+        **result,
+        "content": fitted_content,
+        "next_offset": next_offset if next_offset < result["stored_chars"] else None,
+    }
 
 
 def _bounded_error(message: str, limit: int) -> dict[str, Any]:
@@ -329,19 +358,10 @@ def _bounded_error(message: str, limit: int) -> dict[str, Any]:
     if _serialized_size(result) <= limit:
         return result
 
-    low = 0
-    high = len(message)
-    best = {"success": False, "error": ""}
-    while low <= high:
-        midpoint = (low + high) // 2
-        candidate = {"success": False, "error": message[:midpoint]}
-        if _serialized_size(candidate) <= limit:
-            best = candidate
-            low = midpoint + 1
-        else:
-            high = midpoint - 1
-    return best
-
-
-def _serialized_size(value: object) -> int:
-    return len(json.dumps(value, ensure_ascii=False, default=str))
+    return {
+        "success": False,
+        "error": _fit_text_to_budget(
+            message,
+            lambda shortened: _serialized_size({"success": False, "error": shortened}) <= limit,
+        ),
+    }
