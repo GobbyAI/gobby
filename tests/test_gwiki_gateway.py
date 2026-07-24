@@ -994,6 +994,52 @@ async def test_ingest_url_passes_batch_and_preserves_payload(
     assert result["payload"] == payload
 
 
+@pytest.mark.parametrize("max_age_hours", [0, 24, 8760])
+async def test_ingest_url_passes_max_age_hours(
+    monkeypatch: pytest.MonkeyPatch,
+    max_age_hours: int,
+) -> None:
+    payload = {"status": "success", "accepted": [], "failed": [], "cached": []}
+    calls = _patch_subprocess(monkeypatch, [FakeProcess(stdout=_json_bytes(payload))])
+
+    await _gateway().ingest_url(
+        ["https://example.test/a"],
+        max_age_hours=max_age_hours,
+    )
+
+    assert calls == [
+        (
+            "/bin/gwiki",
+            "ingest-url",
+            "https://example.test/a",
+            "--max-age-hours",
+            str(max_age_hours),
+            "--project",
+            "/repo",
+            "--topic",
+            "docs",
+            "--format",
+            "json",
+        )
+    ]
+
+
+@pytest.mark.parametrize("max_age_hours", [-1, 8761])
+async def test_ingest_url_rejects_invalid_max_age_before_subprocess(
+    monkeypatch: pytest.MonkeyPatch,
+    max_age_hours: int,
+) -> None:
+    calls = _patch_subprocess(monkeypatch, [])
+
+    with pytest.raises(ValueError, match="max_age_hours must be between 0 and 8760"):
+        await _gateway().ingest_url(
+            ["https://example.test/a"],
+            max_age_hours=max_age_hours,
+        )
+
+    assert calls == []
+
+
 async def test_ingest_url_preserves_partial_and_all_failed_errors(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

@@ -8,6 +8,7 @@ from gobby.gwiki_gateway import (
     GENERATION_GWIKI_TIMEOUT_SECONDS,
     INTERACTIVE_GWIKI_TIMEOUT_SECONDS,
     INTERACTIVE_HEALTH_GWIKI_TIMEOUT_SECONDS,
+    MAX_URL_AGE_HOURS,
     GwikiCommandError,
     GwikiGateway,
     GwikiGatewayError,
@@ -198,19 +199,20 @@ def create_wiki_registry(
             lambda: write_call(project, topic, lambda gwiki: gwiki.ingest_file(path))
         )
 
-    @registry.tool(
-        name="wiki_ingest",
-        description="Ingest one path, multiple paths, or a URL batch. Provide file input or urls, not both.",
-    )
     async def wiki_ingest(
         path: str | None = None,
         paths: list[str] | None = None,
         urls: list[str] | None = None,
+        max_age_hours: int | None = None,
         project: str | None = None,
         topic: str | None = None,
     ) -> dict[str, Any]:
         file_paths = _ingest_paths(path, paths)
         url_values = _string_sequence(urls)
+        if file_paths and max_age_hours is not None:
+            return _validation_error("max_age_hours is only valid with urls")
+        if max_age_hours is not None and not 0 <= max_age_hours <= MAX_URL_AGE_HOURS:
+            return _validation_error(f"max_age_hours must be between 0 and {MAX_URL_AGE_HOURS}")
         if file_paths and url_values:
             return _validation_error("Provide file paths or URLs, not both")
         if not file_paths and not url_values:
@@ -218,7 +220,14 @@ def create_wiki_registry(
 
         if url_values:
             return await _guard(
-                lambda: write_call(project, topic, lambda gwiki: gwiki.ingest_url(url_values))
+                lambda: write_call(
+                    project,
+                    topic,
+                    lambda gwiki: gwiki.ingest_url(
+                        url_values,
+                        max_age_hours=max_age_hours,
+                    ),
+                )
             )
         if len(file_paths) == 1:
             return await _guard(
@@ -227,6 +236,30 @@ def create_wiki_registry(
         return await _guard(
             lambda: write_call(project, topic, lambda gwiki: _ingest_many(gwiki, file_paths))
         )
+
+    registry.register(
+        name="wiki_ingest",
+        description=(
+            "Ingest one path, multiple paths, or a URL batch. Provide file input or urls, not both."
+        ),
+        input_schema={
+            "type": "object",
+            "properties": {
+                "path": {"type": "string"},
+                "paths": {"type": "array", "items": {"type": "string"}},
+                "urls": {"type": "array", "items": {"type": "string"}},
+                "max_age_hours": {
+                    "type": "integer",
+                    "minimum": 0,
+                    "maximum": MAX_URL_AGE_HOURS,
+                },
+                "project": {"type": "string"},
+                "topic": {"type": "string"},
+            },
+            "required": [],
+        },
+        func=wiki_ingest,
+    )
 
     @registry.tool(
         name="wiki_write_page",

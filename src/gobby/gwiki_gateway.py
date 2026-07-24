@@ -15,6 +15,7 @@ from gobby.utils.native_bin import resolve_native_bin
 from gobby.utils.wiki_vault import existing_vault_dir, is_vault, resolve_vault_dir
 
 COMPILE_KINDS = frozenset({"source", "concept", "topic"})
+MAX_URL_AGE_HOURS = 8760
 PAGE_WRITE_MODES = frozenset({"upsert", "create"})
 
 # Gateway command names (the ``command_name`` passed to ``_run_json``) whose
@@ -282,8 +283,18 @@ class GwikiGateway:
     async def ingest_file(self, path: str | Path) -> dict[str, Any]:
         return await self._run_json("ingest_file", ["ingest-file", str(path)])
 
-    async def ingest_url(self, urls: Sequence[str]) -> dict[str, Any]:
-        return await self._run_json("ingest_url", ["ingest-url", *urls])
+    async def ingest_url(
+        self,
+        urls: Sequence[str],
+        *,
+        max_age_hours: int | None = None,
+    ) -> dict[str, Any]:
+        args = ["ingest-url", *urls]
+        if max_age_hours is not None:
+            if not 0 <= max_age_hours <= MAX_URL_AGE_HOURS:
+                raise ValueError(f"max_age_hours must be between 0 and {MAX_URL_AGE_HOURS}")
+            args.extend(["--max-age-hours", str(max_age_hours)])
+        return await self._run_json("ingest_url", args)
 
     async def collect(self, query: str | None = None) -> dict[str, Any]:
         args = ["collect"]

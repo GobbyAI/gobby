@@ -170,8 +170,18 @@ class FakeGateway:
             {"command": "page-delete", "path": path, "changed_paths": [path]},
         )
 
-    async def ingest_url(self, urls: list[str]) -> dict[str, Any]:
-        self.calls.append(("ingest_url", list(urls)))
+    async def ingest_url(
+        self,
+        urls: list[str],
+        *,
+        max_age_hours: int | None = None,
+    ) -> dict[str, Any]:
+        self.calls.append(
+            (
+                "ingest_url",
+                {"urls": list(urls), "max_age_hours": max_age_hours},
+            )
+        )
         payload = FakeGateway.next_result or {
             "command": "ingest-url",
             "status": "partial",
@@ -354,6 +364,13 @@ async def test_tool_schemas(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> 
         "token_budget",
     } <= set(ask_schema["properties"])
     assert ask_schema["required"] == ["query"]
+
+    ingest_schema = _schema("wiki_ingest")
+    assert "max_age_hours" in ingest_schema["properties"]
+    assert ingest_schema["properties"]["max_age_hours"]["type"] == "integer"
+    assert ingest_schema["properties"]["max_age_hours"]["minimum"] == 0
+    assert ingest_schema["properties"]["max_age_hours"]["maximum"] == 8760
+    assert ingest_schema["required"] == []
 
     remove_schema = _schema("wiki_remove_source")
     assert remove_schema["required"] == ["id"]
@@ -554,11 +571,20 @@ async def test_source_lifecycle_passthrough() -> None:
 async def test_wiki_ingest_url_batch_passthrough() -> None:
     result = await _registry().call(
         "wiki_ingest",
-        {"urls": ["https://example.test/a", "https://example.test/b"]},
+        {
+            "urls": ["https://example.test/a", "https://example.test/b"],
+            "max_age_hours": 0,
+        },
     )
 
     assert FakeGateway.instances[-1].calls == [
-        ("ingest_url", ["https://example.test/a", "https://example.test/b"])
+        (
+            "ingest_url",
+            {
+                "urls": ["https://example.test/a", "https://example.test/b"],
+                "max_age_hours": 0,
+            },
+        )
     ]
     assert result["payload"]["accepted"] == [
         {"requested_url": "https://example.test/a", "raw_path": "raw/a.md"}
@@ -567,6 +593,46 @@ async def test_wiki_ingest_url_batch_passthrough() -> None:
         {"url": "https://example.test/b", "code": "blocked", "message": "blocked"}
     ]
     assert result["payload"]["indexed"] == {"documents": 1, "chunks": 2, "links": 3, "sources": 1}
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("max_age_hours", [-1, 8761])
+async def test_wiki_ingest_rejects_out_of_range_max_age(max_age_hours: int) -> None:
+    result = await _registry().call(
+        "wiki_ingest",
+        {"urls": ["https://example.test/a"], "max_age_hours": max_age_hours},
+    )
+
+    assert result == {
+        "success": False,
+        "ok": False,
+        "error": "max_age_hours must be between 0 and 8760",
+    }
+    assert FakeGateway.instances == []
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "file_input",
+    [
+        pytest.param({"path": "/tmp/a.md"}, id="path"),
+        pytest.param({"paths": ["/tmp/a.md", "/tmp/b.md"]}, id="paths"),
+    ],
+)
+async def test_wiki_ingest_rejects_max_age_for_file_input(
+    file_input: dict[str, object],
+) -> None:
+    result = await _registry().call(
+        "wiki_ingest",
+        {**file_input, "max_age_hours": 24},
+    )
+
+    assert result == {
+        "success": False,
+        "ok": False,
+        "error": "max_age_hours is only valid with urls",
+    }
+    assert FakeGateway.instances == []
 
 
 @pytest.mark.asyncio
