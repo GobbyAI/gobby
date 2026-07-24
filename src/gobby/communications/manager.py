@@ -21,6 +21,7 @@ from gobby.communications.models import (
 from gobby.communications.outbound import OutboundCommunications
 from gobby.communications.polling import PollingManager
 from gobby.communications.rate_limiter import TokenBucketRateLimiter
+from gobby.communications.responder import CommunicationsResponder
 from gobby.communications.router import MessageRouter
 from gobby.communications.threads import ThreadManager
 
@@ -81,6 +82,7 @@ class CommunicationsManager:
         self._lifecycle = AdapterLifecycleOperations(self)
         self._outbound = OutboundCommunications(self)
         self._inbound = InboundCommunications(self)
+        self.responder = CommunicationsResponder(self)
 
         self.event_callback: Callable[..., Any] | None = None
         self.reaction_handler: Any | None = None
@@ -103,6 +105,7 @@ class CommunicationsManager:
     async def stop(self) -> None:
         """Shutdown all adapters and clear state."""
         await self._lifecycle.stop()
+        await self.responder.stop()
 
     async def _init_adapter(self, channel: ChannelConfig) -> BaseChannelAdapter:
         """Lookup adapter class from registry, instantiate, and initialize."""

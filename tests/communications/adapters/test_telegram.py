@@ -67,6 +67,29 @@ async def test_initialize_success(
 
 
 @pytest.mark.asyncio
+async def test_initialize_captures_bot_identity_for_mention_gating(
+    adapter: TelegramAdapter,
+    channel_config: ChannelConfig,
+    secret_resolver: Callable[[str], str | None],
+) -> None:
+    get_me_response = MagicMock()
+    get_me_response.json.return_value = {
+        "ok": True,
+        "result": {"id": 123456, "username": "gobby_bot"},
+    }
+    delete_webhook_response = MagicMock()
+    mock_post = AsyncMock(side_effect=[get_me_response, delete_webhook_response])
+
+    with patch("httpx.AsyncClient") as MockClient:
+        MockClient.return_value.post = mock_post
+
+        await adapter.initialize(channel_config, secret_resolver)
+
+    assert adapter._bot_user_id == "123456"
+    assert adapter._bot_username == "gobby_bot"
+
+
+@pytest.mark.asyncio
 async def test_initialize_with_webhook(
     adapter: TelegramAdapter,
     channel_config: ChannelConfig,
@@ -170,6 +193,12 @@ async def test_send_message_http_status_error_redacts_bot_token(
         request = httpx.Request("POST", url)
         if "deleteWebhook" in url:
             return httpx.Response(200, request=request, json={"ok": True})
+        if "getMe" in url:
+            return httpx.Response(
+                200,
+                request=request,
+                json={"ok": True, "result": {"id": 123456, "username": "gobby_bot"}},
+            )
         return httpx.Response(400, request=request, json={"ok": False})
 
     mock_post.side_effect = side_effect
@@ -281,12 +310,15 @@ def test_parse_webhook(adapter: TelegramAdapter) -> None:
     assert msg.metadata_json["username"] == "testuser"
     assert msg.metadata_json["chat_id"] == "2222222"
     assert msg.metadata_json["platform_channel_id"] == "2222222"
+    assert msg.metadata_json["conversation_type"] == "private"
+    assert msg.metadata_json["mentioned"] is False
     assert msg.metadata_json["conversation_reference"] == {
         "conversation_id": "2222222",
     }
 
 
 def test_parse_group_webhook_sets_conversation_reference(adapter: TelegramAdapter) -> None:
+    adapter._bot_username = "gobby_bot"
     payload = {
         "update_id": 10001,
         "message": {
@@ -298,7 +330,7 @@ def test_parse_group_webhook_sets_conversation_reference(adapter: TelegramAdapte
                 "type": "supergroup",
             },
             "date": 1441645532,
-            "text": "hello group",
+            "text": "@gobby_bot hello group",
         },
     }
 
@@ -308,6 +340,30 @@ def test_parse_group_webhook_sets_conversation_reference(adapter: TelegramAdapte
     assert messages[0].metadata_json["conversation_reference"] == {
         "conversation_id": "-1002222222",
     }
+    assert messages[0].metadata_json["conversation_type"] == "supergroup"
+    assert messages[0].metadata_json["mentioned"] is True
+
+
+def test_parse_group_webhook_marks_unmentioned_message(adapter: TelegramAdapter) -> None:
+    adapter._bot_username = "gobby_bot"
+    payload = {
+        "update_id": 10002,
+        "message": {
+            "message_id": 1367,
+            "from": {"id": 1111111, "is_bot": False, "username": "testuser"},
+            "chat": {
+                "id": -1002222222,
+                "title": "Test group",
+                "type": "supergroup",
+            },
+            "date": 1441645532,
+            "text": "hello @someone_else",
+        },
+    }
+
+    messages = adapter.parse_webhook(payload, {})
+
+    assert messages[0].metadata_json["mentioned"] is False
 
 
 @pytest.mark.parametrize(

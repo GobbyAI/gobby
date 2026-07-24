@@ -164,7 +164,6 @@ def init_servers(runner: GobbyRunner) -> None:
 
         from gobby.runner_broadcasting import (
             setup_agent_event_broadcasting,
-            setup_communications_event_broadcasting,
             setup_cron_event_broadcasting,
             setup_pipeline_event_broadcasting,
         )
@@ -177,8 +176,10 @@ def init_servers(runner: GobbyRunner) -> None:
         if runner.cron_scheduler:
             setup_cron_event_broadcasting(runner.websocket_server, runner.cron_scheduler)
 
-        if runner.communications_manager:
-            setup_communications_event_broadcasting(
-                runner.websocket_server,
-                runner.communications_manager,
-            )
+    if runner.communications_manager:
+        from gobby.runner_broadcasting import setup_communications_event_broadcasting
+
+        setup_communications_event_broadcasting(
+            runner.websocket_server,
+            runner.communications_manager,
+        )

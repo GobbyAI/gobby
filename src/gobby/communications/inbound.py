@@ -70,6 +70,8 @@ class InboundCommunications:
                         continue
 
                 if message.identity_id:
+                    external_user_id = message.identity_id
+                    message.metadata_json["external_user_id"] = external_user_id
                     external_username = message.metadata_json.get("external_username")
                     identity_meta: dict[str, Any] = {}
                     if "conversation_reference" in message.metadata_json:
@@ -80,7 +82,7 @@ class InboundCommunications:
                     identity = await asyncio.to_thread(
                         manager._identity_manager.resolve_identity,
                         channel.id,
-                        message.identity_id,
+                        external_user_id,
                         external_username,
                         metadata=identity_meta,
                     )

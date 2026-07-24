@@ -11,7 +11,7 @@ import inspect
 import logging
 from collections.abc import Awaitable, Callable, Coroutine
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, Protocol
 
 if TYPE_CHECKING:
     from gobby.scheduler.scheduler import CronScheduler
@@ -21,6 +21,18 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 RunDbHook = Callable[..., Awaitable[Any]] | Callable[..., Any]
+
+
+class CommunicationsEventBroadcaster(Protocol):
+    """WebSocket surface used by communications event fan-out."""
+
+    async def broadcast_communications_event(
+        self,
+        *,
+        event: str,
+        **kwargs: Any,
+    ) -> None: ...
+
 
 # Module-level reference so broadcast_agent_event can be called directly
 # from spawn and completion paths without going through the registry.
@@ -351,13 +363,14 @@ def setup_cron_event_broadcasting(
 
 
 def setup_communications_event_broadcasting(
-    websocket_server: WebSocketServer,
+    websocket_server: CommunicationsEventBroadcaster | None,
     communications_manager: Any,
 ) -> None:
-    """Set up WebSocket broadcasting for communications events."""
+    """Fan communications events out to WebSocket clients and the responder."""
 
     async def broadcast_comms_event(event: str, **kwargs: Any) -> None:
-        """Broadcast communications events via WebSocket."""
+        """Broadcast communications events and dispatch inbound responder work."""
+        consumers: list[tuple[str, Awaitable[None]]] = []
         if websocket_server:
             # message can be a dict or a Pydantic model
             # We convert to dict if needed to ensure JSON serializability
@@ -369,10 +382,34 @@ def setup_communications_event_broadcasting(
                     safe_kwargs[k] = vars(v)
                 else:
                     safe_kwargs[k] = v
-            await websocket_server.broadcast_communications_event(
-                event=event,
-                **safe_kwargs,
+            consumers.append(
+                (
+                    "websocket",
+                    websocket_server.broadcast_communications_event(
+                        event=event,
+                        **safe_kwargs,
+                    ),
+                )
             )
+        responder = getattr(communications_manager, "responder", None)
+        if responder is not None:
+            consumers.append(("responder", responder.handle_event(event, **kwargs)))
+
+        if not consumers:
+            return
+        results = await asyncio.gather(
+            *(consumer for _name, consumer in consumers),
+            return_exceptions=True,
+        )
+        for (name, _consumer), result in zip(consumers, results, strict=True):
+            if isinstance(result, BaseException):
+                logger.warning(
+                    "Communications %s consumer failed for %s: %s",
+                    name,
+                    event,
+                    result,
+                    exc_info=(type(result), result, result.__traceback__),
+                )
 
     communications_manager.event_callback = broadcast_comms_event
-    logger.debug("Communications event broadcasting enabled")
+    logger.debug("Communications event fan-out enabled")

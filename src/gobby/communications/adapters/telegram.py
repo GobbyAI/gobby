@@ -7,6 +7,7 @@ import functools
 import hmac
 import json
 import logging
+import re
 import uuid
 from collections.abc import Callable, Mapping
 from datetime import UTC, datetime
@@ -28,6 +29,27 @@ if TYPE_CHECKING:
     from gobby.communications.attachments import AttachmentManager
 
 logger = logging.getLogger(__name__)
+
+
+def _mentions_telegram_bot(
+    text: str,
+    message: Mapping[str, Any],
+    *,
+    bot_username: str | None,
+    bot_user_id: str | None,
+) -> bool:
+    if bot_username:
+        pattern = rf"(?<![A-Za-z0-9_])@{re.escape(bot_username)}(?![A-Za-z0-9_])"
+        if re.search(pattern, text, flags=re.IGNORECASE):
+            return True
+    reply_to = message.get("reply_to_message")
+    if not isinstance(reply_to, Mapping):
+        return False
+    reply_from = reply_to.get("from")
+    if not isinstance(reply_from, Mapping):
+        return False
+    reply_user_id = reply_from.get("id")
+    return bot_user_id is not None and str(reply_user_id) == bot_user_id
 
 
 def _file_size(value: object) -> int:
@@ -112,6 +134,8 @@ class TelegramAdapter(BaseChannelAdapter):
         self._client: httpx.AsyncClient | None = None
         self._bot_token: str | None = None
         self._api_base: str | None = None
+        self._bot_username: str | None = None
+        self._bot_user_id: str | None = None
         self._offset: int = 0
         self._persisted_offset: int = 0
         self._pending_update_ids: list[int] = []
@@ -207,6 +231,19 @@ class TelegramAdapter(BaseChannelAdapter):
 
         self._api_base = f"https://api.telegram.org/bot{self._bot_token}"
         self._client = httpx.AsyncClient(timeout=30.0)
+
+        response = await self._client.post(f"{self._api_base}/getMe")
+        self._raise_for_status_with_redacted_token(response)
+        body = response.json()
+        if isinstance(body, dict):
+            result = body.get("result")
+            if isinstance(result, dict):
+                username = result.get("username")
+                user_id = result.get("id")
+                if isinstance(username, str) and username:
+                    self._bot_username = username
+                if isinstance(user_id, str | int):
+                    self._bot_user_id = str(user_id)
 
         # Optionally call setWebhook if webhook_base_url is configured
         webhook_base_url = config.config_json.get("webhook_base_url")
@@ -403,6 +440,10 @@ class TelegramAdapter(BaseChannelAdapter):
         chat = msg_data.get("chat", {})
         raw_chat_id = chat.get("id")
         chat_id = str(raw_chat_id) if raw_chat_id is not None else ""
+        raw_conversation_type = chat.get("type")
+        conversation_type = (
+            raw_conversation_type if isinstance(raw_conversation_type, str) else "unknown"
+        )
         raw_msg_id = msg_data.get("message_id")
         message_id = str(raw_msg_id) if raw_msg_id is not None else ""
 
@@ -416,6 +457,13 @@ class TelegramAdapter(BaseChannelAdapter):
         metadata = {
             "chat_id": chat_id,
             "platform_channel_id": chat_id,
+            "conversation_type": conversation_type,
+            "mentioned": _mentions_telegram_bot(
+                text if text else caption,
+                msg_data,
+                bot_username=self._bot_username,
+                bot_user_id=self._bot_user_id,
+            ),
             "conversation_reference": {"conversation_id": chat_id},
             "telegram_update_id": payload_dict.get("update_id"),
             "user_id": user_id,

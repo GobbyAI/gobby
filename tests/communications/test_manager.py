@@ -448,6 +448,12 @@ async def test_send_message_telegram_4xx_redacts_token_from_logs_and_storage(cap
         request = httpx.Request("POST", url)
         if "deleteWebhook" in url:
             return httpx.Response(200, request=request, json={"ok": True})
+        if "getMe" in url:
+            return httpx.Response(
+                200,
+                request=request,
+                json={"ok": True, "result": {"id": 123456, "username": "gobby_bot"}},
+            )
         return httpx.Response(400, request=request, json={"ok": False})
 
     mock_post.side_effect = side_effect
@@ -749,6 +755,7 @@ async def test_handle_inbound_resolves_identity():
     stored = await manager.handle_inbound("test-channel", {}, {}, raw_body=b"{}")
     assert stored[0].session_id == "session-abc"
     assert stored[0].identity_id == "identity-1"
+    assert stored[0].metadata_json["external_user_id"] == "ext-user-1"
 
 
 async def test_handle_inbound_messages_continues_after_identity_resolution_failure():
