@@ -28,7 +28,6 @@ from gobby.adapters.degradation import (
     AdapterDegradationKind,
     record_adapter_degradation,
     record_unsupported_response_fields,
-    truncate_context_for_adapter,
 )
 from gobby.hooks.events import HookEvent, HookEventType, HookResponse, SessionSource
 
@@ -216,7 +215,7 @@ class ClaudeCodeAdapter(BaseAdapter):
         # Claude's hook name is the definitive tool outcome signal. Preserve
         # both values because successful PostToolUse payloads commonly contain
         # only stdout/stderr dictionaries without an exit code.
-        metadata: dict[str, Any] = {}
+        metadata: dict[str, Any] = {"_native_hook_type": hook_type}
         hook_event_name = contract.hook_event_name if contract is not None else hook_type
         if hook_event_name == "PostToolUse":
             metadata["is_failure"] = False
@@ -312,15 +311,7 @@ class ClaudeCodeAdapter(BaseAdapter):
         if not additional_context_parts:
             return None
 
-        contributor_sizes = {label: len(part) for label, part in additional_context_parts}
-        return truncate_context_for_adapter(
-            "\n\n".join(part for _, part in additional_context_parts),
-            provider=self.source,
-            hook_type=hook_type,
-            destination_channel=ContextChannel.ADDITIONAL_CONTEXT,
-            contributor_sizes=contributor_sizes,
-            event_logger=self._event_logger(),
-        )
+        return "\n\n".join(part for _, part in additional_context_parts)
 
     def translate_from_hook_response(
         self, response: HookResponse, hook_type: str | None = None

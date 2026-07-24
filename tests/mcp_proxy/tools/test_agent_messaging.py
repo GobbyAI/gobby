@@ -2,7 +2,7 @@
 
 Covers:
     - send_message: target-based messaging, auto-writes agent_runs.result
-- deliver_pending_messages: returns undelivered messages and marks them delivered
+- get_inter_session_message: retrieves one complete message for its sender or recipient
 - get_inter_session_messages: read-only message history query
 """
 
@@ -60,6 +60,7 @@ class MockMessage:
             "to_session": self.to_session,
             "content": self.content,
             "priority": self.priority,
+            "message_type": self.message_type,
             "sent_at": self.sent_at,
             "delivered_at": self.delivered_at,
         }
@@ -715,17 +716,16 @@ class TestSendMessage:
         assert result["wake_results"][0]["error_code"] == "no_tmux_pane"
         mock_message_manager.mark_delivered.assert_not_called()
 
-        mock_message_manager.get_undelivered_messages.return_value = [created]
-        mock_message_manager.mark_delivered_batch.return_value = [created.id]
+        mock_message_manager.get_message.return_value = created
         with session_context_for_test("s-to"):
-            delivered = await registry.call(
-                "deliver_pending_messages",
-                {"target_session_id": "s-to"},
+            retrieved = await registry.call(
+                "get_inter_session_message",
+                {"message_id": created.id},
             )
 
-        assert delivered["success"] is True
-        assert delivered["count"] == 1
-        mock_message_manager.mark_delivered_batch.assert_called_once_with(["msg-direct"], "s-to")
+        assert retrieved["success"] is True
+        assert retrieved["message"]["id"] == created.id
+        mock_message_manager.mark_delivered_batch.assert_not_called()
 
     @pytest.mark.asyncio
     async def test_send_message_different_project_rejected(
@@ -806,12 +806,12 @@ class TestSendMessage:
 
 
 # ═══════════════════════════════════════════════════════════════════════
-# deliver_pending_messages
+# get_inter_session_message
 # ═══════════════════════════════════════════════════════════════════════
 
 
-class TestDeliverPendingMessages:
-    """deliver_pending_messages returns undelivered and marks delivered."""
+class TestGetInterSessionMessage:
+    """get_inter_session_message returns one lossless, access-controlled payload."""
 
     @pytest.fixture(autouse=True)
     def caller_context(self):
@@ -819,158 +819,105 @@ class TestDeliverPendingMessages:
             yield
 
     @pytest.mark.asyncio
-    async def test_deliver_returns_undelivered(
-        self, messaging_registry, mock_message_manager
+    @pytest.mark.parametrize(
+        ("from_session", "to_session"),
+        [("s-parent", "s-child"), ("s-child", "s-parent")],
+    )
+    async def test_sender_or_recipient_can_retrieve_complete_message(
+        self,
+        messaging_registry,
+        mock_message_manager,
+        from_session: str,
+        to_session: str,
     ) -> None:
-        """Returns undelivered messages and marks them delivered."""
-        msg1 = MockMessage(id="msg-1", content="first")
-        msg2 = MockMessage(id="msg-2", content="second")
-        mock_message_manager.get_undelivered_messages.return_value = [msg1, msg2]
-        mock_message_manager.mark_delivered_batch.return_value = [msg1.id, msg2.id]
-
-        result = await messaging_registry.call(
-            "deliver_pending_messages",
-            {"target_session_id": "s-child"},
-        )
-
-        assert result["success"] is True
-        assert len(result["messages"]) == 2
-        mock_message_manager.get_undelivered_messages.assert_called_once_with("s-child")
-        mock_message_manager.mark_delivered_batch.assert_called_once_with(
-            ["msg-1", "msg-2"], "s-child"
-        )
-
-    @pytest.mark.asyncio
-    async def test_deliver_empty(self, messaging_registry, mock_message_manager) -> None:
-        """Returns empty list when no undelivered messages."""
-        mock_message_manager.get_undelivered_messages.return_value = []
-
-        result = await messaging_registry.call(
-            "deliver_pending_messages",
-            {"target_session_id": "s-child"},
-        )
-
-        assert result["success"] is True
-        assert result["messages"] == []
-        assert result["count"] == 0
-        mock_message_manager.mark_delivered_batch.assert_not_called()
-
-    @pytest.mark.asyncio
-    async def test_deliver_defaults_target_to_caller(
-        self, messaging_registry, mock_message_manager
-    ) -> None:
-        result = await messaging_registry.call("deliver_pending_messages", {})
-
-        assert result["success"] is True
-        mock_message_manager.get_undelivered_messages.assert_called_once_with("s-child")
-
-    @pytest.mark.asyncio
-    async def test_deliver_rejects_foreign_target(
-        self, messaging_registry, mock_message_manager
-    ) -> None:
-        result = await messaging_registry.call(
-            "deliver_pending_messages",
-            {"target_session_id": "s-other"},
-        )
-
-        assert result == {
-            "success": False,
-            "error": "target_session_id must resolve to the calling session.",
-        }
-        mock_message_manager.get_undelivered_messages.assert_not_called()
-
-    @pytest.mark.asyncio
-    async def test_deliver_requires_calling_session(
-        self, messaging_registry, mock_message_manager
-    ) -> None:
-        token = set_session_context(None)
-        try:
-            result = await messaging_registry.call(
-                "deliver_pending_messages",
-                {"target_session_id": "s-child"},
-            )
-        finally:
-            reset_session_context(token)
-
-        assert result == {
-            "success": False,
-            "error": "No calling session is available for message delivery.",
-        }
-        mock_message_manager.get_undelivered_messages.assert_not_called()
-
-    @pytest.mark.asyncio
-    async def test_deliver_includes_run_task_type_and_signoff_context(
-        self, messaging_registry, mock_message_manager
-    ) -> None:
-        """Delivered completion messages include metadata needed for continuation."""
-        msg = MockMessage(
-            id="msg-1",
+        content = "lossless:" + ("x" * 32_597)
+        message = MockMessage(
+            id="msg-large",
+            from_session=from_session,
+            to_session=to_session,
+            content=content,
             message_type="completion_notification",
             metadata_json=(
                 '{"run_id": "run-1", "task_id": "#12754", '
                 '"completion_id": "run-1", "signoff_message": "Approved"}'
             ),
         )
-        mock_message_manager.get_undelivered_messages.return_value = [msg]
-        mock_message_manager.mark_delivered_batch.return_value = [msg.id]
+        mock_message_manager.get_message.return_value = message
 
         result = await messaging_registry.call(
-            "deliver_pending_messages",
-            {"target_session_id": "s-child"},
-        )
-
-        delivered = result["messages"][0]
-        assert delivered["message_type"] == "completion_notification"
-        assert delivered["run_id"] == "run-1"
-        assert delivered["task_id"] == "#12754"
-        assert delivered["completion_id"] == "run-1"
-        assert delivered["signoff_message"] == "Approved"
-        assert delivered["has_signoff"] is True
-        assert delivered["metadata"]["run_id"] == "run-1"
-
-    @pytest.mark.asyncio
-    async def test_payload_failure_does_not_claim_any_messages(
-        self, messaging_registry, mock_message_manager, monkeypatch
-    ) -> None:
-        from gobby.mcp_proxy.tools import agent_messaging
-
-        msg1 = MockMessage(id="msg-1", content="first")
-        msg2 = MockMessage(id="msg-2", content="second")
-        mock_message_manager.get_undelivered_messages.return_value = [msg1, msg2]
-        original_builder = agent_messaging._message_delivery_payload
-
-        def build_payload(msg: MockMessage) -> dict[str, Any]:
-            if msg.id == "msg-2":
-                raise ValueError("payload failed")
-            return original_builder(msg)
-
-        monkeypatch.setattr(agent_messaging, "_message_delivery_payload", build_payload)
-
-        result = await messaging_registry.call(
-            "deliver_pending_messages",
-            {"target_session_id": "s-child"},
-        )
-
-        assert result == {"success": False, "error": "payload failed"}
-        mock_message_manager.mark_delivered_batch.assert_not_called()
-
-    @pytest.mark.asyncio
-    async def test_returns_only_messages_claimed_by_batch(
-        self, messaging_registry, mock_message_manager
-    ) -> None:
-        msg1 = MockMessage(id="msg-1", content="first")
-        msg2 = MockMessage(id="msg-2", content="second")
-        mock_message_manager.get_undelivered_messages.return_value = [msg1, msg2]
-        mock_message_manager.mark_delivered_batch.return_value = [msg2.id]
-
-        result = await messaging_registry.call(
-            "deliver_pending_messages",
-            {"target_session_id": "s-child"},
+            "get_inter_session_message",
+            {"message_id": message.id},
         )
 
         assert result["success"] is True
-        assert [message["id"] for message in result["messages"]] == ["msg-2"]
-        assert result["count"] == 1
+        retrieved = result["message"]
+        assert retrieved["content"] == content
+        assert retrieved["message_type"] == "completion_notification"
+        assert retrieved["run_id"] == "run-1"
+        assert retrieved["task_id"] == "#12754"
+        assert retrieved["completion_id"] == "run-1"
+        assert retrieved["signoff_message"] == "Approved"
+        assert retrieved["has_signoff"] is True
+        assert retrieved["metadata"]["run_id"] == "run-1"
+        mock_message_manager.get_message.assert_called_once_with("msg-large")
+        mock_message_manager.mark_delivered_batch.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_missing_message_returns_not_found(
+        self, messaging_registry, mock_message_manager
+    ) -> None:
+        mock_message_manager.get_message.return_value = None
+
+        result = await messaging_registry.call(
+            "get_inter_session_message",
+            {"message_id": "missing"},
+        )
+
+        assert result == {
+            "success": False,
+            "error": "Inter-session message not found: missing",
+            "error_code": "message_not_found",
+        }
+
+    @pytest.mark.asyncio
+    async def test_foreign_session_is_denied(
+        self, messaging_registry, mock_message_manager
+    ) -> None:
+        mock_message_manager.get_message.return_value = MockMessage(
+            id="msg-private",
+            from_session="s-parent",
+            to_session="s-sibling",
+        )
+
+        result = await messaging_registry.call(
+            "get_inter_session_message",
+            {"message_id": "msg-private"},
+        )
+
+        assert result == {
+            "success": False,
+            "error": "Only the message sender or recipient may retrieve it.",
+            "error_code": "message_access_denied",
+        }
+        mock_message_manager.mark_delivered_batch.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_requires_calling_session(self, messaging_registry, mock_message_manager) -> None:
+        token = set_session_context(None)
+        try:
+            result = await messaging_registry.call(
+                "get_inter_session_message",
+                {"message_id": "msg-1"},
+            )
+        finally:
+            reset_session_context(token)
+
+        assert result == {
+            "success": False,
+            "error": "No calling session is available for message retrieval.",
+            "error_code": "missing_session_context",
+        }
+        mock_message_manager.get_message.assert_not_called()
 
 
 # ═══════════════════════════════════════════════════════════════════════
@@ -986,8 +933,9 @@ class TestToolRegistration:
         tool_names = {t["name"] for t in tools}
 
         assert "send_message" in tool_names
-        assert "deliver_pending_messages" in tool_names
+        assert "get_inter_session_message" in tool_names
         assert "get_inter_session_messages" in tool_names
+        assert "deliver_pending_messages" not in tool_names
         assert "send_command" not in tool_names
         assert "activate_command" not in tool_names
         assert "complete_command" not in tool_names

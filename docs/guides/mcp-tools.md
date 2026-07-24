@@ -741,7 +741,7 @@ registry is the runtime side.
 | Tool | Description |
 | :--- | :--- |
 | `send_message` | Message a `session`, `agent`, `project`, `build`, or `all` target. |
-| `deliver_pending_messages` | Fetch undelivered messages and mark them delivered. |
+| `get_inter_session_message` | Retrieve one complete message as its sender or recipient. |
 | `get_inter_session_messages` | Read message history. |
 
 The agent depth limit is 5; spawn requests beyond that are rejected.

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any
 
@@ -91,10 +92,11 @@ async def _cleanup_terminal_artifacts(
             except Exception as e:
                 result["session_expire_error"] = str(e)
 
-        agents._fire_synthetic_stop(
+        await asyncio.to_thread(
+            agents._fire_synthetic_stop,
             hook_manager_resolver,
             agent_session_id,
-            session_manager=session_manager,
+            session_manager,
         )
 
 

@@ -9,12 +9,12 @@ Extracted from HookManager.handle() as part of the Strangler Fig decomposition.
 
 from __future__ import annotations
 
-import json
 import logging
-from collections.abc import Mapping
 from typing import TYPE_CHECKING, Any
 
+from gobby.adapters.capabilities import ContextChannel, get_provider_capabilities
 from gobby.hooks.events import HookEvent, HookEventType, HookResponse
+from gobby.hooks.pending_messages import render_pending_messages
 
 # Only inject full session metadata (IDs, terminal context) on context-building
 # events, never on lifecycle events like Stop or per-tool events.
@@ -45,36 +45,6 @@ _PIGGYBACK_EVENTS = {
     HookEventType.BEFORE_TOOL,
     HookEventType.BEFORE_AGENT,
 }
-
-
-def _message_metadata(msg: Any) -> dict[str, Any]:
-    """Parse optional JSON metadata from an inter-session message."""
-    raw = getattr(msg, "metadata_json", None)
-    if isinstance(raw, str) and raw:
-        try:
-            parsed = json.loads(raw)
-        except (TypeError, ValueError, json.JSONDecodeError):
-            return {}
-        return parsed if isinstance(parsed, dict) else {}
-    if isinstance(raw, Mapping):
-        return dict(raw)
-    return {}
-
-
-def _message_context_suffix(msg: Any, msg_type: str) -> str:
-    """Build compact machine-readable context for pending message injection."""
-    metadata = _message_metadata(msg)
-    bits: list[str] = [f"type={msg_type}"]
-    from_session = getattr(msg, "from_session", None)
-    if from_session:
-        bits.append(f"from_session={from_session}")
-    for key in ("run_id", "task_id", "completion_id"):
-        value = metadata.get(key)
-        if value:
-            bits.append(f"{key}={value}")
-    if metadata.get("signoff_message") or metadata.get("signoff"):
-        bits.append("signoff=true")
-    return f" ({', '.join(bits)})"
 
 
 class EventEnricher:
@@ -163,6 +133,7 @@ class EventEnricher:
             self._inter_session_msg_manager
             and event.event_type in _PIGGYBACK_EVENTS
             and event.metadata.get("_platform_session_id")
+            and self._hook_supports_context(event)
         ):
             try:
                 self._inject_pending_messages(event.metadata["_platform_session_id"], response)
@@ -188,51 +159,44 @@ class EventEnricher:
         if not undelivered:
             return
 
-        # Group by message_type
-        groups: dict[str, list[Any]] = {}
-        for msg in undelivered:
-            msg_type = getattr(msg, "message_type", "message") or "message"
-            groups.setdefault(msg_type, []).append(msg)
-
-        # Format each group
-        sections: list[str] = []
-        for msg_type, msgs in groups.items():
-            header = self._group_header(msg_type)
-            lines = [header]
-            for msg in msgs:
-                urgent = "[URGENT] " if getattr(msg, "priority", "normal") == "urgent" else ""
-                sender = self._resolve_sender_label(getattr(msg, "from_session", None))
-                context = _message_context_suffix(msg, msg_type)
-                lines.append(f"- {urgent}{sender}{msg.content}{context}")
-            sections.append("\n".join(lines))
-
-        pending_context = "\n\n".join(sections)
+        rendered = render_pending_messages(
+            undelivered,
+            resolve_sender=self._resolve_sender_label,
+        )
+        pending_context = rendered.context
+        if not pending_context:
+            return
         if response.context:
-            response.context = f"{response.context}\n\n{pending_context}"
+            response.context = f"{pending_context}\n\n{response.context}"
         else:
             response.context = pending_context
 
-        # Mark only after every message has been formatted and attached. A failed
-        # mark deliberately leaves the message retryable (at-least-once delivery).
-        for msg in undelivered:
-            try:
-                self._inter_session_msg_manager.mark_delivered(msg.id, platform_session_id)
-            except Exception:
-                logger.warning(
-                    "Failed to mark piggyback message %s delivered; it will be retried",
-                    msg.id,
-                    exc_info=True,
-                )
+        try:
+            self._inter_session_msg_manager.mark_delivered_batch(
+                list(rendered.represented_message_ids),
+                platform_session_id,
+            )
+        except Exception:
+            logger.warning(
+                "Failed to mark piggyback messages delivered; they will be retried",
+                exc_info=True,
+            )
 
     @staticmethod
-    def _group_header(message_type: str) -> str:
-        """Return the context header for a message type group."""
-        if message_type == "web_chat":
-            return "[Pending messages from web chat user]:"
-        if message_type == "command_result":
-            return "[Pending command results]:"
-        # Default: P2P messages (message_type == "message")
-        return "[Pending P2P messages from other sessions]:"
+    def _hook_supports_context(event: HookEvent) -> bool:
+        """Return whether this exact native provider hook carries model context."""
+        native_hook_type = event.metadata.get("_native_hook_type")
+        if not isinstance(native_hook_type, str) or not native_hook_type:
+            return False
+        try:
+            capability = get_provider_capabilities(event.source).get_hook(native_hook_type)
+        except ValueError:
+            return False
+        return bool(
+            capability
+            and capability.event_type is event.event_type
+            and capability.context_channel is not ContextChannel.NONE
+        )
 
     def _resolve_sender_label(self, from_session: str | None) -> str:
         """Resolve a session ID to a human-readable sender label.

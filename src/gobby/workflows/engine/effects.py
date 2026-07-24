@@ -155,18 +155,6 @@ class EffectsMixin(DeliveryFormattingMixin):
                         if (
                             effect.server,
                             effect.tool,
-                        ) == ("gobby-agents", "deliver_pending_messages") and isinstance(
-                            raw_result, dict
-                        ):
-                            formatted = await asyncio.to_thread(
-                                self._format_delivery_result,
-                                raw_result,
-                                platform_session_id,
-                                variables,
-                            )
-                        elif (
-                            effect.server,
-                            effect.tool,
                         ) == ("gobby-memory", "search_memories") and isinstance(raw_result, dict):
                             formatted = await asyncio.to_thread(
                                 self._format_search_memories_result,

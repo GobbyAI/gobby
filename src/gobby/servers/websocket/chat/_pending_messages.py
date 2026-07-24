@@ -5,6 +5,7 @@ from __future__ import annotations
 import logging
 
 from gobby.hooks.events import HookEventType
+from gobby.hooks.pending_messages import render_pending_messages
 
 logger = logging.getLogger(__name__)
 
@@ -42,32 +43,16 @@ class ChatPendingMessagesMixin:
             if not undelivered:
                 return None
 
-            groups: dict[tuple[str, str], list[str]] = {}
-            collected_message_ids: list[str] = []
-            for msg in undelivered:
-                msg_type = getattr(msg, "message_type", "message") or "message"
-                header = self._message_group_header(msg_type)
-                urgent = "[URGENT] " if getattr(msg, "priority", "normal") == "urgent" else ""
-                sender = self._resolve_chat_sender(getattr(msg, "from_session", None))
-                rendered = f"- {urgent}{sender}{msg.content}"
-                groups.setdefault((msg_type, header), []).append(rendered)
-                msg_id = getattr(msg, "id", None)
-                if isinstance(msg_id, str):
-                    collected_message_ids.append(msg_id)
-
-            if not groups:
+            rendered = render_pending_messages(
+                undelivered,
+                resolve_sender=self._resolve_chat_sender,
+            )
+            if not rendered.context:
                 return None
 
-            sections: list[str] = []
-            for (_msg_type, header), rendered_messages in groups.items():
-                lines = [header]
-                lines.extend(rendered_messages)
-                sections.append("\n".join(lines))
-
-            context = "\n\n".join(sections)
             if pending_message_ids is not None:
-                pending_message_ids.extend(collected_message_ids)
-            return context
+                pending_message_ids.extend(rendered.represented_message_ids)
+            return rendered.context
         except Exception as exc:
             logger.debug("Inter-session message piggyback failed: %s", exc, exc_info=True)
             return None
@@ -87,15 +72,6 @@ class ChatPendingMessagesMixin:
                     message_id,
                     exc_info=True,
                 )
-
-    @staticmethod
-    def _message_group_header(message_type: str) -> str:
-        """Return the context header for a message type group."""
-        if message_type == "web_chat":
-            return "[Pending messages from web chat user]:"
-        if message_type == "command_result":
-            return "[Pending command results]:"
-        return "[Pending P2P messages from other sessions]:"
 
     @staticmethod
     def _resolve_chat_sender(from_session: str | None) -> str:

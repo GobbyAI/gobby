@@ -351,7 +351,7 @@ class TestTranslateToHookEvent:
         assert event.machine_id == "machine-abc"
         assert event.cwd == "/projects/test"
         assert event.timestamp is not None
-        assert event.metadata == {}
+        assert event.metadata == {"_native_hook_type": "session-start"}
 
     def test_top_level_platform_session_id_copied_to_metadata(self) -> None:
         adapter = ClaudeCodeAdapter()
@@ -397,7 +397,10 @@ class TestTranslateToHookEvent:
         }
         event = adapter.translate_to_hook_event(native)
         assert event.event_type == HookEventType.AFTER_TOOL
-        assert event.metadata == {"is_failure": False}
+        assert event.metadata == {
+            "_native_hook_type": "post-tool-use",
+            "is_failure": False,
+        }
         # tool_result should be normalized to tool_output
         assert event.data["tool_output"] == "command output"
 
@@ -582,7 +585,10 @@ class TestBashFailureDetection:
             },
         }
         event = adapter.translate_to_hook_event(native)
-        assert event.metadata == {"is_failure": False}
+        assert event.metadata == {
+            "_native_hook_type": "post-tool-use",
+            "is_failure": False,
+        }
 
     def test_post_tool_use_non_bash_unaffected(self) -> None:
         """post-tool-use with non-Bash tool → no is_failure even with exit code text."""
@@ -596,7 +602,10 @@ class TestBashFailureDetection:
             },
         }
         event = adapter.translate_to_hook_event(native)
-        assert event.metadata == {"is_failure": False}
+        assert event.metadata == {
+            "_native_hook_type": "post-tool-use",
+            "is_failure": False,
+        }
 
     def test_live_session_8944_post_tool_use_sets_definitive_success(self) -> None:
         fixture_path = (
@@ -1115,6 +1124,17 @@ class TestTranslateFromHookResponse:
         result = adapter.translate_from_hook_response(response, hook_type="user-prompt-submit")
         assert "hookSpecificOutput" in result
         assert result["hookSpecificOutput"]["hookEventName"] == "UserPromptSubmit"
+
+    def test_oversized_context_is_preserved_for_native_claude_offload(self) -> None:
+        adapter = ClaudeCodeAdapter()
+        context = "oversized-unrelated-context:" + ("x" * 32_597)
+        response = HookResponse(decision="allow", context=context)
+
+        result = adapter.translate_from_hook_response(response, hook_type="user-prompt-submit")
+
+        additional_context = result["hookSpecificOutput"]["additionalContext"]
+        assert additional_context == context
+        assert "[truncated]" not in additional_context
 
     def test_context_injection_session_start(self) -> None:
         adapter = ClaudeCodeAdapter()

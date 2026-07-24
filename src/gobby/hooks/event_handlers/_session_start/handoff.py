@@ -155,9 +155,8 @@ def _bound_handoff_summary(summary: str, parent: Any) -> str:
     """Bound a parent summary for inline injection, with a retrieval breadcrumb.
 
     The full summary stays available via the get_handoff_context MCP tool; this
-    only caps the copy injected into additionalContext, which Claude Code
-    hard-limits at ~10K chars. Returns the summary unchanged when it already
-    fits within the budget.
+    only caps the copy injected into provider context. Returns the summary
+    unchanged when it already fits within the budget.
     """
     if len(summary) <= HANDOFF_SUMMARY_INJECT_BUDGET:
         return summary
@@ -167,8 +166,8 @@ def _bound_handoff_summary(summary: str, parent: Any) -> str:
     ref_clause = f' with session ref "{ref}"' if ref else ""
     breadcrumb = (
         "> ⚠️ This is a truncated head of the previous session's summary "
-        f"({len(summary)} chars total), shortened to fit Claude Code's "
-        "additionalContext limit. Call get_handoff_context (gobby-sessions)"
+        f"({len(summary)} chars total), shortened to fit the inline handoff "
+        "budget. Call get_handoff_context (gobby-sessions)"
         f"{ref_clause} or with no arguments to load the full summary."
     )
     return head_with_breadcrumb(

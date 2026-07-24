@@ -129,7 +129,9 @@ class CodexHooksAdapter(BaseAdapter):
 
         # Check for failure on PostToolUse
         is_failure = normalized_data.get("is_error", False)
-        metadata = {"is_failure": is_failure} if is_failure else {}
+        metadata: dict[str, Any] = {"_native_hook_type": hook_type}
+        if is_failure:
+            metadata["is_failure"] = True
         if isinstance(raw_tool_input, dict):
             metadata["raw_tool_input"] = copy.deepcopy(raw_tool_input)
         original_tool_name = normalized_data.pop("_original_tool_name", None)

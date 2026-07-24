@@ -256,7 +256,7 @@ Run tools:
 Coordination tools:
 
 - `send_message`
-- `deliver_pending_messages`
+- `get_inter_session_message`
 - `get_inter_session_messages`
 
 `send_message` uses explicit targets: `session`, `agent`, `project`, `build`,

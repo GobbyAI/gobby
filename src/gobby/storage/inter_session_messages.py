@@ -265,7 +265,7 @@ class InterSessionMessageManager:
         rows = self.db.fetchall(
             """SELECT * FROM inter_session_messages
                WHERE to_session = %s AND delivered_at IS NULL
-               ORDER BY sent_at""",
+               ORDER BY sent_at ASC, id ASC""",
             (to_session,),
         )
         return [InterSessionMessage.from_row(row) for row in rows]

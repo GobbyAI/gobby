@@ -160,6 +160,8 @@ class TestInjectPendingMessages:
         msg1.message_type = "web_chat"
         msg1.from_session = "1234567890"
         msg1.content = "hello"
+        msg1.priority = "normal"
+        msg1.metadata_json = None
 
         msg2 = MagicMock()
         msg2.id = "2"
@@ -167,8 +169,17 @@ class TestInjectPendingMessages:
         msg2.priority = "urgent"
         msg2.from_session = None
         msg2.content = "help me"
+        msg2.metadata_json = None
 
-        mixin.inter_session_msg_manager.get_undelivered_messages.return_value = [msg1, msg2]
+        msg3 = MagicMock()
+        msg3.id = "3"
+        msg3.message_type = "p2p"
+        msg3.priority = "normal"
+        msg3.from_session = "sender-large"
+        msg3.content = "lossless:" + ("x" * 32_597)
+        msg3.metadata_json = None
+
+        mixin.inter_session_msg_manager.get_undelivered_messages.return_value = [msg1, msg2, msg3]
 
         pending_message_ids: list[str] = []
         res = mixin._inject_pending_messages(
@@ -182,14 +193,17 @@ class TestInjectPendingMessages:
         assert "- Session 12345678: hello" in res
         assert "Pending P2P messages from other sessions" in res
         assert "- [URGENT] help me" in res
+        assert "lossless:" not in res
+        assert 'get_inter_session_message(message_id="3")' in res
 
-        assert pending_message_ids == ["1", "2"]
+        assert pending_message_ids == ["1", "2", "3"]
         mixin.inter_session_msg_manager.mark_delivered.assert_not_called()
 
         mixin._mark_pending_messages_delivered(pending_message_ids, "sid")
 
         mixin.inter_session_msg_manager.mark_delivered.assert_any_call("1", "sid")
         mixin.inter_session_msg_manager.mark_delivered.assert_any_call("2", "sid")
+        mixin.inter_session_msg_manager.mark_delivered.assert_any_call("3", "sid")
 
     def test_inject_build_failure_leaves_message_undelivered(
         self,
@@ -211,13 +225,14 @@ class TestInjectPendingMessages:
         self,
         mixin: DummyMessagingMixin,
     ) -> None:
-        mixin.inter_session_msg_manager = MagicMock()
-        mixin.inter_session_msg_manager.mark_delivered.side_effect = ValueError("already claimed")
+        message_manager = MagicMock()
+        mixin.inter_session_msg_manager = message_manager
+        message_manager.mark_delivered.side_effect = ValueError("already claimed")
 
         result = mixin._mark_pending_messages_delivered(["claimed"], "sid")
 
         assert result is None
-        mixin.inter_session_msg_manager.mark_delivered.assert_called_once_with("claimed", "sid")
+        message_manager.mark_delivered.assert_called_once_with("claimed", "sid")
 
 
 class TestHandleChatMessage:

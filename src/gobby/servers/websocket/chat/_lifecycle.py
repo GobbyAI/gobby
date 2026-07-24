@@ -278,11 +278,6 @@ class ChatLifecycleMixin:
                 event_type,
                 pending_message_ids=pending_message_ids,
             )
-            if msg_context:
-                if merged_context:
-                    merged_context = merged_context + "\n\n" + msg_context
-                else:
-                    merged_context = msg_context
 
             # Build result dict
             result: dict[str, Any] = {
@@ -320,6 +315,12 @@ class ChatLifecycleMixin:
                 else:
                     enrichment = f"Gobby Session ID: {session_ref}"
                 result["context"] = f"{enrichment}\n\n{ctx}" if ctx else enrichment
+
+            if msg_context:
+                existing_context = result.get("context")
+                result["context"] = (
+                    f"{msg_context}\n\n{existing_context}" if existing_context else msg_context
+                )
 
             # --- Event broadcasting for audit trail (parity with CLI path D2) ---
             hook_broadcaster = getattr(self, "hook_broadcaster", None)

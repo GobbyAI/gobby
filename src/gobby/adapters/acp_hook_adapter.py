@@ -226,6 +226,7 @@ class ACPHookAdapter(BaseAdapter):
             }
         else:
             metadata = {}
+        metadata["_native_hook_type"] = hook_type
         self._copy_platform_session_metadata(native_event, metadata)
 
         # Normalize event data for CLI-agnostic processing

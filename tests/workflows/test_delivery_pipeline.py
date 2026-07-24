@@ -3,8 +3,6 @@
 from __future__ import annotations
 
 import asyncio
-import json
-import logging
 import threading
 from datetime import UTC, datetime
 from typing import Any
@@ -57,36 +55,6 @@ def _memory(mid: str, *, tags: list[str] | None = None) -> dict[str, Any]:
     if tags is not None:
         memory["tags"] = tags
     return memory
-
-
-def _memory_recall_message(
-    memories: list[dict[str, Any]],
-    *,
-    origin_turn_seq: Any = 4,
-    producer: str | None = "daemon_memory_recall",
-    recall_request_id: str = "recall-123",
-    enabled: bool | None = None,
-    disabled: bool | None = None,
-    from_session: str = "daemon-memory-recall",
-) -> dict[str, Any]:
-    payload: dict[str, Any] = {
-        "type": "memory_recall",
-        "recall_request_id": recall_request_id,
-        "memories": memories,
-    }
-    if producer is not None:
-        payload["producer"] = producer
-    if origin_turn_seq is not None:
-        payload["origin_turn_seq"] = origin_turn_seq
-    if enabled is not None:
-        payload["enabled"] = enabled
-    if disabled is not None:
-        payload["disabled"] = disabled
-    return {"from_session": from_session, "content": json.dumps(payload)}
-
-
-def _plain_message(content: str, *, from_session: str = "child-plain") -> dict[str, Any]:
-    return {"from_session": from_session, "content": content}
 
 
 def _variables(**overrides: Any) -> dict[str, Any]:
@@ -175,81 +143,6 @@ def test_is_empty_inject_payload_shapes() -> None:
     assert _is_empty_inject_payload({"success": True, "memories": [_memory("m1")]}) is False
 
 
-def test_empty_delivery_no_mutation(engine: RuleEngine, db: HubDatabase) -> None:
-    result = engine._format_delivery_result(
-        {"success": True, "messages": [], "count": 0},
-        PLATFORM_SESSION_ID,
-        _variables(),
-    )
-
-    assert result is None
-    assert "injected_memory_ids" not in _vars(db, PLATFORM_SESSION_ID)
-
-
-def test_memory_recall_delivery_payload_formats_and_tracks_ids(
-    engine: RuleEngine,
-    db: HubDatabase,
-) -> None:
-    result = engine._format_delivery_result(
-        {"messages": [_memory_recall_message([_memory("m1")])], "count": 1},
-        PLATFORM_SESSION_ID,
-        _variables(),
-    )
-
-    assert result is not None
-    assert "content-sentinel-m1" in result
-    assert _vars(db, PLATFORM_SESSION_ID)["injected_memory_ids"] == ["m1"]
-
-
-def test_memory_recall_delivery_does_not_touch_existing_injected_ids(
-    engine: RuleEngine,
-    db: HubDatabase,
-) -> None:
-    _set_injected(db, PLATFORM_SESSION_ID, ["m1"])
-
-    result = engine._format_delivery_result(
-        {"messages": [_memory_recall_message([_memory("m1")])], "count": 1},
-        PLATFORM_SESSION_ID,
-        _variables(),
-    )
-
-    assert result is None
-    assert _vars(db, PLATFORM_SESSION_ID)["injected_memory_ids"] == ["m1"]
-
-
-def test_mixed_memory_recall_and_plain_messages_formats_both(
-    engine: RuleEngine,
-    db: HubDatabase,
-) -> None:
-    result = engine._format_delivery_result(
-        {
-            "messages": [
-                _memory_recall_message([_memory("m1")]),
-                _plain_message("plain-msg-sentinel"),
-            ],
-            "count": 2,
-        },
-        PLATFORM_SESSION_ID,
-        _variables(),
-    )
-
-    assert result is not None
-    assert "content-sentinel-m1" in result
-    assert "plain-msg-sentinel" in result
-    assert _vars(db, PLATFORM_SESSION_ID)["injected_memory_ids"] == ["m1"]
-
-
-def test_malformed_message_content_falls_through(engine: RuleEngine) -> None:
-    result = engine._format_delivery_result(
-        {"messages": [_plain_message("{not-json plain-malformed-sentinel")], "count": 1},
-        PLATFORM_SESSION_ID,
-        _variables(),
-    )
-
-    assert result is not None
-    assert "plain-malformed-sentinel" in result
-
-
 async def _append_id(db: HubDatabase, session_id: str, mid: str) -> None:
     await asyncio.to_thread(
         SessionVariableManager(db).append_to_set_variable,
@@ -266,28 +159,6 @@ async def test_concurrent_append_race_safe(db: HubDatabase) -> None:
     )
 
     assert _vars(db, PLATFORM_SESSION_ID)["injected_memory_ids"] == ["m1", "m2"]
-
-
-def test_memory_recall_delivery_accepts_daemon_producer_independent_of_sender(
-    engine: RuleEngine,
-    db: HubDatabase,
-) -> None:
-    result = engine._format_delivery_result(
-        {
-            "messages": [
-                _memory_recall_message([_memory("m-recall")], from_session="old-recall-name"),
-                _plain_message("plain-sentinel", from_session="old-worker-name"),
-            ],
-            "count": 2,
-        },
-        PLATFORM_SESSION_ID,
-        _variables(),
-    )
-
-    assert result is not None
-    assert "content-sentinel-m-recall" in result
-    assert "plain-sentinel" in result
-    assert _vars(db, PLATFORM_SESSION_ID)["injected_memory_ids"] == ["m-recall"]
 
 
 @pytest.mark.asyncio
@@ -318,117 +189,6 @@ async def test_session_key_uses_platform_session_id(
     assert "content-sentinel-m1" in response.context
     assert _vars(db, PLATFORM_SESSION_ID)["injected_memory_ids"] == ["m1"]
     assert "injected_memory_ids" not in _vars(db, EXTERNAL_SESSION_ID)
-
-
-def test_stale_memory_recall_delivery_payloads_ignored(
-    engine: RuleEngine,
-    db: HubDatabase,
-) -> None:
-    result = engine._format_delivery_result(
-        {
-            "messages": [
-                _memory_recall_message([_memory("fresh")], origin_turn_seq=4),
-                _memory_recall_message([_memory("too-old")], origin_turn_seq=3),
-                _memory_recall_message([_memory("same-turn")], origin_turn_seq=5),
-                _memory_recall_message([_memory("future")], origin_turn_seq=6),
-                _memory_recall_message([_memory("missing")], origin_turn_seq=None),
-                _memory_recall_message([_memory("legacy")], producer="legacy-memory-recall"),
-                _memory_recall_message([_memory("malformed")], origin_turn_seq="bad"),
-                _memory_recall_message([_memory("disabled")], enabled=False),
-            ],
-            "count": 8,
-        },
-        PLATFORM_SESSION_ID,
-        _variables(),
-    )
-
-    assert result is not None
-    assert "content-sentinel-fresh" in result
-    assert "content-sentinel-too-old" not in result
-    assert "content-sentinel-same-turn" not in result
-    assert "content-sentinel-future" not in result
-    assert "content-sentinel-missing" not in result
-    assert "content-sentinel-legacy" not in result
-    assert "content-sentinel-malformed" not in result
-    assert "content-sentinel-disabled" not in result
-    assert _vars(db, PLATFORM_SESSION_ID)["injected_memory_ids"] == ["fresh"]
-
-
-def test_memory_recall_delivery_drops_and_success_log_at_info(
-    engine: RuleEngine,
-    db: HubDatabase,
-    caplog: pytest.LogCaptureFixture,
-) -> None:
-    """Delivery-side funnel outcomes are observable at INFO with the request id (#17772)."""
-    _set_injected(db, PLATFORM_SESSION_ID, ["m-dup"])
-
-    with caplog.at_level(logging.INFO, logger="gobby.workflows.engine.effects"):
-        result = engine._format_delivery_result(
-            {
-                "messages": [
-                    _memory_recall_message([_memory("m-new")], recall_request_id="rid-ok"),
-                    _memory_recall_message(
-                        [_memory("m-stale")], origin_turn_seq=3, recall_request_id="rid-stale"
-                    ),
-                    _memory_recall_message([_memory("m-dup")], recall_request_id="rid-dup"),
-                ],
-                "count": 3,
-            },
-            PLATFORM_SESSION_ID,
-            _variables(),
-        )
-
-    assert result is not None
-    messages = [r.getMessage() for r in caplog.records if r.levelno == logging.INFO]
-    assert any("Delivered memory_recall injection" in m and "rid-ok" in m for m in messages)
-    assert any("delivery_turn_seq_mismatch" in m and "rid-stale" in m for m in messages)
-    assert any("delivery_dedup" in m and "rid-dup" in m for m in messages)
-
-
-def test_memory_recall_delivery_ignored_when_parent_turn_seq_missing(
-    engine: RuleEngine,
-    db: HubDatabase,
-) -> None:
-    variables: dict[str, Any] = {}
-
-    result = engine._format_delivery_result(
-        {
-            "messages": [
-                _memory_recall_message([_memory("unverified")]),
-                _plain_message("plain-msg-unverified-sentinel"),
-            ],
-            "count": 2,
-        },
-        PLATFORM_SESSION_ID,
-        variables,
-    )
-
-    assert result is not None
-    assert "content-sentinel-unverified" not in result
-    assert "plain-msg-unverified-sentinel" in result
-    assert "injected_memory_ids" not in _vars(db, PLATFORM_SESSION_ID)
-
-
-def test_disabled_memory_recall_delivery_payload_dropped_beside_plain_message(
-    engine: RuleEngine,
-    db: HubDatabase,
-) -> None:
-    result = engine._format_delivery_result(
-        {
-            "messages": [
-                _memory_recall_message([_memory("disabled")], disabled=True),
-                _plain_message("plain-msg-disabled-sentinel"),
-            ],
-            "count": 2,
-        },
-        PLATFORM_SESSION_ID,
-        _variables(),
-    )
-
-    assert result is not None
-    assert "content-sentinel-disabled" not in result
-    assert "plain-msg-disabled-sentinel" in result
-    assert "injected_memory_ids" not in _vars(db, PLATFORM_SESSION_ID)
 
 
 def test_search_memories_formatter_dedup(engine: RuleEngine, db: HubDatabase) -> None:
@@ -562,61 +322,6 @@ class TestInjectionOutcomeCapture:
         recorded: list[dict[str, Any]] = []
         engine = RuleEngine(db, injection_outcome_recorder=recorded.extend)
         return engine, recorded
-
-    def test_memory_recall_delivery_records_positions_and_drops(self, db: HubDatabase) -> None:
-        engine, recorded = self._engine_with_recorder(db)
-        _set_injected(db, PLATFORM_SESSION_ID, ["m-old"])
-        payload = {
-            "type": "memory_recall",
-            "producer": "daemon_memory_recall",
-            "origin_turn_seq": 4,
-            "recall_request_id": "recall-123",
-            "project_id": PROJECT_ID,
-            "memories": [
-                {"id": "m-lesson", "content": "lesson", "tags": ["review-lesson"]},
-                {"id": "m-old", "content": "seen before"},
-                {"id": "m-new", "content": "fresh fact", "type": "fact"},
-            ],
-        }
-
-        result = engine._format_memory_recall_delivery(payload, PLATFORM_SESSION_ID, _variables())
-
-        assert result is not None
-        assert "fresh fact" in result
-        by_id = {row["memory_id"]: row for row in recorded}
-        assert by_id["m-lesson"]["outcome"] == "filtered"
-        assert by_id["m-lesson"]["drop_reason"] == "review_lesson"
-        assert by_id["m-old"]["outcome"] == "filtered"
-        assert by_id["m-old"]["drop_reason"] == "already_injected"
-        assert by_id["m-new"]["outcome"] == "injected"
-        assert by_id["m-new"]["injection_position"] == 0
-        assert by_id["m-new"]["injection_group"] == "fact"
-        assert by_id["m-new"]["turn_seq"] == 4
-        assert by_id["m-new"]["caller"] == "memory.recall"
-        assert by_id["m-new"]["project_id"] == PROJECT_ID
-        assert by_id["m-new"]["session_id"] == PLATFORM_SESSION_ID
-        assert all(row["recall_request_id"] == "recall-123" for row in recorded)
-        # Only the rendered memory joins the already-known id in session state.
-        assert set(_vars(db, PLATFORM_SESSION_ID)["injected_memory_ids"]) == {"m-old", "m-new"}
-
-    def test_stale_delivery_records_whole_payload_drop(self, db: HubDatabase) -> None:
-        engine, recorded = self._engine_with_recorder(db)
-        payload = {
-            "type": "memory_recall",
-            "producer": "daemon_memory_recall",
-            "origin_turn_seq": 2,  # parent_turn_seq=5 → stale (needs 4)
-            "recall_request_id": "recall-stale",
-            "memories": [{"id": "m1", "content": "late"}],
-        }
-
-        result = engine._format_memory_recall_delivery(payload, PLATFORM_SESSION_ID, _variables())
-
-        assert result is None
-        assert len(recorded) == 1
-        assert recorded[0]["memory_id"] == "m1"
-        assert recorded[0]["outcome"] == "filtered"
-        assert recorded[0]["drop_reason"] == "other"
-        assert recorded[0]["drop_detail"] == "stale_delivery"
 
     def test_inline_search_memories_result_records_outcomes(self, db: HubDatabase) -> None:
         engine, recorded = self._engine_with_recorder(db)

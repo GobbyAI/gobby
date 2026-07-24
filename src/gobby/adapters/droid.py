@@ -96,7 +96,7 @@ class DroidAdapter(BaseAdapter):
                 },
             )
         is_failure = normalized_data.get("is_error")
-        metadata: dict[str, Any] = {}
+        metadata: dict[str, Any] = {"_native_hook_type": hook_type}
         if hook_type == "PostToolUse":
             metadata["is_failure"] = is_failure if isinstance(is_failure, bool) else False
         elif hook_type == "PostToolUseFailure":

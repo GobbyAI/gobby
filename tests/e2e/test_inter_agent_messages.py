@@ -10,7 +10,7 @@ Test scenario:
 1. Start daemon
 2. Register parent and child sessions
 3. Parent sends message via send_message
-4. Child receives via deliver_pending_messages
+4. Child reads its inbox via get_inter_session_messages
 5. Child responds via send_message
 6. Parent receives response
 """
@@ -50,9 +50,9 @@ class TestInterAgentMessagingE2E:
 
         This test verifies the full messaging flow:
         1. Parent sends message via send_message
-        2. Child receives via deliver_pending_messages
+        2. Child reads its inbox via get_inter_session_messages
         3. Child responds via send_message
-        4. Parent receives response via deliver_pending_messages
+        4. Parent reads the response via get_inter_session_messages
         """
         # Setup: Create parent and child sessions using register_session
         # (which creates entries in the sessions DB table)
@@ -113,15 +113,19 @@ class TestInterAgentMessagingE2E:
         parent_to_child_msg_id = result["message"]["id"]
         assert parent_to_child_msg_id is not None
 
-        # Step 2: Child receives message via deliver_pending_messages
+        # Step 2: Child reads its undelivered inbox.
         mcp_client.session_id = child_session_id
         raw_result = mcp_client.call_tool(
             server_name="gobby-agents",
-            tool_name="deliver_pending_messages",
-            arguments={"target_session_id": child_session_id},
+            tool_name="get_inter_session_messages",
+            arguments={
+                "target_session_id": child_session_id,
+                "direction": "inbox",
+                "undelivered_only": True,
+            },
         )
         result = unwrap_result(raw_result)
-        assert "error" not in result, f"deliver_pending_messages failed: {result}"
+        assert "error" not in result, f"get_inter_session_messages failed: {result}"
         messages = result.get("messages", [])
         assert len(messages) >= 1, "Child should have received at least 1 message"
 
@@ -154,15 +158,19 @@ class TestInterAgentMessagingE2E:
         child_to_parent_msg_id = result["message"]["id"]
         assert child_to_parent_msg_id is not None
 
-        # Step 4: Parent receives response via deliver_pending_messages
+        # Step 4: Parent reads the response from its undelivered inbox.
         mcp_client.session_id = parent_session_id
         raw_result = mcp_client.call_tool(
             server_name="gobby-agents",
-            tool_name="deliver_pending_messages",
-            arguments={"target_session_id": parent_session_id},
+            tool_name="get_inter_session_messages",
+            arguments={
+                "target_session_id": parent_session_id,
+                "direction": "inbox",
+                "undelivered_only": True,
+            },
         )
         result = unwrap_result(raw_result)
-        assert "error" not in result, f"deliver_pending_messages (parent) failed: {result}"
+        assert "error" not in result, f"get_inter_session_messages (parent) failed: {result}"
         parent_messages = result.get("messages", [])
         assert len(parent_messages) >= 1, "Parent should have received at least 1 message"
 
@@ -183,13 +191,13 @@ class TestInterAgentMessagingE2E:
         # Cleanup: Unregister the test agent
         cli_events.unregister_test_agent(run_id)
 
-    def test_deliver_pending_messages_empty(
+    def test_get_inter_session_messages_empty(
         self,
         daemon_instance: DaemonInstance,
         mcp_client: MCPTestClient,
         cli_events: CLIEventSimulator,
     ) -> None:
-        """Test delivering messages returns empty list when no messages."""
+        """Reading an empty inbox returns an empty list."""
         # First, register the project in the database (required for FK constraint)
         project_result = cli_events.register_test_project(
             project_id="00000000-0000-0000-0000-000000000e2e",
@@ -208,29 +216,30 @@ class TestInterAgentMessagingE2E:
         )
         session_id = session_result["id"]
 
-        # Deliver pending messages should return empty
+        # The undelivered inbox should be empty.
         mcp_client.session_id = session_id
         raw_result = mcp_client.call_tool(
             server_name="gobby-agents",
-            tool_name="deliver_pending_messages",
-            arguments={"target_session_id": session_id},
+            tool_name="get_inter_session_messages",
+            arguments={
+                "target_session_id": session_id,
+                "direction": "inbox",
+                "undelivered_only": True,
+            },
         )
         result = unwrap_result(raw_result)
 
-        assert "error" not in result, f"deliver_pending_messages failed: {result}"
+        assert "error" not in result, f"get_inter_session_messages failed: {result}"
         assert result.get("messages", []) == []
         assert result.get("count", 0) == 0
 
-    def test_deliver_marks_messages_as_delivered(
+    def test_mailbox_reads_do_not_mark_messages_delivered(
         self,
         daemon_instance: DaemonInstance,
         mcp_client: MCPTestClient,
         cli_events: CLIEventSimulator,
     ) -> None:
-        """Test that deliver_pending_messages marks messages as delivered.
-
-        After delivering, a second call should return no new messages.
-        """
+        """Mailbox history reads are side-effect free."""
         parent_external_id = f"parent-{uuid.uuid4().hex[:8]}"
         child_external_id = f"child-{uuid.uuid4().hex[:8]}"
         run_id = str(uuid.uuid4())
@@ -279,24 +288,32 @@ class TestInterAgentMessagingE2E:
             },
         )
 
-        # First deliver - should return the message
+        # First read returns the message.
         mcp_client.session_id = child_session_id
         raw_result = mcp_client.call_tool(
             server_name="gobby-agents",
-            tool_name="deliver_pending_messages",
-            arguments={"target_session_id": child_session_id},
+            tool_name="get_inter_session_messages",
+            arguments={
+                "target_session_id": child_session_id,
+                "direction": "inbox",
+                "undelivered_only": True,
+            },
         )
         result = unwrap_result(raw_result)
-        assert len(result.get("messages", [])) >= 1, "First deliver should return messages"
+        assert len(result.get("messages", [])) >= 1, "First read should return messages"
 
-        # Second deliver - should return empty (already delivered)
+        # A second read returns it again because history access does not acknowledge.
         raw_result = mcp_client.call_tool(
             server_name="gobby-agents",
-            tool_name="deliver_pending_messages",
-            arguments={"target_session_id": child_session_id},
+            tool_name="get_inter_session_messages",
+            arguments={
+                "target_session_id": child_session_id,
+                "direction": "inbox",
+                "undelivered_only": True,
+            },
         )
         result = unwrap_result(raw_result)
-        assert len(result.get("messages", [])) == 0, "Second deliver should return no messages"
+        assert len(result.get("messages", [])) >= 1, "Second read should preserve messages"
 
         # Cleanup
         cli_events.unregister_test_agent(run_id)
@@ -354,7 +371,8 @@ class TestMessagingToolsAvailability:
 
         expected_tools = [
             "send_message",
-            "deliver_pending_messages",
+            "get_inter_session_message",
+            "get_inter_session_messages",
         ]
 
         for tool in expected_tools:
@@ -375,15 +393,15 @@ class TestMessagingToolsAvailability:
         assert raw_schema is not None
         assert isinstance(raw_schema, dict)
 
-    def test_deliver_pending_messages_schema(
+    def test_get_inter_session_message_schema(
         self,
         daemon_instance: DaemonInstance,
         mcp_client: MCPTestClient,
     ) -> None:
-        """Verify deliver_pending_messages tool schema can be retrieved."""
+        """Verify get_inter_session_message tool schema can be retrieved."""
         raw_schema = mcp_client.get_tool_schema(
             server_name="gobby-agents",
-            tool_name="deliver_pending_messages",
+            tool_name="get_inter_session_message",
         )
 
         # Schema endpoint returns response - just verify we get some response

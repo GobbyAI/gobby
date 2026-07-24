@@ -337,7 +337,7 @@ class TestTranslateToHookEvent:
 
         event = adapter.translate_to_hook_event(native_event)
 
-        assert event.metadata == {}
+        assert event.metadata == {"_native_hook_type": "SessionStart"}
 
 
 class TestTranslateFromHookResponse:

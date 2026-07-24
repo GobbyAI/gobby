@@ -2,7 +2,7 @@
 
 Provides P2P messaging and command coordination between sessions:
 - send_message: target-based messaging with same-project validation for sessions
-- deliver_pending_messages: Fetch and mark undelivered messages
+- get_inter_session_message: Retrieve one complete message for a participant
 - get_inter_session_messages: Read-only query of message history
 """
 
@@ -53,8 +53,8 @@ def _message_metadata(msg: Any) -> dict[str, Any]:
 
 
 def _message_delivery_payload(msg: Any) -> dict[str, Any]:
-    """Return pending-message payload with delivery context included."""
-    raw_payload = msg.to_brief()
+    """Return a complete message payload with parsed delivery metadata."""
+    raw_payload = msg.to_dict()
     payload: dict[str, Any] = dict(raw_payload) if isinstance(raw_payload, Mapping) else {}
     metadata = _message_metadata(msg)
     if metadata:
@@ -245,18 +245,16 @@ def add_messaging_tools(
             logger.error("send_message failed: %s", e)
             return {"success": False, "error": str(e)}
 
-    # ── deliver_pending_messages ───────────────────────────────────
+    # ── get_inter_session_message ──────────────────────────────────
 
     @registry.tool(
-        name="deliver_pending_messages",
+        name="get_inter_session_message",
         description=(
-            "Fetch and atomically claim undelivered messages for the calling session. "
-            "target_session_id defaults to the caller and must resolve to the caller."
+            "Retrieve one complete stored inter-session message by ID. "
+            "The calling session must be the sender or recipient."
         ),
     )
-    async def deliver_pending_messages(
-        target_session_id: str | None = None,
-    ) -> dict[str, Any]:
+    async def get_inter_session_message(message_id: str) -> dict[str, Any]:
         try:
             from gobby.utils.session_context import get_current_session_id
 
@@ -264,42 +262,30 @@ def add_messaging_tools(
             if not caller_session_id:
                 return {
                     "success": False,
-                    "error": "No calling session is available for message delivery.",
+                    "error": "No calling session is available for message retrieval.",
+                    "error_code": "missing_session_context",
                 }
             resolved_caller_id = _resolve(caller_session_id)
-            resolved_id = (
-                resolved_caller_id if target_session_id is None else _resolve(target_session_id)
-            )
-            if resolved_id != resolved_caller_id:
+            message = message_manager.get_message(message_id)
+            if message is None:
                 return {
                     "success": False,
-                    "error": "target_session_id must resolve to the calling session.",
+                    "error": f"Inter-session message not found: {message_id}",
+                    "error_code": "message_not_found",
                 }
-
-            pending = message_manager.get_undelivered_messages(resolved_id)
-            payloads = [_message_delivery_payload(msg) for msg in pending]
-            claimed_ids = set(
-                message_manager.mark_delivered_batch(
-                    [msg.id for msg in pending],
-                    resolved_id,
-                )
-                if pending
-                else []
-            )
-            messages = [
-                payload
-                for msg, payload in zip(pending, payloads, strict=True)
-                if msg.id in claimed_ids
-            ]
-
+            if resolved_caller_id not in {message.from_session, message.to_session}:
+                return {
+                    "success": False,
+                    "error": "Only the message sender or recipient may retrieve it.",
+                    "error_code": "message_access_denied",
+                }
             return {
                 "success": True,
-                "messages": messages,
-                "count": len(messages),
+                "message": _message_delivery_payload(message),
             }
 
         except Exception as e:
-            logger.error("deliver_pending_messages failed: %s", e)
+            logger.error("get_inter_session_message failed: %s", e)
             return {"success": False, "error": str(e)}
 
     # ── get_inter_session_messages ────────────────────────────────

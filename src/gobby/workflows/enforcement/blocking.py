@@ -44,7 +44,7 @@ OPERATOR_TOOLS = {
 }
 
 
-MESSAGE_DELIVERY_TOOLS = {"deliver_pending_messages"}
+MESSAGE_DELIVERY_TOOLS = {"get_inter_session_message", "get_inter_session_messages"}
 
 
 def is_message_delivery_tool(tool_name: str | None) -> bool:

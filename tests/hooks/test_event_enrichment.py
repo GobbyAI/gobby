@@ -28,13 +28,23 @@ pytestmark = pytest.mark.unit
 
 
 def _make_event(event_type: HookEventType, platform_session_id: str = "sess-abc") -> HookEvent:
+    native_hook_types = {
+        HookEventType.SESSION_START: "session-start",
+        HookEventType.BEFORE_AGENT: "user-prompt-submit",
+        HookEventType.BEFORE_TOOL: "pre-tool-use",
+        HookEventType.AFTER_TOOL: "post-tool-use",
+        HookEventType.SESSION_END: "session-end",
+    }
     return HookEvent(
         event_type=event_type,
         session_id="ext-session-1",
         source=SessionSource.CLAUDE,
         timestamp=datetime.now(UTC),
         data={},
-        metadata={"_platform_session_id": platform_session_id},
+        metadata={
+            "_platform_session_id": platform_session_id,
+            "_native_hook_type": native_hook_types[event_type],
+        },
     )
 
 
@@ -110,8 +120,8 @@ class TestPiggybackEventTypes:
 
         assert response.context is not None
         assert "Turn-start message" in response.context
-        enricher._inter_session_msg_manager.mark_delivered.assert_called_once_with(
-            "msg-1", "sess-abc"
+        enricher._inter_session_msg_manager.mark_delivered_batch.assert_called_once_with(
+            ["msg-1"], "sess-abc"
         )
 
     def test_piggyback_skips_session_start(self) -> None:
@@ -222,7 +232,7 @@ class TestMessageDeliveryOrdering:
 
         enricher.enrich(_make_event(HookEventType.BEFORE_AGENT), response)
 
-        enricher._inter_session_msg_manager.mark_delivered.assert_not_called()
+        enricher._inter_session_msg_manager.mark_delivered_batch.assert_not_called()
         assert response.context is None
 
     def test_mark_failure_warns_and_leaves_attached_message(
@@ -230,7 +240,7 @@ class TestMessageDeliveryOrdering:
     ) -> None:
         msg = _make_msg()
         enricher = _make_enricher([msg])
-        enricher._inter_session_msg_manager.mark_delivered.side_effect = RuntimeError(
+        enricher._inter_session_msg_manager.mark_delivered_batch.side_effect = RuntimeError(
             "database unavailable"
         )
         response = HookResponse()
@@ -240,7 +250,7 @@ class TestMessageDeliveryOrdering:
 
         assert response.context is not None
         assert "hello" in response.context
-        assert "Failed to mark piggyback message msg-1 delivered" in caplog.text
+        assert "Failed to mark piggyback messages delivered" in caplog.text
 
 
 class TestUrgentPriority:

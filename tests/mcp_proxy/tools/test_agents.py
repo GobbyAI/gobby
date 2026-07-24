@@ -1765,7 +1765,15 @@ class TestFireSyntheticStop:
         runner.cancel_run.return_value = True
 
         mock_hook_mgr = MagicMock()
-        mock_hook_mgr.evaluate_workflow_rules.return_value = (None, None)
+        evaluated_events: list[Any] = []
+
+        def evaluate_off_loop(event: Any) -> tuple[None, None]:
+            with pytest.raises(RuntimeError, match="no running event loop"):
+                asyncio.get_running_loop()
+            evaluated_events.append(event)
+            return None, None
+
+        mock_hook_mgr.evaluate_workflow_rules.side_effect = evaluate_off_loop
         mock_resolver = MagicMock(return_value=mock_hook_mgr)
 
         registry = create_agents_registry(
@@ -1785,7 +1793,8 @@ class TestFireSyntheticStop:
         # Verify synthetic stop was fired for the agent's session
         mock_resolver.assert_called_once()
         mock_hook_mgr.evaluate_workflow_rules.assert_called_once()
-        event_arg = mock_hook_mgr.evaluate_workflow_rules.call_args[0][0]
+        assert len(evaluated_events) == 1
+        event_arg = evaluated_events[0]
         assert event_arg.metadata["_platform_session_id"] == "sess-456"
 
 
