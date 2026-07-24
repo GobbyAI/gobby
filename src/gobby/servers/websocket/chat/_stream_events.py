@@ -20,8 +20,8 @@ from gobby.llm.claude_models import (
     ToolCallEvent,
     ToolResultEvent,
 )
+from gobby.servers.chat_stream_transport import ChatStreamTransport
 from gobby.servers.websocket.chat._stream_persistence import ChatStreamPersistence
-from gobby.servers.websocket.chat._stream_transport import ChatStreamTransport
 from gobby.servers.websocket.chat.content_blocks import AssistantContentBlocks
 
 logger = logging.getLogger(__name__)

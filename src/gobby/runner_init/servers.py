@@ -156,7 +156,15 @@ def init_servers(runner: GobbyRunner) -> None:
         runner.http_server.broadcaster.websocket_server = runner.websocket_server
 
         if runner.communications_manager:
+            from gobby.communications.chat_backend import ChatSessionCommsBackend
+
             runner.communications_manager.set_websocket_broadcast(runner.websocket_server.broadcast)
+            runner.communications_manager.responder.set_backend(
+                ChatSessionCommsBackend(
+                    runner.websocket_server,
+                    runner.communications_manager,
+                )
+            )
 
         if runner.message_processor:
             runner.message_processor.websocket_server = runner.websocket_server

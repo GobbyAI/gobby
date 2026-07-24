@@ -19,7 +19,7 @@ class ChatStreamOwner(Protocol):
 
 
 @dataclass
-class ChatStreamTransport:
+class WebSocketChatStreamTransport:
     """Request-scoped WebSocket message builder and sender."""
 
     owner: ChatStreamOwner

@@ -12,13 +12,14 @@ import httpx
 from websockets.exceptions import ConnectionClosed, ConnectionClosedError
 
 from gobby.servers.chat_session_base import ChatSessionProtocol
+from gobby.servers.chat_stream_transport import ChatStreamTransport
 from gobby.servers.websocket.chat._session import _resolve_git_branch
 from gobby.servers.websocket.chat._stream_events import (
     ChatStreamEventHandler,
     ChatStreamEventState,
 )
 from gobby.servers.websocket.chat._stream_persistence import ChatStreamPersistence
-from gobby.servers.websocket.chat._stream_transport import ChatStreamTransport
+from gobby.servers.websocket.chat._stream_transport import WebSocketChatStreamTransport
 from gobby.servers.websocket.chat.content_blocks import AssistantContentBlocks
 from gobby.servers.websocket.chat.local_openai_warmup import LocalOpenAIModelWarmupError
 from gobby.servers.websocket.chat_attachments import PreparedMessageAttachments
@@ -98,9 +99,44 @@ class ChatStreamingMixin:
         attachments: PreparedMessageAttachments | None = None,
     ) -> None:
         """Stream a ChatSession response to the client. Runs as a cancellable task."""
+        transport = WebSocketChatStreamTransport(
+            self,
+            websocket,
+            conversation_id,
+            request_id,
+        )
+        await self._run_chat_turn(
+            conversation_id=conversation_id,
+            content=content,
+            model=model,
+            transport=transport,
+            project_id=project_id,
+            inject_context=inject_context,
+            provider=provider,
+            reasoning_effort=reasoning_effort,
+            tts_enabled=tts_enabled,
+            attachments=attachments,
+            websocket=websocket,
+        )
+
+    async def _run_chat_turn(
+        self,
+        *,
+        conversation_id: str,
+        content: ChatContent,
+        model: str | None,
+        transport: ChatStreamTransport,
+        project_id: str | None = None,
+        inject_context: str | None = None,
+        provider: str | None = None,
+        reasoning_effort: str | None = None,
+        tts_enabled: bool | None = None,
+        attachments: PreparedMessageAttachments | None = None,
+        websocket: Any | None = None,
+    ) -> None:
+        """Run one ChatSession turn through a caller-supplied stream transport."""
         assistant_blocks = AssistantContentBlocks()
         state = ChatStreamEventState(assistant_message_id=f"assistant-{uuid4().hex[:12]}")
-        transport = ChatStreamTransport(self, websocket, conversation_id, request_id)
         persistence = ChatStreamPersistence(self, conversation_id, assistant_blocks)
         tts_pipeline = self._create_optional_tts_pipeline(conversation_id, tts_enabled)
         event_handler = ChatStreamEventHandler(
@@ -131,10 +167,11 @@ class ChatStreamingMixin:
                 if session is None:
                     return
 
-            client_info = self.clients.get(websocket)
-            if client_info is not None:
-                client_info["conversation_id"] = conversation_id
-                client_info["project_id"] = getattr(session, "project_id", None)
+            if websocket is not None:
+                client_info = self.clients.get(websocket)
+                if client_info is not None:
+                    client_info["conversation_id"] = conversation_id
+                    client_info["project_id"] = getattr(session, "project_id", None)
 
             if reasoning_effort is not None:
                 session.reasoning_effort = reasoning_effort
@@ -361,6 +398,14 @@ class ChatStreamingMixin:
             await aclose()
         except Exception:
             pass
+
+    async def reset_chat_session(self, conversation_id: str) -> bool:
+        """Stop and remove one cached ChatSession runtime."""
+        session = self._chat_sessions.pop(conversation_id, None)
+        if session is None:
+            return False
+        await session.stop()
+        return True
 
     def _clear_active_task(self, conversation_id: str) -> None:
         registry = getattr(self, "web_chat_session_registry", None)

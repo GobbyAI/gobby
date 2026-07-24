@@ -62,6 +62,11 @@ class BaseChannelAdapter(ABC):
     def supports_polling(self) -> bool:
         """Whether this adapter supports message polling."""
 
+    @property
+    def supports_message_edit(self) -> bool:
+        """Whether this adapter can replace an existing platform message."""
+        return type(self).edit_message is not BaseChannelAdapter.edit_message
+
     @abstractmethod
     async def initialize(
         self, config: ChannelConfig, secret_resolver: Callable[[str], str | None]
@@ -98,6 +103,18 @@ class BaseChannelAdapter(ABC):
         Default raises NotImplementedError. Override in adapters that support files.
         """
         raise NotImplementedError(f"{self.channel_type} adapter does not support file attachments")
+
+    async def edit_message(
+        self,
+        platform_message_id: str,
+        content: str,
+        conversation_id: str,
+    ) -> None:
+        """Replace an existing platform message.
+
+        Override in adapters that support message editing.
+        """
+        raise NotImplementedError(f"{self.channel_type} adapter does not support message editing")
 
     async def download_inbound_attachments(
         self,

@@ -7,6 +7,7 @@ from dataclasses import asdict
 from typing import TYPE_CHECKING, Any
 
 from gobby.communications.adapters import get_adapter_class
+from gobby.communications.adapters.base import BaseChannelAdapter
 from gobby.communications.attachments import AttachmentManager
 from gobby.communications.identities import IdentityManager
 from gobby.communications.inbound import InboundCommunications
@@ -28,7 +29,6 @@ from gobby.communications.threads import ThreadManager
 if TYPE_CHECKING:
     from pathlib import Path
 
-    from gobby.communications.adapters.base import BaseChannelAdapter
     from gobby.config.communications import CommunicationsConfig
     from gobby.storage.communications import LocalCommunicationsStore
     from gobby.storage.secrets import SecretStore
@@ -130,6 +130,30 @@ class CommunicationsManager:
     ) -> CommsMessage:
         """Send a message to a named channel."""
         return await self._outbound.send_message(channel_name, content, session_id, metadata)
+
+    def supports_message_edit(self, channel_name: str) -> bool:
+        """Return whether the active adapter implements message editing."""
+        adapter = self._adapters.get(channel_name)
+        return bool(adapter and adapter.supports_message_edit)
+
+    async def edit_message(
+        self,
+        channel_name: str,
+        platform_message_id: str,
+        content: str,
+        conversation_id: str,
+    ) -> None:
+        """Replace an existing platform message through an active adapter."""
+        adapter = self._adapters.get(channel_name)
+        if adapter is None:
+            raise ValueError(f"Channel {channel_name!r} not found or not active")
+        if not self.supports_message_edit(channel_name):
+            raise NotImplementedError(
+                f"{adapter.channel_type} adapter does not support message editing"
+            )
+        channel = self._channel_by_name[channel_name]
+        await self._rate_limiter.wait_if_needed(channel.id)
+        await adapter.edit_message(platform_message_id, content, conversation_id)
 
     async def send_attachment(
         self,
