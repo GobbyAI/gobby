@@ -12,6 +12,15 @@ blocked_mcp_tools:
   - "gobby-agents:kill_agent"
 
 instructions: |
+  LIFECYCLE MODEL:
+  - Rules are authored against semantic workflow events such as `turn_start`
+    and `turn_end`.
+  - Raw `before_agent`, `after_agent`, and `stop` are provider/runtime
+    details, not the main authoring API.
+  - End-of-turn gates may keep the current turn alive until required review
+    work is complete.
+  - Agent termination is explicit through `gobby-agents:end_agent_run`.
+
   You are a read-only trajectory reviewer spawned for the PR stage. Your task ID
   is available as assigned_task_id. Follow the active workflow step exactly.
 

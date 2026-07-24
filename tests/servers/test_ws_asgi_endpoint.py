@@ -1,15 +1,22 @@
 from __future__ import annotations
 
 import json
+import logging
 from types import SimpleNamespace
-from typing import Any
+from typing import Any, cast
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 from fastapi import FastAPI, WebSocket
 from fastapi.testclient import TestClient
+from starlette.routing import WebSocketRoute
 from starlette.websockets import WebSocketDisconnect
+from websockets.exceptions import ConnectionClosedError
 
 from gobby.servers._app_ui import _mount_ws_endpoint
+from gobby.servers.http import HTTPServer
+from gobby.servers.websocket.asgi_adapter import ASGIWebSocketAdapter
+from gobby.servers.websocket.server import WebSocketServer
 
 pytestmark = pytest.mark.unit
 
@@ -63,8 +70,80 @@ def _client(
         services=SimpleNamespace(websocket_server=websocket_server),
         websocket_server=websocket_server,
     )
-    _mount_ws_endpoint(app, server)
+    _mount_ws_endpoint(app, cast(HTTPServer, server))
     return TestClient(app)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("message", "send_method"),
+    [
+        pytest.param("text payload", "send_text", id="text"),
+        pytest.param(b"binary payload", "send_bytes", id="binary"),
+    ],
+)
+async def test_adapter_send_normalizes_starlette_disconnect(
+    message: str | bytes,
+    send_method: str,
+) -> None:
+    websocket = MagicMock(spec=WebSocket)
+    websocket.client = ("127.0.0.1", 1234)
+    send = AsyncMock(side_effect=WebSocketDisconnect(code=1006, reason="client vanished"))
+    setattr(websocket, send_method, send)
+    adapter = ASGIWebSocketAdapter(websocket, user_id="test-user")
+
+    with pytest.raises(ConnectionClosedError) as exc_info:
+        await adapter.send(message)
+
+    send.assert_awaited_once_with(message)
+    assert isinstance(exc_info.value.__cause__, WebSocketDisconnect)
+    assert adapter.disconnected is True
+    assert adapter.closed is False
+    assert adapter.close_code == 1006
+    assert adapter.close_reason == "client vanished"
+
+
+@pytest.mark.asyncio
+async def test_disconnect_during_welcome_cleans_up_without_unexpected_error(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    config = MagicMock()
+    config.host = "localhost"
+    config.port = 60888
+    config.ping_interval = 30
+    config.ping_timeout = 10
+    config.max_message_size = 1024
+    websocket_server = WebSocketServer(config, MagicMock())
+    cleanup_tmux_client = AsyncMock()
+
+    app = FastAPI()
+    server = SimpleNamespace(
+        auth_service=SimpleNamespace(enabled=False),
+        services=SimpleNamespace(websocket_server=websocket_server),
+        websocket_server=websocket_server,
+    )
+    _mount_ws_endpoint(app, cast(HTTPServer, server))
+    route = next(
+        route for route in app.routes if isinstance(route, WebSocketRoute) and route.path == "/ws"
+    )
+
+    websocket = MagicMock(spec=WebSocket)
+    websocket.client = ("127.0.0.1", 1234)
+    websocket.accept = AsyncMock()
+    websocket.send_text = AsyncMock(
+        side_effect=WebSocketDisconnect(code=1006, reason="client vanished")
+    )
+    websocket.close = AsyncMock()
+    caplog.set_level(logging.DEBUG, logger="gobby.servers.websocket.server")
+
+    with patch.object(websocket_server, "_cleanup_tmux_client", cleanup_tmux_client):
+        await route.endpoint(websocket)
+
+    assert websocket_server.clients == {}
+    cleanup_tmux_client.assert_awaited_once()
+    websocket.close.assert_not_awaited()
+    assert "connection closed abnormally" in caplog.text
+    assert "Unexpected error for client" not in caplog.text
 
 
 def test_unauthenticated_handshake_is_rejected_before_handler() -> None:

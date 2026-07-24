@@ -61,8 +61,8 @@ instructions: |
     `gobby-agents:end_agent_run` once its leaf is closed; harvest by task
     state and reclaim idle-but-done workers with `stop_agent`.
 
-MESSAGING:
-- Act on pending-message notifications before dispatching. Resolve any
+  MESSAGING:
+  - Act on pending-message notifications before dispatching. Resolve any
   reference with `gobby-agents:get_inter_session_message`.
   - Send milestone updates with `gobby-agents:send_message` to your parent
     session: iteration completed, leaf closed, worker failure, budget

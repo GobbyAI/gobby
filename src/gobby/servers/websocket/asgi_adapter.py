@@ -5,6 +5,8 @@ from __future__ import annotations
 from collections.abc import AsyncIterator
 
 from fastapi import WebSocket
+from starlette.websockets import WebSocketDisconnect
+from websockets.exceptions import ConnectionClosedError
 
 
 class ASGIWebSocketAdapter(AsyncIterator[str | bytes]):
@@ -27,10 +29,16 @@ class ASGIWebSocketAdapter(AsyncIterator[str | bytes]):
         self.accepted = True
 
     async def send(self, message: str | bytes) -> None:
-        if isinstance(message, bytes):
-            await self._websocket.send_bytes(message)
-        else:
-            await self._websocket.send_text(message)
+        try:
+            if isinstance(message, bytes):
+                await self._websocket.send_bytes(message)
+            else:
+                await self._websocket.send_text(message)
+        except WebSocketDisconnect as exc:
+            self.disconnected = True
+            self.close_code = exc.code
+            self.close_reason = exc.reason
+            raise ConnectionClosedError(None, None) from exc
 
     async def close(self, code: int = 1000, reason: str = "") -> None:
         if self.closed or self.disconnected:
