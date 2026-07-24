@@ -11,6 +11,7 @@ use crate::ai_context::PostgresAiConfigSource;
 use crate::ai_context::{AiConfigSource, NoPrimaryAiConfigSource};
 use crate::config::{ConfigSource, DaemonOrPrimary, DaemonServedConfig, routing_overrides_only};
 use crate::provisioning::{StandaloneConfig, gcore_config_path};
+use crate::runtime_mode::{RuntimeMode, RuntimeModeError, runtime_mode};
 
 pub const EFFECTIVE_CONFIG_PATH: &str = "/api/config/effective";
 
@@ -29,16 +30,23 @@ pub type EffectivePostgresAiSource<'a> = AiConfigSource<
 
 #[derive(Debug, Clone, Error, PartialEq, Eq)]
 pub enum EffectiveConfigError {
+    #[error(transparent)]
+    RuntimeMode(#[from] RuntimeModeError),
+    #[error("daemon effective config request failed: {reason}")]
+    Transport { reason: &'static str },
+    #[error("daemon effective config request failed with HTTP {status}")]
+    HttpStatus { status: u16 },
     #[error("daemon effective config protocol failure at HTTP {status}: {reason}")]
     Protocol { status: u16, reason: &'static str },
     #[error("daemon effective config contract failure for key {key:?}: {reason}")]
     Contract { key: String, reason: &'static str },
+    #[error("daemon effective config local configuration failure: {reason}")]
+    LocalConfiguration { reason: &'static str },
 }
 
 #[derive(Debug, Clone)]
 pub enum EffectiveConfigState {
     Available(EffectiveConfigLayers),
-    Unavailable,
     Failed(EffectiveConfigError),
 }
 
@@ -50,16 +58,17 @@ struct EffectiveConfigEnvelope {
 static EFFECTIVE_CONFIG_STATE: OnceLock<EffectiveConfigState> = OnceLock::new();
 
 pub fn daemon_mode_layers() -> Result<Option<EffectiveConfigLayers>, EffectiveConfigError> {
-    layers_from_state(effective_config_state())
+    daemon_mode_layers_for(runtime_mode()?, || {
+        layers_from_state(effective_config_state())
+    })
 }
 
 pub fn daemon_mode_layers_at(
     base_url: &str,
     gobby_home: &Path,
-) -> Result<Option<EffectiveConfigLayers>, EffectiveConfigError> {
-    let Some(daemon) = fetch_daemon_served_config_at(base_url)? else {
-        return Ok(None);
-    };
+) -> Result<EffectiveConfigLayers, EffectiveConfigError> {
+    let token = crate::local_token::read_local_cli_token_at(gobby_home).ok();
+    let daemon = fetch_daemon_served_config_at(base_url, token.as_deref())?;
     let path = gcore_config_path(gobby_home);
     let routing = match StandaloneConfig::read_raw_at(&path) {
         Ok(config) => config.map(routing_overrides_only),
@@ -72,31 +81,39 @@ pub fn daemon_mode_layers_at(
             None
         }
     };
-    Ok(Some((daemon, routing)))
+    Ok((daemon, routing))
 }
 
 pub fn fetch_daemon_served_config_at(
     base_url: &str,
-) -> Result<Option<DaemonServedConfig>, EffectiveConfigError> {
+    token: Option<&str>,
+) -> Result<DaemonServedConfig, EffectiveConfigError> {
     let url = format!(
         "{}{}",
         base_url.trim_end_matches('/'),
         EFFECTIVE_CONFIG_PATH
     );
     let mut request = ureq::get(&url).timeout(EFFECTIVE_CONFIG_TIMEOUT);
-    if let Ok(token) = crate::local_token::read_local_cli_token() {
+    if let Some(token) = token {
         request = request.set(
             crate::local_token::AUTHORIZATION_HEADER,
-            &crate::local_token::authorization_bearer(&token),
+            &crate::local_token::authorization_bearer(token),
         );
     }
     let response = match request.call() {
         Ok(response) => response,
-        Err(ureq::Error::Status(_, _)) | Err(ureq::Error::Transport(_)) => return Ok(None),
+        Err(ureq::Error::Status(status, _)) => {
+            return Err(EffectiveConfigError::HttpStatus { status });
+        }
+        Err(ureq::Error::Transport(_)) => {
+            return Err(EffectiveConfigError::Transport {
+                reason: "daemon could not be reached",
+            });
+        }
     };
     let status = response.status();
     if !(200..300).contains(&status) {
-        return Ok(None);
+        return Err(EffectiveConfigError::HttpStatus { status });
     }
     let body = response
         .into_string()
@@ -110,11 +127,14 @@ pub fn fetch_daemon_served_config_at(
             reason: "response did not match the required config envelope",
         })?;
     validate_served_values(&envelope.config)?;
-    Ok(Some(DaemonServedConfig::new(envelope.config)))
+    Ok(DaemonServedConfig::new(envelope.config))
 }
 
 pub fn daemon_dsn() -> Result<Option<String>, EffectiveConfigError> {
-    daemon_dsn_from_state(effective_config_state())
+    match runtime_mode()? {
+        RuntimeMode::Daemon => daemon_dsn_from_state(effective_config_state()),
+        RuntimeMode::Standalone => Ok(None),
+    }
 }
 
 pub fn ai_source_with_primary<P: ConfigSource>(
@@ -152,29 +172,15 @@ pub fn ai_source_for_conn(
     })
 }
 
-/// Environment variable that disables daemon-served effective config when set
-/// to any non-empty value, forcing the standalone stack. It is consulted on
-/// every cached state read — before the process-global cache — so test
-/// environment guards behave deterministically even after another thread has
-/// already cached a live daemon fetch.
-pub const DAEMON_CONFIG_DISABLE_ENV: &str = "GOBBY_DAEMON_CONFIG_DISABLE";
-
-fn daemon_config_disabled() -> bool {
-    std::env::var_os(DAEMON_CONFIG_DISABLE_ENV).is_some_and(|value| !value.is_empty())
-}
-
 fn effective_config_state() -> &'static EffectiveConfigState {
-    static DISABLED_STATE: EffectiveConfigState = EffectiveConfigState::Unavailable;
-    if daemon_config_disabled() {
-        return &DISABLED_STATE;
-    }
     EFFECTIVE_CONFIG_STATE.get_or_init(|| {
         let Ok(gobby_home) = crate::gobby_home() else {
-            return EffectiveConfigState::Unavailable;
+            return EffectiveConfigState::Failed(EffectiveConfigError::LocalConfiguration {
+                reason: "Gobby home could not be resolved",
+            });
         };
         match daemon_mode_layers_at(&crate::daemon_url::daemon_url(), &gobby_home) {
-            Ok(Some(layers)) => EffectiveConfigState::Available(layers),
-            Ok(None) => EffectiveConfigState::Unavailable,
+            Ok(layers) => EffectiveConfigState::Available(layers),
             Err(error) => EffectiveConfigState::Failed(error),
         }
     })
@@ -182,20 +188,27 @@ fn effective_config_state() -> &'static EffectiveConfigState {
 
 fn layers_from_state(
     state: &EffectiveConfigState,
-) -> Result<Option<EffectiveConfigLayers>, EffectiveConfigError> {
+) -> Result<EffectiveConfigLayers, EffectiveConfigError> {
     match state {
-        EffectiveConfigState::Available(layers) => Ok(Some(layers.clone())),
-        EffectiveConfigState::Unavailable => Ok(None),
+        EffectiveConfigState::Available(layers) => Ok(layers.clone()),
         EffectiveConfigState::Failed(error) => Err(error.clone()),
+    }
+}
+
+fn daemon_mode_layers_for(
+    mode: RuntimeMode,
+    daemon_layers: impl FnOnce() -> Result<EffectiveConfigLayers, EffectiveConfigError>,
+) -> Result<Option<EffectiveConfigLayers>, EffectiveConfigError> {
+    match mode {
+        RuntimeMode::Daemon => daemon_layers().map(Some),
+        RuntimeMode::Standalone => Ok(None),
     }
 }
 
 fn daemon_dsn_from_state(
     state: &EffectiveConfigState,
 ) -> Result<Option<String>, EffectiveConfigError> {
-    let Some((mut daemon, _)) = layers_from_state(state)? else {
-        return Ok(None);
-    };
+    let (mut daemon, _) = layers_from_state(state)?;
     Ok(daemon
         .config_value(POSTGRES_DSN_KEY)
         .map(|dsn| dsn.trim().to_string())

@@ -6,17 +6,24 @@ const DEFAULT_MAX_INBOX_ITEM_BYTES: u64 = 500_000_000;
 use crate::error::WikiError;
 use gobby_core::ai::effective_config::{EffectiveConfigError, daemon_dsn};
 use gobby_core::provisioning::{StandaloneConfig, gcore_config_path};
+use gobby_core::runtime_mode::{RuntimeMode, runtime_mode};
 use std::path::{Path, PathBuf};
 
 const GWIKI_DATABASE_URL_ENV: &str = "GWIKI_DATABASE_URL";
 const GOBBY_POSTGRES_DSN_ENV: &str = "GOBBY_POSTGRES_DSN";
 
 pub(crate) fn database_url() -> anyhow::Result<Option<String>> {
-    database_url_from_sources(database_url_from_env(), gobby_core::gobby_home, daemon_dsn)
+    database_url_from_sources(
+        database_url_from_env(),
+        runtime_mode()?,
+        gobby_core::gobby_home,
+        daemon_dsn,
+    )
 }
 
 fn database_url_from_sources(
     env_database_url: Option<String>,
+    mode: RuntimeMode,
     home: impl FnOnce() -> anyhow::Result<PathBuf>,
     daemon_dsn: impl FnOnce() -> Result<Option<String>, EffectiveConfigError>,
 ) -> anyhow::Result<Option<String>> {
@@ -25,7 +32,9 @@ fn database_url_from_sources(
     }
 
     let home = home()?;
-    if let Some(database_url) = non_empty_trimmed(daemon_dsn()?) {
+    if mode == RuntimeMode::Daemon
+        && let Some(database_url) = non_empty_trimmed(daemon_dsn()?)
+    {
         return Ok(Some(database_url));
     }
 
@@ -40,7 +49,10 @@ fn database_url_from_sources(
             );
         }
     }
-    resolve_database_url_from_gcore_config(&home)
+    match mode {
+        RuntimeMode::Daemon => Ok(None),
+        RuntimeMode::Standalone => resolve_database_url_from_gcore_config(&home),
+    }
 }
 
 pub(crate) fn database_url_for(command: &str) -> Result<Option<String>, WikiError> {
@@ -113,10 +125,14 @@ mod tests {
             "databases:\n  postgres:\n    dsn: postgresql://gcore.example/gobby\n",
         )
         .expect("write gcore config");
-        let resolved =
-            database_url_from_sources(None, || Ok(home.path().to_path_buf()), || Ok(None))
-                .expect("resolve database url")
-                .expect("gcore database url");
+        let resolved = database_url_from_sources(
+            None,
+            RuntimeMode::Standalone,
+            || Ok(home.path().to_path_buf()),
+            || panic!("standalone mode must bypass daemon DSN resolution"),
+        )
+        .expect("resolve database url")
+        .expect("gcore database url");
 
         assert_eq!(resolved, "postgresql://gcore.example/gobby");
     }
@@ -137,6 +153,7 @@ mod tests {
 
         let env = database_url_from_sources(
             Some("postgresql://env.example/gobby".to_string()),
+            RuntimeMode::Daemon,
             || panic!("environment must bypass Gobby home"),
             || panic!("environment must bypass daemon DSN"),
         )
@@ -145,15 +162,20 @@ mod tests {
 
         let daemon = database_url_from_sources(
             None,
+            RuntimeMode::Daemon,
             || Ok(home.path().to_path_buf()),
             || Ok(Some(" postgresql://daemon.example/gobby ".to_string())),
         )
         .expect("daemon database url");
         assert_eq!(daemon.as_deref(), Some("postgresql://daemon.example/gobby"));
 
-        let bootstrap =
-            database_url_from_sources(None, || Ok(home.path().to_path_buf()), || Ok(None))
-                .expect("bootstrap database url");
+        let bootstrap = database_url_from_sources(
+            None,
+            RuntimeMode::Daemon,
+            || Ok(home.path().to_path_buf()),
+            || Ok(None),
+        )
+        .expect("bootstrap database url");
         assert_eq!(
             bootstrap.as_deref(),
             Some("postgresql://bootstrap.example/gobby")
@@ -161,6 +183,7 @@ mod tests {
 
         let blank_daemon = database_url_from_sources(
             None,
+            RuntimeMode::Daemon,
             || Ok(home.path().to_path_buf()),
             || Ok(Some(" \n\t".to_string())),
         )
@@ -187,6 +210,7 @@ mod tests {
 
         let error = database_url_from_sources(
             None,
+            RuntimeMode::Daemon,
             || Ok(home.path().to_path_buf()),
             || {
                 Err(
@@ -200,5 +224,36 @@ mod tests {
         .expect_err("daemon DSN error");
 
         assert!(error.to_string().contains("test contract failure"));
+    }
+
+    #[test]
+    fn daemon_mode_excludes_gcore_yaml_and_standalone_skips_daemon_dsn() {
+        let home = tempfile::tempdir().expect("create home");
+        fs::write(
+            home.path().join("gcore.yaml"),
+            "databases:\n  postgres:\n    dsn: postgresql://gcore.example/gobby\n",
+        )
+        .expect("write gcore config");
+
+        let daemon = database_url_from_sources(
+            None,
+            RuntimeMode::Daemon,
+            || Ok(home.path().to_path_buf()),
+            || Ok(None),
+        )
+        .expect("daemon database url");
+        assert_eq!(daemon, None);
+
+        let standalone = database_url_from_sources(
+            None,
+            RuntimeMode::Standalone,
+            || Ok(home.path().to_path_buf()),
+            || panic!("standalone mode must bypass daemon DSN resolution"),
+        )
+        .expect("standalone database url");
+        assert_eq!(
+            standalone.as_deref(),
+            Some("postgresql://gcore.example/gobby")
+        );
     }
 }

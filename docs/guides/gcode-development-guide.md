@@ -93,30 +93,38 @@ tell users to configure the PostgreSQL hub with the required code-index schema.
 
 ### Service Configuration
 
-Resolution order for infrastructure services (FalkorDB, Qdrant):
+gcode uses gcore's process-lifetime runtime mode. `GOBBY_RUNTIME_MODE` accepts
+`auto` or `standalone`; empty and unset values mean `auto`. Explicit standalone
+wins, then a non-empty `GOBBY_DAEMON_URL`, then a registered Gobby OS service.
+No registration selects standalone. The mode is fixed until the next gcode
+invocation.
 
-| Priority | Source | Example |
-|----------|--------|---------|
-| 1 (highest) | Environment variables | `GOBBY_FALKORDB_HOST`, `GOBBY_FALKORDB_PORT`, `GOBBY_FALKORDB_PASSWORD`, `GOBBY_QDRANT_URL` |
-| 2 | `config_store` table in PostgreSQL | `databases.falkordb.host`, `databases.falkordb.port`, `databases.falkordb.password`, `databases.qdrant.url` |
-| 3 (lowest) | Hardcoded defaults | FalkorDB port `16379` and graph name `gobby_code` once a host is configured |
+Configuration stacks are mode-specific:
 
-AI capability config resolves from daemon-supported `config_store` keys first,
-then standalone `~/.gobby/gcore.yaml`, then defaults. Embedding keys use the
-canonical `ai.embeddings.*` namespace. `ai.text_generate.*` is a CLI
-standalone/direct namespace; daemon text generation uses daemon provider config
-such as `ai.generation.local.endpoints.<name>` and request-level provider/model
+| Mode | Runtime config | PostgreSQL DSN |
+|------|----------------|----------------|
+| Daemon | Environment → daemon effective config → routing-only `gcore.yaml` | `GCODE_DATABASE_URL` / `GOBBY_POSTGRES_DSN` → daemon effective config → `bootstrap.yaml` |
+| Standalone | Environment → PostgreSQL `config_store` → full `gcore.yaml` | `GCODE_DATABASE_URL` / `GOBBY_POSTGRES_DSN` → `bootstrap.yaml` → full `gcore.yaml` |
+
+Daemon mode never reads full `gcore.yaml` as a DSN fallback. A registered but
+stopped or disabled daemon, authentication failure, or server error is a hard
+daemon-mode error. It does not trigger standalone config resolution.
+
+Embedding keys use the canonical `ai.embeddings.*` namespace.
+`ai.text_generate.*` is the CLI standalone/direct namespace; daemon text
+generation uses daemon provider config such as
+`ai.generation.local.endpoints.<name>` and request-level provider/model
 selection.
 
 Config values are JSON-encoded in `config_store` — strings have surrounding quotes stripped. Secret patterns like `$secret:NAME` are resolved via `secrets.rs` (Fernet decryption using machine_id + salt, 600K PBKDF2 iterations).
 
 ### Runtime Model
 
-gcode is daemon-independent but requires a configured PostgreSQL hub. Project
+gcode supports daemon and standalone runtime modes and requires a configured
+PostgreSQL hub in either mode. Service installation selects daemon mode in
+`auto`; explicit standalone or absent installation selects standalone. Project
 identity still comes from `.gobby/project.json`, `.gobby/gcode.json`, isolated
-roots, linked worktrees, or generated identity during `gcode init`. Service
-configuration comes from env vars first, then PostgreSQL `config_store`, then
-defaults where the current behavior defines defaults.
+roots, linked worktrees, or generated identity during `gcode init`.
 
 ## Indexing Pipeline
 

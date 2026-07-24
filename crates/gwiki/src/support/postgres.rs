@@ -4,7 +4,14 @@ use postgres::Client;
 use crate::{WikiError, support::env};
 
 pub(crate) fn require_attached_index(command: &'static str) -> Result<(), WikiError> {
-    let Some(database_url) = env::database_url_for(command)? else {
+    require_attached_index_from_database_url(command, env::database_url_for(command)?)
+}
+
+fn require_attached_index_from_database_url(
+    command: &'static str,
+    database_url: Option<String>,
+) -> Result<(), WikiError> {
+    let Some(database_url) = database_url else {
         return Err(WikiError::Config {
             detail: format!(
                 "{command}: PostgreSQL index is required but no PostgreSQL hub is configured"
@@ -36,6 +43,13 @@ pub(crate) fn require_attached_index(command: &'static str) -> Result<(), WikiEr
     Err(WikiError::Config {
         detail: format!("{command}: PostgreSQL index is required but validation failed: {missing}"),
     })
+}
+
+#[cfg(test)]
+pub(crate) fn require_attached_index_without_database_for_test(
+    command: &'static str,
+) -> Result<(), WikiError> {
+    require_attached_index_from_database_url(command, None)
 }
 
 pub(crate) fn require_postgres_index(command: &'static str) -> Result<Client, WikiError> {

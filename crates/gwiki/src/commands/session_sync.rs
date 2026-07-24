@@ -44,6 +44,17 @@ pub(crate) fn execute(
     options: SyncSessionsOptions,
     run_options: RunOptions,
 ) -> Result<CommandOutcome, WikiError> {
+    execute_with_database_url(selection, options, run_options, || {
+        database_url_for(COMMAND)
+    })
+}
+
+fn execute_with_database_url(
+    selection: ScopeSelection,
+    options: SyncSessionsOptions,
+    run_options: RunOptions,
+    database_url: impl FnOnce() -> Result<Option<String>, WikiError>,
+) -> Result<CommandOutcome, WikiError> {
     let selection = default_sessions_scope(selection);
     let scope = resolve_command_scope(&selection)?;
     let initialized = vault::initialize(&scope)?;
@@ -74,7 +85,7 @@ pub(crate) fn execute(
     };
     let mut stderr_progress = StderrWikiProgress::new(run_options.quiet);
     let mut progress = ProgressOptions::with_sink(&mut stderr_progress);
-    if let Some(database_url) = database_url_for(COMMAND)? {
+    if let Some(database_url) = database_url()? {
         let mut conn = connect_postgres_index(&database_url, COMMAND)?;
         let search_scope = search_scope_for_resolved(&scope);
         let result = {
@@ -283,14 +294,9 @@ mod tests {
         std::fs::create_dir_all(&wiki_dir).expect("wiki dir");
         std::fs::create_dir_all(&archive_dir).expect("archive dir");
 
-        // GOBBY_HOME → empty temp (no bootstrap.yaml) and the DB env vars unset
-        // ⇒ `database_url_for` resolves to `None` ⇒ the in-memory store path, so
-        // the test never depends on a real PostgreSQL hub. GOBBY_WIKI_HUB → temp
-        // keeps the topic vault init contained instead of touching `~/wiki`.
-        let _env = EnvGuard::set("GOBBY_HOME", temp.path().as_os_str())
-            .and_set("GOBBY_WIKI_HUB", hub.as_os_str())
-            .and_unset("GWIKI_DATABASE_URL")
-            .and_unset("GOBBY_POSTGRES_DSN");
+        // Injecting no database selects the in-memory store path.
+        // GOBBY_WIKI_HUB keeps topic vault initialization inside the tempdir.
+        let _env = EnvGuard::set("GOBBY_WIKI_HUB", hub.as_os_str());
 
         let options = SyncSessionsOptions {
             wiki_dir: Some(wiki_dir),
@@ -298,8 +304,13 @@ mod tests {
             ..Default::default()
         };
 
-        let outcome = execute(ScopeSelection::Detect, options, RunOptions { quiet: true })
-            .expect("execute sync-sessions");
+        let outcome = execute_with_database_url(
+            ScopeSelection::Detect,
+            options,
+            RunOptions { quiet: true },
+            || Ok(None),
+        )
+        .expect("execute sync-sessions");
         assert_eq!(outcome.result.payload["scope"]["kind"], "topic");
         assert_eq!(outcome.result.payload["scope"]["id"], SESSIONS_TOPIC);
     }

@@ -19,6 +19,7 @@ The baseline crate remains dependency-light. Consumers that only need project di
 | `project` | always | Walk up from a starting directory to find a `.gobby/` directory containing `project.json` or `gcode.json`. Read the `id` field from the project identity file. |
 | `bootstrap` | always | Read `~/.gobby/bootstrap.yaml` to get the daemon's listen endpoint (`bind_host`, `daemon_port`). Falls back to `127.0.0.1:60887` when the file is missing or malformed. |
 | `daemon_url` | always | One daemon-URL resolver for all binaries: `GOBBY_DAEMON_URL` → `GOBBY_PORT` → bootstrap endpoint, normalizing wildcard listen addresses (`0.0.0.0`, `::`, `::0`) to `127.0.0.1` and bracketing bare IPv6 literals. |
+| `runtime_mode` | always | Select and cache `Daemon` or `Standalone` from `GOBBY_RUNTIME_MODE`, an explicit daemon URL, and installed OS service artifacts. |
 | `codewiki_contract` | always | Frontmatter contract for codewiki-generated vault pages: shared key/value constants plus a golden page fixture pinned by gcode's emitter tests and gwiki's parser tests. |
 | `config` | always | Shared configuration-resolution contracts. Environment variables, `config_store`, and defaults are represented here as the foundation expands. |
 | `context` | always | Shared runtime context contracts for project identity, daemon URL, and service configuration. Consumer-specific CLI state stays outside. |
@@ -98,6 +99,45 @@ let url = gobby_core::daemon_url::daemon_url();
 // GOBBY_DAEMON_URL / GOBBY_PORT win over all of the above
 ureq::post(&format!("{url}/api/hooks/execute")).send_string(body)?;
 ```
+
+### `runtime_mode`
+
+```rust
+pub enum RuntimeMode {
+    Daemon,
+    Standalone,
+}
+
+pub fn runtime_mode() -> Result<RuntimeMode, RuntimeModeError>;
+```
+
+`GOBBY_RUNTIME_MODE=standalone` selects standalone explicitly. The default,
+an empty value, and `auto` use this precedence:
+
+1. A non-empty `GOBBY_DAEMON_URL` selects daemon mode for remote clients.
+2. A registered OS service selects daemon mode.
+3. No registration selects standalone mode.
+
+Registration means the platform installer artifact exists:
+
+- macOS: `~/Library/LaunchAgents/com.gobby.daemon.plist`
+- Linux:
+  `${XDG_CONFIG_HOME:-~/.config}/systemd/user/gobby-daemon.service`
+- Windows: `$GOBBY_HOME/gobby-daemon.task.xml`
+
+Unsupported platforms select standalone in `auto`. Unknown
+`GOBBY_RUNTIME_MODE` values are configuration errors.
+
+The first successful selection is cached for the process lifetime. Changes to
+environment variables, service installation, enablement, or running state take
+effect on the next process invocation. Daemon mode stays selected when the
+registered service is stopped or disabled; clients report the daemon failure
+instead of changing configuration stacks.
+
+With the `ai` feature, effective daemon config is fetched once after daemon
+mode is selected. Transport failures and every non-2xx response are sanitized
+hard errors. `daemon_mode_layers()` returns `None` only when runtime mode is
+standalone.
 
 ### `falkor`
 

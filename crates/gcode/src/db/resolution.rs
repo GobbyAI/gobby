@@ -4,6 +4,7 @@ use anyhow::{Context as _, bail};
 use gobby_core::ai::effective_config::EffectiveConfigError;
 use gobby_core::bootstrap::HubDatabaseBootstrap;
 use gobby_core::provisioning::{GCORE_CONFIG_FILENAME, StandaloneConfig};
+use gobby_core::runtime_mode::{RuntimeMode, runtime_mode};
 
 const GCODE_DATABASE_URL_ENV: &str = "GCODE_DATABASE_URL";
 const GOBBY_POSTGRES_DSN_ENV: &str = "GOBBY_POSTGRES_DSN";
@@ -19,9 +20,11 @@ pub fn bootstrap_path() -> anyhow::Result<PathBuf> {
 
 /// Resolve the standalone database from explicit DSN sources.
 pub fn resolve_database_url() -> anyhow::Result<String> {
+    let mode = runtime_mode()?;
     let home = gobby_home()?;
     resolve_database_url_from_sources_with_identity_and_reachability(
         &home,
+        mode,
         |name| std::env::var(name).ok(),
         gobby_core::ai::effective_config::daemon_dsn,
         |url| gobby_core::postgres::connect_readonly(url).is_ok(),
@@ -32,12 +35,14 @@ pub fn resolve_database_url() -> anyhow::Result<String> {
 #[cfg(test)]
 fn resolve_database_url_from_sources(
     home: &Path,
+    mode: RuntimeMode,
     get_var: impl FnMut(&str) -> Option<String>,
     daemon_dsn: impl FnOnce() -> Result<Option<String>, EffectiveConfigError>,
     database_reachable: impl FnMut(&str) -> bool,
 ) -> anyhow::Result<String> {
     resolve_database_url_from_sources_with_identity_and_reachability(
         home,
+        mode,
         get_var,
         daemon_dsn,
         database_reachable,
@@ -48,6 +53,7 @@ fn resolve_database_url_from_sources(
 #[cfg(test)]
 fn resolve_database_url_from_sources_with_identity(
     home: &Path,
+    mode: RuntimeMode,
     get_var: impl FnMut(&str) -> Option<String>,
     daemon_dsn: impl FnOnce() -> Result<Option<String>, EffectiveConfigError>,
     database_reachable: impl FnMut(&str) -> bool,
@@ -55,6 +61,7 @@ fn resolve_database_url_from_sources_with_identity(
 ) -> anyhow::Result<String> {
     resolve_database_url_from_sources_with_identity_and_reachability(
         home,
+        mode,
         get_var,
         daemon_dsn,
         database_reachable,
@@ -64,6 +71,7 @@ fn resolve_database_url_from_sources_with_identity(
 
 fn resolve_database_url_from_sources_with_identity_and_reachability(
     home: &Path,
+    mode: RuntimeMode,
     get_var: impl FnMut(&str) -> Option<String>,
     daemon_dsn: impl FnOnce() -> Result<Option<String>, EffectiveConfigError>,
     mut database_reachable: impl FnMut(&str) -> bool,
@@ -78,8 +86,16 @@ fn resolve_database_url_from_sources_with_identity_and_reachability(
         return Ok(database_url);
     }
 
-    if let Some(database_url) = non_empty_trimmed(daemon_dsn()?) {
-        return Ok(database_url);
+    if mode == RuntimeMode::Daemon {
+        if let Some(database_url) = non_empty_trimmed(daemon_dsn()?) {
+            return Ok(database_url);
+        }
+        if let Some(database_url) = resolve_database_url_from_bootstrap_file(&path)? {
+            return Ok(database_url);
+        }
+        bail!(
+            "missing Gobby PostgreSQL configuration. Run `gcode setup --standalone`, set {GCODE_DATABASE_URL_ENV}, or configure the Gobby daemon bootstrap."
+        );
     }
 
     let gcore_database_url = match resolve_database_url_from_gcore_config(home) {
@@ -234,6 +250,7 @@ mod tests {
 
         let resolved = resolve_database_url_from_sources(
             home.path(),
+            RuntimeMode::Daemon,
             |name| match name {
                 GCODE_DATABASE_URL_ENV => Some("postgresql://env/db".to_string()),
                 _ => None,
@@ -262,6 +279,7 @@ mod tests {
 
         let resolved = resolve_database_url_from_sources(
             home.path(),
+            RuntimeMode::Daemon,
             |_| None,
             || Ok(Some(" postgresql://daemon/db ".to_string())),
             |_| true,
@@ -282,6 +300,7 @@ mod tests {
 
         let resolved = resolve_database_url_from_sources(
             home.path(),
+            RuntimeMode::Daemon,
             |_| None,
             || Ok(Some(" \n\t".to_string())),
             |_| true,
@@ -307,6 +326,7 @@ mod tests {
 
         let error = resolve_database_url_from_sources(
             home.path(),
+            RuntimeMode::Daemon,
             |_| None,
             || {
                 Err(
@@ -332,9 +352,14 @@ mod tests {
         )
         .expect("write bootstrap");
 
-        let resolved =
-            resolve_database_url_from_sources(home.path(), |_| None, || Ok(None), |_| true)
-                .expect("resolve database url");
+        let resolved = resolve_database_url_from_sources(
+            home.path(),
+            RuntimeMode::Standalone,
+            |_| None,
+            || panic!("standalone mode must bypass daemon DSN resolution"),
+            |_| true,
+        )
+        .expect("resolve database url");
 
         assert_eq!(resolved, "postgresql://inline/db");
     }
@@ -348,9 +373,14 @@ mod tests {
         )
         .expect("write gcore config");
 
-        let resolved =
-            resolve_database_url_from_sources(home.path(), |_| None, || Ok(None), |_| true)
-                .expect("resolve database url");
+        let resolved = resolve_database_url_from_sources(
+            home.path(),
+            RuntimeMode::Standalone,
+            |_| None,
+            || panic!("standalone mode must bypass daemon DSN resolution"),
+            |_| true,
+        )
+        .expect("resolve database url");
 
         assert_eq!(resolved, "postgresql://gcore/db");
     }
@@ -366,8 +396,9 @@ mod tests {
 
         let resolved = resolve_database_url_from_sources_with_identity(
             home.path(),
+            RuntimeMode::Standalone,
             |_| None,
-            || Ok(None),
+            || panic!("standalone mode must bypass daemon DSN resolution"),
             |_| true,
             |_| {
                 Ok(gobby_core::provisioning::HubIdentityProbeResult::Known(
@@ -381,6 +412,31 @@ mod tests {
         .expect("resolve adopted hub");
 
         assert_eq!(resolved, "postgresql://adopted/gobby");
+    }
+
+    #[test]
+    fn daemon_mode_excludes_full_gcore_yaml_from_dsn_resolution() {
+        let home = tempfile::tempdir().expect("temp home");
+        std::fs::write(
+            home.path().join(GCORE_CONFIG_FILENAME),
+            "databases.postgres.dsn: postgresql://gcore/db\n",
+        )
+        .expect("write gcore config");
+
+        let error = resolve_database_url_from_sources(
+            home.path(),
+            RuntimeMode::Daemon,
+            |_| None,
+            || Ok(None),
+            |_| panic!("daemon mode must not probe a gcore.yaml DSN"),
+        )
+        .expect_err("daemon mode must not use gcore.yaml");
+
+        assert!(
+            error
+                .to_string()
+                .contains("missing Gobby PostgreSQL configuration")
+        );
     }
 
     #[test]

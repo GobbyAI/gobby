@@ -145,6 +145,7 @@ impl GwikiFixture {
     fn apply_isolated_env<'a>(&self, command: &'a mut Command) -> &'a mut Command {
         command
             .env("GOBBY_WIKI_HUB", &self.hub)
+            .env("GOBBY_RUNTIME_MODE", "standalone")
             .env("HOME", &self.home)
             .env("XDG_CONFIG_HOME", self.root.join("xdg-config"))
             .env("XDG_DATA_HOME", self.root.join("xdg-data"))
@@ -252,6 +253,7 @@ pub fn strip_service_env(command: &mut Command) -> &mut Command {
     ] {
         command.env_remove(key);
     }
+    command.env("GOBBY_RUNTIME_MODE", "standalone");
     command
 }
 

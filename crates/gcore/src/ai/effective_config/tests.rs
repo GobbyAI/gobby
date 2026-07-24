@@ -1,84 +1,18 @@
 use std::cell::Cell;
 use std::collections::BTreeMap;
-use std::ffi::OsString;
 use std::fs;
 use std::net::TcpListener;
-use std::path::Path;
-use std::sync::MutexGuard;
 
 use tempfile::TempDir;
 
 use super::*;
 use crate::ai_context::{AiConfigSource, NoPrimaryAiConfigSource};
 use crate::config::{
-    AiCapability, ConfigSource, DaemonOrPrimary, DaemonServedConfig, TEST_ENV_LOCK,
-    resolve_capability_binding, resolve_embedding_config_from_binding,
+    AiCapability, ConfigSource, DaemonOrPrimary, DaemonServedConfig, resolve_capability_binding,
+    resolve_embedding_config_from_binding,
 };
 use crate::local_token::{AUTHORIZATION_HEADER, LOCAL_CLI_TOKEN_FILENAME};
 use crate::test_http::{RequestHandle, spawn_json_response, spawn_json_response_with_status};
-
-struct EnvGuard {
-    _lock: MutexGuard<'static, ()>,
-    original_values: Vec<(&'static str, Option<OsString>)>,
-}
-
-impl EnvGuard {
-    fn set_gobby_home(home: &Path, token: &str) -> Self {
-        let lock = TEST_ENV_LOCK
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner);
-        fs::write(home.join(LOCAL_CLI_TOKEN_FILENAME), token).expect("write local CLI token");
-        let mut guard = Self {
-            _lock: lock,
-            original_values: Vec::new(),
-        };
-        guard.set_value("GOBBY_HOME", home.as_os_str());
-        guard
-    }
-
-    fn and_set(mut self, key: &'static str, value: &str) -> Self {
-        self.set_value(key, value.as_ref());
-        self
-    }
-
-    fn set_value(&mut self, key: &'static str, value: &std::ffi::OsStr) {
-        if !self
-            .original_values
-            .iter()
-            .any(|(stored, _)| *stored == key)
-        {
-            self.original_values.push((key, std::env::var_os(key)));
-        }
-        // SAFETY: TEST_ENV_LOCK serializes every test mutation of these variables.
-        unsafe { std::env::set_var(key, value) };
-    }
-
-    fn remove_value(&mut self, key: &'static str) {
-        if !self
-            .original_values
-            .iter()
-            .any(|(stored, _)| *stored == key)
-        {
-            self.original_values.push((key, std::env::var_os(key)));
-        }
-        // SAFETY: TEST_ENV_LOCK serializes every test mutation of these variables.
-        unsafe { std::env::remove_var(key) };
-    }
-}
-
-impl Drop for EnvGuard {
-    fn drop(&mut self) {
-        // SAFETY: this guard still owns TEST_ENV_LOCK while restoring variables.
-        unsafe {
-            for (key, original) in self.original_values.iter().rev() {
-                match original {
-                    Some(value) => std::env::set_var(*key, value),
-                    None => std::env::remove_var(*key),
-                }
-            }
-        }
-    }
-}
 
 fn temp_home() -> TempDir {
     tempfile::tempdir().expect("temp gobby home")
@@ -112,15 +46,18 @@ fn served(values: impl IntoIterator<Item = (&'static str, &'static str)>) -> Dae
 #[test]
 fn fetch_carries_bearer_and_parses_effective_config_envelope() {
     let home = temp_home();
-    let _env = EnvGuard::set_gobby_home(home.path(), "effective-token");
+    fs::write(
+        home.path().join(LOCAL_CLI_TOKEN_FILENAME),
+        "effective-token",
+    )
+    .expect("write local CLI token");
     let (base_url, request) = spawn_json_response(
         r#"{"config":{"ai.embeddings.model":"nomic-embed-text","databases.postgres.dsn":"postgresql://daemon/gobby"}}"#,
     )
     .expect("spawn daemon");
 
-    let (mut daemon, routing) = daemon_mode_layers_at(&base_url, home.path())
-        .expect("fetch effective config")
-        .expect("daemon mode");
+    let (mut daemon, routing) =
+        daemon_mode_layers_at(&base_url, home.path()).expect("fetch effective config");
 
     assert_eq!(
         daemon.config_value("ai.embeddings.model").as_deref(),
@@ -137,25 +74,24 @@ fn fetch_carries_bearer_and_parses_effective_config_envelope() {
 }
 
 #[test]
-fn transport_and_non_success_statuses_are_unavailable() {
+fn transport_and_non_success_statuses_are_sanitized_hard_errors() {
     let home = temp_home();
-    let _env = EnvGuard::set_gobby_home(home.path(), "effective-token");
 
     let listener = TcpListener::bind("127.0.0.1:0").expect("reserve unused port");
     let unreachable = format!("http://{}", listener.local_addr().expect("local address"));
     drop(listener);
-    assert_eq!(
-        daemon_mode_layers_at(&unreachable, home.path()).expect("transport is absence"),
-        None
-    );
+    let error =
+        daemon_mode_layers_at(&unreachable, home.path()).expect_err("transport must hard fail");
+    assert!(matches!(error, EffectiveConfigError::Transport { .. }));
+    assert!(!error.to_string().contains(&unreachable));
 
     for status in [401, 500] {
         let (base_url, request) =
             spawn_json_response_with_status(status, "sensitive error body").expect("spawn daemon");
-        assert_eq!(
-            daemon_mode_layers_at(&base_url, home.path()).expect("status is absence"),
-            None
-        );
+        let error =
+            daemon_mode_layers_at(&base_url, home.path()).expect_err("status must hard fail");
+        assert_eq!(error, EffectiveConfigError::HttpStatus { status });
+        assert!(!error.to_string().contains("sensitive error body"));
         join_request(request);
     }
 }
@@ -163,7 +99,6 @@ fn transport_and_non_success_statuses_are_unavailable() {
 #[test]
 fn success_with_invalid_json_or_missing_envelope_is_protocol_failure() {
     let home = temp_home();
-    let _env = EnvGuard::set_gobby_home(home.path(), "effective-token");
 
     for body in ["sensitive-response-body", "{}"] {
         let (base_url, request) = spawn_json_response(body).expect("spawn daemon");
@@ -183,7 +118,6 @@ fn success_with_invalid_json_or_missing_envelope_is_protocol_failure() {
 #[test]
 fn served_secret_or_environment_references_are_contract_failures() {
     let home = temp_home();
-    let _env = EnvGuard::set_gobby_home(home.path(), "effective-token");
     let cases = [
         (
             "databases.postgres.dsn",
@@ -211,16 +145,14 @@ fn served_secret_or_environment_references_are_contract_failures() {
 #[test]
 fn malformed_local_yaml_after_fetch_keeps_daemon_mode_without_routing() {
     let home = temp_home();
-    let _env = EnvGuard::set_gobby_home(home.path(), "effective-token");
     fs::write(home.path().join("gcore.yaml"), "ai: [malformed")
         .expect("write malformed gcore yaml");
     let (base_url, request) =
         spawn_json_response(r#"{"config":{"ai.embeddings.model":"served-model"}}"#)
             .expect("spawn daemon");
 
-    let (mut daemon, routing) = daemon_mode_layers_at(&base_url, home.path())
-        .expect("malformed local yaml is soft")
-        .expect("daemon mode remains selected");
+    let (mut daemon, routing) =
+        daemon_mode_layers_at(&base_url, home.path()).expect("malformed local yaml is soft");
 
     assert!(routing.is_none());
     assert_eq!(
@@ -323,37 +255,29 @@ fn daemon_source_resolves_served_binding_and_embedding_settings_end_to_end() {
 }
 
 #[test]
-fn disable_env_is_consulted_before_the_cached_daemon_state() {
-    let home = temp_home();
-    let (base_url, request) =
-        spawn_json_response(r#"{"config":{"databases.postgres.dsn":"postgresql://daemon/gobby"}}"#)
-            .expect("spawn daemon");
-    let mut env = EnvGuard::set_gobby_home(home.path(), "effective-token")
-        .and_set("GOBBY_DAEMON_URL", &base_url);
+fn explicit_standalone_skips_daemon_fetch() {
+    let calls = Cell::new(0);
+    let layers = daemon_mode_layers_for(RuntimeMode::Standalone, || {
+        calls.set(calls.get() + 1);
+        Err(EffectiveConfigError::Transport {
+            reason: "must not run",
+        })
+    })
+    .expect("standalone layers");
 
-    // Prime the process-global cache with daemon mode through the ambient path.
-    assert!(
-        daemon_mode_layers()
-            .expect("fetch effective config")
-            .is_some()
-    );
-    join_request(request);
-
-    env = env.and_set(DAEMON_CONFIG_DISABLE_ENV, "1");
-    assert_eq!(daemon_mode_layers().expect("disabled layers read"), None);
-    assert_eq!(daemon_dsn().expect("disabled dsn read"), None);
-
-    env.remove_value(DAEMON_CONFIG_DISABLE_ENV);
-    assert_eq!(
-        daemon_dsn().expect("cached dsn read"),
-        Some("postgresql://daemon/gobby".to_string())
-    );
+    assert!(layers.is_none());
+    assert_eq!(calls.get(), 0);
 }
 
 #[test]
 fn cached_state_is_cloneable() {
-    let state = EffectiveConfigState::Unavailable;
-    assert!(matches!(state.clone(), EffectiveConfigState::Unavailable));
+    let failed = EffectiveConfigState::Failed(EffectiveConfigError::Transport {
+        reason: "daemon could not be reached",
+    });
+    assert!(matches!(
+        failed.clone(),
+        EffectiveConfigState::Failed(EffectiveConfigError::Transport { .. })
+    ));
 
     let map = BTreeMap::from([("ai.embeddings.model".to_string(), "served".to_string())]);
     let state =

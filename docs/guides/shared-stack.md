@@ -73,6 +73,21 @@ Point remote clients at the daemon API:
 export GOBBY_DAEMON_URL="http://gobby-box.tailnet.ts.net:60887"
 ```
 
+For Rust clients such as gcode and gwiki, a non-empty `GOBBY_DAEMON_URL`
+selects daemon runtime mode without requiring a local service installation.
+The selection is cached for one process invocation. Restart long-lived client
+processes after changing the URL or installing/removing a service.
+
+`GOBBY_RUNTIME_MODE=standalone` has higher precedence and is intended for an
+explicit local standalone stack. Leave it unset or set it to `auto` on remote
+clients. Unknown values are configuration errors.
+
+Daemon mode remains daemon mode when the remote daemon is stopped, returns
+401, or returns a 5xx response. Those conditions are hard client errors; they
+do not expose local full-`gcore.yaml` fallback values. Remote DSN resolution is
+environment, daemon-served DSN, then local `bootstrap.yaml`. Normally the
+daemon-served DSN is authoritative for Rust client operations.
+
 Do not put the daemon host's PostgreSQL URL in a remote client bootstrap. The
 runtime bootstrap contract accepts only local Docker-managed PostgreSQL hosts.
 
@@ -106,4 +121,4 @@ If remote clients cannot connect, check the daemon bind address, Tailscale ACLs,
 host firewall rules, CORS origins, and the shared API token. Datastore
 troubleshooting should be performed locally on the daemon host.
 
-_Last verified: 2026-07-20_
+_Last verified: 2026-07-24_

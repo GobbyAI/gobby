@@ -14,11 +14,6 @@ pub(crate) static ENV_TEST_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(()
 /// `EnvGuard` captures each key once, holds `ENV_TEST_LOCK` for its lifetime,
 /// and restores in reverse order. The safety boundary is partial: unsynchronized
 /// env access outside this helper can still race guarded mutations.
-///
-/// Every guard also disables daemon-served effective config for its lifetime
-/// so guarded tests deterministically exercise the standalone stack, even
-/// when a live daemon is running and another thread has already cached a
-/// daemon-mode fetch in gcore's process-global state.
 pub(crate) struct EnvGuard {
     old_values: Vec<(&'static str, Option<OsString>)>,
     _lock: MutexGuard<'static, ()>,
@@ -54,15 +49,10 @@ impl EnvGuard {
         let lock = ENV_TEST_LOCK
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner);
-        let mut guard = Self {
+        Self {
             old_values: Vec::new(),
             _lock: lock,
-        };
-        guard.set_value(
-            gobby_core::ai::effective_config::DAEMON_CONFIG_DISABLE_ENV,
-            OsStr::new("1"),
-        );
-        guard
+        }
     }
 
     fn set_value(&mut self, key: &'static str, value: &OsStr) {

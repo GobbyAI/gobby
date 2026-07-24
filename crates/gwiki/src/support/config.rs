@@ -108,15 +108,6 @@ pub(crate) fn index_options_from_conn(conn: &mut Client) -> Result<IndexOptions,
     )
 }
 
-#[cfg(test)]
-pub(crate) fn local_shared_code_graph_limits() -> Result<SharedCodeGraphLimits, WikiError> {
-    let standalone = read_standalone_config()?;
-    match standalone {
-        Some(mut source) => resolve_shared_code_graph_limits(&mut source),
-        None => Ok(SharedCodeGraphLimits::default()),
-    }
-}
-
 pub(crate) fn shared_code_graph_limits_from_conn(
     conn: &mut Client,
 ) -> Result<SharedCodeGraphLimits, WikiError> {
@@ -236,13 +227,8 @@ mod tests {
     use gobby_core::config::{DaemonOrPrimary, DaemonServedConfig, routing_overrides_only};
 
     use crate::store::MemoryWikiStore;
-    use crate::support::test_env::EnvGuard;
 
     use super::*;
-
-    fn guard_gobby_home(path: &Path) -> EnvGuard {
-        EnvGuard::set("GOBBY_HOME", path)
-    }
 
     fn write_file(root: &Path, rel: &str, contents: &str) {
         let path = root.join(rel);
@@ -312,17 +298,21 @@ mod tests {
     }
 
     #[test]
-    #[serial_test::serial]
-    fn local_shared_code_graph_limits_read_gcore_yaml() {
+    fn standalone_shared_code_graph_limits_read_gcore_yaml() {
         let home = tempfile::tempdir().expect("home");
         write_file(
             home.path(),
             "gcore.yaml",
             "gwiki:\n  shared_code:\n    call_edge_limit: 31\n    import_edge_limit: 32\n",
         );
-        let _guard = guard_gobby_home(home.path());
+        let standalone = StandaloneConfig::read_at(&gcore_config_path(home.path()))
+            .expect("read standalone config");
 
-        let limits = local_shared_code_graph_limits().expect("limits");
+        let limits =
+            resolve_shared_code_graph_limits_from_layers(None, TestSource::default(), || {
+                Ok(standalone)
+            })
+            .expect("limits");
 
         assert_eq!(
             limits,
@@ -349,17 +339,19 @@ mod tests {
     }
 
     #[test]
-    #[serial_test::serial]
-    fn local_index_options_read_gcore_yaml() {
+    fn standalone_index_options_read_gcore_yaml() {
         let home = tempfile::tempdir().expect("home");
         write_file(
             home.path(),
             "gcore.yaml",
             "indexing:\n  respect_gitignore: false\n",
         );
-        let _guard = guard_gobby_home(home.path());
+        let standalone = StandaloneConfig::read_at(&gcore_config_path(home.path()))
+            .expect("read standalone config");
 
-        let options = local_index_options().expect("index options");
+        let options =
+            resolve_index_options_from_layers(None, TestSource::default(), || Ok(standalone))
+                .expect("index options");
 
         assert!(!options.respect_gitignore);
     }
@@ -427,15 +419,18 @@ mod tests {
     }
 
     #[test]
-    #[serial_test::serial]
-    fn memory_indexing_uses_local_index_options() {
+    fn memory_indexing_uses_injected_standalone_options() {
         let home = tempfile::tempdir().expect("home");
         write_file(
             home.path(),
             "gcore.yaml",
             "indexing:\n  respect_gitignore: false\n",
         );
-        let _guard = guard_gobby_home(home.path());
+        let standalone = StandaloneConfig::read_at(&gcore_config_path(home.path()))
+            .expect("read standalone config");
+        let options =
+            resolve_index_options_from_layers(None, TestSource::default(), || Ok(standalone))
+                .expect("index options");
 
         let vault = tempfile::tempdir().expect("vault");
         std::fs::create_dir(vault.path().join(".git")).expect("git dir");
@@ -446,7 +441,7 @@ mod tests {
         crate::indexer::index_vault(
             vault.path(),
             &mut store,
-            local_index_options().expect("index options"),
+            options,
             &mut crate::progress::ProgressOptions::default(),
         )
         .expect("index vault");

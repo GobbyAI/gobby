@@ -513,14 +513,11 @@ mod tests {
     use std::path::PathBuf;
 
     #[test]
-    #[serial_test::serial]
-    fn citation_quality_execute_requires_postgresql_index() {
-        let temp = tempfile::tempdir().expect("tempdir");
-        let _env = EnvGuard::set("GOBBY_HOME", temp.path().as_os_str())
-            .and_unset("GWIKI_DATABASE_URL")
-            .and_unset("GOBBY_POSTGRES_DSN");
-
-        let error = execute(ScopeSelection::Detect).expect_err("missing postgres must fail");
+    fn citation_quality_requires_postgresql_index_when_database_source_is_absent() {
+        let error = crate::support::postgres::require_attached_index_without_database_for_test(
+            "gwiki citation-quality",
+        )
+        .expect_err("missing postgres must fail");
 
         assert!(matches!(error, WikiError::Config { .. }));
         assert!(error.to_string().contains("PostgreSQL index is required"));

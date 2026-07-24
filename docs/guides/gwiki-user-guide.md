@@ -716,16 +716,32 @@ OpenAI-compatible HTTP endpoint, or stay off:
 | Embeddings (`ai.embeddings`) | Semantic vectors for hybrid search |
 
 Routing values are `auto`, `daemon`, `direct`, and `off`. `direct` means any
-OpenAI-compatible endpoint, local or remote — there is no `local` route. AI
-settings resolve from daemon-supported `config_store` keys when the daemon
-database is available, then `~/.gobby/gcore.yaml`, then defaults; `GOBBY_*`
-environment variables are not an AI configuration layer. `ai.text_generate.*`
-is the CLI standalone/direct namespace; daemon text generation uses daemon
-provider config such as `ai.generation.local.endpoints.<name>`.
+OpenAI-compatible endpoint, local or remote — there is no `local` route.
+
+gwiki selects one runtime mode per invocation. `GOBBY_RUNTIME_MODE=standalone`
+selects standalone explicitly. Unset, empty, and `auto` values select daemon
+when `GOBBY_DAEMON_URL` is non-empty or the Gobby OS service is installed;
+otherwise they select standalone. Installation is authoritative even when the
+service is stopped or disabled. Environment and installation changes apply to
+the next gwiki invocation.
+
+The mode controls both config and DSN sources:
+
+| Mode | Runtime config | PostgreSQL DSN |
+|------|----------------|----------------|
+| Daemon | Environment → daemon effective config → routing-only `gcore.yaml` | `GWIKI_DATABASE_URL` / `GOBBY_POSTGRES_DSN` → daemon effective config → `bootstrap.yaml` |
+| Standalone | Environment → PostgreSQL `config_store` → full `gcore.yaml` | `GWIKI_DATABASE_URL` / `GOBBY_POSTGRES_DSN` → `bootstrap.yaml` → full `gcore.yaml` |
+
+Daemon transport, authentication, and server failures are hard errors. Daemon
+mode never reads full `gcore.yaml` as a DSN fallback.
+
+`GOBBY_*` environment variables are not an AI configuration layer.
+`ai.text_generate.*` is the CLI standalone/direct namespace; daemon text
+generation uses daemon provider config such as
+`ai.generation.local.endpoints.<name>`.
 
 Indexing respects `.gitignore`, `.git/info/exclude`, and global git excludes by
-default. The shared setting resolves from `config_store`, then
-`~/.gobby/gcore.yaml`, then default `true`:
+default. It follows the selected runtime config stack, then defaults to `true`:
 
 ```yaml
 indexing:
