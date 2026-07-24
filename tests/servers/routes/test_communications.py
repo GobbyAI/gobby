@@ -141,11 +141,25 @@ def test_send_message(client, comms_manager):
     )
     comms_manager.send_message = AsyncMock(return_value=message)
 
-    response = client.post("/api/comms/send", json={"channel_name": "alerts", "content": "hello"})
+    response = client.post(
+        "/api/comms/send",
+        json={
+            "channel_name": "alerts",
+            "content": "hello",
+            "session_id": "session-1",
+            "metadata": {"conversation_id": "chat-42"},
+        },
+    )
 
     assert response.status_code == 200
     assert response.json()["id"] == "msg1"
-    comms_manager.send_message.assert_awaited_once_with("alerts", "hello")
+    assert response.json()["status"] == "sent"
+    comms_manager.send_message.assert_awaited_once_with(
+        "alerts",
+        "hello",
+        session_id="session-1",
+        metadata={"conversation_id": "chat-42"},
+    )
 
 
 def test_send_message_unknown_channel(client, comms_manager):

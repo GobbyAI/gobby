@@ -33,6 +33,8 @@ def create_communications_router(server: HTTPServer) -> APIRouter:
     class SendMessageRequest(BaseModel):
         channel_name: str = Field(..., description="Name of the destination channel")
         content: str = Field(..., description="Message content")
+        session_id: str | None = Field(None, description="Optional originating session")
+        metadata: dict[str, Any] | None = Field(None, description="Optional message metadata")
 
     @router.post("/webhooks/{channel_name}")
     async def receive_webhook(
@@ -101,7 +103,12 @@ def create_communications_router(server: HTTPServer) -> APIRouter:
             raise HTTPException(status_code=503, detail="Communications manager not available")
 
         try:
-            message = await comms_manager.send_message(request.channel_name, request.content)
+            message = await comms_manager.send_message(
+                request.channel_name,
+                request.content,
+                session_id=request.session_id,
+                metadata=request.metadata,
+            )
         except ValueError as e:
             raise HTTPException(status_code=404, detail=str(e)) from e
 

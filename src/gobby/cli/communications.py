@@ -58,7 +58,7 @@ def status_cmd(ctx: click.Context) -> None:
             print_error(f"Failed to fetch channel status: {response.text}")
             ctx.exit(1)
 
-        channels = response.json().get("channels", [])
+        channels = response.json()
         if not channels:
             click.echo("No communications channels configured.")
             return
@@ -132,7 +132,7 @@ def channels_list_cmd(ctx: click.Context) -> None:
             print_error(f"Failed to fetch channels: {response.text}")
             ctx.exit(1)
 
-        channels = response.json().get("channels", [])
+        channels = response.json()
         if not channels:
             click.echo("No communications channels configured.")
             return
@@ -251,7 +251,7 @@ def channels_remove_cmd(ctx: click.Context, name: str) -> None:
             print_error("Failed to fetch channels to find ID.")
             ctx.exit(1)
 
-        channels = channels_resp.json().get("channels", [])
+        channels = channels_resp.json()
         channel_id = next((ch["id"] for ch in channels if ch["name"] == name), None)
 
         if not channel_id:

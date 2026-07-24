@@ -22,11 +22,11 @@ def mock_client() -> MagicMock:
 
 
 def _mock_response(
-    status_code: int = 200, json_data: dict | None = None, text: str = ""
+    status_code: int = 200, json_data: object | None = None, text: str = ""
 ) -> MagicMock:
     resp = MagicMock()
     resp.status_code = status_code
-    resp.json.return_value = json_data or {}
+    resp.json.return_value = json_data if json_data is not None else {}
     resp.text = text
     return resp
 
@@ -37,17 +37,15 @@ def _mock_response(
 def test_status_shows_channels(runner: CliRunner, mock_client: MagicMock) -> None:
     """status command displays channel status table."""
     mock_client.call_http_api.return_value = _mock_response(
-        json_data={
-            "channels": [
-                {
-                    "name": "my-slack",
-                    "channel_type": "slack",
-                    "enabled": True,
-                    "status": "connected",
-                    "stats": {"inbound": 42, "outbound": 10},
-                }
-            ]
-        }
+        json_data=[
+            {
+                "name": "my-slack",
+                "channel_type": "slack",
+                "enabled": True,
+                "status": "connected",
+                "stats": {"inbound": 42, "outbound": 10},
+            }
+        ]
     )
 
     with patch("gobby.cli.communications.get_daemon_client", return_value=mock_client):
@@ -60,7 +58,7 @@ def test_status_shows_channels(runner: CliRunner, mock_client: MagicMock) -> Non
 
 def test_status_no_channels(runner: CliRunner, mock_client: MagicMock) -> None:
     """status command shows message when no channels configured."""
-    mock_client.call_http_api.return_value = _mock_response(json_data={"channels": []})
+    mock_client.call_http_api.return_value = _mock_response(json_data=[])
 
     with patch("gobby.cli.communications.get_daemon_client", return_value=mock_client):
         result = runner.invoke(comms, ["status"])
@@ -142,22 +140,20 @@ def test_send_connection_failure(runner: CliRunner, mock_client: MagicMock) -> N
 def test_channels_list_shows_table(runner: CliRunner, mock_client: MagicMock) -> None:
     """channels list command displays channel table."""
     mock_client.call_http_api.return_value = _mock_response(
-        json_data={
-            "channels": [
-                {
-                    "id": "chan-1",
-                    "name": "my-slack",
-                    "channel_type": "slack",
-                    "enabled": True,
-                },
-                {
-                    "id": "chan-2",
-                    "name": "my-telegram",
-                    "channel_type": "telegram",
-                    "enabled": False,
-                },
-            ]
-        }
+        json_data=[
+            {
+                "id": "chan-1",
+                "name": "my-slack",
+                "channel_type": "slack",
+                "enabled": True,
+            },
+            {
+                "id": "chan-2",
+                "name": "my-telegram",
+                "channel_type": "telegram",
+                "enabled": False,
+            },
+        ]
     )
 
     with patch("gobby.cli.communications.get_daemon_client", return_value=mock_client):
@@ -171,7 +167,7 @@ def test_channels_list_shows_table(runner: CliRunner, mock_client: MagicMock) ->
 
 def test_channels_list_empty(runner: CliRunner, mock_client: MagicMock) -> None:
     """channels list shows message when empty."""
-    mock_client.call_http_api.return_value = _mock_response(json_data={"channels": []})
+    mock_client.call_http_api.return_value = _mock_response(json_data=[])
 
     with patch("gobby.cli.communications.get_daemon_client", return_value=mock_client):
         result = runner.invoke(comms, ["channels", "list"])
@@ -264,12 +260,10 @@ def test_channels_remove_success(runner: CliRunner, mock_client: MagicMock) -> N
     mock_client.call_http_api.side_effect = [
         # First call: GET channels list
         _mock_response(
-            json_data={
-                "channels": [
-                    {"id": "chan-1", "name": "my-slack"},
-                    {"id": "chan-2", "name": "my-telegram"},
-                ]
-            }
+            json_data=[
+                {"id": "chan-1", "name": "my-slack"},
+                {"id": "chan-2", "name": "my-telegram"},
+            ]
         ),
         # Second call: DELETE channel
         _mock_response(status_code=204),
@@ -287,7 +281,7 @@ def test_channels_remove_success(runner: CliRunner, mock_client: MagicMock) -> N
 
 def test_channels_remove_not_found(runner: CliRunner, mock_client: MagicMock) -> None:
     """channels remove shows error when channel name not found."""
-    mock_client.call_http_api.return_value = _mock_response(json_data={"channels": []})
+    mock_client.call_http_api.return_value = _mock_response(json_data=[])
 
     with patch("gobby.cli.communications.get_daemon_client", return_value=mock_client):
         result = runner.invoke(comms, ["channels", "remove", "nonexistent", "--yes"])

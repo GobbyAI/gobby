@@ -20,17 +20,15 @@ def test_comms_status_success(mock_daemon_client):
 
     mock_response = MagicMock(spec=httpx.Response)
     mock_response.status_code = 200
-    mock_response.json.return_value = {
-        "channels": [
-            {
-                "name": "test-channel",
-                "channel_type": "telegram",
-                "enabled": True,
-                "status": "connected",
-                "stats": {"inbound": 5, "outbound": 10},
-            }
-        ]
-    }
+    mock_response.json.return_value = [
+        {
+            "name": "test-channel",
+            "channel_type": "telegram",
+            "enabled": True,
+            "status": "connected",
+            "stats": {"inbound": 5, "outbound": 10},
+        }
+    ]
     mock_daemon_client.call_http_api.return_value = mock_response
 
     result = runner.invoke(comms, ["status"])
@@ -67,11 +65,9 @@ def test_comms_channels_list(mock_daemon_client):
 
     mock_response = MagicMock(spec=httpx.Response)
     mock_response.status_code = 200
-    mock_response.json.return_value = {
-        "channels": [
-            {"id": "cc_123", "name": "test-chan", "channel_type": "slack", "enabled": True}
-        ]
-    }
+    mock_response.json.return_value = [
+        {"id": "cc_123", "name": "test-chan", "channel_type": "slack", "enabled": True}
+    ]
     mock_daemon_client.call_http_api.return_value = mock_response
 
     result = runner.invoke(comms, ["channels", "list"])
@@ -257,7 +253,7 @@ def test_comms_channels_remove(mock_daemon_client):
     # First response for listing
     list_response = MagicMock(spec=httpx.Response)
     list_response.status_code = 200
-    list_response.json.return_value = {"channels": [{"id": "cc_123", "name": "my-tg"}]}
+    list_response.json.return_value = [{"id": "cc_123", "name": "my-tg"}]
 
     # Second response for delete
     delete_response = MagicMock(spec=httpx.Response)
