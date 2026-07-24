@@ -54,6 +54,19 @@ def _payload_with_status(
 
 
 class TestVoiceWarmup:
+    def test_get_voice_transcriber_returns_available_singleton(self) -> None:
+        mixin = DummyVoiceMixin(VoiceConfig(enabled=True))
+        transcriber = MagicMock(is_available=True)
+        mixin._whisper_stt = transcriber
+
+        assert mixin.get_voice_transcriber() is transcriber
+
+    def test_get_voice_transcriber_rejects_unavailable_runtime(self) -> None:
+        mixin = DummyVoiceMixin(VoiceConfig(enabled=True))
+        mixin._whisper_stt = MagicMock(is_available=False)
+
+        assert mixin.get_voice_transcriber() is None
+
     @pytest.mark.asyncio
     async def test_start_voice_warmup_is_single_flight(self) -> None:
         """Warmup is single-flight and logs one trigger while the task is in flight."""

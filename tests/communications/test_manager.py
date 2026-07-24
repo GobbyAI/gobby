@@ -6,6 +6,7 @@ import logging
 import threading
 from collections.abc import Callable
 from datetime import UTC, datetime
+from pathlib import Path
 from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -641,6 +642,62 @@ async def test_handle_inbound_persists_downloaded_attachments() -> None:
 
 
 @pytest.mark.asyncio
+async def test_handle_inbound_transcribes_voice_note_before_event(tmp_path: Path) -> None:
+    channel = make_channel(webhook_secret=None)
+    store = make_store([channel])
+    manager = CommunicationsManager(make_config(), store, make_secret_store(), MagicMock())
+    audio_path = tmp_path / "voice.ogg"
+    audio_path.write_bytes(b"telegram voice bytes")
+    parsed_msg = CommsMessage(
+        id="voice-message",
+        channel_id="",
+        direction="inbound",
+        content="original caption",
+        content_type="attachment",
+        metadata_json={"voice_note": True},
+        created_at=datetime(2024, 1, 1, tzinfo=UTC),
+    )
+    attachment = CommsAttachment(
+        id="voice-attachment",
+        message_id="",
+        filename="voice.ogg",
+        content_type="audio/ogg",
+        size_bytes=20,
+        local_path=str(audio_path),
+    )
+    transcriber = MagicMock()
+    transcriber.transcribe = AsyncMock(return_value="  transcribed voice note  ")
+    manager.set_voice_transcriber_getter(lambda: transcriber)
+    manager.event_callback = AsyncMock()
+    mock_adapter = make_adapter()
+    mock_adapter.parse_webhook.return_value = [parsed_msg]
+    mock_adapter.download_inbound_attachments.return_value = [attachment]
+
+    with patch(
+        "gobby.communications.manager.get_adapter_class",
+        return_value=MagicMock(return_value=mock_adapter),
+    ):
+        await manager.start()
+
+    stored = await manager.handle_inbound(
+        "test-channel",
+        {"data": "payload"},
+        {},
+        raw_body=b'{"data":"payload"}',
+    )
+
+    assert stored[0].content == "transcribed voice note"
+    assert stored[0].metadata_json["voice_note_caption"] == "original caption"
+    assert stored[0].metadata_json["voice_transcription_status"] == "completed"
+    assert attachment.message_id == stored[0].id
+    transcriber.transcribe.assert_awaited_once_with(b"telegram voice bytes", "audio/ogg")
+    store.create_message_with_attachments.assert_called_once_with(stored[0], [attachment])
+    manager.event_callback.assert_awaited_once_with(
+        "comms.message_received",
+        message=stored[0],
+    )
+
+
 async def test_handle_inbound_webhook_verification_failure():
     """handle_inbound() raises ValueError if webhook signature fails."""
     channel = make_channel(webhook_secret="mysecret")

@@ -168,6 +168,17 @@ async def test_access_gate_accepts_allowlisted_sender() -> None:
 
 
 @pytest.mark.asyncio
+async def test_blank_attachment_content_does_not_start_responder_turn() -> None:
+    manager = FakeManager(make_channel())
+    backend = RecordingBackend()
+    responder = CommunicationsResponder(manager, backend=backend)
+
+    task = await responder.handle_message(make_message(content=""))
+
+    assert task is None
+    assert backend.turns == []
+
+
 async def test_access_gate_rejects_sender_outside_allowlist(
     caplog: pytest.LogCaptureFixture,
 ) -> None:

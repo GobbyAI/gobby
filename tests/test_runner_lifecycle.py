@@ -2877,6 +2877,9 @@ class TestMessageProcessorWebSocketIntegration:
             mock_communications_manager.set_websocket_broadcast.assert_called_once_with(
                 mock_ws_server.broadcast
             )
+            mock_communications_manager.set_voice_transcriber_getter.assert_called_once_with(
+                mock_ws_server.get_voice_transcriber
+            )
 
 
 class TestShutdownLoop:

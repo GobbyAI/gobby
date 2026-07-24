@@ -159,6 +159,9 @@ def init_servers(runner: GobbyRunner) -> None:
             from gobby.communications.chat_backend import ChatSessionCommsBackend
 
             runner.communications_manager.set_websocket_broadcast(runner.websocket_server.broadcast)
+            runner.communications_manager.set_voice_transcriber_getter(
+                runner.websocket_server.get_voice_transcriber
+            )
             runner.communications_manager.responder.set_backend(
                 ChatSessionCommsBackend(
                     runner.websocket_server,

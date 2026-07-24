@@ -10,6 +10,7 @@ import time
 from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
+    from gobby.communications.voice import VoiceTranscriber
     from gobby.config.voice import VoiceConfig
     from gobby.voice.tts import TTSProvider
 
@@ -35,7 +36,7 @@ class VoiceWarmupMixin:
     _tts_warmup_error: str
     _tts_warmup_status: str
     _voice_warmup_task: asyncio.Task[None] | None
-    _whisper_stt: Any
+    _whisper_stt: VoiceTranscriber | None
 
     # Warmup-failure backoff (class-level defaults so hosts need no init changes).
     _stt_warmup_failures = 0
@@ -63,7 +64,7 @@ class VoiceWarmupMixin:
             return voice
         return None
 
-    def _get_stt(self) -> Any:
+    def _get_stt(self) -> VoiceTranscriber | None:
         """Get or create the WhisperSTT singleton."""
         if self._whisper_stt is not None:
             return self._whisper_stt
@@ -76,6 +77,13 @@ class VoiceWarmupMixin:
 
         self._whisper_stt = WhisperSTT(voice_config)
         return self._whisper_stt
+
+    def get_voice_transcriber(self) -> VoiceTranscriber | None:
+        """Return the shared Whisper singleton when its runtime is available."""
+        transcriber = self._get_stt()
+        if transcriber is None or not transcriber.is_available:
+            return None
+        return transcriber
 
     def _get_stt_availability(self) -> tuple[bool, str]:
         """Return package-level STT availability and reason."""

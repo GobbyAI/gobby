@@ -553,6 +553,7 @@ class TelegramAdapter(BaseChannelAdapter):
         }
         if attachment is not None:
             metadata["telegram_attachment"] = attachment
+            metadata["voice_note"] = attachment.get("media_type") == "voice"
 
         platform_thread_id = (
             str(msg_data.get("message_thread_id"))

@@ -653,6 +653,7 @@ def test_parse_webhook_media(
     assert messages[0].content == caption
     assert messages[0].content_type == "attachment"
     assert messages[0].metadata_json["telegram_attachment"] == expected_attachment
+    assert messages[0].metadata_json["voice_note"] is (expected_attachment["media_type"] == "voice")
 
 
 @pytest.mark.asyncio

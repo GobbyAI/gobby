@@ -153,6 +153,10 @@ class CommunicationsResponder:
 
     async def handle_message(self, message: CommsMessage) -> asyncio.Task[None] | None:
         """Apply policy and route one inbound message."""
+        if not message.content.strip():
+            logger.info("Ignoring responder message %s without text content", message.id)
+            return None
+
         channel = self._manager.get_channel(message.channel_id)
         if channel is None:
             logger.warning(

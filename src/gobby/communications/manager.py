@@ -25,6 +25,7 @@ from gobby.communications.rate_limiter import TokenBucketRateLimiter
 from gobby.communications.responder import CommunicationsResponder
 from gobby.communications.router import MessageRouter
 from gobby.communications.threads import ThreadManager
+from gobby.communications.voice import VoiceTranscriber, VoiceTranscriberGetter
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -70,6 +71,7 @@ class CommunicationsManager:
         self._channel_by_name: dict[str, ChannelConfig] = {}
         self._channel_init_errors: dict[str, str] = {}
         self._websocket_broadcast: Any | None = None
+        self._voice_transcriber_getter: VoiceTranscriberGetter | None = None
 
         self._identity_manager = IdentityManager(store, session_store, config)
         self._thread_manager = ThreadManager(max_size=10000)
@@ -254,6 +256,16 @@ class CommunicationsManager:
         """Wire the WebSocket broadcast callable into the gobby_chat adapter."""
         self._websocket_broadcast = broadcast
         self._lifecycle.set_websocket_broadcast(broadcast)
+
+    def set_voice_transcriber_getter(self, getter: VoiceTranscriberGetter | None) -> None:
+        """Wire the voice subsystem's current speech-to-text singleton."""
+        self._voice_transcriber_getter = getter
+
+    def get_voice_transcriber(self) -> VoiceTranscriber | None:
+        """Return the current shared speech-to-text service when available."""
+        if self._voice_transcriber_getter is None:
+            return None
+        return self._voice_transcriber_getter()
 
     def get_channel(self, channel_id: str) -> ChannelConfig | None:
         """Get a channel by ID."""
