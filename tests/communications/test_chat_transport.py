@@ -22,14 +22,23 @@ class _Clock:
 
 
 class _FakeManager:
-    def __init__(self, *, supports_edit: bool) -> None:
+    def __init__(self, *, supports_edit: bool, supports_typing: bool = False) -> None:
         self.supports_edit = supports_edit
+        self.typing_supported = supports_typing
         self.sent: list[tuple[str, str, str | None, dict[str, object] | None]] = []
         self.edited: list[tuple[str, str, str, str]] = []
+        self.typing: list[tuple[str, str]] = []
 
     def supports_message_edit(self, channel_name: str) -> bool:
         assert channel_name == "telegram"
         return self.supports_edit
+
+    def supports_typing(self, channel_name: str) -> bool:
+        assert channel_name == "telegram"
+        return self.typing_supported
+
+    async def send_typing(self, channel_name: str, conversation_id: str) -> None:
+        self.typing.append((channel_name, conversation_id))
 
     async def send_message(
         self,
@@ -206,3 +215,13 @@ async def test_backend_flushes_fallback_when_stream_ends_without_done_event() ->
     await backend.run_turn(_context())
 
     assert [sent[1] for sent in manager.sent] == ["partial reply"]
+
+
+@pytest.mark.asyncio
+async def test_backend_publishes_typing_indicator_for_supported_channel() -> None:
+    manager = _FakeManager(supports_edit=False, supports_typing=True)
+    backend = ChatSessionCommsBackend(_FakeChatHost(), manager)
+
+    await backend.run_turn(_context())
+
+    assert manager.typing == [("telegram", "chat-42")]

@@ -12,7 +12,7 @@ import pytest
 
 from gobby.communications.adapters.telegram import TelegramAdapter
 from gobby.communications.attachments import AttachmentManager
-from gobby.communications.models import ChannelConfig, CommsMessage
+from gobby.communications.models import ChannelConfig, CommsAttachment, CommsMessage
 
 
 @pytest.fixture
@@ -176,6 +176,7 @@ async def test_send_message_basic(
         assert call_kwargs["json"] == {
             "chat_id": "chat999",
             "text": "Hello world",
+            "parse_mode": "HTML",
             "reply_to_message_id": "reply123",
         }
 
@@ -279,6 +280,181 @@ async def test_send_message_chunking(
         # Second call with 904 chars
         second_call_args = mock_post.call_args_list[1][1]
         assert len(second_call_args["json"]["text"]) == 904
+
+
+@pytest.mark.asyncio
+async def test_send_message_renders_telegram_safe_html(adapter: TelegramAdapter) -> None:
+    mock_client = MagicMock()
+
+    async def post(url: str, **kwargs: object) -> httpx.Response:
+        return httpx.Response(
+            200,
+            request=httpx.Request("POST", url),
+            json={"ok": True, "result": {"message_id": 12345}},
+        )
+
+    mock_client.post = AsyncMock(side_effect=post)
+    adapter._client = mock_client
+    adapter._api_base = "https://api.telegram.org/bottest-token"
+    message = CommsMessage(
+        id="msg1",
+        channel_id="channel1",
+        direction="outbound",
+        content=("**bold** *italic* `<code>` [link](https://example.com?a=1&b=2) <raw>"),
+        metadata_json={"platform_destination": "chat999"},
+        created_at=datetime.now(UTC),
+    )
+
+    await adapter.send_message(message)
+
+    payload = mock_client.post.await_args.kwargs["json"]
+    assert payload == {
+        "chat_id": "chat999",
+        "text": (
+            "<b>bold</b> <i>italic</i> <code>&lt;code&gt;</code> "
+            '<a href="https://example.com?a=1&amp;b=2">link</a> &lt;raw&gt;'
+        ),
+        "parse_mode": "HTML",
+    }
+
+
+@pytest.mark.asyncio
+async def test_send_message_balances_html_across_4096_character_chunks(
+    adapter: TelegramAdapter,
+) -> None:
+    mock_client = MagicMock()
+    message_id = 0
+
+    async def post(url: str, **kwargs: object) -> httpx.Response:
+        nonlocal message_id
+        message_id += 1
+        return httpx.Response(
+            200,
+            request=httpx.Request("POST", url),
+            json={"ok": True, "result": {"message_id": message_id}},
+        )
+
+    mock_client.post = AsyncMock(side_effect=post)
+    adapter._client = mock_client
+    adapter._api_base = "https://api.telegram.org/bottest-token"
+    message = CommsMessage(
+        id="msg1",
+        channel_id="channel1",
+        direction="outbound",
+        content=f"**{'A' * 5000}**",
+        metadata_json={"platform_destination": "chat999"},
+        created_at=datetime.now(UTC),
+    )
+
+    root_message_id = await adapter.send_message(message)
+
+    payloads = [call.kwargs["json"] for call in mock_client.post.await_args_list]
+    assert root_message_id == "1"
+    assert [
+        len(payload["text"].removeprefix("<b>").removesuffix("</b>")) for payload in payloads
+    ] == [
+        4096,
+        904,
+    ]
+    assert all(payload["text"].startswith("<b>") for payload in payloads)
+    assert all(payload["text"].endswith("</b>") for payload in payloads)
+    assert adapter._edit_overflow_ids == {"1": ["2"]}
+
+
+@pytest.mark.asyncio
+async def test_send_typing_calls_send_chat_action(adapter: TelegramAdapter) -> None:
+    response = httpx.Response(
+        200,
+        request=httpx.Request("POST", "https://api.telegram.org/bottest-token/sendChatAction"),
+        json={"ok": True, "result": True},
+    )
+    mock_client = MagicMock()
+    mock_client.post = AsyncMock(return_value=response)
+    adapter._client = mock_client
+    adapter._api_base = "https://api.telegram.org/bottest-token"
+
+    assert adapter.supports_typing is True
+    await adapter.send_typing("chat999")
+
+    mock_client.post.assert_awaited_once_with(
+        "https://api.telegram.org/bottest-token/sendChatAction",
+        json={"chat_id": "chat999", "action": "typing"},
+    )
+
+
+@pytest.mark.asyncio
+async def test_edit_message_calls_edit_message_text_with_html(
+    adapter: TelegramAdapter,
+) -> None:
+    response = httpx.Response(
+        200,
+        request=httpx.Request("POST", "https://api.telegram.org/bottest-token/editMessageText"),
+        json={"ok": True, "result": {"message_id": 12345}},
+    )
+    mock_client = MagicMock()
+    mock_client.post = AsyncMock(return_value=response)
+    adapter._client = mock_client
+    adapter._api_base = "https://api.telegram.org/bottest-token"
+
+    assert adapter.supports_message_edit is True
+    await adapter.edit_message("12345", "**updated**", "chat999")
+
+    mock_client.post.assert_awaited_once_with(
+        "https://api.telegram.org/bottest-token/editMessageText",
+        json={
+            "chat_id": "chat999",
+            "message_id": "12345",
+            "text": "<b>updated</b>",
+            "parse_mode": "HTML",
+        },
+    )
+
+
+@pytest.mark.asyncio
+async def test_send_attachment_uses_send_photo_for_images(
+    adapter: TelegramAdapter,
+    tmp_path: Path,
+) -> None:
+    image_path = tmp_path / "photo.jpg"
+    image_path.write_bytes(b"image bytes")
+    response = httpx.Response(
+        200,
+        request=httpx.Request("POST", "https://api.telegram.org/bottest-token/sendPhoto"),
+        json={"ok": True, "result": {"message_id": 42}},
+    )
+    mock_client = MagicMock()
+    mock_client.post = AsyncMock(return_value=response)
+    adapter._client = mock_client
+    adapter._api_base = "https://api.telegram.org/bottest-token"
+    message = CommsMessage(
+        id="msg1",
+        channel_id="channel1",
+        direction="outbound",
+        content="**caption**",
+        metadata_json={"platform_destination": "chat999"},
+        created_at=datetime.now(UTC),
+    )
+    attachment = CommsAttachment(
+        id="attachment1",
+        message_id=message.id,
+        filename=image_path.name,
+        content_type="image/jpeg",
+        size_bytes=image_path.stat().st_size,
+    )
+
+    result = await adapter.send_attachment(message, attachment, image_path)
+
+    assert result == "42"
+    call = mock_client.post.await_args
+    assert call.args[0] == "https://api.telegram.org/bottest-token/sendPhoto"
+    assert call.kwargs["data"] == {
+        "chat_id": "chat999",
+        "caption": "<b>caption</b>",
+        "parse_mode": "HTML",
+    }
+    assert call.kwargs["files"] == {
+        "photo": ("photo.jpg", b"image bytes", "image/jpeg"),
+    }
 
 
 def test_parse_webhook(adapter: TelegramAdapter) -> None:

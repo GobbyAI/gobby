@@ -15,6 +15,10 @@ class CommunicationsDeliveryManager(Protocol):
 
     def supports_message_edit(self, channel_name: str) -> bool: ...
 
+    def supports_typing(self, channel_name: str) -> bool: ...
+
+    async def send_typing(self, channel_name: str, conversation_id: str) -> None: ...
+
     async def send_message(
         self,
         channel_name: str,

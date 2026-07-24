@@ -18,6 +18,9 @@ import httpx
 
 from gobby.communications.adapters import register_adapter
 from gobby.communications.adapters.base import BaseChannelAdapter
+from gobby.communications.adapters.telegram_formatting import (
+    markdown_to_telegram_html_chunks,
+)
 from gobby.communications.models import (
     ChannelCapabilities,
     ChannelConfig,
@@ -140,6 +143,7 @@ class TelegramAdapter(BaseChannelAdapter):
         self._persisted_offset: int = 0
         self._pending_update_ids: list[int] = []
         self._acknowledged_update_ids: set[int] = set()
+        self._edit_overflow_ids: dict[str, list[str]] = {}
 
     def _advance_acknowledged_offset(self) -> None:
         while self._pending_update_ids:
@@ -185,6 +189,21 @@ class TelegramAdapter(BaseChannelAdapter):
             response.raise_for_status()
         except httpx.HTTPStatusError as exc:
             raise self._redacted_status_error(exc) from None
+
+    async def _post_json(self, method: str, payload: dict[str, Any]) -> dict[str, Any]:
+        if not self._client or not self._api_base:
+            raise RuntimeError("Adapter not initialized")
+        url = f"{self._api_base}/{method}"
+        try:
+            response = await self._retry_request(
+                functools.partial(self._client.post, url, json=payload)
+            )
+        except httpx.HTTPStatusError as exc:
+            raise self._redacted_status_error(exc) from None
+        body: object = response.json()
+        if not isinstance(body, dict):
+            raise RuntimeError(f"Telegram {method} returned a non-object response")
+        return body
 
     @property
     def channel_type(self) -> str:
@@ -269,40 +288,97 @@ class TelegramAdapter(BaseChannelAdapter):
         """Send message and return platform message ID."""
         if not self._client or not self._api_base:
             raise RuntimeError("Adapter not initialized")
-        client = self._client
 
         chat_id = self.platform_destination(message)
 
-        chunks = self.chunk_message(message.content)
+        chunks = markdown_to_telegram_html_chunks(message.content, self.max_message_length)
 
-        last_message_id = None
+        message_ids: list[str] = []
         for chunk in chunks:
             payload: dict[str, Any] = {
                 "chat_id": chat_id,
                 "text": chunk,
+                "parse_mode": "HTML",
             }
 
             if message.platform_thread_id:
                 payload["reply_to_message_id"] = message.platform_thread_id
 
-            url = f"{self._api_base}/sendMessage"
-            try:
-                response = await self._retry_request(
-                    functools.partial(client.post, url, json=payload)
-                )
-            except httpx.HTTPStatusError as exc:
-                raise self._redacted_status_error(exc) from None
-
-            data = response.json()
+            data = await self._post_json("sendMessage", payload)
             if data.get("ok"):
-                last_message_id = str(data["result"]["message_id"])
+                message_ids.append(str(data["result"]["message_id"]))
 
-        return last_message_id
+        if not message_ids:
+            return None
+        root_message_id = message_ids[0]
+        if len(message_ids) > 1:
+            self._edit_overflow_ids[root_message_id] = message_ids[1:]
+        return root_message_id
+
+    async def send_typing(self, conversation_id: str) -> None:
+        """Publish Telegram's typing chat action."""
+        await self._post_json(
+            "sendChatAction",
+            {"chat_id": conversation_id, "action": "typing"},
+        )
+
+    async def edit_message(
+        self,
+        platform_message_id: str,
+        content: str,
+        conversation_id: str,
+    ) -> None:
+        """Replace a Telegram message, maintaining overflow chunks when needed."""
+        chunks = markdown_to_telegram_html_chunks(content, self.max_message_length)
+        target_ids = [
+            platform_message_id,
+            *self._edit_overflow_ids.get(platform_message_id, []),
+        ]
+
+        for index, chunk in enumerate(chunks):
+            if index < len(target_ids):
+                await self._post_json(
+                    "editMessageText",
+                    {
+                        "chat_id": conversation_id,
+                        "message_id": target_ids[index],
+                        "text": chunk,
+                        "parse_mode": "HTML",
+                    },
+                )
+                continue
+
+            result = await self._post_json(
+                "sendMessage",
+                {
+                    "chat_id": conversation_id,
+                    "text": chunk,
+                    "parse_mode": "HTML",
+                },
+            )
+            if not result.get("ok"):
+                raise RuntimeError("Telegram sendMessage did not return a message")
+            target_ids.append(str(result["result"]["message_id"]))
+
+        for stale_message_id in target_ids[len(chunks) :]:
+            await self._post_json(
+                "deleteMessage",
+                {
+                    "chat_id": conversation_id,
+                    "message_id": stale_message_id,
+                },
+            )
+
+        overflow_ids = target_ids[1 : len(chunks)]
+        if overflow_ids:
+            self._edit_overflow_ids[platform_message_id] = overflow_ids
+        else:
+            self._edit_overflow_ids.pop(platform_message_id, None)
 
     async def send_attachment(
         self, message: CommsMessage, attachment: CommsAttachment, file_path: Path
     ) -> str | None:
-        """Send a file via Telegram sendDocument API."""
+        """Send an image or document through the matching Telegram API."""
         if not self._client or not self._api_base:
             raise RuntimeError("Adapter not initialized")
         client = self._client
@@ -310,14 +386,18 @@ class TelegramAdapter(BaseChannelAdapter):
         chat_id = self.platform_destination(message)
 
         file_bytes = await asyncio.to_thread(file_path.read_bytes)
-        files = {"document": (attachment.filename, file_bytes, attachment.content_type)}
+        is_image = attachment.content_type.startswith("image/")
+        file_field = "photo" if is_image else "document"
+        method = "sendPhoto" if is_image else "sendDocument"
+        files = {file_field: (attachment.filename, file_bytes, attachment.content_type)}
         data: dict[str, Any] = {"chat_id": chat_id}
         if message.content:
-            data["caption"] = message.content[:1024]
+            data["caption"] = markdown_to_telegram_html_chunks(message.content, 1024)[0]
+            data["parse_mode"] = "HTML"
         if message.platform_thread_id:
             data["reply_to_message_id"] = message.platform_thread_id
 
-        url = f"{self._api_base}/sendDocument"
+        url = f"{self._api_base}/{method}"
         try:
             response = await self._retry_request(
                 functools.partial(client.post, url, data=data, files=files)
@@ -405,6 +485,7 @@ class TelegramAdapter(BaseChannelAdapter):
         if self._client:
             await self._client.aclose()
             self._client = None
+        self._edit_overflow_ids.clear()
 
     def capabilities(self) -> ChannelCapabilities:
         """Return channel capabilities."""

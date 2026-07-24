@@ -67,6 +67,11 @@ class BaseChannelAdapter(ABC):
         """Whether this adapter can replace an existing platform message."""
         return type(self).edit_message is not BaseChannelAdapter.edit_message
 
+    @property
+    def supports_typing(self) -> bool:
+        """Whether this adapter can publish a typing indicator."""
+        return type(self).send_typing is not BaseChannelAdapter.send_typing
+
     @abstractmethod
     async def initialize(
         self, config: ChannelConfig, secret_resolver: Callable[[str], str | None]
@@ -115,6 +120,13 @@ class BaseChannelAdapter(ABC):
         Override in adapters that support message editing.
         """
         raise NotImplementedError(f"{self.channel_type} adapter does not support message editing")
+
+    async def send_typing(self, conversation_id: str) -> None:
+        """Publish a typing indicator for an existing platform conversation.
+
+        Override in adapters that support presence indicators.
+        """
+        raise NotImplementedError(f"{self.channel_type} adapter does not support typing indicators")
 
     async def download_inbound_attachments(
         self,

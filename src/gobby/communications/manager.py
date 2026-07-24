@@ -136,6 +136,24 @@ class CommunicationsManager:
         adapter = self._adapters.get(channel_name)
         return bool(adapter and adapter.supports_message_edit)
 
+    def supports_typing(self, channel_name: str) -> bool:
+        """Return whether the active adapter implements typing indicators."""
+        adapter = self._adapters.get(channel_name)
+        return bool(adapter and adapter.supports_typing)
+
+    async def send_typing(self, channel_name: str, conversation_id: str) -> None:
+        """Publish a typing indicator through an active adapter."""
+        adapter = self._adapters.get(channel_name)
+        if adapter is None:
+            raise ValueError(f"Channel {channel_name!r} not found or not active")
+        if not self.supports_typing(channel_name):
+            raise NotImplementedError(
+                f"{adapter.channel_type} adapter does not support typing indicators"
+            )
+        channel = self._channel_by_name[channel_name]
+        await self._rate_limiter.wait_if_needed(channel.id)
+        await adapter.send_typing(conversation_id)
+
     async def edit_message(
         self,
         channel_name: str,

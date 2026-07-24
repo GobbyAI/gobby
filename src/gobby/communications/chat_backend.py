@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import logging
 from typing import Protocol, cast
 
 from gobby.communications.chat_transport import (
@@ -11,6 +12,10 @@ from gobby.communications.chat_transport import (
 )
 from gobby.communications.responder import ResponderContext
 from gobby.servers.chat_stream_transport import ChatStreamTransport
+
+logger = logging.getLogger(__name__)
+
+_TYPING_REFRESH_SECONDS = 4.0
 
 
 class ChatTurnHost(Protocol):
@@ -49,7 +54,9 @@ class ChatSessionCommsBackend:
         if current is not None:
             self._active_turns[session_key] = cast(asyncio.Task[None], current)
         transport = CommunicationsChatStreamTransport(self._manager, context)
+        typing_task: asyncio.Task[None] | None = None
         try:
+            typing_task = await self._start_typing(context)
             await self._host._run_chat_turn(
                 conversation_id=session_key,
                 content=context.message.content,
@@ -59,12 +66,46 @@ class ChatSessionCommsBackend:
                 tts_enabled=False,
             )
         finally:
+            if typing_task is not None:
+                typing_task.cancel()
+                await asyncio.gather(typing_task, return_exceptions=True)
             try:
                 await transport.finalize()
             finally:
                 if current is not None and self._active_turns.get(session_key) is current:
                     self._active_turns.pop(session_key, None)
         return None
+
+    async def _start_typing(self, context: ResponderContext) -> asyncio.Task[None] | None:
+        channel_name = context.channel.name
+        if not self._manager.supports_typing(channel_name):
+            return None
+        try:
+            await self._manager.send_typing(channel_name, context.conversation_id)
+        except Exception:
+            logger.warning(
+                "Failed to publish initial typing indicator for channel %s",
+                channel_name,
+                exc_info=True,
+            )
+            return None
+        return asyncio.create_task(
+            self._refresh_typing(channel_name, context.conversation_id),
+            name=f"comms-typing:{channel_name}:{context.conversation_id}",
+        )
+
+    async def _refresh_typing(self, channel_name: str, conversation_id: str) -> None:
+        while True:
+            await asyncio.sleep(_TYPING_REFRESH_SECONDS)
+            try:
+                await self._manager.send_typing(channel_name, conversation_id)
+            except Exception:
+                logger.warning(
+                    "Failed to refresh typing indicator for channel %s",
+                    channel_name,
+                    exc_info=True,
+                )
+                return
 
     async def new_session(self, context: ResponderContext) -> str | None:
         """Discard the current runtime so the next message starts fresh."""
