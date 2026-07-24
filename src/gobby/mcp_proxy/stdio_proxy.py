@@ -138,6 +138,7 @@ class DaemonProxy:
         timeout: float = 30.0,
         project_id: str | None = None,
         session_id: str | None = None,
+        params: dict[str, str] | None = None,
         preflight: bool = False,
     ) -> dict[str, Any]:
         """Make HTTP request to daemon."""
@@ -176,22 +177,26 @@ class DaemonProxy:
         try:
             client = self._get_client()
             request_headers = {**headers, **self._auth_headers}
+            request_kwargs: dict[str, Any] = {
+                "json": json,
+                "headers": request_headers,
+                "timeout": timeout,
+            }
+            if params:
+                request_kwargs["params"] = params
             resp = await client.request(
                 method,
                 f"{self.base_url}{path}",
-                json=json,
-                headers=request_headers,
-                timeout=timeout,
+                **request_kwargs,
             )
             if resp.status_code == 401:
                 self._auth_headers = daemon_auth_headers()
                 retry_headers = {**headers, **self._auth_headers}
+                request_kwargs["headers"] = retry_headers
                 resp = await client.request(
                     method,
                     f"{self.base_url}{path}",
-                    json=json,
-                    headers=retry_headers,
-                    timeout=timeout,
+                    **request_kwargs,
                 )
             if resp.status_code == 200:
                 data: dict[str, Any] = resp.json()
@@ -252,6 +257,7 @@ class DaemonProxy:
         arguments: str | dict[str, Any] | None = None,
         project_id: str | None = None,
         session_id: str | None = None,
+        intent: str | None = None,
         preflight_enabled: bool = True,
     ) -> dict[str, Any]:
         if server_name == "gobby-workflows" and tool_name == REMOVED_WORKFLOW_WAIT_TOOL:
@@ -296,6 +302,8 @@ class DaemonProxy:
                 "tool_name": tool_name,
                 "arguments": arguments if arguments is not None else {},
             }
+            if intent:
+                request_payload["intent"] = intent
 
         request_kwargs: dict[str, Any] = {
             "json": request_payload,
@@ -305,6 +313,8 @@ class DaemonProxy:
             request_kwargs["project_id"] = project_id
         if session_id:
             request_kwargs["session_id"] = session_id
+        if intent and tool_name not in WAIT_TOOL_NAMES:
+            request_kwargs["params"] = {"intent": intent}
         return await self._request(
             "POST",
             request_path,

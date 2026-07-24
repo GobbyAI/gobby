@@ -27,6 +27,34 @@ def test_nested_wrapper_payload_is_canonicalized_to_target_arguments() -> None:
     assert canonical.arguments == {}
 
 
+def test_wrapper_intent_is_separate_from_target_intent() -> None:
+    canonical = canonicalize_call_tool_wrapper(
+        server_name="example",
+        tool_name="summarize",
+        arguments={"intent": "target-value"},
+        intent="wrapper-summary",
+    )
+
+    assert canonical.intent == "wrapper-summary"
+    assert canonical.arguments == {"intent": "target-value"}
+
+
+def test_nested_wrapper_intent_is_hoisted_without_touching_target_intent() -> None:
+    canonical = canonicalize_call_tool_wrapper(
+        server_name=None,
+        tool_name=None,
+        arguments={
+            "server_name": "example",
+            "tool_name": "summarize",
+            "intent": "wrapper-summary",
+            "arguments": {"intent": "target-value"},
+        },
+    )
+
+    assert canonical.intent == "wrapper-summary"
+    assert canonical.arguments == {"intent": "target-value"}
+
+
 def test_nested_wrapper_payload_accepts_args_alias() -> None:
     canonical = canonicalize_call_tool_wrapper(
         server_name=None,
@@ -135,7 +163,7 @@ def test_invalid_wrapper_json_still_raises_without_top_level_route() -> None:
 
 class _SchemaErrorProxy:
     def __init__(self) -> None:
-        self.calls: list[tuple[str, str, object, object]] = []
+        self.calls: list[tuple[str, str, object, object, bool, str | None]] = []
 
     async def call_tool(
         self,
@@ -143,8 +171,13 @@ class _SchemaErrorProxy:
         tool_name: str,
         arguments: object,
         session_id: object,
+        *,
+        wrapper_originated: bool = False,
+        intent: str | None = None,
     ) -> dict[str, object]:
-        self.calls.append((server_name, tool_name, arguments, session_id))
+        self.calls.append(
+            (server_name, tool_name, arguments, session_id, wrapper_originated, intent)
+        )
         return {
             "error": "Unexpected argument 'arguments'",
             "hint": "Call end_agent_run with the target parameters directly.",
@@ -182,5 +215,12 @@ async def test_bad_end_agent_run_wrapper_call_returns_schema_help() -> None:
     assert "Correct schema" in text
     assert '"status"' in text
     assert proxy.calls == [
-        ("gobby-agents", "end_agent_run", {"arguments": {"status": "success"}}, None)
+        (
+            "gobby-agents",
+            "end_agent_run",
+            {"arguments": {"status": "success"}},
+            None,
+            True,
+            None,
+        )
     ]

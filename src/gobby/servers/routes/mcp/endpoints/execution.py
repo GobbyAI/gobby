@@ -668,6 +668,8 @@ async def call_mcp_tool(
         server_name = body.get("server_name")
         tool_name = body.get("tool_name")
         arguments = body.get("arguments", {})
+        raw_intent = body.get("intent")
+        intent = raw_intent if isinstance(raw_intent, str) and raw_intent else None
 
         if not server_name or not tool_name:
             raise HTTPException(
@@ -701,6 +703,8 @@ async def call_mcp_tool(
                     arguments,
                     session_id=get_current_session_id(),
                     timeout=timeout,
+                    wrapper_originated=True,
+                    intent=intent,
                 )
                 response_time_ms = (time.perf_counter() - start_time) * 1000
                 return _process_tool_proxy_result(result, server_name, tool_name, response_time_ms)
@@ -783,6 +787,8 @@ async def mcp_proxy(
                 status_code=400,
                 detail={"success": False, "error": f"Invalid JSON in request body: {e}"},
             ) from e
+        raw_intent = request.query_params.get("intent")
+        intent = raw_intent if isinstance(raw_intent, str) and raw_intent else None
 
         stale_wrapper_result = _stale_stdio_wrapper_wait_result(
             request,
@@ -804,6 +810,8 @@ async def mcp_proxy(
                     arguments,
                     session_id=get_current_session_id(),
                     timeout=timeout,
+                    wrapper_originated=True,
+                    intent=intent,
                 )
                 response_time_ms = (time.perf_counter() - start_time) * 1000
                 return _process_tool_proxy_result(result, server_name, tool_name, response_time_ms)

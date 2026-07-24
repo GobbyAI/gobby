@@ -20,6 +20,7 @@ class CanonicalCallToolWrapper:
     arguments: str | dict[str, Any] | None
     session_id: str | None
     project_id: str | None
+    intent: str | None
 
 
 class CallToolWrapperInputError(ValueError):
@@ -67,6 +68,7 @@ def canonicalize_call_tool_wrapper(
     args: str | dict[str, Any] | None = None,
     session_id: str | None = None,
     project_id: str | None = None,
+    intent: str | None = None,
 ) -> CanonicalCallToolWrapper:
     """Canonicalize public ``call_tool`` wrapper inputs.
 
@@ -80,7 +82,9 @@ def canonicalize_call_tool_wrapper(
     ``arguments.session_id`` is a target-tool override for a different session:
     local ``#N`` refs resolve in the caller project, while cross-project targets
     should use UUIDs. If routing fields are already top-level, malformed string
-    arguments are preserved for target validation.
+    arguments are preserved for target validation. Wrapper ``intent`` metadata is
+    accepted at top level or beside nested routing fields; target ``arguments.intent``
+    remains untouched.
     """
 
     raw_argument_value = arguments if arguments is not None else args
@@ -98,6 +102,7 @@ def canonicalize_call_tool_wrapper(
                 arguments=raw_argument_value,
                 session_id=session_id if isinstance(session_id, str) and session_id else None,
                 project_id=project_id if isinstance(project_id, str) and project_id else None,
+                intent=intent if isinstance(intent, str) and intent else None,
             )
         raise
 
@@ -125,6 +130,11 @@ def canonicalize_call_tool_wrapper(
     wrapper_route_from_nested = not complete_top_level_route and (
         server_name_from_nested or tool_name_from_nested
     )
+    canonical_intent = intent if isinstance(intent, str) and intent else None
+    intent_from_nested = False
+    if canonical_intent is None and wrapper_route_from_nested:
+        canonical_intent = _pick_wrapper_value(None, nested.get("intent"))
+        intent_from_nested = canonical_intent is not None
     canonical_project_id = project_id if isinstance(project_id, str) and project_id else None
     if canonical_project_id is None and wrapper_route_from_nested:
         canonical_project_id = _pick_wrapper_value(None, nested.get("project_id"))
@@ -152,6 +162,8 @@ def canonicalize_call_tool_wrapper(
     ):
         for field in CALL_TOOL_WRAPPER_FIELDS:
             canonical_arguments.pop(field, None)
+        if intent_from_nested:
+            canonical_arguments.pop("intent", None)
 
     return CanonicalCallToolWrapper(
         server_name=canonical_server_name,
@@ -159,4 +171,5 @@ def canonicalize_call_tool_wrapper(
         arguments=canonical_arguments,
         session_id=canonical_session_id,
         project_id=canonical_project_id,
+        intent=canonical_intent,
     )

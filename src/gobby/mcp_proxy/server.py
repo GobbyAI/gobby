@@ -6,13 +6,14 @@ import asyncio
 import json
 import logging
 from collections.abc import Callable
-from typing import Annotated, Any
+from typing import Annotated, Any, cast
 
 from mcp.server.fastmcp import FastMCP
 from mcp.types import CallToolResult, TextContent
 from pydantic import Field
 
 from gobby.config.app import DaemonConfig
+from gobby.config.features import ToolResultOffloadConfig
 from gobby.hooks.tool_outcomes import ToolOutcomeStatus, classify_raw_tool_result
 from gobby.mcp_proxy._call_tool_wrapper import (
     CallToolWrapperInputError,
@@ -22,10 +23,12 @@ from gobby.mcp_proxy.instructions import build_gobby_instructions
 from gobby.mcp_proxy.manager import MCPClientManager
 from gobby.mcp_proxy.server_list import compact_mcp_server_list
 from gobby.mcp_proxy.services.recommendation import RecommendationService, SearchMode
+from gobby.mcp_proxy.services.result_offload import ToolResultOffloader
 from gobby.mcp_proxy.services.server_mgmt import ServerManagementService
 from gobby.mcp_proxy.services.tool_proxy import ToolProxyService
 from gobby.mcp_proxy.wait_tools import call_with_wait_heartbeat, prepare_client_guard
 from gobby.storage.hub.protocol import HubDatabase
+from gobby.storage.tool_results import ToolResultStore
 from gobby.utils import project_context as project_context_utils
 from gobby.utils.session_context import (
     reset_seeded_contexts,
@@ -45,7 +48,7 @@ class GobbyDaemonTools:
         websocket_port: int,
         start_time: float,
         internal_manager: Any,
-        db: HubDatabase,
+        db: HubDatabase | None,
         config: DaemonConfig | None = None,
         llm_service: Any | None = None,
         session_manager: Any | None = None,
@@ -65,11 +68,29 @@ class GobbyDaemonTools:
         self.start_time = start_time
 
         # Initialize services
+        result_offloader = None
+        if db is not None:
+            configured_offload = (
+                config.get_tool_result_offload_config() if config is not None else None
+            )
+            offload_config = (
+                configured_offload
+                if isinstance(configured_offload, ToolResultOffloadConfig)
+                else ToolResultOffloadConfig()
+            )
+            result_store = ToolResultStore(db, offload_config)
+            result_offloader = ToolResultOffloader(
+                result_store,
+                db,
+                offload_config,
+                self._caller_project_ref,
+            )
         self.tool_proxy = ToolProxyService(
             mcp_manager,
             internal_manager=internal_manager,
             fallback_resolver=fallback_resolver,
             hook_manager_resolver=hook_manager_resolver,
+            result_offloader=result_offloader,
         )
         self.server_mgmt = ServerManagementService(
             mcp_manager, config_manager, config, llm_service=llm_service
@@ -77,7 +98,7 @@ class GobbyDaemonTools:
         self.recommendation = RecommendationService(
             llm_service,
             mcp_manager,
-            db=db,
+            db=cast(HubDatabase, db),
             semantic_search=semantic_search,
             project_id=None,  # Resolved per-call via get_project_context()
             config=config.recommend_tools if config else None,
@@ -172,6 +193,7 @@ class GobbyDaemonTools:
         arguments: str | dict[str, Any] | None = None,
         session_id: str | None = None,
         project_id: str | None = None,
+        intent: str | None = None,
     ) -> Any:
         """Call a tool.
 
@@ -207,6 +229,7 @@ class GobbyDaemonTools:
                 arguments=arguments,
                 session_id=session_id,
                 project_id=project_id,
+                intent=intent,
             )
         except CallToolWrapperInputError as exc:
             return CallToolResult(
@@ -219,6 +242,7 @@ class GobbyDaemonTools:
         arguments = canonical.arguments
         session_id = canonical.session_id
         project_id = canonical.project_id
+        intent = canonical.intent
 
         if not server_name or not tool_name:
             return CallToolResult(
@@ -295,6 +319,8 @@ class GobbyDaemonTools:
                     tool_name,
                     guard.arguments,
                     effective_session_id,
+                    wrapper_originated=True,
+                    intent=intent,
                 ),
                 ctx=None,
                 tool_name=tool_name,

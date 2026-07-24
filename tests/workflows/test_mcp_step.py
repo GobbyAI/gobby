@@ -544,10 +544,10 @@ class TestMCPTemplateRendering:
         assert rendered.mcp.arguments["verbose"] is False
 
     @pytest.mark.asyncio
-    async def test_coerce_null_values(
+    async def test_drop_null_values(
         self, mock_db, mock_execution_manager, mock_llm_service
     ) -> None:
-        """Test that null/none strings are coerced to None."""
+        """Null-like MCP arguments are omitted from the rendered call."""
         from gobby.workflows.pipeline_executor import PipelineExecutor
         from gobby.workflows.templates import TemplateEngine
 
@@ -573,7 +573,7 @@ class TestMCPTemplateRendering:
         }
 
         rendered = executor.renderer.render_step(step, context)
-        assert rendered.mcp.arguments["param"] is None
+        assert "param" not in rendered.mcp.arguments
 
     @pytest.mark.asyncio
     async def test_coerce_float_values(

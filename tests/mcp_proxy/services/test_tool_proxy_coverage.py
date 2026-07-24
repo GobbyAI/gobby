@@ -4,16 +4,81 @@ Targets uncovered lines: 97-104, 125, 133, 183, 188-220, 250-278, 280-309
 """
 
 import inspect
+from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
+from gobby.config.features import ToolResultOffloadConfig
 from gobby.mcp_proxy.manager import MCPClientManager
 from gobby.mcp_proxy.models import MCPError, MCPServerConfig
+from gobby.mcp_proxy.services.result_offload import ToolResultOffloader
 from gobby.mcp_proxy.services.tool_execution import get_tool_schema as get_tool_schema_impl
 from gobby.mcp_proxy.services.tool_proxy import ToolProxyService, safe_truncate
+from gobby.mcp_proxy.tools.internal import InternalRegistryManager, InternalToolRegistry
+from gobby.mcp_proxy.tools.results import create_results_registry
+from gobby.storage.hub.protocol import HubDatabase
+from gobby.storage.tool_results import ToolResultStore
 
 pytestmark = pytest.mark.unit
+
+
+@pytest.mark.asyncio
+async def test_wrapper_originated_internal_list_is_offloaded_and_retrievable(
+    temp_db: HubDatabase,
+    sample_project: dict[str, Any],
+) -> None:
+    config = ToolResultOffloadConfig(
+        threshold_chars=3_000,
+        max_envelope_chars=2_000,
+        preview_chars=200,
+        chunk_chars=200,
+        max_stored_chars=10_000,
+    )
+    project_id = sample_project["id"]
+    payload = [{"needle": "retrievable", "content": "x" * 4_000}]
+    large_registry = InternalToolRegistry("gobby-large")
+    large_registry.register(
+        name="list_large",
+        description="Return one oversized list.",
+        input_schema={"type": "object", "properties": {}},
+        func=lambda: payload,
+    )
+    manager = InternalRegistryManager()
+    manager.add_registry(large_registry)
+    manager.add_registry(create_results_registry(temp_db, config, default_project_id=project_id))
+    store = ToolResultStore(temp_db, config)
+    offloader = ToolResultOffloader(
+        store,
+        temp_db,
+        config,
+        lambda: project_id,
+    )
+    mcp_manager = MagicMock()
+    mcp_manager.project_id = project_id
+    proxy = ToolProxyService(
+        mcp_manager=mcp_manager,
+        internal_manager=manager,
+        validate_arguments=False,
+        result_offloader=offloader,
+    )
+
+    envelope = await proxy.call_tool(
+        "gobby-large",
+        "list_large",
+        {},
+        wrapper_originated=True,
+    )
+    full_result = await proxy.call_tool(
+        "gobby-results",
+        "get_tool_result",
+        {"result_id": envelope["result_id"], "limit": 10_000},
+        wrapper_originated=True,
+    )
+
+    assert envelope["offloaded"] is True
+    assert envelope["retrieval_available"] is True
+    assert "retrievable" in full_result["content"]
 
 
 class TestListServers:

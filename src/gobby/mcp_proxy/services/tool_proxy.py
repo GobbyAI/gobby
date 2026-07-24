@@ -59,6 +59,7 @@ if TYPE_CHECKING:
     from gobby.hooks.events import HookEvent
     from gobby.hooks.hook_manager import HookManager
     from gobby.mcp_proxy.services.fallback import ToolFallbackResolver
+    from gobby.mcp_proxy.services.result_offload import ToolResultOffloader
     from gobby.mcp_proxy.tools.internal import InternalRegistryManager
     from gobby.storage.sessions import SessionManager
 
@@ -77,6 +78,7 @@ class ToolProxyService:
         validate_arguments: bool = True,
         tool_filter: Any = None,
         hook_manager_resolver: Callable[[], "HookManager | None"] | None = None,
+        result_offloader: "ToolResultOffloader | None" = None,
     ):
         self._mcp_manager = mcp_manager
         self._internal_manager = internal_manager
@@ -84,6 +86,7 @@ class ToolProxyService:
         self._validate_arguments = validate_arguments
         self._tool_filter = tool_filter
         self._hook_manager_resolver = hook_manager_resolver
+        self._result_offloader = result_offloader
 
     @property
     def session_manager(self) -> "SessionManager | None":
@@ -257,6 +260,8 @@ class ToolProxyService:
         strip_unknown: bool = False,
         enforce_workflow: bool = True,
         timeout: float | None = None,
+        wrapper_originated: bool = False,
+        intent: str | None = None,
     ) -> Any:
         """Execute a tool with optional pre-validation."""
         return await call_tool_impl(
@@ -268,6 +273,8 @@ class ToolProxyService:
             strip_unknown,
             enforce_workflow,
             timeout,
+            wrapper_originated,
+            intent,
         )
 
     async def read_resource(self, server_name: str, uri: str) -> Any:

@@ -243,6 +243,8 @@ async def call_tool(
     strip_unknown: bool = False,
     enforce_workflow: bool = True,
     timeout: float | None = None,
+    wrapper_originated: bool = False,
+    intent: str | None = None,
 ) -> Any:
     """Execute a tool with optional pre-validation."""
     caller_identity = (
@@ -259,6 +261,8 @@ async def call_tool(
         strip_unknown,
         enforce_workflow,
         timeout,
+        wrapper_originated,
+        intent,
     )
     try:
         sv_mgr = _tracking_variable_manager(service)
@@ -296,6 +300,8 @@ async def _call_tool_impl(
     strip_unknown: bool = False,
     enforce_workflow: bool = True,
     timeout: float | None = None,
+    wrapper_originated: bool = False,
+    intent: str | None = None,
 ) -> _CallToolOutcome:
     """Execute one proxy route and return its structural outcome."""
     server_name = service._resolve_server_name(server_name)
@@ -358,6 +364,8 @@ async def _call_tool_impl(
                 strip_unknown=strip_unknown,
                 enforce_workflow=enforce_workflow,
                 timeout=timeout,
+                wrapper_originated=wrapper_originated,
+                intent=intent,
             )
         result = {
             "success": False,
@@ -513,6 +521,8 @@ async def _call_tool_impl(
         effective_session_id=effective_session_id,
         emit_after_workflow=enforce_workflow,
         timeout=timeout,
+        wrapper_originated=wrapper_originated,
+        intent=intent,
     )
     return _CallToolOutcome(
         result,
@@ -533,6 +543,8 @@ async def _execute_tool_dispatch(
     effective_session_id: str | None,
     emit_after_workflow: bool,
     timeout: float | None,
+    wrapper_originated: bool,
+    intent: str | None,
 ) -> Any:
     result = await _execute_tool(
         service=service,
@@ -557,6 +569,14 @@ async def _execute_tool_dispatch(
                 server_name,
                 tool_name,
             )
+    if wrapper_originated and service._result_offloader is not None:
+        result = await service._result_offloader.maybe_offload(
+            server_name=server_name,
+            tool_name=tool_name,
+            result=result,
+            session_id=effective_session_id,
+            intent=intent,
+        )
     return result
 
 

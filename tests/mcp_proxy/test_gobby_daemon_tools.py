@@ -1,12 +1,15 @@
 """Tests for GobbyDaemonTools handler class in server.py."""
 
 import asyncio
+import json
 import threading
 from unittest.mock import AsyncMock, MagicMock, call, patch
 
 import pytest
 
+from gobby.config.app import DaemonConfig
 from gobby.mcp_proxy.server import GobbyDaemonTools, create_mcp_server
+from gobby.mcp_proxy.services.result_offload import ToolResultOffloader
 
 pytestmark = pytest.mark.unit
 
@@ -93,6 +96,31 @@ class TestGobbyDaemonToolsInit:
         )
 
         assert handler._semantic_search is mock_semantic
+
+    def test_init_wires_result_offloader_only_with_database(
+        self, mock_mcp_manager, mock_internal_manager
+    ) -> None:
+        with_db = GobbyDaemonTools(
+            mcp_manager=mock_mcp_manager,
+            daemon_port=8787,
+            websocket_port=8788,
+            start_time=1000.0,
+            internal_manager=mock_internal_manager,
+            db=MagicMock(),
+            config=DaemonConfig(),
+        )
+        without_db = GobbyDaemonTools(
+            mcp_manager=mock_mcp_manager,
+            daemon_port=8787,
+            websocket_port=8788,
+            start_time=1000.0,
+            internal_manager=mock_internal_manager,
+            db=None,
+            config=DaemonConfig(),
+        )
+
+        assert isinstance(with_db.tool_proxy._result_offloader, ToolResultOffloader)
+        assert without_db.tool_proxy._result_offloader is None
 
 
 class TestGobbyDaemonToolsStatus:
@@ -244,11 +272,65 @@ class TestGobbyDaemonToolsCallTool:
         )
 
         tools_handler.tool_proxy.call_tool.assert_called_once_with(
-            "test-server", "test-tool", {"key": "value"}, None
+            "test-server",
+            "test-tool",
+            {"key": "value"},
+            None,
+            wrapper_originated=True,
+            intent=None,
         )
         # MCP layer strips "success" from successful responses (server.py:140-142)
         assert "success" not in result
         assert result["result"] == "test output"
+
+    @pytest.mark.asyncio
+    async def test_call_tool_final_wait_envelope_stays_within_shared_cap(
+        self, tools_handler
+    ) -> None:
+        max_envelope_chars = 2_000
+        envelope = {
+            "offloaded": True,
+            "result_id": "11111111-1111-4111-8111-111111111111",
+            "preview": "x" * 1_300,
+        }
+        tools_handler.tool_proxy.call_tool = AsyncMock(return_value=envelope)
+
+        result = await tools_handler.call_tool(
+            server_name="gobby-sessions",
+            tool_name="wait_for_summary",
+            arguments={"timeout_seconds": 999_999},
+            intent="find completion",
+        )
+
+        assert len(json.dumps(result, ensure_ascii=False, default=str)) <= max_envelope_chars
+        assert result["_mcp_metadata"]["wait_timeout_capped_by_mcp_wrapper"] is True
+        assert tools_handler.tool_proxy.call_tool.await_args.kwargs["wrapper_originated"] is True
+        assert tools_handler.tool_proxy.call_tool.await_args.kwargs["intent"] == "find completion"
+
+    @pytest.mark.asyncio
+    async def test_call_tool_final_retrieval_response_stays_within_shared_cap(
+        self, tools_handler
+    ) -> None:
+        max_envelope_chars = 2_000
+        retrieval = {
+            "success": True,
+            "result_id": "11111111-1111-4111-8111-111111111111",
+            "content": "x" * 1_400,
+            "offset": 0,
+            "next_offset": 1_400,
+            "total_chars": 4_000,
+        }
+        tools_handler.tool_proxy.call_tool = AsyncMock(return_value=retrieval)
+
+        result = await tools_handler.call_tool(
+            server_name="gobby-results",
+            tool_name="get_tool_result",
+            arguments={"result_id": retrieval["result_id"]},
+        )
+
+        assert "success" not in result
+        assert len(json.dumps(result, ensure_ascii=False, default=str)) <= max_envelope_chars
+        assert tools_handler.tool_proxy.call_tool.await_args.kwargs["wrapper_originated"] is True
 
     @pytest.mark.asyncio
     async def test_call_tool_resolves_session_context_off_event_loop(self, tools_handler):
@@ -333,7 +415,12 @@ class TestGobbyDaemonToolsCallTool:
         )
 
         tools_handler.tool_proxy.call_tool.assert_called_once_with(
-            "gobby-skills", "get_skill", {"name": "brevity"}, None
+            "gobby-skills",
+            "get_skill",
+            {"name": "brevity"},
+            None,
+            wrapper_originated=True,
+            intent=None,
         )
         assert tools_handler.tool_proxy.call_tool.call_count == 1
         assert tools_handler.tool_proxy.call_tool.call_args is not None
@@ -350,7 +437,12 @@ class TestGobbyDaemonToolsCallTool:
         )
 
         tools_handler.tool_proxy.call_tool.assert_called_once_with(
-            "server", "no-args-tool", None, None
+            "server",
+            "no-args-tool",
+            None,
+            None,
+            wrapper_originated=True,
+            intent=None,
         )
         assert tools_handler.tool_proxy.call_tool.call_count == 1
         assert tools_handler.tool_proxy.call_tool.call_args is not None
@@ -374,6 +466,8 @@ class TestGobbyDaemonToolsCallTool:
             "wait_for_summary",
             {"session_id": "session-123", "timeout_seconds": 300},
             None,
+            wrapper_originated=True,
+            intent=None,
         )
 
     @pytest.mark.asyncio
@@ -395,6 +489,8 @@ class TestGobbyDaemonToolsCallTool:
             "wait_for_agent",
             arguments,
             None,
+            wrapper_originated=True,
+            intent=None,
         )
 
     @pytest.mark.asyncio
@@ -403,7 +499,7 @@ class TestGobbyDaemonToolsCallTool:
         release_call = asyncio.Event()
         call_finished = asyncio.Event()
 
-        async def _block_until_released(*_args):
+        async def _block_until_released(*_args, **_kwargs):
             await release_call.wait()
             call_finished.set()
             return {"success": True, "res": "too late"}
@@ -441,6 +537,8 @@ class TestGobbyDaemonToolsCallTool:
             "wait_for_summary",
             {"session_id": "session-123", "timeout_seconds": 0.02},
             None,
+            wrapper_originated=True,
+            intent=None,
         )
         release_call.set()
         await asyncio.wait_for(call_finished.wait(), timeout=0.2)
@@ -745,14 +843,14 @@ class TestGobbyDaemonToolsSemanticSearch:
 class TestCreateMcpServer:
     """Tests for create_mcp_server factory function."""
 
-    def test_create_mcp_server_returns_fastmcp(self, tools_handler) -> None:
+    def test_create_mcp_server_returns_fastmcp(self, tools_handler: GobbyDaemonTools) -> None:
         """Test that create_mcp_server returns a FastMCP instance."""
         mcp = create_mcp_server(tools_handler)
 
         assert mcp is not None
         assert mcp.name == "gobby"
 
-    def test_create_mcp_server_registers_all_tools(self, tools_handler) -> None:
+    def test_create_mcp_server_registers_all_tools(self, tools_handler: GobbyDaemonTools) -> None:
         """Test that all expected tools are registered."""
         mcp = create_mcp_server(tools_handler)
 
@@ -765,18 +863,20 @@ class TestGobbyDaemonToolsReadResource:
     """Tests for read_mcp_resource functionality."""
 
     @pytest.mark.asyncio
-    async def test_read_mcp_resource_delegates_to_proxy(self, tools_handler):
+    async def test_read_mcp_resource_delegates_to_proxy(
+        self, tools_handler: GobbyDaemonTools
+    ) -> None:
         """Test that read_mcp_resource delegates to tool_proxy."""
-        tools_handler.tool_proxy.read_resource = AsyncMock(
-            return_value={"content": "resource content"}
-        )
+        with patch.object(
+            tools_handler.tool_proxy,
+            "read_resource",
+            new_callable=AsyncMock,
+            return_value={"content": "resource content"},
+        ) as read_resource:
+            result = await tools_handler.read_mcp_resource(
+                server_name="server1",
+                resource_uri="file:///path/to/resource",
+            )
 
-        result = await tools_handler.read_mcp_resource(
-            server_name="server1",
-            resource_uri="file:///path/to/resource",
-        )
-
-        tools_handler.tool_proxy.read_resource.assert_called_once_with(
-            "server1", "file:///path/to/resource"
-        )
+        read_resource.assert_called_once_with("server1", "file:///path/to/resource")
         assert result["content"] == "resource content"

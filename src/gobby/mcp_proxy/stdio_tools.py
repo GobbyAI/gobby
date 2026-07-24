@@ -32,6 +32,7 @@ class CanonicalizeCallToolWrapper(Protocol):
         args: str | dict[str, Any] | None = None,
         session_id: str | None = None,
         project_id: str | None = None,
+        intent: str | None = None,
     ) -> CanonicalCallToolWrapper: ...
 
 
@@ -137,6 +138,7 @@ def register_proxy_tools(
         args: str | dict[str, Any] | None = None,
         session_id: str | None = None,
         project_id: str | None = None,
+        intent: str | None = None,
         preflight_enabled: bool = True,
         ctx: Context[Any, Any, Any] | None = None,
     ) -> dict[str, Any]:
@@ -174,6 +176,7 @@ def register_proxy_tools(
                 args=args,
                 session_id=session_id,
                 project_id=project_id,
+                intent=intent,
             )
         except deps.input_error_type as exc:
             return {"success": False, "error": str(exc)}
@@ -183,6 +186,7 @@ def register_proxy_tools(
         final_args = canonical.arguments
         session_id = canonical.session_id
         project_id = canonical.project_id
+        intent = canonical.intent
 
         if not server_name or not tool_name:
             return {
@@ -201,6 +205,8 @@ def register_proxy_tools(
             call_kwargs["project_id"] = project_id
         if session_id:
             call_kwargs["session_id"] = session_id
+        if intent:
+            call_kwargs["intent"] = intent
 
         result = await deps.call_with_wait_heartbeat(
             proxy.call_tool(

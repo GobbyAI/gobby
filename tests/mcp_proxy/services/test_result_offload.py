@@ -14,6 +14,7 @@ from gobby.mcp_proxy.services.result_offload import (
     _WRAPPER_MUTATION_RESERVE,
     ToolResultOffloader,
 )
+from gobby.mcp_proxy.services.tool_execution import _execute_tool_dispatch
 from gobby.search.keyword import MAX_PG_SEARCH_QUERY_CHARS, SearchHit, SearchQuerySyntaxError
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.tool_results import ToolResultStore
@@ -33,6 +34,25 @@ class OffloadHarness(NamedTuple):
 class ExplodingString:
     def __str__(self) -> str:
         raise RuntimeError("cannot render")
+
+
+class DispatchOffloader:
+    def __init__(self, result: object) -> None:
+        self.result = result
+        self.calls: list[dict[str, object]] = []
+
+    async def maybe_offload(self, **kwargs: object) -> object:
+        self.calls.append(kwargs)
+        return self.result
+
+
+class DispatchService:
+    def __init__(self, offloader: DispatchOffloader) -> None:
+        self._result_offloader = offloader
+        self.after_calls: list[dict[str, object]] = []
+
+    async def _apply_after_tool_workflow(self, **kwargs: object) -> None:
+        self.after_calls.append(kwargs)
 
 
 def _config(**overrides: Any) -> ToolResultOffloadConfig:
@@ -75,6 +95,82 @@ def _harness(
 
 def _serialized_size(value: object) -> int:
     return len(json.dumps(value, ensure_ascii=False, default=str))
+
+
+@pytest.mark.asyncio
+async def test_dispatch_offloads_after_after_tool_workflow_sees_full_result() -> None:
+    full_result = {"payload": "x" * 4_000}
+    envelope = {"offloaded": True, "result_id": RESULT_ID}
+    offloader = DispatchOffloader(envelope)
+    service = DispatchService(offloader)
+
+    async def execute_tool(**_kwargs: object) -> object:
+        return full_result
+
+    with patch(
+        "gobby.mcp_proxy.services.tool_execution._execute_tool",
+        new=execute_tool,
+    ):
+        result = await _execute_tool_dispatch(
+            service=service,
+            server_name="example",
+            tool_name="large_tool",
+            arguments={"value": 1},
+            effective_session_id="session",
+            emit_after_workflow=True,
+            timeout=None,
+            wrapper_originated=True,
+            intent="find payload",
+        )
+
+    assert result == envelope
+    assert service.after_calls == [
+        {
+            "server_name": "example",
+            "tool_name": "large_tool",
+            "arguments": {"value": 1},
+            "session_id": "session",
+            "tool_output": full_result,
+        }
+    ]
+    assert offloader.calls == [
+        {
+            "server_name": "example",
+            "tool_name": "large_tool",
+            "result": full_result,
+            "session_id": "session",
+            "intent": "find payload",
+        }
+    ]
+
+
+@pytest.mark.asyncio
+async def test_dispatch_keeps_full_result_for_internal_consumers() -> None:
+    full_result = {"payload": "x" * 4_000}
+    offloader = DispatchOffloader({"offloaded": True})
+    service = DispatchService(offloader)
+
+    async def execute_tool(**_kwargs: object) -> object:
+        return full_result
+
+    with patch(
+        "gobby.mcp_proxy.services.tool_execution._execute_tool",
+        new=execute_tool,
+    ):
+        result = await _execute_tool_dispatch(
+            service=service,
+            server_name="example",
+            tool_name="large_tool",
+            arguments={},
+            effective_session_id=None,
+            emit_after_workflow=False,
+            timeout=None,
+            wrapper_originated=False,
+            intent=None,
+        )
+
+    assert result is full_result
+    assert offloader.calls == []
 
 
 @pytest.mark.asyncio

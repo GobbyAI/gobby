@@ -1,5 +1,8 @@
 """Focused bearer-auth tests for stdio daemon requests."""
 
+import json
+from collections.abc import Awaitable, Callable
+from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -8,6 +11,7 @@ from mcp.server.fastmcp import FastMCP
 from gobby.mcp_proxy.session_bootstrap import resolve_session_id_from_terminal_context
 from gobby.mcp_proxy.stdio_proxy import DaemonProxy
 from gobby.mcp_proxy.stdio_server import StdioServerDependencies, create_stdio_mcp_server
+from gobby.mcp_proxy.stdio_tools import register_proxy_tools
 
 pytestmark = pytest.mark.unit
 
@@ -16,6 +20,29 @@ def _response(status_code: int, payload: dict[str, object] | None = None) -> Mag
     response = MagicMock(status_code=status_code, text="Unauthorized")
     response.json.return_value = payload or {"success": True}
     return response
+
+
+def _capture_stdio_tools(
+    proxy: MagicMock,
+) -> dict[str, Callable[..., Awaitable[Any]]]:
+    captured: dict[str, Callable[..., Awaitable[Any]]] = {}
+    mcp = MagicMock()
+
+    def tool(
+        name: str | None = None,
+        **_kwargs: Any,
+    ) -> Callable[[Callable[..., Awaitable[Any]]], Callable[..., Awaitable[Any]]]:
+        def register(
+            func: Callable[..., Awaitable[Any]],
+        ) -> Callable[..., Awaitable[Any]]:
+            captured[name or func.__name__] = func
+            return func
+
+        return register
+
+    mcp.tool.side_effect = tool
+    register_proxy_tools(mcp, proxy)
+    return captured
 
 
 @pytest.mark.asyncio
@@ -67,6 +94,94 @@ async def test_request_preserves_explicit_nulls_in_tool_results() -> None:
         )
 
     assert result == payload
+
+
+@pytest.mark.asyncio
+async def test_call_tool_sends_intent_on_each_http_shape() -> None:
+    deps = MagicMock()
+    deps.read_project_id.return_value = None
+    deps.load_config.return_value = MagicMock(mcp_client_proxy=MagicMock(tool_timeouts={}))
+    proxy = DaemonProxy(60887, deps_factory=lambda: deps)
+
+    with patch.object(proxy, "_request", new_callable=AsyncMock) as request:
+        request.return_value = {"success": True}
+        await proxy.call_tool(
+            "example",
+            "ordinary",
+            {"intent": "target-value"},
+            intent="wrapper-summary",
+        )
+        await proxy.call_tool(
+            "gobby-sessions",
+            "wait_for_summary",
+            {"session_id": "session", "intent": "target-value"},
+            intent="wrapper-summary",
+        )
+
+    direct = request.await_args_list[0]
+    assert direct.args[:2] == ("POST", "/api/mcp/example/tools/ordinary")
+    assert direct.kwargs["json"] == {"intent": "target-value"}
+    assert direct.kwargs["params"] == {"intent": "wrapper-summary"}
+    structured = request.await_args_list[1]
+    assert structured.args[:2] == ("POST", "/api/mcp/tools/call")
+    assert structured.kwargs["json"]["intent"] == "wrapper-summary"
+    assert structured.kwargs["json"]["arguments"]["intent"] == "target-value"
+
+
+@pytest.mark.asyncio
+async def test_stdio_final_wait_envelope_stays_within_shared_cap() -> None:
+    max_envelope_chars = 2_000
+    http_envelope = {
+        "success": True,
+        "result": {
+            "offloaded": True,
+            "result_id": "11111111-1111-4111-8111-111111111111",
+            "preview": "x" * 1_200,
+        },
+        "response_time_ms": 1.0,
+    }
+    proxy = MagicMock(spec=DaemonProxy)
+    proxy.call_tool = AsyncMock(return_value=http_envelope)
+    call_tool = _capture_stdio_tools(proxy)["call_tool"]
+
+    result = await call_tool(
+        server_name="gobby-sessions",
+        tool_name="wait_for_summary",
+        arguments={"timeout_seconds": 999_999},
+        intent="find completion",
+    )
+
+    assert len(json.dumps(result, ensure_ascii=False, default=str)) <= max_envelope_chars
+    assert result["wait_timeout_capped_by_mcp_wrapper"] is True
+    assert proxy.call_tool.await_args.kwargs["intent"] == "find completion"
+
+
+@pytest.mark.asyncio
+async def test_stdio_final_retrieval_response_stays_within_shared_cap() -> None:
+    max_envelope_chars = 2_000
+    http_result: dict[str, Any] = {
+        "success": True,
+        "result": {
+            "result_id": "11111111-1111-4111-8111-111111111111",
+            "content": "x" * 1_400,
+            "offset": 0,
+            "next_offset": 1_400,
+            "total_chars": 4_000,
+        },
+        "response_time_ms": 1.0,
+    }
+    proxy = MagicMock(spec=DaemonProxy)
+    proxy.call_tool = AsyncMock(return_value=http_result)
+    call_tool = _capture_stdio_tools(proxy)["call_tool"]
+
+    result = await call_tool(
+        server_name="gobby-results",
+        tool_name="get_tool_result",
+        arguments={"result_id": http_result["result"]["result_id"]},
+    )
+
+    assert result == http_result
+    assert len(json.dumps(result, ensure_ascii=False, default=str)) <= max_envelope_chars
 
 
 @pytest.mark.asyncio
