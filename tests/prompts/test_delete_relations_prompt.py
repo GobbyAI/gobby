@@ -47,14 +47,17 @@ class TestDeleteRelationsPrompt:
         rendered = loader.render(
             "memory/delete_relations",
             {
-                "existing_relations": '[{"source": "Josh", "relationship": "uses", "destination": "Python 3.12"}]',
+                "existing_relations": '[{"id": "r0", "source": "Josh", "relationship": "uses", "destination": "Python 3.12"}]',
                 "new_relations": '[{"source": "Josh", "relationship": "uses", "destination": "Python 3.13"}]',
             },
         )
+        assert '"id": "r0"' in rendered
         assert "Python 3.12" in rendered
         assert "Python 3.13" in rendered
 
     def test_prompt_specifies_deletion_output(self, loader: PromptLoader) -> None:
-        """Prompt instructs output identifying relations to delete."""
+        """Prompt requires opaque relation IDs instead of free-form triples."""
         template = loader.load("memory/delete_relations")
-        assert "delete" in template.content.lower()
+        assert '"relation_ids_to_delete"' in template.content
+        assert '"relations_to_delete"' not in template.content
+        assert '"source": "Josh"' not in template.content

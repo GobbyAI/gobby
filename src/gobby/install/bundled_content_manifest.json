@@ -36,7 +36,7 @@
     "prompts/import/system.md": "57260c7a7a4311d2d0ca04e1acecca2d9774c95ecd37939d83a9e967d3c8a62c",
     "prompts/mcp/progressive-discovery.md": "8ef28c8e3415fcaa2083213c8de00726ddaf0fa1f0549f03ec8c753c90e208d0",
     "prompts/memory/dedup_decision.md": "16c351f287f313796c8dcc1145b61672209f8868d105fccee9e28c3662e888fc",
-    "prompts/memory/delete_relations.md": "24551379f75720743de25d8b145a46a5e7bbdeb3390771fe8b1403d892ca70d2",
+    "prompts/memory/delete_relations.md": "a6bf7a7374f48b8454335a794e00260d3c8e70c15ec4e4aeb66f94522d145779",
     "prompts/memory/digest_update.md": "c3023d8849f2498483088f3162fadb9decfcbb8739590a9b6887d82f9ca9b412",
     "prompts/memory/dream.md": "d0899bda00404d74c0395f4b8efbd4518c2a03001ef911d3e3e20caa57d558b6",
     "prompts/memory/extract_entities.md": "81098e10d6a27973549c313685ffd44961138dddd96d45cd2e57169be65a2910",

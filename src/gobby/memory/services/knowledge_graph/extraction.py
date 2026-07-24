@@ -225,14 +225,27 @@ class KnowledgeGraphExtractor:
                 for r in new_relations
             ]
         )
-        existing_json = json.dumps(existing_relations)
+        existing_by_id = {
+            f"r{index}": relation for index, relation in enumerate(existing_relations)
+        }
+        existing_json = json.dumps(
+            [
+                {
+                    "id": relation_id,
+                    "source": relation["source"],
+                    "relationship": relation["relationship"],
+                    "destination": relation["destination"],
+                }
+                for relation_id, relation in existing_by_id.items()
+            ]
+        )
 
         prompt = self._prompt_loader.render(
             "memory/delete_relations",
             {"existing_relations": existing_json, "new_relations": new_relations_json},
         )
         response = await self._generate_json(prompt, caller="memory.kg.select_outdated_relations")
-        to_delete = response.get("relations_to_delete", [])
+        to_delete = response.get("relation_ids_to_delete", [])
         if not isinstance(to_delete, list):
             logger.warning(
                 "Relationship deletion selection ignored non-list payload: %s",
@@ -240,39 +253,35 @@ class KnowledgeGraphExtractor:
             )
             return []
 
-        existing_by_triple = {
-            (rel["source"], rel["relationship"], rel["destination"]): rel
-            for rel in existing_relations
-        }
         selected: list[dict[str, Any]] = []
         seen: set[tuple[str, str, str]] = set()
-        ignored = 0
-        for rel in to_delete:
-            if not isinstance(rel, dict):
-                ignored += 1
+        malformed = 0
+        unknown = 0
+        for relation_id in to_delete:
+            if not isinstance(relation_id, str):
+                malformed += 1
                 continue
-            source = rel.get("source")
-            relationship = rel.get("relationship")
-            destination = rel.get("destination")
-            if not (
-                isinstance(source, str)
-                and isinstance(relationship, str)
-                and isinstance(destination, str)
-            ):
-                ignored += 1
-                continue
-            triple = (source, relationship, destination)
-            canonical = existing_by_triple.get(triple)
+            canonical = existing_by_id.get(relation_id)
             if canonical is None:
-                ignored += 1
+                unknown += 1
                 continue
+            triple = (
+                canonical["source"],
+                canonical["relationship"],
+                canonical["destination"],
+            )
             if triple not in seen:
                 selected.append(canonical)
                 seen.add(triple)
 
-        if ignored:
+        if malformed:
             logger.warning(
-                "Ignored %d noncanonical relationship deletion selection(s)",
-                ignored,
+                "Ignored %d malformed relationship deletion ID selection(s)",
+                malformed,
+            )
+        if unknown:
+            logger.warning(
+                "Ignored %d unknown relationship deletion ID selection(s)",
+                unknown,
             )
         return selected

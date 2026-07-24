@@ -122,6 +122,37 @@ async def _handle_indexed_file_not_found(
     return True
 
 
+async def _handle_project_not_found(
+    *,
+    storage: CodeIndexStorage,
+    config: CodeIndexConfig,
+    project_id: str,
+    root: Path,
+    error: GcodeProjectNotFoundError,
+    sync_kind: str,
+    file_path: str,
+    clear_graph: Callable[[str], Awaitable[dict[str, Any]]] | None,
+    run_db: Callable[..., Awaitable[Any]] | None,
+) -> None:
+    if not await asyncio.to_thread(root.is_dir):
+        await purge_missing_project(
+            project=_MissingProject(id=project_id, root_path=str(root)),
+            storage=storage,
+            config=config,
+            clear_graph=clear_graph,
+            run_db=run_db,
+        )
+        return
+    logger.warning(
+        "Sync worker: gcode project missing for %s at %s during %s sync of %s: %s",
+        project_id,
+        root,
+        sync_kind,
+        file_path,
+        error,
+    )
+
+
 async def sync_worker_loop(
     storage: CodeIndexStorage,
     context: CodeIndexContext,
@@ -301,6 +332,19 @@ async def _sync_file(
                     run_db=run_db,
                 ):
                     return False
+            except GcodeProjectNotFoundError as e:
+                await _handle_project_not_found(
+                    storage=storage,
+                    config=config,
+                    project_id=project_id,
+                    root=root,
+                    error=e,
+                    sync_kind="vector",
+                    file_path=current.file_path,
+                    clear_graph=clear_graph,
+                    run_db=run_db,
+                )
+                return False
             except (
                 GcodeEmbeddingTransportError,
                 GcodeTimeoutError,
@@ -368,23 +412,18 @@ async def _sync_file(
                 ):
                     return False
             except GcodeProjectNotFoundError as e:
-                if not await asyncio.to_thread(root.is_dir):
-                    await purge_missing_project(
-                        project=_MissingProject(id=project_id, root_path=str(root)),
-                        storage=storage,
-                        config=config,
-                        clear_graph=clear_graph,
-                        run_db=run_db,
-                    )
-                else:
-                    logger.warning(
-                        "Sync worker: gcode project missing for %s at %s during graph sync "
-                        "of %s: %s",
-                        project_id,
-                        root,
-                        current.file_path,
-                        e,
-                    )
+                await _handle_project_not_found(
+                    storage=storage,
+                    config=config,
+                    project_id=project_id,
+                    root=root,
+                    error=e,
+                    sync_kind="graph",
+                    file_path=current.file_path,
+                    clear_graph=clear_graph,
+                    run_db=run_db,
+                )
+                return False
             except GcodeTimeoutError as e:
                 logger.warning(
                     "Sync worker: graph sync timed out for %s: %s",

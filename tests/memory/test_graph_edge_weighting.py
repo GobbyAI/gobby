@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import sys
 import types
+from collections.abc import Callable
 from datetime import UTC, datetime
 from typing import Any
 from unittest.mock import AsyncMock, MagicMock
@@ -17,8 +18,10 @@ import pytest
 
 from gobby.config.persistence import MemoryKnowledgeGraphConfig
 from gobby.mcp_proxy import semantic_search as semantic_search_mod
+from gobby.memory.falkor_client import FalkorClient
 from gobby.memory.services.knowledge_graph import service as service_mod
 from gobby.memory.services.knowledge_graph import writer as writer_mod
+from gobby.memory.services.knowledge_graph.clustering import ClusterRunResult
 from gobby.memory.services.knowledge_graph.reader import (
     _STRUCTURAL_RELATIONSHIP_TYPES,
     KnowledgeGraphReader,
@@ -35,7 +38,7 @@ from gobby.search.backends import embedding as embedding_mod
 
 pytestmark = pytest.mark.unit
 
-Responder = Any
+Responder = Callable[[str, dict[str, Any] | None], list[dict[str, Any]]] | None
 
 
 class RecordingFalkor:
@@ -67,15 +70,13 @@ class _StubFalkorDB:
         return None
 
 
-def _falkor_client(monkeypatch: pytest.MonkeyPatch) -> Any:
+def _falkor_client(monkeypatch: pytest.MonkeyPatch) -> FalkorClient:
     """Construct a real FalkorClient backed by a fake falkordb module."""
     fake_package = types.ModuleType("falkordb")
     fake_asyncio = types.ModuleType("falkordb.asyncio")
-    fake_asyncio.FalkorDB = _StubFalkorDB
+    fake_asyncio.__dict__["FalkorDB"] = _StubFalkorDB
     monkeypatch.setitem(sys.modules, "falkordb", fake_package)
     monkeypatch.setitem(sys.modules, "falkordb.asyncio", fake_asyncio)
-
-    from gobby.memory.falkor_client import FalkorClient
 
     return FalkorClient(host="127.0.0.1", port=16379, password="secret")
 
@@ -110,10 +111,10 @@ def test_cooccurrence_weight_is_bounded_unit_interval() -> None:
 
 
 def test_cosine_similarity_is_shared_implementation_not_reimplemented() -> None:
-    assert embedding_mod._cosine_similarity is similarity_mod.cosine_similarity
-    assert writer_mod._cosine_similarity is similarity_mod.cosine_similarity
-    assert service_mod._cosine_similarity is similarity_mod.cosine_similarity
-    assert semantic_search_mod._cosine_similarity is similarity_mod.cosine_similarity
+    assert embedding_mod.__dict__["_cosine_similarity"] is similarity_mod.cosine_similarity
+    assert writer_mod.__dict__["_cosine_similarity"] is similarity_mod.cosine_similarity
+    assert service_mod.__dict__["_cosine_similarity"] is similarity_mod.cosine_similarity
+    assert semantic_search_mod.__dict__["_cosine_similarity"] is similarity_mod.cosine_similarity
 
 
 # --------------------------------------------------------------------------- #
@@ -125,11 +126,12 @@ async def test_merge_relationship_unweighted_keeps_prior_behavior(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     client = _falkor_client(monkeypatch)
-    client.query = AsyncMock(return_value=[])
+    query = AsyncMock(return_value=[])
+    monkeypatch.setattr(client, "query", query)
 
     await client.merge_relationship("a", "b", "RELATED", properties={"foo": "bar"})
 
-    cypher, params = client.query.call_args.args
+    cypher, params = query.call_args.args
     assert "ON CREATE SET r += $props " in cypher
     assert "ON MATCH SET r += $props " in cypher
     # No managed metadata when weight is absent.
@@ -143,11 +145,12 @@ async def test_merge_relationship_weighted_upserts_weight_count_and_timestamp(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     client = _falkor_client(monkeypatch)
-    client.query = AsyncMock(return_value=[])
+    query = AsyncMock(return_value=[])
+    monkeypatch.setattr(client, "query", query)
 
     await client.merge_relationship("a", "b", "RELATED", properties={"weight": 0.7, "foo": "bar"})
 
-    cypher, params = client.query.call_args.args
+    cypher, params = query.call_args.args
     assert "ON CREATE SET r += $props, r.count = 1, r.updated_at = timestamp()" in cypher
     # A pre-existing edge with no count coalesces to 0 then increments to 1 (no error).
     assert "r.count = coalesce(r.count, 0) + 1" in cypher
@@ -256,14 +259,80 @@ async def test_merge_cooccurrence_edges_zero_support_deletes_and_skips_write() -
 # --------------------------------------------------------------------------- #
 
 
-async def test_fetch_existing_relations_excludes_cooccurrence_from_cleanup() -> None:
+async def test_fetch_existing_relations_uses_index_anchored_directional_queries() -> None:
     falkor = RecordingFalkor()
     writer = KnowledgeGraphWriter(falkor)  # type: ignore[arg-type]
 
     await writer.fetch_existing_relations(["a", "b"])
 
-    cypher = falkor.queries[0][0]
-    assert "type(r) <> 'CO_OCCURS'" in cypher
+    outbound = (
+        "UNWIND $keys AS key "
+        "MATCH (a:_Entity {entity_key: key}) "
+        "MATCH (a)-[r]->(b:_Entity) "
+        "WHERE type(r) <> 'CO_OCCURS' "
+        "RETURN a.name AS source, type(r) AS rel_type, b.name AS target"
+    )
+    inbound = (
+        "UNWIND $keys AS key "
+        "MATCH (b:_Entity {entity_key: key}) "
+        "MATCH (a:_Entity)-[r]->(b) "
+        "WHERE type(r) <> 'CO_OCCURS' "
+        "RETURN a.name AS source, type(r) AS rel_type, b.name AS target"
+    )
+    assert falkor.queries == [
+        (outbound, {"keys": ["a", "b"]}),
+        (inbound, {"keys": ["a", "b"]}),
+    ]
+
+
+async def test_fetch_existing_relations_empty_keys_skips_queries() -> None:
+    falkor = RecordingFalkor()
+    writer = KnowledgeGraphWriter(falkor)  # type: ignore[arg-type]
+
+    relations = await writer.fetch_existing_relations([])
+
+    assert relations == []
+    assert falkor.queries == []
+
+
+async def test_fetch_existing_relations_deduplicates_overlap_in_first_seen_order() -> None:
+    duplicate = {"source": "A", "rel_type": "USES", "target": "B"}
+    outbound_only = {"source": "A", "rel_type": "LIKES", "target": "C"}
+    inbound_only = {"source": "D", "rel_type": "KNOWS", "target": "A"}
+
+    def responder(cypher: str, _params: dict[str, Any] | None) -> list[dict[str, Any]]:
+        if "MATCH (a:_Entity {entity_key: key})" in cypher:
+            return [duplicate, outbound_only]
+        return [duplicate, inbound_only]
+
+    writer = KnowledgeGraphWriter(RecordingFalkor(responder))  # type: ignore[arg-type]
+
+    relations = await writer.fetch_existing_relations(["a", "b"])
+
+    assert relations == [
+        {"source": "A", "relationship": "USES", "destination": "B"},
+        {"source": "A", "relationship": "LIKES", "destination": "C"},
+        {"source": "D", "relationship": "KNOWS", "destination": "A"},
+    ]
+
+
+@pytest.mark.parametrize("failing_query", [1, 2])
+async def test_fetch_existing_relations_propagates_directional_failures(
+    failing_query: int,
+) -> None:
+    query_count = 0
+
+    def responder(_cypher: str, _params: dict[str, Any] | None) -> list[dict[str, Any]]:
+        nonlocal query_count
+        query_count += 1
+        if query_count == failing_query:
+            raise TimeoutError(f"query {failing_query} timed out")
+        return []
+
+    writer = KnowledgeGraphWriter(RecordingFalkor(responder))  # type: ignore[arg-type]
+
+    with pytest.raises(TimeoutError, match=f"query {failing_query} timed out"):
+        await writer.fetch_existing_relations(["a"])
 
 
 def test_cooccurrence_is_traversable_not_structural() -> None:
@@ -299,13 +368,13 @@ async def test_service_recluster_uses_configured_density_params(
         *,
         min_cluster_size: int,
         min_samples: int | None,
-    ) -> service_mod.ClusterRunResult:
+    ) -> ClusterRunResult:
         captured["reader"] = reader
         captured["writer"] = writer
         captured["project_id"] = project_id
         captured["min_cluster_size"] = min_cluster_size
         captured["min_samples"] = min_samples
-        return service_mod.ClusterRunResult(
+        return ClusterRunResult(
             project_id=project_id,
             entity_count=0,
             valid_entity_count=0,

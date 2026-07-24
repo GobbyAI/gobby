@@ -4,7 +4,9 @@ from __future__ import annotations
 
 import asyncio
 import json
+from collections.abc import Iterable
 from dataclasses import asdict
+from typing import cast
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -20,7 +22,10 @@ from gobby.memory.services.knowledge_graph import (
     KnowledgeGraphStatus,
     Relationship,
 )
-from gobby.memory.services.knowledge_graph.extraction import ENTITY_EXTRACTION_SYSTEM_PROMPT
+from gobby.memory.services.knowledge_graph.extraction import (
+    ENTITY_EXTRACTION_SYSTEM_PROMPT,
+    KnowledgeGraphExtractor,
+)
 from gobby.memory.services.knowledge_graph.reader import KnowledgeGraphReader
 from gobby.storage.projects import PERSONAL_PROJECT_ID
 
@@ -94,7 +99,7 @@ def _mock_graph_extraction(mock_llm: AsyncMock) -> None:
                     {"source": "Josh", "relationship": "uses", "destination": "Python"},
                 ]
             },
-            {"relations_to_delete": []},
+            {"relation_ids_to_delete": []},
         ]
     )
 
@@ -233,7 +238,7 @@ class TestAddToGraph:
                 # Relationship extraction
                 {"relations": []},
                 # Delete relations (existing relations empty)
-                {"relations_to_delete": []},
+                {"relation_ids_to_delete": []},
             ]
         )
 
@@ -285,13 +290,13 @@ class TestAddToGraph:
         mock_prompt_loader: MagicMock,
     ) -> None:
         """KG extraction should expose the same feature/caller boundary as title synthesis."""
-        feature_config = object()
+        feature_config = cast(MemoryKnowledgeGraphConfig, object())
         llm_service = MagicMock()
         llm_service.call_json_feature = AsyncMock(
             side_effect=[
                 {"entities": [{"entity": "Josh", "entity_type": "person"}]},
                 {"relations": []},
-                {"relations_to_delete": []},
+                {"relation_ids_to_delete": []},
             ]
         )
         mock_llm.call_json_feature = AsyncMock()
@@ -330,7 +335,7 @@ class TestAddToGraph:
                         {"source": "Josh", "relationship": "works_on", "destination": "Gobby"}
                     ]
                 },
-                {"relations_to_delete": []},
+                {"relation_ids_to_delete": []},
             ]
         )
 
@@ -360,7 +365,7 @@ class TestAddToGraph:
                     ]
                 },
                 {"relations": []},
-                {"relations_to_delete": []},
+                {"relation_ids_to_delete": []},
             ]
         )
 
@@ -392,7 +397,7 @@ class TestAddToGraph:
                         {"source": "Josh", "relationship": "uses", "destination": "Python"},
                     ]
                 },
-                {"relations_to_delete": []},
+                {"relation_ids_to_delete": []},
             ]
         )
 
@@ -417,7 +422,7 @@ class TestAddToGraph:
             side_effect=[
                 {"entities": [{"entity": "Josh", "entity_type": "person"}]},
                 {"relations": []},
-                {"relations_to_delete": []},
+                {"relation_ids_to_delete": []},
             ]
         )
 
@@ -452,7 +457,7 @@ class TestAddToGraph:
             side_effect=[
                 {"entities": [{"entity": "Josh", "entity_type": "person"}]},
                 {"relations": []},
-                {"relations_to_delete": []},
+                {"relation_ids_to_delete": []},
             ]
         )
 
@@ -490,11 +495,7 @@ class TestAddToGraph:
                         {"source": "Josh", "relationship": "uses", "destination": "Python 3.13"},
                     ]
                 },
-                {
-                    "relations_to_delete": [
-                        {"source": "Josh", "relationship": "uses", "destination": "Python 3.12"},
-                    ]
-                },
+                {"relation_ids_to_delete": ["r0"]},
             ]
         )
 
@@ -508,14 +509,14 @@ class TestAddToGraph:
             == "memory.kg.select_outdated_relations"
         )
 
-    async def test_add_to_graph_ignores_noncanonical_relation_deletions(
+    async def test_add_to_graph_maps_valid_duplicate_malformed_and_unknown_relation_ids(
         self,
         service: KnowledgeGraphService,
         mock_falkor: AsyncMock,
         mock_llm: AsyncMock,
         caplog: pytest.LogCaptureFixture,
     ) -> None:
-        """Only exact existing triples are accepted from the LLM delete selector."""
+        """Only valid opaque IDs select canonical relations for deletion."""
         mock_falkor.query = AsyncMock(
             return_value=[
                 {"source": "Josh", "rel_type": "uses", "target": "Python 3.12"},
@@ -535,16 +536,7 @@ class TestAddToGraph:
                         {"source": "Josh", "relationship": "uses", "destination": "Python 3.13"},
                     ]
                 },
-                {
-                    "relations_to_delete": [
-                        valid,
-                        dict(valid),
-                        {"source": "Joshua", "relationship": "uses", "destination": "Python 3.12"},
-                        {"source": "Josh", "relationship": "uses", "destination": "Python 2.7"},
-                        {"source": "Josh", "relationship": "uses"},
-                        "not-an-object",
-                    ]
-                },
+                {"relation_ids_to_delete": ["r0", "r0", "r999", valid, None]},
             ]
         )
 
@@ -556,7 +548,36 @@ class TestAddToGraph:
         assert len(delete_calls) == 1
         assert delete_calls[0].args[1]["source_key"].endswith(":josh")
         assert delete_calls[0].args[1]["target_key"].endswith(":python 3.12")
-        assert "Ignored 4 noncanonical relationship deletion selection(s)" in caplog.text
+        assert "Ignored 2 malformed relationship deletion ID selection(s)" in caplog.text
+        assert "Ignored 1 unknown relationship deletion ID selection(s)" in caplog.text
+
+    async def test_delete_selector_deduplicates_canonical_triples_across_valid_ids(
+        self,
+        mock_llm: AsyncMock,
+        mock_prompt_loader: MagicMock,
+        mock_feature_config: MemoryKnowledgeGraphConfig,
+    ) -> None:
+        canonical = {"source": "Josh", "relationship": "uses", "destination": "Python"}
+        mock_llm.call_json_feature = AsyncMock(
+            return_value={"relation_ids_to_delete": ["r0", "r1"]}
+        )
+        extractor = KnowledgeGraphExtractor(
+            mock_prompt_loader,
+            mock_llm,
+            mock_feature_config,
+        )
+
+        selected = await extractor.select_outdated_relations(
+            entities=[],
+            new_relations=[],
+            existing_relations=[canonical, dict(canonical)],
+        )
+
+        render_context = mock_prompt_loader.render.call_args.args[1]
+        rendered_relations = json.loads(render_context["existing_relations"])
+        assert [relation["id"] for relation in rendered_relations] == ["r0", "r1"]
+        assert selected == [canonical]
+        assert selected[0] is canonical
 
     @pytest.mark.asyncio
     async def test_supersede_selection_compares_normalized_new_and_stored_relation_types(
@@ -608,8 +629,8 @@ class TestAddToGraph:
                 new_relations = json.loads(delete_context["new_relations"])
                 existing_relations = json.loads(delete_context["existing_relations"])
                 if new_relations[0]["relationship"] == existing_relations[0]["relationship"]:
-                    return {"relations_to_delete": [existing_relations[0]]}
-                return {"relations_to_delete": []}
+                    return {"relation_ids_to_delete": [existing_relations[0]["id"]]}
+                return {"relation_ids_to_delete": []}
             raise AssertionError(f"Unexpected caller: {caller}")
 
         mock_prompt_loader.render.side_effect = render
@@ -620,6 +641,7 @@ class TestAddToGraph:
         new_relations = json.loads(delete_context["new_relations"])
         existing_relations = json.loads(delete_context["existing_relations"])
         assert new_relations[0]["relationship"] == "works_with"
+        assert existing_relations[0]["id"] == "r0"
         assert existing_relations[0]["relationship"] == "works_with"
         delete_calls = [
             call for call in mock_falkor.query.call_args_list if "DELETE" in call.args[0]
@@ -794,7 +816,7 @@ class TestGracefulDegradation:
             side_effect=[
                 {"entities": [{"entity": "Josh", "entity_type": "person"}]},
                 {"relations": []},
-                {"relations_to_delete": []},
+                {"relation_ids_to_delete": []},
             ]
         )
         mock_falkor.merge_node = AsyncMock(side_effect=FalkorConnectionError("refused"))
@@ -1021,7 +1043,7 @@ def _stub_llm_for_entities(mock_llm: AsyncMock, entities: list[dict[str, str]]) 
         side_effect=[
             {"entities": entities},
             {"relations": []},
-            {"relations_to_delete": []},
+            {"relation_ids_to_delete": []},
         ]
     )
 
@@ -1228,7 +1250,7 @@ class TestMemoryNodeProjectIdScoping:
             side_effect=[
                 {"entities": [{"entity": "Auth", "entity_type": "concept"}]},
                 {"relations": []},
-                {"relations_to_delete": []},
+                {"relation_ids_to_delete": []},
             ]
         )
 
@@ -1439,7 +1461,7 @@ class TestEntityGraphActiveFiltering:
     async def test_get_entity_graph_drops_hidden_only_entities_and_relationships(
         self,
     ) -> None:
-        graph = {
+        graph: dict[str, object] = {
             "entities": [
                 {"entity_key": "e-active", "name": "Active"},
                 {"entity_key": "e-mixed", "name": "Mixed"},
@@ -1450,7 +1472,7 @@ class TestEntityGraphActiveFiltering:
                 {"source_key": "e-active", "target_key": "e-hidden", "type": "RELATED"},
             ],
         }
-        backing_rows = [
+        backing_rows: list[dict[str, object]] = [
             {"entity_key": "e-active", "memory_ids": ["m1"]},
             {"entity_key": "e-mixed", "memory_ids": ["m2", "m3"]},
             {"entity_key": "e-hidden", "memory_ids": ["m4"]},
@@ -1458,7 +1480,7 @@ class TestEntityGraphActiveFiltering:
         active_ids = {"m1", "m3"}
 
         async def _filter(memory_ids: object, project_id: str | None) -> set[str]:
-            return {mid for mid in memory_ids if mid in active_ids}  # type: ignore[union-attr]
+            return {mid for mid in cast(Iterable[str], memory_ids) if mid in active_ids}
 
         falkor = _FakeFalkorGraph(graph, backing_rows)
         reader = KnowledgeGraphReader(
@@ -1481,7 +1503,10 @@ class TestEntityGraphActiveFiltering:
 
     @pytest.mark.asyncio
     async def test_get_entity_graph_fails_open_when_backing_lookup_errors(self) -> None:
-        graph = {"entities": [{"entity_key": "e1", "name": "E"}], "relationships": []}
+        graph: dict[str, object] = {
+            "entities": [{"entity_key": "e1", "name": "E"}],
+            "relationships": [],
+        }
 
         async def _filter(memory_ids: object, project_id: str | None) -> set[str]:
             return set()
@@ -1509,7 +1534,10 @@ class TestEntityGraphActiveFiltering:
 
     @pytest.mark.asyncio
     async def test_get_entity_graph_without_filter_returns_raw(self) -> None:
-        graph = {"entities": [{"entity_key": "e1", "name": "E"}], "relationships": []}
+        graph: dict[str, object] = {
+            "entities": [{"entity_key": "e1", "name": "E"}],
+            "relationships": [],
+        }
 
         class _Falkor:
             async def get_entity_graph(

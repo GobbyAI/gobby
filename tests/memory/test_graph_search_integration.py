@@ -83,7 +83,7 @@ class TestEntityLabelAndMemoryLinkage:
             side_effect=[
                 {"entities": [{"entity": "Josh", "entity_type": "person"}]},
                 {"relations": []},
-                {"relations_to_delete": []},
+                {"relation_ids_to_delete": []},
             ]
         )
 
@@ -104,7 +104,7 @@ class TestEntityLabelAndMemoryLinkage:
             side_effect=[
                 {"entities": [{"entity": "Python", "entity_type": "tool"}]},
                 {"relations": []},
-                {"relations_to_delete": []},
+                {"relation_ids_to_delete": []},
             ]
         )
 
@@ -131,7 +131,7 @@ class TestEntityLabelAndMemoryLinkage:
             side_effect=[
                 {"entities": [{"entity": "Python", "entity_type": "tool"}]},
                 {"relations": []},
-                {"relations_to_delete": []},
+                {"relation_ids_to_delete": []},
             ]
         )
 

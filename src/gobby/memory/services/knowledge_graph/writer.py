@@ -180,17 +180,42 @@ class KnowledgeGraphWriter:
 
     async def fetch_existing_relations(self, entity_keys: list[str]) -> list[dict[str, str]]:
         """Fetch existing relationships involving the given entities."""
-        rows = await self._falkor.query(
-            "MATCH (a:_Entity)-[r]->(b:_Entity) "
-            "WHERE (a.entity_key IN $keys OR b.entity_key IN $keys) "
-            "AND type(r) <> 'CO_OCCURS' "
+        if not entity_keys:
+            return []
+
+        outbound_rows = await self._falkor.query(
+            "UNWIND $keys AS key "
+            "MATCH (a:_Entity {entity_key: key}) "
+            "MATCH (a)-[r]->(b:_Entity) "
+            "WHERE type(r) <> 'CO_OCCURS' "
             "RETURN a.name AS source, type(r) AS rel_type, b.name AS target",
             {"keys": entity_keys},
         )
-        return [
-            {"source": r["source"], "relationship": r["rel_type"], "destination": r["target"]}
-            for r in rows
-        ]
+        inbound_rows = await self._falkor.query(
+            "UNWIND $keys AS key "
+            "MATCH (b:_Entity {entity_key: key}) "
+            "MATCH (a:_Entity)-[r]->(b) "
+            "WHERE type(r) <> 'CO_OCCURS' "
+            "RETURN a.name AS source, type(r) AS rel_type, b.name AS target",
+            {"keys": entity_keys},
+        )
+
+        relations: list[dict[str, str]] = []
+        seen: set[tuple[str, str, str]] = set()
+        for rows in (outbound_rows, inbound_rows):
+            for row in rows:
+                triple = (row["source"], row["rel_type"], row["target"])
+                if triple in seen:
+                    continue
+                seen.add(triple)
+                relations.append(
+                    {
+                        "source": row["source"],
+                        "relationship": row["rel_type"],
+                        "destination": row["target"],
+                    }
+                )
+        return relations
 
     async def delete_relations(
         self,

@@ -26,13 +26,11 @@ You are a knowledge graph maintenance assistant. Given existing relationships an
 
 ## Output Format
 
-Respond with a JSON object containing an array of relationships to delete. Each entry should reference the existing relationship to remove:
+Respond with a JSON object containing the opaque IDs of the existing relationships to delete. Copy IDs exactly from the existing relationship list:
 
 ```json
 {
-  "relations_to_delete": [
-    {"source": "Josh", "relationship": "uses", "destination": "Python 3.12"}
-  ]
+  "relation_ids_to_delete": ["r0"]
 }
 ```
 
@@ -40,6 +38,6 @@ If no relationships should be deleted, return:
 
 ```json
 {
-  "relations_to_delete": []
+  "relation_ids_to_delete": []
 }
 ```
