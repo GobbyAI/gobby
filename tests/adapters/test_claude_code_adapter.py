@@ -8,9 +8,11 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
+from typing import Any
 from unittest.mock import MagicMock
 
 import pytest
+import yaml
 
 import gobby.adapters.claude_code as claude_code
 from gobby.adapters.base import ADAPTER_EMPTY_BLOCK_REASON_SENTINEL
@@ -20,8 +22,233 @@ from gobby.adapters.claude_contract import (
     CLAUDE_NATIVE_HOOK_NAMES,
 )
 from gobby.hooks.events import HookEvent, HookEventType, HookResponse, SessionSource
+from gobby.skills.formatting import skill_fetch_directive
+from gobby.workflows.sync_rules import get_bundled_rules_path
 
 pytestmark = pytest.mark.unit
+
+_REDIRECT_BLOCK_RULES = frozenset(
+    {
+        "block-and-teach-context7",
+        "block-ask-during-stop-compliance",
+        "block-claude-memory-read",
+        "block-claude-memory-search",
+        "block-claude-memory-write",
+        "block-direct-verification-evidence-variable-set",
+        "block-edits-plan-mode",
+        "block-gobby-tasks-cli",
+        "block-native-task-tools-unclaimed",
+        "block-native-todo-write",
+        "block-needs-review-interactive",
+        "block-reopen-task",
+        "block-writes-outside-plan-artifact",
+        "enforce-tdd-block",
+        "no-bash-sleep",
+        "no-external-github-issues",
+        "no-full-cargo-test",
+        "no-full-go-test",
+        "no-full-pytest-suite",
+        "no-full-vitest-suite",
+        "no-invalid-git-flags",
+        "prefer-gcode-for-code-search",
+        "prefer-gcode-for-source-read",
+        "require-bash-skill",
+        "require-build-coordinator-for-gobby-build",
+        "require-c-skill",
+        "require-claimed-task-required-skills",
+        "require-clean-tree-before-status",
+        "require-code-index-skill",
+        "require-commit-before-status",
+        "require-completion-readiness-evidence",
+        "require-cpp-skill",
+        "require-csharp-skill",
+        "require-current-context-schema-before-call",
+        "require-dart-skill",
+        "require-elixir-skill",
+        "require-go-skill",
+        "require-java-skill",
+        "require-javascript-skill",
+        "require-json-skill",
+        "require-kotlin-skill",
+        "require-lua-skill",
+        "require-memory-review-before-status",
+        "require-objc-skill",
+        "require-php-skill",
+        "require-python-skill",
+        "require-restraint-skill",
+        "require-ruby-skill",
+        "require-rust-skill",
+        "require-scala-skill",
+        "require-swift-skill",
+        "require-task-before-edit",
+        "require-task-creation-skill-loaded",
+        "require-task-creation-skill-on-schema",
+        "require-task-transitions-skill-loaded",
+        "require-task-transitions-skill-on-lifecycle",
+        "require-typescript-skill",
+        "require-uv",
+        "require-yaml-skill",
+        "task-commit-project-path-allowlist-before-git",
+    }
+)
+_TRUE_RESTRICTION_BLOCK_RULES = frozenset(
+    {
+        "no-agent-spawn-for-merge",
+        "no-brew-install",
+        "no-cargo-add",
+        "no-cargo-publish",
+        "no-cargo-publish-interactive",
+        "no-curl-upload",
+        "no-daemon-management",
+        "no-daemon-management-http",
+        "no-dd",
+        "no-dd-interactive",
+        "no-destructive-git",
+        "no-destructive-git-interactive",
+        "no-force-kill",
+        "no-force-kill-interactive",
+        "no-force-push",
+        "no-force-push-interactive",
+        "no-gem-install",
+        "no-gem-push",
+        "no-gem-push-interactive",
+        "no-npm-install",
+        "no-npm-publish",
+        "no-npm-publish-interactive",
+        "no-npx",
+        "no-pip-install",
+        "no-push",
+        "no-push-for-workers",
+        "no-recursive-permissions",
+        "no-recursive-permissions-interactive",
+        "no-recursive-rm",
+        "no-recursive-rm-interactive",
+        "no-remote-copy",
+        "no-remote-exec",
+        "no-secret-read",
+        "no-secure-delete",
+        "no-secure-delete-interactive",
+        "no-truncate",
+        "no-truncate-interactive",
+        "no-twine-upload",
+        "no-twine-upload-interactive",
+        "no-uv-add",
+        "no-wget-upload",
+        "no-yarn-add",
+    }
+)
+_SKILL_FETCH_REASON_TEMPLATE = "{{ skill_fetch_directive(first_unloaded_claimed_task_required_skill(tool_input, event.data)) }}"
+
+
+def _bundled_before_tool_block_reasons() -> dict[str, str]:
+    reasons: dict[str, str] = {}
+    rules_path = get_bundled_rules_path()
+    for yaml_file in sorted(rules_path.rglob("*.yaml")):
+        if "deprecated" in yaml_file.relative_to(rules_path).parts:
+            continue
+        data: Any = yaml.safe_load(yaml_file.read_text(encoding="utf-8"))
+        if not isinstance(data, dict):
+            continue
+        rules: Any = data.get("rules") or {}
+        if not isinstance(rules, dict):
+            continue
+        for rule_name, rule_data in rules.items():
+            if not isinstance(rule_name, str) or not isinstance(rule_data, dict):
+                continue
+            if rule_data.get("event") != "before_tool":
+                continue
+            raw_effects = rule_data.get("effects")
+            if raw_effects is None:
+                raw_effect = rule_data.get("effect")
+                raw_effects = [raw_effect] if raw_effect is not None else []
+            block_effects = [
+                effect
+                for effect in raw_effects
+                if isinstance(effect, dict) and effect.get("type") == "block"
+            ]
+            if not block_effects:
+                continue
+            assert len(block_effects) == 1, f"{rule_name} must have one block reason"
+            reason = block_effects[0].get("reason")
+            assert isinstance(reason, str), f"{rule_name} must have a string block reason"
+            assert rule_name not in reasons, f"duplicate live block rule: {rule_name}"
+            reasons[rule_name] = reason
+    return reasons
+
+
+_BUNDLED_BEFORE_TOOL_BLOCK_REASONS = _bundled_before_tool_block_reasons()
+
+
+def _aggregated_compaction(rule_name: str, reason: str) -> str:
+    normalized_reason = " ".join(line.strip() for line in reason.splitlines() if line.strip())
+    return claude_code._compact_aggregated_claude_pre_tool_deny_reason(
+        "aggregated:1-gates",
+        f"Multiple gates blocked.\n1. [{rule_name}] {normalized_reason}",
+    )
+
+
+class TestBundledBlockReasonFraming:
+    def test_live_corpus_is_exhaustively_classified_once(self) -> None:
+        rule_names = set(_BUNDLED_BEFORE_TOOL_BLOCK_REASONS)
+
+        assert _REDIRECT_BLOCK_RULES.isdisjoint(_TRUE_RESTRICTION_BLOCK_RULES)
+        assert rule_names == _REDIRECT_BLOCK_RULES | _TRUE_RESTRICTION_BLOCK_RULES
+
+    @pytest.mark.parametrize(
+        ("rule_name", "raw_reason"),
+        sorted(_BUNDLED_BEFORE_TOOL_BLOCK_REASONS.items()),
+        ids=sorted(_BUNDLED_BEFORE_TOOL_BLOCK_REASONS),
+    )
+    def test_live_corpus_preserves_framing_through_both_compaction_paths(
+        self,
+        rule_name: str,
+        raw_reason: str,
+    ) -> None:
+        is_redirect = rule_name in _REDIRECT_BLOCK_RULES
+        is_true_restriction = rule_name in _TRUE_RESTRICTION_BLOCK_RULES
+        assert is_redirect != is_true_restriction
+
+        reason = (
+            skill_fetch_directive("python")
+            if rule_name == "require-claimed-task-required-skills"
+            else raw_reason
+        )
+        single = claude_code._compact_single_claude_pre_tool_deny_reason(rule_name, reason)
+        aggregated = _aggregated_compaction(rule_name, reason)
+
+        if is_redirect:
+            assert "blocked" not in single.casefold()
+            assert single.startswith(f"Gobby [{rule_name}]:")
+            assert "blocked" not in aggregated.casefold()
+            assert f"1. [{rule_name}]:" in aggregated
+        else:
+            assert single.startswith(f"Gobby blocked [{rule_name}]:")
+            assert f"1. blocked [{rule_name}]:" in aggregated
+
+    @pytest.mark.parametrize(
+        "rule_name",
+        ["require-java-skill", "no-invalid-git-flags"],
+    )
+    def test_previously_omitted_redirects_use_redirect_framing(
+        self,
+        rule_name: str,
+    ) -> None:
+        reason = _BUNDLED_BEFORE_TOOL_BLOCK_REASONS[rule_name]
+
+        single = claude_code._compact_single_claude_pre_tool_deny_reason(rule_name, reason)
+        aggregated = _aggregated_compaction(rule_name, reason)
+
+        assert single.startswith(f"Gobby [{rule_name}]:")
+        assert "blocked" not in single.casefold()
+        assert f"1. [{rule_name}]:" in aggregated
+        assert "blocked" not in aggregated.casefold()
+
+    def test_skill_fetch_template_renders_call_at_offset_zero(self) -> None:
+        assert (
+            _BUNDLED_BEFORE_TOOL_BLOCK_REASONS["require-claimed-task-required-skills"]
+            == _SKILL_FETCH_REASON_TEMPLATE
+        )
+        assert skill_fetch_directive("python").startswith("Call ")
 
 
 class TestClaudeCodeAdapterInit:
