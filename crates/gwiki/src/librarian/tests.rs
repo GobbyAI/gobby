@@ -669,6 +669,32 @@ fn near_duplicates_skip_session_digest_pairs() {
 }
 
 #[test]
+fn near_duplicates_skip_stale_semantic_hits() {
+    let current = knowledge_page(
+        "knowledge/sources/src-ac09859b71d30030-session-019f917d-db1d-7a01-97f1-13e11eacdd31.md",
+        "---\nsource_kind: session\n---\n# Session: current\n\nWorked the wiki upkeep pipeline.\n",
+    );
+    let mut backend = FixedSemanticBackend {
+        hits: vec![semantic_hit(
+            "knowledge/sources/src-3e33ee89f4af7707-session-019f917d-db1d-7a01-97f1-13e11eacdd31.md",
+            0.95,
+        )],
+    };
+
+    let pairs = near_duplicate_pairs(
+        &[current],
+        SemanticProbe {
+            backend: &mut backend,
+            search_scope: SearchScope::topic("ops"),
+        },
+        &BTreeSet::new(),
+    )
+    .expect("scan succeeds");
+
+    assert_eq!(pairs, Vec::new());
+}
+
+#[test]
 fn near_duplicates_skip_redirect_pairs() {
     let redirect = knowledge_page(
         "knowledge/topics/legacy-topic.md",

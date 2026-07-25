@@ -110,6 +110,10 @@ pub(super) fn near_duplicate_pairs(
         backend,
         search_scope,
     } = probe;
+    let pages_by_path: BTreeMap<&Path, &lint::WikiPage> = pages
+        .iter()
+        .map(|page| (page.relative_path.as_path(), page))
+        .collect();
     let mut best_scores: BTreeMap<(PathBuf, PathBuf), f64> = BTreeMap::new();
     for page in pages.iter().filter(|page| {
         is_knowledge_page(page) && !lint::is_structural_page_path(&page.relative_path)
@@ -136,6 +140,7 @@ pub(super) fn near_duplicate_pairs(
                 || hit.path == page.relative_path
                 || !hit.path.starts_with("knowledge")
                 || lint::is_structural_page_path(&hit.path)
+                || !pages_by_path.contains_key(hit.path.as_path())
             {
                 continue;
             }
@@ -150,10 +155,6 @@ pub(super) fn near_duplicate_pairs(
             }
         }
     }
-    let pages_by_path: BTreeMap<&Path, &lint::WikiPage> = pages
-        .iter()
-        .map(|page| (page.relative_path.as_path(), page))
-        .collect();
     Ok(best_scores
         .into_iter()
         .filter(|((left, right), _)| {
@@ -168,8 +169,9 @@ pub(super) fn near_duplicate_pairs(
 /// it cites, and session digests are distinct manifest records that must not
 /// merge even when adjacent sessions worked the same topic. Reviewed
 /// disambiguation verdicts (#17782) are also honored so blessed-distinct
-/// pairs stop resurfacing. Pages missing from the lookup (stale semantic
-/// index) keep their pairs.
+/// pairs stop resurfacing. Semantic hits missing from the authoritative page
+/// lookup are ignored before pair classification because stale indexes can
+/// retain removed pages.
 pub(super) fn expected_similarity_pair(
     left: &Path,
     right: &Path,
