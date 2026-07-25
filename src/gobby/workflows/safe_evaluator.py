@@ -493,7 +493,9 @@ def build_condition_helpers(
         first_tdd_code_path,
         first_tdd_test_path,
         is_gobby_build_command,
+        is_pending_memory_recall_call,
         is_validation_command,
+        pending_memory_recall_request_id,
         task_commit_project_path_allowlist_violation,
         task_needs_human_review,
         task_state_in,
@@ -694,6 +696,15 @@ def build_condition_helpers(
         _first_unloaded_claimed_task_required_skill
     )
     funcs["assistant_response_matches_any"] = _assistant_response_matches_any
+    funcs["pending_memory_recall_request_id"] = lambda: pending_memory_recall_request_id(
+        _get_variables(ctx)
+    )
+    funcs["is_pending_memory_recall_call"] = lambda tool_input=None: (
+        is_pending_memory_recall_call(
+            tool_input if tool_input is not None else ctx.get("tool_input"),
+            pending_memory_recall_request_id(_get_variables(ctx)),
+        )
+    )
 
     # --- Plugin conditions ---
 

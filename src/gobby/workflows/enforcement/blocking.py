@@ -25,6 +25,7 @@ DISCOVERY_TOOLS = {
     "recommend_tools",
     "list_skills",
     "get_skill",
+    "get_recall_memories",
     "search_skills",
 }
 

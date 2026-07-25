@@ -177,7 +177,6 @@ class HookManager:
             session_manager=self._session_manager,
             injected_sessions=self._injected_sessions,
             inter_session_msg_manager=self._inter_session_msg_manager,
-            database=self._database,
         )
 
         # Session lookup service (resolves platform session IDs from CLI external IDs)

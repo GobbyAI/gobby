@@ -361,6 +361,7 @@
     "workflows/rules/memory-lifecycle/increment-parent-turn-seq.yaml": "4ec100000dc8599fc5cb6e753157c573996469088c627e3f1d02147d69edebda",
     "workflows/rules/memory-lifecycle/memory-capture-nudge.yaml": "b2916a3e9c04a559140b356213840389997a071264d64fd11d84aba06a854918",
     "workflows/rules/memory-lifecycle/memory-recall-on-prompt.yaml": "633aeb3b013155c1da5d361004286dcdd03aff9c52cc7e4ad62dc862e9efc8a7",
+    "workflows/rules/memory-lifecycle/require-memory-recall-retrieval.yaml": "f7053906a5aeda5f378da8b6f7e3346110b803d7f4b7c65186e13112f242f0b4",
     "workflows/rules/memory-lifecycle/require-memory-review-before-status.yaml": "2a3af915647d1e5b023f1b8255b431ce488689fefa6f51f7748ef09de36a2905",
     "workflows/rules/memory-lifecycle/reset-memory-tracking-on-start.yaml": "eeb0d4944ccdb850994137d3a4aa2fdfe49e4cdade0e8ad39e33efa9376ee2ff",
     "workflows/rules/pipeline-enforcement/auto-run-pipeline.yaml": "7f27af1e4047aed4c5ee075fcbe05979bda2af147f5a7901f5e419e7b1579639",

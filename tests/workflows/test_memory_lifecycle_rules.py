@@ -9,6 +9,8 @@ Active memory-lifecycle rules:
 - increment-parent-turn-seq: set_variable on turn_start before daemon recall
 - memory-recall-on-prompt: mcp_call on turn_start
 - memory-capture-nudge: inject_context on turn_start
+- require-memory-recall-before-tool: block on before_tool
+- require-memory-recall-before-turn-end: block on turn_end
 - require-memory-review-before-status: block on before_tool (close_task, submit_for_review, approve_review, reject_review)
 - clear-memory-review-on-create: set_variable on before_tool
 
@@ -32,6 +34,8 @@ MEMORY_RULES = {
     "increment-parent-turn-seq",
     "memory-recall-on-prompt",
     "memory-capture-nudge",
+    "require-memory-recall-before-tool",
+    "require-memory-recall-before-turn-end",
     "require-memory-review-before-status",
     "clear-memory-review-on-create",
 }

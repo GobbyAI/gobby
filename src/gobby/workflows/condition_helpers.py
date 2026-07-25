@@ -29,6 +29,48 @@ from gobby.workflows.verification_evidence import (
 
 logger = logging.getLogger(__name__)
 
+MEMORY_RECALL_DELIVERIES_VARIABLE = "memory_recall_deliveries"
+
+
+def pending_memory_recall_request_id(variables: Mapping[str, Any]) -> str | None:
+    """Return the oldest valid pending recall request ID."""
+    deliveries = variables.get(MEMORY_RECALL_DELIVERIES_VARIABLE)
+    if not isinstance(deliveries, list):
+        return None
+    for delivery in deliveries:
+        if not isinstance(delivery, Mapping) or delivery.get("status") != "pending":
+            continue
+        request_id = delivery.get("recall_request_id")
+        references = delivery.get("references")
+        if (
+            isinstance(request_id, str)
+            and request_id
+            and isinstance(references, list)
+            and any(
+                isinstance(reference, Mapping)
+                and isinstance(reference.get("memory_id"), str)
+                and bool(reference.get("memory_id"))
+                for reference in references
+            )
+        ):
+            return request_id
+    return None
+
+
+def is_pending_memory_recall_call(
+    tool_input: Any,
+    expected_recall_request_id: str | None,
+) -> bool:
+    """Check whether a proxy call retrieves the exact oldest pending recall."""
+    return bool(
+        expected_recall_request_id
+        and isinstance(tool_input, Mapping)
+        and tool_input.get("server_name") == "gobby-memory"
+        and tool_input.get("tool_name") == "get_recall_memories"
+        and tool_input.get("recall_request_id") == expected_recall_request_id
+    )
+
+
 TaskIdRef = str | int | UUID | bytes | bytearray | memoryview
 TaskIdInput = TaskIdRef | Iterable[TaskIdRef | None] | None
 _ENV_ASSIGNMENT_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*=.*$")
