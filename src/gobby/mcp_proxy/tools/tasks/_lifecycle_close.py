@@ -7,7 +7,7 @@ commit checks, session linking, and worktree status updates.
 import asyncio
 import logging
 from dataclasses import replace
-from typing import Any
+from typing import Any, Literal
 
 from gobby.mcp_proxy.tools.internal import InternalToolRegistry
 from gobby.mcp_proxy.tools.task_repo_paths import (
@@ -81,6 +81,7 @@ def register_close_task(registry: InternalToolRegistry, ctx: RegistryContext) ->
         commit_sha: str | None = None,
         project_path: str | None = None,
         preview: bool = False,
+        response_detail: Literal["concise", "diagnostic"] = "concise",
         evidence_receipt_ids: list[str] | None = None,
     ) -> dict[str, Any]:
         """Close a task with validation.
@@ -103,6 +104,7 @@ def register_close_task(registry: InternalToolRegistry, ctx: RegistryContext) ->
                 task project's repository. Absolute paths are allowed when they resolve to an
                 accessible task/project/worktree/clone repository directory.
             preview: Evaluate current close readiness without mutating task or validation state.
+            response_detail: Preview response detail level.
             evidence_receipt_ids: Receipt IDs to prioritize for detailed validation context.
 
         Returns:
@@ -122,7 +124,10 @@ def register_close_task(registry: InternalToolRegistry, ctx: RegistryContext) ->
         task = ctx.task_manager.get_task(resolved_id)
         if not task:
             return {"error": f"Task {task_id} not found"}
-        report = CloseEvaluationReport(task_id=resolved_id)
+        report = CloseEvaluationReport(
+            task_id=resolved_id,
+            response_detail=response_detail,
+        )
         report.pass_gate("task_exists")
 
         def blocked(
@@ -716,12 +721,20 @@ def register_close_task(registry: InternalToolRegistry, ctx: RegistryContext) ->
                 "preview": {
                     "type": "boolean",
                     "description": (
-                        "Read-only close evaluation. Returns prospective commits, mechanical "
-                        "gates, selected evidence, completeness, unassigned-receipt diagnostics, "
-                        "blocking reasons, and exact required actions without task, claim, "
-                        "counter, backoff, or validation-history mutation."
+                        "Read-only close evaluation. Returns a concise result with prospective "
+                        "commits and any actionable failure details without task, claim, counter, "
+                        "backoff, or validation-history mutation."
                     ),
                     "default": False,
+                },
+                "response_detail": {
+                    "type": "string",
+                    "enum": ["concise", "diagnostic"],
+                    "description": (
+                        "Preview response detail. 'concise' omits successful gates and evidence "
+                        "diagnostics; 'diagnostic' includes the full evaluation packet."
+                    ),
+                    "default": "concise",
                 },
                 "evidence_receipt_ids": {
                     "type": "array",

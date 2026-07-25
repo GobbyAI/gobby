@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, Literal
 
 from gobby.tasks.verification_receipt_packet import VerificationReceiptPacket
 
@@ -16,6 +16,7 @@ class CloseEvaluationReport:
     """Structured state accumulated by the canonical close evaluator."""
 
     task_id: str
+    response_detail: Literal["concise", "diagnostic"] = "concise"
     commit_shas: list[str] = field(default_factory=list)
     mechanical_gates: list[dict[str, Any]] = field(default_factory=list)
     selected_evidence: dict[str, list[str]] = field(
@@ -67,24 +68,46 @@ class CloseEvaluationReport:
             "can_close": can_close,
             "task_id": self.task_id,
             "commit_shas": list(self.commit_shas),
-            "mechanical_gates": gates,
-            "selected_evidence": dict(self.selected_evidence),
-            "evidence_completeness": dict(self.evidence_completeness),
-            "unassigned_receipts": _unassigned_receipt_diagnostics(
-                self.unassigned_count,
-                task_id=self.task_id,
-            ),
-            "blocking_reasons": reasons,
-            "required_actions": actions,
         }
+        if reasons:
+            response["blocking_reasons"] = reasons
+        if actions:
+            response["required_actions"] = actions
+        if self.response_detail == "diagnostic":
+            response.update(
+                {
+                    "mechanical_gates": gates,
+                    "selected_evidence": dict(self.selected_evidence),
+                    "evidence_completeness": dict(self.evidence_completeness),
+                    "unassigned_receipts": _unassigned_receipt_diagnostics(
+                        self.unassigned_count,
+                        task_id=self.task_id,
+                    ),
+                    "blocking_reasons": reasons,
+                    "required_actions": actions,
+                }
+            )
         if error:
             response["error"] = error
         if self.validation_status:
             response["validation_status"] = self.validation_status
-        if self.validation_feedback:
+        if self.validation_feedback and self.response_detail == "diagnostic":
             response["validation_feedback"] = self.validation_feedback
         if extra:
-            response.update(extra)
+            if self.response_detail == "diagnostic":
+                response.update(extra)
+            else:
+                diagnostic_keys = {
+                    "diagnostics",
+                    "evidence_completeness",
+                    "mechanical_gates",
+                    "selected_evidence",
+                    "unassigned_receipts",
+                    "validation_feedback",
+                }
+                response.update(
+                    {key: value for key, value in extra.items() if key not in diagnostic_keys}
+                )
         return response
 
 

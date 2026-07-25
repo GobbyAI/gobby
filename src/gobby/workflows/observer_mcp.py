@@ -34,7 +34,12 @@ def detect_mcp_call(event: HookEvent, variables: dict[str, Any], session_id: str
     tracked = _track_mcp_call(variables, server_name, inner_tool, tool_output, session_id)
     if server_name == "gobby-skills" and inner_tool == "get_skill":
         if tracked:
-            _track_loaded_skill(variables, tool_output, session_id)
+            _track_loaded_skill(
+                variables,
+                event.data.get("tool_input") or {},
+                tool_output,
+                session_id,
+            )
         else:
             _track_unresolvable_required_skill(
                 variables,
@@ -46,11 +51,14 @@ def detect_mcp_call(event: HookEvent, variables: dict[str, Any], session_id: str
 
 def _track_loaded_skill(
     variables: dict[str, Any],
+    tool_input: dict[str, Any] | Any,
     tool_output: dict[str, Any] | Any,
     session_id: str,
 ) -> None:
     """Record a successful agent-visible gobby-skills:get_skill result."""
     name = _extract_loaded_skill_name(tool_output)
+    if not name and _is_offloaded_get_skill_result(tool_output):
+        name = _requested_skill_name(tool_input)
     if not name:
         return
 
@@ -89,6 +97,19 @@ def _extract_loaded_skill_name(tool_output: dict[str, Any] | Any) -> str | None:
             if isinstance(name, str) and name:
                 return name
     return None
+
+
+def _is_offloaded_get_skill_result(tool_output: dict[str, Any] | Any) -> bool:
+    """Return whether a successful result was replaced by an offload envelope."""
+    if not isinstance(tool_output, dict) or tool_output.get("success") is False:
+        return False
+    result = tool_output.get("result")
+    return (
+        isinstance(result, dict)
+        and result.get("offloaded") is True
+        and result.get("server_name") == "gobby-skills"
+        and result.get("tool_name") == "get_skill"
+    )
 
 
 def _track_unresolvable_required_skill(

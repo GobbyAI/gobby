@@ -1443,6 +1443,7 @@ async def test_close_task_preview_is_read_only_and_prioritizes_explicit_receipts
                 "commit_sha": "a3",
                 "changes_summary": "Implemented preview.",
                 "preview": True,
+                "response_detail": "diagnostic",
                 "evidence_receipt_ids": ["receipt-020"],
             },
         )
@@ -1451,6 +1452,9 @@ async def test_close_task_preview_is_read_only_and_prioritizes_explicit_receipts
     assert missing_result["can_close"] is False
     assert missing_result["error"] == "evidence_receipts_not_found"
     assert "assign the intended receipt IDs" in missing_result["required_actions"][0]
+    assert "mechanical_gates" not in missing_result
+    assert "selected_evidence" not in missing_result
+    assert "evidence_completeness" not in missing_result
     assert result["success"] is True
     assert result["preview"] is True
     assert result["can_close"] is True
@@ -1573,6 +1577,10 @@ async def test_real_close_reevaluates_after_successful_preview(
     assert preview_result["can_close"] is True
     assert blocked_preview_result["can_close"] is False
     assert blocked_preview_result["error"] == "validation_failed"
+    assert blocked_preview_result["blocking_reasons"]
+    assert "mechanical_gates" not in blocked_preview_result
+    assert "selected_evidence" not in blocked_preview_result
+    assert "diagnostics" not in blocked_preview_result
     assert close_result["success"] is False
     assert close_result["error"] == "validation_failed"
     assert mock_task_validator.validate_task.await_count == 3

@@ -236,6 +236,7 @@ class TestCloseTask:
                     "task_id": parent.id,
                     "changes_summary": "All subtasks completed",
                     "preview": True,
+                    "response_detail": "diagnostic",
                 },
             )
             assert preview_result["success"] is True
