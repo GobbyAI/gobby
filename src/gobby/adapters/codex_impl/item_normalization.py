@@ -43,6 +43,12 @@ TOOLISH_FIELDS: frozenset[str] = frozenset(
 )
 
 _FUNCTIONS_EXEC_NAMES = frozenset({"exec", "functions.exec"})
+_DIRECT_EXEC_COMMAND_NAMES = frozenset({"exec_command", "functions.exec_command"})
+_DIRECT_EXEC_COMPLETION_RE = re.compile(
+    r"\AChunk ID: [^\r\n]+\r?\n"
+    r"Wall time: [^\r\n]+\r?\n"
+    r"Process exited with code (?P<exit_code>-?\d+)\r?\n"
+)
 _EXEC_COMMAND_CALL_RE = re.compile(r"\btools\.exec_command\s*\(")
 _EXEC_COMMAND_LITERAL_RE = re.compile(
     r'(?:^|[{,])\s*cmd\s*:\s*("(?:\\.|[^"\\])*")',
@@ -90,6 +96,20 @@ def extract_functions_exec_command(arguments: Any) -> str | None:
         command = json.loads(matches[0])
     except (TypeError, ValueError):
         return None
+    return command if isinstance(command, str) and command else None
+
+
+def _extract_direct_exec_command(arguments: Any) -> str | None:
+    """Extract the command from one direct Codex ``exec_command`` call."""
+    decoded = arguments
+    if isinstance(arguments, str):
+        try:
+            decoded = json.loads(arguments)
+        except (TypeError, ValueError):
+            return None
+    if not isinstance(decoded, dict):
+        return None
+    command = decoded.get("cmd")
     return command if isinstance(command, str) and command else None
 
 
@@ -154,6 +174,22 @@ def _terminal_exec_results(data: dict[str, Any]) -> list[dict[str, Any]]:
             if has_exit or has_boolean:
                 results.append(candidate)
     return results
+
+
+def _direct_exec_terminal_result(value: Any) -> dict[str, Any] | None:
+    """Read one exact terminal result from Codex's direct exec envelope."""
+    matches: list[dict[str, Any]] = []
+    for text in _iter_wrapper_output_text(value):
+        match = _DIRECT_EXEC_COMPLETION_RE.match(text)
+        if match is None:
+            continue
+        matches.append(
+            {
+                "exit_code": int(match.group("exit_code")),
+                "output": text[match.end() :],
+            }
+        )
+    return matches[0] if len(matches) == 1 else None
 
 
 def _normalize_session_id(value: Any) -> str | None:
@@ -386,6 +422,15 @@ def build_tool_event_data(
             if command is not None:
                 item_data["_original_tool_name"] = dynamic_name
                 item_data["_dynamic_exec_command"] = command
+        elif dynamic_name in _DIRECT_EXEC_COMMAND_NAMES:
+            command = _extract_direct_exec_command(item_data.get("arguments"))
+            if command is not None:
+                item_data["_original_tool_name"] = dynamic_name
+                item_data["tool_name"] = "Bash"
+                item_data["tool_input"] = {"command": command}
+                terminal_result = _direct_exec_terminal_result(item_data.get("contentItems"))
+                if terminal_result is not None:
+                    item_data["tool_result"] = terminal_result
 
     if "tool_response" not in item_data and "tool_result" not in item_data:
         if "output" in item_data:

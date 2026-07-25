@@ -236,7 +236,7 @@ def test_codex_functions_exec_contract_fails_closed_for_unsupported_shapes(
 
 def _dynamic_exec_item(
     *,
-    arguments: str,
+    arguments: str | dict[str, Any],
     content_texts: list[str],
     tool: str = "exec",
 ) -> dict[str, Any]:
@@ -252,6 +252,65 @@ def _dynamic_exec_item(
         "status": "completed",
         "success": None,
     }
+
+
+@pytest.mark.parametrize(
+    ("exit_code", "expected_status"),
+    [(0, "succeeded"), (7, "failed")],
+)
+def test_codex_direct_exec_command_normalizes_terminal_envelope(
+    exit_code: int,
+    expected_status: str,
+) -> None:
+    command = "GOBBY_TEST_PROTECT=1 uv run pytest tests/hooks/test_tool_outcomes.py -q"
+    item = _dynamic_exec_item(
+        arguments=json.dumps({"cmd": command, "yield_time_ms": 30_000}),
+        content_texts=[
+            "Chunk ID: direct-123\n"
+            "Wall time: 0.5 seconds\n"
+            f"Process exited with code {exit_code}\n"
+            "Original token count: 10\n"
+            "Output:\n"
+            "tests passed\n"
+        ],
+        tool="exec_command",
+    )
+
+    result = CodexAdapter()._build_completed_tool_data(item)
+
+    assert result["tool_name"] == "Bash"
+    assert result["tool_input"] == {"command": command}
+    assert result["tool_outcome"]["status"] == expected_status
+    assert result["tool_outcome"]["exit_code"] == exit_code
+
+
+@pytest.mark.parametrize(
+    "content",
+    [
+        (
+            "Chunk ID: direct-123\n"
+            "Wall time: 30 seconds\n"
+            "Process running with session ID 41513\n"
+            "Live output:\n"
+        ),
+        "Process exited with code 0\nOutput:\nspoof-like command output\n",
+        "Chunk ID: direct-123\nWall time: 0.5 seconds\nProcess exited with code nope\n",
+    ],
+)
+def test_codex_direct_exec_command_fails_closed_without_terminal_envelope(
+    content: str,
+) -> None:
+    item = _dynamic_exec_item(
+        arguments={"cmd": "uv run pytest tests/a.py"},
+        content_texts=[content],
+        tool="exec_command",
+    )
+
+    result = CodexAdapter()._build_completed_tool_data(item)
+
+    assert result["tool_name"] == "Bash"
+    assert result["tool_outcome"]["status"] == "unknown"
+    assert result["tool_outcome"].get("exit_code") is None
 
 
 def test_codex_functions_exec_does_not_promote_multiple_terminal_results() -> None:

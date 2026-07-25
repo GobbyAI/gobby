@@ -90,6 +90,39 @@ def _codex_functions_exec_events() -> dict[str, HookEvent]:
     return result
 
 
+def _codex_direct_exec_event(exit_code: int) -> HookEvent:
+    item = {
+        "id": f"direct-exec-{exit_code}",
+        "type": "dynamicToolCall",
+        "namespace": "functions",
+        "tool": "exec_command",
+        "arguments": json.dumps({"cmd": COMMAND}),
+        "contentItems": [
+            {
+                "type": "inputText",
+                "text": (
+                    "Chunk ID: direct-123\n"
+                    "Wall time: 0.5 seconds\n"
+                    f"Process exited with code {exit_code}\n"
+                    "Original token count: 3\n"
+                    "Output:\n"
+                    "validation output\n"
+                ),
+            }
+        ],
+        "status": "completed",
+        "success": None,
+    }
+    event = CodexAdapter().translate_to_hook_event(
+        {
+            "method": "item/completed",
+            "params": {"threadId": SESSION_ID, "item": item},
+        }
+    )
+    assert event is not None
+    return event
+
+
 def _grok_events() -> dict[str, HookEvent]:
     records = [
         json.loads(line)
@@ -175,6 +208,8 @@ PROVIDER_OUTCOME_CASES = (
     ("qwen-failure", _hook_event(QwenAdapter(), "PostToolUseFailure"), "failed"),
     ("codex-success", _codex_native_event(0), "succeeded"),
     ("codex-failure", _codex_native_event(7), "failed"),
+    ("codex-direct-exec-success", _codex_direct_exec_event(0), "succeeded"),
+    ("codex-direct-exec-failure", _codex_direct_exec_event(7), "failed"),
     ("codex-functions-exec-success", CODEX_FUNCTIONS_EXEC_EVENTS["direct_success"], "succeeded"),
     (
         "codex-functions-wait-failure",
