@@ -85,6 +85,11 @@ class InboundCommunications:
                     handled.append(message)
                     continue
 
+                callback_status = message.metadata_json.get("callback_status")
+                if message.content_type == "callback" and callback_status != "ok":
+                    handled.append(message)
+                    continue
+
                 reaction_dedupe_checked = False
                 if message.content_type == "reaction":
                     reaction_target = message.metadata_json.get("reaction_target_message_id")
@@ -139,6 +144,13 @@ class InboundCommunications:
                     )
                     message.session_id = resolution.session_id
                     message.identity_id = resolution.identity.id
+                    callback_session_id = message.metadata_json.get("callback_session_id")
+                    if (
+                        message.content_type == "callback"
+                        and isinstance(callback_session_id, str)
+                        and callback_session_id
+                    ):
+                        message.session_id = callback_session_id
 
                 if message.session_id and message.platform_thread_id:
                     manager._track_thread(
@@ -264,4 +276,7 @@ class InboundCommunications:
                     msg.channel_id = channel.id
                 return parsed
 
-        return await self.handle_messages(channel_name, parsed)
+        handled = await self.handle_messages(channel_name, parsed)
+        if handled:
+            await adapter.acknowledge_webhook_messages(handled)
+        return handled

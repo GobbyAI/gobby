@@ -114,6 +114,7 @@ async def test_initialize_with_webhook(
                     "message",
                     "message_reaction",
                     "message_reaction_count",
+                    "callback_query",
                 ],
                 "secret_token": "test_secret_token",
             },
@@ -914,7 +915,9 @@ async def test_poll(
         params={
             "offset": 0,
             "timeout": 30,
-            "allowed_updates": '["message", "message_reaction", "message_reaction_count"]',
+            "allowed_updates": (
+                '["message", "message_reaction", "message_reaction_count", "callback_query"]'
+            ),
         },
         timeout=35.0,
     )

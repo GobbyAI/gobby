@@ -172,6 +172,10 @@ class BaseChannelAdapter(ABC):
         """Acknowledge successfully handled polled messages."""
         return None
 
+    async def acknowledge_webhook_messages(self, messages: list[CommsMessage]) -> None:
+        """Acknowledge successfully handled webhook messages."""
+        return None
+
     def platform_destination(self, message: CommsMessage) -> str:
         """Return the adapter-facing destination for an outbound message.
 

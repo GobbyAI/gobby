@@ -27,13 +27,17 @@ from gobby.communications.models import (
     CommsAttachment,
     CommsMessage,
 )
+from gobby.communications.telegram_callbacks import (
+    TelegramCallbackRegistry,
+    telegram_callback_message,
+)
 from gobby.communications.telegram_stickers import telegram_sticker_attachments
 
 if TYPE_CHECKING:
     from gobby.communications.attachments import AttachmentManager
 
 logger = logging.getLogger(__name__)
-_ALLOWED_UPDATES = ("message", "message_reaction", "message_reaction_count")
+_ALLOWED_UPDATES = ("message", "message_reaction", "message_reaction_count", "callback_query")
 
 
 def _mentions_telegram_bot(
@@ -305,6 +309,7 @@ class TelegramAdapter(BaseChannelAdapter):
         self._pending_update_ids: list[int] = []
         self._acknowledged_update_ids: set[int] = set()
         self._edit_overflow_ids: dict[str, list[str]] = {}
+        self._callback_registry = TelegramCallbackRegistry()
 
     def _advance_acknowledged_offset(self) -> None:
         while self._pending_update_ids:
@@ -456,14 +461,26 @@ class TelegramAdapter(BaseChannelAdapter):
         chat_id = self.platform_destination(message)
 
         chunks = markdown_to_telegram_html_chunks(message.content, self.max_message_length)
+        reply_markup = None
+        raw_keyboard = message.metadata_json.get("inline_keyboard")
+        if raw_keyboard is not None:
+            reply_markup = self._callback_registry.register_keyboard(
+                raw_keyboard,
+                session_id=message.session_id,
+                chat_id=chat_id,
+                thread_id=message.platform_thread_id,
+                ttl_seconds=message.metadata_json.get("callback_ttl_seconds", 300),
+            )
 
         message_ids: list[str] = []
-        for chunk in chunks:
+        for index, chunk in enumerate(chunks):
             payload: dict[str, Any] = {
                 "chat_id": chat_id,
                 "text": chunk,
                 "parse_mode": "HTML",
             }
+            if reply_markup is not None and index == len(chunks) - 1:
+                payload["reply_markup"] = reply_markup
 
             if message.platform_thread_id:
                 payload["message_thread_id"] = _outbound_message_thread_id(
@@ -747,6 +764,9 @@ class TelegramAdapter(BaseChannelAdapter):
         reaction_count_message = _telegram_reaction_count_message(payload_dict)
         if reaction_count_message is not None:
             return [reaction_count_message]
+        callback_message = telegram_callback_message(payload_dict, self._callback_registry)
+        if callback_message is not None:
+            return [callback_message]
 
         if "message" not in payload_dict:
             return []
@@ -876,6 +896,7 @@ class TelegramAdapter(BaseChannelAdapter):
 
     async def acknowledge_messages(self, messages: list[CommsMessage]) -> None:
         """Advance the Telegram offset for successfully handled updates."""
+        await self._answer_callback_queries(messages)
         for message in messages:
             update_id = message.metadata_json.get("telegram_update_id")
             if isinstance(update_id, int):
@@ -883,6 +904,27 @@ class TelegramAdapter(BaseChannelAdapter):
 
         self._advance_acknowledged_offset()
         await self._persist_poll_offset()
+
+    async def acknowledge_webhook_messages(self, messages: list[CommsMessage]) -> None:
+        """Answer callback queries delivered by webhook."""
+        await self._answer_callback_queries(messages)
+
+    async def _answer_callback_queries(self, messages: list[CommsMessage]) -> None:
+        for message in messages:
+            callback_id = message.metadata_json.get("telegram_callback_query_id")
+            if not isinstance(callback_id, str) or not callback_id:
+                continue
+            status = message.metadata_json.get("callback_status")
+            if status == "ok":
+                text = "Selection received."
+            elif status == "expired":
+                text = "This action has expired."
+            else:
+                text = "This action is no longer available."
+            await self._post_json(
+                "answerCallbackQuery",
+                {"callback_query_id": callback_id, "text": text},
+            )
 
 
 # Register the adapter

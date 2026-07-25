@@ -27,23 +27,34 @@ def create_communications_registry(
         ),
     )
 
-    @registry.tool(description="Send a message to a communication channel.")
+    @registry.tool(
+        description=(
+            "Send a message to a communication channel. For Telegram clarification or approval "
+            "prompts, pass inline_keyboard as rows of {text, value} buttons with a session_id; "
+            "the selected value returns to that session."
+        )
+    )
     async def send_message(
         channel: str,
         content: str,
         session_id: str | None = None,
         thread_id: str | None = None,
         content_type: str = "text",
+        inline_keyboard: list[list[dict[str, str]]] | None = None,
+        callback_ttl_seconds: int = 300,
     ) -> dict[str, Any]:
         """Send a message via the CommunicationsManager."""
         try:
-            metadata = None
-            if thread_id or content_type != "text":
+            metadata: dict[str, Any] | None = None
+            if thread_id or content_type != "text" or inline_keyboard is not None:
                 metadata = {}
                 if thread_id:
                     metadata["thread_id"] = thread_id
                 if content_type != "text":
                     metadata["content_type"] = content_type
+                if inline_keyboard is not None:
+                    metadata["inline_keyboard"] = inline_keyboard
+                    metadata["callback_ttl_seconds"] = callback_ttl_seconds
 
             msg = await communications_manager.send_message(
                 channel_name=channel,

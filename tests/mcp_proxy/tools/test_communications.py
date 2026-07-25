@@ -429,3 +429,31 @@ def test_unlink_identity(registry: Any, mock_store: MagicMock) -> None:
 
     assert res["success"] is True
     mock_store.update_identity_session.assert_called_once_with("id-1", None)
+
+
+async def test_send_message_exposes_inline_keyboard_metadata(
+    registry: Any,
+    mock_manager: MagicMock,
+) -> None:
+    mock_msg = MagicMock(id="msg-123", status="sent", error=None)
+    mock_manager.send_message.return_value = mock_msg
+    inline_keyboard = [[{"text": "Approve", "value": "approve"}]]
+
+    result = await registry.get_tool("send_message")(
+        channel="telegram",
+        content="Proceed?",
+        session_id="session-1",
+        inline_keyboard=inline_keyboard,
+        callback_ttl_seconds=45,
+    )
+
+    assert result["success"] is True
+    mock_manager.send_message.assert_awaited_once_with(
+        channel_name="telegram",
+        content="Proceed?",
+        session_id="session-1",
+        metadata={
+            "inline_keyboard": inline_keyboard,
+            "callback_ttl_seconds": 45,
+        },
+    )

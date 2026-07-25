@@ -113,6 +113,7 @@ def make_adapter(
     adapter.shutdown = AsyncMock()
     adapter.parse_webhook.return_value = []
     adapter.download_inbound_attachments = AsyncMock(return_value=[])
+    adapter.acknowledge_webhook_messages = AsyncMock()
     adapter.verify_webhook.return_value = True
     return adapter
 
