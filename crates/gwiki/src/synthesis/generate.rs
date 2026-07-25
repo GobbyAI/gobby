@@ -95,6 +95,12 @@ pub fn synthesize_article(
         render_list_section(&mut markdown, "Backlinks", &source_links);
     }
 
+    let source_hashes = input
+        .accepted_sources
+        .iter()
+        .map(|source| source.source_hash.as_str());
+    let markdown = crate::page_version::stamp_generated_page(&markdown, source_hashes);
+
     Ok(SynthesizedPage {
         path,
         title: input.topic.clone(),
@@ -208,6 +214,10 @@ pub fn synthesize_source_pages(
         markdown.push_str("`\n\n");
         render_list_section(&mut markdown, "Extracts", &source.chunks);
         render_list_section(&mut markdown, "Used by", &used_by);
+        let markdown = crate::page_version::stamp_generated_page(
+            &markdown,
+            std::iter::once(source.source_hash.as_str()),
+        );
 
         pages.push(SynthesizedPage {
             path,

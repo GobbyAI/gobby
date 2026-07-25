@@ -308,19 +308,17 @@ fn compile_writes_obsidian_markdown() {
     let scope = ResearchScope::project_for_id("project-1", temp.path());
     let note_path = scope.root().join("raw/research/compile.md");
     std::fs::create_dir_all(note_path.parent().expect("note parent")).expect("raw dir");
-    std::fs::write(
-        &note_path,
-        concat!(
-            "---\n",
-            "title: Compile behavior\n",
-            "source: daemon notes\n",
-            "---\n\n",
-            "Citation: Example Docs, Compile API\n",
-            "Compile turns accepted notes into source-grounded wiki articles.\n",
-            "Evidence sections keep claims traceable to their matching outline entries."
-        ),
-    )
-    .expect("note written");
+    let note = concat!(
+        "---\n",
+        "title: Compile behavior\n",
+        "source: daemon notes\n",
+        "---\n\n",
+        "Citation: Example Docs, Compile API\n",
+        "Compile turns accepted notes into source-grounded wiki articles.\n",
+        "Evidence sections keep claims traceable to their matching outline entries."
+    );
+    std::fs::write(&note_path, note).expect("note written");
+    let source_hash = gobby_core::indexing::content_hash(note.as_bytes());
     let mut session = session_with_note(&scope, "Compile behavior", "raw/research/compile.md");
 
     let outcome = compile_to_wiki(
@@ -343,11 +341,22 @@ fn compile_writes_obsidian_markdown() {
     assert!(page.starts_with("---\n"));
     assert!(page.contains("title: \"Durable Compile\""));
     assert!(page.contains("source_kind: \"topic\""));
+    assert!(page.contains(&format!(
+        "content_hash: {}",
+        crate::page_version::content_hash(&page)
+    )));
+    assert!(page.contains(&format!("compiled_from:\n  - {source_hash}\n")));
     assert!(page.contains("[[knowledge/sources/compile-behavior|Compile behavior]]"));
     assert!(page.contains("Example Docs, Compile API"));
 
     let source_page = scope.root().join("knowledge/sources/compile-behavior.md");
     assert!(source_page.exists());
+    let source_page = std::fs::read_to_string(source_page).expect("source page");
+    assert!(source_page.contains(&format!(
+        "content_hash: {}",
+        crate::page_version::content_hash(&source_page)
+    )));
+    assert!(source_page.contains(&format!("compiled_from:\n  - {source_hash}\n")));
     let provenance =
         std::fs::read_to_string(scope.root().join("meta/provenance.json")).expect("provenance");
     assert!(provenance.contains("knowledge/topics/durable-compile.md"));
@@ -372,6 +381,42 @@ fn compile_writes_obsidian_markdown() {
     );
     let source = &provenance.links()[0].source;
     assert!(source.byte_end > source.byte_start);
+    assert_eq!(source.source_hash, source_hash);
+    assert_eq!(
+        provenance.links()[0].section.content_hash,
+        crate::page_version::content_hash(&page)
+    );
+}
+
+#[test]
+fn unchanged_recompile_preserves_body_hash_across_new_handoff() {
+    let temp = tempfile::tempdir().expect("tempdir");
+    let scope = ResearchScope::project_for_id("project-1", temp.path());
+    let note_path = scope.root().join("raw/research/compile.md");
+    std::fs::create_dir_all(note_path.parent().expect("note parent")).expect("raw dir");
+    std::fs::write(&note_path, "Stable compile evidence.\n").expect("note written");
+    let request = || CompileRequest {
+        topic: "Stable Compile".to_string(),
+        outline: vec!["Overview".to_string()],
+        target_page: None,
+        write_intent: true,
+    };
+
+    let mut first_session =
+        session_with_note(&scope, "Compile behavior", "raw/research/compile.md");
+    let first = compile_to_wiki(&mut first_session, request()).expect("first compile");
+    let first_page = std::fs::read_to_string(&first.article_path).expect("first page");
+
+    let mut second_session =
+        session_with_note(&scope, "Compile behavior", "raw/research/compile.md");
+    let second = compile_to_wiki(&mut second_session, request()).expect("second compile");
+    let second_page = std::fs::read_to_string(&second.article_path).expect("second page");
+
+    assert_ne!(first.handoff_id, second.handoff_id);
+    assert_eq!(
+        crate::page_version::content_hash(&first_page),
+        crate::page_version::content_hash(&second_page)
+    );
 }
 
 #[test]
@@ -532,6 +577,8 @@ fn recompile_without_target_page_updates_article_in_place() {
     };
     let mut session = session_with_note(&scope, "Compile behavior", "raw/research/compile.md");
     let first = compile_to_wiki(&mut session, request()).expect("first compile succeeded");
+    let first_page = std::fs::read_to_string(&first.article_path).expect("first article");
+    let first_hash = crate::page_version::content_hash(&first_page);
     assert_eq!(
         first.article_path,
         scope.root().join("knowledge/topics/durable-compile.md")
@@ -540,12 +587,24 @@ fn recompile_without_target_page_updates_article_in_place() {
     std::fs::write(&note_path, "Recompiled evidence.\n").expect("note rewritten");
     let mut session = session_with_note(&scope, "Compile behavior", "raw/research/compile.md");
     let outcome = compile_to_wiki(&mut session, request()).expect("recompile succeeded");
+    let recompiled_page =
+        std::fs::read_to_string(&outcome.article_path).expect("recompiled article");
+    let recompiled_hash = crate::page_version::content_hash(&recompiled_page);
 
     // The recompile resolves the article written by the first compile and
     // updates it in place — no -2 suffixed sibling article (#17635).
     assert_eq!(outcome.article_path, first.article_path);
     let entries = content_page_names(&scope.root().join("knowledge/topics"));
     assert_eq!(entries, vec!["durable-compile.md".to_string()]);
+    assert_ne!(first_hash, recompiled_hash);
+    let provenance =
+        ProvenanceGraph::load_from_vault(scope.root()).expect("load replaced provenance");
+    assert_eq!(provenance.links().len(), 1);
+    assert_eq!(provenance.links()[0].section.content_hash, recompiled_hash);
+    assert_eq!(
+        provenance.links()[0].source.source_hash,
+        gobby_core::indexing::content_hash(b"Recompiled evidence.\n")
+    );
     // Resolving the existing page also feeds its body into the synthesis
     // prompt as update-over-create context.
     assert!(

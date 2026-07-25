@@ -123,6 +123,7 @@ pub struct CompileBundle {
 pub struct AcceptedCompileSource {
     pub title: String,
     pub path: PathBuf,
+    pub source_hash: String,
     pub chunks: Vec<String>,
     pub chunk_offsets: Vec<AcceptedCompileChunkOffset>,
 }
@@ -196,6 +197,7 @@ pub fn compile_to_wiki_with_options(
         .map(|source| SynthesisSource {
             title: source.title.clone(),
             path: source.path.clone(),
+            source_hash: source.source_hash.clone(),
             chunks: source.chunks.clone(),
             existing_page: existing_digest_page(vault_root, &manifest_records, &source.path),
         })

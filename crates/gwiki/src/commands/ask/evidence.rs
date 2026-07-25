@@ -40,16 +40,18 @@ pub(super) fn plan_evidence(retrieval: &SearchRetrieval) -> EvidencePlan {
     }
 
     for (index, hit) in retrieval.output.results.iter().enumerate() {
-        let raw = retrieval
-            .evidence
-            .iter()
-            .find(|evidence| {
-                evidence.fusion_key == hit.fusion_key
-                    && evidence.wiki_page == hit.wiki_page
-                    && evidence.source_path == hit.source_path
-            })
-            .map(|evidence| evidence.body.as_str())
-            .unwrap_or(hit.snippet.as_str());
+        let materialized = retrieval.evidence.iter().find(|evidence| {
+            evidence.fusion_key == hit.fusion_key
+                && evidence.wiki_page == hit.wiki_page
+                && evidence.source_path == hit.source_path
+        });
+        let (raw, content_hash) = match materialized {
+            Some(evidence) => (evidence.body.as_str(), evidence.content_hash.clone()),
+            None => (
+                hit.snippet.as_str(),
+                crate::page_version::content_hash(&hit.snippet),
+            ),
+        };
         let excerpt = query_window(raw, query, EVIDENCE_BEFORE_CHARS, EVIDENCE_AFTER_CHARS)
             .trim()
             .to_string();
@@ -75,6 +77,7 @@ pub(super) fn plan_evidence(retrieval: &SearchRetrieval) -> EvidencePlan {
         items.push(AskEvidenceOutput {
             wiki_page: hit.wiki_page.clone(),
             source_path: hit.source_path.clone(),
+            content_hash,
             excerpt_chars: excerpt.chars().count(),
         });
         excerpts.push(excerpt);
@@ -124,6 +127,7 @@ mod tests {
                 fusion_key: format!("topic:docs:wiki/hit-{index}.md"),
                 wiki_page: PathBuf::from(format!("wiki/hit-{index}.md")),
                 source_path: PathBuf::from(format!("raw/hit-{index}.md")),
+                content_hash: crate::page_version::content_hash(&body),
                 body,
             })
             .collect();

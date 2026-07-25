@@ -98,6 +98,7 @@ mod tests {
                 wiki_page: PathBuf::from("wiki/hooks.md"),
                 source_path: PathBuf::from("raw/hooks.md"),
                 body: "Hooks run at turn boundaries and dispatch envelopes.".to_string(),
+                content_hash: "page-hash".to_string(),
             }],
         };
         let plan = plan_evidence(&retrieval);
@@ -113,6 +114,7 @@ mod tests {
         );
         assert_eq!(output.evidence.len(), 1);
         assert_eq!(output.evidence[0].wiki_page, PathBuf::from("wiki/hooks.md"));
+        assert_eq!(output.evidence[0].content_hash, "page-hash");
         assert_eq!(output.prompt_token_budget, ASK_PROMPT_TOKEN_BUDGET);
         assert!(output.prompt_tokens_estimated > 0);
         assert!(!output.truncated);

@@ -63,6 +63,10 @@ pub(crate) fn write_document_derived_markdown(
         extraction,
         degradation,
     ));
+    let markdown = crate::page_version::stamp_generated_page(
+        &markdown,
+        std::iter::once(record.content_hash.as_str()),
+    );
     write_document_markdown_atomic(&path, markdown.as_bytes())?;
     Ok(relative_path)
 }

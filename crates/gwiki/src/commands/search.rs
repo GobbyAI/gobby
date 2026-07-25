@@ -32,6 +32,7 @@ pub(crate) struct SearchEvidence {
     pub(crate) wiki_page: PathBuf,
     pub(crate) source_path: PathBuf,
     pub(crate) body: String,
+    pub(crate) content_hash: String,
 }
 
 /// Narrowing levers suggested when `--token-budget` trims the result set.
@@ -252,14 +253,23 @@ where
             continue;
         }
         let fusion_key = result.fusion_key()?;
-        let body_start = frontmatter_body_start(&result.snippet).unwrap_or(0);
-        let evidence_body = &result.snippet[body_start..];
+        let page_path = input.vault_root.join(&result.path);
+        let current_markdown =
+            std::fs::read_to_string(&page_path).map_err(|source| WikiError::Io {
+                action: "read current wiki search evidence",
+                path: Some(page_path),
+                source,
+            })?;
+        let content_hash = crate::page_version::content_hash(&current_markdown);
+        let body_start = frontmatter_body_start(&current_markdown).unwrap_or(0);
+        let evidence_body = &current_markdown[body_start..];
         let snippet = bounded_snippet(evidence_body, &input.query);
         evidence.push(SearchEvidence {
             fusion_key: fusion_key.clone(),
             wiki_page: result.path.clone(),
             source_path: result.source_path.clone(),
             body: evidence_body.to_string(),
+            content_hash,
         });
         results.push(SearchResultOutput {
             title: result.title,
@@ -474,7 +484,7 @@ mod tests {
         std::fs::write(&document, &markdown).expect("document");
 
         let mut hit = store_hit(path);
-        hit.snippet = markdown;
+        hit.snippet = "---\ntitle: Stale index\n---\n\nStale indexed body.\n".to_string();
         let mut bm25_backend = search_support::StoreBm25Backend {
             hits: vec![hit].into(),
         };
@@ -501,6 +511,10 @@ mod tests {
 
         assert_eq!(retrieval.output.results[0].snippet.trim(), body);
         assert_eq!(retrieval.evidence[0].body.trim(), body);
+        assert_eq!(
+            retrieval.evidence[0].content_hash,
+            crate::page_version::content_hash(&markdown)
+        );
     }
 
     #[test]

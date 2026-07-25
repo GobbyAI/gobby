@@ -172,6 +172,7 @@ fn representative_ask_output() -> AskOutput {
         evidence: vec![AskEvidenceOutput {
             wiki_page: PathBuf::from("knowledge/topics/contract-guardrails.md"),
             source_path: PathBuf::from("crates/gwiki/src/contract.rs"),
+            content_hash: "page-hash".to_string(),
             excerpt_chars: 51,
         }],
         prompt_token_budget: 12_000,

@@ -209,6 +209,7 @@ fn source_page_paths_reserve_article_path() {
     let sources = vec![SynthesisSource {
         title: "Collision".to_string(),
         path: PathBuf::from("raw/collision.md"),
+        source_hash: "collision-hash".to_string(),
         chunks: Vec::new(),
         existing_page: None,
     }];
@@ -228,12 +229,14 @@ fn source_page_paths_reuse_existing_digest_pages() {
         SynthesisSource {
             title: "Session digest".to_string(),
             path: PathBuf::from("raw/sessions/digest.md"),
+            source_hash: "session-hash".to_string(),
             chunks: Vec::new(),
             existing_page: Some(digest.clone()),
         },
         SynthesisSource {
             title: "Fresh note".to_string(),
             path: PathBuf::from("raw/research/fresh.md"),
+            source_hash: "fresh-hash".to_string(),
             chunks: Vec::new(),
             existing_page: None,
         },
@@ -256,6 +259,7 @@ fn recompile_resolves_stub_for_same_source_identity_in_place() {
     input.accepted_sources = vec![SynthesisSource {
         title: "48631169".to_string(),
         path: PathBuf::from("raw/src-hn-48631169.md"),
+        source_hash: "first-hash".to_string(),
         chunks: vec!["First extract.".to_string()],
         existing_page: None,
     }];
@@ -315,6 +319,7 @@ fn recompile_resolves_stub_after_source_content_hash_rotates() {
     input.accepted_sources = vec![SynthesisSource {
         title: "mgsloan pre-commit gist".to_string(),
         path: PathBuf::from("raw/src-b75e5eacb3d718ef-https-gist-github-com-mgsloan-pre-commit.md"),
+        source_hash: "gist-hash".to_string(),
         chunks: vec!["First extract.".to_string()],
         existing_page: None,
     }];
@@ -386,6 +391,7 @@ fn recompile_reuses_legacy_stub_without_source_path_frontmatter() {
     input.accepted_sources = vec![SynthesisSource {
         title: "Gist".to_string(),
         path: PathBuf::from("raw/src-1ca0bb24edbe42ac-https-gist-example-com-a.md"),
+        source_hash: "gist-hash".to_string(),
         chunks: vec!["new".to_string()],
         existing_page: None,
     }];
@@ -408,6 +414,7 @@ fn source_page_paths_suffix_only_for_different_source_identity() {
     input.accepted_sources = vec![SynthesisSource {
         title: "Release notes".to_string(),
         path: PathBuf::from("raw/src-first.md"),
+        source_hash: "first-hash".to_string(),
         chunks: vec!["First extract.".to_string()],
         existing_page: None,
     }];
@@ -424,6 +431,7 @@ fn source_page_paths_suffix_only_for_different_source_identity() {
     let sources = vec![SynthesisSource {
         title: "Release notes".to_string(),
         path: PathBuf::from("raw/src-second.md"),
+        source_hash: "second-hash".to_string(),
         chunks: Vec::new(),
         existing_page: None,
     }];
@@ -444,6 +452,7 @@ fn source_page_paths_reuse_base_across_rotated_source_hash() {
     input.accepted_sources = vec![SynthesisSource {
         title: "GitHub - example/repo".to_string(),
         path: PathBuf::from("raw/src-0000000000000000-https-github-com-example-repo.md"),
+        source_hash: "first-hash".to_string(),
         chunks: vec!["First extract.".to_string()],
         existing_page: None,
     }];
@@ -463,6 +472,7 @@ fn source_page_paths_reuse_base_across_rotated_source_hash() {
     let sources = vec![SynthesisSource {
         title: "GitHub - example/repo".to_string(),
         path: PathBuf::from("raw/src-1111111111111111-https-github-com-example-repo.md"),
+        source_hash: "second-hash".to_string(),
         chunks: Vec::new(),
         existing_page: None,
     }];
@@ -481,6 +491,7 @@ fn recompile_stub_merges_used_by_links_across_articles() {
     let source = SynthesisSource {
         title: "Shared note".to_string(),
         path: PathBuf::from("raw/src-shared.md"),
+        source_hash: "shared-hash".to_string(),
         chunks: vec!["Shared extract.".to_string()],
         existing_page: None,
     };
@@ -528,12 +539,14 @@ fn synthesize_source_pages_skips_sources_with_existing_digest() {
         SynthesisSource {
             title: "Session digest".to_string(),
             path: PathBuf::from("raw/sessions/digest.md"),
+            source_hash: "session-hash".to_string(),
             chunks: vec!["Digest extract.".to_string()],
             existing_page: Some(digest),
         },
         SynthesisSource {
             title: "Fresh note".to_string(),
             path: PathBuf::from("raw/research/fresh.md"),
+            source_hash: "fresh-hash".to_string(),
             chunks: vec!["Fresh extract.".to_string()],
             existing_page: None,
         },
@@ -557,6 +570,29 @@ fn frontmatter_renders_aliases_and_extra_tags() {
     let mut input = empty_input("Gcode", ArticleKind::Concept);
     input.aliases = vec!["gcode".to_string(), "GCode".to_string()];
     input.extra_tags = vec!["entity".to_string()];
+    input.accepted_sources = vec![
+        SynthesisSource {
+            title: "Second".to_string(),
+            path: PathBuf::from("raw/second.md"),
+            source_hash: "bbb".to_string(),
+            chunks: Vec::new(),
+            existing_page: None,
+        },
+        SynthesisSource {
+            title: "First".to_string(),
+            path: PathBuf::from("raw/first.md"),
+            source_hash: "aaa".to_string(),
+            chunks: Vec::new(),
+            existing_page: None,
+        },
+        SynthesisSource {
+            title: "Duplicate".to_string(),
+            path: PathBuf::from("raw/duplicate.md"),
+            source_hash: "bbb".to_string(),
+            chunks: Vec::new(),
+            existing_page: None,
+        },
+    ];
 
     let article_path = resolve_article_path(temp.path(), "Gcode", ArticleKind::Concept);
     let article = synthesize_article(
@@ -585,6 +621,15 @@ fn frontmatter_renders_aliases_and_extra_tags() {
         crate::frontmatter::parse_frontmatter(&article.markdown).expect("frontmatter parses");
     assert_eq!(parsed.metadata.aliases, vec!["gcode", "GCode"]);
     assert!(parsed.metadata.tags.iter().any(|tag| tag == "entity"));
+    assert!(
+        article
+            .markdown
+            .contains("compiled_from:\n  - aaa\n  - bbb\n")
+    );
+    assert!(article.markdown.contains(&format!(
+        "content_hash: {}",
+        crate::page_version::content_hash(&article.markdown)
+    )));
 }
 
 #[test]

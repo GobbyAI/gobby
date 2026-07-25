@@ -31,6 +31,10 @@ pub fn write_video_derived_markdown(
     }
 
     let markdown = render_video_derived_markdown(scope, record, &request, &aligned_segments);
+    let markdown = crate::page_version::stamp_generated_page(
+        &markdown,
+        std::iter::once(record.content_hash.as_str()),
+    );
     write_video_markdown_atomic(&path, markdown.as_bytes())?;
 
     Ok(VideoMarkdownResult {

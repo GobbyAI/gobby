@@ -38,6 +38,7 @@ pub mod models;
 pub(crate) mod normalize;
 pub(crate) mod obsidian;
 pub mod output;
+pub(crate) mod page_version;
 pub(crate) mod paths;
 pub(crate) mod progress;
 pub(crate) mod project_lock;

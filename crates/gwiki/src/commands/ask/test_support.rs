@@ -29,6 +29,7 @@ pub(super) fn retrieval_with_hooks_hit() -> SearchRetrieval {
             wiki_page: PathBuf::from("wiki/hooks.md"),
             source_path: PathBuf::from("raw/hooks.md"),
             body: "Hooks run at turn boundaries and dispatch envelopes to the daemon.".to_string(),
+            content_hash: "page-hash".to_string(),
         }],
     }
 }

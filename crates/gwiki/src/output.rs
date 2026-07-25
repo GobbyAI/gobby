@@ -164,6 +164,7 @@ pub struct AskOutput {
 pub struct AskEvidenceOutput {
     pub wiki_page: PathBuf,
     pub source_path: PathBuf,
+    pub content_hash: String,
     pub excerpt_chars: usize,
 }
 

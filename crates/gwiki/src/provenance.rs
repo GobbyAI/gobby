@@ -15,6 +15,7 @@ pub struct SourceChunkRef {
     pub source_id: String,
     pub chunk_id: String,
     pub path: PathBuf,
+    pub source_hash: String,
     /// Inclusive byte offset in the source note.
     pub byte_start: usize,
     /// Exclusive byte offset in the source note.
@@ -26,6 +27,7 @@ pub struct WikiSectionRef {
     pub page_path: PathBuf,
     pub heading: String,
     pub section_id: String,
+    pub content_hash: String,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -65,6 +67,22 @@ impl ProvenanceGraph {
             .or_default()
             .push(index);
         self.links.push(link);
+    }
+
+    /// Replace all current provenance for one compiled page and rebuild lookup
+    /// indexes. The graph represents current attribution rather than an
+    /// implicit page-version history.
+    pub fn replace_page_links(
+        &mut self,
+        page_path: &Path,
+        links: impl IntoIterator<Item = ProvenanceLink>,
+    ) {
+        self.links
+            .retain(|link| link.section.page_path != page_path);
+        self.rebuild_indexes();
+        for link in links {
+            self.add_link(link);
+        }
     }
 
     #[allow(dead_code, reason = "reserved gwiki CLI/API split")]
@@ -232,6 +250,7 @@ mod tests {
             source_id: "src-provenance".to_string(),
             chunk_id: "chunk-42".to_string(),
             path: PathBuf::from("raw/research/provenance.md"),
+            source_hash: "source-hash".to_string(),
             byte_start: 12,
             byte_end: 96,
         };
@@ -239,6 +258,7 @@ mod tests {
             page_path: PathBuf::from("knowledge/topics/provenance.md"),
             heading: "Durable provenance".to_string(),
             section_id: "durable-provenance".to_string(),
+            content_hash: "page-hash".to_string(),
         };
         let mut graph = ProvenanceGraph::default();
 
@@ -286,6 +306,7 @@ mod tests {
                 source_id: "src-roundtrip".to_string(),
                 chunk_id: "chunk-1".to_string(),
                 path: PathBuf::from("raw/source.md"),
+                source_hash: "source-hash".to_string(),
                 byte_start: 0,
                 byte_end: 42,
             },
@@ -293,6 +314,7 @@ mod tests {
                 page_path: PathBuf::from("knowledge/topics/roundtrip.md"),
                 heading: "Roundtrip".to_string(),
                 section_id: "roundtrip".to_string(),
+                content_hash: "page-hash".to_string(),
             },
             claim: Some("Persistence preserves provenance links.".to_string()),
         });
@@ -310,5 +332,90 @@ mod tests {
         let graph = ProvenanceGraph::load_from_vault(temp.path()).expect("missing graph");
 
         assert!(graph.links().is_empty());
+    }
+
+    #[test]
+    fn replacing_page_links_removes_stale_versions_and_keeps_other_pages() {
+        let mut graph = ProvenanceGraph::default();
+        let page = PathBuf::from("knowledge/topics/current.md");
+        let other_page = PathBuf::from("knowledge/topics/other.md");
+        let link = |source_id: &str, source_hash: &str, page_path: &Path, content_hash: &str| {
+            ProvenanceLink {
+                source: SourceChunkRef {
+                    source_id: source_id.to_string(),
+                    chunk_id: "chunk-1".to_string(),
+                    path: PathBuf::from(format!("raw/{source_id}.md")),
+                    source_hash: source_hash.to_string(),
+                    byte_start: 0,
+                    byte_end: 42,
+                },
+                section: WikiSectionRef {
+                    page_path: page_path.to_path_buf(),
+                    heading: "Heading".to_string(),
+                    section_id: "section".to_string(),
+                    content_hash: content_hash.to_string(),
+                },
+                claim: None,
+            }
+        };
+
+        graph.add_link(link("old", "old-source-hash", &page, "old-page-hash"));
+        graph.add_link(link(
+            "other",
+            "other-source-hash",
+            &other_page,
+            "other-page-hash",
+        ));
+        graph.replace_page_links(
+            &page,
+            [link(
+                "current",
+                "current-source-hash",
+                &page,
+                "current-page-hash",
+            )],
+        );
+
+        assert_eq!(graph.links().len(), 2);
+        assert!(graph.links_for_source("old").is_empty());
+        assert_eq!(graph.links_for_source("current").len(), 1);
+        assert_eq!(graph.links_for_source("other").len(), 1);
+        assert_eq!(
+            graph.links_for_source("current")[0].section.content_hash,
+            "current-page-hash"
+        );
+    }
+
+    #[test]
+    fn unversioned_provenance_json_is_rejected() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let path = temp.path().join("meta").join("provenance.json");
+        std::fs::create_dir_all(path.parent().expect("meta parent")).expect("create meta");
+        std::fs::write(
+            &path,
+            r#"{
+                "links": [{
+                    "source": {
+                        "source_id": "source",
+                        "chunk_id": "chunk",
+                        "path": "raw/source.md",
+                        "byte_start": 0,
+                        "byte_end": 42
+                    },
+                    "section": {
+                        "page_path": "knowledge/topics/page.md",
+                        "heading": "Heading",
+                        "section_id": "section"
+                    },
+                    "claim": null
+                }]
+            }"#,
+        )
+        .expect("write old provenance");
+
+        let error = ProvenanceGraph::load_from_vault(temp.path())
+            .expect_err("unversioned provenance must fail");
+
+        assert!(matches!(error, WikiError::Json { .. }));
     }
 }

@@ -135,6 +135,7 @@ pub fn run(
             .map(|session| SynthesisSource {
                 title: session.title.clone(),
                 path: vault_root.join(&session.digest_relative),
+                source_hash: session.record.content_hash.clone(),
                 chunks: vec![session.body.clone()],
                 existing_page: Some(vault_root.join(&session.digest_relative)),
             })
@@ -312,7 +313,12 @@ fn render_page(
         page.push_str(&wiki_link(vault_root, &absolute, &session.title));
         page.push('\n');
     }
-    page
+    crate::page_version::stamp_generated_page(
+        &page,
+        sessions
+            .iter()
+            .map(|session| session.record.content_hash.as_str()),
+    )
 }
 
 fn write_page(path: &Path, content: &str) -> Result<(), WikiError> {
@@ -500,6 +506,14 @@ mod tests {
             fs::read_to_string(root.join("recaps/2026-07-04.md")).expect("recap page written");
         assert!(page.contains("title: \"Recap: 2026-07-04\""), "{page}");
         assert!(page.contains("  - recap\n"), "recap tag rendered: {page}");
+        assert!(page.contains(&format!(
+            "content_hash: {}",
+            crate::page_version::content_hash(&page)
+        )));
+        assert!(
+            page.contains("compiled_from:\n  - s-early-hash\n  - s-late-hash\n"),
+            "{page}"
+        );
         assert!(
             page.contains("[[knowledge/sources/s-early|Session s-early]]"),
             "citation grounded to the digest wiki link: {page}"

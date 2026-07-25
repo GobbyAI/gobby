@@ -131,6 +131,10 @@ pub fn write_image_derived_markdown(
 
     let markdown =
         render_image_derived_markdown(scope, record, request, extraction, degradation.as_ref());
+    let markdown = crate::page_version::stamp_generated_page(
+        &markdown,
+        std::iter::once(record.content_hash.as_str()),
+    );
     write_vision_markdown_atomically(&path, markdown.as_bytes())?;
 
     Ok(VisionMarkdownResult {

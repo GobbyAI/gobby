@@ -512,6 +512,7 @@ mod tests {
             stale_pages: Vec::new(),
             stale_exports: None,
             stale_citations: Vec::new(),
+            citation_drift: Vec::new(),
             uncited_sources: Vec::new(),
             broken_links: vec![
                 crate::lint::LinkIssue {

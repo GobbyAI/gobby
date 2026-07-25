@@ -721,6 +721,7 @@ fn change_triggered_refresh_health_degrades_to_provenance_only_mapping() {
             source_id: "source-lib".to_string(),
             chunk_id: "source-lib#chunk-0".to_string(),
             path: PathBuf::from("src/lib.rs"),
+            source_hash: "source-lib-hash".to_string(),
             byte_start: 0,
             byte_end: 10,
         },
@@ -728,6 +729,7 @@ fn change_triggered_refresh_health_degrades_to_provenance_only_mapping() {
             page_path: PathBuf::from("code/lib.md"),
             heading: "Lib".to_string(),
             section_id: "lib".to_string(),
+            content_hash: "code-lib-hash".to_string(),
         },
         claim: None,
     });

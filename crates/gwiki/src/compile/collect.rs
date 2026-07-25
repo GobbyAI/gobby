@@ -57,6 +57,7 @@ pub(crate) fn collect_accepted_sources(
         accepted_sources.push(AcceptedCompileSource {
             title: note.title.clone(),
             path,
+            source_hash: gobby_core::indexing::content_hash(text.as_bytes()),
             chunks: note_sections
                 .chunks
                 .iter()

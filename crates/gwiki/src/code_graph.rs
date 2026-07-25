@@ -363,6 +363,7 @@ mod tests {
                 source_id: "src-a".to_string(),
                 chunk_id: "src-a#chunk-0".to_string(),
                 path: "src/a.rs".into(),
+                source_hash: "src-a-hash".to_string(),
                 byte_start: 0,
                 byte_end: 10,
             },
@@ -370,6 +371,7 @@ mod tests {
                 page_path: "code/a.md".into(),
                 heading: "A".to_string(),
                 section_id: "a".to_string(),
+                content_hash: "code-a-hash".to_string(),
             },
             claim: None,
         });
@@ -378,6 +380,7 @@ mod tests {
                 source_id: "src-b".to_string(),
                 chunk_id: "src-b#chunk-0".to_string(),
                 path: "src/b.rs".into(),
+                source_hash: "src-b-hash".to_string(),
                 byte_start: 0,
                 byte_end: 10,
             },
@@ -385,6 +388,7 @@ mod tests {
                 page_path: "code/b.md".into(),
                 heading: "B".to_string(),
                 section_id: "b".to_string(),
+                content_hash: "code-b-hash".to_string(),
             },
             claim: None,
         });
@@ -431,6 +435,7 @@ mod tests {
                 source_id: "src-a".to_string(),
                 chunk_id: "src-a#chunk-0".to_string(),
                 path: "src/a.rs".into(),
+                source_hash: "src-a-hash".to_string(),
                 byte_start: 0,
                 byte_end: 10,
             },
@@ -438,6 +443,7 @@ mod tests {
                 page_path: "code/a.md".into(),
                 heading: "A".to_string(),
                 section_id: "a".to_string(),
+                content_hash: "code-a-hash".to_string(),
             },
             claim: None,
         });

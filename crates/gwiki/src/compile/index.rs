@@ -26,11 +26,8 @@ pub(crate) fn write_provenance(
     } else {
         ProvenanceGraph::default()
     };
-    let sections = provenance_sections(
-        PathBuf::from(relative_path(vault_root, &article.path)),
-        article,
-        outline,
-    );
+    let page_path = PathBuf::from(relative_path(vault_root, &article.path));
+    let sections = provenance_sections(page_path.clone(), article, outline);
     let manifest_records = source_records_for_paths(
         vault_root,
         &sources
@@ -39,6 +36,7 @@ pub(crate) fn write_provenance(
             .collect::<Vec<_>>(),
     )?;
 
+    let mut links = Vec::new();
     let mut chunk_ordinal = 0;
     for source in sources {
         let source_id = manifest_records
@@ -56,11 +54,12 @@ pub(crate) fn write_provenance(
                         byte_start: 0,
                         byte_end: chunk.len(),
                     });
-            graph.add_link(ProvenanceLink {
+            links.push(ProvenanceLink {
                 source: SourceChunkRef {
                     source_id: source_id.clone(),
                     chunk_id: format!("{source_id}#chunk-{index}"),
                     path: PathBuf::from(relative_path(vault_root, &source.path)),
+                    source_hash: source.source_hash.clone(),
                     byte_start: offset.byte_start,
                     byte_end: offset.byte_end,
                 },
@@ -71,6 +70,7 @@ pub(crate) fn write_provenance(
         }
     }
 
+    graph.replace_page_links(&page_path, links);
     graph.save_to_vault(vault_root)
 }
 
@@ -105,6 +105,7 @@ fn provenance_sections(
     article: &SynthesizedPage,
     outline: &[String],
 ) -> Vec<WikiSectionRef> {
+    let content_hash = crate::page_version::content_hash(&article.markdown);
     let mut headings: Vec<String> = outline
         .iter()
         .map(|heading| heading.trim())
@@ -124,6 +125,7 @@ fn provenance_sections(
             section_id: section_id_for_article(article, &heading),
             heading,
             page_path: page_path.clone(),
+            content_hash: content_hash.clone(),
         })
         .collect()
 }

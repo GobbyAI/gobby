@@ -21,6 +21,10 @@ pub(crate) fn write_session_derived_markdown(
             source: error,
         })?;
     }
+    let markdown = crate::page_version::stamp_generated_page(
+        markdown,
+        std::iter::once(record.content_hash.as_str()),
+    );
     write_session_markdown_atomically(&path, markdown.as_bytes())?;
     Ok(relative_path)
 }

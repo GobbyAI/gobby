@@ -174,6 +174,10 @@ pub fn write_audio_transcript_markdown(
         transcription.as_ref(),
         degradation.as_ref(),
     );
+    let markdown = crate::page_version::stamp_generated_page(
+        &markdown,
+        std::iter::once(record.content_hash.as_str()),
+    );
     write_transcript_markdown_atomically(&path, markdown.as_bytes())?;
 
     Ok(TranscriptionMarkdownResult {

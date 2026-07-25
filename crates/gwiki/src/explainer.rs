@@ -388,6 +388,7 @@ mod tests {
         SynthesisSource {
             title: title.to_string(),
             path: PathBuf::from(path),
+            source_hash: "source-hash".to_string(),
             chunks: vec![chunk.to_string()],
             existing_page: None,
         }

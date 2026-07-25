@@ -44,6 +44,7 @@ impl ArticleKind {
 pub struct SynthesisSource {
     pub title: String,
     pub path: PathBuf,
+    pub source_hash: String,
     pub chunks: Vec<String>,
     /// Manifest-backed digest page already on disk for this source
     /// (`knowledge/sources/<id>.md`). When set, synthesis links the article to

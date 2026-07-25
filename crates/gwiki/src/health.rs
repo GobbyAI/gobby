@@ -19,7 +19,10 @@ use crate::provenance::ProvenanceGraph;
 use crate::sources::{CompileStatus, SourceManifest, SourceRecord};
 use crate::{ScopeIdentity, WikiError};
 
+mod citation_drift;
 mod citations;
+
+pub use citation_drift::CitationDriftIssue;
 
 const AVERAGE_GREGORIAN_YEAR_SECONDS: u64 = 31_556_952;
 const STALE_CITATION_YEARS_ENV: &str = "GWIKI_STALE_CITATION_YEARS";
@@ -60,6 +63,7 @@ pub struct HealthReport {
     pub stale_pages: Vec<PathBuf>,
     pub stale_exports: Option<Vec<ExportArtifactIssue>>,
     pub stale_citations: Vec<HealthSourceIssue>,
+    pub citation_drift: Vec<CitationDriftIssue>,
     pub uncited_sources: Vec<HealthSourceIssue>,
     pub broken_links: Vec<crate::lint::LinkIssue>,
     pub duplicate_concepts: Vec<DuplicateConcept>,
@@ -185,6 +189,7 @@ fn report_from_pages_for_health(
         .filter(|entry| source_citation_is_stale(entry))
         .map(source_issue)
         .collect();
+    let citation_drift = citation_drift::inspect(vault_root, &provenance)?;
     let uncited_sources = manifest
         .entries
         .iter()
@@ -206,6 +211,7 @@ fn report_from_pages_for_health(
         stale_pages,
         stale_exports,
         stale_citations,
+        citation_drift,
         uncited_sources,
         broken_links: lint_report.broken_links,
         duplicate_concepts,
@@ -341,6 +347,7 @@ pub fn render_text(report: &HealthReport) -> String {
     render_paths(&mut text, "Stale pages", &report.stale_pages);
     render_stale_exports(&mut text, report.stale_exports.as_deref());
     render_sources(&mut text, "Stale citations", &report.stale_citations);
+    citation_drift::render_text(&mut text, &report.citation_drift);
     render_sources(&mut text, "Uncited sources", &report.uncited_sources);
     render_broken_links(&mut text, &report.broken_links);
     render_duplicate_concepts(&mut text, &report.duplicate_concepts);
