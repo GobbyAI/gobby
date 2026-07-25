@@ -8,7 +8,7 @@ Competitor sources (fetched 2026-07-11): OpenClaw docs.openclaw.ai/channels; Her
 
 | Channel | OpenClaw | Hermes | Gobby |
 |---------|----------|--------|-------|
-| Telegram | ✅ | ✅ | core live parity validated; operator-only checks tracked by #18867 and #18868 |
+| Telegram | ✅ | ✅ | core live parity complete: epic #17888, live pass #17903, and operator checks #18867/#18868 completed |
 | Slack | ✅ (Socket Mode default; also HTTP + relay) | ✅ (Socket Mode only) | adapter shipped; parity plan authored (`.gobby/plans/slack-parity.md`), epic pending review |
 | Discord | ✅ (plugin) | ✅ | adapter shipped; untested |
 | Teams | ✅ (plugin) | ✅ | adapter shipped; untested |
@@ -32,26 +32,38 @@ Gap-channel backlog tasks are filed per the `channel-parity` skill reporting rul
 
 ## Telegram (epic #17888, plan `.gobby/plans/telegram-parity.md`)
 
+Operator configuration and current limits are maintained in the
+[Telegram guide](../guides/telegram.md).
+
 | # | Feature | OpenClaw | Hermes | Gobby status |
 |---|---------|----------|--------|--------------|
-| 1 | Agent replies (inbound → agent turn → reply) | ✅ | ✅ | done (live #17903) |
-| 2 | Multi-turn persistent sessions | ✅ per-chat | ✅ per-chat/thread, survives restarts | done (live restart + context recall #17903) |
-| 3 | Access gate (allowlist) | ✅ `allowFrom`, dmPolicy default pairing | ✅ `TELEGRAM_ALLOWED_USERS`, pairing | done (#17894); live owner path passed, second-sender denial is tracked by #18867; pairing backlog #18850 |
-| 4 | Groups: mention-gated, per-chat session | ✅ requireMention, groupPolicy | ✅ require_mention, wake words, guest mode | done (#17894, #17896); operator-created group check is tracked by #18868; passive observation backlog #18859 |
-| 5 | Media inbound (photo/doc/voice STT/video/captions) | ✅ incl. sticker vision | ✅ incl. STT (whisper) | done (#17891, #17898); live photo, document, voice storage, and voice transcription passed #17903; stickers backlog #18852 |
-| 6 | Media outbound (documents, photos) | ✅ + voice notes, stickers | ✅ + TTS voice bubbles | done (live photo + document #17903); TTS backlog #18855 |
-| 7 | Typing indicator | ✅ incl. forum topics | ✅ | done (#17897); Bot API call passed and a fast voice reply made visual confirmation inconclusive #17903 |
+| 1 | Agent replies (inbound → agent turn → reply) | ✅ | ✅ | done (#17888; live #17903) |
+| 2 | Multi-turn persistent sessions | ✅ per-chat | ✅ per-chat/thread, survives restarts | done; live restart and context recall #17903 |
+| 3 | Access gate | ✅ `allowFrom`, dmPolicy default pairing | ✅ `TELEGRAM_ALLOWED_USERS`, pairing | done (#17894, #18867): numeric allowlist; first exact private `/start` atomically binds an empty allowlist to its sender; other senders are silently denied before persistence |
+| 4 | Groups: mention gate, per-chat session, passive context | ✅ requireMention, groupPolicy | ✅ require_mention, wake words, guest mode | done (#17894, #17896, #18859); owner-only and authorized-user live checks completed #18868 |
+| 5 | Media inbound (photo/doc/voice STT/video/captions) | ✅ incl. sticker vision | ✅ incl. STT (whisper) | done (#17891, #17898, #18852); live photo, document, voice storage, and transcription #17903; stickers feed vision with metadata fallback |
+| 6 | Media outbound (documents, photos, voice) | ✅ + voice notes, stickers | ✅ + TTS voice bubbles | done (#18855); photo and document live #17903; optional TTS sends Ogg Opus voice notes with text fallback |
+| 7 | Typing indicator | ✅ incl. forum topics | ✅ | done (#17897); Bot API call passed #17903, with fast replies sometimes too brief to observe visually |
 | 8 | Streaming-by-edit | ✅ off/partial/block/progress | ✅ auto/draft/edit/off | done (live #17903; final persistence #18843; placeholder #18846) |
-| 9 | Formatting + chunking | ✅ HTML, 4000-char chunks | ✅ Bot API rich messages, MarkdownV2 fallback | done (live >4096-character send #17903) |
-| 10 | Commands | ~55 cross-channel + menu | ~60 auto-registered + menu | done (live `/new /reset /stop /status /help` #17903); command menu backlog #18857 |
+| 9 | Formatting + chunking | ✅ HTML, 4000-char chunks | ✅ Bot API rich messages, MarkdownV2 fallback | done; live send beyond 4,096 characters #17903 |
+| 10 | Commands and menu | ~55 cross-channel + menu | ~60 auto-registered + menu | done (#18857): `/new /reset /stop /status /help`; commands live #17903 and synchronized with `setMyCommands` |
 | 11 | Reliability (dedup, offset persistence, init errors) | ✅ durable ingress queue | ✅ sessions auto-resume | done (live restart, bad credentials, idle polling #17903; #17890, #17893, #18842, #18844) |
-| — | Reply destination resolution (session-scoped sends) | ✅ | ✅ | done (live #17903; #17889) |
-| — | HTTP/CLI/MCP send surfaces | n/a | n/a | done (#17892, #18845) |
-| — | Live validation pass | — | — | core pass complete (#17903); operator-only checks #18867 and #18868 |
+| — | Reactions | ✅ | ✅ | done (#18851): inbound reaction normalization plus standard emoji set/clear |
+| — | Forum and private topics | ✅ | ✅ threads | done (#18853): `message_thread_id` preservation, topic sessions, and topic replies |
+| — | Inline keyboards | ✅ | ✅ | done (#18854): opaque single-use callbacks scoped to chat/topic/session |
+| — | Scheduled home-channel delivery | ✅ | ✅ | done (#18858): cron/routing delivery through `default_destination` with idempotent retry handling |
+| — | Link-preview control | ✅ | UNVERIFIED | done (#18860): channel defaults plus per-message overrides retained through edits |
+| — | Proxy support | ✅ | ✅ | done (#18861): HTTP, SOCKS5, and SOCKS5H across all Bot API requests |
+| — | Reply destination resolution | ✅ | ✅ | done (live #17903; #17889) |
+| — | HTTP/CLI/MCP send surfaces | n/a | n/a | done (#17892, #18845); MCP also ships `send_attachment` and `set_channel_project` |
+| — | Live validation pass | — | — | complete: core #17903, unknown-DM denial #18867, and group authorization #18868 |
 
 Telegram responders now start with the restricted `comms-agent` persona in normal mode, default to the Personal project, and support a persistent per-channel project selection through `gobby-communications:set_channel_project`.
 
-**Telegram backlog (post-#17888):** pairing-code flow #18850; reactions #18851; stickers + vision #18852; forum/private topics #18853; inline keyboards #18854; TTS voice replies #18855; Mini App dashboard #18856; `setMyCommands` menu #18857; cron home-channel delivery #18858; passive group observation #18859; link-preview control #18860; proxy support #18861. Cross-channel prioritization is tracked by #18862.
+Completion record: #17888, #17903, #18867, and #18868 are complete. The
+post-epic Telegram capability tasks #18850–#18861 have shipped or been
+superseded by the documented first-owner design. The only deferred Telegram
+surface is the Mini App dashboard (#18498).
 
 ## Slack (plan `.gobby/plans/slack-parity.md`, epic pending review)
 
@@ -91,6 +103,6 @@ To be filled by their channel-parity efforts (run the `channel-parity` skill per
 ## Behavioral parity notes (cross-channel)
 
 - Both competitors auto-respond by default; Gobby's responder (#17894/#17895) is the equivalent and is shared across channels — per-channel work is capability methods + config only.
-- Both support voice in (STT) broadly; TTS out is backlog for Gobby.
-- Both offer pairing flows in addition to allowlists; Gobby ships allowlist first, pairing backlog.
+- Both support voice in (STT) broadly; Gobby Telegram also ships optional TTS voice-note replies with text fallback.
+- Both competitors offer pairing flows. Gobby Telegram uses numeric allowlists plus exact private `/start` first-owner binding; it has no pairing-code flow.
 - Neither competitor fronts a task system, persistent memory, worktree isolation, or multi-provider CLI agents — that is Gobby's "+".

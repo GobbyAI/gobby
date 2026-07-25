@@ -71,6 +71,7 @@ links to the guide that owns that topic.
 | [integrations.md](integrations.md) | GitHub and Linear integration setup |
 | [github-issue-triage.md](github-issue-triage.md) | Webhook-first GitHub issue intake, deduplication, and task creation |
 | [comm-integrations.md](comm-integrations.md) | Slack, Telegram, Discord, Teams, email, SMS, and Gobby chat adapters |
+| [telegram.md](telegram.md) | Secure Telegram bot setup, authorization, responder operation, capabilities, and troubleshooting |
 | [webhooks-and-plugins.md](webhooks-and-plugins.md) | Webhook and plugin development |
 | [webhook-action-schema.md](webhook-action-schema.md) | Webhook action schema reference |
 | [../archive/droid.md](../archive/droid.md) | Factory Droid CLI hooks, MCP, and agent spawning |
@@ -138,10 +139,11 @@ links to the guide that owns that topic.
 ### Building Integrations
 
 1. Read [mcp-tools.md](mcp-tools.md) for the native MCP proxy model.
-2. Read [artifacts.md](artifacts.md) for browser-facing MCP artifacts.
-3. Read [providers-and-models.md](providers-and-models.md) for provider/model selection.
-4. Read [integrations.md](integrations.md) for GitHub and Linear setup.
-5. Read [comm-integrations.md](comm-integrations.md) for channel adapters.
+2. Read [providers-and-models.md](providers-and-models.md) for provider/model selection.
+3. Read [integrations.md](integrations.md) for GitHub and Linear setup.
+4. Read [comm-integrations.md](comm-integrations.md) for channel adapters.
+5. Follow the [Telegram DM-only quick path](telegram.md#quick-path-a-private-dm-bot)
+   when operating a Telegram bot.
 6. Read [webhooks-and-plugins.md](webhooks-and-plugins.md) for extension points.
 
 ---
@@ -154,6 +156,8 @@ links to the guide that owns that topic.
 - **Create memory**: `gobby memory create "Content"` or `create_memory` MCP tool
 - **Session handoff**: `gobby sessions create-handoff` or `set_handoff_context` MCP tool
 - **Check daemon health**: `gobby status` or `/api/admin/status`
+- **Set up a private Telegram bot**:
+  [Telegram DM-only quick path](telegram.md#quick-path-a-private-dm-bot)
 - **Audit test quality**: `gobby test-quality audit tests/path`
 
-_Last verified: 2026-07-02_
+_Last verified: 2026-07-25_

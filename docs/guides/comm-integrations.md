@@ -4,6 +4,10 @@ Gobby's communications framework connects external channels to the daemon
 through adapters, HTTP webhooks, polling loops, and the
 `gobby-communications` MCP server. It is disabled by default.
 
+For secure BotFather setup, DM and group authorization, privacy mode, responder
+operation, shipped features, and Telegram-specific troubleshooting, use the
+[Telegram operator guide](telegram.md).
+
 ## Enable communications
 
 Set `communications.enabled` in daemon config and restart the daemon:
@@ -46,7 +50,7 @@ registered and no such channel exists.
 | Type | Inbound | Outbound | Polling | Capabilities and destination |
 |------|---------|----------|---------|------------------------------|
 | `slack` | Events API webhook | Web API | No | Threads, reactions, files, Markdown; Slack channel ID. |
-| `telegram` | Bot API webhook or `getUpdates` | Bot API | Yes | Threads, files, Markdown-to-HTML, typing, message edits, media and voice-note download; Telegram chat ID. |
+| `telegram` | Bot API webhook or `getUpdates` | Bot API | Yes | Topics, reactions, photos, documents, voice, stickers, STT/TTS, HTML chunking, typing, streaming edits, inline keyboards, link previews, proxies, and persistent polling offsets; Telegram chat/topic ID. |
 | `discord` | Gateway plus interaction webhooks | REST API | No | Threads, reactions, files, Markdown; Discord channel or thread ID. |
 | `teams` | Bot Framework webhook | Bot Framework API | No | Threads, Adaptive Cards, files; conversation ID plus service URL. |
 | `email` | IMAP inbox | SMTP | Yes | Threads, HTML email, files; recipient address. |
@@ -98,7 +102,10 @@ reports a delivery failure.
 Example with an explicit destination:
 
 ```bash
+GOBBY_TOKEN="$(tr -d '\r\n' < "${GOBBY_HOME:-$HOME/.gobby}/local_cli_token")"
+
 curl -X POST http://127.0.0.1:60887/api/comms/send \
+  -H "Authorization: Bearer $GOBBY_TOKEN" \
   -H 'Content-Type: application/json' \
   -d '{
     "channel_name": "team-telegram",
@@ -108,9 +115,13 @@ curl -X POST http://127.0.0.1:60887/api/comms/send \
 ```
 
 `PUT /api/comms/channels/{channel_id}` replaces the channel's non-secret
-configuration. Include every non-secret field that must remain. Existing
-`$secret:` fields omitted from `config` are preserved, and supplied `secrets`
-are updated separately.
+configuration wholesale. Include every non-secret field that must remain;
+omitted non-secret fields are removed. Existing `$secret:` fields omitted from
+`config` are preserved, and supplied `secrets` are updated separately. A
+successful update deactivates and reinitializes the live adapter. Verify
+`active` and `init_error` through the channel status endpoint after each
+change. The [Telegram safe-update procedure](telegram.md#safe-channel-updates)
+shows authenticated read-modify-write.
 
 `GET /api/comms/messages` accepts `channel_id`, `session_id`, `direction`
 (`inbound` or `outbound`), `limit` (1–1000, default 50), and `offset`.
@@ -121,7 +132,9 @@ When the manager is available, the proxy registers `gobby-communications`:
 
 | Tool | Arguments |
 |------|-----------|
-| `send_message` | `channel`, `content`, optional `session_id`, optional `thread_id`, `content_type="text"` |
+| `send_message` | `channel`, `content`; optional `session_id`, `thread_id`, `content_type="text"`, `inline_keyboard`, `callback_ttl_seconds=300`, `link_preview_options` |
+| `send_attachment` | `channel`, `file_path`; optional `caption`, `session_id`, `filename`, `content_type`, `metadata` |
+| `set_channel_project` | `channel`, `project` exact name or UUID |
 | `list_channels` | None |
 | `get_messages` | Optional `channel`, `session_id`, `direction`, `limit=50` |
 | `add_channel` | `channel_type`, `name`, `config`, optional `secrets` |
@@ -135,6 +148,14 @@ When the manager is available, the proxy registers `gobby-communications`:
 `default_destination`, pass a linked `session_id`, or use the HTTP endpoint
 when adapter-specific metadata is required. `thread_id` is copied to the
 platform reply/thread field and overrides a thread remembered for the session.
+
+For Telegram, `inline_keyboard` accepts rows of `{text, value}` buttons and
+requires `session_id` so selected values can return to the originating
+session. `callback_ttl_seconds` controls the bounded callback lifetime.
+`link_preview_options` overrides channel defaults for one text message.
+Supported Telegram preview fields are `is_disabled`, `url`,
+`prefer_small_media`, `prefer_large_media`, and `show_above_text`.
+See [Telegram MCP sends](telegram.md#mcp-sends) for examples and limits.
 
 ## Configuration and secrets
 
@@ -224,6 +245,11 @@ The responder turns approved inbound messages into persistent `ChatSession`
 turns and streams the result back through the originating channel. It is
 configured per channel inside `config`.
 
+Telegram adds first-`/start` owner binding, passive group context, a restricted
+default agent, persistent channel project selection, STT/TTS, and platform
+commands. Those operator-facing details are authoritative in
+[Telegram responder, projects, and models](telegram.md#responder-projects-and-models).
+
 Minimal direct-message configuration:
 
 ```json
@@ -243,6 +269,8 @@ Access rules:
 
 - Direct messages require the sender's platform user ID in `allow_from`.
   `"*"` allows every sender.
+- Telegram alone can atomically populate an empty `allow_from` from the first
+  exact private `/start`; unknown senders are denied before persistence.
 - Group policy defaults to `allowlist`. Under this policy, the group must
   appear in `groups` (or match `"*"`) and the sender must pass `allow_from`.
 - `group_policy: "open"` accepts any sender. When `groups` is non-empty, only
@@ -376,4 +404,8 @@ project or session, and refreshes its cache every 30 seconds.
 | Responder ignores a group message | Check `group_policy`, `groups`, `allow_from`, `require_mention`, and the adapter's extracted chat ID. |
 | Responder has no backend | Enable the daemon WebSocket server so the communications `ChatSession` backend is installed. |
 
-_Last verified: 2026-07-23_
+Telegram-specific token, privacy, proxy, media-service, authorization, and
+provider/model diagnostics live in
+[Telegram troubleshooting](telegram.md#troubleshooting).
+
+_Last verified: 2026-07-25_
