@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import asyncio
 from collections.abc import Callable
-from dataclasses import asdict
+from dataclasses import asdict, replace
 from typing import TYPE_CHECKING, Any
 
 from gobby.communications.adapters import get_adapter_class
@@ -25,8 +25,15 @@ from gobby.communications.polling import PollingManager
 from gobby.communications.rate_limiter import TokenBucketRateLimiter
 from gobby.communications.responder import CommunicationsResponder
 from gobby.communications.router import MessageRouter
+from gobby.communications.telegram_access import (
+    allowed_senders,
+    is_deliberate_start,
+    is_telegram_dm,
+    telegram_dm_sender,
+)
 from gobby.communications.threads import ThreadManager
 from gobby.communications.voice import VoiceTranscriber, VoiceTranscriberGetter
+from gobby.utils.datetime import utc_now
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -71,6 +78,7 @@ class CommunicationsManager:
         self._adapters: dict[str, BaseChannelAdapter] = {}
         self._channel_by_name: dict[str, ChannelConfig] = {}
         self._channel_init_errors: dict[str, str] = {}
+        self._telegram_binding_locks: dict[str, asyncio.Lock] = {}
         self._websocket_broadcast: Any | None = None
         self._voice_transcriber_getter: VoiceTranscriberGetter | None = None
 
@@ -282,6 +290,47 @@ class CommunicationsManager:
     def get_channel(self, channel_id: str) -> ChannelConfig | None:
         """Get a channel by ID."""
         return self._store.get_channel(channel_id)
+
+    async def admit_inbound_message(
+        self,
+        channel: ChannelConfig,
+        message: CommsMessage,
+    ) -> bool:
+        """Apply pre-persistence access control for Telegram direct messages."""
+        if not is_telegram_dm(channel, message):
+            return True
+
+        sender_id = telegram_dm_sender(channel, message)
+        if sender_id is None:
+            return False
+
+        allow_from = allowed_senders(channel.config_json)
+        if sender_id in allow_from or "*" in allow_from:
+            return True
+        if allow_from or not is_deliberate_start(message.content):
+            return False
+
+        lock = self._telegram_binding_locks.setdefault(channel.id, asyncio.Lock())
+        async with lock:
+            candidate = await asyncio.to_thread(self._store.get_channel, channel.id)
+            current = candidate if isinstance(candidate, ChannelConfig) else channel
+            current_allow_from = allowed_senders(current.config_json)
+            if current_allow_from:
+                return sender_id in current_allow_from or "*" in current_allow_from
+
+            config_json = dict(current.config_json)
+            config_json["allow_from"] = [sender_id]
+            updated = replace(current, config_json=config_json, updated_at=utc_now())
+            await asyncio.to_thread(self._store.update_channel, updated)
+
+            channel.config_json = dict(config_json)
+            channel.updated_at = updated.updated_at
+            cached = self._channel_by_name.get(channel.name)
+            if cached is not None and cached is not channel:
+                cached.config_json = dict(config_json)
+                cached.updated_at = updated.updated_at
+            message.metadata_json["telegram_first_contact_bound"] = True
+            return True
 
     async def update_channel(
         self, channel: ChannelConfig, secrets: dict[str, Any] | None = None

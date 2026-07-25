@@ -1593,7 +1593,10 @@ async def test_send_message_injects_conversation_reference_destination():
 @pytest.mark.asyncio
 async def test_telegram_inbound_session_reply_resolves_chat_destination():
     """A session auto-created from Telegram inbound can send back to the originating chat."""
-    channel = make_channel(channel_type="telegram", config_json={})
+    channel = make_channel(
+        channel_type="telegram",
+        config_json={"allow_from": ["1111111"]},
+    )
     identities: list[CommsIdentity] = []
     store = make_store([channel])
     store.get_identity_by_external.side_effect = lambda channel_id, external_user_id: next(

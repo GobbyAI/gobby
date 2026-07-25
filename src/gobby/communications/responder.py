@@ -12,7 +12,7 @@ from gobby.communications.models import ChannelConfig, CommsMessage
 
 logger = logging.getLogger(__name__)
 
-_COMMANDS = frozenset({"new", "reset", "stop", "status", "help"})
+_COMMANDS = frozenset({"start", "new", "reset", "stop", "status", "help"})
 _DIRECT_CONVERSATION_TYPES = frozenset({"direct", "dm", "im", "private"})
 _GROUP_CONVERSATION_TYPES = frozenset({"channel", "group", "mpim", "room", "supergroup"})
 

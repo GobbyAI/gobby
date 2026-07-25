@@ -62,6 +62,14 @@ class InboundCommunications:
                     message.metadata_json["platform_channel_id"] = str(platform_channel_id)
                 message.channel_id = channel.id
 
+                if not await manager.admit_inbound_message(channel, message):
+                    logger.info(
+                        "Ignoring unregistered Telegram DM on channel %s",
+                        channel.name,
+                    )
+                    handled.append(message)
+                    continue
+
                 if message.content_type == "reaction":
                     if manager.reaction_handler:
                         try:

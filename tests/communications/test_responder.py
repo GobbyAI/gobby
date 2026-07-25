@@ -265,9 +265,22 @@ async def test_group_policy_and_mention_gate(
     assert bool(backend.turns) is accepted
 
 
-@pytest.mark.parametrize("command", ["new", "reset", "stop", "status", "help"])
+@pytest.mark.parametrize(
+    ("command", "expected_handler"),
+    [
+        ("start", "help"),
+        ("new", "new"),
+        ("reset", "reset"),
+        ("stop", "stop"),
+        ("status", "status"),
+        ("help", "help"),
+    ],
+)
 @pytest.mark.asyncio
-async def test_each_command_routes_to_its_backend_handler(command: str) -> None:
+async def test_each_command_routes_to_its_backend_handler(
+    command: str,
+    expected_handler: str,
+) -> None:
     manager = FakeManager(make_channel())
     backend = RecordingBackend()
     responder = CommunicationsResponder(manager, backend=backend)
@@ -275,8 +288,8 @@ async def test_each_command_routes_to_its_backend_handler(command: str) -> None:
     task = await responder.handle_message(make_message(content=f"/{command}"))
 
     assert task is None
-    assert [name for name, _context in backend.commands] == [command]
-    assert manager.sent[0]["content"] == command
+    assert [name for name, _context in backend.commands] == [expected_handler]
+    assert manager.sent[0]["content"] == expected_handler
 
 
 @pytest.mark.asyncio
