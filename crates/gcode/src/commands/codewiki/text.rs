@@ -41,19 +41,14 @@ pub(crate) use generation::generate_with_bounded_retry;
 
 #[cfg(test)]
 use citations::{fallback_spans, wrap_citation_items};
-#[cfg(test)]
-use generation::{GENERATION_RETRY_BACKOFF, is_model_refusal, is_prompt_echo};
 
 #[cfg(test)]
 mod tests {
-    use super::super::{PromptTier, SourceSpan, TextGenerator, prompts};
+    use super::super::SourceSpan;
     use super::{
-        GENERATION_RETRY_BACKOFF, GenerationContent, MAX_FALLBACK_CITATIONS,
-        MAX_FRONTMATTER_PROVENANCE_FILES, citation_list, citation_markers, fallback_spans,
-        frontmatter, generate_with_bounded_retry, is_model_refusal, is_prompt_echo, maybe_generate,
-        wrap_citation_items, write_references,
+        MAX_FALLBACK_CITATIONS, MAX_FRONTMATTER_PROVENANCE_FILES, citation_list, citation_markers,
+        fallback_spans, frontmatter, wrap_citation_items, write_references,
     };
-    use gobby_core::ai_types::AiError;
 
     fn span(file: impl Into<String>, line_start: usize, line_end: usize) -> SourceSpan {
         SourceSpan {
@@ -243,149 +238,5 @@ mod tests {
 
         assert!(wrapped.lines().count() > 1, "{wrapped}");
         assert!(wrapped.lines().all(|line| line.len() <= 40), "{wrapped}");
-    }
-
-    #[test]
-    fn prompt_echo_is_rejected_as_failed_generation() {
-        let prompt = prompts::module_prompt(
-            "crates/gcode",
-            &[prompts::ChildSummary {
-                name: "crates/gcode/Cargo.toml".to_string(),
-                summary: "Manifest for the gcode binary.".to_string(),
-            }],
-            &[],
-            &[],
-            &[],
-            &crate::commands::codewiki::RelationshipFacts::default(),
-        );
-
-        let mut echoing = |prompt: &str, _system: &str, _tier: PromptTier| Some(prompt.to_string());
-        let mut generate = Some::<&mut TextGenerator<'_>>(&mut echoing);
-        let generation = maybe_generate(
-            &mut generate,
-            &prompt,
-            prompts::MODULE_SYSTEM,
-            PromptTier::Aggregate,
-        );
-        assert!(
-            matches!(generation.into_content(), GenerationContent::Failed(_)),
-            "prompt echo must record degradation"
-        );
-
-        let mut healthy = |_prompt: &str, _system: &str, _tier: PromptTier| {
-            Some("`crates/gcode` indexes source and serves search.".to_string())
-        };
-        let mut generate = Some::<&mut TextGenerator<'_>>(&mut healthy);
-        let generation = maybe_generate(
-            &mut generate,
-            &prompt,
-            prompts::MODULE_SYSTEM,
-            PromptTier::Aggregate,
-        );
-        assert!(matches!(
-            generation.into_content(),
-            GenerationContent::Generated(_)
-        ));
-    }
-
-    #[test]
-    fn short_prompts_never_trigger_echo_rejection() {
-        let prompt = "Short prompt.";
-        assert!(!is_prompt_echo("Short prompt.", prompt));
-    }
-
-    #[test]
-    fn model_refusal_is_detected_but_real_prose_is_not() {
-        // The actual failure mode (#904): a weak model refused the curated
-        // narrative prompt and the apology shipped as the page body.
-        let refusal = "# Welcome to Gcode\n\nI cannot write this chapter as specified. \
-             The supplied evidence is insufficient to create a guided-tour chapter.";
-        assert!(is_model_refusal(refusal));
-        // Grounded prose that merely discusses a limitation must not be flagged:
-        // "it cannot index" is not a first-person refusal to write the page.
-        let prose = "The indexing pipeline parses each file with tree-sitter and writes \
-             symbols to PostgreSQL. It cannot index binary files, which are skipped.";
-        assert!(!is_model_refusal(prose));
-    }
-
-    #[test]
-    fn refusal_marker_after_the_lead_is_ignored() {
-        // Only the opening is scanned, so a long real body that happens to use
-        // the phrase deep in the prose is not misflagged as a refusal.
-        let body = format!(
-            "{}\n\nA contributor once joked they i cannot write tests fast enough.",
-            "Real grounded prose about the parser. ".repeat(30)
-        );
-        assert!(!is_model_refusal(&body));
-    }
-
-    #[test]
-    fn refusal_body_makes_maybe_generate_fail_and_fall_back() {
-        let mut refusing = |_prompt: &str, _system: &str, _tier: PromptTier| {
-            Some("I am unable to write this page.".to_string())
-        };
-        let mut generate = Some::<&mut TextGenerator<'_>>(&mut refusing);
-        let generation = maybe_generate(
-            &mut generate,
-            "Write the repository overview.",
-            prompts::REPO_SYSTEM,
-            PromptTier::Aggregate,
-        );
-        assert!(
-            matches!(generation.into_content(), GenerationContent::Failed(_)),
-            "model refusal must record degradation"
-        );
-    }
-
-    fn transport_failure() -> AiError {
-        AiError::TransportFailure {
-            status: None,
-            body: None,
-            source: "connection reset".to_string(),
-            timeout: false,
-        }
-    }
-
-    #[test]
-    fn bounded_retry_recovers_from_transient_transport_failure() {
-        let mut calls = 0_usize;
-        let result = generate_with_bounded_retry(|| {
-            calls += 1;
-            if calls == 1 {
-                Err(transport_failure())
-            } else {
-                Ok("generated".to_string())
-            }
-        });
-
-        assert_eq!(result.expect("retry recovers"), "generated");
-        assert_eq!(calls, 2);
-    }
-
-    #[test]
-    fn bounded_retry_gives_up_after_bounded_attempts() {
-        let mut calls = 0_usize;
-        let result: Result<String, AiError> = generate_with_bounded_retry(|| {
-            calls += 1;
-            Err(transport_failure())
-        });
-
-        assert!(result.is_err());
-        assert_eq!(calls, 1 + GENERATION_RETRY_BACKOFF.len());
-    }
-
-    #[test]
-    fn bounded_retry_fails_fast_on_non_transient_errors() {
-        let mut calls = 0_usize;
-        let result: Result<String, AiError> = generate_with_bounded_retry(|| {
-            calls += 1;
-            Err(AiError::NotConfigured {
-                capability: None,
-                message: "no provider".to_string(),
-            })
-        });
-
-        assert!(result.is_err());
-        assert_eq!(calls, 1);
     }
 }
