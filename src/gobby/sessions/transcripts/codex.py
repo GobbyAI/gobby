@@ -30,6 +30,8 @@ from datetime import UTC, datetime
 from typing import Any, Literal
 
 from gobby.adapters.codex_impl.item_normalization import (
+    extract_direct_exec_command,
+    extract_direct_exec_terminal_result,
     extract_functions_exec_command,
     extract_functions_write_stdin_session_id,
     extract_wait_cell_id,
@@ -53,6 +55,7 @@ _ROLE_MAP = {
 }
 
 _NESTED_EXEC_NAMES = frozenset({"exec", "functions.exec"})
+_DIRECT_EXEC_NAMES = frozenset({"exec_command", "functions.exec_command"})
 _NESTED_WAIT_NAMES = frozenset({"wait", "functions.wait"})
 _MAX_PENDING_NESTED_EXEC = 64
 _TOOL_CALL_PAYLOAD_TYPES = frozenset(
@@ -85,6 +88,7 @@ class _PendingNestedExec:
     literal_command: str | None = None
     cell_id: str | None = None
     session_id: str | None = None
+    direct: bool = False
 
     def to_state(self) -> dict[str, Any]:
         return {
@@ -92,6 +96,7 @@ class _PendingNestedExec:
             "literal_command": self.literal_command,
             "cell_id": self.cell_id,
             "session_id": self.session_id,
+            "direct": self.direct,
         }
 
     @classmethod
@@ -102,6 +107,7 @@ class _PendingNestedExec:
         literal_command = value.get("literal_command")
         cell_id = value.get("cell_id")
         session_id = value.get("session_id")
+        direct = value.get("direct", False)
         if not isinstance(outer_call_id, str) or not outer_call_id:
             return None
         if literal_command is not None and not isinstance(literal_command, str):
@@ -110,11 +116,14 @@ class _PendingNestedExec:
             return None
         if session_id is not None and not isinstance(session_id, str):
             return None
+        if not isinstance(direct, bool):
+            return None
         return cls(
             outer_call_id=outer_call_id,
             literal_command=literal_command,
             cell_id=cell_id,
             session_id=session_id,
+            direct=direct,
         )
 
 
@@ -508,6 +517,18 @@ class CodexTranscriptParser(BaseTranscriptParser):
         if not isinstance(call_id, str) or not call_id or not isinstance(name, str):
             return
 
+        if name in _DIRECT_EXEC_NAMES:
+            literal_command = extract_direct_exec_command(_tool_call_arguments(payload))
+            if literal_command is None:
+                return
+            pending = _PendingNestedExec(
+                outer_call_id=call_id,
+                literal_command=literal_command,
+                direct=True,
+            )
+            self._set_pending(self._pending_nested_exec_calls, call_id, pending)
+            return
+
         if name in _NESTED_EXEC_NAMES:
             arguments = _tool_call_arguments(payload)
             literal_command = extract_functions_exec_command(arguments)
@@ -571,6 +592,7 @@ class CodexTranscriptParser(BaseTranscriptParser):
                 literal_command=pending.literal_command,
                 cell_id=yielded_cell_id,
                 session_id=pending.session_id,
+                direct=pending.direct,
             )
             self._set_pending(
                 self._pending_nested_exec_cells,
@@ -584,7 +606,11 @@ class CodexTranscriptParser(BaseTranscriptParser):
             if current is not None and current.outer_call_id == pending.outer_call_id:
                 self._pending_nested_exec_cells.pop(pending.cell_id, None)
 
-        results = _decoded_exec_results(output)
+        if pending.direct:
+            direct_result = extract_direct_exec_terminal_result(output)
+            results = [direct_result] if direct_result is not None else []
+        else:
+            results = _decoded_exec_results(output)
         terminal_results = [
             result for result in results if _definitive_exit_code(result) is not None
         ]
@@ -602,6 +628,7 @@ class CodexTranscriptParser(BaseTranscriptParser):
                     outer_call_id=pending.outer_call_id,
                     literal_command=pending.literal_command,
                     session_id=session_id,
+                    direct=pending.direct,
                 )
                 self._set_pending(
                     self._pending_nested_exec_sessions,

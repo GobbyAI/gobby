@@ -99,7 +99,7 @@ def extract_functions_exec_command(arguments: Any) -> str | None:
     return command if isinstance(command, str) and command else None
 
 
-def _extract_direct_exec_command(arguments: Any) -> str | None:
+def extract_direct_exec_command(arguments: Any) -> str | None:
     """Extract the command from one direct Codex ``exec_command`` call."""
     decoded = arguments
     if isinstance(arguments, str):
@@ -176,7 +176,7 @@ def _terminal_exec_results(data: dict[str, Any]) -> list[dict[str, Any]]:
     return results
 
 
-def _direct_exec_terminal_result(value: Any) -> dict[str, Any] | None:
+def extract_direct_exec_terminal_result(value: Any) -> dict[str, Any] | None:
     """Read one exact terminal result from Codex's direct exec envelope."""
     matches: list[dict[str, Any]] = []
     for text in _iter_wrapper_output_text(value):
@@ -423,12 +423,12 @@ def build_tool_event_data(
                 item_data["_original_tool_name"] = dynamic_name
                 item_data["_dynamic_exec_command"] = command
         elif dynamic_name in _DIRECT_EXEC_COMMAND_NAMES:
-            command = _extract_direct_exec_command(item_data.get("arguments"))
+            command = extract_direct_exec_command(item_data.get("arguments"))
             if command is not None:
                 item_data["_original_tool_name"] = dynamic_name
                 item_data["tool_name"] = "Bash"
                 item_data["tool_input"] = {"command": command}
-                terminal_result = _direct_exec_terminal_result(item_data.get("contentItems"))
+                terminal_result = extract_direct_exec_terminal_result(item_data.get("contentItems"))
                 if terminal_result is not None:
                     item_data["tool_result"] = terminal_result
 

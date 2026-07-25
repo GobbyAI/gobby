@@ -55,6 +55,34 @@ def _output(call_id: str, *texts: str) -> str:
     )
 
 
+def _direct_call(call_id: str, command: str) -> str:
+    return _response_item(
+        {
+            "type": "function_call",
+            "call_id": call_id,
+            "name": "exec_command",
+            "arguments": json.dumps({"cmd": command}),
+        }
+    )
+
+
+def _direct_output(call_id: str, exit_code: int) -> str:
+    return _response_item(
+        {
+            "type": "function_call_output",
+            "call_id": call_id,
+            "output": (
+                "Chunk ID: sanitized\n"
+                "Wall time: 0.1234 seconds\n"
+                f"Process exited with code {exit_code}\n"
+                "Final output:\n"
+                "focused verification output\n"
+            ),
+        },
+        second=1,
+    )
+
+
 def _setup_processor(
     temp_db: Any,
     session_manager: Any,
@@ -82,6 +110,111 @@ def _setup_processor(
     )
     processor.register_session(session.id, str(transcript_path), source="codex")
     return processor, session, task
+
+
+@pytest.mark.parametrize(
+    ("exit_code", "normalized_outcome"),
+    [(0, "success"), (7, "failure")],
+)
+async def test_direct_exec_command_persists_exact_terminal_receipt(
+    temp_db: Any,
+    session_manager: Any,
+    sample_project: dict[str, Any],
+    tmp_path: Path,
+    exit_code: int,
+    normalized_outcome: str,
+) -> None:
+    call_id = f"call_direct_{exit_code}"
+    command = "GOBBY_TEST_PROTECT=1 uv run pytest tests/sessions/ -q"
+    transcript_path = tmp_path / f"rollout-direct-{exit_code}.jsonl"
+    transcript_path.write_text(
+        "\n".join(
+            [
+                _direct_call(call_id, command),
+                _direct_output(call_id, exit_code),
+            ]
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    processor, session, task = _setup_processor(
+        temp_db,
+        session_manager,
+        sample_project,
+        transcript_path,
+        external_suffix=f"direct-{exit_code}",
+    )
+
+    await processor._process_session(session.id, str(transcript_path), at_eof=True)
+
+    receipts = VerificationReceiptStore(temp_db).list_for_task(
+        sample_project["id"],
+        task.id,
+    )
+    assert len(receipts) == 1
+    assert receipts[0].execution_id == f"{call_id}:0"
+    assert receipts[0].command == command
+    assert receipts[0].exit_code == exit_code
+    assert receipts[0].normalized_outcome == normalized_outcome
+
+
+@pytest.mark.parametrize(
+    "output",
+    [
+        (
+            "Chunk ID: sanitized\n"
+            "Wall time: 0.1234 seconds\n"
+            "Process running with session ID 123\n"
+            "Live output:\n"
+        ),
+        '{"exit_code": 0, "output": "untrusted summary"}',
+        "human summary without a structured outcome",
+    ],
+)
+async def test_direct_exec_command_rejects_nonterminal_or_malformed_output(
+    temp_db: Any,
+    session_manager: Any,
+    sample_project: dict[str, Any],
+    tmp_path: Path,
+    output: str,
+) -> None:
+    call_id = "call_direct_unknown"
+    transcript_path = tmp_path / "rollout-direct-unknown.jsonl"
+    transcript_path.write_text(
+        "\n".join(
+            [
+                _direct_call(call_id, "uv run ruff check src/"),
+                _response_item(
+                    {
+                        "type": "function_call_output",
+                        "call_id": call_id,
+                        "output": output,
+                    },
+                    second=1,
+                ),
+            ]
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    processor, session, task = _setup_processor(
+        temp_db,
+        session_manager,
+        sample_project,
+        transcript_path,
+        external_suffix=f"direct-unknown-{len(output)}",
+    )
+
+    await processor._process_session(session.id, str(transcript_path), at_eof=True)
+
+    assert (
+        VerificationReceiptStore(temp_db).list_for_task(
+            sample_project["id"],
+            task.id,
+        )
+        == []
+    )
+    assert processor._byte_offsets[session.id] == transcript_path.stat().st_size
 
 
 async def test_fast_content_items_shape_persists_acknowledged_receipt(
