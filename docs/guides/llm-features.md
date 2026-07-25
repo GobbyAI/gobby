@@ -7,8 +7,8 @@ their external form; for task features that is `gobby-tasks`, matching the MCP s
 
 | Profile | Default candidates |
 | --- | --- |
-| `feature_low` | `claude/haiku`, `codex/gpt-5.6-luna`, `codex/gpt-5.4-mini` |
-| `feature_mid` | `claude/sonnet`, `codex/gpt-5.6-terra` |
+| `feature_low` | `claude/haiku`, `codex/gpt-5.6-luna` |
+| `feature_mid` | `codex/gpt-5.6-terra`, `claude/sonnet` |
 | `feature_high` | `codex/gpt-5.6-sol` (`xhigh` reasoning), `claude/opus` (`high` reasoning) |
 
 Built-in defaults are cloud-only. Local runtimes are opt-in named endpoints and
@@ -17,35 +17,37 @@ should be explicit final fallbacks:
 ```yaml
 ai:
   generation:
-    local:
-      endpoints:
-        lm-studio:
-          provider: lmstudio
-          api_base: http://localhost:1234
-          model: google/gemma-4-26b-a4b-qat
-          api_key: $secret:LM_STUDIO_KEY
-        ollama:
-          provider: ollama
-          api_base: http://localhost:11434
-          model: qwen3
-        generic:
-          provider: openai-compatible
-          api_base: http://localhost:8000/v1
-          model: local-model
+    endpoints:
+      lm-studio:
+        protocol: lmstudio
+        wire_api: chat-completions
+        api_base: http://localhost:1234
+        model: google/gemma-4-26b-a4b-qat
+        api_key: $secret:LM_STUDIO_KEY
+      ollama:
+        protocol: ollama
+        wire_api: chat-completions
+        api_base: http://localhost:11434
+        model: qwen3
+      generic:
+        protocol: openai-compatible
+        wire_api: chat-completions
+        api_base: http://localhost:8000/v1
+        model: local-model
     profile_defaults:
       feature_low:
-        - codex/gpt-5.4-mini
         - claude/haiku
-        - local:lm-studio/google/gemma-4-26b-a4b-qat
+        - codex/gpt-5.6-luna
+        - endpoint:lm-studio/google/gemma-4-26b-a4b-qat
 ```
 
-Feature candidates use `local:<endpoint>/<model>` to pin a specific endpoint.
+Feature candidates use `endpoint:<name>/<model>` to pin a specific endpoint.
 Selection skips to the next candidate when the endpoint is unavailable or does not
-serve the model. Direct HTTP text generation uses `provider="local:<endpoint>"`
+serve the model. Direct HTTP text generation uses `provider="endpoint:<name>"`
 with `model="<model>"`.
 
-Bare `local` is not a daemon text-generation provider. Local vision extraction is
-also exposed through named providers such as `local:lm-studio`, and only for
+Bare `endpoint` is invalid; selectors and providers must name an endpoint. Vision
+extraction is exposed through named providers such as `endpoint:lm-studio`, only for
 endpoints configured with `vision_extract: true`.
 
 ## Feature Routes

@@ -98,11 +98,10 @@ DEFAULT_PROFILE_CANDIDATES: dict[FeatureProfile, tuple[FeatureCandidateConfig, .
     FeatureProfile.LOW: (
         FeatureCandidateConfig(candidate="claude/haiku"),
         FeatureCandidateConfig(candidate="codex/gpt-5.6-luna"),
-        FeatureCandidateConfig(candidate="codex/gpt-5.4-mini"),
     ),
     FeatureProfile.MID: (
-        FeatureCandidateConfig(candidate="claude/sonnet"),
         FeatureCandidateConfig(candidate="codex/gpt-5.6-terra"),
+        FeatureCandidateConfig(candidate="claude/sonnet"),
     ),
     FeatureProfile.HIGH: (
         FeatureCandidateConfig(candidate="codex/gpt-5.6-sol", reasoning_effort="xhigh"),
