@@ -474,12 +474,11 @@ async def _apply_window_rename(
         mgr = _tmux_manager_for_session(session, terminal_context)
         applied = bool(await mgr.rename_window(pane, resolved))
     except Exception as e:
-        logger.debug(
-            "tmux window rename errored for %s pane=%s socket=%s title=%r: %s",
+        logger.warning(
+            "tmux window rename errored for %s pane=%s socket=%s: %s",
             ref,
             pane,
             socket,
-            resolved,
             e,
         )
         return False
@@ -492,13 +491,12 @@ async def _apply_window_rename(
             resolved,
         )
     else:
-        logger.debug(
-            "tmux window rename did not apply for %s pane=%s socket=%s title=%r "
+        logger.warning(
+            "tmux window rename did not apply for %s pane=%s socket=%s "
             "(target missing or tmux error)",
             ref,
             pane,
             socket,
-            resolved,
         )
     return applied
 
@@ -524,7 +522,9 @@ async def _managed_window_name_needs_repair(
     current = window_name.strip()
     if not current:
         return False
-    return _resolve_window_title(session, terminal_context, current) != current
+    persisted_title = getattr(session, "title", None)
+    title = persisted_title if isinstance(persisted_title, str) else ""
+    return _resolve_window_title(session, terminal_context, title) != current
 
 
 async def _rename_tmux_window(session: Any, title: str) -> None:
@@ -549,8 +549,8 @@ async def enforce_window_name_if_unmanaged(session: Any) -> bool:
 
     Used by the periodic repair sweep. A window Gobby has already named has
     ``automatic-rename`` off (``rename_window`` disables it); such windows are
-    left untouched unless their current title still normalizes to a different
-    Gobby-owned title. Returns True when a rename was issued.
+    left untouched only when their current title matches the authoritative
+    persisted session title. Returns True when a rename was issued.
 
     This is the durable safety net for sessions whose session-start rename never
     lands — notably interactive Claude sessions in a VSCode tmux pane, which keep
@@ -558,8 +558,8 @@ async def enforce_window_name_if_unmanaged(session: Any) -> bool:
     (e.g. its version string).
 
     Returns False when terminal context is missing, the tmux pane is absent, the
-    window cannot be inspected, or the window is already managed and has no
-    unresolved session placeholder.
+    window cannot be inspected, or the window already matches the persisted
+    session title.
     """
     tc = parse_terminal_context_value(getattr(session, "terminal_context", None))
     if not tc:

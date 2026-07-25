@@ -761,17 +761,18 @@ class TestRenameTmuxWindow:
         assert manager.rename_calls == [("%10", "Named Socket Title")]
 
     @pytest.mark.asyncio
-    async def test_failure_does_not_propagate(
+    async def test_failure_does_not_propagate_and_logs_warning(
         self,
         caplog: pytest.LogCaptureFixture,
     ) -> None:
-        """Rename failures are swallowed, never propagated."""
+        """Rename failures are visible but never propagated."""
         from gobby.workflows.summary_actions import _rename_tmux_window
 
         _RecordingTmuxManager.instances = []
         session = MagicMock()
         session.terminal_context = {"tmux_pane": "%42"}
         session.agent_depth = 0
+        session.ref = "#99"
 
         class FailingTmuxManager(_RecordingTmuxManager):
             async def rename_window(self, target, title):
@@ -785,7 +786,9 @@ class TestRenameTmuxWindow:
 
         assert result is None
         assert "tmux window rename errored" in caplog.text
-        assert all(record.levelno < logging.WARNING for record in caplog.records)
+        assert "#99 pane=%42 socket=default" in caplog.text
+        assert "title=" not in caplog.text
+        assert any(record.levelno == logging.WARNING for record in caplog.records)
 
 
 # =============================================================================
@@ -843,17 +846,17 @@ class TestEnforceWindowNameIfUnmanaged:
 
     @pytest.mark.asyncio
     async def test_skips_window_already_managed(self) -> None:
-        """A window Gobby already named (automatic-rename off) is left untouched."""
+        """A managed window matching the persisted title is left untouched."""
         from gobby.workflows.summary_actions import enforce_window_name_if_unmanaged
 
         _EnforceTmuxManager.instances = []
         _EnforceTmuxManager.auto_rename_return = False
-        _EnforceTmuxManager.window_name_return = "#99 gobby"
+        _EnforceTmuxManager.window_name_return = "#99 Session title"
         session = MagicMock()
         session.terminal_context = {"tmux_pane": "%42", "cwd": "/work/repos/gobby/"}
         session.agent_depth = 0
         session.ref = "#99"
-        session.title = ""
+        session.title = "Session title"
 
         with patch("gobby.sessions.tmux_context.TmuxSessionManager", _EnforceTmuxManager):
             acted = await enforce_window_name_if_unmanaged(session)
@@ -861,6 +864,27 @@ class TestEnforceWindowNameIfUnmanaged:
         assert acted is False
         rename_calls = [c for m in _EnforceTmuxManager.instances for c in m.rename_calls]
         assert rename_calls == []
+
+    @pytest.mark.asyncio
+    async def test_repairs_managed_window_with_stale_persisted_title(self) -> None:
+        """A managed window follows a newer persisted session title."""
+        from gobby.workflows.summary_actions import enforce_window_name_if_unmanaged
+
+        _EnforceTmuxManager.instances = []
+        _EnforceTmuxManager.auto_rename_return = False
+        _EnforceTmuxManager.window_name_return = "#99 Old title"
+        session = MagicMock()
+        session.terminal_context = {"tmux_pane": "%42"}
+        session.agent_depth = 0
+        session.ref = "#99"
+        session.title = "New title"
+
+        with patch("gobby.sessions.tmux_context.TmuxSessionManager", _EnforceTmuxManager):
+            acted = await enforce_window_name_if_unmanaged(session)
+
+        assert acted is True
+        rename_calls = [c for m in _EnforceTmuxManager.instances for c in m.rename_calls]
+        assert rename_calls == [("%42", "#99 New title")]
 
     @pytest.mark.asyncio
     async def test_repairs_managed_window_with_unresolved_placeholder(self) -> None:
