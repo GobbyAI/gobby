@@ -58,7 +58,11 @@ async def test_create_task_fails_closed_when_session_project_lookup_errors(
     ):
         result = await registry.call(
             "create_task",
-            {"title": "Must not cross projects", "category": "test"},
+            {
+                "title": "Must not cross projects",
+                "category": "test",
+                "validation_criteria": "Test task completion is observable.",
+            },
         )
 
     assert "session database unavailable" in result["error"]
@@ -135,6 +139,7 @@ async def test_create_task_does_not_accept_or_seed_stage_caps(
                 "title": "Metadata-only review anchor",
                 "category": "planning",
                 "task_type": "review_anchor",
+                "validation_criteria": "The review anchor metadata is stored.",
             },
         )
 
@@ -162,6 +167,7 @@ async def test_create_and_update_task_round_trip_schedule_fields(
             {
                 "title": "Scheduled task",
                 "category": "research",
+                "validation_criteria": "The schedule fields are stored.",
                 "start_date": "2026-07-14",
                 "due_date": "2026-07-21",
             },
@@ -235,6 +241,7 @@ async def test_initialize_task_manifest_persists_review_anchor_cap(
         title="Capped review anchor",
         category="planning",
         task_type="review_anchor",
+        validation_criteria="Test task completion is observable.",
     )
     ctx = RegistryContext(task_manager=manager)
     registry = create_stage_ops_registry(ctx)
@@ -269,6 +276,7 @@ async def test_initialize_task_manifest_rejects_unknown_stage(
         title="Bad stage task",
         category="planning",
         task_type="review_anchor",
+        validation_criteria="Test task completion is observable.",
     )
     registry = create_stage_ops_registry(RegistryContext(task_manager=manager))
 

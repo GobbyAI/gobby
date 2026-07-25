@@ -46,8 +46,12 @@ def dep_manager(temp_db):
 def test_orphan_dependencies(manager, dep_manager, sample_project):
     """Test detection and cleanup of orphan dependencies."""
     proj_id = sample_project["id"]
-    t1 = manager.create_task(proj_id, "Task 1")
-    t2 = manager.create_task(proj_id, "Task 2")
+    t1 = manager.create_task(
+        proj_id, "Task 1", validation_criteria="Test task completion is observable."
+    )
+    t2 = manager.create_task(
+        proj_id, "Task 2", validation_criteria="Test task completion is observable."
+    )
 
     # Create valid dependency
     dep_manager.add_dependency(t2.id, t1.id)
@@ -80,7 +84,9 @@ def test_orphan_dependencies(manager, dep_manager, sample_project):
 def test_invalid_projects(manager, sample_project):
     """Test detection of tasks with invalid projects."""
     proj_id = sample_project["id"]
-    manager.create_task(proj_id, "Valid Task")
+    manager.create_task(
+        proj_id, "Valid Task", validation_criteria="Test task completion is observable."
+    )
 
     validator = TaskValidator(manager)
     orphan_task_id = str(uuid4())
@@ -88,13 +94,16 @@ def test_invalid_projects(manager, sample_project):
     with _deferred_constraints_rollback(manager.db):
         manager.db.execute(
             """
-            INSERT INTO tasks (id, project_id, title, created_at, updated_at)
-            VALUES (%s, %s, %s, %s, %s)
+            INSERT INTO tasks (
+                id, project_id, title, validation_criteria, created_at, updated_at
+            )
+            VALUES (%s, %s, %s, %s, %s, %s)
             """,
             (
                 orphan_task_id,
                 missing_project_id,
                 "Orphan Project Task",
+                "The invalid project reference is detected.",
                 "2023-01-01",
                 "2023-01-01",
             ),
@@ -110,8 +119,12 @@ def test_invalid_projects(manager, sample_project):
 def test_cycles_check(manager, dep_manager, sample_project):
     """Test cycle detection via validator."""
     proj_id = sample_project["id"]
-    t1 = manager.create_task(proj_id, "T1")
-    t2 = manager.create_task(proj_id, "T2")
+    t1 = manager.create_task(
+        proj_id, "T1", validation_criteria="Test task completion is observable."
+    )
+    t2 = manager.create_task(
+        proj_id, "T2", validation_criteria="Test task completion is observable."
+    )
 
     dep_manager.add_dependency(t2.id, t1.id)
 

@@ -29,7 +29,11 @@ def service(task_manager, run_manager):
 def test_apply_run_rolls_back_partial_writes_on_failure(
     service, task_manager, run_manager, sample_project
 ):
-    parent = task_manager.create_task(project_id=sample_project["id"], title="Parent expansion")
+    parent = task_manager.create_task(
+        project_id=sample_project["id"],
+        title="Parent expansion",
+        validation_criteria="Test task completion is observable.",
+    )
     listener_calls: list[str] = []
     task_manager.add_change_listener(lambda: listener_calls.append("changed"))
     run = run_manager.create(
@@ -47,6 +51,7 @@ def test_apply_run_rolls_back_partial_writes_on_failure(
                 "title": "First child",
                 "category": "docs",
                 "affected_files": ["docs/plan.md"],
+                "validation": "Test task completion is observable.",
             }
         ],
         "dependencies": [],

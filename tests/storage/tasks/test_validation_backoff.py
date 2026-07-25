@@ -36,6 +36,7 @@ def test_record_failure_increments_and_schedules_retry(
     task = LocalTaskManager(temp_db).create_task(
         project_id=sample_project["id"],
         title="Backoff task",
+        validation_criteria="Test task completion is observable.",
     )
     store = TaskValidationBackoffStore(temp_db)
     now = datetime(2026, 1, 1, tzinfo=UTC)
@@ -90,6 +91,7 @@ def test_should_escalate_after_threshold(
     task = LocalTaskManager(temp_db).create_task(
         project_id=sample_project["id"],
         title="Escalate task",
+        validation_criteria="Test task completion is observable.",
     )
     store = TaskValidationBackoffStore(temp_db)
     now = datetime(2026, 1, 1, tzinfo=UTC)
@@ -109,6 +111,7 @@ def test_clear_resets_backoff(
     task = LocalTaskManager(temp_db).create_task(
         project_id=sample_project["id"],
         title="Reset task",
+        validation_criteria="Test task completion is observable.",
     )
     store = TaskValidationBackoffStore(temp_db)
     now = datetime(2026, 1, 1, tzinfo=UTC)

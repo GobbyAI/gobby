@@ -21,7 +21,11 @@ pytestmark = pytest.mark.unit
 
 
 def _task(task_manager: LocalTaskManager, sample_project):
-    return task_manager.create_task(project_id=sample_project["id"], title="Expand me")
+    return task_manager.create_task(
+        project_id=sample_project["id"],
+        title="Expand me",
+        validation_criteria="Test task completion is observable.",
+    )
 
 
 def _complete_run(run_manager: LocalExpansionRunManager, run_id: str) -> ExpansionRun:
@@ -406,6 +410,7 @@ def test_stage_pipeline_mutex_suppresses_expansion_terminal_event(
         project_id=sample_project["id"],
         title="Pipeline expansion",
         task_type="epic",
+        validation_criteria="Test task completion is observable.",
     )
     task_manager.update_task(task.id, isolation="worktree", allow_automation=True)
     initialize_manifest(

@@ -453,8 +453,8 @@ async def validate_leaf_task_with_llm(
     validation_config: "TaskValidationConfig | None",
     file_context_text: str | None = None,
     *,
-    is_documentation_only: bool = False,
     verification_receipt_text: str | None = None,
+    admissible_evidence_ids: list[str] | None = None,
     read_only: bool = False,
 ) -> ValidationResult:
     """Run LLM validation on a leaf task.
@@ -470,26 +470,6 @@ async def validate_leaf_task_with_llm(
     Returns:
         ValidationResult indicating if task can be closed
     """
-    # Auto-skip LLM validation for doc-only changes
-    if is_documentation_only:
-        logger.info("Skipping LLM validation for task %s: doc-only changes", task.id)
-        feedback = "Auto-validated: documentation-only changes"
-        if not read_only:
-            _record_validation_iteration(
-                task,
-                ctx,
-                status="valid",
-                feedback=feedback,
-                context_type="documentation_diff",
-                validator_type="automatic",
-            )
-        return ValidationResult(
-            can_close=True,
-            validation_status="valid",
-            validation_feedback=feedback,
-            reset_reason="documentation_auto_validation",
-        )
-
     # Skip the LLM call entirely while an infrastructure-failure backoff is active,
     # so a generation outage does not re-run validation every heartbeat.
     backoff_store = TaskValidationBackoffStore(ctx.task_manager.db)
@@ -536,6 +516,7 @@ async def validate_leaf_task_with_llm(
         category=task.category,
         file_context_text=file_context_text,
         verification_receipt_text=verification_receipt_text,
+        admissible_evidence_ids=admissible_evidence_ids or [],
         lessons_section=lessons_section,
     )
     result.diagnostics.extend(recall_diagnostics)
@@ -731,6 +712,9 @@ async def validate_leaf_task_with_llm(
             preview_extra = {
                 "validation_status": validation_status,
                 "failure_category": failure_category.value,
+                "criterion_results": [
+                    criterion_result.to_dict() for criterion_result in result.criterion_results
+                ],
             }
             if result.verdict_override is not None:
                 preview_extra["verdict_override"] = result.verdict_override
@@ -787,6 +771,9 @@ async def validate_leaf_task_with_llm(
             "validation_status": validation_status,
             "validation_fail_count": fail_count,
             "failure_category": failure_category.value,
+            "criterion_results": [
+                criterion_result.to_dict() for criterion_result in result.criterion_results
+            ],
         }
         if result.verdict_override is not None:
             extra["verdict_override"] = result.verdict_override
@@ -845,7 +832,12 @@ async def validate_leaf_task_with_llm(
     return ValidationResult(
         can_close=True,
         extra=_with_validation_diagnostics(
-            {"recurring_validation_candidates": recurring_validation_candidates},
+            {
+                "recurring_validation_candidates": recurring_validation_candidates,
+                "criterion_results": [
+                    criterion_result.to_dict() for criterion_result in result.criterion_results
+                ],
+            },
             result.diagnostics,
         ),
         validation_status="valid",

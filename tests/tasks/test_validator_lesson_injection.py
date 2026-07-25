@@ -120,6 +120,14 @@ def _valid_response() -> dict[str, object]:
         "status": "valid",
         "feedback": "Focused validation passes.",
         "blocking_reasons": [],
+        "criterion_results": [
+            {
+                "criterion": "Focused validation evidence is complete.",
+                "status": "satisfied",
+                "evidence_ids": ["evidence-1"],
+                "explanation": "The focused receipt records a successful current result.",
+            }
+        ],
         "issues": [],
         "current_failure_evidence": [],
     }
@@ -143,6 +151,8 @@ async def test_lessons_section_empty_safe(
         _context(manager, service),
         task.id,
         validator.config,
+        verification_receipt_text="EVIDENCE_ID: evidence-1\nOUTCOME: success",
+        admissible_evidence_ids=["evidence-1"],
         read_only=True,
     )
 
@@ -257,6 +267,8 @@ async def test_recall_failure_diagnostic(
         _context(manager, _RecallService()),
         task.id,
         validator.config,
+        verification_receipt_text="EVIDENCE_ID: evidence-1\nOUTCOME: success",
+        admissible_evidence_ids=["evidence-1"],
         read_only=True,
     )
     with caplog.at_level(logging.WARNING):
@@ -270,6 +282,8 @@ async def test_recall_failure_diagnostic(
             ),
             task.id,
             validator.config,
+            verification_receipt_text="EVIDENCE_ID: evidence-1\nOUTCOME: success",
+            admissible_evidence_ids=["evidence-1"],
             read_only=True,
         )
 

@@ -17,7 +17,11 @@ def make_expansion_qa_case(temp_db: Any, project_manager: Any, repo_path: Path) 
     project = project_manager.create(name="qa-project", repo_path=str(repo_path))
     task_manager = LocalTaskManager(temp_db)
     registry = create_task_ops_registry(task_manager)
-    parent = task_manager.create_task(project_id=project.id, title="Expansion parent")
+    parent = task_manager.create_task(
+        project_id=project.id,
+        title="Expansion parent",
+        validation_criteria="Test task completion is observable.",
+    )
     plan_rel = Path(".gobby/plans/task-qa.md")
     plan_path = repo_path / plan_rel
     plan_path.parent.mkdir(parents=True, exist_ok=True)

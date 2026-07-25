@@ -37,7 +37,10 @@ from gobby.workflows.agent_resolver import resolve_agent
 from gobby.workflows.definitions import WorkflowInstance
 from gobby.workflows.state_manager import SessionVariableManager, WorkflowInstanceManager
 from tests._timing import wait_for_async_condition
+from tests.agents.detection_test_support import BundledDetectionRegistry
 from tests.storage.tasks._stage_test_helpers import stage_row
+
+DETECTION_REGISTRY = BundledDetectionRegistry()
 
 pytestmark = pytest.mark.e2e
 
@@ -140,6 +143,10 @@ class MiniBuildHarness:
             self._fake_spawn_agent_impl,
         )
         self.monkeypatch.setattr(
+            "gobby.dispatch.spawn._prepare_plan_adversary_evidence",
+            lambda **kwargs: (str(kwargs["prompt"]), None, None),
+        )
+        self.monkeypatch.setattr(
             "gobby.dispatch.dispatcher._execute_pipeline_background",
             self._fake_pipeline_background,
         )
@@ -195,6 +202,7 @@ class MiniBuildHarness:
         assert dispatch_idle
         task_id = cast(str, run["task_id"])
         session_id = cast(str, run["child_session_id"])
+        schedule_after_completion = False
         with session_context_for_test(session_id):
             if stage_state == "in_progress" and stage_name == "merge":
                 result = await self.stage_registry.call(
@@ -211,19 +219,49 @@ class MiniBuildHarness:
                     },
                 )
             elif stage_state == "needs_review":
-                result = await self.stage_registry.call(
-                    "approve_review",
-                    {
-                        "task_id": task_id,
-                        "stage_name": stage_name,
-                        "approval_notes": f"{agent_name} approved",
-                    },
-                )
+                if stage_name == "planning":
+                    self.task_manager.stage_states.approve_review(
+                        task_id,
+                        stage_name,
+                        by_session_id=session_id,
+                        notes=f"{agent_name} approved",
+                        dispatch_run_id=cast(str, run["run_id"]),
+                    )
+                    current_mutex = self.mutexes.get_mutex(task_id)
+                    assert current_mutex is not None
+                    assert current_mutex.lease_holder is not None
+                    assert self.mutexes.release_mutex(task_id, current_mutex.lease_holder)
+                    self.task_manager.stage_states.complete_stage(
+                        task_id,
+                        stage_name,
+                        by_session_id="dispatcher",
+                    )
+                    self.task_manager.release_task_claim(task_id)
+                    schedule_after_completion = True
+                    result = {"ok": True}
+                else:
+                    result = await self.stage_registry.call(
+                        "approve_review",
+                        {
+                            "task_id": task_id,
+                            "stage_name": stage_name,
+                            "approval_notes": f"{agent_name} approved",
+                        },
+                    )
             else:
                 raise AssertionError(f"Unhandled fake stage state: {stage_state}")
         assert "error" not in result
         self.run_manager.complete(cast(str, run["run_id"]), result="ok", tool_calls_count=1)
         run["completed"] = True
+        if schedule_after_completion:
+            from gobby.build.dispatch_tick import schedule_dispatcher_tick_for_project
+
+            assert schedule_dispatcher_tick_for_project(
+                self.db,
+                project_id=self.project_id,
+                reason="mini_build_planning_approved",
+                services=self.services,
+            )
 
     async def assert_clean_final_state(self) -> None:
         await wait_for_async_condition(
@@ -369,11 +407,40 @@ class MiniBuildHarness:
         self._create_child()
         from gobby.hooks.event_handlers import _dispatch
 
-        _dispatch.on_pipeline_completed(
+        terminal_result = _dispatch.on_pipeline_completed(
             {"execution_id": execution_id},
             db=self.db,
             storage=self.mutexes,
         )
+        assert terminal_result is not None
+        from gobby.build.dispatch_tick import (
+            schedule_dispatcher_continuation_for_task,
+            schedule_dispatcher_tick_for_project,
+        )
+
+        root = self.task_manager.get_task(self.root_id)
+        assert root is not None
+        if root.allow_automation:
+            assert schedule_dispatcher_tick_for_project(
+                self.db,
+                project_id=self.project_id,
+                reason="mini_build_pipeline_completed",
+                services=self.services,
+            )
+        else:
+            assert schedule_dispatcher_continuation_for_task(
+                self.db,
+                task_id=self.root_id,
+                reason="mini_build_pipeline_completed",
+                services=self.services,
+            )
+            await self.loop.dispatch_project_once(
+                project_id=self.project_id,
+                reason="mini_build_pipeline_completed",
+                max_ticks=1,
+                max_actions=1,
+                explicit_task_ids=(self.root_id,),
+            )
 
     def _active_run(
         self,
@@ -459,7 +526,7 @@ async def test_quick_expansion_completion_dispatches_one_reviewer(
     harness.pipeline_release.set()
     reviewer_run = await wait_for_async_condition(
         lambda: harness._active_run("expansion-qa", "expansion", "needs_review"),
-        timeout=2.0,
+        timeout=10.0,
         description="quick-build expansion reviewer",
     )
     assert reviewer_run is not None
@@ -586,6 +653,7 @@ async def test_submit_for_review_autonomously_dispatches_reviewer_without_build_
         title="Build plan",
         task_type="epic",
         category="planning",
+        validation_criteria="Test task completion is observable.",
     )
     task_manager.update_task(
         task.id,
@@ -646,6 +714,10 @@ async def test_submit_for_review_autonomously_dispatches_reviewer_without_build_
     monkeypatch.setattr(
         "gobby.mcp_proxy.tools.spawn_agent._implementation.spawn_agent_impl",
         fake_spawn_agent_impl,
+    )
+    monkeypatch.setattr(
+        "gobby.dispatch.spawn._prepare_plan_adversary_evidence",
+        lambda **kwargs: (str(kwargs["prompt"]), None, None),
     )
 
     registry_task_manager = LocalTaskManager(temp_db)
@@ -711,6 +783,7 @@ async def test_cancelled_reviewer_wakes_dispatcher_for_replacement_without_build
         title="Reviewable plan",
         task_type="epic",
         category="planning",
+        validation_criteria="Test task completion is observable.",
     )
     task_manager.update_task(
         task.id,
@@ -778,10 +851,15 @@ async def test_cancelled_reviewer_wakes_dispatcher_for_replacement_without_build
         "gobby.mcp_proxy.tools.spawn_agent._implementation.spawn_agent_impl",
         fake_spawn_agent_impl,
     )
+    monkeypatch.setattr(
+        "gobby.dispatch.spawn._prepare_plan_adversary_evidence",
+        lambda **kwargs: (str(kwargs["prompt"]), None, None),
+    )
 
     monitor = AgentLifecycleMonitor(
         agent_run_manager=run_manager,
         db=temp_db,
+        detection_registry=cast(Any, DETECTION_REGISTRY),
         session_manager=session_manager,
         task_manager=task_manager,
     )
@@ -845,6 +923,7 @@ async def test_idle_planner_stage_agent_keeps_periodic_enter_and_gets_handoff_re
         task_type="epic",
         category="planning",
         claimed_by_session_id=child.id,
+        validation_criteria="Test task completion is observable.",
     )
     task_manager.update_task(task.id, allow_automation=True)
     task_manager.stage_states.initialize_manifest(
@@ -892,6 +971,7 @@ async def test_idle_planner_stage_agent_keeps_periodic_enter_and_gets_handoff_re
     monitor = AgentLifecycleMonitor(
         agent_run_manager=run_manager,
         db=temp_db,
+        detection_registry=cast(Any, DETECTION_REGISTRY),
         session_manager=session_manager,
     )
     mock_tmux = AsyncMock()

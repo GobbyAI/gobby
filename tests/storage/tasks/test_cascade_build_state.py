@@ -35,6 +35,7 @@ def test_cascade_build_state_updates_subtree_without_agent_or_lifecycle_fields(
         task_type="epic",
         category="planning",
         labels=["keep-me"],
+        validation_criteria="Test task completion is observable.",
     )
     child_epic = task_manager.create_task(
         project_id=sample_project["id"],
@@ -42,6 +43,7 @@ def test_cascade_build_state_updates_subtree_without_agent_or_lifecycle_fields(
         parent_task_id=epic.id,
         task_type="epic",
         category="planning",
+        validation_criteria="Test task completion is observable.",
     )
     leaf = task_manager.create_task(
         project_id=sample_project["id"],
@@ -50,12 +52,14 @@ def test_cascade_build_state_updates_subtree_without_agent_or_lifecycle_fields(
         category="code",
         assigned_agent="backend-developer",
         additional_skills=["sql-review"],
+        validation_criteria="Test task completion is observable.",
     )
     sibling = task_manager.create_task(
         project_id=sample_project["id"],
         title="Sibling task",
         parent_task_id=epic.id,
         category="docs",
+        validation_criteria="Test task completion is observable.",
     )
     task_manager.initialize_task_manifest(epic.id, stage_names=["development", "merge"])
 
@@ -99,6 +103,7 @@ def test_pristine_stage_prune_holds_dispatch_mutex_against_competing_start(
         project_id=sample_project["id"],
         title="Prunable child",
         category="code",
+        validation_criteria="Test task completion is observable.",
     )
     task_manager.initialize_task_manifest(task.id, stage_names=["development", "merge"])
     stage_states = task_manager.stage_states
@@ -141,6 +146,7 @@ def test_pristine_stage_prune_rechecks_state_after_acquiring_mutex(
         project_id=sample_project["id"],
         title="Progressed child",
         category="code",
+        validation_criteria="Test task completion is observable.",
     )
     task_manager.initialize_task_manifest(task.id, stage_names=["development", "merge"])
     original_enter = RuntimeDispatchMutex.__enter__
@@ -194,18 +200,21 @@ def test_cascade_reports_manifest_failure_without_enabling_failed_child(
         title="Automated epic",
         task_type="epic",
         category="planning",
+        validation_criteria="Test task completion is observable.",
     )
     failed_child = task_manager.create_task(
         project_id=sample_project["id"],
         title="Busy child",
         parent_task_id=epic.id,
         category="code",
+        validation_criteria="Test task completion is observable.",
     )
     healthy_child = task_manager.create_task(
         project_id=sample_project["id"],
         title="Healthy child",
         parent_task_id=epic.id,
         category="code",
+        validation_criteria="Test task completion is observable.",
     )
     task_manager.initialize_task_manifest(epic.id, stage_names=["development", "merge"])
     original_initialize = StageStatesManager.initialize_manifest
@@ -261,6 +270,7 @@ def test_cascade_can_force_merge_into_legacy_child_manifest_scope(
         title="Legacy parent scope",
         task_type="epic",
         category="planning",
+        validation_criteria="Test task completion is observable.",
     )
     child = task_manager.create_task(
         project_id=sample_project["id"],
@@ -268,6 +278,7 @@ def test_cascade_can_force_merge_into_legacy_child_manifest_scope(
         parent_task_id=epic.id,
         task_type="task",
         category="docs",
+        validation_criteria="Test task completion is observable.",
     )
     task_manager.initialize_task_manifest(epic.id, stage_names=["development"])
 

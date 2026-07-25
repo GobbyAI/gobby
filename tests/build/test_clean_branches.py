@@ -50,6 +50,7 @@ def test_branch_cleanup_ignores_branch_already_deleted(
         title="already cleaned branch",
         task_type="task",
         category="code",
+        validation_criteria="Branch cleanup tolerates an already-deleted branch.",
     )
     branch = branch_cleanup.default_task_branch_name(task)
 
@@ -91,6 +92,7 @@ def test_branch_cleanup_refuses_missing_project_repo_path(
         title="missing project repo path",
         task_type="task",
         category="code",
+        validation_criteria="Branch cleanup rejects a missing repository path.",
     )
 
     def fail_git_operation(*_args: object, **_kwargs: object) -> None:
@@ -127,6 +129,7 @@ async def test_clean_deletes_stale_task_branch(temp_db, tmp_path: Path) -> None:
         title="docs: audit long guide",
         task_type="task",
         category="docs",
+        validation_criteria="Test task completion is observable.",
     )
     stale_branch = default_task_branch_name(task)
     _git(repo, "branch", stale_branch)
@@ -167,6 +170,7 @@ async def test_clean_deletes_stale_integration_branch(temp_db, tmp_path: Path) -
         title="docs: complete 0.4.0 guides audit E2E",
         task_type="epic",
         category="docs",
+        validation_criteria="Test task completion is observable.",
     )
     stale_branch = integration_branch_name(epic)
     _git(repo, "branch", stale_branch)
@@ -204,6 +208,7 @@ async def test_clean_clears_dangling_integration_workspace_id(
         title="recover missing integration metadata",
         task_type="epic",
         category="code",
+        validation_criteria="Test task completion is observable.",
     )
     stale_branch = integration_branch_name(epic)
     stale_worktree_id = "5a540ab5-0ba4-5e8e-ad09-93e63ed828fd"
@@ -257,6 +262,7 @@ async def test_clean_force_defers_dirty_descendant_worktree(
         title="Root",
         task_type="epic",
         category="planning",
+        validation_criteria="Test task completion is observable.",
     )
     leaf = task_manager.create_task(
         project_id=project.id,
@@ -264,6 +270,7 @@ async def test_clean_force_defers_dirty_descendant_worktree(
         parent_task_id=root.id,
         task_type="task",
         category="code",
+        validation_criteria="Test task completion is observable.",
     )
 
     _git(repo, "worktree", "add", "-b", "task/dirty-leaf", str(worktree_path), "main")
@@ -330,6 +337,7 @@ async def test_clean_dirty_worktree_override_deletes_descendant_worktree(
         title="Root",
         task_type="epic",
         category="planning",
+        validation_criteria="Test task completion is observable.",
     )
     leaf = task_manager.create_task(
         project_id=project.id,
@@ -337,6 +345,7 @@ async def test_clean_dirty_worktree_override_deletes_descendant_worktree(
         parent_task_id=root.id,
         task_type="task",
         category="code",
+        validation_criteria="Test task completion is observable.",
     )
 
     _git(repo, "worktree", "add", "-b", "task/dirty-leaf", str(worktree_path), "main")

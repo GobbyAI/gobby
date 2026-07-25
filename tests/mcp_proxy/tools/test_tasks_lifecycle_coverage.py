@@ -1,17 +1,66 @@
 """Focused coverage tests for task MCP tools."""
 
 from collections.abc import Iterator
+from datetime import UTC, datetime
 from pathlib import Path
-from unittest.mock import MagicMock, call, patch
+from typing import Any
+from unittest.mock import AsyncMock, MagicMock, call, patch
 
 import pytest
 
-from gobby.mcp_proxy.tools.tasks import create_task_registry
+from gobby.mcp_proxy.tools.tasks import create_task_registry as _create_task_registry
 from gobby.plans.bootstrap_ledger import BootstrapLedgerMismatchError
+from gobby.storage.tasks import Task
+from gobby.tasks.validation_verdict import ValidationResult
 from gobby.utils.session_context import session_context_for_test
 
 pytestmark = pytest.mark.unit
 TEST_REPO_PATH = str(Path(__file__).resolve().parents[3])
+
+
+def _contract_task() -> Any:
+    now = datetime.now(UTC)
+    return Task(
+        id="550e8400-e29b-41d4-a716-446655440000",
+        project_id="11111111-1111-4111-8111-111111110001",
+        title="Contract task",
+        priority=2,
+        task_type="task",
+        created_at=now,
+        updated_at=now,
+        category="research",
+        validation_criteria="The requested lifecycle behavior is observable.",
+    )
+
+
+def create_task_registry(
+    task_manager: Any,
+    *args: Any,
+    **kwargs: Any,
+) -> Any:
+    if not args and "task_validator" not in kwargs:
+        validator = AsyncMock()
+        validator.validate_task.return_value = ValidationResult(
+            status="valid",
+            feedback="Every criterion is satisfied by admissible evidence.",
+        )
+        kwargs["task_validator"] = validator
+    return _create_task_registry(task_manager, *args, **kwargs)
+
+
+@pytest.fixture(autouse=True)
+def _disable_validation_backoff_storage() -> Iterator[None]:
+    with (
+        patch(
+            "gobby.mcp_proxy.tools.tasks._lifecycle_validation.TaskValidationBackoffStore.get",
+            return_value=None,
+        ),
+        patch(
+            "gobby.mcp_proxy.tools.tasks._lifecycle_validation._record_validation_iteration",
+            return_value=1,
+        ),
+    ):
+        yield
 
 
 class TestCloseTaskTool:
@@ -39,7 +88,7 @@ class TestCloseTaskTool:
     @pytest.mark.asyncio
     async def test_close_task_no_commits_error(self, mock_task_manager: MagicMock) -> None:
         """Test close_task requires commits to be linked."""
-        mock_task = MagicMock()
+        mock_task = _contract_task()
         mock_task.id = "550e8400-e29b-41d4-a716-446655440000"
         mock_task.commits = None
         mock_task.project_id = "11111111-1111-4111-8111-111111110001"
@@ -76,15 +125,11 @@ class TestCloseTaskTool:
         self, mock_task_manager: MagicMock
     ) -> None:
         """Test close_task with skip reason bypasses commit check."""
-        mock_task = MagicMock()
+        mock_task = _contract_task()
         mock_task.id = "550e8400-e29b-41d4-a716-446655440000"
         mock_task.commits = None
         mock_task.project_id = "11111111-1111-4111-8111-111111110001"
         mock_task.requires_user_review = False  # Avoid review routing
-        mock_task.to_brief.return_value = {
-            "id": "550e8400-e29b-41d4-a716-446655440000",
-            "status": "closed",
-        }
         mock_task_manager.get_task.return_value = mock_task
         mock_task_manager.close_task.return_value = mock_task
         mock_task_manager.list_tasks.return_value = []  # No children
@@ -121,11 +166,11 @@ class TestCloseTaskTool:
     @pytest.mark.asyncio
     async def test_close_task_parent_with_open_children(self, mock_task_manager: MagicMock) -> None:
         """Test close_task fails for parent with open children."""
-        mock_task = MagicMock()
+        mock_task = _contract_task()
         mock_task.id = "550e8400-e29b-41d4-a716-446655440020"
         mock_task.commits = ["abc123"]
         mock_task.project_id = "11111111-1111-4111-8111-111111110001"
-        mock_task.validation_criteria = None
+        mock_task.validation_criteria = "Test task completion is observable."
         mock_task_manager.get_task.return_value = mock_task
 
         # Create open child tasks
@@ -159,16 +204,12 @@ class TestCloseTaskTool:
     @pytest.mark.asyncio
     async def test_close_task_success_with_commits(self, mock_task_manager: MagicMock) -> None:
         """Test close_task succeeds when commits are linked."""
-        mock_task = MagicMock()
+        mock_task = _contract_task()
         mock_task.id = "550e8400-e29b-41d4-a716-446655440000"
         mock_task.commits = ["abc123"]
         mock_task.project_id = "11111111-1111-4111-8111-111111110001"
-        mock_task.validation_criteria = None
+        mock_task.validation_criteria = "Test task completion is observable."
         mock_task.requires_user_review = False  # Explicitly set to avoid review routing
-        mock_task.to_brief.return_value = {
-            "id": "550e8400-e29b-41d4-a716-446655440000",
-            "status": "closed",
-        }
         mock_task_manager.get_task.return_value = mock_task
         mock_task_manager.close_task.return_value = mock_task
         mock_task_manager.list_tasks.return_value = []  # No children
@@ -196,7 +237,7 @@ class TestCloseTaskTool:
                 },
             )
 
-            assert result == {"success": True}
+            assert result["success"] is True
             assert mock_task_manager.close_task.call_count == 1
 
     @pytest.mark.asyncio
@@ -204,15 +245,11 @@ class TestCloseTaskTool:
         self, mock_task_manager: MagicMock
     ) -> None:
         """A repaired task should close against its linked repair commit, not ambient HEAD."""
-        mock_task = MagicMock()
+        mock_task = _contract_task()
         mock_task.id = "550e8400-e29b-41d4-a716-446655440000"
         mock_task.commits = ["old-commit", "repair-commit"]
         mock_task.project_id = "11111111-1111-4111-8111-111111110001"
-        mock_task.validation_criteria = None
-        mock_task.to_brief.return_value = {
-            "id": "550e8400-e29b-41d4-a716-446655440000",
-            "status": "closed",
-        }
+        mock_task.validation_criteria = "Test task completion is observable."
         mock_task_manager.get_task.return_value = mock_task
         mock_task_manager.close_task.return_value = mock_task
         mock_task_manager.list_tasks.return_value = []
@@ -240,7 +277,7 @@ class TestCloseTaskTool:
                 },
             )
 
-            assert result == {"success": True}
+            assert result["success"] is True
             close_call = mock_task_manager.close_task.call_args
             assert close_call.kwargs["closed_commit_sha"] == "repair-commit"
             mock_git.assert_not_called()
@@ -250,7 +287,7 @@ class TestCloseTaskTool:
         self, mock_task_manager: MagicMock
     ) -> None:
         """Test close_task returns structured bootstrap ledger mismatch errors."""
-        mock_task = MagicMock()
+        mock_task = _contract_task()
         mock_task.id = "550e8400-e29b-41d4-a716-446655440000"
         mock_task.commits = None
         mock_task.project_id = "11111111-1111-4111-8111-111111110001"
@@ -289,15 +326,11 @@ class TestCloseTaskTool:
         self, mock_task_manager: MagicMock, tmp_path: Path
     ) -> None:
         """Test close_task with commit_sha links the commit first."""
-        mock_task = MagicMock()
+        mock_task = _contract_task()
         mock_task.id = "550e8400-e29b-41d4-a716-446655440000"
         mock_task.commits = ["abc123"]
         mock_task.project_id = "11111111-1111-4111-8111-111111110001"
-        mock_task.validation_criteria = None
-        mock_task.to_brief.return_value = {
-            "id": "550e8400-e29b-41d4-a716-446655440000",
-            "status": "closed",
-        }
+        mock_task.validation_criteria = "Test task completion is observable."
         mock_task_manager.get_task.return_value = mock_task
         mock_task_manager.link_commit.return_value = mock_task
         mock_task_manager.close_task.return_value = mock_task
@@ -344,16 +377,12 @@ class TestCloseTaskTool:
 
     @pytest.mark.asyncio
     async def test_close_task_with_skip_validation(self, mock_task_manager: MagicMock) -> None:
-        """Test close_task with skip_validation bypasses LLM validation."""
-        mock_task = MagicMock()
+        """Leaf criterion-to-evidence validation cannot be bypassed."""
+        mock_task = _contract_task()
         mock_task.id = "550e8400-e29b-41d4-a716-446655440000"
         mock_task.commits = ["abc123"]
         mock_task.project_id = "11111111-1111-4111-8111-111111110001"
         mock_task.validation_criteria = "Must pass tests"
-        mock_task.to_brief.return_value = {
-            "id": "550e8400-e29b-41d4-a716-446655440000",
-            "status": "closed",
-        }
         mock_task_manager.get_task.return_value = mock_task
         mock_task_manager.close_task.return_value = mock_task
         mock_task_manager.list_tasks.return_value = []
@@ -395,27 +424,21 @@ class TestCloseTaskTool:
                 },
             )
 
-            assert result == {"success": True}
-            mock_task_manager.close_task.assert_called_once()
+            assert result["success"] is False
+            assert result["error"] == "validation_contract_not_skippable"
+            mock_task_manager.close_task.assert_not_called()
             mock_task_manager.escalate_task.assert_not_called()
-            close_call = mock_task_manager.close_task.call_args
-            assert close_call.args == ("550e8400-e29b-41d4-a716-446655440000",)
-            assert close_call.kwargs["validation_override_reason"] == "Manually verified"
-            assert not any(
-                call.kwargs.get("validation_override_reason") is not None
-                for call in mock_task_manager.update_task.call_args_list
-            )
 
     @pytest.mark.asyncio
     async def test_close_task_fails_when_commit_sha_cannot_be_resolved(
         self, mock_task_manager: MagicMock
     ) -> None:
         """Test close_task surfaces explicit commit SHA resolution failures."""
-        mock_task = MagicMock()
+        mock_task = _contract_task()
         mock_task.id = "550e8400-e29b-41d4-a716-446655440000"
         mock_task.commits = None
         mock_task.project_id = "11111111-1111-4111-8111-111111110001"
-        mock_task.validation_criteria = None
+        mock_task.validation_criteria = "Test task completion is observable."
         mock_task.requires_user_review = False
         mock_task_manager.get_task.return_value = mock_task
         mock_task_manager.list_tasks.return_value = []
@@ -439,8 +462,9 @@ class TestCloseTaskTool:
                 },
             )
 
-        assert result == {"error": "Invalid or unresolved commit SHA: bad-sha"}
-        assert mock_task_manager.link_commit.call_count == 1
+        assert result["success"] is False
+        assert result["error"] == "invalid_commit_sha"
+        mock_task_manager.link_commit.assert_not_called()
         assert mock_task_manager.close_task.call_count == 0
 
     @pytest.mark.asyncio
@@ -448,11 +472,11 @@ class TestCloseTaskTool:
         self, mock_task_manager: MagicMock
     ) -> None:
         """Commit operations fail closed when the task repository cannot be resolved."""
-        mock_task = MagicMock()
+        mock_task = _contract_task()
         mock_task.id = "550e8400-e29b-41d4-a716-446655440000"
         mock_task.commits = None
         mock_task.project_id = "11111111-1111-4111-8111-111111110001"
-        mock_task.validation_criteria = None
+        mock_task.validation_criteria = "Test task completion is observable."
         mock_task.claimed_by_session_id = None
         mock_task_manager.get_task.return_value = mock_task
 
@@ -495,11 +519,11 @@ class TestCloseTaskTool:
         self, mock_task_manager: MagicMock
     ) -> None:
         """Linked commits are not normalized against the daemon working directory."""
-        mock_task = MagicMock()
+        mock_task = _contract_task()
         mock_task.id = "550e8400-e29b-41d4-a716-446655440000"
         mock_task.commits = ["abc1234"]
         mock_task.project_id = "11111111-1111-4111-8111-111111110001"
-        mock_task.validation_criteria = None
+        mock_task.validation_criteria = "Test task completion is observable."
         mock_task.claimed_by_session_id = None
         mock_task_manager.get_task.return_value = mock_task
         mock_task_manager.list_tasks.return_value = []
@@ -535,11 +559,11 @@ class TestCloseTaskTool:
         self, mock_task_manager: MagicMock
     ) -> None:
         """Claim-window commit discovery requires the task repository path."""
-        mock_task = MagicMock()
+        mock_task = _contract_task()
         mock_task.id = "550e8400-e29b-41d4-a716-446655440000"
         mock_task.commits = None
         mock_task.project_id = "11111111-1111-4111-8111-111111110001"
-        mock_task.validation_criteria = None
+        mock_task.validation_criteria = "Test task completion is observable."
         mock_task.claimed_by_session_id = "test-session"
         mock_task_manager.get_task.return_value = mock_task
         mock_task_manager.list_tasks.return_value = []
@@ -581,7 +605,7 @@ class TestCloseTaskTool:
         self, mock_task_manager: MagicMock
     ) -> None:
         """Test out_of_repo reason still enforces commit check for target-task edits."""
-        mock_task = MagicMock()
+        mock_task = _contract_task()
         mock_task.id = "550e8400-e29b-41d4-a716-446655440000"
         mock_task.commits = None
         mock_task.project_id = "11111111-1111-4111-8111-111111110001"
@@ -637,16 +661,12 @@ class TestCloseTaskTool:
         self, mock_task_manager: MagicMock
     ) -> None:
         """Gitignored-only edits (e.g. a vault under wiki/) never need a commit."""
-        mock_task = MagicMock()
+        mock_task = _contract_task()
         mock_task.id = "550e8400-e29b-41d4-a716-446655440000"
         mock_task.commits = None
         mock_task.project_id = "11111111-1111-4111-8111-111111110001"
-        mock_task.validation_criteria = None
+        mock_task.validation_criteria = "Test task completion is observable."
         mock_task.requires_user_review = False
-        mock_task.to_brief.return_value = {
-            "id": "550e8400-e29b-41d4-a716-446655440000",
-            "status": "closed",
-        }
         mock_task_manager.get_task.return_value = mock_task
         mock_task_manager.close_task.return_value = mock_task
         mock_task_manager.list_tasks.return_value = []  # leaf task (no children)
@@ -691,7 +711,7 @@ class TestCloseTaskTool:
                 },
             )
 
-            assert result == {"success": True}
+            assert result["success"] is True
             assert mock_task_manager.close_task.call_count == 1
             assert mock_task_manager.link_commit.call_count == 0
             mock_task_manager.close_task.assert_called_once()
@@ -701,16 +721,12 @@ class TestCloseTaskTool:
         self, mock_task_manager: MagicMock
     ) -> None:
         """Test out_of_repo reason succeeds when only another task has edits."""
-        mock_task = MagicMock()
+        mock_task = _contract_task()
         mock_task.id = "550e8400-e29b-41d4-a716-446655440000"
         mock_task.commits = None
         mock_task.project_id = "11111111-1111-4111-8111-111111110001"
-        mock_task.validation_criteria = None
+        mock_task.validation_criteria = "Test task completion is observable."
         mock_task.requires_user_review = False
-        mock_task.to_brief.return_value = {
-            "id": "550e8400-e29b-41d4-a716-446655440000",
-            "status": "closed",
-        }
         mock_task_manager.get_task.return_value = mock_task
         mock_task_manager.close_task.return_value = mock_task
         mock_task_manager.list_tasks.return_value = []
@@ -747,7 +763,7 @@ class TestCloseTaskTool:
                 },
             )
 
-            assert result == {"success": True}
+            assert result["success"] is True
             mock_task_manager.close_task.assert_called_once()
             assert mock_task_manager.close_task.call_count == 1
             assert mock_task_manager.close_task.call_args is not None
@@ -803,13 +819,12 @@ class TestCloseTaskTool:
 
             registry = create_task_registry(mock_task_manager)
 
-            mock_task = MagicMock()
+            mock_task = _contract_task()
             mock_task.id = task_uuid
             mock_task.commits = ["abc123"]
             mock_task.project_id = "11111111-1111-4111-8111-111111110001"
-            mock_task.validation_criteria = None
+            mock_task.validation_criteria = "Test task completion is observable."
             mock_task.requires_user_review = False
-            mock_task.to_brief.return_value = {"id": task_uuid, "status": "closed"}
             mock_task_manager.get_task.return_value = mock_task
             mock_task_manager.close_task.return_value = mock_task
             mock_task_manager.list_tasks.return_value = []
@@ -885,13 +900,12 @@ class TestCloseTaskTool:
 
             registry = create_task_registry(mock_task_manager)
 
-            mock_task = MagicMock()
+            mock_task = _contract_task()
             mock_task.id = task_uuid
             mock_task.commits = ["abc123"]
             mock_task.project_id = "11111111-1111-4111-8111-111111110001"
-            mock_task.validation_criteria = None
+            mock_task.validation_criteria = "Test task completion is observable."
             mock_task.requires_user_review = False
-            mock_task.to_brief.return_value = {"id": task_uuid, "status": "closed"}
             mock_task_manager.get_task.return_value = mock_task
             mock_task_manager.close_task.return_value = mock_task
             mock_task_manager.list_tasks.return_value = []
@@ -951,12 +965,12 @@ class TestCloseTaskTool:
             MockProjManager.return_value = mock_proj_instance
 
             registry = create_task_registry(mock_task_manager)
-            mock_task = MagicMock()
+            mock_task = _contract_task()
             mock_task.id = task_uuid
             mock_task.claimed_by_session_id = "owner-session"
             mock_task.commits = []
             mock_task.project_id = "11111111-1111-4111-8111-111111110001"
-            mock_task.validation_criteria = None
+            mock_task.validation_criteria = "Test task completion is observable."
             mock_task.requires_user_review = False
             mock_task_manager.get_task.return_value = mock_task
             mock_task_manager.list_tasks.return_value = []
@@ -1025,14 +1039,13 @@ class TestCloseTaskTool:
             MockProjManager.return_value = mock_proj_instance
 
             registry = create_task_registry(mock_task_manager)
-            mock_task = MagicMock()
+            mock_task = _contract_task()
             mock_task.id = task_uuid
             mock_task.claimed_by_session_id = "owner-session"
             mock_task.commits = ["abc123"]
             mock_task.project_id = "11111111-1111-4111-8111-111111110001"
-            mock_task.validation_criteria = None
+            mock_task.validation_criteria = "Test task completion is observable."
             mock_task.requires_user_review = False
-            mock_task.to_brief.return_value = {"id": task_uuid, "status": "closed"}
             mock_task_manager.get_task.return_value = mock_task
             mock_task_manager.close_task.return_value = mock_task
             mock_task_manager.list_tasks.return_value = []
@@ -1203,7 +1216,7 @@ class TestSessionVariableMirroring:
 
             registry = create_task_registry(mock_task_manager)
 
-            mock_task = MagicMock()
+            mock_task = _contract_task()
             mock_task.id = task_uuid
             mock_task.seq_num = 200
             mock_task.project_id = "11111111-1111-4111-8111-111111110001"
@@ -1271,11 +1284,11 @@ class TestSessionVariableMirroring:
 
             registry = create_task_registry(mock_task_manager)
 
-            mock_task = MagicMock()
+            mock_task = _contract_task()
             mock_task.id = task_uuid
             mock_task.commits = ["abc123"]
             mock_task.project_id = "11111111-1111-4111-8111-111111110001"
-            mock_task.validation_criteria = None
+            mock_task.validation_criteria = "Test task completion is observable."
             mock_task.requires_user_review = False
             mock_task_manager.get_task.return_value = mock_task
             mock_task_manager.close_task.return_value = mock_task
@@ -1330,7 +1343,7 @@ class TestSessionVariableMirroring:
 
             registry = create_task_registry(mock_task_manager)
 
-            mock_task = MagicMock()
+            mock_task = _contract_task()
             mock_task.id = task_uuid
             mock_task.seq_num = 300
             mock_task.status = "in_progress"
@@ -1350,6 +1363,7 @@ class TestSessionVariableMirroring:
                         "title": "New Task",
                         "category": "research",
                         "claim": True,
+                        "validation_criteria": "Test task completion is observable.",
                     },
                 )
 

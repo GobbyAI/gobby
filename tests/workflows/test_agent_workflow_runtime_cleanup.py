@@ -54,6 +54,7 @@ async def test_agent_workflow_completion_clears_mutex_and_workflow_instance(
     task = LocalTaskManager(temp_db).create_task(
         project_id=sample_project["id"],
         title="Workflow-owned task",
+        validation_criteria="Workflow completion clears its runtime ownership state.",
     )
     mutex = TaskDispatchMutexManager(temp_db)
     mutex.acquire_mutex(
@@ -120,6 +121,7 @@ async def test_submit_for_review_handoff_terminates_worker_and_unblocks_reviewer
         title="Review handoff task",
         task_type="task",
         category="code",
+        validation_criteria="Test task completion is observable.",
     )
     update_task(temp_db, task.id, allow_automation=True)
     initialize_manifest(temp_db, task.id, [spec("development", 0)], by_session_id=child.id)
@@ -206,6 +208,7 @@ async def test_submit_for_review_handoff_terminates_worker_and_unblocks_reviewer
 
     runner = SimpleNamespace(
         run_storage=run_manager,
+        get_run=run_manager.get,
         complete_run=lambda run_id, result=None: run_manager.complete(
             run_id,
             result=result,

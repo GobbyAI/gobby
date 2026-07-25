@@ -430,8 +430,8 @@ class TestCompactSelfTerminalPath:
         assert "list_mcp_servers" not in captured_prompts[0]
         assert "list_tools" not in captured_prompts[0]
         assert "get_tool_schema" not in captured_prompts[0]
-        assert '"name": "python"' in captured_prompts[0]
-        assert '"name": "development-discipline"' in captured_prompts[0]
+        assert '"name":"python"' in captured_prompts[0]
+        assert '"name":"development-discipline"' in captured_prompts[0]
 
     def test_terminal_session_clears_continuation_on_slash_command_failure(self) -> None:
         session = _make_terminal_session("claude")
@@ -746,6 +746,7 @@ class TestCompactSelfTerminalPath:
             title="Survive delayed compact summary",
             category="test",
             task_type="task",
+            validation_criteria="Test task completion is observable.",
         )
         task_manager.claim_task(task.id, session_id)
 

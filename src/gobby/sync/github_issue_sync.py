@@ -15,6 +15,7 @@ from gobby.storage.github_triage import GitHubTriageConfig, GitHubTriageStore
 from gobby.storage.projects import LocalProjectManager, Project
 from gobby.storage.tasks import LocalTaskManager
 from gobby.sync.github import GitHubSyncService
+from gobby.tasks.import_criteria import external_issue_validation_criteria
 from gobby.utils.datetime import parse_stored_datetime
 
 TriageIssueCallback = Callable[..., Awaitable[dict[str, Any]]]
@@ -102,11 +103,15 @@ class GitHubIssueSyncService:
             raise ValueError("GitHub issue response number does not match the requested issue")
 
         existing = self.db.fetchone(
-            "SELECT id, title, description, labels, updated_at FROM tasks "
+            "SELECT id, title, description, labels, validation_criteria, updated_at FROM tasks "
             "WHERE project_id = %s AND github_repo = %s AND github_issue_number = %s",
             (project_id, repo, issue_number),
         )
         updates = self._issue_updates(issue)
+        validation_criteria = external_issue_validation_criteria(
+            "GitHub",
+            f"{repo}#{issue_number}",
+        )
         if existing:
             remote_updated = parse_stored_datetime(issue.get("updated_at"))
             local_updated = parse_stored_datetime(existing.get("updated_at"))
@@ -114,6 +119,11 @@ class GitHubIssueSyncService:
                 return {"action": "skipped_local_newer", "task_id": existing["id"]}
             existing_labels = existing.get("labels") or []
             updates["labels"] = list(dict.fromkeys([*existing_labels, *updates["labels"]]))
+            if existing.get("validation_criteria") != validation_criteria:
+                self.task_manager.update_task(
+                    existing["id"],
+                    validation_criteria=validation_criteria,
+                )
             task = self.task_manager.reconcile_task_state(existing["id"], **updates)
             return {"action": "updated", "task_id": task.id}
 
@@ -125,6 +135,7 @@ class GitHubIssueSyncService:
                 labels=updates["labels"],
                 github_issue_number=issue_number,
                 github_repo=repo,
+                validation_criteria=validation_criteria,
             )
         except psycopg.IntegrityError:
             existing = self.db.fetchone(
@@ -134,6 +145,10 @@ class GitHubIssueSyncService:
             )
             if not existing:
                 raise
+            self.task_manager.update_task(
+                existing["id"],
+                validation_criteria=validation_criteria,
+            )
             task = self.task_manager.reconcile_task_state(existing["id"], **updates)
             return {"action": "updated", "task_id": task.id}
         lifecycle = {

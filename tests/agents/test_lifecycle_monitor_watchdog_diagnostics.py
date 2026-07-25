@@ -210,6 +210,7 @@ async def test_idle_reasoning_watchdog_interrupts_supported_reader_and_records_t
         project_id=sample_project["id"],
         title="Review watchdog target",
         task_type="bug",
+        validation_criteria="Test task completion is observable.",
     )
     task_manager.initialize_task_manifest(task.id)
     task_manager.stage_states.start_stage(task.id, "development", by_session_id="worker")

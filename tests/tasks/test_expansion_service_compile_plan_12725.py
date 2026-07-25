@@ -43,6 +43,7 @@ def test_plan_12725_compiles_clean(
         project_id=sample_project["id"],
         title="Lifecycle dispatch",
         task_type="epic",
+        validation_criteria="Test task completion is observable.",
     )
     doc = parse_plan(PLAN_PATH, parse_mode="expansion")
     spec = service.compile_plan_to_spec(doc, parent_task)

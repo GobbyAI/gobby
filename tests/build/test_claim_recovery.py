@@ -33,6 +33,7 @@ def _claimed_review_task(
         title=f"Claim recovery {stage_state}",
         category="code",
         task_type="task",
+        validation_criteria="Test task completion is observable.",
     )
     task_manager.update_task(task.id, allow_automation=True, isolation=family)
     initialize_manifest(temp_db, task.id, [spec("development", 0)])

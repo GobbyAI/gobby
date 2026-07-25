@@ -32,6 +32,7 @@ def _parent(
         title="Lifecycle epic",
         task_type="epic",
         labels=labels or [],
+        validation_criteria="Test task completion is observable.",
     )
 
 
@@ -94,6 +95,7 @@ def test_validate_compiled_spec_rejects_manual_leaves(
                     "phase_id": "phase-1",
                     "title": "Manual QA",
                     "category": "manual",
+                    "validation": "Test task completion is observable.",
                 }
             ],
             "dependencies": [],
@@ -129,6 +131,7 @@ def test_validate_compiled_spec_rejects_invalid_task_metadata(
                 "title": "Implementation",
                 "category": "code",
                 field: invalid_value,
+                "validation": "Test task completion is observable.",
             }
         ],
         "dependencies": [],
@@ -155,6 +158,7 @@ def test_validate_compiled_spec_rejects_planning_leaf_tasks(
                     "title": "Plan implementation",
                     "category": "planning",
                     "task_type": "task",
+                    "validation": "Test task completion is observable.",
                 }
             ],
             "dependencies": [],
@@ -185,6 +189,7 @@ def test_validate_compiled_spec_rejects_research_leaf_tasks(
                     "title": "Re-audit implementation",
                     "category": "research",
                     "task_type": "task",
+                    "validation": "Test task completion is observable.",
                 }
             ],
             "dependencies": [],
@@ -278,6 +283,7 @@ def test_normalize_preserves_registry_agent_selection_and_additional_skills(
                     "category": "code",
                     "assigned_agent": "frontend-developer",
                     "additional_skills": ["playwright-cli"],
+                    "validation": "Test task completion is observable.",
                 }
             ],
             "dependencies": [],
@@ -306,6 +312,7 @@ def test_normalize_defaults_ambiguous_automated_leaf_to_backend_with_audit_marke
                     "title": "Document behavior",
                     "category": "docs",
                     "description": "Update the operator guide.",
+                    "validation": "Test task completion is observable.",
                 }
             ],
             "dependencies": [],
@@ -340,6 +347,7 @@ def test_normalize_selects_best_fit_agent_from_registry(
                     "category": "code",
                     "description": "Implement browser components and CSS states.",
                     "affected_files": ["src/gobby/ui/App.tsx"],
+                    "validation": "Test task completion is observable.",
                 }
             ],
             "dependencies": [],
@@ -373,6 +381,7 @@ def test_normalize_selects_frontend_from_web_tsx_signals(
                     "category": "code",
                     "description": "Update implementation.",
                     "affected_files": ["web/src/routes/App.tsx"],
+                    "validation": "Test task completion is observable.",
                 }
             ],
             "dependencies": [],

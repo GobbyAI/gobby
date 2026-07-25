@@ -209,6 +209,7 @@ async def test_parent_epic_waits_for_in_flight_child_with_real_context(
         title="Parent delivery epic",
         task_type="epic",
         category="planning",
+        validation_criteria="Test task completion is observable.",
     )
     child = manager.create_task(
         project_id=sample_project["id"],
@@ -216,6 +217,7 @@ async def test_parent_epic_waits_for_in_flight_child_with_real_context(
         parent_task_id=parent.id,
         task_type="task",
         category="docs",
+        validation_criteria="Test task completion is observable.",
     )
     update_task(temp_db, parent.id, allow_automation=True, isolation="worktree")
     initialize_manifest(temp_db, parent.id, [spec("epic_qa", 0), spec("merge", 1)])
@@ -244,6 +246,7 @@ async def test_parent_epic_pr_merge_closes_with_real_heartbeat(
         title="Parent delivery epic",
         task_type="epic",
         category="planning",
+        validation_criteria="Test task completion is observable.",
     )
     child = manager.create_task(
         project_id=sample_project["id"],
@@ -251,6 +254,7 @@ async def test_parent_epic_pr_merge_closes_with_real_heartbeat(
         parent_task_id=parent.id,
         task_type="task",
         category="code",
+        validation_criteria="Test task completion is observable.",
     )
     manager.close_task(child.id, force=True)
     update_task(temp_db, parent.id, allow_automation=True, isolation="none")

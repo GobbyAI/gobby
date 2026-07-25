@@ -162,6 +162,10 @@ def task_stats(project_ref: str | None, json_format: bool) -> None:
 @click.command("create")
 @click.argument("title")
 @click.option("--description", "-d", help="Task description")
+@click.option(
+    "--validation-criteria",
+    help="Observable completion criteria (required unless --type epic)",
+)
 @click.option("--priority", "-p", type=int, default=2, help="Priority (1=High, 2=Med, 3=Low)")
 @click.option("--type", "-t", "task_type", type=TASK_TYPE_CHOICE, default="task", help="Task type")
 @click.option("--depends-on", "-D", multiple=True, help="Task(s) this task depends on (#N, UUID)")
@@ -169,6 +173,7 @@ def task_stats(project_ref: str | None, json_format: bool) -> None:
 def create_task(
     title: str,
     description: str | None,
+    validation_criteria: str | None,
     priority: int,
     task_type: str,
     depends_on: tuple[str, ...],
@@ -182,7 +187,16 @@ def create_task(
         gobby tasks create "Final review" -D "#1" -D "#2"
         gobby tasks create "Note" --project _personal
     """
-    create_task_impl(_services(), title, description, priority, task_type, depends_on, project_ref)
+    create_task_impl(
+        _services(),
+        title,
+        description,
+        validation_criteria,
+        priority,
+        task_type,
+        depends_on,
+        project_ref,
+    )
 
 
 @click.command("show")
@@ -198,6 +212,7 @@ def show_task(task_id: str) -> None:
 @click.command("update")
 @click.argument("task_id", metavar="TASK")
 @click.option("--title", "-T", help="New title")
+@click.option("--validation-criteria", help="New observable completion criteria")
 @click.option("--priority", type=int, help="New priority")
 @click.option("--parent", "parent_task_id", help="Parent task (#N, path, or UUID)")
 @click.option(
@@ -214,6 +229,7 @@ def show_task(task_id: str) -> None:
 def update_task(
     task_id: str,
     title: str | None,
+    validation_criteria: str | None,
     priority: int | None,
     parent_task_id: str | None,
     task_type: str | None,
@@ -223,14 +239,32 @@ def update_task(
 
     TASK can be: #N (e.g., #1, #47), path (e.g., 1.2.3), or UUID.
     """
-    update_task_impl(_services(), task_id, title, priority, parent_task_id, task_type, isolation)
+    update_task_impl(
+        _services(),
+        task_id,
+        title,
+        validation_criteria,
+        priority,
+        parent_task_id,
+        task_type,
+        isolation,
+    )
 
 
 @click.command("close")
 @click.argument("task_ids", metavar="TASK", nargs=-1, required=True)
 @click.option("--reason", "-r", default="completed", help="Reason for closing")
-@click.option("--skip-validation", is_flag=True, help="Skip validation checks")
-@click.option("--force", "-f", is_flag=True, help="Alias for --skip-validation")
+@click.option(
+    "--skip-validation",
+    is_flag=True,
+    help="Deprecated; criterion-to-evidence validation cannot be skipped",
+)
+@click.option(
+    "--force",
+    "-f",
+    is_flag=True,
+    help="Deprecated; structural child-completion checks cannot be skipped",
+)
 def close_task_cmd(
     task_ids: tuple[str, ...], reason: str, skip_validation: bool, force: bool
 ) -> None:
@@ -244,8 +278,8 @@ def close_task_cmd(
         gobby tasks close 42 43 44
         gobby tasks close abc123,#45,46
 
-    Parent tasks require all children to be closed first.
-    Use --skip-validation or --force for wont_fix, duplicate, etc.
+    Structural parents require all children to be closed first. Non-epic leaves
+    must use the evidence-aware close_task MCP contract.
     """
     close_task_impl(_services(), task_ids, reason, skip_validation, force)
 

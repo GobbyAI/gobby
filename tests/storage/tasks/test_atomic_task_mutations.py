@@ -72,7 +72,11 @@ def test_concurrent_add_label_preserves_both_labels(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     manager = LocalTaskManager(temp_db)
-    task = manager.create_task(sample_project["id"], "Concurrent labels")
+    task = manager.create_task(
+        sample_project["id"],
+        "Concurrent labels",
+        validation_criteria="Test task completion is observable.",
+    )
     monkeypatch.setattr(
         _lifecycle,
         "get_task",
@@ -94,7 +98,11 @@ def test_concurrent_link_commit_preserves_both_commits(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     manager = LocalTaskManager(temp_db)
-    task = manager.create_task(sample_project["id"], "Concurrent commits")
+    task = manager.create_task(
+        sample_project["id"],
+        "Concurrent commits",
+        validation_criteria="Test task completion is observable.",
+    )
     monkeypatch.setattr(
         _lifecycle,
         "get_task",
@@ -117,7 +125,11 @@ def test_concurrent_unlink_commit_removes_both_commits(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     manager = LocalTaskManager(temp_db)
-    task = manager.create_task(sample_project["id"], "Concurrent commit removal")
+    task = manager.create_task(
+        sample_project["id"],
+        "Concurrent commit removal",
+        validation_criteria="Test task completion is observable.",
+    )
     with patch("gobby.utils.git.normalize_commit_sha", side_effect=lambda sha, cwd=None: sha):
         _lifecycle.link_commit(temp_db, task.id, "commit-a")
         _lifecycle.link_commit(temp_db, task.id, "commit-b")
@@ -143,7 +155,11 @@ def test_concurrent_escalate_has_exactly_one_winner(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     manager = LocalTaskManager(temp_db)
-    task = manager.create_task(sample_project["id"], "Concurrent escalation")
+    task = manager.create_task(
+        sample_project["id"],
+        "Concurrent escalation",
+        validation_criteria="Test task completion is observable.",
+    )
     monkeypatch.setattr(
         _transitions,
         "get_task",
@@ -174,7 +190,11 @@ def test_submit_for_review_preserves_label_added_during_transition(
         source="codex",
         project_id=sample_project["id"],
     )
-    task = manager.create_task(sample_project["id"], "Concurrent review labels")
+    task = manager.create_task(
+        sample_project["id"],
+        "Concurrent review labels",
+        validation_criteria="Test task completion is observable.",
+    )
     manager.stage_states.initialize_manifest(
         task.id,
         [StageManifestSpec("development", 0)],

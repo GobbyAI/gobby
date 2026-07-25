@@ -48,7 +48,10 @@ def test_edit_history_flow(temp_db, tmp_path) -> None:
 
     # 3. Create a task
     task = task_manager.create_task(
-        project_id=project_id, title="Test Task", created_in_session_id=session.id
+        project_id=project_id,
+        title="Test Task",
+        created_in_session_id=session.id,
+        validation_criteria="Test task completion is observable.",
     )
 
     # 4. Claim the task (EventHandlers checks for claimed tasks)
@@ -123,6 +126,7 @@ def test_shell_edit_history_invalidates_verification_evidence(temp_db, tmp_path)
         project_id=project.id,
         title="Shell Edit Task",
         created_in_session_id=session.id,
+        validation_criteria="Test task completion is observable.",
     )
     task_manager.claim_task(task.id, session.id)
     session_var_manager.merge_variables(
@@ -185,6 +189,7 @@ def test_edit_history_ignores_out_of_repo_paths(temp_db, tmp_path) -> None:
         project_id=project.id,
         title="Out-of-Repo Task",
         created_in_session_id=session.id,
+        validation_criteria="Test task completion is observable.",
     )
     task_manager.claim_task(task.id, session.id)
 
@@ -226,7 +231,10 @@ def test_edit_history_not_set_if_task_not_claimed(temp_db) -> None:
 
     # Create task but DON'T claim it
     task_manager.create_task(
-        project_id=project_id, title="Unclaimed Task", created_in_session_id=session.id
+        project_id=project_id,
+        title="Unclaimed Task",
+        created_in_session_id=session.id,
+        validation_criteria="Test task completion is observable.",
     )
 
     edit_tool = list(EDIT_TOOLS)[0]
@@ -304,10 +312,16 @@ def test_edit_history_multiple_claims_use_active_task_id(temp_db, tmp_path) -> N
         project_id=project.id,
     )
     first = task_manager.create_task(
-        project_id=project.id, title="First Task", created_in_session_id=session.id
+        project_id=project.id,
+        title="First Task",
+        created_in_session_id=session.id,
+        validation_criteria="Test task completion is observable.",
     )
     second = task_manager.create_task(
-        project_id=project.id, title="Second Task", created_in_session_id=session.id
+        project_id=project.id,
+        title="Second Task",
+        created_in_session_id=session.id,
+        validation_criteria="Test task completion is observable.",
     )
     task_manager.claim_task(first.id, session.id)
     task_manager.claim_task(second.id, session.id)

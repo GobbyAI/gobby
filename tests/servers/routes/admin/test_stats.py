@@ -134,6 +134,7 @@ def test_stats_with_filters_returns_postgres_counts(temp_db):
             project_id=project.id,
             title=f"Task for {project.name}",
             task_type="task",
+            validation_criteria="Test task completion is observable.",
         )
 
     app = FastAPI()

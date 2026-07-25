@@ -66,10 +66,28 @@ def populated_hub_db(temp_hub_db):
     )
 
     task_manager = LocalTaskManager(db)
-    task_manager.create_task(PROJECT_ALPHA, "Task 1", task_type="task", priority=1)
-    task2 = task_manager.create_task(PROJECT_ALPHA, "Task 2", task_type="task", priority=2)
+    task_manager.create_task(
+        PROJECT_ALPHA,
+        "Task 1",
+        task_type="task",
+        priority=1,
+        validation_criteria="Test task completion is observable.",
+    )
+    task2 = task_manager.create_task(
+        PROJECT_ALPHA,
+        "Task 2",
+        task_type="task",
+        priority=2,
+        validation_criteria="Test task completion is observable.",
+    )
     task_manager.close_task(task2.id)
-    task3 = task_manager.create_task(PROJECT_BETA, "Task 3", task_type="feature", priority=1)
+    task3 = task_manager.create_task(
+        PROJECT_BETA,
+        "Task 3",
+        task_type="feature",
+        priority=1,
+        validation_criteria="Test task completion is observable.",
+    )
     _start_current_stage(task_manager, task3.id)
 
     # Insert test sessions with correct columns

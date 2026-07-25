@@ -76,11 +76,13 @@ class TestCheckOrphanDependencies:
             title="Task 1",
             task_type="task",
             project_id=project.id,
+            validation_criteria="Test task completion is observable.",
         )
         task2 = task_manager.create_task(
             title="Task 2",
             task_type="task",
             project_id=project.id,
+            validation_criteria="Test task completion is observable.",
         )
 
         # Create valid dependency
@@ -108,6 +110,7 @@ class TestCheckOrphanDependencies:
             title="Task 1",
             task_type="task",
             project_id=project.id,
+            validation_criteria="Test task completion is observable.",
         )
         missing_task_id = str(uuid4())
 
@@ -138,6 +141,7 @@ class TestCheckOrphanDependencies:
             title="Task 1",
             task_type="task",
             project_id=project.id,
+            validation_criteria="Test task completion is observable.",
         )
         missing_depends_on_id = str(uuid4())
 
@@ -177,6 +181,7 @@ class TestCheckInvalidProjects:
             title="Task 1",
             task_type="task",
             project_id=project.id,
+            validation_criteria="Test task completion is observable.",
         )
 
         result = validator.check_invalid_projects()
@@ -194,10 +199,19 @@ class TestCheckInvalidProjects:
         with _deferred_constraints_rollback(task_manager.db):
             task_manager.db.execute(
                 """
-                INSERT INTO tasks (id, title, task_type, project_id, created_at, updated_at)
-                VALUES (%s, %s, %s, %s, NOW(), NOW())
+                INSERT INTO tasks (
+                    id, title, task_type, project_id, validation_criteria,
+                    created_at, updated_at
+                )
+                VALUES (%s, %s, %s, %s, %s, NOW(), NOW())
                 """,
-                (orphan_task_id, "Orphan Task", "task", missing_project_id),
+                (
+                    orphan_task_id,
+                    "Orphan Task",
+                    "task",
+                    missing_project_id,
+                    "The invalid project reference is detected.",
+                ),
             )
 
             result = validator.check_invalid_projects()
@@ -226,9 +240,24 @@ class TestCheckCycles:
             repo_path="/tmp/test",
         )
 
-        task1 = task_manager.create_task(title="Task 1", task_type="task", project_id=project.id)
-        task2 = task_manager.create_task(title="Task 2", task_type="task", project_id=project.id)
-        task3 = task_manager.create_task(title="Task 3", task_type="task", project_id=project.id)
+        task1 = task_manager.create_task(
+            title="Task 1",
+            task_type="task",
+            project_id=project.id,
+            validation_criteria="Test task completion is observable.",
+        )
+        task2 = task_manager.create_task(
+            title="Task 2",
+            task_type="task",
+            project_id=project.id,
+            validation_criteria="Test task completion is observable.",
+        )
+        task3 = task_manager.create_task(
+            title="Task 3",
+            task_type="task",
+            project_id=project.id,
+            validation_criteria="Test task completion is observable.",
+        )
 
         # Linear chain: task1 <- task2 <- task3
         task_manager.db.execute(
@@ -255,8 +284,18 @@ class TestCheckCycles:
             repo_path="/tmp/test",
         )
 
-        task1 = task_manager.create_task(title="Task 1", task_type="task", project_id=project.id)
-        task2 = task_manager.create_task(title="Task 2", task_type="task", project_id=project.id)
+        task1 = task_manager.create_task(
+            title="Task 1",
+            task_type="task",
+            project_id=project.id,
+            validation_criteria="Test task completion is observable.",
+        )
+        task2 = task_manager.create_task(
+            title="Task 2",
+            task_type="task",
+            project_id=project.id,
+            validation_criteria="Test task completion is observable.",
+        )
 
         # Create cycle: task1 -> task2 -> task1
         task_manager.db.execute(
@@ -296,7 +335,12 @@ class TestCleanOrphans:
             repo_path="/tmp/test",
         )
 
-        task1 = task_manager.create_task(title="Task 1", task_type="task", project_id=project.id)
+        task1 = task_manager.create_task(
+            title="Task 1",
+            task_type="task",
+            project_id=project.id,
+            validation_criteria="Test task completion is observable.",
+        )
         missing_task_id = str(uuid4())
         missing_depends_on_id = str(uuid4())
 
@@ -338,7 +382,12 @@ class TestValidateAll:
         )
 
         # Create a valid task
-        task_manager.create_task(title="Valid Task", task_type="task", project_id=project.id)
+        task_manager.create_task(
+            title="Valid Task",
+            task_type="task",
+            project_id=project.id,
+            validation_criteria="Test task completion is observable.",
+        )
 
         result = validator.validate_all()
 
@@ -364,10 +413,19 @@ class TestValidateAll:
             # Create task with invalid project
             task_manager.db.execute(
                 """
-                INSERT INTO tasks (id, title, task_type, project_id, created_at, updated_at)
-                VALUES (%s, %s, %s, %s, NOW(), NOW())
+                INSERT INTO tasks (
+                    id, title, task_type, project_id, validation_criteria,
+                    created_at, updated_at
+                )
+                VALUES (%s, %s, %s, %s, %s, NOW(), NOW())
                 """,
-                (orphan_task_id, "Orphan Task", "task", missing_project_id),
+                (
+                    orphan_task_id,
+                    "Orphan Task",
+                    "task",
+                    missing_project_id,
+                    "The invalid project reference is detected.",
+                ),
             )
 
             # Create orphan dependency (depends_on doesn't exist)

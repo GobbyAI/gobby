@@ -18,7 +18,11 @@ def _manager(temp_db) -> LocalTaskManager:
 
 def _task(manager: LocalTaskManager, sample_project: dict):
     """Create a minimal task for state-helper assertions."""
-    return manager.create_task(project_id=sample_project["id"], title="Task state helper")
+    return manager.create_task(
+        project_id=sample_project["id"],
+        title="Task state helper",
+        validation_criteria="Test task completion is observable.",
+    )
 
 
 def _start_development_stage(manager: LocalTaskManager, task_id: str) -> None:

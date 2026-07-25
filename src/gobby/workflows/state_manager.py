@@ -706,6 +706,11 @@ class SessionVariableManager:
 
             task_id = active_task_id_for_edit(current_vars)
             if task_id and repo_relative_path:
+                conn.execute(
+                    "UPDATE tasks SET validation_epoch = validation_epoch + 1, "
+                    "updated_at = %s WHERE id = %s",
+                    (now, task_id),
+                )
                 raw_task_files = current_vars.get("task_edited_files") or {}
                 task_files = raw_task_files if isinstance(raw_task_files, dict) else {}
                 stored_for_task = task_files.get(task_id, [])

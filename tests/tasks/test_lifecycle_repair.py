@@ -40,6 +40,7 @@ def test_repair_dry_runs_metadata_only_auto_seed_without_mutation(
         project_id=sample_project["id"],
         title="Historical auto-seeded task",
         task_type="task",
+        validation_criteria="Test task completion is observable.",
     )
     manager.initialize_task_manifest(task.id, stage_names=["development", "pr", "merge"])
 
@@ -57,6 +58,7 @@ def test_repair_apply_removes_metadata_only_auto_seed(temp_db, sample_project) -
         project_id=sample_project["id"],
         title="Historical auto-seeded task",
         task_type="task",
+        validation_criteria="Test task completion is observable.",
     )
     manager.initialize_task_manifest(task.id, stage_names=["development"])
 
@@ -75,6 +77,7 @@ def test_repair_reseeds_expansion_child_from_parent_scope(temp_db, sample_projec
         project_id=sample_project["id"],
         title="Expansion parent",
         task_type="epic",
+        validation_criteria="Test task completion is observable.",
     )
     manager.initialize_task_manifest(parent.id, stage_names=["development", "pr", "merge"])
     child = manager.create_task(
@@ -83,6 +86,7 @@ def test_repair_reseeds_expansion_child_from_parent_scope(temp_db, sample_projec
         parent_task_id=parent.id,
         task_type="task",
         labels=["expansion-run:abc"],
+        validation_criteria="Test task completion is observable.",
     )
     manager.initialize_task_manifest(child.id, stage_names=["epic_qa", "pr", "merge"])
 
@@ -111,6 +115,7 @@ def test_repair_reseeds_stunted_plan_file_root_from_build_history(
         title="Stunted plan-file root",
         task_type="epic",
         category="planning",
+        validation_criteria="Test task completion is observable.",
     )
     manager.artifacts.set_artifact(root.id, "plan_file_path", str(plan_file))
     manager.initialize_task_manifest(root.id, stage_names=["planning", "merge"])
@@ -156,6 +161,7 @@ def test_repair_reseeds_stunted_plan_file_root_from_build_run_summary(
         title="Stunted plan-file root from restart",
         task_type="epic",
         category="planning",
+        validation_criteria="Test task completion is observable.",
     )
     manager.artifacts.set_artifact(root.id, "plan_file_path", str(plan_file))
     manager.initialize_task_manifest(root.id, stage_names=["planning", "merge"])
@@ -194,6 +200,7 @@ def test_repair_reports_diagnostic_for_stunted_plan_file_without_provenance(
         title="Unproven plan-file root",
         task_type="epic",
         category="planning",
+        validation_criteria="Test task completion is observable.",
     )
     manager.artifacts.set_artifact(root.id, "plan_file_path", str(plan_file))
     manager.initialize_task_manifest(root.id, stage_names=["planning", "merge"])
@@ -219,6 +226,7 @@ def test_repair_does_not_remove_development_from_historical_leaf(
         title="Historical phase",
         task_type="epic",
         labels=["expansion-run:abc"],
+        validation_criteria="Test task completion is observable.",
     )
     manager.initialize_task_manifest(phase.id, stage_names=["epic_qa", "pr", "merge"])
     leaf = manager.create_task(
@@ -227,6 +235,7 @@ def test_repair_does_not_remove_development_from_historical_leaf(
         parent_task_id=phase.id,
         task_type="task",
         labels=["expansion-run:abc"],
+        validation_criteria="Test task completion is observable.",
     )
     manager.initialize_task_manifest(leaf.id, stage_names=["development", "pr", "merge"])
 
@@ -244,6 +253,7 @@ def test_repair_reseeds_historical_phase_wrapper_to_development_first(
         project_id=sample_project["id"],
         title="Metadata-only expansion parent",
         task_type="epic",
+        validation_criteria="Test task completion is observable.",
     )
     phase = manager.create_task(
         project_id=sample_project["id"],
@@ -251,6 +261,7 @@ def test_repair_reseeds_historical_phase_wrapper_to_development_first(
         parent_task_id=parent.id,
         task_type="epic",
         labels=["expansion-run:abc"],
+        validation_criteria="Test task completion is observable.",
     )
     manager.initialize_task_manifest(phase.id, stage_names=["epic_qa", "pr", "merge"])
 
@@ -266,6 +277,7 @@ def test_repair_skips_active_expansion_rows_without_force(temp_db, sample_projec
         project_id=sample_project["id"],
         title="Expansion parent",
         task_type="epic",
+        validation_criteria="Test task completion is observable.",
     )
     manager.initialize_task_manifest(parent.id, stage_names=["development", "pr", "merge"])
     child = manager.create_task(
@@ -274,6 +286,7 @@ def test_repair_skips_active_expansion_rows_without_force(temp_db, sample_projec
         parent_task_id=parent.id,
         task_type="task",
         labels=["expansion-run:active"],
+        validation_criteria="Test task completion is observable.",
     )
     manager.initialize_task_manifest(child.id, stage_names=["epic_qa", "pr", "merge"])
     manager.stage_states.start_stage(child.id, "epic_qa", by_session_id=None)
@@ -291,6 +304,7 @@ def test_repair_force_reseeds_active_task_scope(temp_db, sample_project) -> None
         project_id=sample_project["id"],
         title="Expansion parent",
         task_type="epic",
+        validation_criteria="Test task completion is observable.",
     )
     manager.initialize_task_manifest(parent.id, stage_names=["development"])
     child = manager.create_task(
@@ -299,6 +313,7 @@ def test_repair_force_reseeds_active_task_scope(temp_db, sample_project) -> None
         parent_task_id=parent.id,
         task_type="task",
         labels=["expansion-run:active"],
+        validation_criteria="Test task completion is observable.",
     )
     manager.initialize_task_manifest(child.id, stage_names=["epic_qa"])
     manager.stage_states.start_stage(child.id, "epic_qa", by_session_id=None)
@@ -318,6 +333,7 @@ def test_repair_force_preserves_terminal_task_manifest(
         project_id=sample_project["id"],
         title="Expansion parent",
         task_type="epic",
+        validation_criteria="Test task completion is observable.",
     )
     manager.initialize_task_manifest(parent.id, stage_names=["development"])
     child = manager.create_task(
@@ -326,6 +342,7 @@ def test_repair_force_preserves_terminal_task_manifest(
         parent_task_id=parent.id,
         task_type="task",
         labels=["expansion-run:active"],
+        validation_criteria="Test task completion is observable.",
     )
     manager.initialize_task_manifest(child.id, stage_names=["epic_qa"])
     manager.stage_states.start_stage(child.id, "epic_qa", by_session_id=None)
@@ -351,6 +368,7 @@ def test_repair_force_reseed_rolls_back_delete_when_initialize_fails(
         project_id=sample_project["id"],
         title="Expansion parent",
         task_type="epic",
+        validation_criteria="Test task completion is observable.",
     )
     manager.initialize_task_manifest(parent.id, stage_names=["development"])
     child = manager.create_task(
@@ -359,6 +377,7 @@ def test_repair_force_reseed_rolls_back_delete_when_initialize_fails(
         parent_task_id=parent.id,
         task_type="task",
         labels=["expansion-run:active"],
+        validation_criteria="Test task completion is observable.",
     )
     manager.initialize_task_manifest(child.id, stage_names=["epic_qa"])
     manager.stage_states.start_stage(child.id, "epic_qa", by_session_id=None)

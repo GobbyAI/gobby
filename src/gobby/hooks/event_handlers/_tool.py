@@ -5,6 +5,7 @@ import os
 from pathlib import Path
 from typing import Any
 
+from gobby.adapters.codex_impl.execution_chain import validate_functions_exec_wrapper
 from gobby.hooks._normalization_canonical import CANONICAL_WRITE_TOOL_NAMES
 from gobby.hooks.event_handlers._base import EventHandlersBase
 from gobby.hooks.events import HookEvent, HookResponse
@@ -52,6 +53,13 @@ class ToolEventHandlerMixin(EventHandlersBase):
             self.logger.debug("BEFORE_TOOL: %s, session %s", tool_name, session_id)
         else:
             self.logger.debug("BEFORE_TOOL: %s", tool_name)
+
+        if event.source.value == "codex" and tool_name in {"exec", "functions.exec"}:
+            wrapper_error = validate_functions_exec_wrapper(
+                input_data.get("arguments", input_data.get("tool_input"))
+            )
+            if wrapper_error is not None:
+                return HookResponse(decision="block", reason=wrapper_error)
 
         # Intercept Skill tool calls to resolve gobby skills
         if tool_name == "Skill" and (self._skill_manager or self._call_tool):

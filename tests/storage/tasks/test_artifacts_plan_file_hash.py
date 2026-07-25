@@ -14,6 +14,7 @@ def test_set_artifact_plan_hash_round_trips(temp_db, sample_project) -> None:
     task = LocalTaskManager(temp_db).create_task(
         project_id=sample_project["id"],
         title="Plan hash",
+        validation_criteria="Test task completion is observable.",
     )
     manager = TaskArtifactManager(temp_db)
 
@@ -26,7 +27,11 @@ def test_set_artifact_plan_hash_round_trips(temp_db, sample_project) -> None:
 def test_mcp_get_artifacts_includes_plan_file_hash(temp_db, sample_project) -> None:
     task_manager = LocalTaskManager(temp_db)
     registry = create_task_ops_registry(task_manager)
-    task = task_manager.create_task(project_id=sample_project["id"], title="Plan hash")
+    task = task_manager.create_task(
+        project_id=sample_project["id"],
+        title="Plan hash",
+        validation_criteria="Test task completion is observable.",
+    )
     set_artifact = registry.get_tool("set_artifact")
     get_artifacts = registry.get_tool("get_artifacts")
 

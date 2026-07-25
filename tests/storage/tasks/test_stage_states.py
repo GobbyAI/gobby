@@ -169,6 +169,7 @@ def test_development_manifest_resolves_docs_reviewer_from_selector(
         project_id=sample_project["id"],
         title="Docs stage manifest task",
         category="docs",
+        validation_criteria="Test task completion is observable.",
     )
     manager = LocalTaskManager(temp_db).stage_states
 
@@ -211,6 +212,7 @@ def test_fixed_registry_reviewer_overrides_selector(temp_db, sample_project) -> 
         project_id=sample_project["id"],
         title="Docs fixed reviewer task",
         category="docs",
+        validation_criteria="Test task completion is observable.",
     )
     manager = LocalTaskManager(temp_db).stage_states
 
@@ -247,6 +249,7 @@ def test_selector_category_rules_take_precedence_over_task_type_rules(
         title="Docs bug reviewer task",
         task_type="bug",
         category="docs",
+        validation_criteria="Test task completion is observable.",
     )
     manager = LocalTaskManager(temp_db).stage_states
 
@@ -266,6 +269,7 @@ def test_reviewer_selector_snapshot_is_not_retroactive(temp_db, sample_project) 
         project_id=sample_project["id"],
         title="Docs reviewer snapshot task",
         category="docs",
+        validation_criteria="Test task completion is observable.",
     )
     manager = LocalTaskManager(temp_db).stage_states
     manager.initialize_manifest(
@@ -492,6 +496,7 @@ def _closed_leaf_for_epic_failure(temp_db, sample_project, parent_id: str, title
         parent_task_id=parent_id,
         task_type="task",
         category="docs",
+        validation_criteria="Test task completion is observable.",
     )
     initialize_manifest(temp_db, leaf.id, [spec("development", 0), spec("merge", 1)])
     set_stage_state(temp_db, leaf.id, "development", "done", work_attempt_count=1)
@@ -520,6 +525,7 @@ def test_epic_failure_reopens_single_cited_child_to_development(
         title="Docs epic",
         task_type="epic",
         category="docs",
+        validation_criteria="Test task completion is observable.",
     )
     manager.stage_states.initialize_manifest(
         parent.id,
@@ -574,6 +580,7 @@ def test_retry_neutral_epic_spawn_failure_resets_cited_child_attempts(
         title="Docs epic",
         task_type="epic",
         category="docs",
+        validation_criteria="Test task completion is observable.",
     )
     manager.stage_states.initialize_manifest(
         parent.id,
@@ -628,6 +635,7 @@ def test_epic_failure_reactivates_merged_cited_child_worktree(
         title="Docs epic",
         task_type="epic",
         category="docs",
+        validation_criteria="Test task completion is observable.",
     )
     manager.stage_states.initialize_manifest(
         parent.id,
@@ -680,6 +688,7 @@ def test_epic_failure_reopens_multiple_cited_children_only(
         title="Docs epic",
         task_type="epic",
         category="docs",
+        validation_criteria="Test task completion is observable.",
     )
     manager.stage_states.initialize_manifest(
         parent.id,
@@ -713,12 +722,14 @@ def test_epic_failure_rejects_cited_non_descendant(temp_db, sample_project) -> N
         title="Docs epic",
         task_type="epic",
         category="docs",
+        validation_criteria="Test task completion is observable.",
     )
     outsider = manager.create_task(
         project_id=sample_project["id"],
         title="Outsider",
         task_type="task",
         category="docs",
+        validation_criteria="Test task completion is observable.",
     )
     manager.stage_states.initialize_manifest(
         parent.id,

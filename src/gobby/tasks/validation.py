@@ -14,6 +14,7 @@ Multi-strategy context gathering:
 import logging
 import re
 import subprocess  # nosec B404 # subprocess needed for validation commands
+from collections.abc import Sequence
 from pathlib import Path
 
 from gobby.ai.text_generation import is_feature_generation_infrastructure_error
@@ -22,6 +23,7 @@ from gobby.failure_categories import FailureCategory, classify_exception
 from gobby.llm import LLMService
 from gobby.prompts import PromptLoader
 from gobby.storage.hub.protocol import HubDatabase
+from gobby.tasks.criteria_contract import split_validation_criteria
 from gobby.tasks.validation_evidence import (
     build_diff_validation_evidence,
     build_file_context_evidence,
@@ -665,6 +667,7 @@ class TaskValidator:
         *,
         file_context_text: str | None = None,
         verification_receipt_text: str | None = None,
+        admissible_evidence_ids: Sequence[str] = (),
         lessons_section: str = "",
     ) -> ValidationResult:
         """Validate one preassembled evidence packet with one JSON model request."""
@@ -678,6 +681,7 @@ class TaskValidator:
             category=category,
             file_context_text=file_context_text,
             verification_receipt_text=verification_receipt_text,
+            admissible_evidence_ids=admissible_evidence_ids,
             lessons_section=lessons_section,
         )
 
@@ -693,6 +697,7 @@ class TaskValidator:
         *,
         file_context_text: str | None = None,
         verification_receipt_text: str | None = None,
+        admissible_evidence_ids: Sequence[str] = (),
         lessons_section: str = "",
     ) -> ValidationResult:
         """
@@ -701,9 +706,9 @@ class TaskValidator:
         Args:
             task_id: Task ID
             title: Task title
-            description: Task description (used as fallback if no validation_criteria)
+            description: Task description provided as contextual task intent
             changes_summary: Summary of changes made (files, diffs, etc.)
-            validation_criteria: Specific criteria to validate against (optional)
+            validation_criteria: Observable criteria to validate against
             context_files: List of files to read for context (optional)
             category: Task domain category (e.g., 'manual', 'code', 'test')
             file_context_text: Pre-gathered file context to include with any
@@ -715,10 +720,13 @@ class TaskValidator:
         if not self.config.enabled:
             return ValidationResult(status="pending", feedback="Validation disabled")
 
-        if not description and not validation_criteria:
-            logger.warning("Cannot validate task %s: missing description and criteria", task_id)
+        criteria = split_validation_criteria(validation_criteria)
+        if not criteria:
+            logger.warning("Cannot validate task %s: missing validation criteria", task_id)
             return ValidationResult(
-                status="pending", feedback="Missing task description and validation criteria"
+                status="pending",
+                feedback="Missing validation criteria",
+                blocking_reasons=["Non-epic tasks require explicit validation criteria"],
             )
 
         logger.info("Validating task %s: %s", task_id, title)
@@ -732,10 +740,8 @@ class TaskValidator:
         file_context = "\n\n".join(part for part in file_context_parts if part)
 
         # Build prompt
-        criteria_text = (
-            f"Validation Criteria:\n{validation_criteria}"
-            if validation_criteria
-            else f"Task Description:\n{description}"
+        criteria_text = "Validation Criteria (use each exact string in criterion_results):\n" + (
+            "\n".join(f"{index}. {criterion}" for index, criterion in enumerate(criteria, 1))
         )
 
         raw_changes_chars = len(changes_summary)
@@ -846,7 +852,11 @@ class TaskValidator:
                     status="pending", feedback="Validation failed: Empty response from LLM"
                 )
 
-            return _validation_result_from_data(result_data)
+            return _validation_result_from_data(
+                result_data,
+                expected_criteria=criteria,
+                admissible_evidence_ids=admissible_evidence_ids,
+            )
 
         except Exception as e:
             if is_feature_generation_infrastructure_error(e):

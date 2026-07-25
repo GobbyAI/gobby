@@ -87,10 +87,18 @@ def _task_manager_mock() -> SimpleNamespace:
 
 
 @pytest.mark.asyncio
-async def test_documentation_auto_validation_returns_named_reset_branch() -> None:
+async def test_documentation_uses_the_same_llm_validation_contract() -> None:
     task = _task()
     manager = _task_manager_mock()
-    validator = SimpleNamespace(validate_task=AsyncMock())
+    validator = SimpleNamespace(
+        validate_task=AsyncMock(
+            return_value=TaskValidationResult(
+                status="valid",
+                feedback="Documentation criterion is satisfied.",
+                blocking_reasons=[],
+            )
+        )
+    )
 
     result = await validate_leaf_task_with_llm(
         task,
@@ -99,13 +107,12 @@ async def test_documentation_auto_validation_returns_named_reset_branch() -> Non
         SimpleNamespace(task_manager=manager),
         task.id,
         None,
-        is_documentation_only=True,
     )
 
     assert result.can_close is True
     assert result.validation_status == "valid"
-    assert result.reset_reason == "documentation_auto_validation"
-    validator.validate_task.assert_not_awaited()
+    assert result.reset_reason == "llm_valid"
+    validator.validate_task.assert_awaited_once()
     manager.update_task.assert_not_called()
     manager.increment_validation_failure.assert_not_called()
 
@@ -147,7 +154,10 @@ async def test_valid_structured_verdict_ignores_failure_vocabulary(narrative: st
     assert result.validation_status == "valid"
     assert result.validation_feedback == narrative
     assert result.reset_reason == "llm_valid"
-    assert result.extra == {"recurring_validation_candidates": []}
+    assert result.extra == {
+        "criterion_results": [],
+        "recurring_validation_candidates": [],
+    }
     manager.update_task.assert_not_called()
     manager.increment_validation_failure.assert_not_called()
 

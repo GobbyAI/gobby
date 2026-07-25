@@ -115,7 +115,12 @@ class TestTaskStatusDuringMerge:
 
         project = LocalProjectManager(hub_db).create(name="merge-status", repo_path="/tmp/repo")
         manager = LocalTaskManager(hub_db)
-        task = manager.create_task(project_id=project.id, title="Merge status", category="code")
+        task = manager.create_task(
+            project_id=project.id,
+            title="Merge status",
+            category="code",
+            validation_criteria="Test task completion is observable.",
+        )
 
         updated = manager.set_merge_status(
             task.id,
@@ -142,7 +147,12 @@ class TestTaskStatusDuringMerge:
             repo_path="/tmp/repo",
         )
         manager = LocalTaskManager(hub_db)
-        task = manager.create_task(project_id=project.id, title="Merge status", category="code")
+        task = manager.create_task(
+            project_id=project.id,
+            title="Merge status",
+            category="code",
+            validation_criteria="Test task completion is observable.",
+        )
 
         manager.set_merge_status(task.id, merge_in_progress=True, blocked_by_merge=True)
         renamed = manager.update_task(task.id, title="Merge status renamed")
@@ -175,7 +185,12 @@ class TestTaskStatusDuringMerge:
             repo_path="/tmp/repo",
         )
         manager = LocalTaskManager(hub_db)
-        task = manager.create_task(project_id=project.id, title="Merge status", category="code")
+        task = manager.create_task(
+            project_id=project.id,
+            title="Merge status",
+            category="code",
+            validation_criteria="Test task completion is observable.",
+        )
 
         with pytest.raises(ValueError, match="merge_in_progress cannot be None"):
             manager.update_task(task.id, merge_in_progress=None)

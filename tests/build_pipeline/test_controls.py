@@ -37,6 +37,7 @@ def _tree(task_manager: LocalTaskManager, project_id: str) -> tuple[Task, list[T
         title="Lifecycle controls",
         task_type="epic",
         category="planning",
+        validation_criteria="Test task completion is observable.",
     )
     child = task_manager.create_task(
         project_id=project_id,
@@ -44,6 +45,7 @@ def _tree(task_manager: LocalTaskManager, project_id: str) -> tuple[Task, list[T
         parent_task_id=epic.id,
         task_type="task",
         category="code",
+        validation_criteria="Test task completion is observable.",
     )
     leaf = task_manager.create_task(
         project_id=project_id,
@@ -51,6 +53,7 @@ def _tree(task_manager: LocalTaskManager, project_id: str) -> tuple[Task, list[T
         parent_task_id=epic.id,
         task_type="task",
         category="docs",
+        validation_criteria="Test task completion is observable.",
     )
     return epic, [child, leaf]
 
@@ -68,6 +71,7 @@ async def test_stop_disables_leaf_automation_preserves_unattended_and_cancels_ac
         title="Runaway build",
         category="code",
         task_type="task",
+        validation_criteria="Test task completion is observable.",
     )
     task_manager.update_task(task.id, allow_automation=True, unattended=True)
 
@@ -133,6 +137,7 @@ async def test_stop_clears_runtime_claim_and_resets_current_stage(
         title="Phantom build",
         category="code",
         task_type="task",
+        validation_criteria="Test task completion is observable.",
     )
     task_manager.update_task(task.id, allow_automation=True, unattended=True)
     initialize_manifest(temp_db, task.id, [spec("development", 0)])
@@ -205,6 +210,7 @@ async def test_stop_prevents_dispatcher_respawn_on_next_heartbeat(
         title="Ready dispatch task",
         category="code",
         task_type="task",
+        validation_criteria="Test task completion is observable.",
     )
     task_manager.update_task(
         task.id,
@@ -275,6 +281,7 @@ async def test_resume_clears_orphan_no_run_dispatch_mutex(
         title="Orphan dispatch mutex",
         category="code",
         task_type="task",
+        validation_criteria="Test task completion is observable.",
     )
     storage = TaskDispatchMutexManager(temp_db)
     acquired_at = datetime.now(UTC) - timedelta(seconds=60)
@@ -314,6 +321,7 @@ async def test_resume_preserves_no_run_dispatch_mutex_with_live_lease(
         title="Fresh dispatch mutex",
         category="code",
         task_type="task",
+        validation_criteria="Test task completion is observable.",
     )
     storage = TaskDispatchMutexManager(temp_db)
     acquired_at = datetime.now(UTC) - timedelta(seconds=60)
@@ -355,6 +363,7 @@ async def test_clean_dry_run_reports_blockers_and_artifacts(
         title="Failed clone task",
         category="code",
         task_type="task",
+        validation_criteria="Test task completion is observable.",
     )
     task_manager.update_task(task.id, allow_automation=True)
     clone_path = tmp_path / "clone"
@@ -398,6 +407,7 @@ async def test_clean_force_deletes_clone_and_clears_artifact_pair(
         title="Failed clone cleanup",
         category="code",
         task_type="task",
+        validation_criteria="Test task completion is observable.",
     )
     task_manager.update_task(task.id, allow_automation=False)
     clone_path = clones_root / "3104e04d-850a-5af3-a5ec-cd6c31fdd129"
@@ -449,6 +459,7 @@ def test_successful_merge_cleanup_defers_active_agent_worktree(
         title="Merged while agent still exits",
         category="code",
         task_type="task",
+        validation_criteria="Test task completion is observable.",
     )
     worktree_path = tmp_path / "active-worktree"
     worktree_path.mkdir()
@@ -545,6 +556,7 @@ def test_successful_merge_cleanup_deletes_inactive_worktree(
         title="Merged after agent exit",
         category="code",
         task_type="task",
+        validation_criteria="Test task completion is observable.",
     )
     worktree_path = tmp_path / "inactive-worktree"
     worktree_path.mkdir()
@@ -688,6 +700,7 @@ def test_successful_merge_cleanup_force_deletes_dirty_inactive_worktree(
         title="Merged dirty artifact",
         category="code",
         task_type="task",
+        validation_criteria="Test task completion is observable.",
     )
     worktree_path = tmp_path / "dirty-inactive-worktree"
     worktree_path.mkdir()
@@ -767,12 +780,14 @@ def test_successful_merge_cleanup_deletes_integrated_dirty_closed_descendant(
         project_id=sample_project["id"],
         title="Root",
         task_type="epic",
+        validation_criteria="Test task completion is observable.",
     )
     child = task_manager.create_task(
         project_id=sample_project["id"],
         title="Closed dirty child",
         category="code",
         parent_task_id=root.id,
+        validation_criteria="Test task completion is observable.",
     )
     task_manager.close_task(child.id, force=True, closed_commit_sha="child-head")
     TaskArtifactManager(temp_db).set_artifacts_atomic(root.id, target_branch="main")
@@ -899,12 +914,14 @@ def test_successful_merge_cleanup_defers_open_dirty_descendant(
         project_id=sample_project["id"],
         title="Root",
         task_type="epic",
+        validation_criteria="Test task completion is observable.",
     )
     child = task_manager.create_task(
         project_id=sample_project["id"],
         title="Open dirty child",
         category="code",
         parent_task_id=root.id,
+        validation_criteria="Test task completion is observable.",
     )
     TaskArtifactManager(temp_db).set_artifacts_atomic(root.id, target_branch="main")
     worktree_path = tmp_path / "dirty-open"
@@ -969,12 +986,14 @@ def test_successful_merge_cleanup_defers_unintegrated_dirty_closed_descendant(
         project_id=sample_project["id"],
         title="Root",
         task_type="epic",
+        validation_criteria="Test task completion is observable.",
     )
     child = task_manager.create_task(
         project_id=sample_project["id"],
         title="Closed unintegrated child",
         category="code",
         parent_task_id=root.id,
+        validation_criteria="Test task completion is observable.",
     )
     task_manager.close_task(child.id, force=True, closed_commit_sha="child-head")
     TaskArtifactManager(temp_db).set_artifacts_atomic(root.id, target_branch="main")
@@ -1060,6 +1079,7 @@ async def test_clean_force_resets_runtime_state_without_artifacts(
         title="Clean phantom state",
         category="code",
         task_type="task",
+        validation_criteria="Test task completion is observable.",
     )
     initialize_manifest(temp_db, task.id, [spec("development", 0)])
     set_stage_state(temp_db, task.id, "development", "in_progress")
@@ -1128,6 +1148,7 @@ async def test_restart_dry_run_reports_restart_without_mutating_task(
         title="Restart preview",
         category="code",
         task_type="task",
+        validation_criteria="Test task completion is observable.",
     )
     task_manager.update_task(task.id, allow_automation=True)
 
@@ -1160,6 +1181,7 @@ async def test_restart_reseeds_exhausted_isolated_manifest_with_merge(
         title="Exhausted docs task",
         category="docs",
         task_type="task",
+        validation_criteria="Test task completion is observable.",
     )
     task_manager.update_task(task.id, allow_automation=True, isolation="worktree")
     task_manager.artifacts.set_artifact(task.id, "target_branch", "integration/test")
@@ -1205,6 +1227,7 @@ async def test_restart_no_resume_rebuilds_plan_file_root_manifest_from_options(
         title="Plan-file root",
         category="planning",
         task_type="epic",
+        validation_criteria="Test task completion is observable.",
     )
     child = task_manager.create_task(
         project_id=sample_project["id"],
@@ -1212,6 +1235,7 @@ async def test_restart_no_resume_rebuilds_plan_file_root_manifest_from_options(
         category="code",
         task_type="task",
         parent_task_id=root.id,
+        validation_criteria="Test task completion is observable.",
     )
     task_manager.update_task(root.id, allow_automation=True, isolation="worktree")
     task_manager.update_task(child.id, allow_automation=True, isolation="worktree")
@@ -1326,6 +1350,7 @@ async def test_restart_no_resume_resets_epic_tree_without_dispatch(
         title="Docs epic",
         category="planning",
         task_type="epic",
+        validation_criteria="Test task completion is observable.",
     )
     leaf = task_manager.create_task(
         project_id=sample_project["id"],
@@ -1333,6 +1358,7 @@ async def test_restart_no_resume_resets_epic_tree_without_dispatch(
         category="docs",
         task_type="task",
         parent_task_id=epic.id,
+        validation_criteria="Test task completion is observable.",
     )
     task_manager.update_task(epic.id, allow_automation=True, isolation="worktree")
     task_manager.update_task(
@@ -1386,6 +1412,7 @@ async def test_restart_clears_build_owned_dispatch_escalations(
         title="Restart escalated epic",
         category="planning",
         task_type="epic",
+        validation_criteria="Test task completion is observable.",
     )
     auto_escalated = task_manager.create_task(
         project_id=sample_project["id"],
@@ -1393,6 +1420,7 @@ async def test_restart_clears_build_owned_dispatch_escalations(
         category="docs",
         task_type="task",
         parent_task_id=epic.id,
+        validation_criteria="Test task completion is observable.",
     )
     manual_escalated = task_manager.create_task(
         project_id=sample_project["id"],
@@ -1400,6 +1428,7 @@ async def test_restart_clears_build_owned_dispatch_escalations(
         category="docs",
         task_type="task",
         parent_task_id=epic.id,
+        validation_criteria="Test task completion is observable.",
     )
     task_manager.update_task(
         auto_escalated.id,
@@ -1461,6 +1490,7 @@ async def test_restart_resets_stale_dispatch_failure_count_without_escalation(
         title="Retry counter only",
         category="docs",
         task_type="task",
+        validation_criteria="Test task completion is observable.",
     )
     task_manager.update_task(task.id, allow_automation=True, dispatch_failure_count=3)
 
@@ -1492,6 +1522,7 @@ def test_default_branch_dir_name_uses_untitled_for_empty_slug(
         title="!!!",
         category="code",
         task_type="task",
+        validation_criteria="The fallback branch name is observable.",
     )
 
     assert default_task_branch_name(task) == f"task-{task.seq_num}-untitled"

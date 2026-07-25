@@ -39,7 +39,11 @@ def run_manager(db):
 
 @pytest.fixture
 def parent_task(task_manager):
-    return task_manager.create_task(project_id=PROJECT_ID, title="Parent expansion task")
+    return task_manager.create_task(
+        project_id=PROJECT_ID,
+        title="Parent expansion task",
+        validation_criteria="Test task completion is observable.",
+    )
 
 
 ALL_STATUSES: tuple[ExpansionRunStatus, ...] = (
@@ -241,7 +245,11 @@ def test_cleanup_stale_runs_fails_in_flight_run(run_manager, parent_task, status
 def test_cleanup_stale_runs_preserves_recent_and_other_task_runs(
     run_manager, task_manager, parent_task
 ) -> None:
-    other_task = task_manager.create_task(project_id=PROJECT_ID, title="Other expansion task")
+    other_task = task_manager.create_task(
+        project_id=PROJECT_ID,
+        title="Other expansion task",
+        validation_criteria="Test task completion is observable.",
+    )
     recent = run_manager.create(
         parent_task_id=parent_task.id,
         project_id=parent_task.project_id,

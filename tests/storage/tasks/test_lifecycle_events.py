@@ -18,6 +18,7 @@ def test_record_lifecycle_event_requires_reason_and_actor(temp_db, sample_projec
     task = LocalTaskManager(temp_db).create_task(
         project_id=sample_project["id"],
         title="Lifecycle event",
+        validation_criteria="Test task completion is observable.",
     )
     manager = _event_manager_class()(temp_db)
 
@@ -43,6 +44,7 @@ def test_record_lifecycle_event_appends_ordered_audit_rows(temp_db, sample_proje
     task = LocalTaskManager(temp_db).create_task(
         project_id=sample_project["id"],
         title="Lifecycle event",
+        validation_criteria="Test task completion is observable.",
     )
     manager = _event_manager_class()(temp_db)
 
@@ -79,6 +81,7 @@ def test_has_build_event_only_true_after_a_gobby_build_event(temp_db, sample_pro
     task = LocalTaskManager(temp_db).create_task(
         project_id=sample_project["id"],
         title="Build state",
+        validation_criteria="Test task completion is observable.",
     )
     manager = _event_manager_class()(temp_db)
 
@@ -114,6 +117,7 @@ def test_build_event_survives_a_stop_so_state_reads_paused_not_never_started(
     task = LocalTaskManager(temp_db).create_task(
         project_id=sample_project["id"],
         title="Stopped build",
+        validation_criteria="Test task completion is observable.",
     )
     manager = _event_manager_class()(temp_db)
     manager.record_lifecycle_event(
@@ -130,10 +134,20 @@ def test_build_event_survives_a_stop_so_state_reads_paused_not_never_started(
 
 def test_tasks_with_build_event_is_a_batched_predicate(temp_db, sample_project) -> None:
     task_manager = LocalTaskManager(temp_db)
-    built = task_manager.create_task(project_id=sample_project["id"], title="Built")
-    untouched = task_manager.create_task(project_id=sample_project["id"], title="Never built")
+    built = task_manager.create_task(
+        project_id=sample_project["id"],
+        title="Built",
+        validation_criteria="Test task completion is observable.",
+    )
+    untouched = task_manager.create_task(
+        project_id=sample_project["id"],
+        title="Never built",
+        validation_criteria="Test task completion is observable.",
+    )
     other_event = task_manager.create_task(
-        project_id=sample_project["id"], title="Has non-build event"
+        project_id=sample_project["id"],
+        title="Has non-build event",
+        validation_criteria="Test task completion is observable.",
     )
     manager = _event_manager_class()(temp_db)
     manager.record_lifecycle_event(
@@ -163,6 +177,7 @@ def test_module_helpers_return_id_and_list_newest_first(temp_db, sample_project)
     task = LocalTaskManager(temp_db).create_task(
         project_id=sample_project["id"],
         title="Lifecycle event",
+        validation_criteria="Test task completion is observable.",
     )
 
     first_id = record_lifecycle_event(

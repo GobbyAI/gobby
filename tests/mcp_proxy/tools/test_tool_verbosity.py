@@ -69,7 +69,14 @@ async def test_task_verbosity_reduction(
     registry = create_task_registry(mock_manager, mock_sync)
 
     with session_context_for_test(canonical_task_session.id):
-        result = await registry.call("create_task", {"title": "test", "category": "research"})
+        result = await registry.call(
+            "create_task",
+            {
+                "title": "test",
+                "category": "research",
+                "validation_criteria": "Test task completion is observable.",
+            },
+        )
     assert result["id"] == "task-123"
     assert "description" not in result
 

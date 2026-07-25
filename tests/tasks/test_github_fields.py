@@ -51,6 +51,7 @@ class TestTaskGitHubFields:
         task = task_manager.create_task(
             project_id=project_id,
             title="Test task",
+            validation_criteria="Test task completion is observable.",
         )
         assert task.github_issue_number is None
         assert task.github_pr_number is None
@@ -61,6 +62,7 @@ class TestTaskGitHubFields:
         task = task_manager.create_task(
             project_id=project_id,
             title="Test task",
+            validation_criteria="Test task completion is observable.",
         )
         task_dict = task.to_dict()
         assert "github_issue_number" in task_dict
@@ -81,8 +83,9 @@ class TestTaskGitHubFields:
                 """
                 INSERT INTO tasks (
                     id, project_id, title, priority, task_type,
-                    created_at, updated_at, github_issue_number, github_pr_number, github_repo
-                ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                    validation_criteria, created_at, updated_at,
+                    github_issue_number, github_pr_number, github_repo
+                ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
                 """,
                 (
                     task_id,
@@ -90,6 +93,7 @@ class TestTaskGitHubFields:
                     "GitHub linked task",
                     2,
                     "task",
+                    "GitHub fields survive a database roundtrip.",
                     now,
                     now,
                     123,  # github_issue_number

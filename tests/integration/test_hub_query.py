@@ -66,6 +66,7 @@ def multi_project_hub(hub_db):
                 title=f"Task {j} for {project_name}",
                 task_type=task_type,
                 priority=j + 1,
+                validation_criteria="Test task completion is observable.",
             )
             if state == "in_progress":
                 _start_current_stage(task_manager, task.id)
@@ -321,10 +322,17 @@ class TestHubQueryEdgeCases:
         )
         hub_db.execute(
             """
-            INSERT INTO tasks (id, project_id, title, created_at, updated_at)
-            VALUES (%s, %s, %s, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+            INSERT INTO tasks (
+                id, project_id, title, validation_criteria, created_at, updated_at
+            )
+            VALUES (%s, %s, %s, %s, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
             """,
-            (_test_uuid("task-only-1"), tasks_only_project, "A Task"),
+            (
+                _test_uuid("task-only-1"),
+                tasks_only_project,
+                "A Task",
+                "The task is visible in project queries.",
+            ),
         )
 
         registry = create_hub_registry(db=hub_db)

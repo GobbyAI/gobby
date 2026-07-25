@@ -82,6 +82,7 @@ def _task(temp_db: HubDatabase, sample_project: dict[str, Any]) -> Task:
     return LocalTaskManager(temp_db).create_task(
         project_id=sample_project["id"],
         title="Artifacts",
+        validation_criteria="Test task completion is observable.",
     )
 
 

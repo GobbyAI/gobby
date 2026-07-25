@@ -32,6 +32,7 @@ def _expanded_epic(
         title="Readiness epic",
         task_type="epic",
         category="planning",
+        validation_criteria="Test task completion is observable.",
     )
     leaf_code = task_manager.create_task(
         project_id=project_id,
@@ -39,6 +40,7 @@ def _expanded_epic(
         parent_task_id=epic.id,
         task_type="task",
         category="code",
+        validation_criteria="Test task completion is observable.",
     )
     leaf_test = task_manager.create_task(
         project_id=project_id,
@@ -46,6 +48,7 @@ def _expanded_epic(
         parent_task_id=epic.id,
         task_type="task",
         category="test",
+        validation_criteria="Test task completion is observable.",
     )
     return epic, [leaf_code, leaf_test]
 

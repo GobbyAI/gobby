@@ -34,6 +34,7 @@ class TestTaskManagerGitHubCreate:
             project_id=project_id,
             title="Issue-linked task",
             github_issue_number=42,
+            validation_criteria="Test task completion is observable.",
         )
         assert task.github_issue_number == 42
 
@@ -43,6 +44,7 @@ class TestTaskManagerGitHubCreate:
             project_id=project_id,
             title="PR-linked task",
             github_pr_number=123,
+            validation_criteria="Test task completion is observable.",
         )
         assert task.github_pr_number == 123
 
@@ -52,6 +54,7 @@ class TestTaskManagerGitHubCreate:
             project_id=project_id,
             title="Repo-linked task",
             github_repo="owner/repo",
+            validation_criteria="Test task completion is observable.",
         )
         assert task.github_repo == "owner/repo"
 
@@ -63,6 +66,7 @@ class TestTaskManagerGitHubCreate:
             github_issue_number=100,
             github_pr_number=200,
             github_repo="myorg/myrepo",
+            validation_criteria="Test task completion is observable.",
         )
         assert task.github_issue_number == 100
         assert task.github_pr_number == 200
@@ -76,6 +80,7 @@ class TestTaskManagerGitHubCreate:
             github_issue_number=55,
             github_pr_number=66,
             github_repo="test/repo",
+            validation_criteria="Test task completion is observable.",
         )
 
         # Retrieve fresh from database
@@ -90,25 +95,41 @@ class TestTaskManagerGitHubUpdate:
 
     def test_update_task_github_issue_number(self, task_manager, project_id) -> None:
         """update_task should accept github_issue_number parameter."""
-        task = task_manager.create_task(project_id=project_id, title="To update")
+        task = task_manager.create_task(
+            project_id=project_id,
+            title="To update",
+            validation_criteria="Test task completion is observable.",
+        )
         updated = task_manager.update_task(task.id, github_issue_number=99)
         assert updated.github_issue_number == 99
 
     def test_update_task_github_pr_number(self, task_manager, project_id) -> None:
         """update_task should accept github_pr_number parameter."""
-        task = task_manager.create_task(project_id=project_id, title="To update")
+        task = task_manager.create_task(
+            project_id=project_id,
+            title="To update",
+            validation_criteria="Test task completion is observable.",
+        )
         updated = task_manager.update_task(task.id, github_pr_number=88)
         assert updated.github_pr_number == 88
 
     def test_update_task_github_repo(self, task_manager, project_id) -> None:
         """update_task should accept github_repo parameter."""
-        task = task_manager.create_task(project_id=project_id, title="To update")
+        task = task_manager.create_task(
+            project_id=project_id,
+            title="To update",
+            validation_criteria="Test task completion is observable.",
+        )
         updated = task_manager.update_task(task.id, github_repo="new/repo")
         assert updated.github_repo == "new/repo"
 
     def test_update_task_all_github_fields(self, task_manager, project_id) -> None:
         """update_task should accept all GitHub fields together."""
-        task = task_manager.create_task(project_id=project_id, title="To update")
+        task = task_manager.create_task(
+            project_id=project_id,
+            title="To update",
+            validation_criteria="Test task completion is observable.",
+        )
         updated = task_manager.update_task(
             task.id,
             github_issue_number=111,
@@ -126,6 +147,7 @@ class TestTaskManagerGitHubUpdate:
             title="To clear",
             github_issue_number=50,
             github_repo="some/repo",
+            validation_criteria="Test task completion is observable.",
         )
 
         # Clear the fields
@@ -139,7 +161,11 @@ class TestTaskManagerGitHubUpdate:
 
     def test_update_task_github_fields_persist(self, task_manager, project_id) -> None:
         """Updated GitHub fields should persist to database."""
-        task = task_manager.create_task(project_id=project_id, title="Persist test")
+        task = task_manager.create_task(
+            project_id=project_id,
+            title="Persist test",
+            validation_criteria="Test task completion is observable.",
+        )
         task_manager.update_task(
             task.id,
             github_issue_number=77,
@@ -164,6 +190,7 @@ class TestTaskManagerGitHubList:
             title="Listed task",
             github_issue_number=30,
             github_repo="list/test",
+            validation_criteria="Test task completion is observable.",
         )
 
         tasks = task_manager.list_tasks(project_id=project_id)

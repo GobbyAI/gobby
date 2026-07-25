@@ -399,6 +399,7 @@ async def test_close_linked_issue_after_merge_comments_labels_and_closes(
         title="Linked issue",
         github_repo="owner/repo",
         github_issue_number=99,
+        validation_criteria="The linked GitHub issue is closed after the merge is recorded.",
     )
     github = FakeGitHubMCP()
     service = GitHubIssueTriageService(db=temp_db, mcp_manager=github)

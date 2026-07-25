@@ -57,7 +57,11 @@ async def test_failed_non_in_progress_recovery_releases_run_mutex(temp_db, sampl
         source="codex",
         project_id=sample_project["id"],
     )
-    task = task_manager.create_task(sample_project["id"], "Recover task")
+    task = task_manager.create_task(
+        sample_project["id"],
+        "Recover task",
+        validation_criteria="Test task completion is observable.",
+    )
     task_manager.claim_task(task.id, session.id)
     mutexes = TaskDispatchMutexManager(temp_db)
     assert mutexes.acquire_mutex(
@@ -100,7 +104,11 @@ async def test_resolve_claimed_task_requires_child_session_ownership(
         source="codex",
         project_id=sample_project["id"],
     )
-    task = task_manager.create_task(sample_project["id"], "Recover claimed task")
+    task = task_manager.create_task(
+        sample_project["id"],
+        "Recover claimed task",
+        validation_criteria="Test task completion is observable.",
+    )
     task_manager.claim_task(task.id, session.id)
     handler = TaskRecoveryHandler(
         task_manager,

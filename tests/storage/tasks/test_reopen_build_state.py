@@ -28,6 +28,7 @@ def _task(temp_db, sample_project):
         title="Reopen build state",
         category="code",
         task_type="task",
+        validation_criteria="Test task completion is observable.",
     )
     initialize_manifest(temp_db, task.id, [spec("development", 0)])
     return manager, task

@@ -50,9 +50,12 @@ def validate_task_cmd(
 
     from gobby.cli.runtime import get_cli_runtime, require_cli_database
     from gobby.llm import LLMService
+    from gobby.storage.verification_receipts import VerificationReceiptStore
+    from gobby.tasks.evidence_admission import admit_task_evidence
     from gobby.tasks.validation import TaskValidator
     from gobby.tasks.validation_history import ValidationHistoryManager
     from gobby.tasks.validation_verdict import ValidationResult, format_close_validation_message
+    from gobby.tasks.verification_receipt_packet import build_verification_receipt_packet
 
     manager = get_task_manager()
     resolved = resolve_task_id(manager, task_id)
@@ -168,6 +171,15 @@ def validate_task_cmd(
     except Exception as e:
         raise click.ClickException(f"Error initializing validator: {e}") from e
 
+    receipt_store = VerificationReceiptStore(manager.db)
+    admission = admit_task_evidence(
+        receipt_store.list_for_task(resolved.project_id, resolved.id),
+        task_id=resolved.id,
+        validation_epoch=resolved.validation_epoch,
+        validation_criteria=resolved.validation_criteria or "",
+    )
+    receipt_packet = build_verification_receipt_packet(admission.receipts)
+
     # Run validation
     try:
         result = asyncio.run(
@@ -177,6 +189,9 @@ def validate_task_cmd(
                 description=resolved.description,
                 changes_summary=changes_summary,
                 validation_criteria=resolved.validation_criteria,
+                category=resolved.category,
+                verification_receipt_text=receipt_packet.text,
+                admissible_evidence_ids=sorted(admission.evidence_ids),
             )
         )
 
@@ -207,8 +222,10 @@ def validate_task_cmd(
         escalation_reason: str | None = None
 
         if result.status == "valid":
-            manager.close_task(resolved.id, reason="Completed via validation")
-            click.echo("Task closed.")
+            click.echo(
+                "Validation passed. Use the close_task MCP tool to gather final task-state "
+                "evidence and close atomically."
+            )
         elif (
             result.status == "invalid"
             and result.failure_category not in INFRASTRUCTURE_FAILURE_CATEGORIES
@@ -225,6 +242,10 @@ def validate_task_cmd(
                     parent_task_id=resolved.id,
                     priority=1,
                     task_type="bug",
+                    validation_criteria=(
+                        "Every reported validation gap is resolved and supported by fresh "
+                        "admissible evidence."
+                    ),
                 )
                 validation_updates["validation_feedback"] = (
                     result.feedback or ""

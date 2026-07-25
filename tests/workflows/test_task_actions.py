@@ -39,6 +39,7 @@ class TestUpdateTaskFromWorkflow:
         task = task_manager.create_task(
             project_id=project_id,
             title="Test task",
+            validation_criteria="Test task completion is observable.",
         )
 
         updated = update_task_from_workflow(
@@ -68,6 +69,7 @@ class TestUpdateTaskFromWorkflow:
         task = task_manager.create_task(
             project_id=project_id,
             title="Test task",
+            validation_criteria="Test task completion is observable.",
         )
 
         result = update_task_from_workflow(

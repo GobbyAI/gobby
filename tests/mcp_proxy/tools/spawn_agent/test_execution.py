@@ -418,6 +418,7 @@ class TestSpawnAgentConcurrencyGuards:
         task = task_manager.create_task(
             project_id=str(sample_project["id"]),
             title="Guarded task",
+            validation_criteria="Test task completion is observable.",
         )
         parent_session_id = _register_parent_session(temp_db, sample_project, "parent-concurrent")
         run_storage = LocalAgentRunManager(temp_db)
@@ -514,6 +515,7 @@ class TestSpawnAgentConcurrencyGuards:
         task = task_manager.create_task(
             project_id=str(sample_project["id"]),
             title="Capped task",
+            validation_criteria="Test task completion is observable.",
         )
 
         registry = create_spawn_agent_registry(
@@ -780,6 +782,7 @@ class TestSpawnAgentPreRegistration:
         task = task_manager.create_task(
             project_id=str(sample_project["id"]),
             title="Attach failure task",
+            validation_criteria="Test task completion is observable.",
         )
         session_manager = SessionManager(temp_db)
         parent_session_id = _register_parent_session(temp_db, sample_project, "parent-attach")

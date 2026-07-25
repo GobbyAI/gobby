@@ -303,7 +303,9 @@ class TestSpawnAgentStepVariables:
 
         project = LocalProjectManager(db).create(name="spawn-step-project", repo_path="/tmp/gobby")
         task_manager = LocalTaskManager(db)
-        task = task_manager.create_task(project.id, "Review plan")
+        task = task_manager.create_task(
+            project.id, "Review plan", validation_criteria="Test task completion is observable."
+        )
 
         session_manager = SessionManager(db)
         parent = session_manager.register(
@@ -426,6 +428,7 @@ class TestSpawnAgentStepVariables:
             project.id,
             f"{agent_name} task",
             additional_skills=additional_skills,
+            validation_criteria="Test task completion is observable.",
         )
 
         session_manager = SessionManager(db)

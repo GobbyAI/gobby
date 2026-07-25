@@ -17,7 +17,11 @@ pytestmark = pytest.mark.unit
 
 def test_no_legacy_fields(temp_db, sample_project) -> None:
     manager = LocalTaskManager(temp_db)
-    manager.create_task(project_id=sample_project["id"], title="Shape")
+    manager.create_task(
+        project_id=sample_project["id"],
+        title="Shape",
+        validation_criteria="Test task completion is observable.",
+    )
     server = create_http_server(
         config=DaemonConfig(),
         database=temp_db,

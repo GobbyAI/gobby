@@ -135,6 +135,7 @@ class LibrarianTaskManagerProtocol(Protocol):
         *,
         labels: list[str] | None = None,
         category: str | None = None,
+        validation_criteria: str | None = None,
     ) -> object: ...
 
 
@@ -929,6 +930,7 @@ def _file_librarian_tasks(
             _librarian_task_description(entry),
             labels=[label],
             category="docs",
+            validation_criteria=_librarian_validation_criteria(entry),
         )
         filed_titles.append(title)
     return {
@@ -970,6 +972,16 @@ def _librarian_task_description(entry: dict[str, Any]) -> str | None:
         affected = f"Affected paths:\n{listing}"
         return f"{description}\n\n{affected}" if description else affected
     return description or None
+
+
+def _librarian_validation_criteria(entry: dict[str, Any]) -> str:
+    provided = str(entry.get("validation_criteria") or "").strip()
+    if provided:
+        return provided
+    return (
+        "The identified wiki gap is corrected in the final documentation artifact, "
+        "and referenced paths and links are accurate."
+    )
 
 
 def _scope_project_id(scope: str, fallback_project_id: str) -> str:

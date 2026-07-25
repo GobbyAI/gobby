@@ -44,6 +44,7 @@ def expansion_run(task_manager: LocalTaskManager, test_project: Any) -> Any:
         project_id=test_project,
         title="Parent task for expansion QA",
         task_type="feature",
+        validation_criteria="Test task completion is observable.",
     )
     run_manager = LocalExpansionRunManager(task_manager.db)
     return run_manager.create(

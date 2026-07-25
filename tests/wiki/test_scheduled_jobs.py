@@ -230,6 +230,7 @@ class RecordingTaskManager:
         *,
         labels: list[str] | None = None,
         category: str | None = None,
+        validation_criteria: str | None = None,
     ) -> object:
         self.created.append(
             {
@@ -238,6 +239,7 @@ class RecordingTaskManager:
                 "description": description,
                 "labels": labels,
                 "category": category,
+                "validation_criteria": validation_criteria,
             }
         )
         self.open_titles_by_project.setdefault(project_id, []).append(title)

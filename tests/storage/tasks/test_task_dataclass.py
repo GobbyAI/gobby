@@ -11,7 +11,11 @@ pytestmark = pytest.mark.unit
 
 def test_is_escalated_field(temp_db, sample_project) -> None:
     manager = LocalTaskManager(temp_db)
-    task = manager.create_task(project_id=sample_project["id"], title="Escalation flag")
+    task = manager.create_task(
+        project_id=sample_project["id"],
+        title="Escalation flag",
+        validation_criteria="Test task completion is observable.",
+    )
 
     temp_db.execute("UPDATE tasks SET is_escalated = TRUE WHERE id = %s", (task.id,))
     fetched = manager.get_task(task.id)
@@ -28,6 +32,7 @@ def test_implementation_domain_persists(temp_db, sample_project) -> None:
         title="Backend leaf",
         category="code",
         implementation_domain="backend",
+        validation_criteria="Test task completion is observable.",
     )
 
     fetched = manager.get_task(task.id)

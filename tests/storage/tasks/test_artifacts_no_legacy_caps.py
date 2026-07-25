@@ -25,6 +25,7 @@ def test_set_artifact_rejects_max_review_rounds_kwarg(temp_db, sample_project) -
     task = LocalTaskManager(temp_db).create_task(
         project_id=sample_project["id"],
         title="Artifact cap",
+        validation_criteria="Test task completion is observable.",
     )
     manager = TaskArtifactManager(temp_db)
 
@@ -36,6 +37,7 @@ def test_set_artifacts_atomic_rejects_max_review_rounds_kwarg(temp_db, sample_pr
     task = LocalTaskManager(temp_db).create_task(
         project_id=sample_project["id"],
         title="Artifact caps",
+        validation_criteria="Test task completion is observable.",
     )
     manager = TaskArtifactManager(temp_db)
 

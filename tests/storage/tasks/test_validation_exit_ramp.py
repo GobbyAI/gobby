@@ -26,7 +26,11 @@ def test_close_existing_task_with_changed_updated_at_raises_stale(
     sample_project: dict[str, Any],
 ) -> None:
     manager = LocalTaskManager(temp_db)
-    snapshot = manager.create_task(sample_project["id"], "Concurrent close")
+    snapshot = manager.create_task(
+        sample_project["id"],
+        "Concurrent close",
+        validation_criteria="Test task completion is observable.",
+    )
     manager.update_task(snapshot.id, title="Changed concurrently")
 
     with pytest.raises(TaskStaleStateError):
@@ -83,7 +87,11 @@ def test_concurrent_threshold_crossing_escalates_exactly_once(
     sample_project: dict[str, Any],
 ) -> None:
     manager = LocalTaskManager(temp_db)
-    task = manager.create_task(sample_project["id"], "Threshold race")
+    task = manager.create_task(
+        sample_project["id"],
+        "Threshold race",
+        validation_criteria="Test task completion is observable.",
+    )
     manager.update_task(task.id, validation_fail_count=4)
     snapshot = manager.get_task(task.id)
 
@@ -115,7 +123,11 @@ def test_count_already_past_threshold_still_escalates(
     sample_project: dict[str, Any],
 ) -> None:
     manager = LocalTaskManager(temp_db)
-    task = manager.create_task(sample_project["id"], "Past threshold")
+    task = manager.create_task(
+        sample_project["id"],
+        "Past threshold",
+        validation_criteria="Test task completion is observable.",
+    )
     manager.update_task(task.id, validation_fail_count=6)
     snapshot = manager.get_task(task.id)
 
@@ -137,7 +149,11 @@ def test_concurrent_valid_and_invalid_verdict_first_transition_wins(
     winner: str,
 ) -> None:
     manager = LocalTaskManager(temp_db)
-    task = manager.create_task(sample_project["id"], f"Verdict race {winner}")
+    task = manager.create_task(
+        sample_project["id"],
+        f"Verdict race {winner}",
+        validation_criteria="Test task completion is observable.",
+    )
     manager.update_task(task.id, validation_fail_count=3)
     snapshot = manager.get_task(task.id)
     winner_done = threading.Event()
@@ -195,7 +211,11 @@ def test_deliberate_close_of_escalated_task_succeeds_and_clears_escalation(
 ) -> None:
     """A caller that read the escalated row may close it; only racing closes lose."""
     manager = LocalTaskManager(temp_db)
-    task = manager.create_task(sample_project["id"], "Escalated resolution close")
+    task = manager.create_task(
+        sample_project["id"],
+        "Escalated resolution close",
+        validation_criteria="Test task completion is observable.",
+    )
     manager.escalate_task(task.id, reason="ready for QA review")
     snapshot = manager.get_task(task.id)
 
@@ -225,7 +245,11 @@ def test_manual_escalation_reopen_resets_validation_fail_count(
     sample_project: dict[str, Any],
 ) -> None:
     manager = LocalTaskManager(temp_db)
-    task = manager.create_task(sample_project["id"], "Manual reopen")
+    task = manager.create_task(
+        sample_project["id"],
+        "Manual reopen",
+        validation_criteria="Test task completion is observable.",
+    )
     manager.update_task(task.id, validation_fail_count=4)
     manager.escalate_task(task.id, reason="manual review")
 
@@ -240,7 +264,11 @@ def test_repeated_close_preserves_terminal_timestamps_and_stage_metadata(
     sample_project: dict[str, Any],
 ) -> None:
     manager = LocalTaskManager(temp_db)
-    task = manager.create_task(sample_project["id"], "Idempotent close")
+    task = manager.create_task(
+        sample_project["id"],
+        "Idempotent close",
+        validation_criteria="Test task completion is observable.",
+    )
     manager.initialize_task_manifest(task.id)
 
     first = manager.close_task(task.id, reason="finished")

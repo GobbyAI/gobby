@@ -30,6 +30,7 @@ def _parent(service: ExpansionService, sample_project: dict[str, Any]) -> Task:
         project_id=sample_project["id"],
         title="Lifecycle dispatch",
         task_type="epic",
+        validation_criteria="Test task completion is observable.",
     )
 
 

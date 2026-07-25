@@ -86,6 +86,7 @@ def task(task_manager: LocalTaskManager, project: Project) -> Task:
         project_id=project.id,
         title="Test Task",
         description="A test task for worktree tests",
+        validation_criteria="Test task completion is observable.",
     )
 
 

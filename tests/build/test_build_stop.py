@@ -194,11 +194,13 @@ def test_resume_cleanup_preserves_expired_mutex_for_active_run(temp_db) -> None:
         project_id=project.id,
         title="Active",
         category="code",
+        validation_criteria="Test task completion is observable.",
     )
     orphan_task = task_manager.create_task(
         project_id=project.id,
         title="Orphan",
         category="code",
+        validation_criteria="Test task completion is observable.",
     )
     run = LocalAgentRunManager(temp_db).create(
         parent_session_id=SYSTEM_SESSION_ID,

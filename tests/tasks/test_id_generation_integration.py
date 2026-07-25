@@ -45,6 +45,7 @@ class TestCompleteIDGenerationFlow:
             project_id=project_id,
             title="Test Task",
             description="Integration test task",
+            validation_criteria="Test task completion is observable.",
         )
 
         # Verify ID is a valid UUID
@@ -87,10 +88,26 @@ class TestCompleteIDGenerationFlow:
         )
 
         # Create tasks in each project
-        alpha_task1 = task_manager.create_task(project_id=alpha_project_id, title="Alpha 1")
-        alpha_task2 = task_manager.create_task(project_id=alpha_project_id, title="Alpha 2")
-        beta_task1 = task_manager.create_task(project_id=beta_project_id, title="Beta 1")
-        beta_task2 = task_manager.create_task(project_id=beta_project_id, title="Beta 2")
+        alpha_task1 = task_manager.create_task(
+            project_id=alpha_project_id,
+            title="Alpha 1",
+            validation_criteria="Test task completion is observable.",
+        )
+        alpha_task2 = task_manager.create_task(
+            project_id=alpha_project_id,
+            title="Alpha 2",
+            validation_criteria="Test task completion is observable.",
+        )
+        beta_task1 = task_manager.create_task(
+            project_id=beta_project_id,
+            title="Beta 1",
+            validation_criteria="Test task completion is observable.",
+        )
+        beta_task2 = task_manager.create_task(
+            project_id=beta_project_id,
+            title="Beta 2",
+            validation_criteria="Test task completion is observable.",
+        )
 
         # Each project has independent seq_num sequences
         assert alpha_task1.seq_num == 1
@@ -112,20 +129,40 @@ class TestCompleteIDGenerationFlow:
         #     child2 (seq=5, path=1.5)
         #   root2 (seq=6, path=6)
 
-        root = task_manager.create_task(project_id=project_id, title="Root")
+        root = task_manager.create_task(
+            project_id=project_id,
+            title="Root",
+            validation_criteria="Test task completion is observable.",
+        )
         child1 = task_manager.create_task(
-            project_id=project_id, title="Child 1", parent_task_id=root.id
+            project_id=project_id,
+            title="Child 1",
+            parent_task_id=root.id,
+            validation_criteria="Test task completion is observable.",
         )
         grandchild1 = task_manager.create_task(
-            project_id=project_id, title="Grandchild 1", parent_task_id=child1.id
+            project_id=project_id,
+            title="Grandchild 1",
+            parent_task_id=child1.id,
+            validation_criteria="Test task completion is observable.",
         )
         grandchild2 = task_manager.create_task(
-            project_id=project_id, title="Grandchild 2", parent_task_id=child1.id
+            project_id=project_id,
+            title="Grandchild 2",
+            parent_task_id=child1.id,
+            validation_criteria="Test task completion is observable.",
         )
         child2 = task_manager.create_task(
-            project_id=project_id, title="Child 2", parent_task_id=root.id
+            project_id=project_id,
+            title="Child 2",
+            parent_task_id=root.id,
+            validation_criteria="Test task completion is observable.",
         )
-        root2 = task_manager.create_task(project_id=project_id, title="Root 2")
+        root2 = task_manager.create_task(
+            project_id=project_id,
+            title="Root 2",
+            validation_criteria="Test task completion is observable.",
+        )
 
         # Verify seq_nums are sequential (flat, not hierarchical)
         assert root.seq_num == 1
@@ -146,13 +183,27 @@ class TestCompleteIDGenerationFlow:
     def test_reparent_updates_subtree_paths(self, task_manager, project_id) -> None:
         """Test that reparenting a task updates all descendant paths."""
         # Create initial hierarchy under root1
-        root1 = task_manager.create_task(project_id=project_id, title="Root 1")
-        root2 = task_manager.create_task(project_id=project_id, title="Root 2")
+        root1 = task_manager.create_task(
+            project_id=project_id,
+            title="Root 1",
+            validation_criteria="Test task completion is observable.",
+        )
+        root2 = task_manager.create_task(
+            project_id=project_id,
+            title="Root 2",
+            validation_criteria="Test task completion is observable.",
+        )
         branch = task_manager.create_task(
-            project_id=project_id, title="Branch", parent_task_id=root1.id
+            project_id=project_id,
+            title="Branch",
+            parent_task_id=root1.id,
+            validation_criteria="Test task completion is observable.",
         )
         leaf = task_manager.create_task(
-            project_id=project_id, title="Leaf", parent_task_id=branch.id
+            project_id=project_id,
+            title="Leaf",
+            parent_task_id=branch.id,
+            validation_criteria="Test task completion is observable.",
         )
 
         # Initial paths
@@ -171,12 +222,22 @@ class TestCompleteIDGenerationFlow:
 
     def test_reparent_to_root(self, task_manager, project_id) -> None:
         """Test reparenting a task to become a root task."""
-        parent = task_manager.create_task(project_id=project_id, title="Parent")
+        parent = task_manager.create_task(
+            project_id=project_id,
+            title="Parent",
+            validation_criteria="Test task completion is observable.",
+        )
         child = task_manager.create_task(
-            project_id=project_id, title="Child", parent_task_id=parent.id
+            project_id=project_id,
+            title="Child",
+            parent_task_id=parent.id,
+            validation_criteria="Test task completion is observable.",
         )
         grandchild = task_manager.create_task(
-            project_id=project_id, title="Grandchild", parent_task_id=child.id
+            project_id=project_id,
+            title="Grandchild",
+            parent_task_id=child.id,
+            validation_criteria="Test task completion is observable.",
         )
 
         # Initial paths
@@ -195,9 +256,21 @@ class TestCompleteIDGenerationFlow:
 
     def test_seq_num_gaps_preserved(self, task_manager, project_id) -> None:
         """Test that seq_num gaps are preserved after deletion."""
-        task1 = task_manager.create_task(project_id=project_id, title="Task 1")
-        task2 = task_manager.create_task(project_id=project_id, title="Task 2")
-        task3 = task_manager.create_task(project_id=project_id, title="Task 3")
+        task1 = task_manager.create_task(
+            project_id=project_id,
+            title="Task 1",
+            validation_criteria="Test task completion is observable.",
+        )
+        task2 = task_manager.create_task(
+            project_id=project_id,
+            title="Task 2",
+            validation_criteria="Test task completion is observable.",
+        )
+        task3 = task_manager.create_task(
+            project_id=project_id,
+            title="Task 3",
+            validation_criteria="Test task completion is observable.",
+        )
 
         assert task1.seq_num == 1
         assert task2.seq_num == 2
@@ -207,7 +280,11 @@ class TestCompleteIDGenerationFlow:
         task_manager.delete_task(task2.id)
 
         # Create a new task - should get seq_num 4, not 2
-        task4 = task_manager.create_task(project_id=project_id, title="Task 4")
+        task4 = task_manager.create_task(
+            project_id=project_id,
+            title="Task 4",
+            validation_criteria="Test task completion is observable.",
+        )
         assert task4.seq_num == 4
 
     def test_deep_hierarchy(self, task_manager, project_id) -> None:
@@ -221,6 +298,7 @@ class TestCompleteIDGenerationFlow:
                 project_id=project_id,
                 title=f"Level {i}",
                 parent_task_id=parent_id,
+                validation_criteria="Test task completion is observable.",
             )
             tasks.append(task)
             parent_id = task.id
@@ -232,9 +310,16 @@ class TestCompleteIDGenerationFlow:
 
     def test_to_dict_and_to_brief_include_all_fields(self, task_manager, project_id) -> None:
         """Test that to_dict and to_brief include ID, seq_num, and path_cache."""
-        parent = task_manager.create_task(project_id=project_id, title="Parent")
+        parent = task_manager.create_task(
+            project_id=project_id,
+            title="Parent",
+            validation_criteria="Test task completion is observable.",
+        )
         child = task_manager.create_task(
-            project_id=project_id, title="Child", parent_task_id=parent.id
+            project_id=project_id,
+            title="Child",
+            parent_task_id=parent.id,
+            validation_criteria="Test task completion is observable.",
         )
 
         # to_dict
@@ -262,6 +347,7 @@ class TestCompleteIDGenerationFlow:
             task = task_manager.create_task(
                 project_id=project_id,
                 title=f"Task {i + 1}",
+                validation_criteria="Test task completion is observable.",
             )
             tasks.append(task)
 
@@ -278,7 +364,11 @@ class TestCompleteIDGenerationFlow:
         """Test that generated task IDs are valid UUIDs."""
         import uuid
 
-        task = task_manager.create_task(project_id=project_id, title="UUID Test")
+        task = task_manager.create_task(
+            project_id=project_id,
+            title="UUID Test",
+            validation_criteria="Test task completion is observable.",
+        )
 
         # Should be parseable as UUID
         parsed = uuid.UUID(task.id)

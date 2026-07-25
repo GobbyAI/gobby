@@ -74,6 +74,7 @@ def test_native_before_after_pair_is_one_terminal_receipt_for_each_provider(
         sample_project["id"],
         f"Receipt task {source.value}",
         claimed_by_session_id=session.id,
+        validation_criteria="The command exits successfully for the attributed task.",
     )
     before = _event(
         event_type=HookEventType.BEFORE_TOOL,
@@ -113,6 +114,7 @@ def test_native_before_after_pair_is_one_terminal_receipt_for_each_provider(
     assert receipt.normalized_outcome == "success"
     assert receipt.command == "echo ordinary-command"
     assert receipt.output_first_4k == "ordinary output"
+    assert receipt.validation_epoch == 0
     assert receipt.attribution_source == "active_task"
     projection = variables["verification_evidence"][-1]
     assert projection["evidence_type"] == "receipt_projection"

@@ -44,7 +44,11 @@ def test_event_id_is_stable_then_fresh_after_re_escalation(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     manager = LocalTaskManager(temp_db)
-    task = manager.create_task(sample_project["id"], "Escalation identity")
+    task = manager.create_task(
+        sample_project["id"],
+        "Escalation identity",
+        validation_criteria="Test task completion is observable.",
+    )
     first_at = datetime(2026, 1, 1, tzinfo=UTC)
     second_at = first_at + timedelta(seconds=1)
     times = iter((first_at, second_at))
@@ -68,7 +72,11 @@ def test_coordinator_upserts_session_link_and_attaches_event_id(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     manager = LocalTaskManager(temp_db)
-    task = manager.create_task(sample_project["id"], "Escalation delivery")
+    task = manager.create_task(
+        sample_project["id"],
+        "Escalation delivery",
+        validation_criteria="Test task completion is observable.",
+    )
     escalated = manager.escalate_task(task.id, reason="threshold")
     session = _session(session_manager, sample_project["id"])
     ctx = _context(temp_db, manager)
@@ -107,7 +115,11 @@ def test_notification_failure_does_not_change_authoritative_escalation(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     manager = LocalTaskManager(temp_db)
-    task = manager.create_task(sample_project["id"], "Best effort notification")
+    task = manager.create_task(
+        sample_project["id"],
+        "Best effort notification",
+        validation_criteria="Test task completion is observable.",
+    )
     escalated = manager.escalate_task(task.id, reason="threshold")
     monkeypatch.setattr(
         "gobby.mcp_proxy.tools.tasks._escalation_coordinator.notify_parent_on_task_state_change",

@@ -13,12 +13,23 @@ from typing import Any, Literal
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.utils.datetime import utc_now
 
-VerificationOutcome = Literal["provisional", "success", "failure", "unknown", "conflicting"]
+VerificationOutcome = Literal["pending", "success", "failure", "unknown", "conflicting"]
 AttributionSource = Literal[
     "active_task", "sole_claim", "explicit_task", "manual_assignment", "unassigned"
 ]
 
 _OUTPUT_EXCERPT_BYTES = 4096
+
+
+def verification_receipt_id(
+    project_id: str,
+    session_id: str,
+    provider: str,
+    execution_id: str,
+) -> str:
+    """Return the stable ID for one provider execution identity."""
+    key = f"gobby:verification-receipt:{project_id}:{session_id}:{provider}:{execution_id}"
+    return str(uuid.uuid5(uuid.NAMESPACE_URL, key))
 
 
 def _bounded_output(output: str | None) -> tuple[str | None, str | None, str | None, int | None]:
@@ -59,6 +70,7 @@ class VerificationReceipt:
     attributed_at: datetime | None
     created_at: datetime
     updated_at: datetime
+    validation_epoch: int | None = None
 
     @classmethod
     def from_row(cls, row: Mapping[str, Any]) -> VerificationReceipt:
@@ -91,6 +103,9 @@ class VerificationReceipt:
             output_bytes=(
                 int(row["output_bytes"]) if row.get("output_bytes") is not None else None
             ),
+            validation_epoch=(
+                int(row["validation_epoch"]) if row.get("validation_epoch") is not None else None
+            ),
             details=dict(details),
             attribution_source=row["attribution_source"],
             attribution_actor=row.get("attribution_actor"),
@@ -120,6 +135,7 @@ class VerificationReceipt:
             "output_last_4k": self.output_last_4k,
             "output_sha256": self.output_sha256,
             "output_bytes": self.output_bytes,
+            "validation_epoch": self.validation_epoch,
             "details": self.details,
             "attribution_source": self.attribution_source,
             "attribution_actor": self.attribution_actor,
@@ -144,6 +160,7 @@ class VerificationReceiptWrite:
     exit_code: int | None = None
     completed_at: datetime | None = None
     output: str | None = None
+    validation_epoch: int | None = None
     details: Mapping[str, Any] = field(default_factory=dict)
     attribution_source: AttributionSource = "unassigned"
     attribution_actor: str | None = None
@@ -236,11 +253,11 @@ class VerificationReceiptStore:
                 source_event_id, evidence_type, command, cwd, normalized_outcome,
                 outcome_provenance, exit_code, started_at, completed_at,
                 output_first_4k, output_last_4k, output_sha256, output_bytes,
-                details, attribution_source, attribution_actor, attributed_at,
+                validation_epoch, details, attribution_source, attribution_actor, attributed_at,
                 created_at, updated_at
             ) VALUES (
                 %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s,
-                %s, %s, %s, %s, %s, %s, %s::jsonb, %s, %s, %s, %s, %s
+                %s, %s, %s, %s, %s, %s, %s, %s::jsonb, %s, %s, %s, %s, %s
             )
             ON CONFLICT (project_id, session_id, provider, execution_id)
             DO UPDATE SET
@@ -249,12 +266,12 @@ class VerificationReceiptStore:
                 cwd = COALESCE(EXCLUDED.cwd, verification_receipts.cwd),
                 normalized_outcome = CASE
                     WHEN verification_receipts.completed_at IS NOT NULL
-                         AND EXCLUDED.normalized_outcome IN ('unknown', 'provisional')
+                         AND EXCLUDED.normalized_outcome IN ('unknown', 'pending')
                     THEN verification_receipts.normalized_outcome
                     WHEN verification_receipts.completed_at IS NOT NULL
                          AND EXCLUDED.completed_at IS NOT NULL
-                         AND verification_receipts.normalized_outcome NOT IN ('unknown', 'provisional')
-                         AND EXCLUDED.normalized_outcome NOT IN ('unknown', 'provisional')
+                         AND verification_receipts.normalized_outcome NOT IN ('unknown', 'pending')
+                         AND EXCLUDED.normalized_outcome NOT IN ('unknown', 'pending')
                          AND verification_receipts.normalized_outcome <> EXCLUDED.normalized_outcome
                     THEN 'conflicting'
                     WHEN verification_receipts.completed_at IS NOT NULL
@@ -275,6 +292,9 @@ class VerificationReceiptStore:
                 ),
                 output_sha256 = COALESCE(EXCLUDED.output_sha256, verification_receipts.output_sha256),
                 output_bytes = COALESCE(EXCLUDED.output_bytes, verification_receipts.output_bytes),
+                validation_epoch = COALESCE(
+                    verification_receipts.validation_epoch, EXCLUDED.validation_epoch
+                ),
                 details = verification_receipts.details || EXCLUDED.details,
                 attribution_source = CASE
                     WHEN verification_receipts.task_id IS NOT NULL
@@ -291,7 +311,12 @@ class VerificationReceiptStore:
             RETURNING *
             """,
             (
-                str(uuid.uuid4()),
+                verification_receipt_id(
+                    write.project_id,
+                    write.session_id,
+                    write.provider,
+                    write.execution_id,
+                ),
                 write.project_id,
                 write.session_id,
                 write.task_id,
@@ -310,6 +335,7 @@ class VerificationReceiptStore:
                 last,
                 digest,
                 output_bytes,
+                write.validation_epoch,
                 json.dumps(dict(write.details), sort_keys=True),
                 write.attribution_source,
                 write.attribution_actor,

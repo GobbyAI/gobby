@@ -7,6 +7,7 @@ import click
 
 from gobby.cli.tasks._crud_services import CrudServices
 from gobby.storage.tasks import TaskStaleStateError
+from gobby.tasks.criteria_contract import TaskCriteriaError, require_validation_criteria
 from gobby.tasks.state_semantics import is_task_closed
 
 
@@ -14,6 +15,7 @@ def create_task_impl(
     services: CrudServices,
     title: str,
     description: str | None,
+    validation_criteria: str | None,
     priority: int,
     task_type: str,
     depends_on: tuple[str, ...],
@@ -26,6 +28,10 @@ def create_task_impl(
         project_id = PERSONAL_PROJECT_ID
 
     manager = services.get_task_manager()
+    try:
+        validation_criteria = require_validation_criteria(task_type, validation_criteria)
+    except TaskCriteriaError as exc:
+        raise click.ClickException(str(exc)) from exc
     resolved_blockers: list[tuple[str, Any]] = []
     dependency_failures: list[str] = []
 
@@ -41,13 +47,17 @@ def create_task_impl(
         failure_lines = "\n".join(f"  {failure}" for failure in dependency_failures)
         raise click.ClickException(f"Could not add dependencies:\n{failure_lines}")
 
-    task = manager.create_task(
-        project_id=project_id,
-        title=title,
-        description=description,
-        priority=priority,
-        task_type=task_type,
-    )
+    try:
+        task = manager.create_task(
+            project_id=project_id,
+            title=title,
+            description=description,
+            validation_criteria=validation_criteria,
+            priority=priority,
+            task_type=task_type,
+        )
+    except ValueError as exc:
+        raise click.ClickException(str(exc)) from exc
     task_ref = f"#{task.seq_num}" if task.seq_num else task.id[:8]
     project_ctx = services.get_project_context(cwd=Path.cwd())
     project_name = project_ctx.get("name") if project_ctx else None
@@ -87,6 +97,7 @@ def update_task_impl(
     services: CrudServices,
     task_id: str,
     title: str | None,
+    validation_criteria: str | None,
     priority: int | None,
     parent_task_id: str | None,
     task_type: str | None,
@@ -107,6 +118,8 @@ def update_task_impl(
     kwargs: dict[str, Any] = {}
     if title is not None:
         kwargs["title"] = title
+    if validation_criteria is not None:
+        kwargs["validation_criteria"] = validation_criteria
     if priority is not None:
         kwargs["priority"] = priority
     if resolved_parent_id is not None:
@@ -135,7 +148,7 @@ def close_task_impl(
     force: bool,
 ) -> None:
     manager = services.get_task_manager()
-    skip = skip_validation or force
+    _ = (skip_validation, force)
 
     expanded_ids = services.parse_task_refs(task_ids)
 
@@ -148,24 +161,30 @@ def close_task_impl(
             failed_count += 1
             continue
 
-        if not skip:
-            children = manager.list_tasks(parent_task_id=resolved.id, limit=1000)
+        children = manager.list_tasks(parent_task_id=resolved.id, limit=1000)
+        task_ref = f"#{resolved.seq_num}" if resolved.seq_num else resolved.id[:8]
+        if resolved.task_type != "epic" and not children:
+            click.echo(
+                f"Cannot close {task_ref} through the direct CLI: non-epic leaves require "
+                "the criterion-to-evidence close_task contract.",
+                err=True,
+            )
+            failed_count += 1
+            continue
 
-            if children:
-                open_children = [c for c in children if not is_task_closed(c)]
-                if open_children:
-                    task_ref = f"#{resolved.seq_num}" if resolved.seq_num else resolved.id[:8]
-                    click.echo(
-                        f"Cannot close {task_ref}: {len(open_children)} child tasks still open",
-                        err=True,
-                    )
-                    failed_count += 1
-                    continue
+        if children:
+            open_children = [c for c in children if not is_task_closed(c)]
+            if open_children:
+                click.echo(
+                    f"Cannot close {task_ref}: {len(open_children)} child tasks still open",
+                    err=True,
+                )
+                failed_count += 1
+                continue
 
         try:
             task = manager.close_task(resolved.id, reason=reason)
         except TaskStaleStateError:
-            task_ref = f"#{resolved.seq_num}" if resolved.seq_num else resolved.id[:8]
             click.echo(f"Cannot close {task_ref}: task is already closed", err=True)
             failed_count += 1
             continue

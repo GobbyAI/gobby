@@ -805,7 +805,16 @@ class TestCreateTaskCommand:
         mock_manager.create_task.return_value = mock_task
         mock_get_manager.return_value = mock_manager
 
-        result = runner.invoke(cli, ["tasks", "create", "My new task"])
+        result = runner.invoke(
+            cli,
+            [
+                "tasks",
+                "create",
+                "My new task",
+                "--validation-criteria",
+                "The requested task result is observable.",
+            ],
+        )
 
         assert result.exit_code == 0
         assert "Created task Test Project-#1: Test Task" in result.output
@@ -834,6 +843,8 @@ class TestCreateTaskCommand:
                 "My new task",
                 "--description",
                 "Task description",
+                "--validation-criteria",
+                "The bug is fixed and verified.",
                 "--priority",
                 "1",
                 "--type",
@@ -846,6 +857,7 @@ class TestCreateTaskCommand:
             project_id="proj-123",
             title="My new task",
             description="Task description",
+            validation_criteria="The bug is fixed and verified.",
             priority=1,
             task_type="bug",
         )
@@ -867,13 +879,23 @@ class TestCreateTaskCommand:
         mock_manager.create_task.return_value = mock_task
         mock_get_manager.return_value = mock_manager
 
-        result = runner.invoke(cli, ["tasks", "create", "My new task"])
+        result = runner.invoke(
+            cli,
+            [
+                "tasks",
+                "create",
+                "My new task",
+                "--validation-criteria",
+                "The requested task result is observable.",
+            ],
+        )
 
         assert result.exit_code == 0
         mock_manager.create_task.assert_called_once_with(
             project_id=PERSONAL_PROJECT_ID,
             title="My new task",
             description=None,
+            validation_criteria="The requested task result is observable.",
             priority=2,
             task_type="task",
         )
@@ -894,7 +916,18 @@ class TestCreateTaskCommand:
         mock_get_manager.return_value = mock_manager
         mock_resolve_task_id.return_value = None
 
-        result = runner.invoke(cli, ["tasks", "create", "My new task", "--depends-on", "#404"])
+        result = runner.invoke(
+            cli,
+            [
+                "tasks",
+                "create",
+                "My new task",
+                "--validation-criteria",
+                "The dependency-backed result is observable.",
+                "--depends-on",
+                "#404",
+            ],
+        )
 
         assert result.exit_code != 0
         assert "Could not add dependencies" in result.output
@@ -927,7 +960,18 @@ class TestCreateTaskCommand:
         )
         mock_dependency_manager_cls.return_value = mock_dependency_manager
 
-        result = runner.invoke(cli, ["tasks", "create", "My new task", "--depends-on", "#2"])
+        result = runner.invoke(
+            cli,
+            [
+                "tasks",
+                "create",
+                "My new task",
+                "--validation-criteria",
+                "The dependency-backed result is observable.",
+                "--depends-on",
+                "#2",
+            ],
+        )
 
         assert result.exit_code != 0
         assert "Could not add dependencies" in result.output
@@ -1185,7 +1229,7 @@ class TestCloseTaskCommand:
         runner: CliRunner,
         mock_task: MagicMock,
     ) -> None:
-        """Test closing a task."""
+        """Direct CLI close fails closed for non-epic leaves."""
         mock_resolve.return_value = mock_task
         mock_manager = MagicMock()
         mock_manager.list_tasks.return_value = []  # No children
@@ -1194,8 +1238,9 @@ class TestCloseTaskCommand:
 
         result = runner.invoke(cli, ["tasks", "close", "gt-abc123"])
 
-        assert result.exit_code == 0
-        assert "Closed task" in result.output
+        assert result.exit_code == 1
+        assert "criterion-to-evidence close_task contract" in result.output
+        mock_manager.close_task.assert_not_called()
 
     @patch("gobby.cli.tasks.crud.get_task_manager")
     @patch("gobby.cli.tasks.crud.resolve_task_id")
@@ -1208,6 +1253,7 @@ class TestCloseTaskCommand:
     ) -> None:
         """Test close expands comma and numeric refs through parse_task_refs."""
         mock_resolve.return_value = mock_task
+        mock_task.task_type = "epic"
         mock_manager = MagicMock()
         mock_manager.list_tasks.return_value = []
         mock_manager.close_task.return_value = mock_task
@@ -1227,7 +1273,7 @@ class TestCloseTaskCommand:
         runner: CliRunner,
         mock_task: MagicMock,
     ) -> None:
-        """Test closing a task with a reason."""
+        """A close reason does not bypass the leaf evidence contract."""
         mock_resolve.return_value = mock_task
         mock_manager = MagicMock()
         mock_manager.list_tasks.return_value = []
@@ -1236,9 +1282,9 @@ class TestCloseTaskCommand:
 
         result = runner.invoke(cli, ["tasks", "close", "gt-abc123", "--reason", "wont_fix"])
 
-        assert result.exit_code == 0
-        assert "wont_fix" in result.output
-        mock_manager.close_task.assert_called_once_with(mock_task.id, reason="wont_fix")
+        assert result.exit_code == 1
+        assert "criterion-to-evidence close_task contract" in result.output
+        mock_manager.close_task.assert_not_called()
 
     @patch("gobby.cli.tasks.crud.get_task_manager")
     @patch("gobby.cli.tasks.crud.resolve_task_id")

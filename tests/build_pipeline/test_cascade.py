@@ -38,6 +38,7 @@ def _tree(task_manager: LocalTaskManager, project_id: str) -> tuple[object, list
         title="Automated epic",
         task_type="epic",
         category="planning",
+        validation_criteria="Test task completion is observable.",
     )
     child_epic = task_manager.create_task(
         project_id=project_id,
@@ -45,6 +46,7 @@ def _tree(task_manager: LocalTaskManager, project_id: str) -> tuple[object, list
         parent_task_id=epic.id,
         task_type="epic",
         category="planning",
+        validation_criteria="Test task completion is observable.",
     )
     leaf_a = task_manager.create_task(
         project_id=project_id,
@@ -52,6 +54,7 @@ def _tree(task_manager: LocalTaskManager, project_id: str) -> tuple[object, list
         parent_task_id=child_epic.id,
         task_type="task",
         category="config",
+        validation_criteria="Test task completion is observable.",
     )
     leaf_b = task_manager.create_task(
         project_id=project_id,
@@ -59,6 +62,7 @@ def _tree(task_manager: LocalTaskManager, project_id: str) -> tuple[object, list
         parent_task_id=epic.id,
         task_type="task",
         category="docs",
+        validation_criteria="Test task completion is observable.",
     )
     task_manager.update_task(
         leaf_a.id,

@@ -32,7 +32,11 @@ def _task(
     work_attempt_count: int = 0,
 ) -> Task:
     manager = LocalTaskManager(temp_db)
-    task = manager.create_task(project_id=sample_project["id"], title="Daemon resume task")
+    task = manager.create_task(
+        project_id=sample_project["id"],
+        title="Daemon resume task",
+        validation_criteria="Test task completion is observable.",
+    )
     update_task(
         temp_db,
         task.id,

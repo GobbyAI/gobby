@@ -16,6 +16,24 @@ _VERDICT_STATUSES = frozenset({"valid", "invalid", "pending"})
 logger = logging.getLogger(__name__)
 
 
+@dataclass(frozen=True)
+class CriterionResult:
+    """One criterion's evidence-backed semantic verdict."""
+
+    criterion: str
+    status: Literal["satisfied", "gap"]
+    evidence_ids: list[str]
+    explanation: str
+
+    def to_dict(self) -> dict[str, object]:
+        return {
+            "criterion": self.criterion,
+            "status": self.status,
+            "evidence_ids": self.evidence_ids,
+            "explanation": self.explanation,
+        }
+
+
 @dataclass
 class ValidationResult:
     """Result of task validation with optional deterministic override provenance."""
@@ -27,6 +45,7 @@ class ValidationResult:
     diagnostics: list[dict[str, str]] = field(default_factory=list)
     verdict_override: dict[str, object] | None = None
     failure_category: FailureCategory | None = None
+    criterion_results: list[CriterionResult] = field(default_factory=list)
 
 
 def _coerce_blocking_reasons(value: object) -> list[str]:
@@ -110,12 +129,130 @@ def contradiction_rejection_message(payload: Mapping[str, object]) -> str:
     )
 
 
-def _validation_result_from_data(result_data: Mapping[str, object]) -> ValidationResult:
+def _gap_result(criterion: str, explanation: str) -> CriterionResult:
+    return CriterionResult(
+        criterion=criterion,
+        status="gap",
+        evidence_ids=[],
+        explanation=explanation,
+    )
+
+
+def _parse_criterion_results(
+    raw: object,
+    *,
+    expected_criteria: Sequence[str],
+    admissible_evidence_ids: frozenset[str],
+) -> tuple[list[CriterionResult], list[str]]:
+    errors: list[str] = []
+    if not isinstance(raw, list):
+        return (
+            [
+                _gap_result(criterion, "Validator response omitted structured criterion coverage")
+                for criterion in expected_criteria
+            ],
+            ["Validation response did not provide criterion_results as a list"],
+        )
+
+    by_criterion: dict[str, CriterionResult] = {}
+    duplicate_criteria: set[str] = set()
+    expected_set = set(expected_criteria)
+    for index, item in enumerate(raw):
+        if not isinstance(item, dict):
+            errors.append(f"criterion_results[{index}] is not an object")
+            continue
+        criterion = item.get("criterion")
+        status = item.get("status")
+        explanation = item.get("explanation")
+        evidence = item.get("evidence_ids")
+        if not isinstance(criterion, str) or criterion not in expected_set:
+            errors.append(f"criterion_results[{index}] does not cite an exact task criterion")
+            continue
+        if criterion in by_criterion:
+            duplicate_criteria.add(criterion)
+            continue
+        if status not in {"satisfied", "gap"}:
+            errors.append(f"{criterion}: status must be 'satisfied' or 'gap'")
+            by_criterion[criterion] = _gap_result(criterion, "Malformed criterion status")
+            continue
+        if not isinstance(explanation, str) or not explanation.strip():
+            errors.append(f"{criterion}: explanation must be nonempty")
+            by_criterion[criterion] = _gap_result(criterion, "Missing criterion explanation")
+            continue
+        if not isinstance(evidence, list) or not all(
+            isinstance(evidence_id, str) and evidence_id.strip() for evidence_id in evidence
+        ):
+            errors.append(f"{criterion}: evidence_ids must be a list of receipt IDs")
+            by_criterion[criterion] = _gap_result(criterion, "Malformed evidence citations")
+            continue
+        cited_ids = list(dict.fromkeys(str(evidence_id).strip() for evidence_id in evidence))
+        invented = [
+            evidence_id for evidence_id in cited_ids if evidence_id not in admissible_evidence_ids
+        ]
+        if invented:
+            errors.append(f"{criterion}: cited inadmissible evidence IDs: {', '.join(invented)}")
+            by_criterion[criterion] = _gap_result(
+                criterion,
+                f"Validator cited evidence outside the admissible packet: {', '.join(invented)}",
+            )
+            continue
+        if status == "satisfied" and not cited_ids:
+            errors.append(f"{criterion}: satisfied verdict has no evidence citation")
+            by_criterion[criterion] = _gap_result(
+                criterion,
+                "No admissible evidence was cited for the satisfied verdict",
+            )
+            continue
+        by_criterion[criterion] = CriterionResult(
+            criterion=criterion,
+            status=cast(Literal["satisfied", "gap"], status),
+            evidence_ids=cited_ids,
+            explanation=explanation.strip(),
+        )
+
+    for criterion in duplicate_criteria:
+        errors.append(f"{criterion}: criterion appears more than once")
+        by_criterion[criterion] = _gap_result(criterion, "Duplicate criterion verdicts")
+    results = [
+        by_criterion.get(
+            criterion,
+            _gap_result(criterion, "Validator response did not cover this criterion"),
+        )
+        for criterion in expected_criteria
+    ]
+    return results, errors
+
+
+def _validation_result_from_data(
+    result_data: Mapping[str, object],
+    *,
+    expected_criteria: Sequence[str],
+    admissible_evidence_ids: Sequence[str],
+) -> ValidationResult:
     normalized = demote_contradictory_valid(result_data)
-    status = str(normalized.get("status", "pending")).strip().lower()
-    if status not in _VERDICT_STATUSES:
-        status = "pending"
-    reasons = _coerce_blocking_reasons(normalized.get("blocking_reasons"))
+    reported_status = str(normalized.get("status", "pending")).strip().lower()
+    criterion_results, parse_errors = _parse_criterion_results(
+        normalized.get("criterion_results"),
+        expected_criteria=expected_criteria,
+        admissible_evidence_ids=frozenset(admissible_evidence_ids),
+    )
+    reasons = [
+        f"{result.criterion}: {result.explanation}"
+        for result in criterion_results
+        if result.status == "gap"
+    ]
+    all_satisfied = bool(expected_criteria) and all(
+        result.status == "satisfied" for result in criterion_results
+    )
+    derived_status = "valid" if all_satisfied and not parse_errors else "invalid"
+    if reported_status not in _VERDICT_STATUSES:
+        parse_errors.append(f"Unknown overall validation status: {reported_status}")
+    elif reported_status == "valid" and not all_satisfied:
+        parse_errors.append("Overall valid verdict contradicts one or more criterion gaps")
+    elif reported_status != "valid" and all_satisfied:
+        parse_errors.append("Overall non-valid verdict contradicts complete criterion satisfaction")
+    status = "valid" if derived_status == "valid" and reported_status == "valid" else "invalid"
+    reasons.extend(parse_errors)
     feedback = normalized.get("feedback")
     if not isinstance(feedback, str):
         feedback = None
@@ -123,7 +260,6 @@ def _validation_result_from_data(result_data: Mapping[str, object]) -> Validatio
     if status == "valid":
         reasons = []
     elif not reasons:
-        status = "pending"
         reasons = ["Validation response did not name unmet criteria or failing gates"]
     override = normalized.get("verdict_override")
     if not isinstance(override, dict):
@@ -140,6 +276,7 @@ def _validation_result_from_data(result_data: Mapping[str, object]) -> Validatio
         issues=issues,
         verdict_override=override,
         failure_category=failure_category,
+        criterion_results=criterion_results,
     )
 
 
@@ -171,6 +308,7 @@ def format_close_validation_message(
 
 __all__ = [
     "ValidationResult",
+    "CriterionResult",
     "_coerce_blocking_reasons",
     "_validation_result_from_data",
     "contradiction_rejection_message",

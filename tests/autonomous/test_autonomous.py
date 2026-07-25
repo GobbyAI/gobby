@@ -1890,6 +1890,7 @@ class TestAutonomousIntegration:
             project_id=test_project["id"],
             title="Ready autonomous task",
             description="Task selected through readiness registry.",
+            validation_criteria="Test task completion is observable.",
         )
         registry = create_readiness_registry(
             task_manager=task_manager,

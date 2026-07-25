@@ -47,7 +47,7 @@ class VerificationOutcomeProjection:
             "raw_total": self.raw_total,
             "raw_per_outcome": dict(self.raw_per_outcome),
             "superseded_total": self.superseded_total,
-            "ready": self.ready,
+            "diagnostic_success_present": self.ready,
             "latest_receipt_id": self.latest_receipt_id,
             "latest_timestamp": (
                 self.latest_timestamp.isoformat() if self.latest_timestamp is not None else None
@@ -69,7 +69,7 @@ def _is_authoritative(receipt: VerificationReceipt) -> bool:
 
 def _is_supersession_candidate(receipt: VerificationReceipt) -> bool:
     return (
-        receipt.normalized_outcome in {"provisional", "unknown"}
+        receipt.normalized_outcome in {"pending", "unknown"}
         and receipt.outcome_provenance == "before_tool"
     )
 

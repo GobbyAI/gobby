@@ -130,6 +130,14 @@ def register_verification_tools(
             active_task_ref=active_task_ref if isinstance(active_task_ref, str) else None,
             explicit_task_ref=task_id,
         )
+        validation_epoch: int | None = None
+        if attributed_task_id is not None:
+            task_row = db.fetchone(
+                "SELECT validation_epoch FROM tasks WHERE id = %s AND project_id = %s",
+                (attributed_task_id, session.project_id),
+            )
+            if task_row is not None:
+                validation_epoch = int(task_row["validation_epoch"])
         execution_id = f"manual:{uuid.uuid4()}"
         receipt = receipt_store.upsert(
             VerificationReceiptWrite(
@@ -146,6 +154,7 @@ def register_verification_tools(
                 started_at=recorded_at,
                 completed_at=recorded_at,
                 output=summary,
+                validation_epoch=validation_epoch,
                 details={
                     "summary": summary,
                     "supports": supports,

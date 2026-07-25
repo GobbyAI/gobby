@@ -69,13 +69,19 @@ async def test_child_build_resume_repairs_parent_integration_metadata_only(
 
     project = LocalProjectManager(temp_db).create("merge-project", repo_path=str(repo))
     task_manager = LocalTaskManager(temp_db)
-    parent = task_manager.create_task(project_id=project.id, title="Parent", task_type="epic")
+    parent = task_manager.create_task(
+        project_id=project.id,
+        title="Parent",
+        task_type="epic",
+        validation_criteria="Test task completion is observable.",
+    )
     leaf = task_manager.create_task(
         project_id=project.id,
         title="Leaf",
         parent_task_id=parent.id,
         category="code",
         task_type="task",
+        validation_criteria="Test task completion is observable.",
     )
     sibling = task_manager.create_task(
         project_id=project.id,
@@ -83,6 +89,7 @@ async def test_child_build_resume_repairs_parent_integration_metadata_only(
         parent_task_id=parent.id,
         category="code",
         task_type="task",
+        validation_criteria="Test task completion is observable.",
     )
     integration_branch = _integration_branch(parent)
 
@@ -145,13 +152,19 @@ async def test_child_build_resume_restores_missing_leaf_target_branch(
 
     project = LocalProjectManager(temp_db).create("merge-project", repo_path=str(repo))
     task_manager = LocalTaskManager(temp_db)
-    parent = task_manager.create_task(project_id=project.id, title="Parent", task_type="epic")
+    parent = task_manager.create_task(
+        project_id=project.id,
+        title="Parent",
+        task_type="epic",
+        validation_criteria="Test task completion is observable.",
+    )
     leaf = task_manager.create_task(
         project_id=project.id,
         title="Leaf",
         parent_task_id=parent.id,
         category="code",
         task_type="task",
+        validation_criteria="Test task completion is observable.",
     )
     integration_branch = _integration_branch(parent)
     base_sha = _git(repo, "rev-parse", "main")
@@ -224,7 +237,12 @@ def test_epic_integration_workspace_refreshes_from_advanced_target_branch(
 
     project = LocalProjectManager(temp_db).create("merge-project", repo_path=str(repo))
     task_manager = LocalTaskManager(temp_db)
-    parent = task_manager.create_task(project_id=project.id, title="Parent", task_type="epic")
+    parent = task_manager.create_task(
+        project_id=project.id,
+        title="Parent",
+        task_type="epic",
+        validation_criteria="Test task completion is observable.",
+    )
     integration_branch = _integration_branch(parent)
 
     _git(repo, "worktree", "add", "-b", integration_branch, str(integration_path), "main")
@@ -275,7 +293,12 @@ def test_epic_integration_workspace_adopts_pruned_metadata(
 
     project = LocalProjectManager(temp_db).create("merge-project", repo_path=str(repo))
     task_manager = LocalTaskManager(temp_db)
-    parent = task_manager.create_task(project_id=project.id, title="Parent", task_type="epic")
+    parent = task_manager.create_task(
+        project_id=project.id,
+        title="Parent",
+        task_type="epic",
+        validation_criteria="Test task completion is observable.",
+    )
     integration_branch = _integration_branch(parent)
     stale_worktree_id = "9516a9e0-4615-52ca-9594-38a1c6be96a5"
 
@@ -319,7 +342,12 @@ def test_epic_integration_workspace_recreates_missing_path(
 
     project = LocalProjectManager(temp_db).create("merge-project", repo_path=str(repo))
     task_manager = LocalTaskManager(temp_db)
-    parent = task_manager.create_task(project_id=project.id, title="Parent", task_type="epic")
+    parent = task_manager.create_task(
+        project_id=project.id,
+        title="Parent",
+        task_type="epic",
+        validation_criteria="Test task completion is observable.",
+    )
     integration_branch = _integration_branch(parent)
     missing_path = tmp_path / "missing-integration"
 
@@ -370,7 +398,12 @@ def test_epic_integration_workspace_recreates_invalid_git_path(
 
     project = LocalProjectManager(temp_db).create("merge-project", repo_path=str(repo))
     task_manager = LocalTaskManager(temp_db)
-    parent = task_manager.create_task(project_id=project.id, title="Parent", task_type="epic")
+    parent = task_manager.create_task(
+        project_id=project.id,
+        title="Parent",
+        task_type="epic",
+        validation_criteria="Test task completion is observable.",
+    )
     integration_branch = _integration_branch(parent)
     invalid_path = _workspace_path("worktrees", repo.name, integration_branch)
     shutil.rmtree(invalid_path, ignore_errors=True)
@@ -426,11 +459,17 @@ def test_epic_integration_workspace_recreates_invalid_branch_record_from_other_t
 
     project = LocalProjectManager(temp_db).create("merge-project", repo_path=str(repo))
     task_manager = LocalTaskManager(temp_db)
-    parent = task_manager.create_task(project_id=project.id, title="Parent", task_type="epic")
+    parent = task_manager.create_task(
+        project_id=project.id,
+        title="Parent",
+        task_type="epic",
+        validation_criteria="Test task completion is observable.",
+    )
     stale_owner = task_manager.create_task(
         project_id=project.id,
         title="Stale owner",
         task_type="epic",
+        validation_criteria="Test task completion is observable.",
     )
     integration_branch = _integration_branch(parent)
     invalid_path = _workspace_path("worktrees", repo.name, integration_branch)
@@ -482,7 +521,12 @@ def test_epic_integration_workspace_blocks_active_run_for_pruned_metadata(
 
     project = LocalProjectManager(temp_db).create("merge-project", repo_path=str(repo))
     task_manager = LocalTaskManager(temp_db)
-    parent = task_manager.create_task(project_id=project.id, title="Parent", task_type="epic")
+    parent = task_manager.create_task(
+        project_id=project.id,
+        title="Parent",
+        task_type="epic",
+        validation_criteria="Test task completion is observable.",
+    )
     integration_branch = _integration_branch(parent)
     stale_worktree_id = "42281c41-58fa-567b-bd9f-a7ad0341e969"
     temp_db.execute(
@@ -538,7 +582,12 @@ def test_epic_integration_workspace_blocks_active_run_for_invalid_git_path(
 
     project = LocalProjectManager(temp_db).create("merge-project", repo_path=str(repo))
     task_manager = LocalTaskManager(temp_db)
-    parent = task_manager.create_task(project_id=project.id, title="Parent", task_type="epic")
+    parent = task_manager.create_task(
+        project_id=project.id,
+        title="Parent",
+        task_type="epic",
+        validation_criteria="Test task completion is observable.",
+    )
     integration_branch = _integration_branch(parent)
     invalid_path = _workspace_path("worktrees", repo.name, integration_branch)
     shutil.rmtree(invalid_path, ignore_errors=True)
@@ -612,13 +661,19 @@ def test_epic_integration_workspace_merges_closed_descendant_commits(
 
     project = LocalProjectManager(temp_db).create("merge-project", repo_path=str(repo))
     task_manager = LocalTaskManager(temp_db)
-    parent = task_manager.create_task(project_id=project.id, title="Parent", task_type="epic")
+    parent = task_manager.create_task(
+        project_id=project.id,
+        title="Parent",
+        task_type="epic",
+        validation_criteria="Test task completion is observable.",
+    )
     leaf = task_manager.create_task(
         project_id=project.id,
         title="Leaf",
         parent_task_id=parent.id,
         category="code",
         task_type="task",
+        validation_criteria="Test task completion is observable.",
     )
     integration_branch = _integration_branch(parent)
 
@@ -674,13 +729,19 @@ def test_epic_integration_workspace_prefers_closed_commit_over_stale_links(
 
     project = LocalProjectManager(temp_db).create("merge-project", repo_path=str(repo))
     task_manager = LocalTaskManager(temp_db)
-    parent = task_manager.create_task(project_id=project.id, title="Parent", task_type="epic")
+    parent = task_manager.create_task(
+        project_id=project.id,
+        title="Parent",
+        task_type="epic",
+        validation_criteria="Test task completion is observable.",
+    )
     leaf = task_manager.create_task(
         project_id=project.id,
         title="Leaf",
         parent_task_id=parent.id,
         category="code",
         task_type="task",
+        validation_criteria="Test task completion is observable.",
     )
     integration_branch = _integration_branch(parent)
 
@@ -742,7 +803,12 @@ def test_epic_integration_workspace_skips_non_automation_planning_commits(
 
     project = LocalProjectManager(temp_db).create("merge-project", repo_path=str(repo))
     task_manager = LocalTaskManager(temp_db)
-    parent = task_manager.create_task(project_id=project.id, title="Parent", task_type="epic")
+    parent = task_manager.create_task(
+        project_id=project.id,
+        title="Parent",
+        task_type="epic",
+        validation_criteria="Test task completion is observable.",
+    )
     planning_child = task_manager.create_task(
         project_id=project.id,
         title="Interactive plan",
@@ -750,6 +816,7 @@ def test_epic_integration_workspace_skips_non_automation_planning_commits(
         category="planning",
         task_type="epic",
         labels=["interactive:planning"],
+        validation_criteria="Test task completion is observable.",
     )
     automated_leaf = task_manager.create_task(
         project_id=project.id,
@@ -757,6 +824,7 @@ def test_epic_integration_workspace_skips_non_automation_planning_commits(
         parent_task_id=parent.id,
         category="code",
         task_type="task",
+        validation_criteria="Test task completion is observable.",
     )
     integration_branch = _integration_branch(parent)
 
@@ -918,7 +986,12 @@ def test_epic_integration_workspace_clears_stale_task_worktree_artifacts(
 
     project = LocalProjectManager(temp_db).create("merge-project", repo_path=str(repo))
     task_manager = LocalTaskManager(temp_db)
-    parent = task_manager.create_task(project_id=project.id, title="Parent", task_type="epic")
+    parent = task_manager.create_task(
+        project_id=project.id,
+        title="Parent",
+        task_type="epic",
+        validation_criteria="Test task completion is observable.",
+    )
     integration_branch = _integration_branch(parent)
     base_sha = _git(repo, "rev-parse", "main")
 
@@ -994,7 +1067,12 @@ def test_epic_integration_workspace_promotes_existing_task_worktree(
 
     project = LocalProjectManager(temp_db).create("merge-project", repo_path=str(repo))
     task_manager = LocalTaskManager(temp_db)
-    parent = task_manager.create_task(project_id=project.id, title="Parent", task_type="epic")
+    parent = task_manager.create_task(
+        project_id=project.id,
+        title="Parent",
+        task_type="epic",
+        validation_criteria="Test task completion is observable.",
+    )
     worktrees = LocalWorktreeManager(temp_db)
     phase = worktrees.create(
         project_id=project.id,
@@ -1050,7 +1128,12 @@ def test_epic_integration_workspace_dirty_task_worktree_keeps_task_role(
 
     project = LocalProjectManager(temp_db).create("merge-project", repo_path=str(repo))
     task_manager = LocalTaskManager(temp_db)
-    parent = task_manager.create_task(project_id=project.id, title="Parent", task_type="epic")
+    parent = task_manager.create_task(
+        project_id=project.id,
+        title="Parent",
+        task_type="epic",
+        validation_criteria="Test task completion is observable.",
+    )
     worktrees = LocalWorktreeManager(temp_db)
     phase = worktrees.create(
         project_id=project.id,
@@ -1102,7 +1185,12 @@ def test_epic_integration_workspace_blocks_active_run_for_task_worktree_promotio
 
     project = LocalProjectManager(temp_db).create("merge-project", repo_path=str(repo))
     task_manager = LocalTaskManager(temp_db)
-    parent = task_manager.create_task(project_id=project.id, title="Parent", task_type="epic")
+    parent = task_manager.create_task(
+        project_id=project.id,
+        title="Parent",
+        task_type="epic",
+        validation_criteria="Test task completion is observable.",
+    )
     worktrees = LocalWorktreeManager(temp_db)
     phase = worktrees.create(
         project_id=project.id,
@@ -1176,7 +1264,12 @@ def test_epic_integration_workspace_blocks_active_run_for_task_clone_promotion(
 
     project = LocalProjectManager(temp_db).create("merge-project", repo_path=str(repo))
     task_manager = LocalTaskManager(temp_db)
-    parent = task_manager.create_task(project_id=project.id, title="Parent", task_type="epic")
+    parent = task_manager.create_task(
+        project_id=project.id,
+        title="Parent",
+        task_type="epic",
+        validation_criteria="Test task completion is observable.",
+    )
     clones = LocalCloneManager(temp_db)
     phase = clones.create(
         project_id=project.id,
@@ -1250,7 +1343,12 @@ def test_epic_integration_workspace_recovers_partially_promoted_worktree(
 
     project = LocalProjectManager(temp_db).create("merge-project", repo_path=str(repo))
     task_manager = LocalTaskManager(temp_db)
-    parent = task_manager.create_task(project_id=project.id, title="Parent", task_type="epic")
+    parent = task_manager.create_task(
+        project_id=project.id,
+        title="Parent",
+        task_type="epic",
+        validation_criteria="Test task completion is observable.",
+    )
     worktrees = LocalWorktreeManager(temp_db)
     phase = worktrees.create(
         project_id=project.id,

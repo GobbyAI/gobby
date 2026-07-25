@@ -8,10 +8,9 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from gobby.cli.linear import _enable_linear_auto_sync, _run_linear_setup
+from gobby.cli.linear import _run_linear_setup
 from gobby.storage.projects import LocalProjectManager
 from gobby.storage.tasks import LocalTaskManager
-from gobby.sync.linear import create_linear_sync_handler
 
 pytestmark = pytest.mark.e2e
 
@@ -119,11 +118,6 @@ async def test_linear_setup_stubbed_mcp_e2e(temp_db, tmp_path) -> None:
             }
         )
     )
-    task = task_manager.create_task(
-        project_id=project.id,
-        title="Create Linear setup path",
-        description="Initial Gobby task",
-    )
     linear = StubLinearMCP()
 
     setup_result = await _run_linear_setup(
@@ -135,8 +129,6 @@ async def test_linear_setup_stubbed_mcp_e2e(temp_db, tmp_path) -> None:
         team_id=None,
         linear_project_id=None,
         project_name="Gobby E2E",
-        import_issues=False,
-        create_missing=True,
     )
 
     assert setup_result["linear_team_id"] == "team-1"
@@ -148,28 +140,5 @@ async def test_linear_setup_stubbed_mcp_e2e(temp_db, tmp_path) -> None:
     persisted = json.loads((project_root / ".gobby" / "project.json").read_text())
     assert persisted["linear_project_id"] == "proj-1"
 
-    linked_task = task_manager.get_task(task.id)
-    issue_id = linked_task.linear_issue_id
-    assert issue_id is not None
-    assert linear.issues[issue_id]["projectId"] == "proj-1"
-
-    linear.issues[issue_id]["title"] = "Updated from Linear"
-    linear.issues[issue_id]["description"] = "Mutated through Linear MCP stub"
-    linear.issues[issue_id]["updatedAt"] = "9999-01-01T00:00:01+00:00"
-
-    job_id = _enable_linear_auto_sync(task_manager, project.id, interval=60)
-    handler = create_linear_sync_handler(
-        mcp_manager=linear,
-        task_manager=task_manager,
-        project_id=project.id,
-        team_id="team-1",
-        linear_project_id="proj-1",
-    )
-    output = await handler(MagicMock(id=job_id))
-
-    assert "Linear sync complete" in output
-    updated_task = task_manager.get_task(task.id)
-    assert updated_task.title == "Updated from Linear"
-    assert any(
-        tool == "list_issues" and args.get("projectId") == "proj-1" for tool, args in linear.calls
-    )
+    assert any(tool == "list_teams" for tool, _args in linear.calls)
+    assert any(tool == "create_project" for tool, _args in linear.calls)

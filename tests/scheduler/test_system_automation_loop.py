@@ -528,6 +528,7 @@ async def test_direct_wake_after_agent_cleanup_runs_project_heartbeat_without_cr
         title="Cleanup wake",
         category="code",
         task_type="feature",
+        validation_criteria="Test task completion is observable.",
     )
     manager.update_task(task.id, allow_automation=True)
     services = SimpleNamespace(

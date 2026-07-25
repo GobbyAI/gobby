@@ -49,6 +49,7 @@ def _write(
         started_at=now,
         completed_at=now if terminal else None,
         output=output,
+        validation_epoch=0 if task_id else None,
         attribution_source="sole_claim" if task_id else "unassigned",
         attribution_actor=session_id if task_id else None,
         attributed_at=now if task_id else None,
@@ -70,7 +71,7 @@ def _session(session_manager: SessionManager, project_id: str, suffix: str):
     )
 
 
-def test_provisional_terminal_upsert_and_distinct_identical_commands(
+def test_pending_terminal_upsert_and_distinct_identical_commands(
     temp_db, session_manager, sample_project, task_manager
 ) -> None:
     session = _session(session_manager, sample_project["id"], "upsert")
@@ -79,16 +80,17 @@ def test_provisional_terminal_upsert_and_distinct_identical_commands(
         "Receipt task",
         claimed_by_session_id=session.id,
         category="code",
+        validation_criteria="The attributed receipt has the expected terminal outcome.",
     )
     store = VerificationReceiptStore(temp_db)
 
-    provisional = store.upsert(
+    pending = store.upsert(
         _write(
             project_id=sample_project["id"],
             session_id=session.id,
             execution_id="call-1",
             task_id=task.id,
-            outcome="provisional",
+            outcome="pending",
             terminal=False,
         )
     )
@@ -129,13 +131,13 @@ def test_provisional_terminal_upsert_and_distinct_identical_commands(
             outcome="failure",
         )
     )
-    provisional_after_conflict = store.upsert(
+    pending_after_conflict = store.upsert(
         _write(
             project_id=sample_project["id"],
             session_id=session.id,
             execution_id="call-1",
             task_id=task.id,
-            outcome="provisional",
+            outcome="pending",
             terminal=False,
         )
     )
@@ -149,10 +151,10 @@ def test_provisional_terminal_upsert_and_distinct_identical_commands(
         )
     )
 
-    assert provisional.id == terminal.id == duplicate.id
+    assert pending.id == terminal.id == duplicate.id
     assert unknown_duplicate.normalized_outcome == "success"
     assert conflicting.normalized_outcome == "conflicting"
-    assert provisional_after_conflict.normalized_outcome == "conflicting"
+    assert pending_after_conflict.normalized_outcome == "conflicting"
     assert second.id != terminal.id
     assert terminal.normalized_outcome == "success"
     assert terminal.completed_at is not None
@@ -168,7 +170,10 @@ def test_more_than_fifty_receipts_are_durable(
 ) -> None:
     session = _session(session_manager, sample_project["id"], "many")
     task = task_manager.create_task(
-        sample_project["id"], "Many receipts", claimed_by_session_id=session.id
+        sample_project["id"],
+        "Many receipts",
+        claimed_by_session_id=session.id,
+        validation_criteria="All attributed receipts remain durable.",
     )
     store = VerificationReceiptStore(temp_db)
 
@@ -190,10 +195,16 @@ def test_attribution_prefers_valid_active_then_sole_claim_and_rejects_ambiguity(
 ) -> None:
     session = _session(session_manager, sample_project["id"], "attribution")
     first = task_manager.create_task(
-        sample_project["id"], "First", claimed_by_session_id=session.id
+        sample_project["id"],
+        "First",
+        claimed_by_session_id=session.id,
+        validation_criteria="Attribution resolves to this task when it is active.",
     )
     second = task_manager.create_task(
-        sample_project["id"], "Second", claimed_by_session_id=session.id
+        sample_project["id"],
+        "Second",
+        claimed_by_session_id=session.id,
+        validation_criteria="Attribution resolves to this task when it is active.",
     )
     store = VerificationReceiptStore(temp_db)
 
@@ -218,10 +229,16 @@ def test_inspection_assignment_is_isolated_and_one_way(
     session = _session(session_manager, sample_project["id"], "assignment")
     other_session = _session(session_manager, other_project.id, "other")
     task = task_manager.create_task(
-        sample_project["id"], "Assignment", claimed_by_session_id=session.id
+        sample_project["id"],
+        "Assignment",
+        claimed_by_session_id=session.id,
+        validation_criteria="Receipt assignment remains project-scoped.",
     )
     other_task = task_manager.create_task(
-        other_project.id, "Other assignment", claimed_by_session_id=other_session.id
+        other_project.id,
+        "Other assignment",
+        claimed_by_session_id=other_session.id,
+        validation_criteria="Receipt assignment remains project-scoped.",
     )
     store = VerificationReceiptStore(temp_db)
     local = store.upsert(
@@ -283,7 +300,10 @@ def test_task_and_unassigned_receipts_follow_separate_retention(
 ) -> None:
     session = _session(session_manager, sample_project["id"], "retention")
     task = task_manager.create_task(
-        sample_project["id"], "Retention", claimed_by_session_id=session.id
+        sample_project["id"],
+        "Retention",
+        claimed_by_session_id=session.id,
+        validation_criteria="Assigned receipts follow task retention.",
     )
     store = VerificationReceiptStore(temp_db)
     assigned = store.upsert(

@@ -12,6 +12,7 @@ from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any
 
 from gobby.storage.tasks import LocalTaskManager
+from gobby.tasks.import_criteria import external_issue_validation_criteria
 
 if TYPE_CHECKING:
     from gobby.storage.hub.protocol import HubDatabase
@@ -146,6 +147,10 @@ class GitHubIssueImporter:
                     issue.get("createdAt") or issue.get("created_at") or datetime.now(UTC)
                 )
                 updated_at = datetime.now(UTC)
+                validation_criteria = external_issue_validation_criteria(
+                    "GitHub",
+                    f"{github_repo}#{issue_num}",
+                )
 
                 existing = conn.execute(
                     """
@@ -178,6 +183,7 @@ class GitHubIssueImporter:
                            SET title=%s,
                                description=%s,
                                labels=%s,
+                               validation_criteria=%s,
                                updated_at=%s,
                                github_repo=%s,
                                github_issue_number=%s
@@ -188,6 +194,7 @@ class GitHubIssueImporter:
                             title,
                             desc,
                             labels_json,
+                            validation_criteria,
                             updated_at,
                             github_repo,
                             issue_num,
@@ -200,9 +207,9 @@ class GitHubIssueImporter:
                         """
                         INSERT INTO tasks (
                             id, project_id, title, description, task_type,
-                            labels, created_at, updated_at,
+                            labels, validation_criteria, created_at, updated_at,
                             github_repo, github_issue_number
-                        ) VALUES (%s, %s, %s, %s, 'task', %s, %s, %s, %s, %s)
+                        ) VALUES (%s, %s, %s, %s, 'task', %s, %s, %s, %s, %s, %s)
                         """,
                         (
                             task_id,
@@ -210,6 +217,7 @@ class GitHubIssueImporter:
                             title,
                             desc,
                             labels_json,
+                            validation_criteria,
                             created_at,
                             updated_at,
                             github_repo,

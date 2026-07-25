@@ -32,6 +32,7 @@ async def test_default_manifest_positions_are_zero_indexed_and_returned(
         title="Manifest build",
         category="test",
         task_type="task",
+        validation_criteria="Test task completion is observable.",
     )
 
     result = await build(

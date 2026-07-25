@@ -73,6 +73,7 @@ class TestTaskCreationUUID:
         task = task_manager.create_task(
             project_id=project_id,
             title="Test Task",
+            validation_criteria="Test task completion is observable.",
         )
 
         # ID should be valid UUID format
@@ -85,6 +86,7 @@ class TestTaskCreationUUID:
             task = task_manager.create_task(
                 project_id=project_id,
                 title=f"Task {i}",
+                validation_criteria="Test task completion is observable.",
             )
             assert task.id not in ids, f"Duplicate ID generated: {task.id}"
             ids.add(task.id)
@@ -97,6 +99,7 @@ class TestTaskCreationUUID:
         task = task_manager.create_task(
             project_id=project_id,
             title="Test Task",
+            validation_criteria="Test task completion is observable.",
         )
         original_id = task.id
 
@@ -113,6 +116,7 @@ class TestTaskCreationUUID:
         task = task_manager.create_task(
             project_id=project_id,
             title="Test Task",
+            validation_criteria="Test task completion is observable.",
         )
 
         parsed = _assert_valid_uuid(task.id)
@@ -124,11 +128,13 @@ class TestTaskCreationUUID:
         parent = task_manager.create_task(
             project_id=project_id,
             title="Parent Task",
+            validation_criteria="Test task completion is observable.",
         )
         child = task_manager.create_task(
             project_id=project_id,
             title="Child Task",
             parent_task_id=parent.id,
+            validation_criteria="Test task completion is observable.",
         )
 
         # Both should be valid UUIDs

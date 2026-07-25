@@ -92,7 +92,7 @@ def test_empty_projection_is_not_ready() -> None:
         "raw_total": 0,
         "raw_per_outcome": {},
         "superseded_total": 0,
-        "ready": False,
+        "diagnostic_success_present": False,
         "latest_receipt_id": None,
         "latest_timestamp": None,
     }
@@ -239,7 +239,7 @@ def test_different_output_and_unknown_only_receipts_remain_effective() -> None:
     )
     unknown_only = _receipt(
         2,
-        "provisional",
+        "pending",
         command="another verifier",
         execution_id="exec-unknown-only",
         outcome_provenance="before_tool",
@@ -254,4 +254,4 @@ def test_different_output_and_unknown_only_receipts_remain_effective() -> None:
         unknown_only.id,
     ]
     assert projection.superseded_total == 0
-    assert projection.per_outcome == {"provisional": 1, "success": 1, "unknown": 1}
+    assert projection.per_outcome == {"pending": 1, "success": 1, "unknown": 1}

@@ -12,6 +12,7 @@ from typing import TYPE_CHECKING, Any, cast
 
 from gobby.integrations.github import GitHubIntegration
 from gobby.integrations.github_helper import parse_github_mcp_result, parse_github_repo
+from gobby.tasks.import_criteria import external_issue_validation_criteria
 from gobby.tasks.state_semantics import is_task_closed
 from gobby.utils.datetime import parse_stored_datetime
 
@@ -152,6 +153,10 @@ class GitHubSyncService:
             issue_number = issue.get("number")
             title = issue.get("title", "Untitled Issue")
             description = issue.get("body", "")
+            validation_criteria = external_issue_validation_criteria(
+                "GitHub",
+                f"{repo}#{issue_number}",
+            )
             issue_labels = [
                 lbl["name"] if isinstance(lbl, dict) else lbl for lbl in (issue.get("labels") or [])
             ]
@@ -191,6 +196,8 @@ class GitHubSyncService:
                         metadata_updates["title"] = title
                     if (getattr(existing, "description", None) or "") != description:
                         metadata_updates["description"] = description
+                    if getattr(existing, "validation_criteria", None) != validation_criteria:
+                        metadata_updates["validation_criteria"] = validation_criteria
 
                     existing_label_value = getattr(existing, "labels", None)
                     existing_labels = (
@@ -216,6 +223,7 @@ class GitHubSyncService:
                     github_issue_number=issue_number,
                     github_repo=repo,
                     labels=mapped_labels or None,
+                    validation_criteria=validation_criteria,
                 )
                 if lifecycle_updates:
                     task = self.task_manager.reconcile_task_state(task.id, **lifecycle_updates)

@@ -404,6 +404,11 @@ class TestGitHubSyncServiceDedup:
             "existing-task-id",
             title="Newer remote title",
             description="Newer remote body",
+            validation_criteria=(
+                "The acceptance conditions recorded in GitHub issue owner/repo#1 are "
+                "implemented, and the resulting behavior is verified by authoritative "
+                "current-state evidence."
+            ),
             labels=["local-only", "remote"],
         )
         mock_task_manager.create_task.assert_not_called()

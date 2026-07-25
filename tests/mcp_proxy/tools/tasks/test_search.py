@@ -142,6 +142,7 @@ def seeded_tasks(
             description=description,
             task_type=task_type,
             priority=priority,
+            validation_criteria="Test task completion is observable.",
         )
         tasks.append(task)
     return tasks
@@ -297,6 +298,7 @@ class TestSearchTasksResults:
             description=long_description,
             task_type="task",
             priority=2,
+            validation_criteria="Test task completion is observable.",
         )
 
         result = func(query="Bounded preview marker")

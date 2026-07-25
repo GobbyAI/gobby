@@ -113,6 +113,7 @@ def stage_review_setup(temp_db: HubDatabase, tmp_path: Path) -> StageReviewSetup
         task_type="review_anchor",
         category="planning",
         isolation="none",
+        validation_criteria="Test task completion is observable.",
     )
     manager.initialize_task_manifest(task.id, stage_names=["planning"])
     set_stage_state(temp_db, task.id, "planning", "needs_review")
@@ -315,6 +316,7 @@ def test_server_side_evidence_resolution(stage_review_setup: StageReviewSetup) -
         "Other plan",
         task_type="review_anchor",
         category="planning",
+        validation_criteria="Test task completion is observable.",
     )
     stage_review_setup.manager.initialize_task_manifest(other_task.id, stage_names=["planning"])
     set_stage_state(stage_review_setup.db, other_task.id, "planning", "needs_review")

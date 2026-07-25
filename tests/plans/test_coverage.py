@@ -418,7 +418,9 @@ def test_db_source_loads_live_task_records(
 
     project = LocalProjectManager(temp_db).create("project")
     manager = LocalTaskManager(temp_db)
-    root = manager.create_task(project.id, "Root")
+    root = manager.create_task(
+        project.id, "Root", validation_criteria="Test task completion is observable."
+    )
     leaf = manager.create_task(
         project.id,
         "Leaf",
@@ -453,7 +455,9 @@ def test_db_deferral_uses_project_records_without_widening_root_scope(
     project = projects.create("project")
     foreign_project = projects.create("foreign-project")
     manager = LocalTaskManager(temp_db)
-    root = manager.create_task(project.id, "Root")
+    root = manager.create_task(
+        project.id, "Root", validation_criteria="Test task completion is observable."
+    )
     deferral = manager.create_task(
         project.id,
         "Project-wide deferral",
@@ -485,7 +489,11 @@ def test_db_deferral_uses_project_records_without_widening_root_scope(
     assert report.rows[0].deferral_target == f"#{deferral.seq_num}"
     scoped_hash = report.header.task_tree_source_hash
 
-    manager.create_task(project.id, "Unrelated project task")
+    manager.create_task(
+        project.id,
+        "Unrelated project task",
+        validation_criteria="Test task completion is observable.",
+    )
     report_with_outsider = evaluate(
         plan=plan_path,
         plan_id="plan",

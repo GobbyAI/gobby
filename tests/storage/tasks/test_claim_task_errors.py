@@ -21,6 +21,7 @@ def test_claim_task_raises_task_closed_error(temp_db, sample_project) -> None:
     task = LocalTaskManager(temp_db).create_task(
         sample_project["id"],
         title="Closed task",
+        validation_criteria="Test task completion is observable.",
     )
     close_task(temp_db, task.id, reason="test")
 
@@ -32,6 +33,7 @@ def test_claim_task_raises_task_already_claimed_error(temp_db, sample_project) -
     task = LocalTaskManager(temp_db).create_task(
         sample_project["id"],
         title="Claimed task",
+        validation_criteria="Test task completion is observable.",
     )
     session_manager = SessionManager(temp_db)
     owner = session_manager.register(
@@ -59,6 +61,7 @@ def test_concurrent_claim_has_exactly_one_winner(temp_db, sample_project) -> Non
     task = LocalTaskManager(temp_db).create_task(
         sample_project["id"],
         title="Contended task",
+        validation_criteria="Test task completion is observable.",
     )
     session_manager = SessionManager(temp_db)
     claimants = [
@@ -105,6 +108,7 @@ def test_expected_owner_does_not_stomp_replacement_owner(temp_db, sample_project
     task = LocalTaskManager(temp_db).create_task(
         sample_project["id"],
         title="Delegated task",
+        validation_criteria="Test task completion is observable.",
     )
     session_manager = SessionManager(temp_db)
     owner = session_manager.register(

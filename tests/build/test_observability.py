@@ -19,7 +19,12 @@ def _automated_task(temp_db, project_id: str, title: str = "Task"):
     from gobby.storage.tasks import LocalTaskManager
 
     manager = LocalTaskManager(temp_db)
-    task = manager.create_task(project_id=project_id, title=title, category="code")
+    task = manager.create_task(
+        project_id=project_id,
+        title=title,
+        category="code",
+        validation_criteria="Test task completion is observable.",
+    )
     manager.initialize_task_manifest(task.id, stage_names=["development"])
     return manager.update_task(task.id, allow_automation=True, isolation="none")
 
@@ -188,13 +193,24 @@ def test_get_build_status_counts_closed_and_escalated_nodes(temp_db) -> None:
 
     project_id = _project(temp_db, "observability-tree")
     manager = LocalTaskManager(temp_db)
-    root = manager.create_task(project_id=project_id, title="Root", task_type="epic")
-    closed = manager.create_task(project_id=project_id, title="Closed", parent_task_id=root.id)
+    root = manager.create_task(
+        project_id=project_id,
+        title="Root",
+        task_type="epic",
+        validation_criteria="Test task completion is observable.",
+    )
+    closed = manager.create_task(
+        project_id=project_id,
+        title="Closed",
+        parent_task_id=root.id,
+        validation_criteria="Test task completion is observable.",
+    )
     escalated = manager.create_task(
         project_id=project_id,
         title="Escalated",
         parent_task_id=root.id,
         category="code",
+        validation_criteria="Test task completion is observable.",
     )
     manager.close_task(closed.id, force=True)
     manager.escalate_task(escalated.id, "needs_human")
@@ -217,10 +233,20 @@ def test_build_stop_target_disables_status_and_dispatch_for_tree(temp_db) -> Non
 
     project_id = _project(temp_db, "observability-stop-target")
     manager = LocalTaskManager(temp_db)
-    root = manager.create_task(project_id=project_id, title="Root", task_type="epic")
+    root = manager.create_task(
+        project_id=project_id,
+        title="Root",
+        task_type="epic",
+        validation_criteria="Test task completion is observable.",
+    )
     manager.initialize_task_manifest(root.id, stage_names=["planning", "development"])
     root = manager.update_task(root.id, allow_automation=True, isolation="none")
-    child = manager.create_task(project_id=project_id, title="Child", parent_task_id=root.id)
+    child = manager.create_task(
+        project_id=project_id,
+        title="Child",
+        parent_task_id=root.id,
+        validation_criteria="Test task completion is observable.",
+    )
     manager.initialize_task_manifest(child.id, stage_names=["development"])
     child = manager.update_task(child.id, allow_automation=True, isolation="none")
     manager.lifecycle_events.record_lifecycle_event(
@@ -261,7 +287,11 @@ def test_build_control_targets_reject_foreign_project_uuid(temp_db, action: str)
     foreign_project_id = _project(temp_db, "observability-stop-foreign")
     manager = LocalTaskManager(temp_db)
     artifact_manager = TaskArtifactManager(temp_db)
-    foreign_task = manager.create_task(project_id=foreign_project_id, title="Foreign")
+    foreign_task = manager.create_task(
+        project_id=foreign_project_id,
+        title="Foreign",
+        validation_criteria="Test task completion is observable.",
+    )
     manager.initialize_task_manifest(foreign_task.id, stage_names=["development"])
     manager.stage_states.start_stage(foreign_task.id, "development", by_session_id="dispatcher")
     foreign_task = manager.update_task(foreign_task.id, allow_automation=True)
@@ -319,7 +349,12 @@ def test_build_stop_target_preserves_review_approved_stage(temp_db) -> None:
 
     project_id = _project(temp_db, "observability-stop-approved")
     manager = LocalTaskManager(temp_db)
-    root = manager.create_task(project_id=project_id, title="Root", task_type="epic")
+    root = manager.create_task(
+        project_id=project_id,
+        title="Root",
+        task_type="epic",
+        validation_criteria="Test task completion is observable.",
+    )
     manager.initialize_task_manifest(root.id, stage_names=["expansion", "development"])
     root = manager.update_task(root.id, allow_automation=True, isolation="none")
     manager.lifecycle_events.record_lifecycle_event(
@@ -358,7 +393,12 @@ def test_build_resume_target_reopens_project_gate_before_dispatch(temp_db, monke
 
     project_id = _project(temp_db, "observability-resume-target")
     manager = LocalTaskManager(temp_db)
-    root = manager.create_task(project_id=project_id, title="Root", task_type="epic")
+    root = manager.create_task(
+        project_id=project_id,
+        title="Root",
+        task_type="epic",
+        validation_criteria="Test task completion is observable.",
+    )
     manager.initialize_task_manifest(root.id, stage_names=["planning", "development"])
     root = manager.update_task(root.id, allow_automation=False, isolation="none")
     manager.lifecycle_events.record_lifecycle_event(
@@ -532,12 +572,21 @@ def test_explain_dispatch_reports_block_reasons_and_would_dispatch(temp_db) -> N
         ttl_seconds=60,
     )
     blocked = _automated_task(temp_db, project_id, "Blocked")
-    blocker = manager.create_task(project_id=project_id, title="Blocker")
+    blocker = manager.create_task(
+        project_id=project_id,
+        title="Blocker",
+        validation_criteria="Test task completion is observable.",
+    )
     temp_db.execute(
         "INSERT INTO task_dependencies (task_id, depends_on, dep_type, created_at) VALUES (%s, %s, 'blocks', NOW())",
         (blocked.id, blocker.id),
     )
-    parent = manager.create_task(project_id=project_id, title="Parent", task_type="epic")
+    parent = manager.create_task(
+        project_id=project_id,
+        title="Parent",
+        task_type="epic",
+        validation_criteria="Test task completion is observable.",
+    )
     manager.update_task(parent.id, allow_automation=False, isolation="none")
     manager.initialize_task_manifest(
         parent.id, stage_names=["planning", "expansion", "development"]
@@ -555,12 +604,22 @@ def test_explain_dispatch_reports_block_reasons_and_would_dispatch(temp_db) -> N
         title="Ancestor blocked",
         category="code",
         parent_task_id=parent.id,
+        validation_criteria="Test task completion is observable.",
     )
     manager.initialize_task_manifest(ancestor_blocked.id, stage_names=["development"])
     manager.update_task(ancestor_blocked.id, allow_automation=True, isolation="none")
-    no_stage = manager.create_task(project_id=project_id, title="No stage")
+    no_stage = manager.create_task(
+        project_id=project_id,
+        title="No stage",
+        validation_criteria="Test task completion is observable.",
+    )
     manager.update_task(no_stage.id, allow_automation=True)
-    no_match = manager.create_task(project_id=project_id, title="No match", category="code")
+    no_match = manager.create_task(
+        project_id=project_id,
+        title="No match",
+        category="code",
+        validation_criteria="Test task completion is observable.",
+    )
     manager.initialize_task_manifest(no_match.id, stage_names=["merge"])
     manager.update_task(no_match.id, allow_automation=True, isolation="none")
     temp_db.execute(
@@ -597,7 +656,12 @@ def test_explain_dispatch_reports_epic_descendant_gate(temp_db) -> None:
 
     project_id = _project(temp_db, "observability-epic-gate")
     manager = LocalTaskManager(temp_db)
-    root = manager.create_task(project_id=project_id, title="Root", task_type="epic")
+    root = manager.create_task(
+        project_id=project_id,
+        title="Root",
+        task_type="epic",
+        validation_criteria="Test task completion is observable.",
+    )
     manager.update_task(root.id, allow_automation=True, isolation="none")
     manager.initialize_task_manifest(root.id, stage_names=["development", "epic_qa", "merge"])
     temp_db.execute(
@@ -609,13 +673,17 @@ def test_explain_dispatch_reports_epic_descendant_gate(temp_db) -> None:
         (root.id,),
     )
     phase = manager.create_task(
-        project_id=project_id, title="Integrated phase", parent_task_id=root.id
+        project_id=project_id,
+        title="Integrated phase",
+        parent_task_id=root.id,
+        validation_criteria="Test task completion is observable.",
     )
     child = manager.create_task(
         project_id=project_id,
         title="Reopened child",
         category="code",
         parent_task_id=phase.id,
+        validation_criteria="Test task completion is observable.",
     )
     manager.initialize_task_manifest(child.id, stage_names=["development"])
 

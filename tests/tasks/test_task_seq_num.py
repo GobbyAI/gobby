@@ -34,15 +34,28 @@ class TestSeqNumAutoIncrement:
         task = task_manager.create_task(
             project_id=project_id,
             title="First Task",
+            validation_criteria="Test task completion is observable.",
         )
 
         assert task.seq_num == 1
 
     def test_sequential_tasks_get_incrementing_seq_nums(self, task_manager, project_id) -> None:
         """Test that sequential tasks get incrementing seq_num values."""
-        task1 = task_manager.create_task(project_id=project_id, title="Task 1")
-        task2 = task_manager.create_task(project_id=project_id, title="Task 2")
-        task3 = task_manager.create_task(project_id=project_id, title="Task 3")
+        task1 = task_manager.create_task(
+            project_id=project_id,
+            title="Task 1",
+            validation_criteria="Test task completion is observable.",
+        )
+        task2 = task_manager.create_task(
+            project_id=project_id,
+            title="Task 2",
+            validation_criteria="Test task completion is observable.",
+        )
+        task3 = task_manager.create_task(
+            project_id=project_id,
+            title="Task 3",
+            validation_criteria="Test task completion is observable.",
+        )
 
         assert task1.seq_num == 1
         assert task2.seq_num == 2
@@ -50,11 +63,16 @@ class TestSeqNumAutoIncrement:
 
     def test_child_task_gets_next_seq_num(self, task_manager, project_id) -> None:
         """Test that child tasks also get incrementing seq_nums."""
-        parent = task_manager.create_task(project_id=project_id, title="Parent")
+        parent = task_manager.create_task(
+            project_id=project_id,
+            title="Parent",
+            validation_criteria="Test task completion is observable.",
+        )
         child = task_manager.create_task(
             project_id=project_id,
             title="Child",
             parent_task_id=parent.id,
+            validation_criteria="Test task completion is observable.",
         )
 
         assert parent.seq_num == 1
@@ -75,10 +93,26 @@ class TestSeqNumAutoIncrement:
         )
 
         # Create tasks in each project
-        task_a1 = task_manager.create_task(project_id=project_a_id, title="A1")
-        task_a2 = task_manager.create_task(project_id=project_a_id, title="A2")
-        task_b1 = task_manager.create_task(project_id=project_b_id, title="B1")
-        task_b2 = task_manager.create_task(project_id=project_b_id, title="B2")
+        task_a1 = task_manager.create_task(
+            project_id=project_a_id,
+            title="A1",
+            validation_criteria="Test task completion is observable.",
+        )
+        task_a2 = task_manager.create_task(
+            project_id=project_a_id,
+            title="A2",
+            validation_criteria="Test task completion is observable.",
+        )
+        task_b1 = task_manager.create_task(
+            project_id=project_b_id,
+            title="B1",
+            validation_criteria="Test task completion is observable.",
+        )
+        task_b2 = task_manager.create_task(
+            project_id=project_b_id,
+            title="B2",
+            validation_criteria="Test task completion is observable.",
+        )
 
         # Each project should have independent sequence
         assert task_a1.seq_num == 1
@@ -88,15 +122,31 @@ class TestSeqNumAutoIncrement:
 
     def test_seq_num_gaps_after_deletion(self, task_manager, project_id) -> None:
         """Test that seq_nums have gaps after deletion (stable references)."""
-        task1 = task_manager.create_task(project_id=project_id, title="Task 1")
-        task2 = task_manager.create_task(project_id=project_id, title="Task 2")
-        task3 = task_manager.create_task(project_id=project_id, title="Task 3")
+        task1 = task_manager.create_task(
+            project_id=project_id,
+            title="Task 1",
+            validation_criteria="Test task completion is observable.",
+        )
+        task2 = task_manager.create_task(
+            project_id=project_id,
+            title="Task 2",
+            validation_criteria="Test task completion is observable.",
+        )
+        task3 = task_manager.create_task(
+            project_id=project_id,
+            title="Task 3",
+            validation_criteria="Test task completion is observable.",
+        )
 
         # Delete task 2
         task_manager.delete_task(task2.id)
 
         # Create a new task
-        task4 = task_manager.create_task(project_id=project_id, title="Task 4")
+        task4 = task_manager.create_task(
+            project_id=project_id,
+            title="Task 4",
+            validation_criteria="Test task completion is observable.",
+        )
 
         # seq_num 2 should be skipped (gap preserved)
         assert task1.seq_num == 1
@@ -106,8 +156,16 @@ class TestSeqNumAutoIncrement:
     def test_seq_num_continues_after_gap(self, task_manager, project_id, temp_db) -> None:
         """Test that seq_num continues from max even with gaps."""
         # Create tasks with existing seq_nums (simulating partial migration)
-        task_manager.create_task(project_id=project_id, title="Task 1")
-        task2 = task_manager.create_task(project_id=project_id, title="Task 2")
+        task_manager.create_task(
+            project_id=project_id,
+            title="Task 1",
+            validation_criteria="Test task completion is observable.",
+        )
+        task2 = task_manager.create_task(
+            project_id=project_id,
+            title="Task 2",
+            validation_criteria="Test task completion is observable.",
+        )
 
         # Manually create a gap by setting a high seq_num
         temp_db.execute(
@@ -116,12 +174,20 @@ class TestSeqNumAutoIncrement:
         )
 
         # New task should continue from max
-        task3 = task_manager.create_task(project_id=project_id, title="Task 3")
+        task3 = task_manager.create_task(
+            project_id=project_id,
+            title="Task 3",
+            validation_criteria="Test task completion is observable.",
+        )
         assert task3.seq_num == 101
 
     def test_seq_num_stored_and_retrieved(self, task_manager, project_id) -> None:
         """Test that seq_num is properly stored and retrieved."""
-        task = task_manager.create_task(project_id=project_id, title="Test Task")
+        task = task_manager.create_task(
+            project_id=project_id,
+            title="Test Task",
+            validation_criteria="Test task completion is observable.",
+        )
         original_seq = task.seq_num
 
         # Retrieve the task
@@ -130,7 +196,11 @@ class TestSeqNumAutoIncrement:
 
     def test_seq_num_in_to_dict(self, task_manager, project_id) -> None:
         """Test that seq_num is included in to_dict() output."""
-        task = task_manager.create_task(project_id=project_id, title="Test Task")
+        task = task_manager.create_task(
+            project_id=project_id,
+            title="Test Task",
+            validation_criteria="Test task completion is observable.",
+        )
         data = task.to_dict()
 
         assert "seq_num" in data
@@ -138,7 +208,11 @@ class TestSeqNumAutoIncrement:
 
     def test_seq_num_in_to_brief(self, task_manager, project_id) -> None:
         """Test that seq_num is included in to_brief() output."""
-        task = task_manager.create_task(project_id=project_id, title="Test Task")
+        task = task_manager.create_task(
+            project_id=project_id,
+            title="Test Task",
+            validation_criteria="Test task completion is observable.",
+        )
         brief = task.to_brief()
 
         assert "seq_num" in brief
@@ -151,6 +225,7 @@ class TestSeqNumAutoIncrement:
             task = task_manager.create_task(
                 project_id=project_id,
                 title=f"Task {i + 1}",
+                validation_criteria="Test task completion is observable.",
             )
             tasks.append(task)
 

@@ -25,8 +25,12 @@ def project_id(sample_project):
 
 class TestTaskDependencyManager:
     def test_add_dependency(self, task_manager, dep_manager, project_id) -> None:
-        t1 = task_manager.create_task(project_id, "T1")
-        t2 = task_manager.create_task(project_id, "T2")  # T1 -> T2 (T1 depends on T2)
+        t1 = task_manager.create_task(
+            project_id, "T1", validation_criteria="Test task completion is observable."
+        )
+        t2 = task_manager.create_task(
+            project_id, "T2", validation_criteria="Test task completion is observable."
+        )  # T1 -> T2 (T1 depends on T2)
 
         dep = dep_manager.add_dependency(t1.id, t2.id, "blocks")
         assert dep.task_id == t1.id
@@ -34,9 +38,15 @@ class TestTaskDependencyManager:
         assert dep.dep_type == "blocks"
 
     def test_cycle_detection(self, task_manager, dep_manager, project_id) -> None:
-        t1 = task_manager.create_task(project_id, "T1")
-        t2 = task_manager.create_task(project_id, "T2")
-        t3 = task_manager.create_task(project_id, "T3")
+        t1 = task_manager.create_task(
+            project_id, "T1", validation_criteria="Test task completion is observable."
+        )
+        t2 = task_manager.create_task(
+            project_id, "T2", validation_criteria="Test task completion is observable."
+        )
+        t3 = task_manager.create_task(
+            project_id, "T3", validation_criteria="Test task completion is observable."
+        )
 
         # T1 -> T2 -> T3
         dep_manager.add_dependency(t1.id, t2.id)
@@ -47,8 +57,12 @@ class TestTaskDependencyManager:
             dep_manager.add_dependency(t3.id, t1.id)
 
     def test_get_blockers_blocking(self, task_manager, dep_manager, project_id) -> None:
-        t1 = task_manager.create_task(project_id, "T1")
-        t2 = task_manager.create_task(project_id, "T2")
+        t1 = task_manager.create_task(
+            project_id, "T1", validation_criteria="Test task completion is observable."
+        )
+        t2 = task_manager.create_task(
+            project_id, "T2", validation_criteria="Test task completion is observable."
+        )
 
         # T1 needs T2 (T2 blocks T1)
         dep_manager.add_dependency(t1.id, t2.id)
@@ -62,9 +76,15 @@ class TestTaskDependencyManager:
         assert blocking[0].task_id == t1.id
 
     def test_dependency_tree(self, task_manager, dep_manager, project_id) -> None:
-        t1 = task_manager.create_task(project_id, "T1")
-        t2 = task_manager.create_task(project_id, "T2")
-        t3 = task_manager.create_task(project_id, "T3")
+        t1 = task_manager.create_task(
+            project_id, "T1", validation_criteria="Test task completion is observable."
+        )
+        t2 = task_manager.create_task(
+            project_id, "T2", validation_criteria="Test task completion is observable."
+        )
+        t3 = task_manager.create_task(
+            project_id, "T3", validation_criteria="Test task completion is observable."
+        )
 
         # T1 -> T2 -> T3
         dep_manager.add_dependency(t1.id, t2.id)
@@ -79,8 +99,12 @@ class TestTaskDependencyManager:
         assert tree["blockers"][0]["blockers"][0]["id"] == t3.id
 
     def test_check_cycles_global(self, task_manager, dep_manager, project_id) -> None:
-        t1 = task_manager.create_task(project_id, "T1")
-        t2 = task_manager.create_task(project_id, "T2")
+        t1 = task_manager.create_task(
+            project_id, "T1", validation_criteria="Test task completion is observable."
+        )
+        t2 = task_manager.create_task(
+            project_id, "T2", validation_criteria="Test task completion is observable."
+        )
 
         dep_manager.add_dependency(t1.id, t2.id)
 
@@ -99,8 +123,12 @@ class TestTaskDependencyManager:
         assert t2.id in cycle_ids
 
     def test_remove_dependency(self, task_manager, dep_manager, project_id) -> None:
-        t1 = task_manager.create_task(project_id, "T1")
-        t2 = task_manager.create_task(project_id, "T2")
+        t1 = task_manager.create_task(
+            project_id, "T1", validation_criteria="Test task completion is observable."
+        )
+        t2 = task_manager.create_task(
+            project_id, "T2", validation_criteria="Test task completion is observable."
+        )
 
         dep_manager.add_dependency(t1.id, t2.id)
         assert len(dep_manager.get_blockers(t1.id)) == 1
@@ -110,13 +138,19 @@ class TestTaskDependencyManager:
         assert len(dep_manager.get_blockers(t1.id)) == 0
 
     def test_self_dependency_fails(self, task_manager, dep_manager, project_id) -> None:
-        t1 = task_manager.create_task(project_id, "T1")
+        t1 = task_manager.create_task(
+            project_id, "T1", validation_criteria="Test task completion is observable."
+        )
         with pytest.raises(ValueError, match="itself"):
             dep_manager.add_dependency(t1.id, t1.id)
 
     def test_to_dict(self, task_manager, dep_manager, project_id) -> None:
-        t1 = task_manager.create_task(project_id, "T1")
-        t2 = task_manager.create_task(project_id, "T2")
+        t1 = task_manager.create_task(
+            project_id, "T1", validation_criteria="Test task completion is observable."
+        )
+        t2 = task_manager.create_task(
+            project_id, "T2", validation_criteria="Test task completion is observable."
+        )
         dep = dep_manager.add_dependency(t1.id, t2.id, "related")
 
         data = dep.to_dict()
@@ -127,9 +161,15 @@ class TestTaskDependencyManager:
         assert "id" in data
 
     def test_get_all_dependencies(self, task_manager, dep_manager, project_id) -> None:
-        t1 = task_manager.create_task(project_id, "T1")
-        t2 = task_manager.create_task(project_id, "T2")
-        t3 = task_manager.create_task(project_id, "T3")
+        t1 = task_manager.create_task(
+            project_id, "T1", validation_criteria="Test task completion is observable."
+        )
+        t2 = task_manager.create_task(
+            project_id, "T2", validation_criteria="Test task completion is observable."
+        )
+        t3 = task_manager.create_task(
+            project_id, "T3", validation_criteria="Test task completion is observable."
+        )
 
         # T1 -> T2 (blocks)
         # T1 -> T3 (related)
@@ -143,9 +183,15 @@ class TestTaskDependencyManager:
         assert t3.id in dw_ids
 
     def test_dependency_tree_blocking_and_both(self, task_manager, dep_manager, project_id) -> None:
-        t1 = task_manager.create_task(project_id, "T1")
-        t2 = task_manager.create_task(project_id, "T2")
-        t3 = task_manager.create_task(project_id, "T3")
+        t1 = task_manager.create_task(
+            project_id, "T1", validation_criteria="Test task completion is observable."
+        )
+        t2 = task_manager.create_task(
+            project_id, "T2", validation_criteria="Test task completion is observable."
+        )
+        t3 = task_manager.create_task(
+            project_id, "T3", validation_criteria="Test task completion is observable."
+        )
 
         # T1 -> T2 -> T3
         dep_manager.add_dependency(t1.id, t2.id)
@@ -176,9 +222,15 @@ class TestTaskDependencyManager:
         assert tree_both["blocking"][0]["id"] == t1.id
 
     def test_dependency_tree_max_depth(self, task_manager, dep_manager, project_id) -> None:
-        t1 = task_manager.create_task(project_id, "T1")
-        t2 = task_manager.create_task(project_id, "T2")
-        t3 = task_manager.create_task(project_id, "T3")
+        t1 = task_manager.create_task(
+            project_id, "T1", validation_criteria="Test task completion is observable."
+        )
+        t2 = task_manager.create_task(
+            project_id, "T2", validation_criteria="Test task completion is observable."
+        )
+        t3 = task_manager.create_task(
+            project_id, "T3", validation_criteria="Test task completion is observable."
+        )
 
         dep_manager.add_dependency(t1.id, t2.id)
         dep_manager.add_dependency(t2.id, t3.id)

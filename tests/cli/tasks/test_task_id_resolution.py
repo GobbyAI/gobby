@@ -297,8 +297,9 @@ class TestCliCloseCommandWithHashFormat:
         mock_utils_get_manager.return_value = mock_manager
 
         result = runner.invoke(cli, ["tasks", "close", "#3"])
-        assert result.exit_code == 0
-        mock_manager.close_task.assert_called()
+        assert result.exit_code == 1
+        assert "criterion-to-evidence close_task contract" in result.output
+        mock_manager.close_task.assert_not_called()
 
 
 class TestIntegrationResolveTaskId:
@@ -314,9 +315,21 @@ class TestIntegrationResolveTaskId:
         project_id = hub_sample_project["id"]
 
         # Create tasks
-        task1 = manager.create_task(project_id=project_id, title="Task 1")
-        task2 = manager.create_task(project_id=project_id, title="Task 2")
-        task3 = manager.create_task(project_id=project_id, title="Task 3")
+        task1 = manager.create_task(
+            project_id=project_id,
+            title="Task 1",
+            validation_criteria="Test task completion is observable.",
+        )
+        task2 = manager.create_task(
+            project_id=project_id,
+            title="Task 2",
+            validation_criteria="Test task completion is observable.",
+        )
+        task3 = manager.create_task(
+            project_id=project_id,
+            title="Task 3",
+            validation_criteria="Test task completion is observable.",
+        )
 
         # Resolve using #N format
         result = resolve_task_id(manager, "#1", project_id=project_id)
@@ -341,10 +354,22 @@ class TestIntegrationResolveTaskId:
         project_id = hub_sample_project["id"]
 
         # Create hierarchy: parent -> child -> grandchild
-        parent = manager.create_task(project_id=project_id, title="Parent")
-        child = manager.create_task(project_id=project_id, title="Child", parent_task_id=parent.id)
+        parent = manager.create_task(
+            project_id=project_id,
+            title="Parent",
+            validation_criteria="Test task completion is observable.",
+        )
+        child = manager.create_task(
+            project_id=project_id,
+            title="Child",
+            parent_task_id=parent.id,
+            validation_criteria="Test task completion is observable.",
+        )
         grandchild = manager.create_task(
-            project_id=project_id, title="Grandchild", parent_task_id=child.id
+            project_id=project_id,
+            title="Grandchild",
+            parent_task_id=child.id,
+            validation_criteria="Test task completion is observable.",
         )
 
         # For root task "1", use #1 format (path format requires dots)
@@ -371,7 +396,11 @@ class TestIntegrationResolveTaskId:
         manager = LocalTaskManager(hub_db)
         project_id = hub_sample_project["id"]
 
-        task = manager.create_task(project_id=project_id, title="UUID Test Task")
+        task = manager.create_task(
+            project_id=project_id,
+            title="UUID Test Task",
+            validation_criteria="Test task completion is observable.",
+        )
 
         # Resolve using full UUID
         result = resolve_task_id(manager, task.id, project_id=project_id)
@@ -387,7 +416,11 @@ class TestIntegrationResolveTaskId:
         manager = LocalTaskManager(hub_db)
         project_id = hub_sample_project["id"]
 
-        manager.create_task(project_id=project_id, title="Test Task")
+        manager.create_task(
+            project_id=project_id,
+            title="Test Task",
+            validation_criteria="Test task completion is observable.",
+        )
 
         # gt-* format should fail with deprecation error
         result = resolve_task_id(manager, "gt-abc123", project_id=project_id)
@@ -402,7 +435,11 @@ class TestIntegrationResolveTaskId:
         manager = LocalTaskManager(hub_db)
         project_id = hub_sample_project["id"]
 
-        manager.create_task(project_id=project_id, title="Task 1")
+        manager.create_task(
+            project_id=project_id,
+            title="Task 1",
+            validation_criteria="Test task completion is observable.",
+        )
 
         # #999 doesn't exist
         result = resolve_task_id(manager, "#999", project_id=project_id)

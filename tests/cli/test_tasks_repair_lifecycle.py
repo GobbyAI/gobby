@@ -37,6 +37,7 @@ def test_repair_lifecycle_cli_dry_runs_by_default(hub_db) -> None:
         project_id=project.id,
         title="CLI repair task",
         task_type="task",
+        validation_criteria="Test task completion is observable.",
     )
     manager.initialize_task_manifest(task.id, stage_names=["development"])
     runner = CliRunner()
@@ -65,6 +66,7 @@ def test_repair_lifecycle_cli_json_includes_diagnostics(hub_db) -> None:
         project_id=project.id,
         title="CLI repair task",
         task_type="task",
+        validation_criteria="Test task completion is observable.",
     )
     manager.initialize_task_manifest(task.id, stage_names=["development"])
     runner = CliRunner()

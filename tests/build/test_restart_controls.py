@@ -26,6 +26,7 @@ def test_restart_manifest_replacement_rolls_back_when_reinitialize_fails(
         title="Restart target",
         category="code",
         task_type="feature",
+        validation_criteria="Test task completion is observable.",
     )
     task_manager.stage_states.initialize_manifest(
         task.id,

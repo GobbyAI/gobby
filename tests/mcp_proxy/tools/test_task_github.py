@@ -131,6 +131,11 @@ async def test_import_github_issues_resolves_parent_once_and_creates_nested_task
         github_issue_number=42,
         github_repo="owner/repo",
         labels=["bug"],
+        validation_criteria=(
+            "The acceptance conditions recorded in GitHub issue owner/repo#42 are "
+            "implemented, and the resulting behavior is verified by authoritative "
+            "current-state evidence."
+        ),
     )
     task_manager.update_task.assert_not_called()
 
@@ -176,6 +181,11 @@ async def test_import_github_issues_applies_parent_to_existing_task() -> None:
         title="Updated issue",
         description="New body",
         labels=None,
+        validation_criteria=(
+            "The acceptance conditions recorded in GitHub issue owner/repo#42 are "
+            "implemented, and the resulting behavior is verified by authoritative "
+            "current-state evidence."
+        ),
         parent_task_id="parent-uuid",
     )
     task_manager.create_task.assert_not_called()

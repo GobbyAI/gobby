@@ -110,7 +110,11 @@ def _task(
     **fields: Any,
 ) -> Task:
     manager = LocalTaskManager(temp_db)
-    task = manager.create_task(project_id=sample_project["id"], title=title)
+    task = manager.create_task(
+        project_id=sample_project["id"],
+        title=title,
+        validation_criteria="Test task completion is observable.",
+    )
     legacy_lifecycle = fields.pop("lifecycle", None)
     legacy_status = fields.pop("status", None)
     stage_name = fields.pop(
@@ -150,6 +154,7 @@ def _parent_with_stage_order(
         project_id=sample_project["id"],
         title=f"Parent {expansion_state}",
         task_type="epic",
+        validation_criteria="Test task completion is observable.",
     )
     update_task(
         temp_db,
@@ -1029,6 +1034,7 @@ async def test_heartbeat_records_gated_epic_root_before_reopened_descendant(
         project_id=sample_project["id"],
         title="Epic root",
         task_type="epic",
+        validation_criteria="Test task completion is observable.",
     )
     update_task(temp_db, root.id, allow_automation=True, isolation="none", task_type="epic")
     initialize_manifest(
@@ -1042,6 +1048,7 @@ async def test_heartbeat_records_gated_epic_root_before_reopened_descendant(
         project_id=sample_project["id"],
         title="Integrated phase",
         parent_task_id=root.id,
+        validation_criteria="Test task completion is observable.",
     )
     child = _task(
         temp_db,
@@ -1085,6 +1092,7 @@ async def test_heartbeat_dispatches_reopened_review_under_gated_epic_root(
         project_id=sample_project["id"],
         title="Epic root",
         task_type="epic",
+        validation_criteria="Test task completion is observable.",
     )
     update_task(temp_db, root.id, allow_automation=True, isolation="none", task_type="epic")
     initialize_manifest(
@@ -2126,6 +2134,10 @@ async def test_planning_agents_inherit_task_worktree_isolation(
     monkeypatch.setattr(
         "gobby.mcp_proxy.tools.spawn_agent._implementation.spawn_agent_impl",
         fake_spawn_agent_impl,
+    )
+    monkeypatch.setattr(
+        "gobby.dispatch.spawn._prepare_plan_adversary_evidence",
+        lambda **kwargs: (str(kwargs["prompt"]), None, None),
     )
     monkeypatch.setattr(dispatch_rules, "evaluate", lambda *args, **kwargs: action)
     services = SimpleNamespace(
@@ -3972,6 +3984,7 @@ async def test_dispatch_spawn_uses_task_project_context_for_cross_project_build(
         category="code",
         allow_automation=True,
         isolation="none",
+        validation_criteria="Test task completion is observable.",
     )
     captured: dict[str, object] = {}
 
@@ -4361,6 +4374,7 @@ async def test_real_heartbeat_merge_ready_starts_then_spawns_merge_orchestrator(
         title="Merge ready",
         task_type="feature",
         category="code",
+        validation_criteria="Test task completion is observable.",
     )
     update_task(temp_db, task.id, allow_automation=True, isolation="none")
     initialize_manifest(temp_db, task.id, [spec("pr", 0), spec("merge", 1)])

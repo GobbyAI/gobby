@@ -22,11 +22,15 @@ def test_find_candidates(manager, sample_project):
 
     # Create tasks
     # 1. Closed recently (not candidate)
-    t1 = manager.create_task(proj_id, "Recent Closed")
+    t1 = manager.create_task(
+        proj_id, "Recent Closed", validation_criteria="Test task completion is observable."
+    )
     manager.close_task(t1.id)
 
     # 2. Closed long ago (candidate)
-    t2 = manager.create_task(proj_id, "Old Closed")
+    t2 = manager.create_task(
+        proj_id, "Old Closed", validation_criteria="Test task completion is observable."
+    )
     manager.close_task(t2.id)
 
     # Manually update closed_at to be old
@@ -34,7 +38,9 @@ def test_find_candidates(manager, sample_project):
     manager.db.execute("UPDATE tasks SET closed_at = %s WHERE id = %s", (old_date, t2.id))
 
     # 3. Open task (not candidate)
-    t3 = manager.create_task(proj_id, "Open Task")
+    t3 = manager.create_task(
+        proj_id, "Open Task", validation_criteria="Test task completion is observable."
+    )
     # Manually update updated_at to be old
     manager.db.execute("UPDATE tasks SET updated_at = %s WHERE id = %s", (old_date, t3.id))
 
@@ -47,7 +53,11 @@ def test_find_candidates(manager, sample_project):
 
 @pytest.mark.integration
 def test_compact_task_rejects_open_or_already_compacted_task(manager, sample_project):
-    task = manager.create_task(sample_project["id"], "Guarded compaction")
+    task = manager.create_task(
+        sample_project["id"],
+        "Guarded compaction",
+        validation_criteria="Test task completion is observable.",
+    )
     compactor = TaskCompactor(manager)
 
     with pytest.raises(ValueError, match="open, missing, or already compacted"):
@@ -63,7 +73,12 @@ def test_compact_task_rejects_open_or_already_compacted_task(manager, sample_pro
 def test_compact_task(manager, sample_project):
     """Test compaction application."""
     proj_id = sample_project["id"]
-    t1 = manager.create_task(proj_id, "To Be Compacted", description="Original description")
+    t1 = manager.create_task(
+        proj_id,
+        "To Be Compacted",
+        description="Original description",
+        validation_criteria="Test task completion is observable.",
+    )
     manager.close_task(t1.id)
 
     compactor = TaskCompactor(manager)
@@ -85,12 +100,16 @@ def test_get_stats(manager, sample_project):
     """Test statistics calculation."""
     proj_id = sample_project["id"]
     # Create mix of tasks
-    manager.create_task(proj_id, "Open")
+    manager.create_task(proj_id, "Open", validation_criteria="Test task completion is observable.")
 
-    t1 = manager.create_task(proj_id, "Closed Normal")
+    t1 = manager.create_task(
+        proj_id, "Closed Normal", validation_criteria="Test task completion is observable."
+    )
     manager.close_task(t1.id)
 
-    t2 = manager.create_task(proj_id, "Closed Compacted")
+    t2 = manager.create_task(
+        proj_id, "Closed Compacted", validation_criteria="Test task completion is observable."
+    )
     manager.close_task(t2.id)
 
     compactor = TaskCompactor(manager)

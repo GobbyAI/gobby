@@ -22,9 +22,13 @@ async def test_mcp_list_tasks_current_stage_state_excludes_stale_closed_task(
     registry = create_task_registry(task_manager, MagicMock())
     project_id = sample_project["id"]
 
-    open_task = task_manager.create_task(project_id, "Open review")
+    open_task = task_manager.create_task(
+        project_id, "Open review", validation_criteria="Test task completion is observable."
+    )
     set_stage_state(temp_db, open_task.id, "development", "needs_review")
-    closed_task = task_manager.create_task(project_id, "Closed stale review")
+    closed_task = task_manager.create_task(
+        project_id, "Closed stale review", validation_criteria="Test task completion is observable."
+    )
     set_stage_state(temp_db, closed_task.id, "development", "needs_review")
     temp_db.execute(
         """

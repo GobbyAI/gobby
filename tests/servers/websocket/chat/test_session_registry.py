@@ -20,6 +20,7 @@ from gobby.sessions.compact_continuation import build_compact_self_continue_prom
 from gobby.storage.session_tasks import SessionTaskManager
 from gobby.storage.tasks import LocalTaskManager
 from gobby.workflows.engine.core import RuleEngine
+from gobby.workflows.evaluation_runtime import WorkflowEvaluationRuntime
 from gobby.workflows.hooks import WorkflowHookHandler
 from gobby.workflows.state_manager import SessionVariableManager
 from gobby.workflows.sync_rules import get_bundled_rules_path, sync_bundled_rules
@@ -477,11 +478,13 @@ class TestWebChatLifecycle:
             project_id=sample_project["id"],
             title="Closed task",
             task_type="task",
+            validation_criteria="Test task completion is observable.",
         )
         remaining_epic = task_manager.create_task(
             project_id=sample_project["id"],
             title="Remaining epic",
             task_type="epic",
+            validation_criteria="Test task completion is observable.",
         )
 
         SessionVariableManager(temp_db).merge_variables(
@@ -500,10 +503,12 @@ class TestWebChatLifecycle:
             db_session_id=db_session_id, project_id=sample_project["id"]
         )
         rule_engine = RuleEngine(temp_db, task_manager=task_manager)
+        evaluation_runtime = WorkflowEvaluationRuntime()
         host.workflow_handler = WorkflowHookHandler(
             rule_engine=rule_engine,
             task_manager=task_manager,
             session_task_manager=SessionTaskManager(temp_db),
+            evaluation_runtime=evaluation_runtime,
         )
 
         result = await host._fire_lifecycle(
@@ -519,6 +524,7 @@ class TestWebChatLifecycle:
                 "tool_output": {"success": True, "result": {"id": closed_task.id}},
             },
         )
+        evaluation_runtime.shutdown()
 
         assert result is not None
         compact_calls = [

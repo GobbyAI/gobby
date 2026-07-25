@@ -61,6 +61,7 @@ async def test_receipt_tools_paginate_assign_and_isolate_current_project(
         sample_project["id"],
         "Assign receipts",
         claimed_by_session_id=session.id,
+        validation_criteria="Test task completion is observable.",
     )
     store = VerificationReceiptStore(temp_db)
     current_receipts = [

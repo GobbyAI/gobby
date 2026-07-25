@@ -154,6 +154,7 @@ async def test_stale_pending_execution_fails_and_releases_dispatch_mutex(
         title="Pending pipeline task",
         task_type="task",
         project_id=PROJECT_ID,
+        validation_criteria="Test task completion is observable.",
     )
     execution = exec_manager.create_execution(
         pipeline_name="never-started",
@@ -403,6 +404,7 @@ def _create_in_progress_task(
         title="Test stale task",
         task_type="task",
         project_id=project_id,
+        validation_criteria="Test task completion is observable.",
     )
     task_manager.db.execute(
         "UPDATE tasks SET claimed_by_session_id = %s WHERE id = %s",
@@ -616,6 +618,7 @@ async def test_stale_review_task_releases_claim_without_status_regression(
         title="Review me",
         task_type="task",
         project_id=PROJECT_ID,
+        validation_criteria="Test task completion is observable.",
     )
     stale_session_id = STALE_REVIEW_SESSION_ID
     _seed_session(task_manager.db, stale_session_id)

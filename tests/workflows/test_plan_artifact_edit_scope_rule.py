@@ -109,7 +109,11 @@ def test_planner_path_blocks_until_task_reaches_review_approved(db: HubDatabase,
     body = _sync_bundled(db)
     project = LocalProjectManager(db).create(name="planner-project", repo_path=str(tmp_path))
     task_manager = LocalTaskManager(db)
-    task = task_manager.create_task(project_id=project.id, title="Planner task")
+    task = task_manager.create_task(
+        project_id=project.id,
+        title="Planner task",
+        validation_criteria="Test task completion is observable.",
+    )
     engine = RuleEngine(db, task_manager=task_manager)
     variables: dict[str, object] = {
         "project": {"path": str(tmp_path)},
@@ -277,7 +281,11 @@ def test_absolute_artifact_write_uses_platform_session_project_path(
         project_path=str(tmp_path),
     )
     task_manager = LocalTaskManager(db)
-    task = task_manager.create_task(project_id=project.id, title="Planner task")
+    task = task_manager.create_task(
+        project_id=project.id,
+        title="Planner task",
+        validation_criteria="Test task completion is observable.",
+    )
     engine = RuleEngine(db, task_manager=task_manager)
     variables: dict[str, object] = {
         "_agent_type": "planner",

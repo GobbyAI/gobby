@@ -1150,7 +1150,12 @@ class TestDispatchFailureCountCRUD:
         """update_task can set dispatch_failure_count."""
 
         mgr = LocalTaskManager(temp_db)
-        task = mgr.create_task(title="test", task_type="task", project_id=sample_project["id"])
+        task = mgr.create_task(
+            title="test",
+            task_type="task",
+            project_id=sample_project["id"],
+            validation_criteria="Dispatch failure count can be updated.",
+        )
         updated = mgr.update_task(task.id, dispatch_failure_count=2)
         assert updated.dispatch_failure_count == 2
 
@@ -1160,7 +1165,12 @@ class TestDispatchFailureCountCRUD:
         """Reopening a task resets dispatch_failure_count to 0."""
 
         mgr = LocalTaskManager(temp_db)
-        task = mgr.create_task(title="test", task_type="task", project_id=sample_project["id"])
+        task = mgr.create_task(
+            title="test",
+            task_type="task",
+            project_id=sample_project["id"],
+            validation_criteria="Reopening resets the dispatch failure count.",
+        )
         # Set failure count and move out of open state
         mgr.update_task(task.id, dispatch_failure_count=3)
         mgr.escalate_task(task.id, reason="dispatch failures")
@@ -1303,6 +1313,7 @@ class TestTerminalizeCancelledRun:
             title="Child work",
             task_type="task",
             category="code",
+            validation_criteria="Test task completion is observable.",
         )
         task_manager.initialize_task_manifest(task.id, stage_names=["development"])
         task_manager.stage_states.start_stage(task.id, "development", by_session_id=child.id)
@@ -1392,6 +1403,7 @@ class TestTerminalizeCancelledRun:
             title="Replacement work",
             task_type="task",
             category="code",
+            validation_criteria="Test task completion is observable.",
         )
         task_manager.initialize_task_manifest(task.id, stage_names=["development"])
         task_manager.stage_states.start_stage(task.id, "development", by_session_id=old_child.id)

@@ -48,6 +48,7 @@ def _epic_with_epic_manifest(manager: LocalTaskManager, sample_project: dict) ->
         title="Docs epic",
         task_type="epic",
         category="docs",
+        validation_criteria="Test task completion is observable.",
     )
     manager.stage_states.initialize_manifest(
         epic.id,
@@ -65,6 +66,7 @@ def _closed_child(temp_db, sample_project: dict, parent_id: str, title: str) -> 
         parent_task_id=parent_id,
         task_type="task",
         category="docs",
+        validation_criteria="Test task completion is observable.",
     )
     initialize_manifest(temp_db, leaf.id, [spec("development", 0), spec("merge", 1)])
     set_stage_state(temp_db, leaf.id, "development", "done", work_attempt_count=1)

@@ -24,7 +24,11 @@ def session_manager(temp_db):
 
 @pytest.fixture
 def sample_task(task_manager, sample_project):
-    return task_manager.create_task(project_id=sample_project["id"], title="Test Task")
+    return task_manager.create_task(
+        project_id=sample_project["id"],
+        title="Test Task",
+        validation_criteria="Test task completion is observable.",
+    )
 
 
 @pytest.fixture

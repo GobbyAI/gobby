@@ -132,6 +132,17 @@ def _extract_output(event: HookEvent) -> str:
     return ""
 
 
+def _receipt_details(event: HookEvent) -> dict[str, Any]:
+    """Preserve structured audit diagnostics without treating them as verdicts."""
+    details: dict[str, Any] = {"tool_name": event.data.get("tool_name")}
+    tool_result = event.data.get("tool_result")
+    if isinstance(tool_result, dict):
+        unknown_reason = tool_result.get("unknown_reason")
+        if isinstance(unknown_reason, str) and unknown_reason:
+            details["unknown_reason"] = unknown_reason
+    return details
+
+
 def _project_id(db: HubDatabase, session_id: str, event: HookEvent) -> str | None:
     if event.project_id:
         return event.project_id
@@ -168,10 +179,21 @@ def ingest_verification_receipt(
         session_id=session_id,
         active_task_ref=active_task_ref if isinstance(active_task_ref, str) else None,
     )
+    validation_epoch: int | None = None
+    if task_id is not None:
+        task_row = db.fetchone(
+            "SELECT validation_epoch FROM tasks WHERE id = %s AND project_id = %s",
+            (task_id, project_id),
+        )
+        if task_row is not None:
+            validation_epoch = int(task_row["validation_epoch"])
 
-    is_terminal = event.event_type == HookEventType.AFTER_TOOL
+    is_terminal = (
+        event.event_type == HookEventType.AFTER_TOOL
+        and event.data.get("_verification_pending") is not True
+    )
     outcome = _shell_tool_outcome(event) if is_terminal else None
-    normalized_outcome: VerificationOutcome = "provisional"
+    normalized_outcome: VerificationOutcome = "pending"
     if outcome is not None:
         if outcome.succeeded is True:
             normalized_outcome = "success"
@@ -197,7 +219,8 @@ def ingest_verification_receipt(
             started_at=event.timestamp,
             completed_at=event.timestamp if is_terminal else None,
             output=_extract_output(event) if is_terminal else None,
-            details={"tool_name": event.data.get("tool_name")},
+            validation_epoch=validation_epoch,
+            details=_receipt_details(event),
             attribution_source=attribution_source,
             attribution_actor=session_id if task_id else None,
             attributed_at=event.timestamp if task_id else None,

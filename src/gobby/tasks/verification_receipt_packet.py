@@ -130,6 +130,7 @@ def _detail(receipt: VerificationReceipt) -> dict[str, Any]:
         "output_last": _middle_elide(receipt.output_last_4k, 768),
         "output_sha256": receipt.output_sha256,
         "output_bytes": receipt.output_bytes,
+        "validation_epoch": receipt.validation_epoch,
         "evidence_type": receipt.evidence_type,
         "details_json": _middle_elide(_json(receipt.details), 512),
     }
@@ -138,7 +139,9 @@ def _detail(receipt: VerificationReceipt) -> dict[str, Any]:
 def _catalog(receipt: VerificationReceipt, *, command_chars: int = 160) -> dict[str, Any]:
     return {
         "receipt_id": receipt.id,
+        "evidence_type": receipt.evidence_type,
         "outcome": receipt.normalized_outcome,
+        "validation_epoch": receipt.validation_epoch,
         "exit_code": receipt.exit_code,
         "command": _middle_elide(receipt.command, command_chars),
         "completed_at": receipt.completed_at.isoformat() if receipt.completed_at else None,

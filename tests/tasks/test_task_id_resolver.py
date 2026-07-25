@@ -35,16 +35,32 @@ class TestTaskIdResolver:
 
     def test_resolve_seq_num_format(self, task_manager, project_id) -> None:
         """Test resolving #N format to UUID."""
-        task = task_manager.create_task(project_id=project_id, title="Test Task")
+        task = task_manager.create_task(
+            project_id=project_id,
+            title="Test Task",
+            validation_criteria="Test task completion is observable.",
+        )
 
         resolved = task_manager.resolve_task_reference("#1", project_id)
         assert resolved == task.id
 
     def test_resolve_seq_num_multiple_tasks(self, task_manager, project_id) -> None:
         """Test resolving #N with multiple tasks."""
-        task1 = task_manager.create_task(project_id=project_id, title="Task 1")
-        task2 = task_manager.create_task(project_id=project_id, title="Task 2")
-        task3 = task_manager.create_task(project_id=project_id, title="Task 3")
+        task1 = task_manager.create_task(
+            project_id=project_id,
+            title="Task 1",
+            validation_criteria="Test task completion is observable.",
+        )
+        task2 = task_manager.create_task(
+            project_id=project_id,
+            title="Task 2",
+            validation_criteria="Test task completion is observable.",
+        )
+        task3 = task_manager.create_task(
+            project_id=project_id,
+            title="Task 3",
+            validation_criteria="Test task completion is observable.",
+        )
 
         assert task_manager.resolve_task_reference("#1", project_id) == task1.id
         assert task_manager.resolve_task_reference("#2", project_id) == task2.id
@@ -54,7 +70,11 @@ class TestTaskIdResolver:
         """Test resolving high seq_num like #123."""
         # Create 123 tasks to get to #123
         for i in range(123):
-            task = task_manager.create_task(project_id=project_id, title=f"Task {i + 1}")
+            task = task_manager.create_task(
+                project_id=project_id,
+                title=f"Task {i + 1}",
+                validation_criteria="Test task completion is observable.",
+            )
 
         # The 123rd task should be resolvable as #123
         resolved = task_manager.resolve_task_reference("#123", project_id)
@@ -62,21 +82,33 @@ class TestTaskIdResolver:
 
     def test_resolve_invalid_seq_num_zero(self, task_manager, project_id) -> None:
         """Test that #0 raises an error (seq_num starts at 1)."""
-        task_manager.create_task(project_id=project_id, title="Test Task")
+        task_manager.create_task(
+            project_id=project_id,
+            title="Test Task",
+            validation_criteria="Test task completion is observable.",
+        )
 
         with pytest.raises(TaskNotFoundError):
             task_manager.resolve_task_reference("#0", project_id)
 
     def test_resolve_nonexistent_seq_num(self, task_manager, project_id) -> None:
         """Test that non-existent #999 raises an error."""
-        task_manager.create_task(project_id=project_id, title="Test Task")
+        task_manager.create_task(
+            project_id=project_id,
+            title="Test Task",
+            validation_criteria="Test task completion is observable.",
+        )
 
         with pytest.raises(TaskNotFoundError):
             task_manager.resolve_task_reference("#999", project_id)
 
     def test_resolve_uuid_passthrough(self, task_manager, project_id) -> None:
         """Test that valid UUID passes through unchanged."""
-        task = task_manager.create_task(project_id=project_id, title="Test Task")
+        task = task_manager.create_task(
+            project_id=project_id,
+            title="Test Task",
+            validation_criteria="Test task completion is observable.",
+        )
 
         resolved = task_manager.resolve_task_reference(task.id, project_id)
         assert resolved == task.id
@@ -93,23 +125,38 @@ class TestTaskIdResolver:
             "INSERT INTO projects (id, name, created_at, updated_at) VALUES (%s, %s, NOW(), NOW())",
             (project_b_id, "Project B"),
         )
-        foreign_task = task_manager.create_task(project_id=project_b_id, title="Task B")
+        foreign_task = task_manager.create_task(
+            project_id=project_b_id,
+            title="Task B",
+            validation_criteria="Test task completion is observable.",
+        )
 
         with pytest.raises(TaskNotFoundError, match="not found in project"):
             task_manager.resolve_task_reference(foreign_task.id, project_a_id)
 
     def test_resolve_uuid_validates_exists(self, task_manager, project_id) -> None:
         """Test that UUID is validated to exist."""
-        task_manager.create_task(project_id=project_id, title="Test Task")
+        task_manager.create_task(
+            project_id=project_id,
+            title="Test Task",
+            validation_criteria="Test task completion is observable.",
+        )
 
         with pytest.raises(TaskNotFoundError):
             task_manager.resolve_task_reference("00000000-0000-0000-0000-000000000000", project_id)
 
     def test_resolve_path_format(self, task_manager, project_id) -> None:
         """Test resolving path format like 1.2.3."""
-        parent = task_manager.create_task(project_id=project_id, title="Parent")
+        parent = task_manager.create_task(
+            project_id=project_id,
+            title="Parent",
+            validation_criteria="Test task completion is observable.",
+        )
         child = task_manager.create_task(
-            project_id=project_id, title="Child", parent_task_id=parent.id
+            project_id=project_id,
+            title="Child",
+            parent_task_id=parent.id,
+            validation_criteria="Test task completion is observable.",
         )
 
         # Child should have path "1.2"
@@ -118,12 +165,22 @@ class TestTaskIdResolver:
 
     def test_resolve_deep_path(self, task_manager, project_id) -> None:
         """Test resolving deep path like 1.2.3.4."""
-        parent = task_manager.create_task(project_id=project_id, title="Parent")
+        parent = task_manager.create_task(
+            project_id=project_id,
+            title="Parent",
+            validation_criteria="Test task completion is observable.",
+        )
         child = task_manager.create_task(
-            project_id=project_id, title="Child", parent_task_id=parent.id
+            project_id=project_id,
+            title="Child",
+            parent_task_id=parent.id,
+            validation_criteria="Test task completion is observable.",
         )
         grandchild = task_manager.create_task(
-            project_id=project_id, title="Grandchild", parent_task_id=child.id
+            project_id=project_id,
+            title="Grandchild",
+            parent_task_id=child.id,
+            validation_criteria="Test task completion is observable.",
         )
 
         resolved = task_manager.resolve_task_reference("1.2.3", project_id)
@@ -131,21 +188,33 @@ class TestTaskIdResolver:
 
     def test_resolve_path_nonexistent(self, task_manager, project_id) -> None:
         """Test that non-existent path raises error."""
-        task_manager.create_task(project_id=project_id, title="Test Task")
+        task_manager.create_task(
+            project_id=project_id,
+            title="Test Task",
+            validation_criteria="Test task completion is observable.",
+        )
 
         with pytest.raises(TaskNotFoundError):
             task_manager.resolve_task_reference("1.2.3", project_id)
 
     def test_resolve_gt_format_raises_unknown_format_error(self, task_manager, project_id) -> None:
         """Test that gt-* format raises an 'unknown format' error (no longer special-cased)."""
-        task_manager.create_task(project_id=project_id, title="Test Task")
+        task_manager.create_task(
+            project_id=project_id,
+            title="Test Task",
+            validation_criteria="Test task completion is observable.",
+        )
 
         with pytest.raises(TaskNotFoundError, match="Unknown task reference format"):
             task_manager.resolve_task_reference("gt-abc123", project_id)
 
     def test_resolve_invalid_format(self, task_manager, project_id) -> None:
         """Test that completely invalid format raises error."""
-        task_manager.create_task(project_id=project_id, title="Test Task")
+        task_manager.create_task(
+            project_id=project_id,
+            title="Test Task",
+            validation_criteria="Test task completion is observable.",
+        )
 
         with pytest.raises((ValueError, TaskNotFoundError)):
             task_manager.resolve_task_reference("invalid-format", project_id)
@@ -170,8 +239,16 @@ class TestTaskIdResolver:
         )
 
         # Create tasks in each project
-        task_a = task_manager.create_task(project_id=project_a_id, title="Task A")
-        task_b = task_manager.create_task(project_id=project_b_id, title="Task B")
+        task_a = task_manager.create_task(
+            project_id=project_a_id,
+            title="Task A",
+            validation_criteria="Test task completion is observable.",
+        )
+        task_b = task_manager.create_task(
+            project_id=project_b_id,
+            title="Task B",
+            validation_criteria="Test task completion is observable.",
+        )
 
         # #1 in proj-a should resolve to task_a
         assert task_manager.resolve_task_reference("#1", project_a_id) == task_a.id
@@ -181,9 +258,21 @@ class TestTaskIdResolver:
 
     def test_resolve_after_deletion_gap(self, task_manager, project_id) -> None:
         """Test resolution after creating a gap via deletion."""
-        task1 = task_manager.create_task(project_id=project_id, title="Task 1")
-        task2 = task_manager.create_task(project_id=project_id, title="Task 2")
-        task3 = task_manager.create_task(project_id=project_id, title="Task 3")
+        task1 = task_manager.create_task(
+            project_id=project_id,
+            title="Task 1",
+            validation_criteria="Test task completion is observable.",
+        )
+        task2 = task_manager.create_task(
+            project_id=project_id,
+            title="Task 2",
+            validation_criteria="Test task completion is observable.",
+        )
+        task3 = task_manager.create_task(
+            project_id=project_id,
+            title="Task 3",
+            validation_criteria="Test task completion is observable.",
+        )
 
         # Delete task2, creating a gap
         task_manager.delete_task(task2.id)

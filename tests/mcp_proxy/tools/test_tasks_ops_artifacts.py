@@ -50,6 +50,7 @@ def test_append_description_section_is_idempotent_for_same_heading_and_body(
         project_id=sample_project["id"],
         title="Audit marker",
         description="Existing description.",
+        validation_criteria="Test task completion is observable.",
     )
     append_section = _tool(registry, "append_description_section")
 
@@ -81,6 +82,7 @@ def test_append_description_section_notifies_after_committed_state_is_visible(
         project_id=sample_project["id"],
         title="Committed listener state",
         description="Existing description.",
+        validation_criteria="Test task completion is observable.",
     )
     observed: list[tuple[object | None, str | None]] = []
 
@@ -123,7 +125,11 @@ def test_artifact_tools_mutate_and_fetch_artifacts(
     temp_db: HubDatabase, sample_project: dict[str, Any]
 ) -> None:
     task_manager, registry = _registry(temp_db)
-    task = task_manager.create_task(project_id=sample_project["id"], title="Artifacts")
+    task = task_manager.create_task(
+        project_id=sample_project["id"],
+        title="Artifacts",
+        validation_criteria="Test task completion is observable.",
+    )
     set_artifacts_atomic = _tool(registry, "set_artifacts_atomic")
     clear_isolation_pair = _tool(registry, "clear_isolation_pair")
     get_artifacts = _tool(registry, "get_artifacts")
@@ -157,7 +163,11 @@ def test_set_artifact_validates_field_allowlist(
     temp_db: HubDatabase, sample_project: dict[str, Any]
 ) -> None:
     task_manager, registry = _registry(temp_db)
-    task = task_manager.create_task(project_id=sample_project["id"], title="Single artifact")
+    task = task_manager.create_task(
+        project_id=sample_project["id"],
+        title="Single artifact",
+        validation_criteria="Test task completion is observable.",
+    )
     set_artifact = _tool(registry, "set_artifact")
     get_artifacts = _tool(registry, "get_artifacts")
 
@@ -177,7 +187,11 @@ def test_set_artifacts_atomic_returns_structured_constraint_errors(
     sample_project: dict[str, Any],
 ) -> None:
     task_manager, registry = _registry(temp_db)
-    task = task_manager.create_task(project_id=sample_project["id"], title="Bad artifacts")
+    task = task_manager.create_task(
+        project_id=sample_project["id"],
+        title="Bad artifacts",
+        validation_criteria="Test task completion is observable.",
+    )
     set_artifacts_atomic = _tool(registry, "set_artifacts_atomic")
 
     result = set_artifacts_atomic(

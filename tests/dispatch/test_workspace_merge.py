@@ -155,13 +155,19 @@ async def test_execute_merge_workspace_merges_worktree_and_completes_stage(
 
     project = LocalProjectManager(temp_db).create("merge-project", repo_path=str(repo))
     task_manager = LocalTaskManager(temp_db)
-    parent = task_manager.create_task(project_id=project.id, title="Parent", task_type="epic")
+    parent = task_manager.create_task(
+        project_id=project.id,
+        title="Parent",
+        task_type="epic",
+        validation_criteria="Test task completion is observable.",
+    )
     leaf = task_manager.create_task(
         project_id=project.id,
         title="Leaf",
         parent_task_id=parent.id,
         category="code",
         task_type="task",
+        validation_criteria="Test task completion is observable.",
     )
     task_manager.initialize_task_manifest(leaf.id, stage_names=["merge"])
     task_manager.stage_states.start_stage(leaf.id, "merge", by_session_id="test")
@@ -248,13 +254,19 @@ async def test_execute_merge_workspace_recovers_interrupted_target_merge(
 
     project = LocalProjectManager(temp_db).create("merge-project", repo_path=str(repo))
     task_manager = LocalTaskManager(temp_db)
-    parent = task_manager.create_task(project_id=project.id, title="Parent", task_type="epic")
+    parent = task_manager.create_task(
+        project_id=project.id,
+        title="Parent",
+        task_type="epic",
+        validation_criteria="Test task completion is observable.",
+    )
     leaf = task_manager.create_task(
         project_id=project.id,
         title="Leaf",
         parent_task_id=parent.id,
         category="code",
         task_type="task",
+        validation_criteria="Test task completion is observable.",
     )
     task_manager.initialize_task_manifest(leaf.id, stage_names=["merge"])
     task_manager.stage_states.start_stage(leaf.id, "merge", by_session_id="test")
@@ -330,13 +342,19 @@ async def test_execute_merge_workspace_completes_already_merged_worktree(
 
     project = LocalProjectManager(temp_db).create("merge-project", repo_path=str(repo))
     task_manager = LocalTaskManager(temp_db)
-    parent = task_manager.create_task(project_id=project.id, title="Parent", task_type="epic")
+    parent = task_manager.create_task(
+        project_id=project.id,
+        title="Parent",
+        task_type="epic",
+        validation_criteria="Test task completion is observable.",
+    )
     leaf = task_manager.create_task(
         project_id=project.id,
         title="Leaf",
         parent_task_id=parent.id,
         category="code",
         task_type="task",
+        validation_criteria="Test task completion is observable.",
     )
     task_manager.initialize_task_manifest(leaf.id, stage_names=["merge"])
     task_manager.stage_states.start_stage(leaf.id, "merge", by_session_id="test")
@@ -406,13 +424,19 @@ async def test_execute_merge_workspace_retries_clone_sync_before_completing_stag
 
     project = LocalProjectManager(temp_db).create("merge-project", repo_path=str(repo))
     task_manager = LocalTaskManager(temp_db)
-    parent = task_manager.create_task(project_id=project.id, title="Parent", task_type="epic")
+    parent = task_manager.create_task(
+        project_id=project.id,
+        title="Parent",
+        task_type="epic",
+        validation_criteria="Test task completion is observable.",
+    )
     leaf = task_manager.create_task(
         project_id=project.id,
         title="Leaf",
         parent_task_id=parent.id,
         category="code",
         task_type="task",
+        validation_criteria="Test task completion is observable.",
     )
     task_manager.initialize_task_manifest(leaf.id, stage_names=["merge"])
     task_manager.stage_states.start_stage(leaf.id, "merge", by_session_id="test")
@@ -509,13 +533,19 @@ async def test_execute_merge_workspace_escalates_non_ff_clone_sync(
 
     project = LocalProjectManager(temp_db).create("merge-project", repo_path=str(repo))
     task_manager = LocalTaskManager(temp_db)
-    parent = task_manager.create_task(project_id=project.id, title="Parent", task_type="epic")
+    parent = task_manager.create_task(
+        project_id=project.id,
+        title="Parent",
+        task_type="epic",
+        validation_criteria="Test task completion is observable.",
+    )
     leaf = task_manager.create_task(
         project_id=project.id,
         title="Leaf",
         parent_task_id=parent.id,
         category="code",
         task_type="task",
+        validation_criteria="Test task completion is observable.",
     )
     task_manager.initialize_task_manifest(leaf.id, stage_names=["merge"])
     task_manager.stage_states.start_stage(leaf.id, "merge", by_session_id="test")
@@ -590,13 +620,19 @@ async def test_execute_merge_workspace_lands_root_integration_worktree_on_local_
 
     project = LocalProjectManager(temp_db).create("merge-project", repo_path=str(repo))
     task_manager = LocalTaskManager(temp_db)
-    root = task_manager.create_task(project_id=project.id, title="Root", task_type="epic")
+    root = task_manager.create_task(
+        project_id=project.id,
+        title="Root",
+        task_type="epic",
+        validation_criteria="Test task completion is observable.",
+    )
     leaf = task_manager.create_task(
         project_id=project.id,
         title="Stale leaf",
         parent_task_id=root.id,
         category="docs",
         task_type="task",
+        validation_criteria="Test task completion is observable.",
     )
     dirty_leaf = task_manager.create_task(
         project_id=project.id,
@@ -604,6 +640,7 @@ async def test_execute_merge_workspace_lands_root_integration_worktree_on_local_
         parent_task_id=root.id,
         category="docs",
         task_type="task",
+        validation_criteria="Test task completion is observable.",
     )
     task_manager.initialize_task_manifest(root.id, stage_names=["merge"])
     task_manager.stage_states.start_stage(root.id, "merge", by_session_id="test")
@@ -699,12 +736,18 @@ async def test_execute_merge_workspace_lands_child_epic_integration_on_local_bra
 
     project = LocalProjectManager(temp_db).create("merge-project", repo_path=str(repo))
     task_manager = LocalTaskManager(temp_db)
-    root = task_manager.create_task(project_id=project.id, title="Root", task_type="epic")
+    root = task_manager.create_task(
+        project_id=project.id,
+        title="Root",
+        task_type="epic",
+        validation_criteria="Test task completion is observable.",
+    )
     phase = task_manager.create_task(
         project_id=project.id,
         title="Phase",
         parent_task_id=root.id,
         task_type="epic",
+        validation_criteria="Test task completion is observable.",
     )
     task_manager.initialize_task_manifest(phase.id, stage_names=["merge"])
     task_manager.stage_states.start_stage(phase.id, "merge", by_session_id="test")
@@ -763,13 +806,19 @@ async def test_execute_merge_workspace_adopts_missing_integration_worktree_metad
 
     project = LocalProjectManager(temp_db).create("merge-project", repo_path=str(repo))
     task_manager = LocalTaskManager(temp_db)
-    parent = task_manager.create_task(project_id=project.id, title="Parent", task_type="epic")
+    parent = task_manager.create_task(
+        project_id=project.id,
+        title="Parent",
+        task_type="epic",
+        validation_criteria="Test task completion is observable.",
+    )
     leaf = task_manager.create_task(
         project_id=project.id,
         title="Leaf",
         parent_task_id=parent.id,
         category="code",
         task_type="task",
+        validation_criteria="Test task completion is observable.",
     )
     integration_branch = _integration_branch(parent)
 
@@ -838,13 +887,19 @@ async def test_execute_merge_workspace_rejects_dirty_unmanaged_integration_workt
 
     project = LocalProjectManager(temp_db).create("merge-project", repo_path=str(repo))
     task_manager = LocalTaskManager(temp_db)
-    parent = task_manager.create_task(project_id=project.id, title="Parent", task_type="epic")
+    parent = task_manager.create_task(
+        project_id=project.id,
+        title="Parent",
+        task_type="epic",
+        validation_criteria="Test task completion is observable.",
+    )
     leaf = task_manager.create_task(
         project_id=project.id,
         title="Leaf",
         parent_task_id=parent.id,
         category="code",
         task_type="task",
+        validation_criteria="Test task completion is observable.",
     )
     integration_branch = _integration_branch(parent)
 
@@ -909,13 +964,19 @@ async def test_execute_merge_workspace_allows_disjoint_registered_target_dirt(
 
     project = LocalProjectManager(temp_db).create("merge-project", repo_path=str(repo))
     task_manager = LocalTaskManager(temp_db)
-    parent = task_manager.create_task(project_id=project.id, title="Parent", task_type="epic")
+    parent = task_manager.create_task(
+        project_id=project.id,
+        title="Parent",
+        task_type="epic",
+        validation_criteria="Test task completion is observable.",
+    )
     leaf = task_manager.create_task(
         project_id=project.id,
         title="Leaf",
         parent_task_id=parent.id,
         category="code",
         task_type="task",
+        validation_criteria="Test task completion is observable.",
     )
     task_manager.initialize_task_manifest(leaf.id, stage_names=["merge"])
     task_manager.stage_states.start_stage(leaf.id, "merge", by_session_id="test")
@@ -982,13 +1043,19 @@ async def test_execute_merge_workspace_fails_stage_when_target_dirt_overlaps_mer
 
     project = LocalProjectManager(temp_db).create("merge-project", repo_path=str(repo))
     task_manager = LocalTaskManager(temp_db)
-    parent = task_manager.create_task(project_id=project.id, title="Parent", task_type="epic")
+    parent = task_manager.create_task(
+        project_id=project.id,
+        title="Parent",
+        task_type="epic",
+        validation_criteria="Test task completion is observable.",
+    )
     leaf = task_manager.create_task(
         project_id=project.id,
         title="Leaf",
         parent_task_id=parent.id,
         category="code",
         task_type="task",
+        validation_criteria="Test task completion is observable.",
     )
     task_manager.initialize_task_manifest(leaf.id, stage_names=["merge"])
     task_manager.stage_states.start_stage(leaf.id, "merge", by_session_id="test")
@@ -1068,13 +1135,19 @@ async def test_execute_merge_workspace_preserves_worktree_after_merge_conflict(
 
     project = LocalProjectManager(temp_db).create("merge-project", repo_path=str(repo))
     task_manager = LocalTaskManager(temp_db)
-    parent = task_manager.create_task(project_id=project.id, title="Parent", task_type="epic")
+    parent = task_manager.create_task(
+        project_id=project.id,
+        title="Parent",
+        task_type="epic",
+        validation_criteria="Test task completion is observable.",
+    )
     leaf = task_manager.create_task(
         project_id=project.id,
         title="Leaf",
         parent_task_id=parent.id,
         category="code",
         task_type="task",
+        validation_criteria="Test task completion is observable.",
     )
     task_manager.initialize_task_manifest(leaf.id, stage_names=["merge"])
     task_manager.stage_states.start_stage(leaf.id, "merge", by_session_id="test")
@@ -1163,13 +1236,19 @@ async def test_execute_merge_workspace_resolves_worktree_local_project_metadata(
 
     project = LocalProjectManager(temp_db).create("merge-project", repo_path=str(repo))
     task_manager = LocalTaskManager(temp_db)
-    parent = task_manager.create_task(project_id=project.id, title="Parent", task_type="epic")
+    parent = task_manager.create_task(
+        project_id=project.id,
+        title="Parent",
+        task_type="epic",
+        validation_criteria="Test task completion is observable.",
+    )
     leaf = task_manager.create_task(
         project_id=project.id,
         title="Leaf",
         parent_task_id=parent.id,
         category="code",
         task_type="task",
+        validation_criteria="Test task completion is observable.",
     )
     task_manager.initialize_task_manifest(leaf.id, stage_names=["merge"])
     task_manager.stage_states.start_stage(leaf.id, "merge", by_session_id="test")
@@ -1276,13 +1355,19 @@ async def test_execute_merge_workspace_resolves_docs_guides_readme_row_conflict(
 
     project = LocalProjectManager(temp_db).create("merge-project", repo_path=str(repo))
     task_manager = LocalTaskManager(temp_db)
-    parent = task_manager.create_task(project_id=project.id, title="Parent", task_type="epic")
+    parent = task_manager.create_task(
+        project_id=project.id,
+        title="Parent",
+        task_type="epic",
+        validation_criteria="Test task completion is observable.",
+    )
     leaf = task_manager.create_task(
         project_id=project.id,
         title="Leaf",
         parent_task_id=parent.id,
         category="docs",
         task_type="task",
+        validation_criteria="Test task completion is observable.",
     )
     task_manager.initialize_task_manifest(leaf.id, stage_names=["merge"])
     task_manager.stage_states.start_stage(leaf.id, "merge", by_session_id="test")
@@ -1384,13 +1469,19 @@ async def test_execute_merge_workspace_resolves_represented_docs_guides_readme_q
 
     project = LocalProjectManager(temp_db).create("merge-project", repo_path=str(repo))
     task_manager = LocalTaskManager(temp_db)
-    parent = task_manager.create_task(project_id=project.id, title="Parent", task_type="epic")
+    parent = task_manager.create_task(
+        project_id=project.id,
+        title="Parent",
+        task_type="epic",
+        validation_criteria="Test task completion is observable.",
+    )
     leaf = task_manager.create_task(
         project_id=project.id,
         title="Leaf",
         parent_task_id=parent.id,
         category="docs",
         task_type="task",
+        validation_criteria="Test task completion is observable.",
     )
     task_manager.initialize_task_manifest(leaf.id, stage_names=["merge"])
     task_manager.stage_states.start_stage(leaf.id, "merge", by_session_id="test")

@@ -19,6 +19,7 @@ from gobby.sync.tasks import (
     TaskRestoreError,
     _compute_path_cache,
 )
+from gobby.tasks.criteria_contract import TaskCriteriaError
 from gobby.tasks.state_semantics import is_task_closed
 
 pytestmark = pytest.mark.unit
@@ -144,8 +145,16 @@ class TestTaskBackupManager:
         sample_project: dict[str, Any],
     ) -> None:
         # Create tasks
-        t1 = task_manager.create_task(sample_project["id"], "Task 1")
-        t2 = task_manager.create_task(sample_project["id"], "Task 2")
+        t1 = task_manager.create_task(
+            sample_project["id"],
+            "Task 1",
+            validation_criteria="Test task completion is observable.",
+        )
+        t2 = task_manager.create_task(
+            sample_project["id"],
+            "Task 2",
+            validation_criteria="Test task completion is observable.",
+        )
 
         # Add dependency: Task 2 depends on Task 1
         # task_id = t2.id (the one with dependency), depends_on = t1.id (the dependency)
@@ -184,8 +193,16 @@ class TestTaskBackupManager:
         task_manager: LocalTaskManager,
         sample_project: dict[str, Any],
     ) -> None:
-        task_manager.create_task(sample_project["id"], "Task 1")
-        task_manager.create_task(sample_project["id"], "Task 2")
+        task_manager.create_task(
+            sample_project["id"],
+            "Task 1",
+            validation_criteria="Test task completion is observable.",
+        )
+        task_manager.create_task(
+            sample_project["id"],
+            "Task 2",
+            validation_criteria="Test task completion is observable.",
+        )
 
         list_tasks = backup_manager.task_manager.list_tasks
         with (
@@ -210,6 +227,7 @@ class TestTaskBackupManager:
             assigned_agent="backend-developer",
             implementation_domain="backend",
             additional_skills=["test-driven-development"],
+            validation_criteria="Test task completion is observable.",
         )
         task_manager.update_task(
             task.id,
@@ -255,6 +273,7 @@ class TestTaskBackupManager:
                 "deps_on": [],
                 "start_date": "2023-01-05",
                 "due_date": "2023-01-10",
+                "validation": {"criteria": "Test task completion is observable."},
             },
             {
                 "id": _task_id("task-imported-2"),
@@ -266,6 +285,7 @@ class TestTaskBackupManager:
                 "project_id": sample_project["id"],
                 "parent_id": None,
                 "deps_on": [_task_id("task-imported-1")],
+                "validation": {"criteria": "Test task completion is observable."},
             },
         ]
 
@@ -318,6 +338,7 @@ class TestTaskBackupManager:
                 "project_id": sample_project["id"],
                 "parent_id": None,
                 "deps_on": [missing_id],
+                "validation": {"criteria": "Test task completion is observable."},
             },
             {
                 "id": other_task_id,
@@ -327,6 +348,7 @@ class TestTaskBackupManager:
                 "project_id": sample_project["id"],
                 "parent_id": None,
                 "deps_on": [],
+                "validation": {"criteria": "Test task completion is observable."},
             },
         ]
         backup_manager.backup_path.parent.mkdir(parents=True, exist_ok=True)
@@ -359,7 +381,11 @@ class TestTaskBackupManager:
     ) -> None:
         """Test LWW conflict resolution during import."""
         # 1. Local Task is NEWER (should keep local)
-        t1 = task_manager.create_task(sample_project["id"], "Local Newer")
+        t1 = task_manager.create_task(
+            sample_project["id"],
+            "Local Newer",
+            validation_criteria="Test task completion is observable.",
+        )
         # Force updated_at to future
         future = "2025-01-01T00:00:00+00:00"
         task_manager.db.execute("UPDATE tasks SET updated_at = %s WHERE id = %s", (future, t1.id))
@@ -376,6 +402,7 @@ class TestTaskBackupManager:
             "project_id": sample_project["id"],
             "parent_id": None,
             "deps_on": [],
+            "validation": {"criteria": "Test task completion is observable."},
         }
 
         # Write file
@@ -390,7 +417,11 @@ class TestTaskBackupManager:
         assert t1_fresh.title == "Local Newer"
 
         # 2. File is NEWER (should overwrite local)
-        t2 = task_manager.create_task(sample_project["id"], "Local Older")
+        t2 = task_manager.create_task(
+            sample_project["id"],
+            "Local Older",
+            validation_criteria="Test task completion is observable.",
+        )
         task_manager.db.execute("UPDATE tasks SET updated_at = %s WHERE id = %s", (past, t2.id))
 
         file_data_2 = {
@@ -403,6 +434,7 @@ class TestTaskBackupManager:
             "project_id": sample_project["id"],
             "parent_id": None,
             "deps_on": [],
+            "validation": {"criteria": "Test task completion is observable."},
         }
 
         # Append to file
@@ -421,7 +453,11 @@ class TestTaskBackupManager:
         task_manager: LocalTaskManager,
         sample_project: dict[str, Any],
     ) -> None:
-        task = task_manager.create_task(sample_project["id"], "Newer local")
+        task = task_manager.create_task(
+            sample_project["id"],
+            "Newer local",
+            validation_criteria="Test task completion is observable.",
+        )
         local_old = "2020-01-01T00:00:00+00:00"
         file_time = "2022-01-01T00:00:00+00:00"
         database_time = "2025-01-01T00:00:00+00:00"
@@ -438,6 +474,7 @@ class TestTaskBackupManager:
             "project_id": sample_project["id"],
             "parent_id": None,
             "deps_on": [],
+            "validation": {"criteria": "Test task completion is observable."},
         }
         backup_manager.backup_path.parent.mkdir(parents=True, exist_ok=True)
         backup_manager.backup_path.write_text(json.dumps(file_data) + "\n")
@@ -464,6 +501,7 @@ class TestTaskBackupManager:
             "project_id": sample_project["id"],
             "parent_id": None,
             "deps_on": [],
+            "validation": {"criteria": "Test task completion is observable."},
         }
         backup_manager.backup_path.parent.mkdir(parents=True, exist_ok=True)
         backup_manager.backup_path.write_text(json.dumps(file_data) + "\n")
@@ -471,13 +509,15 @@ class TestTaskBackupManager:
         task_manager.db.execute(
             """
             INSERT INTO tasks (
-                id, project_id, title, created_at, updated_at, seq_num, path_cache
-            ) VALUES (%s, %s, %s, %s, %s, %s, %s)
+                id, project_id, title, validation_criteria,
+                created_at, updated_at, seq_num, path_cache
+            ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
             """,
             (
                 task_id,
                 sample_project["id"],
                 "Equal local",
+                "The restored task remains unchanged.",
                 datetime.fromisoformat(file_time),
                 datetime.fromisoformat(file_time),
                 999_999,
@@ -498,7 +538,11 @@ class TestTaskBackupManager:
         sample_project: dict[str, Any],
     ) -> None:
         """Test that export always writes correct content, even if file was externally modified."""
-        task = task_manager.create_task(sample_project["id"], "Task 1")
+        task = task_manager.create_task(
+            sample_project["id"],
+            "Task 1",
+            validation_criteria="Test task completion is observable.",
+        )
         backup_manager.backup()
 
         # Read correct content
@@ -528,7 +572,11 @@ class TestTaskBackupManager:
         task_manager: LocalTaskManager,
         sample_project: dict[str, Any],
     ) -> None:
-        local_task = task_manager.create_task(sample_project["id"], "Local task")
+        local_task = task_manager.create_task(
+            sample_project["id"],
+            "Local task",
+            validation_criteria="Test task completion is observable.",
+        )
         remote_task_id = _task_id("remote-only")
         file_only_record = {
             "id": remote_task_id,
@@ -550,7 +598,11 @@ class TestTaskBackupManager:
         task_manager: LocalTaskManager,
         sample_project: dict[str, Any],
     ) -> None:
-        task = task_manager.create_task(sample_project["id"], "Delete everywhere")
+        task = task_manager.create_task(
+            sample_project["id"],
+            "Delete everywhere",
+            validation_criteria="Test task completion is observable.",
+        )
         backup_manager.backup()
 
         assert task_manager.delete_task(task.id)
@@ -560,13 +612,16 @@ class TestTaskBackupManager:
 
         backup_manager.db.execute(
             """
-            INSERT INTO tasks (id, project_id, title, created_at, updated_at)
-            VALUES (%s, %s, %s, %s, %s)
+            INSERT INTO tasks (
+                id, project_id, title, validation_criteria, created_at, updated_at
+            )
+            VALUES (%s, %s, %s, %s, %s, %s)
             """,
             (
                 task.id,
                 sample_project["id"],
                 "Stale peer copy",
+                "The stale peer copy is removed.",
                 "2020-01-01T00:00:00+00:00",
                 "2020-01-01T00:00:00+00:00",
             ),
@@ -582,8 +637,16 @@ class TestTaskBackupManager:
         task_manager: LocalTaskManager,
         sample_project: dict[str, Any],
     ) -> None:
-        blocker = task_manager.create_task(sample_project["id"], "Blocker")
-        task = task_manager.create_task(sample_project["id"], "Dependent")
+        blocker = task_manager.create_task(
+            sample_project["id"],
+            "Blocker",
+            validation_criteria="Test task completion is observable.",
+        )
+        task = task_manager.create_task(
+            sample_project["id"],
+            "Dependent",
+            validation_criteria="Test task completion is observable.",
+        )
         backup_manager.db.execute(
             """
             INSERT INTO task_dependencies (task_id, depends_on, dep_type, created_at)
@@ -599,6 +662,7 @@ class TestTaskBackupManager:
             "project_id": sample_project["id"],
             "parent_id": None,
             "deps_on": [],
+            "validation": {"criteria": "Test task completion is observable."},
         }
         backup_manager.backup_path.parent.mkdir(parents=True, exist_ok=True)
         backup_manager.backup_path.write_text(json.dumps(record) + "\n")
@@ -620,7 +684,11 @@ class TestTaskBackupManager:
         backup_manager.backup_path.parent.mkdir(parents=True, exist_ok=True)
         original = b'{"id": "existing"}\n'
         backup_manager.backup_path.write_bytes(original)
-        task_manager.create_task(sample_project["id"], "Task 1")
+        task_manager.create_task(
+            sample_project["id"],
+            "Task 1",
+            validation_criteria="Test task completion is observable.",
+        )
 
         with patch("gobby.sync.jsonl_io.os.replace", side_effect=OSError("interrupted")):
             with pytest.raises(TaskBackupError, match="interrupted") as exc_info:
@@ -664,6 +732,7 @@ class TestImportEdgeCases:
             "project_id": sample_project["id"],
             "parent_id": None,
             "deps_on": [],
+            "validation": {"criteria": "Test task completion is observable."},
         }
 
         backup_manager.backup_path.parent.mkdir(parents=True, exist_ok=True)
@@ -706,6 +775,7 @@ class TestImportEdgeCases:
                 "criteria": "Must pass unit tests",
                 "override_reason": None,
             },
+            "validation_criteria": "Test task completion is observable.",
         }
 
         backup_manager.backup_path.parent.mkdir(parents=True, exist_ok=True)
@@ -741,6 +811,7 @@ class TestImportEdgeCases:
             "parent_id": None,
             "deps_on": [],
             "commits": ["abc123", "def456"],
+            "validation": {"criteria": "Test task completion is observable."},
         }
 
         backup_manager.backup_path.parent.mkdir(parents=True, exist_ok=True)
@@ -775,6 +846,7 @@ class TestImportEdgeCases:
             "deps_on": [],
             "escalated_at": now,
             "escalation_reason": "Blocked by external dependency",
+            "validation": {"criteria": "Test task completion is observable."},
         }
 
         backup_manager.backup_path.parent.mkdir(parents=True, exist_ok=True)
@@ -823,6 +895,7 @@ class TestImportEdgeCases:
                 "escalated_at": None,
                 "escalation_reason": None,
             },
+            "validation": {"criteria": "Test task completion is observable."},
         }
 
         backup_manager.backup_path.parent.mkdir(parents=True, exist_ok=True)
@@ -863,11 +936,11 @@ class TestImportEdgeCases:
         with open(backup_manager.backup_path, "w") as f:
             f.write(json.dumps(tasks_data) + "\n")
 
-        backup_manager.restore()
+        with pytest.raises(TaskCriteriaError, match="validation_criteria"):
+            backup_manager.restore()
 
-        task = task_manager.get_task(_task_id("task-null-validation"))
-        assert task is not None
-        assert task.validation_status is None
+        with pytest.raises(ValueError, match="not found"):
+            task_manager.get_task(_task_id("task-null-validation"))
 
     @pytest.mark.integration
     @pytest.mark.parametrize(
@@ -889,6 +962,7 @@ class TestImportEdgeCases:
             "created_at": "2024-01-01T00:00:00+00:00",
             "updated_at": "2024-01-01T00:00:00+00:00",
             "project_id": sample_project["id"],
+            "validation": {"criteria": "Test task completion is observable."},
         }
         backup_manager.backup_path.parent.mkdir(parents=True, exist_ok=True)
         backup_manager.backup_path.write_text(json.dumps(valid_record) + "\n" + bad_line + "\n")
@@ -911,7 +985,11 @@ class TestClosedStateRoundTrip:
         sample_project: dict[str, Any],
     ) -> None:
         """Test that a closed task with full metadata survives export → import."""
-        task = task_manager.create_task(sample_project["id"], "Task to close")
+        task = task_manager.create_task(
+            sample_project["id"],
+            "Task to close",
+            validation_criteria="Test task completion is observable.",
+        )
 
         # Simulate a fully closed task with all metadata
         backup_manager.db.execute(
@@ -985,7 +1063,11 @@ class TestClosedStateRoundTrip:
         sample_project: dict[str, Any],
     ) -> None:
         """Test that UPDATE import path preserves session-local columns."""
-        task = task_manager.create_task(sample_project["id"], "Session task")
+        task = task_manager.create_task(
+            sample_project["id"],
+            "Session task",
+            validation_criteria="Test task completion is observable.",
+        )
 
         # Set session-local fields that should NOT be wiped by import
         claimed_session_id = _session_id("session-uuid-123")
@@ -1020,6 +1102,7 @@ class TestClosedStateRoundTrip:
             "deps_on": [],
             "priority": 2,
             "task_type": "task",
+            "validation": {"criteria": "Test task completion is observable."},
         }
 
         backup_manager.backup_path.parent.mkdir(parents=True, exist_ok=True)
@@ -1055,7 +1138,11 @@ class TestClosedStateRoundTrip:
         sample_project: dict[str, Any],
     ) -> None:
         """Test that export includes priority and task_type fields."""
-        task = task_manager.create_task(sample_project["id"], "Typed task")
+        task = task_manager.create_task(
+            sample_project["id"],
+            "Typed task",
+            validation_criteria="Test task completion is observable.",
+        )
         backup_manager.db.execute(
             "UPDATE tasks SET priority = 1, task_type = 'bug' WHERE id = %s",
             (task.id,),
@@ -1080,9 +1167,21 @@ class TestExportEdgeCases:
         sample_project: dict[str, Any],
     ) -> None:
         """Test export with task having multiple dependencies."""
-        t1 = task_manager.create_task(sample_project["id"], "Dependency 1")
-        t2 = task_manager.create_task(sample_project["id"], "Dependency 2")
-        t3 = task_manager.create_task(sample_project["id"], "Task with multiple deps")
+        t1 = task_manager.create_task(
+            sample_project["id"],
+            "Dependency 1",
+            validation_criteria="Test task completion is observable.",
+        )
+        t2 = task_manager.create_task(
+            sample_project["id"],
+            "Dependency 2",
+            validation_criteria="Test task completion is observable.",
+        )
+        t3 = task_manager.create_task(
+            sample_project["id"],
+            "Task with multiple deps",
+            validation_criteria="Test task completion is observable.",
+        )
 
         # Add multiple dependencies to t3
         now = "2023-01-01T00:00:00"
@@ -1112,7 +1211,11 @@ class TestExportEdgeCases:
         sample_project: dict[str, Any],
     ) -> None:
         """Test export includes validation data."""
-        task = task_manager.create_task(sample_project["id"], "Task with validation")
+        task = task_manager.create_task(
+            sample_project["id"],
+            "Task with validation",
+            validation_criteria="Test task completion is observable.",
+        )
 
         # Add validation data directly to DB (status must be 'pending', 'valid', or 'invalid')
         backup_manager.db.execute(
@@ -1144,7 +1247,11 @@ class TestExportEdgeCases:
         sample_project: dict[str, Any],
     ) -> None:
         """Test export includes commits array."""
-        task = task_manager.create_task(sample_project["id"], "Task with commits")
+        task = task_manager.create_task(
+            sample_project["id"],
+            "Task with commits",
+            validation_criteria="Test task completion is observable.",
+        )
 
         # Link commits
         commits_json = json.dumps(["commit1", "commit2"])
@@ -1168,7 +1275,11 @@ class TestExportEdgeCases:
         sample_project: dict[str, Any],
     ) -> None:
         """Test that export errors are propagated."""
-        task_manager.create_task(sample_project["id"], "Task 1")
+        task_manager.create_task(
+            sample_project["id"],
+            "Task 1",
+            validation_criteria="Test task completion is observable.",
+        )
 
         # Make the export path a directory to cause write error
         backup_manager.backup_path.parent.mkdir(parents=True, exist_ok=True)
@@ -1486,6 +1597,7 @@ class TestImportFromGitHubIssues:
             description="Original body",
             github_repo="owner/repo",
             github_issue_number=7,
+            validation_criteria="Test task completion is observable.",
         )
         issues_json = json.dumps(
             [
@@ -1530,6 +1642,7 @@ class TestImportFromGitHubIssues:
             project_id=sample_project["id"],
             title="Legacy task",
             description="Original body",
+            validation_criteria="Test task completion is observable.",
         )
         github_importer.db.execute(
             "UPDATE tasks SET id = %s WHERE id = %s",
@@ -1578,6 +1691,7 @@ class TestImportFromGitHubIssues:
             project_id=sample_project["id"],
             title="Legacy normalized task",
             description="Original body",
+            validation_criteria="Test task completion is observable.",
         )
         github_importer.db.execute(
             "UPDATE tasks SET id = %s WHERE id = %s",
@@ -1630,6 +1744,7 @@ class TestImportFromGitHubIssues:
             project_id=other_project.id,
             title="Other project legacy task",
             description="Other body",
+            validation_criteria="Test task completion is observable.",
         )
         github_importer.db.execute(
             "UPDATE tasks SET id = %s WHERE id = %s",
@@ -1870,6 +1985,7 @@ class TestImportSeqNumPreservation:
             "deps_on": [],
             "seq_num": 42,
             "path_cache": "42",
+            "validation": {"criteria": "Test task completion is observable."},
         }
 
         backup_manager.backup_path.parent.mkdir(parents=True, exist_ok=True)
@@ -1892,7 +2008,11 @@ class TestImportSeqNumPreservation:
     ) -> None:
         """DB has seq_num 5, import different task with 5 → gets fresh seq."""
         # Create existing task with seq_num 5
-        existing = task_manager.create_task(sample_project["id"], "Existing Task")
+        existing = task_manager.create_task(
+            sample_project["id"],
+            "Existing Task",
+            validation_criteria="Test task completion is observable.",
+        )
         backup_manager.db.execute(
             "UPDATE tasks SET seq_num = 5, path_cache = '5' WHERE id = %s",
             (existing.id,),
@@ -1911,6 +2031,7 @@ class TestImportSeqNumPreservation:
             "deps_on": [],
             "seq_num": 5,
             "path_cache": "5",
+            "validation": {"criteria": "Test task completion is observable."},
         }
 
         backup_manager.backup_path.parent.mkdir(parents=True, exist_ok=True)
@@ -1935,8 +2056,16 @@ class TestImportSeqNumPreservation:
         sample_project: dict[str, Any],
     ) -> None:
         """Updating a task keeps its local sequence metadata when the JSONL seq is occupied."""
-        task = task_manager.create_task(sample_project["id"], "Task to update")
-        occupant = task_manager.create_task(sample_project["id"], "Sequence occupant")
+        task = task_manager.create_task(
+            sample_project["id"],
+            "Task to update",
+            validation_criteria="Test task completion is observable.",
+        )
+        occupant = task_manager.create_task(
+            sample_project["id"],
+            "Sequence occupant",
+            validation_criteria="Test task completion is observable.",
+        )
         backup_manager.db.execute(
             "UPDATE tasks SET seq_num = 5, path_cache = '5', "
             "updated_at = '2020-01-01T00:00:00+00:00' WHERE id = %s",
@@ -1959,6 +2088,7 @@ class TestImportSeqNumPreservation:
             "deps_on": [],
             "seq_num": 100,
             "path_cache": "100",
+            "validation": {"criteria": "Test task completion is observable."},
         }
 
         backup_manager.backup_path.parent.mkdir(parents=True, exist_ok=True)
@@ -1995,6 +2125,7 @@ class TestImportSeqNumPreservation:
             "deps_on": [],
             "seq_num": 100,
             "path_cache": "100",
+            "validation": {"criteria": "Test task completion is observable."},
         }
         task2 = {
             "id": _task_id("task-batch-2"),
@@ -2008,6 +2139,7 @@ class TestImportSeqNumPreservation:
             "deps_on": [],
             "seq_num": 100,
             "path_cache": "100",
+            "validation": {"criteria": "Test task completion is observable."},
         }
 
         backup_manager.backup_path.parent.mkdir(parents=True, exist_ok=True)
@@ -2047,6 +2179,7 @@ class TestImportSeqNumPreservation:
             "project_id": sample_project["id"],
             "parent_id": None,
             "deps_on": [],
+            "validation": {"criteria": "Test task completion is observable."},
             # No seq_num or path_cache
         }
 
@@ -2084,6 +2217,7 @@ class TestImportSeqNumPreservation:
             "deps_on": [],
             "seq_num": 50,
             "path_cache": "50",
+            "validation": {"criteria": "Test task completion is observable."},
         }
         child = {
             "id": _task_id("task-child-seq"),
@@ -2097,6 +2231,7 @@ class TestImportSeqNumPreservation:
             "deps_on": [],
             "seq_num": 51,
             "path_cache": "50.51",
+            "validation": {"criteria": "Test task completion is observable."},
         }
 
         # UUID-sorted exports can place a child before its parent.
@@ -2140,10 +2275,22 @@ class TestImportSeqNumPreservation:
         foreign_parent_id = _task_id("foreign-parent")
         backup_manager.db.execute(
             """
-            INSERT INTO tasks (id, project_id, title, created_at, updated_at, seq_num, path_cache)
-            VALUES (%s, %s, %s, %s, %s, %s, %s)
+            INSERT INTO tasks (
+                id, project_id, title, validation_criteria,
+                created_at, updated_at, seq_num, path_cache
+            )
+            VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
             """,
-            (foreign_parent_id, other_project.id, "Foreign Parent", now, now, 77, "77"),
+            (
+                foreign_parent_id,
+                other_project.id,
+                "Foreign Parent",
+                "The foreign parent remains isolated.",
+                now,
+                now,
+                77,
+                "77",
+            ),
         )
         child = {
             "id": _task_id("foreign-parent-child"),
@@ -2156,6 +2303,7 @@ class TestImportSeqNumPreservation:
             "parent_id": foreign_parent_id,
             "deps_on": [],
             "seq_num": 78,
+            "validation": {"criteria": "Test task completion is observable."},
         }
 
         backup_manager.backup_path.parent.mkdir(parents=True, exist_ok=True)

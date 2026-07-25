@@ -41,6 +41,7 @@ def sample_task_uuid() -> Task:
         created_at="2024-01-01T00:00:00Z",
         updated_at="2024-01-01T00:00:00Z",
         description="Test description",
+        validation_criteria="The requested task update is observable.",
         labels=["test"],
         seq_num=1,
         path_cache="1",
@@ -290,8 +291,16 @@ class TestIntegrationMCPTaskIdResolution:
         project_id = sample_project["id"]
 
         # Create tasks
-        task1 = manager.create_task(project_id=project_id, title="Task 1")
-        task2 = manager.create_task(project_id=project_id, title="Task 2")
+        task1 = manager.create_task(
+            project_id=project_id,
+            title="Task 1",
+            validation_criteria="Test task completion is observable.",
+        )
+        task2 = manager.create_task(
+            project_id=project_id,
+            title="Task 2",
+            validation_criteria="Test task completion is observable.",
+        )
 
         registry = create_task_registry(manager)
         get_task_func = registry._tools["get_task"].func
@@ -340,8 +349,17 @@ class TestIntegrationMCPTaskIdResolution:
         project_id = sample_project["id"]
 
         # Create hierarchy
-        parent = manager.create_task(project_id=project_id, title="Parent")
-        child = manager.create_task(project_id=project_id, title="Child", parent_task_id=parent.id)
+        parent = manager.create_task(
+            project_id=project_id,
+            title="Parent",
+            validation_criteria="Test task completion is observable.",
+        )
+        child = manager.create_task(
+            project_id=project_id,
+            title="Child",
+            parent_task_id=parent.id,
+            validation_criteria="Test task completion is observable.",
+        )
 
         registry = create_task_registry(manager)
         get_task_func = registry._tools["get_task"].func
@@ -373,7 +391,11 @@ class TestIntegrationMCPTaskIdResolution:
         manager = LocalTaskManager(temp_db)
         project_id = sample_project["id"]
 
-        manager.create_task(project_id=project_id, title="Task 1")
+        manager.create_task(
+            project_id=project_id,
+            title="Task 1",
+            validation_criteria="Test task completion is observable.",
+        )
 
         registry = create_task_registry(manager)
         get_task_func = registry._tools["get_task"].func

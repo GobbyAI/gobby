@@ -48,12 +48,14 @@ async def test_require_epic_tree_close_uses_real_task_manager(db: HubDatabase) -
         title="Parent epic",
         task_type="epic",
         category="planning",
+        validation_criteria="Test task completion is observable.",
     )
     task_manager.create_task(
         project_id=project.id,
         title="Open child",
         parent_task_id=parent.id,
         category="code",
+        validation_criteria="Test task completion is observable.",
     )
 
     engine = RuleEngine(db, task_manager=task_manager)

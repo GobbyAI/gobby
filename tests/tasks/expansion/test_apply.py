@@ -50,6 +50,7 @@ def test_apply_copies_parent_target_branch_onto_generated_leaves(temp_db, sample
         project_id=sample_project["id"],
         title="Expansion parent",
         task_type="epic",
+        validation_criteria="Test task completion is observable.",
     )
     artifact_manager.set_artifact(parent.id, "target_branch", "release/0.4")
     run = run_manager.create(
@@ -70,6 +71,7 @@ def test_apply_copies_parent_target_branch_onto_generated_leaves(temp_db, sample
                     "title": "Implement leaf",
                     "category": "code",
                     "assigned_agent": "backend-developer",
+                    "validation": "Test task completion is observable.",
                 }
             ],
             "dependencies": [],
@@ -113,6 +115,7 @@ def test_contract_apply_stage_manifests_and_created_ids(temp_db, sample_project)
         project_id=sample_project["id"],
         title="Expansion parent",
         task_type="epic",
+        validation_criteria="Test task completion is observable.",
     )
     service.task_manager.initialize_task_manifest(
         parent.id,
@@ -141,6 +144,7 @@ def test_contract_apply_stage_manifests_and_created_ids(temp_db, sample_project)
                 "validation": "leaf 1 exists",
                 "labels": ["covers:12761:1.1:1.1.1"],
                 "source_section_id": "1.1",
+                "validation_criteria": "Test task completion is observable.",
             },
             {
                 "id": "leaf-2",
@@ -151,6 +155,7 @@ def test_contract_apply_stage_manifests_and_created_ids(temp_db, sample_project)
                 "validation": "leaf 2 exists",
                 "labels": ["covers:12761:2.1:2.1.1"],
                 "source_section_id": "2.1",
+                "validation_criteria": "Test task completion is observable.",
             },
         ],
         "dependencies": [],
@@ -191,10 +196,19 @@ def test_apply_parent_with_no_stages_is_noop_for_expansion_completion(
         project_id=sample_project["id"],
         title="No stages parent",
         task_type="epic",
+        validation_criteria="Test task completion is observable.",
     )
     spec = {
         "phases": [{"id": "phase-1", "title": "Phase 1", "task_ids": ["leaf"]}],
-        "tasks": [{"id": "leaf", "phase_id": "phase-1", "title": "Leaf", "category": "code"}],
+        "tasks": [
+            {
+                "id": "leaf",
+                "phase_id": "phase-1",
+                "title": "Leaf",
+                "category": "code",
+                "validation": "Test task completion is observable.",
+            }
+        ],
         "dependencies": [],
     }
     run = _save_run(service, parent, sample_project, spec)
@@ -212,6 +226,7 @@ def test_apply_completes_current_expansion_stage(temp_db, sample_project) -> Non
         project_id=sample_project["id"],
         title="Expansion stage parent",
         task_type="epic",
+        validation_criteria="Test task completion is observable.",
     )
     service.task_manager.initialize_task_manifest(
         parent.id,
@@ -220,7 +235,15 @@ def test_apply_completes_current_expansion_stage(temp_db, sample_project) -> Non
     service.task_manager.stage_states.start_stage(parent.id, "expansion", by_session_id=None)
     spec = {
         "phases": [{"id": "phase-1", "title": "Phase 1", "task_ids": ["leaf"]}],
-        "tasks": [{"id": "leaf", "phase_id": "phase-1", "title": "Leaf", "category": "code"}],
+        "tasks": [
+            {
+                "id": "leaf",
+                "phase_id": "phase-1",
+                "title": "Leaf",
+                "category": "code",
+                "validation": "Test task completion is observable.",
+            }
+        ],
         "dependencies": [],
     }
     run = _save_run(service, parent, sample_project, spec)
@@ -238,6 +261,7 @@ def test_apply_can_suppress_parent_expansion_stage_transition(temp_db, sample_pr
         project_id=sample_project["id"],
         title="Pipeline-owned expansion parent",
         task_type="epic",
+        validation_criteria="Test task completion is observable.",
     )
     service.task_manager.initialize_task_manifest(
         parent.id,
@@ -246,7 +270,15 @@ def test_apply_can_suppress_parent_expansion_stage_transition(temp_db, sample_pr
     service.task_manager.stage_states.start_stage(parent.id, "expansion", by_session_id=None)
     spec = {
         "phases": [{"id": "phase-1", "title": "Phase 1", "task_ids": ["leaf"]}],
-        "tasks": [{"id": "leaf", "phase_id": "phase-1", "title": "Leaf", "category": "code"}],
+        "tasks": [
+            {
+                "id": "leaf",
+                "phase_id": "phase-1",
+                "title": "Leaf",
+                "category": "code",
+                "validation": "Test task completion is observable.",
+            }
+        ],
         "dependencies": [],
     }
     run = _save_run(service, parent, sample_project, spec)
@@ -269,6 +301,7 @@ def test_reset_deletes_only_expansion_output(temp_db, sample_project) -> None:
         project_id=sample_project["id"],
         title="Reset parent",
         task_type="epic",
+        validation_criteria="Test task completion is observable.",
     )
     service.task_manager.initialize_task_manifest(
         parent.id,
@@ -280,10 +313,19 @@ def test_reset_deletes_only_expansion_output(temp_db, sample_project) -> None:
         parent_task_id=parent.id,
         task_type="task",
         category="planning",
+        validation_criteria="Test task completion is observable.",
     )
     spec = {
         "phases": [{"id": "phase-p1", "title": "Phase 1", "summary": "P1", "task_ids": ["leaf"]}],
-        "tasks": [{"id": "leaf", "phase_id": "phase-p1", "title": "Leaf", "category": "code"}],
+        "tasks": [
+            {
+                "id": "leaf",
+                "phase_id": "phase-p1",
+                "title": "Leaf",
+                "category": "code",
+                "validation": "Test task completion is observable.",
+            }
+        ],
         "dependencies": [],
     }
     run = _save_run(service, parent, sample_project, spec)
@@ -300,7 +342,10 @@ def test_reset_deletes_only_expansion_output(temp_db, sample_project) -> None:
 def test_reset_rolls_back_all_deletions_when_one_fails(temp_db, sample_project) -> None:
     service = _service(temp_db)
     parent = service.task_manager.create_task(
-        project_id=sample_project["id"], title="Atomic reset parent", task_type="epic"
+        project_id=sample_project["id"],
+        title="Atomic reset parent",
+        task_type="epic",
+        validation_criteria="Test task completion is observable.",
     )
     spec = {
         "phases": [
@@ -312,8 +357,20 @@ def test_reset_rolls_back_all_deletions_when_one_fails(temp_db, sample_project) 
             }
         ],
         "tasks": [
-            {"id": "leaf-1", "phase_id": "phase-p1", "title": "Leaf 1", "category": "code"},
-            {"id": "leaf-2", "phase_id": "phase-p1", "title": "Leaf 2", "category": "code"},
+            {
+                "id": "leaf-1",
+                "phase_id": "phase-p1",
+                "title": "Leaf 1",
+                "category": "code",
+                "validation": "Test task completion is observable.",
+            },
+            {
+                "id": "leaf-2",
+                "phase_id": "phase-p1",
+                "title": "Leaf 2",
+                "category": "code",
+                "validation": "Test task completion is observable.",
+            },
         ],
         "dependencies": [],
     }
@@ -345,6 +402,7 @@ def test_reset_discovers_historical_phase_ancestor(temp_db, sample_project) -> N
         project_id=sample_project["id"],
         title="Historical reset parent",
         task_type="epic",
+        validation_criteria="Test task completion is observable.",
     )
     phase = service.task_manager.create_task(
         project_id=sample_project["id"],
@@ -352,6 +410,7 @@ def test_reset_discovers_historical_phase_ancestor(temp_db, sample_project) -> N
         parent_task_id=parent.id,
         task_type="epic",
         category="planning",
+        validation_criteria="Test task completion is observable.",
     )
     leaf = service.task_manager.create_task(
         project_id=sample_project["id"],
@@ -359,6 +418,7 @@ def test_reset_discovers_historical_phase_ancestor(temp_db, sample_project) -> N
         parent_task_id=phase.id,
         task_type="task",
         category="code",
+        validation_criteria="Test task completion is observable.",
     )
     run = service.run_manager.create(
         parent_task_id=parent.id,
@@ -387,6 +447,7 @@ def test_reset_refuses_progressed_generated_task(temp_db, sample_project) -> Non
         project_id=sample_project["id"],
         title="Refuse reset parent",
         task_type="epic",
+        validation_criteria="Test task completion is observable.",
     )
     leaf = service.task_manager.create_task(
         project_id=sample_project["id"],
@@ -394,6 +455,7 @@ def test_reset_refuses_progressed_generated_task(temp_db, sample_project) -> Non
         parent_task_id=parent.id,
         task_type="task",
         category="code",
+        validation_criteria="Test task completion is observable.",
     )
     service.task_manager.initialize_task_manifest(leaf.id, stage_names=["development"])
     service.task_manager.stage_states.start_stage(leaf.id, "development", by_session_id=None)
@@ -423,10 +485,19 @@ def test_apply_refuses_duplicate_output_without_reset(temp_db, sample_project) -
         project_id=sample_project["id"],
         title="Duplicate parent",
         task_type="epic",
+        validation_criteria="Test task completion is observable.",
     )
     spec = {
         "phases": [{"id": "phase-1", "title": "Phase 1", "task_ids": ["leaf"]}],
-        "tasks": [{"id": "leaf", "phase_id": "phase-1", "title": "Leaf", "category": "code"}],
+        "tasks": [
+            {
+                "id": "leaf",
+                "phase_id": "phase-1",
+                "title": "Leaf",
+                "category": "code",
+                "validation": "Test task completion is observable.",
+            }
+        ],
         "dependencies": [],
     }
     first = _save_run(service, parent, sample_project, spec)
@@ -448,6 +519,7 @@ def test_concurrent_apply_creates_one_subtask_tree(temp_db, sample_project) -> N
         project_id=sample_project["id"],
         title="Concurrent parent",
         task_type="epic",
+        validation_criteria="Test task completion is observable.",
     )
     spec = {
         "phases": [{"id": "phase-1", "title": "Phase 1", "task_ids": ["leaf"]}],
@@ -457,6 +529,7 @@ def test_concurrent_apply_creates_one_subtask_tree(temp_db, sample_project) -> N
                 "phase_id": "phase-1",
                 "title": "Concurrent leaf",
                 "category": "code",
+                "validation": "Test task completion is observable.",
             }
         ],
         "dependencies": [],
@@ -503,10 +576,19 @@ def test_apply_ignores_closed_obsolete_historical_output(temp_db, sample_project
         project_id=sample_project["id"],
         title="Historical duplicate parent",
         task_type="epic",
+        validation_criteria="Test task completion is observable.",
     )
     spec = {
         "phases": [{"id": "phase-1", "title": "Phase 1", "task_ids": ["leaf"]}],
-        "tasks": [{"id": "leaf", "phase_id": "phase-1", "title": "Leaf", "category": "code"}],
+        "tasks": [
+            {
+                "id": "leaf",
+                "phase_id": "phase-1",
+                "title": "Leaf",
+                "category": "code",
+                "validation": "Test task completion is observable.",
+            }
+        ],
         "dependencies": [],
     }
     first = _save_run(service, parent, sample_project, spec)

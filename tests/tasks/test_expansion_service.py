@@ -55,6 +55,7 @@ def _compiled_spec(*, category: str = "code") -> dict:
                 "validation": "Focused validation passes.",
                 "assigned_agent": "frontend-developer",
                 "additional_skills": ["playwright-cli"],
+                "validation_criteria": "Test task completion is observable.",
             }
         ],
         "dependencies": [],
@@ -70,6 +71,7 @@ def test_prompt_context_ignores_legacy_stage_skip_labels(
         project_id=sample_project["id"],
         title="Skipped-stage epic",
         labels=["profile:quick", "stage-:qa", "stage-:pr"],
+        validation_criteria="Test task completion is observable.",
     )
     run = run_manager.create(
         parent_task_id=epic.id,
@@ -102,6 +104,7 @@ async def test_compile_run_does_not_short_circuit_from_legacy_skip_labels(
             "stage-:epic_review",
             "stage-:pr",
         ],
+        validation_criteria="Test task completion is observable.",
     )
     run = run_manager.create(
         parent_task_id=epic.id,
@@ -128,6 +131,7 @@ def test_apply_run_persists_agent_selection_fields_to_created_leaf(
     epic = service.task_manager.create_task(
         project_id=sample_project["id"],
         title="Agent selection epic",
+        validation_criteria="Test task completion is observable.",
     )
     run = run_manager.create(
         parent_task_id=epic.id,
@@ -154,6 +158,7 @@ def test_apply_run_rejects_manual_leaf_without_creating_children(
     epic = service.task_manager.create_task(
         project_id=sample_project["id"],
         title="Manual leaf epic",
+        validation_criteria="Test task completion is observable.",
     )
     run = run_manager.create(
         parent_task_id=epic.id,

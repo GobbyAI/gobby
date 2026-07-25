@@ -175,6 +175,7 @@ def test_fresh_feature_task_planning_review_path_uses_registry_policy(
         project_id=sample_project["id"],
         title="Production path feature",
         task_type="feature",
+        validation_criteria="Test task completion is observable.",
     )
     manager.initialize_task_manifest(task.id)
     rows = {row["stage_name"]: row for row in stage_rows(temp_db, task.id)}
@@ -201,6 +202,7 @@ def test_fresh_review_anchor_task_has_planning_review_stage(temp_db, sample_proj
         title="Plan review round anchor",
         task_type="review_anchor",
         category="planning",
+        validation_criteria="Test task completion is observable.",
     )
     manager.initialize_task_manifest(task.id, stage_names=["planning"])
 
@@ -220,6 +222,7 @@ def test_review_anchor_stage_caps_persist_planning_review_rounds(temp_db, sample
         title="Plan review round anchor",
         task_type="review_anchor",
         category="planning",
+        validation_criteria="Test task completion is observable.",
     )
     manager.initialize_task_manifest(
         task.id,
@@ -239,6 +242,7 @@ def test_planning_stage_allows_99_rejections_with_100_round_cap(temp_db, sample_
         title="High budget plan review anchor",
         task_type="review_anchor",
         category="planning",
+        validation_criteria="Test task completion is observable.",
     )
     manager.initialize_task_manifest(
         task.id,
@@ -269,6 +273,7 @@ def test_duplicate_stage_escalation_with_same_reason_is_noop(temp_db, sample_pro
         title="Plan review round anchor",
         task_type="review_anchor",
         category="planning",
+        validation_criteria="Test task completion is observable.",
     )
     manager.initialize_task_manifest(task.id, stage_names=["planning"])
 

@@ -26,7 +26,11 @@ def _stage_pipeline_task(
     from tests.storage.tasks._stage_test_helpers import initialize_manifest, set_stage_state, spec
 
     manager = LocalTaskManager(temp_db)
-    task = manager.create_task(project_id=sample_project["id"], title="Pipeline stage")
+    task = manager.create_task(
+        project_id=sample_project["id"],
+        title="Pipeline stage",
+        validation_criteria="Test task completion is observable.",
+    )
     temp_db.execute(
         "UPDATE task_stages_registry SET review_policy = %s WHERE name = 'expansion'",
         (review_policy,),

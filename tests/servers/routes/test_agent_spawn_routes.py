@@ -32,6 +32,7 @@ def _create_task(task_manager: LocalTaskManager, project_id: str, title: str = "
         title=title,
         task_type="task",
         project_id=project_id,
+        validation_criteria="Test task completion is observable.",
     )
 
 

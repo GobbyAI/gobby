@@ -268,6 +268,15 @@ class TestGetTaskTool:
 class TestUpdateTaskTool:
     """Tests for update_task MCP tool."""
 
+    @pytest.fixture(autouse=True)
+    def _existing_task_has_contract(self, mock_task_manager: MagicMock) -> None:
+        mock_task_manager.get_task.return_value = SimpleNamespace(
+            task_type="task",
+            category="research",
+            validation_criteria="The requested task metadata is stored.",
+            implementation_domain=None,
+        )
+
     @pytest.mark.asyncio
     async def test_update_task_title(self, mock_task_manager: MagicMock, sample_task: Task) -> None:
         """Test update_task updates title."""
@@ -306,6 +315,7 @@ class TestUpdateTaskTool:
         """A category flip must satisfy the effective code-task invariant."""
         registry = create_task_registry(mock_task_manager)
         mock_task_manager.get_task.return_value = SimpleNamespace(
+            task_type="task",
             category="manual",
             validation_criteria=None,
             implementation_domain=None,
@@ -316,10 +326,7 @@ class TestUpdateTaskTool:
             {"task_id": "550e8400-e29b-41d4-a716-446655440000", "category": "code"},
         )
 
-        assert result == {
-            "error": "Code tasks require validation_criteria. "
-            "Describe what 'done' looks like so validate_task can check your diff against it."
-        }
+        assert "Every non-epic task requires nonempty validation_criteria" in result["error"]
         assert mock_task_manager.get_task.call_count == 2
         mock_task_manager.update_task.assert_not_called()
 
@@ -330,6 +337,7 @@ class TestUpdateTaskTool:
         """A category flip with criteria must still provide an implementation domain."""
         registry = create_task_registry(mock_task_manager)
         mock_task_manager.get_task.return_value = SimpleNamespace(
+            task_type="task",
             category="manual",
             validation_criteria=None,
             implementation_domain=None,
@@ -358,6 +366,7 @@ class TestUpdateTaskTool:
         """An existing code task cannot clear its validation criteria."""
         registry = create_task_registry(mock_task_manager)
         mock_task_manager.get_task.return_value = SimpleNamespace(
+            task_type="task",
             category="code",
             validation_criteria="Focused tests pass",
             implementation_domain="backend",
@@ -371,10 +380,7 @@ class TestUpdateTaskTool:
             },
         )
 
-        assert result == {
-            "error": "Code tasks require validation_criteria. "
-            "Describe what 'done' looks like so validate_task can check your diff against it."
-        }
+        assert "Every non-epic task requires nonempty validation_criteria" in result["error"]
         assert mock_task_manager.get_task.call_count == 2
         mock_task_manager.update_task.assert_not_called()
 
@@ -385,6 +391,7 @@ class TestUpdateTaskTool:
         """A category flip succeeds when the effective code-task state is valid."""
         registry = create_task_registry(mock_task_manager)
         mock_task_manager.get_task.return_value = SimpleNamespace(
+            task_type="task",
             category="manual",
             validation_criteria=None,
             implementation_domain=None,

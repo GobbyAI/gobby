@@ -10,12 +10,18 @@ from gobby.storage.tasks._queries import list_blocked_tasks, list_ready_tasks
 def test_list_tasks_orders_hierarchy_before_applying_pagination(temp_db, sample_project) -> None:
     task_manager = LocalTaskManager(temp_db)
     project_id = sample_project["id"]
-    parent = task_manager.create_task(project_id=project_id, title="Parent", priority=4)
+    parent = task_manager.create_task(
+        project_id=project_id,
+        title="Parent",
+        priority=4,
+        validation_criteria="Test task completion is observable.",
+    )
     child = task_manager.create_task(
         project_id=project_id,
         title="Child",
         priority=0,
         parent_task_id=parent.id,
+        validation_criteria="Test task completion is observable.",
     )
 
     first_page = task_manager.list_tasks(project_id=project_id, limit=1, offset=0)

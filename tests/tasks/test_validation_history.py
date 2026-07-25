@@ -35,9 +35,19 @@ def sample_task(temp_db, sample_project):
     """Create a sample task for tests."""
     task_id = str(uuid4())
     temp_db.execute(
-        """INSERT INTO tasks (id, project_id, title, priority, task_type, created_at, updated_at)
-           VALUES (%s, %s, %s, %s, %s, NOW(), NOW())""",
-        (task_id, sample_project["id"], "Test Task", 2, "task"),
+        """INSERT INTO tasks (
+               id, project_id, title, priority, task_type, validation_criteria,
+               created_at, updated_at
+           )
+           VALUES (%s, %s, %s, %s, %s, %s, NOW(), NOW())""",
+        (
+            task_id,
+            sample_project["id"],
+            "Test Task",
+            2,
+            "task",
+            "Validation history behavior is observable.",
+        ),
     )
     return {"id": task_id}
 
@@ -196,9 +206,19 @@ class TestValidationHistoryManager:
         # Create a second task
         other_task_id = str(uuid4())
         temp_db.execute(
-            """INSERT INTO tasks (id, project_id, title, priority, task_type, created_at, updated_at)
-               VALUES (%s, %s, %s, %s, %s, NOW(), NOW())""",
-            (other_task_id, sample_project["id"], "Other Task", 2, "task"),
+            """INSERT INTO tasks (
+                   id, project_id, title, priority, task_type, validation_criteria,
+                   created_at, updated_at
+               )
+               VALUES (%s, %s, %s, %s, %s, %s, NOW(), NOW())""",
+            (
+                other_task_id,
+                sample_project["id"],
+                "Other Task",
+                2,
+                "task",
+                "Validation history is isolated to this task.",
+            ),
         )
 
         # Add history to both tasks
@@ -326,9 +346,19 @@ class TestRecurringIssueDetection:
         """Create a sample task for tests."""
         task_id = str(uuid4())
         temp_db.execute(
-            """INSERT INTO tasks (id, project_id, title, priority, task_type, created_at, updated_at)
-               VALUES (%s, %s, %s, %s, %s, NOW(), NOW())""",
-            (task_id, sample_project["id"], "Test Task", 2, "task"),
+            """INSERT INTO tasks (
+                   id, project_id, title, priority, task_type, validation_criteria,
+                   created_at, updated_at
+               )
+               VALUES (%s, %s, %s, %s, %s, %s, NOW(), NOW())""",
+            (
+                task_id,
+                sample_project["id"],
+                "Test Task",
+                2,
+                "task",
+                "Recurring validation issues are detected.",
+            ),
         )
         return {"id": task_id}
 

@@ -73,6 +73,7 @@ def parent_task(task_manager, test_project):
         project_id=test_project,
         title="Parent task for expansion",
         task_type="feature",
+        validation_criteria="Test task completion is observable.",
     )
     return task.id
 
@@ -237,6 +238,7 @@ class TestExpansionRuns:
             title="Implement the foundation",
             parent_task_id=parent.id,
             category="code",
+            validation_criteria="Test task completion is observable.",
         )
         run_manager.mark_applying(run.id)
         run_manager.save_apply_result(

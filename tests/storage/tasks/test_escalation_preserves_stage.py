@@ -18,7 +18,11 @@ def test_round_trip_preserves_row(
     sample_project: dict[str, Any],
 ) -> None:
     manager = LocalTaskManager(temp_db)
-    task = manager.create_task(project_id=sample_project["id"], title="Preserve stage")
+    task = manager.create_task(
+        project_id=sample_project["id"],
+        title="Preserve stage",
+        validation_criteria="Test task completion is observable.",
+    )
 
     temp_db.execute(
         "DELETE FROM task_stage_states WHERE task_id = %s",
@@ -67,7 +71,11 @@ def test_de_escalate_can_reset_current_stage_work_attempts(
     sample_project: dict[str, Any],
 ) -> None:
     manager = LocalTaskManager(temp_db)
-    task = manager.create_task(project_id=sample_project["id"], title="Reset stage attempts")
+    task = manager.create_task(
+        project_id=sample_project["id"],
+        title="Reset stage attempts",
+        validation_criteria="Test task completion is observable.",
+    )
 
     temp_db.execute(
         "DELETE FROM task_stage_states WHERE task_id = %s",
@@ -112,7 +120,11 @@ def test_de_escalate_can_restore_stopped_approved_stage_from_history(
     sample_project: dict[str, Any],
 ) -> None:
     manager = LocalTaskManager(temp_db)
-    task = manager.create_task(project_id=sample_project["id"], title="Restore approved stage")
+    task = manager.create_task(
+        project_id=sample_project["id"],
+        title="Restore approved stage",
+        validation_criteria="Test task completion is observable.",
+    )
 
     temp_db.execute(
         "DELETE FROM task_stage_states WHERE task_id = %s",
@@ -169,7 +181,11 @@ def test_de_escalate_restore_stage_from_history_requires_build_stop_history(
     sample_project: dict[str, Any],
 ) -> None:
     manager = LocalTaskManager(temp_db)
-    task = manager.create_task(project_id=sample_project["id"], title="No restore history")
+    task = manager.create_task(
+        project_id=sample_project["id"],
+        title="No restore history",
+        validation_criteria="Test task completion is observable.",
+    )
 
     temp_db.execute(
         "DELETE FROM task_stage_states WHERE task_id = %s",
@@ -202,7 +218,11 @@ def test_de_escalate_restore_requires_latest_ready_transition_to_be_build_stop(
     sample_project: dict[str, Any],
 ) -> None:
     manager = LocalTaskManager(temp_db)
-    task = manager.create_task(project_id=sample_project["id"], title="Latest restore history")
+    task = manager.create_task(
+        project_id=sample_project["id"],
+        title="Latest restore history",
+        validation_criteria="Test task completion is observable.",
+    )
     temp_db.execute("DELETE FROM task_stage_states WHERE task_id = %s", (task.id,))
     temp_db.execute(
         """
@@ -249,7 +269,11 @@ def test_de_escalate_rolls_back_claim_release_when_attempt_reset_fails(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     manager = LocalTaskManager(temp_db)
-    task = manager.create_task(project_id=sample_project["id"], title="Atomic de-escalation")
+    task = manager.create_task(
+        project_id=sample_project["id"],
+        title="Atomic de-escalation",
+        validation_criteria="Test task completion is observable.",
+    )
     manager.escalate_task(task.id, reason="development_max_work_attempts")
 
     def fail_reset(*_args: object, **_kwargs: object) -> None:
@@ -283,7 +307,11 @@ def test_de_escalate_resets_exhausted_stage_named_by_escalation_reason(
     escalation_reason: str,
 ) -> None:
     manager = LocalTaskManager(temp_db)
-    task = manager.create_task(project_id=sample_project["id"], title="Reset exhausted stage")
+    task = manager.create_task(
+        project_id=sample_project["id"],
+        title="Reset exhausted stage",
+        validation_criteria="Test task completion is observable.",
+    )
 
     temp_db.execute(
         "DELETE FROM task_stage_states WHERE task_id = %s",

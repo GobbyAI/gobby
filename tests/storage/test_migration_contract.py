@@ -69,6 +69,22 @@ def test_digest_owned_session_title_migration_contract() -> None:
     assert "last_title_synthesis_digest_hash" not in baseline
 
 
+def test_task_validation_epoch_migration_defines_close_contract() -> None:
+    migration = (SRC_ROOT / "storage" / "migrations" / "342_task_validation_epoch.sql").read_text(
+        encoding="utf-8"
+    )
+
+    assert "ADD COLUMN validation_epoch INTEGER NOT NULL DEFAULT 0" in migration
+    assert "tasks_require_validation_criteria" in migration
+    assert "task_type = 'epic'" in migration
+    assert "ADD COLUMN validation_epoch INTEGER" in migration
+    assert "normalized_outcome = 'pending'" in migration
+    assert "'pending', 'success', 'failure', 'unknown', 'conflicting'" in migration
+    assert migration.index("DROP CONSTRAINT verification_receipts_normalized_outcome_check") < (
+        migration.index("SET normalized_outcome = 'pending'")
+    )
+
+
 def _tracked_migration_names(migrations_dir: Path) -> list[str]:
     relative_dir = migrations_dir.relative_to(REPO_ROOT)
     try:

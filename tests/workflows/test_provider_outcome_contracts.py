@@ -297,7 +297,7 @@ def test_codex_wrapper_promotes_unique_terminal_result_before_receipt_ingestion(
     assert correlated["tool_outcome"] == {
         "status": "succeeded",
         "exit_code": 0,
-        "provenance": "tool_output.content[1].text.json.exit_code",
+        "provenance": "codex.execution_chain",
     }
 
 

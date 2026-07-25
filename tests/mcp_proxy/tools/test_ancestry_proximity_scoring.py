@@ -36,7 +36,12 @@ class TestGetAncestryChain:
 
     def test_root_task_returns_single_element(self, task_manager, project_id) -> None:
         """Root tasks with no parent return just themselves."""
-        task = task_manager.create_task(project_id, "Root task", task_type="epic")
+        task = task_manager.create_task(
+            project_id,
+            "Root task",
+            task_type="epic",
+            validation_criteria="Test task completion is observable.",
+        )
 
         chain = _get_ancestry_chain(task_manager, task.id)
 
@@ -44,9 +49,18 @@ class TestGetAncestryChain:
 
     def test_child_task_returns_parent_chain(self, task_manager, project_id) -> None:
         """Child tasks return themselves and all ancestors."""
-        parent = task_manager.create_task(project_id, "Parent", task_type="epic")
+        parent = task_manager.create_task(
+            project_id,
+            "Parent",
+            task_type="epic",
+            validation_criteria="Test task completion is observable.",
+        )
         child = task_manager.create_task(
-            project_id, "Child", task_type="task", parent_task_id=parent.id
+            project_id,
+            "Child",
+            task_type="task",
+            parent_task_id=parent.id,
+            validation_criteria="Test task completion is observable.",
         )
 
         chain = _get_ancestry_chain(task_manager, child.id)
@@ -55,15 +69,32 @@ class TestGetAncestryChain:
 
     def test_deep_hierarchy_returns_full_chain(self, task_manager, project_id) -> None:
         """Deep hierarchies return the complete ancestry chain."""
-        grandparent = task_manager.create_task(project_id, "Grandparent", task_type="epic")
+        grandparent = task_manager.create_task(
+            project_id,
+            "Grandparent",
+            task_type="epic",
+            validation_criteria="Test task completion is observable.",
+        )
         parent = task_manager.create_task(
-            project_id, "Parent", task_type="feature", parent_task_id=grandparent.id
+            project_id,
+            "Parent",
+            task_type="feature",
+            parent_task_id=grandparent.id,
+            validation_criteria="Test task completion is observable.",
         )
         child = task_manager.create_task(
-            project_id, "Child", task_type="task", parent_task_id=parent.id
+            project_id,
+            "Child",
+            task_type="task",
+            parent_task_id=parent.id,
+            validation_criteria="Test task completion is observable.",
         )
         grandchild = task_manager.create_task(
-            project_id, "Grandchild", task_type="task", parent_task_id=child.id
+            project_id,
+            "Grandchild",
+            task_type="task",
+            parent_task_id=child.id,
+            validation_criteria="Test task completion is observable.",
         )
 
         chain = _get_ancestry_chain(task_manager, grandchild.id)
@@ -165,17 +196,39 @@ class TestSuggestNextTaskProximityScoring:
     async def test_prefers_task_in_same_branch(self, task_manager, project_id):
         """suggest_next_task prefers tasks in the same branch as in_progress task."""
         # Create two separate branches
-        epic_a = task_manager.create_task(project_id, "Epic A", task_type="epic")
+        epic_a = task_manager.create_task(
+            project_id,
+            "Epic A",
+            task_type="epic",
+            validation_criteria="Test task completion is observable.",
+        )
         task_a1 = task_manager.create_task(
-            project_id, "Task A1", task_type="task", parent_task_id=epic_a.id
+            project_id,
+            "Task A1",
+            task_type="task",
+            parent_task_id=epic_a.id,
+            validation_criteria="Test task completion is observable.",
         )
         task_a2 = task_manager.create_task(
-            project_id, "Task A2", task_type="task", parent_task_id=epic_a.id
+            project_id,
+            "Task A2",
+            task_type="task",
+            parent_task_id=epic_a.id,
+            validation_criteria="Test task completion is observable.",
         )
 
-        epic_b = task_manager.create_task(project_id, "Epic B", task_type="epic")
+        epic_b = task_manager.create_task(
+            project_id,
+            "Epic B",
+            task_type="epic",
+            validation_criteria="Test task completion is observable.",
+        )
         task_manager.create_task(
-            project_id, "Task B1", task_type="task", parent_task_id=epic_b.id
+            project_id,
+            "Task B1",
+            task_type="task",
+            parent_task_id=epic_b.id,
+            validation_criteria="Test task completion is observable.",
         )  # Creates competing task in different branch
 
         # Set task_a1 as in_progress
@@ -192,15 +245,32 @@ class TestSuggestNextTaskProximityScoring:
     @pytest.mark.asyncio
     async def test_child_of_in_progress_preferred_over_sibling(self, task_manager, project_id):
         """Children of in_progress task get higher boost than siblings."""
-        parent = task_manager.create_task(project_id, "Parent", task_type="feature")
+        parent = task_manager.create_task(
+            project_id,
+            "Parent",
+            task_type="feature",
+            validation_criteria="Test task completion is observable.",
+        )
         task_manager.create_task(
-            project_id, "Sibling", task_type="task", parent_task_id=parent.id
+            project_id,
+            "Sibling",
+            task_type="task",
+            parent_task_id=parent.id,
+            validation_criteria="Test task completion is observable.",
         )  # Creates sibling to compare against
         in_progress = task_manager.create_task(
-            project_id, "In Progress", task_type="task", parent_task_id=parent.id
+            project_id,
+            "In Progress",
+            task_type="task",
+            parent_task_id=parent.id,
+            validation_criteria="Test task completion is observable.",
         )
         child_of_active = task_manager.create_task(
-            project_id, "Child of Active", task_type="task", parent_task_id=in_progress.id
+            project_id,
+            "Child of Active",
+            task_type="task",
+            parent_task_id=in_progress.id,
+            validation_criteria="Test task completion is observable.",
         )
 
         _claim_task(task_manager, project_id, in_progress.id)
@@ -216,12 +286,27 @@ class TestSuggestNextTaskProximityScoring:
     @pytest.mark.asyncio
     async def test_no_boost_when_no_in_progress_task(self, task_manager, project_id):
         """When no task is in_progress, no proximity boost is applied."""
-        epic = task_manager.create_task(project_id, "Epic", task_type="epic")
+        epic = task_manager.create_task(
+            project_id,
+            "Epic",
+            task_type="epic",
+            validation_criteria="Test task completion is observable.",
+        )
         task1 = task_manager.create_task(
-            project_id, "High Priority", task_type="task", parent_task_id=epic.id, priority=1
+            project_id,
+            "High Priority",
+            task_type="task",
+            parent_task_id=epic.id,
+            priority=1,
+            validation_criteria="Test task completion is observable.",
         )
         task_manager.create_task(
-            project_id, "Low Priority", task_type="task", parent_task_id=epic.id, priority=3
+            project_id,
+            "Low Priority",
+            task_type="task",
+            parent_task_id=epic.id,
+            priority=3,
+            validation_criteria="Test task completion is observable.",
         )  # Lower priority task for comparison
 
         with patch("gobby.mcp_proxy.tools.tasks._context.get_project_context") as mock_ctx:
@@ -236,17 +321,42 @@ class TestSuggestNextTaskProximityScoring:
     async def test_priority_dominates_over_proximity(self, task_manager, project_id):
         """Priority takes precedence over proximity - high priority task wins even without proximity."""
         # Create two branches
-        epic_a = task_manager.create_task(project_id, "Epic A", task_type="epic")
+        epic_a = task_manager.create_task(
+            project_id,
+            "Epic A",
+            task_type="epic",
+            validation_criteria="Test task completion is observable.",
+        )
         task_a1 = task_manager.create_task(
-            project_id, "Task A1 (medium)", task_type="task", parent_task_id=epic_a.id, priority=2
+            project_id,
+            "Task A1 (medium)",
+            task_type="task",
+            parent_task_id=epic_a.id,
+            priority=2,
+            validation_criteria="Test task completion is observable.",
         )
         task_manager.create_task(
-            project_id, "Task A2 (low)", task_type="task", parent_task_id=epic_a.id, priority=3
+            project_id,
+            "Task A2 (low)",
+            task_type="task",
+            parent_task_id=epic_a.id,
+            priority=3,
+            validation_criteria="Test task completion is observable.",
         )
 
-        epic_b = task_manager.create_task(project_id, "Epic B", task_type="epic")
+        epic_b = task_manager.create_task(
+            project_id,
+            "Epic B",
+            task_type="epic",
+            validation_criteria="Test task completion is observable.",
+        )
         task_b1 = task_manager.create_task(
-            project_id, "Task B1 (high)", task_type="task", parent_task_id=epic_b.id, priority=1
+            project_id,
+            "Task B1 (high)",
+            task_type="task",
+            parent_task_id=epic_b.id,
+            priority=1,
+            validation_criteria="Test task completion is observable.",
         )  # High priority but different branch
 
         # Set task_a1 as in_progress
@@ -268,14 +378,26 @@ class TestSuggestNextTaskProximityScoring:
         """Tasks in completely separate trees get no proximity boost."""
         # Two completely separate task trees (flat, no parent epics to avoid complexity)
         tree1_task1 = task_manager.create_task(
-            project_id, "Tree 1 Task 1", task_type="task", priority=3
+            project_id,
+            "Tree 1 Task 1",
+            task_type="task",
+            priority=3,
+            validation_criteria="Test task completion is observable.",
         )
         task_manager.create_task(
-            project_id, "Tree 1 Task 2", task_type="task", priority=3
+            project_id,
+            "Tree 1 Task 2",
+            task_type="task",
+            priority=3,
+            validation_criteria="Test task completion is observable.",
         )  # Second task in tree 1
 
         tree2_task = task_manager.create_task(
-            project_id, "Tree 2 Task", task_type="task", priority=1
+            project_id,
+            "Tree 2 Task",
+            task_type="task",
+            priority=1,
+            validation_criteria="Test task completion is observable.",
         )
 
         # Set tree1_task1 as in_progress
@@ -297,12 +419,25 @@ class TestSuggestNextTaskProximityScoring:
     @pytest.mark.asyncio
     async def test_reason_includes_proximity_when_boosted(self, task_manager, project_id):
         """The reason field mentions proximity when it contributed to selection."""
-        epic = task_manager.create_task(project_id, "Epic", task_type="epic")
+        epic = task_manager.create_task(
+            project_id,
+            "Epic",
+            task_type="epic",
+            validation_criteria="Test task completion is observable.",
+        )
         task1 = task_manager.create_task(
-            project_id, "Task 1", task_type="task", parent_task_id=epic.id
+            project_id,
+            "Task 1",
+            task_type="task",
+            parent_task_id=epic.id,
+            validation_criteria="Test task completion is observable.",
         )
         task_manager.create_task(
-            project_id, "Task 2", task_type="task", parent_task_id=epic.id
+            project_id,
+            "Task 2",
+            task_type="task",
+            parent_task_id=epic.id,
+            validation_criteria="Test task completion is observable.",
         )  # Creates sibling task
 
         _claim_task(task_manager, project_id, task1.id)

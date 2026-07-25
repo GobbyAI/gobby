@@ -83,6 +83,7 @@ async def test_development_resume_blocks_active_child_epic_integration_workspace
         title="Existing web build",
         category="planning",
         task_type="epic",
+        validation_criteria="Test task completion is observable.",
     )
     task_manager.initialize_task_manifest(
         root.id,
@@ -94,6 +95,7 @@ async def test_development_resume_blocks_active_child_epic_integration_workspace
         category="planning",
         task_type="epic",
         parent_task_id=root.id,
+        validation_criteria="Test task completion is observable.",
     )
 
     child_integration_branch = "gobby/integration/child-api"
@@ -201,6 +203,7 @@ async def test_development_resume_refreshes_invalid_child_epic_integration_artif
         title="Existing web build",
         category="planning",
         task_type="epic",
+        validation_criteria="Test task completion is observable.",
     )
     task_manager.initialize_task_manifest(
         root.id,
@@ -212,6 +215,7 @@ async def test_development_resume_refreshes_invalid_child_epic_integration_artif
         category="planning",
         task_type="epic",
         parent_task_id=root.id,
+        validation_criteria="Test task completion is observable.",
     )
 
     child_integration_branch = "gobby/integration/child-api"
@@ -283,7 +287,11 @@ def test_apply_stage_caps_to_existing_lifecycle_uses_dispatch_mutex(
     sample_project,
 ) -> None:
     task_manager = LocalTaskManager(temp_db)
-    task = task_manager.create_task(sample_project["id"], "Resume caps")
+    task = task_manager.create_task(
+        sample_project["id"],
+        "Resume caps",
+        validation_criteria="Test task completion is observable.",
+    )
     initialize_manifest(temp_db, task.id, [spec("development", 0)])
     mutexes = TaskDispatchMutexManager(temp_db)
     assert mutexes.acquire_mutex(
@@ -309,6 +317,7 @@ def test_repair_expanded_epic_root_manifest_replaces_under_dispatch_mutex(
         title="Resume expanded epic",
         category="code",
         task_type="epic",
+        validation_criteria="Test task completion is observable.",
     )
     initialize_manifest(
         temp_db,
@@ -381,6 +390,7 @@ def test_manifest_replacement_skips_when_expected_shape_changed(
         title="Stale manifest shape",
         category="code",
         task_type="epic",
+        validation_criteria="Test task completion is observable.",
     )
     initialize_manifest(
         temp_db,

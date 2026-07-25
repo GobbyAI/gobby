@@ -23,6 +23,7 @@ def test_set_artifacts_atomic_enforces_worktree_pair_copresence(
     task = LocalTaskManager(temp_db).create_task(
         project_id=sample_project["id"],
         title="Artifacts",
+        validation_criteria="Test task completion is observable.",
     )
     manager = TaskArtifactManager(temp_db)
 
@@ -36,6 +37,7 @@ def test_set_artifacts_atomic_enforces_clone_pair_copresence(temp_db, sample_pro
     task = LocalTaskManager(temp_db).create_task(
         project_id=sample_project["id"],
         title="Artifacts",
+        validation_criteria="Test task completion is observable.",
     )
     manager = TaskArtifactManager(temp_db)
 
@@ -49,6 +51,7 @@ def test_set_artifacts_atomic_enforces_isolation_family_xor(temp_db, sample_proj
     task = LocalTaskManager(temp_db).create_task(
         project_id=sample_project["id"],
         title="Artifacts",
+        validation_criteria="Test task completion is observable.",
     )
     manager = TaskArtifactManager(temp_db)
 
@@ -74,6 +77,7 @@ def test_clear_isolation_pair_atomically_clears_named_family(temp_db, sample_pro
     task = LocalTaskManager(temp_db).create_task(
         project_id=sample_project["id"],
         title="Clear artifacts",
+        validation_criteria="Test task completion is observable.",
     )
     manager = TaskArtifactManager(temp_db)
 
@@ -106,6 +110,7 @@ def test_clear_worktree_references_clears_integration_branch(temp_db, sample_pro
     task = LocalTaskManager(temp_db).create_task(
         project_id=sample_project["id"],
         title="Clear integration worktree",
+        validation_criteria="Test task completion is observable.",
     )
     manager = TaskArtifactManager(temp_db)
     manager.set_artifacts_atomic(
@@ -128,10 +133,12 @@ def test_clear_worktree_references_rolls_back_partial_failure(temp_db, sample_pr
     task_a = task_manager.create_task(
         project_id=sample_project["id"],
         title="Rollback artifacts A",
+        validation_criteria="Test task completion is observable.",
     )
     task_b = task_manager.create_task(
         project_id=sample_project["id"],
         title="Rollback artifacts B",
+        validation_criteria="Test task completion is observable.",
     )
     manager = TaskArtifactManager(temp_db)
     for task, path in ((task_a, "/tmp/wt-a"), (task_b, "/tmp/wt-b")):
@@ -180,6 +187,7 @@ def test_plan_enhancement_fields_default_to_zero_and_false(temp_db, sample_proje
     task = LocalTaskManager(temp_db).create_task(
         project_id=sample_project["id"],
         title="Enhancement defaults",
+        validation_criteria="Test task completion is observable.",
     )
     artifacts = TaskArtifactManager(temp_db).get_artifacts(task.id)
 
@@ -192,6 +200,7 @@ def test_set_artifacts_atomic_round_trips_plan_enhancement_fields(temp_db, sampl
     task = LocalTaskManager(temp_db).create_task(
         project_id=sample_project["id"],
         title="Enhancement round trip",
+        validation_criteria="Test task completion is observable.",
     )
     manager = TaskArtifactManager(temp_db)
 
@@ -216,6 +225,7 @@ def test_set_artifacts_atomic_rejects_negative_plan_enhancement_rounds(
     task = LocalTaskManager(temp_db).create_task(
         project_id=sample_project["id"],
         title="Enhancement negative",
+        validation_criteria="Test task completion is observable.",
     )
     manager = TaskArtifactManager(temp_db)
 

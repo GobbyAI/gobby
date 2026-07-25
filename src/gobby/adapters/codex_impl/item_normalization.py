@@ -11,6 +11,9 @@ import logging
 import re
 from typing import Any
 
+from gobby.adapters.codex_impl.execution_chain import (
+    DynamicExecCorrelator as DynamicExecCorrelator,
+)
 from gobby.hooks.normalization import normalize_tool_fields
 
 logger = logging.getLogger(__name__)
@@ -245,106 +248,6 @@ def extract_wait_cell_id(data: dict[str, Any]) -> str | None:
     return None
 
 
-class DynamicExecCorrelator:
-    """Correlate yielded ``functions.exec`` calls with their final wait item."""
-
-    def __init__(self, max_pending: int = 64) -> None:
-        self._max_pending = max_pending
-        self._pending_cells: dict[str, dict[str, Any]] = {}
-        self._pending_sessions: dict[str, dict[str, Any]] = {}
-        self._ambiguous_cells: set[str] = set()
-        self._ambiguous_sessions: set[str] = set()
-
-    def correlate(self, data: dict[str, Any]) -> dict[str, Any]:
-        """Attach the original shell command throughout a correlated wrapper chain."""
-        original_tool = data.get("_original_tool_name") or data.get("tool_name")
-        pending_input: dict[str, Any] | None = None
-        waited_cell_id: str | None = None
-        polled_session_id: str | None = None
-
-        if original_tool in _FUNCTIONS_EXEC_NAMES:
-            command = data.pop("_dynamic_exec_command", None)
-            if isinstance(command, str) and command:
-                pending_input = {"command": command}
-            else:
-                polled_session_id = extract_functions_write_stdin_session_id(data.get("arguments"))
-                if (
-                    polled_session_id is not None
-                    and polled_session_id not in self._ambiguous_sessions
-                ):
-                    pending_input = self._pending_sessions.get(polled_session_id)
-        elif original_tool in {"wait", "functions.wait"}:
-            waited_cell_id = extract_wait_cell_id(data)
-            if waited_cell_id is not None and waited_cell_id not in self._ambiguous_cells:
-                pending_input = self._pending_cells.get(waited_cell_id)
-
-        if pending_input is None:
-            return data
-
-        yielded_cell_id = extract_yielded_cell_id(data)
-        if yielded_cell_id is not None:
-            self._set_pending(
-                self._pending_cells,
-                yielded_cell_id,
-                pending_input,
-                self._ambiguous_cells,
-            )
-            return data
-
-        if waited_cell_id is not None:
-            self._pending_cells.pop(waited_cell_id, None)
-
-        result_session_id = extract_exec_session_id(data)
-        terminal_results = _terminal_exec_results(data)
-        if len(terminal_results) == 1:
-            data["_original_tool_name"] = str(original_tool)
-            data["tool_name"] = "Bash"
-            data["tool_input"] = dict(pending_input)
-            data["tool_result"] = dict(terminal_results[0])
-            normalize_tool_fields(data)
-            if polled_session_id is not None:
-                self._pending_sessions.pop(polled_session_id, None)
-            return data
-        if len(terminal_results) > 1:
-            if polled_session_id is not None:
-                self._pending_sessions.pop(polled_session_id, None)
-            return data
-
-        if result_session_id is not None:
-            self._set_pending(
-                self._pending_sessions,
-                result_session_id,
-                pending_input,
-                self._ambiguous_sessions,
-            )
-        elif polled_session_id is not None:
-            self._pending_sessions.pop(polled_session_id, None)
-        return data
-
-    def _set_pending(
-        self,
-        pending: dict[str, dict[str, Any]],
-        key: str,
-        tool_input: dict[str, Any],
-        ambiguous: set[str],
-    ) -> None:
-        existing = pending.get(key)
-        if existing is not None and existing != tool_input:
-            pending.pop(key, None)
-            self._mark_ambiguous(ambiguous, key)
-            return
-        if key in ambiguous:
-            return
-        if len(pending) >= self._max_pending and key not in pending:
-            pending.pop(next(iter(pending)))
-        pending[key] = dict(tool_input)
-
-    def _mark_ambiguous(self, ambiguous: set[str], key: str) -> None:
-        if len(ambiguous) >= self._max_pending and key not in ambiguous:
-            ambiguous.pop()
-        ambiguous.add(key)
-
-
 def extract_completed_item_payload(params: dict[str, Any]) -> dict[str, Any]:
     """Return tool item payload from item/started or item/completed params."""
     item = params.get("item")
@@ -466,6 +369,9 @@ def build_pre_tool_lifecycle_payload(
         return None
 
     tool_input = data.get("tool_input") or {}
+    original_tool = data.get("_original_tool_name") or data.get("tool_name")
+    if original_tool in _FUNCTIONS_EXEC_NAMES and isinstance(data.get("arguments"), str):
+        tool_input = {"arguments": data["arguments"]}
     if not isinstance(tool_input, dict):
         tool_input = {}
     return tool_name, tool_input

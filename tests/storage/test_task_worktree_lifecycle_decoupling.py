@@ -9,7 +9,11 @@ from gobby.storage.worktrees import LocalWorktreeManager, WorktreeStatus
 def test_close_task_does_not_mark_linked_worktree_merged(temp_db, sample_project) -> None:
     task_manager = LocalTaskManager(temp_db)
     worktree_manager = LocalWorktreeManager(temp_db)
-    task = task_manager.create_task(project_id=sample_project["id"], title="Close linked task")
+    task = task_manager.create_task(
+        project_id=sample_project["id"],
+        title="Close linked task",
+        validation_criteria="Test task completion is observable.",
+    )
     worktree = worktree_manager.create(
         project_id=sample_project["id"],
         branch_name="feature/close-linked-task",
@@ -41,7 +45,11 @@ def test_reopen_task_does_not_reactivate_linked_worktree(
 ) -> None:
     task_manager = LocalTaskManager(temp_db)
     worktree_manager = LocalWorktreeManager(temp_db)
-    task = task_manager.create_task(project_id=sample_project["id"], title="Reopen linked task")
+    task = task_manager.create_task(
+        project_id=sample_project["id"],
+        title="Reopen linked task",
+        validation_criteria="Test task completion is observable.",
+    )
     worktree = worktree_manager.create(
         project_id=sample_project["id"],
         branch_name=f"feature/reopen-linked-task-{expected_status}",

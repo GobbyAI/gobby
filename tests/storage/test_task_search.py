@@ -30,6 +30,7 @@ def db_with_tasks(hub_db, tmp_path):
         task_type="feature",
         priority=1,
         labels=["auth", "security"],
+        validation_criteria="Test task completion is observable.",
     )
 
     manager.create_task(
@@ -39,6 +40,7 @@ def db_with_tasks(hub_db, tmp_path):
         task_type="bug",
         priority=1,
         labels=["database", "performance"],
+        validation_criteria="Test task completion is observable.",
     )
 
     manager.create_task(
@@ -48,6 +50,7 @@ def db_with_tasks(hub_db, tmp_path):
         task_type="feature",
         priority=2,
         labels=["ui", "user"],
+        validation_criteria="Test task completion is observable.",
     )
 
     manager.create_task(
@@ -57,6 +60,7 @@ def db_with_tasks(hub_db, tmp_path):
         task_type="task",
         priority=3,
         labels=["auth", "refactor"],
+        validation_criteria="Test task completion is observable.",
     )
 
     manager.create_task(
@@ -66,6 +70,7 @@ def db_with_tasks(hub_db, tmp_path):
         task_type="task",
         priority=2,
         labels=["docs"],
+        validation_criteria="Test task completion is observable.",
     )
 
     return hub_db, manager, project_id
@@ -113,6 +118,7 @@ class TestTaskSearch:
             project_id=project_id,
             title="Authentication review gate",
             description="Authentication task waiting on approval",
+            validation_criteria="Test task completion is observable.",
         )
         set_stage_state(db, task.id, "development", "review_approved")
 
@@ -140,12 +146,14 @@ class TestTaskSearch:
             project_id=project_id,
             title="Authentication review active",
             description="Authentication review shared marker",
+            validation_criteria="Test task completion is observable.",
         )
         set_stage_state(db, open_task.id, "development", "needs_review")
         closed_task = manager.create_task(
             project_id=project_id,
             title="Authentication review closed",
             description="Authentication review shared marker",
+            validation_criteria="Test task completion is observable.",
         )
         set_stage_state(db, closed_task.id, "development", "needs_review")
         db.execute(
@@ -414,7 +422,7 @@ class TestTaskSearchBackend:
 
         assert [(hit.id, hit.score) for hit in results] == [("mem-a", 1.0)]
         assert "deleted_at IS NULL" in db.sql
-        assert "(memories.project_id = %s OR memories.project_id IS NULL)" in db.sql
+        assert "(memories.project_id = %s OR memories.is_global IS TRUE)" in db.sql
         # The active clause carries no bound parameter: two search-column terms, the
         # project_id filter, then the limit.
         assert db.params == ("alpha", "alpha", "proj-1", 5)

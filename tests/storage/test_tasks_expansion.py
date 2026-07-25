@@ -34,6 +34,7 @@ def test_create_task_preserves_description_and_category(manager):
         title="Test Expansion",
         description="Rich details here",
         category="planning",
+        validation_criteria="Test task completion is observable.",
     )
 
     assert task.description == "Rich details here"
@@ -48,7 +49,11 @@ def test_create_task_preserves_description_and_category(manager):
 @pytest.mark.integration
 @pytest.mark.e2e
 def test_update_task_description(manager):
-    task = manager.create_task(project_id=PROJECT_ID, title="Update Me")
+    task = manager.create_task(
+        project_id=PROJECT_ID,
+        title="Update Me",
+        validation_criteria="Test task completion is observable.",
+    )
     updated = manager.update_task(task.id, description="Updated details")
     assert updated.description == "Updated details"
 
@@ -61,7 +66,10 @@ def test_update_task_description(manager):
 @pytest.mark.e2e
 def test_to_dict_excludes_legacy_expansion_fields(manager):
     task = manager.create_task(
-        project_id=PROJECT_ID, title="Dict Test", description="Secret details"
+        project_id=PROJECT_ID,
+        title="Dict Test",
+        description="Secret details",
+        validation_criteria="Test task completion is observable.",
     )
 
     data = task.to_dict()

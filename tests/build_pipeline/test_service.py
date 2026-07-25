@@ -437,6 +437,7 @@ async def test_build_accepts_isolation_for_single_leaf_and_merges_by_default(
         title="Single automated leaf",
         category="code",
         task_type="task",
+        validation_criteria="The isolated leaf build merges by default.",
     )
 
     result = await _build(
@@ -463,6 +464,7 @@ async def test_build_rejects_isolation_change_on_epic_with_existing_artifact(
         title="Built epic",
         category="planning",
         task_type="epic",
+        validation_criteria="Test task completion is observable.",
     )
     TaskArtifactManager(temp_db).set_artifacts_atomic(
         epic.id,
@@ -537,6 +539,7 @@ async def test_build_rejects_no_merge_without_isolation(
         title="No merge leaf",
         category="code",
         task_type="task",
+        validation_criteria="No-merge requires an isolated build.",
     )
 
     with pytest.raises(ValueError, match="--no-merge requires"):
@@ -695,6 +698,7 @@ async def test_build_plan_file_uses_registered_open_root_task(
         title="Gwiki Parity+ Roadmap",
         task_type="epic",
         category="planning",
+        validation_criteria="Test task completion is observable.",
     )
     LocalPlanManager(temp_db).create_plan(
         project_id=project_id,
@@ -1155,6 +1159,7 @@ async def test_build_launch_resumes_paused_dispatcher_before_tick(
         title="Docs leaf",
         category="docs",
         task_type="task",
+        validation_criteria="The documentation leaf resumes dispatch before its tick.",
     )
     tick_kwargs: list[dict[str, object]] = []
 
@@ -1294,6 +1299,7 @@ async def test_build_leaf_uses_category_primary_stage_and_sets_agent(
         title="Solo leaf",
         category="test",
         task_type="task",
+        validation_criteria="Test task completion is observable.",
     )
 
     result = await _build(
@@ -1326,6 +1332,7 @@ async def test_build_existing_leaf_omitted_backend_defaults_to_worktree(
         title="Docs leaf",
         category="docs",
         task_type="task",
+        validation_criteria="Test task completion is observable.",
     )
     task_manager.update_task(leaf.id, isolation="none")
     task_manager.initialize_task_manifest(leaf.id, stage_names=["development"])
@@ -1357,6 +1364,7 @@ async def test_build_existing_leaf_explicit_isolation_overrides_task_isolation(
         title="Explicit isolation leaf",
         category="code",
         task_type="task",
+        validation_criteria="Test task completion is observable.",
     )
     task_manager.update_task(leaf.id, isolation="none")
     task_manager.initialize_task_manifest(leaf.id, stage_names=["development", "merge"])
@@ -1385,6 +1393,7 @@ async def test_build_rerun_same_manifest_preserves_active_stage(
         title="Same shape leaf",
         category="code",
         task_type="task",
+        validation_criteria="Test task completion is observable.",
     )
     await _build(
         f"#{leaf.seq_num}",
@@ -1427,6 +1436,7 @@ async def test_build_rejects_skip_stage_on_existing_lifecycle(
         title="Different shape active leaf",
         category="code",
         task_type="task",
+        validation_criteria="Test task completion is observable.",
     )
     await _build(
         f"#{leaf.seq_num}",
@@ -1460,6 +1470,7 @@ async def test_build_existing_lifecycle_stage_caps_update_rows(
         title="Pristine reseed leaf",
         category="code",
         task_type="task",
+        validation_criteria="Test task completion is observable.",
     )
     task_manager.initialize_task_manifest(leaf.id, stage_names=["development", "pr", "merge"])
 
@@ -1492,6 +1503,7 @@ async def test_build_task_ref_dry_run_rolls_back_existing_lifecycle_mutations(
         title="Existing lifecycle preview",
         category="code",
         task_type="task",
+        validation_criteria="Test task completion is observable.",
     )
     task_manager.initialize_task_manifest(task.id, stage_names=["development", "pr"])
     tables = (
@@ -1555,6 +1567,7 @@ async def test_build_epic_dry_run_resume_skips_subtree_cascade_locking(
         title="Existing epic preview",
         category="planning",
         task_type="epic",
+        validation_criteria="Test task completion is observable.",
     )
     child = task_manager.create_task(
         project_id=sample_project["id"],
@@ -1562,6 +1575,7 @@ async def test_build_epic_dry_run_resume_skips_subtree_cascade_locking(
         parent_task_id=epic.id,
         category="code",
         task_type="task",
+        validation_criteria="Test task completion is observable.",
     )
     task_manager.initialize_task_manifest(epic.id, stage_names=["development", "merge"])
 
@@ -1602,6 +1616,7 @@ async def test_build_epic_cascade_initializes_child_from_resolved_scope(
         title="Scoped build epic",
         category="planning",
         task_type="epic",
+        validation_criteria="Test task completion is observable.",
     )
     child = task_manager.create_task(
         project_id=sample_project["id"],
@@ -1609,6 +1624,7 @@ async def test_build_epic_cascade_initializes_child_from_resolved_scope(
         parent_task_id=epic.id,
         category="code",
         task_type="task",
+        validation_criteria="Test task completion is observable.",
     )
 
     await _build(
@@ -1642,6 +1658,7 @@ async def test_build_epic_creates_integration_worktrees_and_targets_nearest_bran
         title="Root Integration",
         category="planning",
         task_type="epic",
+        validation_criteria="Test task completion is observable.",
     )
     child_epic = task_manager.create_task(
         project_id=project_id,
@@ -1649,6 +1666,7 @@ async def test_build_epic_creates_integration_worktrees_and_targets_nearest_bran
         parent_task_id=root.id,
         category="planning",
         task_type="epic",
+        validation_criteria="Test task completion is observable.",
     )
     leaf = task_manager.create_task(
         project_id=project_id,
@@ -1656,6 +1674,7 @@ async def test_build_epic_creates_integration_worktrees_and_targets_nearest_bran
         parent_task_id=child_epic.id,
         category="code",
         task_type="task",
+        validation_criteria="Test task completion is observable.",
     )
 
     await _build(
@@ -1704,6 +1723,7 @@ async def test_epic_no_merge_skips_only_root_promotion(
         title="No merge root",
         category="planning",
         task_type="epic",
+        validation_criteria="Test task completion is observable.",
     )
     child = task_manager.create_task(
         project_id=project_id,
@@ -1711,6 +1731,7 @@ async def test_epic_no_merge_skips_only_root_promotion(
         parent_task_id=root.id,
         category="code",
         task_type="task",
+        validation_criteria="Test task completion is observable.",
     )
 
     await _build(
@@ -1742,6 +1763,7 @@ async def test_existing_epic_cascade_forces_child_merge_with_legacy_root_manifes
         title="Legacy Integration Root",
         category="planning",
         task_type="epic",
+        validation_criteria="Test task completion is observable.",
     )
     child = task_manager.create_task(
         project_id=project_id,
@@ -1749,6 +1771,7 @@ async def test_existing_epic_cascade_forces_child_merge_with_legacy_root_manifes
         parent_task_id=root.id,
         category="docs",
         task_type="task",
+        validation_criteria="Test task completion is observable.",
     )
     task_manager.initialize_task_manifest(root.id, stage_names=["development"])
 
@@ -1781,6 +1804,7 @@ async def test_build_epic_cascade_preserves_active_child_with_cap_drift(
         title="Root with reopened child",
         category="planning",
         task_type="epic",
+        validation_criteria="Test task completion is observable.",
     )
     child = task_manager.create_task(
         project_id=project_id,
@@ -1788,6 +1812,7 @@ async def test_build_epic_cascade_preserves_active_child_with_cap_drift(
         parent_task_id=root.id,
         category="code",
         task_type="feature",
+        validation_criteria="Test task completion is observable.",
     )
     task_manager.stage_states.initialize_manifest(
         child.id,
@@ -1833,6 +1858,7 @@ async def test_build_epic_cascade_skips_closed_descendants_with_existing_lifecyc
         title="Mixed epic",
         category="planning",
         task_type="epic",
+        validation_criteria="Test task completion is observable.",
     )
     closed_child = task_manager.create_task(
         project_id=sample_project["id"],
@@ -1840,6 +1866,7 @@ async def test_build_epic_cascade_skips_closed_descendants_with_existing_lifecyc
         parent_task_id=epic.id,
         category="docs",
         task_type="task",
+        validation_criteria="Test task completion is observable.",
     )
     open_child = task_manager.create_task(
         project_id=sample_project["id"],
@@ -1847,6 +1874,7 @@ async def test_build_epic_cascade_skips_closed_descendants_with_existing_lifecyc
         parent_task_id=epic.id,
         category="docs",
         task_type="task",
+        validation_criteria="Test task completion is observable.",
     )
     task_manager.update_task(closed_child.id, isolation="worktree")
     task_manager.initialize_task_manifest(
@@ -1893,6 +1921,7 @@ async def test_build_epic_cascade_skips_busy_descendant_manifest_initialization(
         title="Busy epic",
         category="planning",
         task_type="epic",
+        validation_criteria="Test task completion is observable.",
     )
     busy_child = task_manager.create_task(
         project_id=sample_project["id"],
@@ -1900,6 +1929,7 @@ async def test_build_epic_cascade_skips_busy_descendant_manifest_initialization(
         parent_task_id=epic.id,
         category="docs",
         task_type="task",
+        validation_criteria="Test task completion is observable.",
     )
     open_child = task_manager.create_task(
         project_id=sample_project["id"],
@@ -1907,6 +1937,7 @@ async def test_build_epic_cascade_skips_busy_descendant_manifest_initialization(
         parent_task_id=epic.id,
         category="docs",
         task_type="task",
+        validation_criteria="Test task completion is observable.",
     )
     task_manager.initialize_task_manifest(
         busy_child.id,
@@ -1962,6 +1993,7 @@ async def test_build_leaf_with_services_creates_agent_run_by_completion(
         title="Solo leaf with dispatch",
         category="code",
         task_type="task",
+        validation_criteria="Test task completion is observable.",
     )
 
     async def fake_spawn_agent_impl(**kwargs: object) -> dict[str, object]:
@@ -2012,6 +2044,7 @@ async def test_build_leaf_rejects_non_automated_category(
         title="Manual is not an automated leaf category",
         category="manual",
         task_type="task",
+        validation_criteria="Manual leaves are rejected from automated builds.",
     )
 
     with pytest.raises(ValueError, match="category manual cannot be automated"):
@@ -2036,6 +2069,7 @@ async def test_build_task_ref_automates_existing_expansion_output(
         title="Expanded epic",
         category="planning",
         task_type="epic",
+        validation_criteria="Test task completion is observable.",
     )
     child = task_manager.create_task(
         project_id=sample_project["id"],
@@ -2043,6 +2077,7 @@ async def test_build_task_ref_automates_existing_expansion_output(
         parent_task_id=parent.id,
         category="code",
         task_type="task",
+        validation_criteria="Test task completion is observable.",
     )
     _record_completed_expansion_run(
         db=temp_db,
@@ -2095,6 +2130,7 @@ async def test_build_task_ref_repairs_legacy_expanded_epic_manifest_without_pr(
         title="Expanded epic",
         category="planning",
         task_type="epic",
+        validation_criteria="Test task completion is observable.",
     )
     child = task_manager.create_task(
         project_id=sample_project["id"],
@@ -2102,6 +2138,7 @@ async def test_build_task_ref_repairs_legacy_expanded_epic_manifest_without_pr(
         parent_task_id=parent.id,
         category="code",
         task_type="task",
+        validation_criteria="Test task completion is observable.",
     )
     task_manager.stage_states.initialize_manifest(
         parent.id,
@@ -2181,6 +2218,7 @@ async def test_build_task_ref_removes_skipped_pr_from_progressed_child_epic(
         title="Expanded epic",
         category="planning",
         task_type="epic",
+        validation_criteria="Test task completion is observable.",
     )
     child = task_manager.create_task(
         project_id=sample_project["id"],
@@ -2188,6 +2226,7 @@ async def test_build_task_ref_removes_skipped_pr_from_progressed_child_epic(
         parent_task_id=parent.id,
         category="planning",
         task_type="epic",
+        validation_criteria="Test task completion is observable.",
     )
     manifest = [
         StageManifestSpec(stage_name="development", position=0),
@@ -2268,6 +2307,7 @@ async def test_build_task_ref_removes_auto_started_skipped_pr_from_child_epic(
         title="Expanded epic",
         category="planning",
         task_type="epic",
+        validation_criteria="Test task completion is observable.",
     )
     child = task_manager.create_task(
         project_id=sample_project["id"],
@@ -2275,6 +2315,7 @@ async def test_build_task_ref_removes_auto_started_skipped_pr_from_child_epic(
         parent_task_id=parent.id,
         category="planning",
         task_type="epic",
+        validation_criteria="Test task completion is observable.",
     )
     manifest = [
         StageManifestSpec(stage_name="development", position=0),
@@ -2344,6 +2385,7 @@ async def test_build_resume_cascades_skipped_pr_before_workspace_refresh(
         title="Expanded epic",
         category="planning",
         task_type="epic",
+        validation_criteria="Test task completion is observable.",
     )
     child = task_manager.create_task(
         project_id=sample_project["id"],
@@ -2351,6 +2393,7 @@ async def test_build_resume_cascades_skipped_pr_before_workspace_refresh(
         parent_task_id=parent.id,
         category="planning",
         task_type="epic",
+        validation_criteria="Test task completion is observable.",
     )
     manifest = [
         StageManifestSpec(stage_name="development", position=0),
@@ -2453,6 +2496,7 @@ async def test_build_resume_development_epic_defers_workspace_refresh(
         title="Expanded epic",
         category="planning",
         task_type="epic",
+        validation_criteria="Test task completion is observable.",
     )
     child = task_manager.create_task(
         project_id=sample_project["id"],
@@ -2460,6 +2504,7 @@ async def test_build_resume_development_epic_defers_workspace_refresh(
         parent_task_id=parent.id,
         category="planning",
         task_type="epic",
+        validation_criteria="Test task completion is observable.",
     )
     manifest = [
         StageManifestSpec(stage_name="development", position=0),
@@ -2520,6 +2565,7 @@ async def test_build_task_ref_can_reset_existing_expansion_output(
         title="Expanded epic",
         category="planning",
         task_type="epic",
+        validation_criteria="Test task completion is observable.",
     )
     child = task_manager.create_task(
         project_id=sample_project["id"],
@@ -2527,6 +2573,7 @@ async def test_build_task_ref_can_reset_existing_expansion_output(
         parent_task_id=parent.id,
         category="code",
         task_type="task",
+        validation_criteria="Test task completion is observable.",
     )
     _record_completed_expansion_run(
         db=temp_db,

@@ -26,6 +26,7 @@ def test_acquire_release_round_trip(
     task = LocalTaskManager(temp_db).create_task(
         project_id=sample_project["id"],
         title="Mutex task",
+        validation_criteria="Test task completion is observable.",
     )
     manager = _manager_class()(temp_db)
     now = datetime(2026, 1, 1, tzinfo=UTC)
@@ -76,6 +77,7 @@ def test_active_mutex_cannot_be_replaced_by_same_holder_with_different_run(
     task = LocalTaskManager(temp_db).create_task(
         project_id=sample_project["id"],
         title="Run mutex task",
+        validation_criteria="Test task completion is observable.",
     )
     manager = _manager_class()(temp_db)
     now = datetime(2026, 1, 1, tzinfo=UTC)
@@ -126,6 +128,7 @@ def test_same_holder_can_attach_run_to_no_run_mutex(
     task = LocalTaskManager(temp_db).create_task(
         project_id=sample_project["id"],
         title="No-run mutex task",
+        validation_criteria="Test task completion is observable.",
     )
     manager = _manager_class()(temp_db)
     now = datetime(2026, 1, 1, tzinfo=UTC)
@@ -157,6 +160,7 @@ def test_expired_mutex_can_be_reacquired_by_new_holder(temp_db, sample_project) 
     task = LocalTaskManager(temp_db).create_task(
         project_id=sample_project["id"],
         title="Expired mutex",
+        validation_criteria="Test task completion is observable.",
     )
     manager = _manager_class()(temp_db)
     now = datetime(2026, 1, 1, tzinfo=UTC)
@@ -185,6 +189,7 @@ def test_force_release(temp_db, sample_project) -> None:
     task = LocalTaskManager(temp_db).create_task(
         project_id=sample_project["id"],
         title="Force release mutex",
+        validation_criteria="Test task completion is observable.",
     )
     manager = _manager_class()(temp_db)
 
@@ -204,6 +209,7 @@ def test_release_mutex_only_releases_matching_holder(temp_db, sample_project) ->
     task = LocalTaskManager(temp_db).create_task(
         project_id=sample_project["id"],
         title="Release mutex",
+        validation_criteria="Test task completion is observable.",
     )
     manager = _manager_class()(temp_db)
 
@@ -225,6 +231,7 @@ def test_attach_run_id_links_run_to_lease(temp_db, sample_project) -> None:
     task = LocalTaskManager(temp_db).create_task(
         project_id=sample_project["id"],
         title="Attach run id",
+        validation_criteria="Test task completion is observable.",
     )
     manager = _manager_class()(temp_db)
 
@@ -255,6 +262,7 @@ def test_stale_holder_cannot_attach_or_release_lease(temp_db, sample_project) ->
     task = LocalTaskManager(temp_db).create_task(
         project_id=sample_project["id"],
         title="Stale mutex holder",
+        validation_criteria="Test task completion is observable.",
     )
     manager = _manager_class()(temp_db)
     acquired_at = datetime(2026, 1, 1, tzinfo=UTC)
@@ -285,6 +293,7 @@ def test_expired_holder_cannot_attach_or_release_lease(temp_db, sample_project) 
     task = LocalTaskManager(temp_db).create_task(
         project_id=sample_project["id"],
         title="Expired mutex holder",
+        validation_criteria="Test task completion is observable.",
     )
     manager = _manager_class()(temp_db)
     acquired_at = datetime(2026, 1, 1, tzinfo=UTC)
@@ -313,8 +322,16 @@ def test_expired_holder_cannot_attach_or_release_lease(temp_db, sample_project) 
 
 def test_refresh_mutex_for_run_extends_matching_lease_only(temp_db, sample_project) -> None:
     task_manager = LocalTaskManager(temp_db)
-    task = task_manager.create_task(project_id=sample_project["id"], title="Refresh mutex")
-    other = task_manager.create_task(project_id=sample_project["id"], title="Other mutex")
+    task = task_manager.create_task(
+        project_id=sample_project["id"],
+        title="Refresh mutex",
+        validation_criteria="Test task completion is observable.",
+    )
+    other = task_manager.create_task(
+        project_id=sample_project["id"],
+        title="Other mutex",
+        validation_criteria="Test task completion is observable.",
+    )
     manager = _manager_class()(temp_db)
     past = datetime(2026, 1, 1, tzinfo=UTC)
     refresh_at = past + timedelta(minutes=10)
@@ -399,8 +416,16 @@ def test_ensure_table_creates_run_id_index(temp_db) -> None:
 
 def test_sweep_expired(temp_db, sample_project) -> None:
     task_manager = LocalTaskManager(temp_db)
-    stale = task_manager.create_task(project_id=sample_project["id"], title="Stale")
-    fresh = task_manager.create_task(project_id=sample_project["id"], title="Fresh")
+    stale = task_manager.create_task(
+        project_id=sample_project["id"],
+        title="Stale",
+        validation_criteria="Test task completion is observable.",
+    )
+    fresh = task_manager.create_task(
+        project_id=sample_project["id"],
+        title="Fresh",
+        validation_criteria="Test task completion is observable.",
+    )
     manager = _manager_class()(temp_db)
     now = datetime(2026, 1, 1, tzinfo=UTC)
 

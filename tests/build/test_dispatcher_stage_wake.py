@@ -42,6 +42,7 @@ def test_submit_for_review_schedules_direct_dispatch_tick(
         title="Leaf",
         category="code",
         task_type="feature",
+        validation_criteria="Test task completion is observable.",
     )
     manager.update_task(task.id, allow_automation=True, assigned_agent="backend-developer")
     manager.stage_states.initialize_manifest(
@@ -74,6 +75,7 @@ def test_close_task_schedules_direct_dispatch_tick(
         title="No-review leaf",
         category="code",
         task_type="feature",
+        validation_criteria="Test task completion is observable.",
     )
     manager.update_task(task.id, allow_automation=True, assigned_agent="backend-developer")
 
@@ -114,6 +116,7 @@ async def test_close_task_with_commit_fallback_tick_uses_fresh_context(
         title="No-review leaf",
         category="code",
         task_type="feature",
+        validation_criteria="Test task completion is observable.",
     )
     manager.update_task(task.id, allow_automation=True, assigned_agent="backend-developer")
 
@@ -145,6 +148,7 @@ def test_dispatcher_wake_respects_stopped_automation(
         title="Stopped leaf",
         category="code",
         task_type="feature",
+        validation_criteria="Test task completion is observable.",
     )
     manager.update_task(task.id, allow_automation=False, assigned_agent="backend-developer")
     manager.stage_states.initialize_manifest(
@@ -243,6 +247,7 @@ async def test_final_worker_submit_for_review_dispatches_reviewer_without_manual
         title="Final worker handoff",
         category="code",
         task_type="feature",
+        validation_criteria="Test task completion is observable.",
     )
     manager.stage_states.initialize_manifest(
         task.id,

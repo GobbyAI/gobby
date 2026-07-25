@@ -61,6 +61,7 @@ async def test_backfill_wire_contract(
         task_type="review_anchor",
         category="planning",
         isolation="none",
+        validation_criteria="Test task completion is observable.",
     )
     empty_lineage = DurableLineage(
         db=temp_db,
@@ -97,6 +98,7 @@ async def test_backfill_wire_contract(
         task_type="review_anchor",
         category="planning",
         isolation="none",
+        validation_criteria="Test task completion is observable.",
     )
     refused = await registry.call(
         "backfill_plan_review_lessons",
@@ -151,6 +153,7 @@ async def test_non_plan_approval_unaffected(
             f"Facade approve {surface}",
             category="code",
             isolation="none",
+            validation_criteria="Test task completion is observable.",
         )
         manager.initialize_task_manifest(facade_approve.id, stage_names=[stage])
         set_stage_state(temp_db, facade_approve.id, stage, "needs_review")
@@ -164,6 +167,7 @@ async def test_non_plan_approval_unaffected(
             f"Facade reject {surface}",
             category="code",
             isolation="none",
+            validation_criteria="Test task completion is observable.",
         )
         manager.initialize_task_manifest(facade_reject.id, stage_names=[stage])
         set_stage_state(temp_db, facade_reject.id, stage, "needs_review")
@@ -177,6 +181,7 @@ async def test_non_plan_approval_unaffected(
             f"Registry approve {surface}",
             category="code",
             isolation="none",
+            validation_criteria="Test task completion is observable.",
         )
         manager.initialize_task_manifest(registry_approve.id, stage_names=[stage])
         set_stage_state(temp_db, registry_approve.id, stage, "needs_review")
@@ -196,6 +201,7 @@ async def test_non_plan_approval_unaffected(
             f"Registry reject {surface}",
             category="code",
             isolation="none",
+            validation_criteria="Test task completion is observable.",
         )
         manager.initialize_task_manifest(registry_reject.id, stage_names=[stage])
         set_stage_state(temp_db, registry_reject.id, stage, "needs_review")
@@ -216,6 +222,7 @@ async def test_non_plan_approval_unaffected(
         task_type="review_anchor",
         category="planning",
         isolation="none",
+        validation_criteria="Test task completion is observable.",
     )
     manager.initialize_task_manifest(planning.id, stage_names=["planning"])
     set_stage_state(temp_db, planning.id, "planning", "needs_review")

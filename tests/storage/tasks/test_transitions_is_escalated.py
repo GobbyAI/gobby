@@ -11,7 +11,11 @@ pytestmark = pytest.mark.unit
 
 def test_escalate_round_trip(temp_db, sample_project) -> None:
     manager = LocalTaskManager(temp_db)
-    task = manager.create_task(project_id=sample_project["id"], title="Escalate me")
+    task = manager.create_task(
+        project_id=sample_project["id"],
+        title="Escalate me",
+        validation_criteria="Test task completion is observable.",
+    )
 
     escalated = manager.escalate_task(task.id, reason="blocked by operator")
     row = temp_db.fetchone(
@@ -42,7 +46,11 @@ def test_de_escalate_releases_stale_claim(temp_db, sample_project, session_manag
         source="codex",
         project_id=sample_project["id"],
     )
-    task = manager.create_task(project_id=sample_project["id"], title="Escalate me")
+    task = manager.create_task(
+        project_id=sample_project["id"],
+        title="Escalate me",
+        validation_criteria="Test task completion is observable.",
+    )
 
     manager.escalate_task(task.id, reason="blocked by operator")
     temp_db.execute(

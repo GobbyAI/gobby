@@ -311,6 +311,7 @@ class TestSpawnAgentImplErrorBranches:
         task = task_manager.create_task(
             project_id=sample_project["id"],
             title="Reused worktree",
+            validation_criteria="Test task completion is observable.",
         )
         worktree_path = tmp_path / "worktree"
         worktree_path.mkdir()

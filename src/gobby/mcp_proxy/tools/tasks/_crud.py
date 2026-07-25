@@ -20,6 +20,7 @@ from gobby.storage.task_affected_files import TaskAffectedFileManager
 from gobby.storage.task_dependencies import DependencyCycleError
 from gobby.storage.tasks import TASK_TYPE_CHOICES, VALID_CATEGORIES, TaskNotFoundError
 from gobby.tasks.categories import IMPLEMENTATION_DOMAINS
+from gobby.tasks.criteria_contract import TaskCriteriaError, require_validation_criteria
 from gobby.tasks.isolation import validate_task_isolation_artifacts
 from gobby.workflows.claimed_task_skills import build_claimed_task_skill_state
 
@@ -29,20 +30,18 @@ IMPLEMENTATION_DOMAIN_ENUM = tuple(sorted(IMPLEMENTATION_DOMAINS))
 TASK_TYPE_ENUM = TASK_TYPE_CHOICES
 
 
-def _code_task_invariant_error(
+def _task_invariant_error(
+    task_type: str,
     category: str | None,
     validation_criteria: str | None,
     implementation_domain: str | None,
 ) -> str | None:
-    """Return the code-task invariant error for the effective task state."""
-    if category != "code":
-        return None
-    if not validation_criteria:
-        return (
-            "Code tasks require validation_criteria. "
-            "Describe what 'done' looks like so validate_task can check your diff against it."
-        )
-    if implementation_domain is None:
+    """Return the task invariant error for the effective task state."""
+    try:
+        require_validation_criteria(task_type, validation_criteria)
+    except TaskCriteriaError as exc:
+        return str(exc)
+    if category == "code" and implementation_domain is None:
         return "Code tasks require implementation_domain ('backend', 'frontend', or 'fullstack')."
     return None
 
@@ -144,8 +143,11 @@ def create_crud_registry(ctx: RegistryContext) -> InternalToolRegistry:
             except (TaskNotFoundError, ValueError) as e:
                 return {"error": f"Invalid parent_task_id: {e}"}
 
-        invariant_error = _code_task_invariant_error(
-            category, validation_criteria, implementation_domain
+        invariant_error = _task_invariant_error(
+            task_type,
+            category,
+            validation_criteria,
+            implementation_domain,
         )
         if invariant_error:
             return {"error": invariant_error}
@@ -498,6 +500,7 @@ def create_crud_registry(ctx: RegistryContext) -> InternalToolRegistry:
             return {"error": f"Task {task_id} not found"}
 
         effective_category = category if category is not None else current_task.category
+        effective_task_type = task_type if task_type is not None else current_task.task_type
         effective_validation_criteria = (
             validation_criteria
             if validation_criteria is not None
@@ -508,7 +511,8 @@ def create_crud_registry(ctx: RegistryContext) -> InternalToolRegistry:
             if implementation_domain is not None
             else current_task.implementation_domain
         )
-        invariant_error = _code_task_invariant_error(
+        invariant_error = _task_invariant_error(
+            effective_task_type,
             effective_category,
             effective_validation_criteria,
             effective_implementation_domain,

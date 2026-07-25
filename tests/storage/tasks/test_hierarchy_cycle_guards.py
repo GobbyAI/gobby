@@ -24,8 +24,17 @@ def test_path_cache_cycle_fails_before_writing(
     sample_project: dict[str, Any],
 ) -> None:
     manager = LocalTaskManager(temp_db)
-    root = manager.create_task(sample_project["id"], "Cycle root")
-    child = manager.create_task(sample_project["id"], "Cycle child", parent_task_id=root.id)
+    root = manager.create_task(
+        sample_project["id"],
+        "Cycle root",
+        validation_criteria="Test task completion is observable.",
+    )
+    child = manager.create_task(
+        sample_project["id"],
+        "Cycle child",
+        parent_task_id=root.id,
+        validation_criteria="Test task completion is observable.",
+    )
     temp_db.execute("UPDATE tasks SET parent_task_id = %s WHERE id = %s", (child.id, root.id))
     temp_db.execute(
         "UPDATE tasks SET path_cache = NULL WHERE id = ANY(%s::uuid[])",
@@ -49,10 +58,22 @@ def test_descendant_path_update_enforces_depth_cap(
     sample_project: dict[str, Any],
 ) -> None:
     manager = LocalTaskManager(temp_db)
-    root = manager.create_task(sample_project["id"], "Depth root")
-    child = manager.create_task(sample_project["id"], "Depth child", parent_task_id=root.id)
+    root = manager.create_task(
+        sample_project["id"],
+        "Depth root",
+        validation_criteria="Test task completion is observable.",
+    )
+    child = manager.create_task(
+        sample_project["id"],
+        "Depth child",
+        parent_task_id=root.id,
+        validation_criteria="Test task completion is observable.",
+    )
     grandchild = manager.create_task(
-        sample_project["id"], "Depth grandchild", parent_task_id=child.id
+        sample_project["id"],
+        "Depth grandchild",
+        parent_task_id=child.id,
+        validation_criteria="Test task completion is observable.",
     )
     task_ids = [root.id, child.id, grandchild.id]
     temp_db.execute(
@@ -76,12 +97,21 @@ def test_ready_and_blocked_readers_terminate_on_blocker_parent_cycle(
     sample_project: dict[str, Any],
 ) -> None:
     manager = LocalTaskManager(temp_db)
-    blocked = manager.create_task(sample_project["id"], "Blocked task")
-    cycle_root = manager.create_task(sample_project["id"], "Cyclic blocker root")
+    blocked = manager.create_task(
+        sample_project["id"],
+        "Blocked task",
+        validation_criteria="Test task completion is observable.",
+    )
+    cycle_root = manager.create_task(
+        sample_project["id"],
+        "Cyclic blocker root",
+        validation_criteria="Test task completion is observable.",
+    )
     blocker = manager.create_task(
         sample_project["id"],
         "Cyclic blocker",
         parent_task_id=cycle_root.id,
+        validation_criteria="Test task completion is observable.",
     )
     temp_db.execute(
         "UPDATE tasks SET parent_task_id = %s WHERE id = %s", (blocker.id, cycle_root.id)
@@ -100,8 +130,18 @@ def test_build_subtree_readers_and_cascade_bound_cycles(
     sample_project: dict[str, Any],
 ) -> None:
     manager = LocalTaskManager(temp_db)
-    root = manager.create_task(sample_project["id"], "Build root", task_type="epic")
-    child = manager.create_task(sample_project["id"], "Build child", parent_task_id=root.id)
+    root = manager.create_task(
+        sample_project["id"],
+        "Build root",
+        task_type="epic",
+        validation_criteria="Test task completion is observable.",
+    )
+    child = manager.create_task(
+        sample_project["id"],
+        "Build child",
+        parent_task_id=root.id,
+        validation_criteria="Test task completion is observable.",
+    )
     manager.initialize_task_manifest(root.id, stage_names=["development"])
     temp_db.execute("UPDATE tasks SET parent_task_id = %s WHERE id = %s", (child.id, root.id))
 

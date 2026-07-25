@@ -122,10 +122,12 @@ def test_list_active_filters_by_task_ids_in_sql(
     included_task = task_manager.create_task(
         project_id=sample_project["id"],
         title="Included",
+        validation_criteria="Test task completion is observable.",
     )
     excluded_task = task_manager.create_task(
         project_id=sample_project["id"],
         title="Excluded",
+        validation_criteria="Test task completion is observable.",
     )
     included = agent_manager.create(
         parent_session_id=parent_id,

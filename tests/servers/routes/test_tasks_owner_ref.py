@@ -66,7 +66,11 @@ def test_get_task_owner_ref_is_friendly_not_uuid(
     project_id: str,
     session: Session,
 ) -> None:
-    task = task_manager.create_task(project_id=project_id, title="Claimed")
+    task = task_manager.create_task(
+        project_id=project_id,
+        title="Claimed",
+        validation_criteria="Test task completion is observable.",
+    )
     task_manager.claim_task(task.id, session_id=session.id)
 
     body = client.get(f"/api/tasks/{task.id}").json()
@@ -86,7 +90,11 @@ def test_list_tasks_carries_owner_ref(
     project_id: str,
     session: Session,
 ) -> None:
-    task = task_manager.create_task(project_id=project_id, title="Listed")
+    task = task_manager.create_task(
+        project_id=project_id,
+        title="Listed",
+        validation_criteria="Test task completion is observable.",
+    )
     task_manager.claim_task(task.id, session_id=session.id)
 
     tasks = client.get("/api/tasks").json()["tasks"]
@@ -101,7 +109,11 @@ def test_unclaimed_task_owner_ref_is_none(
     task_manager: LocalTaskManager,
     project_id: str,
 ) -> None:
-    task = task_manager.create_task(project_id=project_id, title="Unclaimed")
+    task = task_manager.create_task(
+        project_id=project_id,
+        title="Unclaimed",
+        validation_criteria="Test task completion is observable.",
+    )
 
     body = client.get(f"/api/tasks/{task.id}").json()
 
@@ -114,10 +126,16 @@ def test_dependency_tree_resolves_actual_tasks(
     project_id: str,
 ) -> None:
     blocker = task_manager.create_task(
-        project_id=project_id, title="Upstream migration", task_type="task"
+        project_id=project_id,
+        title="Upstream migration",
+        task_type="task",
+        validation_criteria="Test task completion is observable.",
     )
     blocked = task_manager.create_task(
-        project_id=project_id, title="Downstream work", task_type="feature"
+        project_id=project_id,
+        title="Downstream work",
+        task_type="feature",
+        validation_criteria="Test task completion is observable.",
     )
     TaskDependencyManager(task_manager.db).add_dependency(blocked.id, blocker.id, "blocks")
 

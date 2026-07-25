@@ -106,6 +106,7 @@ def sample_task(task_manager, project_id) -> dict:
         description="A description",
         priority=1,
         task_type="task",
+        validation_criteria="Test task completion is observable.",
     )
     return t.to_dict()
 
@@ -124,8 +125,18 @@ def _start_current_stage(
 @pytest.fixture
 def two_tasks(task_manager, project_id) -> tuple[dict, dict]:
     """Create two tasks for dependency tests."""
-    t1 = task_manager.create_task(project_id=project_id, title="Task A", task_type="task")
-    t2 = task_manager.create_task(project_id=project_id, title="Task B", task_type="task")
+    t1 = task_manager.create_task(
+        project_id=project_id,
+        title="Task A",
+        task_type="task",
+        validation_criteria="Test task completion is observable.",
+    )
+    t2 = task_manager.create_task(
+        project_id=project_id,
+        title="Task B",
+        task_type="task",
+        validation_criteria="Test task completion is observable.",
+    )
     return t1.to_dict(), t2.to_dict()
 
 
@@ -175,6 +186,7 @@ class TestListTasks:
                 project_id=project_id,
                 title=f"Owned task {index}",
                 claimed_by_session_id=owner.id,
+                validation_criteria="Test task completion is observable.",
             )
             for index, owner in enumerate(owners)
         ]
@@ -226,6 +238,7 @@ class TestListTasks:
             project_id=project_id,
             title="Legacy task type",
             task_type=canonical_type,
+            validation_criteria="Test task completion is observable.",
         )
         temp_db.execute("UPDATE tasks SET task_type = %s WHERE id = %s", (legacy_type, task.id))
 
@@ -285,8 +298,16 @@ class TestListTasks:
         self, client: TestClient, task_manager: LocalTaskManager, project_id: str
     ) -> None:
         dep_manager = TaskDependencyManager(task_manager.db)
-        blocker = task_manager.create_task(project_id=project_id, title="Blocker")
-        blocked = task_manager.create_task(project_id=project_id, title="Blocked")
+        blocker = task_manager.create_task(
+            project_id=project_id,
+            title="Blocker",
+            validation_criteria="Test task completion is observable.",
+        )
+        blocked = task_manager.create_task(
+            project_id=project_id,
+            title="Blocked",
+            validation_criteria="Test task completion is observable.",
+        )
         dep_manager.add_dependency(blocked.id, blocker.id, "blocks")
 
         response = client.get("/api/tasks")
@@ -341,7 +362,11 @@ class TestListTasks:
         project_id: str,
         session_id: str,
     ) -> None:
-        parent = task_manager.create_task(project_id=project_id, title="Parent")
+        parent = task_manager.create_task(
+            project_id=project_id,
+            title="Parent",
+            validation_criteria="Test task completion is observable.",
+        )
         matching = task_manager.create_task(
             project_id=project_id,
             title="Filtered needle",
@@ -350,6 +375,7 @@ class TestListTasks:
             task_type="task",
             claimed_by_session_id=session_id,
             labels=["target"],
+            validation_criteria="Test task completion is observable.",
         )
         task_manager.create_task(
             project_id=project_id,
@@ -358,6 +384,7 @@ class TestListTasks:
             priority=2,
             task_type="task",
             labels=["target"],
+            validation_criteria="Test task completion is observable.",
         )
 
         response = client.get(
@@ -400,13 +427,25 @@ class TestListTasks:
 
 class TestCreateTask:
     def test_create_basic(self, client: TestClient) -> None:
-        response = client.post("/api/tasks", json={"title": "New task"})
+        response = client.post(
+            "/api/tasks",
+            json={
+                "title": "New task",
+                "validation_criteria": "The task record is created.",
+            },
+        )
         assert response.status_code == 201
         data = response.json()
         assert data["title"] == "New task"
         assert data["state"]["current_stage"] is None
         assert "state" in data
         assert "id" in data
+
+    def test_create_requires_validation_criteria(self, client: TestClient) -> None:
+        response = client.post("/api/tasks", json={"title": "Missing contract"})
+
+        assert response.status_code == 400
+        assert "validation_criteria" in response.json()["detail"]
 
     def test_create_with_all_fields(self, client: TestClient) -> None:
         response = client.post(
@@ -440,6 +479,7 @@ class TestCreateTask:
             json={
                 "title": "Child task",
                 "parent_task_id": sample_task["id"],
+                "validation_criteria": "The child task record is created.",
             },
         )
         assert response.status_code == 201
@@ -473,11 +513,16 @@ class TestGetTask:
         self, client: TestClient, task_manager: LocalTaskManager, project_id: str
     ) -> None:
         dep_manager = TaskDependencyManager(task_manager.db)
-        parent = task_manager.create_task(project_id=project_id, title="Parent")
+        parent = task_manager.create_task(
+            project_id=project_id,
+            title="Parent",
+            validation_criteria="Test task completion is observable.",
+        )
         child = task_manager.create_task(
             project_id=project_id,
             title="Child",
             parent_task_id=parent.id,
+            validation_criteria="Test task completion is observable.",
         )
         dep_manager.add_dependency(parent.id, child.id, "blocks")
 
@@ -660,6 +705,7 @@ class TestDeleteTask:
             project_id=project_id,
             title="Child",
             parent_task_id=sample_task["id"],
+            validation_criteria="Test task completion is observable.",
         )
 
         response = client.delete(f"/api/tasks/{sample_task['id']}")
@@ -675,6 +721,7 @@ class TestDeleteTask:
             project_id=project_id,
             title="Child",
             parent_task_id=sample_task["id"],
+            validation_criteria="Test task completion is observable.",
         )
         response = client.delete(f"/api/tasks/{sample_task['id']}?cascade=true")
         assert response.status_code == 200
@@ -1392,9 +1439,21 @@ class TestDependencies:
         self, client: TestClient, task_manager: LocalTaskManager, project_id: str
     ) -> None:
         """Adding a dependency that creates a cycle returns 409."""
-        t1 = task_manager.create_task(project_id=project_id, title="Cycle A")
-        t2 = task_manager.create_task(project_id=project_id, title="Cycle B")
-        t3 = task_manager.create_task(project_id=project_id, title="Cycle C")
+        t1 = task_manager.create_task(
+            project_id=project_id,
+            title="Cycle A",
+            validation_criteria="Test task completion is observable.",
+        )
+        t2 = task_manager.create_task(
+            project_id=project_id,
+            title="Cycle B",
+            validation_criteria="Test task completion is observable.",
+        )
+        t3 = task_manager.create_task(
+            project_id=project_id,
+            title="Cycle C",
+            validation_criteria="Test task completion is observable.",
+        )
         # A depends on B, B depends on C
         client.post(
             f"/api/tasks/{t1.id}/dependencies",

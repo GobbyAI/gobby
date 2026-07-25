@@ -46,6 +46,7 @@ from gobby.tasks.validation_evidence import (
     _excerpt_file_diff,
     build_diff_validation_evidence,
 )
+from tests.tasks.contract_validator import ContractTaskValidator
 
 
 def _task_validator(
@@ -53,7 +54,7 @@ def _task_validator(
     llm_service: LLMService,
     **kwargs: Any,
 ) -> TaskValidator:
-    return TaskValidator(config, llm_service, db=MagicMock(spec=HubDatabase), **kwargs)
+    return ContractTaskValidator(config, llm_service, db=MagicMock(spec=HubDatabase), **kwargs)
 
 
 pytestmark = pytest.mark.unit
@@ -554,9 +555,9 @@ class TestInconsistentVerdictReconciliation:
             validation_criteria="criteria",
         )
 
-        assert result.status == "pending"
+        assert result.status == "invalid"
         assert result.blocking_reasons == [
-            "Validation response did not name unmet criteria or failing gates"
+            "criteria: The implementation is correct and all checks pass."
         ]
         assert mock_llm.call_json_feature.call_count == 1
 
@@ -604,7 +605,7 @@ class TestInconsistentVerdictReconciliation:
         )
 
         assert result.status == "invalid"
-        assert result.blocking_reasons == ["No test covers the disabled-feature 404 branch."]
+        assert result.blocking_reasons == ["criteria: Missing a regression test for the 404 path."]
         assert mock_llm.call_json_feature.call_count == 1
 
     @pytest.mark.asyncio
@@ -627,7 +628,7 @@ class TestInconsistentVerdictReconciliation:
         )
 
         assert result.status == "invalid"
-        assert result.blocking_reasons == ["404", "missing test"]
+        assert result.blocking_reasons == ["criteria: Missing gates."]
         assert mock_llm.call_json_feature.call_count == 1
 
     @pytest.mark.asyncio
@@ -672,7 +673,9 @@ class TestInconsistentVerdictReconciliation:
         )
 
         assert result.status == "invalid"
-        assert result.blocking_reasons == ["pytest: 1 failed"]
+        assert result.blocking_reasons == [
+            "Overall non-valid verdict contradicts complete criterion satisfaction"
+        ]
         assert result.verdict_override == {
             "from": "valid",
             "to": "invalid",
@@ -1574,12 +1577,10 @@ class TestTaskValidatorMerged:
 
     @pytest.mark.asyncio
     async def test_validate_task_missing_info(self, config, mock_llm):
-        validator = _task_validator(config, mock_llm)
-        result = await validator.validate_task(
-            "task-1", "title", None, "summary"
-        )  # Missing instruction (instr is None)
+        validator = TaskValidator(config, mock_llm, db=MagicMock(spec=HubDatabase))
+        result = await validator.validate_task("task-1", "title", None, "summary")
         assert result.status == "pending"
-        assert "Missing" in result.feedback
+        assert "Missing validation criteria" in result.feedback
 
     @pytest.mark.asyncio
     async def test_validate_task_success(self, config, mock_llm):
@@ -2179,8 +2180,8 @@ class TestTaskValidatorAdditionalEdgeCases:
             changes_summary="changes",
         )
 
-        # Should return pending status (default from .get())
-        assert result.status == "pending"
+        # Missing overall status is malformed and fails closed.
+        assert result.status == "invalid"
 
     @pytest.mark.asyncio
     async def test_validate_with_file_context_error(self, config, mock_llm, tmp_path):

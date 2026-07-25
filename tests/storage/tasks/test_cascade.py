@@ -16,6 +16,7 @@ def test_cascade_uses_unattended_field(temp_db, sample_project) -> None:
         project_id=sample_project["id"],
         title="Cascade unattended",
         task_type="epic",
+        validation_criteria="Test task completion is observable.",
     )
     manager.initialize_task_manifest(task.id, stage_names=["development"])
 

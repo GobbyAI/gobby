@@ -39,7 +39,12 @@ def _task(
     **kwargs: Any,
 ) -> Task:
     title = kwargs.pop("title", "Condition helper task")
-    return manager.create_task(project_id=sample_project["id"], title=title, **kwargs)
+    return manager.create_task(
+        project_id=sample_project["id"],
+        title=title,
+        **kwargs,
+        validation_criteria="Test task completion is observable.",
+    )
 
 
 def _start_development_stage(manager: LocalTaskManager, task_id: str) -> None:

@@ -10,6 +10,7 @@ from typing import Any
 import pytest
 
 from gobby.adapters.codex_impl.app_server_adapter import CodexAdapter
+from gobby.adapters.codex_impl.execution_chain import validate_functions_exec_wrapper
 from gobby.adapters.codex_impl.item_normalization import (
     extract_functions_exec_command,
     extract_yielded_cell_id,
@@ -174,7 +175,8 @@ def test_codex_functions_exec_contract_correlates_yielded_final_outcome() -> Non
     assert succeeded["tool_input"] == {"command": expected_command}
     assert succeeded["tool_outcome"]["status"] == "succeeded"
     assert succeeded["tool_outcome"]["exit_code"] == 0
-    assert yielded["tool_name"] == "functions.exec"
+    assert yielded["tool_name"] == "Bash"
+    assert yielded["_verification_pending"] is True
     assert yielded["tool_outcome"]["status"] == "unknown"
     assert failed["tool_name"] == "Bash"
     assert failed["tool_input"] == {"command": expected_command}
@@ -202,11 +204,15 @@ def test_codex_functions_exec_contract_correlates_pty_write_stdin_chain(
     expected_command = (
         "GOBBY_TEST_PROTECT=1 uv run pytest tests/sessions/test_codex_outcome_reconciliation.py -q"
     )
-    assert results[0]["tool_name"] == "functions.exec"
-    assert results[1]["tool_name"] == "functions.wait"
+    assert results[0]["tool_name"] == "Bash"
+    assert results[0]["_verification_pending"] is True
+    assert results[1]["tool_name"] == "Bash"
+    assert results[1]["_verification_pending"] is True
     assert results[1]["tool_outcome"]["status"] == "unknown"
-    assert results[2]["tool_name"] == "functions.exec"
-    assert results[3]["tool_name"] == "functions.wait"
+    assert results[2]["tool_name"] == "Bash"
+    assert results[2]["_verification_pending"] is True
+    assert results[3]["tool_name"] == "Bash"
+    assert results[3]["_verification_pending"] is True
     assert results[-1]["tool_name"] == "Bash"
     assert results[-1]["tool_input"] == {"command": expected_command}
     assert results[-1]["tool_outcome"]["status"] == expected_status
@@ -232,6 +238,24 @@ def test_codex_functions_exec_contract_fails_closed_for_unsupported_shapes(
     arguments: str,
 ) -> None:
     assert extract_functions_exec_command(arguments) is None
+
+
+def test_codex_functions_exec_rejects_ambiguous_shell_wrapper_before_execution() -> None:
+    arguments = (
+        'await tools.exec_command({cmd:"uv run pytest tests/a.py"}); '
+        'await tools.exec_command({cmd:"uv run ruff check src/"});'
+    )
+
+    assert validate_functions_exec_wrapper(arguments) == (
+        "functions.exec shell wrappers may contain exactly one static exec_command call; "
+        "run batched validations as separate native commands"
+    )
+    assert (
+        validate_functions_exec_wrapper(
+            'const r = await tools.exec_command({cmd:"uv run pytest tests/a.py"}); text(r);'
+        )
+        is None
+    )
 
 
 def _dynamic_exec_item(
@@ -326,8 +350,10 @@ def test_codex_functions_exec_does_not_promote_multiple_terminal_results() -> No
 
     result = CodexAdapter()._build_completed_tool_data(item)
 
-    assert result["tool_name"] == "functions.exec"
-    assert result["tool_input"] == item["arguments"]
+    assert result["tool_name"] == "Bash"
+    assert result["tool_outcome"]["status"] == "unknown"
+    assert result["tool_result"]["unknown_reason"] == "ambiguous_terminal_results"
+    assert result["tool_input"] == {"command": "uv run pytest tests/a.py"}
 
 
 def test_codex_functions_exec_cell_collision_fails_closed() -> None:

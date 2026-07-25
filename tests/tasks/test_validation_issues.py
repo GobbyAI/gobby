@@ -211,8 +211,17 @@ async def test_candidate_anchor_and_noise_gates(
 
 
 def test_issue_wire_schema_defensive_parse(caplog: pytest.LogCaptureFixture) -> None:
+    criterion = "Focused validation passes"
     canonical = {
         "status": "invalid",
+        "criterion_results": [
+            {
+                "criterion": criterion,
+                "status": "gap",
+                "evidence_ids": [],
+                "explanation": "Focused test is failing",
+            }
+        ],
         "feedback": "Focused test still fails",
         "blocking_reasons": ["Focused test is failing"],
         "current_failure_evidence": ["pytest reports one failure"],
@@ -225,10 +234,17 @@ def test_issue_wire_schema_defensive_parse(caplog: pytest.LogCaptureFixture) -> 
             }
         ],
     }
-    assert _validation_result_from_data(canonical).issues == [_issue()]
+    parser_args = {
+        "expected_criteria": [criterion],
+        "admissible_evidence_ids": [],
+    }
+    assert _validation_result_from_data(canonical, **parser_args).issues == [_issue()]
 
     with caplog.at_level(logging.WARNING, logger="gobby.tasks.validation_verdict"):
-        non_list = _validation_result_from_data({**canonical, "issues": {"bad": "shape"}})
+        non_list = _validation_result_from_data(
+            {**canonical, "issues": {"bad": "shape"}},
+            **parser_args,
+        )
         mixed = _validation_result_from_data(
             {
                 **canonical,
@@ -247,7 +263,8 @@ def test_issue_wire_schema_defensive_parse(caplog: pytest.LogCaptureFixture) -> 
                         "location": _ANCHOR,
                     },
                 ],
-            }
+            },
+            **parser_args,
         )
 
     assert non_list.status == "invalid"

@@ -239,6 +239,7 @@ def _seed_plan_task_tree(
         project.id,
         title="Root plan task",
         task_type="epic",
+        validation_criteria="Test task completion is observable.",
     )
     leaf = task_manager.create_task(
         project.id,

@@ -33,24 +33,43 @@ class TestPathCacheOnInsert:
 
     def test_root_task_gets_path_cache_on_insert(self, task_manager, project_id) -> None:
         """Test that a root task gets path_cache computed immediately on insert."""
-        task = task_manager.create_task(project_id=project_id, title="Root Task")
+        task = task_manager.create_task(
+            project_id=project_id,
+            title="Root Task",
+            validation_criteria="Test task completion is observable.",
+        )
 
         # Path should be the task's seq_num (which is 1 for first task)
         assert task.path_cache == "1"
 
     def test_second_root_task_gets_correct_path(self, task_manager, project_id) -> None:
         """Test second root task gets its seq_num as path."""
-        task1 = task_manager.create_task(project_id=project_id, title="Task 1")
-        task2 = task_manager.create_task(project_id=project_id, title="Task 2")
+        task1 = task_manager.create_task(
+            project_id=project_id,
+            title="Task 1",
+            validation_criteria="Test task completion is observable.",
+        )
+        task2 = task_manager.create_task(
+            project_id=project_id,
+            title="Task 2",
+            validation_criteria="Test task completion is observable.",
+        )
 
         assert task1.path_cache == "1"
         assert task2.path_cache == "2"
 
     def test_child_task_gets_hierarchical_path(self, task_manager, project_id) -> None:
         """Test that a child task gets parent.child path on insert."""
-        parent = task_manager.create_task(project_id=project_id, title="Parent")
+        parent = task_manager.create_task(
+            project_id=project_id,
+            title="Parent",
+            validation_criteria="Test task completion is observable.",
+        )
         child = task_manager.create_task(
-            project_id=project_id, title="Child", parent_task_id=parent.id
+            project_id=project_id,
+            title="Child",
+            parent_task_id=parent.id,
+            validation_criteria="Test task completion is observable.",
         )
 
         # Parent is seq 1, child is seq 2
@@ -59,12 +78,22 @@ class TestPathCacheOnInsert:
 
     def test_grandchild_task_gets_deep_path(self, task_manager, project_id) -> None:
         """Test path computation for deeply nested tasks."""
-        root = task_manager.create_task(project_id=project_id, title="Root")
+        root = task_manager.create_task(
+            project_id=project_id,
+            title="Root",
+            validation_criteria="Test task completion is observable.",
+        )
         child = task_manager.create_task(
-            project_id=project_id, title="Child", parent_task_id=root.id
+            project_id=project_id,
+            title="Child",
+            parent_task_id=root.id,
+            validation_criteria="Test task completion is observable.",
         )
         grandchild = task_manager.create_task(
-            project_id=project_id, title="Grandchild", parent_task_id=child.id
+            project_id=project_id,
+            title="Grandchild",
+            parent_task_id=child.id,
+            validation_criteria="Test task completion is observable.",
         )
 
         assert root.path_cache == "1"
@@ -73,12 +102,22 @@ class TestPathCacheOnInsert:
 
     def test_sibling_tasks_have_distinct_paths(self, task_manager, project_id) -> None:
         """Test that sibling tasks have distinct paths."""
-        parent = task_manager.create_task(project_id=project_id, title="Parent")
+        parent = task_manager.create_task(
+            project_id=project_id,
+            title="Parent",
+            validation_criteria="Test task completion is observable.",
+        )
         child1 = task_manager.create_task(
-            project_id=project_id, title="Child 1", parent_task_id=parent.id
+            project_id=project_id,
+            title="Child 1",
+            parent_task_id=parent.id,
+            validation_criteria="Test task completion is observable.",
         )
         child2 = task_manager.create_task(
-            project_id=project_id, title="Child 2", parent_task_id=parent.id
+            project_id=project_id,
+            title="Child 2",
+            parent_task_id=parent.id,
+            validation_criteria="Test task completion is observable.",
         )
 
         assert parent.path_cache == "1"
@@ -87,7 +126,11 @@ class TestPathCacheOnInsert:
 
     def test_path_cache_preserved_in_database(self, task_manager, project_id, temp_db) -> None:
         """Test that path_cache is stored in database and retrievable."""
-        task = task_manager.create_task(project_id=project_id, title="Task")
+        task = task_manager.create_task(
+            project_id=project_id,
+            title="Task",
+            validation_criteria="Test task completion is observable.",
+        )
         task_id = task.id
 
         # Retrieve directly from database
@@ -100,7 +143,11 @@ class TestPathCacheOnInsert:
 
     def test_path_cache_in_to_dict(self, task_manager, project_id) -> None:
         """Test that path_cache is included in to_dict() output."""
-        task = task_manager.create_task(project_id=project_id, title="Task")
+        task = task_manager.create_task(
+            project_id=project_id,
+            title="Task",
+            validation_criteria="Test task completion is observable.",
+        )
         data = task.to_dict()
 
         assert "path_cache" in data
@@ -108,7 +155,11 @@ class TestPathCacheOnInsert:
 
     def test_path_cache_in_to_brief(self, task_manager, project_id) -> None:
         """Test that path_cache is included in to_brief() output."""
-        task = task_manager.create_task(project_id=project_id, title="Task")
+        task = task_manager.create_task(
+            project_id=project_id,
+            title="Task",
+            validation_criteria="Test task completion is observable.",
+        )
         brief = task.to_brief()
 
         assert "path_cache" in brief
@@ -124,18 +175,39 @@ class TestPathCacheOnInsert:
         #       task2b1 (seq 5)
         #   task3 (seq 6)
 
-        task1 = task_manager.create_task(project_id=project_id, title="Task 1")
-        task2 = task_manager.create_task(project_id=project_id, title="Task 2")
+        task1 = task_manager.create_task(
+            project_id=project_id,
+            title="Task 1",
+            validation_criteria="Test task completion is observable.",
+        )
+        task2 = task_manager.create_task(
+            project_id=project_id,
+            title="Task 2",
+            validation_criteria="Test task completion is observable.",
+        )
         task2a = task_manager.create_task(
-            project_id=project_id, title="Task 2a", parent_task_id=task2.id
+            project_id=project_id,
+            title="Task 2a",
+            parent_task_id=task2.id,
+            validation_criteria="Test task completion is observable.",
         )
         task2b = task_manager.create_task(
-            project_id=project_id, title="Task 2b", parent_task_id=task2.id
+            project_id=project_id,
+            title="Task 2b",
+            parent_task_id=task2.id,
+            validation_criteria="Test task completion is observable.",
         )
         task2b1 = task_manager.create_task(
-            project_id=project_id, title="Task 2b1", parent_task_id=task2b.id
+            project_id=project_id,
+            title="Task 2b1",
+            parent_task_id=task2b.id,
+            validation_criteria="Test task completion is observable.",
         )
-        task3 = task_manager.create_task(project_id=project_id, title="Task 3")
+        task3 = task_manager.create_task(
+            project_id=project_id,
+            title="Task 3",
+            validation_criteria="Test task completion is observable.",
+        )
 
         assert task1.path_cache == "1"
         assert task2.path_cache == "2"
@@ -159,9 +231,21 @@ class TestPathCacheOnInsert:
         )
 
         # Create tasks in each project
-        task_a1 = task_manager.create_task(project_id=project_a_id, title="A1")
-        task_a2 = task_manager.create_task(project_id=project_a_id, title="A2")
-        task_b1 = task_manager.create_task(project_id=project_b_id, title="B1")
+        task_a1 = task_manager.create_task(
+            project_id=project_a_id,
+            title="A1",
+            validation_criteria="Test task completion is observable.",
+        )
+        task_a2 = task_manager.create_task(
+            project_id=project_a_id,
+            title="A2",
+            validation_criteria="Test task completion is observable.",
+        )
+        task_b1 = task_manager.create_task(
+            project_id=project_b_id,
+            title="B1",
+            validation_criteria="Test task completion is observable.",
+        )
 
         # Each project starts fresh with seq 1
         assert task_a1.path_cache == "1"
@@ -176,8 +260,16 @@ class TestPathCacheOnReparent:
     def test_reparent_root_to_child(self, task_manager, project_id) -> None:
         """Test moving a root task to become a child of another task."""
         # Create two root tasks
-        parent = task_manager.create_task(project_id=project_id, title="Parent")
-        orphan = task_manager.create_task(project_id=project_id, title="Orphan")
+        parent = task_manager.create_task(
+            project_id=project_id,
+            title="Parent",
+            validation_criteria="Test task completion is observable.",
+        )
+        orphan = task_manager.create_task(
+            project_id=project_id,
+            title="Orphan",
+            validation_criteria="Test task completion is observable.",
+        )
 
         # Initially both are root tasks
         assert parent.path_cache == "1"
@@ -192,9 +284,16 @@ class TestPathCacheOnReparent:
 
     def test_reparent_child_to_root(self, task_manager, project_id) -> None:
         """Test moving a child task to become a root task."""
-        parent = task_manager.create_task(project_id=project_id, title="Parent")
+        parent = task_manager.create_task(
+            project_id=project_id,
+            title="Parent",
+            validation_criteria="Test task completion is observable.",
+        )
         child = task_manager.create_task(
-            project_id=project_id, title="Child", parent_task_id=parent.id
+            project_id=project_id,
+            title="Child",
+            parent_task_id=parent.id,
+            validation_criteria="Test task completion is observable.",
         )
 
         assert child.path_cache == "1.2"
@@ -208,10 +307,21 @@ class TestPathCacheOnReparent:
 
     def test_reparent_child_to_different_parent(self, task_manager, project_id) -> None:
         """Test moving a child from one parent to another."""
-        parent1 = task_manager.create_task(project_id=project_id, title="Parent 1")
-        parent2 = task_manager.create_task(project_id=project_id, title="Parent 2")
+        parent1 = task_manager.create_task(
+            project_id=project_id,
+            title="Parent 1",
+            validation_criteria="Test task completion is observable.",
+        )
+        parent2 = task_manager.create_task(
+            project_id=project_id,
+            title="Parent 2",
+            validation_criteria="Test task completion is observable.",
+        )
         child = task_manager.create_task(
-            project_id=project_id, title="Child", parent_task_id=parent1.id
+            project_id=project_id,
+            title="Child",
+            parent_task_id=parent1.id,
+            validation_criteria="Test task completion is observable.",
         )
 
         assert child.path_cache == "1.3"
@@ -226,13 +336,27 @@ class TestPathCacheOnReparent:
     def test_reparent_updates_descendants(self, task_manager, project_id) -> None:
         """Test that reparenting updates all descendant paths."""
         # Create hierarchy: parent1 -> child -> grandchild
-        parent1 = task_manager.create_task(project_id=project_id, title="Parent 1")
-        parent2 = task_manager.create_task(project_id=project_id, title="Parent 2")
+        parent1 = task_manager.create_task(
+            project_id=project_id,
+            title="Parent 1",
+            validation_criteria="Test task completion is observable.",
+        )
+        parent2 = task_manager.create_task(
+            project_id=project_id,
+            title="Parent 2",
+            validation_criteria="Test task completion is observable.",
+        )
         child = task_manager.create_task(
-            project_id=project_id, title="Child", parent_task_id=parent1.id
+            project_id=project_id,
+            title="Child",
+            parent_task_id=parent1.id,
+            validation_criteria="Test task completion is observable.",
         )
         grandchild = task_manager.create_task(
-            project_id=project_id, title="Grandchild", parent_task_id=child.id
+            project_id=project_id,
+            title="Grandchild",
+            parent_task_id=child.id,
+            validation_criteria="Test task completion is observable.",
         )
 
         # Initial paths
@@ -253,16 +377,33 @@ class TestPathCacheOnReparent:
         """Test reparenting a subtree with multiple levels."""
         # Create: root1 -> level1 -> level2 -> level3
         #         root2
-        root1 = task_manager.create_task(project_id=project_id, title="Root 1")
-        root2 = task_manager.create_task(project_id=project_id, title="Root 2")
+        root1 = task_manager.create_task(
+            project_id=project_id,
+            title="Root 1",
+            validation_criteria="Test task completion is observable.",
+        )
+        root2 = task_manager.create_task(
+            project_id=project_id,
+            title="Root 2",
+            validation_criteria="Test task completion is observable.",
+        )
         level1 = task_manager.create_task(
-            project_id=project_id, title="Level 1", parent_task_id=root1.id
+            project_id=project_id,
+            title="Level 1",
+            parent_task_id=root1.id,
+            validation_criteria="Test task completion is observable.",
         )
         level2 = task_manager.create_task(
-            project_id=project_id, title="Level 2", parent_task_id=level1.id
+            project_id=project_id,
+            title="Level 2",
+            parent_task_id=level1.id,
+            validation_criteria="Test task completion is observable.",
         )
         level3 = task_manager.create_task(
-            project_id=project_id, title="Level 3", parent_task_id=level2.id
+            project_id=project_id,
+            title="Level 3",
+            parent_task_id=level2.id,
+            validation_criteria="Test task completion is observable.",
         )
 
         # Initial paths
@@ -284,16 +425,33 @@ class TestPathCacheOnReparent:
 
     def test_reparent_with_multiple_children(self, task_manager, project_id) -> None:
         """Test reparenting when the moved task has multiple children."""
-        parent1 = task_manager.create_task(project_id=project_id, title="Parent 1")
-        parent2 = task_manager.create_task(project_id=project_id, title="Parent 2")
+        parent1 = task_manager.create_task(
+            project_id=project_id,
+            title="Parent 1",
+            validation_criteria="Test task completion is observable.",
+        )
+        parent2 = task_manager.create_task(
+            project_id=project_id,
+            title="Parent 2",
+            validation_criteria="Test task completion is observable.",
+        )
         child = task_manager.create_task(
-            project_id=project_id, title="Child", parent_task_id=parent1.id
+            project_id=project_id,
+            title="Child",
+            parent_task_id=parent1.id,
+            validation_criteria="Test task completion is observable.",
         )
         grandchild1 = task_manager.create_task(
-            project_id=project_id, title="Grandchild 1", parent_task_id=child.id
+            project_id=project_id,
+            title="Grandchild 1",
+            parent_task_id=child.id,
+            validation_criteria="Test task completion is observable.",
         )
         grandchild2 = task_manager.create_task(
-            project_id=project_id, title="Grandchild 2", parent_task_id=child.id
+            project_id=project_id,
+            title="Grandchild 2",
+            parent_task_id=child.id,
+            validation_criteria="Test task completion is observable.",
         )
 
         # Move child under parent2
@@ -310,9 +468,16 @@ class TestPathCacheOnReparent:
 
     def test_reparent_preserves_seq_num(self, task_manager, project_id) -> None:
         """Test that reparenting preserves the task's seq_num."""
-        parent = task_manager.create_task(project_id=project_id, title="Parent")
+        parent = task_manager.create_task(
+            project_id=project_id,
+            title="Parent",
+            validation_criteria="Test task completion is observable.",
+        )
         child = task_manager.create_task(
-            project_id=project_id, title="Child", parent_task_id=parent.id
+            project_id=project_id,
+            title="Child",
+            parent_task_id=parent.id,
+            validation_criteria="Test task completion is observable.",
         )
 
         original_seq = child.seq_num
@@ -329,10 +494,21 @@ class TestPathCacheOnReparent:
 
     def test_reparent_path_stored_in_database(self, task_manager, project_id, temp_db) -> None:
         """Test that reparent path changes are persisted to database."""
-        parent1 = task_manager.create_task(project_id=project_id, title="Parent 1")
-        parent2 = task_manager.create_task(project_id=project_id, title="Parent 2")
+        parent1 = task_manager.create_task(
+            project_id=project_id,
+            title="Parent 1",
+            validation_criteria="Test task completion is observable.",
+        )
+        parent2 = task_manager.create_task(
+            project_id=project_id,
+            title="Parent 2",
+            validation_criteria="Test task completion is observable.",
+        )
         child = task_manager.create_task(
-            project_id=project_id, title="Child", parent_task_id=parent1.id
+            project_id=project_id,
+            title="Child",
+            parent_task_id=parent1.id,
+            validation_criteria="Test task completion is observable.",
         )
 
         # Verify initial path in DB

@@ -57,6 +57,7 @@ def create_task(
         project_id=sample_project["id"],
         title=title,
         **kwargs,
+        validation_criteria="Test task completion is observable.",
     )
 
 

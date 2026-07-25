@@ -64,13 +64,19 @@ def _coordinated_review_fixture(
     )
 
     task_manager = LocalTaskManager(temp_db)
-    root = task_manager.create_task(project.id, f"Build root {name}", task_type="epic")
+    root = task_manager.create_task(
+        project.id,
+        f"Build root {name}",
+        task_type="epic",
+        validation_criteria="Test task completion is observable.",
+    )
     task = task_manager.create_task(
         project.id,
         f"Plan review {name}",
         parent_task_id=root.id,
         task_type="review_anchor",
         category="planning",
+        validation_criteria="Test task completion is observable.",
     )
     task_manager.initialize_task_manifest(task.id, stage_names=[stage_name])
     task_manager.stage_states.start_stage(task.id, stage_name, by_session_id=reviewer.id)

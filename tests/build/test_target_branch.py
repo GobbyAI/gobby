@@ -159,7 +159,11 @@ async def test_leaf_build_inherits_target_branch_via_cascade(temp_db, tmp_path: 
     _init_repo_with_release_branch(repo_path)
     manager = LocalTaskManager(temp_db)
     leaf = manager.create_task(
-        project_id=project_id, title="Leaf", task_type="task", category="code"
+        project_id=project_id,
+        title="Leaf",
+        task_type="task",
+        category="code",
+        validation_criteria="Test task completion is observable.",
     )
 
     await _build(
@@ -180,7 +184,11 @@ async def test_worktree_leaf_build_persists_target_branch(temp_db, tmp_path: Pat
     project_id, _repo_path = _project(temp_db, tmp_path)
     manager = LocalTaskManager(temp_db)
     leaf = manager.create_task(
-        project_id=project_id, title="Leaf", task_type="task", category="code"
+        project_id=project_id,
+        title="Leaf",
+        task_type="task",
+        category="code",
+        validation_criteria="Test task completion is observable.",
     )
 
     await _build(

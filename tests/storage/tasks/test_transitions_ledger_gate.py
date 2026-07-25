@@ -56,4 +56,5 @@ def _create_task(temp_db: HubDatabase, tmp_path: Path) -> Task:
         project.id,
         title="Root plan task",
         task_type="epic",
+        validation_criteria="Test task completion is observable.",
     )

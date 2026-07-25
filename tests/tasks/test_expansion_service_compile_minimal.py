@@ -208,6 +208,7 @@ def test_compile_minimal_contract_plan_with_cross_phase_dep_and_deferral(
         project_id=sample_project["id"],
         title="Minimal epic",
         task_type="epic",
+        validation_criteria="Test task completion is observable.",
     )
     plan_doc = parse_plan(
         _write_minimal_plan(tmp_path / "minimal-contract.md"), parse_mode="expansion"
@@ -255,6 +256,7 @@ def test_compile_skips_implicit_phase_edge_when_manifest_requires_later_phase_fi
         project_id=sample_project["id"],
         title="Cross-phase epic",
         task_type="epic",
+        validation_criteria="Test task completion is observable.",
     )
     plan_doc = parse_plan(
         _write_cross_phase_prerequisite_plan(tmp_path / "cross-phase-prerequisite.md"),
@@ -279,6 +281,7 @@ def test_compile_entry_validation_includes_acceptance_artifact_refs(
         project_id=sample_project["id"],
         title="Validation artifacts epic",
         task_type="epic",
+        validation_criteria="Test task completion is observable.",
     )
     plan_doc = parse_plan(
         _write_validation_artifacts_plan(tmp_path / "validation-artifacts.md"),
@@ -308,6 +311,7 @@ def test_apply_contract_spec_persists_covers_labels_without_extra_phase_wrappers
         project_id=sample_project["id"],
         title="Minimal epic",
         task_type="epic",
+        validation_criteria="Test task completion is observable.",
     )
     plan_doc = parse_plan(
         _write_minimal_plan(tmp_path / "minimal-contract.md"), parse_mode="expansion"

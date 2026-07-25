@@ -657,6 +657,11 @@ class TestLinearSyncServiceImport:
             "task-42",
             linear_issue_id="lin-42",
             linear_team_id="team-123",
+            validation_criteria=(
+                "The acceptance conditions recorded in Linear issue lin-42 are implemented, "
+                "and the resulting behavior is verified by authoritative current-state "
+                "evidence."
+            ),
         )
         assert mock_task_manager.update_task.call_count >= 1
         assert mock_task_manager.update_task.call_args is not None
@@ -674,7 +679,8 @@ class TestLinearSyncServiceImport:
         assert any(
             call.args
             == (
-                "SELECT id, updated_at FROM tasks WHERE project_id = %s AND seq_num = %s",
+                "SELECT id, validation_criteria, updated_at FROM tasks "
+                "WHERE project_id = %s AND seq_num = %s",
                 ("test-project-id", 42),
             )
             for call in mock_task_manager.db.fetchone.call_args_list

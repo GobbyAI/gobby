@@ -7,6 +7,7 @@ from uuid import UUID
 
 from gobby.storage.tasks import LocalTaskManager
 from gobby.sync.jsonl_io import atomic_write_text, export_file_lock
+from gobby.tasks.criteria_contract import require_validation_criteria
 from gobby.tasks.state_semantics import serialize_task_state
 from gobby.utils.json_helpers import json_dumps
 
@@ -394,10 +395,11 @@ class TaskBackupManager:
                             "state": task.validation_status,
                             "feedback": task.validation_feedback,
                             "fail_count": task.validation_fail_count,
+                            "epoch": task.validation_epoch,
                             "criteria": task.validation_criteria,
                             "override_reason": task.validation_override_reason,
                         }
-                        if task.validation_status
+                        if task.validation_status or task.validation_criteria
                         else None
                     ),
                     # Expansion fields
@@ -542,8 +544,14 @@ class TaskBackupManager:
                         validation_status = validation.get("state") or validation.get("status")
                         validation_feedback = validation.get("feedback")
                         validation_fail_count = validation.get("fail_count", 0)
+                        validation_epoch = validation.get("epoch", 0)
                         validation_criteria = validation.get("criteria")
                         validation_override_reason = validation.get("override_reason")
+                        task_type = data.get("task_type", "task")
+                        validation_criteria = require_validation_criteria(
+                            task_type,
+                            validation_criteria,
+                        )
 
                         # Handle labels stored as JSON in the hub.
                         labels_raw = data.get("labels")
@@ -584,7 +592,7 @@ class TaskBackupManager:
                             "description": data.get("description"),
                             "parent_task_id": data.get("parent_id"),
                             "priority": data.get("priority", 2),
-                            "task_type": data.get("task_type", "task"),
+                            "task_type": task_type,
                             "created_at": created_at_file,
                             "updated_at": updated_at_file,
                             "created_in_session_id": created_in_session_id,
@@ -600,6 +608,7 @@ class TaskBackupManager:
                             "validation_status": validation_status,
                             "validation_feedback": validation_feedback,
                             "validation_fail_count": validation_fail_count,
+                            "validation_epoch": validation_epoch,
                             "validation_criteria": validation_criteria,
                             "validation_override_reason": validation_override_reason,
                             "category": data.get("category"),

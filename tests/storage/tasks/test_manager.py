@@ -16,6 +16,7 @@ def test_create_task_is_metadata_only(temp_db, sample_project) -> None:
         project_id=sample_project["id"],
         title="Metadata-only task",
         task_type="task",
+        validation_criteria="Test task completion is observable.",
     )
 
     assert manager.stage_states.list_for_task(task.id) == []
@@ -30,6 +31,7 @@ def test_initialize_task_manifest_supports_stage_override_with_caps(
         project_id=sample_project["id"],
         title="Override stages",
         task_type="task",
+        validation_criteria="Test task completion is observable.",
     )
 
     manager.initialize_task_manifest(
@@ -49,6 +51,7 @@ def test_initialize_task_manifest_rejects_unknown_stage_override(temp_db, sample
         project_id=sample_project["id"],
         title="Bad stages",
         task_type="task",
+        validation_criteria="Test task completion is observable.",
     )
 
     with pytest.raises(ValueError, match="Unknown stage 'missing'"):

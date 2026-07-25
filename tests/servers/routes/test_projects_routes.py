@@ -167,7 +167,11 @@ class TestProjectRoutes:
                 machine_id="test-machine",
                 project_id=project.id,
             )
-            task_manager.create_task(project_id=project.id, title=f"Open task {index}")
+            task_manager.create_task(
+                project_id=project.id,
+                title=f"Open task {index}",
+                validation_criteria="Test task completion is observable.",
+            )
 
         original_fetchall = session_manager.db.fetchall
         stats_queries = 0
@@ -342,13 +346,18 @@ class TestProjectRoutes:
         session_manager: SessionManager,
     ) -> None:
         task_manager = LocalTaskManager(session_manager.db)
-        task_manager.create_task(project_id=real_project["id"], title="Pending")
+        task_manager.create_task(
+            project_id=real_project["id"],
+            title="Pending",
+            validation_criteria="Test task completion is observable.",
+        )
         task_manager.create_task(
             project_id=real_project["id"],
             title="Linked",
             linear_issue_id="linear-1",
             github_repo="test/my-project",
             github_issue_number=1,
+            validation_criteria="Test task completion is observable.",
         )
 
         response = client.get(f"/api/projects/{real_project['id']}/integrations/status")

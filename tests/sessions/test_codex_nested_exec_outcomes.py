@@ -296,6 +296,48 @@ def test_pty_write_stdin_chain_survives_repeated_yields_and_parser_hydration() -
     ]
 
 
+def test_direct_write_stdin_poll_preserves_original_execution_identity() -> None:
+    parser = CodexTranscriptParser()
+    outcomes = _outcomes(
+        parser,
+        [
+            _call(
+                "exec-direct-stdin",
+                "functions.exec",
+                'const r = await tools.exec_command({cmd:"pytest direct",tty:true}); text(r);',
+            ),
+            _output(
+                "exec-direct-stdin",
+                json.dumps({"session_id": 91, "output": "still running"}),
+            ),
+            _function_call(
+                "stdin-poll-1",
+                "write_stdin",
+                json.dumps({"session_id": 91, "chars": ""}),
+            ),
+            _raw_output(
+                "stdin-poll-1",
+                json.dumps({"session_id": 91, "output": "still running"}),
+                payload_type="function_call_output",
+            ),
+            _function_call(
+                "stdin-poll-2",
+                "functions.write_stdin",
+                json.dumps({"session_id": 91, "chars": ""}),
+            ),
+            _raw_output(
+                "stdin-poll-2",
+                json.dumps({"exit_code": 7, "output": "one failed"}),
+                payload_type="function_call_output",
+            ),
+        ],
+    )
+
+    assert [(item.identity, item.command, item.result["exit_code"]) for item in outcomes] == [
+        ("exec-direct-stdin:0", "pytest direct", 7)
+    ]
+
+
 @pytest.mark.parametrize(
     ("tool_input", "result_texts"),
     [
@@ -338,4 +380,14 @@ def test_ambiguous_or_unstructured_outputs_remain_unknown(
         [_call("exec-unknown", "exec", tool_input), _output("exec-unknown", *result_texts)],
     )
 
-    assert outcomes == []
+    if tool_input in {
+        'const r = await tools.exec_command({cmd:"pytest"}); text(r.output);',
+        'const r = await tools.exec_command({cmd:"pytest"}); text(r);',
+    }:
+        assert len(outcomes) == 1
+        assert outcomes[0].identity == "exec-unknown:0"
+        assert outcomes[0].command == "pytest"
+        assert outcomes[0].result["success"] is None
+        assert outcomes[0].result["unknown_reason"] == "terminal_result_missing_structured_outcome"
+    else:
+        assert outcomes == []

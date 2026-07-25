@@ -130,7 +130,9 @@ def test_cli_task_diff_with_no_commits_is_invalid(temp_db: Any, tmp_path: Path) 
 
     project = LocalProjectManager(temp_db).create("project")
     manager = LocalTaskManager(temp_db)
-    task = manager.create_task(project.id, "No commits")
+    task = manager.create_task(
+        project.id, "No commits", validation_criteria="Test task completion is observable."
+    )
     ctx = _CliEvidenceContext(repo_root=tmp_path, project_id=project.id)
     ctx.__dict__["task_manager"] = manager
 

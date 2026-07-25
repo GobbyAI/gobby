@@ -28,6 +28,7 @@ from gobby.sync.linear_support import (
 from gobby.sync.linear_support import (
     map_linear_state_to_gobby as _map_linear_state_to_gobby,
 )
+from gobby.tasks.import_criteria import external_issue_validation_criteria
 
 _LINEAR_ISSUE_PAGE_SIZE = 100
 
@@ -252,6 +253,10 @@ class LinearTaskOpsMixin(LinearProjectOpsMixin):
             title = issue.get("title", "Untitled Issue")
             local_title = _local_title_from_linear(title)
             description = issue.get("description", "")
+            validation_criteria = external_issue_validation_criteria(
+                "Linear",
+                str(issue.get("identifier") or issue_id),
+            )
             priority_val = _linear_priority_to_gobby(issue.get("priority"))
             state_name = _linear_issue_state_name(issue)
             gobby_state = (
@@ -271,27 +276,37 @@ class LinearTaskOpsMixin(LinearProjectOpsMixin):
 
             with self.task_manager.db.transaction():
                 existing = self.task_manager.db.fetchone(
-                    "SELECT id, updated_at FROM tasks "
+                    "SELECT id, validation_criteria, updated_at FROM tasks "
                     "WHERE linear_issue_id = %s AND project_id = %s",
                     (issue_id, self.project_id),
                 )
+                needs_linear_link = False
 
                 if not existing:
                     ref_seq = _gobby_seq_from_linear_title(title)
                     if ref_seq is not None:
                         existing = self.task_manager.db.fetchone(
-                            "SELECT id, updated_at FROM tasks "
+                            "SELECT id, validation_criteria, updated_at FROM tasks "
                             "WHERE project_id = %s AND seq_num = %s",
                             (self.project_id, ref_seq),
                         )
                         if existing:
-                            self.task_manager.update_task(
-                                existing["id"],
-                                linear_issue_id=issue_id,
-                                linear_team_id=effective_team_id,
-                            )
+                            needs_linear_link = True
 
                 if existing:
+                    metadata_updates: dict[str, Any] = {}
+                    if needs_linear_link:
+                        metadata_updates.update(
+                            linear_issue_id=issue_id,
+                            linear_team_id=effective_team_id,
+                        )
+                    if existing.get("validation_criteria") != validation_criteria:
+                        metadata_updates["validation_criteria"] = validation_criteria
+                    if metadata_updates:
+                        self.task_manager.update_task(
+                            existing["id"],
+                            **metadata_updates,
+                        )
                     local_updated = _parse_linear_timestamp(existing.get("updated_at"))
                     is_stale = bool(
                         local_updated and linear_updated and local_updated > linear_updated
@@ -314,6 +329,7 @@ class LinearTaskOpsMixin(LinearProjectOpsMixin):
                         linear_issue_id=issue_id,
                         linear_team_id=effective_team_id,
                         priority=priority_val,
+                        validation_criteria=validation_criteria,
                     )
                     if any(value is not None for value in lifecycle_updates.values()):
                         task = self.task_manager.reconcile_task_state(

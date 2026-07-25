@@ -406,6 +406,7 @@ async def test_refresh_active_run_dispatch_mutexes_does_not_restore_without_stag
         project_id=sample_project["id"],
         title="Manual task-bound agent",
         claimed_by_session_id=child.id,
+        validation_criteria="Test task completion is observable.",
     )
     run = agent_run_manager.create(
         parent_session_id=sample_session["id"],
@@ -482,6 +483,7 @@ def _make_dispatched_stage_run(
         project_id=sample_project["id"],
         title=f"Dispatched {run_id}",
         claimed_by_session_id=child_session_id,
+        validation_criteria="Test task completion is observable.",
     )
     task_manager.stage_states.initialize_manifest(
         task.id,
@@ -3941,6 +3943,7 @@ async def test_lifecycle_monitor_db_paths_stay_on_bounded_executor(
         project_id=sample_project["id"],
         title="Lifecycle bounded DB task",
         claimed_by_session_id=sample_session["id"],
+        validation_criteria="Test task completion is observable.",
     )
     run = agent_run_manager.create(
         parent_session_id=sample_session["id"],

@@ -37,6 +37,7 @@ async def test_quick_runs_one_step_and_disables_automation(
         title="Quick build epic",
         category="planning",
         task_type="epic",
+        validation_criteria="Test task completion is observable.",
     )
 
     result = await build(
@@ -62,6 +63,7 @@ async def test_default_build_skips_nothing(
         title="Default build epic",
         category="planning",
         task_type="epic",
+        validation_criteria="Test task completion is observable.",
     )
 
     result = await build(
@@ -95,6 +97,7 @@ async def test_research_leaf_defaults_to_research_stage(
         title="Research leaf",
         category="research",
         task_type="task",
+        validation_criteria="Test task completion is observable.",
     )
 
     result = await build(

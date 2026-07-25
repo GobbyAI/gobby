@@ -96,6 +96,7 @@ from gobby.storage.tasks._transitions_facade import TaskTransitionsMixin
 from gobby.storage.tasks._updates import (
     update_task_metadata as _update_task_metadata,
 )
+from gobby.tasks.criteria_contract import require_validation_criteria
 
 logger = logging.getLogger(__name__)
 
@@ -351,6 +352,16 @@ class LocalTaskManager(TaskTransitionsMixin, TaskDecompositionMixin):
         Stage and ownership mutations must go through the dedicated task
         transition methods so claim/session state stays coherent.
         """
+        current_task = self.get_task(task_id)
+        effective_task_type = current_task.task_type if task_type is UNSET else str(task_type or "")
+        if validation_criteria is UNSET:
+            effective_criteria = current_task.validation_criteria
+        else:
+            effective_criteria = (
+                validation_criteria if isinstance(validation_criteria, str) else None
+            )
+        require_validation_criteria(effective_task_type, effective_criteria)
+
         with self.db.transaction():
             parent_changed = _update_task_metadata(
                 self.db,

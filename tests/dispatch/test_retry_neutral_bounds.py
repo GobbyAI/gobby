@@ -74,6 +74,7 @@ def _task_with_pipeline_stage(temp_db, sample_project) -> str:
         project_id=sample_project["id"],
         title="Pipeline task",
         task_type="task",
+        validation_criteria="Test task completion is observable.",
     )
     initialize_manifest(temp_db, task.id, [spec("expansion", 0)])
     return task.id

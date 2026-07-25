@@ -53,7 +53,11 @@ class TestCreateTaskTool:
 
         result = await registry.call(
             "create_task",
-            {"title": "New Task", "category": "research"},
+            {
+                "title": "New Task",
+                "category": "research",
+                "validation_criteria": "Test task completion is observable.",
+            },
         )
 
         assert result == {
@@ -91,7 +95,11 @@ class TestCreateTaskTool:
 
         result = await registry.call(
             "create_task",
-            {"title": "Refactor extraction", "category": "refactor"},
+            {
+                "title": "Refactor extraction",
+                "category": "refactor",
+                "validation_criteria": "Test task completion is observable.",
+            },
         )
 
         assert result["id"] == "550e8400-e29b-41d4-a716-446655440099"
@@ -170,6 +178,7 @@ class TestCreateTaskTool:
                         "550e8400-e29b-41d4-a716-446655440003",
                         "550e8400-e29b-41d4-a716-446655440004",
                     ],
+                    "validation_criteria": "Test task completion is observable.",
                 },
             )
 
@@ -215,6 +224,7 @@ class TestCreateTaskTool:
                         "title": "Dependent Task",
                         "category": "research",
                         "depends_on": ["blocker-1", "blocker-2"],
+                        "validation_criteria": "Test task completion is observable.",
                     },
                 )
 
@@ -264,6 +274,7 @@ class TestCreateTaskTool:
                         "title": "Partial Deps Task",
                         "category": "research",
                         "depends_on": ["valid-ref", "invalid-ref"],
+                        "validation_criteria": "Test task completion is observable.",
                     },
                 )
 
@@ -296,6 +307,7 @@ class TestCreateTaskTool:
                 "title": "Labeled Task",
                 "category": "research",
                 "labels": ["urgent", "bug"],
+                "validation_criteria": "Test task completion is observable.",
             },
         )
 
@@ -355,7 +367,7 @@ class TestCreateTaskTool:
     async def test_create_non_code_task_without_validation_criteria(
         self, mock_task_manager: MagicMock
     ) -> None:
-        """Test that non-code tasks succeed without validation_criteria."""
+        """Every non-epic category is rejected without validation_criteria."""
         registry = create_task_registry(mock_task_manager)
 
         mock_task = MagicMock()
@@ -366,7 +378,7 @@ class TestCreateTaskTool:
         }
         mock_task_manager.get_task.return_value = mock_task
 
-        await registry.call(
+        result = await registry.call(
             "create_task",
             {
                 "title": "Research auth options",
@@ -374,10 +386,8 @@ class TestCreateTaskTool:
             },
         )
 
-        mock_task_manager.create_task_with_decomposition.assert_called_once()
-        call_kwargs = mock_task_manager.create_task_with_decomposition.call_args.kwargs
-        assert call_kwargs["category"] == "research"
-        assert call_kwargs["validation_criteria"] is None
+        assert "validation_criteria" in result["error"]
+        mock_task_manager.create_task_with_decomposition.assert_not_called()
 
     @pytest.mark.asyncio
     async def test_create_task_with_all_optional_fields(
@@ -441,7 +451,11 @@ class TestCreateTaskTool:
         with session_context_for_test(personal_task_session.id):
             await registry.call(
                 "create_task",
-                {"title": "Task", "category": "research"},
+                {
+                    "title": "Task",
+                    "category": "research",
+                    "validation_criteria": "Test task completion is observable.",
+                },
             )
 
         call_kwargs = mock_task_manager.create_task_with_decomposition.call_args.kwargs
@@ -476,7 +490,11 @@ class TestCreateTaskTool:
 
         result = await registry.call(
             "create_task",
-            {"title": "Full Task", "category": "research"},
+            {
+                "title": "Full Task",
+                "category": "research",
+                "validation_criteria": "Test task completion is observable.",
+            },
         )
 
         assert result == {
@@ -486,13 +504,13 @@ class TestCreateTaskTool:
         }
 
     @pytest.mark.asyncio
-    async def test_create_task_auto_generates_validation(
+    async def test_create_task_does_not_auto_generate_validation(
         self,
         mock_task_manager: MagicMock,
         mock_task_validator: AsyncMock,
         mock_config: MagicMock,
     ) -> None:
-        """Test create_task auto-generates validation criteria when enabled."""
+        """Explicit criteria remain authoritative when auto-generation is enabled."""
         mock_config.get_gobby_tasks_config.return_value.validation.auto_generate_on_create = True
 
         registry = create_task_registry(
@@ -512,7 +530,11 @@ class TestCreateTaskTool:
 
         result = await registry.call(
             "create_task",
-            {"title": "Task", "category": "research"},
+            {
+                "title": "Task",
+                "category": "research",
+                "validation_criteria": "Test task completion is observable.",
+            },
         )
 
         mock_task_manager.update_task.assert_not_called()
@@ -550,7 +572,11 @@ class TestCreateTaskTool:
 
             result = await registry.call(
                 "create_task",
-                {"title": "New Task", "category": "research"},
+                {
+                    "title": "New Task",
+                    "category": "research",
+                    "validation_criteria": "Test task completion is observable.",
+                },
             )
 
             assert result["id"] == "550e8400-e29b-41d4-a716-446655440020"
@@ -598,6 +624,7 @@ class TestCreateTaskTool:
                     "title": "New Task",
                     "category": "research",
                     "claim": True,
+                    "validation_criteria": "Test task completion is observable.",
                 },
             )
 
@@ -660,6 +687,7 @@ class TestCreateTaskTool:
                     "title": "New Task",
                     "category": "research",
                     "claim": True,
+                    "validation_criteria": "Test task completion is observable.",
                 },
             )
 
@@ -720,6 +748,7 @@ class TestCreateTaskTool:
             assert result["id"] == mock_task.id
             merged_vars = mock_sv_manager.merge_variables.call_args[0][1]
             assert merged_vars["claimed_task_required_skills"] == [
+                "tasks",
                 "python",
                 "development-discipline",
             ]
@@ -786,6 +815,7 @@ class TestCreateTaskCrossProjectClaimBlocking:
                     "category": "research",
                     "claim": True,
                     "project": "11111111-1111-4111-8111-111111110001",
+                    "validation_criteria": "Test task completion is observable.",
                 },
             )
 
@@ -855,6 +885,7 @@ class TestCreateTaskCrossProjectClaimBlocking:
                         "title": "Same-project task",
                         "category": "research",
                         "claim": True,
+                        "validation_criteria": "Test task completion is observable.",
                     },
                 )
 
@@ -898,7 +929,12 @@ class TestCreateTaskCrossProjectClaimBlocking:
 
             result = await registry.call(
                 "create_task",
-                {"title": "Unclaimed task", "category": "research", "claim": True},
+                {
+                    "title": "Unclaimed task",
+                    "category": "research",
+                    "claim": True,
+                    "validation_criteria": "Test task completion is observable.",
+                },
             )
 
             assert result["id"] == mock_task.id

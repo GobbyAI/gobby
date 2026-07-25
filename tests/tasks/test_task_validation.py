@@ -17,6 +17,7 @@ from gobby.tasks.validation import (
     get_validation_context_smart,
     read_files_content,
 )
+from tests.tasks.contract_validator import ContractTaskValidator
 
 
 def _task_validator(
@@ -24,7 +25,7 @@ def _task_validator(
     llm_service: LLMService,
     **kwargs: Any,
 ) -> TaskValidator:
-    return TaskValidator(config, llm_service, db=MagicMock(spec=HubDatabase), **kwargs)
+    return ContractTaskValidator(config, llm_service, db=MagicMock(spec=HubDatabase), **kwargs)
 
 
 pytestmark = pytest.mark.unit
@@ -106,12 +107,10 @@ class TestTaskValidator:
 
     @pytest.mark.asyncio
     async def test_validate_task_missing_info(self, config, mock_llm):
-        validator = _task_validator(config, mock_llm)
-        result = await validator.validate_task(
-            "task-1", "title", None, "summary"
-        )  # Missing instruction (instr is None)
+        validator = TaskValidator(config, mock_llm, db=MagicMock(spec=HubDatabase))
+        result = await validator.validate_task("task-1", "title", None, "summary")
         assert result.status == "pending"
-        assert "Missing" in result.feedback
+        assert "Missing validation criteria" in result.feedback
 
     @pytest.mark.asyncio
     async def test_validate_task_success(self, config, mock_llm):
@@ -631,8 +630,8 @@ class TestTaskValidatorEdgeCases:
             changes_summary="changes",
         )
 
-        # Should return pending status (default from .get())
-        assert result.status == "pending"
+        # Missing overall status is malformed and fails closed.
+        assert result.status == "invalid"
 
     @pytest.mark.asyncio
     async def test_validate_with_file_context_error(self, config, mock_llm, tmp_path):

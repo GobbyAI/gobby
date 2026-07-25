@@ -116,6 +116,10 @@ def _redirect_speculative_memory_to_task(
         task_type="research_spike",
         labels=["memory-redirect", "planning-note"],
         category="planning",
+        validation_criteria=(
+            "The speculative proposal is resolved into a decision-complete planning artifact "
+            "with concrete next actions."
+        ),
         created_in_session_id=source_session_id,
     )
     task = result.get("task") if isinstance(result, dict) else None

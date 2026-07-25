@@ -165,6 +165,7 @@ async def test_spawn_and_explain_share_unknown_skill_failure(
         project_id=project.id,
         title="Composition target",
         category="code",
+        validation_criteria="Test task completion is observable.",
     )
     task = task_manager.update_task(task.id, allow_automation=True, isolation="none")
     agent_body = _agent()

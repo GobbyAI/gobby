@@ -200,7 +200,11 @@ def test_read_modify_write_path_serializes_concurrent_writers(postgres_db: Any) 
 
 def test_task_artifact_merge_serializes_concurrent_writers(postgres_db: Any) -> None:
     project = LocalProjectManager(postgres_db).create(f"artifact-merge-race-{uuid.uuid4()}")
-    task = LocalTaskManager(postgres_db).create_task(project.id, "artifact merge race")
+    task = LocalTaskManager(postgres_db).create_task(
+        project.id,
+        "artifact merge race",
+        validation_criteria="Concurrent artifact writes merge without lost updates.",
+    )
     manager = TaskArtifactManager(postgres_db)
     manager.set_artifacts_atomic(task.id)
     errors: queue.Queue[BaseException] = queue.Queue()
@@ -236,7 +240,11 @@ def test_task_artifact_merge_serializes_concurrent_writers(postgres_db: Any) -> 
 
 def test_expansion_attempt_increment_is_atomic(postgres_db: Any) -> None:
     project = LocalProjectManager(postgres_db).create(f"artifact-increment-race-{uuid.uuid4()}")
-    task = LocalTaskManager(postgres_db).create_task(project.id, "artifact increment race")
+    task = LocalTaskManager(postgres_db).create_task(
+        project.id,
+        "artifact increment race",
+        validation_criteria="Concurrent expansion attempt increments are atomic.",
+    )
     manager = TaskArtifactManager(postgres_db)
     manager.set_artifacts_atomic(task.id)
     errors: queue.Queue[BaseException] = queue.Queue()
@@ -270,8 +278,12 @@ def test_expansion_attempt_increment_is_atomic(postgres_db: Any) -> None:
 def test_dependency_cycle_check_and_insert_are_serialized(postgres_db: Any) -> None:
     project = LocalProjectManager(postgres_db).create(f"dependency-race-{uuid.uuid4()}")
     task_manager = LocalTaskManager(postgres_db)
-    first_task = task_manager.create_task(project.id, "first")
-    second_task = task_manager.create_task(project.id, "second")
+    first_task = task_manager.create_task(
+        project.id, "first", validation_criteria="Test task completion is observable."
+    )
+    second_task = task_manager.create_task(
+        project.id, "second", validation_criteria="Test task completion is observable."
+    )
     first_check_started = threading.Event()
     release_first_check = threading.Event()
     second_finished = threading.Event()
@@ -435,6 +447,7 @@ def test_task_seq_allocation_serializes_across_project_visibility(postgres_db: A
                     txn,
                     project_id=project_id,
                     title="first",
+                    validation_criteria="The first task receives a unique sequence number.",
                 )
                 first_task_created.set()
                 assert release_first_allocator.wait(timeout=5)
@@ -455,6 +468,7 @@ def test_task_seq_allocation_serializes_across_project_visibility(postgres_db: A
                     txn,
                     project_id=project_id,
                     title="second",
+                    validation_criteria="The second task receives a unique sequence number.",
                 )
                 second_task_created.set()
         except BaseException as exc:  # pragma: no cover - re-raised in main thread

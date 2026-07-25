@@ -18,6 +18,7 @@ from typing import TYPE_CHECKING, Any
 
 from gobby.mcp_proxy.tools.internal import InternalToolRegistry
 from gobby.storage.tasks import TaskNotFoundError
+from gobby.tasks.import_criteria import external_issue_validation_criteria
 from gobby.utils.project_context import get_project_context
 
 if TYPE_CHECKING:
@@ -147,6 +148,10 @@ def create_github_registry(
             issue_labels = [
                 lbl["name"] if isinstance(lbl, dict) else lbl for lbl in (issue.get("labels") or [])
             ]
+            validation_criteria = external_issue_validation_criteria(
+                "GitHub",
+                f"{repo}#{issue_number}",
+            )
 
             # Dedup: check existing task by repo + issue number
             existing = _find_task_by_github_issue(task_manager, repo, issue_number, project_id)
@@ -155,6 +160,7 @@ def create_github_registry(
                     "title": title,
                     "description": body,
                     "labels": issue_labels or None,
+                    "validation_criteria": validation_criteria,
                 }
                 if resolved_parent_id is not None:
                     update_fields["parent_task_id"] = resolved_parent_id
@@ -172,6 +178,7 @@ def create_github_registry(
                     github_issue_number=issue_number,
                     github_repo=repo,
                     labels=issue_labels or None,
+                    validation_criteria=validation_criteria,
                 )
                 imported.append(task.to_brief())
 

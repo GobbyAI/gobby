@@ -16,7 +16,6 @@ from gobby.mcp_proxy.tools.task_repo_paths import (
 )
 from gobby.mcp_proxy.tools.tasks._context import RegistryContext
 from gobby.mcp_proxy.tools.tasks._escalation_coordinator import coordinate_task_escalation
-from gobby.mcp_proxy.tools.tasks._helpers import SKIP_REASONS
 from gobby.mcp_proxy.tools.tasks._lifecycle_close_preview import (
     CloseEvaluationReport,
     link_close_commit_shas,
@@ -34,9 +33,10 @@ from gobby.mcp_proxy.tools.tasks._resolution import resolve_task_id_for_mcp
 from gobby.plans.bootstrap_ledger import BootstrapLedgerMismatchError
 from gobby.storage.tasks import TaskNotFoundError, TaskStaleStateError
 from gobby.storage.verification_receipts import VerificationReceiptStore
+from gobby.tasks.evidence_admission import admit_task_evidence
 from gobby.tasks.state_semantics import get_claimed_session_id
+from gobby.tasks.task_state_evidence import build_linked_diff_evidence
 from gobby.tasks.verification_receipt_packet import build_verification_receipt_packet
-from gobby.workflows.condition_helpers import completion_evidence_ready
 
 logger = logging.getLogger(__name__)
 
@@ -86,19 +86,19 @@ def register_close_task(registry: InternalToolRegistry, ctx: RegistryContext) ->
     ) -> dict[str, Any]:
         """Close a task with validation.
 
-        For parent tasks: automatically checks all children are closed.
-        For leaf tasks: optionally validates with LLM if changes_summary provided.
+        Structural parents close after all children have closed. Every non-epic leaf
+        is validated against its explicit criteria and admissible task evidence.
 
         Args:
             task_id: Task reference (#N, path, or UUID)
-            reason: Reason for closing. Use "duplicate", "already_implemented", "wont_fix",
-                or "obsolete" to auto-skip commit check (these imply no work was done).
+            reason: Audited reason for closing.
             changes_summary: Summary of changes made. Required for leaf/standalone tasks.
                 Optional for parent/epic tasks where all children are closed.
                 For completed tasks: describe what was changed and why.
                 For no-work closes (duplicate, wont_fix, obsolete): explain why no changes were needed.
-            skip_validation: Skip all validation checks
-            override_justification: Why agent bypassed validation (stored for audit).
+            skip_validation: Accepted only for organizational closes; leaf validation
+                cannot be bypassed.
+            override_justification: Optional audit context for organizational closes.
             commit_sha: Git commit SHA to link before closing. Convenience for link + close in one call.
             project_path: Repository path that contains the commit. Optional; defaults to the
                 task project's repository. Absolute paths are allowed when they resolve to an
@@ -209,6 +209,12 @@ def register_close_task(registry: InternalToolRegistry, ctx: RegistryContext) ->
         # changes_summary, or session-edit checks, regardless of child count.
         is_epic = task.task_type == "epic"
         skip_leaf_checks = is_parent_all_closed or is_epic
+        if not skip_leaf_checks and not (task.validation_criteria or "").strip():
+            return blocked(
+                "missing_validation_criteria",
+                "Non-epic tasks require explicit validation_criteria before they can close.",
+                action="Update the task with observable validation criteria, then retry close_task.",
+            )
 
         # Require changes_summary for non-parent closes (agents must explain what changed)
         if not skip_leaf_checks and not changes_summary:
@@ -320,42 +326,23 @@ def register_close_task(registry: InternalToolRegistry, ctx: RegistryContext) ->
                 )
         report.pass_gate("commit_requirements")
 
-        # Enforce audited skip_validation constraints. Validation may be skipped
-        # only with an explicit reason and current-session verification evidence.
-        if skip_validation:
-            if not override_justification:
-                return blocked(
-                    "skip_validation_no_justification",
-                    "override_justification is required when skip_validation=True. "
-                    "Explain why validation should be skipped.",
-                    action="Pass a specific override_justification, then retry close_task.",
-                )
-            if not _has_current_session_verification_evidence(ctx, resolved_session_id):
-                return blocked(
-                    "skip_validation_missing_evidence",
-                    "skip_validation=True requires successful verification evidence recorded "
-                    "in the current session.",
-                    action="Run a validation command or record an eligible manual diff review.",
-                )
+        if skip_validation and not skip_leaf_checks:
+            return blocked(
+                "validation_contract_not_skippable",
+                "Non-epic task close cannot skip criterion-to-evidence validation.",
+                action="Provide admissible evidence for every validation criterion.",
+            )
         report.pass_gate("override_policy")
 
-        # Auto-skip validation for certain close reasons
-        should_skip = skip_validation or reason.lower() in SKIP_REASONS
+        should_skip = skip_leaf_checks
         validation_status: str | None = None
         validation_feedback: str | None = None
         close_extra: dict[str, Any] = {}
-        validation_reset_reason = (
-            "validation_skip_approval"
-            if not skip_leaf_checks
-            and (should_skip or (not target_task_had_edits and not commit_shas))
-            else None
-        )
+        validation_reset_reason = None
 
-        # Enforce commits if the target task had edits.
-        # Only skip for explicit skip_validation, NOT for close reasons like out_of_repo
-        # (if the target task edited in-repo files, those need commits regardless of reason)
-        # Also skip for parent tasks with all children closed (no direct edits expected)
-        if not skip_leaf_checks and resolved_session_id and not skip_validation:
+        # Enforce commits if the target task had edits. Structural parents and epics
+        # do not represent direct implementation work.
+        if not skip_leaf_checks and resolved_session_id:
             if target_task_had_edits and not commit_shas:
                 return blocked(
                     "missing_commits_for_edits",
@@ -368,9 +355,35 @@ def register_close_task(registry: InternalToolRegistry, ctx: RegistryContext) ->
         report.pass_gate("edits_committed")
 
         receipt_packet = None
+        admission = None
+        evidence = None
         if not skip_leaf_checks:
+            assert resolved_session_id is not None
+            evidence = gather_validation_context(
+                evaluation_task,
+                changes_summary,
+                repo_path,
+                ctx.task_manager,
+            )
             receipt_store = VerificationReceiptStore(ctx.task_manager.db)
             verification_receipts = receipt_store.list_for_task(task.project_id, task.id)
+            linked_diff_evidence = build_linked_diff_evidence(
+                evaluation_task,
+                session_id=resolved_session_id,
+                validation_context=evidence.validation_context or "",
+            )
+            if linked_diff_evidence is not None:
+                linked_diff_receipt = (
+                    linked_diff_evidence.receipt
+                    if preview
+                    else receipt_store.upsert(linked_diff_evidence.write)
+                )
+                verification_receipts = [
+                    receipt
+                    for receipt in verification_receipts
+                    if receipt.id != linked_diff_receipt.id
+                ]
+                verification_receipts.append(linked_diff_receipt)
             requested_receipt_ids = list(dict.fromkeys(evidence_receipt_ids or []))
             available_receipt_ids = {receipt.id for receipt in verification_receipts}
             missing_receipt_ids = [
@@ -387,6 +400,26 @@ def register_close_task(registry: InternalToolRegistry, ctx: RegistryContext) ->
                         "Inspect task and unassigned receipts, assign the intended receipt IDs, "
                         "then retry close_task."
                     ),
+                )
+            admission = admit_task_evidence(
+                verification_receipts,
+                task_id=task.id,
+                validation_epoch=task.validation_epoch,
+                validation_criteria=task.validation_criteria or "",
+            )
+            inadmissible_requested_ids = [
+                receipt_id
+                for receipt_id in requested_receipt_ids
+                if receipt_id not in admission.evidence_ids
+            ]
+            if inadmissible_requested_ids:
+                inadmissible_text = ", ".join(inadmissible_requested_ids)
+                return blocked(
+                    "evidence_receipts_not_admissible",
+                    f"Requested receipts are stale, failed, pending, unknown, superseded, "
+                    f"or untrusted: {inadmissible_text}",
+                    action="Run or record fresh authoritative evidence, then retry close_task.",
+                    extra={"evidence_admission": admission.audit_summary()},
                 )
             explicit_reference_text = "\n".join(
                 value
@@ -408,7 +441,7 @@ def register_close_task(registry: InternalToolRegistry, ctx: RegistryContext) ->
                 resolved_session_id,
             )
             receipt_packet = build_verification_receipt_packet(
-                verification_receipts,
+                admission.receipts,
                 explicit_receipt_ids=list(
                     dict.fromkeys([*requested_receipt_ids, *implicit_receipt_ids])
                 ),
@@ -419,6 +452,7 @@ def register_close_task(registry: InternalToolRegistry, ctx: RegistryContext) ->
                 close_extra.update(
                     {
                         "evidence_completeness": receipt_packet.disclosure.to_dict(),
+                        "evidence_admission": admission.audit_summary(),
                         "selected_evidence": dict(report.selected_evidence),
                     }
                 )
@@ -442,65 +476,59 @@ def register_close_task(registry: InternalToolRegistry, ctx: RegistryContext) ->
                     extra=parent_result.extra,
                 )
 
-            # Code leaves must pass LLM validation even when criteria are absent;
-            # TaskValidator falls back to the task description in that case.
-            children = ctx.task_manager.list_tasks(parent_task_id=resolved_id, limit=1)
-            is_leaf = len(children) == 0
-
-            if (
-                is_leaf
-                and ctx.task_validator
-                and (task.validation_criteria or task.category == "code")
-            ):
-                assert receipt_packet is not None
-                evidence = gather_validation_context(
-                    evaluation_task,
-                    changes_summary,
-                    repo_path,
-                    ctx.task_manager,
+            if ctx.task_validator is None:
+                return blocked(
+                    "validation_provider_unavailable",
+                    "Criterion-to-evidence validation is required, but no task validator "
+                    "is configured.",
+                    action="Configure the task validator, then retry close_task.",
                 )
-                llm_result = await validate_leaf_task_with_llm(
-                    task=evaluation_task,
-                    task_validator=ctx.task_validator,
-                    validation_context=evidence.validation_context or changes_summary or "",
-                    ctx=ctx,
-                    resolved_id=resolved_id,
-                    validation_config=ctx.validation_config,
-                    file_context_text=evidence.file_context_text,
-                    is_documentation_only=evidence.is_documentation_only,
-                    verification_receipt_text=receipt_packet.text,
-                    read_only=preview,
-                )
-                llm_result.extra = {
-                    **(llm_result.extra or {}),
-                    "evidence_completeness": report.evidence_completeness,
-                    "selected_evidence": dict(report.selected_evidence),
+            assert receipt_packet is not None
+            assert admission is not None
+            assert evidence is not None
+            llm_result = await validate_leaf_task_with_llm(
+                task=evaluation_task,
+                task_validator=ctx.task_validator,
+                validation_context=evidence.validation_context or changes_summary or "",
+                ctx=ctx,
+                resolved_id=resolved_id,
+                validation_config=ctx.validation_config,
+                file_context_text=evidence.file_context_text,
+                verification_receipt_text=receipt_packet.text,
+                admissible_evidence_ids=list(admission.evidence_ids),
+                read_only=preview,
+            )
+            llm_result.extra = {
+                **(llm_result.extra or {}),
+                "evidence_completeness": report.evidence_completeness,
+                "evidence_admission": admission.audit_summary(),
+                "selected_evidence": dict(report.selected_evidence),
+            }
+            if not llm_result.can_close:
+                if preview:
+                    reasons = list((llm_result.extra or {}).get("blocking_reasons") or [])
+                    if not reasons and llm_result.message:
+                        reasons = [llm_result.message]
+                    return report.preview_response(
+                        can_close=False,
+                        error=llm_result.error_type or "validation_failed",
+                        blocking_reasons=reasons,
+                        required_actions=reasons,
+                        extra=llm_result.extra,
+                    )
+                response = {
+                    "success": False,
+                    "error": llm_result.error_type,
+                    "message": llm_result.message,
                 }
-                if not llm_result.can_close:
-                    if preview:
-                        reasons = list((llm_result.extra or {}).get("blocking_reasons") or [])
-                        if not reasons and llm_result.message:
-                            reasons = [llm_result.message]
-                        return report.preview_response(
-                            can_close=False,
-                            error=llm_result.error_type or "validation_failed",
-                            blocking_reasons=reasons,
-                            required_actions=reasons,
-                            extra=llm_result.extra,
-                        )
-                    response = {
-                        "success": False,
-                        "error": llm_result.error_type,
-                        "message": llm_result.message,
-                    }
-                    if llm_result.extra:
-                        response.update(llm_result.extra)
-                    return response
-                validation_status = llm_result.validation_status
-                validation_feedback = llm_result.validation_feedback
-                validation_reset_reason = llm_result.reset_reason
                 if llm_result.extra:
-                    close_extra.update(llm_result.extra)
+                    response.update(llm_result.extra)
+                return response
+            validation_status = llm_result.validation_status
+            validation_feedback = llm_result.validation_feedback
+            validation_reset_reason = llm_result.reset_reason
+            if llm_result.extra:
+                close_extra.update(llm_result.extra)
         report.validation_status = validation_status or ("skipped" if should_skip else "valid")
         report.validation_feedback = validation_feedback
         report.pass_gate("semantic_validation")
@@ -566,9 +594,9 @@ def register_close_task(registry: InternalToolRegistry, ctx: RegistryContext) ->
             }
 
         # Named validation-failure reset branches:
-        # (a) LLM valid verdict; (b) documentation auto-validation pass;
-        # (c) approved validation skip or no-diff close; and
-        # (d) manual de-escalation/reopen in storage.tasks._transitions.reopen_task.
+        # (a) a complete criterion-to-evidence verdict;
+        # (b) an organizational parent/epic close; and
+        # (c) manual de-escalation/reopen in storage.tasks._transitions.reopen_task.
         try:
             ctx.task_manager.close_task(
                 resolved_id,
@@ -665,12 +693,9 @@ def register_close_task(registry: InternalToolRegistry, ctx: RegistryContext) ->
             "close_task(task_id, commit_sha='abc123'). Or include "
             "[<project_name>-#<task_number>] in commit message for auto-linking, "
             "e.g. [gobby-#123]. Parent tasks require all children closed. "
-            "Validation auto-skipped for: duplicate, already_implemented, wont_fix, "
-            "obsolete, out_of_repo. Note: out_of_repo only skips LLM validation and "
-            "the basic commit-linked check; commits are still required if the session "
-            "attributed edits to the target task. skip_validation=True "
-            "is an audited override requiring override_justification and current-session "
-            "verification evidence."
+            "Every non-epic leaf requires explicit validation criteria, admissible current-epoch "
+            "evidence, and a criterion-by-criterion validator verdict. Close reasons and "
+            "skip_validation do not bypass that contract."
         ),
         input_schema={
             "type": "object",
@@ -681,7 +706,10 @@ def register_close_task(registry: InternalToolRegistry, ctx: RegistryContext) ->
                 },
                 "reason": {
                     "type": "string",
-                    "description": 'Reason for closing. Use "duplicate", "already_implemented", "wont_fix", or "obsolete" to auto-skip validation and commit check. "out_of_repo" skips validation only; commits are still required if the session edited in-repo files.',
+                    "description": (
+                        "Audited reason for closing. The reason does not bypass the "
+                        "criterion-to-evidence contract for non-epic leaves."
+                    ),
                     "default": "completed",
                 },
                 "changes_summary": {
@@ -691,20 +719,16 @@ def register_close_task(registry: InternalToolRegistry, ctx: RegistryContext) ->
                 "skip_validation": {
                     "type": "boolean",
                     "description": (
-                        "Audited override for LLM validation when validation is unavailable "
-                        "or demonstrably wrong. Requires override_justification and successful "
-                        "current-session verification evidence from a validation command or "
-                        "gobby-sessions:record_verification_evidence. Commits may be attached; "
-                        "close_task stores validation_override_reason for audit."
+                        "Organizational-close compatibility flag. Non-epic leaf validation "
+                        "cannot be skipped and returns validation_contract_not_skippable."
                     ),
                     "default": False,
                 },
                 "override_justification": {
                     "type": "string",
                     "description": (
-                        "Justification for bypassing LLM validation. Required when "
-                        "skip_validation=True and stored as validation_override_reason. "
-                        "Example: 'Validator missed generated migration; verified via focused pytest.'"
+                        "Optional audit context for an organizational close. It cannot "
+                        "override validation for a non-epic leaf."
                     ),
                     "default": None,
                 },
@@ -786,25 +810,3 @@ def _format_git_since(value: Any) -> str | None:
         value = value.isoformat()
     text = str(value).strip()
     return text or None
-
-
-def _has_current_session_verification_evidence(
-    ctx: RegistryContext,
-    resolved_session_id: str | None,
-) -> bool:
-    if not resolved_session_id:
-        return False
-    try:
-        project_id = ctx.resolve_project_from_session(resolved_session_id)
-        if VerificationReceiptStore(ctx.task_manager.db).has_success(
-            project_id, resolved_session_id
-        ):
-            return True
-    except Exception as exc:
-        logger.debug("Failed to load durable verification receipts for skip override: %s", exc)
-    try:
-        variables = ctx.session_var_manager.get_variables(resolved_session_id)
-    except Exception as exc:
-        logger.debug("Failed to load verification evidence for skip override: %s", exc)
-        return False
-    return completion_evidence_ready(variables)
