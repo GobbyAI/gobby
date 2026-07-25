@@ -418,7 +418,7 @@ async def test_send_message_balances_html_across_4096_character_chunks(
     ]
     assert all(payload["text"].startswith("<b>") for payload in payloads)
     assert all(payload["text"].endswith("</b>") for payload in payloads)
-    assert adapter._edit_overflow_ids == {"1": ["2"]}
+    assert adapter._edit_overflow_ids == {("chat999", "1"): ["2"]}
 
 
 @pytest.mark.asyncio
@@ -1160,7 +1160,99 @@ async def test_shutdown(
         mock_client_instance.post = mock_post
 
         await adapter.initialize(channel_config, secret_resolver)
+        adapter._message_link_preview_options[("chat", "message")] = {"is_disabled": True}
         await adapter.shutdown()
 
         mock_aclose.assert_called_once()
         assert adapter._client is None
+        assert adapter._message_link_preview_options == {}
+
+
+@pytest.mark.asyncio
+async def test_send_message_honors_default_and_per_message_link_preview_options(
+    adapter: TelegramAdapter,
+    channel_config: ChannelConfig,
+    secret_resolver: Callable[[str], str | None],
+) -> None:
+    channel_config.config_json["link_preview_options"] = {
+        "is_disabled": True,
+        "show_above_text": True,
+    }
+    mock_post = AsyncMock()
+
+    async def side_effect(url: str, **_kwargs: object) -> MagicMock:
+        response = MagicMock()
+        response.status_code = 200
+        response.raise_for_status = MagicMock()
+        response.json.return_value = (
+            {"ok": True, "result": {"message_id": 12345}}
+            if url.endswith("/sendMessage")
+            else {"ok": True}
+        )
+        return response
+
+    mock_post.side_effect = side_effect
+    with patch("httpx.AsyncClient") as mock_client_class:
+        mock_client_class.return_value.post = mock_post
+        await adapter.initialize(channel_config, secret_resolver)
+        mock_post.reset_mock()
+        mock_post.side_effect = side_effect
+
+        messages = [
+            CommsMessage(
+                id="default-preview",
+                channel_id=channel_config.id,
+                direction="outbound",
+                content="https://example.com/default",
+                metadata_json={"platform_destination": "chat999"},
+                created_at=datetime.now(UTC),
+            ),
+            CommsMessage(
+                id="override-preview",
+                channel_id=channel_config.id,
+                direction="outbound",
+                content="https://example.com/override",
+                metadata_json={
+                    "platform_destination": "chat999",
+                    "link_preview_options": {
+                        "is_disabled": False,
+                        "url": "https://example.com/override",
+                    },
+                },
+                created_at=datetime.now(UTC),
+            ),
+            CommsMessage(
+                id="clear-preview",
+                channel_id=channel_config.id,
+                direction="outbound",
+                content="https://example.com/clear",
+                metadata_json={
+                    "platform_destination": "chat999",
+                    "link_preview_options": None,
+                },
+                created_at=datetime.now(UTC),
+            ),
+        ]
+        for message in messages:
+            platform_message_id = await adapter.send_message(message)
+            assert platform_message_id is not None
+            await adapter.edit_message(
+                platform_message_id,
+                f"{message.content}/edited",
+                "chat999",
+            )
+
+    payloads = [item.kwargs["json"] for item in mock_post.call_args_list]
+    assert payloads[0]["link_preview_options"] == {
+        "is_disabled": True,
+        "show_above_text": True,
+    }
+    assert payloads[1]["link_preview_options"] == payloads[0]["link_preview_options"]
+    assert payloads[2]["link_preview_options"] == {
+        "is_disabled": False,
+        "show_above_text": True,
+        "url": "https://example.com/override",
+    }
+    assert payloads[3]["link_preview_options"] == payloads[2]["link_preview_options"]
+    assert "link_preview_options" not in payloads[4]
+    assert "link_preview_options" not in payloads[5]

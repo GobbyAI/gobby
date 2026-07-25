@@ -9,6 +9,7 @@ import json
 import logging
 import re
 import uuid
+from collections import OrderedDict
 from collections.abc import Callable, Mapping
 from datetime import UTC, datetime
 from pathlib import Path
@@ -32,6 +33,10 @@ from gobby.communications.telegram_callbacks import (
     TelegramCallbackRegistry,
     telegram_callback_message,
 )
+from gobby.communications.telegram_link_previews import (
+    normalize_link_preview_options,
+    resolve_link_preview_options,
+)
 from gobby.communications.telegram_stickers import telegram_sticker_attachments
 
 if TYPE_CHECKING:
@@ -39,6 +44,7 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 _ALLOWED_UPDATES = ("message", "message_reaction", "message_reaction_count", "callback_query")
+_MAX_TRACKED_EDIT_STATE = 1_024
 
 
 def _mentions_telegram_bot(
@@ -309,7 +315,12 @@ class TelegramAdapter(BaseChannelAdapter):
         self._persisted_offset: int = 0
         self._pending_update_ids: list[int] = []
         self._acknowledged_update_ids: set[int] = set()
-        self._edit_overflow_ids: dict[str, list[str]] = {}
+        self._edit_overflow_ids: OrderedDict[tuple[str, str], list[str]] = OrderedDict()
+        self._link_preview_options: dict[str, bool | str] | None = None
+        self._message_link_preview_options: OrderedDict[
+            tuple[str, str],
+            dict[str, bool | str] | None,
+        ] = OrderedDict()
         self._callback_registry = TelegramCallbackRegistry()
 
     def _advance_acknowledged_offset(self) -> None:
@@ -414,6 +425,11 @@ class TelegramAdapter(BaseChannelAdapter):
             raise ValueError("Telegram poll_offset must be a non-negative integer")
         self._offset = poll_offset
         self._persisted_offset = poll_offset
+        self._link_preview_options = normalize_link_preview_options(
+            config.config_json.get("link_preview_options"),
+            field_name="Telegram channel link_preview_options",
+        )
+        self._message_link_preview_options.clear()
 
         self._api_base = f"https://api.telegram.org/bot{self._bot_token}"
         self._client = httpx.AsyncClient(timeout=30.0)
@@ -487,6 +503,10 @@ class TelegramAdapter(BaseChannelAdapter):
                 thread_id=message.platform_thread_id,
                 ttl_seconds=message.metadata_json.get("callback_ttl_seconds", 300),
             )
+        link_preview_options = resolve_link_preview_options(
+            self._link_preview_options,
+            message.metadata_json,
+        )
 
         message_ids: list[str] = []
         for index, chunk in enumerate(chunks):
@@ -495,6 +515,8 @@ class TelegramAdapter(BaseChannelAdapter):
                 "text": chunk,
                 "parse_mode": "HTML",
             }
+            if link_preview_options is not None:
+                payload["link_preview_options"] = link_preview_options
             if reply_markup is not None and index == len(chunks) - 1:
                 payload["reply_markup"] = reply_markup
 
@@ -510,8 +532,16 @@ class TelegramAdapter(BaseChannelAdapter):
         if not message_ids:
             return None
         root_message_id = message_ids[0]
+        message_key = (str(chat_id), root_message_id)
+        if link_preview_options != self._link_preview_options:
+            self._message_link_preview_options[message_key] = link_preview_options
+            self._message_link_preview_options.move_to_end(message_key)
+            if len(self._message_link_preview_options) > _MAX_TRACKED_EDIT_STATE:
+                self._message_link_preview_options.popitem(last=False)
         if len(message_ids) > 1:
-            self._edit_overflow_ids[root_message_id] = message_ids[1:]
+            self._edit_overflow_ids[message_key] = message_ids[1:]
+            if len(self._edit_overflow_ids) > _MAX_TRACKED_EDIT_STATE:
+                self._edit_overflow_ids.popitem(last=False)
         return root_message_id
 
     async def send_typing(self, conversation_id: str) -> None:
@@ -554,31 +584,39 @@ class TelegramAdapter(BaseChannelAdapter):
     ) -> None:
         """Replace a Telegram message, maintaining overflow chunks when needed."""
         chunks = markdown_to_telegram_html_chunks(content, self.max_message_length)
+        message_key = (conversation_id, platform_message_id)
         target_ids = [
             platform_message_id,
-            *self._edit_overflow_ids.get(platform_message_id, []),
+            *self._edit_overflow_ids.get(message_key, []),
         ]
+        link_preview_options = self._message_link_preview_options.get(
+            message_key,
+            self._link_preview_options,
+        )
 
         for index, chunk in enumerate(chunks):
             if index < len(target_ids):
-                await self._post_json(
-                    "editMessageText",
-                    {
-                        "chat_id": conversation_id,
-                        "message_id": target_ids[index],
-                        "text": chunk,
-                        "parse_mode": "HTML",
-                    },
-                )
-                continue
-
-            result = await self._post_json(
-                "sendMessage",
-                {
+                payload: dict[str, Any] = {
                     "chat_id": conversation_id,
+                    "message_id": target_ids[index],
                     "text": chunk,
                     "parse_mode": "HTML",
-                },
+                }
+                if link_preview_options is not None:
+                    payload["link_preview_options"] = link_preview_options
+                await self._post_json("editMessageText", payload)
+                continue
+
+            payload = {
+                "chat_id": conversation_id,
+                "text": chunk,
+                "parse_mode": "HTML",
+            }
+            if link_preview_options is not None:
+                payload["link_preview_options"] = link_preview_options
+            result = await self._post_json(
+                "sendMessage",
+                payload,
             )
             if not result.get("ok"):
                 raise RuntimeError("Telegram sendMessage did not return a message")
@@ -595,9 +633,12 @@ class TelegramAdapter(BaseChannelAdapter):
 
         overflow_ids = target_ids[1 : len(chunks)]
         if overflow_ids:
-            self._edit_overflow_ids[platform_message_id] = overflow_ids
+            self._edit_overflow_ids[message_key] = overflow_ids
+            self._edit_overflow_ids.move_to_end(message_key)
+            if len(self._edit_overflow_ids) > _MAX_TRACKED_EDIT_STATE:
+                self._edit_overflow_ids.popitem(last=False)
         else:
-            self._edit_overflow_ids.pop(platform_message_id, None)
+            self._edit_overflow_ids.pop(message_key, None)
 
     async def send_attachment(
         self, message: CommsMessage, attachment: CommsAttachment, file_path: Path
@@ -758,6 +799,7 @@ class TelegramAdapter(BaseChannelAdapter):
             await self._client.aclose()
             self._client = None
         self._edit_overflow_ids.clear()
+        self._message_link_preview_options.clear()
 
     def capabilities(self) -> ChannelCapabilities:
         """Return channel capabilities."""

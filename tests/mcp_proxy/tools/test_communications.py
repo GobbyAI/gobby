@@ -66,6 +66,7 @@ async def test_send_message(registry, mock_manager):
         session_id="session-1",
         thread_id="thread-1",
         content_type="text/markdown",
+        link_preview_options={"is_disabled": True},
     )
 
     assert res["success"] is True
@@ -74,7 +75,11 @@ async def test_send_message(registry, mock_manager):
         channel_name="test-channel",
         content="Hello world",
         session_id="session-1",
-        metadata={"thread_id": "thread-1", "content_type": "text/markdown"},
+        metadata={
+            "thread_id": "thread-1",
+            "content_type": "text/markdown",
+            "link_preview_options": {"is_disabled": True},
+        },
     )
 
 
