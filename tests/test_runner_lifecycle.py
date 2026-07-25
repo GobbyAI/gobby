@@ -1524,7 +1524,9 @@ class TestShutdownDaemonServices:
         assert completed.returncode == 0, completed.stderr
 
     @pytest.mark.asyncio
-    async def test_pending_interactions_and_http_sessions_stop_before_uvicorn_exit(self) -> None:
+    async def test_communications_stop_before_websocket_and_workflow_runtime_shutdown(
+        self,
+    ) -> None:
         runner = self._minimal_shutdown_runner(ShutdownIntent.STOP)
         server = SimpleNamespace(should_exit=False)
 
@@ -1554,8 +1556,15 @@ class TestShutdownDaemonServices:
             events.append("websocket")
             assert server.should_exit is False
 
+        async def shutdown_workflow_runtime() -> None:
+            events.append("workflow-runtime")
+
         runner.http_server._cleanup_pending_interactions = AsyncMock(side_effect=cleanup_pending)
         runner.http_server._terminate_streamable_http_sessions.side_effect = terminate_sessions
+        runner.http_server._hook_manager = SimpleNamespace(
+            _shutdown_complete=False,
+            shutdown_async=AsyncMock(side_effect=shutdown_workflow_runtime),
+        )
         runner.communications_manager = SimpleNamespace(
             stop=AsyncMock(side_effect=stop_communications)
         )
@@ -1580,6 +1589,7 @@ class TestShutdownDaemonServices:
             "communications",
             "websocket",
         ]
+        assert events.index("communications") < events.index("workflow-runtime")
         assert server.should_exit is True
 
     @pytest.mark.asyncio
