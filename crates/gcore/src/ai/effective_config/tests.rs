@@ -1,7 +1,10 @@
 use std::cell::Cell;
 use std::collections::BTreeMap;
 use std::fs;
+use std::io::Write;
 use std::net::TcpListener;
+use std::thread;
+use std::time::Duration;
 
 use tempfile::TempDir;
 
@@ -12,7 +15,9 @@ use crate::config::{
     resolve_embedding_config_from_binding,
 };
 use crate::local_token::{AUTHORIZATION_HEADER, LOCAL_CLI_TOKEN_FILENAME};
-use crate::test_http::{RequestHandle, spawn_json_response, spawn_json_response_with_status};
+use crate::test_http::{
+    RequestHandle, read_http_request, spawn_json_response, spawn_json_response_with_status,
+};
 
 fn temp_home() -> TempDir {
     tempfile::tempdir().expect("temp gobby home")
@@ -41,6 +46,25 @@ fn served(values: impl IntoIterator<Item = (&'static str, &'static str)>) -> Dae
             .map(|(key, value)| (key.to_string(), value.to_string()))
             .collect(),
     )
+}
+
+fn spawn_delayed_json_response(delay: Duration) -> std::io::Result<(String, RequestHandle)> {
+    let listener = TcpListener::bind("127.0.0.1:0")?;
+    let base_url = format!("http://{}", listener.local_addr()?);
+    let handle = thread::spawn(move || {
+        let (mut stream, _) = listener.accept()?;
+        let request = read_http_request(&mut stream)?;
+        thread::sleep(delay);
+        let body = r#"{"config":{}}"#;
+        write!(
+            stream,
+            "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
+            body.len(),
+            body
+        )?;
+        Ok(request)
+    });
+    Ok((base_url, handle))
 }
 
 #[test]
@@ -82,8 +106,25 @@ fn transport_and_non_success_statuses_are_sanitized_hard_errors() {
     drop(listener);
     let error =
         daemon_mode_layers_at(&unreachable, home.path()).expect_err("transport must hard fail");
-    assert!(matches!(error, EffectiveConfigError::Transport { .. }));
+    assert_eq!(
+        error,
+        EffectiveConfigError::Transport {
+            kind: EffectiveConfigTransportKind::Unreachable,
+        }
+    );
     assert!(!error.to_string().contains(&unreachable));
+
+    let invalid_url = "not a daemon URL";
+    let error =
+        fetch_daemon_served_config_at_with_timeout(invalid_url, None, Duration::from_millis(20))
+            .expect_err("invalid URL must hard fail");
+    assert_eq!(
+        error,
+        EffectiveConfigError::Transport {
+            kind: EffectiveConfigTransportKind::Other,
+        }
+    );
+    assert!(!error.to_string().contains(invalid_url));
 
     for status in [401, 500] {
         let (base_url, request) =
@@ -94,6 +135,31 @@ fn transport_and_non_success_statuses_are_sanitized_hard_errors() {
         assert!(!error.to_string().contains("sensitive error body"));
         join_request(request);
     }
+}
+
+#[test]
+fn loopback_timeout_is_bounded_and_categorized() {
+    assert_eq!(EFFECTIVE_CONFIG_TIMEOUT, Duration::from_secs(5));
+
+    let (base_url, request) =
+        spawn_delayed_json_response(Duration::from_millis(20)).expect("spawn delayed daemon");
+    fetch_daemon_served_config_at_with_timeout(&base_url, None, Duration::from_millis(200))
+        .expect("response within timeout");
+    join_request(request);
+
+    let (base_url, request) =
+        spawn_delayed_json_response(Duration::from_millis(100)).expect("spawn delayed daemon");
+    let error =
+        fetch_daemon_served_config_at_with_timeout(&base_url, None, Duration::from_millis(10))
+            .expect_err("response after timeout must fail");
+    assert_eq!(
+        error,
+        EffectiveConfigError::Transport {
+            kind: EffectiveConfigTransportKind::Timeout,
+        }
+    );
+    assert!(!error.to_string().contains(&base_url));
+    let _ = request.join().expect("delayed daemon thread");
 }
 
 #[test]
@@ -260,7 +326,7 @@ fn explicit_standalone_skips_daemon_fetch() {
     let layers = daemon_mode_layers_for(RuntimeMode::Standalone, || {
         calls.set(calls.get() + 1);
         Err(EffectiveConfigError::Transport {
-            reason: "must not run",
+            kind: EffectiveConfigTransportKind::Other,
         })
     })
     .expect("standalone layers");
@@ -272,7 +338,7 @@ fn explicit_standalone_skips_daemon_fetch() {
 #[test]
 fn cached_state_is_cloneable() {
     let failed = EffectiveConfigState::Failed(EffectiveConfigError::Transport {
-        reason: "daemon could not be reached",
+        kind: EffectiveConfigTransportKind::Unreachable,
     });
     assert!(matches!(
         failed.clone(),

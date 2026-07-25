@@ -10,7 +10,10 @@ from pathlib import Path
 from typing import Any
 from weakref import WeakKeyDictionary
 
-from gobby.runtime_output import forward_subprocess_stderr
+from gobby.runtime_output import (
+    forward_subprocess_stderr,
+    is_daemon_effective_config_transport_error,
+)
 from gobby.utils.native_bin import resolve_native_bin
 from gobby.utils.wiki_vault import existing_vault_dir, is_vault, resolve_vault_dir
 
@@ -104,6 +107,24 @@ class GwikiGatewayError(RuntimeError):
 
 class GwikiUnavailableError(GwikiGatewayError):
     """Raised when the gwiki binary cannot be resolved or executed."""
+
+
+class GwikiDaemonConfigUnavailableError(GwikiUnavailableError):
+    """Raised when gwiki cannot fetch daemon-served effective configuration."""
+
+    def __init__(
+        self,
+        *,
+        command: str,
+        argv: Sequence[str],
+        returncode: int,
+        stderr: str,
+    ) -> None:
+        super().__init__(stderr or f"gwiki {command} exited {returncode}")
+        self.command = command
+        self.argv = tuple(argv)
+        self.returncode = returncode
+        self.stderr = stderr
 
 
 class GwikiJsonError(GwikiGatewayError):
@@ -557,7 +578,6 @@ class GwikiGateway:
                     elapsed_seconds = time.monotonic() - started_at
                     await self._kill_process(proc)
                     stdout, stderr = await self._collect_streams(stdout_task, stderr_task)
-                    forward_subprocess_stderr(stderr)
                     return self._timeout_envelope(
                         command_name,
                         stdout=stdout,
@@ -585,8 +605,15 @@ class GwikiGateway:
                 await self._kill_process(proc)
             return self._timeout_envelope(command_name)
 
-        stderr_text = forward_subprocess_stderr(stderr)
+        stderr_text = stderr.decode(errors="replace").strip()
         if proc.returncode != 0:
+            if is_daemon_effective_config_transport_error(stderr_text):
+                raise GwikiDaemonConfigUnavailableError(
+                    command=command_name,
+                    argv=argv,
+                    returncode=proc.returncode or 1,
+                    stderr=stderr_text,
+                )
             payload = self._parse_error_payload(stdout, stderr)
             raise GwikiCommandError(
                 command=command_name,
@@ -596,6 +623,7 @@ class GwikiGateway:
                 payload=payload,
             )
 
+        forward_subprocess_stderr(stderr)
         return stdout, stderr_text
 
     async def _run_command_result(
@@ -634,7 +662,20 @@ class GwikiGateway:
             returncode = None
             timed_out = True
 
-        forward_subprocess_stderr(stderr)
+        stderr_text = stderr.decode(errors="replace").strip()
+        if (
+            returncode is not None
+            and returncode != 0
+            and is_daemon_effective_config_transport_error(stderr_text)
+        ):
+            raise GwikiDaemonConfigUnavailableError(
+                command=command[1] if len(command) > 1 else command[0],
+                argv=command,
+                returncode=returncode,
+                stderr=stderr_text,
+            )
+        if returncode == 0:
+            forward_subprocess_stderr(stderr)
         return GwikiCommandResult(
             command=tuple(command),
             returncode=returncode,

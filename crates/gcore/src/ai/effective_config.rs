@@ -1,4 +1,5 @@
 use std::collections::BTreeMap;
+use std::error::Error as StdError;
 use std::path::Path;
 use std::sync::OnceLock;
 use std::time::Duration;
@@ -15,7 +16,7 @@ use crate::runtime_mode::{RuntimeMode, RuntimeModeError, runtime_mode};
 
 pub const EFFECTIVE_CONFIG_PATH: &str = "/api/config/effective";
 
-const EFFECTIVE_CONFIG_TIMEOUT: Duration = Duration::from_secs(2);
+const EFFECTIVE_CONFIG_TIMEOUT: Duration = Duration::from_secs(5);
 const POSTGRES_DSN_KEY: &str = "databases.postgres.dsn";
 
 pub type EffectiveConfigLayers = (DaemonServedConfig, Option<StandaloneConfig>);
@@ -32,8 +33,8 @@ pub type EffectivePostgresAiSource<'a> = AiConfigSource<
 pub enum EffectiveConfigError {
     #[error(transparent)]
     RuntimeMode(#[from] RuntimeModeError),
-    #[error("daemon effective config request failed: {reason}")]
-    Transport { reason: &'static str },
+    #[error("daemon effective config request failed: {kind}")]
+    Transport { kind: EffectiveConfigTransportKind },
     #[error("daemon effective config request failed with HTTP {status}")]
     HttpStatus { status: u16 },
     #[error("daemon effective config protocol failure at HTTP {status}: {reason}")]
@@ -42,6 +43,16 @@ pub enum EffectiveConfigError {
     Contract { key: String, reason: &'static str },
     #[error("daemon effective config local configuration failure: {reason}")]
     LocalConfiguration { reason: &'static str },
+}
+
+#[derive(Debug, Clone, Copy, Error, PartialEq, Eq)]
+pub enum EffectiveConfigTransportKind {
+    #[error("daemon could not be reached (timeout)")]
+    Timeout,
+    #[error("daemon could not be reached (unreachable)")]
+    Unreachable,
+    #[error("daemon could not be reached (other transport error)")]
+    Other,
 }
 
 #[derive(Debug, Clone)]
@@ -88,12 +99,20 @@ pub fn fetch_daemon_served_config_at(
     base_url: &str,
     token: Option<&str>,
 ) -> Result<DaemonServedConfig, EffectiveConfigError> {
+    fetch_daemon_served_config_at_with_timeout(base_url, token, EFFECTIVE_CONFIG_TIMEOUT)
+}
+
+fn fetch_daemon_served_config_at_with_timeout(
+    base_url: &str,
+    token: Option<&str>,
+    timeout: Duration,
+) -> Result<DaemonServedConfig, EffectiveConfigError> {
     let url = format!(
         "{}{}",
         base_url.trim_end_matches('/'),
         EFFECTIVE_CONFIG_PATH
     );
-    let mut request = ureq::get(&url).timeout(EFFECTIVE_CONFIG_TIMEOUT);
+    let mut request = ureq::get(&url).timeout(timeout);
     if let Some(token) = token {
         request = request.set(
             crate::local_token::AUTHORIZATION_HEADER,
@@ -105,9 +124,9 @@ pub fn fetch_daemon_served_config_at(
         Err(ureq::Error::Status(status, _)) => {
             return Err(EffectiveConfigError::HttpStatus { status });
         }
-        Err(ureq::Error::Transport(_)) => {
+        Err(ureq::Error::Transport(transport)) => {
             return Err(EffectiveConfigError::Transport {
-                reason: "daemon could not be reached",
+                kind: classify_transport_error(&transport),
             });
         }
     };
@@ -128,6 +147,35 @@ pub fn fetch_daemon_served_config_at(
         })?;
     validate_served_values(&envelope.config)?;
     Ok(DaemonServedConfig::new(envelope.config))
+}
+
+fn classify_transport_error(transport: &ureq::Transport) -> EffectiveConfigTransportKind {
+    if transport_error_is_timeout(transport) {
+        return EffectiveConfigTransportKind::Timeout;
+    }
+    match transport.kind() {
+        ureq::ErrorKind::Dns
+        | ureq::ErrorKind::ConnectionFailed
+        | ureq::ErrorKind::Io
+        | ureq::ErrorKind::ProxyConnect => EffectiveConfigTransportKind::Unreachable,
+        _ => EffectiveConfigTransportKind::Other,
+    }
+}
+
+fn transport_error_is_timeout(transport: &ureq::Transport) -> bool {
+    let mut source = StdError::source(transport);
+    while let Some(error) = source {
+        if let Some(error) = error.downcast_ref::<std::io::Error>()
+            && matches!(
+                error.kind(),
+                std::io::ErrorKind::TimedOut | std::io::ErrorKind::WouldBlock
+            )
+        {
+            return true;
+        }
+        source = error.source();
+    }
+    false
 }
 
 pub fn daemon_dsn() -> Result<Option<String>, EffectiveConfigError> {

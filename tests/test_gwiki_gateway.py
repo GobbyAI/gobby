@@ -7,7 +7,12 @@ from typing import Any
 
 import pytest
 
-from gobby.gwiki_gateway import GwikiCommandError, GwikiGateway, GwikiReadSelectorError
+from gobby.gwiki_gateway import (
+    GwikiCommandError,
+    GwikiDaemonConfigUnavailableError,
+    GwikiGateway,
+    GwikiReadSelectorError,
+)
 
 pytestmark = [pytest.mark.unit, pytest.mark.asyncio]
 
@@ -691,7 +696,45 @@ async def test_error_preserves_stderr(
     assert exc_info.value.stderr == "scope does not exist"
     assert exc_info.value.payload == payload
     assert exc_info.value.to_envelope()["stderr"] == "scope does not exist"
-    assert capsys.readouterr().err == "scope does not exist\n"
+    assert capsys.readouterr().err == ""
+
+
+async def test_daemon_config_transport_is_unavailable_without_forwarding_stderr(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    stderr = b"Error: daemon effective config request failed: daemon could not be reached (timeout)"
+    _patch_subprocess(
+        monkeypatch,
+        [FakeProcess(returncode=1, stderr=stderr)],
+    )
+
+    with pytest.raises(GwikiDaemonConfigUnavailableError) as exc_info:
+        await _gateway().status()
+
+    assert exc_info.value.command == "status"
+    assert exc_info.value.returncode == 1
+    assert exc_info.value.stderr.endswith("(timeout)")
+    assert capsys.readouterr().err == ""
+
+
+async def test_prune_result_classifies_daemon_config_transport(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    stderr = (
+        b"Error: daemon effective config request failed: daemon could not be reached (unreachable)"
+    )
+    _patch_subprocess(
+        monkeypatch,
+        [FakeProcess(returncode=1, stderr=stderr)],
+    )
+
+    with pytest.raises(GwikiDaemonConfigUnavailableError) as exc_info:
+        await _gateway().prune_all_scopes()
+
+    assert exc_info.value.command == "prune"
+    assert capsys.readouterr().err == ""
 
 
 async def test_error_parses_structured_stderr_when_stdout_is_empty(

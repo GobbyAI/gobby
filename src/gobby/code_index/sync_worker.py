@@ -15,13 +15,15 @@ from typing import TYPE_CHECKING, Any
 
 from gobby.code_index.cleanup import purge_missing_project
 from gobby.code_index.gcode_gateway import (
+    GcodeCommandError,
+    GcodeDaemonConfigUnavailableError,
     GcodeEmbeddingTransportError,
     GcodeIndexedFileNotFoundError,
     GcodeProjectNotFoundError,
     GcodeTimeoutError,
     GcodeUnavailableError,
 )
-from gobby.code_index.sync_breaker import VectorSyncBreaker
+from gobby.code_index.sync_breaker import SyncCircuitBreaker
 
 if TYPE_CHECKING:
     from gobby.code_index.context import CodeIndexContext
@@ -63,6 +65,13 @@ class _MissingProject:
 
 def _file_needs_graph_sync(file: IndexedFile) -> bool:
     return file.symbol_count > 0 and file.language.lower() in _GRAPH_SYNC_LANGUAGES
+
+
+def _breakers_allow_attempt(*breakers: SyncCircuitBreaker | None) -> bool:
+    active = tuple(breaker for breaker in breakers if breaker is not None)
+    if any(not breaker.pending_allowed() for breaker in active):
+        return False
+    return all(breaker.should_attempt() for breaker in active)
 
 
 async def _run_db(
@@ -169,8 +178,19 @@ async def sync_worker_loop(
     """
     interval = config.sync_worker_interval_seconds
     batch_size = config.sync_worker_batch_size
-    breaker = VectorSyncBreaker(
+    vector_breaker = SyncCircuitBreaker(
+        name="Vector sync",
+        probe_target="embedding endpoint",
+        operation="vector sync",
         failure_threshold=config.sync_worker_breaker_failure_threshold,
+        base_backoff_seconds=config.sync_worker_breaker_backoff_seconds,
+        max_backoff_seconds=config.sync_worker_breaker_max_backoff_seconds,
+    )
+    gateway_breaker = SyncCircuitBreaker(
+        name="Gcode daemon-config",
+        probe_target="daemon config endpoint",
+        operation="gcode projections",
+        failure_threshold=1,
         base_backoff_seconds=config.sync_worker_breaker_backoff_seconds,
         max_backoff_seconds=config.sync_worker_breaker_max_backoff_seconds,
     )
@@ -192,7 +212,8 @@ async def sync_worker_loop(
                 batch_size=batch_size,
                 clear_graph=context.clear_graph,
                 run_db=run_db,
-                breaker=breaker,
+                vector_breaker=vector_breaker,
+                gateway_breaker=gateway_breaker,
             )
         except Exception as e:
             logger.exception("Sync worker pass error: %s", e)
@@ -213,12 +234,15 @@ async def _sync_pass(
     batch_size: int,
     clear_graph: Callable[[str], Awaitable[dict[str, Any]]] | None = None,
     run_db: Callable[..., Awaitable[Any]] | None = None,
-    breaker: VectorSyncBreaker | None = None,
+    vector_breaker: SyncCircuitBreaker | None = None,
+    gateway_breaker: SyncCircuitBreaker | None = None,
 ) -> None:
     """Single sync pass across all indexed projects."""
     projects = await _run_db(run_db, storage.list_indexed_projects)
     vectors_wanted = config.embedding_enabled and gcode_gateway is not None
-    if breaker is not None and not breaker.pending_allowed():
+    if vector_breaker is not None and not vector_breaker.pending_allowed():
+        vectors_wanted = False
+    if gateway_breaker is not None and not gateway_breaker.pending_allowed():
         vectors_wanted = False
 
     for project in projects:
@@ -253,7 +277,8 @@ async def _sync_pass(
                     file=file,
                     clear_graph=clear_graph,
                     run_db=run_db,
-                    breaker=breaker,
+                    vector_breaker=vector_breaker,
+                    gateway_breaker=gateway_breaker,
                 )
                 if did_sync:
                     synced_count += 1
@@ -282,7 +307,8 @@ async def _sync_file(
     file: IndexedFile,
     clear_graph: Callable[[str], Awaitable[dict[str, Any]]] | None = None,
     run_db: Callable[..., Awaitable[Any]] | None = None,
-    breaker: VectorSyncBreaker | None = None,
+    vector_breaker: SyncCircuitBreaker | None = None,
+    gateway_breaker: SyncCircuitBreaker | None = None,
 ) -> bool:
     """Sync a single file's vectors and/or graph edges. Returns True if any work done."""
     # Validate: file record still exists (not invalidated between poll and process)
@@ -299,7 +325,10 @@ async def _sync_file(
 
     # Vector sync
     if not current.vectors_synced and config.embedding_enabled:
-        if gcode_gateway is not None and (breaker is None or breaker.should_attempt()):
+        if gcode_gateway is not None and _breakers_allow_attempt(
+            gateway_breaker,
+            vector_breaker,
+        ):
             try:
                 await _run_db(run_db, storage.mark_vector_sync_attempted, current.id)
                 await _sync_vector_file(
@@ -308,6 +337,8 @@ async def _sync_file(
                     file=current,
                     timeout=config.sync_worker_projection_timeout_seconds,
                 )
+                if gateway_breaker is not None:
+                    gateway_breaker.record_success()
                 await _run_db(run_db, storage.mark_vectors_synced, current.id, current.content_hash)
                 await _run_db(
                     run_db,
@@ -316,10 +347,16 @@ async def _sync_file(
                     "vector",
                 )
                 did_work = True
-                if breaker is not None:
-                    breaker.record_success()
+                if vector_breaker is not None:
+                    vector_breaker.record_success()
+            except GcodeDaemonConfigUnavailableError:
+                if gateway_breaker is not None:
+                    gateway_breaker.record_failure()
+                return did_work
             except GcodeIndexedFileNotFoundError as e:
                 # Per-file data error: never affects the breaker.
+                if gateway_breaker is not None:
+                    gateway_breaker.record_success()
                 if not await _handle_indexed_file_not_found(
                     storage=storage,
                     config=config,
@@ -333,6 +370,8 @@ async def _sync_file(
                 ):
                     return False
             except GcodeProjectNotFoundError as e:
+                if gateway_breaker is not None:
+                    gateway_breaker.record_success()
                 await _handle_project_not_found(
                     storage=storage,
                     config=config,
@@ -345,15 +384,29 @@ async def _sync_file(
                     run_db=run_db,
                 )
                 return False
-            except (
-                GcodeEmbeddingTransportError,
-                GcodeTimeoutError,
-                GcodeUnavailableError,
-            ) as e:
-                if breaker is not None:
-                    breaker.record_failure()
+            except GcodeEmbeddingTransportError as e:
+                if gateway_breaker is not None:
+                    gateway_breaker.record_success()
+                if vector_breaker is not None:
+                    vector_breaker.record_failure()
                 logger.warning(
                     "Sync worker: vector sync transport failure for %s: %s",
+                    current.file_path,
+                    e,
+                )
+            except (GcodeTimeoutError, GcodeUnavailableError) as e:
+                if vector_breaker is not None:
+                    vector_breaker.record_failure()
+                logger.warning(
+                    "Sync worker: vector sync transport failure for %s: %s",
+                    current.file_path,
+                    e,
+                )
+            except GcodeCommandError as e:
+                if gateway_breaker is not None:
+                    gateway_breaker.record_success()
+                logger.exception(
+                    "Sync worker: vector sync failed for %s: %s",
                     current.file_path,
                     e,
                 )
@@ -379,7 +432,7 @@ async def _sync_file(
                         "graph",
                     )
                     did_work = True
-                else:
+                elif _breakers_allow_attempt(gateway_breaker):
                     await _run_db(run_db, storage.mark_graph_sync_attempted, current.id)
                     graph_synced = await _sync_graph(
                         gcode_gateway=gcode_gateway,
@@ -387,6 +440,8 @@ async def _sync_file(
                         file=current,
                         timeout=config.sync_worker_projection_timeout_seconds,
                     )
+                    if gateway_breaker is not None:
+                        gateway_breaker.record_success()
                     if graph_synced:
                         await _run_db(
                             run_db, storage.mark_graph_synced, current.id, current.content_hash
@@ -398,7 +453,13 @@ async def _sync_file(
                             "graph",
                         )
                         did_work = True
+            except GcodeDaemonConfigUnavailableError:
+                if gateway_breaker is not None:
+                    gateway_breaker.record_failure()
+                return did_work
             except GcodeIndexedFileNotFoundError as e:
+                if gateway_breaker is not None:
+                    gateway_breaker.record_success()
                 if not await _handle_indexed_file_not_found(
                     storage=storage,
                     config=config,
@@ -412,6 +473,8 @@ async def _sync_file(
                 ):
                     return False
             except GcodeProjectNotFoundError as e:
+                if gateway_breaker is not None:
+                    gateway_breaker.record_success()
                 await _handle_project_not_found(
                     storage=storage,
                     config=config,
@@ -427,6 +490,14 @@ async def _sync_file(
             except GcodeTimeoutError as e:
                 logger.warning(
                     "Sync worker: graph sync timed out for %s: %s",
+                    current.file_path,
+                    e,
+                )
+            except GcodeCommandError as e:
+                if gateway_breaker is not None:
+                    gateway_breaker.record_success()
+                logger.exception(
+                    "Sync worker: graph sync failed for %s: %s",
                     current.file_path,
                     e,
                 )

@@ -10,6 +10,7 @@ import pytest
 
 from gobby.code_index.gcode_gateway import (
     GcodeCommandError,
+    GcodeDaemonConfigUnavailableError,
     GcodeGateway,
     GcodeIndexedFileNotFoundError,
     GcodeInputValidationError,
@@ -632,7 +633,46 @@ async def test_gateway_raises_for_nonzero_command(
     with pytest.raises(GcodeCommandError, match="gcode exited 2: boom"):
         await gateway.graph_clear("proj-1")
 
-    assert capsys.readouterr().err == "boom\n"
+    assert capsys.readouterr().err == ""
+
+
+async def test_gateway_classifies_daemon_config_transport_without_forwarding_stderr(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    stderr = (
+        b"Error: daemon effective config request failed: daemon could not be reached (unreachable)"
+    )
+    processes = [
+        FakeProcess(stdout=GCODE_PIN_STDOUT),
+        FakeProcess(returncode=1, stderr=stderr),
+    ]
+    _patch_subprocess(monkeypatch, processes)
+    gateway = GcodeGateway(binary="/tmp/gcode")
+
+    with pytest.raises(GcodeDaemonConfigUnavailableError, match="daemon could not be reached"):
+        await gateway.graph_clear("proj-1")
+
+    assert capsys.readouterr().err == ""
+
+
+async def test_maintenance_command_classifies_daemon_config_transport(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+    tmp_path: Path,
+) -> None:
+    stderr = b"Error: daemon effective config request failed: daemon could not be reached (timeout)"
+    processes = [
+        FakeProcess(stdout=GCODE_PIN_STDOUT),
+        FakeProcess(returncode=1, stderr=stderr),
+    ]
+    _patch_subprocess(monkeypatch, processes)
+    gateway = GcodeGateway(binary="/tmp/gcode")
+
+    with pytest.raises(GcodeDaemonConfigUnavailableError):
+        await gateway.prune_project_for_maintenance(tmp_path)
+
+    assert capsys.readouterr().err == ""
 
 
 async def test_gateway_classifies_project_not_found(

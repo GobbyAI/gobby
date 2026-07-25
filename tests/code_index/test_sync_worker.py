@@ -22,7 +22,7 @@ from gobby.code_index.gcode_gateway import (
 )
 from gobby.code_index.models import IndexedFile, IndexedProject
 from gobby.code_index.storage import CodeIndexStorage
-from gobby.code_index.sync_breaker import BreakerState, VectorSyncBreaker
+from gobby.code_index.sync_breaker import BreakerState, SyncCircuitBreaker
 from gobby.code_index.sync_worker import _sync_file, _sync_graph, _sync_pass, sync_worker_loop
 from gobby.config.code_index import CodeIndexConfig
 from tests.code_index.conftest import PROJECT_ID
@@ -498,7 +498,11 @@ async def test_vector_project_missing_purges_vanished_root_once_and_skips_graph(
     }
     clear_graph = AsyncMock(return_value={"success": True})
     gateway = ProjectNotFoundGcodeGateway(remove_root=True)
-    breaker = VectorSyncBreaker()
+    breaker = SyncCircuitBreaker(
+        name="Vector sync",
+        probe_target="embedding endpoint",
+        operation="vector sync",
+    )
 
     did_sync = await _sync_file(
         storage=storage,
@@ -509,7 +513,7 @@ async def test_vector_project_missing_purges_vanished_root_once_and_skips_graph(
         file=pending_file,
         clear_graph=clear_graph,
         run_db=RecordingRunDb(),
-        breaker=breaker,
+        vector_breaker=breaker,
     )
 
     assert did_sync is False
@@ -533,7 +537,11 @@ async def test_vector_project_missing_warns_existing_root_and_stays_pending(
     storage = MagicMock()
     storage.get_file.return_value = pending_file
     gateway = ProjectNotFoundGcodeGateway()
-    breaker = VectorSyncBreaker()
+    breaker = SyncCircuitBreaker(
+        name="Vector sync",
+        probe_target="embedding endpoint",
+        operation="vector sync",
+    )
 
     with caplog.at_level(logging.WARNING, logger="gobby.code_index.sync_worker"):
         did_sync = await _sync_file(
@@ -543,7 +551,7 @@ async def test_vector_project_missing_warns_existing_root_and_stays_pending(
             project_id=PROJECT_ID,
             root=tmp_path,
             file=pending_file,
-            breaker=breaker,
+            vector_breaker=breaker,
         )
 
     assert did_sync is False
