@@ -25,6 +25,9 @@ logger = logging.getLogger(__name__)
 _TYPING_REFRESH_SECONDS = 4.0
 _DEFAULT_AGENT = "comms-agent"
 _DEFAULT_CHAT_MODE = "normal"
+_PASSIVE_CONTEXT_MESSAGE_LIMIT = 20
+_PASSIVE_CONTEXT_CHARACTER_LIMIT = 8_000
+_PASSIVE_CONTEXT_SCAN_LIMIT = 50
 
 VoiceSynthesizer = Callable[[TTSProvider, str], Awaitable[bytes]]
 
@@ -51,6 +54,16 @@ class CommunicationsVoiceDeliveryManager(CommunicationsDeliveryManager, Protocol
         session_id: str | None = None,
         metadata: dict[str, Any] | None = None,
     ) -> tuple[CommsMessage, CommsAttachment]: ...
+
+    def list_messages(
+        self,
+        *,
+        channel_id: str | None = None,
+        session_id: str | None = None,
+        direction: str | None = None,
+        limit: int = 50,
+        offset: int = 0,
+    ) -> list[CommsMessage]: ...
 
 
 class ChatTurnHost(Protocol):
@@ -128,9 +141,10 @@ class ChatSessionCommsBackend:
                 project_id=project_id,
             )
             typing_task = await self._start_typing(context)
+            turn_content = await self._turn_content(context)
             await self._host._run_chat_turn(
                 conversation_id=session_key,
-                content=context.message.content,
+                content=turn_content,
                 model=_string_setting(context, "model"),
                 project_id=project_id,
                 transport=transport,
@@ -160,6 +174,54 @@ class ChatSessionCommsBackend:
                 if current is not None and self._active_turns.get(session_key) is current:
                     self._active_turns.pop(session_key, None)
         return None
+
+    async def _turn_content(self, context: ResponderContext) -> str:
+        """Prepend passive group messages received since the previous wake."""
+        session_id = context.message.session_id
+        if context.channel.channel_type != "telegram" or not context.is_group or not session_id:
+            return context.message.content
+
+        messages = await asyncio.to_thread(
+            self._manager.list_messages,
+            channel_id=context.channel.id,
+            session_id=session_id,
+            direction="inbound",
+            limit=_PASSIVE_CONTEXT_SCAN_LIMIT,
+        )
+        passive_lines: list[str] = []
+        character_count = 0
+        for message in messages:
+            if message.id == context.message.id:
+                continue
+            if message.metadata_json.get("passive_context") is not True:
+                break
+            content = message.content.strip()
+            if not content:
+                continue
+            line = f"- {_passive_speaker(message)}: {content}"
+            separator_length = 1 if passive_lines else 0
+            remaining = _PASSIVE_CONTEXT_CHARACTER_LIMIT - character_count - separator_length
+            if remaining <= 0:
+                break
+            if len(line) > remaining:
+                if passive_lines:
+                    break
+                line = line[:remaining]
+            passive_lines.append(line)
+            character_count += separator_length + len(line)
+            if len(passive_lines) >= _PASSIVE_CONTEXT_MESSAGE_LIMIT:
+                break
+
+        if not passive_lines:
+            return context.message.content
+        passive_lines.reverse()
+        passive_context = "\n".join(passive_lines)
+        return (
+            "Recent passive group context (oldest to newest):\n"
+            f"{passive_context}\n\n"
+            "Current wake message:\n"
+            f"{context.message.content}"
+        )
 
     def _get_tts_provider(self, context: ResponderContext) -> TTSProvider | None:
         if (
@@ -299,3 +361,11 @@ def _string_setting(context: ResponderContext, key: str) -> str | None:
 def _boolean_setting(context: ResponderContext, key: str) -> bool:
     """Return a strict boolean responder setting."""
     return context.responder_config.get(key) is True
+
+
+def _passive_speaker(message: CommsMessage) -> str:
+    for key in ("external_username", "external_user_id"):
+        value = message.metadata_json.get(key)
+        if not isinstance(value, bool) and isinstance(value, str | int) and str(value):
+            return str(value)
+    return message.identity_id or "unknown"

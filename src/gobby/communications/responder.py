@@ -8,13 +8,12 @@ from collections.abc import Awaitable, Callable, Mapping
 from dataclasses import dataclass
 from typing import Protocol
 
+from gobby.communications.group_policy import evaluate_group_message
 from gobby.communications.models import ChannelConfig, CommsMessage
 
 logger = logging.getLogger(__name__)
 
 _COMMANDS = frozenset({"start", "new", "reset", "stop", "status", "help"})
-_DIRECT_CONVERSATION_TYPES = frozenset({"direct", "dm", "im", "private"})
-_GROUP_CONVERSATION_TYPES = frozenset({"channel", "group", "mpim", "room", "supergroup"})
 
 
 class CommunicationsManagerProtocol(Protocol):
@@ -89,7 +88,10 @@ class ConversationTurnQueue:
                     if not previous.cancelled():
                         raise
                 except Exception:
-                    pass
+                    logger.debug(
+                        "Continuing queued responder work after a failed prior turn",
+                        exc_info=True,
+                    )
             await callback()
 
         task = asyncio.create_task(
@@ -216,7 +218,8 @@ class CommunicationsResponder:
         if responder_config.get("enabled") is not True:
             return None
 
-        sender_id = _sender_id(message)
+        group_decision = evaluate_group_message(channel_config, message)
+        sender_id = group_decision.sender_id
         if sender_id is None:
             logger.warning(
                 "Ignoring responder message %s without external_user_id metadata",
@@ -224,107 +227,34 @@ class CommunicationsResponder:
             )
             return None
 
-        conversation_id = _conversation_id(message)
-        is_group = _is_group_message(message)
-        group_config = _group_config(channel_config, conversation_id) if is_group else {}
-        if not self._access_allowed(
-            channel=channel,
-            channel_config=channel_config,
-            group_config=group_config,
-            sender_id=sender_id,
-            conversation_id=conversation_id,
-            is_group=is_group,
-            mentioned=_is_mentioned(message),
-        ):
-            return None
+        if group_decision.is_group:
+            if not group_decision.authorized or not group_decision.should_respond:
+                logger.info(
+                    "Ignoring group message for conversation %s: %s",
+                    group_decision.conversation_id,
+                    group_decision.reason,
+                )
+                return None
+        else:
+            allow_from = _string_set(channel_config.get("allow_from"))
+            if sender_id not in allow_from and "*" not in allow_from:
+                logger.info(
+                    "Ignoring comms message from sender %s outside allow_from on channel %s",
+                    sender_id,
+                    channel.name,
+                )
+                return None
 
         effective_responder = dict(responder_config)
-        effective_responder.update(_object_mapping(group_config.get("responder")))
+        effective_responder.update(_object_mapping(group_decision.group_config.get("responder")))
         return ResponderContext(
             channel=channel,
             message=message,
-            conversation_id=conversation_id,
+            conversation_id=group_decision.conversation_id,
             sender_id=sender_id,
-            is_group=is_group,
+            is_group=group_decision.is_group,
             responder_config=effective_responder,
         )
-
-    def _access_allowed(
-        self,
-        *,
-        channel: ChannelConfig,
-        channel_config: Mapping[str, object],
-        group_config: Mapping[str, object],
-        sender_id: str,
-        conversation_id: str,
-        is_group: bool,
-        mentioned: bool,
-    ) -> bool:
-        allow_from_value = (
-            group_config["allow_from"]
-            if "allow_from" in group_config
-            else channel_config.get("allow_from")
-        )
-        allow_from = _string_set(allow_from_value)
-
-        if not is_group:
-            if sender_id in allow_from or "*" in allow_from:
-                return True
-            logger.info(
-                "Ignoring comms message from sender %s outside allow_from on channel %s",
-                sender_id,
-                channel.name,
-            )
-            return False
-
-        policy_value = group_config.get(
-            "group_policy",
-            channel_config.get("group_policy", "allowlist"),
-        )
-        policy = policy_value.casefold() if isinstance(policy_value, str) else "disabled"
-        if policy not in {"allowlist", "open"}:
-            logger.info(
-                "Ignoring group message for conversation %s under group_policy=%s",
-                conversation_id,
-                policy,
-            )
-            return False
-
-        groups = _object_mapping(channel_config.get("groups"))
-        group_is_configured = conversation_id in groups or "*" in groups
-        if groups and not group_is_configured:
-            logger.info(
-                "Ignoring message from group %s outside configured groups on channel %s",
-                conversation_id,
-                channel.name,
-            )
-            return False
-        if policy == "allowlist" and not group_is_configured:
-            logger.info(
-                "Ignoring message from group %s under allowlist group policy",
-                conversation_id,
-            )
-            return False
-        if policy == "allowlist" and sender_id not in allow_from and "*" not in allow_from:
-            logger.info(
-                "Ignoring group message from sender %s outside allow_from on channel %s",
-                sender_id,
-                channel.name,
-            )
-            return False
-
-        require_mention_value = group_config.get(
-            "require_mention",
-            channel_config.get("require_mention", True),
-        )
-        require_mention = require_mention_value if isinstance(require_mention_value, bool) else True
-        if require_mention and not mentioned:
-            logger.info(
-                "Ignoring unmentioned group message for conversation %s",
-                conversation_id,
-            )
-            return False
-        return True
 
     async def _run_turn(self, context: ResponderContext) -> None:
         backend = self._backend
@@ -419,63 +349,6 @@ def _string_set(value: object) -> set[str]:
     return {
         str(item) for item in value if not isinstance(item, bool) and isinstance(item, str | int)
     }
-
-
-def _sender_id(message: CommsMessage) -> str | None:
-    raw_sender = message.metadata_json.get("external_user_id")
-    if not isinstance(raw_sender, bool) and isinstance(raw_sender, str | int):
-        return str(raw_sender)
-    return None
-
-
-def _conversation_id(message: CommsMessage) -> str:
-    for key in ("platform_channel_id", "chat_id"):
-        value = message.metadata_json.get(key)
-        if not isinstance(value, bool) and isinstance(value, str | int) and str(value):
-            return str(value)
-    conversation_reference = _object_mapping(message.metadata_json.get("conversation_reference"))
-    reference_id = conversation_reference.get("conversation_id")
-    if (
-        not isinstance(reference_id, bool)
-        and isinstance(reference_id, str | int)
-        and str(reference_id)
-    ):
-        return str(reference_id)
-    return message.session_id or message.id
-
-
-def _group_config(
-    channel_config: Mapping[str, object],
-    conversation_id: str,
-) -> dict[str, object]:
-    groups = _object_mapping(channel_config.get("groups"))
-    wildcard = _object_mapping(groups.get("*"))
-    explicit = _object_mapping(groups.get(conversation_id))
-    return {**wildcard, **explicit}
-
-
-def _is_group_message(message: CommsMessage) -> bool:
-    raw_is_group = message.metadata_json.get("is_group")
-    if isinstance(raw_is_group, bool):
-        return raw_is_group
-    for key in ("conversation_type", "chat_type", "channel_type"):
-        value = message.metadata_json.get(key)
-        if not isinstance(value, str):
-            continue
-        normalized = value.casefold()
-        if normalized in _GROUP_CONVERSATION_TYPES:
-            return True
-        if normalized in _DIRECT_CONVERSATION_TYPES:
-            return False
-    return False
-
-
-def _is_mentioned(message: CommsMessage) -> bool:
-    for key in ("mentioned", "is_mentioned"):
-        value = message.metadata_json.get(key)
-        if isinstance(value, bool):
-            return value
-    return False
 
 
 def _command_name(content: str) -> str | None:

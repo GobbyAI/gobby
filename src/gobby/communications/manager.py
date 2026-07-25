@@ -10,6 +10,7 @@ from typing import TYPE_CHECKING, Any
 from gobby.communications.adapters import get_adapter_class
 from gobby.communications.adapters.base import BaseChannelAdapter
 from gobby.communications.attachments import AttachmentManager
+from gobby.communications.group_policy import evaluate_group_message
 from gobby.communications.identities import IdentityManager
 from gobby.communications.inbound import InboundCommunications
 from gobby.communications.lifecycle import AdapterLifecycleOperations
@@ -338,7 +339,14 @@ class CommunicationsManager:
         channel: ChannelConfig,
         message: CommsMessage,
     ) -> bool:
-        """Apply pre-persistence access control for Telegram direct messages."""
+        """Apply channel access control before resolving identity or persisting content."""
+        group_decision = evaluate_group_message(channel.config_json, message)
+        if channel.channel_type == "telegram" and group_decision.is_group:
+            if not group_decision.authorized:
+                return False
+            message.metadata_json["passive_context"] = not group_decision.should_respond
+            return True
+
         if not is_telegram_dm(channel, message):
             return True
 

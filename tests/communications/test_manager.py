@@ -2117,3 +2117,93 @@ def test_routing_rule_crud_invalidates_cache() -> None:
     # Delete should invalidate
     manager.delete_routing_rule("rule-1")
     assert manager._router._rules_cache is None
+
+
+def _telegram_group_message(*, sender_id: str, mentioned: bool) -> CommsMessage:
+    return CommsMessage(
+        id=f"group-{sender_id}-{mentioned}",
+        channel_id="",
+        direction="inbound",
+        content="ambient group discussion",
+        identity_id=sender_id,
+        metadata_json={
+            "chat_id": "-100123",
+            "platform_channel_id": "-100123",
+            "conversation_type": "supergroup",
+            "mentioned": mentioned,
+            "external_username": sender_id,
+        },
+        created_at=datetime.now(UTC),
+    )
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("mentioned", "expected_passive"),
+    [(False, True), (True, False)],
+)
+async def test_configured_group_message_is_classified_before_persistence(
+    mentioned: bool,
+    expected_passive: bool,
+) -> None:
+    channel = make_channel(
+        channel_type="telegram",
+        config_json={
+            "allow_from": ["owner"],
+            "group_policy": "allowlist",
+            "groups": {"-100123": {}},
+            "require_mention": True,
+        },
+    )
+    store = make_store([channel])
+    manager = CommunicationsManager(make_config(), store, make_secret_store(), MagicMock())
+    manager._channel_by_name[channel.name] = channel
+    identity = CommsIdentity(
+        id="identity-owner",
+        channel_id=channel.id,
+        external_user_id="owner",
+        session_id="group-session",
+        created_at=datetime.now(UTC),
+        updated_at=datetime.now(UTC),
+    )
+    object.__setattr__(
+        manager._identity_manager,
+        "resolve_inbound_identity",
+        MagicMock(return_value=IdentityResolution(identity=identity, session_id="group-session")),
+    )
+    message = _telegram_group_message(sender_id="owner", mentioned=mentioned)
+
+    handled = await manager.handle_inbound_messages(channel.name, [message])
+
+    assert len(handled) == 1
+    assert handled[0].metadata_json["passive_context"] is expected_passive
+    store.create_message.assert_called_once_with(message)
+
+
+@pytest.mark.asyncio
+async def test_group_allowlist_rejection_happens_before_identity_or_persistence() -> None:
+    channel = make_channel(
+        channel_type="telegram",
+        config_json={
+            "allow_from": ["owner"],
+            "group_policy": "allowlist",
+            "groups": {"-100123": {}},
+            "require_mention": True,
+        },
+    )
+    store = make_store([channel])
+    manager = CommunicationsManager(make_config(), store, make_secret_store(), MagicMock())
+    manager._channel_by_name[channel.name] = channel
+    resolve_identity = MagicMock()
+    object.__setattr__(
+        manager._identity_manager,
+        "resolve_inbound_identity",
+        resolve_identity,
+    )
+    message = _telegram_group_message(sender_id="stranger", mentioned=True)
+
+    handled = await manager.handle_inbound_messages(channel.name, [message])
+
+    assert handled == [message]
+    resolve_identity.assert_not_called()
+    store.create_message.assert_not_called()

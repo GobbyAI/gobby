@@ -79,7 +79,7 @@ class InboundCommunications:
 
                 if not await manager.admit_inbound_message(channel, message):
                     logger.info(
-                        "Ignoring unregistered Telegram DM on channel %s",
+                        "Ignoring inbound message rejected by access policy on channel %s",
                         channel.name,
                     )
                     handled.append(message)

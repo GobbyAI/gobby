@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from dataclasses import replace
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any, cast
@@ -39,6 +40,7 @@ class _FakeManager:
         self.edited: list[tuple[str, str, str, str]] = []
         self.typing: list[tuple[str, str]] = []
         self.attachments: list[dict[str, object]] = []
+        self.stored_messages: list[CommsMessage] = []
         self.attachment_manager = _FakeAttachmentManager()
 
     def supports_message_edit(self, channel_name: str) -> bool:
@@ -121,6 +123,20 @@ class _FakeManager:
             created_at=datetime.now(UTC),
         )
         return message, attachment
+
+    def list_messages(
+        self,
+        *,
+        channel_id: str | None = None,
+        session_id: str | None = None,
+        direction: str | None = None,
+        limit: int = 50,
+        offset: int = 0,
+    ) -> list[CommsMessage]:
+        assert channel_id == "channel-1"
+        assert session_id == "session-1"
+        assert direction == "inbound"
+        return self.stored_messages[offset : offset + limit]
 
 
 class _FakeAttachmentManager:
@@ -479,3 +495,56 @@ async def test_backend_falls_back_to_text_when_voice_note_delivery_fails() -> No
 
     assert [sent[1] for sent in manager.sent] == ["reply:delivery"]
     assert len(manager.attachments) == 1
+
+
+@pytest.mark.asyncio
+async def test_group_wake_includes_passive_messages_since_previous_wake() -> None:
+    manager = _FakeManager(supports_edit=False)
+    host = _FakeChatHost()
+    backend = ChatSessionCommsBackend(host, manager)
+    context = replace(_context(content="@gobby_bot what did I miss?"), is_group=True)
+    context.message.metadata_json["passive_context"] = False
+    context.message.metadata_json["conversation_type"] = "supergroup"
+    previous_wake = CommsMessage(
+        id="previous-wake",
+        channel_id="channel-1",
+        direction="inbound",
+        content="@gobby_bot earlier question",
+        session_id="session-1",
+        metadata_json={"passive_context": False},
+        created_at=datetime.now(UTC),
+    )
+    first_passive = CommsMessage(
+        id="passive-1",
+        channel_id="channel-1",
+        direction="inbound",
+        content="The deploy finished.",
+        session_id="session-1",
+        metadata_json={"passive_context": True, "external_username": "alice"},
+        created_at=datetime.now(UTC),
+    )
+    second_passive = CommsMessage(
+        id="passive-2",
+        channel_id="channel-1",
+        direction="inbound",
+        content="Smoke tests are green.",
+        session_id="session-1",
+        metadata_json={"passive_context": True, "external_username": "bob"},
+        created_at=datetime.now(UTC),
+    )
+    manager.stored_messages = [
+        context.message,
+        second_passive,
+        first_passive,
+        previous_wake,
+    ]
+
+    await backend.run_turn(context)
+
+    assert host.calls[0]["content"] == (
+        "Recent passive group context (oldest to newest):\n"
+        "- alice: The deploy finished.\n"
+        "- bob: Smoke tests are green.\n\n"
+        "Current wake message:\n"
+        "@gobby_bot what did I miss?"
+    )

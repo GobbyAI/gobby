@@ -154,7 +154,7 @@ async def test_group_start_cannot_claim_empty_telegram_channel() -> None:
     manager, store, _identity_resolver, _event_callback = _manager(channel)
     message = _message("stranger", "/start", conversation_type="group")
 
-    assert await manager.admit_inbound_message(channel, message) is True
+    assert await manager.admit_inbound_message(channel, message) is False
     assert "allow_from" not in channel.config_json
     store.update_channel.assert_not_called()
 
