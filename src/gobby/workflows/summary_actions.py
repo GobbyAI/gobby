@@ -303,7 +303,7 @@ async def _write_summary_file(
         async with aiofiles.open(summary_file, "w", encoding="utf-8") as f:
             await f.write(content)
 
-        logger.info(
+        logger.debug(
             "Session summary written",
             extra={
                 "session_id": session_id,
@@ -859,7 +859,12 @@ async def generate_summary(
             mode=mode,
         )
 
-    logger.info("Generated summary for session %s (mode=%s)", session_id, mode)
+    logger.info(
+        "Generated summary for session %s (mode=%s, reason=workflow_action, output_chars=%s)",
+        session_id,
+        mode,
+        len(summary_content),
+    )
     result: dict[str, Any] = {"summary_generated": True, "summary_length": len(summary_content)}
     if summary_file_path:
         result["summary_file"] = summary_file_path

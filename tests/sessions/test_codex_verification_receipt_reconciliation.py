@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import copy
 import json
+import logging
 from pathlib import Path
 from typing import Any
 
@@ -342,6 +343,7 @@ async def test_partial_multi_result_failure_replays_after_restart_without_duplic
     sample_project: dict[str, Any],
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
 ) -> None:
     transcript_path = tmp_path / "rollout.jsonl"
     transcript_path.write_text(
@@ -408,7 +410,9 @@ async def test_partial_multi_result_failure_replays_after_restart_without_duplic
         session_manager=session_manager,
     )
     restarted.register_session(session.id, str(transcript_path), source="codex")
-    await restarted._process_session(session.id, str(transcript_path), at_eof=True)
+    caplog.clear()
+    with caplog.at_level(logging.DEBUG, logger="gobby.sessions.processor_transcripts"):
+        await restarted._process_session(session.id, str(transcript_path), at_eof=True)
 
     receipts = VerificationReceiptStore(temp_db).list_for_task(
         sample_project["id"],
@@ -422,6 +426,16 @@ async def test_partial_multi_result_failure_replays_after_restart_without_duplic
     projections = SessionVariableManager(temp_db).get_variables(session.id)["verification_evidence"]
     assert len(projections) == 1
     assert projections[0]["receipt_count"] == 2
+    batch_records = [
+        record
+        for record in caplog.records
+        if record.getMessage() == "Codex transcript verification receipt batch acknowledged"
+    ]
+    assert len(batch_records) == 1
+    assert batch_records[0].levelno == logging.DEBUG
+    assert vars(batch_records[0])["receipt_count"] == 2
+    assert "Codex transcript verification receipt acknowledged" not in caplog.text
+    assert "Derived Codex transcript verification outcomes" not in caplog.text
 
 
 async def test_malformed_nested_output_commits_progress_without_receipt(

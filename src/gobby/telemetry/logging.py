@@ -46,6 +46,8 @@ _AUTOMATION_NAMESPACES = (
     "gobby.dispatch",
     "gobby.build",
     "gobby.system_automation",
+    "gobby.workflows.pipeline",
+    "gobby.workflows.pipeline_executor",
     "gobby.workflows.pipeline_heartbeat",
 )
 

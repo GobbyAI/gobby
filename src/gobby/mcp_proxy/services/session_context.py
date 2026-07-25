@@ -4,9 +4,20 @@ import logging
 from typing import TYPE_CHECKING, Any, cast
 
 if TYPE_CHECKING:
+    from gobby.hooks.events import SessionSource
     from gobby.hooks.hook_manager import HookManager
 
 logger = logging.getLogger("gobby.mcp.server")
+
+
+def should_synthesize_direct_after_tool(source: "SessionSource | str | None") -> bool:
+    """Return whether direct MCP execution owns the after-tool event."""
+    from gobby.hooks.events import SessionSource, parse_session_source
+
+    return parse_session_source(source) in {
+        SessionSource.PIPELINE,
+        SessionSource.UNKNOWN,
+    }
 
 
 def get_requested_session_id(session_id: str | None) -> str | None:
@@ -83,7 +94,7 @@ def resolve_tool_event_context(
     project_ctx = get_project_context()
     cwd = project_ctx.get("project_path") if project_ctx else None
     project_id = project_ctx.get("id") if project_ctx else None
-    source = SessionSource.CODEX
+    source = SessionSource.UNKNOWN
     metadata: dict[str, Any] = {"_platform_session_id": effective_session_id}
 
     hook_manager = service._resolve_hook_manager()
@@ -94,7 +105,7 @@ def resolve_tool_event_context(
             session = session_storage.get(effective_session_id)
         except Exception as exc:
             logger.warning(
-                "Failed to load session %s for tool event; source will default to codex: %s",
+                "Failed to load session %s for tool event; source will remain unknown: %s",
                 effective_session_id,
                 exc,
                 exc_info=True,

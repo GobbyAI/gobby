@@ -6,7 +6,10 @@ from unittest.mock import MagicMock, patch
 import pytest
 
 from gobby.hooks.events import SessionSource
-from gobby.mcp_proxy.services.session_context import resolve_tool_event_context
+from gobby.mcp_proxy.services.session_context import (
+    resolve_tool_event_context,
+    should_synthesize_direct_after_tool,
+)
 
 pytestmark = pytest.mark.unit
 
@@ -17,6 +20,28 @@ class _Service:
 
     def _resolve_hook_manager(self) -> object:
         return self._hook_manager
+
+
+@pytest.mark.parametrize(
+    ("source", "expected"),
+    [
+        (SessionSource.CODEX, False),
+        (SessionSource.CLAUDE, False),
+        (SessionSource.QWEN, False),
+        (SessionSource.DROID, False),
+        (SessionSource.GROK, False),
+        (SessionSource.AGY, False),
+        (SessionSource.PIPELINE, True),
+        (SessionSource.UNKNOWN, True),
+        ("unsupported", True),
+        (None, True),
+    ],
+)
+def test_should_synthesize_direct_after_tool(
+    source: SessionSource | str | None,
+    expected: bool,
+) -> None:
+    assert should_synthesize_direct_after_tool(source) is expected
 
 
 def test_resolve_tool_event_context_tolerates_unsupported_source() -> None:

@@ -223,7 +223,7 @@ def write_session_wiki_page(session: Any, summary_markdown: str | None) -> dict[
     path = resolve_session_wiki_path(session)
     if not _write_file(path, redacted):
         return {"written": False, "skipped": "write_failed", "path": str(path)}
-    logger.info(
+    logger.debug(
         "Session wiki page written for %s (%d chars)",
         getattr(session, "id", "?"),
         len(redacted),

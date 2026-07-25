@@ -819,7 +819,7 @@ class TaskValidator:
             "lessons_section": lessons_section,
         }
         prompt = self._loader.render(prompt_path, template_context)
-        logger.info(
+        logger.debug(
             "Validation prompt assembled for task %s: raw_changes_chars=%d "
             "raw_file_context_chars=%d shaped_changes_chars=%d shaped_file_context_chars=%d "
             "verification_receipt_chars=%d final_prompt_chars=%d",

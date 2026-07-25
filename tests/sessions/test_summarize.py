@@ -486,7 +486,10 @@ class TestGenerateSessionSummaries:
         assert metadata["full_error"] == candidate_error
 
     @pytest.mark.asyncio
-    async def test_source_hash_match_returns_existing_summary_without_regeneration(self) -> None:
+    async def test_source_hash_match_returns_existing_summary_without_regeneration(
+        self,
+        caplog: pytest.LogCaptureFixture,
+    ) -> None:
         session = _make_session(
             session_id="sess-noop",
             digest_markdown="### Turn 1\nStable digest.",
@@ -505,6 +508,11 @@ class TestGenerateSessionSummaries:
                 "gobby.sessions.summarize._generate_full_summary",
                 return_value=(VALID_SUMMARY, None),
             ) as mock_full,
+            patch(
+                "gobby.sessions.session_wiki_file.write_session_wiki_page",
+                return_value={"written": True},
+            ),
+            caplog.at_level(logging.DEBUG, logger="gobby.sessions.summarize"),
         ):
             first = await generate_session_summaries(
                 session_id="sess-noop",
@@ -524,6 +532,21 @@ class TestGenerateSessionSummaries:
         assert second["refresh_reason"] == "source_context_hash_match"
         assert mock_full.call_count == 1
         assert len(manager.persist_calls) == 1
+        summary_records = [
+            record
+            for record in caplog.records
+            if record.name == "gobby.sessions.summarize"
+            and record.getMessage().startswith("Session summary ")
+        ]
+        assert [record.levelno for record in summary_records] == [
+            logging.INFO,
+            logging.DEBUG,
+        ]
+        assert "mode=full" in summary_records[0].getMessage()
+        assert "reason=missing_summary_metadata" in summary_records[0].getMessage()
+        assert "output_chars=" in summary_records[0].getMessage()
+        assert "mode=noop" in summary_records[1].getMessage()
+        assert "reason=source_context_hash_match" in summary_records[1].getMessage()
 
     @pytest.mark.asyncio
     async def test_delta_merge_receives_only_digest_turns_since_watermark(self) -> None:

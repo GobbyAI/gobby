@@ -1209,6 +1209,7 @@ class TestGenerateSummary:
         mock_transcript_processor,
         summary_config,
         tmp_path: Path,
+        caplog: pytest.LogCaptureFixture,
     ) -> None:
         """Test successful summary generation."""
         transcript_file = tmp_path / "transcript.jsonl"
@@ -1228,6 +1229,7 @@ class TestGenerateSummary:
             patch("gobby.workflows.summary_actions.get_git_status", return_value="clean"),
             patch("gobby.workflows.summary_actions.get_file_changes", return_value="No changes"),
             patch("gobby.workflows.summary_actions.get_git_diff_summary", return_value=""),
+            caplog.at_level(logging.DEBUG, logger="gobby.workflows.summary_actions"),
         ):
             result = await generate_summary(
                 session_manager=mock_session_manager,
@@ -1241,6 +1243,15 @@ class TestGenerateSummary:
         assert result["summary_generated"] is True
         assert result["summary_length"] == len(VALID_SUMMARY_CONTENT)
         mock_session_manager.update_summary.assert_called_once()
+        generation_record = next(
+            record
+            for record in caplog.records
+            if record.getMessage().startswith("Generated summary for session ")
+        )
+        assert generation_record.levelno == logging.INFO
+        assert "mode=clear" in generation_record.getMessage()
+        assert "reason=workflow_action" in generation_record.getMessage()
+        assert f"output_chars={len(VALID_SUMMARY_CONTENT)}" in generation_record.getMessage()
 
     @pytest.mark.asyncio
     @pytest.mark.parametrize(
@@ -2147,15 +2158,20 @@ class TestWriteSummaryFile:
     """Tests for the _write_summary_file helper function."""
 
     @pytest.mark.asyncio
-    async def test_write_summary_file_creates_file(self, tmp_path: Path) -> None:
+    async def test_write_summary_file_creates_file(
+        self,
+        tmp_path: Path,
+        caplog: pytest.LogCaptureFixture,
+    ) -> None:
         """Test that _write_summary_file creates a summary file."""
         output_dir = str(tmp_path / "session_summaries")
 
-        result = await _write_summary_file(
-            session_id="test-session-123",
-            content="# Test Summary\n\nTest content",
-            output_path=output_dir,
-        )
+        with caplog.at_level(logging.DEBUG, logger="gobby.workflows.summary_actions"):
+            result = await _write_summary_file(
+                session_id="test-session-123",
+                content="# Test Summary\n\nTest content",
+                output_path=output_dir,
+            )
 
         assert result is not None
         from pathlib import Path
@@ -2163,6 +2179,10 @@ class TestWriteSummaryFile:
         written = Path(result)
         assert written.exists()
         assert written.read_text() == "# Test Summary\n\nTest content"
+        write_record = next(
+            record for record in caplog.records if record.getMessage() == "Session summary written"
+        )
+        assert write_record.levelno == logging.DEBUG
 
     @pytest.mark.asyncio
     async def test_write_summary_file_creates_directory(self, tmp_path: Path) -> None:

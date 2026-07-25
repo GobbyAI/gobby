@@ -1242,14 +1242,13 @@ class TestWorkflowBeforeToolEnforcement:
         assert event.source == SessionSource.PIPELINE
 
     @pytest.mark.asyncio
-    async def test_call_tool_logs_warning_and_defaults_source_when_storage_raises(
+    async def test_call_tool_logs_warning_and_uses_unknown_source_when_storage_raises(
         self, tool_proxy_with_hooks, mock_hook_manager, mock_internal_manager, caplog
     ):
-        """Storage failures during source resolution must log WARNING and fall back to codex.
+        """Storage failures must remain visible and preserve fallback completion.
 
         Regression for #12082: the previous DEBUG-only log silently hid the
-        AttributeError that caused source to default to CODEX; a WARNING ensures
-        the regression surfaces on the first run.
+        AttributeError; a WARNING ensures the regression surfaces on the first run.
         """
         import logging
 
@@ -1271,7 +1270,7 @@ class TestWorkflowBeforeToolEnforcement:
             )
 
         event = mock_hook_manager._workflow_handler.evaluate.call_args.args[0]
-        assert event.source == SessionSource.CODEX
+        assert event.source == SessionSource.UNKNOWN
 
         matching = [
             rec
@@ -1341,7 +1340,7 @@ class TestWorkflowBeforeToolEnforcement:
 
 
 class TestDirectMcpAfterToolWorkflow:
-    """Direct MCP proxy calls emit workflow after_tool events for step state."""
+    """Direct MCP completion ownership follows session-source capabilities."""
 
     @pytest.fixture
     def mock_hook_manager(self):
@@ -1379,10 +1378,69 @@ class TestDirectMcpAfterToolWorkflow:
         )
 
     @pytest.mark.asyncio
-    async def test_internal_tool_success_emits_after_tool_workflow(
-        self, tool_proxy_with_hooks, mock_hook_manager, mock_internal_manager
+    @pytest.mark.parametrize(
+        "source",
+        ["codex", "claude", "qwen", "droid", "grok", "agy"],
+    )
+    async def test_interactive_source_defers_after_tool_to_native_hook(
+        self,
+        source,
+        tool_proxy_with_hooks,
+        mock_hook_manager,
+        mock_internal_manager,
     ) -> None:
-        """Successful MCP calls should process both before_tool and after_tool workflow state."""
+        """Interactive calls keep direct before-tool enforcement and one native completion."""
+        mock_hook_manager._session_manager.get.return_value.source = source
+        mock_internal_manager.is_internal.return_value = True
+        mock_registry = MagicMock()
+        mock_registry.call = AsyncMock(return_value={"id": "task-123", "ref": "#123"})
+        mock_internal_manager.get_registry.return_value = mock_registry
+
+        result = await tool_proxy_with_hooks.call_tool(
+            server_name="gobby-tasks",
+            tool_name="create_task",
+            arguments={"title": "Test task"},
+            session_id="session-123",
+        )
+
+        assert result == {"id": "task-123", "ref": "#123"}
+        events = [
+            call.args[0] for call in mock_hook_manager._workflow_handler.evaluate.call_args_list
+        ]
+        assert [event.event_type for event in events] == [HookEventType.BEFORE_TOOL]
+
+        native_event = SimpleNamespace(
+            event_type=HookEventType.AFTER_TOOL,
+            source=SessionSource(source),
+        )
+        mock_hook_manager._workflow_handler.evaluate(native_event)
+        events = [
+            call.args[0] for call in mock_hook_manager._workflow_handler.evaluate.call_args_list
+        ]
+        assert [event.event_type for event in events] == [
+            HookEventType.BEFORE_TOOL,
+            HookEventType.AFTER_TOOL,
+        ]
+        assert sum(event.event_type is HookEventType.AFTER_TOOL for event in events) == 1
+        mock_hook_manager.handle.assert_not_called()
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize(
+        ("source", "expected_source"),
+        [
+            ("pipeline", SessionSource.PIPELINE),
+            ("unsupported", SessionSource.UNKNOWN),
+        ],
+    )
+    async def test_fallback_source_synthesizes_after_tool_workflow(
+        self,
+        source,
+        expected_source,
+        tool_proxy_with_hooks,
+        mock_hook_manager,
+        mock_internal_manager,
+    ) -> None:
+        mock_hook_manager._session_manager.get.return_value.source = source
         mock_internal_manager.is_internal.return_value = True
         mock_registry = MagicMock()
         mock_registry.call = AsyncMock(return_value={"id": "task-123", "ref": "#123"})
@@ -1404,11 +1462,11 @@ class TestDirectMcpAfterToolWorkflow:
             HookEventType.AFTER_TOOL,
         ]
         after_event = events[1]
+        assert after_event.source is expected_source
         assert after_event.data["tool_name"] == "mcp__gobby__call_tool"
         assert after_event.data["tool_input"]["server_name"] == "gobby-tasks"
         assert after_event.data["tool_input"]["tool_name"] == "create_task"
         assert after_event.data["tool_output"] == {"id": "task-123", "ref": "#123"}
-        mock_hook_manager.handle.assert_not_called()
 
     @pytest.mark.asyncio
     async def test_after_tool_workflow_exception_preserves_successful_result(
@@ -1443,6 +1501,7 @@ class TestDirectMcpAfterToolWorkflow:
         self, tool_proxy_with_hooks, mock_hook_manager, mock_internal_manager
     ) -> None:
         """Execution failures should still reach after_tool workflow recovery."""
+        mock_hook_manager._session_manager.get.return_value.source = "pipeline"
         mock_internal_manager.is_internal.return_value = True
         mock_registry = MagicMock()
         mock_registry.call = AsyncMock(side_effect=RuntimeError("boom"))
@@ -1601,7 +1660,7 @@ class TestStripUnknownParameters:
     async def test_strip_unknown_false_rejects_unknown_params(self, tool_proxy, mock_mcp_manager):
         """Verify strip_unknown=False (default) still rejects unknown parameters."""
 
-        async def mock_get_schema(server, tool):
+        async def mock_get_schema(server: str, tool: str) -> dict[str, object]:
             return {
                 "success": True,
                 "tool": {

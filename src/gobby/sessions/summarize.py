@@ -389,11 +389,22 @@ async def generate_session_summaries(
         session_manager=session_manager,
     )
 
-    logger.info(
-        "Session summary generated for %s (%s chars)",
-        session_id,
-        (len(full_markdown) if full_markdown else 0),
-    )
+    summary_length = len(full_markdown) if full_markdown else 0
+    if decision.mode == "noop":
+        logger.debug(
+            "Session summary unchanged for %s (mode=noop, reason=%s, output_chars=%s)",
+            session_id,
+            decision.reason,
+            summary_length,
+        )
+    else:
+        logger.info(
+            "Session summary generated for %s (mode=%s, reason=%s, output_chars=%s)",
+            session_id,
+            generation_mode,
+            decision.reason,
+            summary_length,
+        )
 
     # Tail: the session wiki page IS the summary. Write the redacted
     # summary_markdown to the flat session-wiki file gwiki ingests. Best-effort

@@ -31,7 +31,7 @@ from gobby.sessions.processor_types import WebSocketServer
 from gobby.sessions.processor_usage import ProcessorUsageMixin
 from gobby.sessions.transcript_index import TranscriptIndexAppender
 from gobby.sessions.transcript_renderer import RenderState
-from gobby.sessions.transcripts.base import ParsedToolEvent, TokenUsage, TranscriptParser
+from gobby.sessions.transcripts.base import TokenUsage, TranscriptParser
 from gobby.sessions.transcripts.codex import CodexNestedExecOutcome
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.token_events import TokenEventStore
@@ -135,69 +135,6 @@ class SessionMessageProcessor(
             source=source,
             context_window=context_window,
             model=model,
-        )
-
-    @staticmethod
-    def _build_codex_hook_event(
-        session: dict[str, Any],
-        tool_event: ParsedToolEvent,
-    ) -> HookEvent | None:
-        """Build a Codex tool HookEvent from a parsed transcript lifecycle record."""
-        if not tool_event.tool:
-            return None
-        if tool_event.phase == "begin":
-            event_type = HookEventType.BEFORE_TOOL
-        elif tool_event.phase == "end":
-            event_type = HookEventType.AFTER_TOOL
-        else:
-            return None
-
-        server = tool_event.server or "codex"
-        data: dict[str, Any] = {
-            "tool_name": f"mcp__{server}__{tool_event.tool}",
-            "tool_input": dict(tool_event.arguments),
-        }
-        if tool_event.call_id:
-            data["call_id"] = tool_event.call_id
-            data["item_id"] = tool_event.call_id
-        if tool_event.raw_json:
-            data["raw_json"] = tool_event.raw_json
-        if event_type == HookEventType.AFTER_TOOL:
-            if tool_event.result is not None:
-                data["tool_output"] = tool_event.result
-            if tool_event.error is not None:
-                data["tool_error"] = tool_event.error
-                data["is_error"] = True
-            if tool_event.duration_ns is not None:
-                data["duration_ns"] = tool_event.duration_ns
-
-        normalize_tool_fields(data)
-        metadata: dict[str, Any] = {"_codex_synthesized_tool_event": True}
-        platform_session_id = session.get("platform_session_id")
-        if isinstance(platform_session_id, str) and platform_session_id:
-            metadata["_platform_session_id"] = platform_session_id
-
-        external_id = session.get("external_id")
-        if not isinstance(external_id, str) or not external_id.strip():
-            logger.warning(
-                "Skipping Codex synthesized tool event without external_id",
-                extra={
-                    "platform_session_id": platform_session_id,
-                    "tool_name": data.get("tool_name"),
-                    "phase": tool_event.phase,
-                },
-            )
-            return None
-
-        return HookEvent(
-            event_type=event_type,
-            session_id=external_id,
-            source=SessionSource.CODEX,
-            timestamp=tool_event.timestamp,
-            data=data,
-            machine_id=session.get("machine_id"),
-            project_id=session.get("project_id"),
-            metadata=metadata,
         )
 
     @staticmethod

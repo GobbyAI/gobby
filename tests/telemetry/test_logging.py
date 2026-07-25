@@ -138,6 +138,8 @@ def test_json_otel_formatter_serializes_non_json_extra_values():
         ("gobby.build.runner", "automation"),
         ("gobby.system_automation", "automation"),
         ("gobby.workflows.pipeline_heartbeat", "automation"),
+        ("gobby.workflows.pipeline_executor", "automation"),
+        ("gobby.workflows.pipeline.handlers", "automation"),
     ],
 )
 def test_classify_log_surface(logger_name: str, expected: str) -> None:
@@ -159,6 +161,8 @@ def test_setup_file_logging_routes_each_record_to_one_primary_surface(
         "gobby.build.runner": "build-record",
         "gobby.system_automation": "system-automation-record",
         "gobby.workflows.pipeline_heartbeat": "pipeline-heartbeat-record",
+        "gobby.workflows.pipeline_executor": "pipeline-executor-record",
+        "gobby.workflows.pipeline.handlers": "pipeline-handler-record",
     }
     for logger_name, message in messages.items():
         logging.getLogger(logger_name).info(message)
@@ -185,6 +189,8 @@ def test_setup_file_logging_routes_each_record_to_one_primary_surface(
         "build-record",
         "system-automation-record",
         "pipeline-heartbeat-record",
+        "pipeline-executor-record",
+        "pipeline-handler-record",
     ):
         assert message in contents["automation"]
     for message in messages.values():

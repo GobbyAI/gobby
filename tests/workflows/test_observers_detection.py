@@ -548,8 +548,10 @@ class TestDetectTaskClaimCloseTaskBehavior:
 
 class TestDetectTaskClaimClaimOperations:
     def test_sets_task_claimed_on_claim_task(
-        self, variables, make_after_tool_event, mock_task_manager
+        self, variables, make_after_tool_event, mock_task_manager, caplog
     ) -> None:
+        caplog.set_level(logging.INFO, logger="gobby.workflows.observers")
+        session_task_manager = MagicMock()
         event = make_after_tool_event(
             "mcp__gobby__call_tool",
             tool_input={
@@ -560,10 +562,30 @@ class TestDetectTaskClaimClaimOperations:
             tool_output={"success": True, "result": {"id": "task-123", "status": "in_progress"}},
         )
 
-        detect_task_claim(event, variables, SESSION_ID, task_manager=mock_task_manager)
+        detect_task_claim(
+            event,
+            variables,
+            SESSION_ID,
+            session_task_manager=session_task_manager,
+            task_manager=mock_task_manager,
+        )
 
         assert variables.get("task_claimed") is True
         assert "task-uuid-123" in variables.get("claimed_tasks", {})
+        session_task_manager.link_task.assert_called_once_with(
+            SESSION_ID, "task-uuid-123", "worked_on"
+        )
+        assert (
+            sum(
+                "added task-uuid-123 to claimed_tasks" in record.message
+                for record in caplog.records
+            )
+            == 1
+        )
+        assert (
+            sum("Auto-linked task task-uuid-123" in record.message for record in caplog.records)
+            == 1
+        )
 
     def test_sets_task_claimed_on_create_task_with_claim(
         self, variables, make_after_tool_event, mock_task_manager

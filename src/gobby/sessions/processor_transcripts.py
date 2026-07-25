@@ -105,16 +105,18 @@ class ProcessorTranscriptMixin:
             if result is None:
                 raise VerificationReceiptIngestionError(outcome.identity)
             ingested.append(result)
-            logger.info(
-                "Codex transcript verification receipt acknowledged",
-                extra={
-                    "session_id": session_id,
-                    "identity": outcome.identity,
-                    "outcome": result.normalized_outcome,
-                    "task_id": result.task_id,
-                    "replayed": result.replayed,
-                },
-            )
+        logger.debug(
+            "Codex transcript verification receipt batch acknowledged",
+            extra={
+                "session_id": session_id,
+                "receipt_count": len(ingested),
+                "replayed_count": sum(result.replayed for result in ingested),
+                "outcomes": [result.normalized_outcome for result in ingested],
+                "task_ids": sorted(
+                    {result.task_id for result in ingested if result.task_id is not None}
+                ),
+            },
+        )
         return ingested
 
     def _extract_native_titles(
@@ -338,14 +340,6 @@ class ProcessorTranscriptMixin:
             r for r in parsed_records if isinstance(r, ParsedMessage)
         ]
 
-        if codex_exec_outcomes:
-            logger.info(
-                "Derived Codex transcript verification outcomes",
-                extra={
-                    "session_id": session_id,
-                    "identities": [outcome.identity for outcome in codex_exec_outcomes],
-                },
-            )
         try:
             await self._dispatch_codex_exec_outcomes(session_id, codex_exec_outcomes)
         except VerificationReceiptIngestionError:

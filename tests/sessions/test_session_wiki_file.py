@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 import os
 from pathlib import Path
 from types import SimpleNamespace
@@ -76,12 +77,15 @@ def test_resolve_session_wiki_path(tmp_path: Path, monkeypatch: pytest.MonkeyPat
 
 
 def test_write_session_wiki_page_writes_redacted_file(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
 ) -> None:
     monkeypatch.setattr("gobby.sessions.session_wiki_file.get_gobby_home", lambda: tmp_path)
     summary = VALID_SUMMARY + "\nLeaked sk-ABCDEFGHIJKLMNOPQRSTUV here."
 
-    result = swf.write_session_wiki_page(_session(), summary)
+    with caplog.at_level(logging.DEBUG, logger="gobby.sessions.session_wiki_file"):
+        result = swf.write_session_wiki_page(_session(), summary)
 
     assert result["written"] is True
     path = tmp_path / "session_wiki" / "019de70c-646f-7bd2-a31d-2e626de30891.md"
@@ -91,6 +95,12 @@ def test_write_session_wiki_page_writes_redacted_file(
     assert "## Current State" in content
     assert "sk-ABCDEFGHIJKLMNOPQRSTUV" not in content  # redacted before write
     assert "sk-<redacted>" in content
+    write_record = next(
+        record
+        for record in caplog.records
+        if record.getMessage().startswith("Session wiki page written for ")
+    )
+    assert write_record.levelno == logging.DEBUG
 
 
 def test_write_session_wiki_page_skips_invalid_summary(

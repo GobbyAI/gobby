@@ -13,6 +13,7 @@ focusing on areas not covered by test_task_validation.py:
 - validate_task category parameter handling
 """
 
+import logging
 from pathlib import Path
 from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
@@ -430,7 +431,7 @@ class TestValidationPromptBudget:
         validator = _task_validator(config, mock_llm)
         mock_llm.call_json_feature.return_value = {"status": "valid", "feedback": "OK"}
 
-        with caplog.at_level("INFO", logger="gobby.tasks.validation"):
+        with caplog.at_level(logging.DEBUG, logger="gobby.tasks.validation"):
             await validator.validate_task(
                 task_id="task-obs",
                 title="t",
@@ -439,10 +440,12 @@ class TestValidationPromptBudget:
                 validation_criteria="criteria",
             )
 
-        assert any(
-            "Validation prompt assembled" in rec.message and "final_prompt_chars" in rec.message
+        prompt_record = next(
+            rec
             for rec in caplog.records
+            if "Validation prompt assembled" in rec.message and "final_prompt_chars" in rec.message
         )
+        assert prompt_record.levelno == logging.DEBUG
 
 
 class TestValidationInfrastructureFailure:
@@ -1995,20 +1998,38 @@ class TestTaskValidatorAdditionalEdgeCases:
         return TaskValidationConfig(enabled=True, candidates=["claude/test-model"])
 
     @pytest.mark.asyncio
-    async def test_validate_with_validation_criteria_only(self, config, mock_llm):
+    async def test_validate_with_validation_criteria_only(
+        self,
+        config,
+        mock_llm,
+        caplog: pytest.LogCaptureFixture,
+    ):
         """Test validation with validation_criteria but no description."""
         validator = _task_validator(config, mock_llm)
         mock_llm.call_json_feature.return_value = {"status": "valid", "feedback": "OK"}
 
-        result = await validator.validate_task(
-            task_id="task-1",
-            title="Test Task",
-            description=None,  # No description
-            changes_summary="Made changes",
-            validation_criteria="Must have tests",  # Has criteria
-        )
+        with caplog.at_level(logging.DEBUG, logger="gobby.tasks.validation"):
+            result = await validator.validate_task(
+                task_id="task-1",
+                title="Test Task",
+                description=None,  # No description
+                changes_summary="Made changes",
+                validation_criteria="Must have tests",  # Has criteria
+            )
 
         assert result.status == "valid"
+        levels = {
+            record.getMessage(): record.levelno
+            for record in caplog.records
+            if record.name == "gobby.tasks.validation"
+        }
+        assert levels["Validating task task-1: Test Task"] == logging.INFO
+        prompt_record = next(
+            record
+            for record in caplog.records
+            if record.getMessage().startswith("Validation prompt assembled for task task-1:")
+        )
+        assert prompt_record.levelno == logging.DEBUG
         # Verify criteria was used in prompt
         call_args = mock_llm.call_json_feature.call_args
         prompt = call_args.args[1]
@@ -2405,7 +2426,9 @@ class TestCwdParameter:
 
     @patch("gobby.tasks.validation.run_git_command")
     @patch("gobby.tasks.validation.get_last_commit_diff")
-    def test_get_git_diff_fallback_passes_cwd(self, mock_last_commit, mock_run) -> None:
+    def test_get_git_diff_fallback_passes_cwd(
+        self, mock_last_commit: MagicMock, mock_run: MagicMock
+    ) -> None:
         """Test that fallback to last commit also passes cwd."""
         # No uncommitted changes
         mock_run.return_value = MagicMock(returncode=0, stdout="")

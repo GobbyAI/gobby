@@ -148,13 +148,16 @@ def build_after_tool_event(
     tool_name: str,
     arguments: dict[str, Any],
     tool_output: Any,
-) -> Any:
-    """Build the after_tool event used for direct MCP execution."""
+) -> Any | None:
+    """Build the after_tool event when direct MCP execution owns completion."""
     from gobby.hooks.events import HookEvent, HookEventType
+    from gobby.mcp_proxy.services.session_context import should_synthesize_direct_after_tool
 
     _hook_manager, _session_manager, _session, source, metadata, cwd, project_id = (
         service._resolve_tool_event_context(effective_session_id)
     )
+    if not should_synthesize_direct_after_tool(source):
+        return None
     metadata["_mcp_proxy_direct_after_tool"] = True
 
     return HookEvent(
@@ -339,6 +342,8 @@ async def apply_after_tool_workflow(
         arguments=arguments,
         tool_output=tool_output,
     )
+    if event is None:
+        return
     try:
         response = await _evaluate_workflow_handler(workflow_handler, event)
     except Exception as exc:
