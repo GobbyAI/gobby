@@ -105,7 +105,7 @@ class ClaudeLLMProvider:
         prompt: str,
         project_path: str,
         model: str | None = None,
-        max_turns: int = 60,
+        max_turns: int | None = None,
         reasoning_effort: str | None = None,
         allowed_tools: Sequence[str] = ("Read", "Grep", "Glob"),
         disallowed_tools: Sequence[str] | None = None,

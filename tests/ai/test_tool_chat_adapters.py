@@ -200,7 +200,7 @@ async def test_openai_loop_stops_at_max_turns(monkeypatch: pytest.MonkeyPatch) -
 
     assert result.stop_reason == "max_turns"
     assert result.turns == 2
-    assert result.tool_use_count == 2
+    assert result.tool_use_count == 1
 
 
 @pytest.mark.asyncio
@@ -315,15 +315,14 @@ async def test_claude_adapter_constrains_tools_and_maps_result() -> None:
     assert result.stop_reason == "completed"
 
 
-async def test_claude_adapter_prefers_request_max_turns_over_limits() -> None:
+async def test_claude_adapter_uses_canonical_limit_max_turns() -> None:
     provider = _FakeClaudeProvider()
     adapter = ClaudeToolChatAdapter(provider_factory=lambda _binding: provider)
     request = ToolChatRequest(
         prompt="Document the auth module.",
         tool_policy=ToolPolicy(cli="gcode", tools=("search",)),
         project_path="/repo",
-        max_turns=12,
-        limits=ToolLoopLimits(max_turns=0),
+        limits=ToolLoopLimits(max_turns=12),
     )
 
     await adapter.chat(request, _claude_binding())
@@ -352,7 +351,6 @@ async def test_claude_adapter_maps_sdk_max_turns_to_budget_exhaustion() -> None:
         prompt="Validate.",
         tool_policy=ToolPolicy(cli="gcode", tools=("search",)),
         project_path="/repo",
-        max_turns=16,
         limits=ToolLoopLimits(max_turns=16, max_tool_calls=12),
     )
 
@@ -441,11 +439,13 @@ async def test_repo_mcp_tool_handler_executes_then_denies(
     assert out["is_error"] is True
     assert out["content"][0]["text"].startswith("[error")
 
-    exhausted_runtime = tools.ToolRuntime(
+    bounded_runtime = tools.ToolRuntime(
         ToolPolicy(cli="gcode", tools=("outline",)),
         project_path="/repo",
-        limits=ToolLoopLimits(max_tool_calls=0),
+        limits=ToolLoopLimits(max_tool_calls=1),
     )
-    exhausted = await _make_tool_handler(exhausted_runtime, "gcode_outline")({"args": []})
+    bounded_handler = _make_tool_handler(bounded_runtime, "gcode_outline")
+    await bounded_handler({"args": []})
+    exhausted = await bounded_handler({"args": []})
     assert exhausted["is_error"] is True
     assert '"error_code":"tool_call_budget_exhausted"' in exhausted["content"][0]["text"]

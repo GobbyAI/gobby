@@ -141,8 +141,11 @@ async def handle_incoming_request(client: CodexAppServerClient, message: dict[st
     method = message["method"]
     params = message.get("params", {})
 
-    if not client._approval_handler:
-        logger.debug("No approval handler for incoming request: %s", method)
+    handler = client._request_handlers.get(method)
+    if handler is None:
+        handler = client._approval_handler
+    if handler is None:
+        logger.debug("No handler for incoming request: %s", method)
         response = {
             "jsonrpc": "2.0",
             "id": request_id,
@@ -154,10 +157,13 @@ async def handle_incoming_request(client: CodexAppServerClient, message: dict[st
     logger.debug("Handling incoming request: %s (id=%s)", method, request_id)
 
     try:
-        result = await client._approval_handler(method, params)
+        if method in client._request_handlers:
+            result = await handler(params)
+        else:
+            result = await handler(method, params)
         response = {"jsonrpc": "2.0", "id": request_id, "result": result}
     except Exception as e:
-        logger.error("Approval handler error for %s: %s", method, e)
+        logger.error("Incoming request handler error for %s: %s", method, e)
         response = {
             "jsonrpc": "2.0",
             "id": request_id,

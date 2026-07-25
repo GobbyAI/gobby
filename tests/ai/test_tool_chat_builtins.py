@@ -9,7 +9,7 @@ import sys
 import threading
 import time
 from collections.abc import Callable, Coroutine
-from typing import Any
+from typing import Any, cast
 
 import pytest
 
@@ -177,7 +177,7 @@ async def test_exact_cap_result_uses_preallocated_ref_and_shared_serializer(
     runtime = ToolRuntime(
         _policy(),
         project_path="/repo",
-        limits=ToolLoopLimits(per_tool_result_byte_cap=cap),
+        limits=ToolLoopLimits(max_bytes_per_tool_result=cap),
         builtins=(_spec(handler),),
     )
 
@@ -212,7 +212,7 @@ async def test_oversized_builtin_result_returns_typed_size_error() -> None:
     runtime = ToolRuntime(
         _policy(),
         project_path="/repo",
-        limits=ToolLoopLimits(per_tool_result_byte_cap=100),
+        limits=ToolLoopLimits(max_bytes_per_tool_result=100),
         builtins=(_spec(handler),),
     )
 
@@ -254,15 +254,15 @@ def test_result_cap_rejects_one_below_minimum_and_accepts_minimum() -> None:
     minimum = minimum_typed_error_result_size()
 
     with pytest.raises(ToolLoopConfigurationError, match=f"at least {minimum}"):
-        ToolLoopLimits(per_tool_result_byte_cap=minimum - 1)
+        ToolLoopLimits(max_bytes_per_tool_result=minimum - 1)
 
-    assert ToolLoopLimits(per_tool_result_byte_cap=minimum).per_tool_result_byte_cap == minimum
+    assert ToolLoopLimits(max_bytes_per_tool_result=minimum).max_bytes_per_tool_result == minimum
 
 
 @pytest.mark.parametrize("timeout", [0, -1.0])
 def test_nonpositive_outer_timeout_is_rejected(timeout: float) -> None:
     with pytest.raises(ToolLoopConfigurationError, match="must be positive"):
-        ToolLoopLimits(tool_timeout_seconds=timeout)
+        ToolLoopLimits(tool_timeout_seconds=cast(int, timeout))
 
 
 @pytest.mark.asyncio
@@ -338,7 +338,7 @@ async def test_layered_deadline_reaps_child_and_worker_before_return(
     runtime = ToolRuntime(
         _policy(),
         project_path="/repo",
-        limits=ToolLoopLimits(tool_timeout_seconds=timeout),
+        limits=ToolLoopLimits(tool_timeout_seconds=cast(int, timeout)),
         builtins=(_spec(handler),),
     )
 
@@ -377,7 +377,7 @@ async def test_outer_timeout_awaits_child_cleanup_and_worker_completion() -> Non
     runtime = ToolRuntime(
         _policy(),
         project_path="/repo",
-        limits=ToolLoopLimits(tool_timeout_seconds=0.1),
+        limits=ToolLoopLimits(tool_timeout_seconds=cast(int, 0.1)),
         builtins=(_spec(handler),),
     )
     asyncio.get_running_loop().call_later(0.15, release_worker.set)

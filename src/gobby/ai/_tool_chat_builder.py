@@ -17,6 +17,7 @@ from gobby.ai._tool_chat_adapters import (
     OpenAIClientFactory,
     OpenAICompatibleToolChatAdapter,
 )
+from gobby.ai._tool_chat_contracts import ToolLoopLimits
 from gobby.ai._tool_chat_service import ToolChatAdapterFactory, ToolChatService
 from gobby.ai._tool_chat_spawn import (
     ACPSpawnToolChatAdapter,
@@ -41,11 +42,12 @@ def build_daemon_tool_chat_service(
     registry: AICapabilityRegistry | None = None,
 ) -> ToolChatService:
     """Build the daemon tool_chat service from configured capability bindings."""
+    limits = ToolLoopLimits(**config.ai.generation.tool_loop.model_dump())
     return ToolChatService(
         registry or build_daemon_ai_capability_registry(config),
         adapter_factories=_daemon_tool_chat_adapter_factories(config),
         profile_defaults=config.ai.generation.profile_defaults,
-        attempt_timeout_seconds=config.ai.generation.timeout_seconds,
+        default_limits=limits,
     )
 
 
@@ -63,12 +65,9 @@ def _daemon_tool_chat_adapter_factories(
             client_factory=_local_client_factory(config)
         ),
         AIAdapterStyle.DAEMON: lambda: CodexSpawnToolChatAdapter(
-            timeout_seconds=config.ai.generation.timeout_seconds,
             config=config,
         ),
-        AIAdapterStyle.CLI: lambda: DroidSpawnToolChatAdapter(
-            timeout_seconds=config.ai.generation.timeout_seconds,
-        ),
+        AIAdapterStyle.CLI: DroidSpawnToolChatAdapter,
         AIAdapterStyle.ACP: lambda: ACPSpawnToolChatAdapter(config),
     }
 

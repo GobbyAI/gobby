@@ -17,11 +17,11 @@ from collections.abc import Callable, Mapping, Sequence
 from dataclasses import replace
 
 from gobby.ai._text_generation_helpers import _CandidateTimeoutError
-from gobby.ai._text_generation_service import _SPAWN_COLD_ADAPTER_STYLES
 from gobby.ai._tool_chat_contracts import (
     ToolChatAdapter,
     ToolChatRequest,
     ToolChatResult,
+    ToolLoopLimits,
 )
 from gobby.ai.endpoints import normalize_endpoint_routing
 from gobby.ai.registry import (
@@ -69,12 +69,12 @@ class ToolChatService:
         profile_defaults: (
             Mapping[FeatureProfile, Sequence[str | FeatureCandidateConfig]] | None
         ) = None,
-        attempt_timeout_seconds: float | None = None,
+        default_limits: ToolLoopLimits | None = None,
     ) -> None:
         self._registry = registry
         self._adapters: dict[AIAdapterStyle, ToolChatAdapter] = dict(adapters or {})
         self._adapter_factories = dict(adapter_factories or {})
-        self._attempt_timeout_seconds = attempt_timeout_seconds
+        self._default_limits = default_limits or ToolLoopLimits()
         self._profile_defaults = {
             FeatureProfile(profile): candidate_runtime_entries(candidates, profile=profile)
             for profile, candidates in (profile_defaults or {}).items()
@@ -86,6 +86,9 @@ class ToolChatService:
 
     async def chat_result(self, request: ToolChatRequest) -> ToolChatResult:
         """Run the first available tool_chat candidate; never fall back elsewhere."""
+        limits = request.limits or self._default_limits
+        request = replace(request, limits=limits)
+        deadline = asyncio.get_running_loop().time() + limits.loop_timeout_seconds
         candidates = self._candidate_requests(request)
         attempted: list[str] = []
         errors: list[tuple[str, str]] = []
@@ -97,7 +100,23 @@ class ToolChatService:
             try:
                 binding = self._select_binding(candidate)
                 adapter = self._adapter_for_style(binding.adapter_style)
-                result = await self._await_chat_candidate(adapter, candidate, binding)
+                result = await self._await_chat_candidate(
+                    adapter,
+                    candidate,
+                    binding,
+                    deadline=deadline,
+                )
+                if result.stop_reason in {"max_turns", "max_tool_calls", "timeout"}:
+                    logger.info(
+                        "tool_chat terminated by limit",
+                        extra={
+                            "provider": result.provider or binding.provider,
+                            "model": result.model or candidate.model,
+                            "stop_reason": result.stop_reason,
+                            "turns": result.turns,
+                            "tool_use_count": result.tool_use_count,
+                        },
+                    )
                 return replace(
                     result,
                     provider=result.provider or binding.provider,
@@ -108,7 +127,15 @@ class ToolChatService:
                 last_error = exc
                 unavailable_count += 1
                 errors.append((label, f"{type(exc).__name__}: {exc}"))
-                logger.info("tool_chat candidate %s unavailable: %s", label, exc)
+                logger.info(
+                    "tool_chat capability unavailable",
+                    extra={
+                        "candidate": label,
+                        "provider": exc.provider,
+                        "model": exc.model,
+                        "reason": exc.reason,
+                    },
+                )
                 continue
 
         if attempted and unavailable_count == len(attempted):
@@ -124,47 +151,26 @@ class ToolChatService:
             reason=(f"No tool_chat candidate succeeded (tried: {attempted}; errors: {errors})"),
         ) from last_error
 
-    def _candidate_timeout_for_binding(
-        self, request: ToolChatRequest, binding: CapabilityBinding | None
-    ) -> float | None:
-        """Select the timeout bounding one tool_chat candidate run.
-
-        A tool_chat candidate is a full multi-turn agentic run, so it is bounded
-        by the overall attempt budget (``ai.generation.timeout_seconds``) — the
-        tight single-generation candidate budgets that ``TextGenerationService``
-        uses for fast failover (#17710) starve legitimate multi-minute agentic
-        investigations (#18285). Request-level overrides can only tighten the
-        bound: spawn-cold lanes read ``cli_candidate_timeout_seconds``, fast API
-        lanes read ``candidate_timeout_seconds``.
-        """
-        if binding is not None and binding.adapter_style in _SPAWN_COLD_ADAPTER_STYLES:
-            if request.cli_candidate_timeout_seconds is not None:
-                return request.cli_candidate_timeout_seconds
-        elif request.candidate_timeout_seconds is not None:
-            return request.candidate_timeout_seconds
-        return self._attempt_timeout_seconds
-
     async def _await_chat_candidate(
         self,
         adapter: ToolChatAdapter,
         request: ToolChatRequest,
         binding: CapabilityBinding,
+        *,
+        deadline: float,
     ) -> ToolChatResult:
-        """Bound one tool_chat candidate by its lane-appropriate timeout.
-
-        Unbounded ``adapter.chat`` lets a stuck multi-turn agentic loop wedge the
-        caller indefinitely (the one-shot ``/api/llm/generate`` path is already
-        bounded). On timeout this candidate fails so ``chat_result`` moves to the
-        next one; a single timed-out candidate surfaces the timeout error.
-        """
-        timeout = self._candidate_timeout_for_binding(request, binding)
-        if timeout is None:
-            return await adapter.chat(request, binding)
+        """Bound every candidate by the request's single shared loop deadline."""
+        limits = request.limits
+        if limits is None:
+            raise RuntimeError("tool_chat limits must be resolved before adapter dispatch")
+        timeout = deadline - asyncio.get_running_loop().time()
+        if timeout <= 0:
+            raise _CandidateTimeoutError("tool_chat request deadline expired")
         try:
             return await asyncio.wait_for(adapter.chat(request, binding), timeout=timeout)
         except TimeoutError as exc:
             raise _CandidateTimeoutError(
-                f"tool_chat candidate timed out after {timeout:g}s"
+                f"tool_chat request timed out after {limits.loop_timeout_seconds:g}s"
             ) from exc
 
     def _candidate_requests(self, request: ToolChatRequest) -> tuple[ToolChatRequest, ...]:

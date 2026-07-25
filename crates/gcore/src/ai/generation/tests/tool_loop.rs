@@ -1,4 +1,28 @@
 use super::common::*;
+use std::sync::atomic::{AtomicBool, Ordering};
+
+struct MapConfigSource {
+    values: BTreeMap<String, String>,
+}
+
+impl ConfigSource for MapConfigSource {
+    fn config_value(&mut self, key: &str) -> Option<String> {
+        self.values.get(key).cloned()
+    }
+
+    fn resolve_value(&mut self, value: &str) -> anyhow::Result<String> {
+        Ok(value.to_string())
+    }
+}
+
+fn config_source(values: &[(&str, &str)]) -> MapConfigSource {
+    MapConfigSource {
+        values: values
+            .iter()
+            .map(|(key, value)| ((*key).to_string(), (*value).to_string()))
+            .collect(),
+    }
+}
 
 struct StubTransport {
     completions: RefCell<VecDeque<ChatCompletion>>,
@@ -87,7 +111,7 @@ fn tool_loop_executes_tool_then_completes_with_observability() {
         tool_call_completion("echo", "call_echo", json!({"text":"hi"})),
         content_completion("final answer"),
     ]);
-    let mut executor = EchoExecutor::new("ECHO:hi");
+    let executor = Arc::new(EchoExecutor::new("ECHO:hi"));
     let messages = vec![
         ChatMessage::system("system prompt"),
         ChatMessage::user("write docs"),
@@ -95,7 +119,7 @@ fn tool_loop_executes_tool_then_completes_with_observability() {
 
     let outcome = run_tool_loop(
         &transport,
-        &mut executor,
+        executor.clone(),
         messages,
         &ToolLoopLimits::default(),
         Some(256),
@@ -116,9 +140,10 @@ fn tool_loop_executes_tool_then_completes_with_observability() {
     assert_eq!(obs.termination_reason, "completed");
 
     // Executor saw exactly the echo call.
-    assert_eq!(executor.calls.len(), 1);
-    assert_eq!(executor.calls[0].name, "echo");
-    assert_eq!(executor.calls[0].arguments["text"], "hi");
+    let calls = executor.calls.lock().expect("calls lock");
+    assert_eq!(calls.len(), 1);
+    assert_eq!(calls[0].name, "echo");
+    assert_eq!(calls[0].arguments["text"], "hi");
 
     // The second turn fed the tool result back to the model.
     let requests = transport.requests.borrow();
@@ -146,7 +171,7 @@ fn tool_loop_forces_tool_use_on_first_turn_then_auto() {
         tool_call_completion("echo", "call_echo", json!({"text": "hi"})),
         content_completion("final answer"),
     ]);
-    let mut executor = EchoExecutor::new("ECHO:hi");
+    let executor = Arc::new(EchoExecutor::new("ECHO:hi"));
     let messages = vec![
         ChatMessage::system("system prompt"),
         ChatMessage::user("write docs"),
@@ -154,7 +179,7 @@ fn tool_loop_forces_tool_use_on_first_turn_then_auto() {
 
     let outcome = run_tool_loop(
         &transport,
-        &mut executor,
+        executor,
         messages,
         &ToolLoopLimits::default(),
         Some(256),
@@ -179,7 +204,7 @@ fn tool_loop_reprompts_a_model_that_ignores_required_tool_choice() {
         tool_call_completion("echo", "call_echo", json!({"text": "hi"})),
         content_completion("grounded final answer"),
     ]);
-    let mut executor = EchoExecutor::new("ECHO:hi");
+    let executor = Arc::new(EchoExecutor::new("ECHO:hi"));
     let messages = vec![
         ChatMessage::system("system prompt"),
         ChatMessage::user("write docs"),
@@ -187,7 +212,7 @@ fn tool_loop_reprompts_a_model_that_ignores_required_tool_choice() {
 
     let outcome = run_tool_loop(
         &transport,
-        &mut executor,
+        executor,
         messages,
         &ToolLoopLimits::default(),
         Some(256),
@@ -233,7 +258,7 @@ fn tool_loop_hard_fails_when_the_model_never_investigates_after_corrections() {
         .map(|_| content_completion("one-shot answer"))
         .collect();
     let transport = StubTransport::new(stubborn);
-    let mut executor = EchoExecutor::new("unused");
+    let executor = Arc::new(EchoExecutor::new("unused"));
     let messages = vec![
         ChatMessage::system("system prompt"),
         ChatMessage::user("write docs"),
@@ -241,7 +266,7 @@ fn tool_loop_hard_fails_when_the_model_never_investigates_after_corrections() {
 
     let outcome = run_tool_loop(
         &transport,
-        &mut executor,
+        executor,
         messages,
         &ToolLoopLimits::default(),
         Some(256),
@@ -277,7 +302,7 @@ fn tool_loop_relays_tool_error_to_model() {
                 parameters: json!({"type":"object"}),
             }]
         }
-        fn execute(&mut self, _call: &ToolCall) -> Result<String, ToolError> {
+        fn execute(&self, _call: &ToolCall) -> Result<String, ToolError> {
             Err(ToolError::new("not found"))
         }
     }
@@ -286,10 +311,10 @@ fn tool_loop_relays_tool_error_to_model() {
         tool_call_completion("boom", "call_boom", json!({})),
         content_completion("recovered"),
     ]);
-    let mut executor = FailingExecutor;
+    let executor = Arc::new(FailingExecutor);
     let outcome = run_tool_loop(
         &transport,
-        &mut executor,
+        executor,
         vec![ChatMessage::user("go")],
         &ToolLoopLimits::default(),
         None,
@@ -324,10 +349,10 @@ fn tool_loop_aggregates_token_usage_across_turns() {
     });
 
     let transport = StubTransport::new(vec![turn1, turn2]);
-    let mut executor = EchoExecutor::new("r");
+    let executor = Arc::new(EchoExecutor::new("r"));
     let outcome = run_tool_loop(
         &transport,
-        &mut executor,
+        executor,
         vec![ChatMessage::user("go")],
         &ToolLoopLimits::default(),
         None,
@@ -350,10 +375,10 @@ fn tool_loop_reports_no_usage_when_unreported() {
         tool_call_completion("echo", "call_echo", json!({"text": "r"})),
         content_completion("done"),
     ]);
-    let mut executor = EchoExecutor::new("r");
+    let executor = Arc::new(EchoExecutor::new("r"));
     let outcome = run_tool_loop(
         &transport,
-        &mut executor,
+        executor,
         vec![ChatMessage::user("go")],
         &ToolLoopLimits::default(),
         None,
@@ -368,15 +393,15 @@ fn tool_loop_stops_at_max_turns() {
         tool_call_completion("echo", "a", json!({})),
         tool_call_completion("echo", "b", json!({})),
     ]);
-    let mut executor = EchoExecutor::new("r");
+    let executor = Arc::new(EchoExecutor::new("r"));
     let limits = ToolLoopLimits {
-        max_turns: 2,
+        max_turns: Some(2),
         max_tool_calls: 100,
         ..ToolLoopLimits::default()
     };
     let outcome = run_tool_loop(
         &transport,
-        &mut executor,
+        executor,
         vec![ChatMessage::user("go")],
         &limits,
         None,
@@ -386,7 +411,37 @@ fn tool_loop_stops_at_max_turns() {
     assert_eq!(outcome.stop_reason, StopReason::MaxTurns);
     assert!(outcome.content.is_none());
     assert_eq!(outcome.observability.turns, 2);
-    assert_eq!(outcome.observability.tool_call_count, 2);
+    assert_eq!(outcome.observability.tool_call_count, 1);
+}
+
+#[test]
+fn tool_loop_allows_unlimited_turns() {
+    let transport = StubTransport::new(vec![
+        tool_call_completion("echo", "a", json!({})),
+        tool_call_completion("echo", "b", json!({})),
+        tool_call_completion("echo", "c", json!({})),
+        content_completion("done"),
+    ]);
+    let executor = Arc::new(EchoExecutor::new("r"));
+    let limits = ToolLoopLimits {
+        max_turns: None,
+        max_tool_calls: 3,
+        ..ToolLoopLimits::default()
+    };
+
+    let outcome = run_tool_loop(
+        &transport,
+        executor,
+        vec![ChatMessage::user("go")],
+        &limits,
+        None,
+    )
+    .expect("loop runs");
+
+    assert_eq!(outcome.stop_reason, StopReason::Completed);
+    assert_eq!(outcome.content.as_deref(), Some("done"));
+    assert_eq!(outcome.observability.turns, 4);
+    assert_eq!(outcome.observability.tool_call_count, 3);
 }
 
 #[test]
@@ -413,15 +468,15 @@ fn tool_loop_stops_at_max_tool_calls() {
     }
 
     let transport = StubTransport::new(vec![two_calls(), two_calls()]);
-    let mut executor = EchoExecutor::new("r");
+    let executor = Arc::new(EchoExecutor::new("r"));
     let limits = ToolLoopLimits {
-        max_turns: 100,
+        max_turns: Some(100),
         max_tool_calls: 3,
         ..ToolLoopLimits::default()
     };
     let outcome = run_tool_loop(
         &transport,
-        &mut executor,
+        executor,
         vec![ChatMessage::user("go")],
         &limits,
         None,
@@ -440,14 +495,14 @@ fn tool_loop_truncates_tool_result_on_utf8_boundary() {
         content_completion("done"),
     ]);
     // "ééé" is 6 bytes; a 5-byte cap keeps 2 chars (4 bytes) without splitting.
-    let mut executor = EchoExecutor::new("ééé");
+    let executor = Arc::new(EchoExecutor::new("ééé"));
     let limits = ToolLoopLimits {
         max_bytes_per_tool_result: 5,
         ..ToolLoopLimits::default()
     };
     let outcome = run_tool_loop(
         &transport,
-        &mut executor,
+        executor,
         vec![ChatMessage::user("go")],
         &limits,
         None,
@@ -471,19 +526,19 @@ fn tool_loop_stops_at_timeout() {
         tool_call_completion("echo", "a", json!({})),
         tool_call_completion("echo", "b", json!({})),
     ]);
-    let mut executor = EchoExecutor::new("r");
+    let executor = Arc::new(EchoExecutor::new("r"));
     let limits = ToolLoopLimits {
-        timeout: Duration::from_millis(50),
-        max_turns: 100,
+        loop_timeout_seconds: 1,
+        max_turns: Some(100),
         max_tool_calls: 100,
         ..ToolLoopLimits::default()
     };
 
-    // Scripted clock: proceed once (0ms), then exceed the 50ms budget.
+    // Scripted clock: proceed once (0ms), then exceed the one-second budget.
     let elapsed = [
         Duration::from_millis(0),
-        Duration::from_millis(100),
-        Duration::from_millis(100),
+        Duration::from_secs(2),
+        Duration::from_secs(2),
     ];
     let index = Cell::new(0usize);
     let clock = || {
@@ -495,7 +550,7 @@ fn tool_loop_stops_at_timeout() {
 
     let outcome = run_tool_loop_with_clock(
         &transport,
-        &mut executor,
+        executor,
         vec![ChatMessage::user("go")],
         &limits,
         None,
@@ -505,21 +560,21 @@ fn tool_loop_stops_at_timeout() {
 
     assert_eq!(outcome.stop_reason, StopReason::Timeout);
     assert_eq!(outcome.observability.turns, 1);
-    assert_eq!(outcome.observability.elapsed_ms, 100);
+    assert_eq!(outcome.observability.elapsed_ms, 2_000);
 }
 
 #[test]
 fn tool_loop_content_completion_times_out_after_transport() {
     let transport = StubTransport::new(vec![content_completion("late answer")]);
-    let mut executor = EchoExecutor::new("unused");
+    let executor = Arc::new(EchoExecutor::new("unused"));
     let limits = ToolLoopLimits {
-        timeout: Duration::from_millis(50),
+        loop_timeout_seconds: 1,
         ..ToolLoopLimits::default()
     };
     let elapsed = [
         Duration::from_millis(0),
-        Duration::from_millis(100),
-        Duration::from_millis(100),
+        Duration::from_secs(2),
+        Duration::from_secs(2),
     ];
     let index = Cell::new(0usize);
     let clock = || {
@@ -531,7 +586,7 @@ fn tool_loop_content_completion_times_out_after_transport() {
 
     let outcome = run_tool_loop_with_clock(
         &transport,
-        &mut executor,
+        executor.clone(),
         vec![ChatMessage::user("go")],
         &limits,
         None,
@@ -542,21 +597,21 @@ fn tool_loop_content_completion_times_out_after_transport() {
     assert_eq!(outcome.stop_reason, StopReason::Timeout);
     assert!(outcome.content.is_none());
     assert_eq!(outcome.observability.turns, 1);
-    assert!(executor.calls.is_empty());
+    assert!(executor.calls.lock().expect("calls lock").is_empty());
 }
 
 #[test]
 fn tool_loop_tool_call_completion_times_out_after_transport_without_executing_tools() {
     let transport = StubTransport::new(vec![tool_call_completion("echo", "a", json!({}))]);
-    let mut executor = EchoExecutor::new("unused");
+    let executor = Arc::new(EchoExecutor::new("unused"));
     let limits = ToolLoopLimits {
-        timeout: Duration::from_millis(50),
+        loop_timeout_seconds: 1,
         ..ToolLoopLimits::default()
     };
     let elapsed = [
         Duration::from_millis(0),
-        Duration::from_millis(100),
-        Duration::from_millis(100),
+        Duration::from_secs(2),
+        Duration::from_secs(2),
     ];
     let index = Cell::new(0usize);
     let clock = || {
@@ -568,7 +623,7 @@ fn tool_loop_tool_call_completion_times_out_after_transport_without_executing_to
 
     let outcome = run_tool_loop_with_clock(
         &transport,
-        &mut executor,
+        executor.clone(),
         vec![ChatMessage::user("go")],
         &limits,
         None,
@@ -577,24 +632,25 @@ fn tool_loop_tool_call_completion_times_out_after_transport_without_executing_to
     .expect("loop runs");
 
     assert_eq!(outcome.stop_reason, StopReason::Timeout);
-    assert!(executor.calls.is_empty());
+    assert!(executor.calls.lock().expect("calls lock").is_empty());
     assert_eq!(outcome.observability.tool_call_count, 0);
 }
 
 #[test]
 fn tool_loop_times_out_after_first_tool_result_before_next_tool_call() {
     let transport = StubTransport::new(vec![two_tool_call_completion()]);
-    let mut executor = EchoExecutor::new("r");
+    let executor = Arc::new(EchoExecutor::new("r"));
     let limits = ToolLoopLimits {
-        timeout: Duration::from_millis(50),
+        loop_timeout_seconds: 1,
         max_tool_calls: 100,
         ..ToolLoopLimits::default()
     };
     let elapsed = [
         Duration::from_millis(0),
         Duration::from_millis(0),
-        Duration::from_millis(100),
-        Duration::from_millis(100),
+        Duration::from_millis(0),
+        Duration::from_secs(2),
+        Duration::from_secs(2),
     ];
     let index = Cell::new(0usize);
     let clock = || {
@@ -606,7 +662,7 @@ fn tool_loop_times_out_after_first_tool_result_before_next_tool_call() {
 
     let outcome = run_tool_loop_with_clock(
         &transport,
-        &mut executor,
+        executor.clone(),
         vec![ChatMessage::user("go")],
         &limits,
         None,
@@ -615,9 +671,170 @@ fn tool_loop_times_out_after_first_tool_result_before_next_tool_call() {
     .expect("loop runs");
 
     assert_eq!(outcome.stop_reason, StopReason::Timeout);
-    assert_eq!(executor.calls.len(), 1);
-    assert_eq!(executor.calls[0].id, "call_a");
+    let calls = executor.calls.lock().expect("calls lock");
+    assert_eq!(calls.len(), 1);
+    assert_eq!(calls[0].id, "call_a");
     assert_eq!(outcome.observability.tool_call_count, 1);
+}
+
+struct SlowExecutor {
+    completed: Arc<AtomicBool>,
+    sleep_for: Duration,
+}
+
+impl ToolExecutor for SlowExecutor {
+    fn schemas(&self) -> Vec<ToolSchema> {
+        vec![ToolSchema {
+            name: "slow".to_string(),
+            description: "sleeps".to_string(),
+            parameters: json!({"type":"object"}),
+        }]
+    }
+
+    fn execute(&self, _call: &ToolCall) -> Result<String, ToolError> {
+        std::thread::sleep(self.sleep_for);
+        self.completed.store(true, Ordering::SeqCst);
+        Ok("late result".to_string())
+    }
+}
+
+#[test]
+fn tool_timeout_is_recoverable_and_worker_drains_after_loop_continues() {
+    let transport = StubTransport::new(vec![
+        tool_call_completion("slow", "slow-call", json!({})),
+        content_completion("recovered"),
+    ]);
+    let completed = Arc::new(AtomicBool::new(false));
+    let executor = Arc::new(SlowExecutor {
+        completed: Arc::clone(&completed),
+        sleep_for: Duration::from_millis(1_250),
+    });
+    let limits = ToolLoopLimits {
+        max_turns: Some(3),
+        tool_timeout_seconds: 1,
+        loop_timeout_seconds: 5,
+        ..ToolLoopLimits::default()
+    };
+
+    let outcome = run_tool_loop(
+        &transport,
+        executor,
+        vec![ChatMessage::user("go")],
+        &limits,
+        None,
+    )
+    .expect("loop runs");
+
+    assert_eq!(outcome.stop_reason, StopReason::Completed);
+    assert_eq!(outcome.content.as_deref(), Some("recovered"));
+    assert_eq!(outcome.observability.tool_call_count, 1);
+    assert!(!completed.load(Ordering::SeqCst));
+    let requests = transport.requests.borrow();
+    let timeout_result = requests[1]
+        .iter()
+        .find(|message| message.role == ChatRole::Tool)
+        .and_then(|message| message.content.as_deref())
+        .expect("timeout result is relayed to the model");
+    assert!(timeout_result.contains("timed out after 1 seconds"));
+    drop(requests);
+
+    for _ in 0..50 {
+        if completed.load(Ordering::SeqCst) {
+            break;
+        }
+        std::thread::sleep(Duration::from_millis(10));
+    }
+    assert!(completed.load(Ordering::SeqCst));
+}
+
+#[test]
+fn remaining_loop_budget_precedes_longer_tool_timeout() {
+    let transport = StubTransport::new(vec![tool_call_completion("slow", "slow-call", json!({}))]);
+    let completed = Arc::new(AtomicBool::new(false));
+    let executor = Arc::new(SlowExecutor {
+        completed: Arc::clone(&completed),
+        sleep_for: Duration::from_millis(50),
+    });
+    let limits = ToolLoopLimits {
+        tool_timeout_seconds: 300,
+        loop_timeout_seconds: 1,
+        ..ToolLoopLimits::default()
+    };
+    let elapsed = [
+        Duration::ZERO,
+        Duration::ZERO,
+        Duration::from_millis(990),
+        Duration::from_secs(1),
+    ];
+    let index = Cell::new(0usize);
+    let clock = || {
+        let current = index.get();
+        let value = elapsed[current.min(elapsed.len() - 1)];
+        index.set(current + 1);
+        value
+    };
+
+    let outcome = run_tool_loop_with_clock(
+        &transport,
+        executor,
+        vec![ChatMessage::user("go")],
+        &limits,
+        None,
+        clock,
+    )
+    .expect("loop runs");
+
+    assert_eq!(outcome.stop_reason, StopReason::Timeout);
+    assert_eq!(outcome.observability.tool_call_count, 0);
+    assert!(!completed.load(Ordering::SeqCst));
+}
+
+#[test]
+fn tool_loop_contract_defaults_and_complete_overrides_resolve() {
+    let defaults = ToolLoopLimits::resolve(&mut config_source(&[])).expect("defaults resolve");
+    assert_eq!(defaults.max_turns, None);
+    assert_eq!(defaults.max_tool_calls, 24);
+    assert_eq!(defaults.max_bytes_per_tool_result, 16_384);
+    assert_eq!(defaults.tool_timeout_seconds, 300);
+    assert_eq!(defaults.loop_timeout_seconds, 1_200);
+
+    let overrides = ToolLoopLimits::resolve(&mut config_source(&[
+        ("ai.generation.tool_loop.max_turns", "7"),
+        ("ai.generation.tool_loop.max_tool_calls", "8"),
+        ("ai.generation.tool_loop.max_bytes_per_tool_result", "9"),
+        ("ai.generation.tool_loop.tool_timeout_seconds", "10"),
+        ("ai.generation.tool_loop.loop_timeout_seconds", "11"),
+    ]))
+    .expect("complete overrides resolve");
+    assert_eq!(
+        overrides,
+        ToolLoopLimits {
+            max_turns: Some(7),
+            max_tool_calls: 8,
+            max_bytes_per_tool_result: 9,
+            tool_timeout_seconds: 10,
+            loop_timeout_seconds: 11,
+        }
+    );
+}
+
+#[test]
+fn tool_loop_contract_rejects_every_non_null_zero_limit() {
+    for suffix in [
+        "max_turns",
+        "max_tool_calls",
+        "max_bytes_per_tool_result",
+        "tool_timeout_seconds",
+        "loop_timeout_seconds",
+    ] {
+        let key = format!("ai.generation.tool_loop.{suffix}");
+        let mut source = config_source(&[(&key, "0")]);
+        let error = ToolLoopLimits::resolve(&mut source).expect_err("zero is invalid");
+        assert!(
+            error.to_string().contains(&key),
+            "error should identify {key}: {error}"
+        );
+    }
 }
 
 // ----- Direct OpenAI-compatible transport ------------------------------------

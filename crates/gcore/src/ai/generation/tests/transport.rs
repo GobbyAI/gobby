@@ -14,6 +14,7 @@ fn direct_context() -> AiContext {
             keep_alive: None,
         },
         limiter: AiLimiter::new(2),
+        tool_loop_limits: ToolLoopLimits::default(),
         project_id: None,
     }
 }
@@ -43,6 +44,7 @@ fn direct_transport_sends_tools_and_parses_tool_calls() {
         tools: &tools,
         max_tokens: Some(128),
         tool_choice: ToolChoice::Auto,
+        timeout: Duration::from_secs(1),
     };
 
     let completion = transport.complete(request).expect("completion");
@@ -90,11 +92,11 @@ fn direct_transport_rejects_malformed_chat_completion_through_tool_loop() {
         };
         let transport =
             DirectChatTransport::new(&context, target, Some("feature_high".to_string())).unwrap();
-        let mut executor = EchoExecutor::new("unused");
+        let executor = Arc::new(EchoExecutor::new("unused"));
 
         let error = run_tool_loop(
             &transport,
-            &mut executor,
+            executor.clone(),
             vec![ChatMessage::user("go")],
             &ToolLoopLimits::default(),
             None,
@@ -103,7 +105,7 @@ fn direct_transport_rejects_malformed_chat_completion_through_tool_loop() {
 
         assert!(matches!(error, AiError::ParseFailure { .. }));
         handle.join().unwrap().unwrap();
-        assert!(executor.calls.is_empty());
+        assert!(executor.calls.lock().expect("calls lock").is_empty());
     }
 }
 
@@ -161,6 +163,7 @@ fn build_request_body_suppresses_tools_for_one_shot() {
         tools: &[],
         max_tokens: None,
         tool_choice: ToolChoice::Auto,
+        timeout: Duration::from_secs(1),
     };
     let body = build_request_body(&target, &request);
     assert!(body.get("tools").is_none());
@@ -187,6 +190,7 @@ fn build_request_body_serializes_required_tool_choice() {
         tools: &tools,
         max_tokens: None,
         tool_choice: ToolChoice::Required,
+        timeout: Duration::from_secs(1),
     };
     let body = build_request_body(&target, &request);
     assert_eq!(body["tool_choice"], "required");
@@ -200,6 +204,7 @@ fn build_request_body_threads_reasoning_effort() {
         tools: &[],
         max_tokens: None,
         tool_choice: ToolChoice::Auto,
+        timeout: Duration::from_secs(1),
     };
 
     // Present -> forwarded so direct one-shot/tool-loop routes keep their profile reasoning pin.

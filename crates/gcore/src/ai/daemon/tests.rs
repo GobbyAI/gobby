@@ -71,6 +71,7 @@ fn test_context(project_id: Option<&str>) -> AiContext {
             keep_alive: None,
         },
         limiter: AiLimiter::new(1),
+        tool_loop_limits: crate::ai::generation::ToolLoopLimits::default(),
         project_id: project_id.map(str::to_string),
     }
 }

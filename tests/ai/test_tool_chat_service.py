@@ -23,9 +23,14 @@ from gobby.ai._tool_chat_builtins import (
     BuiltinToolResult,
     BuiltinToolSpec,
 )
-from gobby.ai._tool_chat_contracts import ToolChatRequest, ToolChatResult, ToolPolicy
+from gobby.ai._tool_chat_contracts import (
+    ToolChatRequest,
+    ToolChatResult,
+    ToolLoopLimits,
+    ToolPolicy,
+)
 from gobby.ai._tool_chat_service import ToolChatService
-from gobby.config.ai import AIConfig, GenerationConfig
+from gobby.config.ai import AIConfig, GenerationConfig, ToolLoopConfig
 from gobby.config.app import DaemonConfig
 
 pytestmark = pytest.mark.unit
@@ -219,44 +224,11 @@ class _FailingAdapter:
         raise RuntimeError("adapter broke")
 
 
-def test_tool_chat_candidate_timeout_is_attempt_budget_with_request_overrides() -> None:
-    # A tool_chat candidate is a full multi-turn agentic run: every lane is
-    # bounded by the overall attempt budget, not the single-generation candidate
-    # budgets (gobby-#18285). Request-level overrides tighten per lane.
-    service = ToolChatService(_registry(), attempt_timeout_seconds=600.0)
-    default_request = _request()
+def test_tool_chat_service_uses_one_canonical_request_deadline() -> None:
+    limits = ToolLoopLimits(loop_timeout_seconds=600)
+    service = ToolChatService(_registry(), default_limits=limits)
 
-    def _binding(style: AIAdapterStyle) -> CapabilityBinding:
-        return CapabilityBinding(
-            capability=AICapability.TOOL_CHAT,
-            provider="p",
-            adapter_style=style,
-            available=True,
-        )
-
-    for style in (
-        AIAdapterStyle.CLI,
-        AIAdapterStyle.DAEMON,
-        AIAdapterStyle.LLM_PROVIDER,
-        AIAdapterStyle.ACP,
-        AIAdapterStyle.LOCAL,
-        AIAdapterStyle.OPENAI_COMPATIBLE,
-    ):
-        assert service._candidate_timeout_for_binding(default_request, _binding(style)) == 600.0
-    assert service._candidate_timeout_for_binding(default_request, None) == 600.0
-
-    # Spawn-cold lanes honor the request's cli_candidate override; fast lanes
-    # honor candidate_timeout_seconds; neither override leaks to the other lane.
-    override_request = _request(
-        candidate_timeout_seconds=30.0,
-        cli_candidate_timeout_seconds=150.0,
-    )
-    spawn_cold = _binding(AIAdapterStyle.LLM_PROVIDER)
-    fast = _binding(AIAdapterStyle.OPENAI_COMPATIBLE)
-    assert service._candidate_timeout_for_binding(override_request, spawn_cold) == 150.0
-    assert service._candidate_timeout_for_binding(override_request, fast) == 30.0
-    cli_only = _request(cli_candidate_timeout_seconds=150.0)
-    assert service._candidate_timeout_for_binding(cli_only, fast) == 600.0
+    assert service._default_limits == limits
 
 
 @pytest.mark.asyncio
@@ -269,7 +241,7 @@ async def test_tool_chat_timeout_propagates_without_trying_next_candidate() -> N
             AIAdapterStyle.LLM_PROVIDER: slow,
             AIAdapterStyle.OPENAI_COMPATIBLE: fast,
         },
-        attempt_timeout_seconds=0.05,
+        default_limits=ToolLoopLimits(loop_timeout_seconds=1),
     )
     with pytest.raises(_CandidateTimeoutError, match="timed out after"):
         await service.chat_result(_request(candidates=("claude/haiku", "endpoint:lm-studio/gemma")))
@@ -300,25 +272,35 @@ async def test_single_timed_out_tool_chat_candidate_raises_timeout() -> None:
     service = ToolChatService(
         _registry(),
         adapters={AIAdapterStyle.LLM_PROVIDER: slow},
-        attempt_timeout_seconds=0.05,
+        default_limits=ToolLoopLimits(loop_timeout_seconds=1),
     )
     with pytest.raises(_CandidateTimeoutError, match="timed out after"):
         await service.chat_result(_request(candidates=("claude/haiku",)))
     assert slow.calls == 1
 
 
-def test_builder_threads_generation_timeouts_into_tool_chat_service() -> None:
+def test_builder_threads_tool_loop_limits_into_tool_chat_service() -> None:
     config = DaemonConfig(
         ai=AIConfig(
             generation=GenerationConfig(
                 candidate_timeout_seconds=33.0,
                 cli_candidate_timeout_seconds=99.0,
                 timeout_seconds=600.0,
+                tool_loop=ToolLoopConfig(
+                    max_turns=17,
+                    max_tool_calls=19,
+                    max_bytes_per_tool_result=20_000,
+                    tool_timeout_seconds=21,
+                    loop_timeout_seconds=601,
+                ),
             )
         ),
     )
     service = build_daemon_tool_chat_service(config)
-    # tool_chat bounds each candidate (a full agentic run) by the overall
-    # timeout_seconds attempt budget; the tight per-candidate budgets stay
-    # text-generation-only for fast failover (gobby-#17710, gobby-#18285).
-    assert service._attempt_timeout_seconds == 600.0
+    assert service._default_limits == ToolLoopLimits(
+        max_turns=17,
+        max_tool_calls=19,
+        max_bytes_per_tool_result=20_000,
+        tool_timeout_seconds=21,
+        loop_timeout_seconds=601,
+    )

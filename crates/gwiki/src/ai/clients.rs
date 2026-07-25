@@ -486,6 +486,7 @@ mod tests {
             },
             limiter: AiLimiter::new(1),
             project_id: Some("project-123".to_string()),
+            tool_loop_limits: gobby_core::ai::generation::ToolLoopLimits::default(),
         }
     }
 

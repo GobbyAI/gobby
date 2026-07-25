@@ -614,6 +614,7 @@ mod tests {
             },
             limiter: AiLimiter::new(1),
             project_id: None,
+            tool_loop_limits: gobby_core::ai::generation::ToolLoopLimits::default(),
         }
     }
 

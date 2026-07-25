@@ -12,11 +12,14 @@
 //! tool-passthrough endpoint. Tool execution always stays local to the loop;
 //! the transport only relays messages and returns the model's `tool_calls`.
 
+use std::sync::{Arc, OnceLock, mpsc};
 use std::time::{Duration, Instant};
 
+use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
 use crate::ai_types::{AiError, TokenUsage};
+use crate::config::{ConfigSource, resolve_ai_setting};
 
 /// Role of a chat message in the tool-loop transcript.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -137,16 +140,16 @@ impl std::error::Error for ToolError {}
 
 /// Read-only repo tool executor. Implemented by consumers (gcode/gwiki) over
 /// their indexed read primitives. Implementations must not mutate the repo or
-/// any datastore; `&mut self` is allowed only so executors can hold connection
-/// state (e.g. a database client).
-pub trait ToolExecutor {
+/// any datastore. Each invocation may run on a detached worker after its caller
+/// times out, so implementations must own thread-safe read-only state.
+pub trait ToolExecutor: Send + Sync {
     /// The tool schemas advertised to the model for this run.
     fn schemas(&self) -> Vec<ToolSchema>;
 
     /// Execute one tool call and return its textual result. Returning `Err`
     /// surfaces the message to the model as a tool result; it does not abort the
     /// loop.
-    fn execute(&mut self, call: &ToolCall) -> Result<String, ToolError>;
+    fn execute(&self, call: &ToolCall) -> Result<String, ToolError>;
 }
 
 /// How the model is allowed to use the advertised tools on a given turn.
@@ -182,6 +185,8 @@ pub struct ChatCompletionRequest<'a> {
     pub max_tokens: Option<usize>,
     /// Tool-use policy for this turn; only meaningful when `tools` is non-empty.
     pub tool_choice: ToolChoice,
+    /// Remaining wall-clock budget for this model request, including retries.
+    pub timeout: Duration,
 }
 
 /// One completion response returned by a [`ChatTransport`].
@@ -225,28 +230,179 @@ pub trait ChatTransport {
 }
 
 /// Hard limits enforced on a tool-loop run.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ToolLoopLimits {
     /// Maximum number of completion turns (model calls).
-    pub max_turns: usize,
+    pub max_turns: Option<usize>,
     /// Maximum number of tool calls executed across the whole run.
     pub max_tool_calls: usize,
     /// Maximum byte length of a single tool result fed back to the model.
     /// Larger results are truncated on a UTF-8 boundary.
     pub max_bytes_per_tool_result: usize,
+    /// Wall-clock budget for each individual tool call.
+    pub tool_timeout_seconds: u64,
     /// Wall-clock budget for the whole run.
-    pub timeout: Duration,
+    pub loop_timeout_seconds: u64,
 }
 
 impl Default for ToolLoopLimits {
     fn default() -> Self {
+        let defaults = contract_defaults();
         Self {
-            max_turns: 8,
-            max_tool_calls: 24,
-            max_bytes_per_tool_result: 16 * 1024,
-            timeout: Duration::from_secs(180),
+            max_turns: defaults.max_turns,
+            max_tool_calls: defaults.max_tool_calls,
+            max_bytes_per_tool_result: defaults.max_bytes_per_tool_result,
+            tool_timeout_seconds: defaults.tool_timeout_seconds,
+            loop_timeout_seconds: defaults.loop_timeout_seconds,
         }
     }
+}
+
+impl ToolLoopLimits {
+    /// Resolve the canonical tool-loop settings from the config store.
+    pub fn resolve(source: &mut impl ConfigSource) -> Result<Self, AiError> {
+        let mut limits = Self::default();
+        limits.max_turns = parse_nullable_positive(source, "max_turns", limits.max_turns)?;
+        limits.max_tool_calls = parse_positive(source, "max_tool_calls", limits.max_tool_calls)?;
+        limits.max_bytes_per_tool_result = parse_positive(
+            source,
+            "max_bytes_per_tool_result",
+            limits.max_bytes_per_tool_result,
+        )?;
+        limits.tool_timeout_seconds =
+            parse_positive(source, "tool_timeout_seconds", limits.tool_timeout_seconds)?;
+        limits.loop_timeout_seconds =
+            parse_positive(source, "loop_timeout_seconds", limits.loop_timeout_seconds)?;
+        limits.validate()?;
+        Ok(limits)
+    }
+
+    /// Validate a complete per-request override.
+    pub fn validate(&self) -> Result<(), AiError> {
+        if self.max_turns == Some(0) {
+            return Err(invalid_limit("max_turns"));
+        }
+        if self.max_tool_calls == 0 {
+            return Err(invalid_limit("max_tool_calls"));
+        }
+        if self.max_bytes_per_tool_result == 0 {
+            return Err(invalid_limit("max_bytes_per_tool_result"));
+        }
+        if self.tool_timeout_seconds == 0 {
+            return Err(invalid_limit("tool_timeout_seconds"));
+        }
+        if self.loop_timeout_seconds == 0 {
+            return Err(invalid_limit("loop_timeout_seconds"));
+        }
+        Ok(())
+    }
+
+    pub fn tool_timeout(self) -> Duration {
+        Duration::from_secs(self.tool_timeout_seconds)
+    }
+
+    pub fn loop_timeout(self) -> Duration {
+        Duration::from_secs(self.loop_timeout_seconds)
+    }
+}
+
+#[derive(Debug, Deserialize)]
+struct ToolLoopContract {
+    contract: String,
+    version: u64,
+    config_prefix: String,
+    fields: ToolLoopContractFields,
+}
+
+#[derive(Debug, Deserialize)]
+struct ToolLoopContractFields {
+    max_turns: ContractField<Option<usize>>,
+    max_tool_calls: ContractField<usize>,
+    max_bytes_per_tool_result: ContractField<usize>,
+    tool_timeout_seconds: ContractField<u64>,
+    loop_timeout_seconds: ContractField<u64>,
+}
+
+#[derive(Debug, Deserialize)]
+struct ContractField<T> {
+    #[allow(dead_code)]
+    r#type: String,
+    default: T,
+}
+
+#[derive(Debug, Clone, Copy)]
+struct ToolLoopContractDefaults {
+    max_turns: Option<usize>,
+    max_tool_calls: usize,
+    max_bytes_per_tool_result: usize,
+    tool_timeout_seconds: u64,
+    loop_timeout_seconds: u64,
+}
+
+const TOOL_LOOP_CONTRACT_JSON: &str = include_str!("../../../contracts/tool_loop_limits.v1.json");
+const TOOL_LOOP_CONTRACT_NAME: &str = "gobby.tool_loop_limits";
+pub const TOOL_LOOP_CONTRACT_VERSION: u64 = 1;
+pub const TOOL_LOOP_CONFIG_PREFIX: &str = "ai.generation.tool_loop";
+
+fn contract_defaults() -> ToolLoopContractDefaults {
+    static DEFAULTS: OnceLock<ToolLoopContractDefaults> = OnceLock::new();
+    *DEFAULTS.get_or_init(|| {
+        let contract: ToolLoopContract =
+            serde_json::from_str(TOOL_LOOP_CONTRACT_JSON).expect("valid tool-loop contract");
+        assert_eq!(contract.contract, TOOL_LOOP_CONTRACT_NAME);
+        assert_eq!(contract.version, TOOL_LOOP_CONTRACT_VERSION);
+        assert_eq!(contract.config_prefix, TOOL_LOOP_CONFIG_PREFIX);
+        ToolLoopContractDefaults {
+            max_turns: contract.fields.max_turns.default,
+            max_tool_calls: contract.fields.max_tool_calls.default,
+            max_bytes_per_tool_result: contract.fields.max_bytes_per_tool_result.default,
+            tool_timeout_seconds: contract.fields.tool_timeout_seconds.default,
+            loop_timeout_seconds: contract.fields.loop_timeout_seconds.default,
+        }
+    })
+}
+
+fn config_key(suffix: &str) -> String {
+    format!("{TOOL_LOOP_CONFIG_PREFIX}.{suffix}")
+}
+
+fn parse_positive<T>(source: &mut impl ConfigSource, suffix: &str, default: T) -> Result<T, AiError>
+where
+    T: std::str::FromStr + PartialEq + From<u8>,
+{
+    let Some(raw) = resolve_ai_setting(source, &config_key(suffix)) else {
+        return Ok(default);
+    };
+    let value = raw.trim().parse::<T>().map_err(|_| invalid_limit(suffix))?;
+    if value == T::from(0) {
+        return Err(invalid_limit(suffix));
+    }
+    Ok(value)
+}
+
+fn parse_nullable_positive(
+    source: &mut impl ConfigSource,
+    suffix: &str,
+    default: Option<usize>,
+) -> Result<Option<usize>, AiError> {
+    let Some(raw) = resolve_ai_setting(source, &config_key(suffix)) else {
+        return Ok(default);
+    };
+    let raw = raw.trim();
+    if raw.eq_ignore_ascii_case("null") || raw.is_empty() {
+        return Ok(None);
+    }
+    let value = raw.parse::<usize>().map_err(|_| invalid_limit(suffix))?;
+    if value == 0 {
+        return Err(invalid_limit(suffix));
+    }
+    Ok(Some(value))
+}
+
+fn invalid_limit(suffix: &str) -> AiError {
+    AiError::parse_failure(format!(
+        "{TOOL_LOOP_CONFIG_PREFIX}.{suffix} must be a positive integer or the documented nullable value"
+    ))
 }
 
 /// Why a tool-loop run stopped.
@@ -347,7 +503,7 @@ const FORCE_INVESTIGATION_CORRECTIONS: [&str; 3] = [
 /// limit returns `Ok` with the corresponding [`StopReason`].
 pub fn run_tool_loop(
     transport: &dyn ChatTransport,
-    executor: &mut dyn ToolExecutor,
+    executor: Arc<dyn ToolExecutor>,
     initial_messages: Vec<ChatMessage>,
     limits: &ToolLoopLimits,
     max_tokens: Option<usize>,
@@ -365,12 +521,13 @@ pub fn run_tool_loop(
 
 pub(super) fn run_tool_loop_with_clock<C: FnMut() -> Duration>(
     transport: &dyn ChatTransport,
-    executor: &mut dyn ToolExecutor,
+    executor: Arc<dyn ToolExecutor>,
     initial_messages: Vec<ChatMessage>,
     limits: &ToolLoopLimits,
     max_tokens: Option<usize>,
     mut elapsed: C,
 ) -> Result<ToolLoopOutcome, AiError> {
+    limits.validate()?;
     let tools = executor.schemas();
     let mut messages = initial_messages;
     let mut tool_names: Vec<String> = Vec::new();
@@ -381,10 +538,12 @@ pub(super) fn run_tool_loop_with_clock<C: FnMut() -> Duration>(
     let mut usage = UsageAccumulator::default();
 
     let (content, stop_reason) = loop {
-        if elapsed() >= limits.timeout {
+        let loop_timeout = limits.loop_timeout();
+        let elapsed_before_turn = elapsed();
+        if elapsed_before_turn >= loop_timeout {
             break (None, StopReason::Timeout);
         }
-        if turns >= limits.max_turns {
+        if limits.max_turns.is_some_and(|max_turns| turns >= max_turns) {
             break (None, StopReason::MaxTurns);
         }
 
@@ -405,6 +564,7 @@ pub(super) fn run_tool_loop_with_clock<C: FnMut() -> Duration>(
             tools: &tools,
             max_tokens,
             tool_choice,
+            timeout: loop_timeout.saturating_sub(elapsed_before_turn),
         };
         let completion = transport.complete(request)?;
         turns += 1;
@@ -413,7 +573,7 @@ pub(super) fn run_tool_loop_with_clock<C: FnMut() -> Duration>(
             model = Some(completion_model);
         }
 
-        if elapsed() >= limits.timeout {
+        if elapsed() >= loop_timeout {
             break (None, StopReason::Timeout);
         }
 
@@ -451,6 +611,13 @@ pub(super) fn run_tool_loop_with_clock<C: FnMut() -> Duration>(
             break (completion.content, StopReason::Completed);
         }
 
+        // The last finite turn may produce a natural final answer, but tool
+        // calls from that turn cannot be executed because no model turn remains
+        // to consume their results.
+        if limits.max_turns.is_some_and(|max_turns| turns >= max_turns) {
+            break (None, StopReason::MaxTurns);
+        }
+
         messages.push(ChatMessage::assistant_tool_calls(
             completion.content.clone(),
             completion.tool_calls.clone(),
@@ -466,14 +633,41 @@ pub(super) fn run_tool_loop_with_clock<C: FnMut() -> Duration>(
             if !tool_names.iter().any(|name| name == &call.name) {
                 tool_names.push(call.name.clone());
             }
-            let result = match executor.execute(call) {
-                Ok(result) => result,
-                Err(error) => format!("tool error: {}", error.message),
+            let remaining = loop_timeout.saturating_sub(elapsed());
+            if remaining.is_zero() {
+                hit_timeout = true;
+                break;
+            }
+            let tool_timeout = limits.tool_timeout();
+            let overall_deadline_first = remaining <= tool_timeout;
+            let wait_for = remaining.min(tool_timeout);
+            let (sender, receiver) = mpsc::sync_channel(1);
+            let worker_executor = Arc::clone(&executor);
+            let worker_call = call.clone();
+            std::thread::spawn(move || {
+                let _ = sender.send(worker_executor.execute(&worker_call));
+            });
+            let result = match receiver.recv_timeout(wait_for) {
+                Ok(Ok(result)) => result,
+                Ok(Err(error)) => format!("tool error: {}", error.message),
+                Err(mpsc::RecvTimeoutError::Timeout) if overall_deadline_first => {
+                    hit_timeout = true;
+                    break;
+                }
+                Err(mpsc::RecvTimeoutError::Timeout) => {
+                    format!(
+                        "tool error: timed out after {} seconds",
+                        limits.tool_timeout_seconds
+                    )
+                }
+                Err(mpsc::RecvTimeoutError::Disconnected) => {
+                    "tool error: execution worker disconnected".to_string()
+                }
             };
             let result = truncate_utf8(result, limits.max_bytes_per_tool_result);
             messages.push(ChatMessage::tool_result(call.id.clone(), result));
             tool_call_count += 1;
-            if elapsed() >= limits.timeout {
+            if elapsed() >= loop_timeout {
                 hit_timeout = true;
                 break;
             }

@@ -12,6 +12,8 @@
 //!   returns the finished narrative — never `tool_calls` for the caller to
 //!   execute.
 
+use std::time::Instant;
+
 use reqwest::blocking::Client;
 use reqwest::header::AUTHORIZATION;
 use serde_json::{Map, Value, json};
@@ -19,8 +21,8 @@ use serde_json::{Map, Value, json};
 use crate::ai::daemon::{daemon_client, daemon_url, read_local_cli_token, with_local_token};
 use crate::ai::text::chat_completion_usage;
 use crate::ai::{
-    chat_api_root, chat_completion_model, parse_json_response, reqwest_error, retry_with_backoff,
-    timeout_for,
+    chat_api_root, chat_completion_model, parse_json_response, reqwest_error,
+    retry_with_backoff_until, timeout_for,
 };
 use crate::ai_context::AiContext;
 use crate::ai_types::{AiError, TokenUsage};
@@ -29,7 +31,7 @@ use crate::config::{AiCapability, FeatureCandidate};
 use super::profile::DirectGenerationTarget;
 use super::tool_loop::{
     ChatCompletion, ChatCompletionRequest, ChatMessage, ChatRole, ChatTransport, ToolCall,
-    ToolSchema,
+    ToolLoopLimits, ToolSchema,
 };
 
 /// Daemon tool-passthrough chat-completion path (#17393).
@@ -82,15 +84,14 @@ impl ChatTransport for DirectChatTransport<'_> {
             .map(str::trim)
             .filter(|value| !value.is_empty())
             .map(str::to_string);
+        let request_timeout = request.timeout.min(timeout_for(AiCapability::TextGenerate));
+        let deadline = Instant::now() + request_timeout;
 
         let _permit = self.context.limiter.acquire();
-        let value = retry_with_backoff(
-            || {
-                let mut http = self
-                    .client
-                    .post(&url)
-                    .timeout(timeout_for(AiCapability::TextGenerate))
-                    .json(&body);
+        let value = retry_with_backoff_until(
+            deadline,
+            |remaining| {
+                let mut http = self.client.post(&url).timeout(remaining).json(&body);
                 if let Some(api_key) = api_key.as_deref() {
                     http = http.header(AUTHORIZATION, format!("Bearer {api_key}"));
                 }
@@ -178,7 +179,7 @@ pub fn daemon_agentic_chat(
     project_path: &str,
     tool_policy: &ToolPolicy,
     messages: &[ChatMessage],
-    max_turns: Option<usize>,
+    limits: &ToolLoopLimits,
     reasoning_effort: Option<&str>,
 ) -> Result<DaemonAgenticResult, AiError> {
     let profile = profile.trim();
@@ -199,20 +200,16 @@ pub fn daemon_agentic_chat(
         project_path,
         tool_policy,
         messages,
-        max_turns,
+        limits,
         reasoning_effort,
     );
 
     let _permit = context.limiter.acquire();
-    let value = retry_with_backoff(
-        || {
-            let http = with_local_token(
-                client
-                    .post(&url)
-                    .timeout(timeout_for(AiCapability::ToolChat))
-                    .json(&body),
-                &token,
-            );
+    let deadline = Instant::now() + limits.loop_timeout();
+    let value = retry_with_backoff_until(
+        deadline,
+        |remaining| {
+            let http = with_local_token(client.post(&url).timeout(remaining).json(&body), &token);
             parse_json_response(http.send().map_err(reqwest_error)?)
         },
         std::thread::sleep,
@@ -237,7 +234,7 @@ pub(crate) fn build_daemon_agentic_body(
     project_path: &str,
     tool_policy: &ToolPolicy,
     messages: &[ChatMessage],
-    max_turns: Option<usize>,
+    limits: &ToolLoopLimits,
     reasoning_effort: Option<&str>,
 ) -> Value {
     let mut body = Map::new();
@@ -258,9 +255,10 @@ pub(crate) fn build_daemon_agentic_body(
     insert_trimmed(&mut body, "project_id", project_id);
     insert_trimmed(&mut body, "project_path", Some(project_path));
     body.insert("tool_policy".to_string(), tool_policy_to_json(tool_policy));
-    if let Some(max_turns) = max_turns {
-        body.insert("max_turns".to_string(), Value::from(max_turns));
-    }
+    body.insert(
+        "limits".to_string(),
+        serde_json::to_value(limits).expect("validated tool-loop limits serialize"),
+    );
     insert_trimmed(&mut body, "reasoning_effort", reasoning_effort);
     Value::Object(body)
 }

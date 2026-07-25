@@ -33,7 +33,6 @@ from __future__ import annotations
 
 import json
 import logging
-import os
 import shlex
 import tempfile
 from pathlib import Path
@@ -42,22 +41,20 @@ from urllib.parse import quote
 
 from gobby.agents.spawn_cache_policy import merge_spawn_path
 from gobby.ai._text_generation_adapters import (
-    _droid_isolated_env,
     _extend_reasoning_args,
     _normalize_qwen_openai_endpoints,
     _run_cli_text_generation_command,
-    _seed_droid_factory_state,
 )
+from gobby.ai._tool_chat_codex import CodexSpawnToolChatAdapter
 from gobby.ai._tool_chat_contracts import (
     ToolChatRequest,
     ToolChatResult,
-    _resolve_max_turns,
+    ToolLoopLimits,
 )
+from gobby.ai._tool_chat_droid import DroidSpawnToolChatAdapter
 from gobby.ai._tool_chat_tools import validate_policy
-from gobby.ai.codex_endpoint import (
-    codex_endpoint_config_overrides,
-    codex_endpoint_env,
-)
+
+__all__ = ["CodexSpawnToolChatAdapter", "DroidSpawnToolChatAdapter"]
 
 if TYPE_CHECKING:
     from collections.abc import Mapping
@@ -69,23 +66,6 @@ _DEFAULT_SPAWN_TIMEOUT_SECONDS = 300.0
 _QWEN_LIMIT_EXIT_CODES = frozenset({53, 55})
 
 logger = logging.getLogger(__name__)
-
-# Droid built-in tools disabled for tool_chat spawn agents. Execute is NOT
-# disabled — the agent needs shell access to run gcode. Droid's default
-# read-only exec autonomy is the OS sandbox that prevents file writes; the
-# remaining disabled tools are defense-in-depth on top of that.
-_DROID_DISABLED_TOOLS: tuple[str, ...] = (
-    "Edit",
-    "ApplyPatch",
-    "Create",
-    "CreateAutomation",
-    "EditAutomation",
-    "DeleteAutomation",
-    "CronCreate",
-    "CronDelete",
-    "GenerateDroid",
-    "Task",
-)
 
 # Grok built-in tools disabled for tool_chat spawn agents. The ``--sandbox
 # workspace`` profile confines writes to the neutral temp cwd; these disabled
@@ -173,43 +153,6 @@ def compose_gcode_direct_prompt(request: ToolChatRequest) -> str:
     )
     parts = [part for part in (request.system_prompt, request.prompt, preamble) if part]
     return "\n\n".join(parts)
-
-
-def parse_codex_stream(stdout: str) -> tuple[str, int, dict[str, int]]:
-    """Parse ``codex exec --json`` JSONL into (final_text, tool_calls, breakdown).
-
-    Tool-call provenance comes from ``item.completed`` events with
-    ``item.type == "command_execution"``. The narrative is the
-    ``agent_message`` item's ``text`` (used as a fallback when
-    ``--output-last-message`` is empty). Non-JSON lines are skipped.
-    """
-    final_text = ""
-    breakdown: dict[str, int] = {}
-    total = 0
-    for raw in stdout.splitlines():
-        line = raw.strip()
-        if not line:
-            continue
-        try:
-            event = json.loads(line)
-        except json.JSONDecodeError:
-            continue
-        if not isinstance(event, dict):
-            continue
-        if event.get("type") != "item.completed":
-            continue
-        item = event.get("item")
-        if not isinstance(item, dict):
-            continue
-        item_type = item.get("type")
-        if item_type == "command_execution":
-            total += 1
-            breakdown["command_execution"] = breakdown.get("command_execution", 0) + 1
-        elif item_type == "agent_message":
-            text = item.get("text")
-            if isinstance(text, str) and text.strip():
-                final_text = text
-    return final_text.strip(), total, breakdown
 
 
 def parse_qwen_stream(
@@ -401,270 +344,6 @@ def _classify_qwen_stop_reason(
     )
 
 
-class CodexSpawnToolChatAdapter:
-    """Family B adapter for the ``daemon`` style — Codex via ``codex exec``.
-
-    Spawns ``codex exec`` agentically in a neutral working directory with the
-    workspace-write sandbox plus network access (so ``gcode`` can reach the
-    Postgres hub), captures the final message via ``--output-last-message``,
-    and reports tool-call provenance from the ``--json`` JSONL event stream.
-    The target repo is byte-identical after a run because Codex is never
-    spawned inside it.
-    """
-
-    def __init__(
-        self,
-        *,
-        command_path: str | None = None,
-        timeout_seconds: float = _DEFAULT_SPAWN_TIMEOUT_SECONDS,
-        config: DaemonConfig | None = None,
-    ) -> None:
-        self._command_path = command_path
-        self._timeout_seconds = timeout_seconds
-        self._config = config
-
-    def _resolve_command_path(self) -> str:
-        import shutil
-
-        path = self._command_path or shutil.which("codex")
-        if not path:
-            raise FileNotFoundError("Codex CLI not found in PATH")
-        return path
-
-    def _build_command(
-        self,
-        request: ToolChatRequest,
-        *,
-        model: str | None,
-        output_path: Path,
-        config_overrides: tuple[str, ...] = (),
-    ) -> list[str]:
-        command = [
-            self._resolve_command_path(),
-            "--ask-for-approval",
-            "never",
-        ]
-        for override in config_overrides:
-            command.extend(["-c", override])
-        command.extend(
-            [
-                "exec",
-                "--skip-git-repo-check",
-                "--ignore-user-config",
-                "--ignore-rules",
-                "--sandbox",
-                "workspace-write",
-                "-c",
-                "sandbox_workspace_write.network_access=true",
-                "--json",
-                "--output-last-message",
-                str(output_path),
-            ]
-        )
-        if model and not config_overrides:
-            command.extend(["--model", model])
-        _extend_reasoning_args(command, "codex", request.reasoning_effort)
-        command.append("-")
-        return command
-
-    async def chat(self, request: ToolChatRequest, binding: CapabilityBinding) -> ToolChatResult:
-        validate_policy(request.tool_policy)
-        logger.warning(
-            "Codex tool_chat cannot enforce request.limits; only wall-time timeout applies"
-        )
-        model = request.model or next(iter(binding.models), None)
-        config_overrides: tuple[str, ...] = ()
-        endpoint_env: dict[str, str] = {}
-        endpoint_name = binding.metadata.get("endpoint")
-        if binding.metadata.get("wire_api") == "responses":
-            if self._config is None or not isinstance(endpoint_name, str):
-                raise ValueError("Responses tool_chat binding is missing endpoint configuration")
-            endpoint = self._config.ai.generation.endpoints[endpoint_name]
-            config_overrides = codex_endpoint_config_overrides(
-                endpoint_name,
-                endpoint,
-                model=model,
-            )
-            endpoint_env.update(codex_endpoint_env(endpoint))
-        with tempfile.TemporaryDirectory(prefix="tool-chat-codex-") as work_str:
-            work = Path(work_str)
-            output_path = work / "last-message.txt"
-            command = self._build_command(
-                request,
-                model=model,
-                output_path=output_path,
-                config_overrides=config_overrides,
-            )
-            # gcode (the read-only investigation surface) is installed in the
-            # managed ~/.gobby/bin; merge_spawn_path puts it on the sandbox PATH.
-            env = {"PATH": merge_spawn_path(None), **endpoint_env}
-            stdout = await _run_cli_text_generation_command(
-                "Codex tool_chat",
-                command,
-                neutral_cwd=work,
-                timeout_seconds=self._timeout_seconds,
-                env_overrides=env,
-                stdin_input=compose_gcode_direct_prompt(request),
-            )
-            file_text = (
-                output_path.read_text(encoding="utf-8").strip() if output_path.exists() else ""
-            )
-            stream_text, tool_use_count, tools = parse_codex_stream(stdout)
-        text = file_text or stream_text
-        if not text:
-            raise RuntimeError(
-                "Codex tool_chat produced no final message "
-                f"(model={model}, tool_use_count={tool_use_count})"
-            )
-        return ToolChatResult(
-            text=text,
-            provider=binding.provider,
-            model=model,
-            tool_use_count=tool_use_count,
-            turns=None,
-            tools=tools,
-            applied_reasoning_effort=request.reasoning_effort,
-            stop_reason="completed",
-            trace=(),
-            calls_used=0,
-            budget_exhausted=False,
-            trace_available=False,
-        )
-
-
-def parse_droid_stream(stdout: str) -> tuple[str, int, dict[str, int], int | None]:
-    """Parse Droid stream JSON into narrative, tool calls, and native turns.
-
-    The narrative is the ``completion`` event's ``finalText`` (falling back to the
-    last assistant ``message``). Tool-call provenance comes from ``tool_call``
-    events, counted by ``toolName``. Turns come only from the completion envelope.
-    """
-    final_text = ""
-    last_assistant = ""
-    breakdown: dict[str, int] = {}
-    total = 0
-    turns: int | None = None
-    for raw in stdout.splitlines():
-        line = raw.strip()
-        if not line:
-            continue
-        try:
-            event = json.loads(line)
-        except json.JSONDecodeError:
-            continue
-        if not isinstance(event, dict):
-            continue
-        etype = event.get("type")
-        if etype == "tool_call":
-            name = str(event.get("toolName") or event.get("toolId") or "tool")
-            breakdown[name] = breakdown.get(name, 0) + 1
-            total += 1
-        elif etype == "message" and event.get("role") == "assistant":
-            text = event.get("text")
-            if isinstance(text, str) and text.strip():
-                last_assistant = text
-        elif etype == "completion":
-            final = event.get("finalText")
-            if isinstance(final, str):
-                final_text = final
-            raw_turns = event.get("numTurns", event.get("num_turns"))
-            if isinstance(raw_turns, int):
-                turns = raw_turns
-    return (final_text or last_assistant).strip(), total, breakdown, turns
-
-
-class DroidSpawnToolChatAdapter:
-    """Family B adapter for the ``cli`` style — Droid via ``droid exec``.
-
-    Spawns ``droid exec --output-format stream-json`` in an isolated, neutral
-    working directory (its Factory home seeded from the real one, so auth
-    travels) with mutating/shell-file tools disabled. Execute is NOT disabled —
-    the agent needs shell access to run ``gcode``. Droid's default read-only
-    ``exec`` autonomy is the OS sandbox that prevents file writes. Tool-call
-    provenance is read from the stream-json ``tool_call`` events.
-    """
-
-    def __init__(
-        self,
-        *,
-        command_path: str | None = None,
-        timeout_seconds: float = _DEFAULT_SPAWN_TIMEOUT_SECONDS,
-    ) -> None:
-        self._command_path = command_path
-        self._timeout_seconds = timeout_seconds
-
-    def _resolve_command_path(self) -> str:
-        import shutil
-
-        path = self._command_path or shutil.which("droid")
-        if not path:
-            raise FileNotFoundError("Droid CLI not found in PATH")
-        return path
-
-    def _build_command(self, request: ToolChatRequest, *, model: str | None) -> list[str]:
-        command = [
-            self._resolve_command_path(),
-            "exec",
-            # `--auto high` lets droid's Execute tool run the gcode binary; droid
-            # gates arbitrary external-command exec at the high autonomy tier.
-            # Truly destructive ops stay blocked without --skip-permissions-unsafe.
-            "--auto",
-            "high",
-            "--output-format",
-            "stream-json",
-            "--disabled-tools",
-            ",".join(_DROID_DISABLED_TOOLS),
-        ]
-        if model:
-            command.extend(["--model", model])
-        _extend_reasoning_args(command, "droid", request.reasoning_effort)
-        command.append(compose_gcode_direct_prompt(request))
-        return command
-
-    async def chat(self, request: ToolChatRequest, binding: CapabilityBinding) -> ToolChatResult:
-        validate_policy(request.tool_policy)
-        logger.warning(
-            "Droid tool_chat cannot enforce request.limits; only wall-time timeout applies"
-        )
-        model = request.model or next(iter(binding.models), None)
-        command = self._build_command(request, model=model)
-        with tempfile.TemporaryDirectory(prefix="tool-chat-droid-") as work_str:
-            work = Path(work_str)
-            temp_home = work / "home"
-            temp_home.mkdir(parents=True, exist_ok=True)
-            base_env = os.environ.copy()
-            _seed_droid_factory_state(base_env, temp_home)
-            isolated_env = _droid_isolated_env(base_env, temp_home)
-            isolated_env["PATH"] = merge_spawn_path(isolated_env.get("PATH"))
-            stdout = await _run_cli_text_generation_command(
-                "Droid tool_chat",
-                command,
-                neutral_cwd=work,
-                timeout_seconds=self._timeout_seconds,
-                env_overrides=isolated_env,
-            )
-        text, tool_use_count, tools, turns = parse_droid_stream(stdout)
-        if not text:
-            raise RuntimeError(
-                "Droid tool_chat produced no final message "
-                f"(model={model}, tool_use_count={tool_use_count})"
-            )
-        return ToolChatResult(
-            text=text,
-            provider=binding.provider,
-            model=model,
-            tool_use_count=tool_use_count,
-            turns=turns,
-            tools=tools,
-            applied_reasoning_effort=request.reasoning_effort,
-            stop_reason="completed",
-            trace=(),
-            calls_used=0,
-            budget_exhausted=False,
-            trace_available=False,
-        )
-
-
 class GrokSpawnToolChatAdapter:
     """Family B adapter for the ``acp`` style — Grok via ``grok --single``.
 
@@ -696,7 +375,7 @@ class GrokSpawnToolChatAdapter:
         return path
 
     def _build_command(self, request: ToolChatRequest, *, model: str | None) -> list[str]:
-        max_turns = _resolve_max_turns(request, default=30)
+        limits = request.limits or ToolLoopLimits()
         command = [
             self._resolve_command_path(),
             "--single",
@@ -710,9 +389,9 @@ class GrokSpawnToolChatAdapter:
             "--no-memory",
             "--disallowed-tools",
             _GROK_DISABLED_TOOLS,
-            "--max-turns",
-            str(max_turns),
         ]
+        if limits.max_turns is not None:
+            command.extend(["--max-turns", str(limits.max_turns)])
         if model:
             command.extend(["--model", model])
         _extend_reasoning_args(command, "grok", request.reasoning_effort)
@@ -817,7 +496,7 @@ class QwenSpawnToolChatAdapter:
         path = self._command_path or shutil.which("qwen")
         if not path:
             raise FileNotFoundError("Qwen CLI not found in PATH")
-        max_turns = _resolve_max_turns(request, default=8)
+        limits = request.limits or ToolLoopLimits()
         command = [
             path,
             "--bare",
@@ -826,13 +505,13 @@ class QwenSpawnToolChatAdapter:
             "yolo",
             "--output-format",
             "stream-json",
-            "--max-session-turns",
-            str(max_turns),
             "--max-tool-calls",
-            str(request.limits.max_tool_calls),
+            str(limits.max_tool_calls),
             "--max-wall-time",
-            f"{int(self._timeout_seconds)}s",
+            f"{limits.loop_timeout_seconds}s",
         ]
+        if limits.max_turns is not None:
+            command.extend(["--max-session-turns", str(limits.max_turns)])
         endpoint = self._select_endpoint(model)
         if endpoint is not None:
             command.extend(["--auth-type", "openai", "--openai-base-url", endpoint.api_base])

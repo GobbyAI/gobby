@@ -6,6 +6,8 @@
 
 use std::sync::{Arc, Condvar, Mutex};
 
+#[cfg(feature = "ai")]
+use crate::ai::generation::ToolLoopLimits;
 use crate::config::{
     AiCapability, AiRouting, AiTuning, CapabilityBinding, ConfigSource, resolve_ai_tuning,
     resolve_capability_binding,
@@ -27,6 +29,8 @@ pub struct AiContext {
     pub tuning: AiTuning,
     pub limiter: AiLimiter,
     pub project_id: Option<String>,
+    #[cfg(feature = "ai")]
+    pub tool_loop_limits: ToolLoopLimits,
 }
 
 impl AiContext {
@@ -41,6 +45,25 @@ impl AiContext {
         source: &mut impl ConfigSource,
         options: AiContextOptions,
     ) -> Self {
+        Self::resolve_with_options_inner(project_id, source, options, false)
+            .expect("non-strict AI context resolution cannot fail")
+    }
+
+    #[cfg(feature = "ai")]
+    pub fn try_resolve_with_options(
+        project_id: Option<String>,
+        source: &mut impl ConfigSource,
+        options: AiContextOptions,
+    ) -> anyhow::Result<Self> {
+        Self::resolve_with_options_inner(project_id, source, options, true)
+    }
+
+    fn resolve_with_options_inner(
+        project_id: Option<String>,
+        source: &mut impl ConfigSource,
+        options: AiContextOptions,
+        strict_tool_loop_limits: bool,
+    ) -> anyhow::Result<Self> {
         let mut bindings = AiBindings::resolve(source);
         let mut tuning = resolve_ai_tuning(source);
 
@@ -54,13 +77,23 @@ impl AiContext {
             tuning.max_concurrency = 1;
         }
         let limiter = AiLimiter::new(tuning.max_concurrency);
+        #[cfg(feature = "ai")]
+        let tool_loop_limits = match ToolLoopLimits::resolve(source) {
+            Ok(limits) => limits,
+            Err(_) if !strict_tool_loop_limits => ToolLoopLimits::default(),
+            Err(error) => return Err(error.into()),
+        };
+        #[cfg(not(feature = "ai"))]
+        let _ = strict_tool_loop_limits;
 
-        Self {
+        Ok(Self {
             bindings,
             tuning,
             limiter,
             project_id,
-        }
+            #[cfg(feature = "ai")]
+            tool_loop_limits,
+        })
     }
 
     pub fn binding(&self, capability: AiCapability) -> &CapabilityBinding {
@@ -614,6 +647,28 @@ ai:
                 .as_deref(),
             Some("high")
         );
+    }
+
+    #[cfg(feature = "ai")]
+    #[test]
+    fn strict_tool_loop_context_rejects_invalid_configured_limits() {
+        let mut direct_source =
+            TestSource::with_values([("ai.generation.tool_loop.max_tool_calls", "0")])
+                .with_resolved([("0", "0")]);
+        ToolLoopLimits::resolve(&mut direct_source)
+            .expect_err("the test source must expose the invalid limit");
+        let mut context_source =
+            TestSource::with_values([("ai.generation.tool_loop.max_tool_calls", "0")])
+                .with_resolved([("0", "0")]);
+
+        let error = AiContext::try_resolve_with_options(
+            None,
+            &mut context_source,
+            AiContextOptions::default(),
+        )
+        .expect_err("zero tool-loop limits must be rejected");
+
+        assert!(error.to_string().contains("max_tool_calls"));
     }
 
     #[test]

@@ -13,13 +13,14 @@ from tempfile import NamedTemporaryFile
 from typing import TYPE_CHECKING, Any, Literal
 
 from fastapi import APIRouter, File, Form, HTTPException, UploadFile
-from pydantic import AliasChoices, BaseModel, Field
+from pydantic import AliasChoices, BaseModel, ConfigDict, Field
 
 from gobby.ai import (
     AICapability,
     CapabilityUnavailableError,
     TextGenerationRequest,
     ToolChatRequest,
+    ToolLoopLimits,
     ToolPolicy,
     VisionExtractRequest,
     build_daemon_ai_capability_registry,
@@ -42,8 +43,6 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 DEFAULT_TEXT_GENERATE_PROFILE = FeatureProfile.LOW.value
 DEFAULT_CHAT_COMPLETIONS_PROFILE = FeatureProfile.HIGH.value
-_DEFAULT_AGENTIC_TURNS = 60
-_MAX_AGENTIC_TURNS = 80
 _VISION_TEMP_DIR_NAME = "gobby-vision"
 _VISION_TEMP_MAX_AGE_SECONDS = 24 * 60 * 60
 _VISION_TEMP_CLEANUP_INTERVAL_SECONDS = max(60.0, min(3600.0, _VISION_TEMP_MAX_AGE_SECONDS / 2))
@@ -127,8 +126,22 @@ class ToolPolicyPayload(BaseModel):
     allow_mutation: bool = False
 
 
+class ToolLoopLimitsPayload(BaseModel):
+    """Complete version-1 tool-loop limits override."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    max_turns: int | None = Field(gt=0)
+    max_tool_calls: int = Field(gt=0)
+    max_bytes_per_tool_result: int = Field(gt=0)
+    tool_timeout_seconds: int = Field(gt=0)
+    loop_timeout_seconds: int = Field(gt=0)
+
+
 class ChatCompletionsPayload(BaseModel):
     """Request body for daemon-side provider-agnostic tool_chat generation."""
+
+    model_config = ConfigDict(extra="forbid")
 
     messages: list[ChatMessage] = Field(min_length=1)
     project_path: str = Field(min_length=1)
@@ -137,7 +150,7 @@ class ChatCompletionsPayload(BaseModel):
     provider: str | None = None
     model: str | None = None
     candidates: tuple[FeatureCandidateInput, ...] = ()
-    max_turns: int | None = Field(default=None, gt=0)
+    limits: ToolLoopLimitsPayload | None = None
     reasoning_effort: str | None = None
 
     @property
@@ -146,13 +159,6 @@ class ChatCompletionsPayload(BaseModel):
         if self.provider or self.model or self.profile or self.candidates:
             return self.profile
         return DEFAULT_CHAT_COMPLETIONS_PROFILE
-
-
-def _clamp_agentic_turns(max_turns: int | None) -> int:
-    """Clamp the requested investigation turn budget to a sane range."""
-    if max_turns is None:
-        return _DEFAULT_AGENTIC_TURNS
-    return max(1, min(max_turns, _MAX_AGENTIC_TURNS))
 
 
 def _split_chat_messages(messages: list[ChatMessage]) -> tuple[str | None, str]:
@@ -286,7 +292,11 @@ def create_llm_router(server: HTTPServer) -> APIRouter:
                     provider=payload.provider,
                     candidates=payload.candidates,
                     model=payload.model,
-                    max_turns=_clamp_agentic_turns(payload.max_turns),
+                    limits=(
+                        ToolLoopLimits(**payload.limits.model_dump())
+                        if payload.limits is not None
+                        else None
+                    ),
                     reasoning_effort=payload.reasoning_effort,
                     caller="llm-chat-completions-route",
                 )

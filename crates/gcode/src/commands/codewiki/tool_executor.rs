@@ -18,6 +18,7 @@
 use std::collections::BTreeSet;
 use std::fmt::Write as _;
 use std::path::{Path, PathBuf};
+use std::sync::Mutex;
 
 use gobby_core::ai::generation::{ToolCall, ToolError, ToolExecutor, ToolSchema};
 use serde_json::{Value, json};
@@ -49,41 +50,48 @@ const MAX_SNIPPET_BYTES: usize = 4_000;
 /// In-process tool executor over the gcode index for a single tool-loop
 /// generation. Holds a read-only connection and the project context; records
 /// any data-source (graph) degradation hit during the loop.
-pub(crate) struct CodewikiToolExecutor<'a> {
-    ctx: &'a Context,
-    conn: postgres::Client,
+pub(crate) struct CodewikiToolExecutor {
+    ctx: Context,
     graph_availability: CodewikiGraphAvailability,
     /// Data-source degradation codes accumulated during the loop (e.g.
     /// [`GRAPH_UNAVAILABLE`] when a graph tool ran against an unreachable
     /// FalkorDB). Evidence degradation surfaced on the generated page; never an
     /// AI-generation failure, so it never hard-fails the page.
-    data_source_degraded: BTreeSet<String>,
+    data_source_degraded: Mutex<BTreeSet<String>>,
 }
 
-impl<'a> CodewikiToolExecutor<'a> {
-    /// Open a read-only connection for the executor. The caller threads the
-    /// run's resolved [`CodewikiGraphAvailability`] so graph tools can return an
-    /// explicit `graph-unavailable` result without re-probing per call.
+impl CodewikiToolExecutor {
+    /// Clone the immutable project context. Each call opens its own read-only
+    /// connection so detached timeout workers never share connection state.
     pub(crate) fn new(
-        ctx: &'a Context,
+        ctx: &Context,
         graph_availability: CodewikiGraphAvailability,
     ) -> anyhow::Result<Self> {
-        let conn = db::connect_readonly(&ctx.database_url)?;
         Ok(Self {
-            ctx,
-            conn,
+            ctx: ctx.clone(),
             graph_availability,
-            data_source_degraded: BTreeSet::new(),
+            data_source_degraded: Mutex::new(BTreeSet::new()),
         })
     }
 
-    /// The data-source degradation codes accumulated during the loop, drained
-    /// for recording into the generated page's `degraded_sources`.
-    pub(crate) fn into_data_source_degraded(self) -> Vec<String> {
-        self.data_source_degraded.into_iter().collect()
+    /// Snapshot data-source degradation accumulated by all workers.
+    pub(crate) fn data_source_degraded(&self) -> Vec<String> {
+        self.degraded_sources().iter().cloned().collect()
     }
 
-    fn search_code(&mut self, args: &Value) -> Result<String, ToolError> {
+    fn degraded_sources(&self) -> std::sync::MutexGuard<'_, BTreeSet<String>> {
+        self.data_source_degraded
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+    }
+
+    fn connection(&self) -> Result<postgres::Client, ToolError> {
+        db::connect_readonly(&self.ctx.database_url)
+            .map_err(|error| tool_err(format!("read-only index connection failed: {error}")))
+    }
+
+    fn search_code(&self, args: &Value) -> Result<String, ToolError> {
+        let mut conn = self.connection()?;
         let query = arg_str(args, "query")?;
         let limit = arg_usize(args, "limit", DEFAULT_SEARCH_LIMIT, MAX_SEARCH_LIMIT);
         let language = arg_str_opt(args, "language");
@@ -92,9 +100,9 @@ impl<'a> CodewikiToolExecutor<'a> {
             .map(|p| vec![p])
             .unwrap_or_default();
         let outcome = fts::search_symbols_exact_first_visible(
-            &mut self.conn,
+            &mut conn,
             &query,
-            self.ctx,
+            &self.ctx,
             kind.as_deref(),
             language.as_deref(),
             &paths,
@@ -110,9 +118,10 @@ impl<'a> CodewikiToolExecutor<'a> {
         ))
     }
 
-    fn outline_file(&mut self, args: &Value) -> Result<String, ToolError> {
+    fn outline_file(&self, args: &Value) -> Result<String, ToolError> {
+        let mut conn = self.connection()?;
         let path = arg_str(args, "path")?;
-        let symbols = visibility::visible_symbols_for_file(&mut self.conn, self.ctx, &path)
+        let symbols = visibility::visible_symbols_for_file(&mut conn, &self.ctx, &path)
             .map_err(|error| tool_err(format!("outline_file failed for `{path}`: {error}")))?;
         if symbols.is_empty() {
             return Ok(format!("`{path}` has no indexed symbols."));
@@ -123,9 +132,10 @@ impl<'a> CodewikiToolExecutor<'a> {
         ))
     }
 
-    fn read_symbol(&mut self, args: &Value) -> Result<String, ToolError> {
+    fn read_symbol(&self, args: &Value) -> Result<String, ToolError> {
+        let mut conn = self.connection()?;
         let id = arg_str(args, "id")?;
-        let symbol = visibility::visible_symbol_by_id(&mut self.conn, self.ctx, &id)
+        let symbol = visibility::visible_symbol_by_id(&mut conn, &self.ctx, &id)
             .map_err(|error| tool_err(format!("read_symbol failed for `{id}`: {error}")))?;
         let Some(symbol) = symbol else {
             return Ok(format!("No visible symbol with id `{id}`."));
@@ -142,7 +152,8 @@ impl<'a> CodewikiToolExecutor<'a> {
         Ok(out)
     }
 
-    fn grep_repo(&mut self, args: &Value) -> Result<String, ToolError> {
+    fn grep_repo(&self, args: &Value) -> Result<String, ToolError> {
+        let mut conn = self.connection()?;
         let pattern = arg_str(args, "pattern")?;
         let max_count = arg_usize(args, "max_count", DEFAULT_GREP_LIMIT, MAX_GREP_LIMIT);
         let paths = arg_str_opt(args, "path")
@@ -167,7 +178,7 @@ impl<'a> CodewikiToolExecutor<'a> {
             max_count: Some(max_count),
             format: Format::Text,
         };
-        let result = grep::grep_repo(self.ctx, &mut self.conn, &options)
+        let result = grep::grep_repo(&self.ctx, &mut conn, &options)
             .map_err(|error| tool_err(format!("grep_repo failed for `{pattern}`: {error}")))?;
         if result.matches.is_empty() {
             return Ok(format!("No content matched `{pattern}`."));
@@ -182,7 +193,7 @@ impl<'a> CodewikiToolExecutor<'a> {
         Ok(out)
     }
 
-    fn read_file(&mut self, args: &Value) -> Result<String, ToolError> {
+    fn read_file(&self, args: &Value) -> Result<String, ToolError> {
         let path = arg_str(args, "path")?;
         let start_line = arg_usize(args, "start_line", 1, usize::MAX).max(1);
         let end_line = args
@@ -216,12 +227,12 @@ impl<'a> CodewikiToolExecutor<'a> {
     /// an explicit `graph-unavailable` result (recorded as evidence
     /// degradation) instead of an indistinguishable empty result. A genuine
     /// query error surfaces to the model as a tool error.
-    fn graph_tool<F>(&mut self, tool: &str, query: F) -> Result<String, ToolError>
+    fn graph_tool<F>(&self, tool: &str, query: F) -> Result<String, ToolError>
     where
         F: FnOnce() -> anyhow::Result<Vec<GraphResult>>,
     {
         if self.graph_availability != CodewikiGraphAvailability::Available {
-            self.data_source_degraded
+            self.degraded_sources()
                 .insert(GRAPH_UNAVAILABLE.to_string());
             return Ok(format!(
                 "{GRAPH_UNAVAILABLE}: the code graph (FalkorDB) is not available for this run; \
@@ -231,7 +242,7 @@ impl<'a> CodewikiToolExecutor<'a> {
         match query() {
             Ok(results) => Ok(format_graph_results(tool, &results)),
             Err(error) if is_graph_unavailable(&error) => {
-                self.data_source_degraded
+                self.degraded_sources()
                     .insert(GRAPH_UNAVAILABLE.to_string());
                 Ok(format!(
                     "{GRAPH_UNAVAILABLE}: the code graph (FalkorDB) is unreachable ({error}); \
@@ -280,12 +291,12 @@ fn read_byte_snippet_from_root(project_root: &Path, symbol: &Symbol) -> Result<S
     Ok(String::from_utf8_lossy(&bytes[start..end]).into_owned())
 }
 
-impl ToolExecutor for CodewikiToolExecutor<'_> {
+impl ToolExecutor for CodewikiToolExecutor {
     fn schemas(&self) -> Vec<ToolSchema> {
         codewiki_tool_schemas()
     }
 
-    fn execute(&mut self, call: &ToolCall) -> Result<String, ToolError> {
+    fn execute(&self, call: &ToolCall) -> Result<String, ToolError> {
         let args = &call.arguments;
         match call.name.as_str() {
             "search_code" => self.search_code(args),
@@ -296,9 +307,7 @@ impl ToolExecutor for CodewikiToolExecutor<'_> {
             "find_callers" => {
                 let id = arg_str(args, "id")?;
                 let limit = arg_usize(args, "limit", DEFAULT_GRAPH_LIMIT, MAX_GRAPH_LIMIT);
-                // Copy the `&Context` out of `self` so the query closure does not
-                // borrow `self` while `graph_tool` takes `&mut self`.
-                let ctx = self.ctx;
+                let ctx = &self.ctx;
                 self.graph_tool("find_callers", move || {
                     code_graph::find_callers(ctx, &id, 0, limit)
                 })
@@ -306,14 +315,14 @@ impl ToolExecutor for CodewikiToolExecutor<'_> {
             "find_usages" => {
                 let id = arg_str(args, "id")?;
                 let limit = arg_usize(args, "limit", DEFAULT_GRAPH_LIMIT, MAX_GRAPH_LIMIT);
-                let ctx = self.ctx;
+                let ctx = &self.ctx;
                 self.graph_tool("find_usages", move || {
                     code_graph::find_usages(ctx, &id, 0, limit)
                 })
             }
             "imports" => {
                 let path = arg_str(args, "path")?;
-                let ctx = self.ctx;
+                let ctx = &self.ctx;
                 self.graph_tool("imports", move || code_graph::get_imports(ctx, &path))
             }
             other => Err(tool_err(format!("unknown tool `{other}`"))),

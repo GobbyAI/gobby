@@ -14,6 +14,7 @@ fn daemon_agentic_context(project_id: Option<&str>) -> AiContext {
             keep_alive: None,
         },
         limiter: AiLimiter::new(1),
+        tool_loop_limits: ToolLoopLimits::default(),
         project_id: project_id.map(str::to_string),
     }
 }
@@ -83,7 +84,8 @@ fn daemon_agentic_chat_posts_once_and_parses_narrative_and_investigation() {
     let (api_base, handle) = spawn_json_response(response).expect("spawn test server");
     let home = tempfile::tempdir().expect("temp home");
     let _env = DaemonEnvGuard::set(&api_base, home.path(), "agentic-token");
-    let context = daemon_agentic_context(Some("project-7"));
+    let mut context = daemon_agentic_context(Some("project-7"));
+    context.tool_loop_limits.max_turns = Some(60);
     let messages = vec![
         ChatMessage::system("page system + daemon directive"),
         ChatMessage::user("Write the architecture page for crates/foo."),
@@ -101,7 +103,7 @@ fn daemon_agentic_chat_posts_once_and_parses_narrative_and_investigation() {
         "/abs/repo",
         &tool_policy,
         &messages,
-        Some(60),
+        &context.tool_loop_limits,
         Some("high"),
     )
     .expect("agentic chat succeeds");
@@ -116,7 +118,12 @@ fn daemon_agentic_chat_posts_once_and_parses_narrative_and_investigation() {
     assert_eq!(body["profile"], "feature_high");
     assert_eq!(body["project_id"], "project-7");
     assert_eq!(body["project_path"], "/abs/repo");
-    assert_eq!(body["max_turns"], 60);
+    assert_eq!(body["limits"]["max_turns"], 60);
+    assert_eq!(body["limits"]["max_tool_calls"], 24);
+    assert_eq!(body["limits"]["max_bytes_per_tool_result"], 16_384);
+    assert_eq!(body["limits"]["tool_timeout_seconds"], 300);
+    assert_eq!(body["limits"]["loop_timeout_seconds"], 1_200);
+    assert!(body.get("max_turns").is_none());
     assert_eq!(body["reasoning_effort"], "high");
     assert_eq!(body["messages"][0]["role"], "system");
     assert_eq!(
@@ -170,7 +177,7 @@ fn daemon_agentic_chat_defaults_missing_investigation_and_omits_unset_fields() {
         "/abs/repo",
         &tool_policy,
         &messages,
-        None,
+        &context.tool_loop_limits,
         None,
     )
     .expect("agentic chat succeeds");
@@ -184,6 +191,7 @@ fn daemon_agentic_chat_defaults_missing_investigation_and_omits_unset_fields() {
     assert_eq!(body["tool_policy"]["allow_mutation"], false);
     assert!(body.get("project_id").is_none());
     assert!(body.get("max_turns").is_none());
+    assert_eq!(body["limits"]["max_turns"], Value::Null);
     assert!(body.get("reasoning_effort").is_none());
 
     assert_eq!(result.content.as_deref(), Some("body"));
@@ -225,7 +233,7 @@ fn daemon_agentic_chat_rejects_blank_profile_before_daemon_setup() {
         "/repo",
         &tool_policy,
         &messages,
-        None,
+        &context.tool_loop_limits,
         None,
     )
     .expect_err("blank profile rejected");
@@ -268,7 +276,7 @@ fn daemon_agentic_chat_pinned_candidates_supersede_profile() {
         "/abs/repo",
         &tool_policy,
         &messages,
-        None,
+        &context.tool_loop_limits,
         None,
     )
     .expect("agentic chat succeeds");
@@ -308,7 +316,7 @@ fn daemon_agentic_chat_empty_candidates_fall_back_to_profile() {
         "/abs/repo",
         &tool_policy,
         &messages,
-        None,
+        &context.tool_loop_limits,
         None,
     )
     .expect("agentic chat succeeds");

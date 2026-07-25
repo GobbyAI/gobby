@@ -210,6 +210,14 @@ def _decode_utf8_view(value: bytes) -> tuple[str, int]:
     return text, len(text.encode("utf-8"))
 
 
+def _cap_text(value: str, byte_cap: int) -> str:
+    """Return a UTF-8-safe view whose complete text fits the shared cap."""
+    encoded = value.encode("utf-8")
+    if len(encoded) <= byte_cap:
+        return value
+    return encoded[:byte_cap].decode("utf-8", errors="ignore")
+
+
 async def run_argv(
     argv: list[str],
     *,
@@ -226,7 +234,10 @@ async def run_argv(
     """
     cwd_path = Path(cwd)
     if not cwd_path.is_dir():
-        return f"[error: working directory not found or not a directory: {cwd!r}]"
+        return _cap_text(
+            f"[error: working directory not found or not a directory: {cwd!r}]",
+            byte_cap,
+        )
     try:
         proc = await asyncio.create_subprocess_exec(
             *argv,
@@ -235,13 +246,13 @@ async def run_argv(
             stderr=asyncio.subprocess.PIPE,
         )
     except FileNotFoundError:
-        return f"[error: executable {argv[0]!r} not found]"
+        return _cap_text(f"[error: executable {argv[0]!r} not found]", byte_cap)
     try:
         stdout, stderr = await asyncio.wait_for(proc.communicate(), timeout=timeout)
     except TimeoutError:
         proc.kill()
         await proc.wait()
-        return f"[error: tool timed out after {timeout:g}s]"
+        return _cap_text(f"[error: tool timed out after {timeout:g}s]", byte_cap)
 
     out = stdout or b""
     shown = out[:byte_cap]
@@ -264,7 +275,7 @@ async def run_argv(
             if text
             else f"[exit {proc.returncode}: {err_tail}]"
         )
-    return text
+    return _cap_text(text, byte_cap)
 
 
 class ToolRuntime:
@@ -439,7 +450,7 @@ class ToolRuntime:
             argv,
             cwd=self._project_path,
             timeout=self._limits.tool_timeout_seconds,
-            byte_cap=self._limits.per_tool_result_byte_cap,
+            byte_cap=self._limits.max_bytes_per_tool_result,
         )
         self._record(tool_name, arguments, text)
         return text
@@ -458,7 +469,7 @@ class ToolRuntime:
 
         evidence_ref = new_evidence_ref()
         max_payload_bytes = success_payload_capacity(
-            self._limits.per_tool_result_byte_cap,
+            self._limits.max_bytes_per_tool_result,
             evidence_ref,
         )
         if max_payload_bytes < 0:
@@ -555,11 +566,11 @@ class ToolRuntime:
             )
             ref = None
             text = serialize_builtin_tool_result(fitted)
-        if len(text.encode("utf-8")) > self._limits.per_tool_result_byte_cap:
+        if len(text.encode("utf-8")) > self._limits.max_bytes_per_tool_result:
             fitted = tool_result_too_large()
             ref = None
             text = serialize_builtin_tool_result(fitted)
-        assert len(text.encode("utf-8")) <= self._limits.per_tool_result_byte_cap
+        assert len(text.encode("utf-8")) <= self._limits.max_bytes_per_tool_result
         return text, fitted, ref
 
     def _record(

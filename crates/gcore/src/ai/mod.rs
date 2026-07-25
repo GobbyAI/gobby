@@ -1,5 +1,5 @@
 use std::io::Cursor;
-use std::time::{Duration, SystemTime};
+use std::time::{Duration, Instant, SystemTime};
 
 use bytes::Bytes;
 use reqwest::blocking::{Client, RequestBuilder, Response, multipart};
@@ -282,6 +282,38 @@ pub fn retry_with_backoff<T>(
     unreachable!("retry loop always returns");
 }
 
+/// Retry transient failures without allowing attempts or backoff to outlive a
+/// caller-owned deadline. The operation receives the remaining request budget
+/// so backend-native timeouts can be clamped on every attempt.
+pub fn retry_with_backoff_until<T>(
+    deadline: Instant,
+    mut operation: impl FnMut(Duration) -> Result<T, AiError>,
+    mut sleep: impl FnMut(Duration),
+) -> Result<T, AiError> {
+    for retry_index in 0..=MAX_RETRIES {
+        let remaining = deadline.saturating_duration_since(Instant::now());
+        if remaining.is_zero() {
+            return Err(AiError::transport_timeout("AI request deadline expired"));
+        }
+        match operation(remaining) {
+            Ok(value) => return Ok(value),
+            Err(error) if retry_index < MAX_RETRIES && is_retryable(&error) => {
+                let delay = retry_delay(&error, retry_index);
+                let remaining = deadline.saturating_duration_since(Instant::now());
+                if delay >= remaining {
+                    return Err(AiError::transport_timeout(
+                        "AI request deadline expired before retry",
+                    ));
+                }
+                sleep(delay);
+            }
+            Err(error) => return Err(error),
+        }
+    }
+
+    unreachable!("retry loop always returns");
+}
+
 fn is_retryable(error: &AiError) -> bool {
     if error.is_timeout() {
         // A client-side request timeout retried just times out again; the
@@ -466,6 +498,31 @@ mod tests {
     }
 
     #[test]
+    fn retry_with_backoff_until_does_not_sleep_past_deadline() {
+        let mut attempts = 0;
+        let mut sleeps = Vec::new();
+        let result: Result<(), AiError> = retry_with_backoff_until(
+            Instant::now() + Duration::from_millis(1),
+            |_| {
+                attempts += 1;
+                Err(AiError::transport_failure(
+                    Some(503),
+                    Some("busy"),
+                    "upstream unavailable",
+                ))
+            },
+            |delay| sleeps.push(delay),
+        );
+
+        assert!(matches!(
+            result,
+            Err(AiError::TransportFailure { timeout: true, .. })
+        ));
+        assert_eq!(attempts, 1);
+        assert!(sleeps.is_empty());
+    }
+
+    #[test]
     fn retry_honors_retry_after_before_exponential_backoff() {
         let mut delays = Vec::new();
         let mut attempts = 0;
@@ -560,6 +617,7 @@ mod tests {
                 keep_alive: None,
             },
             limiter: crate::ai_context::AiLimiter::new(1),
+            tool_loop_limits: crate::ai::generation::ToolLoopLimits::default(),
             project_id: None,
         };
 
@@ -602,6 +660,7 @@ mod tests {
                 keep_alive: None,
             },
             limiter: crate::ai_context::AiLimiter::new(1),
+            tool_loop_limits: crate::ai::generation::ToolLoopLimits::default(),
             project_id: None,
         };
 
@@ -648,6 +707,7 @@ mod tests {
                 keep_alive: None,
             },
             limiter: crate::ai_context::AiLimiter::new(1),
+            tool_loop_limits: crate::ai::generation::ToolLoopLimits::default(),
             project_id: None,
         };
 
@@ -702,6 +762,7 @@ mod tests {
                 keep_alive: None,
             },
             limiter: crate::ai_context::AiLimiter::new(1),
+            tool_loop_limits: crate::ai::generation::ToolLoopLimits::default(),
             project_id: None,
         };
 

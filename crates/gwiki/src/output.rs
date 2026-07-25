@@ -233,7 +233,7 @@ pub struct AskDeepOutput {
     pub model: Option<String>,
     pub turns: Option<usize>,
     pub tool_use_count: usize,
-    pub max_turns: usize,
+    pub max_turns: Option<usize>,
     pub usage: Option<gobby_core::ai_types::TokenUsage>,
     pub stop_reason: Option<String>,
 }

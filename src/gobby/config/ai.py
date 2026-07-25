@@ -8,6 +8,13 @@ from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
+from gobby._generated_tool_loop_limits import (
+    DEFAULT_LOOP_TIMEOUT_SECONDS,
+    DEFAULT_MAX_BYTES_PER_TOOL_RESULT,
+    DEFAULT_MAX_TOOL_CALLS,
+    DEFAULT_MAX_TURNS,
+    DEFAULT_TOOL_TIMEOUT_SECONDS,
+)
 from gobby.config.feature_base import (
     FeatureCandidateConfig,
     FeatureProfile,
@@ -20,6 +27,21 @@ logger = logging.getLogger(__name__)
 _GENERATION_ENDPOINT_NAME_RE = re.compile(r"^[a-z0-9][a-z0-9_-]*$")
 GenerationEndpointProtocol = Literal["openai-compatible", "lmstudio", "ollama"]
 GenerationWireAPI = Literal["chat-completions", "responses"]
+
+
+class ToolLoopConfig(BaseModel):
+    """Canonical ``ai.generation.tool_loop`` defaults and validation."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    max_turns: int | None = Field(default=DEFAULT_MAX_TURNS, gt=0)
+    max_tool_calls: int = Field(default=DEFAULT_MAX_TOOL_CALLS, gt=0)
+    max_bytes_per_tool_result: int = Field(
+        default=DEFAULT_MAX_BYTES_PER_TOOL_RESULT,
+        gt=0,
+    )
+    tool_timeout_seconds: int = Field(default=DEFAULT_TOOL_TIMEOUT_SECONDS, gt=0)
+    loop_timeout_seconds: int = Field(default=DEFAULT_LOOP_TIMEOUT_SECONDS, gt=0)
 
 
 class GenerationEndpointConfig(BaseModel):
@@ -76,6 +98,10 @@ class GenerationConfig(BaseModel):
 
     model_config = ConfigDict(extra="forbid")
 
+    tool_loop: ToolLoopConfig = Field(
+        default_factory=ToolLoopConfig,
+        description="Shared limits for daemon and standalone tool-calling loops.",
+    )
     timeout_seconds: float = Field(
         default=1200.0,
         gt=0.0,

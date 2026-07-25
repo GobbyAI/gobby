@@ -175,6 +175,7 @@ pub fn generate_text_with_target(
         tools: &[],
         max_tokens,
         tool_choice: ToolChoice::Auto,
+        timeout: std::time::Duration::MAX,
     };
     let body = build_request_body(target, &request);
 

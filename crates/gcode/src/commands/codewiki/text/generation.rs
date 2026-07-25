@@ -1,10 +1,11 @@
 use std::collections::BTreeSet;
+use std::sync::Arc;
 use std::time::Duration;
 
 use gobby_core::ai::generation::{
     ChatMessage, ChatTransport, DaemonAgenticResult, DirectChatTransport, DirectGenerationTarget,
-    GenerationTier, StopReason, ToolLoopLimits, ToolLoopOutcome, ToolPolicy, daemon_agentic_chat,
-    generate_one_shot, generate_one_shot_pinned, profile_for_tier,
+    GenerationTier, StopReason, ToolExecutor, ToolLoopLimits, ToolLoopOutcome, ToolPolicy,
+    daemon_agentic_chat, generate_one_shot, generate_one_shot_pinned, profile_for_tier,
     resolve_direct_generation_target, run_tool_loop,
 };
 use gobby_core::ai::{
@@ -423,14 +424,14 @@ fn retryable_generation_error(error: &AiError) -> bool {
 fn resolve_ai_context(ctx: &Context, ai: Option<AiRouting>) -> anyhow::Result<AiContext> {
     let mut conn = db::connect_readonly(&ctx.database_url)?;
     let mut source = ai_source_for_conn(&mut conn)?;
-    Ok(AiContext::resolve_with_options(
+    AiContext::try_resolve_with_options(
         Some(ctx.project_id.clone()),
         &mut source,
         AiContextOptions {
             no_ai: false,
             forced_routing: ai,
         },
-    ))
+    )
 }
 
 /// Why an AI narrative generation attempt failed on an AI-enabled run.
@@ -931,12 +932,14 @@ fn run_direct_tool_loop(
     graph_availability: CodewikiGraphAvailability,
     system: &str,
     prompt: &str,
+    limits: &ToolLoopLimits,
     max_tokens: Option<usize>,
 ) -> ToolLoopResult {
-    let mut executor = match CodewikiToolExecutor::new(ctx, graph_availability) {
+    let executor = match CodewikiToolExecutor::new(ctx, graph_availability) {
         Ok(executor) => executor,
         Err(_) => return ToolLoopResult::unavailable(),
     };
+    let executor = Arc::new(executor);
     // The tool-loop premise is that the model gathers its own grounding via tools, so
     // the seed only orients it. An unbounded pre-assembled aggregate seed (full
     // source excerpts + repo-wide summary dumps — ~95KB observed) overruns a
@@ -947,25 +950,14 @@ fn run_direct_tool_loop(
         ChatMessage::system(tool_loop_system_prompt(system)),
         ChatMessage::user(prompt.clone()),
     ];
-    // A local standalone model (e.g. gemma) is slower per turn than a frontier
-    // model and accumulates context across investigation turns. Keep each tool
-    // result lean so the running prompt does not balloon back toward the
-    // context limit that 400s the request (#993), give the model room to both
-    // investigate and write, and grant a generous wall-clock budget so genuine
-    // multi-turn investigation completes instead of being cut short.
-    let limits = ToolLoopLimits {
-        max_turns: 12,
-        max_tool_calls: 24,
-        max_bytes_per_tool_result: 8 * 1024,
-        timeout: std::time::Duration::from_secs(600),
-    };
-    let outcome = match run_tool_loop(transport, &mut executor, messages, &limits, max_tokens) {
+    let loop_executor: Arc<dyn ToolExecutor> = executor.clone();
+    let outcome = match run_tool_loop(transport, loop_executor, messages, limits, max_tokens) {
         Ok(outcome) => GenerationOutcome::from_tool_loop(outcome, &prompt),
         Err(_) => GenerationOutcome::unavailable(),
     };
     ToolLoopResult {
         outcome,
-        data_source_degraded: executor.into_data_source_degraded(),
+        data_source_degraded: executor.data_source_degraded(),
     }
 }
 
@@ -1073,7 +1065,7 @@ pub(crate) fn resolve_tool_loop_generator(
                     &project_path,
                     &tool_policy,
                     &messages,
-                    Some(60),
+                    &ai_context.tool_loop_limits,
                     binding.reasoning_effort.as_deref(),
                 ) {
                     Ok(result) => ToolLoopResult {
@@ -1092,6 +1084,7 @@ pub(crate) fn resolve_tool_loop_generator(
                             graph_availability,
                             system.as_ref(),
                             prompt,
+                            &ai_context.tool_loop_limits,
                             max_tokens,
                         ),
                         Err(_) => ToolLoopResult::unavailable(),

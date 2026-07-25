@@ -1,15 +1,8 @@
-"""Tests for the Family B spawn tool_chat adapters (gcode-direct).
-
-Covers the shared gcode-direct prompt, stream parsers (codex/droid/qwen),
-and all four adapter classes' command construction + result mapping with the
-external spawn stubbed out.
-"""
+"""Tests for the remaining spawn-based tool_chat adapters."""
 
 from __future__ import annotations
 
 import json
-import logging
-import os
 import shlex
 from pathlib import Path
 from typing import Any
@@ -27,17 +20,12 @@ from gobby.ai._tool_chat_contracts import (
 )
 from gobby.ai._tool_chat_spawn import (
     ACPSpawnToolChatAdapter,
-    CodexSpawnToolChatAdapter,
-    DroidSpawnToolChatAdapter,
     GrokSpawnToolChatAdapter,
     QwenSpawnToolChatAdapter,
     compose_gcode_direct_prompt,
-    parse_codex_stream,
-    parse_droid_stream,
     parse_grok_session_signals,
     parse_qwen_stream,
 )
-from gobby.ai._tool_chat_tools import ToolPolicyError
 from gobby.config.app import DaemonConfig
 
 pytestmark = pytest.mark.unit
@@ -73,14 +61,6 @@ def test_tool_chat_result_defaults_optional_text_and_turns() -> None:
     assert result.turns is None
 
 
-def _arg_max_for_regression() -> int:
-    try:
-        value = os.sysconf("SC_ARG_MAX")
-    except (AttributeError, OSError, ValueError):
-        return 262_144
-    return int(value) if value > 0 else 262_144
-
-
 # --- Shared prompt ---------------------------------------------------------
 
 
@@ -107,92 +87,6 @@ def test_compose_gcode_direct_prompt_quotes_project_path() -> None:
     prompt = compose_gcode_direct_prompt(request)
 
     assert f"--project {shlex.quote(project_path)}" in prompt
-
-
-# --- Codex stream parser ---------------------------------------------------
-
-
-def test_parse_codex_stream_extracts_narrative_and_tool_counts() -> None:
-    stream = "\n".join(
-        [
-            "Reading prompt from stdin...",
-            '{"type":"thread.started","thread_id":"t1"}',
-            '{"type":"item.completed","item":{"id":"i0","type":"command_execution",'
-            '"command":"/bin/zsh -lc gcode search","exit_code":0}}',
-            '{"type":"item.completed","item":{"id":"i1","type":"agent_message",'
-            '"text":"## Auth\\n\\nNarrative citing src/auth.rs:10."}}',
-            '{"type":"turn.completed","usage":{}}',
-        ]
-    )
-
-    text, total, breakdown = parse_codex_stream(stream)
-
-    assert text == "## Auth\n\nNarrative citing src/auth.rs:10."
-    assert total == 1
-    assert breakdown == {"command_execution": 1}
-
-
-def test_parse_codex_stream_skips_non_json_lines() -> None:
-    text, total, _ = parse_codex_stream("not json\n{}\n")
-
-    assert text == ""
-    assert total == 0
-
-
-def test_parse_codex_stream_counts_multiple_tool_calls() -> None:
-    stream = "\n".join(
-        [
-            '{"type":"item.completed","item":{"type":"command_execution"}}',
-            '{"type":"item.completed","item":{"type":"command_execution"}}',
-        ]
-    )
-
-    _, total, breakdown = parse_codex_stream(stream)
-
-    assert total == 2
-    assert breakdown == {"command_execution": 2}
-
-
-# --- Droid stream parser ---------------------------------------------------
-
-
-# Real droid `--output-format stream-json` records (captured from droid 0.159.1).
-_DROID_STREAM = "\n".join(
-    [
-        '{"type":"system","subtype":"init","tools":["Read"],"model":"m"}',
-        '{"type":"message","role":"user","text":"Document auth."}',
-        '{"type":"tool_call","toolId":"Execute","toolName":"Execute",'
-        '"parameters":{"command":"gcode search --project /repo auth"}}',
-        '{"type":"tool_result","toolId":"Execute","isError":false,"value":"hit"}',
-        '{"type":"tool_call","toolName":"Execute"}',
-        '{"type":"completion","finalText":"## Auth\\n\\nNarrative citing src/auth.rs:10.",'
-        '"numTurns":3}',
-    ]
-)
-
-
-def test_parse_droid_stream_extracts_final_text_and_tool_counts() -> None:
-    text, total, breakdown, turns = parse_droid_stream(_DROID_STREAM)
-
-    assert text == "## Auth\n\nNarrative citing src/auth.rs:10."
-    assert total == 2
-    assert breakdown == {"Execute": 2}
-    assert turns == 3
-
-
-def test_parse_droid_stream_falls_back_to_last_assistant_message() -> None:
-    stream = "\n".join(
-        [
-            '{"type":"message","role":"assistant","text":"first"}',
-            '{"type":"message","role":"assistant","text":"## Final answer"}',
-        ]
-    )
-
-    text, total, _, turns = parse_droid_stream(stream)
-
-    assert text == "## Final answer"
-    assert total == 0
-    assert turns is None
 
 
 # --- Qwen stream parser ----------------------------------------------------
@@ -389,334 +283,6 @@ def test_resolve_grok_session_dir_returns_none_when_not_found(
     assert result is None
 
 
-# --- Codex adapter ---------------------------------------------------------
-
-
-def test_codex_build_command_uses_json_sandbox_and_gcode_prompt() -> None:
-    adapter = CodexSpawnToolChatAdapter(command_path="codex")
-    request = _request(reasoning_effort="high")
-    output_path = Path("/tmp/last-message.txt")
-
-    command = adapter._build_command(request, model="gpt-5.6-sol", output_path=output_path)
-    prompt = compose_gcode_direct_prompt(request)
-
-    assert command[0] == "codex"
-    assert "exec" in command
-    assert command[command.index("--ask-for-approval") + 1] == "never"
-    assert command[command.index("--sandbox") + 1] == "workspace-write"
-    assert "sandbox_workspace_write.network_access=true" in command
-    assert "--json" in command
-    assert "--ignore-user-config" in command
-    assert command[command.index("--output-last-message") + 1] == str(output_path)
-    assert command[command.index("--model") + 1] == "gpt-5.6-sol"
-    assert command[-1] == "-"
-    assert prompt not in command
-    assert all("Document the auth module." not in arg for arg in command)
-    assert all("gcode" not in arg for arg in command)
-
-
-@pytest.mark.asyncio
-async def test_codex_adapter_captures_narrative_and_counts_tools(
-    monkeypatch: pytest.MonkeyPatch,
-    caplog: pytest.LogCaptureFixture,
-) -> None:
-    codex_jsonl = "\n".join(
-        [
-            '{"type":"item.completed","item":{"type":"command_execution"}}',
-            '{"type":"item.completed","item":{"type":"command_execution"}}',
-        ]
-    )
-
-    async def fake_run(
-        provider_name: str,
-        command: list[str],
-        *,
-        neutral_cwd: Path,
-        timeout_seconds: float,
-        env_overrides: dict[str, str],
-        stdin_input: str | None = None,
-    ) -> str:
-        (neutral_cwd / "last-message.txt").write_text(
-            "## Auth\n\nGrounded narrative citing src/auth.rs:10.",
-            encoding="utf-8",
-        )
-        # gcode must be on PATH (~/.gobby/bin prepended)
-        assert ".gobby/bin" in env_overrides["PATH"]
-        assert command[-1] == "-"
-        assert stdin_input is not None
-        assert "Document the auth module." in stdin_input
-        assert "gcode" in stdin_input
-        return codex_jsonl
-
-    monkeypatch.setattr(spawn, "_run_cli_text_generation_command", fake_run)
-    adapter = CodexSpawnToolChatAdapter(command_path="codex")
-
-    with caplog.at_level(logging.WARNING, logger=spawn.__name__):
-        result = await adapter.chat(_request(reasoning_effort="high"), _binding())
-
-    assert result.text == "## Auth\n\nGrounded narrative citing src/auth.rs:10."
-    assert result.provider == "codex"
-    assert result.model == "gpt-5.6-sol"
-    assert result.tool_use_count == 2
-    assert result.turns is None
-    assert result.tools == {"command_execution": 2}
-    assert result.applied_reasoning_effort == "high"
-    assert result.stop_reason == "completed"
-    assert result.trace == ()
-    assert result.calls_used == 0
-    assert result.budget_exhausted is False
-    assert result.trace_available is False
-    assert sum("Codex tool_chat cannot enforce request.limits" in m for m in caplog.messages) == 1
-
-
-@pytest.mark.asyncio
-async def test_codex_tool_chat_routes_responses_endpoint_with_scoped_secret(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    secret = "endpoint-child-secret"
-
-    async def fake_run(
-        _provider_name: str,
-        command: list[str],
-        *,
-        neutral_cwd: Path,
-        timeout_seconds: float,
-        env_overrides: dict[str, str],
-        stdin_input: str | None = None,
-    ) -> str:
-        del timeout_seconds, stdin_input
-        (neutral_cwd / "last-message.txt").write_text("tool response", encoding="utf-8")
-        assert env_overrides["GOBBY_CODEX_ENDPOINT_API_KEY"] == secret
-        assert 'model_provider="gobby_endpoint_openrouter"' in command
-        assert 'model_providers.gobby_endpoint_openrouter.wire_api="responses"' in command
-        assert secret not in repr(command)
-        return ""
-
-    monkeypatch.setattr(spawn, "_run_cli_text_generation_command", fake_run)
-    config = DaemonConfig(
-        ai={
-            "generation": {
-                "endpoints": {
-                    "openrouter": {
-                        "wire_api": "responses",
-                        "api_base": "https://openrouter.ai/api/v1",
-                        "api_key": secret,
-                        "model": "moonshotai/kimi-k3",
-                        "tool_chat": True,
-                    }
-                }
-            }
-        }
-    )
-    binding = CapabilityBinding(
-        capability=AICapability.TOOL_CHAT,
-        provider="codex",
-        adapter_style=AIAdapterStyle.DAEMON,
-        available=True,
-        models=("moonshotai/kimi-k3",),
-        metadata={"endpoint": "openrouter", "wire_api": "responses"},
-    )
-    adapter = CodexSpawnToolChatAdapter(command_path="codex", config=config)
-
-    result = await adapter.chat(
-        _request(model="moonshotai/kimi-k3"),
-        binding,
-    )
-
-    assert result.text == "tool response"
-    assert result.provider == "codex"
-
-
-@pytest.mark.asyncio
-async def test_codex_adapter_sends_argmax_sized_prompt_through_stdin(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    arg_max = _arg_max_for_regression()
-    oversized_prompt = "Document the generated aggregate.\n" + ("x" * (arg_max + 1))
-
-    async def fake_run(
-        provider_name: str,
-        command: list[str],
-        *,
-        neutral_cwd: Path,
-        timeout_seconds: float,
-        env_overrides: dict[str, str],
-        stdin_input: str | None = None,
-    ) -> str:
-        assert command[-1] == "-"
-        assert all(oversized_prompt not in arg for arg in command)
-        assert stdin_input is not None
-        assert oversized_prompt in stdin_input
-        assert len(stdin_input) > arg_max
-        (neutral_cwd / "last-message.txt").write_text("Large prompt ok.", encoding="utf-8")
-        return ""
-
-    monkeypatch.setattr(spawn, "_run_cli_text_generation_command", fake_run)
-    adapter = CodexSpawnToolChatAdapter(command_path="codex")
-
-    result = await adapter.chat(_request(prompt=oversized_prompt), _binding())
-
-    assert result.text == "Large prompt ok."
-
-
-@pytest.mark.asyncio
-async def test_codex_adapter_falls_back_to_stream_text(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    async def fake_run(
-        provider_name: str,
-        command: list[str],
-        *,
-        neutral_cwd: Path,
-        timeout_seconds: float,
-        env_overrides: dict[str, str],
-        stdin_input: str | None = None,
-    ) -> str:
-        # No last-message file; stream has agent_message.
-        return (
-            '{"type":"item.completed","item":{"type":"agent_message",'
-            '"text":"Stream fallback narrative."}}'
-        )
-
-    monkeypatch.setattr(spawn, "_run_cli_text_generation_command", fake_run)
-    adapter = CodexSpawnToolChatAdapter(command_path="codex")
-
-    result = await adapter.chat(_request(), _binding())
-
-    assert result.text == "Stream fallback narrative."
-
-
-@pytest.mark.asyncio
-async def test_codex_adapter_rejects_mutation_under_readonly_policy() -> None:
-    adapter = CodexSpawnToolChatAdapter(command_path="codex")
-    request = _request(tool_policy=ToolPolicy(cli="gcode", tools=("search", "index")))
-
-    with pytest.raises(ToolPolicyError):
-        await adapter.chat(request, _binding())
-
-
-@pytest.mark.asyncio
-async def test_codex_adapter_hard_fails_on_empty_output(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    async def fake_run(
-        provider_name: str,
-        command: list[str],
-        *,
-        neutral_cwd: Path,
-        timeout_seconds: float,
-        env_overrides: dict[str, str],
-        stdin_input: str | None = None,
-    ) -> str:
-        return ""
-
-    monkeypatch.setattr(spawn, "_run_cli_text_generation_command", fake_run)
-    adapter = CodexSpawnToolChatAdapter(command_path="codex")
-
-    with pytest.raises(RuntimeError, match="no final message"):
-        await adapter.chat(_request(), _binding())
-
-
-# --- Droid adapter ---------------------------------------------------------
-
-
-def _droid_binding() -> CapabilityBinding:
-    return _binding(provider="droid", style=AIAdapterStyle.CLI)
-
-
-def test_droid_build_command_enables_execute_and_uses_gcode_prompt() -> None:
-    adapter = DroidSpawnToolChatAdapter(command_path="droid")
-    request = _request(reasoning_effort="high")
-
-    command = adapter._build_command(request, model="gpt-5.6-sol")
-
-    assert command[0] == "droid"
-    assert "exec" in command
-    # `--auto high` lets droid's Execute tool run the gcode binary.
-    assert command[command.index("--auto") + 1] == "high"
-    assert command[command.index("--output-format") + 1] == "stream-json"
-    disabled = command[command.index("--disabled-tools") + 1]
-    # Execute must NOT be disabled — the agent needs shell access for gcode.
-    assert "Execute" not in disabled
-    # But file-mutation and automation tools ARE disabled (defense-in-depth).
-    for blocked in ("Edit", "Create", "ApplyPatch", "Task"):
-        assert blocked in disabled
-    assert command[command.index("--model") + 1] == "gpt-5.6-sol"
-    # The composed prompt uses gcode-direct, not gobby-index.
-    assert "gcode" in command[-1]
-    assert "gobby-index" not in command[-1]
-
-
-@pytest.mark.asyncio
-async def test_droid_adapter_captures_narrative_and_counts_tools(
-    monkeypatch: pytest.MonkeyPatch,
-    caplog: pytest.LogCaptureFixture,
-) -> None:
-    captured: dict[str, object] = {}
-
-    async def fake_run(
-        provider_name: str,
-        command: list[str],
-        *,
-        neutral_cwd: Path,
-        timeout_seconds: float,
-        env_overrides: dict[str, str],
-    ) -> str:
-        captured["env"] = env_overrides
-        captured["provider"] = provider_name
-        assert ".gobby/bin" in env_overrides["PATH"]
-        return _DROID_STREAM
-
-    monkeypatch.setattr(spawn, "_seed_droid_factory_state", lambda *a, **k: None)
-    monkeypatch.setattr(spawn, "_droid_isolated_env", lambda base, home: {"HOME": str(home)})
-    monkeypatch.setattr(spawn, "_run_cli_text_generation_command", fake_run)
-    adapter = DroidSpawnToolChatAdapter(command_path="droid")
-
-    with caplog.at_level(logging.WARNING, logger=spawn.__name__):
-        result = await adapter.chat(_request(reasoning_effort="high"), _droid_binding())
-
-    assert result.text == "## Auth\n\nNarrative citing src/auth.rs:10."
-    assert result.provider == "droid"
-    assert result.tool_use_count == 2
-    assert result.turns == 3
-    assert result.tools == {"Execute": 2}
-    assert result.stop_reason == "completed"
-    assert captured["provider"] == "Droid tool_chat"
-    assert sum("Droid tool_chat cannot enforce request.limits" in m for m in caplog.messages) == 1
-
-
-@pytest.mark.asyncio
-async def test_droid_adapter_rejects_mutation_under_readonly_policy() -> None:
-    adapter = DroidSpawnToolChatAdapter(command_path="droid")
-    request = _request(tool_policy=ToolPolicy(cli="gcode", tools=("search", "index")))
-
-    with pytest.raises(ToolPolicyError):
-        await adapter.chat(request, _droid_binding())
-
-
-@pytest.mark.asyncio
-async def test_droid_adapter_hard_fails_on_empty_output(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    async def fake_run(
-        provider_name: str,
-        command: list[str],
-        *,
-        neutral_cwd: Path,
-        timeout_seconds: float,
-        env_overrides: dict[str, str],
-    ) -> str:
-        return '{"type":"system","subtype":"init"}\n{"type":"reasoning","text":"hmm"}'
-
-    monkeypatch.setattr(spawn, "_seed_droid_factory_state", lambda *a, **k: None)
-    monkeypatch.setattr(spawn, "_droid_isolated_env", lambda base, home: {"HOME": str(home)})
-    monkeypatch.setattr(spawn, "_run_cli_text_generation_command", fake_run)
-    adapter = DroidSpawnToolChatAdapter(command_path="droid")
-
-    with pytest.raises(RuntimeError, match="no final message"):
-        await adapter.chat(_request(), _droid_binding())
-
-
 # --- Grok adapter ----------------------------------------------------------
 
 
@@ -728,7 +294,6 @@ def test_grok_build_command_uses_sandbox_json_and_gcode_prompt() -> None:
     adapter = GrokSpawnToolChatAdapter(command_path="grok")
     request = _request(
         reasoning_effort="high",
-        max_turns=99,
         limits=ToolLoopLimits(max_turns=4),
     )
 
@@ -741,7 +306,7 @@ def test_grok_build_command_uses_sandbox_json_and_gcode_prompt() -> None:
     assert "--always-approve" in command
     assert "--no-subagents" in command
     assert command[command.index("--model") + 1] == "grok-4"
-    assert command[command.index("--max-turns") + 1] == "99"
+    assert command[command.index("--max-turns") + 1] == "4"
     disabled = command[command.index("--disallowed-tools") + 1]
     for blocked in ("Edit", "Write", "Task"):
         assert blocked in disabled
@@ -752,15 +317,15 @@ def test_grok_build_command_uses_sandbox_json_and_gcode_prompt() -> None:
     assert "gobby-index" not in prompt
 
 
-def test_grok_build_command_prefers_request_max_turns_over_limits() -> None:
+def test_grok_build_command_omits_unlimited_max_turns() -> None:
     adapter = GrokSpawnToolChatAdapter(command_path="grok")
 
     command = adapter._build_command(
-        _request(max_turns=12, limits=ToolLoopLimits(max_turns=0)),
+        _request(limits=ToolLoopLimits(max_turns=None)),
         model=None,
     )
 
-    assert command[command.index("--max-turns") + 1] == "12"
+    assert "--max-turns" not in command
 
 
 @pytest.mark.asyncio
@@ -939,7 +504,6 @@ def test_qwen_build_command_uses_sandbox_yolo_and_stream_json() -> None:
     adapter = QwenSpawnToolChatAdapter(command_path="qwen")
     request = _request(
         reasoning_effort="high",
-        max_turns=11,
         limits=ToolLoopLimits(max_turns=4, max_tool_calls=9),
     )
 
@@ -949,7 +513,7 @@ def test_qwen_build_command_uses_sandbox_yolo_and_stream_json() -> None:
     assert "--sandbox" in command
     assert command[command.index("--approval-mode") + 1] == "yolo"
     assert command[command.index("--output-format") + 1] == "stream-json"
-    assert command[command.index("--max-session-turns") + 1] == "11"
+    assert command[command.index("--max-session-turns") + 1] == "4"
     assert command[command.index("--max-tool-calls") + 1] == "9"
     assert "--bare" in command
     assert command[command.index("--model") + 1] == "qwen3-coder"

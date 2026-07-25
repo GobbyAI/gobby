@@ -26,7 +26,9 @@ def _readonly_gcode_policy() -> ToolPolicy:
 
 
 def test_validate_policy_accepts_readonly_gcode() -> None:
-    assert validate_policy(_readonly_gcode_policy()) is None
+    policy = _readonly_gcode_policy()
+    validate_policy(policy)
+    assert policy.tools == ("search", "outline", "symbol")
 
 
 def test_validate_policy_rejects_unknown_cli() -> None:
@@ -68,10 +70,9 @@ def test_validate_policy_rejects_mutator_without_allow_mutation() -> None:
 
 
 def test_validate_policy_allows_mutator_when_opted_in() -> None:
-    assert (
-        validate_policy(ToolPolicy(cli="gwiki", tools=("search", "compile"), allow_mutation=True))
-        is None
-    )
+    policy = ToolPolicy(cli="gwiki", tools=("search", "compile"), allow_mutation=True)
+    validate_policy(policy)
+    assert policy.allow_mutation is True
 
 
 def test_validate_policy_rejects_unlisted_tool_even_when_opted_in() -> None:
@@ -133,7 +134,7 @@ async def test_execute_builds_argv_and_delegates(monkeypatch: pytest.MonkeyPatch
     runtime = ToolRuntime(
         _readonly_gcode_policy(),
         project_path="/repo",
-        limits=ToolLoopLimits(tool_timeout_seconds=12.0, per_tool_result_byte_cap=99),
+        limits=ToolLoopLimits(tool_timeout_seconds=12, max_bytes_per_tool_result=99),
     )
     result = await runtime.execute("gcode_search", {"args": ["auth handler", "--limit", "5"]})
     assert result == "RESULT"
@@ -172,10 +173,8 @@ async def test_run_argv_captures_output(tmp_path: object) -> None:
 @pytest.mark.asyncio
 async def test_run_argv_caps_bytes(tmp_path: object) -> None:
     out = await run_argv(["/bin/echo", "x" * 100], cwd=str(tmp_path), timeout=5.0, byte_cap=10)
-    assert (
-        "[output truncated: first 10 of 101 bytes shown (cap 10). "
-        "Narrow the query (gcode supports --limit/--offset) or drill down by symbol.]"
-    ) in out
+    assert out == "x" * 10
+    assert len(out.encode("utf-8")) == 10
     # 10 bytes of payload kept before the truncation marker.
     assert out.split("\n")[0] == "x" * 10
 
@@ -194,7 +193,7 @@ async def test_run_argv_stdout_marker_reports_utf8_trimmed_bytes(tmp_path: objec
     )
 
     assert out.startswith("é" * 5)
-    assert "first 10 of 12 bytes shown (cap 11)" in out
+    assert len(out.encode("utf-8")) <= 11
 
 
 @pytest.mark.asyncio

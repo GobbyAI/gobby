@@ -22,6 +22,7 @@ from gobby.ai import (
     TextGenerationService,
     ToolChatRequest,
     ToolChatResult,
+    ToolLoopLimits,
     VisionExtractRequest,
     VisionExtractResult,
     VisionExtractService,
@@ -1455,7 +1456,7 @@ def test_chat_completions_requires_a_tool_policy(client: TestClient) -> None:
     assert response.status_code == 422
 
 
-def test_chat_completions_clamps_max_turns_and_omits_empty_fields(
+def test_chat_completions_accepts_complete_limits_without_clamping(
     client: TestClient,
     server_with_llm: MagicMock,
 ) -> None:
@@ -1477,7 +1478,13 @@ def test_chat_completions_clamps_max_turns_and_omits_empty_fields(
             "messages": [{"role": "user", "content": "Investigate."}],
             "project_path": "/repo",
             "tool_policy": _READONLY_TOOL_POLICY,
-            "max_turns": 500,
+            "limits": {
+                "max_turns": 500,
+                "max_tool_calls": 24,
+                "max_bytes_per_tool_result": 16_384,
+                "tool_timeout_seconds": 300,
+                "loop_timeout_seconds": 1_200,
+            },
         },
     )
 
@@ -1486,7 +1493,7 @@ def test_chat_completions_clamps_max_turns_and_omits_empty_fields(
     assert "usage" not in body
     assert "applied_reasoning_effort" not in body
     assert body["choices"][0]["finish_reason"] == "length"
-    assert service.requests[0].max_turns == llm_module._MAX_AGENTIC_TURNS
+    assert service.requests[0].limits == ToolLoopLimits(max_turns=500)
 
 
 def test_chat_completions_forwards_explicit_routing(

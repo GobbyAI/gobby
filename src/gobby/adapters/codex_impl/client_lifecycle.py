@@ -59,16 +59,16 @@ async def start(client: CodexAppServerClient, subprocess_module: Any) -> None:
         client._stderr_drain.start_text(client._process.stderr)
 
         # Send initialize request
-        result = await client._send_request(
-            "initialize",
-            {
-                "clientInfo": {
-                    "name": client.CLIENT_NAME,
-                    "title": client.CLIENT_TITLE,
-                    "version": client.CLIENT_VERSION,
-                }
-            },
-        )
+        initialize_params: dict[str, Any] = {
+            "clientInfo": {
+                "name": client.CLIENT_NAME,
+                "title": client.CLIENT_TITLE,
+                "version": client.CLIENT_VERSION,
+            }
+        }
+        if client._experimental_api:
+            initialize_params["capabilities"] = {"experimentalApi": True}
+        result = await client._send_request("initialize", initialize_params)
 
         user_agent = result.get("userAgent", "unknown")
         logger.debug("Codex app-server initialized: %s", user_agent)

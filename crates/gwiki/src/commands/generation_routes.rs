@@ -4,11 +4,12 @@
 //! gwiki capability uses.
 
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
 
 use gobby_core::ai::generation::{
     ChatMessage, ChatTransport, DirectChatTransport, DirectGenerationTarget, GenerationTier,
-    ToolLoopLimits, ToolLoopOutcome, ToolPolicy, daemon_agentic_chat, generate_one_shot,
-    profile_for_tier, resolve_direct_generation_target, run_tool_loop,
+    ToolExecutor, ToolLoopLimits, ToolLoopOutcome, ToolPolicy, daemon_agentic_chat,
+    generate_one_shot, profile_for_tier, resolve_direct_generation_target, run_tool_loop,
 };
 use gobby_core::ai::{AiNoticeKind, resolve_route_observed_with_probe};
 use gobby_core::ai_context::{AiContext, AiContextOptions};
@@ -62,10 +63,6 @@ const GWIKI_READONLY_TOOLS: [&str; 8] = [
     "audit",
     "lint",
 ];
-
-/// Turn budget for the daemon's server-side agent, matching the client-side
-/// [`ToolLoopLimits::default`] bound the Direct route runs under.
-const DAEMON_AGENTIC_MAX_TURNS: usize = 8;
 
 /// The read-only gwiki investigation policy the tool loop hands the daemon: the agent
 /// may inspect the vault but never mutate it.
@@ -154,14 +151,15 @@ pub(crate) fn resolve_tool_loop_generator(
         return None;
     }
     let mut source = crate::support::config::hub_ai_config_source(command).ok()?;
-    let context = AiContext::resolve_with_options(
+    let context = AiContext::try_resolve_with_options(
         None,
         &mut source,
         AiContextOptions {
             no_ai: false,
             forced_routing: Some(route),
         },
-    );
+    )
+    .ok()?;
     // A daemon tool loop without a project root (topic scope) cannot give
     // the daemon's agent an investigation cwd; decline so the caller uses the
     // one-shot explainer, which needs no project root.
@@ -227,17 +225,18 @@ pub(crate) fn run_direct_agentic_generation(
     let transport = DirectChatTransport::new(context, target.clone(), Some(profile.to_string()))
         .map_err(|error| error.to_string())?;
     let model = transport.model().map(str::to_string);
-    let mut executor = VaultToolExecutor::new(
+    let executor = Arc::new(VaultToolExecutor::new(
         scope.clone(),
         vault_root.to_path_buf(),
         scope_identity.clone(),
-    );
-    let outcome = run_tool_loop(&transport, &mut executor, messages, limits, None)
+    ));
+    let loop_executor: Arc<dyn ToolExecutor> = executor.clone();
+    let outcome = run_tool_loop(&transport, loop_executor, messages, limits, None)
         .map_err(|error| error.to_string())?;
     Ok(DirectAgenticGeneration {
         model,
         outcome,
-        data_source_degraded: executor.into_data_source_degraded(),
+        data_source_degraded: executor.data_source_degraded(),
     })
 }
 
@@ -268,7 +267,7 @@ fn run_agentic_generation(
                 &project_root.display().to_string(),
                 &gwiki_readonly_tool_policy(),
                 &messages,
-                Some(DAEMON_AGENTIC_MAX_TURNS),
+                &context.tool_loop_limits,
                 None,
             )
             .map_err(|error| error.to_string())?;
@@ -288,7 +287,6 @@ fn run_agentic_generation(
         AiRouting::Direct => {
             let target = target
                 .ok_or_else(|| "direct tool loop requires a resolved profile target".to_string())?;
-            let limits = ToolLoopLimits::default();
             let direct = run_direct_agentic_generation(
                 context,
                 profile,
@@ -297,7 +295,7 @@ fn run_agentic_generation(
                 scope,
                 vault_root,
                 scope_identity,
-                &limits,
+                &context.tool_loop_limits,
             )?;
             // Data-source degradation (graph/semantic backend down mid-loop) is
             // evidence degradation, not a generation failure — log it without
@@ -657,6 +655,7 @@ mod tests {
             },
             limiter: AiLimiter::new(1),
             project_id: None,
+            tool_loop_limits: ToolLoopLimits::default(),
         }
     }
 }

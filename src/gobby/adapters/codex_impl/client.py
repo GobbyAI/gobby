@@ -64,6 +64,7 @@ class CodexAppServerClient:
         disabled_features: tuple[str, ...] | list[str] | None = None,
         global_args: tuple[str, ...] | list[str] | None = None,
         env_overrides: Mapping[str, str] | None = None,
+        experimental_api: bool = False,
     ) -> None:
         """
         Initialize the Codex app-server client.
@@ -83,6 +84,7 @@ class CodexAppServerClient:
         self._disabled_features = tuple(disabled_features or ())
         self._global_args = tuple(global_args or ())
         self._env_overrides = dict(env_overrides or {})
+        self._experimental_api = experimental_api
         self._redacted_env_values = tuple(
             value
             for key, value in self._env_overrides.items()
@@ -103,6 +105,7 @@ class CodexAppServerClient:
 
         # Approval handler for incoming requests (bidirectional blocking)
         self._approval_handler: Any | None = None
+        self._request_handlers: dict[str, Any] = {}
 
         # Reader task
         self._reader_task: asyncio.Task[None] | None = None
@@ -157,6 +160,13 @@ class CodexAppServerClient:
     def register_approval_handler(self, handler: Any | None) -> None:
         client_notifications.register_approval_handler(self, handler)
 
+    def register_request_handler(self, method: str, handler: Any) -> None:
+        """Register an exact handler for one server-initiated JSON-RPC request."""
+        self._request_handlers[method] = handler
+
+    def remove_request_handler(self, method: str) -> None:
+        self._request_handlers.pop(method, None)
+
     async def start_thread(
         self,
         cwd: str | None = None,
@@ -165,6 +175,8 @@ class CodexAppServerClient:
         sandbox: str | None = None,
         terminal_context: dict[str, Any] | None = None,
         ephemeral: bool = False,
+        dynamic_tools: list[dict[str, Any]] | None = None,
+        experimental_raw_events: bool = False,
     ) -> CodexThread:
         return await client_api.start_thread(
             self,
@@ -174,6 +186,8 @@ class CodexAppServerClient:
             sandbox=sandbox,
             terminal_context=terminal_context,
             ephemeral=ephemeral,
+            dynamic_tools=dynamic_tools,
+            experimental_raw_events=experimental_raw_events,
         )
 
     async def resume_thread(self, thread_id: str) -> CodexThread:

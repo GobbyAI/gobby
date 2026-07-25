@@ -2,8 +2,8 @@ use std::fs;
 use std::path::{Component, Path};
 
 use gobby_core::ai::generation::{
-    ChatMessage, DirectGenerationTarget, ToolLoopLimits, ToolPolicy, daemon_agentic_chat,
-    profile_for_tier, resolve_direct_generation_target,
+    ChatMessage, DirectGenerationTarget, ToolPolicy, daemon_agentic_chat, profile_for_tier,
+    resolve_direct_generation_target,
 };
 use gobby_core::ai::{AiNoticeKind, resolve_route_observed};
 use gobby_core::ai_context::{AiContext, AiContextOptions};
@@ -20,7 +20,6 @@ use crate::output::{AskAiOutput, AskCitationCheckOutput, AskDeepOutput, AskOutpu
 use crate::support::scope::{resolve_command_scope, resolved_scope_identity};
 use crate::{ScopeSelection, WikiError};
 
-const DEEP_MAX_TURNS: usize = 8;
 const DEEP_DAEMON_TOOLS: [&str; 4] = ["search", "read", "backlinks", "sources"];
 
 struct DeepGenerationResult {
@@ -28,6 +27,7 @@ struct DeepGenerationResult {
     model: Option<String>,
     content: Option<String>,
     turns: Option<usize>,
+    max_turns: Option<usize>,
     tool_use_count: usize,
     usage: Option<TokenUsage>,
     stop_reason: Option<String>,
@@ -46,14 +46,17 @@ pub(super) fn synthesize(
     let project_root = resolved_scope.project_root().map(Path::to_path_buf);
     let scope_identity = resolved_scope_identity(&resolved_scope);
     let mut source = crate::support::config::hub_ai_config_source("gwiki ask --deep")?;
-    let context = AiContext::resolve_with_options(
+    let context = AiContext::try_resolve_with_options(
         None,
         &mut source,
         AiContextOptions {
             no_ai: false,
             forced_routing: Some(requested_mode),
         },
-    );
+    )
+    .map_err(|error| WikiError::Config {
+        detail: error.to_string(),
+    })?;
     let observed = resolve_route_observed(&context, AiCapability::ToolChat);
     let route = observed.route;
     if let Some(notice) = observed.reason.or_else(|| {
@@ -128,7 +131,6 @@ fn run_direct(
     require_ai: bool,
 ) -> Result<(), WikiError> {
     let messages = deep_messages(direct_system(), plan);
-    let limits = ToolLoopLimits::default();
     match run_direct_agentic_generation(
         context,
         profile,
@@ -137,7 +139,7 @@ fn run_direct(
         selection,
         vault_root,
         scope_identity,
-        &limits,
+        &context.tool_loop_limits,
     ) {
         Ok(direct) => {
             if !direct.data_source_degraded.is_empty() {
@@ -155,6 +157,7 @@ fn run_direct(
                     model: direct.model,
                     content: outcome.content,
                     turns: Some(outcome.observability.turns),
+                    max_turns: context.tool_loop_limits.max_turns,
                     tool_use_count: outcome.observability.tool_call_count,
                     usage: outcome.total_usage,
                     stop_reason: Some(outcome.stop_reason.as_str().to_string()),
@@ -184,7 +187,7 @@ fn run_daemon(
         &project_root.display().to_string(),
         &deep_daemon_tool_policy(),
         &messages,
-        Some(DEEP_MAX_TURNS),
+        &context.tool_loop_limits,
         None,
     ) {
         Ok(result) => {
@@ -198,6 +201,7 @@ fn run_daemon(
                     model: result.model,
                     content: result.content,
                     turns: result.turns,
+                    max_turns: context.tool_loop_limits.max_turns,
                     tool_use_count: result.tool_use_count,
                     usage: result.usage,
                     stop_reason: result.stop_reason,
@@ -235,7 +239,7 @@ fn record_deep_unavailable(
         model: model.clone(),
         turns: None,
         tool_use_count: 0,
-        max_turns: DEEP_MAX_TURNS,
+        max_turns: None,
         usage: None,
         stop_reason: None,
     });
@@ -266,6 +270,7 @@ fn record_deep_generation(
         model,
         content,
         turns,
+        max_turns,
         tool_use_count,
         usage,
         stop_reason,
@@ -276,7 +281,7 @@ fn record_deep_generation(
         model: model.clone(),
         turns,
         tool_use_count,
-        max_turns: DEEP_MAX_TURNS,
+        max_turns,
         usage,
         stop_reason: stop_reason.clone(),
     });
@@ -545,6 +550,7 @@ mod tests {
                     model: Some("test-model".to_string()),
                     content: None,
                     turns: Some(8),
+                    max_turns: None,
                     tool_use_count: 24,
                     usage: Some(TokenUsage {
                         input_tokens: Some(10),
@@ -585,6 +591,7 @@ mod tests {
                 model: Some("test-model".to_string()),
                 content: Some("Answer cites [[knowledge/concepts/verified]].".to_string()),
                 turns: Some(3),
+                max_turns: None,
                 tool_use_count: 4,
                 usage: Some(TokenUsage {
                     input_tokens: Some(20),
@@ -642,6 +649,7 @@ mod tests {
                 model: None,
                 content: None,
                 turns: None,
+                max_turns: None,
                 tool_use_count: 0,
                 usage: None,
                 stop_reason: Some("completed".to_string()),
@@ -674,6 +682,7 @@ mod tests {
                 model: None,
                 content: Some("Answer cites [[knowledge/concepts/verified]].".to_string()),
                 turns: None,
+                max_turns: None,
                 tool_use_count: 3,
                 usage: None,
                 stop_reason: Some("provider_specific".to_string()),

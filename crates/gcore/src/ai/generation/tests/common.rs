@@ -6,7 +6,7 @@ pub(super) use std::collections::VecDeque;
 pub(super) use std::ffi::OsString;
 pub(super) use std::fs;
 pub(super) use std::path::Path;
-pub(super) use std::sync::MutexGuard;
+pub(super) use std::sync::{Arc, Mutex, MutexGuard};
 pub(super) use std::time::Duration;
 
 pub(super) use serde_json::{Value, json};
@@ -57,14 +57,14 @@ pub(super) fn blank_binding() -> CapabilityBinding {
 }
 
 pub(super) struct EchoExecutor {
-    pub(super) calls: Vec<ToolCall>,
+    pub(super) calls: Mutex<Vec<ToolCall>>,
     result: String,
 }
 
 impl EchoExecutor {
     pub(super) fn new(result: impl Into<String>) -> Self {
         Self {
-            calls: Vec::new(),
+            calls: Mutex::new(Vec::new()),
             result: result.into(),
         }
     }
@@ -79,8 +79,8 @@ impl ToolExecutor for EchoExecutor {
         }]
     }
 
-    fn execute(&mut self, call: &ToolCall) -> Result<String, ToolError> {
-        self.calls.push(call.clone());
+    fn execute(&self, call: &ToolCall) -> Result<String, ToolError> {
+        self.calls.lock().expect("calls lock").push(call.clone());
         Ok(self.result.clone())
     }
 }

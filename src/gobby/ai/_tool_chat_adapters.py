@@ -21,7 +21,7 @@ from typing import Any
 from gobby.ai._tool_chat_contracts import (
     ToolChatRequest,
     ToolChatResult,
-    _resolve_max_turns,
+    ToolLoopLimits,
 )
 from gobby.ai._tool_chat_tools import ToolPolicyError, ToolRuntime
 from gobby.ai.registry import CapabilityBinding
@@ -48,10 +48,11 @@ class OpenAICompatibleToolChatAdapter:
         self._client_factory = client_factory
 
     async def chat(self, request: ToolChatRequest, binding: CapabilityBinding) -> ToolChatResult:
+        limits = request.limits or ToolLoopLimits()
         runtime = ToolRuntime(
             request.tool_policy,
             project_path=request.project_path,
-            limits=request.limits,
+            limits=limits,
             builtins=request.builtins,
         )
         model = request.model or next(iter(binding.models), None)
@@ -67,15 +68,13 @@ class OpenAICompatibleToolChatAdapter:
             },
             {"role": "user", "content": request.prompt},
         ]
-        limits = request.limits
-
         usage_total: dict[str, int] = {}
         tool_breakdown: dict[str, int] = {}
         turns = 0
         content = ""
         stop_reason = "max_turns"
 
-        for _ in range(limits.max_turns):
+        while limits.max_turns is None or turns < limits.max_turns:
             turns += 1
             response = await client.chat.completions.create(
                 **_completion_kwargs(model, messages, tools, request)
@@ -87,6 +86,10 @@ class OpenAICompatibleToolChatAdapter:
             if not tool_calls:
                 content = message.content or ""
                 stop_reason = "completed"
+                break
+
+            if limits.max_turns is not None and turns >= limits.max_turns:
+                stop_reason = "max_turns"
                 break
 
             messages.append(_assistant_message(message, tool_calls))
@@ -273,16 +276,17 @@ class ClaudeToolChatAdapter:
         self._provider_factory = provider_factory
 
     async def chat(self, request: ToolChatRequest, binding: CapabilityBinding) -> ToolChatResult:
+        limits = request.limits or ToolLoopLimits()
         runtime = ToolRuntime(
             request.tool_policy,
             project_path=request.project_path,
-            limits=request.limits,
+            limits=limits,
             builtins=request.builtins,
         )
         server, allowed_tools = build_repo_mcp_server(runtime)
         provider = self._provider_factory(binding)
         model = request.model or next(iter(binding.models), None)
-        max_turns = _resolve_max_turns(request, default=60)
+        max_turns = limits.max_turns
         try:
             result = await provider.generate_agentic(
                 system_prompt=request.system_prompt,

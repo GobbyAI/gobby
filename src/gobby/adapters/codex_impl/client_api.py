@@ -24,6 +24,8 @@ async def start_thread(
     sandbox: str | None = None,
     terminal_context: dict[str, Any] | None = None,
     ephemeral: bool = False,
+    dynamic_tools: list[dict[str, Any]] | None = None,
+    experimental_raw_events: bool = False,
 ) -> CodexThread:
     """
     Start a new Codex conversation thread.
@@ -53,6 +55,10 @@ async def start_thread(
         }.get(sandbox, sandbox)
     if ephemeral:
         params["ephemeral"] = True
+    if dynamic_tools is not None:
+        params["dynamicTools"] = dynamic_tools
+    if experimental_raw_events:
+        params["experimentalRawEvents"] = True
 
     pending_context: dict[str, Any] | None = None
     if terminal_context:
@@ -414,6 +420,7 @@ async def run_turn(
         "item/started",
         "item/completed",
         "item/agentMessage/delta",
+        "rawResponse/completed",
     ]
 
     for method in event_methods:

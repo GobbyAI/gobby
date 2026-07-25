@@ -8,6 +8,7 @@
 
 use std::collections::BTreeSet;
 use std::path::PathBuf;
+use std::sync::Mutex;
 
 use gobby_core::ai::generation::{ToolCall, ToolError, ToolExecutor, ToolSchema};
 use serde_json::{Value, json};
@@ -35,7 +36,7 @@ pub(crate) struct VaultToolExecutor {
     /// graph/semantic backend unavailable mid-search). Evidence degradation
     /// surfaced for observability; never an AI-generation failure, so it never
     /// hard-fails the page.
-    data_source_degraded: BTreeSet<String>,
+    data_source_degraded: Mutex<BTreeSet<String>>,
 }
 
 impl VaultToolExecutor {
@@ -48,16 +49,21 @@ impl VaultToolExecutor {
             selection,
             vault_root,
             scope_identity,
-            data_source_degraded: BTreeSet::new(),
+            data_source_degraded: Mutex::new(BTreeSet::new()),
         }
     }
 
     /// Data-source degradation codes accumulated during the loop, sorted.
-    pub(crate) fn into_data_source_degraded(self) -> Vec<String> {
-        self.data_source_degraded.into_iter().collect()
+    pub(crate) fn data_source_degraded(&self) -> Vec<String> {
+        self.data_source_degraded
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .iter()
+            .cloned()
+            .collect()
     }
 
-    fn search_vault(&mut self, args: &Value) -> Result<String, ToolError> {
+    fn search_vault(&self, args: &Value) -> Result<String, ToolError> {
         let query = arg_str(args, "query")?;
         let limit = arg_usize(args, "limit", DEFAULT_SEARCH_LIMIT, MAX_SEARCH_LIMIT);
         // Agent-facing vault search keeps the default surface: quarantined
@@ -71,9 +77,14 @@ impl VaultToolExecutor {
             false,
         )
         .map_err(|error| tool_err(format!("vault search failed: {error}")))?;
+        let mut degraded = self
+            .data_source_degraded
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
         for degradation in &retrieval.output.degradations {
-            self.data_source_degraded.insert(degradation.clone());
+            degraded.insert(degradation.clone());
         }
+        drop(degraded);
         if retrieval.output.results.is_empty() {
             return Ok(format!("No vault documents matched `{query}`."));
         }
@@ -96,7 +107,7 @@ impl VaultToolExecutor {
         Ok(block)
     }
 
-    fn read_document(&mut self, args: &Value) -> Result<String, ToolError> {
+    fn read_document(&self, args: &Value) -> Result<String, ToolError> {
         let path = arg_str(args, "path")?;
         read::read_document_text(
             &self.vault_root,
@@ -106,7 +117,7 @@ impl VaultToolExecutor {
         .map_err(|error| tool_err(format!("read `{path}` failed: {error}")))
     }
 
-    fn backlinks(&mut self, args: &Value) -> Result<String, ToolError> {
+    fn backlinks(&self, args: &Value) -> Result<String, ToolError> {
         let path = arg_str(args, "path")?;
         let limit = arg_usize(args, "limit", DEFAULT_SEARCH_LIMIT, MAX_SEARCH_LIMIT);
         let outcome = backlinks::execute(path.clone(), self.selection.clone())
@@ -120,7 +131,7 @@ impl VaultToolExecutor {
             .map_err(|error| tool_err(format!("backlinks serialization failed: {error}")))
     }
 
-    fn sources(&mut self, args: &Value) -> Result<String, ToolError> {
+    fn sources(&self, args: &Value) -> Result<String, ToolError> {
         let limit = arg_usize(args, "limit", DEFAULT_SEARCH_LIMIT, MAX_SEARCH_LIMIT);
         let manifest = SourceManifest::read(&self.vault_root)
             .map_err(|error| tool_err(format!("source manifest read failed: {error}")))?;
@@ -135,7 +146,7 @@ impl ToolExecutor for VaultToolExecutor {
         vault_tool_schemas()
     }
 
-    fn execute(&mut self, call: &ToolCall) -> Result<String, ToolError> {
+    fn execute(&self, call: &ToolCall) -> Result<String, ToolError> {
         match call.name.as_str() {
             "search_vault" => self.search_vault(&call.arguments),
             "read_document" => self.read_document(&call.arguments),
@@ -309,7 +320,7 @@ mod tests {
         )
         .expect("register second source");
 
-        let mut executor = executor(temp.path());
+        let executor = executor(temp.path());
         let output = executor
             .execute(&ToolCall {
                 id: "call-sources".to_string(),
@@ -345,7 +356,7 @@ mod tests {
             "# Source\n\nSee [[knowledge/concepts/target.md]].\n",
         )
         .expect("write source");
-        let mut executor = VaultToolExecutor::new(
+        let executor = VaultToolExecutor::new(
             ScopeSelection::project(temp.path()),
             vault,
             ScopeIdentity::project("00000000-0000-4000-8000-000000000001"),
@@ -378,7 +389,7 @@ mod tests {
     fn read_document_returns_scoped_vault_content() {
         let temp = tempfile::tempdir().expect("tempdir");
         let path = write_vault_doc(temp.path(), "# Overview\n\nVault body text.");
-        let mut executor = executor(temp.path());
+        let executor = executor(temp.path());
         let call = ToolCall {
             id: "call-1".to_string(),
             name: "read_document".to_string(),
@@ -394,7 +405,7 @@ mod tests {
     #[test]
     fn execute_rejects_unknown_tool() {
         let temp = tempfile::tempdir().expect("tempdir");
-        let mut executor = executor(temp.path());
+        let executor = executor(temp.path());
         let call = ToolCall {
             id: "call-x".to_string(),
             name: "delete_everything".to_string(),
@@ -440,7 +451,7 @@ mod tests {
             temp.path(),
             "# Overview\n\nGrounding fact the model retrieved.",
         );
-        let mut executor = executor(temp.path());
+        let executor = executor(temp.path());
 
         let read_call = ToolCall {
             id: "call-1".to_string(),
@@ -465,8 +476,14 @@ mod tests {
             ChatMessage::user("Compile a page."),
         ];
         let limits = ToolLoopLimits::default();
-        let outcome = run_tool_loop(&transport, &mut executor, messages, &limits, None)
-            .expect("tool loop runs");
+        let outcome = run_tool_loop(
+            &transport,
+            std::sync::Arc::new(executor),
+            messages,
+            &limits,
+            None,
+        )
+        .expect("tool loop runs");
 
         assert!(outcome.stop_reason.is_completed());
         assert_eq!(

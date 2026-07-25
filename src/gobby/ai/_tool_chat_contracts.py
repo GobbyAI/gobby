@@ -14,6 +14,14 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Protocol
 
+from gobby._generated_tool_loop_limits import (
+    DEFAULT_LOOP_TIMEOUT_SECONDS,
+    DEFAULT_MAX_BYTES_PER_TOOL_RESULT,
+    DEFAULT_MAX_TOOL_CALLS,
+    DEFAULT_MAX_TURNS,
+    DEFAULT_TOOL_TIMEOUT_SECONDS,
+    ToolLoopLimitsDict,
+)
 from gobby.config.feature_base import FeatureCandidateInput
 
 if TYPE_CHECKING:
@@ -48,22 +56,40 @@ class ToolLoopLimits:
     paths bound investigation identically.
     """
 
-    max_turns: int = 8
-    max_tool_calls: int = 24
-    per_tool_result_byte_cap: int = 16 * 1024
-    tool_timeout_seconds: float = 60.0
+    max_turns: int | None = DEFAULT_MAX_TURNS
+    max_tool_calls: int = DEFAULT_MAX_TOOL_CALLS
+    max_bytes_per_tool_result: int = DEFAULT_MAX_BYTES_PER_TOOL_RESULT
+    tool_timeout_seconds: int = DEFAULT_TOOL_TIMEOUT_SECONDS
+    loop_timeout_seconds: int = DEFAULT_LOOP_TIMEOUT_SECONDS
 
     def __post_init__(self) -> None:
         from gobby.ai._tool_chat_builtins import minimum_typed_error_result_size
 
-        if self.tool_timeout_seconds <= 0:
-            raise ToolLoopConfigurationError("tool_timeout_seconds must be positive")
+        values = {
+            "max_turns": self.max_turns,
+            "max_tool_calls": self.max_tool_calls,
+            "max_bytes_per_tool_result": self.max_bytes_per_tool_result,
+            "tool_timeout_seconds": self.tool_timeout_seconds,
+            "loop_timeout_seconds": self.loop_timeout_seconds,
+        }
+        for name, value in values.items():
+            if value is not None and value <= 0:
+                raise ToolLoopConfigurationError(f"{name} must be positive")
         minimum_cap = minimum_typed_error_result_size()
-        if self.per_tool_result_byte_cap < minimum_cap:
+        if self.max_bytes_per_tool_result < minimum_cap:
             raise ToolLoopConfigurationError(
-                "per_tool_result_byte_cap must be at least "
+                "max_bytes_per_tool_result must be at least "
                 f"{minimum_cap} bytes to carry a typed error result"
             )
+
+    def as_dict(self) -> ToolLoopLimitsDict:
+        return {
+            "max_turns": self.max_turns,
+            "max_tool_calls": self.max_tool_calls,
+            "max_bytes_per_tool_result": self.max_bytes_per_tool_result,
+            "tool_timeout_seconds": self.tool_timeout_seconds,
+            "loop_timeout_seconds": self.loop_timeout_seconds,
+        }
 
 
 class ToolLoopConfigurationError(ValueError):
@@ -89,23 +115,12 @@ class ToolChatRequest:
     profile: str | None = None
     candidates: tuple[FeatureCandidateInput, ...] = ()
     model: str | None = None
-    max_turns: int | None = None
     max_tokens: int | None = None
     reasoning_effort: str | None = None
-    limits: ToolLoopLimits = field(default_factory=ToolLoopLimits)
+    limits: ToolLoopLimits | None = None
     builtins: tuple[BuiltinToolSpec, ...] = ()
     allowed_adapter_styles: tuple[AIAdapterStyle, ...] | None = None
     caller: str | None = None
-    candidate_timeout_seconds: float | None = None
-    cli_candidate_timeout_seconds: float | None = None
-
-
-def _resolve_max_turns(request: ToolChatRequest, *, default: int) -> int:
-    if request.max_turns is not None:
-        return request.max_turns
-    if request.limits.max_turns is not None:
-        return request.limits.max_turns
-    return default
 
 
 @dataclass(frozen=True, kw_only=True)

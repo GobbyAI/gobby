@@ -118,7 +118,7 @@ fn deep_output_serializes_stop_reason_and_optional_turns() {
         model: Some("test-model".to_string()),
         turns: Some(8),
         tool_use_count: 24,
-        max_turns: 8,
+        max_turns: Some(8),
         usage: None,
         stop_reason: Some("max_tool_calls".to_string()),
     })
@@ -131,7 +131,7 @@ fn deep_output_serializes_stop_reason_and_optional_turns() {
         model: None,
         turns: None,
         tool_use_count: 0,
-        max_turns: 8,
+        max_turns: Some(8),
         usage: None,
         stop_reason: None,
     })
@@ -193,7 +193,7 @@ fn representative_ask_output() -> AskOutput {
             model: Some("test-model".to_string()),
             turns: Some(2),
             tool_use_count: 3,
-            max_turns: 8,
+            max_turns: Some(8),
             usage: None,
             stop_reason: Some("completed".to_string()),
         }),

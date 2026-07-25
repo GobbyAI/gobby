@@ -1,0 +1,27 @@
+{
+  "contract": "gobby.tool_loop_limits",
+  "version": 1,
+  "config_prefix": "ai.generation.tool_loop",
+  "fields": {
+    "max_turns": {
+      "type": "nullable_positive_integer",
+      "default": null
+    },
+    "max_tool_calls": {
+      "type": "positive_integer",
+      "default": 24
+    },
+    "max_bytes_per_tool_result": {
+      "type": "positive_integer",
+      "default": 16384
+    },
+    "tool_timeout_seconds": {
+      "type": "positive_integer",
+      "default": 300
+    },
+    "loop_timeout_seconds": {
+      "type": "positive_integer",
+      "default": 1200
+    }
+  }
+}
