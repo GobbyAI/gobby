@@ -171,6 +171,7 @@ def init_servers(runner: GobbyRunner) -> None:
                 ChatSessionCommsBackend(
                     runner.websocket_server,
                     runner.communications_manager,
+                    tts_provider_getter=runner.websocket_server.get_tts_provider,
                 )
             )
 

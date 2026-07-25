@@ -67,6 +67,19 @@ class TestVoiceWarmup:
 
         assert mixin.get_voice_transcriber() is None
 
+    def test_get_tts_provider_returns_available_singleton(self) -> None:
+        mixin = DummyVoiceMixin(VoiceConfig(enabled=True, tts_enabled=True))
+        provider = MagicMock(is_available=True)
+        mixin._tts_provider = provider
+
+        assert mixin.get_tts_provider() is provider
+
+    def test_get_tts_provider_rejects_unavailable_runtime(self) -> None:
+        mixin = DummyVoiceMixin(VoiceConfig(enabled=True, tts_enabled=True))
+        mixin._tts_provider = MagicMock(is_available=False)
+
+        assert mixin.get_tts_provider() is None
+
     @pytest.mark.asyncio
     async def test_start_voice_warmup_is_single_flight(self) -> None:
         """Warmup is single-flight and logs one trigger while the task is in flight."""

@@ -3,15 +3,17 @@
 from __future__ import annotations
 
 from datetime import UTC, datetime
-from typing import Any
+from pathlib import Path
+from typing import Any, cast
 
 import pytest
 
 from gobby.communications.chat_backend import ChatSessionCommsBackend
 from gobby.communications.chat_transport import CommunicationsChatStreamTransport
-from gobby.communications.models import ChannelConfig, CommsMessage
+from gobby.communications.models import ChannelConfig, CommsAttachment, CommsMessage
 from gobby.communications.responder import ResponderContext
 from gobby.storage.projects import PERSONAL_PROJECT_ID
+from gobby.voice.tts import TTSProvider
 
 
 class _Clock:
@@ -23,12 +25,21 @@ class _Clock:
 
 
 class _FakeManager:
-    def __init__(self, *, supports_edit: bool, supports_typing: bool = False) -> None:
+    def __init__(
+        self,
+        *,
+        supports_edit: bool,
+        supports_typing: bool = False,
+        attachment_status: str = "sent",
+    ) -> None:
         self.supports_edit = supports_edit
         self.typing_supported = supports_typing
+        self.attachment_status = attachment_status
         self.sent: list[tuple[str, str, str | None, dict[str, object] | None]] = []
         self.edited: list[tuple[str, str, str, str]] = []
         self.typing: list[tuple[str, str]] = []
+        self.attachments: list[dict[str, object]] = []
+        self.attachment_manager = _FakeAttachmentManager()
 
     def supports_message_edit(self, channel_name: str) -> bool:
         assert channel_name == "telegram"
@@ -68,6 +79,57 @@ class _FakeManager:
         conversation_id: str,
     ) -> None:
         self.edited.append((channel_name, platform_message_id, content, conversation_id))
+
+    async def send_attachment(
+        self,
+        channel_name: str,
+        file_path: Path,
+        filename: str | None = None,
+        content_type: str = "application/octet-stream",
+        content: str = "",
+        session_id: str | None = None,
+        metadata: dict[str, Any] | None = None,
+    ) -> tuple[CommsMessage, CommsAttachment]:
+        self.attachments.append(
+            {
+                "channel_name": channel_name,
+                "file_path": file_path,
+                "filename": filename,
+                "content_type": content_type,
+                "content": content,
+                "session_id": session_id,
+                "metadata": metadata,
+            }
+        )
+        message = CommsMessage(
+            id=f"attachment-message-{len(self.attachments)}",
+            channel_id="channel-1",
+            direction="outbound",
+            content=content,
+            content_type="attachment",
+            status=self.attachment_status,
+            error="voice delivery failed" if self.attachment_status != "sent" else None,
+            created_at=datetime.now(UTC),
+        )
+        attachment = CommsAttachment(
+            id=f"attachment-{len(self.attachments)}",
+            message_id=message.id,
+            filename=filename or file_path.name,
+            content_type=content_type,
+            size_bytes=4,
+            local_path=str(file_path),
+            created_at=datetime.now(UTC),
+        )
+        return message, attachment
+
+
+class _FakeAttachmentManager:
+    def __init__(self) -> None:
+        self.stored: list[tuple[bytes, str]] = []
+
+    async def store(self, content: bytes, filename: str) -> Path:
+        self.stored.append((content, filename))
+        return Path("/virtual") / filename
 
 
 def _context(
@@ -336,3 +398,84 @@ async def test_backend_status_reports_explicit_binding() -> None:
     status = await backend.status(_context())
 
     assert status == "Responder idle. Provider: codex. Model: gpt-5.6."
+
+
+@pytest.mark.asyncio
+async def test_backend_sends_configured_telegram_tts_as_voice_note() -> None:
+    manager = _FakeManager(supports_edit=True)
+    host = _FakeChatHost()
+    provider = object()
+    synthesized: list[tuple[object, str]] = []
+
+    async def synthesize(tts: TTSProvider, text: str) -> bytes:
+        synthesized.append((tts, text))
+        return b"OggSvoice"
+
+    backend = ChatSessionCommsBackend(
+        host,
+        manager,
+        tts_provider_getter=lambda: cast(TTSProvider, provider),
+        voice_synthesizer=synthesize,
+    )
+
+    await backend.run_turn(_context(content="voice", responder_config={"tts_enabled": True}))
+
+    assert manager.sent == []
+    assert synthesized == [(provider, "reply:voice")]
+    assert manager.attachment_manager.stored == [(b"OggSvoice", "reply.ogg")]
+    assert manager.attachments == [
+        {
+            "channel_name": "telegram",
+            "file_path": Path("/virtual/reply.ogg"),
+            "filename": "reply.ogg",
+            "content_type": "audio/ogg",
+            "content": "reply:voice",
+            "session_id": "session-1",
+            "metadata": {
+                "platform_destination": "chat-42",
+                "voice_note": True,
+            },
+        }
+    ]
+
+
+@pytest.mark.asyncio
+async def test_backend_falls_back_to_text_when_telegram_tts_fails() -> None:
+    manager = _FakeManager(supports_edit=True)
+    host = _FakeChatHost()
+
+    async def fail_synthesis(tts: TTSProvider, text: str) -> bytes:
+        raise RuntimeError("synthesis failed")
+
+    backend = ChatSessionCommsBackend(
+        host,
+        manager,
+        tts_provider_getter=lambda: cast(TTSProvider, object()),
+        voice_synthesizer=fail_synthesis,
+    )
+
+    await backend.run_turn(_context(content="fallback", responder_config={"tts_enabled": True}))
+
+    assert [sent[1] for sent in manager.sent] == ["reply:fallback"]
+    assert manager.attachments == []
+
+
+@pytest.mark.asyncio
+async def test_backend_falls_back_to_text_when_voice_note_delivery_fails() -> None:
+    manager = _FakeManager(supports_edit=True, attachment_status="failed")
+    host = _FakeChatHost()
+
+    async def synthesize(tts: TTSProvider, text: str) -> bytes:
+        return b"OggSvoice"
+
+    backend = ChatSessionCommsBackend(
+        host,
+        manager,
+        tts_provider_getter=lambda: cast(TTSProvider, object()),
+        voice_synthesizer=synthesize,
+    )
+
+    await backend.run_turn(_context(content="delivery", responder_config={"tts_enabled": True}))
+
+    assert [sent[1] for sent in manager.sent] == ["reply:delivery"]
+    assert len(manager.attachments) == 1

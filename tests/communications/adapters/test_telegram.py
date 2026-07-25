@@ -500,6 +500,56 @@ async def test_send_attachment_uses_send_photo_for_images(
     }
 
 
+@pytest.mark.asyncio
+async def test_send_attachment_uses_send_voice_for_voice_notes(
+    adapter: TelegramAdapter,
+    tmp_path: Path,
+) -> None:
+    voice_path = tmp_path / "reply.ogg"
+    voice_path.write_bytes(b"OggSvoice")
+    response = httpx.Response(
+        200,
+        request=httpx.Request("POST", "https://api.telegram.org/bottest-token/sendVoice"),
+        json={"ok": True, "result": {"message_id": 43}},
+    )
+    mock_client = MagicMock()
+    mock_client.post = AsyncMock(return_value=response)
+    adapter._client = mock_client
+    adapter._api_base = "https://api.telegram.org/bottest-token"
+    message = CommsMessage(
+        id="msg-voice",
+        channel_id="channel1",
+        direction="outbound",
+        content="spoken reply",
+        platform_thread_id="17",
+        metadata_json={
+            "platform_destination": "chat999",
+            "voice_note": True,
+        },
+        created_at=datetime.now(UTC),
+    )
+    attachment = CommsAttachment(
+        id="attachment-voice",
+        message_id=message.id,
+        filename=voice_path.name,
+        content_type="audio/ogg",
+        size_bytes=voice_path.stat().st_size,
+    )
+
+    result = await adapter.send_attachment(message, attachment, voice_path)
+
+    assert result == "43"
+    call = mock_client.post.await_args
+    assert call.args[0] == "https://api.telegram.org/bottest-token/sendVoice"
+    assert call.kwargs["data"] == {
+        "chat_id": "chat999",
+        "message_thread_id": 17,
+    }
+    assert call.kwargs["files"] == {
+        "voice": ("reply.ogg", b"OggSvoice", "audio/ogg"),
+    }
+
+
 def test_parse_webhook(adapter: TelegramAdapter) -> None:
     payload = {
         "update_id": 10000,

@@ -49,11 +49,13 @@ class CommunicationsChatStreamTransport:
         *,
         edit_interval: float = 1.5,
         clock: Callable[[], float] = time.monotonic,
+        defer_delivery: bool = False,
     ) -> None:
         self._manager = manager
         self._context = context
         self._edit_interval = edit_interval
         self._clock = clock
+        self._defer_delivery = defer_delivery
         self._supports_edit = manager.supports_message_edit(context.channel.name)
         self._text = ""
         self._last_delivered_text = ""
@@ -67,6 +69,11 @@ class CommunicationsChatStreamTransport:
         """Return all streamed text collected for the current turn."""
         return self._text
 
+    @property
+    def has_delivered_text(self) -> bool:
+        """Whether any buffered response text has already been delivered."""
+        return bool(self._last_delivered_text)
+
     def base_msg(self, **fields: Any) -> dict[str, Any]:
         """Build a transport-neutral stream frame."""
         return dict(fields)
@@ -79,7 +86,7 @@ class CommunicationsChatStreamTransport:
                 if self._text and not self._text.endswith("\n"):
                     self._text += "\n\n"
                 self._text += error
-                await self._finalize()
+                await self.release_deferred_text()
             return
         await self.safe_send(msg)
 
@@ -92,6 +99,8 @@ class CommunicationsChatStreamTransport:
         if isinstance(content, str):
             self._text += content
 
+        if self._defer_delivery:
+            return True
         if msg.get("done") is True:
             await self.finalize()
         elif content and self._supports_edit:
@@ -100,6 +109,13 @@ class CommunicationsChatStreamTransport:
 
     async def finalize(self) -> None:
         """Flush the latest collected text exactly once."""
+        if self._defer_delivery:
+            return
+        await self._finalize()
+
+    async def release_deferred_text(self) -> None:
+        """Enable delivery and flush text buffered for an alternate response."""
+        self._defer_delivery = False
         await self._finalize()
 
     async def _maybe_stream_update(self) -> None:

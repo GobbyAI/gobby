@@ -594,12 +594,16 @@ class TelegramAdapter(BaseChannelAdapter):
         chat_id = self.platform_destination(message)
 
         file_bytes = await asyncio.to_thread(file_path.read_bytes)
+        is_voice_note = (
+            attachment.content_type == "audio/ogg"
+            and message.metadata_json.get("voice_note") is True
+        )
         is_image = attachment.content_type.startswith("image/")
-        file_field = "photo" if is_image else "document"
-        method = "sendPhoto" if is_image else "sendDocument"
+        file_field = "voice" if is_voice_note else "photo" if is_image else "document"
+        method = "sendVoice" if is_voice_note else "sendPhoto" if is_image else "sendDocument"
         files = {file_field: (attachment.filename, file_bytes, attachment.content_type)}
         data: dict[str, Any] = {"chat_id": chat_id}
-        if message.content:
+        if message.content and not is_voice_note:
             data["caption"] = markdown_to_telegram_html_chunks(message.content, 1024)[0]
             data["parse_mode"] = "HTML"
         if message.platform_thread_id:

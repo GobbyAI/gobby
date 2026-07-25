@@ -122,6 +122,13 @@ class VoiceWarmupMixin:
         self._tts_provider = tts
         return self._tts_provider
 
+    def get_tts_provider(self) -> TTSProvider | None:
+        """Return the shared TTS provider when its runtime is available."""
+        provider = self._get_tts()
+        if provider is None or not provider.is_available:
+            return None
+        return provider
+
     def _get_tts_availability(self) -> tuple[bool, str]:
         """Return package-level TTS availability and reason."""
         voice_config = self._get_voice_config()
