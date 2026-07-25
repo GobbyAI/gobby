@@ -3,13 +3,15 @@
 import asyncio
 import json
 from contextlib import ExitStack
+from pathlib import Path
 from types import SimpleNamespace
-from typing import Any
+from typing import Any, cast
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
 from gobby.config import DaemonConfig
+from gobby.config.persistence import EmbeddingsConfig
 from gobby.config.postgres_pool import PostgresPoolConfig
 from gobby.config.tasks import GobbyTasksConfig, TaskExpansionConfig, TaskValidationConfig
 from gobby.runner import GobbyRunner
@@ -49,7 +51,11 @@ def _config_value(db: Any, key: str) -> Any | None:
 class TestGobbyRunnerInit:
     """Tests for GobbyRunner initialization."""
 
-    def test_init_creates_components(self, tmp_path, mock_config_with_websocket) -> None:
+    def test_init_creates_components(
+        self,
+        tmp_path: Path,
+        mock_config_with_websocket: MagicMock,
+    ) -> None:
         """Test that init creates all required components."""
         patches = create_base_patches(mock_config=mock_config_with_websocket)
 
@@ -110,7 +116,8 @@ class TestGobbyRunnerInit:
             assert phase_two_call.kwargs["secret_resolver"] == runner.secret_store.get
 
     async def test_trace_export_broadcasts_from_worker_thread(
-        self, mock_config_with_websocket
+        self,
+        mock_config_with_websocket: MagicMock,
     ) -> None:
         """Trace exports schedule WebSocket broadcasts on the daemon loop."""
         websocket_server = MagicMock()
@@ -240,7 +247,7 @@ class TestGobbyRunnerInit:
             patch("gobby.runner_init.services.MemoryManager") as mock_memory_manager,
         ):
             mock_embedding_service.return_value.is_configured.return_value = True
-            services._init_memory_stack(runner)
+            services._init_memory_stack(cast(GobbyRunner, runner))
 
         mock_embedding_service.assert_any_call(
             model="text-embedding-3-small",
@@ -273,7 +280,13 @@ class TestGobbyRunnerInit:
         )
         emb_cfg = SimpleNamespace(api_key="")
 
-        assert _resolve_embedding_api_key(runner, emb_cfg) == "sk-legacy"
+        assert (
+            _resolve_embedding_api_key(
+                cast(GobbyRunner, runner),
+                cast(EmbeddingsConfig, emb_cfg),
+            )
+            == "sk-legacy"
+        )
 
 
 class TestWakeTmuxSenders:
@@ -471,7 +484,7 @@ class TestInitHubDatabase:
             "gobby.storage.hub.postgres.PostgresHubDatabase",
             FakePostgresDatabase,
         )
-        monkeypatch.setattr(helpers.time, "sleep", sleeps.append)
+        monkeypatch.setattr("gobby.runner_init.helpers.time.sleep", sleeps.append)
         config = SimpleNamespace(
             hub_backend="postgres",
             database_url="postgresql://gobby:secret@localhost:60891/gobby",
@@ -593,6 +606,47 @@ class TestGobbyRunnerInitialization:
                 if record.message == "Failed to initialize code indexer"
             )
             assert code_index_error.exc_info is not None
+
+    def test_init_reconciles_codewiki_crons_with_empty_target_set(self) -> None:
+        mock_config = MagicMock()
+        mock_config.code_index.enabled = True
+        patches = create_base_patches(mock_config=mock_config)
+        project_manager = MagicMock()
+        project_manager.get.return_value = None
+
+        with ExitStack() as stack:
+            for patch_context in patches:
+                stack.enter_context(patch_context)
+            stack.enter_context(
+                patch(
+                    "gobby.storage.projects.LocalProjectManager",
+                    return_value=project_manager,
+                )
+            )
+            stack.enter_context(patch("gobby.code_index.storage.CodeIndexStorage"))
+            stack.enter_context(patch("gobby.code_index.context.CodeIndexContext"))
+            stack.enter_context(patch("gobby.code_index.prune.register_code_index_prune_cron"))
+            stack.enter_context(
+                patch("gobby.code_index.nightly_reindex.register_code_index_nightly_reindex_cron")
+            )
+            register = stack.enter_context(
+                patch(
+                    "gobby.code_index.codewiki_nightly.register_codewiki_nightly_crons",
+                    return_value=0,
+                )
+            )
+
+            runner = GobbyRunner()
+
+        assert runner.code_indexer is not None
+        assert runner.cron_scheduler is not None
+        assert "codewiki_nightly_cron" not in runner.degraded_services
+        assert register.call_count == 1
+        call_kwargs = register.call_args.kwargs
+        assert call_kwargs["cron_storage"] is runner.cron_storage
+        assert call_kwargs["cron_executor"] is runner.cron_scheduler.executor
+        assert call_kwargs["projects"] == []
+        assert call_kwargs["wiki_config"] is runner.config.wiki
 
     def test_init_with_memory_backup_manager_does_not_restore_jsonl(self) -> None:
         """Test MemoryBackupManager initializes without automatic JSONL restore."""
@@ -924,7 +978,7 @@ class TestCronInitializationFailures:
 class TestGobbyRunnerInitEdgeCases:
     """Edge case tests for GobbyRunner initialization."""
 
-    def test_init_with_no_llm_service(self, mock_config) -> None:
+    def test_init_with_no_llm_service(self, mock_config: MagicMock) -> None:
         """Test init when LLM service creation returns None."""
         patches = create_base_patches(mock_config=mock_config)
 
@@ -935,7 +989,7 @@ class TestGobbyRunnerInitEdgeCases:
 
             assert runner.llm_service is None
 
-    def test_init_llm_service_exception(self, mock_config) -> None:
+    def test_init_llm_service_exception(self, mock_config: MagicMock) -> None:
         """Test init when LLM service creation raises."""
         patches = create_base_patches(mock_config=mock_config)
         patches = [p for p in patches if "create_llm_service" not in str(p)]
@@ -953,7 +1007,7 @@ class TestGobbyRunnerInitEdgeCases:
 
             assert runner.llm_service is None
 
-    def test_init_with_verbose_false(self, mock_config) -> None:
+    def test_init_with_verbose_false(self, mock_config: MagicMock) -> None:
         """Test init with verbose=False (default)."""
         patches = create_base_patches(mock_config=mock_config)
 
@@ -964,7 +1018,7 @@ class TestGobbyRunnerInitEdgeCases:
 
             assert runner.verbose is False
 
-    def test_shutdown_requested_initially_false(self, mock_config) -> None:
+    def test_shutdown_requested_initially_false(self, mock_config: MagicMock) -> None:
         """Test that _shutdown_requested is False on init."""
         patches = create_base_patches(mock_config=mock_config)
 

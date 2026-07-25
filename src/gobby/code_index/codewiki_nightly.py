@@ -30,6 +30,7 @@ logger = logging.getLogger(__name__)
 
 CODEWIKI_NIGHTLY_CRON_EXPR = "0 3 * * *"
 CODEWIKI_NIGHTLY_AI = "daemon"
+CODEWIKI_NIGHTLY_JOB_PREFIX = "gobby:codewiki-nightly:"
 
 # The first full run LLM-summarizes every core file (thousands of pages on a
 # large repo); steady-state incremental runs finish in minutes via hash reuse.
@@ -57,7 +58,7 @@ class CronRegistrationProtocol(Protocol):
 
 
 def codewiki_nightly_job_name(project_id: str) -> str:
-    return f"gobby:codewiki-nightly:{project_id}"
+    return f"{CODEWIKI_NIGHTLY_JOB_PREFIX}{project_id}"
 
 
 def codewiki_nightly_handler_name(project_id: str) -> str:
@@ -243,12 +244,14 @@ def register_codewiki_nightly_crons(
     nightly refresh per memory-bearing repo keeps those digests fresh.
 
     Project IDs are de-duplicated and entries without a repo path are skipped.
-    A single shared ``CodewikiRefreshService`` backs every registered handler.
-    Returns the number of projects registered.
+    Enabled system jobs outside the registered project set are disabled and
+    unscheduled. A single shared ``CodewikiRefreshService`` backs every
+    registered handler. Returns the number of projects registered.
     """
-    service = refresh_service or nightly_refresh_service()
+    service = refresh_service
     seen: set[str] = set()
     seen_repo_paths: set[str] = set()
+    registered_project_ids: set[str] = set()
     registered = 0
     for project_id, project_name, repo_path in projects:
         if not project_id or project_id in seen or not project_name or not repo_path:
@@ -258,6 +261,8 @@ def register_codewiki_nightly_crons(
             continue
         seen.add(project_id)
         seen_repo_paths.add(repo_key)
+        if service is None:
+            service = nightly_refresh_service()
         register_codewiki_nightly_cron(
             cron_storage=cron_storage,
             cron_executor=cron_executor,
@@ -267,7 +272,27 @@ def register_codewiki_nightly_crons(
             wiki_config=wiki_config,
             refresh_service=service,
         )
+        registered_project_ids.add(project_id)
         registered += 1
+
+    for job in cron_storage.list_system_jobs_by_name_prefix(
+        CODEWIKI_NIGHTLY_JOB_PREFIX,
+        enabled=True,
+    ):
+        if job.project_id in registered_project_ids:
+            continue
+        disabled = cron_storage.reconcile_system_job_identity(
+            job.id,
+            enabled=False,
+            next_run_at=None,
+        )
+        if disabled is not None:
+            logger.info(
+                "Disabled stale CodeWiki nightly system cron job %s (%s) for ineligible project %s",
+                job.name,
+                job.id,
+                job.project_id,
+            )
     return registered
 
 

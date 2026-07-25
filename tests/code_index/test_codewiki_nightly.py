@@ -2,10 +2,11 @@
 
 from __future__ import annotations
 
+import logging
 import signal
-from datetime import timedelta
+from datetime import datetime, timedelta
 from pathlib import Path
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, cast
 
 import pytest
 
@@ -26,9 +27,10 @@ from gobby.code_index.codewiki_refresh import (
     CodewikiRefreshResult,
     CodewikiRefreshService,
 )
-from gobby.code_index.gcode_gateway import GcodeCommandError, GcodeGatewayError
+from gobby.code_index.gcode_gateway import GcodeCommandError, GcodeGateway, GcodeGatewayError
 from gobby.config.cron import CronConfig
 from gobby.config.wiki import WikiConfig
+from gobby.gwiki_gateway import GwikiGateway
 from gobby.scheduler.executor import CronExecutor
 from gobby.shutdown_intent import ShutdownIntent, ShutdownIntentRecord
 from gobby.storage.cron import CronJobStorage
@@ -96,11 +98,11 @@ def test_nightly_refresh_service_uses_generation_sized_gateway_timeouts(
     """
     service = nightly_refresh_service()
 
-    gcode = service._gcode_gateway_factory()
+    gcode = cast(GcodeGateway, service._gcode_gateway_factory())
     assert gcode._rebuild_timeout_seconds == CODEWIKI_NIGHTLY_GCODE_TIMEOUT_SECONDS
     assert CODEWIKI_NIGHTLY_GCODE_TIMEOUT_SECONDS >= 4 * 60 * 60.0
 
-    gwiki = service._gwiki_gateway_factory(tmp_path)
+    gwiki = cast(GwikiGateway, service._gwiki_gateway_factory(tmp_path))
     assert gwiki._timeout_seconds == CODEWIKI_NIGHTLY_GWIKI_TIMEOUT_SECONDS
     assert CODEWIKI_NIGHTLY_GWIKI_TIMEOUT_SECONDS >= 10 * 60.0
 
@@ -270,6 +272,151 @@ def test_register_codewiki_nightly_crons_covers_each_project_once(
     assert storage.get_job_by_name(codewiki_nightly_job_name(no_repo_project)) is None
 
 
+def test_register_codewiki_nightly_crons_disables_only_stale_system_jobs(
+    temp_db: HubDatabase,
+    tmp_path: Path,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    pm = LocalProjectManager(temp_db)
+    eligible = pm.create(name="eligible-codewiki", repo_path=str(tmp_path / "eligible"))
+    ineligible = pm.create(name="ineligible-codewiki", repo_path=str(tmp_path / "ineligible"))
+    operator_owned = pm.create(name="operator-codewiki", repo_path=str(tmp_path / "operator"))
+    storage = CronJobStorage(temp_db)
+
+    register_codewiki_nightly_cron(
+        cron_storage=storage,
+        cron_executor=FakeCronExecutor(),
+        project_id=ineligible.id,
+        project_name=ineligible.name,
+        repo_path=ineligible.repo_path or "",
+        wiki_config=WikiConfig(codewiki_nightly_enabled=True),
+    )
+    operator_job = storage.create_job(
+        project_id=operator_owned.id,
+        name=codewiki_nightly_job_name(operator_owned.id),
+        schedule_type="cron",
+        cron_expr="0 1 * * *",
+        action_type="handler",
+        action_config={"handler": "operator-owned"},
+        enabled=True,
+        is_system=False,
+    )
+    operator_next_run = operator_job.next_run_at
+    executor = FakeCronExecutor()
+
+    caplog.set_level(logging.INFO, logger=codewiki_nightly.__name__)
+    registered = register_codewiki_nightly_crons(
+        cron_storage=storage,
+        cron_executor=executor,
+        projects=[(eligible.id, eligible.name, eligible.repo_path or "")],
+        wiki_config=WikiConfig(codewiki_nightly_enabled=True),
+    )
+
+    assert registered == 1
+    assert set(executor.handlers) == {codewiki_nightly_handler_name(eligible.id)}
+    eligible_job = storage.get_job_by_name(codewiki_nightly_job_name(eligible.id))
+    assert eligible_job is not None
+    assert eligible_job.enabled is True
+    stale_job = storage.get_job_by_name(codewiki_nightly_job_name(ineligible.id))
+    assert stale_job is not None
+    assert stale_job.enabled is False
+    assert stale_job.next_run_at is None
+    unchanged_operator_job = storage.get_job(operator_job.id)
+    assert unchanged_operator_job is not None
+    assert unchanged_operator_job.enabled is True
+    assert unchanged_operator_job.next_run_at == operator_next_run
+    stale_logs = [
+        record
+        for record in caplog.records
+        if record.getMessage().startswith("Disabled stale CodeWiki nightly system cron job")
+    ]
+    assert len(stale_logs) == 1
+
+    caplog.clear()
+    register_codewiki_nightly_crons(
+        cron_storage=storage,
+        cron_executor=executor,
+        projects=[(eligible.id, eligible.name, eligible.repo_path or "")],
+        wiki_config=WikiConfig(codewiki_nightly_enabled=True),
+    )
+    assert not [
+        record
+        for record in caplog.records
+        if record.getMessage().startswith("Disabled stale CodeWiki nightly system cron job")
+    ]
+
+
+def test_register_codewiki_nightly_crons_empty_set_disables_soft_deleted_project(
+    temp_db: HubDatabase,
+    tmp_path: Path,
+) -> None:
+    pm = LocalProjectManager(temp_db)
+    project = pm.create(name="deleted-codewiki", repo_path=str(tmp_path))
+    storage = CronJobStorage(temp_db)
+
+    register_codewiki_nightly_cron(
+        cron_storage=storage,
+        cron_executor=FakeCronExecutor(),
+        project_id=project.id,
+        project_name=project.name,
+        repo_path=project.repo_path or "",
+        wiki_config=WikiConfig(codewiki_nightly_enabled=True),
+    )
+    assert pm.soft_delete(project.id) is True
+
+    registered = register_codewiki_nightly_crons(
+        cron_storage=storage,
+        cron_executor=FakeCronExecutor(),
+        projects=[],
+        wiki_config=WikiConfig(codewiki_nightly_enabled=True),
+    )
+
+    assert registered == 0
+    job = storage.get_job_by_name(codewiki_nightly_job_name(project.id))
+    assert job is not None
+    assert job.enabled is False
+    assert job.next_run_at is None
+
+
+def test_register_codewiki_nightly_crons_reenables_project_that_becomes_eligible(
+    temp_db: HubDatabase,
+    tmp_path: Path,
+) -> None:
+    pm = LocalProjectManager(temp_db)
+    project = pm.create(name="restored-codewiki", repo_path=str(tmp_path))
+    storage = CronJobStorage(temp_db)
+
+    register_codewiki_nightly_cron(
+        cron_storage=storage,
+        cron_executor=FakeCronExecutor(),
+        project_id=project.id,
+        project_name=project.name,
+        repo_path=project.repo_path or "",
+        wiki_config=WikiConfig(codewiki_nightly_enabled=True),
+    )
+    register_codewiki_nightly_crons(
+        cron_storage=storage,
+        cron_executor=FakeCronExecutor(),
+        projects=[],
+        wiki_config=WikiConfig(codewiki_nightly_enabled=True),
+    )
+    executor = FakeCronExecutor()
+
+    registered = register_codewiki_nightly_crons(
+        cron_storage=storage,
+        cron_executor=executor,
+        projects=[(project.id, project.name, project.repo_path or "")],
+        wiki_config=WikiConfig(codewiki_nightly_enabled=True),
+    )
+
+    assert registered == 1
+    assert set(executor.handlers) == {codewiki_nightly_handler_name(project.id)}
+    job = storage.get_job_by_name(codewiki_nightly_job_name(project.id))
+    assert job is not None
+    assert job.enabled is True
+    assert job.next_run_at is not None
+
+
 @pytest.mark.asyncio
 async def test_codewiki_nightly_handler_returns_success_output(tmp_path: Path) -> None:
     service = FakeRefreshService(changed_count=2)
@@ -367,7 +514,7 @@ async def test_codewiki_nightly_handler_raises_sigterm_without_active_shutdown(
 
 
 def _cron_job() -> CronJob:
-    now = "2026-01-01T00:00:00+00:00"
+    now = datetime.fromisoformat("2026-01-01T00:00:00+00:00")
     return CronJob(
         id="cj-test",
         project_id=PROJECT_ID,

@@ -541,24 +541,19 @@ def init_orchestration(runner: GobbyRunner) -> None:
                                 memory_project.repo_path,
                             )
 
-                if not codewiki_targets:
-                    logger.debug(
-                        "Skipping nightly codewiki cron registration; no project has a repo path"
-                    )
-                else:
-                    registered_count = register_codewiki_nightly_crons(
-                        cron_storage=runner.cron_storage,
-                        cron_executor=cron_executor,
-                        projects=[
-                            (project_id, project_name, repo_path)
-                            for project_id, (project_name, repo_path) in codewiki_targets.items()
-                        ],
-                        wiki_config=runner.config.wiki,
-                    )
-                    logger.debug(
-                        "Codewiki nightly cron handlers registered for %d project(s)",
-                        registered_count,
-                    )
+                registered_count = register_codewiki_nightly_crons(
+                    cron_storage=runner.cron_storage,
+                    cron_executor=cron_executor,
+                    projects=[
+                        (project_id, project_name, repo_path)
+                        for project_id, (project_name, repo_path) in codewiki_targets.items()
+                    ],
+                    wiki_config=runner.config.wiki,
+                )
+                logger.debug(
+                    "Codewiki nightly cron handlers registered for %d project(s)",
+                    registered_count,
+                )
             except Exception as e:
                 mark_service_degraded(runner, "codewiki_nightly_cron")
                 logger.exception("Failed to register codewiki nightly cron handler: %s", e)
