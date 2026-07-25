@@ -13,6 +13,11 @@ import pytest
 
 from gobby.config.sessions import MemoryRecallConfig
 from gobby.hooks.events import HookEvent, HookEventType, SessionSource
+from gobby.hooks.memory_recall_delivery import (
+    MAX_MEMORY_RECALL_DELIVERIES,
+    MEMORY_RECALL_DELIVERIES_VARIABLE,
+    MemoryRecallDeliveryQueue,
+)
 from gobby.hooks.memory_recall_dispatcher import MemoryRecallDispatcher
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.inter_session_messages import InterSessionMessageManager
@@ -111,13 +116,12 @@ def _make_dispatcher(
         database=temp_db,
         memory_manager=cast(Any, memory_manager),
         llm_service=cast(Any, llm_service),
-        message_manager=InterSessionMessageManager(temp_db),
         loop=None,
         logger=logging.getLogger("tests.memory_recall_dispatcher"),
     )
 
 
-def test_schedule_delivers_deferred_message(
+def test_schedule_queues_ranked_memory_references_without_mailbox_row(
     temp_db: HubDatabase,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -127,9 +131,10 @@ def test_schedule_delivers_deferred_message(
         [
             _memory("weak", "Weak memory should not render.", 0.42),
             _memory("strong", "Strong memory should render.", 0.91),
+            _memory("keyword", "Keyword memory should render second.", None),
         ]
     )
-    llm_service = FakeLLMService({"memory_ids": ["weak", "strong"]})
+    llm_service = FakeLLMService({"memory_ids": ["strong", "keyword", "weak"]})
     dispatcher = _make_dispatcher(temp_db, memory_manager, llm_service)
     scheduled: dict[str, Any] = {}
 
@@ -153,25 +158,95 @@ def test_schedule_delivers_deferred_message(
 
     asyncio.run(scheduled["coro"])
 
-    messages = InterSessionMessageManager(temp_db).get_undelivered_messages(SESSION_ID)
-    assert len(messages) == 1
-    assert messages[0].message_type == "memory_recall"
-    assert messages[0].metadata_json is not None
-    assert json.loads(messages[0].metadata_json) == json.loads(messages[0].content)
-    payload = json.loads(messages[0].content)
-    assert payload["type"] == "memory_recall"
-    assert payload["producer"] == "daemon_memory_recall"
-    assert payload["origin_turn_seq"] == 3
-    UUID(payload["recall_request_id"])
-    rendered = json.dumps(payload["memories"])
-    assert "Strong memory should render." in rendered
-    assert "Weak memory should not render." not in rendered
+    variables = SessionVariableManager(temp_db).get_variables(SESSION_ID)
+    deliveries = variables[MEMORY_RECALL_DELIVERIES_VARIABLE]
+    assert len(deliveries) == 1
+    delivery = deliveries[0]
+    assert delivery["origin_turn_seq"] == 3
+    assert delivery["project_id"] == PROJECT_ID
+    assert delivery["status"] == "pending"
+    UUID(delivery["recall_request_id"])
+    assert delivery["references"] == [
+        {
+            "memory_id": "strong",
+            "rank": 1,
+            "similarity": 0.91,
+            "search_via": "semantic",
+        },
+        {
+            "memory_id": "keyword",
+            "rank": 2,
+            "search_via": "semantic",
+        },
+    ]
+    serialized = json.dumps(delivery)
+    assert "Strong memory should render." not in serialized
+    assert "Keyword memory should render second." not in serialized
+    assert '"tags"' not in serialized
+    assert InterSessionMessageManager(temp_db).get_undelivered_messages(SESSION_ID) == []
     assert memory_manager.calls[0]["min_score"] == 0.7
     assert memory_manager.calls[0]["session_id"] == SESSION_ID
     UUID(memory_manager.calls[0]["recall_request_id"])
     assert memory_manager.calls[0]["caller"] == "memory.recall"
     assert '"strong"' in llm_service.calls[0]["prompt"]
     assert '"weak"' not in llm_service.calls[0]["prompt"]
+
+
+def test_delivery_queue_upserts_duplicate_turn_and_keeps_last_sixteen(
+    temp_db: HubDatabase,
+) -> None:
+    _create_session(temp_db)
+    queue = MemoryRecallDeliveryQueue(temp_db)
+    for origin_turn_seq in range(MAX_MEMORY_RECALL_DELIVERIES + 2):
+        queue.queue(
+            SESSION_ID,
+            recall_request_id=f"request-{origin_turn_seq}",
+            origin_turn_seq=origin_turn_seq,
+            project_id=PROJECT_ID,
+            memories=[
+                {
+                    "id": f"memory-{origin_turn_seq}",
+                    "content": "must never be persisted",
+                    "tags": ["private"],
+                    "similarity": 0.8,
+                    "ranking_score": origin_turn_seq / 10,
+                }
+            ],
+        )
+    queue.queue(
+        SESSION_ID,
+        recall_request_id="replacement-request",
+        origin_turn_seq=MAX_MEMORY_RECALL_DELIVERIES + 1,
+        project_id=PROJECT_ID,
+        memories=[
+            {
+                "id": "replacement-memory",
+                "content": "replacement body",
+                "search_via": "keyword|semantic",
+            }
+        ],
+    )
+
+    deliveries = SessionVariableManager(temp_db).get_variables(SESSION_ID)[
+        MEMORY_RECALL_DELIVERIES_VARIABLE
+    ]
+    assert len(deliveries) == MAX_MEMORY_RECALL_DELIVERIES
+    assert [item["origin_turn_seq"] for item in deliveries] == list(
+        range(2, MAX_MEMORY_RECALL_DELIVERIES + 2)
+    )
+    replacement = deliveries[-1]
+    assert replacement["recall_request_id"] == "replacement-request"
+    assert replacement["references"] == [
+        {
+            "memory_id": "replacement-memory",
+            "rank": 1,
+            "search_via": "keyword|semantic",
+        }
+    ]
+    serialized = json.dumps(deliveries)
+    assert "must never be persisted" not in serialized
+    assert "replacement body" not in serialized
+    assert '"tags"' not in serialized
 
 
 def test_schedule_skips_duplicate_turn(

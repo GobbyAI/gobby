@@ -2,8 +2,8 @@
 
 EventEnricher copies session metadata, terminal context, and workflow context
 from the hook event into the response for adapter injection.
-Also checks for undelivered inter-session messages (web chat -> CLI) and
-injects them into the response context for hook piggyback delivery.
+It also injects durable memory recall references and undelivered inter-session
+messages into provider hooks that carry model context.
 Extracted from HookManager.handle() as part of the Strangler Fig decomposition.
 """
 
@@ -14,6 +14,10 @@ from typing import TYPE_CHECKING, Any
 
 from gobby.adapters.capabilities import ContextChannel, get_provider_capabilities
 from gobby.hooks.events import HookEvent, HookEventType, HookResponse
+from gobby.hooks.memory_recall_delivery import (
+    MemoryRecallDeliveryQueue,
+    render_memory_recall_deliveries,
+)
 from gobby.hooks.pending_messages import render_pending_messages
 
 # Only inject full session metadata (IDs, terminal context) on context-building
@@ -24,6 +28,7 @@ _METADATA_INJECTION_EVENTS = {
 }
 
 if TYPE_CHECKING:
+    from gobby.storage.hub.protocol import HubDatabase
     from gobby.storage.inter_session_messages import InterSessionMessageManager
 
 logger = logging.getLogger(__name__)
@@ -53,7 +58,7 @@ class EventEnricher:
     Copies platform session ID, external ID, machine ID, project ID,
     terminal context, and workflow context from the event into the response.
     Tracks first-hook-per-session for token optimization.
-    Injects undelivered inter-session messages for hook piggyback delivery.
+    Injects memory recall references and inter-session messages.
     """
 
     def __init__(
@@ -61,10 +66,14 @@ class EventEnricher:
         session_manager: Any,  # Avoid runtime import of SessionManager
         injected_sessions: set[str],
         inter_session_msg_manager: InterSessionMessageManager | None = None,
+        database: HubDatabase | None = None,
     ):
         self._session_manager = session_manager
         self._injected_sessions = injected_sessions
         self._inter_session_msg_manager = inter_session_msg_manager
+        self._memory_recall_delivery_queue = (
+            MemoryRecallDeliveryQueue(database) if database else None
+        )
 
     def enrich(
         self,
@@ -127,16 +136,28 @@ class EventEnricher:
             else:
                 response.context = workflow_context
 
-        # Hook piggyback: inject undelivered inter-session messages
-        # Only on high-frequency events to avoid checking on every hook
+        raw_delivery_session_id = event.metadata.get("_platform_session_id")
+        delivery_session_id = (
+            raw_delivery_session_id
+            if isinstance(raw_delivery_session_id, str) and raw_delivery_session_id
+            else None
+        )
+        supports_context = self._hook_supports_context(event)
+        if self._memory_recall_delivery_queue and delivery_session_id and supports_context:
+            try:
+                self._inject_pending_memory_recalls(delivery_session_id, response)
+            except Exception as exc:
+                logger.debug("Memory recall reference injection failed: %s", exc)
+
+        # Hook piggyback: inject undelivered inter-session messages.
         if (
             self._inter_session_msg_manager
             and event.event_type in _PIGGYBACK_EVENTS
-            and event.metadata.get("_platform_session_id")
-            and self._hook_supports_context(event)
+            and delivery_session_id
+            and supports_context
         ):
             try:
-                self._inject_pending_messages(event.metadata["_platform_session_id"], response)
+                self._inject_pending_messages(delivery_session_id, response)
             except Exception as e:
                 logger.debug("Piggyback message injection failed: %s", e)
 
@@ -145,6 +166,31 @@ class EventEnricher:
         ):
             session_key = f"{event.metadata['_platform_session_id']}:{event.source.value}"
             self._injected_sessions.discard(session_key)
+
+    def _inject_pending_memory_recalls(
+        self,
+        platform_session_id: str,
+        response: HookResponse,
+    ) -> None:
+        """Attach durable memory references, then acknowledge their delivery."""
+        queue = self._memory_recall_delivery_queue
+        if queue is None:
+            return
+        deliveries = queue.pending(platform_session_id)
+        recall_context = render_memory_recall_deliveries(deliveries)
+        if not recall_context:
+            return
+        if response.context:
+            response.context = f"{recall_context}\n\n{response.context}"
+        else:
+            response.context = recall_context
+        try:
+            queue.acknowledge(platform_session_id, deliveries)
+        except Exception:
+            logger.warning(
+                "Failed to acknowledge memory recall references; they will be retried",
+                exc_info=True,
+            )
 
     def _inject_pending_messages(self, platform_session_id: str, response: HookResponse) -> None:
         """Check for and inject undelivered messages into response context.

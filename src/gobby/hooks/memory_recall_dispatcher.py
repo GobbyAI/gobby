@@ -5,20 +5,18 @@ from __future__ import annotations
 import asyncio
 import concurrent.futures
 import copy
-import json
 import logging
 import threading
 import time
 from typing import TYPE_CHECKING, Any
 
 from gobby.hooks.events import HookEvent
-from gobby.memory.recall_constants import MEMORY_RECALL_PRODUCER
+from gobby.hooks.memory_recall_delivery import MemoryRecallDeliveryQueue
 
 if TYPE_CHECKING:
     from gobby.llm.service import LLMService
     from gobby.memory.manager import MemoryManager
     from gobby.storage.hub.protocol import HubDatabase
-    from gobby.storage.inter_session_messages import InterSessionMessageManager
 
 
 class MemoryRecallDispatcher:
@@ -31,7 +29,6 @@ class MemoryRecallDispatcher:
         database: HubDatabase | None,
         memory_manager: MemoryManager | None,
         llm_service: LLMService | None,
-        message_manager: InterSessionMessageManager | None,
         loop: asyncio.AbstractEventLoop | None,
         logger: logging.Logger,
     ) -> None:
@@ -39,7 +36,7 @@ class MemoryRecallDispatcher:
         self._database = database
         self._memory_manager = memory_manager
         self._llm_service = llm_service
-        self._message_manager = message_manager
+        self._delivery_queue = MemoryRecallDeliveryQueue(database) if database else None
         self._loop = loop
         self._logger = logger
         self._tasks: dict[tuple[str, int], concurrent.futures.Future[Any]] = {}
@@ -47,7 +44,7 @@ class MemoryRecallDispatcher:
         self._closing = False
 
     def schedule(self, event: HookEvent) -> None:
-        """Schedule daemon-owned recall for deferred message delivery."""
+        """Schedule daemon-owned recall for deferred reference delivery."""
         session_id = event.metadata.get("_platform_session_id")
         if not isinstance(session_id, str) or not session_id:
             return
@@ -201,10 +198,14 @@ class MemoryRecallDispatcher:
     ) -> None:
         try:
             from gobby.memory.recall import MemoryRecallRunner
-            from gobby.storage.inter_session_messages import InterSessionMessageManager
 
             config = getattr(self._config, "memory_recall", None)
-            if config is None or self._memory_manager is None or self._database is None:
+            if (
+                config is None
+                or self._memory_manager is None
+                or self._database is None
+                or self._delivery_queue is None
+            ):
                 return
             runner = MemoryRecallRunner(
                 db=self._database,
@@ -217,24 +218,12 @@ class MemoryRecallDispatcher:
             if result is None or not result.memories:
                 return
 
-            payload = {
-                "type": "memory_recall",
-                "producer": MEMORY_RECALL_PRODUCER,
-                "origin_turn_seq": result.origin_turn_seq,
-                "recall_request_id": result.recall_request_id,
-                "project_id": event.project_id,
-                "memories": result.memories,
-            }
-            payload_json = json.dumps(payload)
-            message_manager = self._message_manager
-            if message_manager is None:
-                message_manager = InterSessionMessageManager(self._database)
-            message_manager.create_message(
-                from_session=session_id,
-                to_session=session_id,
-                content=payload_json,
-                message_type="memory_recall",
-                metadata_json=payload_json,
+            self._delivery_queue.queue(
+                session_id,
+                recall_request_id=result.recall_request_id,
+                origin_turn_seq=result.origin_turn_seq,
+                project_id=event.project_id,
+                memories=result.memories,
             )
         except Exception as exc:  # noqa: BLE001 - recall must fail open at hook boundary
             self._logger.warning("Deferred daemon memory recall failed: %s", exc)

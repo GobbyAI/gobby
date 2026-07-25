@@ -166,7 +166,6 @@ class HookManager:
             database=self._database,
             memory_manager=self._memory_manager,
             llm_service=self._llm_service,
-            message_manager=self._inter_session_msg_manager,
             loop=self._loop,
             logger=self.logger,
         )
@@ -178,6 +177,7 @@ class HookManager:
             session_manager=self._session_manager,
             injected_sessions=self._injected_sessions,
             inter_session_msg_manager=self._inter_session_msg_manager,
+            database=self._database,
         )
 
         # Session lookup service (resolves platform session IDs from CLI external IDs)

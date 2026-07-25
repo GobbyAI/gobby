@@ -18,8 +18,17 @@ import pytest
 
 from gobby.hooks.event_enrichment import _PIGGYBACK_EVENTS, EventEnricher
 from gobby.hooks.events import HookEvent, HookEventType, HookResponse, SessionSource
+from gobby.hooks.memory_recall_delivery import (
+    MEMORY_RECALL_DELIVERIES_VARIABLE,
+    MemoryRecallDeliveryQueue,
+)
+from gobby.storage.hub.protocol import HubDatabase
+from gobby.workflows.state_manager import SessionVariableManager
 
 pytestmark = pytest.mark.unit
+
+RECALL_SESSION_ID = "c8a1f7c4-1a9f-47e7-ae20-c08e7d684100"
+PROJECT_ID = "7f4b3122-01a4-4d42-aa81-432971d54d13"
 
 
 # ---------------------------------------------------------------------------
@@ -70,6 +79,7 @@ def _make_enricher(
     msgs: list | None = None,
     session_manager: MagicMock | None = None,
     injected_sessions: set[str] | None = None,
+    database: HubDatabase | None = None,
 ) -> EventEnricher:
     mgr = MagicMock()
     mgr.get_undelivered_messages.return_value = msgs or []
@@ -77,6 +87,27 @@ def _make_enricher(
         session_manager=session_manager,
         injected_sessions=injected_sessions if injected_sessions is not None else set(),
         inter_session_msg_manager=mgr,
+        database=database,
+    )
+
+
+def _create_recall_session(db: HubDatabase) -> None:
+    db.execute(
+        "INSERT INTO projects (id, name, created_at) VALUES (%s, %s, CURRENT_TIMESTAMP) "
+        "ON CONFLICT (id) DO NOTHING",
+        (PROJECT_ID, "event-enrichment-test"),
+    )
+    db.execute(
+        "INSERT INTO sessions (id, external_id, machine_id, source, project_id, created_at, "
+        "updated_at) VALUES (%s, %s, %s, %s, %s, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP) "
+        "ON CONFLICT (id) DO NOTHING",
+        (
+            RECALL_SESSION_ID,
+            "external-event-enrichment",
+            "machine-1",
+            "claude",
+            PROJECT_ID,
+        ),
     )
 
 
@@ -253,6 +284,137 @@ class TestMessageDeliveryOrdering:
         assert "Failed to mark piggyback messages delivered" in caplog.text
 
 
+class TestMemoryRecallReferenceDelivery:
+    def test_renders_ranked_references_and_acknowledges_in_persisted_state(
+        self,
+        temp_db: HubDatabase,
+    ) -> None:
+        _create_recall_session(temp_db)
+        queue = MemoryRecallDeliveryQueue(temp_db)
+        queue.queue(
+            RECALL_SESSION_ID,
+            recall_request_id="request-ranked",
+            origin_turn_seq=17,
+            project_id=PROJECT_ID,
+            memories=[
+                {
+                    "id": "memory-first",
+                    "content": "first body must stay out",
+                    "tags": ["private"],
+                    "similarity": 0.91,
+                    "search_via": "semantic",
+                },
+                {
+                    "id": "memory-second",
+                    "content": "second body must stay out",
+                    "ranking_score": 0.77,
+                    "ranking_mode": "hybrid",
+                },
+            ],
+        )
+        SessionVariableManager(temp_db).set_variable(
+            RECALL_SESSION_ID,
+            "injected_memory_ids",
+            ["existing-memory", "memory-first"],
+        )
+        enricher = _make_enricher(database=temp_db)
+        response = HookResponse(context="existing workflow context")
+
+        enricher.enrich(
+            _make_event(HookEventType.BEFORE_AGENT, RECALL_SESSION_ID),
+            response,
+        )
+
+        assert response.context is not None
+        first_call = 'gobby-memory.get_memory(memory_id="memory-first")'
+        second_call = 'gobby-memory.get_memory(memory_id="memory-second")'
+        assert response.context.index(first_call) < response.context.index(second_call)
+        assert response.context.index(second_call) < response.context.index(
+            "existing workflow context"
+        )
+        assert "recall_request_id=request-ranked" in response.context
+        assert "origin_turn_seq=17" in response.context
+        assert f"project_id={PROJECT_ID}" in response.context
+        assert "rank=1, similarity=0.91, search_via=semantic" in response.context
+        assert "rank=2, ranking_score=0.77, ranking_mode=hybrid" in response.context
+        assert "first body must stay out" not in response.context
+        assert "second body must stay out" not in response.context
+        assert "Pending P2P" not in response.context
+        assert "get_inter_session_message" not in response.context
+
+        variables = SessionVariableManager(temp_db).get_variables(RECALL_SESSION_ID)
+        assert variables["injected_memory_ids"] == [
+            "existing-memory",
+            "memory-first",
+            "memory-second",
+        ]
+        assert variables[MEMORY_RECALL_DELIVERIES_VARIABLE][0]["status"] == "complete"
+
+        reconstructed = _make_enricher(database=temp_db)
+        second_response = HookResponse()
+        reconstructed.enrich(
+            _make_event(HookEventType.BEFORE_AGENT, RECALL_SESSION_ID),
+            second_response,
+        )
+        assert second_response.context is None
+
+    def test_pending_delivery_survives_compaction_state_and_failed_acknowledgment(
+        self,
+        temp_db: HubDatabase,
+        caplog: pytest.LogCaptureFixture,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        _create_recall_session(temp_db)
+        queue = MemoryRecallDeliveryQueue(temp_db)
+        queue.queue(
+            RECALL_SESSION_ID,
+            recall_request_id="request-retry",
+            origin_turn_seq=18,
+            project_id=PROJECT_ID,
+            memories=[{"id": "memory-retry", "similarity": 0.88}],
+        )
+        SessionVariableManager(temp_db).set_variable(
+            RECALL_SESSION_ID,
+            "injected_memory_ids",
+            [],
+        )
+        first_enricher = _make_enricher(database=temp_db)
+        delivery_queue = first_enricher._memory_recall_delivery_queue
+        assert delivery_queue is not None
+        monkeypatch.setattr(
+            delivery_queue,
+            "acknowledge",
+            MagicMock(side_effect=RuntimeError("database unavailable")),
+        )
+        first_response = HookResponse()
+
+        with caplog.at_level("WARNING", logger="gobby.hooks.event_enrichment"):
+            first_enricher.enrich(
+                _make_event(HookEventType.BEFORE_AGENT, RECALL_SESSION_ID),
+                first_response,
+            )
+
+        assert first_response.context is not None
+        assert "memory-retry" in first_response.context
+        assert "Failed to acknowledge memory recall references" in caplog.text
+        variables = SessionVariableManager(temp_db).get_variables(RECALL_SESSION_ID)
+        assert variables[MEMORY_RECALL_DELIVERIES_VARIABLE][0]["status"] == "pending"
+        assert variables["injected_memory_ids"] == []
+
+        reconstructed = _make_enricher(database=temp_db)
+        retry_response = HookResponse()
+        reconstructed.enrich(
+            _make_event(HookEventType.BEFORE_AGENT, RECALL_SESSION_ID),
+            retry_response,
+        )
+
+        assert retry_response.context is not None
+        assert "memory-retry" in retry_response.context
+        variables = SessionVariableManager(temp_db).get_variables(RECALL_SESSION_ID)
+        assert variables[MEMORY_RECALL_DELIVERIES_VARIABLE][0]["status"] == "complete"
+        assert variables["injected_memory_ids"] == ["memory-retry"]
+
+
 class TestUrgentPriority:
     """Verify urgent messages are tagged."""
 
@@ -334,5 +496,6 @@ class TestSenderResolution:
 
         enricher.enrich(event, response)
 
+        assert response.context is not None
         assert "anonymous msg" in response.context
         assert "Session" not in response.context.split("anonymous")[0].split("\n")[-1]
