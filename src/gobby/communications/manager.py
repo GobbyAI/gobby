@@ -152,6 +152,11 @@ class CommunicationsManager:
         adapter = self._adapters.get(channel_name)
         return bool(adapter and adapter.supports_typing)
 
+    def supports_reactions(self, channel_name: str) -> bool:
+        """Return whether the active adapter implements message reactions."""
+        adapter = self._adapters.get(channel_name)
+        return bool(adapter and adapter.supports_reactions)
+
     async def send_typing(self, channel_name: str, conversation_id: str) -> None:
         """Publish a typing indicator through an active adapter."""
         adapter = self._adapters.get(channel_name)
@@ -164,6 +169,23 @@ class CommunicationsManager:
         channel = self._channel_by_name[channel_name]
         await self._rate_limiter.wait_if_needed(channel.id)
         await adapter.send_typing(conversation_id)
+
+    async def set_reaction(
+        self,
+        channel_name: str,
+        conversation_id: str,
+        platform_message_id: str,
+        reaction: str | None,
+    ) -> None:
+        """Add or remove a reaction through an active adapter."""
+        adapter = self._adapters.get(channel_name)
+        if adapter is None:
+            raise ValueError(f"Channel {channel_name!r} not found or not active")
+        if not self.supports_reactions(channel_name):
+            raise NotImplementedError(f"{adapter.channel_type} adapter does not support reactions")
+        channel = self._channel_by_name[channel_name]
+        await self._rate_limiter.wait_if_needed(channel.id)
+        await adapter.set_reaction(conversation_id, platform_message_id, reaction)
 
     async def edit_message(
         self,

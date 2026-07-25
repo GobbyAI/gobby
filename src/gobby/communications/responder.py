@@ -30,6 +30,14 @@ class CommunicationsManagerProtocol(Protocol):
         metadata: dict[str, object] | None = None,
     ) -> CommsMessage: ...
 
+    async def set_reaction(
+        self,
+        channel_name: str,
+        conversation_id: str,
+        platform_message_id: str,
+        reaction: str | None,
+    ) -> None: ...
+
 
 @dataclass(frozen=True, slots=True)
 class ResponderContext:
@@ -153,6 +161,9 @@ class CommunicationsResponder:
 
     async def handle_message(self, message: CommsMessage) -> asyncio.Task[None] | None:
         """Apply policy and route one inbound message."""
+        if message.content_type == "reaction":
+            logger.debug("Ignoring reaction event %s in responder pipeline", message.id)
+            return None
         if not message.content.strip():
             logger.info("Ignoring responder message %s without text content", message.id)
             return None
@@ -319,8 +330,21 @@ class CommunicationsResponder:
         backend = self._backend
         if backend is None:
             return
-        response = await backend.run_turn(context)
-        await self._deliver_response(context, response)
+        configured_reaction = context.responder_config.get("ack_reaction")
+        ack_reaction = (
+            configured_reaction.strip()
+            if isinstance(configured_reaction, str) and configured_reaction.strip()
+            else None
+        )
+        acknowledged = False
+        if ack_reaction is not None:
+            acknowledged = await self._set_ack_reaction(context, ack_reaction)
+        try:
+            response = await backend.run_turn(context)
+            await self._deliver_response(context, response)
+        finally:
+            if acknowledged:
+                await self._set_ack_reaction(context, None)
 
     async def _run_command(self, command: str, context: ResponderContext) -> None:
         backend = self._backend
@@ -351,6 +375,36 @@ class CommunicationsResponder:
             session_id=context.message.session_id,
             metadata={"platform_destination": context.conversation_id},
         )
+
+    async def _set_ack_reaction(
+        self,
+        context: ResponderContext,
+        reaction: str | None,
+    ) -> bool:
+        platform_message_id = context.message.platform_message_id
+        if not platform_message_id:
+            return False
+        try:
+            await self._manager.set_reaction(
+                context.channel.name,
+                context.conversation_id,
+                platform_message_id,
+                reaction,
+            )
+        except (NotImplementedError, ValueError):
+            logger.debug(
+                "Channel %s does not support acknowledgement reactions",
+                context.channel.name,
+            )
+            return False
+        except Exception:
+            logger.warning(
+                "Failed to update acknowledgement reaction on channel %s",
+                context.channel.name,
+                exc_info=True,
+            )
+            return False
+        return True
 
 
 def _object_mapping(value: object) -> dict[str, object]:

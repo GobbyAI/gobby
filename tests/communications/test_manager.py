@@ -338,6 +338,35 @@ async def test_send_message_success():
 
 
 @pytest.mark.asyncio
+async def test_set_reaction_delegates_to_capable_adapter() -> None:
+    channel = make_channel(channel_type="telegram")
+    store = make_store([channel])
+    manager = CommunicationsManager(make_config(), store, make_secret_store(), MagicMock())
+    mock_adapter = make_adapter(channel_type="telegram")
+    mock_adapter.supports_reactions = True
+    mock_adapter.set_reaction = AsyncMock()
+
+    with patch(
+        "gobby.communications.manager.get_adapter_class",
+        return_value=MagicMock(return_value=mock_adapter),
+    ):
+        await manager.start()
+
+    assert manager.supports_reactions("test-channel") is True
+    await manager.set_reaction("test-channel", "chat-1", "message-1", "👀")
+
+    mock_adapter.set_reaction.assert_awaited_once_with(
+        "chat-1",
+        "message-1",
+        "👀",
+    )
+    manager._adapters.clear()
+    assert manager.supports_reactions("test-channel") is False
+    with pytest.raises(ValueError, match="not found or not active"):
+        await manager.set_reaction("test-channel", "chat-1", "message-1", None)
+
+
+@pytest.mark.asyncio
 async def test_edit_message_persists_final_content(temp_db: HubDatabase) -> None:
     channel = make_channel(channel_id="00000000-0000-0000-0000-000000000101")
     store = LocalCommunicationsStore(
@@ -1751,6 +1780,45 @@ async def test_handle_inbound_deduplicates_platform_message_and_returns_it_for_a
     manager.event_callback.assert_not_awaited()
 
 
+@pytest.mark.asyncio
+async def test_handle_inbound_deduplicates_reaction_before_action_dispatch() -> None:
+    channel = make_channel()
+    store = make_store([channel])
+    store.get_message_by_platform_id.return_value = CommsMessage(
+        id="stored-reaction",
+        channel_id=channel.id,
+        direction="inbound",
+        content="👍",
+        content_type="reaction",
+        platform_message_id="reaction:501:message-1",
+        created_at=datetime(2024, 1, 1, tzinfo=UTC),
+    )
+    manager = CommunicationsManager(make_config(), store, make_secret_store(), MagicMock())
+    manager._channel_by_name[channel.name] = channel
+    manager.reaction_handler = AsyncMock()
+
+    duplicate = CommsMessage(
+        id="duplicate-reaction",
+        channel_id="platform-chat-1",
+        direction="inbound",
+        content="👍",
+        content_type="reaction",
+        platform_message_id="reaction:501:message-1",
+        identity_id="platform-user-1",
+        metadata_json={
+            "reaction_target_message_id": "message-1",
+            "telegram_update_id": 501,
+        },
+        created_at=datetime(2024, 1, 1, tzinfo=UTC),
+    )
+
+    handled = await manager.handle_inbound_messages(channel.name, [duplicate])
+
+    assert handled == [duplicate]
+    manager.reaction_handler.handle_reaction.assert_not_awaited()
+    store.create_message.assert_not_called()
+
+
 async def test_handle_inbound_populates_thread_map_and_handles_reactions():
     """handle_inbound_messages() should populate thread map and dispatch reactions."""
     channel = make_channel(webhook_secret=None)
@@ -1788,10 +1856,11 @@ async def test_handle_inbound_populates_thread_map_and_handles_reactions():
         channel_id="chan-1",
         direction="inbound",
         content="+1",
-        platform_message_id="msg-123",
+        platform_message_id="reaction:501:msg-123",
         content_type="reaction",
         created_at="2024-01-01T00:00:00Z",
         identity_id="user-1",
+        metadata_json={"reaction_target_message_id": "msg-123"},
     )
 
     # Needs to be dict-like so _channel_by_name works; manager.start() does that.
@@ -1800,9 +1869,14 @@ async def test_handle_inbound_populates_thread_map_and_handles_reactions():
     with patch("gobby.communications.manager.get_adapter_class", return_value=mock_adapter_cls):
         await manager.start()
 
-    await manager.handle_inbound_messages("test-channel", [inbound_msg, rxn_msg])
+    handled = await manager.handle_inbound_messages(
+        "test-channel",
+        [inbound_msg, rxn_msg],
+    )
 
     assert manager._thread_manager._thread_map[("chan-1", "session-123")] == "thread-456"
+    assert handled == [inbound_msg, rxn_msg]
+    store.create_message.assert_any_call(rxn_msg)
 
     # reaction should have called handler
     manager.reaction_handler.handle_reaction.assert_awaited_once_with(

@@ -5,7 +5,7 @@ from __future__ import annotations
 from collections.abc import Callable
 from datetime import UTC, datetime
 from pathlib import Path
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock, call, patch
 
 import httpx
 import pytest
@@ -110,6 +110,11 @@ async def test_initialize_with_webhook(
             "https://api.telegram.org/bottest-telegram-token/setWebhook",
             json={
                 "url": f"https://example.com/webhooks/api/comms/webhooks/{channel_config.name}",
+                "allowed_updates": [
+                    "message",
+                    "message_reaction",
+                    "message_reaction_count",
+                ],
                 "secret_token": "test_secret_token",
             },
         )
@@ -383,6 +388,43 @@ async def test_send_typing_calls_send_chat_action(adapter: TelegramAdapter) -> N
 
 
 @pytest.mark.asyncio
+async def test_set_reaction_adds_and_clears_acknowledgement(
+    adapter: TelegramAdapter,
+) -> None:
+    post_json = AsyncMock(return_value={"ok": True, "result": True})
+
+    with patch.object(adapter, "_post_json", post_json):
+        await adapter.set_reaction("chat999", "123", "👀")
+        await adapter.set_reaction("chat999", "123", None)
+
+    assert adapter.supports_reactions is True
+    assert post_json.await_args_list == [
+        call(
+            "setMessageReaction",
+            {
+                "chat_id": "chat999",
+                "message_id": 123,
+                "reaction": [{"type": "emoji", "emoji": "👀"}],
+            },
+        ),
+        call(
+            "setMessageReaction",
+            {
+                "chat_id": "chat999",
+                "message_id": 123,
+                "reaction": [],
+            },
+        ),
+    ]
+
+
+@pytest.mark.asyncio
+async def test_set_reaction_rejects_non_numeric_message_id(adapter: TelegramAdapter) -> None:
+    with pytest.raises(ValueError, match="message ID must be an integer"):
+        await adapter.set_reaction("chat999", "not-a-message", "👀")
+
+
+@pytest.mark.asyncio
 async def test_edit_message_calls_edit_message_text_with_html(
     adapter: TelegramAdapter,
 ) -> None:
@@ -540,6 +582,98 @@ def test_parse_group_webhook_marks_unmentioned_message(adapter: TelegramAdapter)
     messages = adapter.parse_webhook(payload, {})
 
     assert messages[0].metadata_json["mentioned"] is False
+
+
+def test_parse_message_reaction_normalizes_added_emoji(adapter: TelegramAdapter) -> None:
+    messages = adapter.parse_webhook(
+        {
+            "update_id": 10003,
+            "message_reaction": {
+                "chat": {"id": -1002222222, "type": "supergroup"},
+                "message_id": 1400,
+                "user": {"id": 1111111, "username": "testuser"},
+                "old_reaction": [],
+                "new_reaction": [{"type": "emoji", "emoji": "👍"}],
+            },
+        },
+        {},
+    )
+
+    assert len(messages) == 1
+    message = messages[0]
+    assert message.content_type == "reaction"
+    assert message.content == "👍"
+    assert message.platform_message_id == "reaction:10003:1400"
+    assert message.identity_id == "1111111"
+    assert message.metadata_json["reaction_target_message_id"] == "1400"
+    assert message.metadata_json["reaction_action"] == "added"
+    assert message.metadata_json["reactions_added"] == [{"type": "emoji", "value": "👍"}]
+    assert message.metadata_json["reactions_removed"] == []
+
+
+def test_parse_message_reaction_normalizes_removed_custom_emoji(
+    adapter: TelegramAdapter,
+) -> None:
+    messages = adapter.parse_webhook(
+        {
+            "update_id": 10004,
+            "message_reaction": {
+                "chat": {"id": -1002222222, "type": "supergroup"},
+                "message_id": 1401,
+                "actor_chat": {"id": -1002222222, "title": "Test group"},
+                "old_reaction": [{"type": "custom_emoji", "custom_emoji_id": "custom-123"}],
+                "new_reaction": [],
+            },
+        },
+        {},
+    )
+
+    assert len(messages) == 1
+    message = messages[0]
+    assert message.content == "-custom-123"
+    assert message.identity_id == "-1002222222"
+    assert message.metadata_json["reaction_action"] == "removed"
+    assert message.metadata_json["reactions_removed"] == [
+        {"type": "custom_emoji", "value": "custom-123"}
+    ]
+
+
+def test_parse_message_reaction_count_normalizes_anonymous_totals(
+    adapter: TelegramAdapter,
+) -> None:
+    messages = adapter.parse_webhook(
+        {
+            "update_id": 10005,
+            "message_reaction_count": {
+                "chat": {"id": -1002222222, "type": "supergroup"},
+                "message_id": 1402,
+                "reactions": [
+                    {
+                        "type": {"type": "emoji", "emoji": "🔥"},
+                        "total_count": 3,
+                    },
+                    {
+                        "type": {
+                            "type": "custom_emoji",
+                            "custom_emoji_id": "custom-456",
+                        },
+                        "total_count": 2,
+                    },
+                ],
+            },
+        },
+        {},
+    )
+
+    assert len(messages) == 1
+    message = messages[0]
+    assert message.platform_message_id == "reaction-count:10005:1402"
+    assert message.identity_id is None
+    assert message.metadata_json["reaction_action"] == "count"
+    assert message.metadata_json["reaction_counts"] == [
+        {"type": "emoji", "value": "🔥", "total_count": 3},
+        {"type": "custom_emoji", "value": "custom-456", "total_count": 2},
+    ]
 
 
 @pytest.mark.parametrize(
@@ -775,11 +909,15 @@ async def test_poll(
         await adapter.acknowledge_messages(messages)
         assert adapter._offset == 501
 
-        mock_get.assert_called_with(
-            "https://api.telegram.org/bottest-telegram-token/getUpdates",
-            params={"offset": 0, "timeout": 30},
-            timeout=35.0,
-        )
+    mock_get.assert_called_with(
+        "https://api.telegram.org/bottest-telegram-token/getUpdates",
+        params={
+            "offset": 0,
+            "timeout": 30,
+            "allowed_updates": '["message", "message_reaction", "message_reaction_count"]',
+        },
+        timeout=35.0,
+    )
 
 
 @pytest.mark.asyncio

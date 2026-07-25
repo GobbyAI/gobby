@@ -32,6 +32,7 @@ if TYPE_CHECKING:
     from gobby.communications.attachments import AttachmentManager
 
 logger = logging.getLogger(__name__)
+_ALLOWED_UPDATES = ("message", "message_reaction", "message_reaction_count")
 
 
 def _mentions_telegram_bot(
@@ -126,6 +127,148 @@ def _telegram_media_attachment(msg_data: Mapping[str, Any]) -> dict[str, Any] | 
         "size_bytes": _file_size(media.get("file_size")),
         "media_type": media_type,
     }
+
+
+def _normalized_reaction(reaction: object) -> dict[str, str] | None:
+    if not isinstance(reaction, dict):
+        return None
+    reaction_type = reaction.get("type")
+    if reaction_type == "emoji":
+        value = reaction.get("emoji")
+    elif reaction_type == "custom_emoji":
+        value = reaction.get("custom_emoji_id")
+    elif reaction_type == "paid":
+        value = "paid"
+    else:
+        return None
+    if not isinstance(value, str) or not value:
+        return None
+    return {"type": str(reaction_type), "value": value}
+
+
+def _normalized_reactions(value: object) -> list[dict[str, str]]:
+    if not isinstance(value, list):
+        return []
+    return [normalized for item in value if (normalized := _normalized_reaction(item)) is not None]
+
+
+def _telegram_reaction_message(payload: Mapping[str, Any]) -> CommsMessage | None:
+    reaction_update = payload.get("message_reaction")
+    if not isinstance(reaction_update, dict):
+        return None
+    chat = reaction_update.get("chat")
+    if not isinstance(chat, dict):
+        return None
+    raw_chat_id = chat.get("id")
+    raw_message_id = reaction_update.get("message_id")
+    if raw_chat_id is None or raw_message_id is None:
+        return None
+
+    actor = reaction_update.get("user")
+    if not isinstance(actor, dict):
+        actor = reaction_update.get("actor_chat")
+    if not isinstance(actor, dict):
+        return None
+    raw_user_id = actor.get("id")
+    if raw_user_id is None:
+        return None
+
+    current = _normalized_reactions(reaction_update.get("new_reaction"))
+    previous = _normalized_reactions(reaction_update.get("old_reaction"))
+    added = [item for item in current if item not in previous]
+    removed = [item for item in previous if item not in current]
+    if added:
+        action = "added"
+        content = added[0]["value"]
+    elif removed:
+        action = "removed"
+        content = f"-{removed[0]['value']}"
+    else:
+        return None
+
+    chat_id = str(raw_chat_id)
+    target_message_id = str(raw_message_id)
+    update_id = payload.get("update_id")
+    event_id = str(update_id) if isinstance(update_id, int) else str(uuid.uuid4())
+    username = actor.get("username") or actor.get("title") or str(raw_user_id)
+    conversation_type = chat.get("type")
+    return CommsMessage(
+        id=str(uuid.uuid4()),
+        channel_id="",
+        direction="inbound",
+        content=content,
+        content_type="reaction",
+        platform_message_id=f"reaction:{event_id}:{target_message_id}",
+        identity_id=str(raw_user_id),
+        metadata_json={
+            "chat_id": chat_id,
+            "platform_channel_id": chat_id,
+            "conversation_type": (
+                conversation_type if isinstance(conversation_type, str) else "unknown"
+            ),
+            "conversation_reference": {"conversation_id": chat_id},
+            "telegram_update_id": update_id,
+            "reaction_target_message_id": target_message_id,
+            "reaction_action": action,
+            "reactions_added": added,
+            "reactions_removed": removed,
+            "external_username": username,
+        },
+        created_at=datetime.now(UTC),
+    )
+
+
+def _telegram_reaction_count_message(payload: Mapping[str, Any]) -> CommsMessage | None:
+    count_update = payload.get("message_reaction_count")
+    if not isinstance(count_update, dict):
+        return None
+    chat = count_update.get("chat")
+    raw_message_id = count_update.get("message_id")
+    reactions = count_update.get("reactions")
+    if not isinstance(chat, dict) or raw_message_id is None or not isinstance(reactions, list):
+        return None
+    raw_chat_id = chat.get("id")
+    if raw_chat_id is None:
+        return None
+
+    counts: list[dict[str, str | int]] = []
+    for item in reactions:
+        if not isinstance(item, dict):
+            continue
+        normalized = _normalized_reaction(item.get("type"))
+        total_count = item.get("total_count")
+        if normalized is None or isinstance(total_count, bool) or not isinstance(total_count, int):
+            continue
+        counts.append({**normalized, "total_count": total_count})
+    if not counts:
+        return None
+
+    chat_id = str(raw_chat_id)
+    target_message_id = str(raw_message_id)
+    update_id = payload.get("update_id")
+    event_id = str(update_id) if isinstance(update_id, int) else str(uuid.uuid4())
+    conversation_type = chat.get("type")
+    return CommsMessage(
+        id=str(uuid.uuid4()),
+        channel_id="",
+        direction="inbound",
+        content=str(counts[0]["value"]),
+        content_type="reaction",
+        platform_message_id=f"reaction-count:{event_id}:{target_message_id}",
+        metadata_json={
+            "chat_id": chat_id,
+            "platform_channel_id": chat_id,
+            "conversation_type": (
+                conversation_type if isinstance(conversation_type, str) else "unknown"
+            ),
+            "conversation_reference": {"conversation_id": chat_id},
+            "telegram_update_id": update_id,
+            "reaction_target_message_id": target_message_id,
+            "reaction_action": "count",
+            "reaction_counts": counts,
+        },
+        created_at=datetime.now(UTC),
+    )
 
 
 class TelegramAdapter(BaseChannelAdapter):
@@ -269,7 +412,10 @@ class TelegramAdapter(BaseChannelAdapter):
         if webhook_base_url:
             webhook_url = f"{webhook_base_url.rstrip('/')}/api/comms/webhooks/{config.name}"
 
-            payload: dict[str, Any] = {"url": webhook_url}
+            payload: dict[str, Any] = {
+                "url": webhook_url,
+                "allowed_updates": list(_ALLOWED_UPDATES),
+            }
 
             webhook_secret = config.webhook_secret
             if webhook_secret:
@@ -321,6 +467,31 @@ class TelegramAdapter(BaseChannelAdapter):
             "sendChatAction",
             {"chat_id": conversation_id, "action": "typing"},
         )
+
+    async def set_reaction(
+        self,
+        conversation_id: str,
+        platform_message_id: str,
+        reaction: str | None,
+    ) -> None:
+        """Add one standard emoji reaction or clear bot reactions."""
+        try:
+            message_id = int(platform_message_id)
+        except (TypeError, ValueError) as exc:
+            raise ValueError("Telegram reaction message ID must be an integer") from exc
+        reaction_payload = [] if reaction is None else [{"type": "emoji", "emoji": reaction}]
+        data = await self._post_json(
+            "setMessageReaction",
+            {
+                "chat_id": conversation_id,
+                "message_id": message_id,
+                "reaction": reaction_payload,
+            },
+        )
+        if data.get("ok") is not True:
+            description = data.get("description")
+            detail = description if isinstance(description, str) else "unknown Telegram error"
+            raise RuntimeError(f"Telegram setMessageReaction failed: {detail}")
 
     async def edit_message(
         self,
@@ -491,7 +662,7 @@ class TelegramAdapter(BaseChannelAdapter):
         """Return channel capabilities."""
         return ChannelCapabilities(
             threading=True,
-            reactions=False,
+            reactions=True,
             files=True,
             markdown=True,
             max_message_length=self.max_message_length,
@@ -505,6 +676,13 @@ class TelegramAdapter(BaseChannelAdapter):
             payload_dict = json.loads(payload)
         else:
             payload_dict = payload
+
+        reaction_message = _telegram_reaction_message(payload_dict)
+        if reaction_message is not None:
+            return [reaction_message]
+        reaction_count_message = _telegram_reaction_count_message(payload_dict)
+        if reaction_count_message is not None:
+            return [reaction_count_message]
 
         if "message" not in payload_dict:
             return []
@@ -592,7 +770,11 @@ class TelegramAdapter(BaseChannelAdapter):
 
         response = await self._client.get(
             f"{self._api_base}/getUpdates",
-            params={"offset": self._offset, "timeout": 30},
+            params={
+                "offset": self._offset,
+                "timeout": 30,
+                "allowed_updates": json.dumps(_ALLOWED_UPDATES),
+            },
             timeout=35.0,
         )
         self._raise_for_status_with_redacted_token(response)

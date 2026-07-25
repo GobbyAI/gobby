@@ -70,20 +70,31 @@ class InboundCommunications:
                     handled.append(message)
                     continue
 
+                reaction_dedupe_checked = False
                 if message.content_type == "reaction":
-                    if manager.reaction_handler:
+                    reaction_target = message.metadata_json.get("reaction_target_message_id")
+                    if reaction_target is not None and message.platform_message_id:
+                        existing_reaction = await asyncio.to_thread(
+                            manager._store.get_message_by_platform_id,
+                            channel_name,
+                            message.platform_message_id,
+                        )
+                        reaction_dedupe_checked = True
+                        if existing_reaction is not None:
+                            handled.append(message)
+                            continue
+                    if manager.reaction_handler and message.identity_id:
                         try:
                             await manager.reaction_handler.handle_reaction(
                                 channel_name,
-                                message.platform_message_id,
+                                str(reaction_target or message.platform_message_id),
                                 message.content,
                                 message.identity_id,
                             )
                         except Exception as e:
                             logger.exception("Failed to handle reaction: %s", e)
-                    continue
 
-                if message.platform_message_id:
+                if message.platform_message_id and not reaction_dedupe_checked:
                     existing = await asyncio.to_thread(
                         manager._store.get_message_by_platform_id,
                         channel_name,

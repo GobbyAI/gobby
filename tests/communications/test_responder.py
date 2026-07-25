@@ -67,6 +67,7 @@ class FakeManager:
     def __init__(self, channel: ChannelConfig) -> None:
         self.channel = channel
         self.sent: list[dict[str, Any]] = []
+        self.reactions: list[tuple[str, str, str, str | None]] = []
 
     def get_channel(self, channel_id: str) -> ChannelConfig | None:
         if channel_id == self.channel.id:
@@ -97,6 +98,15 @@ class FakeManager:
             metadata_json=metadata or {},
             created_at=datetime.now(UTC),
         )
+
+    async def set_reaction(
+        self,
+        channel_name: str,
+        conversation_id: str,
+        platform_message_id: str,
+        reaction: str | None,
+    ) -> None:
+        self.reactions.append((channel_name, conversation_id, platform_message_id, reaction))
 
 
 class RecordingBackend:
@@ -309,6 +319,44 @@ async def test_turn_response_uses_existing_outbound_manager() -> None:
             "metadata": {"platform_destination": "chat-1"},
         }
     ]
+
+
+@pytest.mark.asyncio
+async def test_turn_adds_and_clears_configured_ack_reaction() -> None:
+    manager = FakeManager(
+        make_channel(
+            config={
+                "responder": {"enabled": True, "ack_reaction": "👀"},
+                "allow_from": ["owner"],
+            }
+        )
+    )
+    responder = CommunicationsResponder(manager, backend=RecordingBackend())
+    message = make_message()
+    message.platform_message_id = "platform-message-1"
+
+    task = await responder.handle_message(message)
+    assert task is not None
+    await task
+
+    assert manager.reactions == [
+        ("telegram", "chat-1", "platform-message-1", "👀"),
+        ("telegram", "chat-1", "platform-message-1", None),
+    ]
+
+
+@pytest.mark.asyncio
+async def test_reaction_event_never_starts_responder_turn() -> None:
+    manager = FakeManager(make_channel())
+    backend = RecordingBackend()
+    responder = CommunicationsResponder(manager, backend=backend)
+    message = make_message(content="👍")
+    message.content_type = "reaction"
+
+    task = await responder.handle_message(message)
+
+    assert task is None
+    assert backend.turns == []
 
 
 @pytest.mark.asyncio

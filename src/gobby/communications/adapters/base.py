@@ -72,6 +72,11 @@ class BaseChannelAdapter(ABC):
         """Whether this adapter can publish a typing indicator."""
         return type(self).send_typing is not BaseChannelAdapter.send_typing
 
+    @property
+    def supports_reactions(self) -> bool:
+        """Whether this adapter can add or remove message reactions."""
+        return type(self).set_reaction is not BaseChannelAdapter.set_reaction
+
     @abstractmethod
     async def initialize(
         self, config: ChannelConfig, secret_resolver: Callable[[str], str | None]
@@ -127,6 +132,15 @@ class BaseChannelAdapter(ABC):
         Override in adapters that support presence indicators.
         """
         raise NotImplementedError(f"{self.channel_type} adapter does not support typing indicators")
+
+    async def set_reaction(
+        self,
+        conversation_id: str,
+        platform_message_id: str,
+        reaction: str | None,
+    ) -> None:
+        """Add one reaction or remove reactions from an existing message."""
+        raise NotImplementedError(f"{self.channel_type} adapter does not support reactions")
 
     async def download_inbound_attachments(
         self,
