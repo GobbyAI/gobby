@@ -20,7 +20,7 @@ def test_commit_message_guidance_uses_project_placeholder(
 ) -> None:
     skill_bodies = {
         name: (bundled_skills_root / name / "SKILL.md").read_text(encoding="utf-8")
-        for name in ("coderabbit", "task-transitions", "source-control")
+        for name in ("coderabbit", "tasks", "source-control")
     }
     for skill_name, body in skill_bodies.items():
         assert "[<project_name>-#<task_number>]" in body

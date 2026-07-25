@@ -26,7 +26,7 @@ rules:
       and event.data.get('canonical_file_path', '').endswith(('.py', '.pyi', '.ts', '.tsx', '.js', '.jsx', '.rs', '.go', '.java', '.kt', '.swift', '.rb', '.php', '.c', '.h', '.cpp', '.hpp', '.cs', '.ex', '.exs', '.dart', '.css', '.sql', '.sh'))
     effects:
       - type: block
-        reason: 'Call get_skill(name="restraint") on gobby-skills directly through mcp__gobby__call_tool: call_tool("gobby-skills", "get_skill", {"name": "restraint"}). Then continue.'
+        reason: 'Load the skill: call_tool("gobby-skills", "get_skill", {"name":"restraint"}). Then continue.'
 
   remind-restraint-on-turn-start:
     description: "Reinforce restraint on every turn after the skill is loaded"

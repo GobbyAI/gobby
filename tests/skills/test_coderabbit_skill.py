@@ -104,7 +104,7 @@ def test_coderabbit_skill_requires_validation_commit_and_task_close() -> None:
     """Verify the skill requires validation, a task-referenced commit, and task closure."""
     body = _body()
 
-    assert "REQUIRED SKILL: task-transitions" in body
+    assert "REQUIRED SKILL: tasks" in body
     assert "REQUIRED SKILL: review-learning" in body
     assert "Run focused validation" in body
     assert "Commit with the task ref" in body

@@ -127,14 +127,14 @@ class ToolResultOffloadConfig(BaseModel):
     """Configuration for storing oversized MCP tool results out of band."""
 
     enabled: bool = True
-    threshold_chars: int = Field(10_000, ge=1_000, le=10_000_000)
+    threshold_chars: int = Field(15_000, ge=1_000, le=10_000_000)
     max_envelope_chars: int = Field(8_000, ge=2_000, le=1_000_000)
     preview_chars: int = Field(2_000, ge=0, le=1_000_000)
     chunk_chars: int = Field(2_000, ge=200, le=100_000)
     max_stored_chars: int = Field(2_000_000, ge=10_000, le=100_000_000)
     intent_match_limit: int = Field(5, ge=0, le=50)
     retention_days: int = Field(7, ge=1, le=3_650)
-    exempt_tools: list[str] = Field(default_factory=lambda: ["gobby-results/*"])
+    exempt_tools: list[str] = Field(default_factory=list)
 
     @model_validator(mode="after")
     def validate_size_relationships(self) -> "ToolResultOffloadConfig":

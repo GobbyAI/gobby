@@ -628,7 +628,7 @@ class TestDetectTaskClaimClaimOperations:
 
         assert variables["claimed_task_language_skills"] == ["python"]
         assert variables["claimed_task_required_skills"] == [
-            "task-transitions",
+            "tasks",
             "python",
             "development-discipline",
         ]
@@ -666,7 +666,7 @@ class TestDetectTaskClaimClaimOperations:
 
         assert variables["claimed_task_language_skills"] == ["rust"]
         assert variables["claimed_task_required_skills"] == [
-            "task-transitions",
+            "tasks",
             "rust",
             "development-discipline",
         ]
@@ -729,7 +729,7 @@ class TestDetectTaskClaimClaimOperations:
 
         assert variables["task_claimed"] is True
         assert variables["claimed_task_required_skills"] == [
-            "task-transitions",
+            "tasks",
             "python",
             "development-discipline",
         ]
@@ -1107,31 +1107,6 @@ class TestDetectMcpCall:
         detect_mcp_call(event, variables, SESSION_ID)
 
         assert variables["loaded_skills"] == ["plan"]
-
-    def test_tracks_loaded_skill_from_offloaded_get_skill(
-        self, variables, make_after_tool_event
-    ) -> None:
-        event = make_after_tool_event(
-            "mcp__gobby__call_tool",
-            tool_input={
-                "server_name": "gobby-skills",
-                "tool_name": "get_skill",
-                "arguments": {"name": "task-transitions"},
-            },
-            tool_output={
-                "success": True,
-                "result": {
-                    "offloaded": True,
-                    "server_name": "gobby-skills",
-                    "tool_name": "get_skill",
-                    "result_id": "stored-result",
-                },
-            },
-        )
-
-        detect_mcp_call(event, variables, SESSION_ID)
-
-        assert variables["loaded_skills"] == ["task-transitions"]
 
     def test_tracks_get_skill_result_and_loaded_skill_together(
         self, variables, make_after_tool_event

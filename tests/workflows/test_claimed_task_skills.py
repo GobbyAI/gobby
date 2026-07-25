@@ -110,7 +110,7 @@ def test_every_claimed_task_requires_task_transitions_first() -> None:
             manager,
         )
 
-    assert state["claimed_task_required_skills"] == ["task-transitions"]
+    assert state["claimed_task_required_skills"] == ["tasks"]
 
 
 class _FakeAffectedFilesDb:

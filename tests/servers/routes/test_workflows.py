@@ -445,14 +445,14 @@ class TestVariables:
                 "/api/workflows/variables/set",
                 json={
                     "name": "loaded_skills",
-                    "value": ["task-transitions"],
+                    "value": ["tasks"],
                     "session_id": "#1",
                 },
             )
 
         assert resp.status_code == 200
         mock_set.assert_called_once()
-        assert mock_set.call_args.kwargs["value"] == ["task-transitions"]
+        assert mock_set.call_args.kwargs["value"] == ["tasks"]
 
     def test_set_variable_accepts_workflow_scope(self) -> None:
         mock_sm = MagicMock()

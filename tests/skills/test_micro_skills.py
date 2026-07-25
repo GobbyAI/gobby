@@ -37,7 +37,7 @@ class TestSourceControlSkill:
 
         content = skill.content.lower()
         # Should still cover commit/release guidance while pointing task closeout
-        # callers at task-transitions.
+        # callers at tasks.
         assert "commit" in content
         assert "release" in content
-        assert "task-transitions" in content
+        assert "tasks" in content

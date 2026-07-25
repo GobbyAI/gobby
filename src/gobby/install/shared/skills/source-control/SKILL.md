@@ -1,6 +1,6 @@
 ---
 name: source-control
-description: Commit message format and release PR process. Use when ready to commit or push a release; use task-transitions for task close/review gates.
+description: Commit message format and release PR process. Use when ready to commit or push a release; use tasks for task close/review gates.
 version: "1.0.0"
 category: core
 triggers: commit, git commit, commit changes, release, push release, create pr, pull request
@@ -15,7 +15,7 @@ metadata:
 
 This skill covers commit message format and the release PR process.
 
-Use the `task-transitions` skill for task lifecycle transitions such as `close_task`,
+Use the `tasks` skill for task lifecycle transitions such as `close_task`,
 `submit_for_review`, validation gates, and commit SHA requirements.
 
 ---
@@ -42,7 +42,7 @@ The hyphen before `#` is required.
 
 ### Step 3: Task Transitions (close preview, close_task, review, validation)
 
-After committing, follow the `task-transitions` skill for the correct task lifecycle
+After committing, follow the `tasks` skill for the correct task lifecycle
 action (read-only close preview before `close_task`, `submit_for_review`, review approval, validation gates, and
 memory review).
 

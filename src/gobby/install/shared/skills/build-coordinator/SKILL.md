@@ -50,8 +50,8 @@ goal.
 
 ## Startup
 
-1. Load relevant local skills before acting: `task-creation`,
-   `task-transitions`, and `source-control`. Load `build` when launch
+1. Load relevant local skills before acting: `tasks` and `source-control`.
+Load `build` when launch
    semantics or CLI flags are in scope.
 2. Identify the target task or epic and the user's non-default constraints.
    Ask only when the target is missing or a decision cannot be inferred safely.

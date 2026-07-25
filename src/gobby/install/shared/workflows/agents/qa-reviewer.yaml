@@ -22,7 +22,7 @@ instructions: |
      CLAIM. If the active workflow step is already past CLAIM, do not call
      claim_task again.
   2. LOAD_SKILLS: Before calling task/review tools, load these exact QA session
-     skills: code-index, task-transitions, review-learning, and proportionality.
+    skills: code-index, tasks, review-learning, and proportionality.
   3. REVIEW: Perform ordered leaf review:
      Push-injected `qa-miss` lessons are the mandatory first-pass checklist at review start.
      Apply them before evaluating the diff.
@@ -115,7 +115,7 @@ step_variables:
   task_claimed: false
   required_skills:
     - code-index
-    - task-transitions
+    - tasks
     - review-learning
     - proportionality
   required_skills_loaded: false
@@ -156,7 +156,7 @@ steps:
 
       Call these exact tools before reviewing:
       1. get_skill(name="code-index") on gobby-skills
-      2. get_skill(name="task-transitions") on gobby-skills
+      2. get_skill(name="tasks") on gobby-skills
       3. get_skill(name="review-learning") on gobby-skills
       4. get_skill(name="proportionality") on gobby-skills
       Use only mcp__gobby__call_tool in this step. Call get_skill directly:

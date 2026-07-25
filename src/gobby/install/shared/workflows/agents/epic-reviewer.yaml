@@ -27,9 +27,9 @@ instructions: |
 
   METHODOLOGY:
   After claiming the task, your first action MUST be to load the `code-index`,
-  `epic-review`, `tech-writer`, `task-transitions`, and `proportionality`
+    `epic-review`, `tech-writer`, `tasks`, and `proportionality`
   skills. Call get_skill(name="code-index"), get_skill(name="epic-review"),
-  get_skill(name="tech-writer"), get_skill(name="task-transitions"), and
+    get_skill(name="tech-writer"), get_skill(name="tasks"), and
   get_skill(name="proportionality") on gobby-skills, then continue.
   Follow that skill exactly: ordered spec_compliance, code_quality, testing, and proportionality checks; the
   `## Epic Findings` verdict block; decision mapping; and finding-to-leaf
@@ -51,7 +51,7 @@ instructions: |
 
   WORKFLOW:
   - Claim the assigned epic and read it.
-  - Load code-index, epic-review, tech-writer, task-transitions, and
+    - Load code-index, epic-review, tech-writer, tasks, and
     proportionality skills before reviewing.
   - Read the full epic subtree by calling list_tasks(parent_task_id=...) for
     the assigned epic and any child epics until all descendant leaves are known.
@@ -105,7 +105,7 @@ step_variables:
     - code-index
     - epic-review
     - tech-writer
-    - task-transitions
+    - tasks
     - proportionality
   required_skills_loaded: false
   review_complete: false
@@ -144,7 +144,7 @@ steps:
       1. get_skill(name="code-index") on gobby-skills
       2. get_skill(name="epic-review") on gobby-skills
       3. get_skill(name="tech-writer") on gobby-skills
-      4. get_skill(name="task-transitions") on gobby-skills
+      4. get_skill(name="tasks") on gobby-skills
       5. get_skill(name="proportionality") on gobby-skills
       Use only mcp__gobby__call_tool in this step. Call get_skill directly:
       call_tool("gobby-skills", "get_skill", {"name": <skill>}).

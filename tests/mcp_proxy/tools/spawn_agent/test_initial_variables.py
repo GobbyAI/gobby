@@ -522,7 +522,7 @@ class TestSpawnAgentStepVariables:
         assert instance.variables["required_skills"] == [
             "development-discipline",
             "restraint",
-            "task-transitions",
+            "tasks",
         ]
         assert instance.variables["required_skills_loaded"] is False
         assert instance.variables["additional_skills"] == []
@@ -552,7 +552,7 @@ class TestSpawnAgentStepVariables:
         assert instance.variables["required_skills"] == [
             "development-discipline",
             "restraint",
-            "task-transitions",
+            "tasks",
         ]
         assert instance.variables["required_skills_loaded"] is False
         assert instance.variables["additional_skills"] == ["code-index"]

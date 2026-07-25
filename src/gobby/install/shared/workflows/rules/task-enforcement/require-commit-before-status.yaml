@@ -47,6 +47,7 @@ rules:
           Retry the status change after committing — Gobby auto-detects commits
           from Bash `git commit` and `link_commit()`. If detection misses the commit,
           pass `commit_sha` explicitly to `close_task()`.
+          No commit linked to the task is available for this status transition.
 
           For a task with no code changes, pass a reason to skip the commit requirement:
           close_task(task_id="#N", reason="obsolete")

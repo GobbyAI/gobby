@@ -108,7 +108,7 @@ class TestBundledBlockReasonFraming:
             _BUNDLED_BEFORE_TOOL_BLOCK_REASONS["require-claimed-task-required-skills"]
             == _SKILL_FETCH_REASON_TEMPLATE
         )
-        assert skill_fetch_directive("python").startswith("Call ")
+        assert skill_fetch_directive("python").startswith("Load the skill:")
 
 
 class TestClaudeCodeAdapterInit:
@@ -891,7 +891,8 @@ class TestTranslateFromHookResponse:
             reason=(
                 "Rule enforced by Gobby: [require-task-creation-skill-loaded]\n"
                 "Task lifecycle tools require the task creation skill.\n"
-                'Call get_skill(name="task-creation") on gobby-skills directly through mcp__gobby__call_tool'
+                'Load the skill: call_tool("gobby-skills", "get_skill", {"name":"tasks"}). '
+                "Then continue."
             ),
         )
         result = adapter.translate_from_hook_response(response, hook_type="pre-tool-use")

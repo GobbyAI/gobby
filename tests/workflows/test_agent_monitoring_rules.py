@@ -68,8 +68,8 @@ class TestRemovedBuildCoordinatorMonitoringSkillRule:
                         {
                             "type": "block",
                             "reason": (
-                                'Call get_skill(name="build-coordinator") on '
-                                "gobby-skills, then continue."
+                                'Load the skill: call_tool("gobby-skills", "get_skill", '
+                                '{"name":"build-coordinator"}). Then continue.'
                             ),
                         }
                     ],
@@ -153,7 +153,10 @@ class TestRequireBuildCoordinatorForGobbyBuild:
         assert response.decision == "block"
         assert response.reason is not None
         assert "require-build-coordinator-for-gobby-build" in response.reason
-        assert 'Call get_skill(name="build-coordinator") on gobby-skills' in response.reason
+        assert (
+            'Load the skill: call_tool("gobby-skills", "get_skill", '
+            '{"name":"build-coordinator"}). Then continue.'
+        ) in response.reason
 
     @pytest.mark.asyncio
     async def test_normalized_bash_gobby_build_triggers_build_coordinator_rule(

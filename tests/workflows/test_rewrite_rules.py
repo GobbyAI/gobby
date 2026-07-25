@@ -117,7 +117,7 @@ def _load_bundled_rule(
     raise AssertionError(f"Bundled rule {rule_name!r} not found under {rules_path}")
 
 
-_ACTION_FIRST_PREFIXES = ("Retry ", "Use ", "Run ", "Call ", "If ")
+_ACTION_FIRST_PREFIXES = ("Retry ", "Use ", "Run ", "Call ", "Load ", "If ")
 _GET_SKILL_RE = re.compile(r'get_skill\(name=(["\']).+?\1\)')
 _COMMAND_CALL_RE = re.compile(r"\b[a-z_][a-z0-9_]*\([^)]*\)")
 
@@ -149,17 +149,34 @@ class TestBundledBlockReasonFraming:
         reasons = _bundled_before_tool_block_reasons()
 
         assert reasons["require-claimed-task-required-skills"] == _SKILL_FETCH_TEMPLATE
-        assert skill_fetch_directive("python").startswith("Call ")
+        assert skill_fetch_directive("python").startswith("Load the skill:")
 
     def test_critical_redirects_retain_literal_offset_zero_actions(self) -> None:
         reasons = _bundled_before_tool_block_reasons()
 
-        assert reasons["require-code-index-skill"].startswith('Call get_skill(name="code-index")')
-        assert reasons["require-java-skill"].startswith('Call get_skill(name="java")')
+        assert reasons["require-code-index-skill"].startswith(
+            'Load the skill: call_tool("gobby-skills", "get_skill", {"name":"code-index"})'
+        )
+        assert reasons["require-java-skill"].startswith(
+            'Load the skill: call_tool("gobby-skills", "get_skill", {"name":"java"})'
+        )
         assert reasons["no-invalid-git-flags"].startswith("Run the command without `--no-stat`")
         completion_reason = reasons["require-completion-readiness-evidence"]
         assert completion_reason.startswith("Run project-appropriate verification")
         assert completion_reason.index("{{ completion_evidence_diagnostic") > 0
+
+    def test_bundled_skill_reasons_use_one_canonical_fetch_call(self) -> None:
+        for reason in _bundled_before_tool_block_reasons().values():
+            if 'call_tool("gobby-skills", "get_skill"' not in reason:
+                continue
+
+            match = re.search(r'\{"name":"([^"]+)"\}', reason)
+            assert match is not None
+            skill_name = match.group(1)
+            assert reason.count("call_tool") == 1
+            assert reason.count("get_skill") == 1
+            assert reason.count("gobby-skills") == 1
+            assert reason.count(f'{{"name":"{skill_name}"}}') == 1
 
 
 class TestMCPRewriteNesting:

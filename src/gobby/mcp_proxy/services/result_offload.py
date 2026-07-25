@@ -27,6 +27,12 @@ from gobby.storage.tool_results import ToolResultStore
 logger = logging.getLogger(__name__)
 
 _WRAPPER_MUTATION_RESERVE = 512
+_MANDATORY_EXEMPT_TOOLS = (
+    "gobby-skills/get_skill",
+    "gobby-skills/get_skill_file",
+    "gobby-agents/get_inter_session_message",
+    "gobby-results/*",
+)
 _MAX_STRUCTURE_KEYS = 20
 
 
@@ -83,7 +89,8 @@ class ToolResultOffloader:
         if not self._config.enabled:
             return result
         identity = f"{server_name}/{tool_name}"
-        if any(fnmatch(identity, pattern) for pattern in self._config.exempt_tools):
+        exemption_patterns = (*_MANDATORY_EXEMPT_TOOLS, *self._config.exempt_tools)
+        if any(fnmatch(identity, pattern) for pattern in exemption_patterns):
             return result
         if classify_raw_tool_result(result).status is ToolOutcomeStatus.FAILED:
             return result

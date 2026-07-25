@@ -510,10 +510,7 @@ class TestInterceptSkillCommand:
 
         result = handler._intercept_skill_command("/gobby:expand")
         assert result is not None
-        assert (
-            'Call get_skill(name="expand") on gobby-skills directly through mcp__gobby__call_tool'
-            in result
-        )
+        assert 'Load the skill: call_tool("gobby-skills", "get_skill", {"name":"expand"})' in result
         assert "# Expand skill" not in result
 
     def test_gobby_space_skill(self) -> None:
@@ -525,10 +522,7 @@ class TestInterceptSkillCommand:
 
         result = handler._intercept_skill_command("/gobby expand some args")
         assert result is not None
-        assert (
-            'Call get_skill(name="expand") on gobby-skills directly through mcp__gobby__call_tool'
-            in result
-        )
+        assert 'Load the skill: call_tool("gobby-skills", "get_skill", {"name":"expand"})' in result
         assert "User arguments:" not in result
         assert "some args" not in result
 
@@ -542,10 +536,7 @@ class TestInterceptSkillCommand:
         result = handler._intercept_skill_command("$gobby expand some args")
 
         assert result is not None
-        assert (
-            'Call get_skill(name="expand") on gobby-skills directly through mcp__gobby__call_tool'
-            in result
-        )
+        assert 'Load the skill: call_tool("gobby-skills", "get_skill", {"name":"expand"})' in result
         assert "User arguments:" not in result
         assert "some args" not in result
 
@@ -564,7 +555,7 @@ class TestInterceptSkillCommand:
 
         assert result is not None
         assert (
-            'Call get_skill(name="coderabbit") on gobby-skills directly through mcp__gobby__call_tool'
+            'Load the skill: call_tool("gobby-skills", "get_skill", {"name":"coderabbit"})'
             in result
         )
         assert "User arguments:" not in result
@@ -580,10 +571,7 @@ class TestInterceptSkillCommand:
         result = handler._intercept_skill_command("/gobby plan draft auth")
 
         assert result is not None
-        assert (
-            'Call get_skill(name="plan") on gobby-skills directly through mcp__gobby__call_tool'
-            in result
-        )
+        assert 'Load the skill: call_tool("gobby-skills", "get_skill", {"name":"plan"})' in result
         assert "User arguments:" not in result
         assert "draft auth" not in result
         assert "<skill-context" not in result
@@ -638,10 +626,7 @@ class TestInterceptSkillCommand:
 
         result = handler._intercept_skill_command("/gobby skills bridge")
         assert result is not None
-        assert (
-            'Call get_skill(name="bridge") on gobby-skills directly through mcp__gobby__call_tool'
-            in result
-        )
+        assert 'Load the skill: call_tool("gobby-skills", "get_skill", {"name":"bridge"})' in result
         assert "# Bridge skill" not in result
         handler._skill_manager.resolve_skill_name.assert_called_with("bridge")
 
@@ -654,10 +639,7 @@ class TestInterceptSkillCommand:
 
         result = handler._intercept_skill_command("/gobby skill bridge")
         assert result is not None
-        assert (
-            'Call get_skill(name="bridge") on gobby-skills directly through mcp__gobby__call_tool'
-            in result
-        )
+        assert 'Load the skill: call_tool("gobby-skills", "get_skill", {"name":"bridge"})' in result
 
     def test_gobby_skills_namespace_with_args(self) -> None:
         handler = _TestHandler()

@@ -85,7 +85,7 @@ def _status_gate_variables(
     claimed = claimed_tasks or {"task-1": "#1"}
     return {
         "require_commit_before_status": True,
-        "loaded_skills": ["task-transitions"],
+        "loaded_skills": ["tasks"],
         "task_claimed": bool(claimed),
         "claimed_tasks": claimed,
         "active_task_id": active_task_id,
@@ -624,7 +624,7 @@ class TestRequireClaimedTaskRequiredSkills:
             variables={
                 "task_claimed": True,
                 "claimed_task_required_skills": [
-                    "task-transitions",
+                    "tasks",
                     "python",
                     "development-discipline",
                 ],
@@ -634,7 +634,7 @@ class TestRequireClaimedTaskRequiredSkills:
 
         assert response.decision == "block"
         assert response.reason is not None
-        assert skill_fetch_directive("task-transitions") in response.reason
+        assert skill_fetch_directive("tasks") in response.reason
 
     @pytest.mark.asyncio
     async def test_rule_allows_when_all_relevant_skills_loaded(self, db: HubDatabase) -> None:
@@ -1074,7 +1074,7 @@ class TestBlockNeedsReviewInteractive:
         _sync_bundled(db)
         engine = RuleEngine(db)
         variables = {
-            "loaded_skills": ["task-transitions"],
+            "loaded_skills": ["tasks"],
             "plan_review_mode": "delegated",
             "active_anchor_id": "anchor-1",
         }
@@ -1093,7 +1093,7 @@ class TestBlockNeedsReviewInteractive:
         _sync_bundled(db)
         engine = RuleEngine(db)
         variables = {
-            "loaded_skills": ["task-transitions"],
+            "loaded_skills": ["tasks"],
             "plan_review_mode": "delegated",
             "active_anchor_id": "anchor-1",
         }
@@ -1113,7 +1113,7 @@ class TestBlockNeedsReviewInteractive:
         engine = RuleEngine(db)
         variables = {
             "is_spawned_agent": True,
-            "loaded_skills": ["task-transitions"],
+            "loaded_skills": ["tasks"],
         }
 
         response = await engine.evaluate(
@@ -1130,7 +1130,7 @@ class TestBlockNeedsReviewInteractive:
         _sync_bundled(db)
         engine = RuleEngine(db)
         variables = {
-            "loaded_skills": ["task-transitions"],
+            "loaded_skills": ["tasks"],
             "plan_review_mode": "delegated",
             "active_anchor_id": "anchor-1",
         }
@@ -1244,7 +1244,7 @@ class TestBlockReopenTask:
         claimed_variables = {
             "task_claimed": True,
             "claimed_tasks": {"uuid-1": "#1"},
-            "loaded_skills": ["task-transitions"],
+            "loaded_skills": ["tasks"],
         }
         claimed_response = await engine.evaluate(
             claimed_event,
@@ -1276,7 +1276,7 @@ class TestBlockReopenTask:
             variables={
                 "task_claimed": True,
                 "claimed_tasks": {"uuid-1": "#1"},
-                "loaded_skills": ["task-transitions"],
+                "loaded_skills": ["tasks"],
             },
         )
 
@@ -1284,7 +1284,7 @@ class TestBlockReopenTask:
 
 
 class TestRequireTaskCreationSkillOnSchema:
-    """Verify create_task schema lookup requires task-creation."""
+    """Verify create_task schema lookup requires the tasks skill."""
 
     def test_blocks_create_task_schema_with_canonical_directive(self, db, manager) -> None:
         _sync_bundled(db)
@@ -1296,14 +1296,14 @@ class TestRequireTaskCreationSkillOnSchema:
         assert body.event.value == "before_tool"
         assert "get_tool_schema" in (body.when or "")
         assert "create_task" in (body.when or "")
-        assert "not skill_loaded('task-creation')" in (body.when or "")
+        assert "not skill_loaded('tasks')" in (body.when or "")
         assert len(body.effects) == 1
         assert body.effects[0].type == "block"
-        assert body.effects[0].reason == skill_fetch_directive("task-creation")
+        assert body.effects[0].reason == skill_fetch_directive("tasks")
 
 
 class TestRequireTaskTransitionsSkillOnLifecycle:
-    """Verify lifecycle schemas require the task-transitions skill."""
+    """Verify lifecycle schemas require the tasks skill."""
 
     def test_when_mentions_extended_lifecycle_tools(self, db, manager) -> None:
         """reopen/escalate/de_escalate should all trigger the skill directive."""
@@ -1319,7 +1319,7 @@ class TestRequireTaskTransitionsSkillOnLifecycle:
         assert "escalate_task" in (body.when or "")
         assert "de_escalate_task" in (body.when or "")
         assert "reject_review" in (body.when or "")
-        assert "not skill_loaded('task-transitions')" in (body.when or "")
+        assert "not skill_loaded('tasks')" in (body.when or "")
 
     def test_blocks_with_task_transitions_directive(self, db, manager) -> None:
         """The rule should block with the canonical directive."""
@@ -1333,7 +1333,7 @@ class TestRequireTaskTransitionsSkillOnLifecycle:
         set_effects = [effect for effect in body.effects if effect.type == "set_variable"]
 
         assert len(block_effects) == 1
-        assert block_effects[0].reason == skill_fetch_directive("task-transitions")
+        assert block_effects[0].reason == skill_fetch_directive("tasks")
         assert set_effects == []
 
 
@@ -1347,8 +1347,8 @@ class TestTaskLifecycleSkillGates:
 
         body = RuleDefinitionBody.model_validate_json(row.definition_json)
         assert body.event.value == "before_tool"
-        assert "skill_loaded('task-creation')" in (body.when or "")
-        assert body.effects[0].reason == skill_fetch_directive("task-creation")
+        assert "skill_loaded('tasks')" in (body.when or "")
+        assert body.effects[0].reason == skill_fetch_directive("tasks")
 
     def test_transition_gate_blocks_without_loaded_skill(self, db, manager) -> None:
         _sync_bundled(db)
@@ -1358,8 +1358,8 @@ class TestTaskLifecycleSkillGates:
         body = RuleDefinitionBody.model_validate_json(row.definition_json)
         assert body.event.value == "before_tool"
         assert "reopen_task" in (body.when or "")
-        assert "skill_loaded('task-transitions')" in (body.when or "")
-        assert body.effects[0].reason == skill_fetch_directive("task-transitions")
+        assert "skill_loaded('tasks')" in (body.when or "")
+        assert body.effects[0].reason == skill_fetch_directive("tasks")
 
     @pytest.mark.asyncio
     async def test_creation_schema_gate_blocks_until_loaded(self, db, manager) -> None:
@@ -1380,11 +1380,11 @@ class TestTaskLifecycleSkillGates:
         allowed = await RuleEngine(db).evaluate(
             event,
             session_id=SESSION_ID,
-            variables={"loaded_skills": ["task-creation"]},
+            variables={"loaded_skills": ["tasks"]},
         )
 
         assert blocked.decision == "block"
-        assert "task-creation" in (blocked.reason or "")
+        assert "tasks" in (blocked.reason or "")
         assert allowed.decision == "allow"
 
     @pytest.mark.asyncio
@@ -1406,11 +1406,11 @@ class TestTaskLifecycleSkillGates:
         allowed = await RuleEngine(db).evaluate(
             event,
             session_id=SESSION_ID,
-            variables={"loaded_skills": ["task-transitions"]},
+            variables={"loaded_skills": ["tasks"]},
         )
 
         assert blocked.decision == "block"
-        assert "task-transitions" in (blocked.reason or "")
+        assert "tasks" in (blocked.reason or "")
         assert allowed.decision == "allow"
 
     @pytest.mark.asyncio
@@ -1433,11 +1433,11 @@ class TestTaskLifecycleSkillGates:
         allowed = await RuleEngine(db).evaluate(
             event,
             session_id=SESSION_ID,
-            variables={"loaded_skills": ["task-creation"]},
+            variables={"loaded_skills": ["tasks"]},
         )
 
         assert blocked.decision == "block"
-        assert "task-creation" in (blocked.reason or "")
+        assert "tasks" in (blocked.reason or "")
         assert allowed.decision == "allow"
 
     @pytest.mark.asyncio
@@ -1487,11 +1487,11 @@ class TestTaskLifecycleSkillGates:
         allowed = await RuleEngine(db).evaluate(
             event,
             session_id=SESSION_ID,
-            variables={"loaded_skills": ["task-transitions"]},
+            variables={"loaded_skills": ["tasks"]},
         )
 
         assert blocked.decision == "block"
-        assert "task-transitions" in (blocked.reason or "")
+        assert "tasks" in (blocked.reason or "")
         assert allowed.decision == "allow"
 
     @pytest.mark.asyncio

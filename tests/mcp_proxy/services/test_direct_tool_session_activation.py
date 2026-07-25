@@ -152,7 +152,7 @@ def _seed_agent_variables(db: HubDatabase, session_id: str, *, spawned: bool) ->
             "_agent_blocked_tools": [],
             "_agent_blocked_mcp_tools": [],
             "is_spawned_agent": spawned,
-            "loaded_skills": ["task-transitions"],
+            "loaded_skills": ["tasks"],
             "baseline_dirty_files": [],
             "session_edited_files": [],
         },

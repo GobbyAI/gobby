@@ -202,6 +202,36 @@ async def test_disabled_and_exempt_results_pass_through_untouched(
     harness.store.save.assert_not_called()
 
 
+@pytest.mark.parametrize(
+    ("server_name", "tool_name"),
+    [
+        ("gobby-skills", "get_skill"),
+        ("gobby-skills", "get_skill_file"),
+        ("gobby-agents", "get_inter_session_message"),
+        ("gobby-results", "get_tool_result"),
+        ("gobby-results", "search_tool_result"),
+    ],
+)
+@pytest.mark.asyncio
+async def test_mandatory_exemptions_cannot_be_removed_by_config(
+    server_name: str,
+    tool_name: str,
+) -> None:
+    harness = _harness(config=_config(exempt_tools=[]))
+    result = {"payload": "x" * 4_000}
+
+    actual = await harness.offloader.maybe_offload(
+        server_name=server_name,
+        tool_name=tool_name,
+        result=result,
+        session_id="session",
+        intent=None,
+    )
+
+    assert actual is result
+    harness.store.save.assert_not_called()
+
+
 @pytest.mark.asyncio
 @pytest.mark.parametrize(
     "result",
@@ -270,6 +300,33 @@ async def test_under_threshold_result_returns_original_object() -> None:
 
     assert actual is result
     harness.store.save.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_default_threshold_keeps_15000_chars_and_offloads_15001() -> None:
+    harness = _harness(config=ToolResultOffloadConfig())
+    inline = CallToolResult(content=[TextContent(type="text", text="x" * 15_000)])
+    oversized = CallToolResult(content=[TextContent(type="text", text="x" * 15_001)])
+
+    inline_actual = await harness.offloader.maybe_offload(
+        server_name="server",
+        tool_name="tool",
+        result=inline,
+        session_id="session",
+        intent=None,
+    )
+    oversized_actual = await harness.offloader.maybe_offload(
+        server_name="server",
+        tool_name="tool",
+        result=oversized,
+        session_id="session",
+        intent=None,
+    )
+
+    assert inline_actual is inline
+    assert isinstance(oversized_actual, dict)
+    assert oversized_actual["offloaded"] is True
+    assert harness.store.save.call_count == 1
 
 
 @pytest.mark.asyncio

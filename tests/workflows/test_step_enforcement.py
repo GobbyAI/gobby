@@ -344,11 +344,10 @@ class TestStepToolBlocking:
 
         assert response.decision == "block"
         assert response.reason is not None
-        assert "gobby-skills:get_skill" in response.reason
-        guidance = response.reason.split("\nDuring this skill-loading step,", maxsplit=1)[-1]
+        guidance = response.reason.split("\nDuring this skill-loading step:", maxsplit=1)[-1]
         assert "list_tools" not in guidance
         assert "get_tool_schema" not in guidance
-        assert 'call_tool("gobby-skills", "get_skill", {"name": "plan-review"})' in guidance
+        assert 'call_tool("gobby-skills", "get_skill", {"name":"plan-review"})' in guidance
         assert tool_name in response.reason
 
     @pytest.mark.asyncio
@@ -542,7 +541,7 @@ class TestStepMCPToolBlocking:
         assert response.reason is not None
         assert "github:get_profile" in response.reason
         assert "gobby-skills:get_skill" in response.reason
-        assert 'call_tool("gobby-skills", "get_skill", {"name": "plan-review"})' in response.reason
+        assert 'call_tool("gobby-skills", "get_skill", {"name":"plan-review"})' in response.reason
 
     @pytest.mark.asyncio
     async def test_blocked_mcp_tool_enforced(

@@ -21,23 +21,22 @@ class TestSkillFetchDirectives:
     def test_skill_fetch_directive_is_canonical(self) -> None:
         rendered = skill_fetch_directive("plan")
 
-        assert rendered.startswith(
-            'Call get_skill(name="plan") on gobby-skills directly through mcp__gobby__call_tool'
+        assert rendered == (
+            'Load the skill: call_tool("gobby-skills", "get_skill", '
+            '{"name":"plan"}). Then continue.'
         )
-        assert "list_mcp_servers" not in rendered
-        assert "list_tools" not in rendered
-        assert "get_tool_schema" not in rendered
-        assert 'call_tool("gobby-skills", "get_skill", {"name": "plan"})' in rendered
-        assert rendered.endswith("Then continue.")
+        assert rendered.count("call_tool") == 1
+        assert rendered.count("get_skill") == 1
+        assert rendered.count("gobby-skills") == 1
+        assert rendered.count("plan") == 1
 
     def test_format_skill_fetch_context_preserves_args(self) -> None:
         rendered = format_skill_fetch_context("plan", "draft auth flow")
 
         assert (
-            'Call get_skill(name="plan") on gobby-skills directly through mcp__gobby__call_tool'
-            in rendered
-        )
-        assert 'call_tool("gobby-skills", "get_skill", {"name": "plan"})' in rendered
+            'Load the skill: call_tool("gobby-skills", "get_skill", '
+            '{"name":"plan"}). Then continue.'
+        ) in rendered
         assert "User arguments: draft auth flow" in rendered
 
     def test_skill_fetch_batch_directive_calls_each_skill_directly(self) -> None:
@@ -49,9 +48,9 @@ class TestSkillFetchDirectives:
         assert "list_tools" not in rendered
         assert "get_tool_schema" not in rendered
         assert rendered.count('call_tool("gobby-skills", "get_skill"') == 3
-        assert rendered.index('{"name": "loading-skills"}') < rendered.index('{"name": "python"}')
-        assert rendered.index('{"name": "python"}') < rendered.index(
-            '{"name": "development-discipline"}'
+        assert rendered.index('{"name":"loading-skills"}') < rendered.index('{"name":"python"}')
+        assert rendered.index('{"name":"python"}') < rendered.index(
+            '{"name":"development-discipline"}'
         )
 
 

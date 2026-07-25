@@ -629,8 +629,8 @@ class TestSkillToolInterception:
 
         assert response.decision == "block"
         assert (
-            'Call get_skill(name="build-coordinator") on gobby-skills directly through mcp__gobby__call_tool'
-            in (response.context or "")
+            'Load the skill: call_tool("gobby-skills", "get_skill", '
+            '{"name":"build-coordinator"})' in (response.context or "")
         )
         assert "# Agent Monitoring" not in (response.context or "")
         assert "<skill-context" not in (response.context or "")
@@ -651,8 +651,8 @@ class TestSkillToolInterception:
 
         assert response.decision == "block"
         assert (
-            'Call get_skill(name="build-coordinator") on gobby-skills directly through mcp__gobby__call_tool'
-            in (response.context or "")
+            'Load the skill: call_tool("gobby-skills", "get_skill", '
+            '{"name":"build-coordinator"})' in (response.context or "")
         )
         skill_manager.resolve_skill_name.assert_called_once_with(
             "build-coordinator",
@@ -813,9 +813,8 @@ class TestSkillToolInterception:
         response = handlers.handle_before_tool(event)
 
         assert response.decision == "block"
-        assert (
-            'Call get_skill(name="playwright") on gobby-skills directly through mcp__gobby__call_tool'
-            in (response.context or "")
+        assert 'Load the skill: call_tool("gobby-skills", "get_skill", {"name":"playwright"})' in (
+            response.context or ""
         )
         assert "Browser automation" not in (response.context or "")
         assert "<skill-context" not in (response.context or "")
@@ -902,7 +901,6 @@ class TestSkillToolInterception:
         response = handlers.handle_before_tool(event)
 
         assert response.decision == "block"
-        assert (
-            'Call get_skill(name="playwright") on gobby-skills directly through mcp__gobby__call_tool'
-            in (response.context or "")
+        assert 'Load the skill: call_tool("gobby-skills", "get_skill", {"name":"playwright"})' in (
+            response.context or ""
         )

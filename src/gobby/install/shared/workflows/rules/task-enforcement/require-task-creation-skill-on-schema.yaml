@@ -2,7 +2,7 @@ tags: [task-enforcement, enforcement, lifecycle, gobby, default, task-skill-gate
 
 rules:
   require-task-creation-skill-on-schema:
-    description: "Require task-creation skill before create_task schema lookup"
+    description: "Require tasks skill before create_task schema lookup"
     event: before_tool
     enabled: true
     priority: 23
@@ -13,8 +13,8 @@ rules:
       )
       and (tool_input.get('server_name') or tool_input.get('server')) == 'gobby-tasks'
       and (tool_input.get('tool_name') or tool_input.get('tool')) == 'create_task'
-      and not skill_loaded('task-creation')
+      and not skill_loaded('tasks')
       and variables.get('_agent_type') != 'pipeline'
     effects:
       - type: block
-        reason: 'Call get_skill(name="task-creation") on gobby-skills directly through mcp__gobby__call_tool: call_tool("gobby-skills", "get_skill", {"name": "task-creation"}). Then continue.'
+        reason: 'Load the skill: call_tool("gobby-skills", "get_skill", {"name":"tasks"}). Then continue.'

@@ -17,7 +17,7 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
-SKILL_FETCH_CALL_TEMPLATE = 'call_tool("gobby-skills", "get_skill", {{"name": {name_json}}})'
+SKILL_FETCH_CALL_TEMPLATE = 'call_tool("gobby-skills", "get_skill", {{"name":{name_json}}})'
 
 SKILL_FETCH_PROXY_PATH_TEMPLATE = SKILL_FETCH_CALL_TEMPLATE
 
@@ -34,12 +34,7 @@ def skill_fetch_call_path(name: str) -> str:
 
 def skill_fetch_directive(name: str) -> str:
     """Return the canonical agent-facing directive for loading a skill."""
-    name_json = json.dumps(name)
-    return (
-        f"Call get_skill(name={name_json}) on gobby-skills directly through "
-        f"mcp__gobby__call_tool: {skill_fetch_proxy_path(name)}. "
-        "Then continue."
-    )
+    return f"Load the skill: {skill_fetch_proxy_path(name)}. Then continue."
 
 
 def skill_fetch_batch_directive(names: Sequence[str]) -> str:
@@ -50,12 +45,7 @@ def skill_fetch_batch_directive(names: Sequence[str]) -> str:
     if len(skills) == 1:
         return skill_fetch_directive(skills[0])
 
-    calls = "\n".join(f"- {skill_fetch_call_path(skill)}" for skill in skills)
-    return (
-        "Load these skills directly through mcp__gobby__call_tool in order:\n"
-        f"{calls}\n"
-        "Then continue."
-    )
+    return "\n".join(f"- {skill_fetch_directive(skill)}" for skill in skills)
 
 
 def format_skill_fetch_context(name: str, args: str | None = None) -> str:

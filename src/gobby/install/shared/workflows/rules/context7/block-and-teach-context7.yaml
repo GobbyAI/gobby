@@ -19,7 +19,7 @@ rules:
         acknowledge_variable: context7_nudge_fired
         reason: >
           If this edit touches third-party APIs, load current docs first:
-          get_skill(name="context7") on gobby-skills through mcp__gobby__call_tool:
-          call_tool("gobby-skills", "get_skill", {"name": "context7"}).
+          Load the skill: call_tool("gobby-skills", "get_skill", {"name":"context7"}).
+          Then continue.
           For internal/stdlib/refactor edits, simply retry — this one-time nudge
           is now cleared.

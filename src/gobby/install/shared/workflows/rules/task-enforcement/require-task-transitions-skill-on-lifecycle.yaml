@@ -2,7 +2,7 @@ tags: [task-enforcement, enforcement, lifecycle, gobby, default, task-skill-gate
 
 rules:
   require-task-transitions-skill-on-lifecycle:
-    description: "Require task-transitions skill before lifecycle schema lookup"
+    description: "Require tasks skill before lifecycle schema lookup"
     event: before_tool
     enabled: true
     priority: 23
@@ -23,8 +23,8 @@ rules:
             'submit_for_review', 'approve_review', 'reject_review')
         )
       )
-      and not skill_loaded('task-transitions')
+      and not skill_loaded('tasks')
       and variables.get('_agent_type') != 'pipeline'
     effects:
       - type: block
-        reason: 'Call get_skill(name="task-transitions") on gobby-skills directly through mcp__gobby__call_tool: call_tool("gobby-skills", "get_skill", {"name": "task-transitions"}). Then continue.'
+        reason: 'Load the skill: call_tool("gobby-skills", "get_skill", {"name":"tasks"}). Then continue.'

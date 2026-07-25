@@ -81,6 +81,73 @@ async def test_wrapper_originated_internal_list_is_offloaded_and_retrievable(
     assert "retrievable" in full_result["content"]
 
 
+@pytest.mark.parametrize(
+    ("server_name", "tool_name", "payload"),
+    [
+        (
+            "gobby-skills",
+            "get_skill_file",
+            {"success": True, "content": "skill-file-" + ("x" * 4_000)},
+        ),
+        (
+            "gobby-agents",
+            "get_inter_session_message",
+            {"success": True, "message": {"content": "message-" + ("x" * 4_000)}},
+        ),
+    ],
+)
+@pytest.mark.asyncio
+async def test_wrapper_originated_single_item_retrieval_is_never_offloaded(
+    temp_db: HubDatabase,
+    sample_project: dict[str, Any],
+    server_name: str,
+    tool_name: str,
+    payload: dict[str, Any],
+) -> None:
+    config = ToolResultOffloadConfig(
+        threshold_chars=3_000,
+        max_envelope_chars=2_000,
+        preview_chars=200,
+        chunk_chars=200,
+        max_stored_chars=10_000,
+        exempt_tools=[],
+    )
+    registry = InternalToolRegistry(server_name)
+    registry.register(
+        name=tool_name,
+        description="Return one oversized item.",
+        input_schema={"type": "object", "properties": {}},
+        func=lambda: payload,
+    )
+    manager = InternalRegistryManager()
+    manager.add_registry(registry)
+    project_id = sample_project["id"]
+    offloader = ToolResultOffloader(
+        ToolResultStore(temp_db, config),
+        temp_db,
+        config,
+        lambda: project_id,
+    )
+    mcp_manager = MagicMock()
+    mcp_manager.project_id = project_id
+    proxy = ToolProxyService(
+        mcp_manager=mcp_manager,
+        internal_manager=manager,
+        validate_arguments=False,
+        result_offloader=offloader,
+    )
+
+    result = await proxy.call_tool(
+        server_name,
+        tool_name,
+        {},
+        wrapper_originated=True,
+    )
+
+    assert result == {key: value for key, value in payload.items() if key != "success"}
+    assert "offloaded" not in result
+
+
 class TestListServers:
     @pytest.mark.asyncio
     async def test_failed_transport_is_not_reported_connected(self) -> None:

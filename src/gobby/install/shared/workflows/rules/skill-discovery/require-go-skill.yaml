@@ -16,4 +16,4 @@ rules:
       )
     effects:
       - type: block
-        reason: 'Call get_skill(name="go") on gobby-skills directly through mcp__gobby__call_tool: call_tool("gobby-skills", "get_skill", {"name": "go"}). Then continue.'
+        reason: 'Load the skill: call_tool("gobby-skills", "get_skill", {"name":"go"}). Then continue.'

@@ -20,7 +20,7 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 DEVELOPMENT_DISCIPLINE_SKILL = "development-discipline"
-TASK_TRANSITIONS_SKILL = "task-transitions"
+TASKS_SKILL = "tasks"
 TDD_SKILL = "test-driven-development"
 TDD_REQUIRED_LABEL = "tdd:required"
 TDD_EVIDENCE_PHRASE = "tdd evidence"
@@ -132,7 +132,7 @@ def build_claimed_task_skill_state(
     if task_manager is None:
         return _empty_state()
 
-    required_skills.append(TASK_TRANSITIONS_SKILL)
+    required_skills.append(TASKS_SKILL)
 
     for task_id in claimed_tasks:
         task = _load_task(task_manager, str(task_id))

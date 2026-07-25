@@ -38,7 +38,7 @@ pytestmark = pytest.mark.unit
 
 PYTHON_SKILL_DIRECTIVE = skill_fetch_directive("python")
 CODE_INDEX_SKILL_DIRECTIVE = skill_fetch_directive("code-index")
-TASK_TRANSITIONS_SKILL_DIRECTIVE = skill_fetch_directive("task-transitions")
+TASKS_SKILL_DIRECTIVE = skill_fetch_directive("tasks")
 
 
 def _async_stream(*items: Any):
@@ -359,9 +359,7 @@ class TestGrokBackend:
         session._connected = True
         session.sdk_session_id = "sess-1"
         session._on_pre_tool = AsyncMock(return_value={"context": PYTHON_SKILL_DIRECTIVE})
-        session._on_post_tool = AsyncMock(
-            return_value={"context": TASK_TRANSITIONS_SKILL_DIRECTIVE}
-        )
+        session._on_post_tool = AsyncMock(return_value={"context": TASKS_SKILL_DIRECTIVE})
 
         first_events = [event async for event in session.send_message("first")]
         second_events = [event async for event in session.send_message("second")]
@@ -385,7 +383,7 @@ class TestGrokBackend:
             if isinstance(block, dict) and isinstance(block.get("text"), str)
         )
         assert PYTHON_SKILL_DIRECTIVE in second_prompt
-        assert TASK_TRANSITIONS_SKILL_DIRECTIVE in second_prompt
+        assert TASKS_SKILL_DIRECTIVE in second_prompt
 
     @pytest.mark.asyncio
     async def test_managed_session_suppresses_tool_call_when_pre_tool_blocks(self) -> None:
@@ -412,7 +410,7 @@ class TestGrokBackend:
         session._connected = True
         session.sdk_session_id = "sess-1"
         session._on_pre_tool = AsyncMock(
-            return_value={"decision": "block", "context": TASK_TRANSITIONS_SKILL_DIRECTIVE}
+            return_value={"decision": "block", "context": TASKS_SKILL_DIRECTIVE}
         )
         session._on_post_tool = AsyncMock()
 
@@ -425,7 +423,7 @@ class TestGrokBackend:
             {"tool_name": "Write", "tool_input": {"file_path": "/tmp/example.py"}}
         )
         session._on_post_tool.assert_not_awaited()
-        assert session._consume_deferred_context() == TASK_TRANSITIONS_SKILL_DIRECTIVE
+        assert session._consume_deferred_context() == TASKS_SKILL_DIRECTIVE
 
     @pytest.mark.asyncio
     async def test_managed_session_declines_acp_request_permission_when_pre_tool_blocks(
@@ -491,7 +489,7 @@ class TestGrokBackend:
         session.sdk_session_id = "sess-1"
         session._model = "grok-ctx"
         session._on_pre_tool = AsyncMock(
-            return_value={"decision": "block", "context": TASK_TRANSITIONS_SKILL_DIRECTIVE}
+            return_value={"decision": "block", "context": TASKS_SKILL_DIRECTIVE}
         )
 
         events = [event async for event in session.send_message("first")]
@@ -1505,7 +1503,7 @@ class TestCodexBackend:
         session.chat_mode = "accept_edits"
         session._thread_id = "thread-1"
         session._on_pre_tool = AsyncMock(
-            return_value={"decision": "block", "context": TASK_TRANSITIONS_SKILL_DIRECTIVE}
+            return_value={"decision": "block", "context": TASKS_SKILL_DIRECTIVE}
         )
         backend._sessions_by_thread["thread-1"] = session
 
@@ -1535,7 +1533,7 @@ class TestCodexBackend:
                 "tool_input": {"server_name": "gobby-tasks", "tool_name": "close_task"},
             }
         )
-        assert session._consume_deferred_context() == TASK_TRANSITIONS_SKILL_DIRECTIVE
+        assert session._consume_deferred_context() == TASKS_SKILL_DIRECTIVE
 
     @pytest.mark.asyncio
     async def test_handle_approval_request_allows_gcode_in_plan_mode(self) -> None:
@@ -1748,9 +1746,7 @@ class TestCodexBackend:
         session = CodexManagedChatSession(conversation_id="conv-codex", _backend=backend)
         session._connected = True
         session._thread_id = "thread-1"
-        session._on_post_tool = AsyncMock(
-            return_value={"context": TASK_TRANSITIONS_SKILL_DIRECTIVE}
-        )
+        session._on_post_tool = AsyncMock(return_value={"context": TASKS_SKILL_DIRECTIVE})
         session._get_transcript_offset = AsyncMock(return_value=0)
         session._get_transcript_assistant_text_since = AsyncMock(return_value=None)
 
@@ -1767,7 +1763,7 @@ class TestCodexBackend:
                 "mcp_tool": "close_task",
             }
         )
-        assert session._consume_deferred_context() == TASK_TRANSITIONS_SKILL_DIRECTIVE
+        assert session._consume_deferred_context() == TASKS_SKILL_DIRECTIVE
 
     @pytest.mark.asyncio
     async def test_send_message_normalizes_realistic_completed_mcp_items(self) -> None:

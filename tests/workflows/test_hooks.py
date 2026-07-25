@@ -1006,8 +1006,8 @@ class TestVariablePersistence:
 
         assert before_response.decision == "block"
         assert (
-            'Call get_skill(name="task-transitions") on gobby-skills directly through mcp__gobby__call_tool'
-            in (before_response.reason or "")
+            'Load the skill: call_tool("gobby-skills", "get_skill", {"name":"tasks"}). '
+            "Then continue." in (before_response.reason or "")
         )
         assert response.decision == "allow"
         assert after_event.data["tool_input"] == {

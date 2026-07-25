@@ -25,11 +25,13 @@ rules:
           - "gobby-tasks-ops:close_linked_github_issue"
           - "gobby-merge:merge_apply"
         reason: |
-          Run project-appropriate verification and record results, then retry — {{ completion_evidence_diagnostic(variables, tool_input.get('task_id')) }}
+          Run project-appropriate verification commands for the changed work.
+          Recognized successful verification commands are recorded automatically; after a
+          failure, rerun until the same verification category succeeds.
+          Record results, then retry — {{ completion_evidence_diagnostic(variables, tool_input.get('task_id')) }}
           Use tests, linters, formatting checks, type checks, builds, or other
           project-defined checks appropriate to the changed work.
-          Every terminal command is recorded automatically as a durable shell_command receipt.
-          Readiness requires at least one successful verification receipt; failed and unknown
+          Successful commands become durable shell_command receipts. Failed and unknown
           receipts stay ranked first in the evidence packet for the semantic close gate.
 
           For batched Codex validation, emit every nested result as structured

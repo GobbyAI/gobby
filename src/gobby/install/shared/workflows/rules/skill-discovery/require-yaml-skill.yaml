@@ -24,4 +24,4 @@ rules:
       )
     effects:
       - type: block
-        reason: 'Call get_skill(name="yaml") on gobby-skills directly through mcp__gobby__call_tool: call_tool("gobby-skills", "get_skill", {"name": "yaml"}). Then continue.'
+        reason: 'Load the skill: call_tool("gobby-skills", "get_skill", {"name":"yaml"}). Then continue.'

@@ -5,7 +5,7 @@ from pathlib import Path
 import pytest
 from pydantic import ValidationError
 
-from gobby.config.app import DaemonConfig
+from gobby.config.app import DaemonConfig, load_config
 from gobby.config.features import ToolResultOffloadConfig
 from gobby.storage.hub.protocol import HubDatabase
 
@@ -15,18 +15,31 @@ def test_tool_result_offload_defaults_and_app_accessor() -> None:
 
     assert config.model_dump() == {
         "enabled": True,
-        "threshold_chars": 10_000,
+        "threshold_chars": 15_000,
         "max_envelope_chars": 8_000,
         "preview_chars": 2_000,
         "chunk_chars": 2_000,
         "max_stored_chars": 2_000_000,
         "intent_match_limit": 5,
         "retention_days": 7,
-        "exempt_tools": ["gobby-results/*"],
+        "exempt_tools": [],
     }
 
     daemon_config = DaemonConfig()
     assert daemon_config.get_tool_result_offload_config() is daemon_config.tool_result_offload
+
+
+def test_tool_result_offload_threshold_config_store_override_wins(tmp_path: Path) -> None:
+    class DummyConfigStore:
+        def get_all(self) -> dict[str, object]:
+            return {"tool_result_offload.threshold_chars": 21_000}
+
+    config = load_config(
+        config_file=str(tmp_path / "missing.yaml"),
+        config_store=DummyConfigStore(),
+    )
+
+    assert config.tool_result_offload.threshold_chars == 21_000
 
 
 @pytest.mark.parametrize(
@@ -36,7 +49,7 @@ def test_tool_result_offload_defaults_and_app_accessor() -> None:
         {"chunk_chars": 0},
         {"retention_days": 0},
         {"preview_chars": 8_001},
-        {"max_envelope_chars": 10_000},
+        {"max_envelope_chars": 15_000},
         {"max_stored_chars": 9_999},
         {"retention_days": 100_000},
     ],
@@ -63,7 +76,9 @@ def test_tool_results_migration_is_unique_and_applied(temp_db: HubDatabase) -> N
     versions = [int(path.name.split("_", 1)[0]) for path in migration_paths]
 
     assert versions.count(340) == 1
-    assert migration_paths[-1].name == "340_tool_results.sql"
+    assert next(path.name for path in migration_paths if path.name.startswith("340_")) == (
+        "340_tool_results.sql"
+    )
 
     tables = {
         row["table_name"]

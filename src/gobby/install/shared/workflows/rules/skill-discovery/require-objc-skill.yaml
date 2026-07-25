@@ -11,4 +11,4 @@ rules:
       and event.data.get('canonical_file_path', '').endswith(('.m', '.mm', '.h', '.pch'))
     effects:
       - type: block
-        reason: 'Call get_skill(name="objc") on gobby-skills directly through mcp__gobby__call_tool: call_tool("gobby-skills", "get_skill", {"name": "objc"}). Then continue.'
+        reason: 'Load the skill: call_tool("gobby-skills", "get_skill", {"name":"objc"}). Then continue.'

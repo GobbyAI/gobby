@@ -89,7 +89,7 @@ def _set_variable_event(name: str) -> HookEvent:
 
 def _ready_variables(**overrides: object) -> dict[str, object]:
     variables: dict[str, object] = {
-        "loaded_skills": ["task-transitions"],
+        "loaded_skills": ["tasks"],
         "target_task_has_edits": True,
         "task_has_commits": True,
         "memory_review_completed": True,

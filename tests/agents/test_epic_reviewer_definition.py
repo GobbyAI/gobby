@@ -105,7 +105,7 @@ def test_loads_required_skills_before_review() -> None:
         "code-index",
         "epic-review",
         "tech-writer",
-        "task-transitions",
+        "tasks",
         "proportionality",
     ]
     assert load_step["allowed_mcp_tools"] == ["gobby-skills:get_skill"]

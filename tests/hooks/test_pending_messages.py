@@ -34,7 +34,11 @@ def test_small_message_is_complete_and_large_message_is_referenced() -> None:
     assert result.context is not None
     assert "small sentinel" in result.context
     assert "large-sentinel-" not in result.context
-    assert 'get_inter_session_message(message_id="large-id")' in result.context
+    assert (
+        "- Session sender-12345678: 32,612-character message; retrieve with "
+        'gobby-agents.get_inter_session_message(message_id="large-id").'
+    ) in result.context
+    assert result.context.count("large-id") == 1
     assert result.represented_message_ids == ("small-id", "large-id")
     assert result.deferred_message_ids == ()
     assert len(result.context) <= PENDING_MESSAGE_CONTEXT_BUDGET

@@ -38,7 +38,7 @@ instructions: |
 
   METHODOLOGY:
   After claiming the task, load all required session skills: `tech-writer`,
-  and `task-transitions`. Call get_skill on gobby-skills for each, then
+    and `tasks`. Call get_skill on gobby-skills for each, then
   continue. Follow the tech-writer documentation workflow before editing docs.
 
   HANDOFF:
@@ -72,7 +72,7 @@ step_variables:
   task_claimed: false
   required_skills:
     - tech-writer
-    - task-transitions
+    - tasks
   required_skills_loaded: false
   implementation_complete: false
 
@@ -106,7 +106,7 @@ steps:
     status_message: |
       Load skills now before implementation:
       1. get_skill(name="tech-writer") on gobby-skills
-      2. get_skill(name="task-transitions") on gobby-skills
+      2. get_skill(name="tasks") on gobby-skills
       Use only mcp__gobby__call_tool in this step. Call get_skill directly:
       call_tool("gobby-skills", "get_skill", {"name": <skill>}).
       Do not use native Skill, GitHub/app connector, or Computer Use tools.

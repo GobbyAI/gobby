@@ -108,9 +108,8 @@ def _render_message_line(
         return f"- {priority_label}{sender}{content}{suffix}"
 
     reference = (
-        f"[Message {message_id} contains {len(content)} characters. Retrieve the complete "
-        "content and metadata with "
-        f'gobby-agents.get_inter_session_message(message_id="{message_id}").]'
+        f"{len(content):,}-character message; retrieve with "
+        f'gobby-agents.get_inter_session_message(message_id="{message_id}").'
     )
     return f"- {priority_label}{sender}{reference}"
 

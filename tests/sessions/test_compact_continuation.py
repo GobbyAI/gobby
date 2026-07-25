@@ -241,7 +241,7 @@ def test_failed_schedule_does_not_replace_newer_pending_marker(session_db: HubDa
     assert sv_mgr.get_variables(SESSION_ID)[COMPACT_SELF_CONTINUE_VARIABLE] == new_payload
 
 
-def test_persist_compact_resume_required_skills_excludes_loaded_skills(
+def test_persist_compact_resume_required_skills_reloads_claimed_task_skill(
     session_db: HubDatabase,
 ) -> None:
     db = session_db
@@ -250,14 +250,14 @@ def test_persist_compact_resume_required_skills_excludes_loaded_skills(
         SESSION_ID,
         {
             "required_skills": ["python"],
-            "claimed_task_required_skills": ["python", "development-discipline"],
-            "loaded_skills": ["code-index", "task-transitions"],
+            "claimed_task_required_skills": ["tasks", "python", "development-discipline"],
+            "loaded_skills": ["code-index", "tasks"],
         },
     )
 
     skills = persist_compact_resume_required_skills(db, SESSION_ID)
 
-    assert skills == ["loading-skills", "python", "development-discipline"]
+    assert skills == ["loading-skills", "python", "tasks", "development-discipline"]
     variables = sv_mgr.get_variables(SESSION_ID)
     assert variables[COMPACT_RESUME_REQUIRED_SKILLS_VARIABLE] == skills
 

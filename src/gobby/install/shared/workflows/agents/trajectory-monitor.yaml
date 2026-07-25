@@ -25,7 +25,7 @@ instructions: |
   is available as assigned_task_id. Follow the active workflow step exactly.
 
   1. CLAIM: Claim the assigned task only when the active step is CLAIM.
-  2. LOAD_SKILLS: Load code-index, task-transitions, review-learning, and
+    2. LOAD_SKILLS: Load code-index, tasks, review-learning, and
      proportionality before inspecting task or repository state.
   3. REVIEW: Establish the exact task workspace and target branch from worktree,
      clone, artifact, and delivery records. Audit every linked commit diff, then
@@ -57,7 +57,7 @@ step_variables:
   task_claimed: false
   required_skills:
     - code-index
-    - task-transitions
+    - tasks
     - review-learning
     - proportionality
   required_skills_loaded: false
@@ -92,7 +92,7 @@ steps:
     mcp_error_policy: stay
     description: "Load required trajectory-review skills"
     status_message: |
-      Load these exact skills from gobby-skills: code-index, task-transitions,
+      Load these exact skills from gobby-skills: code-index, tasks,
       review-learning, and proportionality. Do not inspect the task until all
       required skills are loaded. Use only mcp__gobby__call_tool. For each
       skill, call call_tool("gobby-skills", "get_skill", {"name": <skill>}). Do not use

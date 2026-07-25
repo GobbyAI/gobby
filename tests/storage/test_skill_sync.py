@@ -17,6 +17,8 @@ REMOVED_BUNDLED_SKILLS = (
     "test-battery",
     "agent-" + "monitoring",
     "nano-banana",
+    "task-creation",
+    "task-transitions",
 )
 
 
@@ -105,6 +107,7 @@ class TestSyncBundledSkills:
         # Skills are directly visible (source='installed')
         installed = skill_manager.list_skills(source="installed")
         assert len(installed) > 0
+        assert skill_manager.get_by_name("tasks") is not None
 
     def test_sync_bundled_skills_creates_as_installed_source(
         self, db: HubDatabase, skill_manager: LocalSkillManager

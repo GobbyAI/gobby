@@ -41,7 +41,7 @@ _AGGREGATED_RULE_NAME_RE = re.compile(r"^aggregated:(\d+)-gates$")
 _AGGREGATED_GATE_LINE_RE = re.compile(r"^\s*(\d+)\.\s+\[([^\]]+)\]\s*(.*)$")
 _GET_SKILL_RE = re.compile(r'get_skill\(name=(["\']).+?\1\)')
 _COMMAND_CALL_RE = re.compile(r"\b[a-z_][a-z0-9_]*\([^)]*\)")
-_ACTION_FIRST_PREFIXES = ("Retry ", "Use ", "Run ", "Call ", "If ")
+_ACTION_FIRST_PREFIXES = ("Retry ", "Use ", "Run ", "Call ", "Load ", "If ")
 _DENY_REASON_MAX_CHARS = 300
 
 DECISION_STYLES_ALLOWED_TO_CONTINUE_ON_DENY = frozenset(

@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import re
 
-from gobby.skills.formatting import skill_fetch_proxy_path
+from gobby.skills.formatting import skill_fetch_batch_directive, skill_fetch_directive
 from gobby.workflows.definitions import WorkflowStep
 
 _SKILL_LOAD_TARGET_PATTERN = re.compile(r"tool_input\.name\s*==\s*['\"]([^'\"]+)['\"]")
@@ -16,15 +16,10 @@ def skill_load_block_guidance(step: WorkflowStep) -> str:
         return ""
 
     targets = _skill_load_targets(step)
-    if targets:
-        calls = ", then ".join(skill_fetch_proxy_path(target) for target in targets)
-    else:
-        calls = 'call_tool("gobby-skills", "get_skill", {"name": "<skill-name>"})'
-
-    return (
-        "\nDuring this skill-loading step, call gobby-skills:get_skill directly through "
-        f"mcp__gobby__call_tool: {calls}."
+    directive = (
+        skill_fetch_batch_directive(targets) if targets else skill_fetch_directive("<skill-name>")
     )
+    return f"\nDuring this skill-loading step:\n{directive}"
 
 
 def _is_skill_load_step(step: WorkflowStep) -> bool:

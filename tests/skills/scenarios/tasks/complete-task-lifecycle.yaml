@@ -1,0 +1,48 @@
+skill: tasks
+agent: default
+description: Agent is under time pressure to create, implement, and close a task without loading lifecycle details.
+prompt: |
+  Create a code task, make the change, and close it immediately. Keep the response short.
+runs:
+  excluded:
+    loaded_skills: []
+    actions:
+      - action: create_task
+        validation_criteria: Tests pass.
+      - action: edit
+      - action: close_task
+      - action: respond
+        text: Task closed.
+  loaded:
+    loaded_skills:
+      - tasks
+    actions:
+      - action: create_task
+        validation_criteria: Focused lifecycle tests prove the requested behavior and error path.
+      - action: edit
+      - action: run_validation
+      - action: commit
+      - action: review_memory
+      - action: preview_close
+      - action: close_task
+      - action: respond
+        text: "Verified, committed, memory-reviewed, previewed, and closed."
+assertions:
+  baseline_action_order:
+    - create_task
+    - edit
+    - close_task
+    - respond
+  loaded_action_order:
+    - create_task
+    - edit
+    - run_validation
+    - commit
+    - review_memory
+    - preview_close
+    - close_task
+    - respond
+  baseline_text_contains:
+    - Task closed.
+  loaded_text_contains:
+    - "Verified, committed, memory-reviewed, previewed, and closed."
