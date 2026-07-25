@@ -778,6 +778,7 @@ async def test_poll(
         mock_get.assert_called_with(
             "https://api.telegram.org/bottest-telegram-token/getUpdates",
             params={"offset": 0, "timeout": 30},
+            timeout=35.0,
         )
 
 

@@ -2,6 +2,7 @@
 
 import asyncio
 import json
+from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -11,13 +12,14 @@ from gobby.servers.websocket.chat._session import (
     ChatSessionMixin,
     _resolve_git_branch,
 )
+from gobby.servers.websocket.chat._streaming import ChatStreamingMixin
 from gobby.servers.websocket.chat.session_registry import WebChatSessionRegistry
 from tests._timing import drain_asyncio_tasks, wait_forever
 
 pytestmark = pytest.mark.unit
 
 
-class DummyMixin(ChatSessionMixin):
+class DummyMixin(ChatStreamingMixin, ChatSessionMixin):
     def __init__(self) -> None:
         self.clients: dict = {}
         self._chat_sessions: dict = {}
@@ -28,9 +30,9 @@ class DummyMixin(ChatSessionMixin):
         self._pending_projects: dict = {}
         self._pending_providers: dict = {}
         self._session_create_locks: dict = {}
-        self.session_manager = None
-        self.daemon_config = None
-        self.web_chat_runtime_manager = None
+        self.session_manager: Any = None
+        self.daemon_config: Any = None
+        self.web_chat_runtime_manager: Any = None
 
     async def _fire_lifecycle(self, cid: str, event_type: str, data: object) -> None:
         pass
@@ -139,6 +141,74 @@ class TestCancelActiveChat:
         mixin._cancel_tts.assert_awaited_once_with("conv-xyz")
         assert mixin._cancel_tts.await_count == 1
         assert mixin._cancel_tts.await_args is not None
+
+
+class TestConfigureChatSession:
+    @pytest.mark.asyncio
+    async def test_queues_surface_context_for_new_session(self, mixin: DummyMixin) -> None:
+        await mixin.configure_chat_session(
+            "conv-comms",
+            chat_mode="normal",
+            agent_name="comms-agent",
+            project_id="project-1",
+        )
+
+        assert mixin._pending_modes["conv-comms"] == "normal"
+        assert mixin._pending_agents["conv-comms"] == "comms-agent"
+        assert mixin._pending_projects["conv-comms"] == "project-1"
+
+    @pytest.mark.asyncio
+    async def test_reuses_matching_existing_session(self, mixin: DummyMixin) -> None:
+        session = MagicMock(
+            chat_mode="normal",
+            project_id="project-1",
+            _pending_agent_name="comms-agent",
+        )
+        session.stop = AsyncMock()
+        mixin._chat_sessions["conv-comms"] = session
+
+        await mixin.configure_chat_session(
+            "conv-comms",
+            chat_mode="normal",
+            agent_name="comms-agent",
+            project_id="project-1",
+        )
+
+        session.stop.assert_not_awaited()
+        assert mixin._chat_sessions["conv-comms"] is session
+
+    @pytest.mark.asyncio
+    async def test_restarts_mismatched_existing_session(self, mixin: DummyMixin) -> None:
+        session = MagicMock(
+            chat_mode="plan",
+            project_id="project-old",
+            _pending_agent_name="default",
+        )
+        session.stop = AsyncMock()
+        mixin._chat_sessions["conv-comms"] = session
+
+        await mixin.configure_chat_session(
+            "conv-comms",
+            chat_mode="normal",
+            agent_name="comms-agent",
+            project_id="project-new",
+        )
+
+        session.stop.assert_awaited_once()
+        assert "conv-comms" not in mixin._chat_sessions
+        assert mixin._pending_modes["conv-comms"] == "normal"
+        assert mixin._pending_agents["conv-comms"] == "comms-agent"
+        assert mixin._pending_projects["conv-comms"] == "project-new"
+
+    @pytest.mark.asyncio
+    async def test_rejects_unknown_mode(self, mixin: DummyMixin) -> None:
+        with pytest.raises(ValueError, match="Unsupported chat mode"):
+            await mixin.configure_chat_session(
+                "conv-comms",
+                chat_mode="auto",
+                agent_name="comms-agent",
+                project_id="project-1",
+            )
 
 
 class TestCreateChatSessionInner:
@@ -522,6 +592,51 @@ class TestCreateChatSessionInner:
         )
         assert mixin.web_chat_runtime_manager.create_session.call_count == 1
         assert mixin.web_chat_runtime_manager.create_session.call_args is not None
+
+    @pytest.mark.asyncio
+    async def test_project_switch_starts_fresh_and_persists_project(
+        self, mixin: DummyMixin
+    ) -> None:
+        existing_db_sess = MagicMock()
+        existing_db_sess.id = "db-existing"
+        existing_db_sess.seq_num = 88
+        existing_db_sess.session_type = "web_chat"
+        existing_db_sess.status = "active"
+        existing_db_sess.source = "codex"
+        existing_db_sess.project_id = "project-old"
+        existing_db_sess.external_id = "codex-old"
+        existing_db_sess.usage_output_tokens = 100
+        existing_db_sess.chat_mode = "normal"
+        existing_db_sess.approved_tools_json = None
+
+        mock_session = AsyncMock()
+        mock_session.provider = "codex"
+        mock_session.chat_mode = "plan"
+        mock_session.db_session_id = None
+        mock_session.resume_session_id = None
+        mock_session.project_path = None
+        mock_session.project_id = None
+        mock_session.system_prompt_override = None
+        mock_session.model = None
+
+        mixin.web_chat_runtime_manager = MagicMock()
+        mixin.web_chat_runtime_manager.create_session.return_value = mock_session
+        mixin.session_manager = MagicMock()
+        mixin.session_manager.db = MagicMock()
+        mixin.session_manager.get.return_value = existing_db_sess
+
+        await mixin._create_chat_session_inner(
+            "conv-existing",
+            project_id="project-new",
+            provider="codex",
+        )
+
+        assert mock_session.resume_session_id is None
+        assert mock_session.project_id == "project-new"
+        mixin.session_manager.update.assert_called_once_with(
+            "db-existing",
+            project_id="project-new",
+        )
 
     @pytest.mark.asyncio
     async def test_expired_web_chat_activates_after_successful_hydration(

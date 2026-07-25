@@ -12,10 +12,13 @@ from gobby.communications.chat_transport import (
 )
 from gobby.communications.responder import ResponderContext
 from gobby.servers.chat_stream_transport import ChatStreamTransport
+from gobby.storage.projects import PERSONAL_PROJECT_ID
 
 logger = logging.getLogger(__name__)
 
 _TYPING_REFRESH_SECONDS = 4.0
+_DEFAULT_AGENT = "comms-agent"
+_DEFAULT_CHAT_MODE = "normal"
 
 
 class ChatTurnHost(Protocol):
@@ -28,11 +31,29 @@ class ChatTurnHost(Protocol):
         content: str,
         model: str | None,
         transport: ChatStreamTransport,
+        project_id: str | None = None,
         provider: str | None = None,
         tts_enabled: bool | None = None,
     ) -> None: ...
 
     async def reset_chat_session(self, conversation_id: str) -> bool: ...
+
+    async def configure_chat_session(
+        self,
+        conversation_id: str,
+        *,
+        chat_mode: str,
+        agent_name: str,
+        project_id: str,
+    ) -> None: ...
+
+    def resolve_chat_binding(
+        self,
+        conversation_id: str,
+        *,
+        provider: str | None,
+        model: str | None,
+    ) -> tuple[str, str | None]: ...
 
 
 class ChatSessionCommsBackend:
@@ -55,12 +76,20 @@ class ChatSessionCommsBackend:
             self._active_turns[session_key] = cast(asyncio.Task[None], current)
         transport = CommunicationsChatStreamTransport(self._manager, context)
         typing_task: asyncio.Task[None] | None = None
+        project_id = _string_setting(context, "project_id") or PERSONAL_PROJECT_ID
         try:
+            await self._host.configure_chat_session(
+                session_key,
+                chat_mode=_string_setting(context, "chat_mode") or _DEFAULT_CHAT_MODE,
+                agent_name=_string_setting(context, "agent") or _DEFAULT_AGENT,
+                project_id=project_id,
+            )
             typing_task = await self._start_typing(context)
             await self._host._run_chat_turn(
                 conversation_id=session_key,
                 content=context.message.content,
                 model=_string_setting(context, "model"),
+                project_id=project_id,
                 transport=transport,
                 provider=_string_setting(context, "provider"),
                 tts_enabled=False,
@@ -131,8 +160,12 @@ class ChatSessionCommsBackend:
         """Describe the current responder runtime binding."""
         session_key = _session_key(context)
         state = "active" if session_key in self._active_turns else "idle"
-        provider = _string_setting(context, "provider") or "default"
-        model = _string_setting(context, "model") or "default"
+        provider, model = self._host.resolve_chat_binding(
+            session_key,
+            provider=_string_setting(context, "provider"),
+            model=_string_setting(context, "model"),
+        )
+        model = model or "provider default"
         return f"Responder {state}. Provider: {provider}. Model: {model}."
 
     async def help(self, context: ResponderContext) -> str | None:

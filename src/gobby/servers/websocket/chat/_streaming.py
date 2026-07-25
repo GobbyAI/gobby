@@ -13,7 +13,10 @@ from websockets.exceptions import ConnectionClosed, ConnectionClosedError
 
 from gobby.servers.chat_session_base import ChatSessionProtocol
 from gobby.servers.chat_stream_transport import ChatStreamTransport
-from gobby.servers.websocket.chat._session import _resolve_git_branch
+from gobby.servers.websocket.chat._session import (
+    _normalize_runtime_chat_mode,
+    _resolve_git_branch,
+)
 from gobby.servers.websocket.chat._stream_events import (
     ChatStreamEventHandler,
     ChatStreamEventState,
@@ -37,6 +40,9 @@ class ChatStreamingMixin:
 
     _chat_sessions: dict[str, ChatSessionProtocol]
     _active_chat_tasks: dict[str, asyncio.Task[None]]
+    _pending_agents: dict[str, str]
+    _pending_modes: dict[str, str]
+    _pending_projects: dict[str, str]
     clients: dict[ServerConnection, dict[str, Any]]
     web_chat_session_registry: Any
 
@@ -406,6 +412,36 @@ class ChatStreamingMixin:
             return False
         await session.stop()
         return True
+
+    async def configure_chat_session(
+        self,
+        conversation_id: str,
+        *,
+        chat_mode: str,
+        agent_name: str,
+        project_id: str,
+    ) -> None:
+        """Apply authoritative surface context before the next chat turn."""
+        normalized_mode = _normalize_runtime_chat_mode(chat_mode)
+        if normalized_mode not in {"normal", "bypass", "plan"}:
+            raise ValueError(f"Unsupported chat mode: {chat_mode}")
+
+        session = self._chat_sessions.get(conversation_id)
+        if session is not None:
+            current_agent = getattr(session, "_pending_agent_name", None) or "default"
+            current_project = getattr(session, "project_id", None)
+            current_mode = _normalize_runtime_chat_mode(getattr(session, "chat_mode", None))
+            if (
+                current_agent == agent_name
+                and current_project == project_id
+                and current_mode == normalized_mode
+            ):
+                return
+            await self.reset_chat_session(conversation_id)
+
+        self._pending_modes[conversation_id] = normalized_mode
+        self._pending_agents[conversation_id] = agent_name
+        self._pending_projects[conversation_id] = project_id
 
     def _clear_active_task(self, conversation_id: str) -> None:
         registry = getattr(self, "web_chat_session_registry", None)

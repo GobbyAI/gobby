@@ -2,12 +2,14 @@
 
 from dataclasses import asdict
 from datetime import datetime
+from typing import Any
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
 from gobby.communications.models import ChannelConfig, CommsIdentity, CommsMessage
 from gobby.mcp_proxy.tools.communications import create_communications_registry
+from gobby.storage.projects import LocalProjectManager
 
 pytestmark = pytest.mark.unit
 
@@ -23,7 +25,9 @@ def mock_manager(mock_store):
     manager = MagicMock()
     manager._store = mock_store
     manager.send_message = AsyncMock()
+    manager.send_attachment = AsyncMock()
     manager.add_channel = AsyncMock()
+    manager.update_channel = AsyncMock()
     manager.remove_channel = AsyncMock()
     manager.get_channel_status = MagicMock(return_value={"connected": True})
     manager.channel_to_dict.side_effect = lambda channel: {
@@ -74,6 +78,65 @@ async def test_send_message(registry, mock_manager):
     )
 
 
+@pytest.mark.asyncio
+async def test_send_attachment_validates_path_and_returns_metadata(
+    registry,
+    mock_manager,
+    tmp_path,
+):
+    image_path = tmp_path / "parity.png"
+    image_path.write_bytes(b"png")
+    message = MagicMock(
+        id="msg-attachment",
+        status="sent",
+        platform_message_id="telegram-7",
+        content="parity image",
+        error=None,
+    )
+    attachment = MagicMock(
+        id="attachment-1",
+        message_id="msg-attachment",
+        filename="parity.png",
+        content_type="image/png",
+        size_bytes=3,
+        platform_url=None,
+    )
+    mock_manager.send_attachment.return_value = (message, attachment)
+
+    result = await registry.get_tool("send_attachment")(
+        channel="telegram",
+        file_path=str(image_path),
+        caption="parity image",
+        session_id="session-1",
+        metadata={"platform_destination": "chat-42"},
+    )
+
+    assert result["success"] is True
+    assert result["message"]["platform_message_id"] == "telegram-7"
+    assert result["attachment"]["content_type"] == "image/png"
+    mock_manager.send_attachment.assert_awaited_once_with(
+        channel_name="telegram",
+        file_path=image_path.resolve(),
+        filename=None,
+        content_type="image/png",
+        content="parity image",
+        session_id="session-1",
+        metadata={"platform_destination": "chat-42"},
+    )
+
+
+@pytest.mark.asyncio
+async def test_send_attachment_rejects_missing_path(registry, mock_manager, tmp_path):
+    result = await registry.get_tool("send_attachment")(
+        channel="telegram",
+        file_path=str(tmp_path / "missing.png"),
+    )
+
+    assert result["success"] is False
+    assert "Invalid attachment path" in result["error"]
+    mock_manager.send_attachment.assert_not_awaited()
+
+
 async def test_send_message_reports_failed_status(registry, mock_manager):
     mock_msg = MagicMock()
     mock_msg.id = "msg-123"
@@ -106,6 +169,7 @@ def test_list_channels(registry, mock_store, mock_manager):
     assert res["success"] is True
     assert len(res["channels"]) == 1
     assert res["channels"][0]["name"] == "test-channel"
+    assert res["channels"][0]["project_id"] is None
 
 
 def test_get_messages(registry, mock_store):
@@ -195,6 +259,57 @@ async def test_remove_channel(registry, mock_manager):
     res = await handler(name="old-channel")
     assert res["success"] is True
     mock_manager.remove_channel.assert_called_once_with(name="old-channel")
+
+
+@pytest.mark.asyncio
+async def test_set_channel_project_resolves_name_and_persists_config(
+    mock_manager: MagicMock,
+    mock_store: MagicMock,
+    temp_db: Any,
+) -> None:
+    project = LocalProjectManager(temp_db).create("gobby", repo_path="/tmp/gobby")
+    channel = _make_channel()
+    channel.config_json = {"responder": {"enabled": True}}
+    mock_store.get_channel_by_name.return_value = channel
+    registry = create_communications_registry(mock_manager, db=temp_db)
+    handler = registry.get_tool("set_channel_project")
+    assert handler is not None
+
+    result = await handler(
+        channel="test-channel",
+        project="gobby",
+    )
+
+    assert result == {
+        "success": True,
+        "channel": "test-channel",
+        "project_id": project.id,
+        "project_name": "gobby",
+        "project_path": "/tmp/gobby",
+    }
+    updated = mock_manager.update_channel.await_args.args[0]
+    assert updated.config_json == {"responder": {"enabled": True, "project_id": project.id}}
+    assert channel.config_json == {"responder": {"enabled": True}}
+
+
+@pytest.mark.asyncio
+async def test_set_channel_project_rejects_unknown_project(
+    mock_manager: MagicMock,
+    mock_store: MagicMock,
+    temp_db: Any,
+) -> None:
+    mock_store.get_channel_by_name.return_value = _make_channel()
+    registry = create_communications_registry(mock_manager, db=temp_db)
+    handler = registry.get_tool("set_channel_project")
+    assert handler is not None
+
+    result = await handler(
+        channel="test-channel",
+        project="missing",
+    )
+
+    assert result == {"success": False, "error": "Project 'missing' not found"}
+    mock_manager.update_channel.assert_not_awaited()
 
 
 def _make_channel(id: str = "ch-1", name: str = "test-channel") -> ChannelConfig:
@@ -298,7 +413,7 @@ def test_list_identities_filter_by_session(registry, mock_store):
     assert res["identities"][0]["id"] == "id-1"
 
 
-def test_list_identities_channel_not_found(registry, mock_store):
+def test_list_identities_channel_not_found(registry: Any, mock_store: MagicMock) -> None:
     mock_store.get_channel_by_name.return_value = None
 
     handler = registry.get_tool("list_identities")
@@ -308,7 +423,7 @@ def test_list_identities_channel_not_found(registry, mock_store):
     assert "not found" in res["error"]
 
 
-def test_unlink_identity(registry, mock_store):
+def test_unlink_identity(registry: Any, mock_store: MagicMock) -> None:
     handler = registry.get_tool("unlink_identity")
     res = handler(identity_id="id-1")
 

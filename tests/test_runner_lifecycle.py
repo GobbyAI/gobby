@@ -6,7 +6,7 @@ import os
 import signal
 import sys
 from collections.abc import AsyncIterator, Iterator
-from contextlib import ExitStack, suppress
+from contextlib import ExitStack, nullcontext, suppress
 from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
@@ -22,6 +22,7 @@ from gobby.app_context import clear_app_context, get_app_context
 from gobby.runner import GobbyRunner, main, run_gobby
 from gobby.runner_pid_file import FailOpenPidOwnership
 from gobby.shutdown_intent import ShutdownIntent
+from tests._timing import wait_for_async_condition
 from tests.runner_helpers import create_base_patches
 
 pytestmark = [pytest.mark.unit, pytest.mark.usefixtures("fast_stop_hook_grace_window")]
@@ -111,6 +112,7 @@ class TestGobbyRunnerRun:
 
             mock_mcp_manager.connect_all.assert_called_once()
             mock_mcp_manager.disconnect_all.assert_called_once()
+            assert mock_server.capture_signals is nullcontext
             assert runner._shutdown_requested is True
             assert runner.database.close.called is True
             assert get_app_context() is None
@@ -1472,7 +1474,7 @@ class TestShutdownDaemonServices:
                     cleanup_pid_file=MagicMock(),
                 )
             )
-            await asyncio.sleep(0.05)
+            await wait_for_async_condition(lambda: runner.db_executor.stats().shutdown)
             runner.database.close.assert_not_called()
             release_worker.set()
             await asyncio.wait_for(shutdown_task, timeout=1.0)
@@ -1544,8 +1546,19 @@ class TestShutdownDaemonServices:
             events.append("terminate")
             assert server.should_exit is False
 
+        async def stop_communications() -> None:
+            events.append("communications")
+            assert server.should_exit is False
+
+        async def shutdown_websocket(_runner: object) -> None:
+            events.append("websocket")
+            assert server.should_exit is False
+
         runner.http_server._cleanup_pending_interactions = AsyncMock(side_effect=cleanup_pending)
         runner.http_server._terminate_streamable_http_sessions.side_effect = terminate_sessions
+        runner.communications_manager = SimpleNamespace(
+            stop=AsyncMock(side_effect=stop_communications)
+        )
 
         await runner_lifecycle_shutdown.shutdown_daemon_services(
             runner,
@@ -1553,14 +1566,20 @@ class TestShutdownDaemonServices:
             server_task,
             1,
             await_critical_stop_hook_grace_window=grace_window,
-            shutdown_websocket_server=AsyncMock(),
+            shutdown_websocket_server=shutdown_websocket,
             cancel_active_agent_runs_for_shutdown=AsyncMock(return_value=0),
             reap_remaining_child_processes=AsyncMock(),
             shutdown_telemetry=MagicMock(),
             cleanup_pid_file=MagicMock(),
         )
 
-        assert events[:3] == ["grace", "pending", "terminate"]
+        assert events[:5] == [
+            "grace",
+            "pending",
+            "terminate",
+            "communications",
+            "websocket",
+        ]
         assert server.should_exit is True
 
     @pytest.mark.asyncio

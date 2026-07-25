@@ -247,6 +247,11 @@ def test_message_crud(comms_store: LocalCommunicationsStore) -> None:
     assert updated.status == "delivered"
     assert updated.error == "no error"
 
+    comms_store.update_message_content(saved.id, "Edited response")
+    edited = comms_store.get_message(saved.id)
+    assert edited is not None
+    assert edited.content == "Edited response"
+
 
 def test_create_message_deduplicates_channel_platform_message_id(
     comms_store: LocalCommunicationsStore,

@@ -28,6 +28,7 @@ from gobby.communications.models import (
 from gobby.communications.rate_limiter import RateLimitWaitExceeded
 from gobby.config.communications import ChannelDefaults, CommunicationsConfig
 from gobby.storage.communications import LocalCommunicationsStore
+from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.secrets import SecretStore
 
 
@@ -295,16 +296,20 @@ async def test_stop_shuts_down_all_adapters():
     channel = make_channel()
     store = make_store([channel])
     manager = CommunicationsManager(make_config(), store, make_secret_store(), MagicMock())
+    events: list[str] = []
 
     mock_adapter = make_adapter()
+    mock_adapter.shutdown.side_effect = lambda: events.append("adapter")
     mock_adapter_cls = MagicMock(return_value=mock_adapter)
 
     with patch("gobby.communications.manager.get_adapter_class", return_value=mock_adapter_cls):
         await manager.start()
 
+    manager.responder.stop = AsyncMock(side_effect=lambda: events.append("responder"))
     await manager.stop()
 
     mock_adapter.shutdown.assert_called_once()
+    assert events == ["responder", "adapter"]
     assert len(manager._adapters) == 0
     assert len(manager._channel_by_name) == 0
 
@@ -330,6 +335,54 @@ async def test_send_message_success():
     assert msg.platform_message_id == "platform-msg-id-1"
     mock_adapter.send_message.assert_called_once()
     store.create_message.assert_called_once()
+
+
+@pytest.mark.asyncio
+async def test_edit_message_persists_final_content(temp_db: HubDatabase) -> None:
+    channel = make_channel(channel_id="00000000-0000-0000-0000-000000000101")
+    store = LocalCommunicationsStore(
+        temp_db,
+        project_id="00000000-0000-0000-0000-000000000000",
+    )
+    store.create_channel(channel)
+    stored_message = CommsMessage(
+        id="00000000-0000-0000-0000-000000000102",
+        channel_id=channel.id,
+        direction="outbound",
+        content="Thinking…",
+        platform_message_id="platform-msg-id-1",
+        created_at=datetime.now(UTC),
+    )
+    store.create_message(stored_message)
+    manager = CommunicationsManager(make_config(), store, make_secret_store(), MagicMock())
+
+    mock_adapter = make_adapter()
+    mock_adapter.supports_message_edit = True
+    mock_adapter.edit_message = AsyncMock()
+    with patch(
+        "gobby.communications.manager.get_adapter_class",
+        return_value=MagicMock(return_value=mock_adapter),
+    ):
+        await manager.start()
+
+    await manager.edit_message(
+        "test-channel",
+        "platform-msg-id-1",
+        "Final response",
+        "conversation-1",
+    )
+
+    mock_adapter.edit_message.assert_awaited_once_with(
+        "platform-msg-id-1",
+        "Final response",
+        "conversation-1",
+    )
+    persisted = store.get_message("00000000-0000-0000-0000-000000000102")
+    assert persisted is not None
+    assert persisted.content == "Final response"
+    assert [message.id for message in store.list_messages(channel_id=channel.id)] == [
+        "00000000-0000-0000-0000-000000000102"
+    ]
 
 
 @pytest.mark.asyncio
@@ -857,11 +910,15 @@ async def test_handle_inbound_messages_continues_after_identity_resolution_failu
         updated_at="2024-01-01T00:00:00",
         session_id="session-ok",
     )
-    manager._identity_manager.resolve_inbound_identity = MagicMock(
-        side_effect=[
-            RuntimeError("database unavailable"),
-            IdentityResolution(identity=identity, session_id="session-ok"),
-        ]
+    object.__setattr__(
+        manager._identity_manager,
+        "resolve_inbound_identity",
+        MagicMock(
+            side_effect=[
+                RuntimeError("database unavailable"),
+                IdentityResolution(identity=identity, session_id="session-ok"),
+            ]
+        ),
     )
 
     messages = [

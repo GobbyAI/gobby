@@ -404,6 +404,14 @@ SELECT
                 (status, error, message_id),
             )
 
+    def update_message_content(self, message_id: str, content: str) -> None:
+        """Replace persisted content after a successful platform edit."""
+        with self.db.transaction() as conn:
+            conn.execute(
+                "UPDATE comms_messages SET content = %s WHERE id = %s",
+                (content, message_id),
+            )
+
     # --- Routing Rules ---
 
     def create_routing_rule(self, rule: CommsRoutingRule) -> CommsRoutingRule:

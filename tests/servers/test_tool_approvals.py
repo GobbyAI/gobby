@@ -34,7 +34,14 @@ def test_normalize_stored_approval_key_cases(raw_key: str, expected: str) -> Non
 
 
 def test_is_builtin_auto_exempt_allows_known_gobby_servers() -> None:
-    assert is_builtin_auto_exempt("mcp__gobby__do_thing", {})
+    assert is_builtin_auto_exempt("mcp__gobby__get_tool_schema", {})
+    assert is_builtin_auto_exempt(
+        "mcp__gobby__call_tool",
+        {
+            "server_name": "gobby-results",
+            "tool_name": "get_tool_result",
+        },
+    )
 
 
 def test_is_builtin_auto_exempt_rejects_unknown_gobby_like_server() -> None:

@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import sys
+from contextlib import nullcontext
 from functools import partial
 from typing import TYPE_CHECKING, Any
 
@@ -213,6 +214,9 @@ async def run_daemon(
             timeout_graceful_shutdown=uvicorn_drain_timeout,
         )
         server = uvicorn.Server(config)
+        # Gobby owns process signals so lifecycle events can finish before
+        # Uvicorn tears down the FastAPI lifespan and workflow runtime.
+        object.__setattr__(server, "capture_signals", nullcontext)
         from gobby.servers.uvicorn_shutdown import (
             install_uvicorn_shutdown_filter,
             remove_uvicorn_shutdown_filter,

@@ -9,6 +9,9 @@ from typing import Any, Protocol
 from gobby.communications.models import CommsMessage
 from gobby.communications.responder import ResponderContext
 
+_THINKING_PLACEHOLDER = "Thinking…"
+_INITIAL_STREAM_TEXT_LENGTH = 24
+
 
 class CommunicationsDeliveryManager(Protocol):
     """Manager surface required by the communications stream transport."""
@@ -103,10 +106,15 @@ class CommunicationsChatStreamTransport:
         if not self._text:
             return
         if not self._initial_sent:
-            sent = await self._send(self._text)
+            initial_content = (
+                self._text
+                if len(self._text.strip()) >= _INITIAL_STREAM_TEXT_LENGTH
+                else _THINKING_PLACEHOLDER
+            )
+            sent = await self._send(initial_content)
             self._initial_sent = True
             self._platform_message_id = sent.platform_message_id
-            self._last_delivered_text = self._text
+            self._last_delivered_text = initial_content
             self._last_edit_at = self._clock()
             return
         if self._platform_message_id is None:

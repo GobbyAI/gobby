@@ -1,19 +1,30 @@
+import asyncio
 import logging
+import mimetypes
+from dataclasses import replace
+from pathlib import Path
 from typing import Any, Literal
 
 from gobby.communications.manager import CommunicationsManager
 from gobby.mcp_proxy.tools.internal import InternalToolRegistry
+from gobby.storage.hub.protocol import HubDatabase
+from gobby.storage.projects import LocalProjectManager
 
 logger = logging.getLogger(__name__)
 
 
 def create_communications_registry(
     communications_manager: CommunicationsManager,
+    db: HubDatabase | None = None,
 ) -> InternalToolRegistry:
     """Create a registry with communication tools."""
     registry = InternalToolRegistry(
         name="gobby-communications",
-        description="Tools for interacting with external communication channels (e.g., Slack, Discord, Email) - send_message, list_channels, get_messages, add_channel, remove_channel",
+        description=(
+            "Tools for interacting with external communication channels "
+            "(e.g., Slack, Discord, Email) - send_message, send_attachment, "
+            "list_channels, get_messages, add_channel, set_channel_project, remove_channel"
+        ),
     )
 
     @registry.tool(description="Send a message to a communication channel.")
@@ -45,6 +56,62 @@ def create_communications_registry(
             logger.exception("Communications tool error")
             return {"success": False, "error": str(e)}
 
+    @registry.tool(description="Send an existing local file to a communication channel.")
+    async def send_attachment(
+        channel: str,
+        file_path: str,
+        caption: str = "",
+        session_id: str | None = None,
+        filename: str | None = None,
+        content_type: str | None = None,
+        metadata: dict[str, Any] | None = None,
+    ) -> dict[str, Any]:
+        """Validate and send a local image or document."""
+        try:
+            resolved_path = Path(file_path).expanduser().resolve(strict=True)
+            if not resolved_path.is_file():
+                return {"success": False, "error": f"Attachment path is not a file: {file_path}"}
+
+            resolved_content_type = content_type
+            if not resolved_content_type:
+                resolved_content_type = (
+                    mimetypes.guess_type(filename or resolved_path.name)[0]
+                    or "application/octet-stream"
+                )
+
+            message, attachment = await communications_manager.send_attachment(
+                channel_name=channel,
+                file_path=resolved_path,
+                filename=filename,
+                content_type=resolved_content_type,
+                content=caption,
+                session_id=session_id,
+                metadata=metadata,
+            )
+            return {
+                "success": message.status == "sent",
+                "message": {
+                    "id": message.id,
+                    "status": message.status,
+                    "platform_message_id": message.platform_message_id,
+                    "content": message.content,
+                    "error": message.error,
+                },
+                "attachment": {
+                    "id": attachment.id,
+                    "message_id": attachment.message_id,
+                    "filename": attachment.filename,
+                    "content_type": attachment.content_type,
+                    "size_bytes": attachment.size_bytes,
+                    "platform_url": attachment.platform_url,
+                },
+            }
+        except (FileNotFoundError, OSError) as e:
+            return {"success": False, "error": f"Invalid attachment path: {e}"}
+        except Exception as e:
+            logger.exception("Communications tool error")
+            return {"success": False, "error": str(e)}
+
     @registry.tool(description="List configured communication channels and their status.")
     def list_channels() -> dict[str, Any]:
         """List all configured communication channels."""
@@ -60,6 +127,11 @@ def create_communications_registry(
                         "type": ch.channel_type,
                         "enabled": ch.enabled,
                         "status": status,
+                        "project_id": (
+                            ch.config_json.get("responder", {}).get("project_id")
+                            if isinstance(ch.config_json.get("responder"), dict)
+                            else None
+                        ),
                     }
                 )
             return {"success": True, "channels": result}
@@ -143,6 +215,44 @@ def create_communications_registry(
         try:
             await communications_manager.remove_channel(name=name)
             return {"success": True}
+        except Exception as e:
+            logger.exception("Communications tool error")
+            return {"success": False, "error": str(e)}
+
+    @registry.tool(
+        description=(
+            "Set a channel's default Gobby project by UUID or exact project name. "
+            "The next responder turn switches to that project."
+        )
+    )
+    async def set_channel_project(channel: str, project: str) -> dict[str, Any]:
+        """Persist the project used by future responder turns on one channel."""
+        try:
+            if db is None:
+                return {"success": False, "error": "Project storage is unavailable"}
+            configured_channel = communications_manager.get_channel_by_name(channel)
+            if configured_channel is None:
+                return {"success": False, "error": f"Channel '{channel}' not found"}
+
+            project_manager = LocalProjectManager(db)
+            resolved = await asyncio.to_thread(project_manager.resolve_ref, project)
+            if resolved is None:
+                return {"success": False, "error": f"Project '{project}' not found"}
+
+            config = dict(configured_channel.config_json)
+            raw_responder = config.get("responder")
+            responder = dict(raw_responder) if isinstance(raw_responder, dict) else {}
+            responder["project_id"] = resolved.id
+            config["responder"] = responder
+            updated = replace(configured_channel, config_json=config)
+            await communications_manager.update_channel(updated)
+            return {
+                "success": True,
+                "channel": channel,
+                "project_id": resolved.id,
+                "project_name": resolved.name,
+                "project_path": resolved.repo_path,
+            }
         except Exception as e:
             logger.exception("Communications tool error")
             return {"success": False, "error": str(e)}

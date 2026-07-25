@@ -529,13 +529,6 @@ async def _stop_started_services(
             timeout=2.0,
         )
 
-    if runner.communications_manager:
-        await _best_effort(
-            runner.communications_manager.stop,
-            "CommunicationsManager shutdown",
-            timeout=5.0,
-        )
-
 
 def _log_shutdown_timeout(service_name: str, *, shutdown_intent: ShutdownIntent) -> None:
     if shutdown_intent is ShutdownIntent.RESTART:
@@ -760,12 +753,17 @@ async def _run_graceful_shutdown_sequence(
         "Streamable HTTP session termination",
     )
 
+    if runner.communications_manager:
+        await _best_effort(
+            runner.communications_manager.stop,
+            "CommunicationsManager shutdown",
+            timeout=5.0,
+        )
+
     await _best_effort(
         lambda: _drain_uvicorn_http_connections(server),
         "HTTP connection drain",
     )
-
-    server.should_exit = True
 
     await _best_effort(
         lambda: _cancel_runner_task(runner, "_provider_model_refresh_task"),
@@ -776,6 +774,8 @@ async def _run_graceful_shutdown_sequence(
         lambda: shutdown_websocket_server(runner),
         "WebSocket server shutdown",
     )
+
+    server.should_exit = True
 
     await _best_effort(
         runner.lifecycle_manager.stop,

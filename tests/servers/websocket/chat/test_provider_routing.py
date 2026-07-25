@@ -117,8 +117,9 @@ class TestPendingProviderOverride:
         mock_session.project_path = None
         mock_session.project_id = None
         mock_session.system_prompt_override = None
-        mixin.web_chat_runtime_manager = MagicMock()
-        mixin.web_chat_runtime_manager.create_session.return_value = mock_session
+        runtime_manager = MagicMock()
+        runtime_manager.create_session.return_value = mock_session
+        mixin.web_chat_runtime_manager = runtime_manager
 
         session = await _create_session_for_provider(mixin, provider=None)
 
@@ -128,7 +129,16 @@ class TestPendingProviderOverride:
     async def test_daemon_chat_provider_used_when_request_has_no_provider(self) -> None:
         """Daemon chat.provider supplies the default web-chat backend."""
         mixin = _make_mixin(
-            daemon_config=DaemonConfig(chat=ChatConfig(candidates=["codex/gpt-5"])),
+            daemon_config=DaemonConfig(
+                chat=ChatConfig(
+                    candidates=[
+                        {
+                            "candidate": "codex/gpt-5.6-sol",
+                            "reasoning_effort": "xhigh",
+                        }
+                    ]
+                )
+            ),
         )
         mock_session = AsyncMock()
         mock_session.provider = "codex"
@@ -138,14 +148,61 @@ class TestPendingProviderOverride:
         mock_session.project_path = None
         mock_session.project_id = None
         mock_session.system_prompt_override = None
-        mixin.web_chat_runtime_manager = MagicMock()
-        mixin.web_chat_runtime_manager.create_session.return_value = mock_session
+        runtime_manager = MagicMock()
+        runtime_manager.create_session.return_value = mock_session
+        mixin.web_chat_runtime_manager = runtime_manager
 
         session = await _create_session_for_provider(mixin, provider=None)
 
         assert session.provider == "codex"
-        mixin.web_chat_runtime_manager.create_session.assert_called_once()
-        assert mixin.web_chat_runtime_manager.create_session.call_args.kwargs["provider"] == "codex"
+        assert runtime_manager.create_session.call_args.kwargs == {
+            "provider": "codex",
+            "conversation_id": "test-conv-routing",
+            "model": "gpt-5.6-sol",
+            "reasoning_effort": "xhigh",
+        }
+        mock_session.start.assert_awaited_once_with(model="gpt-5.6-sol")
+
+    @pytest.mark.asyncio
+    async def test_explicit_chat_binding_overrides_configured_candidate(self) -> None:
+        mixin = _make_mixin(
+            daemon_config=DaemonConfig(
+                chat=ChatConfig(
+                    candidates=[
+                        {
+                            "candidate": "codex/gpt-5.6-sol",
+                            "reasoning_effort": "xhigh",
+                        }
+                    ]
+                )
+            ),
+        )
+        mock_session = AsyncMock()
+        mock_session.provider = "qwen"
+        mock_session.chat_mode = "plan"
+        mock_session.db_session_id = None
+        mock_session.resume_session_id = None
+        mock_session.project_path = None
+        mock_session.project_id = None
+        mock_session.system_prompt_override = None
+        runtime_manager = MagicMock()
+        runtime_manager.create_session.return_value = mock_session
+        mixin.web_chat_runtime_manager = runtime_manager
+
+        await mixin._create_chat_session(
+            conversation_id="test-conv-routing",
+            provider="qwen",
+            model="qwen3-coder",
+            reasoning_effort="high",
+        )
+
+        assert runtime_manager.create_session.call_args.kwargs == {
+            "provider": "qwen",
+            "conversation_id": "test-conv-routing",
+            "model": "qwen3-coder",
+            "reasoning_effort": "high",
+        }
+        mock_session.start.assert_awaited_once_with(model="qwen3-coder")
 
 
 class TestSessionRegistration:

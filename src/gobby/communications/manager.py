@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 from collections.abc import Callable
 from dataclasses import asdict
 from typing import TYPE_CHECKING, Any
@@ -106,8 +107,8 @@ class CommunicationsManager:
 
     async def stop(self) -> None:
         """Shutdown all adapters and clear state."""
-        await self._lifecycle.stop()
         await self.responder.stop()
+        await self._lifecycle.stop()
 
     async def _init_adapter(self, channel: ChannelConfig) -> BaseChannelAdapter:
         """Lookup adapter class from registry, instantiate, and initialize."""
@@ -174,6 +175,17 @@ class CommunicationsManager:
         channel = self._channel_by_name[channel_name]
         await self._rate_limiter.wait_if_needed(channel.id)
         await adapter.edit_message(platform_message_id, content, conversation_id)
+        stored_message = await asyncio.to_thread(
+            self._store.get_message_by_platform_id,
+            channel_name,
+            platform_message_id,
+        )
+        if stored_message is not None:
+            await asyncio.to_thread(
+                self._store.update_message_content,
+                stored_message.id,
+                content,
+            )
 
     async def send_attachment(
         self,

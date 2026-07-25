@@ -1897,6 +1897,48 @@ class TestCodexBackend:
         }
 
     @pytest.mark.asyncio
+    async def test_mcp_elicitation_preserves_nested_gobby_target(self) -> None:
+        backend = CodexWebChatBackend(client=MagicMock())
+        session = CodexManagedChatSession(conversation_id="conv-codex", _backend=backend)
+        session.project_path = "/tmp/project"
+        session.chat_mode = "accept_edits"
+        session._thread_id = "thread-1"
+        session._on_pre_tool = AsyncMock()
+        wait_for_tool_approval = AsyncMock()
+        object.__setattr__(session, "_wait_for_tool_approval", wait_for_tool_approval)
+        backend._sessions_by_thread["thread-1"] = session
+
+        params = {
+            "threadId": "thread-1",
+            "elicitationId": "elicitation-1",
+            "serverName": "gobby",
+            "message": 'Allow the gobby MCP server to run tool "call_tool"?',
+            "_meta": {
+                "codex_approval_kind": "mcp_tool_call",
+                "tool_params": {
+                    "server_name": "gobby-tasks",
+                    "tool_name": "list_tasks",
+                    "arguments": {"project": "_personal"},
+                },
+            },
+        }
+
+        result = await backend.handle_approval_request("mcpServer/elicitation/request", params)
+
+        assert result == backend._accept_response("mcpServer/elicitation/request")
+        session._on_pre_tool.assert_awaited_once_with(
+            {
+                "tool_name": "mcp__gobby__call_tool",
+                "tool_input": {
+                    "server_name": "gobby-tasks",
+                    "tool_name": "list_tasks",
+                    "arguments": {"project": "_personal"},
+                },
+            }
+        )
+        wait_for_tool_approval.assert_not_awaited()
+
+    @pytest.mark.asyncio
     async def test_send_message_dispatches_pre_tool_once_per_item_and_resets_each_turn(
         self,
     ) -> None:
@@ -1974,8 +2016,16 @@ class TestCodexBackend:
         session._thread_id = "thread-1"
         session.chat_mode = "bypass"
         session._on_pre_tool = AsyncMock()
-        session._get_transcript_offset = AsyncMock(return_value=0)
-        session._get_transcript_assistant_text_since = AsyncMock(return_value=None)
+        object.__setattr__(
+            session,
+            "_get_transcript_offset",
+            AsyncMock(return_value=0),
+        )
+        object.__setattr__(
+            session,
+            "_get_transcript_assistant_text_since",
+            AsyncMock(return_value=None),
+        )
         backend._sessions_by_thread["thread-1"] = session
 
         [event async for event in backend.send_message(session, "first turn")]

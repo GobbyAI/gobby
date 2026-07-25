@@ -51,6 +51,26 @@ def _normalize_web_chat_provider(provider: Any) -> str | None:
     return None
 
 
+def _first_configured_chat_binding(
+    daemon_config: Any,
+) -> tuple[str, str, str | None] | None:
+    """Return the first usable provider/model/reasoning chat candidate."""
+    chat_config = getattr(daemon_config, "chat", None)
+    for candidate in getattr(chat_config, "candidates", ()) or ():
+        try:
+            candidate_provider, candidate_model = parse_feature_candidate(candidate)
+        except ValueError:
+            continue
+        normalized_provider = _normalize_web_chat_provider(candidate_provider)
+        if normalized_provider is None:
+            continue
+        reasoning_effort = getattr(candidate, "reasoning_effort", None)
+        if not isinstance(reasoning_effort, str):
+            reasoning_effort = None
+        return normalized_provider, candidate_model, reasoning_effort
+    return None
+
+
 def _build_agent_identity_preamble(agent_body: Any) -> str | None:
     """Build the non-duplicated identity preamble for web-chat sessions.
 
@@ -286,6 +306,37 @@ class ChatSessionMixin:
                 reasoning_effort,
             )
 
+    def resolve_chat_binding(
+        self,
+        conversation_id: str,
+        *,
+        provider: str | None,
+        model: str | None,
+    ) -> tuple[str, str | None]:
+        """Resolve the provider/model serving an existing or future chat session."""
+        configured_binding = _first_configured_chat_binding(getattr(self, "daemon_config", None))
+        existing = self._chat_sessions.get(conversation_id)
+        if existing is not None:
+            existing_provider = _normalize_web_chat_provider(getattr(existing, "provider", None))
+            existing_model = getattr(existing, "model", None)
+            if not isinstance(existing_model, str) or not existing_model:
+                existing_model = None
+            if (
+                existing_model is None
+                and configured_binding is not None
+                and configured_binding[0] == existing_provider
+            ):
+                existing_model = configured_binding[1]
+            return existing_provider or "claude", existing_model
+
+        effective_provider = _normalize_web_chat_provider(provider)
+        effective_model = model.strip() if isinstance(model, str) and model.strip() else None
+        if effective_provider is None and configured_binding is not None:
+            effective_provider = configured_binding[0]
+            if effective_model is None:
+                effective_model = configured_binding[1]
+        return effective_provider or "claude", effective_model
+
     async def _create_chat_session_inner(
         self,
         conversation_id: str,
@@ -329,6 +380,8 @@ class ChatSessionMixin:
         pending_providers = getattr(self, "_pending_providers", {})
         pending_provider = _normalize_web_chat_provider(pending_providers.pop(session_key, None))
         effective_provider = pending_provider
+        effective_model = model
+        effective_reasoning_effort = reasoning_effort
         if not effective_provider and existing_db_session:
             effective_provider = _normalize_web_chat_provider(
                 getattr(existing_db_session, "source", None)
@@ -336,21 +389,13 @@ class ChatSessionMixin:
         if not effective_provider:
             effective_provider = _normalize_web_chat_provider(provider)
         if not effective_provider and daemon_cfg is not None:
-            # The chat provider/model were migrated into the standardized
-            # ``candidates`` list ("provider/model" labels) by #11523, so the
-            # legacy ``chat.provider`` attribute no longer exists (it is always
-            # None). Resolve the configured default from the first usable
-            # candidate, mirroring ChatSession._default_model.
-            chat_cfg = getattr(daemon_cfg, "chat", None)
-            for candidate in getattr(chat_cfg, "candidates", ()) or ():
-                try:
-                    candidate_provider, _candidate_model = parse_feature_candidate(candidate)
-                except ValueError:
-                    continue
-                normalized = _normalize_web_chat_provider(candidate_provider)
-                if normalized:
-                    effective_provider = normalized
-                    break
+            configured_binding = _first_configured_chat_binding(daemon_cfg)
+            if configured_binding is not None:
+                effective_provider, candidate_model, candidate_reasoning = configured_binding
+                if effective_model is None:
+                    effective_model = candidate_model
+                if effective_reasoning_effort is None:
+                    effective_reasoning_effort = candidate_reasoning
 
         pending_agents = getattr(self, "_pending_agents", {})
         pending_agent = pending_agents.pop(session_key, None)
@@ -403,8 +448,8 @@ class ChatSessionMixin:
             session = runtime_manager.create_session(
                 provider=provider_name,
                 conversation_id=conversation_id,
-                model=model,
-                reasoning_effort=reasoning_effort,
+                model=effective_model,
+                reasoning_effort=effective_reasoning_effort,
             )
         else:
             if provider_name != "claude":
@@ -412,10 +457,10 @@ class ChatSessionMixin:
                     f"Web chat provider '{provider_name}' requires the managed runtime backend"
                 )
             session = ChatSession(conversation_id=conversation_id, provider=provider_name)
-            session.reasoning_effort = reasoning_effort
+            session.reasoning_effort = effective_reasoning_effort
 
-        if reasoning_effort is not None:
-            session.reasoning_effort = reasoning_effort
+        if effective_reasoning_effort is not None:
+            session.reasoning_effort = effective_reasoning_effort
 
         if resume_session_id:
             session.resume_session_id = resume_session_id
@@ -520,6 +565,11 @@ class ChatSessionMixin:
             or getattr(existing_db_session, "project_id", None)
             or PERSONAL_PROJECT_ID
         )
+        project_context_changed = bool(
+            existing_db_session
+            and project_id
+            and getattr(existing_db_session, "project_id", None) != effective_pid
+        )
         session.project_id = effective_pid
 
         if existing_terminal_resume and existing_db_session and session_manager:
@@ -605,6 +655,7 @@ class ChatSessionMixin:
 
             if (
                 not resume_session_id
+                and not project_context_changed
                 and existing_db_session.usage_output_tokens > 0
                 and existing_db_session.external_id
                 and not _is_bootstrap_external_id(existing_db_session.external_id)
@@ -775,14 +826,14 @@ class ChatSessionMixin:
                 logger.warning("Failed to build agent system prompt for '%s': %s", agent_name, e)
 
         try:
-            await session.start(model=model)
+            await session.start(model=effective_model)
         except Exception:
             if session.resume_session_id:
                 logger.warning(
                     "SDK resume failed for %s, starting fresh", session.resume_session_id[:8]
                 )
                 session.resume_session_id = None
-                await session.start(model=model)
+                await session.start(model=effective_model)
             else:
                 raise
 
@@ -821,6 +872,8 @@ class ChatSessionMixin:
 
         if session_manager and session.db_session_id:
             update_kwargs: dict[str, str] = {}
+            if project_context_changed:
+                update_kwargs["project_id"] = effective_pid
             runtime_external_id = _get_runtime_external_id(session)
             if runtime_external_id and runtime_external_id != session_key:
                 update_kwargs["external_id"] = runtime_external_id

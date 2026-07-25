@@ -520,8 +520,8 @@ class CodexWebChatBackend:
                 and isinstance(tool_name, str)
                 and tool_name
             ):
-                elicitation_data["server_name"] = server_name
-                elicitation_data["tool_name"] = tool_name
+                elicitation_data.setdefault("server_name", server_name)
+                elicitation_data.setdefault("tool_name", tool_name)
                 return "mcp__gobby__call_tool", elicitation_data
             return None, {}
 

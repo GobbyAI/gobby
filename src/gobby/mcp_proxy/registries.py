@@ -474,7 +474,10 @@ def setup_internal_registries(
         try:
             from gobby.mcp_proxy.tools.communications import create_communications_registry
 
-            communications_registry = create_communications_registry(communications_manager)
+            communications_registry = create_communications_registry(
+                communications_manager,
+                db=db,
+            )
             manager.add_registry(communications_registry)
             logger.debug("Communications registry initialized")
         except (ImportError, RuntimeError, OSError) as e:

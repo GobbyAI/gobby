@@ -591,7 +591,9 @@ class TelegramAdapter(BaseChannelAdapter):
             raise RuntimeError("Adapter not initialized")
 
         response = await self._client.get(
-            f"{self._api_base}/getUpdates", params={"offset": self._offset, "timeout": 30}
+            f"{self._api_base}/getUpdates",
+            params={"offset": self._offset, "timeout": 30},
+            timeout=35.0,
         )
         self._raise_for_status_with_redacted_token(response)
 

@@ -65,6 +65,7 @@ GOBBY_EXEMPT_SERVERS = frozenset(
         "gobby-pipeline",
         "gobby-pipelines",
         "gobby-plans",
+        "gobby-results",
         "gobby-rule",
         "gobby-rules",
         "gobby-schedule",
