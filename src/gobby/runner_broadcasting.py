@@ -14,8 +14,10 @@ from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, Protocol
 
 if TYPE_CHECKING:
+    from gobby.communications.models import CommsMessage
     from gobby.scheduler.scheduler import CronScheduler
     from gobby.servers.websocket.server import WebSocketServer
+    from gobby.storage.cron_models import CronJob, CronRun
     from gobby.workflows.pipeline_executor import PipelineExecutor
 
 logger = logging.getLogger(__name__)
@@ -32,6 +34,20 @@ class CommunicationsEventBroadcaster(Protocol):
         event: str,
         **kwargs: Any,
     ) -> None: ...
+
+
+class CronCommunicationsRouter(Protocol):
+    """Communications surface used by scheduled-run notifications."""
+
+    async def send_event(
+        self,
+        event_type: str,
+        content: str,
+        project_id: str | None = None,
+        session_id: str | None = None,
+        *,
+        event_id: str | None = None,
+    ) -> list[CommsMessage]: ...
 
 
 # Module-level reference so broadcast_agent_event can be called directly
@@ -325,15 +341,25 @@ def setup_pipeline_event_broadcasting(
     logger.debug("Pipeline event broadcasting enabled")
 
 
+def _format_cron_run_message(job: CronJob, run: CronRun) -> str:
+    """Format a concise scheduled-run notification."""
+    content = f'Scheduled job "{job.name}" {run.status}.'
+    if run.error:
+        return f"{content}\n\nError: {run.error}"
+    if run.output:
+        return f"{content}\n\n{run.output}"
+    return content
+
+
 def setup_cron_event_broadcasting(
-    websocket_server: WebSocketServer,
+    websocket_server: WebSocketServer | None,
     cron_scheduler: CronScheduler,
+    communications_manager: CronCommunicationsRouter | None = None,
 ) -> None:
-    """Set up WebSocket broadcasting for cron run completion events."""
-    from gobby.storage.cron_models import CronJob, CronRun
+    """Set up WebSocket and communications delivery for completed cron runs."""
 
     async def on_run_complete(job: CronJob, run: CronRun) -> None:
-        """Broadcast cron run completion via WebSocket."""
+        """Broadcast and route a cron run completion."""
         if websocket_server:
             event_by_status = {
                 "completed": "run_completed",
@@ -349,17 +375,31 @@ def setup_cron_event_broadcasting(
                     run.id,
                 )
                 event = "run_unknown"
-            await websocket_server.broadcast_cron_event(
-                event=event,
-                job_id=job.id,
-                run_id=run.id,
-                job_name=job.name,
-                status=run.status,
-                run=run.to_dict(),
-            )
+            try:
+                await websocket_server.broadcast_cron_event(
+                    event=event,
+                    job_id=job.id,
+                    run_id=run.id,
+                    job_name=job.name,
+                    status=run.status,
+                    run=run.to_dict(),
+                )
+            except Exception:
+                logger.exception("Failed to broadcast cron run %s", run.id)
+
+        if communications_manager is not None:
+            try:
+                await communications_manager.send_event(
+                    f"cron.run.{run.status}",
+                    _format_cron_run_message(job, run),
+                    project_id=job.project_id,
+                    event_id=run.id,
+                )
+            except Exception:
+                logger.exception("Failed to route cron run %s to communications", run.id)
 
     cron_scheduler.on_run_complete = on_run_complete
-    logger.debug("Cron event broadcasting enabled")
+    logger.debug("Cron event delivery enabled")
 
 
 def setup_communications_event_broadcasting(

@@ -216,6 +216,8 @@ class OutboundCommunications:
         content: str,
         project_id: str | None = None,
         session_id: str | None = None,
+        *,
+        event_id: str | None = None,
     ) -> list[CommsMessage]:
         """Route event to matching channels and send to each."""
         manager = self._manager
@@ -233,12 +235,104 @@ class OutboundCommunications:
             if channel_name is None:
                 continue
             try:
-                msg = await manager.send_message(channel_name, content, session_id=session_id)
+                if event_id is None:
+                    msg = await manager.send_message(channel_name, content, session_id=session_id)
+                else:
+                    msg = await self._send_event_once(
+                        channel_name,
+                        content,
+                        event_type=event_type,
+                        event_id=event_id,
+                        session_id=session_id,
+                    )
                 messages.append(msg)
             except Exception as e:
                 logger.error("send_event: failed to send to %r: %s", channel_name, e)
 
         return messages
+
+    async def _send_event_once(
+        self,
+        channel_name: str,
+        content: str,
+        *,
+        event_type: str,
+        event_id: str,
+        session_id: str | None,
+    ) -> CommsMessage:
+        """Reserve and deliver one event message per channel."""
+        manager = self._manager
+        adapter = manager._adapters.get(channel_name)
+        if adapter is None:
+            raise ValueError(f"Channel {channel_name!r} not found or not active")
+
+        channel = manager._channel_by_name[channel_name]
+        message_id = str(
+            uuid.uuid5(
+                uuid.NAMESPACE_URL,
+                f"gobby:communications:event:{event_type}:{event_id}:{channel.id}",
+            )
+        )
+        existing = await asyncio.to_thread(manager._store.get_message, message_id)
+        if existing is not None:
+            return existing
+
+        platform_thread_id = None
+        if session_id:
+            platform_thread_id = manager._get_thread_id(channel.id, session_id)
+        metadata = await self.enrich_metadata(
+            channel,
+            channel_name,
+            session_id,
+            {"source_event_id": event_id},
+        )
+        message = CommsMessage(
+            id=message_id,
+            channel_id=channel.id,
+            direction="outbound",
+            content=content,
+            session_id=session_id,
+            status="pending",
+            platform_thread_id=platform_thread_id,
+            metadata_json=metadata,
+            created_at=datetime.now(UTC),
+        )
+
+        try:
+            await asyncio.to_thread(manager._store.create_message, message)
+        except Exception:
+            existing = await asyncio.to_thread(manager._store.get_message, message_id)
+            if existing is not None:
+                return existing
+            raise
+
+        try:
+            await manager._rate_limiter.wait_if_needed(channel.id)
+            message.platform_message_id = await adapter.send_message(message)
+            message.status = "sent"
+        except Exception as exc:
+            message.status = "failed"
+            message.error = str(exc)
+            logger.exception("Failed to send event message to %r: %s", channel_name, exc)
+
+        try:
+            await asyncio.to_thread(
+                manager._store.update_message_delivery,
+                message.id,
+                message.status,
+                message.error,
+                message.platform_message_id,
+            )
+        except Exception as exc:
+            logger.exception("Failed to update outbound event message: %s", exc)
+
+        if manager.event_callback is not None:
+            try:
+                await manager.event_callback("comms.message_sent", message=message)
+            except Exception as exc:
+                logger.warning("Event callback error on send_event: %s", exc, exc_info=True)
+
+        return message
 
     async def send_proactive(
         self, channel_name: str, conversation_id: str, content: str, content_type: str = "text"

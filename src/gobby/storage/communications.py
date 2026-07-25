@@ -404,6 +404,24 @@ SELECT
                 (status, error, message_id),
             )
 
+    def update_message_delivery(
+        self,
+        message_id: str,
+        status: str,
+        error: str | None,
+        platform_message_id: str | None,
+    ) -> None:
+        """Persist the final delivery result for a reserved outbound message."""
+        with self.db.transaction() as conn:
+            conn.execute(
+                """
+                UPDATE comms_messages
+                   SET status = %s, error = %s, platform_message_id = %s
+                 WHERE id = %s
+                """,
+                (status, error, platform_message_id, message_id),
+            )
+
     def update_message_content(self, message_id: str, content: str) -> None:
         """Replace persisted content after a successful platform edit."""
         with self.db.transaction() as conn:

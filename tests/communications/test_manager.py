@@ -24,6 +24,7 @@ from gobby.communications.models import (
     CommsAttachment,
     CommsIdentity,
     CommsMessage,
+    CommsRoutingRule,
 )
 from gobby.communications.rate_limiter import RateLimitWaitExceeded
 from gobby.config.communications import ChannelDefaults, CommunicationsConfig
@@ -666,6 +667,75 @@ async def test_send_event_routes_to_channels():
 
 
 @pytest.mark.asyncio
+async def test_send_event_id_is_durable_across_manager_restart(temp_db: HubDatabase) -> None:
+    """A recovered event returns its persisted message without sending twice."""
+    channel = make_channel(
+        channel_type="telegram",
+        channel_id="10000000-0000-0000-0000-000000000001",
+        config_json={"default_destination": "chat-123"},
+    )
+    project_id = "project-1"
+    now = datetime.now(UTC)
+    store = LocalCommunicationsStore(temp_db)
+    store.create_channel(channel)
+    store.create_routing_rule(
+        CommsRoutingRule(
+            id="20000000-0000-0000-0000-000000000001",
+            name="Cron home notifications",
+            channel_id=channel.id,
+            event_pattern="cron.run.*",
+            created_at=now,
+            updated_at=now,
+        )
+    )
+
+    first_adapter = make_adapter(channel_type="telegram")
+    first_manager = CommunicationsManager(make_config(), store, make_secret_store(), MagicMock())
+    with patch(
+        "gobby.communications.manager.get_adapter_class",
+        return_value=MagicMock(return_value=first_adapter),
+    ):
+        await first_manager.start()
+
+    first = await first_manager.send_event(
+        "cron.run.completed",
+        'Scheduled job "Nightly backup" completed.',
+        project_id=project_id,
+        event_id="cron-run-1",
+    )
+
+    second_adapter = make_adapter(channel_type="telegram")
+    recovered_manager = CommunicationsManager(
+        make_config(), store, make_secret_store(), MagicMock()
+    )
+    with patch(
+        "gobby.communications.manager.get_adapter_class",
+        return_value=MagicMock(return_value=second_adapter),
+    ):
+        await recovered_manager.start()
+
+    recovered = await recovered_manager.send_event(
+        "cron.run.completed",
+        'Scheduled job "Nightly backup" completed.',
+        project_id=project_id,
+        event_id="cron-run-1",
+    )
+
+    first_adapter.send_message.assert_awaited_once()
+    second_adapter.send_message.assert_not_awaited()
+    assert len(first) == len(recovered) == 1
+    assert recovered[0].id == first[0].id
+
+    persisted = store.get_message(first[0].id)
+    assert persisted is not None
+    assert persisted.status == "sent"
+    assert persisted.platform_message_id == "platform-msg-id-1"
+    assert persisted.metadata_json == {
+        "platform_destination": "chat-123",
+        "source_event_id": "cron-run-1",
+    }
+
+
 async def test_send_event_skips_inactive_channels():
     """send_event() skips channel IDs that don't have active adapters."""
     store = make_store()

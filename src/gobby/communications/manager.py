@@ -248,9 +248,17 @@ class CommunicationsManager:
         content: str,
         project_id: str | None = None,
         session_id: str | None = None,
+        *,
+        event_id: str | None = None,
     ) -> list[CommsMessage]:
         """Route event to matching channels and send to each."""
-        return await self._outbound.send_event(event_type, content, project_id, session_id)
+        return await self._outbound.send_event(
+            event_type,
+            content,
+            project_id,
+            session_id,
+            event_id=event_id,
+        )
 
     def _bridge_identity(self, identity_id: str, session_id: str) -> None:
         """Link existing identity to a session."""
