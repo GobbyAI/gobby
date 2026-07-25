@@ -154,6 +154,13 @@ def _parse_int_token(value: Any, *, default: int = 0) -> int:
         return default
 
 
+def _parse_positive_int_token(value: Any) -> int | None:
+    """Return a strict positive token count without coercing malformed values."""
+    if not isinstance(value, int) or isinstance(value, bool) or value <= 0:
+        return None
+    return value
+
+
 def _parse_tool_payload(value: Any) -> dict[str, Any]:
     """Parse a tool payload value into a dict when possible."""
     if isinstance(value, dict):
@@ -828,6 +835,16 @@ class CodexTranscriptParser(BaseTranscriptParser):
             cache_creation_tokens=cache_creation_tokens,
             cache_read_tokens=cached_input_tokens,
         )
+        context_used_tokens = None
+        last_token_usage = info.get("last_token_usage") if isinstance(info, dict) else None
+        if (
+            isinstance(last_token_usage, dict)
+            and usage.input_tokens == 0
+            and usage.output_tokens == 0
+            and usage.cache_creation_tokens == 0
+            and usage.cache_read_tokens == 0
+        ):
+            context_used_tokens = _parse_positive_int_token(last_token_usage.get("total_tokens"))
         model = (
             usage_data.get("model")
             or payload.get("model")
@@ -848,6 +865,7 @@ class CodexTranscriptParser(BaseTranscriptParser):
             usage=usage,
             model=str(model) if model else None,
             message_id=self._message_id_for(index, payload.get("message_id") or payload.get("id")),
+            context_used_tokens=context_used_tokens,
         )
 
     def iter_parse_events(

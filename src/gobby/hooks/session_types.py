@@ -12,6 +12,7 @@ from typing import TYPE_CHECKING, Any, Protocol
 from gobby.storage.session_models import Session
 
 if TYPE_CHECKING:
+    from gobby.storage.context_usage_snapshot import ContextUsageSnapshot
     from gobby.storage.hub.protocol import HubDatabase
 
 
@@ -123,6 +124,12 @@ class HookSessionManager(Protocol):
         cache_read_tokens: int,
         context_window: int | None = None,
         model: str | None = None,
+    ) -> bool: ...
+
+    def update_context_usage(
+        self,
+        session_id: str,
+        snapshot: ContextUsageSnapshot,
     ) -> bool: ...
 
     def mark_had_edits(self, session_id: str) -> Session | None: ...

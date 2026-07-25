@@ -3,13 +3,17 @@
 from __future__ import annotations
 
 import asyncio
+import logging
 from pathlib import Path
+from types import SimpleNamespace
+from typing import Any
 from unittest.mock import MagicMock, patch
 
 import pytest
 
 from gobby.hooks.event_handlers import EventHandlers
 from gobby.hooks.events import HookEventType
+from gobby.workflows.observer_context_usage import detect_context_compact_guidance
 
 from ._event_handler_helpers import make_event
 
@@ -54,6 +58,137 @@ class TestOtherHandlers:
         event = make_event(HookEventType.PERMISSION_REQUEST, data={"permission": "write"})
         response = event_handlers.handle_permission_request(event)
         assert response.decision == "allow"
+
+
+class TestPostCompactHandler:
+    @pytest.mark.parametrize("source", ["claude", "qwen", "codex", "droid", "grok", "agy"])
+    def test_resets_context_pressure_for_compacting_cli(
+        self,
+        mock_dependencies: dict,
+        source: str,
+    ) -> None:
+        session_manager = mock_dependencies["session_manager"]
+        session = SimpleNamespace(
+            source=source,
+            model="provider-model",
+            context_window=258_400,
+            context_used_tokens=222_353,
+            context_usage_ratio=222_353 / 258_400,
+        )
+        session_manager.get.return_value = session
+        session_manager.update_context_usage.return_value = True
+        handlers = EventHandlers(**mock_dependencies)
+        event = make_event(
+            HookEventType.POST_COMPACT,
+            source=source,
+            metadata={"_platform_session_id": "session-1"},
+        )
+
+        response = handlers.handle_post_compact(event)
+
+        assert response.decision == "allow"
+        session_manager.update_context_usage.assert_called_once()
+        session_id, snapshot = session_manager.update_context_usage.call_args.args
+        assert session_id == "session-1"
+        assert snapshot.source == source
+        assert snapshot.model == "provider-model"
+        assert snapshot.context_window == 258_400
+        assert snapshot.context_used_tokens is None
+        assert snapshot.context_usage_ratio is None
+        assert snapshot.confidence == "unknown"
+
+    def test_reset_pressure_is_absent_from_next_turn_guidance(
+        self,
+        mock_dependencies: dict,
+    ) -> None:
+        session_manager = mock_dependencies["session_manager"]
+        session = SimpleNamespace(
+            source="codex",
+            model="gpt-5.6-sol",
+            context_window=258_400,
+            context_used_tokens=222_353,
+            context_usage_ratio=222_353 / 258_400,
+            context_compact_soft_ratio=None,
+            context_compact_strong_ratio=None,
+        )
+        session_manager.get.return_value = session
+
+        def persist_context(_session_id: str, snapshot: Any) -> bool:
+            session.context_used_tokens = snapshot.context_used_tokens
+            session.context_usage_ratio = snapshot.context_usage_ratio
+            return True
+
+        session_manager.update_context_usage.side_effect = persist_context
+        handlers = EventHandlers(**mock_dependencies)
+        event = make_event(
+            HookEventType.POST_COMPACT,
+            source="codex",
+            metadata={"_platform_session_id": "session-1"},
+        )
+        handlers.handle_post_compact(event)
+        variables: dict[str, Any] = {"parent_turn_seq": 1, "turns_since_compact": 0}
+
+        detect_context_compact_guidance(variables, "session-1", session_manager)
+
+        assert variables["context_compact_guidance_kind"] == ""
+        assert variables["context_compact_guidance_message"] == ""
+
+    def test_missing_session_is_logged_and_allowed(
+        self,
+        mock_dependencies: dict,
+        caplog: pytest.LogCaptureFixture,
+    ) -> None:
+        caplog.set_level(logging.WARNING, logger="test")
+        mock_dependencies["session_manager"].get.return_value = None
+        handlers = EventHandlers(**mock_dependencies)
+        event = make_event(
+            HookEventType.POST_COMPACT,
+            metadata={"_platform_session_id": "missing-session"},
+        )
+
+        response = handlers.handle_post_compact(event)
+
+        assert response.decision == "allow"
+        assert "session missing-session was not found" in caplog.text
+
+    def test_missing_platform_session_id_is_logged_and_allowed(
+        self,
+        mock_dependencies: dict,
+        caplog: pytest.LogCaptureFixture,
+    ) -> None:
+        caplog.set_level(logging.WARNING, logger="test")
+        handlers = EventHandlers(**mock_dependencies)
+        event = make_event(HookEventType.POST_COMPACT)
+
+        response = handlers.handle_post_compact(event)
+
+        assert response.decision == "allow"
+        assert "missing platform session id" in caplog.text
+
+    def test_persistence_failure_is_logged_and_allowed(
+        self,
+        mock_dependencies: dict,
+        caplog: pytest.LogCaptureFixture,
+    ) -> None:
+        caplog.set_level(logging.WARNING, logger="test")
+        session_manager = mock_dependencies["session_manager"]
+        session_manager.get.return_value = SimpleNamespace(
+            source="codex",
+            model="gpt-5.6-sol",
+            context_window=258_400,
+        )
+        session_manager.update_context_usage.return_value = False
+        handlers = EventHandlers(**mock_dependencies)
+        event = make_event(
+            HookEventType.POST_COMPACT,
+            source="codex",
+            metadata={"_platform_session_id": "session-1"},
+        )
+
+        response = handlers.handle_post_compact(event)
+
+        assert response.decision == "allow"
+        assert "failed to reset context usage for session session-1" in caplog.text
 
 
 class TestAcpOnlyHandlers:
@@ -502,7 +637,7 @@ class TestAcpHandlerEdgeCases:
 
     @pytest.mark.asyncio
     async def test_after_model_worker_thread_broadcasts_usage_on_daemon_loop(
-        self, mock_dependencies: dict
+        self, mock_dependencies: dict[str, Any]
     ) -> None:
         loop = asyncio.get_running_loop()
         handlers = EventHandlers(event_loop=loop, **mock_dependencies)
@@ -533,7 +668,7 @@ class TestAcpHandlerEdgeCases:
         broadcasts = []
         broadcasted = asyncio.Event()
 
-        async def broadcast_usage(payload: dict) -> None:
+        async def broadcast_usage(payload: dict[str, Any]) -> None:
             broadcasts.append(payload)
             broadcasted.set()
 
@@ -555,7 +690,7 @@ class TestAcpHandlerEdgeCases:
 class TestSubagentHandlerWithSessionId:
     """Test SUBAGENT handlers with session_id for log coverage."""
 
-    def test_subagent_stop_with_session_id(self, mock_dependencies: dict) -> None:
+    def test_subagent_stop_with_session_id(self, mock_dependencies: dict[str, Any]) -> None:
         """Test SUBAGENT_STOP with session_id present."""
         handlers = EventHandlers(**mock_dependencies)
         event = make_event(
@@ -567,7 +702,7 @@ class TestSubagentHandlerWithSessionId:
 
         assert response.decision == "allow"
 
-    def test_subagent_start_without_subagent_id(self, mock_dependencies: dict) -> None:
+    def test_subagent_start_without_subagent_id(self, mock_dependencies: dict[str, Any]) -> None:
         """Test SUBAGENT_START without subagent_id."""
         handlers = EventHandlers(**mock_dependencies)
         event = make_event(
@@ -580,7 +715,7 @@ class TestSubagentHandlerWithSessionId:
 
         assert response.decision == "allow"
 
-    def test_subagent_start_without_agent_id(self, mock_dependencies: dict) -> None:
+    def test_subagent_start_without_agent_id(self, mock_dependencies: dict[str, Any]) -> None:
         """Test SUBAGENT_START without agent_id."""
         handlers = EventHandlers(**mock_dependencies)
         event = make_event(

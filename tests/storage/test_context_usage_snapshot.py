@@ -59,6 +59,24 @@ def test_window_only_snapshot_keeps_pressure_unknown() -> None:
     assert snapshot.confidence == "unknown"
 
 
+def test_reported_occupancy_stays_separate_from_token_breakdown() -> None:
+    snapshot = ContextUsageSnapshot.from_reported_occupancy(
+        source="codex",
+        context_window=258_400,
+        context_used_tokens=7_248,
+        model="gpt-5.6-sol",
+    )
+
+    assert snapshot.context_used_tokens == 7_248
+    assert snapshot.context_usage_ratio == pytest.approx(7_248 / 258_400)
+    assert snapshot.raw_prompt_footprint == 7_248
+    assert snapshot.uncached_prompt_tokens is None
+    assert snapshot.cache_read_tokens is None
+    assert snapshot.cache_creation_tokens is None
+    assert snapshot.output_tokens is None
+    assert snapshot.confidence == "reported"
+
+
 def test_token_breakdown_ignores_bool_token_values() -> None:
     snapshot = ContextUsageSnapshot.from_token_breakdown(
         source="web_chat",

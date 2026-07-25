@@ -70,6 +70,28 @@ class ContextUsageSnapshot:
         )
 
     @classmethod
+    def from_reported_occupancy(
+        cls,
+        *,
+        source: ContextUsageSource,
+        context_window: int | None,
+        context_used_tokens: int | None,
+        model: str | None = None,
+    ) -> ContextUsageSnapshot:
+        """Create a snapshot from provider-reported current-context occupancy."""
+        context_used = _coerce_nonnegative_int(context_used_tokens)
+        return cls(
+            source=source,
+            model=model,
+            context_window=context_window,
+            context_used_tokens=context_used,
+            context_usage_ratio=cls.calculate_ratio(context_used, context_window),
+            confidence="reported" if context_used is not None else "unknown",
+            timestamp=utc_now(),
+            raw_prompt_footprint=context_used,
+        )
+
+    @classmethod
     def from_token_breakdown(
         cls,
         *,

@@ -16,7 +16,9 @@ from gobby.mcp_proxy.tools.worktrees._helpers import (
     install_provider_hooks,
     resolve_project_context,
 )
+from gobby.sessions.context_usage import normalize_context_usage_source
 from gobby.sessions.token_usage import typed_json_token_usage
+from gobby.storage.context_usage_snapshot import ContextUsageSnapshot
 from gobby.storage.token_events import build_session_usage_payload
 from gobby.utils.project_context import get_workflow_project_path
 from gobby.worktrees.git import WorktreeGitManager
@@ -190,6 +192,43 @@ class MiscEventHandlerMixin(EventHandlersBase):
     def handle_post_compact(self, event: HookEvent) -> HookResponse:
         """Handle POST_COMPACT event."""
         self._log_observe_only_event("POST_COMPACT", event)
+        session_id = event.metadata.get("_platform_session_id")
+        if not session_id:
+            self.logger.warning("POST_COMPACT: missing platform session id")
+            return HookResponse(decision="allow")
+        if self._session_manager is None:
+            self.logger.warning("POST_COMPACT: session manager is unavailable")
+            return HookResponse(decision="allow")
+
+        try:
+            session = self._session_manager.get(session_id)
+            if session is None:
+                self.logger.warning("POST_COMPACT: session %s was not found", session_id)
+                return HookResponse(decision="allow")
+            source = normalize_context_usage_source(session.source)
+            if source is None:
+                self.logger.warning(
+                    "POST_COMPACT: session %s has unsupported source %r",
+                    session_id,
+                    session.source,
+                )
+                return HookResponse(decision="allow")
+            snapshot = ContextUsageSnapshot.window_only(
+                source=source,
+                context_window=session.context_window,
+                model=session.model,
+            )
+            if not self._session_manager.update_context_usage(session_id, snapshot):
+                self.logger.warning(
+                    "POST_COMPACT: failed to reset context usage for session %s",
+                    session_id,
+                )
+        except Exception:
+            self.logger.warning(
+                "POST_COMPACT: failed to reset context usage for session %s",
+                session_id,
+                exc_info=True,
+            )
         return HookResponse(decision="allow")
 
     def handle_stop_failure(self, event: HookEvent) -> HookResponse:

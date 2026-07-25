@@ -2197,7 +2197,7 @@ class TestCodexTranscriptParser:
 
         msg = parser.parse_line(line, 0)
 
-        assert msg is not None
+        assert isinstance(msg, ParsedMessage)
         assert msg.usage is not None
         assert msg.usage.input_tokens == 0
         assert msg.usage.output_tokens == 0
@@ -2228,6 +2228,62 @@ class TestCodexTranscriptParser:
         assert msg.content_type == "usage"
         assert render_transcript([msg]) == []
 
+    def test_token_count_zero_breakdown_reports_current_context_occupancy(
+        self,
+        parser: CodexTranscriptParser,
+    ) -> None:
+        line = self._event_msg(
+            "token_count",
+            info={
+                "last_token_usage": {
+                    "input_tokens": 0,
+                    "cached_input_tokens": 0,
+                    "output_tokens": 0,
+                    "reasoning_output_tokens": 0,
+                    "total_tokens": 7_248,
+                },
+                "model_context_window": 258_400,
+            },
+        )
+
+        msg = parser.parse_line(line, 0)
+
+        assert isinstance(msg, ParsedMessage)
+        assert msg.usage is not None
+        assert msg.usage.input_tokens == 0
+        assert msg.usage.output_tokens == 0
+        assert msg.usage.cache_creation_tokens == 0
+        assert msg.usage.cache_read_tokens == 0
+        assert msg.context_used_tokens == 7_248
+
+    @pytest.mark.parametrize(
+        "last_token_usage",
+        [
+            {},
+            {"total_tokens": "7248"},
+            {"total_tokens": -1},
+            {"total_tokens": True},
+            {"total_tokens": {"value": 7_248}},
+        ],
+    )
+    def test_token_count_ignores_invalid_current_context_occupancy(
+        self,
+        parser: CodexTranscriptParser,
+        last_token_usage: dict[str, Any],
+    ) -> None:
+        line = self._event_msg(
+            "token_count",
+            info={
+                "last_token_usage": last_token_usage,
+                "model_context_window": 258_400,
+            },
+        )
+
+        msg = parser.parse_line(line, 0)
+
+        assert isinstance(msg, ParsedMessage)
+        assert msg.context_used_tokens is None
+
 
 class TestGrokTranscriptParser:
     """Tests for Grok transcript parser."""
@@ -2255,7 +2311,7 @@ class TestGrokTranscriptParser:
 
         msg = parser.parse_line(line, 0)
 
-        assert msg is not None
+        assert isinstance(msg, ParsedMessage)
         assert msg.usage is not None
         assert msg.usage.input_tokens == 1_500
         assert msg.usage.cache_read_tokens == 8_000

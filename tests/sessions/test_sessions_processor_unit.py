@@ -24,6 +24,7 @@ from gobby.sessions.transcript_index import (
     persist_index_sidecar,
 )
 from gobby.sessions.transcripts.base import ParsedMessage, TokenUsage
+from gobby.sessions.transcripts.codex import CodexTranscriptParser
 from gobby.storage.token_events import TokenEvent
 from tests._timing import wait_for_async_condition
 
@@ -1648,6 +1649,126 @@ class TestModelExtraction:
         assert usage_payload["last_prompt_uncached_input_tokens"] == 11392
         assert usage_payload["context_window"] == 258400
         mock_ws.broadcast_token_event.assert_awaited_once()
+
+    @pytest.mark.asyncio
+    async def test_codex_compaction_occupancy_replaces_pressure_without_token_accounting(
+        self,
+        mock_db: MagicMock,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        class FakeTokenEventStore:
+            def __init__(self, _db: object) -> None:
+                self.records: list[TokenEvent] = []
+                self.totals = {
+                    "input_tokens": 222_353,
+                    "output_tokens": 0,
+                    "cache_creation_tokens": 0,
+                    "cache_read_tokens": 0,
+                }
+
+            def get_session_totals(self, _session_id: str) -> dict[str, int]:
+                return dict(self.totals)
+
+            def record(self, event: TokenEvent) -> bool:
+                self.records.append(event)
+                self.totals["input_tokens"] += event.input_tokens
+                self.totals["output_tokens"] += event.output_tokens
+                self.totals["cache_creation_tokens"] += event.cache_creation_tokens
+                self.totals["cache_read_tokens"] += event.cache_read_tokens
+                return True
+
+        store = FakeTokenEventStore(mock_db)
+        monkeypatch.setattr(
+            "gobby.sessions.processor.TokenEventStore",
+            lambda _db: store,
+        )
+
+        session_manager = MagicMock()
+        session = MagicMock()
+        session.project_id = "proj-1"
+        session.source = "codex"
+        session.context_window = 258_400
+        session.model = "gpt-5.6-sol"
+        session.context_used_tokens = 222_353
+        session.context_usage_ratio = 222_353 / 258_400
+        session_manager.get.return_value = session
+
+        def persist_context(_session_id: str, snapshot: Any) -> bool:
+            session.context_used_tokens = snapshot.context_used_tokens
+            session.context_usage_ratio = snapshot.context_usage_ratio
+            return True
+
+        session_manager.update_context_usage.side_effect = persist_context
+        websocket_server = MagicMock()
+        websocket_server.broadcast_token_event = AsyncMock()
+        websocket_server.broadcast_session_usage_updated = AsyncMock()
+        processor = SessionMessageProcessor(
+            mock_db,
+            websocket_server=websocket_server,
+            session_manager=session_manager,
+        )
+        transcript = tmp_path / "codex-compaction.jsonl"
+
+        def token_count_line(last_token_usage: dict[str, int]) -> str:
+            return json.dumps(
+                {
+                    "timestamp": "2026-07-25T12:00:00Z",
+                    "type": "event_msg",
+                    "payload": {
+                        "type": "token_count",
+                        "info": {
+                            "last_token_usage": last_token_usage,
+                            "model_context_window": 258_400,
+                        },
+                    },
+                }
+            )
+
+        transcript.write_text(
+            token_count_line(
+                {
+                    "input_tokens": 0,
+                    "cached_input_tokens": 0,
+                    "output_tokens": 0,
+                    "reasoning_output_tokens": 0,
+                    "total_tokens": 7_248,
+                }
+            )
+            + "\n"
+        )
+        processor._active_sessions["session-1"] = str(transcript)
+        processor._parsers["session-1"] = CodexTranscriptParser()
+
+        await processor._process_session("session-1", str(transcript))
+
+        assert session.context_used_tokens == 7_248
+        assert session.context_usage_ratio == pytest.approx(7_248 / 258_400)
+        assert store.records == []
+        session_manager.update_usage.assert_not_called()
+        websocket_server.broadcast_token_event.assert_not_awaited()
+
+        with transcript.open("a") as transcript_file:
+            transcript_file.write(
+                token_count_line(
+                    {
+                        "input_tokens": 8_000,
+                        "cached_input_tokens": 7_000,
+                        "output_tokens": 50,
+                        "reasoning_output_tokens": 10,
+                        "total_tokens": 8_050,
+                    }
+                )
+                + "\n"
+            )
+
+        await processor._process_session("session-1", str(transcript))
+
+        assert len(store.records) == 1
+        assert session.context_used_tokens == 8_000
+        assert session.context_usage_ratio == pytest.approx(8_000 / 258_400)
+        session_manager.update_usage.assert_called_once()
+        websocket_server.broadcast_token_event.assert_awaited_once()
 
     @pytest.mark.asyncio
     async def test_duplicate_token_usage_refreshes_session_without_token_broadcast(

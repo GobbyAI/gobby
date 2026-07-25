@@ -119,6 +119,7 @@ class ParsedMessage:
     source: str | None = None
     source_ref: str | None = None
     source_line: int | None = None
+    context_used_tokens: int | None = None
 
 
 DecodeFailureKind = Literal["empty", "non_json", "truncated"]

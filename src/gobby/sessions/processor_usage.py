@@ -8,8 +8,10 @@ from datetime import UTC, datetime
 import psycopg
 
 from gobby.llm.context_windows import reconcile_model_context, reconcile_observed_model
+from gobby.sessions.context_usage import normalize_context_usage_source
 from gobby.sessions.processor_types import WINDOW_ONLY_CONTEXT_SOURCES, ProcessorHost
 from gobby.sessions.transcripts.base import ParsedMessage
+from gobby.storage.context_usage_snapshot import ContextUsageSnapshot
 from gobby.storage.token_events import (
     TokenEvent,
     build_session_usage_payload,
@@ -29,9 +31,15 @@ class ProcessorUsageMixin:
         if not self.session_manager:
             return
         has_usage = any(self._usage_has_tokens(msg) for msg in messages)
+        has_context_occupancy = any(msg.context_used_tokens is not None for msg in messages)
         has_window_metadata = any(self._message_context_window(msg) is not None for msg in messages)
         has_model = any(isinstance(msg.model, str) and bool(msg.model) for msg in messages)
-        if not has_usage and not has_window_metadata and not has_model:
+        if (
+            not has_usage
+            and not has_context_occupancy
+            and not has_window_metadata
+            and not has_model
+        ):
             return
 
         try:
@@ -77,8 +85,21 @@ class ProcessorUsageMixin:
             event_context_window = reconciled_context.context_window
             if event_context_window is not None:
                 context_window = event_context_window
+            has_reported_occupancy = False
+            if msg.context_used_tokens is not None:
+                normalized_source = normalize_context_usage_source(source)
+                if normalized_source is not None:
+                    occupancy_snapshot = ContextUsageSnapshot.from_reported_occupancy(
+                        source=normalized_source,
+                        context_window=event_context_window,
+                        context_used_tokens=msg.context_used_tokens,
+                        model=last_model,
+                    )
+                    if occupancy_snapshot.context_used_tokens is not None:
+                        latest_context_snapshot = occupancy_snapshot
+                        has_reported_occupancy = True
             if not self._usage_has_tokens(msg) or msg.usage is None:
-                if source in WINDOW_ONLY_CONTEXT_SOURCES:
+                if not has_reported_occupancy and source in WINDOW_ONLY_CONTEXT_SOURCES:
                     latest_context_snapshot = self._snapshot_from_window_metadata(
                         source=source,
                         context_window=event_context_window,
