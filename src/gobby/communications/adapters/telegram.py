@@ -37,6 +37,7 @@ from gobby.communications.telegram_link_previews import (
     normalize_link_preview_options,
     resolve_link_preview_options,
 )
+from gobby.communications.telegram_proxy import resolve_telegram_proxy_url
 from gobby.communications.telegram_stickers import telegram_sticker_attachments
 
 if TYPE_CHECKING:
@@ -432,7 +433,12 @@ class TelegramAdapter(BaseChannelAdapter):
         self._message_link_preview_options.clear()
 
         self._api_base = f"https://api.telegram.org/bot{self._bot_token}"
-        self._client = httpx.AsyncClient(timeout=30.0)
+        proxy_url = resolve_telegram_proxy_url(config.config_json.get("proxy_url"), secret_resolver)
+        self._client = (
+            httpx.AsyncClient(timeout=30.0, proxy=proxy_url)
+            if proxy_url
+            else httpx.AsyncClient(timeout=30.0)
+        )
 
         response = await self._client.post(f"{self._api_base}/getMe")
         self._raise_for_status_with_redacted_token(response)

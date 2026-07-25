@@ -174,7 +174,7 @@ Adapter fields:
 | Type | Secrets | Main configuration |
 |------|---------|--------------------|
 | `slack` | `bot_token`; `signing_secret` for webhooks; optional `webhook_secret` | `default_destination` |
-| `telegram` | `bot_token`; `webhook_secret` for webhook mode | `default_destination`, optional `poll_interval`; `poll_offset` is maintained by the adapter |
+| `telegram` | `bot_token`; `webhook_secret` for webhook mode; authenticated `proxy_url` | `default_destination`, optional `poll_interval` and unauthenticated `proxy_url`; `poll_offset` is maintained by the adapter |
 | `discord` | `bot_token`; `webhook_secret` holds the interaction public key | `default_destination`, `enable_gateway` (default `true`) |
 | `teams` | `app_id`, `app_password` | `default_destination`; outbound also needs `service_url` or a stored conversation reference |
 | `email` | `password`, or OAuth values `oauth2_client_id`, `oauth2_client_secret`, `oauth2_refresh_token` | `smtp_host`, `smtp_port`, `imap_host`, `imap_port`, `from_address`, `auth_method`; optional `default_destination`, `to_address`, `default_recipient`, `oauth2_token_url`, `allow_plaintext_credentials` |
@@ -184,6 +184,11 @@ Adapter fields:
 Slack uses `signing_secret` when verifying Events API requests. The dedicated
 `webhook_secret` field is the verification source passed to every adapter, so
 provider-specific setups may put the same verification value there as well.
+
+Telegram accepts an optional `proxy_url` using `http`, `socks5`, or `socks5h`.
+All Bot API requests—including polling, attachment downloads, and sends—use
+that proxy. Configure URLs containing proxy credentials through the `secrets`
+map so channel reads expose only a `$secret:` reference.
 
 ## Outbound destination resolution
 

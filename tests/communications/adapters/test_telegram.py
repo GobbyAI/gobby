@@ -64,6 +64,7 @@ async def test_initialize_success(
 
         # Test without webhook
         await adapter.initialize(channel_config, secret_resolver)
+        MockClient.assert_called_once_with(timeout=30.0)
         assert adapter._bot_token == "test-telegram-token"
         assert adapter._api_base == "https://api.telegram.org/bottest-telegram-token"
         assert mock_post.await_args_list[:2] == [
@@ -87,6 +88,36 @@ async def test_initialize_success(
         mock_post.assert_called_with(
             "https://api.telegram.org/bottest-telegram-token/deleteWebhook"
         )
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "proxy_url",
+    [
+        "http://127.0.0.1:8080",
+        "socks5://proxy-user:proxy-password@127.0.0.1:1080",
+    ],
+)
+async def test_initialize_uses_configured_proxy_for_shared_http_client(
+    adapter: TelegramAdapter,
+    channel_config: ChannelConfig,
+    proxy_url: str,
+) -> None:
+    channel_config.config_json["proxy_url"] = "$secret:TELEGRAM_PROXY_URL"
+
+    def resolve_secret(key: str) -> str | None:
+        return {
+            "TELEGRAM_BOT_TOKEN": "test-telegram-token",
+            "TELEGRAM_PROXY_URL": proxy_url,
+        }.get(key)
+
+    with patch("httpx.AsyncClient") as MockClient:
+        MockClient.return_value.post = AsyncMock(return_value=_telegram_api_success())
+
+        await adapter.initialize(channel_config, resolve_secret)
+
+    MockClient.assert_called_once_with(timeout=30.0, proxy=proxy_url)
+    assert adapter._api_base == "https://api.telegram.org/bottest-telegram-token"
 
 
 @pytest.mark.asyncio
@@ -246,6 +277,7 @@ async def test_send_message_http_status_error_redacts_bot_token(
     secret_resolver: Callable[[str], str | None],
 ) -> None:
     token = "test-telegram-token"
+    channel_config.config_json["proxy_url"] = "http://127.0.0.1:8080"
     mock_post = AsyncMock()
 
     async def side_effect(url, **kwargs):
