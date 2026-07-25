@@ -309,6 +309,11 @@ def register_core_routes(
                 project_id=project_id,
                 transcript_path=request_data.transcript_path,
                 title=request_data.title,
+                title_source=(
+                    "manual"
+                    if isinstance(request_data.title, str) and request_data.title.strip()
+                    else None
+                ),
                 git_branch=git_branch,
                 parent_session_id=request_data.parent_session_id,
                 sandbox_enabled=request_data.sandbox_enabled,

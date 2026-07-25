@@ -83,7 +83,6 @@ def prepare_terminal_spawn(
     workflow_name: str | None = None,
     agent_name: str | None = None,
     initial_variables: dict[str, Any] | None = None,
-    title: str | None = None,
     git_branch: str | None = None,
     prompt: str | None = None,
     model: str | None = None,
@@ -118,7 +117,6 @@ def prepare_terminal_spawn(
         agent_id: Optional agent ID
         workflow_name: Optional workflow to activate
         agent_name: Agent definition name used for the spawned session/run
-        title: Optional session title
         git_branch: Optional git branch
         prompt: Optional initial prompt
         model: Optional model override.
@@ -154,7 +152,6 @@ def prepare_terminal_spawn(
         source=source,
         agent_id=agent_id,
         workflow_name=workflow_name,
-        title=title,
         git_branch=git_branch,
         is_local=is_local,
         sandbox_enabled=sandbox_enabled,

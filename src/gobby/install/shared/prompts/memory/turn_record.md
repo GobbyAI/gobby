@@ -22,7 +22,9 @@ The `title_candidate` must describe the actual work, not command syntax. If the
 user prompt begins with a router or skill command such as `/gobby coderabbit`,
 `$gobby coderabbit`, `/help`, or `$skill`, ignore that command prefix and title
 the trailing task text or the work the agent performed. Never return a title
-that starts with `/` or `$`.
+that starts with `/` or `$`. Use plain words only: no dates, timestamps, session
+or task refs, provider names, emoji, tree glyphs, bullets, or decorative
+punctuation.
 
 `turn_markdown` must cover:
 - What the user asked or requested

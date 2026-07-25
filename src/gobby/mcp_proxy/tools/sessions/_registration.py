@@ -93,6 +93,7 @@ machine_id and project_id are auto-resolved from the local environment if omitte
                 source=source,
                 project_id=resolved_project_id,
                 title=title,
+                title_source="manual" if isinstance(title, str) and title.strip() else None,
                 git_branch=git_branch,
                 parent_session_id=parent_session_id,
                 agent_depth=agent_depth,

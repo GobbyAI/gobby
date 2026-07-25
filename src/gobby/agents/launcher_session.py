@@ -15,7 +15,6 @@ def get_or_create_launcher_session(
     session_manager: SessionManager,
     project_id: str,
     source: str,
-    title: str,
 ) -> str:
     """Return a persistent top-level launcher session id for a project/source pair."""
     sessions = session_manager.list(project_id=project_id, source=source)
@@ -27,7 +26,6 @@ def get_or_create_launcher_session(
         machine_id=get_machine_id() or source,
         source=source,
         project_id=project_id,
-        title=title,
         agent_depth=0,
     )
     return str(created.id)
@@ -37,7 +35,6 @@ async def aget_or_create_launcher_session(
     session_manager: SessionManager,
     project_id: str,
     source: str,
-    title: str,
 ) -> str:
     """Async wrapper for launcher session lookup in request handlers."""
     return await asyncio.to_thread(
@@ -45,5 +42,4 @@ async def aget_or_create_launcher_session(
         session_manager,
         project_id,
         source,
-        title,
     )

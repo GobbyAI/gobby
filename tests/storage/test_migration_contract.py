@@ -55,6 +55,20 @@ MEMORY_DREAM_RUNTIME_NORMALIZERS = (
 )
 
 
+def test_digest_owned_session_title_migration_contract() -> None:
+    migration = (
+        SRC_ROOT / "storage" / "migrations" / "341_digest_owned_session_titles.sql"
+    ).read_text(encoding="utf-8")
+    baseline = POSTGRES_BASELINE_SCHEMA.read_text(encoding="utf-8")
+
+    assert "title_source IN ('heuristic', 'native', 'provisional')" in migration
+    assert "title_source = 'provisional'" in migration
+    assert "WHEN 'codex' THEN 'Codex'" in migration
+    assert "WHEN 'claude' THEN 'Claude'" in migration
+    assert "DROP COLUMN IF EXISTS last_title_synthesis_digest_hash" in migration
+    assert "last_title_synthesis_digest_hash" not in baseline
+
+
 def _tracked_migration_names(migrations_dir: Path) -> list[str]:
     relative_dir = migrations_dir.relative_to(REPO_ROOT)
     try:

@@ -198,7 +198,6 @@ async def resume_agent_run(
         workflow_name=_metadata_str(resume_metadata, "workflow"),
         agent_name=_metadata_str(resume_metadata, "agent_slug") or original_run.agent_name,
         initial_variables=initial_variables,
-        title=_resume_title(original_run),
         git_branch=_metadata_str(resume_metadata, "branch_name"),
         prompt=prompt,
         model=resume_model,
@@ -637,12 +636,6 @@ def _tmux_spawner(daemon_config: Any | None, metadata: dict[str, Any]) -> TmuxSp
     if not isinstance(tmux_config, TmuxConfig):
         raise RuntimeError("daemon tmux config is required to resume tmux agents")
     return TmuxSpawner(config=tmux_config)
-
-
-def _resume_title(run: AgentRun) -> str | None:
-    if run.agent_name:
-        return f"{run.agent_name}: resumed after daemon stop"
-    return "Agent: resumed after daemon stop"
 
 
 def _metadata_str(metadata: dict[str, Any], key: str) -> str | None:

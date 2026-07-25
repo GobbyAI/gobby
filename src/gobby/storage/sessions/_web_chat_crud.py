@@ -9,6 +9,8 @@ from gobby.storage.hub.protocol import HubDatabase, WebChatSessionBootstrap
 from gobby.storage.session_models import Session
 from gobby.utils.datetime import utc_now
 
+from ._title_defaults import MANUAL_TITLE_SOURCE
+
 
 class _SessionWebChatCRUDHost(Protocol):
     db: HubDatabase
@@ -67,6 +69,7 @@ class _SessionWebChatCRUDMixin:
                 source=source,
                 project_id=project_id,
                 title=title,
+                title_source=MANUAL_TITLE_SOURCE if title and title.strip() else None,
                 session_type="web_chat",
                 is_local=is_local,
                 sandbox_enabled=sandbox_enabled,

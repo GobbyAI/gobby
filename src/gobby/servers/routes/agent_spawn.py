@@ -244,7 +244,6 @@ def create_agent_spawn_router(server: HTTPServer) -> APIRouter:
                 machine_id=get_machine_id() or "web",
                 project_id=effective_project_id,
                 source=source,
-                title=task.title,
                 model=req.model,
                 is_local=is_local_agent_definition(source, req.model),
                 sandbox_enabled=sandbox_enabled,
@@ -297,7 +296,6 @@ def create_agent_spawn_router(server: HTTPServer) -> APIRouter:
             server.services.session_manager,
             effective_project_id,
             "web_launcher",
-            "Web Launcher",
         )
 
         # Load agent definition

@@ -404,7 +404,6 @@ class PipelineExecutor(
                             machine_id="pipeline",
                             source="pipeline",
                             project_id=project_id,
-                            title=f"pipeline:{pipeline.name}",
                             parent_session_id=caller_session_id,
                             agent_depth=0,
                         )

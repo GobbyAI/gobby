@@ -285,6 +285,11 @@ def test_postgres_migration_discovery_finds_all_post_baseline_migrations() -> No
         (334, "verification_receipts"),
         (335, "memories_dream_due_version"),
         (336, "model_metadata_rename"),
+        (337, "verification_receipts_default"),
+        (338, "plan_review_evidence"),
+        (339, "expired_plan_review_round_retry"),
+        (340, "tool_results"),
+        (341, "digest_owned_session_titles"),
     ]
     actual = [(migration.version, migration.name) for migration in discovered]
 

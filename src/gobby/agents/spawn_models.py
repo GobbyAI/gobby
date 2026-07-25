@@ -32,7 +32,6 @@ class SpawnRequest:
     branch_name: str | None = None
     task_id: str | None = None
     claimed_session_id: str | None = None
-    title: str | None = None
     agent_name: str | None = None
     agent_depth: int = 0
     max_agent_depth: int = 5

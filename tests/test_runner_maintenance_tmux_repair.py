@@ -119,19 +119,11 @@ async def test_repair_loop_repairs_one_best_session_per_tmux_pane() -> None:
     )
     session_manager = _SessionManager([stale, grok, other])
 
-    title_repair = AsyncMock(return_value=None)
     enforce = AsyncMock(return_value=True)
-    with (
-        patch("gobby.runner_maintenance.repair_missing_session_title", title_repair),
-        patch("gobby.runner_maintenance.enforce_window_name_if_unmanaged", enforce),
-    ):
+    with patch("gobby.runner_maintenance.enforce_window_name_if_unmanaged", enforce):
         await tmux_window_name_repair_loop(session_manager, lambda: True)
 
     assert session_manager.calls == [(["active", "paused"], 200)]
-    assert title_repair.await_args_list == [
-        call(session_manager, grok),
-        call(session_manager, other),
-    ]
     assert enforce.await_args_list == [call(grok), call(other)]
 
 
@@ -170,18 +162,10 @@ async def test_repair_loop_scopes_missing_socket_to_effective_default() -> None:
     )
     session_manager = _SessionManager([root, shallow_agent, nested_agent])
 
-    title_repair = AsyncMock(return_value=None)
     enforce = AsyncMock(return_value=True)
-    with (
-        patch("gobby.runner_maintenance.repair_missing_session_title", title_repair),
-        patch("gobby.runner_maintenance.enforce_window_name_if_unmanaged", enforce),
-    ):
+    with patch("gobby.runner_maintenance.enforce_window_name_if_unmanaged", enforce):
         await tmux_window_name_repair_loop(session_manager, lambda: True)
 
-    assert title_repair.await_args_list == [
-        call(session_manager, root),
-        call(session_manager, nested_agent),
-    ]
     assert enforce.await_args_list == [call(root), call(nested_agent)]
 
 

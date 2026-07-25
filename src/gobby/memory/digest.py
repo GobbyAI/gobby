@@ -12,6 +12,9 @@ import hashlib
 import json
 import logging
 import re
+import threading
+from collections.abc import AsyncIterator
+from contextlib import asynccontextmanager
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, NoReturn, Protocol
@@ -20,17 +23,14 @@ from gobby.llm.base import LLMProviderCancellation
 from gobby.memory.shadow_relevance import judge_shadow_candidate_relevance
 from gobby.memory.title_heuristics import (
     LIFECYCLE_CMDS,
-    build_heuristic_title,
-    heuristic_title_from_transcript,
     is_template_placeholder,
     normalize_title_candidate,
 )
 from gobby.storage.hub.protocol import HubDatabase
+from gobby.storage.sessions._title_defaults import DIGEST_TITLE_SOURCE, MANUAL_TITLE_SOURCE
 from gobby.utils.injected_context import strip_injected_context
 
 logger = logging.getLogger(__name__)
-
-_TITLE_SYNTHESIS_DIGEST_LIMIT = 12_000
 
 
 @dataclass(frozen=True)
@@ -48,7 +48,34 @@ class _DigestPersistenceError(RuntimeError):
     """Raised when digest persistence would leave partial session state."""
 
 
+@dataclass
+class _DigestLockEntry:
+    lock: asyncio.Lock
+    users: int = 0
+
+
 _DIGEST_TURN_SENTINEL_RE = re.compile(r"(?m)^[ \t]*<!-- gobby:digest-turn:(\d+) -->[ \t]*$")
+_DIGEST_LOCKS: dict[str, _DigestLockEntry] = {}
+_DIGEST_LOCKS_GUARD = threading.Lock()
+
+
+@asynccontextmanager
+async def _serialize_session_digest(session_id: str) -> AsyncIterator[None]:
+    """Serialize digest reads and writes for one session."""
+    with _DIGEST_LOCKS_GUARD:
+        entry = _DIGEST_LOCKS.get(session_id)
+        if entry is None:
+            entry = _DigestLockEntry(lock=asyncio.Lock())
+            _DIGEST_LOCKS[session_id] = entry
+        entry.users += 1
+    try:
+        async with entry.lock:
+            yield
+    finally:
+        with _DIGEST_LOCKS_GUARD:
+            entry.users -= 1
+            if entry.users == 0 and _DIGEST_LOCKS.get(session_id) is entry:
+                del _DIGEST_LOCKS[session_id]
 
 
 async def _run_sync_io(func: Any, *args: Any, **kwargs: Any) -> Any:
@@ -117,50 +144,6 @@ def _provider_cancelled_result(session_id: str, exc: LLMProviderCancellation) ->
         exc,
     )
     return {"cancelled": True, "reason": str(exc)}
-
-
-async def _provider_cancelled_fallback(
-    session_manager: Any,
-    session_id: str,
-    exc: LLMProviderCancellation,
-) -> dict[str, Any]:
-    """Land a heuristic title when LLM digest/title generation is cancelled.
-
-    Provider-shutdown cancellation otherwise leaves the title unset because the
-    LLM call never completes — the dominant reason interactive Claude sessions
-    keep an empty title. When the session still has no title, persist a cheap
-    transcript-derived heuristic so a descriptive window name always lands even
-    when the LLM is unavailable.
-    """
-    result = _provider_cancelled_result(session_id, exc)
-    if not session_manager or not session_id:
-        return result
-    session = await _run_sync_io(session_manager.get, session_id)
-    if session is None:
-        return result
-    if not _can_replace_with_heuristic_title(session):
-        return result
-
-    title = await heuristic_title_from_transcript(
-        getattr(session, "transcript_path", None),
-        getattr(session, "source", None),
-    )
-    if not title:
-        return result
-
-    updated = await _run_sync_io(
-        session_manager.update_title,
-        session_id,
-        title,
-        title_source="heuristic",
-    )
-    if updated is not None:
-        result["title"] = title
-        result["title_source"] = "heuristic"
-        logger.info(
-            "Persisted heuristic fallback title for cancelled digest session %s", session_id
-        )
-    return result
 
 
 async def _read_last_turn_from_transcript(
@@ -322,7 +305,9 @@ def _build_turn_record_prompt(prompt_text: str, response_text: str) -> str:
         "If the user prompt begins with a router or skill command such as "
         "`/gobby coderabbit`, `$gobby coderabbit`, `/help`, or `$skill`, ignore "
         "that command prefix and title the trailing task text or the work the "
-        "agent performed. Never return a title that starts with `/` or `$`.\n\n"
+        "agent performed. Use plain words only: no dates, timestamps, session or "
+        "task refs, provider names, emoji, tree glyphs, bullets, or decorative "
+        "punctuation. Never return a title that starts with `/` or `$`.\n\n"
         "turn_markdown must cover:\n"
         "- What the user asked or requested\n"
         "- What the agent found, decided, or accomplished\n"
@@ -337,102 +322,10 @@ def _build_turn_record_prompt(prompt_text: str, response_text: str) -> str:
     )
 
 
-def _build_title_synthesis_prompt(digest_markdown: str) -> str:
-    """Build the title synthesis prompt inline (fallback when DB prompts unavailable)."""
-    return (
-        "Given a session's turn-by-turn digest, produce a 3-5 word title\n"
-        "reflecting the current focus of the session. Ignore leading router or\n"
-        "skill command syntax such as `/gobby coderabbit`, `$gobby coderabbit`,\n"
-        "`/help`, or `$skill`; title the actual task or work instead. Never\n"
-        "output a title that starts with `/` or `$`.\n\n"
-        f"## Session Digest\n{digest_markdown}\n\n"
-        "Output only the title, nothing else."
-    )
-
-
 def _should_update_digest_title(session: SessionTitlePolicy) -> bool:
     """Return whether digest-owned title generation may update this session title."""
-    existing_title = str(getattr(session, "title", None) or "").strip()
-    raw_source = getattr(session, "title_source", None)
-    title_source = str(raw_source or "").strip().lower()
-
-    if title_source == "manual":
-        return False
-    if existing_title and raw_source is None:
-        return False
-    if not existing_title:
-        return True
-    if title_source == "native":
-        return False
-    return title_source in {"heuristic", "llm", "provisional"} or not title_source
-
-
-def _can_replace_with_heuristic_title(session: Any) -> bool:
-    """Return whether a prompt/transcript heuristic may set this session title."""
-    existing_title = str(getattr(session, "title", "") or "").strip()
     title_source = str(getattr(session, "title_source", "") or "").strip().lower()
-    if title_source == "manual":
-        return False
-    return not existing_title or title_source == "provisional"
-
-
-def _can_replace_with_native_title(session: Any) -> bool:
-    """Return whether a CLI-native title may set this session title.
-
-    Native titles (Claude ``ai-title``, Droid ``sessionTitle``) are
-    AI-synthesized by the CLI itself. They may replace heuristic or provisional
-    bootstrap titles, and Claude may emit multiple ``ai-title`` updates (latest
-    wins). They may NOT override manual titles (user intent) or LLM digest titles
-    (which have full conversation context).
-    """
-    existing_title = str(getattr(session, "title", "") or "").strip()
-    title_source = str(getattr(session, "title_source", "") or "").strip().lower()
-    if title_source == "manual":
-        return False
-    if title_source == "llm":
-        return False
-    return not existing_title or title_source in {"provisional", "heuristic", "native"}
-
-
-async def bootstrap_session_title(
-    session_manager: Any,
-    session_id: str,
-    prompt_text: Any,
-) -> str | None:
-    """Set a local heuristic title from the first meaningful prompt."""
-    if not session_manager or not session_id:
-        return None
-
-    session = await _run_sync_io(session_manager.get, session_id)
-    if session is None:
-        return None
-
-    if not _can_replace_with_heuristic_title(session):
-        return None
-
-    title = build_heuristic_title(prompt_text)
-    if not title:
-        # Event payload carried no usable prompt (empty/normalization gap on some
-        # provider paths). Fall back to the transcript's first user turn so the
-        # heuristic does not depend solely on the event data.
-        title = await heuristic_title_from_transcript(
-            getattr(session, "transcript_path", None),
-            getattr(session, "source", None),
-        )
-    if not title:
-        return None
-
-    updated = await _run_sync_io(
-        session_manager.update_title,
-        session_id,
-        title,
-        title_source="heuristic",
-    )
-    if updated is None:
-        return None
-
-    logger.debug("Bootstrapped heuristic title for session %s", session_id)
-    return title
+    return title_source != MANUAL_TITLE_SOURCE
 
 
 async def _resolve_undigested_pairs(
@@ -608,65 +501,7 @@ def _raise_turn_record_contract_error(
     raise ValueError(f"memory.turn_record returned invalid JSON contract: {reason}")
 
 
-async def _synthesize_title(
-    updated_digest: str,
-    session_id: str,
-    session_manager: Any,
-    session: Any,
-    llm_service: Any,
-    digest_config: Any,
-    db: HubDatabase,
-) -> str | None:
-    """Synthesize session title from digest via LLM and update tmux window.
-
-    Uses the digest feature config so candidate fallback stays centralized
-    in ``LLMService``. ``llm_service`` and ``digest_config`` are required
-    non-None dependencies whenever title synthesis is attempted.
-    """
-    if llm_service is None:
-        raise TypeError("llm_service is required for memory digest title synthesis")
-    if digest_config is None:
-        raise TypeError("digest_config is required for memory digest title synthesis")
-    if not _should_update_digest_title(session):
-        return None
-
-    digest_excerpt = updated_digest[-_TITLE_SYNTHESIS_DIGEST_LIMIT:]
-
-    try:
-        title_prompt = await _run_sync_io(
-            _render_prompt_template,
-            "memory/title_synthesis",
-            {"digest_markdown": digest_excerpt},
-            db,
-        )
-    except Exception:
-        title_prompt = _build_title_synthesis_prompt(digest_excerpt)
-
-    llm_timeout = getattr(digest_config, "timeout", 30)
-    title = await asyncio.wait_for(
-        llm_service.call_feature(
-            digest_config,
-            title_prompt,
-            caller="memory.title_synthesis",
-        ),
-        llm_timeout,
-    )
-
-    title_str = normalize_title_candidate(title)
-    if title_str:
-        updated_session = await _run_sync_io(
-            session_manager.update_title,
-            session_id,
-            title_str,
-            title_source="llm",
-        )
-        if updated_session is None:
-            return None
-        return title_str
-    return None
-
-
-async def build_turn_and_digest(
+async def _build_turn_and_digest_serialized(
     memory_manager: Any,
     session_manager: Any,
     session_id: str,
@@ -728,56 +563,14 @@ async def build_turn_and_digest(
             logger.warning("build_turn_and_digest: Session %s not found", session_id)
             return None
 
-        title_source = str(getattr(session, "title_source", "") or "").strip().lower()
-        needs_title_recovery = not bool(str(getattr(session, "title", "") or "").strip())
-        needs_title_recovery = needs_title_recovery or title_source in {
-            "heuristic",
-            "provisional",
-        }
-        existing_digest = getattr(session, "digest_markdown", None) or ""
-
         # 2. Resolve undigested pairs
         num_pairs = getattr(digest_config, "num_pairs", 50) if digest_config else 50
         resolved = await _resolve_undigested_pairs(session, prompt_text, session_id, num_pairs)
-        if resolved is None and (not needs_title_recovery or not existing_digest):
+        if resolved is None:
             return None
 
         if digest_config is None:
             return {"error": "memory digest feature config not available"}
-
-        if resolved is None:
-            title_digest_hash = hashlib.sha256(existing_digest.encode("utf-8")).hexdigest()[:16]
-            if getattr(session, "last_title_synthesis_digest_hash", None) == title_digest_hash:
-                return None
-            await _run_sync_io(
-                session_manager.update_last_title_synthesis_digest_hash,
-                session_id,
-                title_digest_hash,
-            )
-            try:
-                title = await _synthesize_title(
-                    existing_digest,
-                    session_id,
-                    session_manager,
-                    session,
-                    llm_service,
-                    digest_config,
-                    db,
-                )
-            except LLMProviderCancellation as e:
-                return await _provider_cancelled_fallback(session_manager, session_id, e)
-            except Exception as e:
-                logger.warning("build_turn_and_digest: Title synthesis failed: %s", e)
-                return None
-
-            if not title:
-                return None
-
-            return {
-                "title": title,
-                "title_only": True,
-                "digest_length": len(existing_digest),
-            }
 
         undigested_pairs, input_hash, next_pair_index = resolved
 
@@ -801,10 +594,12 @@ async def build_turn_and_digest(
             existing_title = str(getattr(session, "title", "") or "").strip()
             existing_title_source = str(getattr(session, "title_source", "") or "").strip().lower()
             digest_title = turn_record.title_candidate
-            title_changed = existing_title != digest_title or existing_title_source != "llm"
+            title_changed = (
+                existing_title != digest_title or existing_title_source != DIGEST_TITLE_SOURCE
+            )
             if title_changed:
                 persist_title = digest_title
-                persist_title_source = "llm"
+                persist_title_source = DIGEST_TITLE_SOURCE
 
         # 6. Persist digest state only after contract validation succeeds.
         try:
@@ -862,7 +657,7 @@ async def build_turn_and_digest(
     except _DigestPersistenceError:
         raise
     except LLMProviderCancellation as e:
-        return await _provider_cancelled_fallback(session_manager, session_id, e)
+        return _provider_cancelled_result(session_id, e)
     except Exception as e:
         logger.exception(
             "build_turn_and_digest: Failed for session %s: %s",
@@ -870,3 +665,25 @@ async def build_turn_and_digest(
             e,
         )
         return {"error": str(e)}
+
+
+async def build_turn_and_digest(
+    memory_manager: Any,
+    session_manager: Any,
+    session_id: str,
+    prompt_text: str | None = None,
+    llm_service: Any | None = None,
+    db: HubDatabase | None = None,
+    config: Any | None = None,
+) -> dict[str, Any] | None:
+    """Build one digest turn and its title under a per-session serialization lock."""
+    async with _serialize_session_digest(session_id):
+        return await _build_turn_and_digest_serialized(
+            memory_manager=memory_manager,
+            session_manager=session_manager,
+            session_id=session_id,
+            prompt_text=prompt_text,
+            llm_service=llm_service,
+            db=db,
+            config=config,
+        )

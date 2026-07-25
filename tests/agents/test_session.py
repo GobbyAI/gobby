@@ -28,7 +28,6 @@ class TestChildSessionConfig:
         assert config.source == "claude"
         assert config.agent_id is None
         assert config.workflow_name is None
-        assert config.title is None
         assert config.git_branch is None
 
     def test_create_with_all_fields(self) -> None:
@@ -40,13 +39,11 @@ class TestChildSessionConfig:
             source="claude",
             agent_id="agent-456",
             workflow_name="plan-execute",
-            title="Feature Implementation",
             git_branch="feature/new-feature",
         )
 
         assert config.agent_id == "agent-456"
         assert config.workflow_name == "plan-execute"
-        assert config.title == "Feature Implementation"
         assert config.git_branch == "feature/new-feature"
 
 
@@ -239,65 +236,7 @@ class TestChildSessionManagerCreate:
         assert call_kwargs["agent_depth"] == 1  # parent is depth 0
         assert call_kwargs["spawned_by_agent_id"] == "agent-456"
         assert "agent-" in call_kwargs["external_id"]
-
-    def test_create_child_session_with_title(self, manager, mock_storage) -> None:
-        """Creates child session with provided title."""
-        mock_parent = MagicMock()
-        mock_parent.parent_session_id = None
-        mock_parent.agent_depth = 0
-        mock_storage.get.return_value = mock_parent
-
-        config = ChildSessionConfig(
-            parent_session_id="sess-parent",
-            project_id="proj-123",
-            machine_id="machine-abc",
-            source="claude",
-            title="Custom Title",
-        )
-
-        manager.create_child_session(config)
-
-        call_kwargs = mock_storage.register.call_args.kwargs
-        assert call_kwargs["title"] == "Custom Title"
-
-    def test_create_child_session_auto_title_workflow(self, manager, mock_storage) -> None:
-        """Creates child session with auto-generated workflow title."""
-        mock_parent = MagicMock()
-        mock_parent.parent_session_id = None
-        mock_parent.agent_depth = 0
-        mock_storage.get.return_value = mock_parent
-
-        config = ChildSessionConfig(
-            parent_session_id="sess-parent",
-            project_id="proj-123",
-            machine_id="machine-abc",
-            source="claude",
-            workflow_name="plan-execute",
-        )
-
-        manager.create_child_session(config)
-
-        call_kwargs = mock_storage.register.call_args.kwargs
-        assert call_kwargs["title"] == "Agent: plan-execute"
-
-    def test_create_child_session_auto_title_default(self, manager, mock_storage) -> None:
-        """Creates child session with default title."""
-        mock_parent = MagicMock()
-        mock_parent.parent_session_id = None
-        mock_parent.agent_depth = 0
-        mock_storage.get.return_value = mock_parent
-
-        config = ChildSessionConfig(
-            parent_session_id="sess-parent",
-            project_id="proj-123",
-            machine_id="machine-abc",
-            source="claude",
-        )
-
-        manager.create_child_session(config)
-
-        call_kwargs = mock_storage.register.call_args.kwargs
-        assert call_kwargs["title"] == "Agent session"
+        assert "title" not in call_kwargs
 
     def test_create_child_session_with_git_branch(self, manager, mock_storage) -> None:
         """Creates child session with git branch."""

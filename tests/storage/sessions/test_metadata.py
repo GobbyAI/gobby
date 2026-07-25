@@ -34,6 +34,7 @@ class TestSessionManagerMetadata:
         updated = session_manager.update_title(session.id, "New Title")
         assert updated is not None
         assert updated.title == "New Title"
+        assert updated.title_source == "manual"
 
     def test_update_title_schedules_tmux_rename(
         self,
@@ -72,7 +73,7 @@ class TestSessionManagerMetadata:
             title="Stable Title",
             terminal_context={"tmux_pane": "%42"},
         )
-        session_manager.update(session.id, title_source="heuristic")
+        session_manager.update(session.id, title_source="provisional")
         calls: list[tuple[str, str]] = []
         session_manager.register_title_listener(
             lambda session_id, title: calls.append((session_id, title))
@@ -179,7 +180,6 @@ class TestSessionManagerMetadata:
             machine_id="machine",
             source="claude",
             project_id=sample_project["id"],
-            title="Old Title",
             terminal_context={"tmux_pane": "%42"},
         )
         session_calls: list[tuple[str, str]] = []
@@ -213,25 +213,34 @@ class TestSessionManagerMetadata:
         assert title_calls == [(session.id, "Digest Title")]
         mock_rename.assert_called_once()
 
-    def test_update_last_title_synthesis_digest_hash_persists_attempt(
+    def test_persist_digest_state_preserves_manual_title(
         self,
         session_manager: SessionManager,
         sample_project: dict,
     ) -> None:
-        """Contentless title recovery persists the digest identity it attempted."""
+        """Digest state lands while a user-owned title remains unchanged."""
         session = session_manager.register(
-            external_id="title-recovery-hash-test",
+            external_id="manual-title-digest-test",
             machine_id="machine",
             source="claude",
             project_id=sample_project["id"],
+            title="My Title",
         )
 
-        session_manager.update_last_title_synthesis_digest_hash(session.id, "digest-hash")
+        updated = session_manager.persist_digest_state(
+            session.id,
+            last_turn_markdown="last turn",
+            digest_markdown="### Turn 1\nlast turn",
+            last_digest_input_hash="abc123",
+            last_digested_pair_index=1,
+            title="Digest Title",
+            title_source="llm",
+        )
 
-        updated = session_manager.get(session.id)
         assert updated is not None
-        assert updated.last_title_synthesis_digest_hash == "digest-hash"
-        assert updated.to_dict()["last_title_synthesis_digest_hash"] == "digest-hash"
+        assert updated.title == "My Title"
+        assert updated.title_source == "manual"
+        assert updated.digest_markdown == "### Turn 1\nlast turn"
 
     def test_persist_digest_state_missing_session_does_not_notify_listener(
         self,
@@ -308,7 +317,7 @@ class TestSessionManagerMetadata:
             reloaded = session_manager.get(session.id)
             assert reloaded is not None
             assert reloaded.title == "Old Title"
-            assert reloaded.title_source is None
+            assert reloaded.title_source == "manual"
             assert reloaded.last_turn_markdown is None
             assert reloaded.digest_markdown is None
             assert reloaded.last_digest_input_hash is None

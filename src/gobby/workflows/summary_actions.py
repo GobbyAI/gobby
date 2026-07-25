@@ -374,9 +374,9 @@ def _synthesize_fallback_title(session: object, terminal_context: dict[str, Any]
     the project directory (the original ``#N gobby`` bug). Falls back to the
     session ``source`` (e.g. ``claude``), then a neutral ``"untitled"`` label.
 
-    With the per-turn heuristic, digest-cancellation fallback, and repair-sweep
-    title synthesis in place this branch is rarely reached; when it is, it must
-    no longer produce a misleading directory name.
+    Persisted sessions receive a canonical provisional title at registration
+    and a digest title after successful full turns, so this branch is only a
+    defensive fallback for terminal window naming.
 
     Args:
         session: The session object
@@ -583,61 +583,6 @@ async def enforce_window_name_if_unmanaged(session: Any) -> bool:
 
     title = getattr(session, "title", None) or ""
     return await _apply_window_rename(session, tc, pane, title)
-
-
-async def repair_missing_session_title(session_manager: Any, session: Any) -> str | None:
-    """Synthesize and persist a heuristic title for a title-less or provisional session.
-
-    The provider-agnostic backstop for the repair sweep: when a tracked session
-    still carries no real title — because the per-turn heuristic and LLM digest
-    paths both missed (e.g. a session interrupted before ``turn_end``, or one
-    whose hooks were mis-routed before the routing fix) — derive a cheap title
-    from the transcript's opening user prompt (no LLM) and persist it with
-    ``title_source="heuristic"``.
-
-    The transcript is the guard, not a DB stat. ``heuristic_title_from_transcript``
-    returns ``None`` when there is no usable opening prompt, so the backstop stays
-    robust even when ``turn_count`` lags at 0: a session's title comes from its
-    first user prompt, which can exist with ``turn_count == 0`` (assistant
-    mid-turn, or only tool-use/thinking blocks so far). Gating on ``turn_count``
-    would skip exactly those sessions.
-
-    Persisting routes through ``session_manager.update_title``, whose
-    title-change side effects schedule the tmux window rename, so the window
-    stops showing the empty/provisional fallback. Returns the persisted title,
-    or ``None`` when no synthesis was applicable (an existing non-provisional or
-    manual title, a missing session id, or no usable transcript prompt).
-    """
-    if not session_manager or session is None:
-        return None
-    title_source = str(getattr(session, "title_source", "") or "").strip().lower()
-    existing_title = str(getattr(session, "title", "") or "").strip()
-    if title_source == "manual":
-        return None
-    if existing_title and title_source != "provisional":
-        return None
-
-    session_id = getattr(session, "id", None)
-    if not session_id:
-        return None
-
-    from gobby.memory.title_heuristics import heuristic_title_from_transcript
-
-    title = await heuristic_title_from_transcript(
-        getattr(session, "transcript_path", None),
-        getattr(session, "source", None),
-    )
-    if not title:
-        return None
-
-    updated = session_manager.update_title(session_id, title, title_source="heuristic")
-    if updated is None:
-        return None
-    logger.info(
-        "Repair sweep synthesized heuristic title for session %s",
-        getattr(session, "ref", session_id),
-    )
-    return title
 
 
 async def generate_summary(

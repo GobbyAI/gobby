@@ -210,7 +210,6 @@ async def spawn_agent(
         session_manager,
         project_id,
         "dispatcher_launcher",
-        "Dispatcher Launcher",
     )
 
     prompt = action.prompt

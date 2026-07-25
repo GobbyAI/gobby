@@ -11,6 +11,7 @@ from gobby.storage.session_models import Session
 from gobby.storage.sessions._summary_protocols import SummaryUpdateHost as _SummaryUpdateHost
 from gobby.utils.datetime import utc_now
 
+from ._title_defaults import MANUAL_TITLE_SOURCE
 from ._update_sentinel import UNSET, UnsetType, is_set
 
 
@@ -149,34 +150,52 @@ class _SummaryUpdateMixin:
                 f"{', '.join(sorted(self._VALID_TITLE_SOURCES))}"
             )
 
-        changed_title = title if title is not None and current.title != title else None
-        source_changed = title_source is not None and current.title_source != title_source
         now = utc_now()
-        values: dict[str, Any] = {
-            "last_turn_markdown": last_turn_markdown,
-            "digest_markdown": digest_markdown,
-            "last_digest_input_hash": last_digest_input_hash,
-            "last_digested_pair_index": last_digested_pair_index,
-            "updated_at": now,
-        }
-        if changed_title is not None:
-            values["title"] = changed_title
-        if source_changed:
-            values["title_source"] = title_source
+        assignments = [
+            "last_turn_markdown = %s",
+            "digest_markdown = %s",
+            "last_digest_input_hash = %s",
+            "last_digested_pair_index = %s",
+            "updated_at = %s",
+        ]
+        values: list[Any] = [
+            last_turn_markdown,
+            digest_markdown,
+            last_digest_input_hash,
+            last_digested_pair_index,
+            now,
+        ]
+        if title is not None:
+            assignments.append(
+                f"title = CASE WHEN title_source = '{MANUAL_TITLE_SOURCE}' THEN title ELSE %s END"
+            )
+            values.append(title)
+        if title_source is not None:
+            assignments.append(
+                "title_source = CASE "
+                f"WHEN title_source = '{MANUAL_TITLE_SOURCE}' THEN title_source ELSE %s END"
+            )
+            values.append(title_source)
 
-        set_clause = ", ".join(f"{column} = %s" for column in values)
         with self.db.transaction() as conn:
             conn.execute(
-                f"UPDATE sessions SET {set_clause} WHERE id = %s",  # nosec B608
-                (*values.values(), session_id),
+                f"UPDATE sessions SET {', '.join(assignments)} WHERE id = %s",  # nosec B608
+                (*values, session_id),
             )
 
         updated = self.get(session_id)
         if updated is None:
             return None
         self._notify_session_change("session_updated", session_id)
-        if changed_title is not None:
-            self._run_title_change_side_effects(updated, changed_title)
+        title_applied = (
+            title is not None
+            and current.title != title
+            and updated.title == title
+            and updated.title_source == title_source
+        )
+        if title_applied:
+            assert title is not None
+            self._run_title_change_side_effects(updated, title)
         return updated
 
     def update_summary(
@@ -274,22 +293,6 @@ class _SummaryUpdateMixin:
                 """
                 UPDATE sessions
                 SET last_digest_input_hash = %s,
-                    updated_at = %s
-                WHERE id = %s
-                """,
-                (hash_value, now, session_id),
-            )
-
-    def update_last_title_synthesis_digest_hash(
-        self: _SummaryUpdateHost, session_id: str, hash_value: str
-    ) -> None:
-        """Record the digest identity used for a contentless title attempt."""
-        now = utc_now()
-        with self.db.transaction():
-            self.db.execute(
-                """
-                UPDATE sessions
-                SET last_title_synthesis_digest_hash = %s,
                     updated_at = %s
                 WHERE id = %s
                 """,

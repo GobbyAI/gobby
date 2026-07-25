@@ -153,8 +153,6 @@ EXPECTED_PUBLIC_METHOD_SIGNATURES = {
     "update_digest_markdown": "(self, session_id: 'str', digest_markdown: 'str') -> "
     "'Session | None'",
     "update_last_digest_input_hash": "(self, session_id: 'str', hash_value: 'str') -> 'None'",
-    "update_last_title_synthesis_digest_hash": "(self, session_id: 'str', "
-    "hash_value: 'str') -> 'None'",
     "update_last_turn_markdown": "(self, session_id: 'str', last_turn_markdown: 'str') "
     "-> 'Session | None'",
     "update_model": "(self, session_id: 'str', model: 'str') -> 'Session | None'",
@@ -175,7 +173,7 @@ EXPECTED_PUBLIC_METHOD_SIGNATURES = {
     "context_injected: 'bool | None' = None, original_prompt: 'str | None' = None) "
     "-> 'Session | None'",
     "update_title": "(self, session_id: 'str', title: 'str', *, "
-    "title_source: 'str | None' = None) -> 'Session | None'",
+    "title_source: 'str | None' = 'manual') -> 'Session | None'",
     "update_usage": "(self, session_id: 'str', input_tokens: 'int', "
     "output_tokens: 'int', cache_creation_tokens: 'int', cache_read_tokens: 'int', "
     "context_window: 'int | None' = None, model: 'str | None' = None) -> 'bool'",

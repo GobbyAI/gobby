@@ -11,34 +11,25 @@ import threading
 from collections.abc import Awaitable
 from dataclasses import dataclass
 from pathlib import Path
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
 from gobby.config.sessions import DigestConfig
 from gobby.llm.base import LLMProviderCancellation
 from gobby.memory.digest import (
-    _build_title_synthesis_prompt,
     _build_turn_record_prompt,
-    _can_replace_with_native_title,
     _get_next_turn_number,
     _read_last_turn_from_transcript,
     _read_undigested_turns,
     _should_update_digest_title,
-    _synthesize_title,
     _validate_turn_record_payload,
-    bootstrap_session_title,
     build_turn_and_digest,
 )
 from gobby.memory.title_heuristics import (
-    build_heuristic_title,
-    heuristic_title_from_transcript,
     is_template_placeholder,
-    normalize_native_title,
     normalize_title_candidate,
 )
-from gobby.storage.hub.protocol import HubDatabase
-from tests._timing import wait_forever
 
 
 async def _assert_event_loop_progresses[T](
@@ -135,194 +126,6 @@ class TestGetNextTurnNumber:
         assert _get_next_turn_number(digest) == 6
 
 
-class TestBuildHeuristicTitle:
-    """Tests for the first-prompt heuristic title bootstrap."""
-
-    def test_returns_none_for_empty_or_command_prompt(self) -> None:
-        assert build_heuristic_title("") is None
-        assert build_heuristic_title("   ") is None
-        assert build_heuristic_title("/clear") is None
-        assert build_heuristic_title("/gobby plan") is None
-        assert build_heuristic_title("/gobby coderabbit") is None
-        assert build_heuristic_title("$gobby coderabbit") is None
-
-    def test_returns_none_for_interrupt_control_marker(self) -> None:
-        assert build_heuristic_title("[Request interrupted by user]") is None
-        assert build_heuristic_title("[Request interrupted by user for tool use]") is None
-
-    @pytest.mark.parametrize(
-        "prompt",
-        [
-            "# AGENTS.md instructions for /repo\n\n<INSTRUCTIONS>\nProject rules.",
-            "\n".join(
-                [
-                    "<permissions instructions>",
-                    "Filesystem sandboxing defines which files can be read or written.",
-                    "</permissions instructions>",
-                    "<collaboration_mode>",
-                    "Known mode names are Default and Plan.",
-                    "</collaboration_mode>",
-                    "Gobby Session ID: #7404 (8a2d79bf-3f79-48aa-b516-f4bb97e0892f)",
-                    "",
-                    "## Instructions",
-                    "Use tools progressively.",
-                ]
-            ),
-            "<turn_aborted>The user interrupted the previous turn.</turn_aborted>",
-            "Message from Gobby daemon: New activity available.",
-            (
-                "Continue where you last left off. Before continuing, call "
-                '`gobby-sessions.wait_for_summary(session_id="s1")`. If it returns '
-                "`completed=false`, repeat the same wait call."
-            ),
-        ],
-    )
-    def test_returns_none_for_synthetic_bootstrap_prompts(self, prompt: str) -> None:
-        assert build_heuristic_title(prompt) is None
-
-    def test_rejects_orchestration_boilerplate_without_h1(self) -> None:
-        assert (
-            build_heuristic_title(
-                "A previous agent produced the plan below to accomplish the user's task. "
-                "Implement the plan in a fresh context."
-            )
-            is None
-        )
-
-    def test_uses_h1_from_orchestration_boilerplate(self) -> None:
-        title = build_heuristic_title(
-            "A previous agent produced the plan below to accomplish the user's task.\n\n"
-            "# Atomic JSON Digest And Rolling Titles\n\n"
-            "Make the existing digest LLM call return JSON."
-        )
-        assert title == "Atomic JSON Digest And Rolling Titles"
-
-    def test_strips_leading_phrase_and_truncates(self) -> None:
-        title = build_heuristic_title(
-            "I'd like to generate a session title on the first user prompt submit."
-        )
-        assert title == "Generate a session title on the first"
-
-    def test_handles_multimodal_blocks(self) -> None:
-        title = build_heuristic_title(
-            [
-                {"type": "text", "text": "Fix the auth bug in login.py"},
-                {"type": "image", "image_url": "ignored"},
-            ]
-        )
-        assert title == "Fix the auth bug in login.py"
-
-    def test_rejects_titles_that_truncate_to_too_short(self) -> None:
-        assert build_heuristic_title("A") is None
-
-    def test_allows_two_character_titles(self) -> None:
-        assert build_heuristic_title("PR") == "PR"
-
-    def test_strips_gobby_namespace_and_subcommand(self) -> None:
-        title = build_heuristic_title(
-            "/gobby plan why aren't tmux titles updating in claude sessions"
-        )
-        assert title == "Why aren't tmux titles updating in claude"
-
-        assert (
-            build_heuristic_title("$gobby coderabbit fix review comments") == "Fix review comments"
-        )
-
-    def test_strips_non_gobby_slash_command(self) -> None:
-        assert build_heuristic_title("/loop check the deploy") == "Check the deploy"
-        assert build_heuristic_title("$skill do thing") == "Do thing"
-        assert build_heuristic_title("/skill do thing") == "Do thing"
-
-    def test_strips_single_slash_command_with_no_args(self) -> None:
-        assert build_heuristic_title("/help") is None
-        assert build_heuristic_title("/schedule") is None
-
-    def test_plain_prompt_unaffected_by_slash_stripping(self) -> None:
-        assert build_heuristic_title("hello world") == "Hello world"
-
-    @pytest.mark.parametrize(
-        "prompt",
-        [
-            "<user_query>",
-            "<user_prompt>",
-            "<prompt>",
-            "<input>",
-            "<USER_QUERY>",
-        ],
-    )
-    def test_rejects_angle_bracket_placeholders(self, prompt: str) -> None:
-        assert build_heuristic_title(prompt) is None
-
-
-class TestNormalizeNativeTitle:
-    """Tests for CLI-native title validation (Claude ai-title, Droid sessionTitle)."""
-
-    def test_accepts_clean_title(self) -> None:
-        assert normalize_native_title("Fix authentication bug") == "Fix authentication bug"
-
-    def test_claude_native_title_replaces_slug_dashes(self) -> None:
-        assert (
-            normalize_native_title(
-                "check-gobby-logs-for-tmux-warnings",
-                source="claude",
-            )
-            == "check gobby logs for tmux warnings"
-        )
-        assert (
-            normalize_native_title(
-                "check-gobby-logs-for-tmux-warnings",
-                source="droid",
-            )
-            == "check-gobby-logs-for-tmux-warnings"
-        )
-
-    @pytest.mark.parametrize(
-        "title",
-        [
-            "<local-command>",
-            '<local-command name="pwd">',
-            "<local-command-stdout>",
-            "<function_calls>",
-            '<invoke name="test">',
-            '<parameter name="x">',
-        ],
-    )
-    def test_rejects_claude_native_tool_tag_titles(self, title: str) -> None:
-        assert normalize_native_title(title, source="claude") is None
-
-    def test_rejects_new_session_placeholder(self) -> None:
-        assert normalize_native_title("New Session") is None
-        assert normalize_native_title("new session") is None
-
-    def test_rejects_multiline_content(self) -> None:
-        assert normalize_native_title("Line one\nLine two") is None
-
-    def test_rejects_excessively_long_content(self) -> None:
-        assert normalize_native_title("A" * 201) is None
-
-    def test_rejects_xml_block_content(self) -> None:
-        assert normalize_native_title("I will help. <function_calls> stuff") is None
-        assert normalize_native_title('<invoke name="test">') is None
-        assert normalize_native_title('<parameter name="x">') is None
-
-    def test_rejects_non_string(self) -> None:
-        assert normalize_native_title(None) is None
-        assert normalize_native_title(123) is None
-
-    def test_rejects_empty(self) -> None:
-        assert normalize_native_title("") is None
-        assert normalize_native_title("   ") is None
-
-    def test_truncates_long_but_valid_title(self) -> None:
-        title = "A" * 100
-        result = normalize_native_title(title)
-        assert result is not None
-        assert len(result) == 80
-
-    def test_rejects_template_placeholder(self) -> None:
-        assert normalize_native_title("<user_query>") is None
-
-
 class TestNormalizeTitleCandidate:
     """Tests for LLM title candidate cleanup."""
 
@@ -357,6 +160,23 @@ class TestNormalizeTitleCandidate:
     def test_preserves_plain_candidate(self) -> None:
         assert normalize_title_candidate("Digest JSON Titles") == "Digest JSON Titles"
 
+    @pytest.mark.parametrize(
+        "candidate",
+        [
+            "2026-07-24 Digest Titles",
+            "14:30 Digest Titles",
+            "#9550 Codex",
+            "Fix titles └── now",
+            "Fix titles 🚀",
+            "Fix • titles",
+        ],
+    )
+    def test_rejects_metadata_and_decorative_junk(self, candidate: str) -> None:
+        assert normalize_title_candidate(candidate) is None
+
+    def test_normalizes_whitespace_without_rejecting_unicode_words(self) -> None:
+        assert normalize_title_candidate("  Café\nsearch\tfix  ") == "Café search fix"
+
 
 class TestShouldUpdateDigestTitle:
     """Tests for digest title ownership policy."""
@@ -367,82 +187,31 @@ class TestShouldUpdateDigestTitle:
 
         assert _should_update_digest_title(LegacySession()) is True
 
-    @pytest.mark.parametrize("title_source", ["heuristic", "provisional"])
-    def test_fallback_title_is_replaceable(self, title_source: str) -> None:
+    @pytest.mark.parametrize("title_source", ["llm", "provisional", None])
+    def test_every_automatic_title_is_replaceable(self, title_source: str | None) -> None:
         session = MagicMock()
-        session.title = "#42 codex"
+        session.title = "#42 Codex"
         session.title_source = title_source
 
         assert _should_update_digest_title(session) is True
 
     @pytest.mark.parametrize(
-        ("title", "title_source", "expected"),
+        ("title", "title_source"),
         [
-            ("Manual Title", "manual", False),
-            ("Legacy Title", None, False),
-            ("", None, True),
-            ("", "native", True),
+            ("Manual Title", "manual"),
+            ("", "manual"),
         ],
     )
-    def test_manual_and_legacy_title_policy(
+    def test_manual_title_is_the_only_digest_override(
         self,
         title: str,
-        title_source: str | None,
-        expected: bool,
+        title_source: str,
     ) -> None:
         session = MagicMock()
         session.title = title
         session.title_source = title_source
 
-        assert _should_update_digest_title(session) is expected
-
-    def test_non_empty_native_title_is_preserved(self) -> None:
-        session = MagicMock()
-        session.title = "Fix auth bug"
-        session.title_source = "native"
         assert _should_update_digest_title(session) is False
-
-
-class TestCanReplaceWithNativeTitle:
-    """Tests for CLI-native title replacement policy."""
-
-    def test_replaces_empty_title(self) -> None:
-        session = MagicMock()
-        session.title = ""
-        session.title_source = ""
-        assert _can_replace_with_native_title(session) is True
-
-    def test_replaces_provisional_title(self) -> None:
-        session = MagicMock()
-        session.title = "#42 codex"
-        session.title_source = "provisional"
-        assert _can_replace_with_native_title(session) is True
-
-    def test_replaces_heuristic_title(self) -> None:
-        session = MagicMock()
-        session.title = "Fix the auth"
-        session.title_source = "heuristic"
-        assert _can_replace_with_native_title(session) is True
-
-    def test_replaces_existing_native_title(self) -> None:
-        """Claude may emit multiple ai-title updates; latest wins."""
-        session = MagicMock()
-        session.title = "Old native title"
-        session.title_source = "native"
-        assert _can_replace_with_native_title(session) is True
-
-    def test_denies_manual_title(self) -> None:
-        session = MagicMock()
-        session.title = "My custom title"
-        session.title_source = "manual"
-        assert _can_replace_with_native_title(session) is False
-
-    def test_denies_llm_title(self) -> None:
-        """LLM digest has more context; native should not override it."""
-        session = MagicMock()
-        session.title = "Comprehensive digest title"
-        session.title_source = "llm"
-        assert _can_replace_with_native_title(session) is False
 
 
 class TestIsTemplatePlaceholder:
@@ -469,250 +238,6 @@ class TestIsTemplatePlaceholder:
 
     def test_angle_bracket_domain_term_not_placeholder(self) -> None:
         assert is_template_placeholder("<vector_db>") is False
-
-
-class TestBootstrapSessionTitle:
-    """Tests for bootstrap_session_title helper."""
-
-    @pytest.mark.asyncio
-    async def test_bootstraps_heuristic_title(self) -> None:
-        session_manager = MagicMock()
-        session = MagicMock()
-        session.title = None
-        session_manager.get.return_value = session
-        session_manager.update_title.return_value = session
-
-        title = await bootstrap_session_title(
-            session_manager,
-            "session-123",
-            "Please fix the auth bug in login.py",
-        )
-
-        assert title == "Fix the auth bug in login.py"
-        session_manager.update_title.assert_called_once_with(
-            "session-123",
-            "Fix the auth bug in login.py",
-            title_source="heuristic",
-        )
-
-    @pytest.mark.asyncio
-    async def test_replaces_provisional_title_from_prompt(self) -> None:
-        session_manager = MagicMock()
-        session = MagicMock()
-        session.title = "#123 codex"
-        session.title_source = "provisional"
-        session_manager.get.return_value = session
-        session_manager.update_title.return_value = session
-
-        title = await bootstrap_session_title(
-            session_manager,
-            "session-123",
-            "Please fix daemon tmux window titles",
-        )
-
-        assert title == "Fix daemon tmux window titles"
-        session_manager.update_title.assert_called_once_with(
-            "session-123",
-            "Fix daemon tmux window titles",
-            title_source="heuristic",
-        )
-
-    @pytest.mark.asyncio
-    async def test_skips_when_title_already_exists(self) -> None:
-        session_manager = MagicMock()
-        session = MagicMock()
-        session.title = "Existing Title"
-        session_manager.get.return_value = session
-
-        title = await bootstrap_session_title(session_manager, "session-123", "Fix the auth bug")
-
-        assert title is None
-        session_manager.update_title.assert_not_called()
-
-    @pytest.mark.asyncio
-    async def test_derives_title_from_transcript_when_prompt_missing(self) -> None:
-        """When the event carries no prompt, fall back to the transcript opener."""
-        session_manager = MagicMock()
-        session = MagicMock()
-        session.title = None
-        session.source = "claude"
-        session.transcript_path = str(_CLAUDE_FIXTURE)
-        session_manager.get.return_value = session
-        session_manager.update_title.return_value = session
-
-        # prompt_text is empty/None — heuristic must come from the transcript.
-        title = await bootstrap_session_title(session_manager, "session-123", "")
-
-        assert title == "Fix Claude session titles in VSCode"
-        session_manager.update_title.assert_called_once_with(
-            "session-123",
-            "Fix Claude session titles in VSCode",
-            title_source="heuristic",
-        )
-
-    @pytest.mark.asyncio
-    async def test_returns_none_when_no_prompt_and_no_transcript(self) -> None:
-        session_manager = MagicMock()
-        session = MagicMock()
-        session.title = None
-        session.source = "claude"
-        session.transcript_path = None
-        session_manager.get.return_value = session
-
-        title = await bootstrap_session_title(session_manager, "session-123", "")
-
-        assert title is None
-        session_manager.update_title.assert_not_called()
-
-
-def _claude_user_record(content: object, idx: int = 0) -> dict[str, object]:
-    """Build a realistic Claude transcript user record (full envelope)."""
-    return {
-        "parentUuid": None,
-        "isSidechain": False,
-        "userType": "external",
-        "cwd": "/projects/test",
-        "sessionId": "sess",
-        "version": "2.1.160",
-        "type": "user",
-        "message": {"role": "user", "content": content},
-        "uuid": f"u-{idx}",
-        "timestamp": "2026-06-01T10:00:00.000Z",
-    }
-
-
-def _claude_assistant_record(text: str, idx: int = 0) -> dict[str, object]:
-    """Build a realistic Claude transcript assistant text record (full envelope)."""
-    return {
-        "parentUuid": None,
-        "isSidechain": False,
-        "userType": "external",
-        "cwd": "/projects/test",
-        "sessionId": "sess",
-        "version": "2.1.160",
-        "type": "assistant",
-        "message": {"role": "assistant", "content": [{"type": "text", "text": text}]},
-        "uuid": f"a-{idx}",
-        "timestamp": "2026-06-01T10:00:00.000Z",
-    }
-
-
-class TestHeuristicTitleFromTranscript:
-    """Tests for heuristic_title_from_transcript (opening-prompt extraction)."""
-
-    @pytest.mark.asyncio
-    async def test_extracts_first_user_prompt_from_real_fixture(self) -> None:
-        title = await heuristic_title_from_transcript(str(_CLAUDE_FIXTURE), "claude")
-        # The opener wins — tool_result user turns and the later follow-up are
-        # not used as the session title.
-        assert title == "Fix Claude session titles in VSCode"
-
-    @pytest.mark.asyncio
-    async def test_returns_none_for_missing_path(self) -> None:
-        assert await heuristic_title_from_transcript("/nonexistent/path.jsonl", "claude") is None
-        assert await heuristic_title_from_transcript(None, "claude") is None
-
-    @pytest.mark.parametrize("source", [None, "", "unknown-cli"])
-    async def test_skips_unsupported_source_with_log(
-        self,
-        source: str | None,
-        caplog: pytest.LogCaptureFixture,
-    ) -> None:
-        with caplog.at_level(logging.WARNING):
-            title = await heuristic_title_from_transcript(str(_CLAUDE_FIXTURE), source)
-
-        assert title is None
-        assert "Skipping heuristic title" in caplog.text
-
-    @pytest.mark.asyncio
-    async def test_skips_lifecycle_and_tool_results(self, tmp_path: Path) -> None:
-        import json
-
-        transcript = tmp_path / "transcript.jsonl"
-        records = [
-            _claude_user_record("/clear", idx=1),
-            _claude_user_record(
-                [{"type": "tool_result", "tool_use_id": "t1", "content": "x"}], idx=2
-            ),
-            _claude_user_record("Refactor the dispatcher rules", idx=3),
-        ]
-        transcript.write_text("\n".join(json.dumps(r) for r in records))
-
-        title = await heuristic_title_from_transcript(str(transcript), "claude")
-        assert title == "Refactor the dispatcher rules"
-
-    @pytest.mark.asyncio
-    async def test_skips_interrupt_control_markers(self, tmp_path: Path) -> None:
-        import json
-
-        transcript = tmp_path / "transcript.jsonl"
-        records = [
-            _claude_user_record("[Request interrupted by user]", idx=1),
-            _claude_user_record("[Request interrupted by user for tool use]", idx=2),
-            _claude_user_record("Investigate flaky digest titles", idx=3),
-        ]
-        transcript.write_text("\n".join(json.dumps(r) for r in records))
-
-        title = await heuristic_title_from_transcript(str(transcript), "claude")
-        assert title == "Investigate flaky digest titles"
-
-    @pytest.mark.asyncio
-    async def test_skips_synthetic_bootstrap_prompts(self, tmp_path: Path) -> None:
-        import json
-
-        transcript = tmp_path / "transcript.jsonl"
-        records = [
-            _claude_user_record("# AGENTS.md instructions for /repo\n\n<INSTRUCTIONS>", idx=1),
-            _claude_user_record("<turn_aborted>The user interrupted.</turn_aborted>", idx=2),
-            _claude_user_record("Fix the actual user request", idx=3),
-        ]
-        transcript.write_text("\n".join(json.dumps(r) for r in records))
-
-        title = await heuristic_title_from_transcript(str(transcript), "claude")
-        assert title == "Fix the actual user request"
-
-    @pytest.mark.asyncio
-    async def test_skips_command_only_router_prompts(self, tmp_path: Path) -> None:
-        import json
-
-        transcript = tmp_path / "transcript.jsonl"
-        records = [
-            _claude_user_record("$gobby coderabbit", idx=1),
-            _claude_user_record("/gobby coderabbit", idx=2),
-            _claude_user_record("$gobby coderabbit fix review comments", idx=3),
-        ]
-        transcript.write_text("\n".join(json.dumps(r) for r in records))
-
-        title = await heuristic_title_from_transcript(str(transcript), "claude")
-        assert title == "Fix review comments"
-
-    @pytest.mark.asyncio
-    async def test_opening_prompt_wins_on_long_transcript(self, tmp_path: Path) -> None:
-        """The opening prompt wins even with a mid-session /clear, an
-        assistant-heavy tail, tool_result user records, and >200 later turns —
-        the exact shape the old last-window implementation returned None on.
-        """
-        import json
-
-        records: list[dict[str, object]] = [
-            _claude_user_record("Add pagination to the search endpoint", idx=0),
-            _claude_user_record("/clear", idx=1),
-        ]
-        for i in range(250):
-            records.append(_claude_assistant_record(f"Working on step {i}.", idx=i))
-            records.append(
-                _claude_user_record(
-                    [{"type": "tool_result", "tool_use_id": f"t{i}", "content": "ok"}],
-                    idx=1000 + i,
-                )
-            )
-        records.append(_claude_user_record("now also add sorting", idx=9999))
-
-        transcript = tmp_path / "long.jsonl"
-        transcript.write_text("\n".join(json.dumps(r) for r in records))
-
-        title = await heuristic_title_from_transcript(str(transcript), "claude")
-        assert title == "Add pagination to the search endpoint"
 
 
 class TestReadLastTurnFromTranscript:
@@ -844,17 +369,15 @@ class TestBuildTurnAndDigest:
         )
         return service
 
-    def test_fallback_prompts_instruct_titles_to_ignore_router_commands(self) -> None:
+    def test_turn_prompt_instructs_titles_to_ignore_router_commands(self) -> None:
         turn_prompt = _build_turn_record_prompt("$gobby coderabbit fix comments", "Done")
-        title_prompt = _build_title_synthesis_prompt("### Turn 1\nUser ran /help.")
 
-        for prompt in (turn_prompt, title_prompt):
-            assert "/gobby coderabbit" in prompt
-            assert "$gobby coderabbit" in prompt
-            assert "/help" in prompt
-            assert "$skill" in prompt
-            assert "Never" in prompt
-            assert "`/` or `$`" in prompt
+        assert "/gobby coderabbit" in turn_prompt
+        assert "$gobby coderabbit" in turn_prompt
+        assert "/help" in turn_prompt
+        assert "$skill" in turn_prompt
+        assert "Never" in turn_prompt
+        assert "`/` or `$`" in turn_prompt
 
     @pytest.mark.asyncio
     async def test_returns_none_when_disabled(self, mock_session_manager, mock_llm_service):
@@ -969,6 +492,81 @@ class TestBuildTurnAndDigest:
         assert llm_call.kwargs["caller"] == "memory.turn_record"
 
     @pytest.mark.asyncio
+    async def test_concurrent_turns_are_serialized_in_digest_order(
+        self,
+        mock_memory_manager,
+        mock_session_manager,
+    ) -> None:
+        """A later turn waits, re-reads persisted state, and becomes the final title."""
+        session = mock_session_manager.get.return_value
+        session.last_digest_input_hash = None
+        session.last_digested_pair_index = 0
+        first_call_started = asyncio.Event()
+        release_first_call = asyncio.Event()
+
+        async def generate_turn(_config, prompt: str, **_kwargs):
+            if "First request" in prompt:
+                first_call_started.set()
+                await release_first_call.wait()
+                return _turn_record_payload("Completed the first request.", "First Digest Title")
+            return _turn_record_payload("Completed the second request.", "Second Digest Title")
+
+        llm_service = MagicMock()
+        llm_service.call_json_feature = AsyncMock(side_effect=generate_turn)
+
+        def persist_state(_session_id: str, **values):
+            session.last_turn_markdown = values["last_turn_markdown"]
+            session.digest_markdown = values["digest_markdown"]
+            session.last_digest_input_hash = values["last_digest_input_hash"]
+            session.last_digested_pair_index = values["last_digested_pair_index"]
+            if values["title"] is not None:
+                session.title = values["title"]
+                session.title_source = values["title_source"]
+            return session
+
+        mock_session_manager.persist_digest_state.side_effect = persist_state
+
+        first = asyncio.create_task(
+            build_turn_and_digest(
+                memory_manager=mock_memory_manager,
+                session_manager=mock_session_manager,
+                session_id="session-123",
+                prompt_text="First request",
+                llm_service=llm_service,
+                config=_digest_config(),
+            )
+        )
+        await first_call_started.wait()
+        second = asyncio.create_task(
+            build_turn_and_digest(
+                memory_manager=mock_memory_manager,
+                session_manager=mock_session_manager,
+                session_id="session-123",
+                prompt_text="Second request",
+                llm_service=llm_service,
+                config=_digest_config(),
+            )
+        )
+
+        async def scheduler_checkpoint() -> None:
+            return None
+
+        await asyncio.create_task(scheduler_checkpoint())
+        assert llm_service.call_json_feature.await_count == 1
+
+        release_first_call.set()
+        first_result, second_result = await asyncio.gather(first, second)
+
+        assert first_result is not None
+        assert second_result is not None
+        assert first_result["turn_num"] == 1
+        assert second_result["turn_num"] == 2
+        assert session.title == "Second Digest Title"
+        assert session.title_source == "llm"
+        assert "<!-- gobby:digest-turn:1 -->" in session.digest_markdown
+        assert "<!-- gobby:digest-turn:2 -->" in session.digest_markdown
+
+    @pytest.mark.asyncio
     async def test_digest_persistence_does_not_block_event_loop(
         self,
         mock_memory_manager,
@@ -1032,16 +630,16 @@ class TestBuildTurnAndDigest:
         assert not [record for record in caplog.records if record.levelno >= logging.ERROR]
 
     @pytest.mark.asyncio
-    async def test_cancellation_persists_public_heuristic_title_from_transcript(
+    async def test_cancellation_leaves_title_unchanged(
         self,
         mock_memory_manager,
         mock_session_manager,
         mock_llm_service,
     ):
-        """On provider cancellation, a transcript heuristic title still lands when
-        the session has none — so a window name is set even without the LLM."""
+        """Provider cancellation preserves the provisional title for a later retry."""
         session = mock_session_manager.get.return_value
-        session.title = None
+        session.title = "#42 Claude"
+        session.title_source = "provisional"
         session.transcript_path = str(_CLAUDE_FIXTURE)
         session.source = "claude"
 
@@ -1060,13 +658,8 @@ class TestBuildTurnAndDigest:
 
         assert result is not None
         assert result["cancelled"] is True
-        assert result["title"] == "Fix Claude session titles in VSCode"
-        assert result["title_source"] == "heuristic"
-        mock_session_manager.update_title.assert_called_once_with(
-            "session-123",
-            "Fix Claude session titles in VSCode",
-            title_source="heuristic",
-        )
+        assert "title" not in result
+        mock_session_manager.update_title.assert_not_called()
         mock_session_manager.persist_digest_state.assert_not_called()
 
     @pytest.mark.asyncio
@@ -1420,13 +1013,13 @@ class TestBuildTurnAndDigest:
         assert _get_next_turn_number(call_args["digest_markdown"]) == 3
 
     @pytest.mark.asyncio
-    async def test_refines_heuristic_title_once(
+    async def test_replaces_legacy_heuristic_title(
         self,
         mock_memory_manager,
         mock_session_manager,
         mock_llm_service,
     ):
-        """A first-prompt heuristic title is refined after the first digest turn."""
+        """A pre-migration heuristic title is replaced by the next digest turn."""
         session = mock_session_manager.get.return_value
         session.title = "Fix the authentication bug in auth.py"
         session.title_source = "heuristic"
@@ -1476,13 +1069,13 @@ class TestBuildTurnAndDigest:
         mock_session_manager.update_title.assert_not_called()
 
     @pytest.mark.asyncio
-    async def test_preserves_native_title_from_digest_title(
+    async def test_replaces_legacy_native_title_from_digest(
         self,
         mock_memory_manager,
         mock_session_manager,
         mock_llm_service,
     ):
-        """A trusted native title is not replaced by digest title synthesis."""
+        """A pre-migration provider-native title is replaced by the digest."""
         session = mock_session_manager.get.return_value
         session.title = "Native Session Title"
         session.title_source = "native"
@@ -1503,10 +1096,13 @@ class TestBuildTurnAndDigest:
         )
 
         assert result is not None
-        assert "title" not in result
+        assert result["title"] == "Digest Replacement Title"
         mock_session_manager.persist_digest_state.assert_called_once()
-        assert mock_session_manager.persist_digest_state.call_args.kwargs["title"] is None
-        assert mock_session_manager.persist_digest_state.call_args.kwargs["title_source"] is None
+        assert (
+            mock_session_manager.persist_digest_state.call_args.kwargs["title"]
+            == "Digest Replacement Title"
+        )
+        assert mock_session_manager.persist_digest_state.call_args.kwargs["title_source"] == "llm"
         mock_session_manager.update_title.assert_not_called()
 
     @pytest.mark.asyncio
@@ -1548,13 +1144,13 @@ class TestBuildTurnAndDigest:
         assert mock_llm_service.call_json_feature.await_count == 1
 
     @pytest.mark.asyncio
-    async def test_preserves_non_empty_legacy_unknown_title(
+    async def test_replaces_non_empty_legacy_unknown_title(
         self,
         mock_memory_manager,
         mock_session_manager,
         mock_llm_service,
     ):
-        """A non-empty title with title_source=None is treated as legacy owned."""
+        """A null-source legacy title is automatic and replaced by the digest."""
         session = mock_session_manager.get.return_value
         session.title = "Legacy Title"
         session.title_source = None
@@ -1569,7 +1165,9 @@ class TestBuildTurnAndDigest:
         )
 
         assert result is not None
-        assert "title" not in result
+        assert result["title"] == "Fix Auth Bug"
+        assert mock_session_manager.persist_digest_state.call_args.kwargs["title"] == "Fix Auth Bug"
+        assert mock_session_manager.persist_digest_state.call_args.kwargs["title_source"] == "llm"
         mock_session_manager.update_title.assert_not_called()
 
     @pytest.mark.asyncio
@@ -1633,62 +1231,6 @@ class TestBuildTurnAndDigest:
         assert "Implement the feature" in prompt or "feature" in prompt.lower()
         assert call_args.kwargs["caller"] == "memory.turn_record"
 
-    @pytest.mark.asyncio
-    async def test_synthesize_title_respects_digest_timeout(self):
-        """Digest title synthesis uses digest.timeout to bound LLM latency."""
-        session_manager = MagicMock()
-        session = MagicMock()
-        session.title = None
-        llm_service = MagicMock()
-
-        async def _slow_call(*args, **kwargs):
-            await wait_forever()
-            return "Too Slow"
-
-        llm_service.call_feature = AsyncMock(side_effect=_slow_call)
-        digest_config = MagicMock(timeout=0.01)
-
-        with pytest.raises(TimeoutError):
-            await _synthesize_title(
-                updated_digest="### Turn 1\nSomething happened",
-                session_id="session-123",
-                session_manager=session_manager,
-                session=session,
-                llm_service=llm_service,
-                digest_config=digest_config,
-                db=MagicMock(spec=HubDatabase),
-            )
-
-        assert llm_service.call_feature.await_args.kwargs["caller"] == "memory.title_synthesis"
-
-    async def test_synthesize_title_bounds_digest_excerpt(self):
-        """Title recovery sends only the most recent bounded digest excerpt."""
-        session_manager = MagicMock()
-        session_manager.update_title.return_value = MagicMock()
-        session = MagicMock(title=None, title_source=None)
-        llm_service = MagicMock()
-        llm_service.call_feature = AsyncMock(return_value="Bounded Title")
-        digest_config = MagicMock(timeout=1)
-        digest = "head-marker" + ("x" * 12_000) + "tail-marker"
-
-        with patch(
-            "gobby.memory.digest._render_prompt_template",
-            side_effect=RuntimeError("use inline fallback"),
-        ):
-            await _synthesize_title(
-                updated_digest=digest,
-                session_id="session-123",
-                session_manager=session_manager,
-                session=session,
-                llm_service=llm_service,
-                digest_config=digest_config,
-                db=MagicMock(spec=HubDatabase),
-            )
-
-        prompt = llm_service.call_feature.await_args.args[1]
-        assert "head-marker" not in prompt
-        assert "tail-marker" in prompt
-
 
 class TestBuildTurnAndDigestIdempotency:
     """Tests for digest idempotency via last_digest_input_hash."""
@@ -1716,7 +1258,6 @@ class TestBuildTurnAndDigestIdempotency:
         session.seq_num = 42
         session.terminal_context = None
         session.last_digest_input_hash = None  # No prior digest
-        session.last_title_synthesis_digest_hash = None
         sm.get.return_value = session
         sm.update_last_turn_markdown.return_value = session
         sm.update_digest_markdown.return_value = session
@@ -1791,193 +1332,6 @@ class TestBuildTurnAndDigestIdempotency:
         assert result is None
         mock_llm_service.call_json_feature.assert_not_called()
         mock_llm_service.call_feature.assert_not_called()
-
-    @pytest.mark.asyncio
-    async def test_synthesizes_missing_title_from_existing_digest_when_duplicate(
-        self,
-        mock_memory_manager,
-        mock_session_manager,
-        mock_llm_service,
-    ):
-        """Duplicate digest input still backfills a missing title from existing digest."""
-        import hashlib
-
-        prompt = "Fix the bug"
-        expected_hash = hashlib.sha256(f"0||{prompt}||".encode()).hexdigest()[:16]
-        session = mock_session_manager.get.return_value
-        session.digest_markdown = "### Turn 1\nExisting digest"
-        session.last_digest_input_hash = expected_hash
-        session.last_title_synthesis_digest_hash = "older-digest"
-
-        mock_llm_service.call_feature = AsyncMock(return_value="Recovered Title")
-
-        result = await build_turn_and_digest(
-            memory_manager=mock_memory_manager,
-            session_manager=mock_session_manager,
-            session_id="session-123",
-            prompt_text=prompt,
-            llm_service=mock_llm_service,
-            config=_digest_config(),
-        )
-
-        assert result == {
-            "title": "Recovered Title",
-            "title_only": True,
-            "digest_length": len(session.digest_markdown),
-        }
-        mock_session_manager.update_title.assert_called_once_with(
-            "session-123",
-            "Recovered Title",
-            title_source="llm",
-        )
-        expected_digest_hash = hashlib.sha256(session.digest_markdown.encode()).hexdigest()[:16]
-        mock_session_manager.update_last_title_synthesis_digest_hash.assert_called_once_with(
-            "session-123", expected_digest_hash
-        )
-        mock_session_manager.persist_digest_state.assert_not_called()
-        mock_session_manager.update_last_turn_markdown.assert_not_called()
-        mock_session_manager.update_digest_markdown.assert_not_called()
-        mock_session_manager.update_last_digest_input_hash.assert_not_called()
-        assert mock_llm_service.call_feature.await_count == 1
-        assert mock_llm_service.call_feature.await_args.kwargs["caller"] == "memory.title_synthesis"
-
-    @pytest.mark.asyncio
-    async def test_unchanged_digest_does_not_repeat_title_synthesis(
-        self,
-        mock_memory_manager,
-        mock_session_manager,
-        mock_llm_service,
-    ):
-        """An unchanged digest is attempted at most once for title recovery."""
-        import hashlib
-
-        prompt = "Fix the bug"
-        expected_hash = hashlib.sha256(f"0||{prompt}||".encode()).hexdigest()[:16]
-        session = mock_session_manager.get.return_value
-        session.digest_markdown = "### Turn 1\nExisting digest"
-        session.last_digest_input_hash = expected_hash
-        session.last_title_synthesis_digest_hash = hashlib.sha256(
-            session.digest_markdown.encode()
-        ).hexdigest()[:16]
-
-        result = await build_turn_and_digest(
-            memory_manager=mock_memory_manager,
-            session_manager=mock_session_manager,
-            session_id="session-123",
-            prompt_text=prompt,
-            llm_service=mock_llm_service,
-            config=_digest_config(),
-        )
-
-        assert result is None
-        mock_llm_service.call_json_feature.assert_not_called()
-        mock_llm_service.call_feature.assert_not_called()
-        mock_session_manager.update_last_title_synthesis_digest_hash.assert_not_called()
-
-    @pytest.mark.asyncio
-    async def test_skips_title_synthesis_when_title_present_and_duplicate(
-        self,
-        mock_memory_manager,
-        mock_session_manager,
-        mock_llm_service,
-    ):
-        """Duplicate digest input does not hit the title LLM when title already exists."""
-        import hashlib
-
-        prompt = "Fix the bug"
-        expected_hash = hashlib.sha256(f"0||{prompt}||".encode()).hexdigest()[:16]
-        session = mock_session_manager.get.return_value
-        session.digest_markdown = "### Turn 1\nExisting digest"
-        session.last_digest_input_hash = expected_hash
-        session.title = "Existing Title"
-        session.title_source = "manual"
-
-        result = await build_turn_and_digest(
-            memory_manager=mock_memory_manager,
-            session_manager=mock_session_manager,
-            session_id="session-123",
-            prompt_text=prompt,
-            llm_service=mock_llm_service,
-            config=_digest_config(),
-        )
-
-        assert result is None
-        mock_llm_service.call_json_feature.assert_not_called()
-        mock_llm_service.call_feature.assert_not_called()
-        mock_session_manager.update_title.assert_not_called()
-
-    @pytest.mark.asyncio
-    async def test_synthesizes_provisional_title_from_existing_digest_when_duplicate(
-        self,
-        mock_memory_manager,
-        mock_session_manager,
-        mock_llm_service,
-    ):
-        """Duplicate digest input still replaces a provisional title."""
-        import hashlib
-
-        prompt = "Fix the bug"
-        expected_hash = hashlib.sha256(f"0||{prompt}||".encode()).hexdigest()[:16]
-        session = mock_session_manager.get.return_value
-        session.digest_markdown = "### Turn 1\nExisting digest"
-        session.last_digest_input_hash = expected_hash
-        session.title = "#42 codex"
-        session.title_source = "provisional"
-
-        mock_llm_service.call_feature = AsyncMock(return_value="Recovered Title")
-
-        result = await build_turn_and_digest(
-            memory_manager=mock_memory_manager,
-            session_manager=mock_session_manager,
-            session_id="session-123",
-            prompt_text=prompt,
-            llm_service=mock_llm_service,
-            config=_digest_config(),
-        )
-
-        assert result == {
-            "title": "Recovered Title",
-            "title_only": True,
-            "digest_length": len(session.digest_markdown),
-        }
-        mock_session_manager.update_title.assert_called_once_with(
-            "session-123",
-            "Recovered Title",
-            title_source="llm",
-        )
-        mock_session_manager.persist_digest_state.assert_not_called()
-
-    @pytest.mark.asyncio
-    async def test_no_title_synthesis_when_no_digest_and_duplicate(
-        self,
-        mock_memory_manager,
-        mock_session_manager,
-        mock_llm_service,
-    ):
-        """Duplicate digest input without an existing digest still skips fully."""
-        import hashlib
-
-        prompt = "Fix the bug"
-        expected_hash = hashlib.sha256(f"0||{prompt}||".encode()).hexdigest()[:16]
-        session = mock_session_manager.get.return_value
-        session.last_digest_input_hash = expected_hash
-        session.digest_markdown = None
-        session.title = None
-        session.title_source = None
-
-        result = await build_turn_and_digest(
-            memory_manager=mock_memory_manager,
-            session_manager=mock_session_manager,
-            session_id="session-123",
-            prompt_text=prompt,
-            llm_service=mock_llm_service,
-            config=_digest_config(),
-        )
-
-        assert result is None
-        mock_llm_service.call_json_feature.assert_not_called()
-        mock_llm_service.call_feature.assert_not_called()
-        mock_session_manager.update_title.assert_not_called()
 
     @pytest.mark.asyncio
     async def test_different_content_processes(

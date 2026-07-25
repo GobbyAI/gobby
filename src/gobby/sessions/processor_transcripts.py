@@ -11,8 +11,6 @@ from typing import Any, cast
 import aiofiles
 import psycopg
 
-from gobby.memory.digest import _can_replace_with_native_title
-from gobby.memory.title_heuristics import normalize_native_title
 from gobby.sessions.message_stats import MessageStats
 from gobby.sessions.observation_tracker import ObservationTracker
 from gobby.sessions.processor_types import ProcessorHost
@@ -119,54 +117,10 @@ class ProcessorTranscriptMixin:
         )
         return ingested
 
-    def _extract_native_titles(
+    def _filter_session_title_messages(
         self: ProcessorHost, session_id: str, messages: list[ParsedMessage]
     ) -> list[ParsedMessage]:
-        """Extract CLI-native session titles, update the session, and return non-title messages.
-
-        ``session_title`` messages are metadata, not conversation content — they
-        must not inflate ``message_count`` or be rendered as chat cards. This
-        method intercepts them before stats/render, calls ``update_title`` with
-        ``title_source="native"`` when the precedence policy allows it, and
-        returns the remaining messages for normal processing.
-        """
-        if not messages:
-            return messages
-        title_msgs = [m for m in messages if m.content_type == "session_title"]
-        if not title_msgs:
-            return messages
-
-        if self.session_manager:
-            try:
-                session = self.session_manager.get(session_id)
-                if session is not None and _can_replace_with_native_title(session):
-                    # Use the last title message (latest ai-title update wins).
-                    title_msg = title_msgs[-1]
-                    raw_title = title_msg.content
-                    source = title_msg.source
-                    if source is None:
-                        source = _parser_source(self._parsers.get(session_id))
-                    title = normalize_native_title(raw_title, source=source)
-                    if title:
-                        self.session_manager.update_title(
-                            session_id,
-                            title,
-                            title_source="native",
-                        )
-            except psycopg.Error:
-                logger.warning(
-                    "Failed to sync native transcript title",
-                    extra={"session_id": session_id},
-                    exc_info=True,
-                )
-                raise
-            except (LookupError, RuntimeError, ValueError):
-                logger.warning(
-                    "Failed to sync native transcript title",
-                    extra={"session_id": session_id},
-                    exc_info=True,
-                )
-
+        """Filter provider-native title metadata out of conversation content."""
         return [m for m in messages if m.content_type != "session_title"]
 
     async def _process_parsed_batch(
@@ -355,7 +309,7 @@ class ProcessorTranscriptMixin:
 
         latest_parsed_index = parsed_messages[-1].index if parsed_messages else last_index
         parsed_messages = await self._run_db(
-            self._extract_native_titles,
+            self._filter_session_title_messages,
             session_id,
             parsed_messages,
         )

@@ -161,9 +161,13 @@ class TestSpawnAgent:
         assert "runner" in data["detail"].lower() or "unavailable" in data["detail"].lower()
 
     def test_spawn_claims_task_for_web_chat(
-        self, client: TestClient, task_manager: LocalTaskManager, test_project
+        self,
+        client: TestClient,
+        task_manager: LocalTaskManager,
+        session_manager: SessionManager,
+        test_project,
     ) -> None:
-        """After web_chat spawn, task should be claimed by the conversation."""
+        """Web-chat task spawn claims the task without seeding its title."""
         task = _create_task(task_manager, test_project.id, "Status task")
         with patch(
             "gobby.utils.project_context.get_project_context",
@@ -178,6 +182,10 @@ class TestSpawnAgent:
         data = response.json()
         updated = task_manager.get_task(task.id)
         assert updated.claimed_by_session_id == data["conversation_id"]
+        conversation = session_manager.get(data["conversation_id"])
+        assert conversation is not None
+        assert conversation.title == f"#{conversation.seq_num} Claude"
+        assert conversation.title_source == "provisional"
 
     def test_spawn_web_chat_preserves_review_status(
         self, client: TestClient, task_manager: LocalTaskManager, test_project

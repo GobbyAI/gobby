@@ -528,6 +528,7 @@ class TestRegisterSession:
                 "machine_id": "machine-1",
                 "source": "Claude Code",
                 "project_id": "proj-123",
+                "title": "User Title",
             },
         )
 
@@ -537,6 +538,8 @@ class TestRegisterSession:
         assert data["external_id"] == "ext-123"
         assert data["id"] == "sess-abc123"
         assert data["machine_id"] == "machine-1"
+        assert mock_server.session_manager.register.call_args.kwargs["title"] == "User Title"
+        assert mock_server.session_manager.register.call_args.kwargs["title_source"] == "manual"
 
     @pytest.mark.parametrize("machine_id", [None, "", "   "])
     def test_register_rejects_missing_or_blank_machine_id(

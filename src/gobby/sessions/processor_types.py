@@ -153,7 +153,7 @@ class ProcessorHost(Protocol):
 
     def _stats_from_session_manager(self, session_id: str) -> MessageStats: ...
 
-    def _extract_native_titles(
+    def _filter_session_title_messages(
         self, session_id: str, messages: list[ParsedMessage]
     ) -> list[ParsedMessage]: ...
 

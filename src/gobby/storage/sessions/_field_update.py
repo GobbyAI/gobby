@@ -17,6 +17,7 @@ from ._constants import (
 )
 from ._lineage_guard import repair_self_parent_session, sanitize_parent_session_id
 from ._summary_update import _SummaryUpdateMixin
+from ._title_defaults import MANUAL_TITLE_SOURCE
 
 if TYPE_CHECKING:
     from gobby.storage.hub.protocol import HubDatabase
@@ -216,7 +217,7 @@ class _FieldUpdateMixin(_SummaryUpdateMixin):
         session_id: str,
         title: str,
         *,
-        title_source: str | None = None,
+        title_source: str | None = MANUAL_TITLE_SOURCE,
     ) -> Session | None:
         """Update session title."""
         current = self.get(session_id)

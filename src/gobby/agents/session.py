@@ -44,9 +44,6 @@ class ChildSessionConfig:
     workflow_name: str | None = None
     """Name of the workflow being executed."""
 
-    title: str | None = None
-    """Optional session title."""
-
     git_branch: str | None = None
     """Git branch for the session."""
 
@@ -178,21 +175,12 @@ class ChildSessionManager:
             external_id = f"agent-{uuid.uuid4().hex[:12]}"
             use_provided_external_id = False
 
-        # Create title if not provided
-        title = config.title
-        if not title:
-            if config.workflow_name:
-                title = f"Agent: {config.workflow_name}"
-            else:
-                title = "Agent session"
-
         # Register the child session
         child = self._storage.register(
             external_id=external_id,
             machine_id=config.machine_id,
             source=config.source,
             project_id=config.project_id,
-            title=title,
             git_branch=config.git_branch,
             parent_session_id=config.parent_session_id,
             agent_depth=child_depth,

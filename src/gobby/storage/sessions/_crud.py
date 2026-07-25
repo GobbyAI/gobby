@@ -22,9 +22,25 @@ from gobby.utils.datetime import utc_now
 from ._constants import SYSTEM_SESSION_ID, ensure_system_session, get_logger
 from ._identity_crud import _SessionIdentityCRUDMixin
 from ._lineage_guard import repair_self_parent_session, sanitize_parent_session_id
-from ._title_defaults import PROVISIONAL_TITLE_SOURCE, format_provisional_session_title
+from ._title_defaults import (
+    MANUAL_TITLE_SOURCE,
+    PROVISIONAL_TITLE_SOURCE,
+    format_provisional_session_title,
+)
 from ._update_sentinel import UNSET, UnsetType, is_set
 from ._upsert import is_session_unique_conflict, update_existing_session
+
+
+def _manual_registration_title(
+    title: str | None | UnsetType,
+    title_source: str | None | UnsetType,
+) -> tuple[str | UnsetType, str | UnsetType]:
+    """Classify a non-empty registration title as user-owned."""
+    if not is_set(title) or not isinstance(title, str) or not title.strip():
+        return UNSET, UNSET
+    if is_set(title_source) and title_source not in {None, MANUAL_TITLE_SOURCE}:
+        return UNSET, UNSET
+    return title.strip(), MANUAL_TITLE_SOURCE
 
 
 class _SessionCRUDHost(Protocol):
@@ -110,8 +126,8 @@ class _SessionCRUDMixin(_SessionIdentityCRUDMixin):
             machine_id: Machine identifier
             source: CLI source (claude, qwen, codex, droid)
             project_id: Project ID (None if project context unavailable)
-            title: Session title; omit to preserve an existing value, or pass None to clear
-            title_source: Optional provenance for an explicit session title
+            title: Explicit user title; non-empty values are classified as manual
+            title_source: Provenance for an explicit user title
             transcript_path: Transcript path; omit to preserve, or pass None to clear
             git_branch: Git branch; omit to preserve, or pass None to clear
             parent_session_id: Parent session; omit to preserve, or pass None to clear
@@ -140,6 +156,8 @@ class _SessionCRUDMixin(_SessionIdentityCRUDMixin):
         ):
             sources = ", ".join(sorted(self._VALID_TITLE_SOURCES))
             raise ValueError(f"Invalid title_source {title_source!r}. Must be one of: {sources}")
+
+        manual_title, manual_title_source = _manual_registration_title(title, title_source)
 
         if is_set(parent_session_id) and parent_session_id == SYSTEM_SESSION_ID:
             ensure_system_session(self.db)
@@ -188,11 +206,11 @@ class _SessionCRUDMixin(_SessionIdentityCRUDMixin):
                 )
 
             if existing:
-                registration_title = title
-                registration_title_source = title_source
+                registration_title = manual_title
+                registration_title_source = manual_title_source
                 existing_seq_num = existing.seq_num
                 if (
-                    not is_set(title)
+                    not is_set(manual_title)
                     and existing_seq_num is not None
                     and not str(existing.title or "").strip()
                 ):
@@ -258,8 +276,10 @@ class _SessionCRUDMixin(_SessionIdentityCRUDMixin):
                 )
 
                 try:
-                    insert_title = title if is_set(title) else None
-                    insert_title_source = title_source if is_set(title_source) else None
+                    insert_title = manual_title if is_set(manual_title) else None
+                    insert_title_source = (
+                        manual_title_source if is_set(manual_title_source) else None
+                    )
                     if insert_title is None:
                         insert_title = format_provisional_session_title(next_seq_num, source)
                         insert_title_source = PROVISIONAL_TITLE_SOURCE
@@ -338,11 +358,11 @@ class _SessionCRUDMixin(_SessionIdentityCRUDMixin):
                         )
                     else:
                         sanitized_parent_session_id = UNSET
-                    registration_title = title
-                    registration_title_source = title_source
+                    registration_title = manual_title
+                    registration_title_source = manual_title_source
                     conflicting_seq_num = conflicting.seq_num
                     if (
-                        not is_set(title)
+                        not is_set(manual_title)
                         and conflicting_seq_num is not None
                         and not str(conflicting.title or "").strip()
                     ):

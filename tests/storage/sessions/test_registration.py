@@ -302,14 +302,14 @@ class TestSessionManagerRegistration:
     @pytest.mark.parametrize(
         ("source", "provider_label"),
         [
-            ("claude", "claude"),
-            ("codex", "codex"),
-            ("grok", "grok"),
-            ("qwen", "qwen"),
-            ("droid", "droid"),
-            ("agy", "agy"),
-            ("pipeline", "pipeline"),
-            ("Custom Source!", "custom-source"),
+            ("claude", "Claude"),
+            ("codex", "Codex"),
+            ("grok", "Grok"),
+            ("qwen", "Qwen"),
+            ("droid", "Droid"),
+            ("agy", "AGY"),
+            ("pipeline", "Pipeline"),
+            ("Custom Source!", "Custom Source"),
         ],
     )
     def test_register_without_title_uses_provisional_title(
@@ -343,24 +343,22 @@ class TestSessionManagerRegistration:
         )
 
         assert session.title == "Caller Supplied Title"
-        assert session.title_source is None
+        assert session.title_source == "manual"
 
-    def test_register_with_explicit_native_title_source(
+    def test_register_rejects_removed_native_title_source(
         self,
         session_manager: SessionManager,
         sample_project: dict,
     ) -> None:
-        session = session_manager.register(
-            external_id="explicit-native-title",
-            machine_id="machine",
-            source="codex",
-            project_id=sample_project["id"],
-            title="Caller Supplied Title",
-            title_source="native",
-        )
-
-        assert session.title == "Caller Supplied Title"
-        assert session.title_source == "native"
+        with pytest.raises(ValueError, match="Invalid title_source"):
+            session_manager.register(
+                external_id="explicit-native-title",
+                machine_id="machine",
+                source="codex",
+                project_id=sample_project["id"],
+                title="Caller Supplied Title",
+                title_source="native",
+            )
 
     def test_register_rejects_invalid_title_source(
         self,
@@ -387,10 +385,10 @@ class TestSessionManagerRegistration:
             machine_id="machine",
             source="codex",
             project_id=sample_project["id"],
-            title_source="native",
+            title_source="llm",
         )
 
-        assert session.title == f"#{session.seq_num} codex"
+        assert session.title == f"#{session.seq_num} Codex"
         assert session.title_source == PROVISIONAL_TITLE_SOURCE
 
     def test_register_existing_blank_title_backfills_provisional_title(
@@ -414,7 +412,7 @@ class TestSessionManagerRegistration:
         )
 
         assert updated.id == session.id
-        assert updated.title == f"#{session.seq_num} codex"
+        assert updated.title == f"#{session.seq_num} Codex"
         assert updated.title_source == PROVISIONAL_TITLE_SOURCE
 
     def test_create_web_chat_without_title_uses_provisional_title(
@@ -432,8 +430,25 @@ class TestSessionManagerRegistration:
         )
 
         assert session.session_type == "web_chat"
-        assert session.title == f"#{session.seq_num} droid"
+        assert session.title == f"#{session.seq_num} Droid"
         assert session.title_source == PROVISIONAL_TITLE_SOURCE
+
+    def test_create_web_chat_with_user_title_marks_it_manual(
+        self,
+        session_manager: SessionManager,
+        sample_project: dict,
+    ) -> None:
+        session = session_manager.create_web_chat_session(
+            machine_id="machine",
+            project_id=sample_project["id"],
+            source="codex",
+            title="My Investigation",
+            sandbox_enabled=True,
+            sandbox_policy_hash="policy-hash-123",
+        )
+
+        assert session.title == "My Investigation"
+        assert session.title_source == "manual"
 
     def test_register_recreates_missing_system_parent_session(
         self,
@@ -950,7 +965,7 @@ class TestSessionManagerRegistration:
     def test_register_updates_metadata_on_existing_session(
         self,
         session_manager: SessionManager,
-        sample_project: dict,
+        sample_project: dict[str, str],
     ) -> None:
         """Test that register updates metadata when session exists."""
         # Create a parent session first for the foreign key
@@ -1014,7 +1029,8 @@ class TestSessionManagerRegistration:
             git_branch=None,
             parent_session_id=None,
         )
-        assert cleared.title is None
+        assert cleared.title == "Updated Title"
+        assert cleared.title_source == "manual"
         assert cleared.transcript_path is None
         assert cleared.git_branch is None
         assert cleared.parent_session_id is None

@@ -6,7 +6,6 @@ are tested there instead.
 
 Active memory-lifecycle rules:
 - reset-memory-tracking-on-start: set_variable on session_start
-- bootstrap-session-title-on-prompt: heuristic title bootstrap on first prompt
 - increment-parent-turn-seq: set_variable on turn_start before daemon recall
 - memory-recall-on-prompt: mcp_call on turn_start
 - memory-capture-nudge: inject_context on turn_start
@@ -21,18 +20,15 @@ import json
 
 import pytest
 
-from gobby.adapters.claude_code import ClaudeCodeAdapter
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.workflow_definitions import LocalWorkflowDefinitionManager
 from gobby.workflows.definitions import RuleDefinitionBody
-from gobby.workflows.safe_evaluator import SafeExpressionEvaluator
 from gobby.workflows.sync_rules import sync_bundled_rules
 
 pytestmark = pytest.mark.unit
 
 MEMORY_RULES = {
     "reset-memory-tracking-on-start",
-    "bootstrap-session-title-on-prompt",
     "increment-parent-turn-seq",
     "memory-recall-on-prompt",
     "memory-capture-nudge",
@@ -41,6 +37,7 @@ MEMORY_RULES = {
 }
 
 REMOVED_HELPER_RULES = {
+    "bootstrap-session-title-on-prompt",
     "cancel-stale-memory-recall-helpers",
     "spawn-memory-recall-helper",
 }
@@ -105,6 +102,26 @@ class TestMemoryLifecycleSync:
                         "block",
                     }
 
+    def test_removed_bootstrap_title_rule_is_orphan_pruned(self, db, manager) -> None:
+        obsolete = manager.create(
+            name="bootstrap-session-title-on-prompt",
+            definition_json=json.dumps(
+                {
+                    "event": "turn_start",
+                    "effects": [{"type": "set_variable", "variable": "obsolete", "value": True}],
+                }
+            ),
+            workflow_type="rule",
+            source="installed",
+            tags=["gobby"],
+        )
+
+        result = _sync_bundled(db)
+
+        assert result["orphaned"] >= 1
+        deleted = manager.get(obsolete.id, include_deleted=True)
+        assert deleted.deleted_at is not None
+
 
 # ═══════════════════════════════════════════════════════════════════════
 # reset-memory-tracking-on-start
@@ -132,74 +149,6 @@ class TestResetMemoryTrackingOnStart:
         assert "compact" in body.when
 
 
-# ═══════════════════════════════════════════════════════════════════════
-# bootstrap-session-title-on-prompt
-# ═══════════════════════════════════════════════════════════════════════
-
-
-class TestBootstrapSessionTitleOnPrompt:
-    """Bootstrap a heuristic title before the first completed turn."""
-
-    def test_event_and_effect(self, db, manager) -> None:
-        _sync_bundled(db)
-        row = manager.get_by_name("bootstrap-session-title-on-prompt")
-        assert row is not None
-        body = RuleDefinitionBody.model_validate_json(row.definition_json)
-        assert body.event.value == "turn_start"
-        assert body.effects[0].type == "mcp_call"
-        assert body.effects[0].server == "gobby-memory"
-        assert body.effects[0].tool == "bootstrap_session_title"
-        assert body.effects[0].background is False
-
-    def test_has_prompt_guard(self, db, manager) -> None:
-        _sync_bundled(db)
-        row = manager.get_by_name("bootstrap-session-title-on-prompt")
-        body = RuleDefinitionBody.model_validate_json(row.definition_json)
-        assert body.when is not None
-        assert "len(" in body.when
-
-    def test_claude_user_prompt_submit_matches_prompt_guard(self, db, manager) -> None:
-        _sync_bundled(db)
-        row = manager.get_by_name("bootstrap-session-title-on-prompt")
-        assert row is not None
-        body = RuleDefinitionBody.model_validate_json(row.definition_json)
-        assert body.when is not None
-
-        event = ClaudeCodeAdapter().translate_to_hook_event(
-            {
-                "hook_type": "user-prompt-submit",
-                "input_data": {
-                    "session_id": "ext-claude",
-                    "user_prompt": "Fix the Claude tmux title regression",
-                },
-            }
-        )
-
-        evaluator = SafeExpressionEvaluator({"event": {"data": event.data}}, {"len": len})
-        assert evaluator.evaluate(body.when) is True
-
-    def test_slash_command_first_prompt_passes_guard(self, db, manager) -> None:
-        _sync_bundled(db)
-        row = manager.get_by_name("bootstrap-session-title-on-prompt")
-        assert row is not None
-        body = RuleDefinitionBody.model_validate_json(row.definition_json)
-        assert body.when is not None
-
-        event = ClaudeCodeAdapter().translate_to_hook_event(
-            {
-                "hook_type": "user-prompt-submit",
-                "input_data": {
-                    "session_id": "ext-claude",
-                    "user_prompt": "/gobby plan fix the tmux title regression",
-                },
-            }
-        )
-
-        evaluator = SafeExpressionEvaluator({"event": {"data": event.data}}, {"len": len})
-        assert evaluator.evaluate(body.when) is True
-
-
-# ═══════════════════════════════════════════════════════════════════════
 # memory-recall-on-prompt
 # ═══════════════════════════════════════════════════════════════════════
 
