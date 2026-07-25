@@ -5,11 +5,13 @@ from __future__ import annotations
 import json
 from collections.abc import Sequence
 from datetime import datetime
-from typing import Protocol
+from typing import Protocol, cast
 
+from gobby.storage.hub.protocol import Transaction
 from gobby.storage.session_models import Session
 from gobby.terminal_context import parse_terminal_context_value
 
+from ._title_update import apply_title_mutation
 from ._update_sentinel import UnsetType, is_set
 
 
@@ -62,8 +64,6 @@ def update_existing_session(
     conn.execute(
         """
         UPDATE sessions SET
-            title = CASE WHEN %s THEN %s ELSE title END,
-            title_source = CASE WHEN %s THEN %s ELSE title_source END,
             transcript_path = CASE WHEN %s THEN %s ELSE transcript_path END,
             git_branch = CASE WHEN %s THEN %s ELSE git_branch END,
             parent_session_id = CASE WHEN %s THEN %s ELSE parent_session_id END,
@@ -91,10 +91,6 @@ def update_existing_session(
         WHERE id = %s
         """,
         (
-            is_set(title),
-            title if is_set(title) else None,
-            is_set(title_source),
-            title_source if is_set(title_source) else None,
             is_set(transcript_path),
             transcript_path if is_set(transcript_path) else None,
             is_set(git_branch),
@@ -111,6 +107,15 @@ def update_existing_session(
             now,
             existing.id,
         ),
+    )
+    apply_title_mutation(
+        cast(Transaction, conn),
+        existing.id,
+        title_is_set=is_set(title),
+        title=title if is_set(title) else None,
+        title_source_is_set=is_set(title_source),
+        title_source=title_source if is_set(title_source) else None,
+        updated_at=now,
     )
     updated = manager.get(existing.id)
     if updated is None:

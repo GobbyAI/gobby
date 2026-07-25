@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Any, ClassVar, Protocol
+from typing import TYPE_CHECKING, ClassVar, Protocol
 
 from gobby.storage.hub.protocol import SessionLineageMutation
 from gobby.storage.session_models import Session
@@ -18,6 +18,7 @@ from ._constants import (
 from ._lineage_guard import repair_self_parent_session, sanitize_parent_session_id
 from ._summary_update import _SummaryUpdateMixin
 from ._title_defaults import MANUAL_TITLE_SOURCE
+from ._title_update import apply_title_mutation
 
 if TYPE_CHECKING:
     from gobby.storage.hub.protocol import HubDatabase
@@ -228,27 +229,27 @@ class _FieldUpdateMixin(_SummaryUpdateMixin):
                 f"Invalid title_source {title_source!r}. Must be one of: {', '.join(sorted(self._VALID_TITLE_SOURCES))}"
             )
 
-        title_changed = current.title != title
-        source_changed = title_source is not None and current.title_source != title_source
-        if not title_changed and not source_changed:
-            return current
-
         now = utc_now()
-        values: dict[str, Any] = {"updated_at": now}
-        if title_changed:
-            values["title"] = title
-        if source_changed:
-            values["title_source"] = title_source
-        with self.db.transaction():
-            self.db.safe_update("sessions", values, "id = %s", (session_id,))
+        with self.db.transaction() as conn:
+            mutation = apply_title_mutation(
+                conn,
+                session_id,
+                title_is_set=True,
+                title=title,
+                title_source_is_set=title_source is not None,
+                title_source=title_source,
+                updated_at=now,
+            )
         updated = self.get(session_id)
         if updated is None:
             return None
+        if mutation is None or not mutation.applied:
+            return updated
 
         self._notify_session_change("session_updated", session_id)
 
-        if title_changed:
-            self._run_title_change_side_effects(updated, title)
+        if mutation.title_changed:
+            self._run_title_change_side_effects(updated, updated.title or "")
 
         return updated
 

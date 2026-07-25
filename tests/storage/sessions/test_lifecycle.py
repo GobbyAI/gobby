@@ -657,8 +657,8 @@ class TestSessionManagerLifecycle:
         )
 
         assert updated is not None
-        assert updated.title is None
-        assert updated.title_source is None
+        assert updated.title == "Temporary title"
+        assert updated.title_source == "manual"
         assert updated.transcript_path is None
         assert updated.git_branch is None
 

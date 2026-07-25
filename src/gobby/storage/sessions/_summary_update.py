@@ -11,7 +11,7 @@ from gobby.storage.session_models import Session
 from gobby.storage.sessions._summary_protocols import SummaryUpdateHost as _SummaryUpdateHost
 from gobby.utils.datetime import utc_now
 
-from ._title_defaults import MANUAL_TITLE_SOURCE
+from ._title_update import apply_title_mutation
 from ._update_sentinel import UNSET, UnsetType, is_set
 
 
@@ -165,37 +165,28 @@ class _SummaryUpdateMixin:
             last_digested_pair_index,
             now,
         ]
-        if title is not None:
-            assignments.append(
-                f"title = CASE WHEN title_source = '{MANUAL_TITLE_SOURCE}' THEN title ELSE %s END"
-            )
-            values.append(title)
-        if title_source is not None:
-            assignments.append(
-                "title_source = CASE "
-                f"WHEN title_source = '{MANUAL_TITLE_SOURCE}' THEN title_source ELSE %s END"
-            )
-            values.append(title_source)
 
         with self.db.transaction() as conn:
             conn.execute(
                 f"UPDATE sessions SET {', '.join(assignments)} WHERE id = %s",  # nosec B608
                 (*values, session_id),
             )
+            mutation = apply_title_mutation(
+                conn,
+                session_id,
+                title_is_set=title is not None,
+                title=title,
+                title_source_is_set=title_source is not None,
+                title_source=title_source,
+                updated_at=now,
+            )
 
         updated = self.get(session_id)
         if updated is None:
             return None
         self._notify_session_change("session_updated", session_id)
-        title_applied = (
-            title is not None
-            and current.title != title
-            and updated.title == title
-            and updated.title_source == title_source
-        )
-        if title_applied:
-            assert title is not None
-            self._run_title_change_side_effects(updated, title)
+        if mutation is not None and mutation.title_changed:
+            self._run_title_change_side_effects(updated, updated.title or "")
         return updated
 
     def update_summary(

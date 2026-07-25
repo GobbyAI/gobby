@@ -70,10 +70,9 @@ class TestSessionManagerMetadata:
             machine_id="machine",
             source="claude",
             project_id=sample_project["id"],
-            title="Stable Title",
             terminal_context={"tmux_pane": "%42"},
         )
-        session_manager.update(session.id, title_source="provisional")
+        assert session.title is not None
         calls: list[tuple[str, str]] = []
         session_manager.register_title_listener(
             lambda session_id, title: calls.append((session_id, title))
@@ -82,7 +81,7 @@ class TestSessionManagerMetadata:
         with patch("gobby.workflows.summary_actions.schedule_tmux_window_rename") as mock_rename:
             updated = session_manager.update_title(
                 session.id,
-                "Stable Title",
+                session.title,
                 title_source="llm",
             )
 
@@ -138,6 +137,94 @@ class TestSessionManagerMetadata:
         assert updated.title == "Stable Title"
         assert updated.updated_at == original_updated_at
         assert calls == []
+
+    @pytest.mark.parametrize("owner", ["llm", "manual"])
+    def test_update_title_rejects_provisional_downgrades(
+        self,
+        session_manager: SessionManager,
+        sample_project: dict,
+        owner: str,
+    ) -> None:
+        session = session_manager.register(
+            external_id=f"direct-title-precedence-{owner}",
+            machine_id="machine",
+            source="claude",
+            project_id=sample_project["id"],
+        )
+        owned = session_manager.update_title(
+            session.id,
+            f"{owner} title",
+            title_source=owner,
+        )
+        assert owned is not None
+
+        calls: list[tuple[str, str]] = []
+        session_manager.register_title_listener(
+            lambda session_id, title: calls.append((session_id, title))
+        )
+        with patch("gobby.workflows.summary_actions.schedule_tmux_window_rename") as mock_rename:
+            session_manager.update_title(
+                session.id,
+                "Fallback title",
+                title_source="provisional",
+            )
+            session_manager.update_title(
+                session.id,
+                f"{owner} title",
+                title_source="provisional",
+            )
+            updated = session_manager.update_title(
+                session.id,
+                "",
+                title_source="provisional",
+            )
+
+        assert updated is not None
+        assert updated.title == f"{owner} title"
+        assert updated.title_source == owner
+        assert calls == []
+        mock_rename.assert_not_called()
+
+    @pytest.mark.parametrize("owner", ["llm", "manual"])
+    def test_bulk_update_rejects_title_downgrades_but_persists_other_fields(
+        self,
+        session_manager: SessionManager,
+        sample_project: dict,
+        owner: str,
+    ) -> None:
+        session = session_manager.register(
+            external_id=f"bulk-title-precedence-{owner}",
+            machine_id="machine",
+            source="claude",
+            project_id=sample_project["id"],
+        )
+        owned = session_manager.update_title(
+            session.id,
+            f"{owner} title",
+            title_source=owner,
+        )
+        assert owned is not None
+
+        calls: list[tuple[str, str]] = []
+        session_manager.register_title_listener(
+            lambda session_id, title: calls.append((session_id, title))
+        )
+        with patch("gobby.workflows.summary_actions.schedule_tmux_window_rename") as mock_rename:
+            session_manager.update(session.id, title_source="provisional")
+            session_manager.update(session.id, title=None, title_source=None)
+            updated = session_manager.update(
+                session.id,
+                title="Fallback title",
+                title_source="provisional",
+                model="new-model",
+            )
+
+        assert updated is not None
+        assert updated.title == f"{owner} title"
+        assert updated.title_source == owner
+        assert updated.model == "new-model"
+        assert calls == []
+        mock_rename.assert_not_called()
 
     def test_update_title_missing_session_does_not_notify_listener(
         self,
@@ -226,21 +313,98 @@ class TestSessionManagerMetadata:
             project_id=sample_project["id"],
             title="My Title",
         )
-
-        updated = session_manager.persist_digest_state(
-            session.id,
-            last_turn_markdown="last turn",
-            digest_markdown="### Turn 1\nlast turn",
-            last_digest_input_hash="abc123",
-            last_digested_pair_index=1,
-            title="Digest Title",
-            title_source="llm",
+        title_calls: list[tuple[str, str]] = []
+        session_manager.register_title_listener(
+            lambda session_id, title: title_calls.append((session_id, title))
         )
+
+        with patch("gobby.workflows.summary_actions.schedule_tmux_window_rename") as mock_rename:
+            updated = session_manager.persist_digest_state(
+                session.id,
+                last_turn_markdown="last turn",
+                digest_markdown="### Turn 1\nlast turn",
+                last_digest_input_hash="abc123",
+                last_digested_pair_index=1,
+                title="Digest Title",
+                title_source="llm",
+            )
 
         assert updated is not None
         assert updated.title == "My Title"
         assert updated.title_source == "manual"
         assert updated.digest_markdown == "### Turn 1\nlast turn"
+        assert title_calls == []
+        mock_rename.assert_not_called()
+
+    def test_persist_digest_state_refreshes_llm_title(
+        self,
+        session_manager: SessionManager,
+        sample_project: dict,
+    ) -> None:
+        session = session_manager.register(
+            external_id="llm-title-refresh-test",
+            machine_id="machine",
+            source="claude",
+            project_id=sample_project["id"],
+        )
+        first = session_manager.persist_digest_state(
+            session.id,
+            last_turn_markdown="first turn",
+            digest_markdown="### Turn 1\nfirst turn",
+            last_digest_input_hash="first-hash",
+            last_digested_pair_index=1,
+            title="First digest title",
+            title_source="llm",
+        )
+        assert first is not None
+
+        updated = session_manager.persist_digest_state(
+            session.id,
+            last_turn_markdown="second turn",
+            digest_markdown="### Turn 2\nsecond turn",
+            last_digest_input_hash="second-hash",
+            last_digested_pair_index=2,
+            title="Refreshed digest title",
+            title_source="llm",
+        )
+
+        assert updated is not None
+        assert updated.title == "Refreshed digest title"
+        assert updated.title_source == "llm"
+
+    def test_manual_rename_overrides_llm_and_blocks_later_digest(
+        self,
+        session_manager: SessionManager,
+        sample_project: dict,
+    ) -> None:
+        session = session_manager.register(
+            external_id="manual-after-llm-title-test",
+            machine_id="machine",
+            source="claude",
+            project_id=sample_project["id"],
+        )
+        digest_owned = session_manager.update_title(
+            session.id,
+            "Digest title",
+            title_source="llm",
+        )
+        assert digest_owned is not None
+
+        manual = session_manager.update_title(session.id, "User title")
+        assert manual is not None
+        updated = session_manager.persist_digest_state(
+            session.id,
+            last_turn_markdown="last turn",
+            digest_markdown="### Turn 1\nlast turn",
+            last_digest_input_hash="digest-hash",
+            last_digested_pair_index=1,
+            title="Later digest title",
+            title_source="llm",
+        )
+
+        assert updated is not None
+        assert updated.title == "User title"
+        assert updated.title_source == "manual"
 
     def test_persist_digest_state_missing_session_does_not_notify_listener(
         self,
@@ -895,7 +1059,7 @@ class TestSessionManagerMetadata:
     def test_update_terminal_pickup_metadata_no_fields(
         self,
         session_manager: SessionManager,
-        sample_project: dict,
+        sample_project: dict[str, str],
     ) -> None:
         """Test update_terminal_pickup_metadata with no fields returns session unchanged."""
         session = session_manager.register(
@@ -913,7 +1077,7 @@ class TestSessionManagerMetadata:
     def test_update_terminal_pickup_context_injected_false(
         self,
         session_manager: SessionManager,
-        sample_project: dict,
+        sample_project: dict[str, str],
     ) -> None:
         """Test updating context_injected to False."""
         session = session_manager.register(
@@ -941,7 +1105,7 @@ class TestSessionManagerMetadata:
     def test_update_summary_partial(
         self,
         session_manager: SessionManager,
-        sample_project: dict,
+        sample_project: dict[str, str],
     ) -> None:
         """Test updating summary with only summary_path."""
         session = session_manager.register(
@@ -1006,7 +1170,7 @@ class TestSessionManagerMetadata:
     def test_update_summary_markdown_only(
         self,
         session_manager: SessionManager,
-        sample_project: dict,
+        sample_project: dict[str, str],
     ) -> None:
         """Test updating summary with only summary_markdown."""
         session = session_manager.register(

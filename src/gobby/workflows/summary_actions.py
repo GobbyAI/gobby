@@ -535,6 +535,14 @@ async def _rename_tmux_window(session: Any, title: str) -> None:
     spawned agents.
     Failures are logged but never propagated.
     """
+    has_persisted_identity = isinstance(getattr(session, "id", None), str)
+    persisted_session = await _reload_persisted_session(session)
+    if has_persisted_identity:
+        if persisted_session is None:
+            return
+        session = persisted_session
+        title = getattr(session, "title", None) or ""
+
     tc = parse_terminal_context_value(getattr(session, "terminal_context", None))
     if not tc:
         return
@@ -542,6 +550,26 @@ async def _rename_tmux_window(session: Any, title: str) -> None:
     if not isinstance(pane, str) or not pane:
         return
     await _apply_window_rename(session, tc, pane, title)
+
+
+async def _reload_persisted_session(session: Any) -> Any | None:
+    """Reload a queued rename's session from daemon-owned storage."""
+    session_id = getattr(session, "id", None)
+    if not isinstance(session_id, str) or not session_id:
+        return None
+
+    from gobby.app_context import get_app_context
+
+    container = get_app_context()
+    if container is None or container.session_manager is None:
+        return None
+    session_manager = container.session_manager
+
+    try:
+        return await container.run_db(session_manager.get, session_id)
+    except Exception:
+        logger.debug("Failed to reload session %s before tmux rename", session_id, exc_info=True)
+        return None
 
 
 async def enforce_window_name_if_unmanaged(session: Any) -> bool:
@@ -561,6 +589,13 @@ async def enforce_window_name_if_unmanaged(session: Any) -> bool:
     window cannot be inspected, or the window already matches the persisted
     session title.
     """
+    has_persisted_identity = isinstance(getattr(session, "id", None), str)
+    persisted_session = await _reload_persisted_session(session)
+    if has_persisted_identity:
+        if persisted_session is None:
+            return False
+        session = persisted_session
+
     tc = parse_terminal_context_value(getattr(session, "terminal_context", None))
     if not tc:
         return False

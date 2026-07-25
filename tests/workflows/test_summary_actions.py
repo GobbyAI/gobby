@@ -12,6 +12,7 @@ import json
 import logging
 import threading
 from pathlib import Path
+from types import SimpleNamespace
 from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -503,6 +504,20 @@ class _RecordingTmuxManager:
         return True
 
 
+class _ReloadingAppContext:
+    def __init__(self, persisted_session: Any) -> None:
+        self.persisted_session = persisted_session
+        self.session_manager = SimpleNamespace(get=self._get_session)
+        self.calls: list[tuple[Any, tuple[Any, ...]]] = []
+
+    def _get_session(self, _session_id: str) -> Any:
+        return self.persisted_session
+
+    async def run_db(self, func: Any, *args: Any) -> Any:
+        self.calls.append((func, args))
+        return func(*args)
+
+
 class TestRenameTmuxWindow:
     """Tests for _rename_tmux_window helper."""
 
@@ -550,6 +565,37 @@ class TestRenameTmuxWindow:
         assert manager.config.socket_path is None
         assert manager.config.socket_name == ""
         assert manager.rename_calls == [("%42", "#99 My Title")]
+
+    @pytest.mark.asyncio
+    async def test_queued_rename_reloads_authoritative_persisted_title(self) -> None:
+        from gobby.workflows.summary_actions import _rename_tmux_window
+
+        _RecordingTmuxManager.instances = []
+        stale_session = SimpleNamespace(
+            id="session-id",
+            terminal_context={"tmux_pane": "%42"},
+            agent_depth=0,
+            ref="#99",
+            title="#99 Codex",
+        )
+        persisted_session = SimpleNamespace(
+            id="session-id",
+            terminal_context={"tmux_pane": "%42"},
+            agent_depth=0,
+            ref="#99",
+            title="Digest-owned title",
+        )
+        container = _ReloadingAppContext(persisted_session)
+
+        with (
+            patch("gobby.app_context.get_app_context", return_value=container),
+            patch("gobby.sessions.tmux_context.TmuxSessionManager", _RecordingTmuxManager),
+        ):
+            await _rename_tmux_window(stale_session, "#99 Codex")
+
+        assert container.calls == [(container.session_manager.get, ("session-id",))]
+        manager = _RecordingTmuxManager.instances[0]
+        assert manager.rename_calls == [("%42", "#99 Digest-owned title")]
 
     @pytest.mark.asyncio
     async def test_successful_window_rename_log_is_debug(

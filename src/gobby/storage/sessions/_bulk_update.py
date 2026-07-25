@@ -12,6 +12,7 @@ from gobby.utils.datetime import utc_now
 
 from ._constants import validate_session_status_transition
 from ._title_defaults import MANUAL_TITLE_SOURCE
+from ._title_update import TitleMutationResult, apply_title_mutation
 from ._update_sentinel import UNSET, UnsetType, is_set
 from ._upsert import is_session_unique_conflict
 
@@ -29,6 +30,8 @@ class _ManagerState(Protocol):
 
     def _notify_session_change(self, event: str, session_id: str) -> None: ...
 
+    def _run_title_change_side_effects(self, updated: Session, title: str) -> None: ...
+
 
 def _apply_session_update(
     manager: _ManagerState,
@@ -37,7 +40,12 @@ def _apply_session_update(
     values: dict[str, Any],
     terminal_context: dict[str, Any],
     updated_at: datetime,
-) -> None:
+    *,
+    title_is_set: bool,
+    title: str | None,
+    title_source_is_set: bool,
+    title_source: str | None,
+) -> TitleMutationResult | None:
     if values:
         manager.db.safe_update("sessions", values, "id = %s", (session_id,))
     if terminal_context:
@@ -50,6 +58,15 @@ def _apply_session_update(
             """,
             (json.dumps(terminal_context), updated_at, session_id),
         )
+    return apply_title_mutation(
+        conn,
+        session_id,
+        title_is_set=title_is_set,
+        title=title,
+        title_source_is_set=title_source_is_set,
+        title_source=title_source,
+        updated_at=updated_at,
+    )
 
 
 class _BulkUpdateMixin:
@@ -122,7 +139,6 @@ class _BulkUpdateMixin:
             validate_session_status_transition(current.status if current else None, status)
             values["status"] = status
         if is_set(title):
-            values["title"] = title
             if not is_set(title_source):
                 title_source = (
                     MANUAL_TITLE_SOURCE if isinstance(title, str) and title.strip() else None
@@ -132,7 +148,18 @@ class _BulkUpdateMixin:
                 raise ValueError(
                     f"Invalid title_source {title_source!r}. Must be one of: {', '.join(sorted(self._VALID_TITLE_SOURCES))}"
                 )
-            values["title_source"] = title_source
+        if is_set(title):
+            title_is_set = True
+            title_value = title
+        else:
+            title_is_set = False
+            title_value = None
+        if is_set(title_source):
+            title_source_is_set = True
+            title_source_value = title_source
+        else:
+            title_source_is_set = False
+            title_source_value = None
         if is_set(git_branch):
             values["git_branch"] = git_branch
         incoming_terminal_context = (
@@ -147,13 +174,19 @@ class _BulkUpdateMixin:
         if sandbox_policy_hash is not None:
             values["sandbox_policy_hash"] = sandbox_policy_hash
 
-        if not values and not incoming_terminal_context:
+        if (
+            not values
+            and not incoming_terminal_context
+            and not title_is_set
+            and not title_source_is_set
+        ):
             return self.get(session_id)
 
         updated_at = utc_now()
         if values:
             values["updated_at"] = updated_at
 
+        title_mutation: TitleMutationResult | None = None
         try:
             if current is not None and project_id is not None and current.project_id != project_id:
                 with self.db.transaction_immediate(
@@ -164,23 +197,31 @@ class _BulkUpdateMixin:
                         (project_id,),
                     ).fetchone()
                     values["seq_num"] = ((max_seq_row["max_seq"] if max_seq_row else None) or 0) + 1
-                    _apply_session_update(
+                    title_mutation = _apply_session_update(
                         self,
                         conn,
                         session_id,
                         values,
                         incoming_terminal_context,
                         updated_at,
+                        title_is_set=title_is_set,
+                        title=title_value,
+                        title_source_is_set=title_source_is_set,
+                        title_source=title_source_value,
                     )
             else:
                 with self.db.transaction() as conn:
-                    _apply_session_update(
+                    title_mutation = _apply_session_update(
                         self,
                         conn,
                         session_id,
                         values,
                         incoming_terminal_context,
                         updated_at,
+                        title_is_set=title_is_set,
+                        title=title_value,
+                        title_source_is_set=title_source_is_set,
+                        title_source=title_source_value,
                     )
         except Exception as exc:
             if current is None or not is_session_unique_conflict(exc):
@@ -189,22 +230,34 @@ class _BulkUpdateMixin:
             if conflicting is None:
                 raise
             with self.db.transaction() as conn:
-                _apply_session_update(
+                title_mutation = _apply_session_update(
                     self,
                     conn,
                     conflicting.id,
                     values,
                     incoming_terminal_context,
                     updated_at,
+                    title_is_set=title_is_set,
+                    title=title_value,
+                    title_source_is_set=title_source_is_set,
+                    title_source=title_source_value,
                 )
             updated = self.get(conflicting.id)
             if updated is not None:
-                self._notify_session_change("session_updated", conflicting.id)
+                mutation_applied = title_mutation is not None and title_mutation.applied
+                if values or incoming_terminal_context or mutation_applied:
+                    self._notify_session_change("session_updated", conflicting.id)
+                if title_mutation is not None and title_mutation.title_changed:
+                    self._run_title_change_side_effects(updated, updated.title or "")
             return updated
         updated = self.get(session_id)
         if updated is not None:
             event = "session_expired" if status == "expired" else "session_updated"
-            self._notify_session_change(event, session_id)
+            mutation_applied = title_mutation is not None and title_mutation.applied
+            if values or incoming_terminal_context or mutation_applied:
+                self._notify_session_change(event, session_id)
+            if title_mutation is not None and title_mutation.title_changed:
+                self._run_title_change_side_effects(updated, updated.title or "")
         return updated
 
     def update_stats(

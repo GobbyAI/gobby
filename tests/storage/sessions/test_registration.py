@@ -5,6 +5,8 @@ import json
 import logging
 import uuid
 from collections.abc import Sequence
+from dataclasses import replace
+from datetime import datetime
 
 import pytest
 
@@ -16,6 +18,7 @@ from gobby.storage.sessions import _field_update as session_field_update
 from gobby.storage.sessions import _upsert as session_upsert
 from gobby.storage.sessions import _web_chat_crud as session_web_chat_crud
 from gobby.storage.sessions._title_defaults import PROVISIONAL_TITLE_SOURCE
+from gobby.storage.sessions._update_sentinel import UNSET
 
 pytestmark = pytest.mark.unit
 
@@ -91,7 +94,7 @@ def test_update_existing_session_can_set_clear_or_preserve_is_local(
             is_local=False,
             sandbox_enabled=None,
             sandbox_policy_hash=None,
-            now="2026-05-22T00:00:00+00:00",
+            now=datetime.fromisoformat("2026-05-22T00:00:00+00:00"),
         )
 
     assert cleared.is_local is False
@@ -111,7 +114,7 @@ def test_update_existing_session_can_set_clear_or_preserve_is_local(
             is_local=None,
             sandbox_enabled=None,
             sandbox_policy_hash=None,
-            now="2026-05-22T00:00:01+00:00",
+            now=datetime.fromisoformat("2026-05-22T00:00:01+00:00"),
         )
 
     assert preserved.is_local is False
@@ -161,8 +164,8 @@ def test_update_existing_session_binds_is_local_as_booleans_for_postgres() -> No
         _StaticSessionGetter(session),
         conn,
         session,
-        title=None,
-        title_source=None,
+        title=UNSET,
+        title_source=UNSET,
         transcript_path=None,
         git_branch=None,
         parent_session_id=None,
@@ -171,13 +174,13 @@ def test_update_existing_session_binds_is_local_as_booleans_for_postgres() -> No
         is_local=True,
         sandbox_enabled=True,
         sandbox_policy_hash=None,
-        now="2026-05-22T00:00:01+00:00",
+        now=datetime.fromisoformat("2026-05-22T00:00:01+00:00"),
     )
 
     params = conn.calls[0][1]
 
-    assert params[13:16] == (True, True, True)
-    assert all(type(value) is bool for value in params[13:16])
+    assert params[9:12] == (True, True, True)
+    assert all(type(value) is bool for value in params[9:12])
 
 
 def test_update_existing_session_preserve_is_local_uses_boolean_guard_param() -> None:
@@ -188,8 +191,8 @@ def test_update_existing_session_preserve_is_local_uses_boolean_guard_param() ->
         _StaticSessionGetter(session),
         conn,
         session,
-        title=None,
-        title_source=None,
+        title=UNSET,
+        title_source=UNSET,
         transcript_path=None,
         git_branch=None,
         parent_session_id=None,
@@ -198,14 +201,14 @@ def test_update_existing_session_preserve_is_local_uses_boolean_guard_param() ->
         is_local=None,
         sandbox_enabled=None,
         sandbox_policy_hash=None,
-        now="2026-05-22T00:00:01+00:00",
+        now=datetime.fromisoformat("2026-05-22T00:00:01+00:00"),
     )
 
     params = conn.calls[0][1]
 
-    assert params[13:16] == (False, False, None)
-    assert type(params[13]) is bool
-    assert type(params[14]) is bool
+    assert params[9:12] == (False, False, None)
+    assert type(params[9]) is bool
+    assert type(params[10]) is bool
 
 
 def test_update_existing_session_ignores_invalid_terminal_context_json() -> None:
@@ -217,8 +220,8 @@ def test_update_existing_session_ignores_invalid_terminal_context_json() -> None
         _StaticSessionGetter(session),
         conn,
         session,
-        title=None,
-        title_source=None,
+        title=UNSET,
+        title_source=UNSET,
         transcript_path=None,
         git_branch=None,
         parent_session_id=None,
@@ -227,12 +230,12 @@ def test_update_existing_session_ignores_invalid_terminal_context_json() -> None
         is_local=None,
         sandbox_enabled=None,
         sandbox_policy_hash=None,
-        now="2026-05-22T00:00:01+00:00",
+        now=datetime.fromisoformat("2026-05-22T00:00:01+00:00"),
     )
 
     params = conn.calls[0][1]
 
-    assert params[10:12] == (None, None)
+    assert params[6:8] == (None, None)
 
 
 def test_update_existing_session_merges_terminal_context_in_sql() -> None:
@@ -244,8 +247,8 @@ def test_update_existing_session_merges_terminal_context_in_sql() -> None:
         _StaticSessionGetter(session),
         conn,
         session,
-        title=None,
-        title_source=None,
+        title=UNSET,
+        title_source=UNSET,
         transcript_path=None,
         git_branch=None,
         parent_session_id=None,
@@ -254,14 +257,14 @@ def test_update_existing_session_merges_terminal_context_in_sql() -> None:
         is_local=None,
         sandbox_enabled=None,
         sandbox_policy_hash=None,
-        now="2026-05-22T00:00:01+00:00",
+        now=datetime.fromisoformat("2026-05-22T00:00:01+00:00"),
     )
 
     sql, params = conn.calls[0]
 
     assert "COALESCE(terminal_context, '{}'::jsonb) || %s::jsonb" in sql
-    assert json.loads(str(params[10])) == {"cwd": "/work/gobby"}
-    assert params[10] == params[11]
+    assert json.loads(str(params[6])) == {"cwd": "/work/gobby"}
+    assert params[6] == params[7]
 
 
 class TestSessionManagerRegistration:
@@ -414,6 +417,42 @@ class TestSessionManagerRegistration:
         assert updated.id == session.id
         assert updated.title == f"#{session.seq_num} Codex"
         assert updated.title_source == PROVISIONAL_TITLE_SOURCE
+
+    def test_stale_registration_backfill_preserves_concurrent_digest_title(
+        self,
+        session_manager: SessionManager,
+        sample_project: dict,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        session = session_manager.register(
+            external_id="stale-registration-title",
+            machine_id="machine",
+            source="claude",
+            project_id=sample_project["id"],
+        )
+        stale_session = replace(session, title=None, title_source=None)
+        digest_owned = session_manager.update_title(
+            session.id,
+            "Digest-owned title",
+            title_source="llm",
+        )
+        assert digest_owned is not None
+
+        monkeypatch.setattr(
+            session_manager,
+            "find_by_external_id",
+            lambda *_args, **_kwargs: stale_session,
+        )
+
+        updated = session_manager.register(
+            external_id="stale-registration-title",
+            machine_id="machine",
+            source="claude",
+            project_id=sample_project["id"],
+        )
+
+        assert updated.title == "Digest-owned title"
+        assert updated.title_source == "llm"
 
     def test_create_web_chat_without_title_uses_provisional_title(
         self,
@@ -947,7 +986,7 @@ class TestSessionManagerRegistration:
     def test_register_with_agent_depth_and_spawned_by(
         self,
         session_manager: SessionManager,
-        sample_project: dict,
+        sample_project: dict[str, str],
     ) -> None:
         """Test registering session with agent depth and spawned_by_agent_id."""
         session = session_manager.register(
