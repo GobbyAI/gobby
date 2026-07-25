@@ -414,10 +414,10 @@ describe("research mode keyboard operation", () => {
     expect(screen.getByRole("textbox", { name: "Topic slug" })).toBeInTheDocument();
 
     const followUps = screen.getByRole("switch", { name: "Create follow-up tasks" });
-    expect(followUps).toHaveAttribute("aria-checked", "true");
+    expect(followUps).toHaveAttribute("aria-checked", "false");
     followUps.focus();
     await user.keyboard(" ");
-    expect(followUps).toHaveAttribute("aria-checked", "false");
+    expect(followUps).toHaveAttribute("aria-checked", "true");
 
     const run = screen.getByRole("button", { name: "Run research" });
     run.focus();
@@ -426,6 +426,6 @@ describe("research mode keyboard operation", () => {
     await waitFor(() => expect(runBodies.length).toBe(1));
     const inputs = runBodies[0].inputs as Record<string, unknown>;
     expect(inputs.question).toBe("How do watchers work?");
-    expect(inputs.create_tasks).toBe("false");
+    expect(inputs.create_tasks).toBe("true");
   });
 });

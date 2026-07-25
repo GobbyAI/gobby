@@ -263,7 +263,7 @@ Total rows: 377 (22 manual frontend/route rows plus 355 generated backend schema
 | embeddings.query_prefix | DaemonConfig schema via /api/config/schema; save via /api/config/values | ConfigFormTab -> SchemaField text/password input | live | keep | memory-knowledge |  |
 | ai.generation.timeout_seconds | DaemonConfig schema via /api/config/schema; save via /api/config/values | ConfigFormTab -> SchemaField number input | live | keep | providers-models |  |
 | ai.generation.candidate_timeout_seconds | DaemonConfig schema via /api/config/schema; save via /api/config/values | ConfigFormTab -> SchemaField number input | live | keep | providers-models |  |
-| ai.generation.local.endpoints | DaemonConfig schema via /api/config/schema; save via /api/config/values | ConfigFormTab -> SchemaField text input fallback for map/object | mismatched-type | fix | providers-models | object items= map=object |
+| ai.generation.endpoints | DaemonConfig schema via /api/config/schema; save via /api/config/values | ConfigFormTab -> SchemaField text input fallback for map/object | mismatched-type | fix | providers-models | object items= map=object |
 | ai.generation.profile_defaults | DaemonConfig schema via /api/config/schema; save via /api/config/values | ConfigFormTab -> SchemaField text input fallback for map/object | mismatched-type | fix | providers-models | object items= map=array |
 | memory.enabled | DaemonConfig schema via /api/config/schema; save via /api/config/values | ConfigFormTab -> SchemaField toggle | live | keep | memory-knowledge |  |
 | memory.backend | DaemonConfig schema via /api/config/schema; save via /api/config/values | ConfigFormTab -> SchemaField text/password input | live | keep | memory-knowledge |  |
@@ -475,7 +475,7 @@ These are the rows that P13 must either fix before/while building the overlay or
 | import_mcp_server.candidates | ConfigFormTab -> SchemaField text input fallback for array | providers-models |
 | hook_extensions.websocket.broadcast_events | ConfigFormTab -> SchemaField text input fallback for array | integrations-hooks |
 | hook_extensions.webhooks.endpoints | ConfigFormTab -> SchemaField text input fallback for array | integrations-hooks |
-| ai.generation.local.endpoints | ConfigFormTab -> SchemaField text input fallback for map/object | providers-models |
+| ai.generation.endpoints | ConfigFormTab -> SchemaField text input fallback for map/object | providers-models |
 | ai.generation.profile_defaults | ConfigFormTab -> SchemaField text input fallback for map/object | providers-models |
 | memory.kg.candidates | ConfigFormTab -> SchemaField text input fallback for array | memory-knowledge |
 | memory.dream.candidates | ConfigFormTab -> SchemaField text input fallback for array | memory-knowledge |
