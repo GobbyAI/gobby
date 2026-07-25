@@ -378,7 +378,18 @@ async def kill_agent(
             timeout=timeout,
         )
         if result.get("success"):
-            terminal_close_result = result
+            response = {
+                "success": True,
+                "message": result.get(
+                    "message",
+                    f"Closed managed tmux session '{run.tmux_session_name}'",
+                ),
+                "terminal_close": result,
+                "method": result.get("method"),
+            }
+            if result.get("already_dead"):
+                response["already_dead"] = True
+            return response
 
     if close_terminal and session_id and terminal_close_result is None:
         result = await _close_terminal_window(

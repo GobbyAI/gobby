@@ -431,7 +431,7 @@ class ChatStreamEventHandler:
         if event.context_window is not None:
             done_msg["context_window"] = event.context_window
 
-        logger.info(
+        logger.debug(
             "DoneEvent context_window=%s total_input=%s "
             "(uncached=%s cache_read=%s cache_creation=%s) output=%s",
             event.context_window,

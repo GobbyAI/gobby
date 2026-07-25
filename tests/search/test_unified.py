@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import logging
 import math
 import threading
 from dataclasses import dataclass
@@ -712,7 +713,7 @@ class TestEmbeddingBackend:
         assert backend._dim == 768
 
     @pytest.mark.asyncio
-    async def test_fit_and_search(self) -> None:
+    async def test_fit_and_search(self, caplog: pytest.LogCaptureFixture) -> None:
         """Test fit and search with mocked embeddings."""
         backend = EmbeddingBackend()
 
@@ -732,7 +733,25 @@ class TestEmbeddingBackend:
             ),
         ):
             items = [("id1", "hello"), ("id2", "world")]
-            await backend.fit_async(items)
+            logger_name = "gobby.search.backends.embedding"
+            with caplog.at_level(logging.DEBUG, logger=logger_name):
+                await backend.fit_async(items)
+
+            records = [
+                record
+                for record in caplog.records
+                if record.getMessage() == "Embedding index built with 2 items"
+            ]
+            assert len(records) == 1
+            assert records[0].levelno == logging.DEBUG
+
+            caplog.clear()
+            with caplog.at_level(logging.INFO, logger=logger_name):
+                await backend.fit_async(items)
+            assert not any(
+                record.getMessage() == "Embedding index built with 2 items"
+                for record in caplog.records
+            )
 
             results = await backend.search_async("greeting", top_k=5)
 

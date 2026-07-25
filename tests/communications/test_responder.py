@@ -204,6 +204,47 @@ async def test_access_gate_rejects_sender_outside_allowlist(
     assert "stranger" in caplog.text
 
 
+async def test_expected_mention_required_skip_logs_at_debug(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    manager = FakeManager(
+        make_channel(
+            config={
+                "responder": {"enabled": True},
+                "group_policy": "open",
+                "require_mention": True,
+            }
+        )
+    )
+    responder = CommunicationsResponder(manager, backend=RecordingBackend())
+    message = make_message(group=True, mentioned=False)
+    logger_name = "gobby.communications.responder"
+
+    with caplog.at_level(logging.DEBUG, logger=logger_name):
+        task = await responder.handle_message(message)
+
+    assert task is None
+    records = [
+        record
+        for record in caplog.records
+        if record.getMessage() == "Ignoring group message for conversation chat-1: mention_required"
+    ]
+    assert len(records) == 1
+    assert records[0].levelno == logging.DEBUG
+    assert records[0].getMessage() == (
+        "Ignoring group message for conversation chat-1: mention_required"
+    )
+
+    caplog.clear()
+    with caplog.at_level(logging.INFO, logger=logger_name):
+        await responder.handle_message(message)
+
+    assert not any(
+        record.getMessage() == "Ignoring group message for conversation chat-1: mention_required"
+        for record in caplog.records
+    )
+
+
 @pytest.mark.parametrize(
     ("group_policy", "groups", "sender_id", "mentioned", "accepted"),
     [

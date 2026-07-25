@@ -34,10 +34,26 @@ changes.
 
 | Classification | Sites |
 | --- | ---: |
-| Kept at daemon `INFO` | 475 |
-| Demoted to `DEBUG` | 5 |
+| Kept at daemon `INFO` | 470 |
+| Demoted to `DEBUG` | 9 |
+| Split by outcome between `INFO` and `DEBUG` | 1 |
 | Rerouted to automation | 10 |
 | **Total** | **490** |
+
+The outcome-split site is the group-message responder skip. Authorization
+denials remain `INFO`; the expected `mention_required` branch emits `DEBUG`.
+
+## Volume-Weighted Follow-up
+
+The original site-count inventory understated operational impact. In the
+07:00–08:59 follow-up sample, `DoneEvent` usage telemetry and expected
+`mention_required` skips produced 46 of 89 daemon `INFO` records: 52% after
+rounding. Both are per-turn or expected-policy diagnostics, so both move to
+`DEBUG`.
+
+The follow-up confirmed routing was already correct. Websocket,
+communications, session, storage, workflow, and agent records stay on the
+daemon surface. Valid warnings continue to aggregate into `errors.log`.
 
 ## Demoted Sites
 
@@ -48,6 +64,16 @@ changes.
 | `src/gobby/tasks/validation.py` | `Validation prompt assembled ...` | Prompt-size diagnostic. Validation start remains `INFO`. |
 | `src/gobby/sessions/session_wiki_file.py` | `Session wiki page written ...` | File-write acknowledgement. |
 | `src/gobby/workflows/summary_actions.py` | `Session summary written` | File-write acknowledgement. |
+| `src/gobby/servers/websocket/chat/_stream_events.py` | `DoneEvent context_window=...` | Per-turn usage telemetry. |
+| `src/gobby/communications/inbound.py` | `Ignoring inbound message rejected by access policy ...` | Expected access-policy decision. |
+| `src/gobby/storage/session_lifecycle.py` | `Skipped pruning ... retained references` | Protected-retention no-op. Nonzero pruning remains `INFO`. |
+| `src/gobby/search/backends/embedding.py` | `Embedding index built ...` | Generic backend completion. Semantic `Skill search index built ...` readiness remains `INFO`. |
+
+## Outcome-Split Site
+
+| File | Baseline message | `DEBUG` outcome | Retained `INFO` outcomes |
+| --- | --- | --- | --- |
+| `src/gobby/communications/responder.py` | `Ignoring group message for conversation ...` | `mention_required` | Authorization and group-policy denials |
 
 The session summarizer's existing generation site remains in the kept count,
 with narrower semantics: actual full, delta, or deterministic-fallback
@@ -69,7 +95,17 @@ through the `gobby.workflows.pipeline` and
 
 ## Retained Examples
 
-The retained 475 include task claims and auto-links, collaboration-mode
+The original retained 475 include task claims and auto-links, collaboration-mode
 changes, workflow step transitions, actual validation and summary execution,
 daemon and subsystem lifecycle, durable configuration/storage mutations,
 agent state changes, and nonzero cleanup or recovery summaries.
+
+After the follow-up corrections, the retained 470 still include those same
+categories. Summary generation remains `INFO`. Two
+`missing_summary_metadata` generations for one session within 27 seconds
+exposed duplicate work; task #18893 tracks per-session generation coalescing.
+
+Managed tmux termination now returns immediately after a successful managed
+kill. This removes the stale post-kill PID identity warning at its source.
+Direct-PID fallback still verifies process identity and warns for a live
+mismatch.

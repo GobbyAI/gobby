@@ -1,6 +1,7 @@
 """Tests for skill search functionality."""
 
 import json
+import logging
 from datetime import UTC, datetime
 from typing import Any
 from unittest.mock import AsyncMock, patch
@@ -193,13 +194,26 @@ class TestSkillSearch:
         assert service.dim == 768
         assert len(calls[0]["texts"]) == len(sample_skills)
 
-    def test_index_skills(self, db: HubDatabase, sample_skills: list[Skill]) -> None:
+    def test_index_skills(
+        self,
+        db: HubDatabase,
+        sample_skills: list[Skill],
+        caplog: pytest.LogCaptureFixture,
+    ) -> None:
         """Test indexing skills."""
         search = SkillSearch(db=db, config=SearchConfig(mode="keyword"))
-        search.index_skills(sample_skills)
+        with caplog.at_level(logging.INFO, logger="gobby.skills.search"):
+            search.index_skills(sample_skills)
 
         assert search._indexed
         assert len(search._skill_names) == 4
+        records = [
+            record
+            for record in caplog.records
+            if record.getMessage() == "Skill search index built with 4 skills"
+        ]
+        assert len(records) == 1
+        assert records[0].levelno == logging.INFO
 
     def test_search_by_name(self, db: HubDatabase, sample_skills: list[Skill]) -> None:
         """Test searching by skill name."""

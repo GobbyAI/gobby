@@ -229,7 +229,8 @@ class CommunicationsResponder:
 
         if group_decision.is_group:
             if not group_decision.authorized or not group_decision.should_respond:
-                logger.info(
+                log = logger.debug if group_decision.reason == "mention_required" else logger.info
+                log(
                     "Ignoring group message for conversation %s: %s",
                     group_decision.conversation_id,
                     group_decision.reason,

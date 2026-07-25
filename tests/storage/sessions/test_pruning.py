@@ -1,5 +1,6 @@
 """Focused tests for session storage behavior."""
 
+import logging
 from uuid import uuid4
 
 import pytest
@@ -202,6 +203,7 @@ class TestSessionManagerPruning:
         self,
         session_manager: SessionManager,
         sample_project: dict,
+        caplog: pytest.LogCaptureFixture,
     ) -> None:
         """Prune should only hard-delete old expired zero-message sessions."""
         prune_me = session_manager.register(
@@ -261,8 +263,16 @@ class TestSessionManagerPruning:
             ),
         )
 
-        count = session_manager.prune_empty_sessions(min_age_hours=1)
+        with caplog.at_level(logging.INFO, logger="gobby.storage.session_lifecycle"):
+            count = session_manager.prune_empty_sessions(min_age_hours=1)
         assert count == 1
+        records = [
+            record
+            for record in caplog.records
+            if record.getMessage().startswith("Pruned 1 empty ghost session")
+        ]
+        assert len(records) == 1
+        assert records[0].levelno == logging.INFO
 
         assert session_manager.get(prune_me.id) is None
         assert (
@@ -309,6 +319,7 @@ class TestSessionManagerPruning:
         self,
         session_manager: SessionManager,
         sample_project: dict,
+        caplog: pytest.LogCaptureFixture,
     ) -> None:
         """Prune should skip empty expired sessions still referenced by retained history."""
         child_parent = session_manager.register(
@@ -386,8 +397,25 @@ class TestSessionManagerPruning:
             (str(uuid4()), agent_run_ref.id, "claude", "retained prompt", "success"),
         )
 
-        count = session_manager.prune_empty_sessions(min_age_hours=1)
+        logger_name = "gobby.storage.session_lifecycle"
+        with caplog.at_level(logging.DEBUG, logger=logger_name):
+            count = session_manager.prune_empty_sessions(min_age_hours=1)
         assert count == 0
+        records = [
+            record
+            for record in caplog.records
+            if record.getMessage().startswith("Skipped pruning 4 empty ghost sessions")
+        ]
+        assert len(records) == 1
+        assert records[0].levelno == logging.DEBUG
+
+        caplog.clear()
+        with caplog.at_level(logging.INFO, logger=logger_name):
+            assert session_manager.prune_empty_sessions(min_age_hours=1) == 0
+        assert not any(
+            record.getMessage().startswith("Skipped pruning 4 empty ghost sessions")
+            for record in caplog.records
+        )
 
         assert session_manager.get(child_parent.id) is not None
         assert session_manager.get(task_ref.id) is not None

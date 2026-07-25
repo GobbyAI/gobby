@@ -78,7 +78,7 @@ class InboundCommunications:
                 message.channel_id = channel.id
 
                 if not await manager.admit_inbound_message(channel, message):
-                    logger.info(
+                    logger.debug(
                         "Ignoring inbound message rejected by access policy on channel %s",
                         channel.name,
                     )

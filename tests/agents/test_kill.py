@@ -1,5 +1,6 @@
 """Tests for gobby.agents.kill module."""
 
+import logging
 import signal
 import sys
 from unittest.mock import AsyncMock, MagicMock, patch
@@ -308,7 +309,6 @@ class TestKillAgent:
     ):
         agent_run.pid = 999
         agent_run.tmux_session_name = "gobby-run-123"
-        mock_kill.side_effect = ProcessLookupError("already dead")
         mock_close_tmux.return_value = {
             "success": True,
             "method": "tmux_kill_session",
@@ -319,6 +319,7 @@ class TestKillAgent:
 
         assert res["success"] is True
         assert res["method"] == "tmux_kill_session"
+        assert res["terminal_close"] == mock_close_tmux.return_value
         mock_close_tmux.assert_awaited_once_with(
             agent_run,
             mock_db,
@@ -327,6 +328,7 @@ class TestKillAgent:
             timeout=5.0,
         )
         mock_close_window.assert_not_called()
+        mock_kill.assert_not_called()
 
     @pytest.mark.asyncio
     @patch("gobby.agents.kill.os.kill")
@@ -377,6 +379,32 @@ class TestKillAgent:
         mock_close.assert_called_once()
         assert mock_kill.call_args_list == [((999, 0),), ((999, 0),)]
         mock_killpg.assert_not_called()
+
+    @patch("gobby.agents.kill._signal_process_group")
+    @patch("gobby.agents.kill._run_subprocess")
+    @patch("gobby.agents.kill.os.kill")
+    @patch("gobby.agents.kill._close_terminal_window")
+    async def test_failed_terminal_close_falls_back_to_direct_pid(
+        self,
+        mock_close: AsyncMock,
+        mock_kill: MagicMock,
+        mock_run: AsyncMock,
+        mock_signal: MagicMock,
+        agent_run: AgentRun,
+        mock_db: MagicMock,
+    ) -> None:
+        agent_run.pid = 999
+        mock_close.return_value = {"success": False, "error": "terminal unavailable"}
+        mock_run.return_value = (0, "python claude session-id sess1", "")
+
+        res = await kill_agent(agent_run, mock_db, close_terminal=True, timeout=0)
+
+        assert res["success"] is True
+        assert res["pid"] == 999
+        assert res["found_via"] == "db"
+        mock_close.assert_awaited_once()
+        mock_kill.assert_called_once_with(999, 0)
+        mock_signal.assert_called_once_with(999, signal.SIGTERM)
 
     @pytest.mark.asyncio
     @patch("gobby.agents.kill.os.killpg")
@@ -430,10 +458,16 @@ class TestKillAgent:
     @patch("gobby.agents.kill._run_subprocess")
     @patch("gobby.agents.kill.os.kill")
     async def test_kill_by_explicit_pid_refuses_recycled_pid(
-        self, mock_kill, mock_run, agent_run, mock_db
+        self,
+        mock_kill,
+        mock_run,
+        agent_run,
+        mock_db,
+        caplog: pytest.LogCaptureFixture,
     ):
         agent_run.pid = 999
         mock_run.return_value = (0, "python other-provider session-id other-session", "")
+        caplog.set_level(logging.WARNING, logger="gobby.agents.kill")
 
         res = await kill_agent(agent_run, mock_db, timeout=0)
 
@@ -441,6 +475,7 @@ class TestKillAgent:
         assert res["pid"] == 999
         assert "does not match agent identity" in res["error"]
         mock_kill.assert_called_once_with(999, 0)
+        assert "Refusing to signal PID 999: cmdline does not match provider identity" in caplog.text
 
     @pytest.mark.asyncio
     @patch("gobby.agents.kill._run_subprocess")
@@ -535,6 +570,7 @@ class TestKillAgent:
         res = await kill_agent(agent_run, mock_db, timeout=0)
         assert res["success"] is True
         assert res["already_dead"] is True
+        mock_kill.assert_called_once_with(999, 0)
 
     @pytest.mark.asyncio
     @patch("gobby.agents.kill.os.kill")
@@ -578,8 +614,12 @@ class TestKillAgent:
     @patch("gobby.agents.kill._run_subprocess")
     @patch("gobby.agents.kill._close_terminal_window")
     async def test_missing_child_session_does_not_target_parent_terminal(
-        self, mock_close_window, mock_run, agent_run, mock_db
-    ):
+        self,
+        mock_close_window: AsyncMock,
+        mock_run: AsyncMock,
+        agent_run: AgentRun,
+        mock_db: MagicMock,
+    ) -> None:
         agent_run.child_session_id = None
         agent_run.parent_session_id = "parent-session"
         agent_run.pid = None

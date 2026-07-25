@@ -455,3 +455,36 @@ async def test_orphan_result_retained_when_terminal_send_fails() -> None:
         "calling",
         "completed",
     ]
+
+
+async def test_done_usage_telemetry_logs_at_debug(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    logger_name = "gobby.servers.websocket.chat._stream_events"
+    handler = _make_handler(_FakeTransport(), AssistantContentBlocks())
+    event = DoneEvent(
+        tool_calls_count=0,
+        context_window=200_000,
+        input_tokens=125,
+        output_tokens=25,
+        cache_read_input_tokens=50,
+        cache_creation_input_tokens=10,
+        total_input_tokens=185,
+    )
+
+    with caplog.at_level(logging.DEBUG, logger=logger_name):
+        await handler._handle_done(event, SimpleNamespace())
+
+    records = [record for record in caplog.records if record.message.startswith("DoneEvent ")]
+    assert len(records) == 1
+    assert records[0].levelno == logging.DEBUG
+    assert records[0].getMessage() == (
+        "DoneEvent context_window=200000 total_input=185 "
+        "(uncached=125 cache_read=50 cache_creation=10) output=25"
+    )
+
+    caplog.clear()
+    with caplog.at_level(logging.INFO, logger=logger_name):
+        await handler._handle_done(event, SimpleNamespace())
+
+    assert not any(record.message.startswith("DoneEvent ") for record in caplog.records)

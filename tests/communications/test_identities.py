@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
@@ -239,4 +240,52 @@ async def test_inbound_metadata_selects_conversation_scoped_session(
         source="comms",
         project_id=None,
         title=title,
+    )
+
+
+async def test_inbound_access_policy_rejection_logs_at_debug(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    channel = ChannelConfig(
+        id="channel-1",
+        channel_type="telegram",
+        name="telegram",
+        enabled=True,
+        config_json={},
+        created_at=utc_now(),
+        updated_at=utc_now(),
+    )
+    manager = MagicMock()
+    manager._channel_by_name = {"telegram": channel}
+    manager._adapters = {}
+    manager.admit_inbound_message = AsyncMock(return_value=False)
+    manager.event_callback = None
+    message = CommsMessage(
+        id="message-1",
+        channel_id="",
+        direction="inbound",
+        content="Denied",
+        created_at=utc_now(),
+    )
+    logger_name = "gobby.communications.inbound"
+
+    with caplog.at_level(logging.DEBUG, logger=logger_name):
+        handled = await InboundCommunications(manager).handle_messages("telegram", [message])
+
+    assert handled == [message]
+    records = [
+        record
+        for record in caplog.records
+        if record.message.startswith("Ignoring inbound message rejected by access policy")
+    ]
+    assert len(records) == 1
+    assert records[0].levelno == logging.DEBUG
+
+    caplog.clear()
+    with caplog.at_level(logging.INFO, logger=logger_name):
+        await InboundCommunications(manager).handle_messages("telegram", [message])
+
+    assert not any(
+        record.message.startswith("Ignoring inbound message rejected by access policy")
+        for record in caplog.records
     )
