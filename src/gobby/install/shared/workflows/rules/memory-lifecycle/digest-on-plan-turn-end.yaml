@@ -2,11 +2,11 @@ tags: [memory-lifecycle, memory, lifecycle, digest, gobby, default]
 
 rules:
   digest-on-plan-turn-end:
-    description: "Build digest when plan mode turn ends via ExitPlanMode or AskUserQuestion"
+    description: "Build digest when a provider-specific plan mode turn ends"
     event: after_tool
     enabled: true
     priority: 11
-    when: "event.data.get('tool_name') in ('ExitPlanMode', 'AskUserQuestion')"
+    when: "event.data.get('tool_name') in ('ExitPlanMode', 'AskUserQuestion', 'request_user_input')"
     effects:
       - type: mcp_call
         server: gobby-memory

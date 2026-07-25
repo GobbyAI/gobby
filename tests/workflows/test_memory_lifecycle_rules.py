@@ -5,6 +5,7 @@ Rules that were merged into context-handoff (preserve-context-on-compact)
 are tested there instead.
 
 Active memory-lifecycle rules:
+- digest-on-plan-turn-end: mcp_call on provider-specific plan boundaries
 - reset-memory-tracking-on-start: set_variable on session_start
 - increment-parent-turn-seq: set_variable on turn_start before daemon recall
 - memory-recall-on-prompt: mcp_call on turn_start
@@ -22,14 +23,18 @@ import json
 
 import pytest
 
+from gobby.adapters.codex_impl.hooks_adapter import CodexHooksAdapter
+from gobby.hooks.events import HookEventType
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.workflow_definitions import LocalWorkflowDefinitionManager
 from gobby.workflows.definitions import RuleDefinitionBody
+from gobby.workflows.safe_evaluator import SafeExpressionEvaluator
 from gobby.workflows.sync_rules import sync_bundled_rules
 
 pytestmark = pytest.mark.unit
 
 MEMORY_RULES = {
+    "digest-on-plan-turn-end",
     "reset-memory-tracking-on-start",
     "increment-parent-turn-seq",
     "memory-recall-on-prompt",
@@ -125,6 +130,58 @@ class TestMemoryLifecycleSync:
         assert result["orphaned"] >= 1
         deleted = manager.get(obsolete.id, include_deleted=True)
         assert deleted.deleted_at is not None
+
+
+# ═══════════════════════════════════════════════════════════════════════
+# digest-on-plan-turn-end
+# ═══════════════════════════════════════════════════════════════════════
+
+
+class TestDigestOnPlanTurnEnd:
+    """Build a digest at each provider-specific plan turn boundary."""
+
+    def test_event_and_effect(self, db, manager) -> None:
+        _sync_bundled(db)
+        row = manager.get_by_name("digest-on-plan-turn-end")
+        assert row is not None
+        body = RuleDefinitionBody.model_validate_json(row.definition_json)
+        assert body.event.value == "after_tool"
+        assert body.effects[0].type == "mcp_call"
+        assert body.effects[0].server == "gobby-memory"
+        assert body.effects[0].tool == "build_turn_and_digest"
+        assert body.effects[0].background is True
+
+    @pytest.mark.parametrize(
+        ("tool_name", "matches"),
+        [
+            ("ExitPlanMode", True),
+            ("AskUserQuestion", True),
+            ("request_user_input", True),
+            ("Bash", False),
+        ],
+    )
+    def test_matches_plan_boundaries(self, db, manager, tool_name: str, matches: bool) -> None:
+        _sync_bundled(db)
+        row = manager.get_by_name("digest-on-plan-turn-end")
+        assert row is not None
+        body = RuleDefinitionBody.model_validate_json(row.definition_json)
+        assert body.when is not None
+
+        native_event = {
+            "hook_type": "PostToolUse",
+            "input_data": {
+                "session_id": "codex-session-123",
+                "cwd": "/project",
+                "tool_name": tool_name,
+            },
+            "source": "codex",
+        }
+        event = CodexHooksAdapter().translate_to_hook_event(native_event)
+
+        assert event is not None
+        assert event.event_type == HookEventType.AFTER_TOOL
+        assert event.data["tool_name"] == tool_name
+        assert SafeExpressionEvaluator({"event": event}, {}).evaluate(body.when) is matches
 
 
 # ═══════════════════════════════════════════════════════════════════════

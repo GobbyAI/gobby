@@ -356,7 +356,7 @@
     "workflows/rules/context7/block-and-teach-context7.yaml": "2f4144f52fa3391f4b0b3727201b2d18b7c398a3fd7216daa331a30b76ba9cb0",
     "workflows/rules/error-recovery/inject-tool-error-recovery.yaml": "f829027568216d651a12fc089ddfd1ce62fc37257dc6e3b0adc5ce6bd46aa106",
     "workflows/rules/memory-lifecycle/clear-memory-review-on-create.yaml": "3ee8a3835a2dc8b925a057961fa89e4a0654274b6a02a45e69f3d4b9d9217ecb",
-    "workflows/rules/memory-lifecycle/digest-on-plan-turn-end.yaml": "6ea6ff0c22d42a58534a8c2d9452a949ed1923e771a0712ca1806dd035633b69",
+    "workflows/rules/memory-lifecycle/digest-on-plan-turn-end.yaml": "e9eabfa535a59bf244256f8aac92e4362a22cd91a734b8fa164a08b97484edfe",
     "workflows/rules/memory-lifecycle/digest-on-response.yaml": "97b0c2f5c9d84c4e3699b3e28612c907b3ce0684840a856c600789b8a4cb5e0f",
     "workflows/rules/memory-lifecycle/increment-parent-turn-seq.yaml": "4ec100000dc8599fc5cb6e753157c573996469088c627e3f1d02147d69edebda",
     "workflows/rules/memory-lifecycle/memory-capture-nudge.yaml": "b2916a3e9c04a559140b356213840389997a071264d64fd11d84aba06a854918",
