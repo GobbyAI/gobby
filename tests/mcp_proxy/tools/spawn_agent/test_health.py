@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -12,6 +13,7 @@ from gobby.config.tmux import TmuxConfig
 from gobby.mcp_proxy.tools.spawn_agent._health import (
     _check_tmux_session_alive,
     _deferred_tmux_health_check,
+    schedule_tmux_health_check,
 )
 
 pytestmark = pytest.mark.unit
@@ -125,6 +127,24 @@ async def test_deferred_health_check_does_not_fail_terminal_run() -> None:
 
     assert terminal_run.status == "success"
     runner.run_storage.fail.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_scheduled_health_check_does_not_create_a_sleeping_task() -> None:
+    runner = SimpleNamespace(run_storage=MagicMock())
+    existing_tasks = asyncio.all_tasks()
+
+    handle = schedule_tmux_health_check(
+        runner=runner,
+        run_id="run-1",
+        tmux_session_name="session-1",
+        socket_name=None,
+        socket_path=None,
+        delay=60,
+    )
+
+    assert asyncio.all_tasks() == existing_tasks
+    handle.cancel()
 
 
 class _RecordingWake:

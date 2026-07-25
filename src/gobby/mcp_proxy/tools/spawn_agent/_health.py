@@ -140,6 +140,30 @@ async def _deferred_tmux_health_check(
         logger.warning("Deferred health check for %s failed: %s", run_id, e)
 
 
+def _start_tmux_health_check(
+    runner: _RunnerWithRunStorage,
+    run_id: str,
+    tmux_session_name: str,
+    socket_name: str | None,
+    socket_path: str | None,
+    completion_registry: Any | None = None,
+) -> None:
+    health_task = asyncio.create_task(
+        _deferred_tmux_health_check(
+            runner,
+            run_id,
+            tmux_session_name,
+            socket_name,
+            socket_path,
+            0,
+            completion_registry,
+        ),
+        name=f"tmux-health-{run_id}",
+    )
+    _health_check_tasks.add(health_task)
+    health_task.add_done_callback(_health_check_tasks.discard)
+
+
 def schedule_tmux_health_check(
     runner: _RunnerWithRunStorage,
     run_id: str,
@@ -148,19 +172,16 @@ def schedule_tmux_health_check(
     socket_path: str | None,
     completion_registry: Any | None = None,
     delay: float = TMUX_HEALTH_CHECK_DELAY,
-) -> None:
-    """Schedule a post-spawn tmux liveness check."""
-    health_task = asyncio.create_task(
-        _deferred_tmux_health_check(
-            runner,
-            run_id,
-            tmux_session_name,
-            socket_name,
-            socket_path,
-            delay,
-            completion_registry,
-        ),
-        name=f"tmux-health-{run_id}",
+) -> asyncio.TimerHandle:
+    """Schedule a post-spawn tmux liveness check without leaving a sleeping task."""
+    loop = asyncio.get_running_loop()
+    return loop.call_later(
+        delay,
+        _start_tmux_health_check,
+        runner,
+        run_id,
+        tmux_session_name,
+        socket_name,
+        socket_path,
+        completion_registry,
     )
-    _health_check_tasks.add(health_task)
-    health_task.add_done_callback(_health_check_tasks.discard)
