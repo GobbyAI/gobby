@@ -20,7 +20,10 @@ from gobby.review_learning.fingerprint import (
     build_occurrence_key,
     derive_finding_fingerprint,
 )
-from gobby.review_learning.guidance import format_review_lesson_guidance
+from gobby.review_learning.guidance import (
+    format_review_lesson_guidance,
+    has_actionable_guidance,
+)
 from gobby.review_learning.lessons import (
     CI_SOURCE_KINDS,
     CODE_DOMAIN_EXCLUDED_TAGS,
@@ -185,7 +188,7 @@ class ReviewLearningService:
             if not memory_id or memory_id in seen:
                 continue
             lesson = _build_file_lesson(memory, normalized_paths, tagged_path)
-            if lesson is None:
+            if lesson is None or not has_actionable_guidance(lesson):
                 continue
             seen.add(memory_id)
             lessons.append(lesson)
@@ -270,6 +273,7 @@ class ReviewLearningService:
                 "skipped_reason": validated_decision,
                 "promotable": False,
             }
+        _validate_recorded_finding(finding)
 
         project_id, source_session_id = await self._resolve_record_scope(session_id)
         finding_fingerprint = derive_finding_fingerprint(finding)
@@ -488,7 +492,7 @@ class ReviewLearningService:
             tagged_memories = await self.memory_manager.alist_memories(
                 project_id=project_id,
                 memory_type="pattern",
-                limit=limit,
+                limit=max(_LEGACY_SCAN_LIMIT, limit),
                 tags_all=["review-lesson", "confirmed", tag],
                 tags_none=code_domain_exclusions,
                 include_global=False,
@@ -586,6 +590,22 @@ def _flatten(value: Any) -> str:
     if isinstance(value, list):
         return " ".join(str(item) for item in value)
     return str(value)
+
+
+def _validate_recorded_finding(finding: dict[str, Any]) -> None:
+    missing_groups: list[str] = []
+    if not any(str(finding.get(field) or "").strip() for field in ("title", "message")):
+        missing_groups.append("title or message")
+    if not has_actionable_guidance(
+        {
+            "principle": finding.get("principle"),
+            "prevention": finding.get("prevention"),
+        }
+    ):
+        missing_groups.append("principle or prevention")
+    if missing_groups:
+        joined = "; ".join(missing_groups)
+        raise ValueError(f"finding missing required non-empty field group(s): {joined}")
 
 
 def _snippet(content: str, length: int = 240) -> str:

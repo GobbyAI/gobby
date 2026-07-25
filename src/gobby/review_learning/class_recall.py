@@ -6,7 +6,10 @@ import asyncio
 from datetime import UTC, datetime
 from typing import Any, Protocol
 
-from gobby.review_learning.guidance import format_review_lesson_guidance
+from gobby.review_learning.guidance import (
+    format_review_lesson_guidance,
+    has_actionable_guidance,
+)
 from gobby.review_learning.lessons import SOURCE_KIND_DOMAIN, pattern_key_for, slugify
 from gobby.storage.hub.protocol import HubDatabase, ReviewLearningPatternMutation
 
@@ -183,7 +186,14 @@ class ReviewLessonClassRecall:
                         memories[memory_id] = memory
 
         ranked = _dedupe_and_rank(list(memories.values()))
-        lessons = [_build_lesson(group) for group in ranked[:bounded_limit]]
+        lessons: list[dict[str, Any]] = []
+        for group in ranked:
+            lesson = _build_lesson(group)
+            if not has_actionable_guidance(lesson):
+                continue
+            lessons.append(lesson)
+            if len(lessons) >= bounded_limit:
+                break
         return {
             "count": len(lessons),
             "lessons": lessons,

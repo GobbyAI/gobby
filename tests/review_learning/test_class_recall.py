@@ -29,14 +29,20 @@ def _lesson_memory(
     occurrence: str,
     category: str | None = None,
     project_id: str | None = PROJECT_SCOPE_ID,
+    principle: str | None = None,
+    prevention: str | None = None,
 ) -> FakeMemory:
     finding = {
         "title": f"Lesson {memory_id}",
         "lesson_type": lesson_type,
         "pattern_id": pattern_id,
         "check_key": check_key,
-        "principle": f"Principle {memory_id}",
-        "prevention": f"Do the safe thing for {memory_id}. Avoid the unsafe thing.",
+        "principle": f"Principle {memory_id}" if principle is None else principle,
+        "prevention": (
+            f"Do the safe thing for {memory_id}. Avoid the unsafe thing."
+            if prevention is None
+            else prevention
+        ),
     }
     if category is not None:
         finding["category"] = category
@@ -317,3 +323,40 @@ async def test_list_check_keys_completeness() -> None:
     )
 
     assert result == {"count": len(expected), "check_keys": expected}
+
+
+@pytest.mark.asyncio
+async def test_empty_class_lessons_do_not_consume_limit() -> None:
+    now = datetime(2026, 7, 23, tzinfo=UTC)
+    empty = _lesson_memory(
+        memory_id="empty-newest",
+        source_kind="task_validation",
+        lesson_type="missing-check",
+        pattern_id="epic-qa:missing-check:empty",
+        check_key="empty",
+        created_at=now,
+        occurrence="empty",
+        principle=" ",
+        prevention="\t",
+    )
+    actionable = _lesson_memory(
+        memory_id="actionable-older",
+        source_kind="task_validation",
+        lesson_type="missing-check",
+        pattern_id="epic-qa:missing-check:actionable",
+        check_key="actionable",
+        created_at=now - timedelta(days=1),
+        occurrence="actionable",
+    )
+    memory_manager = FakeMemoryManager()
+    memory_manager.memories = [empty, actionable]
+
+    result = await _service(memory_manager).recall_review_lessons_by_class(
+        lesson_domain="code",
+        lesson_types=["missing-check"],
+        limit=1,
+    )
+
+    assert result["count"] == 1
+    assert [lesson["memory_id"] for lesson in result["lessons"]] == ["actionable-older"]
+    assert "empty-newest" not in result["message"]

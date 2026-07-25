@@ -555,7 +555,10 @@ async def test_non_promotable_lessons_never_create_tasks(
             source="coderabbit",
             source_review=source_review,
             decision="confirmed",
-            finding={"title": "One-off comment"},
+            finding={
+                "title": "One-off comment",
+                "prevention": "Keep this one-off guidance in memory only.",
+            },
             evidence={"commit": source_review},
         )
 

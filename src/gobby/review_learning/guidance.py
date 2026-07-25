@@ -2,7 +2,15 @@
 
 from __future__ import annotations
 
+from collections.abc import Mapping
 from typing import Any
+
+_ACTIONABLE_GUIDANCE_FIELDS = ("do", "avoid", "principle", "prevention")
+
+
+def has_actionable_guidance(lesson: Mapping[str, Any]) -> bool:
+    """Return whether a lesson contains non-empty actionable guidance."""
+    return any(str(lesson.get(field) or "").strip() for field in _ACTIONABLE_GUIDANCE_FIELDS)
 
 
 def format_review_lesson_guidance(
@@ -11,11 +19,12 @@ def format_review_lesson_guidance(
     scope_label: str = "matched file",
 ) -> str:
     """Format matched review lessons for advisory context injection."""
-    if not lessons:
+    actionable_lessons = [lesson for lesson in lessons if has_actionable_guidance(lesson)]
+    if not actionable_lessons:
         return ""
 
     lines = ["<review-guidance>"]
-    for lesson in lessons:
+    for lesson in actionable_lessons:
         path = lesson.get("matched_file_path") or lesson.get("evidence_path") or scope_label
         pattern_id = lesson.get("pattern_id") or "review-lesson"
         lines.append(f"- {path} [{pattern_id}]")

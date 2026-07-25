@@ -187,7 +187,11 @@ def create_review_learning_registry(service: ReviewLearningService) -> InternalT
 
     @registry.tool(
         name="record_review_lesson",
-        description="Record a confirmed review lesson and promote repeated patterns.",
+        description=(
+            "Record a confirmed or no-fix-policy review lesson and promote repeated "
+            "patterns. Finding requires non-empty title or message and non-empty "
+            "principle or prevention."
+        ),
     )
     async def record_review_lesson(
         source_kind: str,

@@ -43,8 +43,9 @@ non-empty verification evidence, and the current `session_id`.
 
 Pass the diagnostic and generalized lesson in one `finding` dict:
 
-- Required: `title` or `message`.
-- Preferred: `pattern_id`, `principle`, `root_cause`, `prevention`.
+- Required for `confirmed` and `no-fix-policy`: non-empty `title` or `message`,
+  plus non-empty `principle` or `prevention`.
+- Preferred: `pattern_id`, `root_cause`.
 - Optional: `query_hints`, `lesson_type`, `finding_fingerprint`,
   `guardrail_target`, `rule_id`, `rule_url`, `severity`, `path`,
   `start_line`, `end_line`, `symbol`, `suggestion`, `diagnostic_format`.
@@ -123,6 +124,9 @@ Use:
 - `no-fix-policy`: the correct outcome is to tune a rule, profile, checklist,
   or policy because the finding is intentionally rejected.
 - `stale` or `invalid`: skip recording.
+
+The required finding field groups apply only to `confirmed` and
+`no-fix-policy`; `stale` and `invalid` remain no-op decisions.
 
 For `ci_check`, `static_analysis`, and `test_failure`, record only after a
 verified fix exists in `evidence` such as `commit`, `commit_sha`,

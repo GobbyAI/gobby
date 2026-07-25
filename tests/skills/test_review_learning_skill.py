@@ -212,6 +212,9 @@ def test_review_learning_skill_documents_tool_contract() -> None:
     assert "query_hints" in body
     assert "gcode search" in body
     assert "gcode grep" in body
+    assert "Required for `confirmed` and `no-fix-policy`: non-empty `title` or `message`" in body
+    assert "plus non-empty `principle` or `prevention`" in body
+    assert "`stale` and `invalid` remain no-op decisions" in body
 
 
 def test_review_learning_skill_documents_record_skip_and_ladder_rules() -> None:

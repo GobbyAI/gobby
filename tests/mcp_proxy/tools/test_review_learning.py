@@ -152,6 +152,17 @@ def test_recall_review_context_schema_documents_finding_shapes() -> None:
         assert "description" in object_schema["properties"][property_name]
 
 
+def test_record_review_lesson_schema_documents_required_field_groups() -> None:
+    registry = create_review_learning_registry(FakeMemoryManager(), FakeTaskManager())
+
+    schema = registry.get_schema("record_review_lesson")
+
+    assert schema is not None
+    description = schema["description"]
+    assert "non-empty title or message" in description
+    assert "non-empty principle or prevention" in description
+
+
 @pytest.mark.asyncio
 async def test_recall_review_context_groups_matches_per_finding() -> None:
     memory_manager = _scoped_memory_manager()
@@ -471,8 +482,141 @@ async def test_recall_review_lessons_for_files_excludes_global_review_lessons(
 
 
 @pytest.mark.asyncio
-async def test_record_review_lesson_handles_stale_invalid_noops() -> None:
-    registry = create_review_learning_registry(FakeMemoryManager(), FakeTaskManager())
+async def test_empty_file_lessons_do_not_consume_limit() -> None:
+    relative_path = "src/gobby/review_learning/service.py"
+    memory_manager = _scoped_memory_manager()
+    memory_manager.memories.append(
+        FakeMemory(
+            id="empty-lesson",
+            content=(
+                "# Review Lesson: Empty\n\n"
+                "## Identity\n"
+                "- pattern_id: empty-lesson\n\n"
+                "## Lesson\n"
+                "- principle: \n"
+                "- prevention: \n"
+            ),
+            project_id="_personal",
+            tags=["review-lesson", "confirmed", path_tag(relative_path)],
+        )
+    )
+    registry = create_review_learning_registry(memory_manager, FakeTaskManager())
+    recorded = await registry.call(
+        "record_review_lesson",
+        {
+            "source_kind": "review_comment",
+            "source": "coderabbit",
+            "source_review": "review-actionable",
+            "decision": "confirmed",
+            "finding": {
+                "title": "Keep actionable lesson",
+                "pattern_id": "actionable-lesson",
+                "path": relative_path,
+                "principle": "Actionable lessons must remain visible.",
+            },
+            "evidence": {"commit": "abc"},
+            "session_id": SESSION_ID,
+        },
+    )
+    assert recorded["success"] is True
+
+    result = await registry.call(
+        "recall_review_lessons_for_files",
+        {
+            "file_paths": [relative_path],
+            "session_id": SESSION_ID,
+            "limit": 1,
+        },
+    )
+
+    assert result["success"] is True
+    assert result["count"] == 1
+    assert [lesson["pattern_id"] for lesson in result["lessons"]] == ["actionable-lesson"]
+    assert "empty-lesson" not in result["message"]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("decision", ["confirmed", "no-fix-policy"])
+@pytest.mark.parametrize(
+    ("finding", "missing_groups"),
+    [
+        ({"principle": "Use actionable guidance."}, ("title or message",)),
+        ({"title": "Missing guidance"}, ("principle or prevention",)),
+        (
+            {
+                "title": " ",
+                "message": "\t",
+                "principle": "\n",
+                "prevention": " ",
+            },
+            ("title or message", "principle or prevention"),
+        ),
+        ({}, ("title or message", "principle or prevention")),
+    ],
+)
+async def test_record_review_lesson_rejects_missing_required_field_groups(
+    decision: str,
+    finding: dict[str, str],
+    missing_groups: tuple[str, ...],
+) -> None:
+    memory_manager = _scoped_memory_manager()
+    registry = create_review_learning_registry(memory_manager, FakeTaskManager())
+
+    result = await registry.call(
+        "record_review_lesson",
+        {
+            "source_kind": "review_comment",
+            "source": "coderabbit",
+            "source_review": "review-invalid",
+            "decision": decision,
+            "finding": finding,
+            "evidence": {},
+            "session_id": SESSION_ID,
+        },
+    )
+
+    assert result["success"] is False
+    for missing_group in missing_groups:
+        assert missing_group in result["error"]
+    assert memory_manager.memories == []
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "finding",
+    [
+        {"title": "Principle only", "principle": "Keep the core rule explicit."},
+        {"message": "Prevention only", "prevention": "Run the focused guardrail check."},
+    ],
+)
+async def test_record_review_lesson_accepts_principle_or_prevention(
+    finding: dict[str, str],
+) -> None:
+    memory_manager = _scoped_memory_manager()
+    registry = create_review_learning_registry(memory_manager, FakeTaskManager())
+
+    result = await registry.call(
+        "record_review_lesson",
+        {
+            "source_kind": "review_comment",
+            "source": "coderabbit",
+            "source_review": "review-valid",
+            "decision": "confirmed",
+            "finding": finding,
+            "evidence": {},
+            "session_id": SESSION_ID,
+        },
+    )
+
+    assert result["success"] is True
+    assert len(memory_manager.memories) == 1
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("decision", ["stale", "invalid"])
+async def test_record_review_lesson_handles_stale_invalid_noops(decision: str) -> None:
+    memory_manager = FakeMemoryManager()
+    registry = create_review_learning_registry(memory_manager, FakeTaskManager())
 
     result = await registry.call(
         "record_review_lesson",
@@ -480,11 +624,12 @@ async def test_record_review_lesson_handles_stale_invalid_noops() -> None:
             "source_kind": "review_comment",
             "source": "coderabbit",
             "source_review": "review-1",
-            "decision": "stale",
-            "finding": {"title": "stale"},
+            "decision": decision,
+            "finding": {},
             "evidence": {},
         },
     )
 
     assert result["success"] is True
-    assert result["skipped_reason"] == "stale"
+    assert result["skipped_reason"] == decision
+    assert memory_manager.memories == []
