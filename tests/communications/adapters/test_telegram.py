@@ -44,14 +44,19 @@ def adapter() -> TelegramAdapter:
     return TelegramAdapter()
 
 
+def _telegram_api_success(result: object = True) -> MagicMock:
+    response = MagicMock()
+    response.json.return_value = {"ok": True, "result": result}
+    return response
+
+
 @pytest.mark.asyncio
 async def test_initialize_success(
     adapter: TelegramAdapter,
     channel_config: ChannelConfig,
     secret_resolver: Callable[[str], str | None],
 ) -> None:
-    mock_post = AsyncMock()
-    mock_post.return_value.raise_for_status = MagicMock()
+    mock_post = AsyncMock(return_value=_telegram_api_success())
 
     with patch("httpx.AsyncClient") as MockClient:
         mock_client_instance = MockClient.return_value
@@ -61,6 +66,24 @@ async def test_initialize_success(
         await adapter.initialize(channel_config, secret_resolver)
         assert adapter._bot_token == "test-telegram-token"
         assert adapter._api_base == "https://api.telegram.org/bottest-telegram-token"
+        assert mock_post.await_args_list[:2] == [
+            call("https://api.telegram.org/bottest-telegram-token/getMe"),
+            call(
+                "https://api.telegram.org/bottest-telegram-token/setMyCommands",
+                json={
+                    "commands": [
+                        {"command": "new", "description": "Start a new conversation"},
+                        {"command": "reset", "description": "Reset the current conversation"},
+                        {"command": "stop", "description": "Stop the active response"},
+                        {
+                            "command": "status",
+                            "description": "Show responder provider and model",
+                        },
+                        {"command": "help", "description": "Show available commands"},
+                    ]
+                },
+            ),
+        ]
         mock_post.assert_called_with(
             "https://api.telegram.org/bottest-telegram-token/deleteWebhook"
         )
@@ -78,7 +101,9 @@ async def test_initialize_captures_bot_identity_for_mention_gating(
         "result": {"id": 123456, "username": "gobby_bot"},
     }
     delete_webhook_response = MagicMock()
-    mock_post = AsyncMock(side_effect=[get_me_response, delete_webhook_response])
+    commands_response = MagicMock()
+    commands_response.json.return_value = {"ok": True, "result": True}
+    mock_post = AsyncMock(side_effect=[get_me_response, commands_response, delete_webhook_response])
 
     with patch("httpx.AsyncClient") as MockClient:
         MockClient.return_value.post = mock_post
@@ -97,8 +122,7 @@ async def test_initialize_with_webhook(
 ) -> None:
     channel_config.config_json["webhook_base_url"] = "https://example.com/webhooks"
 
-    mock_post = AsyncMock()
-    mock_post.return_value.raise_for_status = MagicMock()
+    mock_post = AsyncMock(return_value=_telegram_api_success())
 
     with patch("httpx.AsyncClient") as MockClient:
         mock_client_instance = MockClient.return_value
@@ -121,6 +145,34 @@ async def test_initialize_with_webhook(
         )
         assert mock_post.call_count >= 1
         assert mock_post.call_args is not None
+
+
+@pytest.mark.asyncio
+async def test_initialize_surfaces_set_my_commands_api_failure(
+    adapter: TelegramAdapter,
+    channel_config: ChannelConfig,
+    secret_resolver: Callable[[str], str | None],
+) -> None:
+    get_me_response = MagicMock()
+    get_me_response.json.return_value = {"ok": True, "result": {"id": 123}}
+    commands_response = MagicMock()
+    commands_response.json.return_value = {
+        "ok": False,
+        "description": "command registration denied",
+    }
+    post = AsyncMock(side_effect=[get_me_response, commands_response])
+
+    with patch("httpx.AsyncClient") as mock_client:
+        mock_client.return_value.post = post
+
+        with pytest.raises(
+            RuntimeError,
+            match="Telegram setMyCommands failed: command registration denied",
+        ):
+            await adapter.initialize(channel_config, secret_resolver)
+
+    assert post.await_count == 2
+    assert post.await_args_list[-1].args[0].endswith("/setMyCommands")
 
 
 @pytest.mark.asyncio
@@ -206,6 +258,8 @@ async def test_send_message_http_status_error_redacts_bot_token(
                 request=request,
                 json={"ok": True, "result": {"id": 123456, "username": "gobby_bot"}},
             )
+        if "setMyCommands" in url:
+            return httpx.Response(200, request=request, json={"ok": True, "result": True})
         return httpx.Response(400, request=request, json={"ok": False})
 
     mock_post.side_effect = side_effect
@@ -942,7 +996,7 @@ async def test_poll(
     }
     mock_get.return_value = mock_response
 
-    mock_post = AsyncMock()
+    mock_post = AsyncMock(return_value=_telegram_api_success())
 
     with patch("httpx.AsyncClient") as MockClient:
         mock_client_instance = MockClient.return_value
@@ -1009,7 +1063,7 @@ async def test_poll_acknowledges_only_contiguous_successful_updates(
     with patch("httpx.AsyncClient") as MockClient:
         mock_client_instance = MockClient.return_value
         mock_client_instance.get = mock_get
-        mock_client_instance.post = AsyncMock()
+        mock_client_instance.post = AsyncMock(return_value=_telegram_api_success())
 
         await adapter.initialize(channel_config, secret_resolver)
         messages = await adapter.poll()
@@ -1049,7 +1103,7 @@ async def test_poll_ignores_non_message_updates_for_offset_tracking(
     with patch("httpx.AsyncClient") as MockClient:
         mock_client_instance = MockClient.return_value
         mock_client_instance.get = mock_get
-        mock_client_instance.post = AsyncMock()
+        mock_client_instance.post = AsyncMock(return_value=_telegram_api_success())
 
         await adapter.initialize(channel_config, secret_resolver)
         messages = await adapter.poll()
@@ -1071,7 +1125,7 @@ async def test_poll_offset_restores_and_persists_after_acknowledgement(
     adapter.set_config_update_callback(persist_config)
 
     with patch("httpx.AsyncClient") as mock_client:
-        mock_client.return_value.post = AsyncMock()
+        mock_client.return_value.post = AsyncMock(return_value=_telegram_api_success())
         await adapter.initialize(channel_config, secret_resolver)
 
     assert adapter._offset == 500
@@ -1098,7 +1152,7 @@ async def test_shutdown(
     secret_resolver: Callable[[str], str | None],
 ) -> None:
     mock_aclose = AsyncMock()
-    mock_post = AsyncMock()
+    mock_post = AsyncMock(return_value=_telegram_api_success())
 
     with patch("httpx.AsyncClient") as MockClient:
         mock_client_instance = MockClient.return_value

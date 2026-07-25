@@ -12,6 +12,7 @@ from gobby.communications.chat_transport import (
     CommunicationsChatStreamTransport,
     CommunicationsDeliveryManager,
 )
+from gobby.communications.commands import responder_help_text
 from gobby.communications.models import CommsAttachment, CommsMessage
 from gobby.communications.responder import ResponderContext
 from gobby.communications.tts_voice import synthesize_telegram_voice
@@ -269,7 +270,7 @@ class ChatSessionCommsBackend:
 
     async def help(self, context: ResponderContext) -> str | None:
         """Return the supported communications command list."""
-        return "Commands: /new, /reset, /stop, /status, /help"
+        return responder_help_text()
 
     async def _reset_session(self, context: ResponderContext) -> None:
         session_key = _session_key(context)

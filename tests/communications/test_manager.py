@@ -568,6 +568,8 @@ async def test_send_message_telegram_4xx_redacts_token_from_logs_and_storage(cap
                 request=request,
                 json={"ok": True, "result": {"id": 123456, "username": "gobby_bot"}},
             )
+        if "setMyCommands" in url:
+            return httpx.Response(200, request=request, json={"ok": True, "result": True})
         return httpx.Response(400, request=request, json={"ok": False})
 
     mock_post.side_effect = side_effect

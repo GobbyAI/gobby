@@ -21,6 +21,7 @@ from gobby.communications.adapters.base import BaseChannelAdapter
 from gobby.communications.adapters.telegram_formatting import (
     markdown_to_telegram_html_chunks,
 )
+from gobby.communications.commands import telegram_bot_commands
 from gobby.communications.models import (
     ChannelCapabilities,
     ChannelConfig,
@@ -429,6 +430,21 @@ class TelegramAdapter(BaseChannelAdapter):
                     self._bot_username = username
                 if isinstance(user_id, str | int):
                     self._bot_user_id = str(user_id)
+
+        commands_response = await self._client.post(
+            f"{self._api_base}/setMyCommands",
+            json={"commands": telegram_bot_commands()},
+        )
+        self._raise_for_status_with_redacted_token(commands_response)
+        commands_body = commands_response.json()
+        if not isinstance(commands_body, dict) or commands_body.get("ok") is not True:
+            description = (
+                commands_body.get("description", "unknown Telegram API error")
+                if isinstance(commands_body, dict)
+                else "invalid Telegram API response"
+            )
+            raise RuntimeError(f"Telegram setMyCommands failed: {description}")
+        logger.info("Synchronized Telegram bot commands")
 
         # Optionally call setWebhook if webhook_base_url is configured
         webhook_base_url = config.config_json.get("webhook_base_url")
