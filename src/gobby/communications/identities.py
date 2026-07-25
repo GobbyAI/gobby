@@ -78,7 +78,7 @@ class IdentityManager:
             external_username=external_username,
             metadata=metadata,
             project_id=project_id,
-            group_chat_id=None,
+            conversation_key=None,
         ).identity
 
     def resolve_inbound_identity(
@@ -88,7 +88,7 @@ class IdentityManager:
         external_username: str | None = None,
         metadata: dict[str, Any] | None = None,
         project_id: str | None = None,
-        group_chat_id: str | None = None,
+        conversation_key: str | None = None,
     ) -> IdentityResolution:
         """Resolve sender attribution and the effective inbound conversation session."""
         return self._resolve(
@@ -97,7 +97,7 @@ class IdentityManager:
             external_username=external_username,
             metadata=metadata,
             project_id=project_id,
-            group_chat_id=group_chat_id,
+            conversation_key=conversation_key,
         )
 
     def _resolve(
@@ -108,16 +108,23 @@ class IdentityManager:
         external_username: str | None,
         metadata: dict[str, Any] | None,
         project_id: str | None,
-        group_chat_id: str | None,
+        conversation_key: str | None,
     ) -> IdentityResolution:
         identity = self._store.get_identity_by_external(channel_id, external_user_id)
-        link_session_to_identity = group_chat_id is None
-        if link_session_to_identity:
+        link_session_to_identity = conversation_key is None
+        if conversation_key is None:
             session_external_id = f"comms:{channel_id}:{external_user_id}"
             session_title = f"Comms: {external_username or external_user_id}"
         else:
-            session_external_id = f"comms:{channel_id}:group:{group_chat_id}"
-            session_title = f"Comms group: {group_chat_id}"
+            session_external_id = f"comms:{channel_id}:{conversation_key}"
+            conversation_type, _, conversation_id = conversation_key.partition(":")
+            if conversation_type == "group":
+                session_title = f"Comms group: {conversation_id}"
+            elif conversation_type == "topic":
+                chat_id, _, thread_id = conversation_id.partition(":")
+                session_title = f"Comms topic: {chat_id}/{thread_id}"
+            else:
+                session_title = f"Comms conversation: {conversation_key}"
 
         session_id = None
         if link_session_to_identity and identity and identity.session_id:

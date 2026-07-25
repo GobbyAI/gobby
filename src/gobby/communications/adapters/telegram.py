@@ -63,6 +63,23 @@ def _file_size(value: object) -> int:
     return value
 
 
+def _message_thread_id(message: Mapping[str, Any]) -> str | None:
+    value = message.get("message_thread_id")
+    if isinstance(value, bool) or not isinstance(value, int) or value <= 0:
+        return None
+    return str(value)
+
+
+def _outbound_message_thread_id(value: str) -> int:
+    try:
+        thread_id = int(value)
+    except ValueError as exc:
+        raise ValueError("Telegram message_thread_id must be a positive integer") from exc
+    if thread_id <= 0:
+        raise ValueError("Telegram message_thread_id must be a positive integer")
+    return thread_id
+
+
 def _telegram_media_attachment(msg_data: Mapping[str, Any]) -> dict[str, Any] | None:
     media_type: str
     media: Mapping[str, Any]
@@ -449,7 +466,9 @@ class TelegramAdapter(BaseChannelAdapter):
             }
 
             if message.platform_thread_id:
-                payload["reply_to_message_id"] = message.platform_thread_id
+                payload["message_thread_id"] = _outbound_message_thread_id(
+                    message.platform_thread_id
+                )
 
             data = await self._post_json("sendMessage", payload)
             if data.get("ok"):
@@ -567,7 +586,7 @@ class TelegramAdapter(BaseChannelAdapter):
             data["caption"] = markdown_to_telegram_html_chunks(message.content, 1024)[0]
             data["parse_mode"] = "HTML"
         if message.platform_thread_id:
-            data["reply_to_message_id"] = message.platform_thread_id
+            data["message_thread_id"] = _outbound_message_thread_id(message.platform_thread_id)
 
         url = f"{self._api_base}/{method}"
         try:
@@ -754,6 +773,7 @@ class TelegramAdapter(BaseChannelAdapter):
         )
         raw_msg_id = msg_data.get("message_id")
         message_id = str(raw_msg_id) if raw_msg_id is not None else ""
+        platform_thread_id = _message_thread_id(msg_data)
 
         from_user = msg_data.get("from", {})
         raw_user_id = from_user.get("id")
@@ -778,6 +798,9 @@ class TelegramAdapter(BaseChannelAdapter):
             "username": username,
             "external_username": username or user_id,
         }
+        if platform_thread_id is not None:
+            metadata["message_thread_id"] = platform_thread_id
+            metadata["is_topic_message"] = True
         if attachment is not None:
             metadata["telegram_attachment"] = attachment
             metadata["voice_note"] = attachment.get("media_type") == "voice"
@@ -786,12 +809,6 @@ class TelegramAdapter(BaseChannelAdapter):
             metadata["telegram_attachments"] = sticker_attachments
             metadata["telegram_sticker"] = sticker_metadata
             metadata["voice_note"] = False
-
-        platform_thread_id = (
-            str(msg_data.get("message_thread_id"))
-            if msg_data.get("message_thread_id")
-            else message_id
-        )
 
         return [
             CommsMessage(

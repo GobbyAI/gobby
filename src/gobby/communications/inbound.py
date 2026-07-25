@@ -19,18 +19,32 @@ _WEBHOOK_VERIFICATION_TIMEOUT_SECONDS = 5.0
 _GROUP_CONVERSATION_TYPES = frozenset({"group", "supergroup"})
 
 
-def _group_chat_id(metadata: dict[str, Any]) -> str | None:
-    """Return the stable group-chat key carried by an adapter message."""
-    if metadata.get("conversation_type") not in _GROUP_CONVERSATION_TYPES:
-        return None
-
+def _conversation_key(metadata: dict[str, Any]) -> str | None:
+    """Return the stable non-DM conversation key carried by an adapter message."""
     value = metadata.get("chat_id")
     if isinstance(value, bool) or not isinstance(value, (str, int)):
-        raise ValueError("Group communications message is missing chat_id")
+        if (
+            metadata.get("conversation_type") in _GROUP_CONVERSATION_TYPES
+            or metadata.get("message_thread_id") is not None
+        ):
+            raise ValueError("Scoped communications message is missing chat_id")
+        return None
     normalized = str(value).strip()
     if not normalized:
-        raise ValueError("Group communications message is missing chat_id")
-    return normalized
+        raise ValueError("Scoped communications message is missing chat_id")
+
+    thread_value = metadata.get("message_thread_id")
+    if thread_value is not None:
+        if isinstance(thread_value, bool) or not isinstance(thread_value, (str, int)):
+            raise ValueError("Topic communications message has invalid message_thread_id")
+        thread_id = str(thread_value).strip()
+        if not thread_id:
+            raise ValueError("Topic communications message has invalid message_thread_id")
+        return f"topic:{normalized}:{thread_id}"
+
+    if metadata.get("conversation_type") in _GROUP_CONVERSATION_TYPES:
+        return f"group:{normalized}"
+    return None
 
 
 class InboundCommunications:
@@ -121,7 +135,7 @@ class InboundCommunications:
                         external_user_id,
                         external_username,
                         metadata=identity_meta,
-                        group_chat_id=_group_chat_id(message.metadata_json),
+                        conversation_key=_conversation_key(message.metadata_json),
                     )
                     message.session_id = resolution.session_id
                     message.identity_id = resolution.identity.id

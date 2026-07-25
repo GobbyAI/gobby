@@ -165,7 +165,7 @@ async def test_send_message_basic(
             channel_id=channel_config.id,
             direction="outbound",
             content="Hello world",
-            platform_thread_id="reply123",
+            platform_thread_id="123",
             metadata_json={"platform_destination": "chat999"},
             created_at=datetime.now(UTC).isoformat(),
         )
@@ -182,7 +182,7 @@ async def test_send_message_basic(
             "chat_id": "chat999",
             "text": "Hello world",
             "parse_mode": "HTML",
-            "reply_to_message_id": "reply123",
+            "message_thread_id": 123,
         }
 
 
@@ -271,7 +271,7 @@ async def test_send_message_chunking(
             channel_id=channel_config.id,
             direction="outbound",
             content=long_content,
-            platform_thread_id="reply123",
+            platform_thread_id="123",
             metadata_json={"platform_destination": "chat999"},
             created_at=datetime.now(UTC).isoformat(),
         )
@@ -523,7 +523,7 @@ def test_parse_webhook(adapter: TelegramAdapter) -> None:
     assert msg.direction == "inbound"
     assert msg.content == "/start"
     assert msg.platform_message_id == "1365"
-    assert msg.platform_thread_id == "1365"
+    assert msg.platform_thread_id is None
     assert msg.metadata_json["user_id"] == "1111111"
     assert msg.metadata_json["username"] == "testuser"
     assert msg.metadata_json["chat_id"] == "2222222"

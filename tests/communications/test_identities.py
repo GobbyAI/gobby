@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from unittest.mock import MagicMock
+from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
@@ -79,13 +79,13 @@ def test_group_resolution_shares_chat_session_across_sender_identities() -> None
         "channel-1",
         "user-1",
         "alice",
-        group_chat_id="-10042",
+        conversation_key="group:-10042",
     )
     second = manager.resolve_inbound_identity(
         "channel-1",
         "user-2",
         "bob",
-        group_chat_id="-10042",
+        conversation_key="group:-10042",
     )
 
     assert first.session_id == second.session_id == "group-session"
@@ -111,7 +111,7 @@ def test_group_resolution_preserves_existing_dm_session_link() -> None:
         "channel-1",
         "user-1",
         "alice",
-        group_chat_id="-10042",
+        conversation_key="group:-10042",
     )
     direct = manager.resolve_inbound_identity(
         "channel-1",
@@ -124,8 +124,70 @@ def test_group_resolution_preserves_existing_dm_session_link() -> None:
     assert dm_identity.session_id == "dm-session"
 
 
+def test_topic_resolution_is_stable_and_isolated_by_chat_and_topic() -> None:
+    store = MagicMock()
+    store.get_identity_by_external.return_value = None
+    store.create_identity.side_effect = lambda identity: identity
+    session_store = MagicMock()
+    session_store.register.side_effect = lambda **kwargs: MagicMock(id=kwargs["external_id"])
+    manager = _manager(store=store, session_store=session_store)
+
+    topic_42 = manager.resolve_inbound_identity(
+        "channel-1",
+        "user-1",
+        "alice",
+        conversation_key="topic:2222222:42",
+    )
+    same_topic = manager.resolve_inbound_identity(
+        "channel-1",
+        "user-1",
+        "alice",
+        conversation_key="topic:2222222:42",
+    )
+    other_topic = manager.resolve_inbound_identity(
+        "channel-1",
+        "user-1",
+        "alice",
+        conversation_key="topic:2222222:99",
+    )
+
+    assert topic_42.session_id == same_topic.session_id == ("comms:channel-1:topic:2222222:42")
+    assert other_topic.session_id == "comms:channel-1:topic:2222222:99"
+    assert topic_42.session_id != other_topic.session_id
+
+
 @pytest.mark.asyncio
-async def test_inbound_group_metadata_selects_chat_scoped_session() -> None:
+@pytest.mark.parametrize(
+    ("metadata", "external_id", "title"),
+    [
+        pytest.param(
+            {
+                "conversation_type": "supergroup",
+                "chat_id": "-10042",
+                "external_username": "alice",
+            },
+            "comms:channel-1:group:-10042",
+            "Comms group: -10042",
+            id="group",
+        ),
+        pytest.param(
+            {
+                "conversation_type": "private",
+                "chat_id": "2222222",
+                "message_thread_id": "42",
+                "external_username": "alice",
+            },
+            "comms:channel-1:topic:2222222:42",
+            "Comms topic: 2222222/42",
+            id="private-topic",
+        ),
+    ],
+)
+async def test_inbound_metadata_selects_conversation_scoped_session(
+    metadata: dict[str, object],
+    external_id: str,
+    title: str,
+) -> None:
     channel = ChannelConfig(
         id="channel-1",
         channel_type="telegram",
@@ -153,6 +215,7 @@ async def test_inbound_group_metadata_selects_chat_scoped_session() -> None:
     manager._adapters = {}
     manager._store = store
     manager._identity_manager = _manager(store=store, session_store=session_store)
+    manager.admit_inbound_message = AsyncMock(return_value=True)
     manager.event_callback = None
     manager.reaction_handler = None
 
@@ -163,11 +226,7 @@ async def test_inbound_group_metadata_selects_chat_scoped_session() -> None:
         content="Hello group",
         identity_id="user-1",
         created_at=utc_now(),
-        metadata_json={
-            "conversation_type": "supergroup",
-            "chat_id": "-10042",
-            "external_username": "alice",
-        },
+        metadata_json=metadata,
     )
 
     handled = await InboundCommunications(manager).handle_messages("telegram", [message])
@@ -175,9 +234,9 @@ async def test_inbound_group_metadata_selects_chat_scoped_session() -> None:
     assert handled[0].session_id == "group-session"
     assert handled[0].identity_id == "identity-1"
     session_store.register.assert_called_once_with(
-        external_id="comms:channel-1:group:-10042",
+        external_id=external_id,
         machine_id="comms",
         source="comms",
         project_id=None,
-        title="Comms group: -10042",
+        title=title,
     )
