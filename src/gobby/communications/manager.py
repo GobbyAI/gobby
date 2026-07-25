@@ -38,6 +38,7 @@ from gobby.utils.datetime import utc_now
 if TYPE_CHECKING:
     from pathlib import Path
 
+    from gobby.ai.vision import VisionExtractService
     from gobby.config.communications import CommunicationsConfig
     from gobby.storage.communications import LocalCommunicationsStore
     from gobby.storage.secrets import SecretStore
@@ -81,6 +82,7 @@ class CommunicationsManager:
         self._telegram_binding_locks: dict[str, asyncio.Lock] = {}
         self._websocket_broadcast: Any | None = None
         self._voice_transcriber_getter: VoiceTranscriberGetter | None = None
+        self._vision_extract_service: VisionExtractService | None = None
 
         self._identity_manager = IdentityManager(store, session_store, config)
         self._thread_manager = ThreadManager(max_size=10000)
@@ -117,6 +119,8 @@ class CommunicationsManager:
         """Shutdown all adapters and clear state."""
         await self.responder.stop()
         await self._lifecycle.stop()
+        if self._vision_extract_service is not None:
+            await self._vision_extract_service.stop()
 
     async def _init_adapter(self, channel: ChannelConfig) -> BaseChannelAdapter:
         """Lookup adapter class from registry, instantiate, and initialize."""
@@ -308,6 +312,14 @@ class CommunicationsManager:
         if self._voice_transcriber_getter is None:
             return None
         return self._voice_transcriber_getter()
+
+    def set_vision_extract_service(self, service: VisionExtractService | None) -> None:
+        """Wire the daemon's configured vision extraction service."""
+        self._vision_extract_service = service
+
+    def get_vision_extract_service(self) -> VisionExtractService | None:
+        """Return the configured daemon vision extraction service."""
+        return self._vision_extract_service
 
     def get_channel(self, channel_id: str) -> ChannelConfig | None:
         """Get a channel by ID."""

@@ -75,6 +75,7 @@ async def test_vision_service_does_not_invent_ocr_text_from_description() -> Non
     adapter = _FakeVisionAdapter()
     service = VisionExtractService(_registry(), {"endpoint:lm-studio": adapter})
 
+    assert service.is_available is True
     result = await service.extract(
         VisionExtractRequest(
             image_path="/tmp/image.png",

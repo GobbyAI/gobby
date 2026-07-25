@@ -301,6 +301,9 @@ async def test_stop_shuts_down_all_adapters():
     mock_adapter = make_adapter()
     mock_adapter.shutdown.side_effect = lambda: events.append("adapter")
     mock_adapter_cls = MagicMock(return_value=mock_adapter)
+    vision_service = MagicMock()
+    vision_service.stop = AsyncMock(side_effect=lambda: events.append("vision"))
+    manager.set_vision_extract_service(vision_service)
 
     with patch("gobby.communications.manager.get_adapter_class", return_value=mock_adapter_cls):
         await manager.start()
@@ -309,7 +312,8 @@ async def test_stop_shuts_down_all_adapters():
     await manager.stop()
 
     mock_adapter.shutdown.assert_called_once()
-    assert events == ["responder", "adapter"]
+    vision_service.stop.assert_awaited_once_with()
+    assert events == ["responder", "adapter", "vision"]
     assert len(manager._adapters) == 0
     assert len(manager._channel_by_name) == 0
 
@@ -798,6 +802,77 @@ async def test_handle_inbound_transcribes_voice_note_before_event(tmp_path: Path
     assert stored[0].metadata_json["voice_transcription_status"] == "completed"
     assert attachment.message_id == stored[0].id
     transcriber.transcribe.assert_awaited_once_with(b"telegram voice bytes", "audio/ogg")
+    store.create_message_with_attachments.assert_called_once_with(stored[0], [attachment])
+    manager.event_callback.assert_awaited_once_with(
+        "comms.message_received",
+        message=stored[0],
+    )
+
+
+@pytest.mark.asyncio
+async def test_handle_inbound_describes_sticker_before_event(tmp_path: Path) -> None:
+    channel = make_channel(webhook_secret=None)
+    store = make_store([channel])
+    manager = CommunicationsManager(make_config(), store, make_secret_store(), MagicMock())
+    image_path = tmp_path / "sticker.webp"
+    image_path.write_bytes(b"telegram sticker image")
+    parsed_msg = CommsMessage(
+        id="sticker-message",
+        channel_id="",
+        direction="inbound",
+        content="",
+        content_type="attachment",
+        metadata_json={
+            "telegram_sticker": {
+                "format": "static",
+                "emoji": "🦡",
+                "set_name": "quartz_badger",
+                "type": "regular",
+            }
+        },
+        created_at=datetime(2024, 1, 1, tzinfo=UTC),
+    )
+    attachment = CommsAttachment(
+        id="sticker-attachment",
+        message_id="",
+        filename="sticker.webp",
+        content_type="image/webp",
+        size_bytes=22,
+        local_path=str(image_path),
+    )
+    vision_result = MagicMock(
+        text="A badger holding a sparkling quartz crystal.",
+        provider="claude",
+        model="sonnet",
+    )
+    vision_service = MagicMock()
+    vision_service.extract = AsyncMock(return_value=vision_result)
+    manager.set_vision_extract_service(vision_service)
+    manager.event_callback = AsyncMock()
+    mock_adapter = make_adapter()
+    mock_adapter.parse_webhook.return_value = [parsed_msg]
+    mock_adapter.download_inbound_attachments.return_value = [attachment]
+
+    with patch(
+        "gobby.communications.manager.get_adapter_class",
+        return_value=MagicMock(return_value=mock_adapter),
+    ):
+        await manager.start()
+
+    stored = await manager.handle_inbound(
+        "test-channel",
+        {"data": "payload"},
+        {},
+        raw_body=b'{"data":"payload"}',
+    )
+
+    assert stored[0].content == (
+        "Telegram sticker 🦡: A badger holding a sparkling quartz crystal."
+    )
+    assert stored[0].metadata_json["sticker_vision_status"] == "completed"
+    request = vision_service.extract.await_args.args[0]
+    assert request.image_path == str(image_path)
+    assert attachment.message_id == stored[0].id
     store.create_message_with_attachments.assert_called_once_with(stored[0], [attachment])
     manager.event_callback.assert_awaited_once_with(
         "comms.message_received",

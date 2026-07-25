@@ -7,6 +7,7 @@ import logging
 from typing import TYPE_CHECKING, Any
 
 from gobby.communications.models import CommsAttachment, CommsMessage
+from gobby.communications.sticker_vision import apply_sticker_vision
 from gobby.communications.voice import apply_voice_transcription
 from gobby.communications.webhook_verification import verify_webhook_with_timeout
 
@@ -139,6 +140,11 @@ class InboundCommunications:
                     message,
                     downloaded_attachments,
                     manager.get_voice_transcriber(),
+                )
+                await apply_sticker_vision(
+                    message,
+                    downloaded_attachments,
+                    manager.get_vision_extract_service(),
                 )
                 if downloaded_attachments:
                     persisted, saved_attachments = await asyncio.to_thread(

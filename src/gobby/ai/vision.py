@@ -68,6 +68,11 @@ class VisionExtractService:
         """Return the capability registry used for selection."""
         return self._registry
 
+    @property
+    def is_available(self) -> bool:
+        """Return whether at least one vision extraction binding is available."""
+        return self._registry.status(AICapability.VISION_EXTRACT).available
+
     async def extract(self, request: VisionExtractRequest) -> VisionExtractResult:
         """Select a vision_extract binding and invoke its adapter."""
         binding = self._registry.select(
@@ -87,6 +92,12 @@ class VisionExtractService:
             provider=binding.provider,
             model=request.model or next(iter(binding.models), None),
         )
+
+    async def stop(self) -> None:
+        """Stop any lazily started daemon-backed vision adapters."""
+        for adapter in self._adapters.values():
+            if isinstance(adapter, CodexEndpointVisionExtractAdapter):
+                await adapter.stop()
 
 
 class ClaudeVisionExtractAdapter:

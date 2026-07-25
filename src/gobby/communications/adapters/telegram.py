@@ -27,6 +27,7 @@ from gobby.communications.models import (
     CommsAttachment,
     CommsMessage,
 )
+from gobby.communications.telegram_stickers import telegram_sticker_attachments
 
 if TYPE_CHECKING:
     from gobby.communications.attachments import AttachmentManager
@@ -586,10 +587,48 @@ class TelegramAdapter(BaseChannelAdapter):
         attachment_manager: AttachmentManager,
     ) -> list[CommsAttachment]:
         """Download Telegram media referenced by an inbound message."""
-        raw_attachment = message.metadata_json.get("telegram_attachment")
-        if not isinstance(raw_attachment, dict):
+        raw_attachments = message.metadata_json.get("telegram_attachments")
+        if isinstance(raw_attachments, list):
+            attachment_specs = [item for item in raw_attachments if isinstance(item, dict)]
+        else:
+            raw_attachment = message.metadata_json.get("telegram_attachment")
+            attachment_specs = [raw_attachment] if isinstance(raw_attachment, dict) else []
+        if not attachment_specs:
             return []
         if not self._client or not self._api_base or not self._bot_token:
+            raise RuntimeError("Adapter not initialized")
+
+        attachments: list[CommsAttachment] = []
+        try:
+            for attachment_spec in attachment_specs:
+                attachments.append(
+                    await self._download_inbound_attachment(
+                        message,
+                        attachment_spec,
+                        attachment_manager,
+                    )
+                )
+        except Exception:
+            await asyncio.to_thread(
+                attachment_manager.delete_paths,
+                [
+                    attachment.local_path
+                    for attachment in attachments
+                    if attachment.local_path is not None
+                ],
+            )
+            raise
+        return attachments
+
+    async def _download_inbound_attachment(
+        self,
+        message: CommsMessage,
+        raw_attachment: dict[str, Any],
+        attachment_manager: AttachmentManager,
+    ) -> CommsAttachment:
+        """Download and persist one normalized Telegram attachment."""
+        client = self._client
+        if client is None or not self._api_base or not self._bot_token:
             raise RuntimeError("Adapter not initialized")
 
         file_id = raw_attachment.get("file_id")
@@ -602,7 +641,6 @@ class TelegramAdapter(BaseChannelAdapter):
         if not isinstance(content_type, str) or not content_type:
             raise ValueError("Telegram attachment content_type is missing")
 
-        client = self._client
         try:
             file_info_response = await self._retry_request(
                 functools.partial(
@@ -623,6 +661,15 @@ class TelegramAdapter(BaseChannelAdapter):
         if not isinstance(telegram_file_path, str) or not telegram_file_path:
             raise RuntimeError("Telegram getFile response did not include file_path")
 
+        actual_suffix = Path(telegram_file_path).suffix.casefold()
+        if raw_attachment.get("media_type") == "sticker_thumbnail" and actual_suffix in {
+            ".jpg",
+            ".jpeg",
+            ".webp",
+        }:
+            filename = f"{Path(filename).stem}{actual_suffix}"
+            content_type = "image/jpeg" if actual_suffix in {".jpg", ".jpeg"} else "image/webp"
+
         download_url = (
             f"https://api.telegram.org/file/bot{self._bot_token}/{telegram_file_path.lstrip('/')}"
         )
@@ -638,18 +685,16 @@ class TelegramAdapter(BaseChannelAdapter):
                 f"Telegram attachment size {size_bytes} exceeds limit of {limit} bytes"
             )
         local_path = await attachment_manager.store(file_response.content, filename)
-        return [
-            CommsAttachment(
-                id=str(uuid.uuid4()),
-                message_id=message.id,
-                filename=filename,
-                content_type=content_type,
-                size_bytes=size_bytes,
-                local_path=str(local_path),
-                platform_url=f"telegram://{telegram_file_path.lstrip('/')}",
-                created_at=datetime.now(UTC),
-            )
-        ]
+        return CommsAttachment(
+            id=str(uuid.uuid4()),
+            message_id=message.id,
+            filename=filename,
+            content_type=content_type,
+            size_bytes=size_bytes,
+            local_path=str(local_path),
+            platform_url=f"telegram://{telegram_file_path.lstrip('/')}",
+            created_at=datetime.now(UTC),
+        )
 
     async def shutdown(self) -> None:
         """Cleanly close connections."""
@@ -692,8 +737,12 @@ class TelegramAdapter(BaseChannelAdapter):
         text = raw_text if isinstance(raw_text, str) else ""
         raw_caption = msg_data.get("caption")
         caption = raw_caption if isinstance(raw_caption, str) else ""
-        attachment = _telegram_media_attachment(msg_data)
-        if not text and attachment is None:
+        raw_sticker = msg_data.get("sticker")
+        sticker = telegram_sticker_attachments(msg_data)
+        if raw_sticker is not None and sticker is None:
+            return []
+        attachment = _telegram_media_attachment(msg_data) if sticker is None else None
+        if not text and attachment is None and sticker is None:
             return []
 
         chat = msg_data.get("chat", {})
@@ -732,6 +781,11 @@ class TelegramAdapter(BaseChannelAdapter):
         if attachment is not None:
             metadata["telegram_attachment"] = attachment
             metadata["voice_note"] = attachment.get("media_type") == "voice"
+        elif sticker is not None:
+            sticker_attachments, sticker_metadata = sticker
+            metadata["telegram_attachments"] = sticker_attachments
+            metadata["telegram_sticker"] = sticker_metadata
+            metadata["voice_note"] = False
 
         platform_thread_id = (
             str(msg_data.get("message_thread_id"))
@@ -745,7 +799,9 @@ class TelegramAdapter(BaseChannelAdapter):
                 channel_id="",  # Will be set by the orchestrator
                 direction="inbound",
                 content=text if text else caption,
-                content_type="attachment" if attachment is not None else "text",
+                content_type="attachment"
+                if attachment is not None or sticker is not None
+                else "text",
                 platform_message_id=message_id,
                 platform_thread_id=platform_thread_id,
                 identity_id=user_id,

@@ -162,6 +162,11 @@ def init_servers(runner: GobbyRunner) -> None:
             runner.communications_manager.set_voice_transcriber_getter(
                 runner.websocket_server.get_voice_transcriber
             )
+            from gobby.ai.vision import build_daemon_vision_extract_service
+
+            runner.communications_manager.set_vision_extract_service(
+                build_daemon_vision_extract_service(runner.config)
+            )
             runner.communications_manager.responder.set_backend(
                 ChatSessionCommsBackend(
                     runner.websocket_server,
