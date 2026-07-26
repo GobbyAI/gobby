@@ -60,11 +60,11 @@ def get_current_project_id() -> str | None:
     return None
 
 
-def _memory_allowed_in_current_project(memory: Any) -> bool:
+def _memory_owned_by_current_project(memory: Any) -> bool:
     if memory is None:
         return False
     current_project_id = get_current_project_id() or PERSONAL_PROJECT_ID
-    return bool(memory.is_global or memory.project_id == current_project_id)
+    return bool(memory.project_id == current_project_id)
 
 
 def _speculative_memory_task_title(content: str) -> str | None:
@@ -438,7 +438,7 @@ def create_memory_registry(
         """
         try:
             memory = memory_manager.get_memory(memory_id, visibility="all")
-            if memory is None or not _memory_allowed_in_current_project(memory):
+            if memory is None or not _memory_owned_by_current_project(memory):
                 return {"success": False, "error": f"Memory {memory_id} not found"}
             await asyncio.to_thread(memory_manager.restore_memory, memory_id)
             await memory_manager.restore_memory_indices(
@@ -465,7 +465,7 @@ def create_memory_registry(
         """
         try:
             existing = memory_manager.get_memory(memory_id, visibility="all")
-            if not _memory_allowed_in_current_project(existing):
+            if not _memory_owned_by_current_project(existing):
                 return {"success": False, "error": f"Memory {memory_id} not found"}
             memory = await memory_manager.promote_memory(memory_id)
             return {
@@ -487,7 +487,7 @@ def create_memory_registry(
     async def demote_memory_from_global(memory_id: str) -> dict[str, Any]:
         try:
             existing = memory_manager.get_memory(memory_id, visibility="all")
-            if not _memory_allowed_in_current_project(existing):
+            if not _memory_owned_by_current_project(existing):
                 return {"success": False, "error": f"Memory {memory_id} not found"}
             memory = await memory_manager.demote_memory(memory_id)
             return {"success": True, "memory": memory.to_dict()}
@@ -501,7 +501,7 @@ def create_memory_registry(
     async def move_memory(memory_id: str, new_project_id: str) -> dict[str, Any]:
         try:
             existing = memory_manager.get_memory(memory_id, visibility="all")
-            if not _memory_allowed_in_current_project(existing):
+            if not _memory_owned_by_current_project(existing):
                 return {"success": False, "error": f"Memory {memory_id} not found"}
             memory = await memory_manager.move_memory(memory_id, new_project_id)
             return {"success": True, "memory": memory.to_dict()}

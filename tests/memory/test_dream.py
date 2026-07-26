@@ -2786,6 +2786,7 @@ async def test_run_all_due_projects_loops_targets_with_per_target_scope(
 @pytest.mark.asyncio
 async def test_run_all_due_projects_isolates_target_failure(
     monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
 ) -> None:
     manager = _FakeDueProjectsManager(["proj-ok", "proj-bad", None])
     service = MemoryDreamService(
@@ -2798,6 +2799,7 @@ async def test_run_all_due_projects_isolates_target_failure(
         return {"success": True, "run_id": "r", "run": {"id": "r", "summary": {"mutations": 2}}}
 
     monkeypatch.setattr(service, "_run_without_execution_lock", fake_run)
+    caplog.set_level("ERROR", logger="gobby.memory.dream.service")
 
     result = await service.run_all_due_projects()
 
@@ -2808,6 +2810,7 @@ async def test_run_all_due_projects_isolates_target_failure(
     bad = next(r for r in result["runs"] if r["project_id"] == "proj-bad")
     assert bad["success"] is False
     assert "boom" in bad["error"]
+    assert "project_id=proj-bad" in caplog.text
 
 
 @pytest.mark.asyncio

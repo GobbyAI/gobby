@@ -121,21 +121,27 @@ class ProjectionScopeRepairService:
                 offset=offset,
                 visibility="all",
             )
-            for memory in memories:
+            if memories:
                 rows = await falkor.query(
                     """
-                    MATCH (m:Memory {memory_id: $memory_id})
+                    UNWIND $memories AS memory
+                    MATCH (m:Memory {memory_id: memory.memory_id})
                     WHERE NOT exists(m.project_id)
                        OR NOT exists(m.is_global)
-                       OR m.project_id <> $project_id
-                       OR m.is_global <> $is_global
-                    SET m.project_id = $project_id, m.is_global = $is_global
+                       OR m.project_id <> memory.project_id
+                       OR m.is_global <> memory.is_global
+                    SET m.project_id = memory.project_id, m.is_global = memory.is_global
                     RETURN count(m) AS repaired
                     """,
                     {
-                        "memory_id": memory.id,
-                        "project_id": memory.project_id,
-                        "is_global": memory.is_global,
+                        "memories": [
+                            {
+                                "memory_id": memory.id,
+                                "project_id": memory.project_id,
+                                "is_global": memory.is_global,
+                            }
+                            for memory in memories
+                        ],
                     },
                 )
                 if rows:

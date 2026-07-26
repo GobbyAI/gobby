@@ -1381,6 +1381,36 @@ class TestRemoveMemoryFromGraph:
         assert len(delete_calls) == 1
 
     @pytest.mark.asyncio
+    async def test_remove_memories_preserves_owner_and_visibility_scopes(
+        self,
+        service: KnowledgeGraphService,
+        mock_falkor: AsyncMock,
+    ) -> None:
+        mock_falkor.query.side_effect = [
+            [
+                {"memory_id": "project-memory", "project_id": "project-1", "is_global": False},
+                {"memory_id": "global-memory", "project_id": "project-1", "is_global": True},
+            ],
+            [{"deleted": 2}],
+            [{"total": 0}],
+            [{"total": 0}],
+        ]
+
+        deleted = await service.remove_memories_from_graph({"project-memory", "global-memory"})
+
+        assert deleted == 2
+        cleanup_calls = mock_falkor.query.await_args_list[2:]
+        assert len(cleanup_calls) == 2
+        assert any(
+            "e.is_global = true" in call.args[0] and call.args[1] == {} for call in cleanup_calls
+        )
+        assert any(
+            "e.project_id = $project_id AND e.is_global = false" in call.args[0]
+            and call.args[1] == {"project_id": "project-1"}
+            for call in cleanup_calls
+        )
+
+    @pytest.mark.asyncio
     async def test_remove_memory_from_graph_FalkorDB_unreachable(
         self,
         service: KnowledgeGraphService,

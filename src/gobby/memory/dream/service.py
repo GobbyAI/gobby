@@ -281,7 +281,11 @@ class MemoryDreamService:
                     }
                 )
             except Exception as exc:
-                logger.exception("memory dream failed for target %s", target_scope.kind.value)
+                logger.exception(
+                    "memory dream failed for target %s (project_id=%s)",
+                    target_scope.kind.value,
+                    scope_project_id,
+                )
                 failed += 1
                 runs.append(
                     {

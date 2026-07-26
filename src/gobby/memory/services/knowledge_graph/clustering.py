@@ -279,6 +279,7 @@ async def recluster_project_entities(
     writer: KnowledgeGraphWriter,
     project_id: str | None,
     *,
+    is_global: bool,
     min_cluster_size: int = DEFAULT_CLUSTER_MIN_CLUSTER_SIZE,
     min_samples: int | None = DEFAULT_CLUSTER_MIN_SAMPLES,
 ) -> ClusterRunResult:
@@ -293,5 +294,6 @@ async def recluster_project_entities(
     await writer.write_entity_clusters(
         result.cluster_ids_by_entity_key,
         project_id=project_id,
+        is_global=is_global,
     )
     return result

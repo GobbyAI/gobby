@@ -144,6 +144,8 @@ class KnowledgeGraphWriter:
         self,
         cluster_ids_by_entity_key: Mapping[str, int | None],
         project_id: str | None,
+        *,
+        is_global: bool,
     ) -> dict[str, int]:
         """Persist entity cluster labels and remove stale labels from noise rows."""
         set_rows = [
@@ -165,7 +167,11 @@ class KnowledgeGraphWriter:
                 "MATCH (e:_Entity {entity_key: row.entity_key}) "
                 f"WHERE {proj_e} "
                 "SET e.cluster_id = row.cluster_id",
-                {"rows": set_batch, "project_id": project_id},
+                {
+                    "rows": set_batch,
+                    "project_id": project_id,
+                    "is_global": is_global,
+                },
             )
         for index in range(0, len(clear_keys), CLUSTER_WRITE_BATCH_SIZE):
             clear_batch = clear_keys[index : index + CLUSTER_WRITE_BATCH_SIZE]
@@ -174,7 +180,11 @@ class KnowledgeGraphWriter:
                 "MATCH (e:_Entity {entity_key: entity_key}) "
                 f"WHERE {proj_e} "
                 "REMOVE e.cluster_id",
-                {"entity_keys": clear_batch, "project_id": project_id},
+                {
+                    "entity_keys": clear_batch,
+                    "project_id": project_id,
+                    "is_global": is_global,
+                },
             )
         return {"clustered": len(set_rows), "noise": len(clear_keys)}
 

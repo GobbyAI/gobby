@@ -17,6 +17,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
+from gobby.mcp_proxy.tools.internal import InternalToolRegistry
 from gobby.mcp_proxy.tools.memory import create_memory_registry, get_current_project_id
 from gobby.storage.projects import PERSONAL_PROJECT_ID
 
@@ -650,6 +651,27 @@ class TestPromoteMemoryToGlobal:
 
         mock_memory_manager.promote_memory.assert_not_awaited()
 
+    @pytest.mark.asyncio
+    async def test_promote_global_memory_requires_owner_project(
+        self,
+        memory_registry,
+        mock_memory_manager,
+    ) -> None:
+        mock_memory_manager.get_memory.return_value = MockMemory(
+            project_id="owner-project",
+            is_global=True,
+        )
+
+        with patch("gobby.utils.project_context.get_project_context") as mock_context:
+            mock_context.return_value = {"id": "current-project"}
+            result = await memory_registry.call(
+                "promote_memory_to_global",
+                {"memory_id": "mem-123"},
+            )
+
+        assert result == {"success": False, "error": "Memory mem-123 not found"}
+        mock_memory_manager.promote_memory.assert_not_awaited()
+
 
 class TestListMemories:
     """Tests for list_memories tool."""
@@ -971,7 +993,10 @@ class TestSearchMemoriesToolRegistration:
     """Tests for search_memories tool registration."""
 
     @pytest.mark.asyncio
-    async def test_search_memories_tool_exists(self, memory_registry):
+    async def test_search_memories_tool_exists(
+        self,
+        memory_registry: InternalToolRegistry,
+    ) -> None:
         """Test that search_memories tool is registered."""
         tools = memory_registry.list_tools()
         tool_names = [t["name"] if isinstance(t, dict) else t.name for t in tools]
