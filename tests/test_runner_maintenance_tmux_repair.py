@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+from datetime import UTC, datetime, timedelta
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, call, patch
 
@@ -38,8 +39,15 @@ class _BrokenSessionManager:
 
 
 def test_tmux_repair_pane_key_uses_socket_identity() -> None:
-    session = SimpleNamespace(terminal_context={"tmux_pane": "%1", "tmux_socket_name": "sock"})
-    assert _tmux_repair_pane_key(session) == ("sock", "%1")
+    session = SimpleNamespace(
+        machine_id="machine",
+        terminal_context={"tmux_pane": "%1", "tmux_socket_name": "sock"},
+    )
+    assert _tmux_repair_pane_key(session) == (
+        "machine",
+        "tmux_socket_name:sock",
+        "%1",
+    )
 
 
 def test_tmux_repair_candidate_score_prefers_identity_and_activity() -> None:
@@ -68,6 +76,75 @@ def test_select_tmux_repair_sessions_keeps_best_candidate_per_pane() -> None:
     )
 
     assert _select_tmux_repair_sessions([stale, best, other]) == [best, other]
+
+
+def test_select_tmux_repair_sessions_uses_creation_order_after_quality() -> None:
+    created_at = datetime.now(UTC)
+    older = SimpleNamespace(
+        id="older",
+        seq_num=9596,
+        created_at=created_at,
+        updated_at=created_at + timedelta(minutes=10),
+        machine_id="machine",
+        external_id="old-external",
+        terminal_context={
+            "tmux_pane": "%154",
+            "tmux_socket_path": "/tmp/tmux-501/default",
+        },
+        transcript_path="/tmp/old.jsonl",
+        message_count=1,
+        turn_count=1,
+        tool_call_count=1,
+    )
+    newer = SimpleNamespace(
+        id="newer",
+        seq_num=9597,
+        created_at=created_at + timedelta(seconds=1),
+        updated_at=created_at + timedelta(seconds=1),
+        machine_id="machine",
+        external_id="new-external",
+        terminal_context={
+            "tmux_pane": "%154",
+            "tmux_socket_path": "/tmp/tmux-501/default",
+        },
+        transcript_path="/tmp/new.jsonl",
+        message_count=1,
+        turn_count=1,
+        tool_call_count=1,
+    )
+
+    assert _select_tmux_repair_sessions([older, newer]) == [newer]
+
+
+def test_select_tmux_repair_sessions_keeps_distinct_machines_and_sockets() -> None:
+    common = {
+        "external_id": "external",
+        "transcript_path": "/tmp/transcript.jsonl",
+        "message_count": 1,
+        "turn_count": 1,
+        "tool_call_count": 1,
+    }
+    first = SimpleNamespace(
+        **common,
+        machine_id="machine-a",
+        terminal_context={"tmux_pane": "%154", "tmux_socket_name": "default"},
+    )
+    other_machine = SimpleNamespace(
+        **common,
+        machine_id="machine-b",
+        terminal_context={"tmux_pane": "%154", "tmux_socket_name": "default"},
+    )
+    other_socket = SimpleNamespace(
+        **common,
+        machine_id="machine-a",
+        terminal_context={"tmux_pane": "%154", "tmux_socket_name": "other"},
+    )
+
+    assert _select_tmux_repair_sessions([first, other_machine, other_socket]) == [
+        first,
+        other_machine,
+        other_socket,
+    ]
 
 
 @pytest.mark.asyncio

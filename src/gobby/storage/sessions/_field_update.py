@@ -6,6 +6,10 @@ from typing import TYPE_CHECKING, ClassVar, Protocol
 
 from gobby.storage.hub.protocol import SessionLineageMutation
 from gobby.storage.session_models import Session
+from gobby.terminal_ownership import (
+    terminal_session_creation_order,
+    terminal_session_identity,
+)
 from gobby.utils.datetime import utc_now
 
 from ._bootstrap import TitleChangeCallback
@@ -138,36 +142,138 @@ class _FieldUpdateMixin(_SummaryUpdateMixin):
         return self.get(session_id)
 
     def revive_expired_terminal_session(self: _ManagerState, session_id: str) -> Session | None:
-        """Mark an expired terminal session active when fresh activity arrives.
+        """Reconcile terminal ownership when fresh activity arrives.
 
         Hook and transcript activity are stronger liveness evidence than a stale
-        parent PID. Reset transcript_processed too so later finalization can
-        process any new transcript tail.
+        parent PID. The newest session created for a machine/socket/pane owns
+        that terminal, so delayed historical activity cannot revive a
+        superseded row.
         """
         current = self.get(session_id)
         if current is None:
             return None
-        if current.status != "expired" or current.session_type != "terminal":
+        if current.session_type != "terminal":
             return current
 
+        identity = terminal_session_identity(current)
+        if identity is None:
+            if current.status != "expired":
+                return current
+
+            now = utc_now()
+            with self.db.transaction():
+                self.db.execute(
+                    """
+                    UPDATE sessions
+                    SET status = 'active',
+                        transcript_processed = FALSE,
+                        updated_at = %s
+                    WHERE id = %s
+                      AND status = 'expired'
+                      AND session_type = 'terminal'
+                    """,
+                    (now, session_id),
+                )
+            updated = self.get(session_id)
+            if updated is not None and updated.status == "active":
+                self._notify_session_change("session_updated", session_id)
+            return updated
+
+        machine_id, socket_identity, pane = identity
         now = utc_now()
-        with self.db.transaction():
-            self.db.execute(
+        status_changes: list[tuple[Session, str]] = []
+        owner: Session | None = None
+        with self.db.transaction() as conn:
+            rows = conn.execute(
                 """
-                UPDATE sessions
-                SET status = 'active',
-                    transcript_processed = FALSE,
-                    updated_at = %s
-                WHERE id = %s
-                  AND status = 'expired'
+                SELECT *
+                FROM sessions
+                WHERE machine_id = %s
                   AND session_type = 'terminal'
+                  AND terminal_context ->> 'tmux_pane' = %s
+                ORDER BY created_at, id
+                FOR UPDATE
                 """,
-                (now, session_id),
+                (machine_id, pane),
+            ).fetchall()
+            matching = [
+                candidate
+                for row in rows
+                if terminal_session_identity(candidate := Session.from_row(row)) == identity
+            ]
+            if not matching:
+                return self.get(session_id)
+
+            owner = max(matching, key=terminal_session_creation_order)
+            reset_target_transcript = current.status == "expired"
+            for candidate in matching:
+                desired_status = candidate.status
+                if candidate.id == owner.id and candidate.status == "expired":
+                    desired_status = "active"
+                elif candidate.id != owner.id and candidate.status in {
+                    "active",
+                    "paused",
+                    "handoff_ready",
+                }:
+                    desired_status = "expired"
+
+                reset_transcript = reset_target_transcript and candidate.id == session_id
+                if desired_status == candidate.status and not reset_transcript:
+                    continue
+
+                conn.execute(
+                    """
+                    UPDATE sessions
+                    SET status = %s,
+                        transcript_processed = CASE
+                            WHEN %s THEN FALSE
+                            ELSE transcript_processed
+                        END,
+                        updated_at = %s
+                    WHERE id = %s
+                    """,
+                    (desired_status, reset_transcript, now, candidate.id),
+                )
+                if desired_status != candidate.status:
+                    status_changes.append((candidate, desired_status))
+
+        if owner is None:
+            return self.get(session_id)
+
+        logger = get_logger()
+        if current.status == "expired" and current.id != owner.id:
+            logger.info(
+                "Suppressed revival of superseded terminal session %s; owner is %s",
+                current.id,
+                owner.id,
+                extra={
+                    "event": "terminal_session_revival_suppressed",
+                    "session_id": current.id,
+                    "terminal_owner_session_id": owner.id,
+                    "machine_id": machine_id,
+                    "tmux_socket": socket_identity,
+                    "tmux_pane": pane,
+                },
             )
-        updated = self.get(session_id)
-        if updated is not None and updated.status == "active":
-            self._notify_session_change("session_updated", session_id)
-        return updated
+
+        for candidate, desired_status in status_changes:
+            self._notify_session_change("session_updated", candidate.id)
+            if desired_status == "expired":
+                logger.info(
+                    "Expired superseded terminal session %s; owner is %s",
+                    candidate.id,
+                    owner.id,
+                    extra={
+                        "event": "terminal_session_owner_superseded",
+                        "session_id": candidate.id,
+                        "terminal_owner_session_id": owner.id,
+                        "machine_id": machine_id,
+                        "tmux_socket": socket_identity,
+                        "tmux_pane": pane,
+                    },
+                )
+
+        return self.get(session_id)
 
     def mark_had_edits(self: _ManagerState, session_id: str) -> Session | None:
         """Mark session as having edits."""

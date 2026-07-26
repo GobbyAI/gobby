@@ -5,6 +5,11 @@ from __future__ import annotations
 from collections.abc import Sequence
 from typing import Any, Protocol
 
+from gobby.terminal_ownership import (
+    terminal_session_creation_order,
+    terminal_session_identity,
+)
+
 
 class TmuxRepairSessionManager(Protocol):
     """Session-store operations required by tmux repair maintenance."""
@@ -12,7 +17,11 @@ class TmuxRepairSessionManager(Protocol):
     def list(self, *, statuses: list[str], limit: int) -> Sequence[Any]: ...
 
 
-def _tmux_repair_pane_key(session: Any) -> tuple[str, str] | None:
+def _tmux_repair_pane_key(session: Any) -> tuple[str, str, str] | None:
+    canonical_identity = terminal_session_identity(session)
+    if canonical_identity is not None:
+        return canonical_identity
+
     tc = getattr(session, "terminal_context", None)
     if not isinstance(tc, dict):
         return None
@@ -37,7 +46,8 @@ def _tmux_repair_pane_key(session: Any) -> tuple[str, str] | None:
                 f"session:{session_id}" if isinstance(session_id, str) else f"object:{id(session)}"
             )
 
-    return socket, pane
+    machine_id = str(getattr(session, "machine_id", "") or "").strip()
+    return machine_id, socket, pane
 
 
 def _tmux_repair_candidate_score(session: Any) -> tuple[int, int]:
@@ -53,14 +63,20 @@ def _tmux_repair_candidate_score(session: Any) -> tuple[int, int]:
 
 
 def _select_tmux_repair_sessions(sessions: Sequence[Any]) -> list[Any]:
-    selected: dict[tuple[str, str], tuple[tuple[int, int], Any]] = {}
+    selected: dict[
+        tuple[str, str, str],
+        tuple[tuple[tuple[int, int], tuple[float, str]], Any],
+    ] = {}
 
     for session in sessions:
         key = _tmux_repair_pane_key(session)
         if key is None:
             continue
 
-        score = _tmux_repair_candidate_score(session)
+        score = (
+            _tmux_repair_candidate_score(session),
+            terminal_session_creation_order(session),
+        )
         current = selected.get(key)
         if current is None or score > current[0]:
             selected[key] = (score, session)

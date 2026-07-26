@@ -420,6 +420,136 @@ class TestSessionManagerLifecycle:
         pending = session_manager.get_pending_transcript_sessions()
         assert pending == []
 
+    def test_revive_superseded_terminal_session_keeps_newest_owner_active(
+        self,
+        session_manager: SessionManager,
+        sample_project: dict,
+        caplog: pytest.LogCaptureFixture,
+    ) -> None:
+        """Delayed activity stays attributed to the expired historical session."""
+        terminal_context = {
+            "tmux_pane": "%154",
+            "tmux_socket_path": "/tmp/tmux-501/default",
+        }
+        older = session_manager.register(
+            external_id="stale-hook-session",
+            machine_id="machine",
+            source="claude",
+            project_id=sample_project["id"],
+            terminal_context=terminal_context,
+        )
+        session_manager.update_status(older.id, "expired")
+        session_manager.mark_transcript_processed(older.id)
+        newer = session_manager.register(
+            external_id="live-hook-session",
+            machine_id="machine",
+            source="claude",
+            project_id=sample_project["id"],
+            terminal_context=terminal_context,
+        )
+        caplog.set_level("INFO", logger="gobby.storage.sessions")
+
+        revived = session_manager.revive_expired_terminal_session(older.id)
+
+        assert revived is not None
+        assert revived.status == "expired"
+        live_owner = session_manager.get(newer.id)
+        assert live_owner is not None
+        assert live_owner.status == "active"
+        transcript_row = session_manager.db.fetchone(
+            "SELECT transcript_processed FROM sessions WHERE id = %s",
+            (older.id,),
+        )
+        assert transcript_row is not None
+        assert transcript_row["transcript_processed"] == 0
+        suppressed = [
+            record
+            for record in caplog.records
+            if getattr(record, "event", None) == "terminal_session_revival_suppressed"
+        ]
+        assert len(suppressed) == 1
+        assert getattr(suppressed[0], "session_id", None) == older.id
+        assert getattr(suppressed[0], "terminal_owner_session_id", None) == newer.id
+
+    def test_newest_terminal_activity_demotes_reactivated_older_owner(
+        self,
+        session_manager: SessionManager,
+        sample_project: dict,
+    ) -> None:
+        """A false-expired newest session reclaims its terminal from an older row."""
+        terminal_context = {
+            "tmux_pane": "%154",
+            "tmux_socket_path": "/tmp/tmux-501/default",
+        }
+        older = session_manager.register(
+            external_id="reactivated-old-session",
+            machine_id="machine",
+            source="claude",
+            project_id=sample_project["id"],
+            terminal_context=terminal_context,
+        )
+        newer = session_manager.register(
+            external_id="false-expired-new-session",
+            machine_id="machine",
+            source="claude",
+            project_id=sample_project["id"],
+            terminal_context=terminal_context,
+        )
+        session_manager.update_status(newer.id, "expired")
+
+        revived = session_manager.revive_expired_terminal_session(newer.id)
+
+        assert revived is not None
+        assert revived.status == "active"
+        superseded = session_manager.get(older.id)
+        assert superseded is not None
+        assert superseded.status == "expired"
+
+    @pytest.mark.parametrize(
+        ("newer_machine_id", "newer_socket_path"),
+        [
+            ("other-machine", "/tmp/tmux-501/default"),
+            ("machine", "/tmp/tmux-501/other"),
+        ],
+    )
+    def test_terminal_ownership_does_not_cross_machine_or_socket(
+        self,
+        session_manager: SessionManager,
+        sample_project: dict,
+        newer_machine_id: str,
+        newer_socket_path: str,
+    ) -> None:
+        """Identical pane IDs on distinct machines or sockets remain independent."""
+        older = session_manager.register(
+            external_id=f"older-{newer_machine_id}-{newer_socket_path}",
+            machine_id="machine",
+            source="claude",
+            project_id=sample_project["id"],
+            terminal_context={
+                "tmux_pane": "%154",
+                "tmux_socket_path": "/tmp/tmux-501/default",
+            },
+        )
+        session_manager.update_status(older.id, "expired")
+        newer = session_manager.register(
+            external_id=f"newer-{newer_machine_id}-{newer_socket_path}",
+            machine_id=newer_machine_id,
+            source="claude",
+            project_id=sample_project["id"],
+            terminal_context={
+                "tmux_pane": "%154",
+                "tmux_socket_path": newer_socket_path,
+            },
+        )
+
+        revived = session_manager.revive_expired_terminal_session(older.id)
+
+        assert revived is not None
+        assert revived.status == "active"
+        independent = session_manager.get(newer.id)
+        assert independent is not None
+        assert independent.status == "active"
+
     @pytest.mark.parametrize("resumable_status", ["paused", "expired"])
     def test_activate_web_chat_session_activates_resumable_row(
         self,
@@ -777,7 +907,7 @@ class TestSessionManagerLifecycle:
     def test_count_with_filters(
         self,
         session_manager: SessionManager,
-        sample_project: dict,
+        sample_project: dict[str, str],
     ) -> None:
         """Test counting sessions with filters."""
         s1 = session_manager.register(
@@ -810,7 +940,7 @@ class TestSessionManagerLifecycle:
     def test_count_by_status(
         self,
         session_manager: SessionManager,
-        sample_project: dict,
+        sample_project: dict[str, str],
     ) -> None:
         """Test counting sessions grouped by status."""
         s1 = session_manager.register(
@@ -961,15 +1091,23 @@ class TestSessionManagerLifecycle:
             (visible_second.id, 30, 2, "active"),
             (deleted.id, 20, 3, "deleted"),
         ]
-        assert session_manager.get(visible_first.id).seq_num == 1
-        assert session_manager.get(visible_second.id).seq_num == 2
-        assert session_manager.get(deleted.id).seq_num == 3
-        assert session_manager.get(other.id).seq_num == 50
+        refreshed_visible_first = session_manager.get(visible_first.id)
+        refreshed_visible_second = session_manager.get(visible_second.id)
+        refreshed_deleted = session_manager.get(deleted.id)
+        refreshed_other = session_manager.get(other.id)
+        assert refreshed_visible_first is not None
+        assert refreshed_visible_second is not None
+        assert refreshed_deleted is not None
+        assert refreshed_other is not None
+        assert refreshed_visible_first.seq_num == 1
+        assert refreshed_visible_second.seq_num == 2
+        assert refreshed_deleted.seq_num == 3
+        assert refreshed_other.seq_num == 50
 
     def test_list_without_filters(
         self,
         session_manager: SessionManager,
-        sample_project: dict,
+        sample_project: dict[str, str],
     ) -> None:
         """Test listing all sessions without filters."""
         session_manager.register(

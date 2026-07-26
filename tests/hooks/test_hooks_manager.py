@@ -274,6 +274,61 @@ class TestHookManagerHandle:
         assert revived is not None
         assert revived.status == "active"
 
+    def test_delayed_after_tool_keeps_superseded_terminal_session_expired(
+        self,
+        hook_manager_with_mocks: HookManager,
+        temp_dir: Path,
+    ) -> None:
+        """Historical PostToolUse processing cannot reclaim a reused tmux pane."""
+        manager = hook_manager_with_mocks
+        project_id = manager._resolve_project_id(None, str(temp_dir))
+        terminal_context = {
+            "tmux_pane": "%154",
+            "tmux_socket_path": "/tmp/tmux-501/default",
+        }
+        older = manager.session_manager.register(
+            external_id="claude-stale-external",
+            machine_id="test-machine-id",
+            source="claude",
+            project_id=project_id,
+            transcript_path=str(temp_dir / "stale.jsonl"),
+            terminal_context=terminal_context,
+        )
+        manager.session_manager.update_status(older.id, "expired")
+        newer = manager.session_manager.register(
+            external_id="claude-live-external",
+            machine_id="test-machine-id",
+            source="claude",
+            project_id=project_id,
+            transcript_path=str(temp_dir / "live.jsonl"),
+            terminal_context=terminal_context,
+        )
+        event = HookEvent(
+            event_type=HookEventType.AFTER_TOOL,
+            session_id="claude-stale-external",
+            source=SessionSource.CLAUDE,
+            timestamp=datetime.now(UTC),
+            data={
+                "cwd": str(temp_dir),
+                "tool_name": "Read",
+                "tool_input": {},
+                "tool_output": {},
+            },
+            machine_id="test-machine-id",
+            cwd=str(temp_dir),
+        )
+
+        response = manager.handle(event)
+
+        assert response.decision == "allow"
+        assert event.metadata["_platform_session_id"] == older.id
+        historical = manager.session_manager.get(older.id)
+        live = manager.session_manager.get(newer.id)
+        assert historical is not None
+        assert live is not None
+        assert historical.status == "expired"
+        assert live.status == "active"
+
 
 class TestHookManagerSessionStart:
     """Tests for session start handling."""
