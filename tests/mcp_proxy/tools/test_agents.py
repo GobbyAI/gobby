@@ -252,12 +252,8 @@ class TestWaitForAgent:
         return run
 
     @staticmethod
-    def _session_manager(*, lineage: bool = False) -> MagicMock:
+    def _lineage_session_manager() -> MagicMock:
         session_manager = MagicMock()
-        if not lineage:
-            session_manager.get.return_value = None
-            return session_manager
-
         root = MagicMock(id=_WAIT_ROOT_SESSION_ID, parent_session_id=None)
         caller = MagicMock(
             id=_WAIT_CALLER_SESSION_ID,
@@ -276,11 +272,11 @@ class TestWaitForAgent:
         db: HubDatabase,
         completion_registry: CompletionEventRegistry,
         *,
-        lineage: bool = False,
+        session_manager: Any | None = None,
     ) -> Any:
         return create_agents_registry(
             runner,
-            session_manager=TestWaitForAgent._session_manager(lineage=lineage),
+            session_manager=session_manager,
             db=db,
             completion_registry=completion_registry,
         )
@@ -381,6 +377,27 @@ class TestWaitForAgent:
         ]
 
     @pytest.mark.asyncio
+    async def test_active_child_waiter_excludes_root_session(self, temp_db: HubDatabase) -> None:
+        runner = MagicMock()
+        runner.get_run.return_value = self._run()
+        completion_registry = CompletionEventRegistry()
+        registry = self._registry(
+            runner,
+            temp_db,
+            completion_registry,
+            session_manager=self._lineage_session_manager(),
+        )
+
+        with session_context_for_test(_WAIT_CALLER_SESSION_ID):
+            result = await registry._tools["wait_for_agent"].func(_WAIT_RUN_ID)
+
+        assert result["notification_registered"] is True
+        assert completion_registry.get_subscribers(_WAIT_RUN_ID) == [_WAIT_CALLER_SESSION_ID]
+        assert CompletionSubscriberManager(temp_db).get_completion_subscribers(_WAIT_RUN_ID) == [
+            _WAIT_CALLER_SESSION_ID
+        ]
+
+    @pytest.mark.asyncio
     async def test_in_region_transition_cleans_only_fresh_owned_rows(
         self, temp_db: HubDatabase
     ) -> None:
@@ -396,7 +413,6 @@ class TestWaitForAgent:
             runner,
             temp_db,
             completion_registry,
-            lineage=True,
         )
 
         with session_context_for_test(_WAIT_CALLER_SESSION_ID):
@@ -426,7 +442,6 @@ class TestWaitForAgent:
             runner,
             temp_db,
             completion_registry,
-            lineage=True,
         )
 
         with session_context_for_test(_WAIT_CALLER_SESSION_ID):

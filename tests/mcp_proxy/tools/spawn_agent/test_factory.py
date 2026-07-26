@@ -260,7 +260,6 @@ class TestSpawnAgentDefaults:
             completion_registry=completion_registry,
             run_id="run-123",
             subscriber_session_id="parent-789",
-            session_manager=None,
             db=db,
         )
 

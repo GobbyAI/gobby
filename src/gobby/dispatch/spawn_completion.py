@@ -61,7 +61,6 @@ def _subscribe_build_coordinator_completion(
         completion_registry=services.completion_registry,
         run_id=run_id,
         subscriber_session_id=coordinator_session_id,
-        session_manager=session_manager,
         db=db,
     )
 

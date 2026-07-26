@@ -146,7 +146,7 @@ def register_agent_query_tools(
                 "error": "wait_for_agent requires an active MCP session",
                 "error_code": "missing_session_context",
             }
-        if ctx.completion_registry is None or ctx.session_manager is None or ctx.db is None:
+        if ctx.completion_registry is None or ctx.db is None:
             return {
                 "success": False,
                 "error": "Agent completion notification services are unavailable",
@@ -175,7 +175,6 @@ def register_agent_query_tools(
                     completion_registry=ctx.completion_registry,
                     run_id=run_id,
                     subscriber_session_id=session_id,
-                    session_manager=ctx.session_manager,
                     db=ctx.db,
                     strict=True,
                 )

@@ -11,7 +11,6 @@ import psycopg
 if TYPE_CHECKING:
     from gobby.events.completion_registry import CompletionEventRegistry
     from gobby.storage.hub.protocol import HubDatabase
-    from gobby.storage.sessions import SessionManager
 
 logger = logging.getLogger(__name__)
 
@@ -29,58 +28,16 @@ class AgentCompletionSubscription:
     inserted_session_ids: list[str]
 
 
-def completion_subscriber_lineage(
-    session_id: str,
-    session_manager: SessionManager | None,
-) -> list[str]:
-    """Return root-to-session subscriber ids for wake delivery.
-
-    If lineage support, session lookup, or unexpected lineage resolution fails,
-    the requested session remains the only subscriber and the failure is logged
-    so completion wakeup remains best-effort.
-    """
-    lineage_ids = [session_id]
-    if session_manager is None:
-        return lineage_ids
-    try:
-        from gobby.agents.session import ChildSessionManager
-    except (ImportError, AttributeError):
-        logger.debug("Could not load child session lineage support", exc_info=True)
-        return _dedupe(lineage_ids)
-
-    try:
-        lineage = ChildSessionManager(session_manager).get_session_lineage(session_id)
-        lineage_ids = [str(session.id) for session in lineage]
-        if session_id not in lineage_ids:
-            lineage_ids.append(session_id)
-    except psycopg.DatabaseError as e:
-        logger.warning(
-            "Could not resolve session lineage for %s: %s",
-            session_id,
-            e,
-            exc_info=True,
-        )
-    except Exception as e:
-        logger.warning(
-            "Unexpected error resolving session lineage for %s: %s",
-            session_id,
-            e,
-            exc_info=True,
-        )
-    return _dedupe(lineage_ids)
-
-
 def subscribe_agent_completion(
     *,
     completion_registry: CompletionEventRegistry | None,
     run_id: str,
     subscriber_session_id: str,
-    session_manager: SessionManager | None = None,
     db: HubDatabase | None = None,
     strict: bool = False,
 ) -> AgentCompletionSubscription:
     """Register in-memory and durable subscribers for an agent completion event."""
-    subscribers = completion_subscriber_lineage(subscriber_session_id, session_manager)
+    subscribers = [subscriber_session_id]
     created_fresh_entry = False
     inserted_session_ids: list[str] = []
 
@@ -153,20 +110,7 @@ def remove_agent_completion_subscribers(
         )
 
 
-def _dedupe(values: list[str]) -> list[str]:
-    """Return values with duplicates removed while preserving order."""
-    seen: set[str] = set()
-    deduped: list[str] = []
-    for value in values:
-        if value in seen:
-            continue
-        seen.add(value)
-        deduped.append(value)
-    return deduped
-
-
 __all__ = [
-    "completion_subscriber_lineage",
     "remove_agent_completion_subscribers",
     "subscribe_agent_completion",
 ]

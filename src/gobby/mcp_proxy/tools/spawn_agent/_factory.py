@@ -540,7 +540,7 @@ def create_spawn_agent_registry(
             code_index=code_index,
         )
 
-        # Auto-subscribe parent session + lineage to agent completion events
+        # Auto-subscribe the declared parent session to agent completion events.
         run_id = result.get("run_id")
         if (
             notify_parent_on_completion
@@ -554,7 +554,6 @@ def create_spawn_agent_registry(
                     completion_registry=completion_registry,
                     run_id=str(run_id),
                     subscriber_session_id=resolved_parent_session_id,
-                    session_manager=session_manager,
                     db=db,
                 )
             except Exception:
