@@ -1,6 +1,8 @@
+import copy
 import hashlib
 import json
-from collections.abc import Generator
+import re
+from collections.abc import Callable, Generator
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any, Literal
@@ -9,26 +11,23 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 
 from gobby.config.tasks import TaskValidationConfig
+from gobby.failure_categories import FailureCategory
 from gobby.llm import LLMService
 from gobby.mcp_proxy.tools.tasks import create_task_registry
 from gobby.mcp_proxy.tools.tasks._verification_evidence_context import (
     format_verification_evidence_context,
 )
-from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.tasks import LocalTaskManager, StageState, Task
-from gobby.storage.verification_receipts import VerificationReceipt
+from gobby.storage.verification_receipts import (
+    VerificationOutcome,
+    VerificationReceipt,
+    VerificationReceiptWrite,
+    verification_receipt_id,
+)
 from gobby.tasks.validation import TaskValidator
 from gobby.tasks.validation_verdict import ValidationResult
 from gobby.utils.datetime import utc_now
 from gobby.utils.session_context import session_context_for_test
-
-
-def _task_validator(
-    config: TaskValidationConfig,
-    llm_service: LLMService,
-    **kwargs: Any,
-) -> TaskValidator:
-    return TaskValidator(config, llm_service, db=MagicMock(spec=HubDatabase), **kwargs)
 
 
 def _diff_result(
@@ -45,7 +44,7 @@ def _verification_receipt(
     command: str,
     *,
     index: int = 1,
-    normalized_outcome: str = "success",
+    normalized_outcome: VerificationOutcome = "success",
     exit_code: int | None = 0,
     execution_id: str | None = None,
     outcome_provenance: str = "tool_output.json.exit_code",
@@ -72,12 +71,53 @@ def _verification_receipt(
         output_last_4k=output,
         output_sha256=hashlib.sha256(output.encode()).hexdigest(),
         output_bytes=len(output),
+        validation_epoch=0,
         details={},
         attribution_source="sole_claim",
         attribution_actor="sess-uuid",
         attributed_at=timestamp,
         created_at=timestamp,
         updated_at=timestamp,
+    )
+
+
+def _receipt_from_write(write: VerificationReceiptWrite) -> VerificationReceipt:
+    """Materialize the receipt returned by the mocked durable store."""
+    output = write.output or ""
+    encoded = output.encode("utf-8")
+    now = utc_now()
+    return VerificationReceipt(
+        id=verification_receipt_id(
+            write.project_id,
+            write.session_id,
+            write.provider,
+            write.execution_id,
+        ),
+        project_id=write.project_id,
+        session_id=write.session_id,
+        task_id=write.task_id,
+        provider=write.provider,
+        execution_id=write.execution_id,
+        source_event_id=write.source_event_id,
+        evidence_type=write.evidence_type,
+        command=write.command,
+        cwd=write.cwd,
+        normalized_outcome=write.normalized_outcome,
+        outcome_provenance=write.outcome_provenance,
+        exit_code=write.exit_code,
+        started_at=write.started_at,
+        completed_at=write.completed_at,
+        output_first_4k=output[:4096] or None,
+        output_last_4k=output[-4096:] or None,
+        output_sha256=hashlib.sha256(encoded).hexdigest() if encoded else None,
+        output_bytes=len(encoded) if write.output is not None else None,
+        validation_epoch=write.validation_epoch,
+        details=dict(write.details),
+        attribution_source=write.attribution_source,
+        attribution_actor=write.attribution_actor,
+        attributed_at=write.attributed_at,
+        created_at=now,
+        updated_at=now,
     )
 
 
@@ -248,6 +288,19 @@ def _seed_session_context() -> Generator[None]:
         yield
 
 
+@pytest.fixture(autouse=True)
+def _mock_verification_receipt_store(monkeypatch: pytest.MonkeyPatch) -> MagicMock:
+    store = MagicMock()
+    store.list_for_task.return_value = []
+    store.count_unassigned.return_value = 0
+    store.upsert.side_effect = _receipt_from_write
+    monkeypatch.setattr(
+        "gobby.mcp_proxy.tools.tasks._lifecycle_close.VerificationReceiptStore",
+        lambda _db: store,
+    )
+    return store
+
+
 @pytest.fixture
 def mock_task_manager() -> MagicMock:
     manager = MagicMock(spec=LocalTaskManager)
@@ -256,6 +309,7 @@ def mock_task_manager() -> MagicMock:
     conn = MagicMock()
     conn.execute.return_value.fetchone.return_value = None
     manager.db.transaction.return_value.__enter__.return_value = conn
+    manager.increment_validation_failure.return_value = (1, False)
     return manager
 
 
@@ -322,12 +376,16 @@ async def _preview_and_close_with_receipts(
         assert isinstance(receipt_text, str)
         packets.append(receipt_text)
         payload = json.loads(receipt_text.removeprefix("Verification receipt packet:\n"))
-        projection = payload["canonical_outcome_projection"]
-        valid = projection["per_outcome"] == {"success": expected_successes}
+        successful_commands = sum(
+            item["outcome"] == "success" and item["evidence_type"] == "shell_command"
+            for item in payload["receipt_catalog"]
+        )
+        valid = successful_commands == expected_successes
         return ValidationResult(
             status="valid" if valid else "pending",
             feedback="Canonical receipt verdict.",
             blocking_reasons=[] if valid else ["Required command outcome remains unknown."],
+            failure_category=None if valid else FailureCategory.TEST,
         )
 
     task_manager.get_task.return_value = task
@@ -349,6 +407,7 @@ async def _preview_and_close_with_receipts(
                 file_count=1,
             ),
         ),
+        patch("gobby.tasks.task_state_evidence.utc_now", return_value=_TEST_TIMESTAMP),
         patch("gobby.utils.git.normalize_commit_sha", side_effect=lambda sha, cwd=None: sha),
         patch(
             "gobby.mcp_proxy.tools.tasks._lifecycle_close.VerificationReceiptStore"
@@ -367,6 +426,7 @@ async def _preview_and_close_with_receipts(
         mock_svm_cls.return_value.get_variables.return_value = {}
         receipt_store_cls.return_value.list_for_task.return_value = receipts
         receipt_store_cls.return_value.count_unassigned.return_value = 0
+        receipt_store_cls.return_value.upsert.side_effect = _receipt_from_write
         registry = create_task_registry(
             task_manager=task_manager,
             task_validator=task_validator,
@@ -388,6 +448,7 @@ async def _preview_and_close_with_receipts(
 
 
 async def _close_with_static_verdict(
+    make_task_validator: Callable[..., TaskValidator],
     task_manager: MagicMock,
     repo_path: str,
     payload: dict[str, object],
@@ -412,8 +473,27 @@ async def _close_with_static_verdict(
     task_manager.close_task.return_value = task
     task_manager.increment_validation_failure.return_value = (1, False)
     llm_service = MagicMock(spec=LLMService)
-    llm_service.call_json_feature = AsyncMock(return_value=payload)
-    validator = _task_validator(
+
+    async def validation_response(
+        _config: Any,
+        prompt: str,
+        **_kwargs: Any,
+    ) -> dict[str, object]:
+        response = copy.deepcopy(payload)
+        receipt_match = re.search(r'"receipt_id":"([^"]+)"', prompt)
+        assert receipt_match is not None
+        criterion_results = response.get("criterion_results")
+        if isinstance(criterion_results, list):
+            for criterion_result in criterion_results:
+                if (
+                    isinstance(criterion_result, dict)
+                    and criterion_result.get("status") == "satisfied"
+                ):
+                    criterion_result["evidence_ids"] = [receipt_match.group(1)]
+        return response
+
+    llm_service.call_json_feature = AsyncMock(side_effect=validation_response)
+    validator = make_task_validator(
         TaskValidationConfig(enabled=True),
         llm_service,
     )
@@ -456,11 +536,14 @@ async def _close_with_static_verdict(
 @pytest.mark.integration
 @pytest.mark.asyncio
 async def test_close_task_ignores_failure_vocabulary_when_structured_verdict_is_valid(
-    mock_task_manager: MagicMock, repo_path: str
+    make_task_validator: Callable[..., TaskValidator],
+    mock_task_manager: MagicMock,
+    repo_path: str,
 ) -> None:
     narrative = "The script sets FAILED=1 on failure; all focused checks pass."
 
     result, _, call_json = await _close_with_static_verdict(
+        make_task_validator,
         mock_task_manager,
         repo_path,
         {
@@ -468,10 +551,18 @@ async def test_close_task_ignores_failure_vocabulary_when_structured_verdict_is_
             "feedback": narrative,
             "blocking_reasons": [],
             "current_failure_evidence": [],
+            "criterion_results": [
+                {
+                    "criterion": "Focused tests pass.",
+                    "status": "satisfied",
+                    "evidence_ids": [],
+                    "explanation": "The linked diff provides the required evidence.",
+                }
+            ],
         },
     )
 
-    assert result["success"] is True
+    assert result["success"] is True, result
     assert "verdict_override" not in result
     assert "FAILED=1" in call_json.call_args.args[1]
 
@@ -479,9 +570,12 @@ async def test_close_task_ignores_failure_vocabulary_when_structured_verdict_is_
 @pytest.mark.integration
 @pytest.mark.asyncio
 async def test_missing_required_command_evidence_blocks_close_and_matches_history(
-    mock_task_manager: MagicMock, repo_path: str
+    make_task_validator: Callable[..., TaskValidator],
+    mock_task_manager: MagicMock,
+    repo_path: str,
 ) -> None:
     result, record_iteration, _ = await _close_with_static_verdict(
+        make_task_validator,
         mock_task_manager,
         repo_path,
         {
@@ -491,6 +585,16 @@ async def test_missing_required_command_evidence_blocks_close_and_matches_histor
                 "Missing result for required command: uv run pytest tests/close_task.py"
             ],
             "current_failure_evidence": [],
+            "criterion_results": [
+                {
+                    "criterion": "Focused tests pass.",
+                    "status": "gap",
+                    "evidence_ids": [],
+                    "explanation": (
+                        "Missing result for required command: uv run pytest tests/close_task.py"
+                    ),
+                }
+            ],
         },
     )
 
@@ -507,9 +611,12 @@ async def test_missing_required_command_evidence_blocks_close_and_matches_histor
 @pytest.mark.integration
 @pytest.mark.asyncio
 async def test_close_task_exposes_structured_override_provenance(
-    mock_task_manager: MagicMock, repo_path: str
+    make_task_validator: Callable[..., TaskValidator],
+    mock_task_manager: MagicMock,
+    repo_path: str,
 ) -> None:
     result, _, _ = await _close_with_static_verdict(
+        make_task_validator,
         mock_task_manager,
         repo_path,
         {
@@ -517,6 +624,14 @@ async def test_close_task_exposes_structured_override_provenance(
             "feedback": "The implementation is complete, but a current check failed.",
             "blocking_reasons": [],
             "current_failure_evidence": ["pytest: 1 failed"],
+            "criterion_results": [
+                {
+                    "criterion": "Focused tests pass.",
+                    "status": "satisfied",
+                    "evidence_ids": [],
+                    "explanation": "The linked diff provides the required evidence.",
+                }
+            ],
         },
     )
 
@@ -647,6 +762,7 @@ async def test_close_task_includes_durable_receipt_packet_and_completeness(
             output_last_4k="passed",
             output_sha256=None,
             output_bytes=6,
+            validation_epoch=0,
             details={},
             attribution_source="sole_claim",
             attribution_actor="sess-uuid",
@@ -659,6 +775,7 @@ async def test_close_task_includes_durable_receipt_packet_and_completeness(
     receipt_store = MagicMock()
     receipt_store.list_for_task.return_value = receipts
     receipt_store.count_unassigned.return_value = 3
+    receipt_store.upsert.side_effect = _receipt_from_write
 
     with (
         patch("gobby.mcp_proxy.tools.tasks._context.TaskDependencyManager"),
@@ -700,25 +817,26 @@ async def test_close_task_includes_durable_receipt_packet_and_completeness(
         )
 
     assert result["success"] is True
+    receipt_store.list_for_task.assert_called_once_with("p1", "t1")
     completeness = result["evidence_completeness"]
-    assert completeness["total"] == 303
+    assert completeness["total"] == 304
     assert completeness["detailed"] == 12
-    assert completeness["catalogued"] + completeness["aggregated"] == 303
+    assert completeness["catalogued"] + completeness["aggregated"] == 304
     assert completeness["aggregated"] > 0
     assert completeness["unassigned"] == 3
-    assert completeness["per_outcome"] == {"success": 303}
+    assert completeness["per_outcome"] == {"success": 304}
     validator_call = mock_task_validator.validate_task.call_args
     assert "Verification receipt packet" not in validator_call.kwargs["changes_summary"]
     validation_evidence = validator_call.kwargs["verification_receipt_text"]
     assert '"receipt_id":"receipt-001"' in validation_evidence
     assert '"receipt_id":"receipt-303"' in validation_evidence
-    assert '"total":303' in validation_evidence
+    assert '"total":304' in validation_evidence
     packet_payload = json.loads(validation_evidence.removeprefix("Verification receipt packet:\n"))
     assert packet_payload["detailed_receipts"][0]["receipt_id"] == "receipt-001"
     projection = packet_payload["canonical_outcome_projection"]
-    assert projection["total"] == 303
-    assert projection["per_outcome"] == {"success": 303}
-    assert projection["ready"] is True
+    assert projection["total"] == 304
+    assert projection["per_outcome"] == {"success": 304}
+    assert projection["diagnostic_success_present"] is True
     assert projection["latest_receipt_id"] == "receipt-303"
     assert projection["latest_timestamp"] is not None
 
@@ -755,6 +873,7 @@ async def test_close_task_accepts_git_diff_check_evidence_without_override(
     receipt_store.list_for_task.return_value = [
         _verification_receipt("git diff --check HEAD~1..HEAD")
     ]
+    receipt_store.upsert.side_effect = _receipt_from_write
     receipt_store.count_unassigned.return_value = 0
 
     with (
@@ -798,7 +917,10 @@ async def test_close_task_accepts_git_diff_check_evidence_without_override(
     ]
     assert '"command":"git diff --check HEAD~1..HEAD"' in validation_context
     assert '"exit_code":0' in validation_context
-    assert '"ready":true' in validation_context
+    packet = json.loads(validation_context.removeprefix("Verification receipt packet:\n"))
+    projection = packet["canonical_outcome_projection"]
+    assert projection["diagnostic_success_present"] is True
+    assert projection["per_outcome"] == {"success": 2}
     assert "matcher_id" not in validation_context
     close_kwargs = mock_task_manager.close_task.call_args.kwargs
     assert close_kwargs["validation_override_reason"] is None
@@ -856,6 +978,7 @@ async def test_close_task_preserves_oversized_test_definitions_with_focused_evid
     receipt_store = MagicMock()
     receipt_store.list_for_task.return_value = [_verification_receipt(focused_command)]
     receipt_store.count_unassigned.return_value = 0
+    receipt_store.upsert.side_effect = _receipt_from_write
 
     with (
         patch("gobby.mcp_proxy.tools.tasks._context.TaskDependencyManager"),
@@ -900,7 +1023,10 @@ async def test_close_task_preserves_oversized_test_definitions_with_focused_evid
         assert name in changes_summary
     assert "hunk truncated for tests/test_acceptance.py" in changes_summary
     assert f'"command":"{focused_command}"' in receipt_text
-    assert '"ready":true' in receipt_text
+    packet = json.loads(receipt_text.removeprefix("Verification receipt packet:\n"))
+    projection = packet["canonical_outcome_projection"]
+    assert projection["diagnostic_success_present"] is True
+    assert projection["per_outcome"] == {"success": 2}
 
 
 @pytest.mark.integration
@@ -1021,8 +1147,9 @@ async def test_close_task_autolinks_claim_window_before_validation(
 
 @pytest.mark.integration
 @pytest.mark.asyncio
-async def test_close_task_skip_validation_with_evidence_stores_override(
-    mock_task_manager: MagicMock, mock_task_validator: AsyncMock, repo_path: str
+async def test_close_task_rejects_skip_validation_with_override_justification(
+    mock_task_manager: MagicMock,
+    mock_task_validator: AsyncMock,
 ) -> None:
     task = _task(
         id="t1",
@@ -1039,61 +1166,34 @@ async def test_close_task_skip_validation_with_evidence_stores_override(
     )
     mock_task_manager.get_task.return_value = task
     mock_task_manager.list_tasks.return_value = []
-    mock_task_manager.close_task.return_value = task
-
-    with (
-        patch("gobby.mcp_proxy.tools.tasks._context.TaskDependencyManager"),
-        patch("gobby.mcp_proxy.tools.tasks._context.LocalProjectManager") as mock_pm,
-        patch("gobby.mcp_proxy.tools.tasks._context.SessionManager") as mock_sm_cls,
-        patch("gobby.mcp_proxy.tools.tasks._context.SessionTaskManager"),
-        patch("gobby.mcp_proxy.tools.tasks._context.SessionVariableManager") as mock_svm_cls,
-        patch("gobby.utils.git.normalize_commit_sha", side_effect=lambda sha, cwd=None: sha),
-    ):
-        mock_pm.return_value.get.return_value = MagicMock(repo_path=repo_path)
-        mock_sm = MagicMock()
-        mock_sm.resolve_session_reference.return_value = "sess-uuid"
-        mock_sm.get.return_value = MagicMock(had_edits=True)
-        mock_sm_cls.return_value = mock_sm
-        mock_svm_cls.return_value.get_variables.return_value = {
-            "verification_evidence": [
-                {
-                    "evidence_type": "manual_diff_review",
-                    "success": True,
-                    "summary": "Reviewed exact linked commits",
-                    "supports": "completion readiness for t1",
-                }
-            ]
-        }
-
-        registry = create_task_registry(
-            task_manager=mock_task_manager,
-            task_validator=mock_task_validator,
-        )
-
-        result = await registry.call(
-            "close_task",
-            {
-                "task_id": "t1",
-                "skip_validation": True,
-                "override_justification": "Validator unavailable; exact diff reviewed.",
-                "changes_summary": "test changes",
-            },
-        )
-
-    assert result == {"success": True}
-    mock_task_validator.validate_task.assert_not_called()
-    mock_task_manager.close_task.assert_called_once()
-    assert (
-        mock_task_manager.close_task.call_args.kwargs["validation_override_reason"]
-        == "Validator unavailable; exact diff reviewed."
+    registry = create_task_registry(
+        task_manager=mock_task_manager,
+        task_validator=mock_task_validator,
     )
-    assert mock_task_manager.close_task.call_args.kwargs["reset_validation_fail_count"] is True
+    result = await registry.call(
+        "close_task",
+        {
+            "task_id": "t1",
+            "skip_validation": True,
+            "override_justification": "Validator unavailable; exact diff reviewed.",
+            "changes_summary": "test changes",
+        },
+    )
+
+    assert result == {
+        "success": False,
+        "error": "validation_contract_not_skippable",
+        "message": "Non-epic task close cannot skip criterion-to-evidence validation.",
+    }
+    mock_task_validator.validate_task.assert_not_called()
+    mock_task_manager.close_task.assert_not_called()
 
 
 @pytest.mark.integration
 @pytest.mark.asyncio
 async def test_close_task_skip_validation_fails_without_evidence(
-    mock_task_manager: MagicMock, mock_task_validator: AsyncMock, repo_path: str
+    mock_task_manager: MagicMock,
+    mock_task_validator: AsyncMock,
 ) -> None:
     task = _task(
         id="t1",
@@ -1111,52 +1211,31 @@ async def test_close_task_skip_validation_fails_without_evidence(
     mock_task_manager.get_task.return_value = task
     mock_task_manager.list_tasks.return_value = []
 
-    with (
-        patch("gobby.mcp_proxy.tools.tasks._context.TaskDependencyManager"),
-        patch("gobby.mcp_proxy.tools.tasks._context.LocalProjectManager") as mock_pm,
-        patch("gobby.mcp_proxy.tools.tasks._context.SessionManager") as mock_sm_cls,
-        patch("gobby.mcp_proxy.tools.tasks._context.SessionTaskManager"),
-        patch("gobby.mcp_proxy.tools.tasks._context.SessionVariableManager") as mock_svm_cls,
-        patch("gobby.utils.git.normalize_commit_sha", side_effect=lambda sha, cwd=None: sha),
-    ):
-        mock_pm.return_value.get.return_value = MagicMock(repo_path=repo_path)
-        mock_sm = MagicMock()
-        mock_sm.resolve_session_reference.return_value = "sess-uuid"
-        mock_sm.get.return_value = MagicMock(had_edits=True)
-        mock_sm_cls.return_value = mock_sm
-        mock_svm_cls.return_value.get_variables.return_value = {}
-
-        registry = create_task_registry(
-            task_manager=mock_task_manager,
-            task_validator=mock_task_validator,
-        )
-
-        result = await registry.call(
-            "close_task",
-            {
-                "task_id": "t1",
-                "skip_validation": True,
-                "override_justification": "Validator unavailable.",
-                "changes_summary": "test changes",
-            },
-        )
+    registry = create_task_registry(
+        task_manager=mock_task_manager,
+        task_validator=mock_task_validator,
+    )
+    result = await registry.call(
+        "close_task",
+        {
+            "task_id": "t1",
+            "skip_validation": True,
+            "changes_summary": "test changes",
+        },
+    )
 
     assert result["success"] is False
-    assert result["error"] == "skip_validation_missing_evidence"
+    assert result["error"] == "validation_contract_not_skippable"
     mock_task_manager.close_task.assert_not_called()
     mock_task_validator.validate_task.assert_not_called()
 
 
 @pytest.mark.integration
 @pytest.mark.asyncio
-async def test_close_task_skip_reason_bypasses_commit_check(
+async def test_close_task_skip_reason_bypasses_commit_check_but_runs_validation(
     mock_task_manager: MagicMock, mock_task_validator: AsyncMock, repo_path: str
 ) -> None:
-    """Test that close_task with skip reason (obsolete) bypasses commit check.
-
-    When using a skip reason like 'obsolete', 'duplicate', 'already_implemented',
-    or 'wont_fix', the commit check is skipped and validation is also auto-skipped.
-    """
+    """Skip reasons bypass commit requirements but retain the validation contract."""
     task = _task(
         id="t1",
         title="Task without commits",
@@ -1196,7 +1275,7 @@ async def test_close_task_skip_reason_bypasses_commit_check(
             task_validator=mock_task_validator,
         )
 
-        # Using reason="obsolete" bypasses commit check and validation
+        # Using reason="obsolete" bypasses the commit requirement.
         result = await registry.call(
             "close_task",
             {
@@ -1212,10 +1291,7 @@ async def test_close_task_skip_reason_bypasses_commit_check(
         mock_task_manager.close_task.assert_called_once()
         assert mock_task_manager.close_task.call_count == 1
         assert mock_task_manager.close_task.call_args is not None
-        # Validator should NOT have been called (skip reasons auto-skip validation)
-        mock_task_validator.validate_task.assert_not_called()
-        assert mock_task_validator.validate_task.call_count == 0
-        assert not mock_task_validator.validate_task.called
+        mock_task_validator.validate_task.assert_awaited_once()
 
 
 @pytest.mark.integration
@@ -1421,6 +1497,7 @@ async def test_close_task_preview_is_read_only_and_prioritizes_explicit_receipts
         mock_svm_cls.return_value.get_variables.return_value = {}
         receipt_store_cls.return_value.list_for_task.return_value = receipts
         receipt_store_cls.return_value.count_unassigned.return_value = 3
+        receipt_store_cls.return_value.upsert.side_effect = _receipt_from_write
         registry = create_task_registry(
             task_manager=mock_task_manager,
             task_validator=mock_task_validator,
@@ -1460,14 +1537,15 @@ async def test_close_task_preview_is_read_only_and_prioritizes_explicit_receipts
     assert result["can_close"] is True
     assert result["commit_shas"] == ["a1", "a2", "a3"]
     assert "receipt-020" in result["selected_evidence"]["detailed_receipt_ids"]
-    assert "receipt-021" in result["selected_evidence"]["catalogued_receipt_ids"]
+    assert "receipt-019" in result["selected_evidence"]["catalogued_receipt_ids"]
+    assert "receipt-021" not in result["selected_evidence"]["catalogued_receipt_ids"]
     assert result["evidence_completeness"]["total"] == 21
     assert result["unassigned_receipts"]["count"] == 3
     assert result["blocking_reasons"] == []
     assert result["required_actions"] == []
     receipt_text = mock_task_validator.validate_task.await_args.kwargs["verification_receipt_text"]
-    assert "receipt-021" in receipt_text
-    assert "failure" in receipt_text
+    assert "receipt-020" in receipt_text
+    assert "receipt-021" not in receipt_text
     mock_task_manager.link_commit.assert_not_called()
     mock_task_manager.close_task.assert_not_called()
     mock_task_manager.update_task.assert_not_called()
@@ -1504,12 +1582,14 @@ async def test_real_close_reevaluates_after_successful_preview(
         ValidationResult(
             status="invalid",
             feedback="Evidence changed.",
-            blocking_reasons=("Focused tests no longer pass.",),
+            blocking_reasons=["Focused tests no longer pass."],
+            failure_category=FailureCategory.TEST,
         ),
         ValidationResult(
             status="invalid",
             feedback="Evidence still invalid.",
-            blocking_reasons=("Focused tests no longer pass.",),
+            blocking_reasons=["Focused tests no longer pass."],
+            failure_category=FailureCategory.TEST,
         ),
     ]
 
@@ -1542,6 +1622,7 @@ async def test_real_close_reevaluates_after_successful_preview(
             _verification_receipt("uv run pytest tests/focused.py")
         ]
         receipt_store_cls.return_value.count_unassigned.return_value = 0
+        receipt_store_cls.return_value.upsert.side_effect = _receipt_from_write
         registry = create_task_registry(
             task_manager=mock_task_manager,
             task_validator=mock_task_validator,
@@ -1618,10 +1699,10 @@ async def test_close_task_reconciles_paired_codex_receipts_for_preview_and_mutat
     assert packets[0] == packets[1]
     packet_payload = json.loads(packets[0].removeprefix("Verification receipt packet:\n"))
     projection = packet_payload["canonical_outcome_projection"]
-    assert projection["per_outcome"] == {"success": 3}
-    assert projection["raw_per_outcome"] == {"success": 3, "unknown": 3}
-    assert projection["superseded_total"] == 3
-    assert packet_payload["evidence_completeness"]["effective_total"] == 3
+    assert projection["per_outcome"] == {"success": 4}
+    assert projection["raw_per_outcome"] == {"success": 4}
+    assert projection["superseded_total"] == 0
+    assert packet_payload["evidence_completeness"]["effective_total"] == 4
     assert all(receipt.id not in packets[0] for receipt in receipts[::2])
     mock_task_manager.close_task.assert_called_once()
 
@@ -1655,6 +1736,7 @@ async def test_close_task_keeps_unknown_only_required_command_pending(
     assert close_result is None
     packet = json.loads(packets[0].removeprefix("Verification receipt packet:\n"))
     projection = packet["canonical_outcome_projection"]
-    assert projection["per_outcome"] == {"unknown": 1}
+    assert projection["per_outcome"] == {"success": 1}
+    assert projection["diagnostic_success_present"] is True
     assert projection["superseded_total"] == 0
     mock_task_manager.close_task.assert_not_called()

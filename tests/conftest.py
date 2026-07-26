@@ -4,7 +4,7 @@ import logging
 import os
 import subprocess
 import tempfile
-from collections.abc import Generator, Iterator
+from collections.abc import Callable, Generator, Iterator
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 from unittest.mock import AsyncMock, MagicMock, patch
@@ -51,10 +51,29 @@ def pytest_collection_modifyitems(config: pytest.Config, items: list[pytest.Item
 
 if TYPE_CHECKING:
     from gobby.config.app import DaemonConfig
+    from gobby.config.tasks import TaskValidationConfig
+    from gobby.llm import LLMService
     from gobby.storage.hub.protocol import HubDatabase
     from gobby.storage.mcp import LocalMCPManager
     from gobby.storage.projects import LocalProjectManager
     from gobby.storage.sessions import SessionManager
+    from gobby.tasks.validation import TaskValidator
+
+
+@pytest.fixture
+def make_task_validator() -> Callable[..., "TaskValidator"]:
+    """Build a task validator with an isolated Hub database dependency."""
+    from gobby.storage.hub.protocol import HubDatabase
+    from gobby.tasks.validation import TaskValidator
+
+    def factory(
+        config: "TaskValidationConfig",
+        llm_service: "LLMService",
+        **kwargs: Any,
+    ) -> TaskValidator:
+        return TaskValidator(config, llm_service, db=MagicMock(spec=HubDatabase), **kwargs)
+
+    return factory
 
 
 _GOBBY_LOGGER_NAMES = ("gobby", "gobby.hooks", "gobby.mcp.server", "gobby.mcp.client")
@@ -415,7 +434,7 @@ def protect_production_resources(
         except ImportError:
             _real_load_config = None
 
-        def safe_load_config(*args, **kwargs):
+        def safe_load_config(*args: Any, **kwargs: Any) -> "DaemonConfig":
             config_store = kwargs.get("config_store")
             config_store_db = getattr(config_store, "db", None)
             if (
