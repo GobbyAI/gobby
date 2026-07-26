@@ -21,7 +21,10 @@ class HubConfig(BaseModel):
     type: Literal["clawdhub", "skillsmp", "github-collection", "github-topic", "claude-plugins"] = (
         Field(
             ...,
-            description="Type of the hub: 'clawdhub', 'skillsmp', 'github-collection', or 'claude-plugins'",
+            description=(
+                "Type of the hub: 'clawdhub', 'skillsmp', 'github-collection', "
+                "'github-topic', or 'claude-plugins'"
+            ),
         )
     )
 

@@ -3,7 +3,7 @@ name: review
 description: "Interactive /gobby review launcher. Dispatches epic-reviewer for an epic."
 version: "1.0.0"
 category: core
-triggers: review, gobby review, epic review, epic review
+triggers: review, gobby review, epic review
 metadata:
   gobby:
     audience: interactive
@@ -24,14 +24,15 @@ dotted task path. If the user does not provide one, ask for the task ref.
 
 ## Mode Selection
 
-Ask how the review should run unless it is already clear from the user's
-request:
+Ask for the I/D mode unless it is already clear from the user's request:
 
 ```text
-I) In-line - apply the epic-reviewer persona to this session and review here.
-S) Spawned - dispatch a separate epic-reviewer agent and surface the run ids.
+I) Interactive - apply the epic-reviewer persona to this session and review in-line.
+D) Delegated - dispatch a separate epic-reviewer agent and surface the run ids.
 ```
 
+Persist the choice as `value="interactive" | "delegated"` for the handoff.
+Interactive maps to in-line mode below; delegated maps to the spawned workflow.
 Both modes use the `epic-reviewer` methodology. Spawned mode works for open
 and already-closed epics — the workflow passes `allow_closed_task` so the
 reviewer can run post-hoc; on a closed epic the reviewer makes no stage

@@ -66,14 +66,18 @@ an edit fails, re-read and verify the checkbox state before retrying.
 
 1. **Load tasks** from `moat-tasks-detail.json`; batch-read all referenced
    screenshots up front.
-2. **Analyze dependencies** before starting: pronouns ("that button", "it")
+2. **Reconcile interrupted work** before starting: for every pre-existing
+   `"doing"` entry, inspect the current implementation and either finish it and
+   mark it `"done"` or reset it to `"to do"` for processing in this run. Never
+   silently skip an entry because a prior run left it `"doing"`.
+3. **Analyze dependencies** before starting: pronouns ("that button", "it")
    and descriptive references ("the blue button", "the updated header") mean
    tasks build on each other — process them in order.
-3. **Pick a processing mode** (ask if the user didn't specify):
+4. **Pick a processing mode** (ask if the user didn't specify):
    - `step` — one task at a time with approval
    - `batch` — group related tasks, single approval per group
    - `yolo` — process all tasks autonomously (use with caution)
-4. **Implementation standards**: prefer design tokens/CSS variables over
+5. **Implementation standards**: prefer design tokens/CSS variables over
    hardcoded values, `rem` over `px`, match existing code patterns, and keep
    accessibility in mind (ARIA, keyboard navigation, contrast). Reference
    code as `path:line`. Ask when a task is ambiguous.
@@ -144,10 +148,10 @@ the turn is blocked, and every wait must be a tool call.
   `.moat/moat-tasks-detail.json` changing (content hash or mtime), polling
   every 5-10 seconds, bounded at ~2 minutes per arm; re-arm when it expires
   with no change.
-- **Other CLIs**: a bounded foreground poll in the shell tool, e.g.
-  `before=$(cksum .moat/moat-tasks-detail.json); for i in $(seq 1 24); do
-  sleep 5; [ "$(cksum .moat/moat-tasks-detail.json)" != "$before" ] && break;
-  done` — returns on any change or after ~2 minutes.
+- **Other CLIs**: use the harness's blocking file-change monitor as a tool
+  call, bounded at ~2 minutes per arm. If the monitor yields a process handle,
+  resume it with the harness's process-wait tool until it reports a change or
+  reaches its deadline. Do not run shell sleep loops.
 - The watcher exits on **any** file change (the sentinel is itself a file
   change — detect it in the loop, not the watcher) and if the file
   disappears (extension disconnected → Wrap-Up).

@@ -82,6 +82,7 @@ uv run gobby install
 Targeted datastore repair commands remain available:
 
 ```bash
+uv run gobby postgres install
 uv run gobby install --falkordb
 printf '%s' 'your-password' | uv run gobby install --falkordb --falkordb-password-stdin
 uv run gobby qdrant install --port 6333
@@ -149,8 +150,8 @@ fixed 13000/16379 host ports.
 Use SSD or NVMe storage for any full-stack local install. PostgreSQL, Qdrant,
 and FalkorDB all suffer on slow or networked filesystems under write-heavy use.
 
-Prefer Docker named volumes for Qdrant and FalkorDB data. The shipped Compose template uses named
-volumes:
+Prefer Docker named volumes for PostgreSQL, Qdrant, and FalkorDB data. The
+shipped Compose template uses named volumes:
 
 | Volume | Purpose |
 |--------|---------|

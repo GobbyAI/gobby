@@ -49,6 +49,26 @@ def test_bridge_skill_live_mode_contract() -> None:
     assert "processed" in body
 
 
+def test_bridge_skill_reconciles_interrupted_doing_entries() -> None:
+    """Pre-existing in-progress entries are recovered instead of skipped."""
+    body = _body()
+    normalized = " ".join(body.split())
+
+    assert "Reconcile interrupted work" in body
+    assert 'pre-existing `"doing"` entry' in normalized
+    assert 'finish it and mark it `"done"`' in normalized
+    assert 'reset it to `"to do"`' in normalized
+
+
+def test_bridge_skill_uses_tool_waits_without_sleep_loops() -> None:
+    """Non-Claude harnesses use process waiting instead of shell sleep polling."""
+    body = _body()
+
+    assert "process-wait tool" in body
+    assert "Do not run shell sleep loops" in body
+    assert "sleep 5" not in body
+
+
 def test_bridge_skill_live_mode_single_commit_wrapup() -> None:
     """Wrap-up commits the session diff before closing the umbrella task."""
     body = _body()

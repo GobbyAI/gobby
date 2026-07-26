@@ -58,7 +58,7 @@ Add the trusted tailnet origin to runtime CORS configuration for browser use:
 cors_origins:
   - http://localhost:*
   - https://localhost:*
-  - https://gobby-box.tailnet.ts.net:*
+  - http://gobby-box.tailnet.ts.net:*
 ```
 
 Restart Gobby after changing bootstrap or CORS settings. Startup will fail

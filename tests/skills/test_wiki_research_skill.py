@@ -2,7 +2,11 @@
 
 from pathlib import Path
 
+import pytest
+
 from gobby.skills.parser import parse_skill_file
+
+pytestmark = pytest.mark.unit
 
 SKILL_PATH = Path("src/gobby/install/shared/skills/wiki-research/SKILL.md")
 
