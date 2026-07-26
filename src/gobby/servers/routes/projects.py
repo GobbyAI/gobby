@@ -184,7 +184,10 @@ def create_projects_router(server: HTTPServer) -> APIRouter:
         requested_repo_path = fields.get("repo_path", original_repo_path)
         repo_path_changed = requested_repo_path != original_repo_path
 
-        if fields.get("linear_sync_enabled") is True:
+        effective_linear_sync_enabled = fields.get(
+            "linear_sync_enabled", project.linear_sync_enabled
+        )
+        if effective_linear_sync_enabled:
             team_id = fields.get("linear_team_id", project.linear_team_id)
             linear_project_id = fields.get("linear_project_id", project.linear_project_id)
             if not team_id or not linear_project_id:
@@ -376,7 +379,11 @@ def create_projects_router(server: HTTPServer) -> APIRouter:
         linear_counts = await server.run_db(status_store.counts, project_id, "linear")
         github_counts = await server.run_db(status_store.counts, project_id, "github")
         github_store = GitHubTriageStore(server.services.database)
-        github_config = await server.run_db(github_store.get_config, project_id)
+        github_config = await server.run_db(
+            github_store.get_config,
+            project_id,
+            fallback_repo=project.github_repo,
+        )
 
         linear_service = None
         if server.services.mcp_manager is not None:
@@ -431,6 +438,8 @@ def create_projects_router(server: HTTPServer) -> APIRouter:
         def status_payload(status: Any, counts: tuple[int, int]) -> dict[str, Any]:
             if status:
                 payload = cast(dict[str, Any], status.to_dict())
+                payload.pop("project_id", None)
+                payload.pop("provider", None)
                 payload["linked_count"] = counts[0]
                 payload["pending_count"] = counts[1]
                 return payload
@@ -445,6 +454,9 @@ def create_projects_router(server: HTTPServer) -> APIRouter:
                 "last_statistics": {},
                 "last_error": None,
             }
+
+        github_config_payload = github_config.to_dict()
+        github_config_payload.pop("project_id", None)
 
         return cast(
             dict[str, Any],
@@ -462,7 +474,7 @@ def create_projects_router(server: HTTPServer) -> APIRouter:
                         **status_payload(linear_status, linear_counts),
                     },
                     "github": {
-                        **github_config.to_dict(),
+                        **github_config_payload,
                         "ready": github_ready,
                         "repositories": list(repositories or github_config.repositories),
                         "readiness_error": github_error,

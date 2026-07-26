@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from collections.abc import Iterator
 from contextlib import contextmanager
+from pathlib import Path
 from unittest.mock import MagicMock
 
 import click
@@ -11,7 +12,7 @@ import pytest
 from click.testing import CliRunner
 
 from gobby.cli import cli
-from gobby.cli.runtime import CliRuntime, require_cli_database
+from gobby.cli.runtime import CliRuntime, require_cli_database, resolve_cli_project
 from gobby.config.app import DaemonConfig
 
 
@@ -20,6 +21,53 @@ def _database_context(database: MagicMock) -> Iterator[MagicMock]:
         yield database
     finally:
         database.close()
+
+
+def test_resolve_cli_project_uses_explicit_reference() -> None:
+    project_manager = MagicMock()
+    project = MagicMock(id="project-id", deleted_at=None)
+    project_manager.resolve_ref.return_value = project
+
+    assert resolve_cli_project(project_manager, "project-ref") == "project-id"
+    project_manager.resolve_ref.assert_called_once_with("project-ref")
+
+
+def test_resolve_cli_project_rejects_missing_or_deleted_reference() -> None:
+    project_manager = MagicMock()
+    project_manager.resolve_ref.return_value = None
+
+    with pytest.raises(click.ClickException, match="Project not found: missing"):
+        resolve_cli_project(project_manager, "missing")
+
+    project_manager.resolve_ref.return_value = MagicMock(deleted_at=object())
+    with pytest.raises(click.ClickException, match="Project not found: deleted"):
+        resolve_cli_project(project_manager, "deleted")
+
+
+def test_resolve_cli_project_uses_context_for_empty_reference(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    project_manager = MagicMock()
+
+    def project_context(*, cwd: Path) -> dict[str, str]:
+        assert cwd == Path.cwd()
+        return {"id": "context-project"}
+
+    monkeypatch.setattr("gobby.cli.runtime.get_project_context", project_context)
+
+    assert resolve_cli_project(project_manager, "") == "context-project"
+    project_manager.resolve_ref.assert_not_called()
+
+
+def test_resolve_cli_project_allows_unscoped_command(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    project_manager = MagicMock()
+    context_lookup = MagicMock()
+    monkeypatch.setattr("gobby.cli.runtime.get_project_context", context_lookup)
+
+    assert resolve_cli_project(project_manager, require_project=False) == ""
+    context_lookup.assert_not_called()
 
 
 def test_runtime_memoizes_database_and_closes_once(monkeypatch: pytest.MonkeyPatch) -> None:

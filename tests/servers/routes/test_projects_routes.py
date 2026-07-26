@@ -5,13 +5,14 @@ from __future__ import annotations
 import json
 from pathlib import Path
 from types import SimpleNamespace
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 import pytest
 from fastapi.testclient import TestClient
 
 from gobby.projects.purge import PurgeOutcome
 from gobby.servers.routes import projects as projects_routes
+from gobby.storage.external_issue_sync import ExternalIssueSyncStatusStore
 from gobby.storage.tasks import LocalTaskManager
 from tests.servers.conftest import create_http_server
 
@@ -339,6 +340,31 @@ class TestProjectRoutes:
         assert response.status_code == 200
         assert response.json()["linear_sync_enabled"] is True
 
+    @pytest.mark.parametrize("binding_field", ["linear_team_id", "linear_project_id"])
+    def test_update_project_rejects_clearing_effective_linear_binding(
+        self,
+        client: TestClient,
+        real_project: dict[str, Any],
+        binding_field: str,
+    ) -> None:
+        enable_response = client.patch(
+            f"/api/projects/{real_project['id']}",
+            json={
+                "linear_team_id": "team-1",
+                "linear_project_id": "linear-project-1",
+                "linear_sync_enabled": True,
+            },
+        )
+        assert enable_response.status_code == 200
+
+        response = client.patch(
+            f"/api/projects/{real_project['id']}",
+            json={binding_field: None},
+        )
+
+        assert response.status_code == 400
+        assert "linear_team_id and linear_project_id" in response.json()["detail"]
+
     def test_integrations_status_reports_live_counts_before_first_run(
         self,
         client: TestClient,
@@ -370,6 +396,37 @@ class TestProjectRoutes:
         assert payload["github"]["linked_count"] == 1
         assert payload["github"]["pending_count"] == 0
         assert payload["github"]["readiness_error"] == "GitHub connector is unavailable"
+
+    def test_integrations_status_normalizes_provider_payloads_and_repository_fallback(
+        self,
+        client: TestClient,
+        real_project: dict[str, Any],
+        session_manager: SessionManager,
+    ) -> None:
+        update_response = client.patch(
+            f"/api/projects/{real_project['id']}",
+            json={"github_repo": "test/my-project"},
+        )
+        assert update_response.status_code == 200
+
+        status_store = ExternalIssueSyncStatusStore(session_manager.db)
+        for provider in ("linear", "github"):
+            status_store.upsert(
+                project_id=real_project["id"],
+                provider=provider,
+                state="healthy",
+                linked_count=0,
+                pending_count=0,
+            )
+
+        response = client.get(f"/api/projects/{real_project['id']}/integrations/status")
+
+        assert response.status_code == 200
+        payload = response.json()
+        assert payload["github"]["repositories"] == ["test/my-project"]
+        for provider in ("linear", "github"):
+            assert "project_id" not in payload[provider]
+            assert "provider" not in payload[provider]
 
     def test_update_project_empty_body(self, client: TestClient, real_project: dict) -> None:
         """Empty update body returns current project data unchanged."""

@@ -19,6 +19,19 @@ from gobby.tasks.import_criteria import external_issue_validation_criteria
 from gobby.utils.datetime import parse_stored_datetime
 
 TriageIssueCallback = Callable[..., Awaitable[dict[str, Any]]]
+_GITHUB_PAGE_SIZE = 100
+_MAX_GITHUB_RECOVERY_PAGES = 100
+_MAX_GITHUB_ISSUE_NUMBER = 2_147_483_647
+
+
+def _normalize_issue_number(value: object) -> int | None:
+    if type(value) is int:
+        number = value
+    elif isinstance(value, str) and value.strip().isdecimal():
+        number = int(value.strip())
+    else:
+        return None
+    return number if 0 < number <= _MAX_GITHUB_ISSUE_NUMBER else None
 
 
 class GitHubRepositoryReadinessError(RuntimeError):
@@ -51,7 +64,7 @@ class GitHubIssueSyncService:
     async def check_access(self, project: Project, config: GitHubTriageConfig) -> tuple[str, ...]:
         """Verify the connector can read every configured repository."""
         try:
-            repositories = self.repositories_for(project, config)
+            repositories = await asyncio.to_thread(self.repositories_for, project, config)
         except ValueError as exc:
             raise GitHubRepositoryReadinessError(
                 "GitHub repository is unresolved; configure github_repo, github_url, or a git origin"
@@ -86,23 +99,30 @@ class GitHubIssueSyncService:
         issue_data: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
         """Create or update the one Gobby task linked to a GitHub issue."""
-        project = self.project_manager.get(project_id)
+        normalized_issue_number = _normalize_issue_number(issue_number)
+        if normalized_issue_number is None:
+            raise ValueError("GitHub issue number must be a positive integer")
+        issue_number = normalized_issue_number
+
+        project = await asyncio.to_thread(self.project_manager.get, project_id)
         if project is None or project.deleted_at:
             raise ValueError(f"Unknown project: {project_id}")
-        config = self.config_store.get_config(project_id)
+        config = await asyncio.to_thread(self.config_store.get_config, project_id)
         if not (config.sync_enabled or config.triage_enabled):
             return {"action": "disabled"}
-        if repo not in self.repositories_for(project, config):
+        repositories = await asyncio.to_thread(self.repositories_for, project, config)
+        if repo not in repositories:
             raise ValueError(f"Repository {repo!r} is not enabled for GitHub issue sync")
 
         issue = issue_data or await self._fetch_issue(repo, issue_number)
         if issue.get("pull_request"):
             return {"action": "skipped_pull_request"}
-        number = issue.get("number", issue_number)
-        if int(number) != issue_number:
+        response_number = _normalize_issue_number(issue.get("number", issue_number))
+        if response_number != issue_number:
             raise ValueError("GitHub issue response number does not match the requested issue")
 
-        existing = self.db.fetchone(
+        existing = await asyncio.to_thread(
+            self.db.fetchone,
             "SELECT id, title, description, labels, validation_criteria, updated_at FROM tasks "
             "WHERE project_id = %s AND github_repo = %s AND github_issue_number = %s",
             (project_id, repo, issue_number),
@@ -120,15 +140,21 @@ class GitHubIssueSyncService:
             existing_labels = existing.get("labels") or []
             updates["labels"] = list(dict.fromkeys([*existing_labels, *updates["labels"]]))
             if existing.get("validation_criteria") != validation_criteria:
-                self.task_manager.update_task(
+                await asyncio.to_thread(
+                    self.task_manager.update_task,
                     existing["id"],
                     validation_criteria=validation_criteria,
                 )
-            task = self.task_manager.reconcile_task_state(existing["id"], **updates)
+            task = await asyncio.to_thread(
+                self.task_manager.reconcile_task_state,
+                existing["id"],
+                **updates,
+            )
             return {"action": "updated", "task_id": task.id}
 
         try:
-            task = self.task_manager.create_task(
+            task = await asyncio.to_thread(
+                self.task_manager.create_task,
                 project_id=project_id,
                 title=updates["title"],
                 description=updates["description"],
@@ -138,18 +164,24 @@ class GitHubIssueSyncService:
                 validation_criteria=validation_criteria,
             )
         except psycopg.IntegrityError:
-            existing = self.db.fetchone(
+            existing = await asyncio.to_thread(
+                self.db.fetchone,
                 "SELECT id FROM tasks WHERE project_id = %s AND github_repo = %s "
                 "AND github_issue_number = %s",
                 (project_id, repo, issue_number),
             )
             if not existing:
                 raise
-            self.task_manager.update_task(
+            await asyncio.to_thread(
+                self.task_manager.update_task,
                 existing["id"],
                 validation_criteria=validation_criteria,
             )
-            task = self.task_manager.reconcile_task_state(existing["id"], **updates)
+            task = await asyncio.to_thread(
+                self.task_manager.reconcile_task_state,
+                existing["id"],
+                **updates,
+            )
             return {"action": "updated", "task_id": task.id}
         lifecycle = {
             key: value
@@ -157,23 +189,28 @@ class GitHubIssueSyncService:
             if key not in {"title", "description", "labels"}
         }
         if lifecycle:
-            task = self.task_manager.reconcile_task_state(task.id, **lifecycle)
+            task = await asyncio.to_thread(
+                self.task_manager.reconcile_task_state,
+                task.id,
+                **lifecycle,
+            )
         return {"action": "created", "task_id": task.id}
 
     async def recover_project(self, project_id: str) -> dict[str, int]:
         """Recover missed issue webhooks for all configured repositories."""
-        project = self.project_manager.get(project_id)
+        project = await asyncio.to_thread(self.project_manager.get, project_id)
         if project is None or project.deleted_at:
             raise ValueError(f"Unknown project: {project_id}")
-        config = self.config_store.get_config(project_id)
+        config = await asyncio.to_thread(self.config_store.get_config, project_id)
         if not (config.sync_enabled or config.triage_enabled):
             return self._empty_stats()
 
         stats = self._empty_stats()
-        for repo in self.repositories_for(project, config):
+        repositories = await asyncio.to_thread(self.repositories_for, project, config)
+        for repo in repositories:
             owner, repo_name = parse_github_repo(repo)
-            page = 1
-            while True:
+            seen_pages: set[tuple[str, ...]] = set()
+            for page in range(1, _MAX_GITHUB_RECOVERY_PAGES + 1):
                 try:
                     result = await self._call(
                         "list_issues",
@@ -182,12 +219,20 @@ class GitHubIssueSyncService:
                             "repo": repo_name,
                             "state": "all",
                             "page": page,
-                            "per_page": 100,
+                            "per_page": _GITHUB_PAGE_SIZE,
                         },
                     )
                     issues = result.get("issues", []) if isinstance(result, dict) else result
                     if not isinstance(issues, list):
                         raise RuntimeError("GitHub list_issues returned an invalid payload")
+                    page_marker = tuple(
+                        repr(issue.get("number")) if isinstance(issue, dict) else repr(issue)
+                        for issue in issues
+                    )
+                    if page_marker in seen_pages:
+                        stats["errors"] += 1
+                        break
+                    seen_pages.add(page_marker)
                 except Exception as exc:
                     if _is_rate_limit_error(exc):
                         raise
@@ -197,12 +242,16 @@ class GitHubIssueSyncService:
                     if not isinstance(issue, dict) or issue.get("pull_request"):
                         continue
                     stats["scanned"] += 1
+                    issue_number = _normalize_issue_number(issue.get("number"))
+                    if issue_number is None:
+                        stats["errors"] += 1
+                        continue
                     try:
                         action = (
                             await self.sync_issue(
                                 project_id,
                                 repo,
-                                int(issue["number"]),
+                                issue_number,
                                 issue_data=issue,
                             )
                         )["action"]
@@ -212,14 +261,15 @@ class GitHubIssueSyncService:
                             stats["skipped"] += 1
                     except Exception:
                         stats["errors"] += 1
-                if len(issues) < 100:
+                if len(issues) < _GITHUB_PAGE_SIZE:
                     break
-                page += 1
+            else:
+                stats["errors"] += 1
         return stats
 
     async def push_linked_tasks(self, project_id: str) -> dict[str, int]:
         """Push linked tasks only; local-native tasks never create GitHub issues."""
-        project = self.project_manager.get(project_id)
+        project = await asyncio.to_thread(self.project_manager.get, project_id)
         if project is None or project.deleted_at:
             raise ValueError(f"Unknown project: {project_id}")
         rows = await asyncio.to_thread(
@@ -324,7 +374,7 @@ class GitHubIssueDeliveryHandler:
         )
         if result.get("action") == "skipped_pull_request":
             return result
-        config = self.config_store.get_config(project_id)
+        config = await asyncio.to_thread(self.config_store.get_config, project_id)
         if config.triage_enabled:
             return await self.triage_issue(
                 project_id,

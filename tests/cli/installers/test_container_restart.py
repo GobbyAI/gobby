@@ -31,7 +31,7 @@ def test_apply_restart_policy_updates_compose_and_existing_containers(
     enabled: bool,
     expected_policy: str,
 ) -> None:
-    completed = subprocess.CompletedProcess[list[str]]([], 0, stdout="", stderr="")
+    completed = subprocess.CompletedProcess[str]([], 0, stdout="", stderr="")
 
     with (
         patch(
@@ -53,7 +53,7 @@ def test_apply_restart_policy_updates_compose_and_existing_containers(
     assert {service["restart"] for service in compose["services"].values()} == {expected_policy}
     run.assert_called_once_with(
         [
-            "docker",
+            "/usr/bin/docker",
             "update",
             "--restart",
             expected_policy,
@@ -66,7 +66,7 @@ def test_apply_restart_policy_updates_compose_and_existing_containers(
 
 
 def test_apply_restart_policy_surfaces_docker_update_failure(tmp_path: Path) -> None:
-    completed = subprocess.CompletedProcess[list[str]](
+    completed = subprocess.CompletedProcess[str](
         [],
         1,
         stdout="",

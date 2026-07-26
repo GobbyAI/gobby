@@ -10,7 +10,7 @@ from pathlib import Path
 
 import click
 
-from gobby.cli.runtime import require_cli_database
+from gobby.cli.runtime import require_cli_database, resolve_cli_project
 from gobby.cli.tasks._utils import resolve_task_id
 from gobby.mcp_proxy.manager import MCPClientManager
 from gobby.storage.external_issue_sync import ExternalIssueSyncStatusStore
@@ -20,7 +20,6 @@ from gobby.storage.projects import LocalProjectManager
 from gobby.storage.tasks import LocalTaskManager
 from gobby.sync.linear import LinearSyncService
 from gobby.utils.json_helpers import json_dumps
-from gobby.utils.project_context import get_project_context
 from gobby.utils.project_init import update_project_json_fields
 
 logger = logging.getLogger(__name__)
@@ -39,19 +38,11 @@ def get_linear_deps(
     db = require_cli_database()
     task_manager = LocalTaskManager(db)
     project_manager = LocalProjectManager(db)
-
-    if project_ref:
-        project = project_manager.resolve_ref(project_ref)
-        if not project or project.deleted_at:
-            raise click.ClickException(f"Project not found: {project_ref}")
-        project_id = project.id
-    elif require_project:
-        ctx = get_project_context(cwd=Path.cwd())
-        if not ctx or not ctx.get("id"):
-            raise click.ClickException("Not in a gobby project directory. Run 'gobby init' first.")
-        project_id = str(ctx["id"])
-    else:
-        project_id = ""
+    project_id = resolve_cli_project(
+        project_manager,
+        project_ref,
+        require_project=require_project,
+    )
     mcp_manager = _create_linear_mcp_manager(db, project_id)
     return task_manager, mcp_manager, project_manager, project_id
 
@@ -296,7 +287,8 @@ def linear_status(project_ref: str | None, all_projects: bool, json_format: bool
             )
 
         if json_format:
-            click.echo(json_dumps(payloads if all_projects else payloads[0], indent=2, default=str))
+            output = payloads if all_projects or not payloads else payloads[0]
+            click.echo(json_dumps(output, indent=2, default=str))
         else:
             for index, payload in enumerate(payloads):
                 if index:

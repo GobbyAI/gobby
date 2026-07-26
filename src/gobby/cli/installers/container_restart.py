@@ -36,7 +36,8 @@ def apply_managed_service_restart_policy(
     home = gobby_home or get_gobby_home()
     compose_file = _write_managed_compose(home / "services", policy=policy)
 
-    if not shutil.which("docker"):
+    docker_path = shutil.which("docker")
+    if not docker_path:
         return {
             "success": False,
             "error": "Docker not found. Restart policy was saved but could not be applied.",
@@ -44,8 +45,8 @@ def apply_managed_service_restart_policy(
         }
 
     try:
-        result = subprocess.run(  # nosec B603 B607 # fixed docker update command
-            ["docker", "update", "--restart", policy, *containers],
+        result = subprocess.run(  # nosec B603 # fixed docker update command
+            [docker_path, "update", "--restart", policy, *containers],
             capture_output=True,
             text=True,
             timeout=60,

@@ -1,12 +1,16 @@
 """Focused tests for daemon-managed external issue synchronization."""
 
 import asyncio
+from collections.abc import Callable
+from typing import cast
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
 from gobby.storage.github_triage import GitHubTriageConfig
 from gobby.sync.external_coordinator import ExternalIssueSyncCoordinator
+
+pytestmark = pytest.mark.unit
 
 
 def _project(project_id: str = "project-1", *, linear_enabled: bool = True) -> MagicMock:
@@ -24,7 +28,7 @@ def _project(project_id: str = "project-1", *, linear_enabled: bool = True) -> M
 def _coordinator(
     projects: list[MagicMock],
     *,
-    monotonic=lambda: 0.0,
+    monotonic: Callable[[], float] = lambda: 0.0,
 ) -> tuple[ExternalIssueSyncCoordinator, MagicMock]:
     db = MagicMock()
     task_manager = MagicMock()
@@ -48,6 +52,10 @@ def _coordinator(
     return coordinator, project_manager
 
 
+def _status_store(coordinator: ExternalIssueSyncCoordinator) -> MagicMock:
+    return cast(MagicMock, coordinator.status_store)
+
+
 @pytest.mark.asyncio
 async def test_enablement_is_discovered_without_daemon_restart() -> None:
     project = _project(linear_enabled=False)
@@ -68,13 +76,12 @@ async def test_enablement_is_discovered_without_daemon_restart() -> None:
         await coordinator.wait_for_idle()
 
     linear.create_missing_issues.assert_awaited_once_with("team-1", limit=25)
-    states = [call.kwargs["state"] for call in coordinator.status_store.upsert.call_args_list]
+    status_store = _status_store(coordinator)
+    states = [call.kwargs["state"] for call in status_store.upsert.call_args_list]
     assert "disabled" in states
     assert "healthy" in states
     healthy = next(
-        call
-        for call in coordinator.status_store.upsert.call_args_list
-        if call.kwargs["state"] == "healthy"
+        call for call in status_store.upsert.call_args_list if call.kwargs["state"] == "healthy"
     )
     assert healthy.kwargs["consecutive_failures"] == 0
 
@@ -105,9 +112,11 @@ async def test_disable_during_run_keeps_disabled_status() -> None:
         release.set()
         await coordinator.wait_for_idle()
 
-    states = [call.kwargs["state"] for call in coordinator.status_store.upsert.call_args_list]
+    states = [call.kwargs["state"] for call in _status_store(coordinator).upsert.call_args_list]
     assert states[-1] == "disabled"
-    linear.sync_all.assert_not_awaited()
+    assert "running" in states
+    assert linear.create_missing_issues.await_count == 1
+    assert linear.sync_all.await_count == 0
 
 
 @pytest.mark.asyncio
@@ -122,7 +131,7 @@ async def test_linear_backfill_runs_ordered_batches_every_five_seconds() -> None
             (30, 0),
         ]
     )
-    coordinator.status_store.counts.side_effect = (
+    _status_store(coordinator).counts.side_effect = (
         lambda _project_id, provider: next(linear_counts) if provider == "linear" else (0, 0)
     )
     linear = MagicMock()
@@ -174,30 +183,33 @@ async def test_one_project_failure_does_not_block_another() -> None:
 
     final_states = {
         (call.kwargs["project_id"], call.kwargs["state"])
-        for call in coordinator.status_store.upsert.call_args_list
+        for call in _status_store(coordinator).upsert.call_args_list
     }
     assert ("failing", "degraded") in final_states
     assert ("healthy", "healthy") in final_states
 
 
 @pytest.mark.asyncio
-async def test_rate_limit_retry_time_is_respected() -> None:
+@pytest.mark.parametrize("message", ["rate-limit exceeded", "HTTP response 429"])
+async def test_rate_limit_retry_time_is_respected(message: str) -> None:
     class RateLimited(RuntimeError):
         retry_after_seconds = 42
 
     now = [10.0]
-    coordinator, _ = _coordinator([_project()], monotonic=lambda: now[0])
+    project = _project()
+    coordinator, _ = _coordinator([project], monotonic=lambda: now[0])
     current = MagicMock(consecutive_failures=1, last_error="limited")
-    coordinator.status_store.get.side_effect = [None, None, None, current, current]
+    _status_store(coordinator).get.return_value = current
     linear = MagicMock()
     linear.is_available.return_value = True
-    linear.create_missing_issues = AsyncMock(side_effect=RateLimited("rate limit exceeded"))
+    linear.create_missing_issues = AsyncMock(side_effect=RateLimited(message))
 
     with patch("gobby.sync.external_coordinator.LinearSyncService", return_value=linear):
-        await coordinator._run_linear(_project())
+        await coordinator.refresh()
+        await coordinator.wait_for_idle()
 
     assert coordinator._due[("linear", "project-1")] == 52.0
-    calls = coordinator.status_store.upsert.call_args_list
+    calls = _status_store(coordinator).upsert.call_args_list
     assert any(call.kwargs["state"] == "rate_limited" for call in calls)
     assert any(call.kwargs["retry_at"] is not None for call in calls)
 
@@ -205,38 +217,99 @@ async def test_rate_limit_retry_time_is_respected() -> None:
 @pytest.mark.asyncio
 async def test_usage_limit_uses_maximum_backoff() -> None:
     now = [10.0]
-    coordinator, _ = _coordinator([_project()], monotonic=lambda: now[0])
+    project = _project()
+    coordinator, _ = _coordinator([project], monotonic=lambda: now[0])
     current = MagicMock(consecutive_failures=1, last_error="usage limit exceeded")
-    coordinator.status_store.get.side_effect = [None, None, None, current, current]
+    _status_store(coordinator).get.return_value = current
     linear = MagicMock()
     linear.is_available.return_value = True
     linear.create_missing_issues = AsyncMock(side_effect=RuntimeError("usage limit exceeded"))
 
     with patch("gobby.sync.external_coordinator.LinearSyncService", return_value=linear):
-        await coordinator._run_linear(_project())
+        await coordinator.refresh()
+        await coordinator.wait_for_idle()
 
     assert coordinator._due[("linear", "project-1")] == 310.0
     assert any(
         call.kwargs["state"] == "rate_limited"
-        for call in coordinator.status_store.upsert.call_args_list
+        for call in _status_store(coordinator).upsert.call_args_list
     )
 
 
 @pytest.mark.asyncio
 async def test_wait_for_idle_drains_dispatched_work() -> None:
-    coordinator, _ = _coordinator([])
+    coordinator, _ = _coordinator([_project()])
+    entered = asyncio.Event()
     release = asyncio.Event()
     finished = asyncio.Event()
 
-    async def operation() -> None:
+    async def create_missing(*_args: object, **_kwargs: object) -> list[object]:
+        entered.set()
         await release.wait()
         finished.set()
+        return []
 
-    coordinator._start("linear", "project-1", operation())
-    draining = asyncio.create_task(coordinator.wait_for_idle())
-    await asyncio.sleep(0)
-    assert not draining.done()
+    linear = MagicMock()
+    linear.is_available.return_value = True
+    linear.create_missing_issues = AsyncMock(side_effect=create_missing)
+    linear.sync_all = AsyncMock(return_value={"pull": {}, "push": {}})
 
-    release.set()
-    await draining
+    with patch("gobby.sync.external_coordinator.LinearSyncService", return_value=linear):
+        await coordinator.refresh()
+        await asyncio.wait_for(entered.wait(), timeout=1.0)
+        draining = asyncio.create_task(coordinator.wait_for_idle())
+        assert not draining.done()
+
+        release.set()
+        await draining
     assert finished.is_set()
+
+
+@pytest.mark.asyncio
+async def test_run_survives_recoverable_refresh_failure() -> None:
+    coordinator, _ = _coordinator([])
+    shutdown = asyncio.Event()
+    attempts = 0
+
+    async def refresh() -> None:
+        nonlocal attempts
+        attempts += 1
+        if attempts == 1:
+            raise RuntimeError("temporary database failure")
+        shutdown.set()
+
+    with patch.object(coordinator, "refresh", new=AsyncMock(side_effect=refresh)):
+        await coordinator.run(shutdown)
+
+    assert attempts == 2
+
+
+@pytest.mark.asyncio
+async def test_shutdown_cancels_and_drains_dispatched_work() -> None:
+    coordinator, _ = _coordinator([_project()])
+    shutdown = asyncio.Event()
+    entered = asyncio.Event()
+    cancelled = asyncio.Event()
+
+    async def create_missing(*_args: object, **_kwargs: object) -> list[object]:
+        entered.set()
+        try:
+            await asyncio.Event().wait()
+            raise AssertionError("blocking operation unexpectedly completed")
+        except asyncio.CancelledError:
+            cancelled.set()
+            raise
+
+    linear = MagicMock()
+    linear.is_available.return_value = True
+    linear.create_missing_issues = AsyncMock(side_effect=create_missing)
+    linear.sync_all = AsyncMock(return_value={"pull": {}, "push": {}})
+
+    with patch("gobby.sync.external_coordinator.LinearSyncService", return_value=linear):
+        run_task = asyncio.create_task(coordinator.run(shutdown))
+        await asyncio.wait_for(entered.wait(), timeout=1.0)
+        shutdown.set()
+        await asyncio.wait_for(run_task, timeout=1.0)
+
+    assert cancelled.is_set()
+    assert not coordinator._tasks

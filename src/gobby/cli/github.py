@@ -10,7 +10,7 @@ from typing import cast
 
 import click
 
-from gobby.cli.runtime import require_cli_database
+from gobby.cli.runtime import require_cli_database, resolve_cli_project
 from gobby.mcp_proxy.manager import MCPClientManager
 from gobby.storage.external_issue_sync import ExternalIssueSyncStatusStore
 from gobby.storage.github_triage import GitHubTriageConfig, GitHubTriageStore
@@ -23,7 +23,6 @@ from gobby.sync.github_issue_sync import (
     GitHubRepositoryReadinessError,
 )
 from gobby.utils.json_helpers import json_dumps
-from gobby.utils.project_context import get_project_context
 
 logger = logging.getLogger(__name__)
 
@@ -34,23 +33,14 @@ def get_github_deps(
     require_project: bool = True,
 ) -> tuple[LocalTaskManager, MCPClientManager, LocalProjectManager, str]:
     """Get dependencies for GitHub commands."""
-    from pathlib import Path
-
     db = require_cli_database()
     task_manager = LocalTaskManager(db)
     project_manager = LocalProjectManager(db)
-    if project_ref:
-        project = project_manager.resolve_ref(project_ref)
-        if not project or project.deleted_at:
-            raise click.ClickException(f"Project not found: {project_ref}")
-        project_id = project.id
-    elif require_project:
-        ctx = get_project_context(cwd=Path.cwd())
-        if not ctx or not ctx.get("id"):
-            raise click.ClickException("Not in a gobby project directory. Run 'gobby init' first.")
-        project_id = str(ctx["id"])
-    else:
-        project_id = ""
+    project_id = resolve_cli_project(
+        project_manager,
+        project_ref,
+        require_project=require_project,
+    )
     mcp_manager = MCPClientManager(
         mcp_db_manager=LocalMCPManager(db),
         project_id=project_id,
@@ -80,6 +70,31 @@ async def _check_github_access(
         return await readiness.check_access(project, config)
     finally:
         await mcp_manager.disconnect_all()
+
+
+async def _check_github_access_result(
+    readiness: GitHubIssueSyncService,
+    project: Project,
+    config: GitHubTriageConfig,
+    mcp_manager: MCPClientManager,
+) -> tuple[tuple[str, ...] | None, str | None]:
+    """Return one readiness outcome without aborting sibling project checks."""
+    try:
+        repositories = await _check_github_access(readiness, project, config, mcp_manager)
+    except GitHubRepositoryReadinessError as exc:
+        return None, str(exc)
+    return repositories, None
+
+
+async def _gather_github_access(
+    checks: list[tuple[GitHubIssueSyncService, Project, GitHubTriageConfig, MCPClientManager]],
+) -> list[tuple[tuple[str, ...] | None, str | None]]:
+    """Run enabled project readiness checks concurrently in one event loop."""
+    return list(
+        await asyncio.gather(
+            *(_check_github_access_result(*check) for check in checks),
+        )
+    )
 
 
 @click.group()
@@ -176,6 +191,10 @@ def github_status(project_ref: str | None, all_projects: bool, json_format: bool
         config_store = GitHubTriageStore(task_manager.db)
         status_store = ExternalIssueSyncStatusStore(task_manager.db)
         payloads: list[dict[str, object]] = []
+        readiness_checks: list[
+            tuple[GitHubIssueSyncService, Project, GitHubTriageConfig, MCPClientManager]
+        ] = []
+        readiness_payloads: list[dict[str, object]] = []
         for project in projects:
             if project is None or project.deleted_at:
                 continue
@@ -198,35 +217,43 @@ def github_status(project_ref: str | None, all_projects: bool, json_format: bool
                 repositories = readiness.repositories_for(project, config)
             except ValueError:
                 repositories = ()
-            try:
-                repositories = asyncio.run(
-                    _check_github_access(readiness, project, config, mcp_manager)
-                )
-                ready = True
-            except GitHubRepositoryReadinessError as exc:
-                readiness_error = str(exc)
-            payloads.append(
-                {
-                    "project_id": project.id,
-                    "project_name": project.name,
-                    **config.to_dict(),
-                    "repositories": list(repositories or config.repositories),
-                    "ready": ready,
-                    "readiness_error": readiness_error,
-                    "state": status.state if status else "pending",
-                    "linked_count": linked,
-                    "pending_count": pending,
-                    "last_attempt_at": status.last_attempt_at if status else None,
-                    "last_success_at": status.last_success_at if status else None,
-                    "retry_at": status.retry_at if status else None,
-                    "last_statistics": status.last_statistics if status else {},
-                    "consecutive_failures": status.consecutive_failures if status else 0,
-                    "last_error": status.last_error if status else None,
-                }
-            )
+            payload = {
+                "project_id": project.id,
+                "project_name": project.name,
+                **config.to_dict(),
+                "repositories": list(repositories or config.repositories),
+                "ready": ready,
+                "readiness_error": readiness_error,
+                "state": status.state if status else "pending",
+                "linked_count": linked,
+                "pending_count": pending,
+                "last_attempt_at": status.last_attempt_at if status else None,
+                "last_success_at": status.last_success_at if status else None,
+                "retry_at": status.retry_at if status else None,
+                "last_statistics": status.last_statistics if status else {},
+                "consecutive_failures": status.consecutive_failures if status else 0,
+                "last_error": status.last_error if status else None,
+            }
+            payloads.append(payload)
+            if config.sync_enabled or config.triage_enabled:
+                readiness_checks.append((readiness, project, config, mcp_manager))
+                readiness_payloads.append(payload)
+
+        if readiness_checks:
+            readiness_results = asyncio.run(_gather_github_access(readiness_checks))
+            for payload, (checked_repositories, readiness_error) in zip(
+                readiness_payloads,
+                readiness_results,
+                strict=True,
+            ):
+                if checked_repositories:
+                    payload["repositories"] = list(checked_repositories)
+                payload["ready"] = readiness_error is None
+                payload["readiness_error"] = readiness_error
 
         if json_format:
-            click.echo(json_dumps(payloads if all_projects else payloads[0], indent=2, default=str))
+            output = payloads if all_projects or not payloads else payloads[0]
+            click.echo(json_dumps(output, indent=2, default=str))
         else:
             for index, payload in enumerate(payloads):
                 if index:

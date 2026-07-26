@@ -1,6 +1,8 @@
 """Tests for project-scoped GitHub issue synchronization."""
 
+from collections.abc import Callable
 from datetime import UTC, datetime, timedelta
+from typing import Any, cast
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -13,9 +15,17 @@ from gobby.sync.github_issue_sync import (
 )
 from gobby.tasks.import_criteria import external_issue_validation_criteria
 
+GitHubSyncFixture = tuple[
+    GitHubIssueSyncService,
+    MagicMock,
+    MagicMock,
+    MagicMock,
+    MagicMock,
+]
+
 
 @pytest.fixture
-def github_sync() -> tuple[GitHubIssueSyncService, MagicMock, MagicMock, MagicMock, MagicMock]:
+def github_sync() -> GitHubSyncFixture:
     db = MagicMock()
     mcp_manager = MagicMock()
     task_manager = MagicMock()
@@ -43,7 +53,9 @@ def github_sync() -> tuple[GitHubIssueSyncService, MagicMock, MagicMock, MagicMo
 
 
 @pytest.mark.asyncio
-async def test_webhook_issue_is_created_once_and_then_updated(github_sync) -> None:
+async def test_webhook_issue_is_created_once_and_then_updated(
+    github_sync: GitHubSyncFixture,
+) -> None:
     service, db, _, task_manager, _ = github_sync
     validation_criteria = external_issue_validation_criteria("GitHub", "owner/repo#17")
     created_task = MagicMock(id="task-1")
@@ -86,7 +98,9 @@ async def test_webhook_issue_is_created_once_and_then_updated(github_sync) -> No
 
 
 @pytest.mark.asyncio
-async def test_pull_request_is_excluded_before_task_lookup(github_sync) -> None:
+async def test_pull_request_is_excluded_before_task_lookup(
+    github_sync: GitHubSyncFixture,
+) -> None:
     service, db, _, task_manager, _ = github_sync
 
     result = await service.sync_issue(
@@ -102,7 +116,9 @@ async def test_pull_request_is_excluded_before_task_lookup(github_sync) -> None:
 
 
 @pytest.mark.asyncio
-async def test_closed_issue_closes_existing_linked_task(github_sync) -> None:
+async def test_closed_issue_closes_existing_linked_task(
+    github_sync: GitHubSyncFixture,
+) -> None:
     service, db, _, task_manager, _ = github_sync
     db.fetchone.return_value = {
         "id": "task-1",
@@ -126,13 +142,16 @@ async def test_closed_issue_closes_existing_linked_task(github_sync) -> None:
     )
 
     assert result["action"] == "updated"
+    assert result["task_id"] == "task-1"
     updates = task_manager.reconcile_task_state.call_args.kwargs
     assert updates["closed_at"] == closed_at
     assert updates["closed_reason"] == "github_sync"
 
 
 @pytest.mark.asyncio
-async def test_local_newer_link_wins_over_recovery(github_sync) -> None:
+async def test_local_newer_link_wins_over_recovery(
+    github_sync: GitHubSyncFixture,
+) -> None:
     service, db, _, task_manager, _ = github_sync
     remote_updated = datetime(2026, 1, 1, tzinfo=UTC)
     db.fetchone.return_value = {
@@ -158,9 +177,9 @@ async def test_local_newer_link_wins_over_recovery(github_sync) -> None:
 
 
 @pytest.mark.asyncio
-async def test_recovery_excludes_pull_requests(github_sync) -> None:
+async def test_recovery_excludes_pull_requests(github_sync: GitHubSyncFixture) -> None:
     service, db, _, task_manager, _ = github_sync
-    service._call = AsyncMock(
+    call_mock = AsyncMock(
         return_value={
             "issues": [
                 {"number": 21, "title": "Issue", "state": "open"},
@@ -172,7 +191,8 @@ async def test_recovery_excludes_pull_requests(github_sync) -> None:
     task_manager.create_task.return_value = MagicMock(id="task-21")
     task_manager.reconcile_task_state.return_value = MagicMock(id="task-21")
 
-    stats = await service.recover_project("project-1")
+    with patch.object(service, "_call", new=call_mock):
+        stats = await service.recover_project("project-1")
 
     assert stats["scanned"] == 1
     assert stats["created"] == 1
@@ -180,7 +200,121 @@ async def test_recovery_excludes_pull_requests(github_sync) -> None:
 
 
 @pytest.mark.asyncio
-async def test_outbound_selects_only_fully_linked_tasks(github_sync) -> None:
+async def test_recovery_normalizes_string_numbers_and_skips_malformed_numbers(
+    github_sync: GitHubSyncFixture,
+) -> None:
+    service, db, _, task_manager, _ = github_sync
+    call_mock = AsyncMock(
+        return_value={
+            "issues": [
+                {"number": " 23 ", "title": "String number", "state": "open"},
+                {"number": "not-a-number", "title": "Malformed", "state": "open"},
+                {"number": 0, "title": "Non-positive", "state": "open"},
+            ]
+        }
+    )
+    db.fetchone.return_value = None
+    task_manager.create_task.return_value = MagicMock(id="task-23")
+    task_manager.reconcile_task_state.return_value = MagicMock(id="task-23")
+
+    with patch.object(service, "_call", new=call_mock):
+        stats = await service.recover_project("project-1")
+
+    assert stats["scanned"] == 3
+    assert stats["created"] == 1
+    assert stats["errors"] == 2
+    assert task_manager.create_task.call_args.kwargs["github_issue_number"] == 23
+
+
+@pytest.mark.asyncio
+async def test_recovery_stops_when_github_repeats_a_full_page(
+    github_sync: GitHubSyncFixture,
+) -> None:
+    service, _, _, _, _ = github_sync
+    page = [{"number": number} for number in range(1, 101)]
+    call_mock = AsyncMock(side_effect=[{"issues": page}, {"issues": page}])
+    sync_issue = AsyncMock(return_value={"action": "updated"})
+
+    with (
+        patch.object(service, "_call", new=call_mock),
+        patch.object(service, "sync_issue", new=sync_issue),
+    ):
+        stats = await service.recover_project("project-1")
+
+    assert call_mock.await_count == 2
+    assert sync_issue.await_count == 100
+    assert stats["scanned"] == 100
+    assert stats["errors"] == 1
+
+
+@pytest.mark.asyncio
+async def test_recovery_stops_at_the_page_limit(
+    github_sync: GitHubSyncFixture,
+) -> None:
+    service, _, _, _, _ = github_sync
+    pages = [
+        [{"number": number} for number in range(1, 101)],
+        [{"number": number} for number in range(101, 201)],
+    ]
+    call_mock = AsyncMock(side_effect=[{"issues": page} for page in pages])
+    sync_issue = AsyncMock(return_value={"action": "updated"})
+
+    with (
+        patch("gobby.sync.github_issue_sync._MAX_GITHUB_RECOVERY_PAGES", 2),
+        patch.object(service, "_call", new=call_mock),
+        patch.object(service, "sync_issue", new=sync_issue),
+    ):
+        stats = await service.recover_project("project-1")
+
+    assert call_mock.await_count == 2
+    assert sync_issue.await_count == 200
+    assert stats["scanned"] == 200
+    assert stats["errors"] == 1
+
+
+@pytest.mark.asyncio
+async def test_sync_issue_offloads_synchronous_storage_and_manager_calls(
+    github_sync: GitHubSyncFixture,
+) -> None:
+    service, db, _, task_manager, _ = github_sync
+    db.fetchone.return_value = None
+    task_manager.create_task.return_value = MagicMock(id="task-24")
+    task_manager.reconcile_task_state.return_value = MagicMock(id="task-24")
+    issue = {"number": 24, "title": "Offloaded", "state": "open"}
+    offloaded: list[str] = []
+
+    async def record_to_thread(
+        func: Callable[..., Any],
+        /,
+        *args: Any,
+        **kwargs: Any,
+    ) -> Any:
+        offloaded.append(getattr(func, "_mock_name", None) or func.__name__)
+        return func(*args, **kwargs)
+
+    with patch("gobby.sync.github_issue_sync.asyncio.to_thread", side_effect=record_to_thread):
+        result = await service.sync_issue(
+            "project-1",
+            "owner/repo",
+            24,
+            issue_data=issue,
+        )
+
+    assert result == {"action": "created", "task_id": "task-24"}
+    assert {
+        "get",
+        "get_config",
+        "repositories_for",
+        "fetchone",
+        "create_task",
+        "reconcile_task_state",
+    } <= set(offloaded)
+
+
+@pytest.mark.asyncio
+async def test_outbound_selects_only_fully_linked_tasks(
+    github_sync: GitHubSyncFixture,
+) -> None:
     service, db, _, _, _ = github_sync
     db.fetchall.return_value = [
         {"id": "task-1", "github_repo": "owner/repo", "github_issue_number": 7}
@@ -199,7 +333,9 @@ async def test_outbound_selects_only_fully_linked_tasks(github_sync) -> None:
 
 
 @pytest.mark.asyncio
-async def test_outbound_propagates_rate_limit_retry_metadata(github_sync) -> None:
+async def test_outbound_propagates_rate_limit_retry_metadata(
+    github_sync: GitHubSyncFixture,
+) -> None:
     class RateLimited(RuntimeError):
         retry_after_seconds = 60
 
@@ -220,9 +356,9 @@ async def test_outbound_propagates_rate_limit_retry_metadata(github_sync) -> Non
 
 
 @pytest.mark.asyncio
-async def test_sync_only_delivery_does_not_run_triage(github_sync) -> None:
+async def test_sync_only_delivery_does_not_run_triage(github_sync: GitHubSyncFixture) -> None:
     service, _, _, _, _ = github_sync
-    service.sync_issue = AsyncMock(return_value={"action": "updated", "task_id": "task-1"})
+    sync_issue = AsyncMock(return_value={"action": "updated", "task_id": "task-1"})
     triage = AsyncMock()
     triage_service = MagicMock()
     triage_service.store = service.config_store
@@ -230,36 +366,51 @@ async def test_sync_only_delivery_does_not_run_triage(github_sync) -> None:
     handler = GitHubIssueDeliveryHandler(triage_service)
     handler.sync_service = service
 
-    result = await handler("project-1", "owner/repo", 23, source="webhook")
+    with patch.object(service, "sync_issue", new=sync_issue):
+        result = await handler("project-1", "owner/repo", 23, source="webhook")
 
     assert result["action"] == "updated"
-    triage.assert_not_awaited()
+    assert result["task_id"] == "task-1"
+    assert sync_issue.await_count == 1
+    sync_issue.assert_awaited_once_with(
+        "project-1",
+        "owner/repo",
+        23,
+        issue_data=None,
+    )
+    assert triage.await_count == 0
 
 
 @pytest.mark.asyncio
-async def test_readiness_reports_repository_access_failure(github_sync) -> None:
+async def test_readiness_reports_repository_access_failure(
+    github_sync: GitHubSyncFixture,
+) -> None:
     service, _, mcp_manager, _, project_manager = github_sync
     mcp_manager.call_tool = AsyncMock(side_effect=RuntimeError("404 Not Found"))
+    config = cast(MagicMock, service.config_store).get_config.return_value
 
     with pytest.raises(GitHubRepositoryReadinessError, match="owner/repo.*404 Not Found"):
         await service.check_access(
             project_manager.get.return_value,
-            service.config_store.get_config.return_value,
+            config,
         )
 
 
 @pytest.mark.asyncio
-async def test_readiness_preserves_rate_limit_retry_time(github_sync) -> None:
+async def test_readiness_preserves_rate_limit_retry_time(
+    github_sync: GitHubSyncFixture,
+) -> None:
     class RateLimited(RuntimeError):
         retry_after_seconds = 75
 
     service, _, mcp_manager, _, project_manager = github_sync
     mcp_manager.call_tool = AsyncMock(side_effect=RateLimited("rate limit"))
+    config = cast(MagicMock, service.config_store).get_config.return_value
 
     with pytest.raises(GitHubRepositoryReadinessError) as raised:
         await service.check_access(
             project_manager.get.return_value,
-            service.config_store.get_config.return_value,
+            config,
         )
 
-    assert raised.value.retry_after_seconds == 75
+    assert vars(raised.value)["retry_after_seconds"] == 75
