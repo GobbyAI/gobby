@@ -232,7 +232,8 @@ def extract_yielded_cell_id(data: dict[str, Any]) -> str | None:
             if not first_nonblank:
                 continue
             match = _YIELDED_CELL_RE.fullmatch(first_nonblank)
-            return match.group(1) if match else None
+            if match:
+                return match.group(1)
     return None
 
 

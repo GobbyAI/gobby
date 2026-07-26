@@ -428,6 +428,7 @@ def test_codex_functions_exec_session_collision_fails_closed() -> None:
     "tool_output",
     [
         "\nScript running with cell ID 52\nWall time: 10.01 seconds\nOutput:\nstill running",
+        "Wrapper status: running\nScript running with cell ID 52",
         {
             "content": [
                 {
@@ -450,7 +451,6 @@ def test_codex_yielded_cell_sentinel_accepts_raw_and_structured_output(
 @pytest.mark.parametrize(
     "tool_output",
     [
-        "Wrapper status: running\nScript running with cell ID 52",
         "Script running with cell ID 52 plus commentary",
         {"content": [{"type": "input_text", "text": "still running"}]},
     ],
