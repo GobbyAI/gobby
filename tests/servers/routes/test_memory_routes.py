@@ -14,6 +14,7 @@ from gobby.config.persistence import MemoryDreamConfig
 from gobby.servers.routes.memory import create_memory_router
 from gobby.servers.routes.memory_dream import create_memory_dream_router
 from gobby.storage.memories import Memory
+from gobby.storage.memories_scope import ALL_MEMORIES, MemoryScope
 
 pytestmark = pytest.mark.unit
 
@@ -543,8 +544,8 @@ class TestPromoteMemory:
         assert response.json()["is_global"] is True
         mock_server.memory_manager.promote_memory.assert_awaited_once_with("mm-promoted")
 
-    def test_promote_calls_explicit_operation(self, client, mock_server) -> None:
-        """Promotion is a dedicated operation with no nullable target scope."""
+    def test_promote_rejects_extraneous_fields(self, client, mock_server) -> None:
+        """Promotion rejects unsupported request fields."""
         promoted = _make_memory(id="mm-promoted", is_global=True)
         mock_server.memory_manager.promote_memory = AsyncMock(return_value=promoted)
 
@@ -553,8 +554,8 @@ class TestPromoteMemory:
             json={"target_project_id": "other-project"},
         )
 
-        assert response.status_code == 200
-        mock_server.memory_manager.promote_memory.assert_awaited_once_with("mm-promoted")
+        assert response.status_code == 422
+        mock_server.memory_manager.promote_memory.assert_not_awaited()
 
     def test_promote_not_found(self, client, mock_server) -> None:
         """A missing memory raises ValueError in storage and surfaces as 404."""
@@ -707,6 +708,10 @@ class TestMemoryGraph:
         mock_server.memory_manager.list_memories.assert_called_once_with(
             project_id="proj-1", limit=200
         )
+        mock_server.memory_manager.storage.get_all_crossrefs.assert_called_once_with(
+            scope=MemoryScope.project_visible("proj-1"),
+            limit=2000,
+        )
 
     @pytest.mark.parametrize("memory_limit", [-1, 1001])
     def test_graph_rejects_out_of_range_limit(self, client, memory_limit: int) -> None:
@@ -726,7 +731,8 @@ class TestMemoryGraph:
             project_id=None, limit=memory_limit
         )
         mock_server.memory_manager.storage.get_all_crossrefs.assert_called_once_with(
-            project_id=None, limit=memory_limit * 10
+            scope=ALL_MEMORIES,
+            limit=memory_limit * 10,
         )
 
     def test_graph_server_error(self, client, mock_server) -> None:

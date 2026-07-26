@@ -651,6 +651,7 @@ class KnowledgeGraphService:
                 self._reader,
                 self._writer,
                 project_id,
+                is_global=project_id is None,
                 min_cluster_size=self._cluster_min_cluster_size,
                 min_samples=self._cluster_min_samples,
             )

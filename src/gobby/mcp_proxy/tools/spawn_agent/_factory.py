@@ -462,17 +462,19 @@ def create_spawn_agent_registry(
                     visited: set[str] = {agent_body.name}
                     candidate_name: str | None = agent_body.fallback_agent
                     fallback_body = None
+                    skip_reason = "chain_exhausted"
+                    skipped_candidate = candidate_name
                     max_depth = 5
 
                     for _ in range(max_depth):
-                        if not candidate_name or candidate_name in visited:
-                            if candidate_name in visited:
-                                logger.warning(
-                                    "Cycle detected in fallback chain: %r already visited %s",
-                                    candidate_name,
-                                    visited,
-                                )
+                        if not candidate_name:
+                            skip_reason = "chain_ended"
                             break
+                        if candidate_name in visited:
+                            skip_reason = "cycle_detected"
+                            skipped_candidate = candidate_name
+                            break
+                        skipped_candidate = candidate_name
                         visited.add(candidate_name)
                         candidate = _load_agent_body(
                             candidate_name,
@@ -481,6 +483,7 @@ def create_spawn_agent_registry(
                             cli_source=parent_provider,
                         )
                         if not candidate:
+                            skip_reason = "definition_missing"
                             break
                         candidate_provider = resolve_spawn_provider(
                             explicit_provider=None,
@@ -491,6 +494,8 @@ def create_spawn_agent_registry(
                             fallback_body = candidate
                             break
                         candidate_name = candidate.fallback_agent
+                    else:
+                        skip_reason = "max_depth_exhausted"
 
                     if fallback_body:
                         logger.info(
@@ -502,6 +507,17 @@ def create_spawn_agent_registry(
                         )
                         agent_body = fallback_body
                         agent = agent_body.name
+                    else:
+                        logger.warning(
+                            "Fallback agent chain did not produce a viable agent",
+                            extra={
+                                "task_id": task_id,
+                                "primary_agent": agent_body.name,
+                                "failed_provider": agent_provider,
+                                "candidate_agent": skipped_candidate,
+                                "skip_reason": skip_reason,
+                            },
+                        )
             except Exception as e:
                 logger.debug("Fallback agent check failed: %s", e)
 

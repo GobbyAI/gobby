@@ -1,9 +1,12 @@
 """Contract tests for the read-only trajectory-monitor agent."""
 
 from pathlib import Path
+from typing import Any, cast
 
 import pytest
 import yaml
+
+from gobby.workflows.safe_evaluator import SafeExpressionEvaluator
 
 AGENT_PATH = (
     Path(__file__).resolve().parents[2]
@@ -13,12 +16,12 @@ AGENT_PATH = (
 pytestmark = pytest.mark.unit
 
 
-def _agent() -> dict:
-    return yaml.safe_load(AGENT_PATH.read_text(encoding="utf-8"))
+def _agent() -> dict[str, Any]:
+    return cast(dict[str, Any], yaml.safe_load(AGENT_PATH.read_text(encoding="utf-8")))
 
 
-def _step(agent: dict, name: str) -> dict:
-    return next(step for step in agent["steps"] if step["name"] == name)
+def _step(agent: dict[str, Any], name: str) -> dict[str, Any]:
+    return cast(dict[str, Any], next(step for step in agent["steps"] if step["name"] == name))
 
 
 def test_trajectory_monitor_is_read_only_and_terminates_explicitly() -> None:
@@ -76,3 +79,24 @@ def test_trajectory_monitor_emits_one_pr_verdict_or_suspicion_escalation() -> No
     assert review["transitions"] == [
         {"to": "terminate", "when": "vars.verdict_emitted or vars.review_stale"}
     ]
+
+
+@pytest.mark.parametrize("state", [None, {"is_closed": False, "current_stage": None}])
+def test_trajectory_monitor_tolerates_missing_nested_task_state(state: object) -> None:
+    review = _step(_agent(), "review")
+    get_task_handler = next(
+        item
+        for item in review["on_mcp_success"]
+        if item["server"] == "gobby-tasks" and item["tool"] == "get_task"
+    )
+    evaluator = SafeExpressionEvaluator(
+        {
+            "tool_output": {
+                "success": True,
+                "result": {"state": state},
+            }
+        },
+        {"bool": bool},
+    )
+
+    assert evaluator.evaluate(get_task_handler["when"]) is True

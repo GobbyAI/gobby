@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from typing import Any
+from typing import Any, cast
 
 import pytest
 
@@ -36,6 +36,31 @@ def test_epic_descendant_gate_blocks_open_ready_descendant(
     assert gate.blockers[0].stage_name == "development"
     assert gate.blockers[0].stage_state == "ready"
     assert gate.blockers[0].reason == EPIC_DESCENDANT_GATE_REASON
+
+
+def test_epic_descendant_gate_selects_pending_stage_by_manifest_position(
+    temp_db: HubDatabase,
+    sample_project: dict[str, Any],
+) -> None:
+    root = _epic_root(temp_db, sample_project)
+    child = create_task(
+        temp_db,
+        sample_project,
+        parent_task_id=root.id,
+        title="Reverse-alphabetic manifest",
+        category="code",
+    )
+    initialize_manifest(
+        temp_db,
+        child.id,
+        [spec("merge", 0), spec("development", 1)],
+    )
+
+    gate = _gate(temp_db, root.id)
+
+    assert gate is not None
+    assert [blocker.task_id for blocker in gate.blockers] == [child.id]
+    assert gate.blockers[0].stage_name == "merge"
 
 
 def test_epic_descendant_gate_blocks_escalated_descendant_without_stage(
@@ -142,7 +167,7 @@ def _child(
     )
     initialize_manifest(temp_db, child.id, [spec("development", 0), spec("merge", 1)])
     set_stage_state(temp_db, child.id, "development", stage_state)
-    return child
+    return cast(Task, child)
 
 
 def _gate(temp_db: HubDatabase, root_id: str) -> EpicDescendantGate | None:

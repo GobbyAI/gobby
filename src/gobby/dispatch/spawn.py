@@ -40,6 +40,7 @@ if TYPE_CHECKING:
     from gobby.agents.runner import AgentRunner
     from gobby.storage.sessions import SessionManager
     from gobby.storage.tasks import LocalTaskManager
+    from gobby.workflows.definitions import AgentDefinitionBody
 
 logger = logging.getLogger(__name__)
 
@@ -141,6 +142,22 @@ def _expire_failed_adversary_spawn(
         )
 
 
+def _with_skill_allowed_tools(
+    agent_body: AgentDefinitionBody | None,
+    allowed_tools: tuple[str, ...],
+) -> AgentDefinitionBody | None:
+    """Return an agent definition whose restricted steps include composed skill tools."""
+    if agent_body is None or not agent_body.steps or not allowed_tools:
+        return agent_body
+
+    composed = agent_body.model_copy(deep=True)
+    for step in composed.steps or ():
+        if step.allowed_tools == "all":
+            continue
+        step.allowed_tools = list(dict.fromkeys((*step.allowed_tools, *allowed_tools)))
+    return composed
+
+
 async def spawn_agent(
     action: SpawnAgentAction,
     *,
@@ -205,6 +222,7 @@ async def spawn_agent(
     )
     if skill_composition.failure_reason is not None:
         raise DispatchSpawnFailed(skill_composition.failure_reason)
+    agent_body = _with_skill_allowed_tools(agent_body, skill_composition.allowed_tools)
 
     parent_session_id = get_or_create_launcher_session(
         session_manager,

@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 
 import pytest
 import yaml
@@ -16,7 +16,7 @@ def _agent() -> dict[str, Any]:
         Path(__file__).resolve().parents[2]
         / "src/gobby/install/shared/workflows/agents/epic-reviewer.yaml"
     )
-    return yaml.safe_load(path.read_text(encoding="utf-8"))
+    return cast(dict[str, Any], yaml.safe_load(path.read_text(encoding="utf-8")))
 
 
 def test_three_outcomes() -> None:
@@ -29,6 +29,12 @@ def test_three_outcomes() -> None:
         "fail_stage",
         "escalate_task",
     } <= success_tools
+
+
+def test_review_step_stays_active_after_mcp_error() -> None:
+    review_step = next(step for step in _agent()["steps"] if step["name"] == "review")
+
+    assert review_step["mcp_error_policy"] == "stay"
 
 
 def test_success_path_uses_complete_stage_for_in_progress_epic_qa() -> None:

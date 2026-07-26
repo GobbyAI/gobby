@@ -11,11 +11,12 @@ from typing import TYPE_CHECKING, Any, cast
 from uuid import uuid4
 
 from fastapi import APIRouter, HTTPException, Query
-from pydantic import BaseModel, Field, field_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 from gobby.servers.responses import JSONResponse
 from gobby.storage.memories import Memory, MemoryType, Visibility
 from gobby.storage.memories_crud import normalize_supersedes
+from gobby.storage.memories_scope import ALL_MEMORIES, MemoryScope
 from gobby.storage.projects import PERSONAL_PROJECT_ID
 
 if TYPE_CHECKING:
@@ -94,6 +95,12 @@ class MemoryMoveRequest(BaseModel):
     """Request body for moving a memory to another owning project."""
 
     new_project_id: str = Field(..., description="New owning project ID")
+
+
+class MemoryPromoteRequest(BaseModel):
+    """Empty request body that rejects unsupported promotion arguments."""
+
+    model_config = ConfigDict(extra="forbid")
 
 
 def _current_project_id(server: "HTTPServer") -> str | None:
@@ -411,8 +418,10 @@ def create_memory_router(server: "HTTPServer") -> APIRouter:
                 project_id=project_id, limit=memory_limit
             )
             memory_ids = {m.id for m in memories}
+            scope = MemoryScope.project_visible(project_id) if project_id else ALL_MEMORIES
             all_crossrefs = server.memory_manager.storage.get_all_crossrefs(
-                project_id=project_id, limit=memory_limit * 10
+                scope=scope,
+                limit=memory_limit * 10,
             )
             crossrefs = [
                 c for c in all_crossrefs if c.source_id in memory_ids and c.target_id in memory_ids
@@ -632,7 +641,10 @@ def create_memory_router(server: "HTTPServer") -> APIRouter:
         return memory.to_dict()
 
     @router.post("/{memory_id}/promote")
-    async def promote_memory(memory_id: str) -> Any:
+    async def promote_memory(
+        memory_id: str,
+        _request_data: MemoryPromoteRequest | None = None,
+    ) -> Any:
         """Promote a project memory to global scope."""
         try:
             _ensure_memory_in_current_project(server, memory_id)

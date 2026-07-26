@@ -181,6 +181,11 @@ mod serial_db {
     }
 
     #[test]
+    #[cfg_attr(
+        not(gcode_postgres_tests),
+        ignore = "requires a PostgreSQL test database URL"
+    )]
+    #[serial_test::serial(serial_db)]
     fn prune_unreachable_falkor_aborts_before_stale_sql_mutation() {
         let database_url = test_env::postgres_test_database_url("projection stale tests");
         let mut conn = Client::connect(&database_url, NoTls).expect("connect PostgreSQL");
@@ -219,6 +224,11 @@ mod serial_db {
     }
 
     #[test]
+    #[cfg_attr(
+        not(gcode_postgres_tests),
+        ignore = "requires a PostgreSQL test database URL"
+    )]
+    #[serial_test::serial(serial_db)]
     fn prune_qdrant_enumeration_failure_aborts_before_stale_sql_mutation() {
         let database_url = test_env::postgres_test_database_url("projection stale tests");
         let mut conn = Client::connect(&database_url, NoTls).expect("connect PostgreSQL");

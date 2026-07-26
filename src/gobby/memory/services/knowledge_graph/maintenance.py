@@ -61,10 +61,13 @@ class KnowledgeGraphMaintenance:
         try:
             scope_rows = await self._falkor.query(
                 "MATCH (m:Memory) WHERE m.memory_id IN $ids "
-                "RETURN m.memory_id AS memory_id, m.project_id AS project_id",
+                "RETURN m.memory_id AS memory_id, m.project_id AS project_id, "
+                "m.is_global AS is_global",
                 {"ids": list(memory_ids)},
             )
-            impacted_scopes = {row.get("project_id") for row in scope_rows}
+            impacted_scopes = {
+                (row.get("project_id"), bool(row.get("is_global"))) for row in scope_rows
+            }
             records = await self._falkor.query(
                 "MATCH (m:Memory) WHERE m.memory_id IN $ids "
                 "WITH count(m) AS total, collect(m) AS nodes "
@@ -72,10 +75,10 @@ class KnowledgeGraphMaintenance:
                 "RETURN total AS deleted",
                 {"ids": list(memory_ids)},
             )
-            for scope in impacted_scopes:
+            for project_id, is_global in impacted_scopes:
                 await self.remove_orphaned_entities(
-                    scope="project" if scope is not None else "global",
-                    project_id=scope,
+                    scope="global" if is_global else "project",
+                    project_id=project_id,
                 )
             return int(records[0]["deleted"]) if records else 0
         except FalkorConnectionError as e:

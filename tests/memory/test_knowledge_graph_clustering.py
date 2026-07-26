@@ -219,9 +219,12 @@ async def test_recluster_project_entities_passes_density_params(
             self,
             labels: dict[str, int | None],
             project_id: str | None,
+            *,
+            is_global: bool,
         ) -> dict[str, int]:
             captured["labels"] = labels
             captured["write_project_id"] = project_id
+            captured["write_is_global"] = is_global
             return {"clustered": 1, "noise": 0}
 
     def fake_cluster_entity_vectors(
@@ -255,6 +258,7 @@ async def test_recluster_project_entities_passes_density_params(
         Reader(),  # type: ignore[arg-type]
         Writer(),  # type: ignore[arg-type]
         "project-1",
+        is_global=False,
         min_cluster_size=7,
         min_samples=None,
     )
@@ -262,6 +266,7 @@ async def test_recluster_project_entities_passes_density_params(
     assert result.cluster_count == 1
     assert captured["read_project_id"] == "project-1"
     assert captured["write_project_id"] == "project-1"
+    assert captured["write_is_global"] is False
     assert captured["min_cluster_size"] == 7
     assert captured["min_samples"] is None
 

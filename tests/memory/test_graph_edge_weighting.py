@@ -366,12 +366,14 @@ async def test_service_recluster_uses_configured_density_params(
         writer: Any,
         project_id: str | None,
         *,
+        is_global: bool,
         min_cluster_size: int,
         min_samples: int | None,
     ) -> ClusterRunResult:
         captured["reader"] = reader
         captured["writer"] = writer
         captured["project_id"] = project_id
+        captured["is_global"] = is_global
         captured["min_cluster_size"] = min_cluster_size
         captured["min_samples"] = min_samples
         return ClusterRunResult(
@@ -404,6 +406,7 @@ async def test_service_recluster_uses_configured_density_params(
     assert result.project_id == "project-1"
     assert captured["reader"] is service._reader
     assert captured["writer"] is service._writer
+    assert captured["is_global"] is False
     assert captured["min_cluster_size"] == 7
     assert captured["min_samples"] is None
 
@@ -572,6 +575,7 @@ async def test_write_entity_clusters_sets_labels_and_clears_noise() -> None:
     counts = await writer.write_entity_clusters(
         {"entity-a": 0, "entity-b": None, "entity-c": 1},
         project_id="project-1",
+        is_global=False,
     )
 
     assert counts == {"clustered": 2, "noise": 1}
@@ -584,10 +588,15 @@ async def test_write_entity_clusters_sets_labels_and_clears_noise() -> None:
             {"entity_key": "entity-c", "cluster_id": 1},
         ],
         "project_id": "project-1",
+        "is_global": False,
     }
     clear_cypher, clear_params = falkor.find("REMOVE e.cluster_id")[0]
     assert "UNWIND $entity_keys AS entity_key" in clear_cypher
-    assert clear_params == {"entity_keys": ["entity-b"], "project_id": "project-1"}
+    assert clear_params == {
+        "entity_keys": ["entity-b"],
+        "project_id": "project-1",
+        "is_global": False,
+    }
 
 
 async def test_cluster_expansion_runs_from_seed_when_traversal_has_no_neighbors() -> None:

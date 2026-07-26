@@ -61,12 +61,17 @@ async def test_repair_uses_authoritative_scope_and_repairs_falkor_in_place() -> 
     )
     storage.get_memories.assert_called_once_with([memory.id], ALL_MEMORIES, visibility="all")
     memory_cypher, memory_params = falkor.query.await_args_list[0].args
-    assert "SET m.project_id = $project_id, m.is_global = $is_global" in memory_cypher
+    assert "UNWIND $memories AS memory" in memory_cypher
+    assert "SET m.project_id = memory.project_id, m.is_global = memory.is_global" in memory_cypher
     assert "DELETE" not in memory_cypher
     assert memory_params == {
-        "memory_id": memory.id,
-        "project_id": "project-1",
-        "is_global": False,
+        "memories": [
+            {
+                "memory_id": memory.id,
+                "project_id": "project-1",
+                "is_global": False,
+            }
+        ]
     }
     assert falkor.query.await_args_list[1].args[1] == {"global_project_id": GLOBAL_PROJECT_ID}
 
@@ -148,7 +153,13 @@ async def test_graph_repair_paginates_list_memories_with_positive_limit(monkeypa
 
     storage.list_memories = MagicMock(side_effect=_list_memories)
     falkor = MagicMock()
-    falkor.query = AsyncMock(return_value=[{"repaired": 1}])
+
+    async def _query(cypher: str, params: dict[str, Any]) -> list[dict[str, int]]:
+        if "UNWIND $memories AS memory" in cypher:
+            return [{"repaired": len(params["memories"])}]
+        return [{"repaired": 1}]
+
+    falkor.query = AsyncMock(side_effect=_query)
     service = ProjectionScopeRepairService(
         storage_provider=lambda: storage,
         run_db=_run_db,
@@ -160,6 +171,12 @@ async def test_graph_repair_paginates_list_memories_with_positive_limit(monkeypa
 
     assert result.failures == []
     assert result.graph_memories_repaired == 3
+    graph_repair_calls = [
+        call
+        for call in falkor.query.await_args_list
+        if "UNWIND $memories AS memory" in call.args[0]
+    ]
+    assert len(graph_repair_calls) == 2
     list_calls = storage.list_memories.call_args_list
     assert [call.kwargs["offset"] for call in list_calls] == [0, 2]
     assert all(call.kwargs["limit"] == 2 for call in list_calls)

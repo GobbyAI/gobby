@@ -619,9 +619,12 @@ def install(
             # The orchestration proceeds with db/secret_store=None — downstream
             # steps open their own DB via _ensure_db_and_secrets if they need it.
             logger.warning(
-                "Failed to initialize install database/secret store (%s): %s",
-                type(exc).__name__,
-                exc,
+                "Failed to initialize install database/secret store",
+                extra={
+                    "error_type": type(exc).__name__,
+                    "error": str(exc),
+                },
+                exc_info=True,
             )
 
         _configure_secret_kek_posture(

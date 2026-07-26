@@ -6,7 +6,7 @@ import json
 import uuid
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 
 import pytest
 import yaml
@@ -28,25 +28,25 @@ LEGACY_MERGE_TOOLS = {
 }
 
 
-def _agent(name: str) -> dict:
+def _agent(name: str) -> dict[str, Any]:
     path = (
         Path(__file__).resolve().parents[2]
         / f"src/gobby/install/shared/workflows/agents/{name}.yaml"
     )
-    return yaml.safe_load(path.read_text(encoding="utf-8"))
+    return cast(dict[str, Any], yaml.safe_load(path.read_text(encoding="utf-8")))
 
 
-def _allowed_mcp_tools(agent: dict) -> set[str]:
+def _allowed_mcp_tools(agent: dict[str, Any]) -> set[str]:
     tools: set[str] = set()
     for step in agent.get("steps", []):
         tools.update(step.get("allowed_mcp_tools", []) or [])
     return tools
 
 
-def _step(agent: dict, name: str) -> dict:
+def _step(agent: dict[str, Any], name: str) -> dict[str, Any]:
     matches = [step for step in agent.get("steps", []) if step.get("name") == name]
     assert len(matches) == 1
-    return matches[0]
+    return cast(dict[str, Any], matches[0])
 
 
 def _create_session(
@@ -343,26 +343,29 @@ async def test_merge_worker_failure_result_transitions_to_terminate(temp_db: Hub
     instance = instance_manager.get_instance("aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaa3002", "merge-worker")
     assert instance is not None
     assert instance.current_step == "terminate"
+    assert instance.variables["merge_result_recorded"] is True
     assert instance.variables["merge_worker_ready_to_terminate"] is True
     assert response.context is not None
     assert "merge -> terminate" in response.context
 
 
 @pytest.mark.parametrize(
-    "mcp_key",
+    ("mcp_key", "ready_to_terminate"),
     [
-        "gobby-tasks-ops:record_merge_result",
-        "gobby-tasks-ops:close_linked_github_issue",
+        ("gobby-tasks-ops:record_merge_result", False),
+        ("gobby-tasks-ops:close_linked_github_issue", True),
     ],
 )
-async def test_merge_worker_tool_failure_routes_to_terminate(
-    temp_db: HubDatabase, mcp_key: str
+async def test_merge_worker_tool_failure_without_durable_result_stays_in_merge(
+    temp_db: HubDatabase,
+    mcp_key: str,
+    ready_to_terminate: bool,
 ) -> None:
     instance_manager = _install_merge_worker_workflow(temp_db)
     engine = RuleEngine(temp_db)
     variables: dict[str, Any] = {}
 
-    response = await engine.evaluate(
+    await engine.evaluate(
         _mcp_event(mcp_key, event_type=HookEventType.AFTER_TOOL, is_error=True),
         session_id="aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaa3002",
         variables=variables,
@@ -370,10 +373,9 @@ async def test_merge_worker_tool_failure_routes_to_terminate(
 
     instance = instance_manager.get_instance("aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaa3002", "merge-worker")
     assert instance is not None
-    assert instance.current_step == "terminate"
-    assert instance.variables["merge_worker_ready_to_terminate"] is True
-    assert response.context is not None
-    assert "merge -> terminate" in response.context
+    assert instance.current_step == "merge"
+    assert instance.variables["merge_result_recorded"] is False
+    assert instance.variables["merge_worker_ready_to_terminate"] is ready_to_terminate
 
 
 @pytest.mark.asyncio
@@ -415,6 +417,39 @@ async def test_merge_worker_success_waits_for_issue_close_before_terminate(
 
 
 @pytest.mark.asyncio
+async def test_merge_worker_issue_close_error_after_durable_result_terminates(
+    temp_db: HubDatabase,
+) -> None:
+    instance_manager = _install_merge_worker_workflow(temp_db)
+    engine = RuleEngine(temp_db)
+    variables: dict[str, Any] = {}
+
+    await engine.evaluate(
+        _mcp_event(
+            "gobby-tasks-ops:record_merge_result",
+            event_type=HookEventType.AFTER_TOOL,
+            arguments={"task_id": "#14094", "merge_sha": "abc123"},
+        ),
+        session_id="aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaa3002",
+        variables=variables,
+    )
+    await engine.evaluate(
+        _mcp_event(
+            "gobby-tasks-ops:close_linked_github_issue",
+            event_type=HookEventType.AFTER_TOOL,
+            is_error=True,
+        ),
+        session_id="aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaa3002",
+        variables=variables,
+    )
+
+    instance = instance_manager.get_instance("aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaa3002", "merge-worker")
+    assert instance is not None
+    assert instance.current_step == "terminate"
+    assert instance.variables["merge_result_recorded"] is True
+
+
+@pytest.mark.asyncio
 async def test_merge_worker_blocks_premature_end_agent_run(temp_db: HubDatabase) -> None:
     db = temp_db
     _install_merge_worker_workflow(db)
@@ -427,5 +462,6 @@ async def test_merge_worker_blocks_premature_end_agent_run(temp_db: HubDatabase)
     )
 
     assert response.decision == "block"
+    assert response.reason is not None
     assert "gobby-agents:end_agent_run" in response.reason
     assert "merge" in response.reason

@@ -10,14 +10,14 @@ import pytest
 from gobby.build.observability import explain_dispatch
 from gobby.dispatch.actions import SpawnAgentAction
 from gobby.dispatch.skill_composition import inspect_skill_composition
-from gobby.dispatch.spawn import DispatchSpawnFailed, spawn_agent
+from gobby.dispatch.spawn import DispatchSpawnFailed, _with_skill_allowed_tools, spawn_agent
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.projects import LocalProjectManager
 from gobby.storage.sessions import SessionManager
 from gobby.storage.skills import LocalSkillManager
 from gobby.storage.tasks import LocalTaskManager
 from gobby.storage.workflow_definitions import LocalWorkflowDefinitionManager
-from gobby.workflows.definitions import AgentDefinitionBody
+from gobby.workflows.definitions import AgentDefinitionBody, WorkflowStep
 
 pytestmark = pytest.mark.integration
 
@@ -100,6 +100,26 @@ def test_skill_composition_clean_pass_through_reports_allowed_tools_union(
     assert report.failure_reason is None
 
 
+def test_composed_skill_tools_extend_restricted_steps_without_mutating_definition() -> None:
+    agent = AgentDefinitionBody(
+        name="restricted-agent",
+        steps=[
+            WorkflowStep(name="work", allowed_tools=["Read"]),
+            WorkflowStep(name="unrestricted", allowed_tools="all"),
+        ],
+    )
+
+    composed = _with_skill_allowed_tools(agent, ("Bash", "Read"))
+
+    assert composed is not None
+    assert composed is not agent
+    assert composed.steps is not None
+    assert composed.steps[0].allowed_tools == ["Read", "Bash"]
+    assert composed.steps[1].allowed_tools == "all"
+    assert agent.steps is not None
+    assert agent.steps[0].allowed_tools == ["Read"]
+
+
 def test_skill_composition_uses_single_visible_skill_query(
     temp_db: HubDatabase,
     monkeypatch: pytest.MonkeyPatch,
@@ -136,7 +156,7 @@ def test_skill_composition_uses_single_visible_skill_query(
 
 
 def test_skill_composition_skips_query_when_no_skills_are_checked(
-    temp_db,
+    temp_db: HubDatabase,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     monkeypatch.setattr(
@@ -158,7 +178,7 @@ def test_skill_composition_skips_query_when_no_skills_are_checked(
 
 @pytest.mark.asyncio
 async def test_spawn_and_explain_share_unknown_skill_failure(
-    temp_db,
+    temp_db: HubDatabase,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     project = LocalProjectManager(temp_db).create(
