@@ -9,6 +9,7 @@ from gobby.agents.reasoning import (
 )
 from gobby.config.ai import GenerationEndpointConfig
 from gobby.config.app import DaemonConfig
+from gobby.servers.provider_model_defaults import DROID_MODEL_CATALOG
 
 pytestmark = pytest.mark.unit
 
@@ -187,6 +188,29 @@ def test_resolve_spawn_reasoning_applies_droid_high() -> None:
     assert result.status == "applied"
     assert result.requested_effort == "high"
     assert result.effective_effort == "high"
+    assert result.reasoning_required is True
+    assert result.message is None
+
+
+def test_resolve_spawn_reasoning_applies_required_droid_glm_52_max(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(
+        reasoning,
+        "_get_provider_models",
+        lambda provider, daemon_config: DROID_MODEL_CATALOG,
+    )
+
+    result = resolve_spawn_reasoning(
+        provider="droid",
+        model="glm-5.2",
+        requested_effort="max",
+        reasoning_required=True,
+    )
+
+    assert result.status == "applied"
+    assert result.requested_effort == "max"
+    assert result.effective_effort == "max"
     assert result.reasoning_required is True
     assert result.message is None
 
