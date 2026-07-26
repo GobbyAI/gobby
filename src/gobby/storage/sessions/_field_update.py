@@ -242,7 +242,7 @@ class _FieldUpdateMixin(_SummaryUpdateMixin):
 
         logger = get_logger()
         if current.status == "expired" and current.id != owner.id:
-            logger.info(
+            logger.debug(
                 "Suppressed revival of superseded terminal session %s; owner is %s",
                 current.id,
                 owner.id,

@@ -447,7 +447,7 @@ class TestSessionManagerLifecycle:
             project_id=sample_project["id"],
             terminal_context=terminal_context,
         )
-        caplog.set_level("INFO", logger="gobby.storage.sessions")
+        caplog.set_level("DEBUG", logger="gobby.storage.sessions")
 
         revived = session_manager.revive_expired_terminal_session(older.id)
 
@@ -468,6 +468,7 @@ class TestSessionManagerLifecycle:
             if getattr(record, "event", None) == "terminal_session_revival_suppressed"
         ]
         assert len(suppressed) == 1
+        assert suppressed[0].levelname == "DEBUG"
         assert getattr(suppressed[0], "session_id", None) == older.id
         assert getattr(suppressed[0], "terminal_owner_session_id", None) == newer.id
 
