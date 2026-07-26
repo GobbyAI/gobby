@@ -63,6 +63,30 @@ def parent_session_provider(
     return source if isinstance(source, str) else None
 
 
+def spawning_session_provider(
+    session_manager: object | None,
+    *,
+    caller_session_id: str | None,
+    parent_session_id: str | None,
+) -> str | None:
+    """Return the source a spawn inherits its provider from.
+
+    ``parent_session_id`` is a reporting and lineage argument that a caller may
+    point at any session, so an agent that reports to a coordinator would drag
+    the coordinator's provider into every worker it launches. The session
+    issuing the spawn is the one the child continues, so it is consulted first;
+    the declared parent serves paths with no ambient caller such as HTTP,
+    dispatch, and the scheduler.
+    """
+    for candidate in (caller_session_id, parent_session_id):
+        if not candidate:
+            continue
+        source = parent_session_provider(session_manager, candidate)
+        if concrete_provider(source) is not None:
+            return source
+    return None
+
+
 def resolve_spawn_provider(
     *,
     explicit_provider: str | None,
@@ -88,4 +112,5 @@ __all__ = [
     "parent_session_provider",
     "provider_prefixed_model",
     "resolve_spawn_provider",
+    "spawning_session_provider",
 ]

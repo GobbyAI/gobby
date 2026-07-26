@@ -13,10 +13,11 @@ from typing import TYPE_CHECKING, Any, Literal
 from gobby.agents.completion_subscribers import subscribe_agent_completion
 from gobby.mcp_proxy.tools.internal import InternalToolRegistry
 from gobby.utils.project_context import get_project_context
+from gobby.utils.session_context import get_current_session_id
 from gobby.workflows.definitions import AgentDefinitionBody
 
 from ._implementation import spawn_agent_impl
-from ._provider_resolution import parent_session_provider, resolve_spawn_provider
+from ._provider_resolution import resolve_spawn_provider, spawning_session_provider
 from ._spawn_guards import max_active_agents_for_project
 
 if TYPE_CHECKING:
@@ -367,12 +368,16 @@ def create_spawn_agent_registry(
             db=db,
         )
         project_id = _project_id_from_context(spawn_project_ctx)
+        # The spawning session, which may differ from the declared parent when an
+        # agent points parent_session_id at the coordinator it reports to.
+        caller_session_id = get_current_session_id()
         parent_provider = resolve_spawn_provider(
             explicit_provider=None,
             agent_provider="inherit",
-            parent_provider=parent_session_provider(
+            parent_provider=spawning_session_provider(
                 session_manager,
-                resolved_parent_session_id,
+                caller_session_id=caller_session_id,
+                parent_session_id=resolved_parent_session_id,
             ),
         )
         agent_body = _load_agent_body(
@@ -525,6 +530,7 @@ def create_spawn_agent_registry(
             reasoning_required=reasoning_required,
             timeout=timeout,
             parent_session_id=resolved_parent_session_id,
+            caller_session_id=caller_session_id,
             project_path=effective_project_path,
             initial_variables=initial_variables,
             session_manager=session_manager,

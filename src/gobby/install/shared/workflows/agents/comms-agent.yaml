@@ -2,7 +2,7 @@ name: comms-agent
 description: |
   Communications coordinator for Telegram and other external channels.
   Answers operational questions and delegates implementation to spawned agents.
-version: "1.0"
+version: "1.1"
 enabled: true
 surfaces: [persona]
 provider: inherit
@@ -45,3 +45,6 @@ blocked_tools:
   - run_shell_command
   - shell
   - write_file
+
+blocked_mcp_tools:
+  - "gobby-agents:kill_agent"

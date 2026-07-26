@@ -10,6 +10,7 @@ from gobby.mcp_proxy.tools.spawn_agent._provider_resolution import (
     concrete_provider,
     parent_session_provider,
     resolve_spawn_provider,
+    spawning_session_provider,
 )
 from gobby.mcp_proxy.tools.spawn_agent._runtime import _normalize_optional_model
 
@@ -85,3 +86,70 @@ def test_parent_session_provider_reads_session_source() -> None:
 @pytest.mark.parametrize("manager", [None, object(), SimpleNamespace(get=lambda _key: None)])
 def test_parent_session_provider_tolerates_unavailable_context(manager: object | None) -> None:
     assert parent_session_provider(manager, "missing") is None
+
+
+def _session_manager(sources: dict[str, str | None]) -> SimpleNamespace:
+    return SimpleNamespace(get=lambda session_id: SimpleNamespace(source=sources.get(session_id)))
+
+
+def test_spawning_session_provider_prefers_caller_over_declared_parent() -> None:
+    manager = _session_manager({"adversary": "codex", "coordinator": "claude"})
+
+    inherited = spawning_session_provider(
+        manager,
+        caller_session_id="adversary",
+        parent_session_id="coordinator",
+    )
+
+    assert inherited == "codex"
+
+
+def test_spawning_session_provider_falls_back_to_parent_without_caller() -> None:
+    manager = _session_manager({"coordinator": "claude"})
+
+    inherited = spawning_session_provider(
+        manager,
+        caller_session_id=None,
+        parent_session_id="coordinator",
+    )
+
+    assert inherited == "claude"
+
+
+@pytest.mark.parametrize("caller_source", [None, "", "inherit"])
+def test_spawning_session_provider_falls_back_when_caller_source_is_unresolved(
+    caller_source: str | None,
+) -> None:
+    manager = _session_manager({"worker": caller_source, "coordinator": "codex"})
+
+    inherited = spawning_session_provider(
+        manager,
+        caller_session_id="worker",
+        parent_session_id="coordinator",
+    )
+
+    assert inherited == "codex"
+
+
+def test_spawning_session_provider_returns_none_without_any_source() -> None:
+    assert (
+        spawning_session_provider(None, caller_session_id="caller", parent_session_id="parent")
+        is None
+    )
+
+
+def test_agent_worker_inherits_spawning_agent_provider_not_coordinator() -> None:
+    """A codex agent spawning an inherit-provider worker keeps the worker on codex."""
+    manager = _session_manager({"adversary": "codex", "coordinator": "claude"})
+
+    resolved = resolve_spawn_provider(
+        explicit_provider=None,
+        agent_provider="inherit",
+        parent_provider=spawning_session_provider(
+            manager,
+            caller_session_id="adversary",
+            parent_session_id="coordinator",
+        ),
+    )
+
+    assert resolved == "codex"

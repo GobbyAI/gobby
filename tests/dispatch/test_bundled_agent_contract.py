@@ -68,6 +68,9 @@ def _tool_inventory(temp_db: Any, sample_project: dict[str, Any]) -> dict[str, s
         merge_storage=MergeResolutionManager(temp_db),
         merge_resolver=MergeResolver(),
         agent_runner=MagicMock(),
+        # Gates the memory and review-learning registries, whose tools bundled
+        # agents reference; the registries only need the manager to construct.
+        memory_manager=MagicMock(),
         project_id=str(sample_project["id"]),
     )
     inventory = {

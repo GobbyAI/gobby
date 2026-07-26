@@ -47,9 +47,9 @@ from ._health import _check_tmux_session_alive, schedule_tmux_health_check
 from ._idempotency import non_actionable_task_spawn_response
 from ._provider_resolution import (
     concrete_provider,
-    parent_session_provider,
     provider_prefixed_model,
     resolve_spawn_provider,
+    spawning_session_provider,
 )
 from ._runtime import (
     _build_spawn_success_response,
@@ -192,6 +192,7 @@ async def spawn_agent_impl(
     timeout: float | None = None,
     # Context
     parent_session_id: str | None = None,
+    caller_session_id: str | None = None,
     project_path: str | None = None,
     initial_variables: dict[str, Any] | None = None,
     session_manager: Any | None = None,  # SessionManager
@@ -233,7 +234,11 @@ async def spawn_agent_impl(
     explicit_provider = concrete_provider(provider)
     if explicit_provider is None and model_from_prefix is not None:
         explicit_provider = model_from_prefix[0]
-    parent_provider = parent_session_provider(session_manager, parent_session_id)
+    parent_provider = spawning_session_provider(
+        session_manager,
+        caller_session_id=caller_session_id,
+        parent_session_id=parent_session_id,
+    )
     agent_provider = agent_body.provider if agent_body else None
     effective_provider = resolve_spawn_provider(
         explicit_provider=explicit_provider,
