@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import math
+import re
 import time
 from collections.abc import Callable, Mapping
 from datetime import timedelta
@@ -73,16 +74,24 @@ class ExternalIssueSyncCoordinator:
         }
 
     async def run(self, shutdown: asyncio.Event) -> None:
-        """Refresh configuration until daemon shutdown, then drain active runs."""
+        """Refresh configuration until daemon shutdown, then cancel active runs."""
         try:
             while not shutdown.is_set():
-                await self.refresh()
+                try:
+                    await self.refresh()
+                except asyncio.CancelledError:
+                    raise
+                except Exception:
+                    logger.exception("External issue sync configuration refresh failed")
                 try:
                     await asyncio.wait_for(shutdown.wait(), timeout=self.refresh_interval_seconds)
                 except TimeoutError:
                     pass
         finally:
-            await self.wait_for_idle()
+            tasks = tuple(self._tasks)
+            for task in tasks:
+                task.cancel()
+            await asyncio.gather(*tasks, return_exceptions=True)
 
     async def refresh(self) -> None:
         """Discover current configuration and start due, non-overlapping runs."""
@@ -518,7 +527,8 @@ class ExternalIssueSyncCoordinator:
             linked, pending = await asyncio.to_thread(
                 self.status_store.counts, project_id, provider
             )
-        assert linked is not None and pending is not None
+        if linked is None or pending is None:
+            raise RuntimeError("External issue sync counts must be resolved before status writes")
         await asyncio.to_thread(
             self.status_store.upsert,
             project_id=project_id,
@@ -571,13 +581,14 @@ def _failure_count(value: Any) -> int:
 
 def _is_rate_limit(exc: Exception) -> bool:
     text = f"{type(exc).__name__}: {exc}".lower()
-    return any(
+    return bool(re.search(r"\b429\b", text)) or any(
         marker in text
         for marker in (
             "rate limit",
+            "rate-limit",
+            "ratelimit",
             "usage limit",
             "quota exceeded",
-            "status 429",
-            "http 429",
+            "too many requests",
         )
     )

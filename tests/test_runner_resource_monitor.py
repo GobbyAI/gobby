@@ -143,19 +143,28 @@ def test_missing_runtime_log_is_tolerated(logs_dir: Path) -> None:
     assert limit_states == [False]
 
 
-def test_start_periodic_tasks_registers_resource_monitor() -> None:
+@pytest.mark.parametrize(
+    ("integration_enabled", "coordinator_started"),
+    [(True, True), (False, False)],
+)
+def test_start_periodic_tasks_registers_resource_monitor(
+    integration_enabled: bool,
+    coordinator_started: bool,
+) -> None:
     from gobby.config.bin_freshness import BinFreshnessConfig
 
     telemetry = SimpleNamespace(trace_retention_days=7)
     logging_config = LoggingSettings(dir="/tmp/gobby-resource-monitor-test")
+    mcp_proxy = MagicMock()
+    mcp_proxy.get_server_config.side_effect = lambda name: (
+        SimpleNamespace(enabled=integration_enabled) if name == "github" else None
+    )
     runner: Any = SimpleNamespace(
         metrics_manager=object(),
         metrics_event_store=object(),
         database=object(),
-        mcp_proxy=object(),
+        mcp_proxy=mcp_proxy,
         task_manager=object(),
-        memory_manager=None,
-        secret_store=None,
         http_server=SimpleNamespace(app=object()),
         pipeline_execution_manager=None,
         degraded_services=set(),
@@ -188,8 +197,8 @@ def test_start_periodic_tasks_registers_resource_monitor() -> None:
         start_periodic_tasks(runner, tracker=None, resource_monitor_loop=resource_monitor_loop)
 
     assert runner._resource_monitor_task is not None
-    assert runner._external_issue_sync_task is not None
-    assert runner.external_issue_sync_coordinator is not None
+    assert (runner._external_issue_sync_task is not None) is coordinator_started
+    assert (runner.external_issue_sync_coordinator is not None) is coordinator_started
     assert monitor_args[0][0] is logging_config
     set_runtime_output_over_limit = monitor_args[0][2]
     set_runtime_output_over_limit(True)

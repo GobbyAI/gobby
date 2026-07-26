@@ -160,6 +160,17 @@ def _roots_by_watch_scope(wiki_config: WikiConfig) -> dict[str, WikiRootConfig]:
     return roots
 
 
+def _has_enabled_external_issue_integration(mcp_manager: Any) -> bool:
+    """Return whether a configured external-issue connector is enabled."""
+    get_server_config = getattr(mcp_manager, "get_server_config", None)
+    if not callable(get_server_config):
+        return False
+    return any(
+        (config := get_server_config(provider)) is not None and config.enabled is True
+        for provider in ("github", "linear")
+    )
+
+
 def start_periodic_tasks(
     runner: GobbyRunner,
     *,
@@ -169,6 +180,7 @@ def start_periodic_tasks(
     """Start all lightweight periodic background tasks."""
     loops = {**_default_loops(), **loops}
     db_executor = getattr(runner, "db_executor", None)
+    memory_manager = getattr(runner, "memory_manager", None)
     session_lifecycle_config = getattr(runner.config, "session_lifecycle", None)
     workflow_audit_retention_days = getattr(
         session_lifecycle_config,
@@ -227,18 +239,16 @@ def start_periodic_tasks(
     )
 
     runner._memory_reconcile_task = None
-    if runner.memory_manager:
+    if memory_manager:
         runner._memory_reconcile_task = asyncio.create_task(
-            loops["memory_reconcile_loop"](
-                runner.memory_manager, lambda: runner._shutdown_requested
-            ),
+            loops["memory_reconcile_loop"](memory_manager, lambda: runner._shutdown_requested),
             name="memory-reconcile",
         )
 
     runner._recall_drift_task = None
     memory_config = getattr(runner.config, "memory", None)
     if (
-        runner.memory_manager
+        memory_manager
         and memory_config is not None
         and getattr(memory_config, "recall_drift_monitor_enabled", False)
     ):
@@ -367,15 +377,19 @@ def start_periodic_tasks(
     runner._external_issue_sync_task = None
     mcp_proxy = getattr(runner, "mcp_proxy", None)
     task_manager = getattr(runner, "task_manager", None)
-    if mcp_proxy is not None and task_manager is not None:
+    if (
+        mcp_proxy is not None
+        and task_manager is not None
+        and _has_enabled_external_issue_integration(mcp_proxy)
+    ):
         from gobby.sync.external_coordinator import ExternalIssueSyncCoordinator
 
         runner.external_issue_sync_coordinator = ExternalIssueSyncCoordinator(
             db=runner.database,
             mcp_manager=mcp_proxy,
             task_manager=task_manager,
-            memory_manager=runner.memory_manager,
-            secret_store=runner.secret_store,
+            memory_manager=memory_manager,
+            secret_store=getattr(runner, "secret_store", None),
         )
         runner._external_issue_sync_shutdown = asyncio.Event()
         runner._external_issue_sync_task = asyncio.create_task(
