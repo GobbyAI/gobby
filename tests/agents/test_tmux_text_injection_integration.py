@@ -60,7 +60,8 @@ import tty
 fd = sys.stdin.fileno()
 original = termios.tcgetattr(fd)
 data = bytearray()
-events = []
+paste_end_at = None
+enter_at = None
 
 try:
     tty.setraw(fd)
@@ -72,13 +73,16 @@ try:
         readable, _, _ = select.select([fd], [], [], 0.1)
         if not readable:
             continue
-        chunk = os.read(fd, 4096)
+        chunk = os.read(fd, 1)
         if not chunk:
             break
+        received_at = time.monotonic()
         data.extend(chunk)
-        events.append({"at": time.monotonic(), "hex": chunk.hex()})
         paste_end = data.find(b"\\x1b[201~")
+        if paste_end_at is None and paste_end >= 0:
+            paste_end_at = received_at
         if paste_end >= 0 and len(data) > paste_end + len(b"\\x1b[201~"):
+            enter_at = received_at
             break
 finally:
     sys.stdout.write("\\033[?2004l")
@@ -86,7 +90,14 @@ finally:
     termios.tcsetattr(fd, termios.TCSADRAIN, original)
     temporary_path = f"{sys.argv[1]}.tmp"
     with open(temporary_path, "w", encoding="utf-8") as output:
-        json.dump({"data_hex": data.hex(), "events": events}, output)
+        json.dump(
+            {
+                "data_hex": data.hex(),
+                "paste_end_at": paste_end_at,
+                "enter_at": enter_at,
+            },
+            output,
+        )
     os.replace(temporary_path, sys.argv[1])
 """,
         encoding="utf-8",
@@ -122,20 +133,8 @@ finally:
         paste = b"\x1b[200~alpha\rbeta\x1b[201~"
         assert data == paste + b"\r"
 
-        cumulative = bytearray()
-        paste_end_at = None
-        enter_at = None
-        for event in captured["events"]:
-            chunk = bytes.fromhex(event["hex"])
-            before = len(cumulative)
-            cumulative.extend(chunk)
-            paste_end = cumulative.find(b"\x1b[201~")
-            if paste_end_at is None and paste_end >= 0:
-                paste_end_at = event["at"]
-            if paste_end >= 0 and before >= paste_end + len(b"\x1b[201~"):
-                enter_at = event["at"]
-                break
-
+        paste_end_at = captured["paste_end_at"]
+        enter_at = captured["enter_at"]
         assert paste_end_at is not None
         assert enter_at is not None
         assert enter_at - paste_end_at >= 0.12
