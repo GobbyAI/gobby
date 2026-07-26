@@ -4,6 +4,7 @@ import uuid
 
 import pytest
 
+from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.memories import LocalMemoryManager
 from gobby.storage.projects import LocalProjectManager
 from gobby.storage.sessions import SessionManager
@@ -17,7 +18,7 @@ class TestSessionManagerLifecycle:
     def test_update_status(
         self,
         session_manager: SessionManager,
-        sample_project: dict,
+        sample_project: dict[str, str],
     ) -> None:
         """Test updating session status."""
         session = session_manager.register(
@@ -35,7 +36,7 @@ class TestSessionManagerLifecycle:
     def test_expire_if_active_does_not_overwrite_handoff_ready(
         self,
         session_manager: SessionManager,
-        sample_project: dict,
+        sample_project: dict[str, str],
     ) -> None:
         session = session_manager.register(
             external_id="conditional-expiry-test",
@@ -53,7 +54,7 @@ class TestSessionManagerLifecycle:
     def test_expire_if_active_updates_active_session(
         self,
         session_manager: SessionManager,
-        sample_project: dict,
+        sample_project: dict[str, str],
     ) -> None:
         session = session_manager.register(
             external_id="active-expiry-test",
@@ -71,7 +72,7 @@ class TestSessionManagerLifecycle:
     def test_status_updates_reject_unknown_values(
         self,
         session_manager: SessionManager,
-        sample_project: dict,
+        sample_project: dict[str, str],
         *,
         bulk: bool,
     ) -> None:
@@ -94,7 +95,7 @@ class TestSessionManagerLifecycle:
     def test_status_updates_reject_transitions_out_of_terminal_states(
         self,
         session_manager: SessionManager,
-        sample_project: dict,
+        sample_project: dict[str, str],
         terminal_status: str,
         *,
         bulk: bool,
@@ -118,7 +119,7 @@ class TestSessionManagerLifecycle:
     def test_activity_status_revives_expired_session(
         self,
         session_manager: SessionManager,
-        sample_project: dict,
+        sample_project: dict[str, str],
         activity_status: str,
     ) -> None:
         session = session_manager.register(
@@ -157,7 +158,7 @@ class TestSessionManagerLifecycle:
     def test_activity_status_does_not_revive_deleted_session(
         self,
         session_manager: SessionManager,
-        sample_project: dict,
+        sample_project: dict[str, str],
         activity_status: str,
     ) -> None:
         session = session_manager.register(
@@ -205,7 +206,7 @@ class TestSessionManagerLifecycle:
     def test_activity_status_idempotently_refreshes_live_session(
         self,
         session_manager: SessionManager,
-        sample_project: dict,
+        sample_project: dict[str, str],
         activity_status: str,
     ) -> None:
         session = session_manager.register(
@@ -244,7 +245,7 @@ class TestSessionManagerLifecycle:
     def test_list_sessions(
         self,
         session_manager: SessionManager,
-        sample_project: dict,
+        sample_project: dict[str, str],
     ) -> None:
         """Test listing sessions."""
         session_manager.register(
@@ -266,7 +267,7 @@ class TestSessionManagerLifecycle:
     def test_list_with_filters(
         self,
         session_manager: SessionManager,
-        sample_project: dict,
+        sample_project: dict[str, str],
     ) -> None:
         """Test listing sessions with filters."""
         s1 = session_manager.register(
@@ -296,7 +297,7 @@ class TestSessionManagerLifecycle:
     def test_list_with_limit(
         self,
         session_manager: SessionManager,
-        sample_project: dict,
+        sample_project: dict[str, str],
     ) -> None:
         """Test listing sessions with limit."""
         for i in range(5):
@@ -313,7 +314,7 @@ class TestSessionManagerLifecycle:
     def test_delete_session(
         self,
         session_manager: SessionManager,
-        sample_project: dict,
+        sample_project: dict[str, str],
     ) -> None:
         """Test deleting a session."""
         session = session_manager.register(
@@ -330,7 +331,7 @@ class TestSessionManagerLifecycle:
     def test_delete_session_preserves_sourced_memory(
         self,
         session_manager: SessionManager,
-        sample_project: dict,
+        sample_project: dict[str, str],
     ) -> None:
         session = session_manager.register(
             external_id="delete-memory-source",
@@ -359,7 +360,7 @@ class TestSessionManagerLifecycle:
     def test_transcript_processing_lifecycle(
         self,
         session_manager: SessionManager,
-        sample_project: dict,
+        sample_project: dict[str, str],
     ) -> None:
         """Test transcript processing lifecycle methods."""
         # Create expired session with transcript_path
@@ -395,7 +396,7 @@ class TestSessionManagerLifecycle:
     def test_revive_expired_terminal_session(
         self,
         session_manager: SessionManager,
-        sample_project: dict,
+        sample_project: dict[str, str],
     ) -> None:
         """Fresh activity revives expired terminal sessions and reopens transcript processing."""
         session = session_manager.register(
@@ -416,6 +417,7 @@ class TestSessionManagerLifecycle:
             "SELECT transcript_processed FROM sessions WHERE id = %s",
             (session.id,),
         )
+        assert row is not None
         assert row["transcript_processed"] == 0
         pending = session_manager.get_pending_transcript_sessions()
         assert pending == []
@@ -423,7 +425,7 @@ class TestSessionManagerLifecycle:
     def test_revive_superseded_terminal_session_keeps_newest_owner_active(
         self,
         session_manager: SessionManager,
-        sample_project: dict,
+        sample_project: dict[str, str],
         caplog: pytest.LogCaptureFixture,
     ) -> None:
         """Delayed activity stays attributed to the expired historical session."""
@@ -475,7 +477,8 @@ class TestSessionManagerLifecycle:
     def test_newest_terminal_activity_demotes_reactivated_older_owner(
         self,
         session_manager: SessionManager,
-        sample_project: dict,
+        sample_project: dict[str, str],
+        caplog: pytest.LogCaptureFixture,
     ) -> None:
         """A false-expired newest session reclaims its terminal from an older row."""
         terminal_context = {
@@ -497,6 +500,7 @@ class TestSessionManagerLifecycle:
             terminal_context=terminal_context,
         )
         session_manager.update_status(newer.id, "expired")
+        caplog.set_level("INFO", logger="gobby.storage.sessions")
 
         revived = session_manager.revive_expired_terminal_session(newer.id)
 
@@ -505,6 +509,15 @@ class TestSessionManagerLifecycle:
         superseded = session_manager.get(older.id)
         assert superseded is not None
         assert superseded.status == "expired"
+        ownership_changes = [
+            record
+            for record in caplog.records
+            if getattr(record, "event", None) == "terminal_session_owner_superseded"
+        ]
+        assert len(ownership_changes) == 1
+        assert ownership_changes[0].levelname == "INFO"
+        assert getattr(ownership_changes[0], "session_id", None) == older.id
+        assert getattr(ownership_changes[0], "terminal_owner_session_id", None) == newer.id
 
     @pytest.mark.parametrize(
         ("newer_machine_id", "newer_socket_path"),
@@ -516,7 +529,7 @@ class TestSessionManagerLifecycle:
     def test_terminal_ownership_does_not_cross_machine_or_socket(
         self,
         session_manager: SessionManager,
-        sample_project: dict,
+        sample_project: dict[str, str],
         newer_machine_id: str,
         newer_socket_path: str,
     ) -> None:
@@ -555,7 +568,7 @@ class TestSessionManagerLifecycle:
     def test_activate_web_chat_session_activates_resumable_row(
         self,
         session_manager: SessionManager,
-        sample_project: dict,
+        sample_project: dict[str, str],
         resumable_status: str,
     ) -> None:
         session = session_manager.register(
@@ -579,7 +592,7 @@ class TestSessionManagerLifecycle:
     def test_activate_web_chat_session_preserves_ineligible_row(
         self,
         session_manager: SessionManager,
-        sample_project: dict,
+        sample_project: dict[str, str],
         session_type: str,
         terminal_status: str,
     ) -> None:
@@ -601,7 +614,7 @@ class TestSessionManagerLifecycle:
     def test_mark_transcript_processed_does_not_clobber_revival(
         self,
         session_manager: SessionManager,
-        sample_project: dict,
+        sample_project: dict[str, str],
     ) -> None:
         """A stale finalizer cannot mark a concurrently revived session processed."""
         session = session_manager.register(
@@ -624,12 +637,13 @@ class TestSessionManagerLifecycle:
             "SELECT transcript_processed FROM sessions WHERE id = %s",
             (session.id,),
         )
+        assert row is not None
         assert row["transcript_processed"] == 0
 
     def test_update_parent_session_id(
         self,
         session_manager: SessionManager,
-        sample_project: dict,
+        sample_project: dict[str, str],
     ) -> None:
         """Test updating parent session ID."""
         session = session_manager.register(
@@ -657,7 +671,7 @@ class TestSessionManagerLifecycle:
     def test_update_parent_session_id_ignores_self_parent(
         self,
         session_manager: SessionManager,
-        sample_project: dict,
+        sample_project: dict[str, str],
     ) -> None:
         """Storage ignores direct updates that would self-parent a session."""
         session = session_manager.register(
@@ -684,7 +698,7 @@ class TestSessionManagerLifecycle:
     def test_find_children(
         self,
         session_manager: SessionManager,
-        sample_project: dict,
+        sample_project: dict[str, str],
     ) -> None:
         """Test finding child sessions of a parent."""
         parent = session_manager.register(
@@ -720,7 +734,7 @@ class TestSessionManagerLifecycle:
     def test_find_children_no_children(
         self,
         session_manager: SessionManager,
-        sample_project: dict,
+        sample_project: dict[str, str],
     ) -> None:
         """Test find_children returns empty list when no children."""
         session = session_manager.register(
@@ -736,7 +750,7 @@ class TestSessionManagerLifecycle:
     def test_update_multiple_fields(
         self,
         session_manager: SessionManager,
-        sample_project: dict,
+        sample_project: dict[str, str],
     ) -> None:
         """Test updating multiple session fields at once."""
         session = session_manager.register(
@@ -766,7 +780,7 @@ class TestSessionManagerLifecycle:
     def test_update_clears_nullable_metadata(
         self,
         session_manager: SessionManager,
-        sample_project: dict,
+        sample_project: dict[str, str],
     ) -> None:
         session = session_manager.register(
             external_id="clear-metadata",
@@ -796,7 +810,7 @@ class TestSessionManagerLifecycle:
     def test_update_single_field(
         self,
         session_manager: SessionManager,
-        sample_project: dict,
+        sample_project: dict[str, str],
     ) -> None:
         """Test updating a single field."""
         session = session_manager.register(
@@ -814,7 +828,7 @@ class TestSessionManagerLifecycle:
     def test_update_no_fields(
         self,
         session_manager: SessionManager,
-        sample_project: dict,
+        sample_project: dict[str, str],
     ) -> None:
         """Test update with no fields returns session unchanged."""
         session = session_manager.register(
@@ -832,7 +846,7 @@ class TestSessionManagerLifecycle:
     def test_update_external_id_only(
         self,
         session_manager: SessionManager,
-        sample_project: dict,
+        sample_project: dict[str, str],
     ) -> None:
         """Test updating just external_id."""
         session = session_manager.register(
@@ -850,7 +864,7 @@ class TestSessionManagerLifecycle:
     def test_update_transcript_path_only(
         self,
         session_manager: SessionManager,
-        sample_project: dict,
+        sample_project: dict[str, str],
     ) -> None:
         """Test updating just transcript_path."""
         session = session_manager.register(
@@ -868,7 +882,7 @@ class TestSessionManagerLifecycle:
     def test_update_git_branch_only(
         self,
         session_manager: SessionManager,
-        sample_project: dict,
+        sample_project: dict[str, str],
     ) -> None:
         """Test updating just git_branch."""
         session = session_manager.register(
@@ -886,7 +900,7 @@ class TestSessionManagerLifecycle:
     def test_count_sessions(
         self,
         session_manager: SessionManager,
-        sample_project: dict,
+        sample_project: dict[str, str],
     ) -> None:
         """Test counting sessions."""
         session_manager.register(
@@ -987,7 +1001,7 @@ class TestSessionManagerLifecycle:
     def test_renumber_project_sessions_dry_run_leaves_rows_unchanged(
         self,
         session_manager: SessionManager,
-        temp_db,
+        temp_db: HubDatabase,
     ) -> None:
         """Dry-run reports dense refs without mutating rows."""
         project = LocalProjectManager(temp_db).create(name="renumber-dry", repo_path="/tmp/dry")
@@ -1021,13 +1035,17 @@ class TestSessionManagerLifecycle:
             (10, 1),
             (30, 2),
         ]
-        assert session_manager.get(first.id).seq_num == 10
-        assert session_manager.get(second.id).seq_num == 30
+        refreshed_first = session_manager.get(first.id)
+        refreshed_second = session_manager.get(second.id)
+        assert refreshed_first is not None
+        assert refreshed_second is not None
+        assert refreshed_first.seq_num == 10
+        assert refreshed_second.seq_num == 30
 
     def test_renumber_project_sessions_apply_is_project_scoped_and_tails_deleted(
         self,
         session_manager: SessionManager,
-        temp_db,
+        temp_db: HubDatabase,
     ) -> None:
         """Apply compacts one project and moves retained deleted rows after visible rows."""
         project_manager = LocalProjectManager(temp_db)
