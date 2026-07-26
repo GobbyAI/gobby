@@ -11,6 +11,7 @@ from datetime import datetime
 from typing import Any, Literal
 
 from gobby.storage.hub.protocol import HubDatabase
+from gobby.storage.sessions import SessionManager as LocalSessionManager
 from gobby.utils.datetime import utc_now
 
 VerificationOutcome = Literal["pending", "success", "failure", "unknown", "conflicting"]
@@ -206,13 +207,18 @@ class VerificationReceiptStore:
         active_task_ref: str | None = None,
         explicit_task_ref: str | None = None,
     ) -> tuple[str | None, AttributionSource]:
-        candidates: tuple[tuple[str | None, AttributionSource], ...] = (
-            (explicit_task_ref, "explicit_task"),
-            (active_task_ref, "active_task"),
+        candidates: tuple[tuple[str | None, AttributionSource, bool], ...] = (
+            (explicit_task_ref, "explicit_task", True),
+            (active_task_ref, "active_task", False),
         )
-        for task_ref, source in candidates:
+        for task_ref, source, allow_owner_ancestor in candidates:
             task_id = self.resolve_task_ref(project_id, task_ref)
-            if task_id and self._is_open_claim(task_id, project_id, session_id):
+            if task_id and self._is_open_claim(
+                task_id,
+                project_id,
+                session_id,
+                allow_owner_ancestor=allow_owner_ancestor,
+            ):
                 return task_id, source
 
         rows = self.db.fetchall(
@@ -230,18 +236,39 @@ class VerificationReceiptStore:
             return str(rows[0]["id"]), "sole_claim"
         return None, "unassigned"
 
-    def _is_open_claim(self, task_id: str, project_id: str, session_id: str) -> bool:
-        return (
-            self.db.fetchone(
-                """
-                SELECT 1 FROM tasks
-                WHERE id = %s AND project_id = %s
-                  AND claimed_by_session_id = %s AND closed_at IS NULL
-                """,
-                (task_id, project_id, session_id),
-            )
-            is not None
+    def _is_open_claim(
+        self,
+        task_id: str,
+        project_id: str,
+        session_id: str,
+        *,
+        allow_owner_ancestor: bool = False,
+    ) -> bool:
+        row = self.db.fetchone(
+            """
+            SELECT claimed_by_session_id FROM tasks
+            WHERE id = %s AND project_id = %s AND closed_at IS NULL
+            """,
+            (task_id, project_id),
         )
+        if row is None or row["claimed_by_session_id"] is None:
+            return False
+        owner_session_id = str(row["claimed_by_session_id"])
+        if owner_session_id == session_id:
+            return True
+        if not allow_owner_ancestor:
+            return False
+        session_manager = LocalSessionManager(self.db)
+        owner_session = session_manager.get(owner_session_id)
+        executor_session = session_manager.get(session_id)
+        if (
+            owner_session is None
+            or executor_session is None
+            or owner_session.project_id != project_id
+            or executor_session.project_id != project_id
+        ):
+            return False
+        return session_manager.is_ancestor(owner_session_id, session_id)
 
     def upsert(self, write: VerificationReceiptWrite) -> VerificationReceipt:
         first, last, digest, output_bytes = _bounded_output(write.output)
