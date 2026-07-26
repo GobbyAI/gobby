@@ -6,7 +6,7 @@ rules:
     event: after_tool
     enabled: true
     priority: 11
-    when: "event.data.get('tool_name') in ('ExitPlanMode', 'AskUserQuestion', 'request_user_input')"
+    when: "event.data.get('tool_name') in ('ExitPlanMode', 'AskUserQuestion', 'request_user_input', 'ExitSpecMode', 'AskUser')"
     effects:
       - type: mcp_call
         server: gobby-memory

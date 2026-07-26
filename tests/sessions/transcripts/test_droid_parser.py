@@ -353,12 +353,12 @@ def test_session_processor_registers_droid_parser_with_transcript_path() -> None
 
 
 def test_session_start_with_title_emits_session_title() -> None:
-    """session_start with a non-placeholder sessionTitle emits a session_title ParsedMessage."""
+    """session_start with a non-placeholder title emits a session_title ParsedMessage."""
     parser = DroidTranscriptParser(session_id="test-session")
     line = json.dumps(
         {
             "type": "session_start",
-            "sessionTitle": "Investigate tmux title issues",
+            "title": "Investigate tmux title issues",
             "timestamp": "2026-04-22T10:00:00Z",
         }
     )
@@ -380,7 +380,7 @@ def test_session_start_placeholder_title_still_emits_message() -> None:
     line = json.dumps(
         {
             "type": "session_start",
-            "sessionTitle": "New Session",
+            "title": "New Session",
             "timestamp": "2026-04-22T10:00:00Z",
         }
     )
@@ -391,7 +391,7 @@ def test_session_start_placeholder_title_still_emits_message() -> None:
 
 
 def test_session_start_without_title_is_skipped() -> None:
-    """session_start with no sessionTitle field produces no message."""
+    """session_start with no title field produces no message."""
     parser = DroidTranscriptParser(session_id="test-session")
     line = json.dumps(
         {

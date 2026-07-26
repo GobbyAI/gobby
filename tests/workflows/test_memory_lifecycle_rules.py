@@ -157,6 +157,8 @@ class TestDigestOnPlanTurnEnd:
             ("ExitPlanMode", True),
             ("AskUserQuestion", True),
             ("request_user_input", True),
+            ("ExitSpecMode", True),
+            ("AskUser", True),
             ("Bash", False),
         ],
     )

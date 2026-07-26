@@ -181,7 +181,7 @@ class DroidTranscriptParser(BaseTranscriptParser):
         message_id = message_id_raw if isinstance(message_id_raw, str) else None
         record_type = record.get("type")
         if record_type == "session_start":
-            session_title = record.get("sessionTitle")
+            session_title = record.get("title")
             if isinstance(session_title, str) and session_title.strip():
                 return [
                     ParsedMessage(
