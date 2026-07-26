@@ -358,7 +358,12 @@ fn prune_project_scoped(
     project_override: Option<&str>,
     quiet: bool,
 ) -> anyhow::Result<()> {
-    let discovery = discover_project_scoped_records(quiet)?;
+    let ctx = Context::resolve_with_services(
+        project_override,
+        quiet,
+        config::ServiceConfigSelection::projection_cleanup(),
+    )?;
+    let discovery = discover_project_scoped_records(&ctx)?;
     let pending = discovery.destructive_set();
     if !authorize_prune_with(force, &pending, |_| confirm_global_prune(&discovery))? {
         eprintln!("Aborted.");
@@ -374,22 +379,7 @@ fn prune_project_scoped(
             stale_totals.failed
         );
     }
-    prune_resolved_project_projections(project_override, quiet)
-}
-
-fn prune_resolved_project_projections(
-    project_override: Option<&str>,
-    quiet: bool,
-) -> anyhow::Result<()> {
-    match Context::resolve_with_services(
-        project_override,
-        quiet,
-        config::ServiceConfigSelection::projection_cleanup(),
-    ) {
-        Ok(ctx) => prune_current_project_projections(&ctx),
-        Err(error) if project_override.is_none() && is_missing_project_context(&error) => Ok(()),
-        Err(error) => Err(error),
-    }
+    prune_current_project_projections(&ctx)
 }
 
 fn prune_global(force: bool, quiet: bool) -> anyhow::Result<()> {
@@ -408,13 +398,25 @@ fn prune_global(force: bool, quiet: bool) -> anyhow::Result<()> {
     print_reconcile_totals("Stale project reconciliation", &stale_totals);
     print_optional_reconcile_totals(
         "Qdrant collection reconciliation",
-        discovery.collections.is_some(),
+        discovery.services.qdrant.is_some(),
         collection_totals.as_ref(),
+        discovery.collections.as_ref().map(|inventory| {
+            (
+                inventory.existing_orphan_ids.len(),
+                inventory.would_be_orphan_ids.len(),
+            )
+        }),
     );
     print_optional_reconcile_totals(
         "Falkor graph-scope reconciliation",
-        discovery.graph_scopes.is_some(),
+        discovery.services.falkordb.is_some(),
         graph_totals.as_ref(),
+        discovery.graph_scopes.as_ref().map(|inventory| {
+            (
+                inventory.existing_orphan_ids.len(),
+                inventory.would_be_orphan_ids.len(),
+            )
+        }),
     );
     print_orphan_project_reconcile_totals(&orphan_totals);
     prune_all_project_projections(quiet)?;
@@ -492,26 +494,24 @@ fn discover_global_prune(quiet: bool) -> anyhow::Result<GlobalPruneDiscovery> {
     })
 }
 
-fn discover_project_scoped_records(quiet: bool) -> anyhow::Result<GlobalPruneDiscovery> {
+fn discover_project_scoped_records(ctx: &Context) -> anyhow::Result<GlobalPruneDiscovery> {
     let all_projects = collect_projects()?;
     let stale_projects = stale_projects(&all_projects)
         .into_iter()
+        .filter(|project| project.project.id == ctx.project_id)
         .map(|project| StaleProjectPlan {
             id: project.project.id.clone(),
             label: display_name(project.project),
             reason: project.reason,
         })
         .collect();
-    let database_url = db::resolve_database_url()?;
-    let mut conn = db::connect_readonly(&database_url)?;
-    let orphan_sql_project_ids = collect_orphan_project_ids(&mut conn)?;
-    let services = Context::resolve_for_project_id_with_services(
-        GLOBAL_SERVICE_CONTEXT_PROJECT_ID,
-        quiet,
-        config::ServiceConfigSelection::projection_cleanup(),
-    )?;
+    let mut conn = db::connect_readonly(&ctx.database_url)?;
+    let orphan_sql_project_ids = collect_orphan_project_ids(&mut conn)?
+        .into_iter()
+        .filter(|project_id| project_id == &ctx.project_id)
+        .collect();
     Ok(GlobalPruneDiscovery {
-        services,
+        services: ctx.clone(),
         stale_projects,
         collections: None,
         graph_scopes: None,
@@ -659,7 +659,24 @@ fn reconcile_orphan_graph_scope(ctx: &Context, project_id: &str) -> anyhow::Resu
 }
 
 fn print_reconcile_totals(label: &str, totals: &ReconcileTotals) {
-    eprintln!(
+    for line in reconcile_totals_lines(label, totals) {
+        eprintln!("{line}");
+    }
+}
+
+fn print_optional_reconcile_totals(
+    label: &str,
+    configured: bool,
+    totals: Option<&ReconcileTotals>,
+    orphan_buckets: Option<(usize, usize)>,
+) {
+    for line in optional_reconcile_totals_lines(label, configured, totals, orphan_buckets) {
+        eprintln!("{line}");
+    }
+}
+
+fn reconcile_totals_lines(label: &str, totals: &ReconcileTotals) -> Vec<String> {
+    let mut lines = vec![format!(
         "{label}: scanned={}, active={}, orphaned={}, deleted={}, already_missing={}, busy={}, invalid={}, failed={}",
         totals.scanned,
         totals.active,
@@ -669,27 +686,38 @@ fn print_reconcile_totals(label: &str, totals: &ReconcileTotals) {
         totals.busy,
         totals.invalid,
         totals.failed,
-    );
+    )];
     if !totals.affected_ids.is_empty() {
-        eprintln!(
+        lines.push(format!(
             "  affected: {}",
             bounded_project_id_summary(&totals.affected_ids)
-        );
+        ));
     }
+    lines
 }
 
-fn print_optional_reconcile_totals(
+fn optional_reconcile_totals_lines(
     label: &str,
     configured: bool,
     totals: Option<&ReconcileTotals>,
-) {
-    if configured {
-        if let Some(totals) = totals {
-            print_reconcile_totals(label, totals);
-        }
-    } else {
-        eprintln!("{label}: skipped (service not configured)");
+    orphan_buckets: Option<(usize, usize)>,
+) -> Vec<String> {
+    if !configured {
+        return vec![format!("{label}: skipped (service not configured)")];
     }
+    let Some(totals) = totals else {
+        return vec![format!(
+            "{label}: configured, but no reconciliation totals were produced"
+        )];
+    };
+
+    let mut lines = reconcile_totals_lines(label, totals);
+    if let Some((existing, pending_stale_project_cleanup)) = orphan_buckets {
+        lines.push(format!(
+            "  orphan buckets: existing={existing}, pending_stale_project_cleanup={pending_stale_project_cleanup}"
+        ));
+    }
+    lines
 }
 
 fn reconcile_orphan_projects(
@@ -1036,12 +1064,6 @@ fn prune_vector_orphans(
         .map_err(anyhow::Error::from)
 }
 
-fn is_missing_project_context(error: &anyhow::Error) -> bool {
-    error
-        .to_string()
-        .contains("No gcode project found. Run `gcode init`")
-}
-
 #[cfg(test)]
 mod tests {
     use std::time::{SystemTime, UNIX_EPOCH};
@@ -1061,6 +1083,42 @@ mod tests {
         assert_eq!(
             projection_cleanup_scope(Some("/tmp/project")),
             ProjectionCleanupScope::ResolvedProjectOverride
+        );
+    }
+
+    #[test]
+    fn optional_reconcile_status_reports_configured_without_totals() {
+        assert_eq!(
+            optional_reconcile_totals_lines("Qdrant collection reconciliation", true, None, None,),
+            [
+                "Qdrant collection reconciliation: configured, but no reconciliation totals were produced"
+            ]
+        );
+    }
+
+    #[test]
+    fn optional_reconcile_status_reports_orphan_buckets_separately() {
+        let totals = ReconcileTotals {
+            scanned: 7,
+            active: 1,
+            orphaned: 5,
+            invalid: 1,
+            ..ReconcileTotals::default()
+        };
+
+        let lines = optional_reconcile_totals_lines(
+            "Qdrant collection reconciliation",
+            true,
+            Some(&totals),
+            Some((2, 3)),
+        );
+
+        assert_eq!(
+            lines,
+            [
+                "Qdrant collection reconciliation: scanned=7, active=1, orphaned=5, deleted=0, already_missing=0, busy=0, invalid=1, failed=0",
+                "  orphan buckets: existing=2, pending_stale_project_cleanup=3",
+            ]
         );
     }
 
@@ -1204,274 +1262,341 @@ mod tests {
         assert!(totals.has_failures());
     }
 
-    #[test]
-    fn global_prune_collection_recheck_retains_row_inserted_after_discovery() {
-        let (mut conn, database_url) = connect_test_db();
-        let project_id = unique_test_project_id("gcode-prune-recheck");
-        cleanup_project(&mut conn, &project_id).expect("pre-clean project rows");
-        let _cleanup = ProjectCleanup {
-            database_url: database_url.clone(),
-            project_id: project_id.clone(),
-        };
-        let authority = HashSet::new();
-        let inventory = classify_collection_inventory(
-            &[format!("code_symbols_{project_id}")],
-            &authority,
-            &HashSet::new(),
-        );
-        assert_eq!(inventory.existing_orphan_ids, vec![project_id.clone()]);
+    mod serial_db {
+        use super::*;
 
-        seed_project_with_child_rows(&mut conn, &project_id, true);
-        let ctx = prune_test_context(database_url, &project_id, true);
+        #[test]
+        #[cfg_attr(
+            not(gcode_postgres_tests),
+            ignore = "requires a PostgreSQL test database URL"
+        )]
+        #[serial_test::serial(serial_db)]
+        fn global_prune_collection_recheck_retains_row_inserted_after_discovery() {
+            let (mut conn, database_url) = connect_test_db();
+            let project_id = unique_test_project_id("gcode-prune-recheck");
+            cleanup_project(&mut conn, &project_id).expect("pre-clean project rows");
+            let _cleanup = ProjectCleanup {
+                database_url: database_url.clone(),
+                project_id: project_id.clone(),
+            };
+            let authority = HashSet::new();
+            let inventory = classify_collection_inventory(
+                &[format!("code_symbols_{project_id}")],
+                &authority,
+                &HashSet::new(),
+            );
+            assert_eq!(inventory.existing_orphan_ids, vec![project_id.clone()]);
 
-        assert_eq!(
-            reconcile_orphan_collection(&ctx, &project_id).expect("recheck collection"),
-            SweepOutcome::Active
-        );
-        assert!(db::indexed_project_exists(&mut conn, &project_id).expect("project exists"));
-    }
+            seed_project_with_child_rows(&mut conn, &project_id, true);
+            let ctx = prune_test_context(database_url, &project_id, true);
 
-    #[test]
-    fn global_prune_busy_lock_defers_entire_stale_project() {
-        let (mut conn, database_url) = connect_test_db();
-        let project_id = unique_test_project_id("gcode-prune-stale-busy");
-        cleanup_project(&mut conn, &project_id).expect("pre-clean project rows");
-        let _cleanup = ProjectCleanup {
-            database_url: database_url.clone(),
-            project_id: project_id.clone(),
-        };
-        seed_project_with_child_rows(&mut conn, &project_id, true);
-        let lock_key = crate::index_lock::project_lock_key(&project_id);
-        conn.query_one("SELECT pg_advisory_lock($1)", &[&lock_key])
-            .expect("hold project lock");
+            assert_eq!(
+                reconcile_orphan_collection(&ctx, &project_id).expect("recheck collection"),
+                SweepOutcome::Active
+            );
+            assert!(db::indexed_project_exists(&mut conn, &project_id).expect("project exists"));
+        }
 
-        let discovery = GlobalPruneDiscovery {
-            services: prune_test_context(database_url, &project_id, true),
-            stale_projects: vec![StaleProjectPlan {
-                id: project_id.clone(),
-                label: project_id.clone(),
-                reason: "test stale project".to_string(),
-            }],
-            collections: None,
-            graph_scopes: None,
-            orphan_sql_project_ids: Vec::new(),
-        };
-        let totals = mutate_stale_projects(&discovery);
+        #[test]
+        #[cfg_attr(
+            not(gcode_postgres_tests),
+            ignore = "requires a PostgreSQL test database URL"
+        )]
+        #[serial_test::serial(serial_db)]
+        fn global_prune_busy_lock_defers_entire_stale_project() {
+            let (mut conn, database_url) = connect_test_db();
+            let project_id = unique_test_project_id("gcode-prune-stale-busy");
+            cleanup_project(&mut conn, &project_id).expect("pre-clean project rows");
+            let _cleanup = ProjectCleanup {
+                database_url: database_url.clone(),
+                project_id: project_id.clone(),
+            };
+            seed_project_with_child_rows(&mut conn, &project_id, true);
+            let lock_key = crate::index_lock::project_lock_key(&project_id);
+            conn.query_one("SELECT pg_advisory_lock($1)", &[&lock_key])
+                .expect("hold project lock");
 
-        conn.query_one("SELECT pg_advisory_unlock($1)", &[&lock_key])
-            .expect("release project lock");
-        assert_eq!(totals.busy, 1);
-        assert_eq!(totals.deleted, 0);
-        assert_eq!(totals.failed, 0);
-        assert!(db::indexed_project_exists(&mut conn, &project_id).expect("project exists"));
-        assert_eq!(project_child_row_count(&mut conn, &project_id), 5);
-    }
+            let discovery = GlobalPruneDiscovery {
+                services: prune_test_context(database_url, &project_id, true),
+                stale_projects: vec![StaleProjectPlan {
+                    id: project_id.clone(),
+                    label: project_id.clone(),
+                    reason: "test stale project".to_string(),
+                }],
+                collections: None,
+                graph_scopes: None,
+                orphan_sql_project_ids: Vec::new(),
+            };
+            let totals = mutate_stale_projects(&discovery);
 
-    #[test]
-    #[cfg_attr(
-        not(gcode_postgres_tests),
-        ignore = "requires a PostgreSQL test database URL"
-    )]
-    #[serial_test::serial(serial_db)]
-    fn orphan_project_discovery_and_sql_deletion_counts() {
-        let (mut conn, database_url) = connect_test_db();
-        let valid_project_id = unique_test_project_id("gcode-orphan-valid");
-        let orphan_project_id = unique_test_project_id("gcode-orphan-missing-parent");
-        cleanup_project(&mut conn, &valid_project_id).expect("pre-clean valid project rows");
-        cleanup_project(&mut conn, &orphan_project_id).expect("pre-clean orphan project rows");
-        let _valid_cleanup = ProjectCleanup {
-            database_url: database_url.clone(),
-            project_id: valid_project_id.clone(),
-        };
-        let _orphan_cleanup = ProjectCleanup {
-            database_url,
-            project_id: orphan_project_id.clone(),
-        };
+            conn.query_one("SELECT pg_advisory_unlock($1)", &[&lock_key])
+                .expect("release project lock");
+            assert_eq!(totals.busy, 1);
+            assert_eq!(totals.deleted, 0);
+            assert_eq!(totals.failed, 0);
+            assert!(db::indexed_project_exists(&mut conn, &project_id).expect("project exists"));
+            assert_eq!(project_child_row_count(&mut conn, &project_id), 5);
+        }
 
-        seed_project_with_child_rows(&mut conn, &valid_project_id, true);
-        seed_project_with_child_rows(&mut conn, &orphan_project_id, false);
-
-        let orphan_ids = collect_orphan_project_ids(&mut conn).expect("discover orphan projects");
-        assert!(orphan_ids.contains(&orphan_project_id));
-        assert!(!orphan_ids.contains(&valid_project_id));
-
-        let counts = delete_orphan_project_sql_rows(&mut conn, &orphan_project_id)
-            .expect("delete orphan rows");
-
-        assert_eq!(
-            counts,
-            OrphanSqlDeletionCounts {
-                symbols_deleted: 1,
-                files_deleted: 1,
-                content_chunks_deleted: 1,
-                imports_deleted: 1,
-                calls_deleted: 1,
+        #[test]
+        #[cfg_attr(
+            not(gcode_postgres_tests),
+            ignore = "requires a PostgreSQL test database URL"
+        )]
+        #[serial_test::serial(serial_db)]
+        fn project_scoped_discovery_filters_stale_and_orphan_rows_to_override() {
+            let (mut conn, database_url) = connect_test_db();
+            let target_stale_id = unique_test_project_id("gcode-prune-target-stale");
+            let unrelated_stale_id = unique_test_project_id("gcode-prune-unrelated-stale");
+            let target_orphan_id = unique_test_project_id("gcode-prune-target-orphan");
+            let unrelated_orphan_id = unique_test_project_id("gcode-prune-unrelated-orphan");
+            let project_ids = [
+                &target_stale_id,
+                &unrelated_stale_id,
+                &target_orphan_id,
+                &unrelated_orphan_id,
+            ];
+            for project_id in project_ids {
+                cleanup_project(&mut conn, project_id).expect("pre-clean project rows");
             }
-        );
-        assert_eq!(project_child_row_count(&mut conn, &orphan_project_id), 0);
-        assert_eq!(project_child_row_count(&mut conn, &valid_project_id), 5);
-    }
+            let _cleanups = project_ids.map(|project_id| ProjectCleanup {
+                database_url: database_url.clone(),
+                project_id: project_id.clone(),
+            });
 
-    struct ProjectCleanup {
-        database_url: String,
-        project_id: String,
-    }
+            seed_project_with_child_rows(&mut conn, &target_stale_id, true);
+            seed_project_with_child_rows(&mut conn, &unrelated_stale_id, true);
+            seed_project_with_child_rows(&mut conn, &target_orphan_id, false);
+            seed_project_with_child_rows(&mut conn, &unrelated_orphan_id, false);
 
-    impl Drop for ProjectCleanup {
-        fn drop(&mut self) {
-            if let Ok(mut conn) = db::connect_readwrite(&self.database_url) {
-                let _ = cleanup_project(&mut conn, &self.project_id);
+            let stale_context = prune_test_context(database_url.clone(), &target_stale_id, false);
+            let stale_discovery = discover_project_scoped_records(&stale_context)
+                .expect("discover target stale project");
+            assert_eq!(
+                stale_discovery
+                    .stale_projects
+                    .iter()
+                    .map(|project| project.id.as_str())
+                    .collect::<Vec<_>>(),
+                [target_stale_id.as_str()]
+            );
+            assert!(stale_discovery.orphan_sql_project_ids.is_empty());
+
+            let orphan_context = prune_test_context(database_url, &target_orphan_id, false);
+            let orphan_discovery = discover_project_scoped_records(&orphan_context)
+                .expect("discover target orphan project");
+            assert!(orphan_discovery.stale_projects.is_empty());
+            assert_eq!(orphan_discovery.orphan_sql_project_ids, [target_orphan_id]);
+        }
+
+        #[test]
+        #[cfg_attr(
+            not(gcode_postgres_tests),
+            ignore = "requires a PostgreSQL test database URL"
+        )]
+        #[serial_test::serial(serial_db)]
+        fn orphan_project_discovery_and_sql_deletion_counts() {
+            let (mut conn, database_url) = connect_test_db();
+            let valid_project_id = unique_test_project_id("gcode-orphan-valid");
+            let orphan_project_id = unique_test_project_id("gcode-orphan-missing-parent");
+            cleanup_project(&mut conn, &valid_project_id).expect("pre-clean valid project rows");
+            cleanup_project(&mut conn, &orphan_project_id).expect("pre-clean orphan project rows");
+            let _valid_cleanup = ProjectCleanup {
+                database_url: database_url.clone(),
+                project_id: valid_project_id.clone(),
+            };
+            let _orphan_cleanup = ProjectCleanup {
+                database_url,
+                project_id: orphan_project_id.clone(),
+            };
+
+            seed_project_with_child_rows(&mut conn, &valid_project_id, true);
+            seed_project_with_child_rows(&mut conn, &orphan_project_id, false);
+
+            let orphan_ids =
+                collect_orphan_project_ids(&mut conn).expect("discover orphan projects");
+            assert!(orphan_ids.contains(&orphan_project_id));
+            assert!(!orphan_ids.contains(&valid_project_id));
+
+            let counts = delete_orphan_project_sql_rows(&mut conn, &orphan_project_id)
+                .expect("delete orphan rows");
+
+            assert_eq!(
+                counts,
+                OrphanSqlDeletionCounts {
+                    symbols_deleted: 1,
+                    files_deleted: 1,
+                    content_chunks_deleted: 1,
+                    imports_deleted: 1,
+                    calls_deleted: 1,
+                }
+            );
+            assert_eq!(project_child_row_count(&mut conn, &orphan_project_id), 0);
+            assert_eq!(project_child_row_count(&mut conn, &valid_project_id), 5);
+        }
+
+        struct ProjectCleanup {
+            database_url: String,
+            project_id: String,
+        }
+
+        impl Drop for ProjectCleanup {
+            fn drop(&mut self) {
+                if let Ok(mut conn) = db::connect_readwrite(&self.database_url) {
+                    let _ = cleanup_project(&mut conn, &self.project_id);
+                }
             }
         }
-    }
 
-    fn connect_test_db() -> (postgres::Client, String) {
-        let database_url = crate::test_env::postgres_test_database_url("prune tests");
-        let conn = db::connect_readwrite(&database_url).expect("connect prune PostgreSQL test DB");
-        (conn, database_url)
-    }
-
-    fn prune_test_context(database_url: String, project_id: &str, qdrant: bool) -> Context {
-        Context {
-            database_url,
-            project_root: std::path::PathBuf::new(),
-            project_id: project_id.to_string(),
-            quiet: true,
-            falkordb: None,
-            qdrant: qdrant.then_some(crate::config::QdrantConfig {
-                url: Some("http://127.0.0.1:1".to_string()),
-                api_key: None,
-            }),
-            embedding: None,
-            code_vectors: crate::config::CodeVectorSettings::default(),
-            indexing: gobby_core::config::IndexingConfig::default(),
-            daemon_url: None,
-            index_scope: crate::config::ProjectIndexScope::Single,
+        fn connect_test_db() -> (postgres::Client, String) {
+            let database_url = crate::test_env::postgres_test_database_url("prune tests");
+            let conn =
+                db::connect_readwrite(&database_url).expect("connect prune PostgreSQL test DB");
+            (conn, database_url)
         }
-    }
 
-    fn unique_test_project_id(prefix: &str) -> String {
-        let nanos = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .expect("system time after epoch")
-            .as_nanos();
-        uuid::Uuid::new_v5(
-            &crate::models::CODE_INDEX_UUID_NAMESPACE,
-            format!("{prefix}-{nanos}").as_bytes(),
-        )
-        .to_string()
-    }
+        fn prune_test_context(database_url: String, project_id: &str, qdrant: bool) -> Context {
+            Context {
+                database_url,
+                project_root: std::path::PathBuf::new(),
+                project_id: project_id.to_string(),
+                quiet: true,
+                falkordb: None,
+                qdrant: qdrant.then_some(crate::config::QdrantConfig {
+                    url: Some("http://127.0.0.1:1".to_string()),
+                    api_key: None,
+                }),
+                embedding: None,
+                code_vectors: crate::config::CodeVectorSettings::default(),
+                indexing: gobby_core::config::IndexingConfig::default(),
+                daemon_url: None,
+                index_scope: crate::config::ProjectIndexScope::Single,
+            }
+        }
 
-    fn test_uuid(conn_id: &str, label: &str) -> uuid::Uuid {
-        uuid::Uuid::new_v5(
-            &crate::models::CODE_INDEX_UUID_NAMESPACE,
-            format!("{conn_id}:{label}").as_bytes(),
-        )
-    }
+        fn unique_test_project_id(prefix: &str) -> String {
+            let nanos = SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .expect("system time after epoch")
+                .as_nanos();
+            uuid::Uuid::new_v5(
+                &crate::models::CODE_INDEX_UUID_NAMESPACE,
+                format!("{prefix}-{nanos}").as_bytes(),
+            )
+            .to_string()
+        }
 
-    fn seed_project_with_child_rows(
-        conn: &mut postgres::Client,
-        project_id: &str,
-        include_project_row: bool,
-    ) {
-        let file_path = "src/lib.rs";
-        let project_uuid = db::id_param(project_id).expect("test project id is a uuid");
-        let file_id = test_uuid(project_id, "file");
-        let symbol_id = test_uuid(project_id, "symbol");
-        let chunk_id = test_uuid(project_id, "chunk");
-        if include_project_row {
-            conn.execute(
-                "INSERT INTO code_indexed_projects
+        fn test_uuid(conn_id: &str, label: &str) -> uuid::Uuid {
+            uuid::Uuid::new_v5(
+                &crate::models::CODE_INDEX_UUID_NAMESPACE,
+                format!("{conn_id}:{label}").as_bytes(),
+            )
+        }
+
+        fn seed_project_with_child_rows(
+            conn: &mut postgres::Client,
+            project_id: &str,
+            include_project_row: bool,
+        ) {
+            let file_path = "src/lib.rs";
+            let project_uuid = db::id_param(project_id).expect("test project id is a uuid");
+            let file_id = test_uuid(project_id, "file");
+            let symbol_id = test_uuid(project_id, "symbol");
+            let chunk_id = test_uuid(project_id, "chunk");
+            if include_project_row {
+                conn.execute(
+                    "INSERT INTO code_indexed_projects
                     (id, root_path, total_files, total_symbols, last_indexed_at, index_duration_ms)
                  VALUES ($1, $2, 1, 1, NOW(), 0)",
-                &[&project_uuid, &format!("/tmp/{project_id}")],
-            )
-            .expect("insert indexed project");
-        }
-        conn.execute(
-            "INSERT INTO code_indexed_files
+                    &[&project_uuid, &format!("/tmp/{project_id}")],
+                )
+                .expect("insert indexed project");
+            }
+            conn.execute(
+                "INSERT INTO code_indexed_files
                 (id, project_id, file_path, language, content_hash, symbol_count, byte_size)
              VALUES ($1, $2, $3, 'rust', 'hash-1', 1, 19)",
-            &[&file_id, &project_uuid, &file_path],
-        )
-        .expect("insert indexed file");
-        conn.execute(
-            "INSERT INTO code_symbols
+                &[&file_id, &project_uuid, &file_path],
+            )
+            .expect("insert indexed file");
+            conn.execute(
+                "INSERT INTO code_symbols
                 (id, project_id, file_path, name, qualified_name, kind, language, byte_start,
                  byte_end, line_start, line_end, signature, docstring, parent_symbol_id,
                  content_hash, summary, created_at, updated_at)
              VALUES ($1, $2, $3, 'indexed', 'crate::indexed', 'function', 'rust', 0, 19,
                  1, 1, 'pub fn indexed()', NULL, NULL, 'hash-1', NULL, NOW(), NOW())",
-            &[&symbol_id, &project_uuid, &file_path],
-        )
-        .expect("insert symbol");
-        conn.execute(
-            "INSERT INTO code_content_chunks
+                &[&symbol_id, &project_uuid, &file_path],
+            )
+            .expect("insert symbol");
+            conn.execute(
+                "INSERT INTO code_content_chunks
                 (id, project_id, file_path, chunk_index, line_start, line_end, content, language)
              VALUES ($1, $2, $3, 0, 1, 1, 'pub fn indexed() {}', 'rust')",
-            &[&chunk_id, &project_uuid, &file_path],
-        )
-        .expect("insert content chunk");
-        conn.execute(
-            "INSERT INTO code_imports (project_id, source_file, target_module)
+                &[&chunk_id, &project_uuid, &file_path],
+            )
+            .expect("insert content chunk");
+            conn.execute(
+                "INSERT INTO code_imports (project_id, source_file, target_module)
              VALUES ($1, $2, 'std::fmt')",
-            &[&project_uuid, &file_path],
-        )
-        .expect("insert import");
-        conn.execute(
-            "INSERT INTO code_calls
+                &[&project_uuid, &file_path],
+            )
+            .expect("insert import");
+            conn.execute(
+                "INSERT INTO code_calls
                 (project_id, caller_symbol_id, callee_symbol_id, callee_name,
                  callee_target_kind, callee_external_module, file_path, line)
              VALUES ($1, $2, NULL, 'missing', 'unresolved', '', $3, 1)",
-            &[&project_uuid, &symbol_id, &file_path],
-        )
-        .expect("insert call");
-    }
+                &[&project_uuid, &symbol_id, &file_path],
+            )
+            .expect("insert call");
+        }
 
-    fn cleanup_project(conn: &mut postgres::Client, project_id: &str) -> anyhow::Result<()> {
-        let project_id = db::id_param(project_id)?;
-        conn.execute(
-            "DELETE FROM code_calls WHERE project_id = $1",
-            &[&project_id],
-        )?;
-        conn.execute(
-            "DELETE FROM code_imports WHERE project_id = $1",
-            &[&project_id],
-        )?;
-        conn.execute(
-            "DELETE FROM code_content_chunks WHERE project_id = $1",
-            &[&project_id],
-        )?;
-        conn.execute(
-            "DELETE FROM code_symbols WHERE project_id = $1",
-            &[&project_id],
-        )?;
-        conn.execute(
-            "DELETE FROM code_indexed_files WHERE project_id = $1",
-            &[&project_id],
-        )?;
-        conn.execute(
-            "DELETE FROM code_indexed_projects WHERE id = $1",
-            &[&project_id],
-        )?;
-        Ok(())
-    }
+        fn cleanup_project(conn: &mut postgres::Client, project_id: &str) -> anyhow::Result<()> {
+            let project_id = db::id_param(project_id)?;
+            conn.execute(
+                "DELETE FROM code_calls WHERE project_id = $1",
+                &[&project_id],
+            )?;
+            conn.execute(
+                "DELETE FROM code_imports WHERE project_id = $1",
+                &[&project_id],
+            )?;
+            conn.execute(
+                "DELETE FROM code_content_chunks WHERE project_id = $1",
+                &[&project_id],
+            )?;
+            conn.execute(
+                "DELETE FROM code_symbols WHERE project_id = $1",
+                &[&project_id],
+            )?;
+            conn.execute(
+                "DELETE FROM code_indexed_files WHERE project_id = $1",
+                &[&project_id],
+            )?;
+            conn.execute(
+                "DELETE FROM code_indexed_projects WHERE id = $1",
+                &[&project_id],
+            )?;
+            Ok(())
+        }
 
-    fn project_child_row_count(conn: &mut postgres::Client, project_id: &str) -> i64 {
-        let files = count_rows(conn, "code_indexed_files", project_id);
-        let symbols = count_rows(conn, "code_symbols", project_id);
-        let chunks = count_rows(conn, "code_content_chunks", project_id);
-        let imports = count_rows(conn, "code_imports", project_id);
-        let calls = count_rows(conn, "code_calls", project_id);
-        files + symbols + chunks + imports + calls
-    }
+        fn project_child_row_count(conn: &mut postgres::Client, project_id: &str) -> i64 {
+            let files = count_rows(conn, "code_indexed_files", project_id);
+            let symbols = count_rows(conn, "code_symbols", project_id);
+            let chunks = count_rows(conn, "code_content_chunks", project_id);
+            let imports = count_rows(conn, "code_imports", project_id);
+            let calls = count_rows(conn, "code_calls", project_id);
+            files + symbols + chunks + imports + calls
+        }
 
-    fn count_rows(conn: &mut postgres::Client, table: &str, project_id: &str) -> i64 {
-        conn.query_one(
-            &format!("SELECT COUNT(*)::BIGINT FROM {table} WHERE project_id = $1"),
-            &[&db::id_param(project_id).expect("test project id is a uuid")],
-        )
-        .expect("count rows")
-        .get(0)
+        fn count_rows(conn: &mut postgres::Client, table: &str, project_id: &str) -> i64 {
+            conn.query_one(
+                &format!("SELECT COUNT(*)::BIGINT FROM {table} WHERE project_id = $1"),
+                &[&db::id_param(project_id).expect("test project id is a uuid")],
+            )
+            .expect("count rows")
+            .get(0)
+        }
     }
 }

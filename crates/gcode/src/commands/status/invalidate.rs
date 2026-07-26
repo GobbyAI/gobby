@@ -1,4 +1,4 @@
-use crate::config::Context;
+use crate::config::{Context, QdrantConfig};
 use crate::db;
 use crate::graph::code_graph;
 use crate::index::indexer;
@@ -64,9 +64,7 @@ pub(crate) fn invalidate_project_locked(
                 .map_err(|err| anyhow::anyhow!("failed to clear FalkorDB projection: {err}"))
         },
         || {
-            let Some(qdrant) = &ctx.qdrant else {
-                return Ok(0);
-            };
+            let qdrant = require_configured_qdrant(ctx.qdrant.as_ref())?;
             code_symbols::delete_project_collection(qdrant, &ctx.project_id)
                 .map_err(|err| anyhow::anyhow!("failed to delete Qdrant projection: {err}"))
         },
@@ -79,6 +77,10 @@ pub(crate) fn invalidate_project_locked(
         graph_cleared: ctx.falkordb.is_some(),
         qdrant_deleted,
     })
+}
+
+fn require_configured_qdrant(qdrant: Option<&QdrantConfig>) -> anyhow::Result<&QdrantConfig> {
+    qdrant.ok_or_else(|| anyhow::anyhow!("Qdrant cleanup was selected without a configured client"))
 }
 
 fn run_projection_first<Falkor, Qdrant, Sql, QdrantOutput>(
@@ -264,52 +266,78 @@ mod tests {
     }
 
     #[test]
-    #[serial_test::serial(serial_db)]
-    fn project_id_invalidation_needs_no_project_root() {
-        let database_url = crate::test_env::postgres_test_database_url("invalidate tests");
-        let mut conn = db::connect_readwrite(&database_url).expect("connect invalidate test DB");
-        let project_id = uuid::Uuid::new_v5(
-            &uuid::Uuid::NAMESPACE_OID,
-            b"gcode-invalidate-rootless-project",
-        )
-        .to_string();
-        delete_indexed_project(&mut conn, &project_id);
-        insert_indexed_project(&mut conn, &project_id);
+    fn configured_qdrant_cleanup_requires_client() {
+        let error = require_configured_qdrant(None)
+            .expect_err("configured Qdrant cleanup without a client must fail");
 
-        let ctx = test_context(database_url, &project_id);
-        assert!(ctx.project_root.as_os_str().is_empty());
-        invalidate_project(&ctx).expect("invalidate project by id without a root");
-
-        assert!(!indexed_project_exists(&mut conn, &project_id));
+        assert!(
+            error
+                .to_string()
+                .contains("selected without a configured client")
+        );
     }
 
-    #[test]
-    #[serial_test::serial(serial_db)]
-    fn busy_project_lock_leaves_sql_discovery_row_untouched() {
-        let database_url = crate::test_env::postgres_test_database_url("invalidate tests");
-        let mut conn = db::connect_readwrite(&database_url).expect("connect invalidate test DB");
-        let project_id =
-            uuid::Uuid::new_v5(&uuid::Uuid::NAMESPACE_OID, b"gcode-invalidate-busy-project")
-                .to_string();
-        delete_indexed_project(&mut conn, &project_id);
-        insert_indexed_project(&mut conn, &project_id);
+    mod serial_db {
+        use super::*;
 
-        let mut holder =
-            db::connect_readwrite(&database_url).expect("connect advisory lock holder");
-        let lock_key = crate::index_lock::project_lock_key(&project_id);
-        holder
-            .query_one("SELECT pg_advisory_lock($1)", &[&lock_key])
-            .expect("hold project advisory lock");
+        #[test]
+        #[cfg_attr(
+            not(gcode_postgres_tests),
+            ignore = "requires a PostgreSQL test database URL"
+        )]
+        #[serial_test::serial(serial_db)]
+        fn project_id_invalidation_needs_no_project_root() {
+            let database_url = crate::test_env::postgres_test_database_url("invalidate tests");
+            let mut conn =
+                db::connect_readwrite(&database_url).expect("connect invalidate test DB");
+            let project_id = uuid::Uuid::new_v5(
+                &uuid::Uuid::NAMESPACE_OID,
+                b"gcode-invalidate-rootless-project",
+            )
+            .to_string();
+            delete_indexed_project(&mut conn, &project_id);
+            insert_indexed_project(&mut conn, &project_id);
 
-        let mut ctx = test_context(database_url, &project_id);
-        ctx.qdrant = Some(crate::config::QdrantConfig {
-            url: Some("http://127.0.0.1:1".to_string()),
-            api_key: None,
-        });
-        let error = invalidate_project(&ctx).expect_err("busy project lock must fail visibly");
+            let ctx = test_context(database_url, &project_id);
+            assert!(ctx.project_root.as_os_str().is_empty());
+            invalidate_project(&ctx).expect("invalidate project by id without a root");
 
-        assert!(error.to_string().contains("index lock is busy"));
-        assert!(indexed_project_exists(&mut conn, &project_id));
-        delete_indexed_project(&mut conn, &project_id);
+            assert!(!indexed_project_exists(&mut conn, &project_id));
+        }
+
+        #[test]
+        #[cfg_attr(
+            not(gcode_postgres_tests),
+            ignore = "requires a PostgreSQL test database URL"
+        )]
+        #[serial_test::serial(serial_db)]
+        fn busy_project_lock_leaves_sql_discovery_row_untouched() {
+            let database_url = crate::test_env::postgres_test_database_url("invalidate tests");
+            let mut conn =
+                db::connect_readwrite(&database_url).expect("connect invalidate test DB");
+            let project_id =
+                uuid::Uuid::new_v5(&uuid::Uuid::NAMESPACE_OID, b"gcode-invalidate-busy-project")
+                    .to_string();
+            delete_indexed_project(&mut conn, &project_id);
+            insert_indexed_project(&mut conn, &project_id);
+
+            let mut holder =
+                db::connect_readwrite(&database_url).expect("connect advisory lock holder");
+            let lock_key = crate::index_lock::project_lock_key(&project_id);
+            holder
+                .query_one("SELECT pg_advisory_lock($1)", &[&lock_key])
+                .expect("hold project advisory lock");
+
+            let mut ctx = test_context(database_url, &project_id);
+            ctx.qdrant = Some(crate::config::QdrantConfig {
+                url: Some("http://127.0.0.1:1".to_string()),
+                api_key: None,
+            });
+            let error = invalidate_project(&ctx).expect_err("busy project lock must fail visibly");
+
+            assert!(error.to_string().contains("index lock is busy"));
+            assert!(indexed_project_exists(&mut conn, &project_id));
+            delete_indexed_project(&mut conn, &project_id);
+        }
     }
 }
