@@ -1,6 +1,7 @@
 """Contract tests for the read-only trajectory-monitor agent."""
 
 from pathlib import Path
+from typing import Any, cast
 
 import pytest
 import yaml
@@ -15,12 +16,12 @@ AGENT_PATH = (
 pytestmark = pytest.mark.unit
 
 
-def _agent() -> dict:
-    return yaml.safe_load(AGENT_PATH.read_text(encoding="utf-8"))
+def _agent() -> dict[str, Any]:
+    return cast(dict[str, Any], yaml.safe_load(AGENT_PATH.read_text(encoding="utf-8")))
 
 
-def _step(agent: dict, name: str) -> dict:
-    return next(step for step in agent["steps"] if step["name"] == name)
+def _step(agent: dict[str, Any], name: str) -> dict[str, Any]:
+    return cast(dict[str, Any], next(step for step in agent["steps"] if step["name"] == name))
 
 
 def test_trajectory_monitor_is_read_only_and_terminates_explicitly() -> None:

@@ -6,7 +6,7 @@ import json
 import uuid
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 
 import pytest
 import yaml
@@ -28,25 +28,25 @@ LEGACY_MERGE_TOOLS = {
 }
 
 
-def _agent(name: str) -> dict:
+def _agent(name: str) -> dict[str, Any]:
     path = (
         Path(__file__).resolve().parents[2]
         / f"src/gobby/install/shared/workflows/agents/{name}.yaml"
     )
-    return yaml.safe_load(path.read_text(encoding="utf-8"))
+    return cast(dict[str, Any], yaml.safe_load(path.read_text(encoding="utf-8")))
 
 
-def _allowed_mcp_tools(agent: dict) -> set[str]:
+def _allowed_mcp_tools(agent: dict[str, Any]) -> set[str]:
     tools: set[str] = set()
     for step in agent.get("steps", []):
         tools.update(step.get("allowed_mcp_tools", []) or [])
     return tools
 
 
-def _step(agent: dict, name: str) -> dict:
+def _step(agent: dict[str, Any], name: str) -> dict[str, Any]:
     matches = [step for step in agent.get("steps", []) if step.get("name") == name]
     assert len(matches) == 1
-    return matches[0]
+    return cast(dict[str, Any], matches[0])
 
 
 def _create_session(
@@ -462,5 +462,6 @@ async def test_merge_worker_blocks_premature_end_agent_run(temp_db: HubDatabase)
     )
 
     assert response.decision == "block"
+    assert response.reason is not None
     assert "gobby-agents:end_agent_run" in response.reason
     assert "merge" in response.reason

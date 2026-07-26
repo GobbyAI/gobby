@@ -3,8 +3,10 @@
 Tests for install.py using Click's CliRunner to test all commands and options.
 """
 
+from collections.abc import Iterator
 from contextlib import nullcontext
 from pathlib import Path
+from typing import cast
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -31,6 +33,7 @@ from gobby.storage.secrets import (
     POSTURE_KEY_FILE,
     POSTURE_SCRYPT_PASSPHRASE,
     SECRET_KEK_PASSPHRASE_ENV,
+    SecretStore,
 )
 
 pytestmark = pytest.mark.unit
@@ -94,7 +97,11 @@ class TestSecretKekPostureInstall:
         store = _SecretKekStore(POSTURE_SCRYPT_PASSPHRASE)
         monkeypatch.setenv(SECRET_KEK_PASSPHRASE_ENV, "current horse")
 
-        _configure_secret_kek_posture(store, "key-file", no_interactive=True)
+        _configure_secret_kek_posture(
+            cast(SecretStore, store),
+            "key-file",
+            no_interactive=True,
+        )
 
         assert store.kek_passphrase == "current horse"
         assert store.calls == [(POSTURE_KEY_FILE, None)]
@@ -106,7 +113,11 @@ class TestSecretKekPostureInstall:
         store = _SecretKekStore()
         monkeypatch.setenv(SECRET_KEK_PASSPHRASE_ENV, "correct horse")
 
-        _configure_secret_kek_posture(store, "passphrase", no_interactive=True)
+        _configure_secret_kek_posture(
+            cast(SecretStore, store),
+            "passphrase",
+            no_interactive=True,
+        )
 
         assert store.calls == [(POSTURE_SCRYPT_PASSPHRASE, "correct horse")]
 
@@ -116,7 +127,7 @@ class TestSecretKekPostureInstall:
 
 
 @pytest.fixture(autouse=True)
-def _mock_ext_services_and_prompts():
+def _mock_ext_services_and_prompts() -> Iterator[None]:
     """Prevent real Docker service installers and interactive API-key prompts."""
     with (
         patch("gobby.cli.install.run_daemon_setup"),
@@ -128,6 +139,11 @@ def _mock_ext_services_and_prompts():
         ),
         patch("gobby.cli.install._run_install_preflight", return_value=([], [])),
         patch("gobby.cli.install._maybe_start_daemon_after_install"),
+        patch(
+            "gobby.cli.runtime.runtime_hub_database",
+            return_value=nullcontext(MagicMock()),
+        ),
+        patch("gobby.cli.load_full_config_from_db", return_value=MagicMock()),
         patch("gobby.storage.hub.runtime.runtime_hub_database", return_value=MagicMock()),
         patch("gobby.cli.install.SecretStore"),
         patch("gobby.cli.install.ConfigStore"),
@@ -140,21 +156,21 @@ def _mock_ext_services_and_prompts():
 
 
 @pytest.fixture(autouse=True)
-def _mock_qwen_detector() -> None:
+def _mock_qwen_detector() -> Iterator[None]:
     """Keep Qwen detection deterministic unless a test overrides it."""
     with patch("gobby.cli.install._is_qwen_cli_installed", return_value=False):
         yield
 
 
 @pytest.fixture(autouse=True)
-def _mock_droid_detector() -> None:
+def _mock_droid_detector() -> Iterator[None]:
     """Keep Droid detection deterministic unless a test overrides it."""
     with patch("gobby.cli.install._is_droid_cli_installed", return_value=False):
         yield
 
 
 @pytest.fixture(autouse=True)
-def _mock_agy_detector() -> None:
+def _mock_agy_detector() -> Iterator[None]:
     """Keep AGY detection deterministic unless a test overrides it."""
     with patch("gobby.cli.install._is_agy_cli_installed", return_value=False):
         yield

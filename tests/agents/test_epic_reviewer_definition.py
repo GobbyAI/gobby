@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 
 import pytest
 import yaml
@@ -16,7 +16,7 @@ def _agent() -> dict[str, Any]:
         Path(__file__).resolve().parents[2]
         / "src/gobby/install/shared/workflows/agents/epic-reviewer.yaml"
     )
-    return yaml.safe_load(path.read_text(encoding="utf-8"))
+    return cast(dict[str, Any], yaml.safe_load(path.read_text(encoding="utf-8")))
 
 
 def test_three_outcomes() -> None:

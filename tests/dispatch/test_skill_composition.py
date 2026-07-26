@@ -156,7 +156,7 @@ def test_skill_composition_uses_single_visible_skill_query(
 
 
 def test_skill_composition_skips_query_when_no_skills_are_checked(
-    temp_db,
+    temp_db: HubDatabase,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     monkeypatch.setattr(
@@ -178,7 +178,7 @@ def test_skill_composition_skips_query_when_no_skills_are_checked(
 
 @pytest.mark.asyncio
 async def test_spawn_and_explain_share_unknown_skill_failure(
-    temp_db,
+    temp_db: HubDatabase,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     project = LocalProjectManager(temp_db).create(

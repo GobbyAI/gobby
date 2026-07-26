@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from typing import Any
+from typing import Any, cast
 
 import pytest
 
@@ -167,7 +167,7 @@ def _child(
     )
     initialize_manifest(temp_db, child.id, [spec("development", 0), spec("merge", 1)])
     set_stage_state(temp_db, child.id, "development", stage_state)
-    return child
+    return cast(Task, child)
 
 
 def _gate(temp_db: HubDatabase, root_id: str) -> EpicDescendantGate | None:
