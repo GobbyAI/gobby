@@ -11,6 +11,29 @@ converge while preserving review quality. This log starts with plan-adversary
 sessions created after the latest daemon restart because older sessions used the
 known-bad researcher spawn path.
 
+## Delegated Evidence Map
+
+Three native Codex subagents performed independent read-only reviews:
+
+| Review | Primary evidence | Conclusion carried into this log |
+| --- | --- | --- |
+| `session_9640_forensics` | Child transcript, tool timings, lane launches and returns, coverage, delivery, compaction, terminal result | 34m31s run; all native lanes returned; repeated result paging, index contention, generic schemas, and a 5m11s post-coverage tail |
+| `parent_round_history` | Round-1 and round-2 snapshots, findings, changed sections, coordinator repair history | 15 of 25 round-2 blockers were fixer-induced or incomplete repairs; 10 were earlier reviewer misses; zero came from new user scope |
+| `orchestration_bottlenecks` | Evidence-service and agent-lifecycle code plus concurrent runs `#9640`, `#9642`, `#9643`, `#9644` | Coverage attested 19 emitted findings but the final result contained 25; four parents plus 12 lanes lacked global admission, frozen index, and enforced deadlines |
+
+The parent analysis verified the restart boundary, inspected installed DB rules
+and agent definitions, reconciled the reports against canonical run results, and
+added the independent 25-round behavioral corpus from
+`docs/plans/adversary-convergence.md`.
+
+The combined conclusion is two-part:
+
+1. **Avoidable rounds are primarily repair failures.** Accepted findings are
+   fixed locally without class-wide consumer, overlap, or counterexample proof.
+2. **Avoidable wall time is primarily orchestration and evidence transport.**
+   Concurrent full-repository lanes contend on shared discovery while large
+   immutable objects are repeatedly paged and echoed by the model.
+
 ## Scope Boundary
 
 The current daemon process is PID `57163`.
