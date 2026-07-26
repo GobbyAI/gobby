@@ -16,6 +16,7 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
+from gobby.agents.watchdog.codex import CodexTranscriptWatchdogReader
 from gobby.config.sessions import DigestConfig
 from gobby.llm.base import LLMProviderCancellation
 from gobby.memory.digest import (
@@ -538,7 +539,7 @@ class TestBuildTurnAndDigest:
         assert llm_call.kwargs["caller"] == "memory.turn_record"
 
     @pytest.mark.asyncio
-    async def test_codex_turn_start_catches_up_interrupted_turn_once(
+    async def test_codex_turn_start_catches_up_once_without_completed_turn_recovery(
         self,
         tmp_path: Path,
         mock_memory_manager: MagicMock,
@@ -546,6 +547,7 @@ class TestBuildTurnAndDigest:
     ) -> None:
         transcript = tmp_path / "codex.jsonl"
         _write_interrupted_codex_transcript(transcript)
+        transcript_before = transcript.read_text()
         session: MagicMock = mock_session_manager.get.return_value
         session.transcript_path = str(transcript)
         session.source = "codex"
@@ -598,6 +600,10 @@ class TestBuildTurnAndDigest:
         assert session.title_source == "llm"
         mock_session_manager.persist_digest_state.assert_called_once()
         llm_service.call_json_feature.assert_awaited_once()
+        assert transcript.read_text() == transcript_before
+        assert '"type": "task_complete"' not in transcript_before
+        watchdog_snapshot = await CodexTranscriptWatchdogReader().read(str(transcript))
+        assert watchdog_snapshot.latest_turn_kind == "started"
 
     @pytest.mark.asyncio
     async def test_concurrent_turns_are_serialized_in_digest_order(
