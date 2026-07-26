@@ -94,7 +94,7 @@ _CONCURRENT_INDEX_RE = re.compile(
     re.IGNORECASE,
 )
 _INVALID_CONCURRENT_INDEX_SQL = """
-SELECT pg_catalog.format('%I.%I', namespace.nspname, relation.relname) AS qualified_name
+SELECT pg_catalog.format('%%I.%%I', namespace.nspname, relation.relname) AS qualified_name
 FROM pg_catalog.pg_class AS relation
 JOIN pg_catalog.pg_namespace AS namespace ON namespace.oid = relation.relnamespace
 JOIN pg_catalog.pg_index AS index_state ON index_state.indexrelid = relation.oid

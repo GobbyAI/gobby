@@ -335,7 +335,7 @@ class _AutocommitMigrationConnection:
             rows = [{"version": params[0]}] if params[0] in self.state.applied else []
             return _Result(rows)
         if "NOT index_state.indisvalid" in sql:
-            assert "pg_catalog.format('%I.%I'" in sql
+            assert "pg_catalog.format('%%I.%%I'" in sql
             assert params == ("idx_shadow",)
             self.state.index_lookups.append(params[0])
             rows = (
