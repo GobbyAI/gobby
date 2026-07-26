@@ -5,6 +5,8 @@ from pathlib import Path
 import pytest
 import yaml
 
+from gobby.workflows.safe_evaluator import SafeExpressionEvaluator
+
 AGENT_PATH = (
     Path(__file__).resolve().parents[2]
     / "src/gobby/install/shared/workflows/agents/trajectory-monitor.yaml"
@@ -76,3 +78,24 @@ def test_trajectory_monitor_emits_one_pr_verdict_or_suspicion_escalation() -> No
     assert review["transitions"] == [
         {"to": "terminate", "when": "vars.verdict_emitted or vars.review_stale"}
     ]
+
+
+@pytest.mark.parametrize("state", [None, {"is_closed": False, "current_stage": None}])
+def test_trajectory_monitor_tolerates_missing_nested_task_state(state: object) -> None:
+    review = _step(_agent(), "review")
+    get_task_handler = next(
+        item
+        for item in review["on_mcp_success"]
+        if item["server"] == "gobby-tasks" and item["tool"] == "get_task"
+    )
+    evaluator = SafeExpressionEvaluator(
+        {
+            "tool_output": {
+                "success": True,
+                "result": {"state": state},
+            }
+        },
+        {"bool": bool},
+    )
+
+    assert evaluator.evaluate(get_task_handler["when"]) is True

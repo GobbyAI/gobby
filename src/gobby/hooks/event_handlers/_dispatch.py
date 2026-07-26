@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 from collections.abc import Mapping
 from typing import Any, cast
 
@@ -14,6 +15,8 @@ from gobby.storage.tasks import (
     TaskLifecycleEventManager,
 )
 from gobby.storage.tasks._stage_states import StageStatesManager
+
+logger = logging.getLogger(__name__)
 
 
 def on_pipeline_completed(
@@ -90,11 +93,22 @@ def _handle_stage_pipeline_terminal(
                         by_session_id=None,
                         preheld_mutex_run_id=str(run_id),
                     )
-                    schedule_dispatcher_continuation_for_task(
-                        db,
-                        task_id=mutex.task_id,
-                        reason="stage_pipeline_review",
-                    )
+                    try:
+                        schedule_dispatcher_continuation_for_task(
+                            db,
+                            task_id=mutex.task_id,
+                            reason="stage_pipeline_review",
+                        )
+                    except Exception:
+                        logger.warning(
+                            "Failed to schedule dispatcher continuation after stage review",
+                            extra={
+                                "task_id": mutex.task_id,
+                                "stage_name": stage_name,
+                                "run_id": str(run_id),
+                            },
+                            exc_info=True,
+                        )
                     return updated
                 return manager.complete_stage(
                     mutex.task_id,

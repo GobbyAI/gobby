@@ -272,6 +272,65 @@ class TestFallbackAgent:
             call_kwargs = mock_impl.call_args.kwargs
             assert call_kwargs["agent_body"].name == "dev-explicit"
 
+    @pytest.mark.asyncio
+    async def test_missing_fallback_definition_logs_skip_diagnostics(
+        self,
+        db: HubDatabase,
+        manager: LocalWorkflowDefinitionManager,
+        caplog: pytest.LogCaptureFixture,
+    ) -> None:
+        self._create_agent(
+            manager,
+            "dev-missing-fallback",
+            provider="codex",
+            fallback_agent="missing-agent",
+        )
+
+        with (
+            patch(
+                "gobby.mcp_proxy.tools.spawn_agent._factory.get_project_context",
+                return_value={"id": "11111111-1111-4111-8111-111111110001"},
+            ),
+            patch(
+                "gobby.agents.provider_rotation.get_failed_providers_for_task",
+                return_value=["codex"],
+            ),
+            patch(
+                "gobby.mcp_proxy.tools.spawn_agent._factory.spawn_agent_impl",
+                new_callable=AsyncMock,
+                return_value={"success": True, "run_id": "run-1"},
+            ) as mock_impl,
+        ):
+            from gobby.mcp_proxy.tools.spawn_agent._factory import (
+                create_spawn_agent_registry,
+            )
+
+            registry = create_spawn_agent_registry(
+                MagicMock(),
+                db=db,
+                detection_registry=DETECTION_REGISTRY,
+            )
+            tool_fn = registry.get_tool("spawn_agent")
+            assert tool_fn is not None
+
+            await tool_fn(
+                prompt="fix the bug",
+                agent="dev-missing-fallback",
+                task_id="task-123",
+            )
+
+        assert mock_impl.call_args.kwargs["agent_body"].name == "dev-missing-fallback"
+        warning = next(
+            record
+            for record in caplog.records
+            if record.message == "Fallback agent chain did not produce a viable agent"
+        )
+        assert vars(warning)["task_id"] == "task-123"
+        assert vars(warning)["primary_agent"] == "dev-missing-fallback"
+        assert vars(warning)["failed_provider"] == "codex"
+        assert vars(warning)["candidate_agent"] == "missing-agent"
+        assert vars(warning)["skip_reason"] == "definition_missing"
+
     def test_fallback_agent_field_roundtrip(self) -> None:
         """AgentDefinitionBody with fallback_agent serializes/deserializes."""
         body = AgentDefinitionBody(

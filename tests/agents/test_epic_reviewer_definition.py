@@ -31,6 +31,12 @@ def test_three_outcomes() -> None:
     } <= success_tools
 
 
+def test_review_step_stays_active_after_mcp_error() -> None:
+    review_step = next(step for step in _agent()["steps"] if step["name"] == "review")
+
+    assert review_step["mcp_error_policy"] == "stay"
+
+
 def test_success_path_uses_complete_stage_for_in_progress_epic_qa() -> None:
     agent = _agent()
     review_step = next(step for step in agent["steps"] if step["name"] == "review")

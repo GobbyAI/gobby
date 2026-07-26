@@ -3,6 +3,7 @@
 Tests for install.py using Click's CliRunner to test all commands and options.
 """
 
+from contextlib import nullcontext
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
@@ -601,6 +602,7 @@ class TestInstallCommand:
         temp_dir: Path,
         temp_db: HubDatabase,
         monkeypatch: pytest.MonkeyPatch,
+        caplog: pytest.LogCaptureFixture,
     ) -> None:
         gobby_home = temp_dir / "gobby-home"
         monkeypatch.setenv("GOBBY_HOME", str(gobby_home))
@@ -621,7 +623,14 @@ class TestInstallCommand:
                 "gobby.cli.install._ensure_daemon_config",
                 return_value={"created": False, "path": "/test/config.yaml"},
             ),
-            patch("gobby.cli.install.load_full_config_from_db", side_effect=FileNotFoundError),
+            patch(
+                "gobby.cli.install.load_full_config_from_db",
+                side_effect=FileNotFoundError("bootstrap unavailable"),
+            ),
+            patch(
+                "gobby.cli.runtime.runtime_hub_database",
+                return_value=nullcontext(temp_db),
+            ),
             patch("gobby.cli.install.install_codex", return_value=codex_result),
         ):
             with runner.isolated_filesystem(temp_dir=str(temp_dir)):
@@ -632,6 +641,13 @@ class TestInstallCommand:
         original_token = token_path.read_text().strip()
         config_store = ConfigStore(temp_db)
         assert config_store.get(LOCAL_API_TOKEN_HASH_KEY) is None
+        warning = next(
+            record
+            for record in caplog.records
+            if record.message == "Failed to initialize install database/secret store"
+        )
+        assert vars(warning)["error_type"] == "FileNotFoundError"
+        assert vars(warning)["error"] == "bootstrap unavailable"
 
         assert ensure_local_api_token(config_store) == original_token
         assert token_path.read_text().strip() == original_token

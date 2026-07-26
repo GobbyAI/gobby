@@ -41,6 +41,8 @@ def test_persisted_validation_status(
         ("whitespace errors", "git diff --check", False, FailureCategory.CODE),
         ("changes found", "git diff --exit-code", False, FailureCategory.CODE),
         ("patch does not apply", "git apply --check", False, FailureCategory.CODE),
+        ("authentication rejected", "git fetch origin", False, FailureCategory.CODE),
+        ("local changes would be overwritten", "git checkout main", False, FailureCategory.CODE),
         ("tests failed", "git diff --check", False, FailureCategory.TEST),
         ("HTTP 429 Too Many Requests", None, False, FailureCategory.PROVIDER),
         ("anything", None, True, FailureCategory.TIMEOUT),

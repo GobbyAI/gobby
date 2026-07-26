@@ -236,15 +236,14 @@ steps:
         value: "vars.get('merge_resolve_attempts', []) + [tool_input.get('conflict_id', '')]"
       - server: gobby-tasks-ops
         tool: record_merge_result
-        when: "bool(tool_input.get('failure_reason'))"
         action: set_variable
-        variable: merge_worker_ready_to_terminate
+        variable: merge_result_recorded
         value: true
       - server: gobby-tasks-ops
         tool: record_merge_result
-        when: "not bool(tool_input.get('failure_reason'))"
+        when: "bool(tool_input.get('failure_reason'))"
         action: set_variable
-        variable: merge_result_recorded
+        variable: merge_worker_ready_to_terminate
         value: true
       - server: gobby-tasks-ops
         tool: close_linked_github_issue
@@ -258,11 +257,6 @@ steps:
         action: set_variable
         variable: merge_resolve_attempts
         value: "vars.get('merge_resolve_attempts', []) + [tool_input.get('conflict_id', '')]"
-      - server: gobby-tasks-ops
-        tool: record_merge_result
-        action: set_variable
-        variable: merge_worker_ready_to_terminate
-        value: true
       - server: gobby-tasks-ops
         tool: close_linked_github_issue
         action: set_variable
@@ -286,7 +280,7 @@ steps:
     # record_merge_result/close_linked_github_issue.
     transitions:
       - to: terminate
-        when: "vars.merge_worker_ready_to_terminate"
+        when: "vars.merge_result_recorded and vars.merge_worker_ready_to_terminate"
 
   - name: terminate
     description: "Safety net: self-terminate via gobby-agents:end_agent_run"
