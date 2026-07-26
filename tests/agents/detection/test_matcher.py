@@ -6,7 +6,8 @@ from pathlib import Path
 
 import pytest
 
-from gobby.agents.detection.matcher import compile_manifest
+from gobby.agents.detection import matcher
+from gobby.agents.detection.matcher import CompiledManifest, compile_manifest
 
 pytestmark = pytest.mark.unit
 
@@ -34,6 +35,23 @@ def test_priority_and_regions() -> None:
     assert excluded.match.rule_id == "historical_stall"
 
 
+def test_latest_open_prompt_box_does_not_reuse_completed_box() -> None:
+    content = (FIXTURES / "detection_manifest.toml").read_text(encoding="utf-8")
+    pane = "\n".join(
+        (
+            "╭ completed",
+            "│ Do you trust the files in this folder?",
+            "│ 1. Trust Folder",
+            "╰",
+            "╭ current",
+        )
+    )
+
+    evaluation = compile_manifest(content).match(pane)
+
+    assert evaluation.match is None
+
+
 def test_compile_cache_uses_content_fingerprint() -> None:
     content = (FIXTURES / "detection_manifest.toml").read_text(encoding="utf-8")
 
@@ -45,6 +63,24 @@ def test_compile_cache_uses_content_fingerprint() -> None:
     assert edited is not first
     assert edited.fingerprint != first.fingerprint
     assert edited.manifest.version == first.manifest.version
+
+
+def test_compile_manifest_passes_string_directly_to_compiler(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    content = (FIXTURES / "detection_manifest.toml").read_text(encoding="utf-8")
+    original_compile = matcher._compile_fingerprint
+    compiled_contents: list[str] = []
+
+    def capture_content(fingerprint: str, text: str) -> CompiledManifest:
+        compiled_contents.append(text)
+        return original_compile(fingerprint, text)
+
+    monkeypatch.setattr(matcher, "_compile_fingerprint", capture_content)
+
+    matcher.compile_manifest(content)
+
+    assert compiled_contents[0] is content
 
 
 def test_invalid_pattern_flags_rule_and_falls_through() -> None:

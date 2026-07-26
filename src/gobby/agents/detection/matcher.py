@@ -157,13 +157,20 @@ def _select_region(pane_snapshot: str, region: str) -> str:
 
 def _last_prompt_box(pane_snapshot: str) -> str:
     lines = pane_snapshot.splitlines()
+    start_index: int | None = None
+    for index in range(len(lines) - 1, -1, -1):
+        if lines[index].lstrip().startswith(("╭", "┌")):
+            start_index = index
+            break
+
     end_index: int | None = None
     for index in range(len(lines) - 1, -1, -1):
         if lines[index].lstrip().startswith(("╰", "└")):
             end_index = index
             break
-    if end_index is None:
+    if end_index is None or (start_index is not None and start_index > end_index):
         return ""
+
     for index in range(end_index - 1, -1, -1):
         if lines[index].lstrip().startswith(("╭", "┌")):
             return "\n".join(lines[index : end_index + 1])
@@ -237,7 +244,11 @@ def _compile_fingerprint(fingerprint: str, content: str) -> CompiledManifest:
 def compile_manifest(content: str | bytes) -> CompiledManifest:
     """Compile manifest content once per SHA-256 content fingerprint."""
 
-    content_bytes = content.encode("utf-8") if isinstance(content, str) else content
-    text = content_bytes.decode("utf-8")
+    if isinstance(content, str):
+        text = content
+        content_bytes = content.encode("utf-8")
+    else:
+        content_bytes = content
+        text = content.decode("utf-8")
     fingerprint = sha256(content_bytes).hexdigest()
     return _compile_fingerprint(fingerprint, text)

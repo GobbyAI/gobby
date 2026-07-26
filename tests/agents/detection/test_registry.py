@@ -5,8 +5,12 @@ from __future__ import annotations
 from pathlib import Path
 from unittest.mock import Mock
 
+import pytest
+
+from gobby.agents.detection import registry as registry_module
 from gobby.agents.detection.matcher import compile_manifest
 from gobby.agents.detection.registry import (
+    MAX_STALENESS_SECONDS,
     DetectionManifestRegistry,
     get_bundled_detection_manifests_path,
     save_user_detection_manifest,
@@ -29,6 +33,52 @@ priority = 100
 region = "whole_recent"
 contains = ["{needle}"]
 '''
+
+
+@pytest.mark.unit
+def test_staleness_validation_ceiling_is_independent_of_default(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    database = Mock()
+    monkeypatch.setattr(registry_module, "DEFAULT_STALENESS_SECONDS", 1.0)
+
+    DetectionManifestRegistry(database, staleness_seconds=MAX_STALENESS_SECONDS)
+
+    with pytest.raises(
+        ValueError,
+        match=rf"between 0 and {MAX_STALENESS_SECONDS:g} seconds",
+    ):
+        DetectionManifestRegistry(
+            database,
+            staleness_seconds=MAX_STALENESS_SECONDS + 1.0,
+        )
+
+
+@pytest.mark.unit
+def test_refresh_and_reload_reuse_unchanged_fingerprint() -> None:
+    provider_id = "registry-unit"
+    database = Mock()
+    database.fetchall.return_value = [
+        {"provider_id": provider_id, "content": _manifest(provider_id, "ready")}
+    ]
+    now = [0.0]
+    registry = DetectionManifestRegistry(
+        database,
+        staleness_seconds=MAX_STALENESS_SECONDS,
+        clock=lambda: now[0],
+    )
+
+    original = registry.for_provider(provider_id)
+    now[0] = MAX_STALENESS_SECONDS
+    refreshed = registry.for_provider(provider_id)
+    reloaded_count = registry.reload()
+    reloaded = registry.for_provider(provider_id)
+
+    assert original is not None
+    assert refreshed is original
+    assert reloaded is original
+    assert reloaded_count == 1
+    assert database.fetchall.call_count == 3
 
 
 def test_bundled_manifests_cover_supported_providers() -> None:
