@@ -366,11 +366,11 @@ def split_rule_definition_data(
     raw_metadata = {
         field: body_data.pop(field)
         for field in RULE_DEFINITION_ROW_METADATA_FIELDS
-        if field != "name" and field in body_data
+        if field in body_data
     }
 
     RuleDefinitionBody.model_validate(body_data)
-    metadata = RuleDefinitionMetadata.model_validate(raw_metadata).model_dump()
+    metadata = RuleDefinitionMetadata.model_validate(raw_metadata).model_dump(exclude_unset=True)
     if name is not None:
         metadata["name"] = name
     return body_data, metadata

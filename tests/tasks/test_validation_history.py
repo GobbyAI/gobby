@@ -6,10 +6,19 @@ from uuid import uuid4
 import pytest
 
 from gobby.failure_categories import FailureCategory
-from gobby.tasks.validation_history import ValidationHistoryManager, ValidationIteration
+from gobby.tasks.validation_history import (
+    ValidationHistoryManager,
+    ValidationIteration,
+    _safe_failure_category,
+)
 from gobby.tasks.validation_models import Issue, IssueSeverity, IssueType
 
 pytestmark = pytest.mark.unit
+
+
+def test_unknown_stored_failure_category_is_ignored(caplog: pytest.LogCaptureFixture) -> None:
+    assert _safe_failure_category("future-category") is None
+    assert "Ignoring unknown validation failure category" in caplog.text
 
 
 @pytest.fixture

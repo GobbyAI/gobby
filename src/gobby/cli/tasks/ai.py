@@ -8,7 +8,10 @@ from typing import Any
 import click
 
 from gobby.cli.tasks._utils import get_task_manager, resolve_task_id
-from gobby.failure_categories import INFRASTRUCTURE_FAILURE_CATEGORIES
+from gobby.failure_categories import (
+    INFRASTRUCTURE_FAILURE_CATEGORIES,
+    persisted_validation_status,
+)
 from gobby.tasks.state_semantics import current_stage_state, is_task_closed
 from gobby.utils.json_helpers import json_dumps
 
@@ -215,12 +218,7 @@ def validate_task_cmd(
                 )
             )
         # Apply validation updates
-        persisted_status = (
-            "error"
-            if result.status == "invalid"
-            and result.failure_category in INFRASTRUCTURE_FAILURE_CATEGORIES
-            else result.status
-        )
+        persisted_status = persisted_validation_status(result.status, result.failure_category)
         validation_updates: dict[str, Any] = {
             "validation_status": persisted_status,
             "validation_feedback": result.feedback,

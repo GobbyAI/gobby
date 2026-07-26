@@ -95,7 +95,7 @@ def test_workflow_definition_session_variables_vs_variables() -> None:
     assert wf.session_variables == {"session_shared": True}
 
 
-def test_rule_definition_metadata_defaults_are_normalized() -> None:
+def test_rule_definition_omits_unsupplied_metadata_defaults() -> None:
     from gobby.workflows.definitions import split_rule_definition_data
 
     body, metadata = split_rule_definition_data(
@@ -106,12 +106,23 @@ def test_rule_definition_metadata_defaults_are_normalized() -> None:
     )
 
     assert body["event"] == "before_tool"
-    assert metadata == {
-        "description": None,
-        "enabled": True,
-        "priority": 100,
-        "tags": [],
-    }
+    assert metadata == {}
+
+
+def test_rule_definition_preserves_explicit_metadata() -> None:
+    from gobby.workflows.definitions import split_rule_definition_data
+
+    _, metadata = split_rule_definition_data(
+        {
+            "event": "before_tool",
+            "effects": [{"type": "block", "reason": "blocked"}],
+            "enabled": True,
+            "priority": 100,
+            "tags": [],
+        }
+    )
+
+    assert metadata == {"enabled": True, "priority": 100, "tags": []}
 
 
 def test_rule_definition_metadata_rejects_invalid_values() -> None:

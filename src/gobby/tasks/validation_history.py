@@ -18,6 +18,19 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 
+def _safe_failure_category(value: object) -> FailureCategory | None:
+    if value is None:
+        return None
+    if not isinstance(value, str):
+        logger.warning("Ignoring non-string validation failure category", extra={"value": repr(value)})
+        return None
+    try:
+        return FailureCategory(value)
+    except ValueError:
+        logger.warning("Ignoring unknown validation failure category", extra={"value": value})
+        return None
+
+
 @dataclass
 class ValidationIteration:
     """Represents a single validation iteration for a task.
@@ -191,11 +204,7 @@ class ValidationHistoryManager:
             context_type=row["context_type"],
             context_summary=row["context_summary"],
             validator_type=row["validator_type"],
-            failure_category=(
-                FailureCategory(row["failure_category"])
-                if row["failure_category"] is not None
-                else None
-            ),
+            failure_category=_safe_failure_category(row["failure_category"]),
             created_at=row["created_at"],
         )
 

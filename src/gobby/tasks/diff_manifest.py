@@ -52,7 +52,8 @@ class DiffPagingError(ValueError):
         return result
 
 
-def _encode_bytes(value: bytes) -> EncodedContent:
+def encode_bytes(value: bytes) -> EncodedContent:
+    """Encode arbitrary bytes without losing non-UTF-8 content."""
     try:
         return {"encoding": "utf-8", "text": value.decode("utf-8")}
     except UnicodeDecodeError:
@@ -64,7 +65,9 @@ def _path_selector(commit: str, path: bytes) -> str:
     return base64.urlsafe_b64encode(digest).rstrip(b"=").decode("ascii")
 
 
-class _ManifestParser:
+class ManifestParser:
+    """Incrementally parse a NUL-delimited Git name-status manifest."""
+
     def __init__(self, commit: str, emit: Callable[[ManifestItem, bytes], None]) -> None:
         self.commit = commit
         self.emit = emit
@@ -106,7 +109,7 @@ class _ManifestParser:
         item: ManifestItem = {
             "commit": self.commit,
             "status": self.status.decode("ascii", errors="replace"),
-            "path": _encode_bytes(token),
+            "path": encode_bytes(token),
             "path_selector": _path_selector(self.commit, token),
         }
         if role is not None:

@@ -20,6 +20,8 @@ from click.testing import CliRunner
 from gobby.cli import cli
 from gobby.cli.tasks._utils import config as task_config_utils
 from gobby.config import DaemonConfig
+from gobby.failure_categories import FailureCategory
+from gobby.tasks.validation_verdict import ValidationResult
 
 pytestmark = pytest.mark.unit
 
@@ -2013,6 +2015,50 @@ class TestValidateCommandExtended:
                 mock_task.id,
                 reason="exceeded_validation_retries (3)",
             )
+
+    @patch("gobby.cli.tasks.ai.get_task_manager")
+    @patch("gobby.cli.tasks.ai.resolve_task_id")
+    def test_validate_persists_infrastructure_failure_as_error(
+        self,
+        mock_resolve: MagicMock,
+        mock_get_manager: MagicMock,
+        runner: CliRunner,
+        mock_task: MagicMock,
+    ) -> None:
+        mock_resolve.return_value = mock_task
+        mock_manager = MagicMock()
+        mock_manager.list_tasks.return_value = []
+        mock_get_manager.return_value = mock_manager
+        verdict = ValidationResult(
+            status="invalid",
+            feedback="provider returned status 429",
+            failure_category=FailureCategory.PROVIDER,
+        )
+
+        async def validate_task(*args: Any, **kwargs: Any) -> ValidationResult:
+            return verdict
+
+        with (
+            patch("gobby.tasks.validation.TaskValidator") as validator_class,
+            patch("gobby.cli.load_full_config_from_db", return_value=DaemonConfig()),
+            patch("gobby.cli.runtime.require_cli_database", return_value=MagicMock()),
+        ):
+            validator_class.return_value.validate_task.side_effect = validate_task
+            result = runner.invoke(
+                cli,
+                ["tasks", "validate", "gt-abc123", "--summary", "fix"],
+            )
+
+        assert result.exit_code == 0
+        assert "Validation Status: INVALID" in result.output
+        assert "provider returned status 429" in result.output
+        mock_manager.update_task.assert_called_once_with(
+            mock_task.id,
+            validation_status="error",
+            validation_feedback=verdict.feedback,
+        )
+        mock_manager.create_task.assert_not_called()
+        mock_manager.escalate_task.assert_not_called()
 
 
 class TestSuggestCommandExtended:

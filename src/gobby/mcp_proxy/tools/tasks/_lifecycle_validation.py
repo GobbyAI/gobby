@@ -11,9 +11,9 @@ from typing import TYPE_CHECKING, Any
 
 from gobby.config.tasks import TaskValidationConfig
 from gobby.failure_categories import (
-    INFRASTRUCTURE_FAILURE_CATEGORIES,
     FailureCategory,
     classify_failure,
+    persisted_validation_status,
 )
 from gobby.mcp_proxy.tools._task_query_pagination import collect_task_query_pages
 from gobby.mcp_proxy.tools.tasks._escalation_coordinator import coordinate_task_escalation
@@ -620,16 +620,18 @@ async def validate_leaf_task_with_llm(
 
     if validation_status != "valid":
         blocking_reasons = list(result.blocking_reasons)
-        failure_category = result.failure_category or classify_failure(
-            "\n".join(part for part in (original_feedback, *blocking_reasons) if part)
-        )
+        result_failure_category = result.failure_category
+        if result_failure_category is None:
+            raise RuntimeError("Non-valid validation result is missing a failure category")
+        failure_category = result_failure_category
+        persisted_status = persisted_validation_status(validation_status, failure_category)
         message = format_close_validation_message(
             validation_status,
             original_feedback,
             blocking_reasons,
             result.verdict_override,
         )
-        if failure_category in INFRASTRUCTURE_FAILURE_CATEGORIES:
+        if persisted_status == "error":
             if read_only:
                 preview_extra: dict[str, Any] = {
                     "validation_status": "error",

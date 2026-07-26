@@ -16,7 +16,7 @@ import pytest
 
 import gobby.tasks.diff_paging as diff_paging
 from gobby.mcp_proxy.tools.task_commits import create_commit_registry
-from gobby.tasks.diff_manifest import ManifestItem
+from gobby.tasks.diff_manifest import ManifestItem, ManifestParser, encode_bytes
 from gobby.tasks.diff_paging import (
     MAX_COMMITS_LIMIT,
     MAX_LIMIT_BYTES,
@@ -127,6 +127,18 @@ def _find_manifest_item(page: DiffPage, raw_path: bytes) -> ManifestItem:
         if decode_content(item["path"]) == raw_path:
             return item
     raise AssertionError(f"manifest path not found: {raw_path!r}")
+
+
+def test_manifest_parser_and_encoder_are_public() -> None:
+    emitted: list[tuple[ManifestItem, bytes]] = []
+    parser = ManifestParser("a" * 40, lambda item, path: emitted.append((item, path)))
+
+    parser.feed(b"M\x00src/example.py\x00")
+    parser.finish()
+
+    assert emitted[0][1] == b"src/example.py"
+    assert emitted[0][0]["path"] == {"encoding": "utf-8", "text": "src/example.py"}
+    assert encode_bytes(b"\xff") == {"encoding": "base64", "data": "/w=="}
 
 
 def test_lossless_sequential_pages_preserve_multibyte_boundaries(repo: Path) -> None:

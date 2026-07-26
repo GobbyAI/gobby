@@ -2,9 +2,33 @@ from __future__ import annotations
 
 import pytest
 
-from gobby.failure_categories import FailureCategory, classify_exception, classify_failure
+from gobby.failure_categories import (
+    FailureCategory,
+    ValidationStatus,
+    classify_exception,
+    classify_failure,
+    persisted_validation_status,
+)
 
 pytestmark = pytest.mark.unit
+
+
+@pytest.mark.parametrize(
+    ("status", "category", "expected"),
+    [
+        ("invalid", FailureCategory.PROVIDER, "error"),
+        ("invalid", FailureCategory.TIMEOUT, "error"),
+        ("invalid", FailureCategory.CODE, "invalid"),
+        ("valid", None, "valid"),
+        ("error", FailureCategory.PROVIDER, "error"),
+    ],
+)
+def test_persisted_validation_status(
+    status: ValidationStatus,
+    category: FailureCategory | None,
+    expected: ValidationStatus,
+) -> None:
+    assert persisted_validation_status(status, category) == expected
 
 
 @pytest.mark.parametrize(

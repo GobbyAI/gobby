@@ -446,7 +446,8 @@ def test_failure_category_taxonomy_is_closed_in_baseline_and_migration() -> None
     ).read_text(encoding="utf-8")
     categories = "'environment', 'dependency', 'code', 'test', 'provider', 'timeout'"
 
-    for schema in (baseline, migration):
+    for raw_schema in (baseline, migration):
+        schema = _normalize_sql_whitespace(raw_schema)
         assert schema.count("failure_category TEXT CHECK") == 2
         assert schema.count(categories) == 2
 

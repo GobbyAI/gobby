@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from enum import StrEnum
+from typing import Literal
 
 
 class FailureCategory(StrEnum):
@@ -24,6 +25,19 @@ INFRASTRUCTURE_FAILURE_CATEGORIES = frozenset(
         FailureCategory.TIMEOUT,
     }
 )
+
+type ValidationStatus = Literal["valid", "invalid", "pending", "error"]
+
+
+def persisted_validation_status(
+    status: ValidationStatus,
+    failure_category: FailureCategory | None,
+) -> ValidationStatus:
+    """Map a validator result to the status stored on the task."""
+    if status == "invalid" and failure_category in INFRASTRUCTURE_FAILURE_CATEGORIES:
+        return "error"
+    return status
+
 
 _TIMEOUT_MARKERS = (
     "maximum number of turns",

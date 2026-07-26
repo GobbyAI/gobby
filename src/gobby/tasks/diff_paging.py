@@ -28,13 +28,13 @@ from gobby.tasks.diff_manifest import (
     ManifestItem as ManifestItem,
 )
 from gobby.tasks.diff_manifest import (
+    ManifestParser as ManifestParser,
+)
+from gobby.tasks.diff_manifest import (
     Utf8Content as Utf8Content,
 )
 from gobby.tasks.diff_manifest import (
-    _encode_bytes as _encode_bytes,
-)
-from gobby.tasks.diff_manifest import (
-    _ManifestParser as _ManifestParser,
+    encode_bytes as encode_bytes,
 )
 from gobby.tasks.diff_manifest import (
     parse_numstat,
@@ -305,7 +305,7 @@ def _encode_window(value: bytes) -> tuple[EncodedContent, int]:
                 return {"encoding": "utf-8", "text": prefix.decode("utf-8")}, len(prefix)
             except UnicodeDecodeError:
                 pass
-        return _encode_bytes(value), len(value)
+        return encode_bytes(value), len(value)
 
 
 def _numstat_totals(
@@ -363,7 +363,7 @@ def _manifest_page_candidates(
     for commit in commits:
         current_numstat = None
         numstat_loaded = False
-        parser = _ManifestParser(commit, emit)
+        parser = ManifestParser(commit, emit)
         _run_git(
             [
                 "--literal-pathspecs",
