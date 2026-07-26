@@ -85,6 +85,22 @@ class Migration:
 
 _NON_TRANSACTIONAL_DIRECTIVE = "-- gobby:non-transactional"
 _MIGRATION_LOCK_SQL = "hashtext('postgres_migrations_apply'), hashtext(current_schema())"
+_SQL_IDENTIFIER_PATTERN = r'(?:[A-Za-z_][A-Za-z0-9_$]*|"(?:[^"]|"")+")'
+_CONCURRENT_INDEX_RE = re.compile(
+    rf"CREATE\s+(?:UNIQUE\s+)?INDEX\s+CONCURRENTLY\s+"
+    rf"(?:IF\s+NOT\s+EXISTS\s+)?"
+    rf"(?P<index_name>{_SQL_IDENTIFIER_PATTERN}(?:\s*\.\s*{_SQL_IDENTIFIER_PATTERN})?)"
+    r"\s+ON\b",
+    re.IGNORECASE,
+)
+_INVALID_CONCURRENT_INDEX_SQL = """
+SELECT pg_catalog.format('%I.%I', namespace.nspname, relation.relname) AS qualified_name
+FROM pg_catalog.pg_class AS relation
+JOIN pg_catalog.pg_namespace AS namespace ON namespace.oid = relation.relnamespace
+JOIN pg_catalog.pg_index AS index_state ON index_state.indexrelid = relation.oid
+WHERE relation.oid = to_regclass(%s)
+  AND NOT index_state.indisvalid
+"""
 
 
 class MigrationRunner:
@@ -154,10 +170,41 @@ class MigrationRunner:
                         "migration_version": migration.version,
                     },
                 )
+                self._repair_invalid_concurrent_indexes(connection, migration)
                 self._run_migration(connection, migration)
                 self._record_applied_version(connection, migration.version)
             finally:
                 connection.execute(f"SELECT pg_advisory_unlock({_MIGRATION_LOCK_SQL})")
+
+    def _repair_invalid_concurrent_indexes(
+        self,
+        connection: _AutocommitConnection,
+        migration: Migration,
+    ) -> None:
+        for index_name in _concurrent_index_names(migration.path.read_text()):
+            row = connection.execute(
+                _INVALID_CONCURRENT_INDEX_SQL,
+                (index_name,),
+            ).fetchone()
+            if row is None:
+                continue
+            qualified_name = _row_value(row, "qualified_name")
+            if not isinstance(qualified_name, str) or not qualified_name:
+                raise MigrationUnsupportedError(
+                    f"Invalid catalog identifier returned while repairing index {index_name!r}"
+                )
+            logger.warning(
+                "Dropping invalid PostgreSQL index before migration retry",
+                extra={
+                    "migration_name": migration.name,
+                    "migration_version": migration.version,
+                    "index_name": index_name,
+                },
+            )
+            # PostgreSQL format('%I.%I', ...) produced this catalog identifier.
+            connection.execute(  # noqa: S608
+                f"DROP INDEX CONCURRENTLY IF EXISTS {qualified_name}"
+            )
 
     def _ensure_schema_migrations_table(self) -> None:
         with self._hub.transaction() as txn:
@@ -287,6 +334,33 @@ def _skip_block_comment(sql: str, start: int) -> int:
             continue
         i += 1
     return i
+
+
+def _statement_body(statement: str) -> str:
+    position = 0
+    while position < len(statement):
+        while position < len(statement) and statement[position].isspace():
+            position += 1
+        if statement.startswith("--", position):
+            position = _skip_line_comment(statement, position)
+            continue
+        if statement.startswith("/*", position):
+            position = _skip_block_comment(statement, position)
+            continue
+        break
+    return statement[position:]
+
+
+def _concurrent_index_names(sql: str) -> tuple[str, ...]:
+    names: list[str] = []
+    for statement in _split_statements_respecting_dollar_quotes(sql):
+        match = _CONCURRENT_INDEX_RE.match(_statement_body(statement))
+        if match is None:
+            continue
+        index_name = re.sub(r"\s*\.\s*", ".", match.group("index_name"))
+        if index_name not in names:
+            names.append(index_name)
+    return tuple(names)
 
 
 def _skip_single_quoted_string(

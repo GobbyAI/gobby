@@ -310,6 +310,9 @@ class _AutocommitMigrationState:
         self.closed = 0
         self.unlocked = 0
         self.index_runs = 0
+        self.index_valid: bool | None = None
+        self.index_lookups: list[str] = []
+        self.index_drops: list[str] = []
 
 
 class _AutocommitMigrationConnection:
@@ -331,9 +334,27 @@ class _AutocommitMigrationConnection:
         if "SELECT version FROM schema_migrations WHERE" in sql:
             rows = [{"version": params[0]}] if params[0] in self.state.applied else []
             return _Result(rows)
+        if "NOT index_state.indisvalid" in sql:
+            assert "pg_catalog.format('%I.%I'" in sql
+            assert params == ("idx_shadow",)
+            self.state.index_lookups.append(params[0])
+            rows = (
+                [{"qualified_name": '"tenant;archive"."idx_shadow"'}]
+                if self.state.index_valid is False
+                else []
+            )
+            return _Result(rows)
+        if sql.startswith("DROP INDEX CONCURRENTLY"):
+            assert self.state.locked
+            assert self.state.index_valid is False
+            self.state.index_drops.append(sql)
+            self.state.index_valid = None
+            return _Result()
         if "CREATE INDEX CONCURRENTLY" in sql:
             assert self.state.locked
-            self.state.index_runs += 1
+            if self.state.index_valid is None:
+                self.state.index_runs += 1
+                self.state.index_valid = True
             return _Result()
         if "INSERT INTO schema_migrations" in sql:
             self.state.applied.add(params[0])
@@ -378,9 +399,42 @@ def test_non_transactional_migration_retries_after_unrecorded_index_creation(
     make_runner().apply_pending()
 
     assert state.applied == {325}
-    assert state.index_runs == 2
+    assert state.index_runs == 1
+    assert state.index_drops == []
+    assert state.index_lookups == ["idx_shadow", "idx_shadow"]
     assert state.unlocked == 2
     assert state.closed == 2
+
+
+def test_non_transactional_migration_repairs_invalid_concurrent_index(
+    tmp_path: Path,
+) -> None:
+    module = _migration_module()
+    migration_path = tmp_path / "325_shadow_index.sql"
+    migration_path.write_text(
+        "-- gobby:non-transactional\n"
+        "CREATE INDEX CONCURRENTLY IF NOT EXISTS idx_shadow ON recall_usefulness(id);\n"
+    )
+    migration = Migration(version=325, name="shadow_index", path=migration_path)
+    state = _AutocommitMigrationState()
+    state.index_valid = False
+    runner = module.MigrationRunner(
+        _PostgresMigrationHub(),
+        autocommit_connection=lambda: _AutocommitMigrationConnection(state),
+    )
+    runner._ensure_schema_migrations_table = MethodType(lambda self: None, runner)
+    runner._read_applied_versions = MethodType(lambda self: set(), runner)
+    runner._discover_migrations = MethodType(lambda self: [migration], runner)
+
+    runner.apply_pending()
+
+    assert state.applied == {325}
+    assert state.index_lookups == ["idx_shadow"]
+    assert state.index_drops == ['DROP INDEX CONCURRENTLY IF EXISTS "tenant;archive"."idx_shadow"']
+    assert state.index_runs == 1
+    assert state.index_valid is True
+    assert state.unlocked == 1
+    assert state.closed == 1
 
 
 def test_sync_tombstone_database_objects_are_removed(postgres_db: Any) -> None:
