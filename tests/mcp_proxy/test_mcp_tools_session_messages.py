@@ -733,7 +733,8 @@ async def test_wait_for_summary_times_out(mock_session_manager, full_sessions_re
 
 @pytest.mark.asyncio
 async def test_wait_for_summary_clamps_timeout_to_wrapper_limit(
-    mock_session_manager, full_sessions_registry
+    mock_session_manager: MagicMock,
+    full_sessions_registry: InternalToolRegistry,
 ) -> None:
     session = _make_mock_session("sess-empty")
     session.summary_markdown = ""

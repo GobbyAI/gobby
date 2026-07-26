@@ -11,6 +11,7 @@ from gobby.build.observability import explain_dispatch
 from gobby.dispatch.actions import SpawnAgentAction
 from gobby.dispatch.skill_composition import inspect_skill_composition
 from gobby.dispatch.spawn import DispatchSpawnFailed, spawn_agent
+from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.projects import LocalProjectManager
 from gobby.storage.sessions import SessionManager
 from gobby.storage.skills import LocalSkillManager
@@ -18,11 +19,13 @@ from gobby.storage.tasks import LocalTaskManager
 from gobby.storage.workflow_definitions import LocalWorkflowDefinitionManager
 from gobby.workflows.definitions import AgentDefinitionBody
 
+pytestmark = pytest.mark.integration
+
 TEST_PROJECT_ID = "00000000-0000-0000-0000-000000000001"
 
 
 def _skill(
-    temp_db,
+    temp_db: HubDatabase,
     name: str,
     *,
     enabled: bool = True,
@@ -44,7 +47,7 @@ def _agent(name: str = "composition-agent") -> AgentDefinitionBody:
     )
 
 
-def test_skill_composition_reports_unknown_skill(temp_db) -> None:
+def test_skill_composition_reports_unknown_skill(temp_db: HubDatabase) -> None:
     _skill(temp_db, "required-skill")
 
     report = inspect_skill_composition(
@@ -60,7 +63,7 @@ def test_skill_composition_reports_unknown_skill(temp_db) -> None:
     assert report.failure_reason == "skill_composition_invalid:unknown=missing-skill"
 
 
-def test_skill_composition_reports_disabled_skill(temp_db) -> None:
+def test_skill_composition_reports_disabled_skill(temp_db: HubDatabase) -> None:
     _skill(temp_db, "required-skill", enabled=False)
 
     report = inspect_skill_composition(
@@ -76,7 +79,9 @@ def test_skill_composition_reports_disabled_skill(temp_db) -> None:
     assert report.failure_reason == "skill_composition_invalid:disabled=required-skill"
 
 
-def test_skill_composition_clean_pass_through_reports_allowed_tools_union(temp_db) -> None:
+def test_skill_composition_clean_pass_through_reports_allowed_tools_union(
+    temp_db: HubDatabase,
+) -> None:
     _skill(temp_db, "required-skill", allowed_tools=["Read", "mcp__gobby__call_tool"])
     _skill(temp_db, "optional-skill", allowed_tools=["Read", "Bash"])
 
@@ -96,7 +101,7 @@ def test_skill_composition_clean_pass_through_reports_allowed_tools_union(temp_d
 
 
 def test_skill_composition_uses_single_visible_skill_query(
-    temp_db,
+    temp_db: HubDatabase,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     _skill(temp_db, "required-skill")

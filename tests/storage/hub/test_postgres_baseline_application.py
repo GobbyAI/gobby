@@ -2,11 +2,14 @@ from __future__ import annotations
 
 import importlib
 import logging
+from collections.abc import Callable
 from contextlib import contextmanager
+from typing import Any
 
 import pytest
 
 from gobby.config.postgres_pool import PostgresPoolConfig
+from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.migrations import BASELINE_VERSION, MigrationUnsupportedError
 
 pytestmark = pytest.mark.unit
@@ -771,13 +774,20 @@ def test_apply_migrations_proceeds_when_pg_search_present(monkeypatch) -> None:
     locked = _ApplyConnection("fresh")
 
     class FakeRunner:
-        def __init__(self, hub, *, autocommit_connection) -> None:
+        def __init__(
+            self,
+            hub: HubDatabase,
+            *,
+            autocommit_connection: Callable[[], Any],
+        ) -> None:
             self.hub = hub
             self.autocommit_connection = autocommit_connection
+            created_runners.append(self)
 
         def apply_pending(self) -> None:
             calls.append("file_migrations")
 
+    created_runners: list[FakeRunner] = []
     monkeypatch.setattr(module, "MigrationRunner", FakeRunner)
     monkeypatch.setattr(module, "_classify_baseline_state", lambda conn: conn.state)
     monkeypatch.setattr(module.importlib, "resources", _Resources())
@@ -786,6 +796,8 @@ def test_apply_migrations_proceeds_when_pg_search_present(monkeypatch) -> None:
     db.apply_migrations()
 
     assert calls == ["file_migrations"]
+    assert len(created_runners) == 1
+    assert created_runners[0].autocommit_connection == db._open_advisory_lock_connection
     assert "CREATE TABLE tasks(id INTEGER)" in locked.statements
     assert all("CREATE EXTENSION" not in statement.upper() for statement in locked.statements)
 

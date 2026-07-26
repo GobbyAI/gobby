@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from pathlib import Path
+from typing import Any
 
 import pytest
 import yaml
@@ -10,7 +11,7 @@ import yaml
 pytestmark = pytest.mark.unit
 
 
-def _agent() -> dict:
+def _agent() -> dict[str, Any]:
     path = (
         Path(__file__).resolve().parents[2]
         / "src/gobby/install/shared/workflows/agents/epic-reviewer.yaml"
