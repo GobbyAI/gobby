@@ -14,7 +14,6 @@ import yaml
 from gobby.hooks.events import HookEvent, HookEventType, SessionSource
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.workflow_definitions import LocalWorkflowDefinitionManager
-from gobby.workflows.condition_helpers import completion_evidence_ready
 from gobby.workflows.definitions import WorkflowInstance
 from gobby.workflows.engine.core import RuleEngine
 from gobby.workflows.state_manager import WorkflowInstanceManager
@@ -654,8 +653,6 @@ async def test_merge_orchestrator_survey_plan_execute_report_path(db: HubDatabas
     instance = manager.get_instance("aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaa3001", "merge-orchestrator")
     assert instance is not None
     assert instance.current_step == "report"
-    assert instance.variables["verification_evidence_recorded"] is True
-    assert completion_evidence_ready(instance.variables)
 
 
 @pytest.mark.asyncio

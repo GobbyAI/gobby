@@ -31,6 +31,9 @@ async def test_worktree_handler_captures_merge_base(
     task = LocalTaskManager(temp_db).create_task(
         project_id=sample_project["id"],
         title="Worktree base",
+        validation_criteria=(
+            "Worktree isolation records the merge base in task artifacts and runtime context."
+        ),
     )
     handler, worktree_path = _worktree_handler(temp_db, tmp_path)
 
@@ -52,6 +55,9 @@ async def test_clone_handler_captures_base(temp_db, sample_project, tmp_path: Pa
     task = LocalTaskManager(temp_db).create_task(
         project_id=sample_project["id"],
         title="Clone base",
+        validation_criteria=(
+            "Clone isolation records the base commit in task artifacts and runtime context."
+        ),
     )
     handler, clone_path = _clone_handler(temp_db, tmp_path)
 
@@ -77,6 +83,9 @@ async def test_base_captured_before_first_agent_run(
     task = LocalTaskManager(temp_db).create_task(
         project_id=sample_project["id"],
         title="Ordering",
+        validation_criteria=(
+            "Isolation persists the base commit before copying agent runtime hooks."
+        ),
     )
     handler, _worktree_path = _worktree_handler(temp_db, tmp_path)
     handler._git_manager.run_git_command.return_value = _git_head("abc123")

@@ -11,6 +11,7 @@ from gobby.sync.github_issue_sync import (
     GitHubIssueSyncService,
     GitHubRepositoryReadinessError,
 )
+from gobby.tasks.import_criteria import external_issue_validation_criteria
 
 
 @pytest.fixture
@@ -44,6 +45,7 @@ def github_sync() -> tuple[GitHubIssueSyncService, MagicMock, MagicMock, MagicMo
 @pytest.mark.asyncio
 async def test_webhook_issue_is_created_once_and_then_updated(github_sync) -> None:
     service, db, _, task_manager, _ = github_sync
+    validation_criteria = external_issue_validation_criteria("GitHub", "owner/repo#17")
     created_task = MagicMock(id="task-1")
     updated_task = MagicMock(id="task-1")
     task_manager.create_task.return_value = created_task
@@ -53,6 +55,7 @@ async def test_webhook_issue_is_created_once_and_then_updated(github_sync) -> No
         {
             "id": "task-1",
             "labels": ["local"],
+            "validation_criteria": validation_criteria,
             "updated_at": datetime(2026, 1, 1, tzinfo=UTC),
         },
     ]
@@ -77,6 +80,7 @@ async def test_webhook_issue_is_created_once_and_then_updated(github_sync) -> No
         labels=["bug"],
         github_issue_number=17,
         github_repo="owner/repo",
+        validation_criteria=validation_criteria,
     )
     assert task_manager.reconcile_task_state.call_args.kwargs["labels"] == ["local", "bug"]
 

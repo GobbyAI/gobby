@@ -83,7 +83,10 @@ def test_restore_ignores_top_level_legacy_keys(temp_db, tmp_path: Path) -> None:
             "parent_id": None,
             "deps_on": [],
             "commits": [],
-            "validation": {"state": "valid"},
+            "validation": {
+                "state": "valid",
+                "criteria": "The restored task preserves its nested validation contract.",
+            },
             "seq_num": 988,
         },
     )
@@ -95,4 +98,5 @@ def test_restore_ignores_top_level_legacy_keys(temp_db, tmp_path: Path) -> None:
     assert task is not None
     assert task.task_type == "bug"
     assert task.validation_status == "valid"
+    assert task.validation_criteria == "The restored task preserves its nested validation contract."
     assert task.closed_at is None

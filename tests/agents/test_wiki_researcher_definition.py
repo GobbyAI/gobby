@@ -146,6 +146,11 @@ class TestWikiResearcherStepMachine:
         research happened.
         """
         scope = "tool_input.get('task_id') == vars.get('assigned_task_id')"
+        conditions = {
+            "claim_task": scope,
+            "close_task": f"not tool_input.get('preview', False) and {scope}",
+            "escalate_task": scope,
+        }
         claim = find_step(agent.steps or [], "claim")
         research = find_step(agent.steps or [], "research")
         assert claim is not None and research is not None
@@ -157,8 +162,8 @@ class TestWikiResearcherStepMachine:
             handlers = getattr(step, "on_mcp_success", []) or []
             matching = [h for h in handlers if _field(h, "tool") == tool]
             assert matching, f"no on_mcp_success handler for {tool}"
-            assert all(_field(h, "when") == scope for h in matching), (
-                f"{tool} trigger must be scoped to assigned_task_id"
+            assert all(_field(h, "when") == conditions[tool] for h in matching), (
+                f"{tool} trigger must use its assigned-task lifecycle condition"
             )
 
     def test_terminate_step_only_permits_end_agent_run(self, agent: AgentDefinitionBody) -> None:

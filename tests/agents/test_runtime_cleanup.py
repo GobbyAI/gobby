@@ -35,6 +35,9 @@ def test_cleanup_agent_runtime_state_releases_mutex_and_workflow(
     task = LocalTaskManager(temp_db).create_task(
         project_id=sample_project["id"],
         title="Agent-owned task",
+        validation_criteria=(
+            "Agent runtime cleanup releases its dispatch mutex and removes its workflow instance."
+        ),
     )
     mutex = TaskDispatchMutexManager(temp_db)
     mutex.acquire_mutex(

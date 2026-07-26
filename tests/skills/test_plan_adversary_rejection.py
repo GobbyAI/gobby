@@ -118,8 +118,9 @@ def test_accepts_standalone_category_test_deliverables() -> None:
     assert "acceptance criteria" in body
 
 
-def test_plan_adversary_prompt_wires_parser_callable() -> None:
-    prompt = _adversary_prompt()
-    assert "gobby.plans.parser.parse_plan" in prompt
-    assert "PlanParseError" in prompt
-    assert "plan-review" in prompt
+def test_plan_adversary_prompt_documents_upstream_draft_validation_contract() -> None:
+    prompt = " ".join(_adversary_prompt().split())
+    assert "Mechanical parser rejection happens upstream." in prompt
+    assert "uv run gobby plans validate <plan-file>" in prompt
+    assert "spawn gate runs the same internal validator" in prompt
+    assert "typed grammar has already passed the draft-mode contract gate" in prompt
