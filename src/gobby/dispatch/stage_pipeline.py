@@ -52,6 +52,9 @@ StageStatesManagerFactory = Callable[..., Any]
 # eventually expire.
 MAX_PIPELINE_RETRY_NEUTRAL_RESTORES = 3
 PIPELINE_START_ACK_TIMEOUT_SECONDS = 5.0
+# Bound cleanup when the target-loop callback is already RUNNING but has not
+# published its spawned task through the registration future yet.
+PIPELINE_START_PUBLICATION_GRACE_SECONDS = 0.1
 
 
 async def start_pipeline_action(
@@ -195,7 +198,9 @@ async def start_pipeline_action(
                 if startup_failed.is_set():
                     spawned.cancel()
             except Exception as exc:
-                if spawned is not None:
+                if spawned is None:
+                    coro.close()
+                else:
                     spawned.cancel()
                 registration.set_exception(exc)
             else:
@@ -207,18 +212,26 @@ async def start_pipeline_action(
             startup_failed.set()
             coro.close()
             return fail_start("pipeline_start_loop_closed")
+        registration_waiter = asyncio.wrap_future(registration)
         try:
             await asyncio.wait_for(
-                asyncio.shield(asyncio.wrap_future(registration)),
+                asyncio.shield(registration_waiter),
                 timeout=PIPELINE_START_ACK_TIMEOUT_SECONDS,
             )
         except TimeoutError:
             startup_failed.set()
             if registration.cancel():
                 coro.close()
-            if registration.done() and not registration.cancelled():
+            else:
+                # Future.cancel() cannot stop a callback after it transitions
+                # to RUNNING. Give that callback a bounded publication window
+                # so the spawned task is cancelled before failure is exposed.
                 try:
-                    registration.result().cancel()
+                    spawned = await asyncio.wait_for(
+                        asyncio.shield(registration_waiter),
+                        timeout=PIPELINE_START_PUBLICATION_GRACE_SECONDS,
+                    )
+                    spawned.cancel()
                 except Exception:
                     pass
             return fail_start("pipeline_start_registration_timeout")

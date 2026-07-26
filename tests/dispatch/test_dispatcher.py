@@ -1,12 +1,13 @@
 """Dispatcher heartbeat scanner tests."""
 
 import asyncio
+import inspect
 import logging
 import subprocess
 import sys
 import threading
 import uuid
-from collections.abc import Callable
+from collections.abc import Awaitable, Callable, Coroutine
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from types import SimpleNamespace
@@ -728,6 +729,89 @@ async def test_stage_pipeline_spawn_hands_off_to_main_loop_from_ephemeral_loop(
 
 
 @pytest.mark.asyncio
+async def test_stage_pipeline_closes_coroutine_when_target_loop_task_creation_fails(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from gobby.dispatch import stage_pipeline
+
+    monkeypatch.setattr(
+        stage_pipeline, "reset_stage_pipeline_retry_neutral", lambda *_a, **_k: None
+    )
+    execution_manager = MagicMock()
+    created_coroutines: list[Coroutine[Any, Any, None]] = []
+    created_task_names: list[str | None] = []
+    action = _pipeline_action("7d34e462-6ba3-5a6c-b1c6-1584b855cb83")
+
+    async def fake_execute() -> None:
+        raise AssertionError("pipeline with failed task creation must not execute")
+
+    def capture_execute(
+        _executor: object,
+        _pipeline: object,
+        _inputs: object,
+        _project_id: str,
+        _execution_id: str,
+        _pipeline_name: str,
+        *,
+        session_id: str | None = None,
+    ) -> Coroutine[Any, Any, None]:
+        coroutine = fake_execute()
+        created_coroutines.append(coroutine)
+        return coroutine
+
+    class ImmediateLoop:
+        def is_closed(self) -> bool:
+            return False
+
+        def call_soon_threadsafe(self, callback: Callable[[], object]) -> None:
+            callback()
+
+    def fail_create_task(
+        _coroutine: Coroutine[Any, Any, object],
+        *,
+        name: str | None = None,
+    ) -> NoReturn:
+        created_task_names.append(name)
+        raise RuntimeError("task creation failed")
+
+    monkeypatch.setattr(asyncio, "create_task", fail_create_task)
+
+    result = await stage_pipeline.start_pipeline_action(
+        action,
+        mutex=cast(RuntimeDispatchMutex, object()),
+        db=cast(HubDatabase, object()),
+        context=SimpleNamespace(project_id="0e27d5b7-167e-5a64-8bd9-6b980bd88f06"),
+        services=SimpleNamespace(
+            pipeline_executor=SimpleNamespace(
+                loader=_EnabledPipelineLoader(),
+                execution_manager=execution_manager,
+            ),
+            main_loop=ImmediateLoop(),
+            triggering_session_id=None,
+        ),
+        field=_field,
+        escalate_pipeline_dispatch=lambda _action, _mutex, _db, reason: {
+            "success": False,
+            "error": reason,
+        },
+        retry_neutral_pipeline_dispatch=_unexpected_pipeline_call,
+        render_dispatch_inputs=lambda *_a, **_k: {},
+        create_stage_pipeline_execution=lambda *_a, **_k: "exec-create-task-failure",
+        execute_pipeline_background=capture_execute,
+        register_background_task=lambda *_a, **_k: None,
+    )
+
+    assert result == {
+        "success": False,
+        "error": "pipeline_start_registration_failed:task creation failed",
+    }
+    assert created_task_names == [f"stage-pipeline-{action.pipeline_name}-exec-cre"]
+    assert len(created_coroutines) == 1
+    assert inspect.getcoroutinestate(created_coroutines[0]) == inspect.CORO_CLOSED
+    execution_manager.update_execution_status.assert_called_once()
+
+
+@pytest.mark.asyncio
 async def test_stage_pipeline_spawn_fails_when_target_loop_does_not_acknowledge(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -738,6 +822,35 @@ async def test_stage_pipeline_spawn_fails_when_target_loop_does_not_acknowledge(
     )
     monkeypatch.setattr(stage_pipeline, "PIPELINE_START_ACK_TIMEOUT_SECONDS", 0.01)
     target_loop = asyncio.new_event_loop()
+    loop_started = threading.Event()
+    registration_started = threading.Event()
+    release_registration = threading.Event()
+    task_cancelled = threading.Event()
+    executed = threading.Event()
+    spawned_tasks: list[asyncio.Task[Any]] = []
+    wait_call_count = 0
+    real_wait_for = asyncio.wait_for
+
+    def run_target_loop() -> None:
+        asyncio.set_event_loop(target_loop)
+        loop_started.set()
+        target_loop.run_forever()
+
+    target_thread = threading.Thread(target=run_target_loop, daemon=True)
+    target_thread.start()
+    assert loop_started.wait(timeout=2)
+
+    async def controlled_wait_for(awaitable: Awaitable[Any], timeout: float | None) -> Any:
+        nonlocal wait_call_count
+        wait_call_count += 1
+        if wait_call_count == 1:
+            assert await asyncio.to_thread(registration_started.wait, 2)
+            raise TimeoutError
+        release_registration.set()
+        return await real_wait_for(awaitable, timeout=timeout)
+
+    monkeypatch.setattr(asyncio, "wait_for", controlled_wait_for)
+
     execution_manager = MagicMock()
     services = SimpleNamespace(
         pipeline_executor=SimpleNamespace(
@@ -750,7 +863,13 @@ async def test_stage_pipeline_spawn_fails_when_target_loop_does_not_acknowledge(
     escalated: list[str] = []
 
     async def fake_execute(*_args: object, **_kwargs: object) -> None:
-        return None
+        executed.set()
+
+    def register_background_task(_execution_id: str, task: asyncio.Task[Any]) -> None:
+        spawned_tasks.append(task)
+        task.add_done_callback(lambda done: task_cancelled.set() if done.cancelled() else None)
+        registration_started.set()
+        assert release_registration.wait(timeout=2)
 
     def record_escalation(
         _action: StartPipelineAction,
@@ -758,6 +877,7 @@ async def test_stage_pipeline_spawn_fails_when_target_loop_does_not_acknowledge(
         _db: HubDatabase,
         reason: str,
     ) -> dict[str, object]:
+        assert spawned_tasks and spawned_tasks[0].cancelling()
         escalated.append(reason)
         return {"success": False, "error": reason}
 
@@ -774,9 +894,13 @@ async def test_stage_pipeline_spawn_fails_when_target_loop_does_not_acknowledge(
             render_dispatch_inputs=lambda *_a, **_k: {},
             create_stage_pipeline_execution=lambda *_a, **_k: "exec-timeout",
             execute_pipeline_background=fake_execute,
-            register_background_task=lambda *_a, **_k: None,
+            register_background_task=register_background_task,
         )
+        assert await asyncio.to_thread(task_cancelled.wait, 2)
     finally:
+        release_registration.set()
+        target_loop.call_soon_threadsafe(target_loop.stop)
+        target_thread.join(timeout=2)
         target_loop.close()
 
     assert result == {
@@ -784,6 +908,8 @@ async def test_stage_pipeline_spawn_fails_when_target_loop_does_not_acknowledge(
         "error": "pipeline_start_registration_timeout",
     }
     assert escalated == ["pipeline_start_registration_timeout"]
+    assert wait_call_count == 2
+    assert executed.is_set() is False
     execution_manager.update_execution_status.assert_called_once()
 
 
@@ -892,9 +1018,24 @@ async def test_stage_pipeline_handles_loop_closing_before_scheduling(
         main_loop=ClosingLoop(),
         triggering_session_id=None,
     )
+    created_coroutines: list[Coroutine[Any, Any, None]] = []
 
-    async def fake_execute(*_args: object, **_kwargs: object) -> None:
+    async def fake_execute() -> None:
         raise AssertionError("unscheduled pipeline must not execute")
+
+    def capture_execute(
+        _executor: object,
+        _pipeline: object,
+        _inputs: object,
+        _project_id: str,
+        _execution_id: str,
+        _pipeline_name: str,
+        *,
+        session_id: str | None = None,
+    ) -> Coroutine[Any, Any, None]:
+        coroutine = fake_execute()
+        created_coroutines.append(coroutine)
+        return coroutine
 
     result = await stage_pipeline.start_pipeline_action(
         _pipeline_action("7d34e462-6ba3-5a6c-b1c6-1584b855cb83"),
@@ -910,11 +1051,13 @@ async def test_stage_pipeline_handles_loop_closing_before_scheduling(
         retry_neutral_pipeline_dispatch=_unexpected_pipeline_call,
         render_dispatch_inputs=lambda *_a, **_k: {},
         create_stage_pipeline_execution=lambda *_a, **_k: "exec-loop-close",
-        execute_pipeline_background=fake_execute,
+        execute_pipeline_background=capture_execute,
         register_background_task=lambda *_a, **_k: None,
     )
 
     assert result == {"success": False, "error": "pipeline_start_loop_closed"}
+    assert len(created_coroutines) == 1
+    assert inspect.getcoroutinestate(created_coroutines[0]) == inspect.CORO_CLOSED
     execution_manager.update_execution_status.assert_called_once()
 
 
