@@ -117,10 +117,13 @@ async def _get_falkordb_memory_status(server: "HTTPServer") -> dict[str, Any]:
         daemon_config = getattr(server, "config", None) or getattr(services, "config", None)
         if daemon_config is None or services is None:
             raise RuntimeError("server config unavailable")
+        database = getattr(services, "database", None)
+        if database is None:
+            raise RuntimeError("server database unavailable")
 
         falkor_cfg = daemon_config.databases.falkordb
         status = await get_falkordb_status(
-            db=getattr(services, "database", None),
+            db=database,
             host=falkor_cfg.host,
             port=falkor_cfg.port,
             password=falkor_cfg.password,
