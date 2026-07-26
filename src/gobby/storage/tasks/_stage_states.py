@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from collections.abc import Mapping, Sequence
+from collections.abc import Callable, Mapping, Sequence
 from typing import Any
 
 from gobby.storage.hub.protocol import HubDatabase, Transaction
@@ -234,6 +234,7 @@ class StageStatesManager:
         *,
         by_session_id: str | None,
         notes: str | None = None,
+        _transaction_mutation: Callable[[Transaction], None] | None = None,
     ) -> StageState:
         """Return a needs_review stage to ready for an enhancement re-plan.
 
@@ -246,6 +247,7 @@ class StageStatesManager:
             "route_enhancement",
             by_session_id=by_session_id,
             notes=notes,
+            _transaction_mutation=_transaction_mutation,
         )
 
     def complete_stage(
@@ -350,6 +352,7 @@ class StageStatesManager:
         cited_subtasks: Sequence[str] | None = None,
         dispatch_run_id: str | None = None,
         preheld_mutex_run_id: str | None = None,
+        _transaction_mutation: Callable[[Transaction], None] | None = None,
     ) -> StageState:
         return self._transitions.transition(
             task_id,
@@ -365,6 +368,7 @@ class StageStatesManager:
             cited_subtasks=cited_subtasks,
             dispatch_run_id=dispatch_run_id,
             preheld_mutex_run_id=preheld_mutex_run_id,
+            _transaction_mutation=_transaction_mutation,
         )
 
     def _state_from_row(self, row: Mapping[str, Any]) -> StageState:

@@ -1,7 +1,9 @@
 from unittest.mock import patch
 
 import pytest
+from psycopg.errors import RaiseException
 
+from gobby.storage.sessions import SessionManager
 from gobby.storage.task_dependencies import TaskDependencyManager
 from gobby.storage.tasks import LocalTaskManager, StageManifestSpec, TaskIDCollisionError
 from gobby.tasks.state_semantics import (
@@ -1574,6 +1576,74 @@ class TestLocalTaskManager:
         artifacts = task_manager.artifacts.get_artifacts(task.id)
         assert artifacts.plan_enhancement_rounds_completed == 1
         assert artifacts.plan_enhancement_converged is False
+
+    @pytest.mark.parametrize(
+        ("converged", "suggestions"),
+        [
+            pytest.param(False, ["Must not persist"], id="suggestions"),
+            pytest.param(True, [], id="converged"),
+        ],
+    )
+    def test_record_plan_enhancement_rolls_back_all_writes_on_task_update_failure(
+        self,
+        task_manager: LocalTaskManager,
+        project_id: str,
+        session_manager: SessionManager,
+        converged: bool,
+        suggestions: list[str],
+    ) -> None:
+        """A late task-write failure rolls back both enhancement transaction paths."""
+        session = session_manager.register(
+            external_id="enhance-rollback-ext",
+            machine_id="test-machine",
+            source="codex",
+            project_id=project_id,
+        )
+        task = _planning_needs_review(task_manager, project_id, session.id)
+        task_before = task_manager.get_task(task.id)
+        events_before = task_manager.lifecycle_events.list_lifecycle_events(task.id)
+        task_manager.db.execute(
+            """
+            CREATE OR REPLACE FUNCTION fail_plan_enhancement_update_fn()
+            RETURNS trigger
+            LANGUAGE plpgsql
+            AS $$
+            BEGIN
+                RAISE EXCEPTION 'plan enhancement update boom';
+            END;
+            $$
+            """
+        )
+        task_manager.db.execute(
+            """
+            CREATE TRIGGER fail_plan_enhancement_update
+            BEFORE UPDATE OF description ON tasks
+            FOR EACH ROW
+            EXECUTE FUNCTION fail_plan_enhancement_update_fn()
+            """
+        )
+
+        try:
+            with pytest.raises(RaiseException, match="plan enhancement update boom"):
+                task_manager.record_plan_enhancement(
+                    task.id,
+                    round_number=1,
+                    converged=converged,
+                    suggestions=suggestions,
+                    by_session_id=session.id,
+                )
+
+            unchanged = task_manager.get_task(task.id)
+            _assert_stage_state(unchanged, "needs_review")
+            assert unchanged.claimed_by_session_id == task_before.claimed_by_session_id
+            assert unchanged.description == task_before.description
+            artifacts = task_manager.artifacts.get_artifacts(task.id)
+            assert artifacts.plan_enhancement_rounds_completed == 0
+            assert artifacts.plan_enhancement_converged is False
+            assert task_manager.lifecycle_events.list_lifecycle_events(task.id) == events_before
+        finally:
+            task_manager.db.execute("DROP TRIGGER IF EXISTS fail_plan_enhancement_update ON tasks")
+            task_manager.db.execute("DROP FUNCTION IF EXISTS fail_plan_enhancement_update_fn()")
 
     def test_record_plan_enhancement_converged_stays_in_needs_review(
         self, task_manager, project_id, session_manager

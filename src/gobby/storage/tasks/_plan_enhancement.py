@@ -5,14 +5,16 @@ from __future__ import annotations
 import re
 from collections.abc import Sequence
 
-from gobby.storage.hub.protocol import HubDatabase
-from gobby.storage.tasks._artifacts import get_artifacts, set_artifacts_atomic
+from gobby.storage.hub.protocol import HubDatabase, Transaction
+from gobby.storage.tasks._artifacts import (
+    _get_artifacts_in_transaction,
+    _set_artifacts_in_transaction,
+)
 from gobby.storage.tasks._lifecycle_events import TaskLifecycleEventManager
 from gobby.storage.tasks._models import Task
 from gobby.storage.tasks._read import get_task
 from gobby.storage.tasks._stage_states import StageStatesManager
 from gobby.storage.tasks._stage_types import NoCurrentStageError
-from gobby.storage.tasks._updates import update_task
 
 
 def _stage_states(db: HubDatabase) -> StageStatesManager:
@@ -51,6 +53,58 @@ def _fold_enhancement_round(
     return f"{existing}\n\n{section}" if existing else section
 
 
+def _persist_enhancement(
+    conn: Transaction,
+    task_id: str,
+    *,
+    round_number: int,
+    converged: bool,
+    suggestions: Sequence[str],
+) -> None:
+    task_row = conn.execute(
+        "SELECT description FROM tasks WHERE id = %s FOR UPDATE",
+        (task_id,),
+    ).fetchone()
+    if task_row is None:
+        raise ValueError(f"Task {task_id} not found")
+
+    conn.execute(
+        "INSERT INTO task_artifacts (task_id) VALUES (%s) ON CONFLICT(task_id) DO NOTHING",
+        (task_id,),
+    )
+    artifacts = _get_artifacts_in_transaction(conn, task_id, for_update=True)
+    _set_artifacts_in_transaction(
+        conn,
+        task_id,
+        {
+            "plan_enhancement_rounds_completed": max(
+                artifacts.plan_enhancement_rounds_completed,
+                round_number,
+            ),
+            "plan_enhancement_converged": converged,
+        },
+    )
+
+    description = _fold_enhancement_round(
+        task_row["description"] or "",
+        round_number,
+        suggestions,
+        converged=converged,
+    )
+    cursor = conn.execute(
+        """
+        UPDATE tasks
+           SET description = %s,
+               claimed_by_session_id = NULL,
+               updated_at = CURRENT_TIMESTAMP
+         WHERE id = %s
+        """,
+        (description, task_id),
+    )
+    if cursor.rowcount == 0:
+        raise ValueError(f"Task {task_id} not found")
+
+
 def record_plan_enhancement(
     db: HubDatabase,
     task_id: str,
@@ -74,7 +128,7 @@ def record_plan_enhancement(
     if normalized_round < 1:
         raise ValueError("round_number must be >= 1")
 
-    task = get_task(db, task_id)
+    get_task(db, task_id)
     stages = _stage_states(db)
     current = stages.current_stage(task_id)
     if current is None:
@@ -93,23 +147,14 @@ def record_plan_enhancement(
     cleaned = [item.strip() for item in (suggestions or []) if item and item.strip()]
     has_suggestions = bool(cleaned)
 
-    # Enhancement counters live in task_artifacts, independent of review rounds.
-    artifacts = get_artifacts(db, task_id)
-    set_artifacts_atomic(
-        db,
-        task_id,
-        plan_enhancement_rounds_completed=max(
-            artifacts.plan_enhancement_rounds_completed, normalized_round
-        ),
-        plan_enhancement_converged=converged,
-    )
-
-    description = _fold_enhancement_round(
-        task.description or "",
-        normalized_round,
-        cleaned,
-        converged=converged,
-    )
+    def persist(conn: Transaction) -> None:
+        _persist_enhancement(
+            conn,
+            task_id,
+            round_number=normalized_round,
+            converged=converged,
+            suggestions=cleaned,
+        )
 
     if has_suggestions:
         # Route the plan back to the planner; route_enhancement intentionally
@@ -119,12 +164,9 @@ def record_plan_enhancement(
             current.stage_name,
             by_session_id=by_session_id,
             notes=signoff_summary,
+            _transaction_mutation=persist,
         )
-
-    update_task(
-        db,
-        task_id,
-        description=description,
-        claimed_by_session_id=None,
-    )
+    else:
+        with db.transaction() as conn:
+            persist(conn)
     return get_task(db, task_id)

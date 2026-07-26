@@ -5,7 +5,7 @@ from __future__ import annotations
 import json
 import logging
 import uuid
-from collections.abc import Mapping, Sequence
+from collections.abc import Callable, Mapping, Sequence
 from datetime import datetime
 from typing import Literal
 
@@ -78,6 +78,7 @@ class StageStateTransitions:
         cited_subtasks: Sequence[str] | None = None,
         dispatch_run_id: str | None = None,
         preheld_mutex_run_id: str | None = None,
+        _transaction_mutation: Callable[[Transaction], None] | None = None,
     ) -> StageState:
         holder = by_session_id or "system"
         session_uuid = _session_uuid_or_none(by_session_id)
@@ -182,6 +183,8 @@ class StageStateTransitions:
                     by_actor=holder,
                     failure_category=(classify_failure(reason) if verb == "fail_stage" else None),
                 )
+                if _transaction_mutation is not None:
+                    _transaction_mutation(conn)
                 if verb == "fail_stage" and stage_name == "epic_qa" and cited_subtasks:
                     self.reset_epic_failure_targets(
                         conn,
