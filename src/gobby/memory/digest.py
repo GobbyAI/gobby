@@ -203,6 +203,8 @@ async def _read_undigested_turns(
     source: str | None,
     digested_pair_index: int,
     num_pairs: int = 50,
+    *,
+    prior_turn_only: bool = False,
 ) -> tuple[list[tuple[str, str]], int]:
     """Read user/assistant pairs from transcript that haven't been digested yet.
 
@@ -216,6 +218,7 @@ async def _read_undigested_turns(
     source: CLI source (claude, qwen, codex, etc.)
         digested_pair_index: Number of pairs already digested
         num_pairs: Maximum pairs to consume in this digest pass
+        prior_turn_only: For Codex turn-start catch-up, exclude the active turn
 
     Returns:
         Tuple of the undigested pair batch and the next persisted pair index.
@@ -248,11 +251,37 @@ async def _read_undigested_turns(
         if not segment:
             return [], digested_pair_index
 
+        segment_turn_offset = len(turns) - len(segment)
+        if prior_turn_only:
+            if (source or "").lower() != "codex":
+                return [], digested_pair_index
+
+            def _is_task_started(record: dict[str, Any]) -> bool:
+                payload = record.get("payload")
+                return (
+                    record.get("type") == "event_msg"
+                    and isinstance(payload, dict)
+                    and payload.get("type") == "task_started"
+                )
+
+            current_turn_start = next(
+                (
+                    index
+                    for index in range(len(segment) - 1, -1, -1)
+                    if _is_task_started(segment[index])
+                ),
+                None,
+            )
+            if current_turn_start is None:
+                return [], digested_pair_index
+            segment = segment[:current_turn_start]
+            if not segment:
+                return [], digested_pair_index
+
         pairs = _extract_digest_pairs(parser, segment)
         if not pairs:
             return [], digested_pair_index
 
-        segment_turn_offset = len(turns) - len(segment)
         # Parsers return the active transcript suffix, but may sanitize records
         # in that suffix (for example Claude removes orphaned tool results).
         # Content equality therefore cannot identify the raw prefix reliably;
@@ -333,6 +362,8 @@ async def _resolve_undigested_pairs(
     prompt_text: str | None,
     session_id: str,
     num_pairs: int = 50,
+    *,
+    prior_turn_only: bool = False,
 ) -> tuple[list[tuple[str, str]], str, int] | None:
     """Resolve undigested turn pairs from transcript or prompt_text.
 
@@ -350,9 +381,12 @@ async def _resolve_undigested_pairs(
             session.source,
             pair_index,
             num_pairs=num_pairs,
+            prior_turn_only=prior_turn_only,
         )
 
     if not undigested_pairs:
+        if prior_turn_only:
+            return None
         user_prompt = prompt_text or ""
         if not user_prompt:
             logger.debug("build_turn_and_digest: No turn content for session %s", session_id)
@@ -509,6 +543,7 @@ async def _build_turn_and_digest_serialized(
     llm_service: Any | None = None,
     db: HubDatabase | None = None,
     config: Any | None = None,
+    prior_turn_only: bool = False,
 ) -> dict[str, Any] | None:
     """Build a detailed turn record, append to digest, and synthesize title.
 
@@ -524,6 +559,7 @@ async def _build_turn_and_digest_serialized(
         llm_service: LLM service for generation
         db: Database for prompt template loading
         config: DaemonConfig carrying the digest feature configuration
+        prior_turn_only: Digest only the prior interrupted Codex turn
 
     Returns:
         Dict with turn_num and pipeline results, or None if skipped
@@ -565,7 +601,13 @@ async def _build_turn_and_digest_serialized(
 
         # 2. Resolve undigested pairs
         num_pairs = getattr(digest_config, "num_pairs", 50) if digest_config else 50
-        resolved = await _resolve_undigested_pairs(session, prompt_text, session_id, num_pairs)
+        resolved = await _resolve_undigested_pairs(
+            session,
+            prompt_text,
+            session_id,
+            num_pairs,
+            prior_turn_only=prior_turn_only,
+        )
         if resolved is None:
             return None
 
@@ -675,6 +717,7 @@ async def build_turn_and_digest(
     llm_service: Any | None = None,
     db: HubDatabase | None = None,
     config: Any | None = None,
+    prior_turn_only: bool = False,
 ) -> dict[str, Any] | None:
     """Build one digest turn and its title under a per-session serialization lock."""
     async with _serialize_session_digest(session_id):
@@ -686,4 +729,5 @@ async def build_turn_and_digest(
             llm_service=llm_service,
             db=db,
             config=config,
+            prior_turn_only=prior_turn_only,
         )

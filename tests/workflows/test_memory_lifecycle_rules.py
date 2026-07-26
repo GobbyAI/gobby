@@ -20,11 +20,12 @@ Active memory-lifecycle rules:
 from __future__ import annotations
 
 import json
+from typing import Any
 
 import pytest
 
 from gobby.adapters.codex_impl.hooks_adapter import CodexHooksAdapter
-from gobby.hooks.events import HookEventType
+from gobby.hooks.events import HookEventType, SessionSource
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.workflow_definitions import LocalWorkflowDefinitionManager
 from gobby.workflows.definitions import RuleDefinitionBody
@@ -34,6 +35,8 @@ from gobby.workflows.sync_rules import sync_bundled_rules
 pytestmark = pytest.mark.unit
 
 MEMORY_RULES = {
+    "digest-on-response",
+    "digest-prior-codex-turn-on-start",
     "digest-on-plan-turn-end",
     "reset-memory-tracking-on-start",
     "increment-parent-turn-seq",
@@ -63,7 +66,7 @@ def manager(db: HubDatabase) -> LocalWorkflowDefinitionManager:
     return LocalWorkflowDefinitionManager(db)
 
 
-def _sync_bundled(db):
+def _sync_bundled(db: HubDatabase) -> dict[str, Any]:
     """Sync bundled rules from the real rules directory."""
     from gobby.workflows.sync_rules import get_bundled_rules_path
 
@@ -184,6 +187,63 @@ class TestDigestOnPlanTurnEnd:
         assert event.event_type == HookEventType.AFTER_TOOL
         assert event.data["tool_name"] == tool_name
         assert SafeExpressionEvaluator({"event": event}, {}).evaluate(body.when) is matches
+
+
+# ═══════════════════════════════════════════════════════════════════════
+# digest-prior-codex-turn-on-start
+# ═══════════════════════════════════════════════════════════════════════
+
+
+class TestDigestPriorCodexTurnOnStart:
+    """Catch up an interrupted Codex response at the next turn boundary."""
+
+    def test_event_and_effect(
+        self,
+        db: HubDatabase,
+        manager: LocalWorkflowDefinitionManager,
+    ) -> None:
+        _sync_bundled(db)
+        row = manager.get_by_name("digest-prior-codex-turn-on-start")
+        assert row is not None
+        body = RuleDefinitionBody.model_validate_json(row.definition_json)
+        assert body.effects is not None
+        effect = body.effects[0]
+
+        assert body.event.value == "turn_start"
+        assert body.when == "event.source == 'codex'"
+        assert effect.type == "mcp_call"
+        assert effect.server == "gobby-memory"
+        assert effect.tool == "build_turn_and_digest"
+        assert effect.arguments == {"prior_turn_only": True}
+        assert effect.background is True
+
+    def test_matches_only_codex(
+        self,
+        db: HubDatabase,
+        manager: LocalWorkflowDefinitionManager,
+    ) -> None:
+        _sync_bundled(db)
+        row = manager.get_by_name("digest-prior-codex-turn-on-start")
+        assert row is not None
+        body = RuleDefinitionBody.model_validate_json(row.definition_json)
+        assert body.when is not None
+
+        event = CodexHooksAdapter().translate_to_hook_event(
+            {
+                "hook_type": "UserPromptSubmit",
+                "input_data": {
+                    "session_id": "codex-session-123",
+                    "cwd": "/project",
+                    "prompt": "Continue",
+                },
+                "source": "codex",
+            }
+        )
+        assert event is not None
+        assert SafeExpressionEvaluator({"event": event}, {}).evaluate(body.when) is True
+
+        event.source = SessionSource.CLAUDE
+        assert SafeExpressionEvaluator({"event": event}, {}).evaluate(body.when) is False
 
 
 # ═══════════════════════════════════════════════════════════════════════
@@ -342,20 +402,30 @@ class TestRequireMemoryReviewBeforeStatus:
 class TestClearMemoryReviewOnCreate:
     """Set memory_review_completed flag when create_memory is called."""
 
-    def test_event_and_effect(self, db, manager) -> None:
+    def test_event_and_effect(
+        self,
+        db: HubDatabase,
+        manager: LocalWorkflowDefinitionManager,
+    ) -> None:
         _sync_bundled(db)
         row = manager.get_by_name("clear-memory-review-on-create")
         assert row is not None
         body = RuleDefinitionBody.model_validate_json(row.definition_json)
+        assert body.effects is not None
         assert body.event.value == "before_tool"
         assert body.effects[0].type == "set_variable"
         assert body.effects[0].variable == "memory_review_completed"
         assert body.effects[0].value is True
 
-    def test_has_when_condition(self, db, manager) -> None:
+    def test_has_when_condition(
+        self,
+        db: HubDatabase,
+        manager: LocalWorkflowDefinitionManager,
+    ) -> None:
         """Must match create_memory on gobby-memory server."""
         _sync_bundled(db)
         row = manager.get_by_name("clear-memory-review-on-create")
+        assert row is not None
         body = RuleDefinitionBody.model_validate_json(row.definition_json)
         assert body.when is not None
         assert "create_memory" in body.when

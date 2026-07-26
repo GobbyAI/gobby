@@ -897,15 +897,19 @@ def create_memory_registry(
         except Exception as e:
             return {"success": False, "error": str(e)}
 
-    # NOTE: This tool is invoked via the `digest-on-response` DB rule (event=stop, mcp_call effect).
-    # It is NOT called directly from Python code. Do not remove without also removing the DB rule.
+    # NOTE: DB rules invoke this tool at turn-end and Codex turn-start catch-up boundaries.
+    # It is NOT called directly from Python code. Keep both lifecycle rules in sync with this API.
     @registry.tool(
         name="build_turn_and_digest",
-        description="Build a detailed turn record from the last agent response, append it to the session digest, and synthesize a title. Fired by digest-on-response rule on stop events.",
+        description=(
+            "Build a detailed turn record, append it to the session digest, and synthesize "
+            "a title. Lifecycle rules invoke it at turn-end and for Codex turn-start catch-up."
+        ),
     )
     async def build_turn_and_digest_tool(
         session_id: str = "",
         prompt_text: str | None = None,
+        prior_turn_only: bool = False,
     ) -> dict[str, Any]:
         """
         Build turn record and append to digest after agent response.
@@ -918,6 +922,7 @@ def create_memory_registry(
         Args:
             session_id: Platform session ID (injected by dispatch layer)
             prompt_text: Optional user prompt (usually None for stop events)
+            prior_turn_only: Exclude the active Codex turn during turn-start catch-up
         """
         if not session_id:
             return {"success": False, "error": "session_id is required"}
@@ -929,6 +934,7 @@ def create_memory_registry(
                 prompt_text=prompt_text,
                 llm_service=llm_service,
                 config=config,
+                prior_turn_only=prior_turn_only,
             )
             if result is None:
                 return {"success": True, "skipped": True, "reason": "disabled or no content"}

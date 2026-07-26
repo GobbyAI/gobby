@@ -11,6 +11,7 @@ import threading
 from collections.abc import Awaitable
 from dataclasses import dataclass
 from pathlib import Path
+from typing import Any
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
@@ -77,6 +78,51 @@ def _turn_record_payload(
     if title_candidate is not None:
         payload["title_candidate"] = title_candidate
     return payload
+
+
+def _write_interrupted_codex_transcript(path: Path) -> None:
+    import json
+
+    records = [
+        {
+            "type": "event_msg",
+            "payload": {"type": "task_started", "turn_id": "turn-1"},
+        },
+        {
+            "type": "response_item",
+            "payload": {
+                "type": "message",
+                "role": "user",
+                "content": [{"type": "input_text", "text": "Investigate the title"}],
+            },
+        },
+        {
+            "type": "response_item",
+            "payload": {
+                "type": "message",
+                "role": "assistant",
+                "content": [{"type": "output_text", "text": "The title is still provisional."}],
+                "phase": "commentary",
+            },
+        },
+        {
+            "type": "event_msg",
+            "payload": {"type": "turn_aborted", "turn_id": "turn-1"},
+        },
+        {
+            "type": "event_msg",
+            "payload": {"type": "task_started", "turn_id": "turn-2"},
+        },
+        {
+            "type": "response_item",
+            "payload": {
+                "type": "message",
+                "role": "user",
+                "content": [{"type": "input_text", "text": "Continue after interrupt"}],
+            },
+        },
+    ]
+    path.write_text("\n".join(json.dumps(record) for record in records))
 
 
 def test_turn_record_contract_log_omits_full_response(
@@ -490,6 +536,68 @@ class TestBuildTurnAndDigest:
         assert llm_call.args[0] is digest_config.digest
         assert "Fix the authentication bug in auth.py" in llm_call.args[1]
         assert llm_call.kwargs["caller"] == "memory.turn_record"
+
+    @pytest.mark.asyncio
+    async def test_codex_turn_start_catches_up_interrupted_turn_once(
+        self,
+        tmp_path: Path,
+        mock_memory_manager: MagicMock,
+        mock_session_manager: MagicMock,
+    ) -> None:
+        transcript = tmp_path / "codex.jsonl"
+        _write_interrupted_codex_transcript(transcript)
+        session: MagicMock = mock_session_manager.get.return_value
+        session.transcript_path = str(transcript)
+        session.source = "codex"
+        session.title = "#42 Codex"
+        session.title_source = "provisional"
+        session.last_digest_input_hash = None
+        session.last_digested_pair_index = 0
+
+        def persist_state(_session_id: str, **values: Any) -> MagicMock:
+            session.last_turn_markdown = values["last_turn_markdown"]
+            session.digest_markdown = values["digest_markdown"]
+            session.last_digest_input_hash = values["last_digest_input_hash"]
+            session.last_digested_pair_index = values["last_digested_pair_index"]
+            if values["title"] is not None:
+                session.title = values["title"]
+                session.title_source = values["title_source"]
+            return session
+
+        mock_session_manager.persist_digest_state.side_effect = persist_state
+        llm_service = MagicMock()
+        llm_service.call_json_feature = AsyncMock(
+            return_value=_turn_record_payload(
+                "User asked why the title was still provisional after an interrupt.",
+                "Interrupted Turn Titles",
+            )
+        )
+
+        first = await build_turn_and_digest(
+            memory_manager=mock_memory_manager,
+            session_manager=mock_session_manager,
+            session_id="session-123",
+            llm_service=llm_service,
+            config=_digest_config(),
+            prior_turn_only=True,
+        )
+        repeated = await build_turn_and_digest(
+            memory_manager=mock_memory_manager,
+            session_manager=mock_session_manager,
+            session_id="session-123",
+            llm_service=llm_service,
+            config=_digest_config(),
+            prior_turn_only=True,
+        )
+
+        assert first is not None
+        assert first["title"] == "Interrupted Turn Titles"
+        assert repeated is None
+        assert session.last_digested_pair_index == 1
+        assert session.title == "Interrupted Turn Titles"
+        assert session.title_source == "llm"
+        mock_session_manager.persist_digest_state.assert_called_once()
+        llm_service.call_json_feature.assert_awaited_once()
 
     @pytest.mark.asyncio
     async def test_concurrent_turns_are_serialized_in_digest_order(
@@ -1707,6 +1815,29 @@ class TestReadUndigestedTurns:
         assert result[1] == ("Follow-up question", "Final answer")
 
     @pytest.mark.asyncio
+    async def test_codex_prior_turn_only_excludes_active_turn(self, tmp_path: Path) -> None:
+        transcript = tmp_path / "codex.jsonl"
+        _write_interrupted_codex_transcript(transcript)
+
+        result, next_index = await _read_undigested_turns(
+            str(transcript),
+            "codex",
+            0,
+            prior_turn_only=True,
+        )
+        repeated, repeated_index = await _read_undigested_turns(
+            str(transcript),
+            "codex",
+            next_index,
+            prior_turn_only=True,
+        )
+
+        assert result == [("Investigate the title", "The title is still provisional.")]
+        assert next_index == 1
+        assert repeated == []
+        assert repeated_index == next_index
+
+    @pytest.mark.asyncio
     async def test_hook_blocking_attachment_does_not_create_digest_exchange(self, tmp_path) -> None:
         """A captured Claude hook-block attachment is excluded from digest exchanges."""
         transcript = tmp_path / "transcript.jsonl"
@@ -1982,10 +2113,10 @@ class TestBuildTurnAndDigestCatchUp:
     @pytest.mark.asyncio
     async def test_idempotency_combined_hash(
         self,
-        mock_memory_manager,
-        mock_llm_service,
-        tmp_path,
-    ):
+        mock_memory_manager: MagicMock,
+        mock_llm_service: MagicMock,
+        tmp_path: Path,
+    ) -> None:
         """Same batch of undigested pairs doesn't re-process."""
         import hashlib
 
