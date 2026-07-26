@@ -1,191 +1,275 @@
 # Why the plan adversary under-finds and over-runs
 
-**Status:** ideas log, written during the `wiki-codewiki-restructure` review loop
-**Task:** `#18959`
-**Evidence base:** round 1 of `.gobby/plans/wiki-codewiki-restructure.md`, first-hand
+**Status:** ideas log
+**Tasks:** `#18959` (v1, single-round), `#18960` (v2, corpus rebuild)
 **Companion:** `docs/research/plan-adversary-improvements.md` (task `#18957`) studies the
-orchestration side — repair attestation, sweep records, lane telemetry — against the
-`herdr-terminal-client` plan. This document covers the other half: **finding quality,
-severity calibration, remedy scope, and why the loop has no fixed point.** Where the two
-overlap it is noted inline; nothing here restates that log.
+orchestration side — repair attestation, sweep records, lane telemetry — on the
+`herdr-terminal-client` plan. This document is the measurement side. The two were written
+independently and converge on the same primary cause; that agreement is noted where it
+happens rather than restated.
 
-## Measured baseline
+## Corpus
 
-Round 1, run `2b388243-dfd2-4fc5-91d3-9b0c6099a256` (counters from its `agent_runs` row;
-finding counts from the persisted round-1 checkpoint fence in the plan changelog):
+Every completed `plan-adversary-taskless` run in the hub whose result blob contains a
+parseable `round_result`. Reproduce with:
 
-| Metric | Value |
-| --- | --- |
-| Model / effort | `gpt-5.6-sol` / `xhigh` |
-| Wall clock | 2045 s (34 m 5 s) |
-| Turns | 7 |
-| Tool calls | 131 |
-| Candidates | 23 |
-| Findings emitted | 17 |
-| Dismissed | 6 |
-| Severity distribution | 17 `blocking`, 0 anything else |
-| Findings accepted | 17 / 17 |
-| Remedies accepted **as written** | 9 / 17 |
-| Remedies accepted **trimmed** | 8 / 17 |
-| Citation accuracy | high — every load-bearing citation ground-checked, all held |
+```sql
+select id, tool_calls_count, turns_used,
+       extract(epoch from (completed_at-started_at))::int as secs,
+       started_at, prompt, result
+from agent_runs
+where agent_name ilike '%adversar%' and status='success'
+order by started_at;
+```
 
-Two numbers carry most of the diagnosis: **severity variance is zero**, and **47% of
-proposed remedies were larger than the minimal correct fix.**
+then extract the first JSON object in `result` containing a `findings` key, and group by
+the plan filename in `prompt`. Finalized rounds also carry `round_result` directly in
+`plan_review_evidence`, but that table retains only recent rows (10 at time of writing),
+so `agent_runs.result` is the wider source.
 
-Citation quality was not a problem. The reviewer correctly established that
-`src/gobby/wiki/scheduled_jobs.py` is exactly 995 lines against a 1,000-line cap, that
-`dispatch_batch` (`src/gobby/mcp_proxy/tools/spawn_agent/_factory.py:592`) refuses
-suggestions without a task ref and therefore cannot carry taskless queue rows, and that
-`crates/gwiki/src/ingest/session/summarize.rs:39,74,77` uses `AiRouting::Direct` while
-sitting outside every declared P1 target. Whatever is wrong is upstream of verification.
+**25 rounds parsed, 6 plans, 109 findings.** Two of the six have complete or near-complete
+round sequences; the rest are single observed rounds.
 
-## Why it does not find more per round
+| Plan | Rounds observed | Findings per round | Terminal verdict |
+| --- | --- | --- | --- |
+| `context-mode-borrowings.md` | 11 (rounds 11–22) | 2, 4, 3, 3, 3, 3, 1, 2, 1, 2, 2 | still `needs_review` at round 22 |
+| `feedback-lesson-loop.md` | 10 (round 3 →) | 10, 7, 8, 6, 4, 2, 1, 1, 2, 0 | **`approved`** |
+| `wiki-codewiki-restructure.md` | 1 (round 1) | 17 | `needs_review` |
+| `subscription-sdk-integration.md` | 1 (round 2) | 12 | `needs_review` |
+| `dream-stale-memory-reconciliation.md` | 1 (round 1) | 10 | `needs_review` |
+| `task-12898-memory-recall-helper.md` | 1 (round 4) | 3 | `needs_review` |
 
-### 1. The budget goes to lookups, not reasoning
+Run cost across the corpus: 17–139 tool calls, 3–23 turns, 283–3389 s. The 2026-07-26
+runs are 2–3× longer than the 2026-07-22/23 runs, consistent with the three-lane native
+fanout landing in between.
 
-131 tool calls for 17 findings is ~7.7 calls per finding, and the great majority were
-file reads re-deriving facts that are cheap, deterministic, and already known to the
-daemon: does this path exist, how many lines is it, what symbols does it export, what
-enum variants does it have. The reviewer rebuilds a model of the repository from zero
-every round.
+**The single hardest number: 109 of 109 findings are `severity: blocking`.** Across six
+plans, four weeks, and every round in the corpus, the adversary has never once emitted a
+finding at any other severity.
 
-Note what the three strongest round-1 findings have in common: each is *"the plan's claim
-disagrees with the repository."* That class is mechanically discoverable. Making it cheap
-converts it from lucky sampling into systematic coverage, and frees the reviewer's
-context for the cross-section reasoning that nothing can precompute.
+## What the corpus retracts
 
-**Change:** `prepare_plan_review_round` emits a **review facts pack** alongside the
-snapshot — for every path in every Target inventory: exists / line count / top-level
-symbol names / last-touched commit; plus the plan's declared dependency DAG with the
-cycle and unknown-dependency verdict already computed. Inject it as evidence. Highest
-expected lift on findings-per-round, deterministic, no protocol change.
+The first version of this document was written from `wiki-codewiki-restructure` round 1
+alone and argued that 131 tool calls for 17 findings (7.7 calls/finding) showed a
+budget wasted on lookups. **The corpus contradicts that.** Calls-per-finding across the
+25 rounds ranges from 4.3 to 62, and 7.7 sits near the *efficient* end. Worse for the
+original claim, the ratio moves the wrong way for it: on the one plan that reached
+`approved`, calls/finding climbed 4.6 → 8.7 → 13.7 → 15.5 → 62 as it converged. High
+calls-per-finding is what a nearly-clean plan looks like, not what waste looks like.
 
-### 2. One generalist time-slices many lenses and finds the shallow instance of each
+That claim is withdrawn. Two things survive it, and they are better:
 
-Round 1's findings cluster into eight recognizable defect classes: durability/rollback
-(3), concurrency and fencing (2), schema/migration (2), dependency ordering (3),
-API-contract-vs-reality (2), size and resource limits (1), measurability (2), scope
-boundary (2). Roughly two per class, across eight classes, in 34 minutes. That is the
-signature of uniform shallow sampling — the reviewer reaches each lens, finds the most
-visible instance, and moves on before finding the second.
+- **Calls-per-finding is a dryness metric.** It rises monotonically on the converging
+  sequence. It is the closest thing in the existing telemetry to a "this plan is running
+  out of real defects" signal, and nothing currently reads it.
+- **The absolute call budget is the real ceiling.** A round gets 17–139 tool calls
+  regardless of whether the plan has 20 target files or 126. Cheapening repo lookups buys
+  *surface coverage per round*, which is a coverage argument, not an efficiency one.
 
-The taskless contract already fans out three native research lanes
-(`requirements_traceability`, `repository_blast_radius`, `runtime_invariants`). Those are
-*research* lanes, not *defect-class* lanes. Scoping lanes by defect class, over a shared
-facts pack, should surface the second and third instance per class inside one round.
-Costs N× tokens per round and should buy fewer rounds.
+## Why rounds repeat
 
-### 3. Dismissed candidates die at the round boundary
+### 1. Repairs fix the named instance, and the next round finds the next instance
 
-Six of 23 candidates were dismissed with reasoning the next round never sees, so nothing
-stops round 2 from re-deriving them and spending its budget arriving at the same
-dismissal. I hand-wrote a do-not-reopen list into the round-2 prompt; that should be
-mechanical, not artisanal. Persist `dismissed_candidates` with reasons in the round
-record and inject them into the next round's prompt. (Adjacent to, and cheaper than, the
-structured sweep records proposed as P5 in the companion log.)
+This is the dominant driver in the only long sequence available, and it is visible in the
+finding keys themselves. From `context-mode-borrowings`:
 
-## Why it does not converge
+- Round 14: `live-migration-ordinal-uniqueness` — "planned migration version 338 collides
+  with an existing live migration."
+- Round 15: `live-migration-ordinal-uniqueness` — "the tool-results migration collides
+  with live migration 339."
 
-### 4. Severity is a constant, so it carries no information
+The same check key, twice, because the repair moved 338 to 339 and 339 was also taken.
+The defect was never "338 is wrong"; it was "the plan picks migration ordinals without
+consulting the live set." One instance got fixed.
 
-All 17 findings arrived `blocking`. The coordinator therefore has to ground-check all 17
-at equal cost, and the reviewer has no pressure to distinguish "this plan will build the
-wrong thing" from "this plan is under-specified here." Uniform severity is what a rubric
-produces when severity has no forcing function.
+The same shape recurs by class rather than by key:
 
-**Change:** `blocking` requires a concrete failure trace — preconditions, the action, the
-wrong outcome — in the same shape a bug report needs to be reproducible. A finding that
-cannot produce one is `major` or `minor` **by construction**, not by the reviewer's
-judgment. This is the same discipline that makes a code-review finding real, and it is
-mechanically checkable at the schema layer.
+- manifest-criteria fidelity: rounds 12 (`...criteria do not reflect their covered
+  section contracts`), 13 (`manifest-validation-criteria-completeness`), 15
+  (`manifest-criteria-save-retention`), 16 (`manifest-validation-criteria-fidelity`) —
+  four rounds, four different M1 entries, one defect class.
+- identity-bound transforms: round 14 (`identity-bound-normalization-closure`, off-by-one
+  against the normalizer cap) → round 16 (`identity-bound-transform-consistency`, 146-char
+  writer form vs 130-char canonicalizer).
+- exhaustive target sweeps: round 16 (`constructor-sweep-target-and-line-cap`) → round 21
+  (`exhaustive-struct-literal-target-sweep`).
+- serialization/size bounds: rounds 11, 12 (twice), 19.
 
-### 5. Completeness findings are infinitely generable
+Round 22, the last one recorded, emitted `live-source-citation-accuracy` **twice in the
+same round** — two instances of one class, which is the same failure surfacing inside a
+single round instead of across two.
 
-"Section X has no acceptance item for Y" can be emitted against any plan of any quality,
-including a perfect one, because acceptance coverage has no natural upper bound. A loop
-whose exit condition is "no findings remain" therefore has **no fixed point**. It
-terminates only when the reviewer decides to stop, which is exactly the decision the
-rubric tells it not to make.
+Roughly half the 27 findings in that tail belong to a class an earlier round already
+raised. The exact-key repeat and the intra-round duplicate are hard evidence; the class
+grouping above is my reading of the finding text, not a mechanical match, because nothing
+in the schema makes classes comparable.
 
-**Change:** define `approved` on risk instead of completeness — *no remaining finding
-carries a concrete failure trace.* Put it in the review contract, not in each round's
-prompt, so it survives prompt drift. Say explicitly that completeness findings without a
-failure trace are non-blocking.
+This is the same conclusion the companion log reached from the herdr plan (its P1 and P2),
+by a completely different route: it saw round 2 immediately find consumers that round 1's
+repairs left behind. Two independent plans, two independent analyses, one cause.
 
-### 6. Accepted remedies inflate the artifact, which manufactures next round's surface
+**The obligation already exists; only the evidence is missing.**
+`_validate_dispositions()` (`src/gobby/plans/review_coverage.py:382`) already refuses a
+round whose payload lacks `adjacent_variant_complete`, with the rejection message
+"class-wide adjacent-variant sweep must be complete." It is a caller-supplied boolean with
+no backing record — the reviewer asserts the sweep and the gate believes it.
 
-This is the structural engine, and it is the one that matters most.
+Two scoping notes, because the timeline matters. That gate landed in `25b399922` at
+2026-07-23T22:58Z, *after* the entire `context-mode-borrowings` sequence (15:57Z–22:18Z the
+same day), so the 22-round tail is not evidence against the boolean. The wiki plan's round
+1 did run under it and attested `adjacent_variant_complete: true` — and then spread 17
+findings across eight defect classes at roughly two apiece, which is what an incomplete
+class sweep produces. One honest attestation, still shallow per class.
 
-The reviewer emits both a defect and a remedy. Defect-finding is bounded by the repo;
-remedy *design* is unbounded, and round 1 shows where it goes: proposed fixes included an
-absence-test matrix, four new reinstall sections, a snapshot-and-restore drill,
-restructuring agents to return staged content, and absorbing every knowledge cron into
-the run queue. Eight of seventeen had to be cut down to the minimal correct fix. Two of
-those trims were strictly *better* than the proposal, not merely cheaper — the
-transactional row-lock chosen over agent restructuring also removed agent vault write
-access entirely.
+The lane split on that same attestation is worth recording: `requirements_traceability` 10
+candidates, `repository_blast_radius` 6, `runtime_invariants` 7 — 23 total, 17 emitted, 6
+dismissed.
 
-The feedback loop: an over-scoped remedy, once accepted, enlarges the plan; a larger plan
-has more sections, more targets, and more acceptance items; more surface yields more
-findings next round. Round 1 took the plan to 28 sections, and round 2's snapshot hashes
-38. The review loop feeds itself.
+### 2. Severity carries no information
 
-**Change:** split the finding schema into `defect` and `minimal_repair`, and constrain
-the repair: *the smallest edit to existing sections that removes the failure trace.*
-Propose a new deliverable only when no existing section can host it, and name the
-sections rejected as hosts and why. This turns "did the reviewer over-scope" from a
-judgment call by the coordinator into an artifact the reviewer must defend.
+109/109 `blocking`. The coordinator must therefore ground-check every finding at equal
+cost and has no basis for ordering work; the reviewer has no pressure to separate "this
+plan will build the wrong thing" from "this section is under-specified." A field with one
+observed value is not a field.
+
+Note what this does to the tail. At round 20 the reviewer emitted one finding and called
+it blocking. At round 22, two. If those were honestly `minor`, the plan approved eight
+rounds earlier.
+
+**Change:** `blocking` requires a concrete failure trace — preconditions, action, wrong
+outcome. A finding that cannot produce one is `major` or `minor` **by construction**, not
+by the reviewer's judgment, and is checkable at the schema layer in
+`validate_review_coverage()`.
+
+### 3. The exit condition has no fixed point
+
+`context-mode-borrowings` ran **22 rounds** and never approved. Its findings-per-round
+flattened at 1–3 by round 17 and stayed there — six consecutive rounds producing 1, 2, 1,
+2, 2 findings, all blocking, none of which stopped the loop.
+
+A floor, rather than a decay to zero, is what an unbounded generator looks like.
+"Section X's validation criteria omit obligation Y" can be emitted against any plan of any
+quality, so an exit condition of "no findings remain" is not reachable by construction.
+The one plan that did approve got there because its findings genuinely ran out
+(10 → 0 with calls/finding rising 13×), not because the rule let it stop.
+
+**Change:** define `approved` on risk — *no remaining finding carries a concrete failure
+trace* — in `docs/contracts/plan-coverage.md` and the agent definition, so it survives
+prompt drift. Completeness findings without a failure trace are explicitly non-blocking.
+
+### 4. Accepted remedies inflate the artifact, which manufactures next round's surface
+
+The reviewer emits both a defect and a remedy. Defect-finding is bounded by the
+repository; remedy *design* is not. On `wiki-codewiki-restructure` round 1, 8 of 17
+proposed remedies were larger than the minimal correct fix — an absence-test matrix, four
+new reinstall sections, a snapshot-and-restore drill, restructuring agents to return
+staged content, absorbing every knowledge cron into the run queue. Two of the trims were
+strictly better than the proposal rather than merely cheaper; the transactional row-lock
+chosen over agent restructuring also removed agent vault write access entirely.
+
+Accepted over-scoped remedies enlarge the plan; a larger plan has more sections, targets,
+and acceptance items; more surface yields more findings. That round took the plan to 28
+sections and the next round's snapshot hashed 38.
+
+The corpus supports the mechanism but cannot size it — remedy scope is not recorded
+anywhere, so 8/17 is a single-round observation and stays one. Recording it is the point
+of the metric list below.
+
+**Change:** split the finding schema into `defect` and `minimal_repair`, constraining the
+repair to the smallest edit to existing sections that removes the failure trace; a new
+deliverable requires naming the sections rejected as hosts and why.
+
+### 5. Dismissed candidates die at the round boundary
+
+`_validate_dispositions()` requires every emitted candidate to carry a disposition, so
+dismissal reasoning exists — and then the round ends and the next reviewer never sees it.
+Nothing prevents re-deriving a dismissed candidate and spending the budget arriving at the
+same dismissal. I hand-wrote a do-not-reopen list into the wiki plan's round-2 prompt;
+that should be mechanical.
+
+### 6. One generalist samples many defect classes shallowly
+
+`wiki-codewiki-restructure` round 1's 17 findings spread across eight classes at roughly
+two apiece: durability/rollback (3), concurrency and fencing (2), schema/migration (2),
+dependency ordering (3), API-contract-vs-reality (2), size and resource limits (1),
+measurability (2), scope boundary (2). Uniform thin coverage is the signature of a
+reviewer that reaches each lens and moves on before finding the second instance — which
+is the same behavior that produces cause 1, seen from inside a single round rather than
+across rounds.
+
+The taskless contract already fans out three lanes (`requirements_traceability`,
+`repository_blast_radius`, `runtime_invariants`). Those are *research* lanes, not
+*defect-class* lanes.
 
 ## Ranked changes
 
-Each item names the machinery it extends.
+Ordered by what the corpus shows drives repeat rounds. Each names the machinery it
+extends.
 
-1. **Review facts pack in the round snapshot.** Extends
-   `PlanReviewEvidenceService.snapshot_payload()` (`src/gobby/plans/review_evidence.py:185`),
-   which already parses the plan document and emits the section manifest — the Target
-   inventories it needs are in that parsed document. Deterministic, no contract change.
-   Biggest lift for the least mechanism.
+1. **Back `adjacent_variant_complete` with a record instead of a boolean.** Directly
+   targets cause 1, the only cause with an exact-key repeat in evidence, and adds no new
+   obligation — `_validate_dispositions()` already requires the class-wide sweep, it just
+   cannot tell a deep one from a shallow one. Require per-sweep entries (check key, seed
+   candidate, query or index evidence, sites checked, resulting candidate IDs) and derive
+   the boolean from them. Extend the same gate to accepted-finding *repairs* so
+   `prepare_plan_review_round` can refuse a round whose prior repairs were not swept. The
+   `live-migration-ordinal-uniqueness` pair is the acceptance test: a sweep that asks
+   "which other ordinals does this plan pick?" catches round 15 during round 14's repair.
+   Same conclusion as the companion log's P1/P2/P5, reached from the round sequence
+   instead of the evidence schema.
 2. **Failure-trace gate on `blocking`.** Extends the `round_result` finding schema and
-   `validate_review_coverage()` in `gobby-plans`. Restores triage signal and kills
-   completeness padding at the source.
-3. **`defect` / `minimal_repair` split with host-section justification.** Same finding
-   schema. Stops artifact inflation — the actual engine of non-convergence.
-4. **Risk-anchored `approved` in the review contract.** Belongs in
-   `docs/contracts/plan-coverage.md` and the plan-adversary agent definition, not in
-   per-round prompt prose. Gives the loop a fixed point.
-5. **Changed-section depth routing for round N>1.** Extends
-   `_changed_sections_since_prior_round()`, which already computes the hashes and knows
-   which sections changed; the prompt still asks for a full-plan review, so unchanged
-   sections get re-derived. Present them as reviewed-and-accepted context and require
-   depth on changed ∪ new ∪ dependents. (Same conclusion as P6 in the companion log,
-   reached from the finding-rate side.)
-6. **Mechanical dismissal-ledger carry-forward.** Persist the `dismissed_candidates`
-   already produced by `_validate_dispositions()` into the round record and inject them
-   into the next round's prompt.
-7. **Defect-class lens panel over a shared facts pack.** Re-scopes the existing
-   three-lane native fanout in the taskless review contract.
+   `validate_review_coverage()`. Turns a single-valued field into a real one and is the
+   precondition for change 3.
+3. **Risk-anchored `approved` in the review contract.** `docs/contracts/plan-coverage.md`
+   plus the agent definition. Gives the loop a reachable exit; without it, changes 1 and 2
+   make rounds cheaper without making them end.
+4. **`defect` / `minimal_repair` split with host-section justification.** Same finding
+   schema. Stops the artifact from growing under repair.
+5. **Read calls-per-finding as a dryness signal.** Already recorded in
+   `agent_runs.tool_calls_count`; nothing consumes it. A round with few findings and a
+   high ratio is a converged plan; few findings at a low ratio means the reviewer stopped
+   early. Cheapest item here — one query.
+6. **Mechanical dismissal-ledger carry-forward.** Persist the dispositions
+   `_validate_dispositions()` already validates, and inject them into the next round's
+   prompt.
+7. **Review facts pack in the round snapshot.** Extends
+   `PlanReviewEvidenceService.snapshot_payload()` (`src/gobby/plans/review_evidence.py:185`),
+   which already parses the plan document and emits the section manifest. Justified as
+   surface coverage per fixed call budget, **not** as waste reduction — see the retraction
+   above.
+8. **Changed-section depth routing for round N>1.** Extends
+   `_changed_sections_since_prior_round()`, which already computes the hashes. Companion
+   log P6.
+9. **Defect-class lens panel over a shared facts pack.** Re-scopes the existing three-lane
+   fanout. The only item that costs materially more per round, and the only one whose
+   payoff is speculative on this corpus.
 
-Items 1, 5, 6 are plumbing on machinery that already exists. Items 2, 3, 4 are schema and
-contract changes to `gobby-plans`. Item 7 is the only one that costs materially more per
-round.
+Items 1–3 are where the measured problem lives. Items 5, 6, 8 are plumbing on machinery
+that already exists.
 
-## How to tell it worked
+## Metrics
 
-Round count alone is the wrong target — it can be driven to 1 by weakening review. Track
-instead:
+Round count alone is the wrong target — it goes to 1 by weakening review. The corpus
+gives a baseline for better ones:
 
-- findings per round **carrying a failure trace** (should rise, then fall to zero);
-- share of remedies accepted **as written** (should rise from 53%);
-- artifact growth per round in sections and bytes (should fall toward zero);
-- repeat rate by `check_key` across rounds (should be ~0 once the dismissal ledger
-  carries forward);
-- tool calls per finding (should fall sharply once the facts pack lands);
-- rounds to the first zero-failure-trace round.
+| Metric | Baseline | Target |
+| --- | --- | --- |
+| Findings at `blocking` | 109 / 109 (100%) | a real distribution |
+| Rounds to `approved` | 12+ observed; 22 without approving | single digits |
+| Findings-per-round floor in the tail | 1–3, flat over 6 rounds | decays to 0 |
+| Exact `check_key` repeats across rounds | ≥1 confirmed | 0 |
+| Same-class findings in consecutive rounds | ~half the observed tail | 0 |
+| Calls-per-finding at approval | 62 (n=1) | rises monotonically |
+| Remedies accepted as written | 9 / 17 (n=1 round) | recorded at all, then rising |
+| Artifact growth per round | not recorded | recorded, then → 0 |
+
+Two of these are unrecorded today. Remedy scope and artifact growth are the ones that
+would size cause 4, which is currently the least-evidenced cause in this document.
 
 ## What not to change
 
-Citation grounding held perfectly in round 1 and is the reason 17/17 findings were
-accepted. Keep the reviewer citing `file:line`, keep the coordinator ground-checking
-before accepting, and keep the byte-exact checkpoint fence. The problem is not that the
-reviewer is wrong. The problem is that it is asked for completeness against a target that
-grows as it is satisfied.
+Citation grounding held on every round inspected, and it is why 17/17 findings were
+accepted on the wiki plan. Keep the reviewer citing `file:line`, keep the coordinator
+ground-checking before accepting, keep the byte-exact checkpoint fence. The reviewer is
+not wrong. It is asked for completeness against a target that grows as it is satisfied,
+and it repairs defects one instance at a time.
