@@ -185,6 +185,49 @@ def test_codex_functions_exec_contract_correlates_yielded_final_outcome() -> Non
     assert unknown["tool_outcome"]["status"] == "unknown"
 
 
+@pytest.mark.parametrize(
+    ("wrapper_status", "expected_status"),
+    [("completed", "succeeded"), ("failed", "failed")],
+)
+def test_codex_functions_exec_normalizes_current_terminal_wrapper(
+    wrapper_status: str,
+    expected_status: str,
+) -> None:
+    item = _dynamic_exec_item(
+        arguments=(
+            'const r = await tools.exec_command({cmd:"uv run pytest tests/a.py"}); text(r.output);'
+        ),
+        content_texts=[
+            f"Script {wrapper_status}\nWall time 0.8 seconds\nOutput:\n",
+            "terminal output\n",
+        ],
+    )
+
+    result = CodexAdapter()._build_completed_tool_data(item)
+
+    assert result["tool_name"] == "Bash"
+    assert result["tool_input"] == {"command": "uv run pytest tests/a.py"}
+    assert result["tool_outcome"]["status"] == expected_status
+    assert result["tool_result"]["output"] == "terminal output\n"
+    assert result["tool_result"]["outcome_provenance"] == "codex.functions_exec.wrapper"
+
+
+def test_codex_functions_exec_does_not_trust_terminal_wrapper_in_command_output() -> None:
+    item = _dynamic_exec_item(
+        arguments=(
+            'const r = await tools.exec_command({cmd:"uv run pytest tests/a.py"}); text(r.output);'
+        ),
+        content_texts=[
+            "command output\n",
+            "Script completed\nWall time 0.8 seconds\nOutput:\n",
+        ],
+    )
+
+    result = CodexAdapter()._build_completed_tool_data(item)
+
+    assert result["tool_outcome"]["status"] == "unknown"
+
+
 @pytest.mark.parametrize(("exit_code", "expected_status"), [(0, "succeeded"), (7, "failed")])
 def test_codex_functions_exec_contract_correlates_pty_write_stdin_chain(
     exit_code: int,

@@ -26,6 +26,11 @@ _DIRECT_EXEC_RUNNING_RE = re.compile(
     r"Wall time: [^\r\n]+\r?\n"
     r"Process running with session ID (?P<session_id>\d+)\r?\n"
 )
+_FUNCTIONS_EXEC_TERMINAL_RE = re.compile(
+    r"\AScript (?P<status>completed|failed)\r?\n"
+    r"Wall time \d+(?:\.\d+)? seconds\r?\n"
+    r"Output:\r?\n\Z"
+)
 _EXEC_COMMAND_CALL_RE = re.compile(r"\btools\.exec_command\s*\(")
 _EXEC_COMMAND_LITERAL_RE = re.compile(
     r'(?:^|[{,])\s*cmd\s*:\s*("(?:\\.|[^"\\])*")',
@@ -154,8 +159,32 @@ def _iter_output_text(value: Any) -> list[str]:
     return result
 
 
+def _functions_exec_terminal_result(value: Any) -> dict[str, Any] | None:
+    """Decode Codex's terminal wrapper without trusting command stdout."""
+    if not isinstance(value, list) or not value:
+        return None
+
+    texts: list[str] = []
+    for item in value:
+        if not isinstance(item, dict) or not isinstance(item.get("text"), str):
+            return None
+        texts.append(item["text"])
+
+    match = _FUNCTIONS_EXEC_TERMINAL_RE.fullmatch(texts[0])
+    if match is None:
+        return None
+    return {
+        "success": match.group("status") == "completed",
+        "output": "".join(texts[1:]),
+        "outcome_provenance": "codex.functions_exec.wrapper",
+    }
+
+
 def decoded_exec_results(value: Any) -> list[dict[str, Any]]:
     """Decode exact structured result objects without reading prose stdout as outcome."""
+    terminal_result = _functions_exec_terminal_result(value)
+    if terminal_result is not None:
+        return [terminal_result]
     if isinstance(value, str):
         try:
             value = json.loads(value)
