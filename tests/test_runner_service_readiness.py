@@ -4,6 +4,7 @@ from types import SimpleNamespace
 from typing import TYPE_CHECKING, Any, cast
 
 import httpx
+import psycopg
 import pytest
 
 from gobby import runner_service_readiness as readiness
@@ -27,8 +28,13 @@ class FakeHealthCheck:
 
 
 class FakeFalkorClient:
-    def __init__(self, *ping_results: bool | Exception) -> None:
+    def __init__(
+        self,
+        *ping_results: bool | Exception,
+        close_error: Exception | None = None,
+    ) -> None:
         self.ping_results = ping_results
+        self.close_error = close_error
         self.ping_calls = 0
         self.close_calls = 0
 
@@ -41,6 +47,8 @@ class FakeFalkorClient:
 
     async def close(self) -> None:
         self.close_calls += 1
+        if self.close_error is not None:
+            raise self.close_error
 
 
 def _client_factory(client: FakeFalkorClient) -> Any:
@@ -77,12 +85,26 @@ async def test_unavailable_postgres_blocks_startup() -> None:
     runner = _runner(qdrant_url="http://localhost:6333", falkor_password="secret")
 
     def _fail(_sql: str) -> dict[str, int]:
-        raise RuntimeError("connection refused")
+        raise psycopg.OperationalError("connection refused")
 
     database: Any = runner.database
     database.fetchone = _fail
 
     with pytest.raises(readiness.ManagedServiceReadinessError, match="PostgreSQL readiness"):
+        await readiness.require_managed_services_ready(runner)
+
+
+@pytest.mark.asyncio
+async def test_unexpected_postgres_error_propagates() -> None:
+    runner = _runner(qdrant_url="http://localhost:6333", falkor_password="secret")
+
+    def _fail(_sql: str) -> dict[str, int]:
+        raise RuntimeError("programming error")
+
+    database: Any = runner.database
+    database.fetchone = _fail
+
+    with pytest.raises(RuntimeError, match="programming error"):
         await readiness.require_managed_services_ready(runner)
 
 
@@ -158,14 +180,34 @@ async def test_falkordb_ping_exception_is_wrapped_and_client_closes(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     health = FakeHealthCheck(True)
-    client = FakeFalkorClient(FalkorConnectionError("connection reset"))
+    client = FakeFalkorClient(
+        FalkorConnectionError("connection reset"),
+        close_error=RuntimeError("cleanup failed"),
+    )
     monkeypatch.setattr(readiness, "is_qdrant_healthy", health)
     monkeypatch.setattr(readiness, "FalkorClient", _client_factory(client))
 
     with pytest.raises(
         readiness.ManagedServiceReadinessError,
         match="FalkorDB readiness check failed at 127.0.0.1:16379",
-    ):
+    ) as exc_info:
+        await readiness.require_managed_services_ready(
+            _runner(qdrant_url="http://localhost:6333", falkor_password="secret")
+        )
+
+    assert client.close_calls == 1
+    assert exc_info.value.__notes__ == ["FalkorDB readiness client cleanup failed: cleanup failed"]
+
+
+@pytest.mark.asyncio
+async def test_falkordb_cleanup_error_propagates_without_primary_failure(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    client = FakeFalkorClient(True, close_error=RuntimeError("cleanup failed"))
+    monkeypatch.setattr(readiness, "is_qdrant_healthy", FakeHealthCheck(True))
+    monkeypatch.setattr(readiness, "FalkorClient", _client_factory(client))
+
+    with pytest.raises(RuntimeError, match="cleanup failed"):
         await readiness.require_managed_services_ready(
             _runner(qdrant_url="http://localhost:6333", falkor_password="secret")
         )

@@ -149,6 +149,54 @@ async def test_codex_close_reconciles_transcript_before_completion_rules() -> No
 
 
 @pytest.mark.asyncio
+async def test_codex_close_reconciles_without_workflow_handler() -> None:
+    service = _Service(SessionSource.CODEX, shell_exit_code=0)
+    service.hook_manager._workflow_handler = None
+
+    _, _, _, error, _ = await apply_before_tool_enforcement(
+        service,
+        "gobby-tasks",
+        "close_task",
+        {"task_id": "task-1", "commit_sha": "abc123"},
+        "external-codex-session",
+    )
+
+    assert error is None
+    assert service.order == ["reconcile"]
+    assert completion_evidence_ready(service.variables)
+    assert service.processor.session_ids == ["platform-codex-session"]
+    assert service.variables["verification_evidence_recorded"] is True
+
+
+@pytest.mark.asyncio
+async def test_codex_close_without_workflow_handler_stays_blocked_on_failed_result() -> None:
+    service = _Service(SessionSource.CODEX)
+    service.hook_manager._workflow_handler = None
+
+    async def _failed_reconcile(_session_id: str) -> SimpleNamespace:
+        service.order.append("reconcile")
+        return SimpleNamespace(flushed=False, error="transcript unavailable")
+
+    service.hook_manager._message_processor = SimpleNamespace(
+        reconcile_codex_transcript=_failed_reconcile
+    )
+
+    _, _, _, error, outcome = await apply_before_tool_enforcement(
+        service,
+        "gobby-tasks",
+        "close_task",
+        {"task_id": "task-1", "commit_sha": "abc123"},
+        "external-codex-session",
+    )
+
+    assert error is not None
+    assert error["error_code"] == "TOOL_BLOCKED"
+    assert error["retryable"] is True
+    assert outcome == "failed_pre_dispatch"
+    assert service.order == ["reconcile"]
+
+
+@pytest.mark.asyncio
 async def test_codex_close_stays_blocked_when_reconciled_result_failed() -> None:
     service = _Service(SessionSource.CODEX, shell_exit_code=1, require_ready=True)
 

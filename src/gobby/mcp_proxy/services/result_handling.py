@@ -201,10 +201,6 @@ async def apply_before_tool_enforcement(
         return server_name, tool_name, arguments, None, None
 
     hook_manager = service._resolve_hook_manager()
-    workflow_handler = getattr(hook_manager, "_workflow_handler", None) if hook_manager else None
-    if workflow_handler is None:
-        return server_name, tool_name, arguments, None, None
-
     event = await asyncio.to_thread(
         service._build_before_tool_event,
         effective_session_id=effective_session_id,
@@ -245,6 +241,10 @@ async def apply_before_tool_enforcement(
             },
             "failed_pre_dispatch",
         )
+    workflow_handler = getattr(hook_manager, "_workflow_handler", None) if hook_manager else None
+    if workflow_handler is None:
+        return server_name, tool_name, arguments, None, None
+
     has_pending_context = getattr(workflow_handler, "has_pending_tool_context", None)
     if callable(has_pending_context):
         try:

@@ -6,6 +6,7 @@ import asyncio
 from typing import TYPE_CHECKING
 
 import httpx
+import psycopg
 
 from gobby.cli.services import is_qdrant_healthy
 from gobby.memory.falkor_client import FalkorClient, FalkorConnectionError, FalkorQueryError
@@ -32,7 +33,7 @@ async def _check_managed_services_ready_once(
             runner.database.fetchone,
             "SELECT 1 AS ready",
         )
-    except Exception as exc:
+    except psycopg.Error as exc:
         raise ManagedServiceReadinessError(
             f"Managed PostgreSQL readiness check failed: {exc}"
         ) from exc
@@ -56,6 +57,7 @@ async def _check_managed_services_ready_once(
         graph_name=falkor.graph_name,
         timeout=5.0,
     )
+    primary_error: BaseException | None = None
     try:
         try:
             falkor_healthy = await client.ping()
@@ -67,8 +69,16 @@ async def _check_managed_services_ready_once(
             raise ManagedServiceReadinessError(
                 f"FalkorDB authentication or PING failed at {falkor.host}:{falkor.port}"
             )
+    except BaseException as exc:
+        primary_error = exc
+        raise
     finally:
-        await client.close()
+        try:
+            await client.close()
+        except Exception as exc:
+            if primary_error is None:
+                raise
+            primary_error.add_note(f"FalkorDB readiness client cleanup failed: {exc}")
 
 
 async def require_managed_services_ready(runner: GobbyRunner) -> None:

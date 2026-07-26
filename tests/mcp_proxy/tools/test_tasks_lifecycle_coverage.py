@@ -941,8 +941,20 @@ class TestCloseTaskTool:
             mock_session_manager.clear_had_edits.assert_not_called()
 
     @pytest.mark.asyncio
+    @pytest.mark.parametrize(
+        ("lookup_error", "is_expected_lookup_failure"),
+        [
+            (KeyError("vars unavailable"), True),
+            (ValueError("vars unavailable"), True),
+            (TypeError("vars unavailable"), True),
+            (RuntimeError("programming error"), False),
+        ],
+    )
     async def test_close_task_fails_closed_when_owner_variables_cannot_load(
-        self, mock_task_manager: MagicMock
+        self,
+        mock_task_manager: MagicMock,
+        lookup_error: Exception,
+        is_expected_lookup_failure: bool,
     ) -> None:
         task_uuid = "550e8400-e29b-41d4-a716-446655440000"
 
@@ -957,7 +969,7 @@ class TestCloseTaskTool:
             MockSessionManager.return_value = mock_session_manager
 
             mock_sv_manager = MagicMock()
-            mock_sv_manager.get_variables.side_effect = KeyError("vars unavailable")
+            mock_sv_manager.get_variables.side_effect = lookup_error
             MockSVManager.return_value = mock_sv_manager
 
             mock_proj_instance = MagicMock()
@@ -975,13 +987,16 @@ class TestCloseTaskTool:
             mock_task_manager.get_task.return_value = mock_task
             mock_task_manager.list_tasks.return_value = []
 
-            result = await registry.call(
-                "close_task",
-                {
-                    "task_id": task_uuid,
-                    "changes_summary": "test changes",
-                },
-            )
+            close_arguments = {
+                "task_id": task_uuid,
+                "changes_summary": "test changes",
+            }
+            if not is_expected_lookup_failure:
+                with pytest.raises(RuntimeError, match="programming error"):
+                    await registry.call("close_task", close_arguments)
+                mock_task_manager.close_task.assert_not_called()
+                return
+            result = await registry.call("close_task", close_arguments)
 
         assert result["success"] is False
         assert result["error"] == "session_variable_lookup_failed"
