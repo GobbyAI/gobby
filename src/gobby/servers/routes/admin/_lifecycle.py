@@ -363,7 +363,10 @@ def register_lifecycle_routes(router: APIRouter, server: "HTTPServer") -> None:
             }
 
         except Exception as e:
-            logger.exception("Error reloading workflows: %s", e)
+            logger.exception(
+                "Error reloading workflows",
+                extra={"error": str(e)},
+            )
             response.status_code = 500
             return {
                 "status": "error",

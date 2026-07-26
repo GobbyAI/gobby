@@ -233,7 +233,11 @@ class TestMCPConfigManagerLoadServers:
         assert servers[0].command == "uvx"
         assert servers[0].args == ["test-mcp"]
 
-    def test_load_servers_skips_without_name(self, tmp_path) -> None:
+    def test_load_servers_skips_without_name(
+        self,
+        tmp_path,
+        caplog: pytest.LogCaptureFixture,
+    ) -> None:
         """Test that servers without name are skipped."""
         config_path = tmp_path / "test_mcp.json"
         config_data = {
@@ -243,12 +247,19 @@ class TestMCPConfigManagerLoadServers:
             ]
         }
         config_path.write_text(json.dumps(config_data))
+        caplog.set_level("WARNING", logger="gobby.config.mcp")
 
         manager = MCPConfigManager(str(config_path))
         servers = manager.load_servers()
 
         assert len(servers) == 1
         assert servers[0].name == "valid"
+        record = next(
+            record
+            for record in caplog.records
+            if record.getMessage() == "Skipping MCP server config without name"
+        )
+        assert record.__dict__["server_index"] == 0
 
     def test_load_servers_warns_and_preserves_first_duplicate_name(
         self,
@@ -272,7 +283,13 @@ class TestMCPConfigManagerLoadServers:
         assert len(servers) == 1
         assert servers[0].name == "dup"
         assert servers[0].url == "http://localhost:8080/mcp"
-        assert "Skipping duplicate MCP server config 'dup'; first entry wins" in caplog.text
+        record = next(
+            record
+            for record in caplog.records
+            if record.getMessage() == "Skipping duplicate MCP server config; first entry wins"
+        )
+        assert record.__dict__["server_index"] == 1
+        assert record.__dict__["server_name"] == "dup"
 
     def test_load_servers_with_oauth(self, tmp_path) -> None:
         """Test loading server with OAuth configuration."""

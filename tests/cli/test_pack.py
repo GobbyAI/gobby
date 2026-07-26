@@ -187,6 +187,36 @@ class TestPackCommand:
         assert mock_start.call_count == 1
         assert mock_start.call_args is not None
 
+    def test_pack_preserves_primary_error_and_completes_cleanup(
+        self,
+        tmp_path: Path,
+        runner: CliRunner,
+    ) -> None:
+        fake_home = tmp_path / ".gobby"
+        fake_home.mkdir()
+        primary_error = RuntimeError("archive failed")
+        cleanup_error = RuntimeError("docker restart failed")
+
+        with (
+            patch("gobby.cli.pack.get_gobby_home", return_value=fake_home),
+            patch("gobby.cli.pack._daemon_is_running", return_value=True),
+            patch("gobby.cli.pack.stop_daemon"),
+            patch("gobby.cli.pack._start_daemon") as start_daemon,
+            patch("gobby.cli.pack._docker_available", return_value=True),
+            patch("gobby.cli.pack._volume_exists", return_value=True),
+            patch("gobby.cli.pack._stop_docker_services", return_value=True),
+            patch(
+                "gobby.cli.pack._start_docker_services",
+                side_effect=cleanup_error,
+            ),
+            patch("gobby.cli.pack._do_pack", side_effect=primary_error),
+        ):
+            result = runner.invoke(pack, [str(tmp_path / "out.tar.gz")])
+
+        assert result.exception is primary_error
+        start_daemon.assert_called_once_with()
+        assert "Warning: Failed to restart Docker services: docker restart failed" in result.output
+
 
 class TestUnpackCommand:
     def _create_fake_archive(self, tmp_path: Path) -> Path:

@@ -51,6 +51,15 @@ class TestValidateCommandWithNewFlags:
         assert result.exit_code == 0
         assert "--max-iterations" in result.output
 
+    def test_validate_rejects_non_positive_max_iterations(self, runner: CliRunner) -> None:
+        result = runner.invoke(
+            cli,
+            ["tasks", "validate", "gt-test123", "--max-iterations", "0"],
+        )
+
+        assert result.exit_code == 2
+        assert "0 is not in the range x>=1" in result.output
+
     def test_validate_help_shows_history_flag(self, runner: CliRunner) -> None:
         """Test that validate --help shows --history flag."""
         result = runner.invoke(cli, ["tasks", "validate", "--help"])

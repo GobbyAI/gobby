@@ -133,7 +133,6 @@ def load_bootstrap(
                 raise BootstrapConfigError("bootstrap.yaml must contain a YAML mapping")
             return _default_bootstrap_config()
 
-        explicit_hub_backend = "hub_backend" in data
         hub_backend = _parse_hub_backend(data.get("hub_backend", "postgres"))
         database_url = _parse_optional_str(data.get("database_url"), "database_url")
         if "database_url_ref" in data:
@@ -146,7 +145,7 @@ def load_bootstrap(
             )
         postgres_pool = _parse_postgres_pool(data.get("postgres_pool"))
         auth_mode = _parse_auth_mode(data.get("auth_mode", BootstrapConfig.auth_mode))
-        if explicit_hub_backend and resolve_database_url and not database_url:
+        if resolve_database_url and not database_url:
             raise BootstrapConfigError(HUB_BACKEND_DATABASE_URL_REQUIRED)
         if resolve_database_url and database_url:
             _validate_managed_database_url(database_url)

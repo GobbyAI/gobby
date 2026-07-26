@@ -302,7 +302,10 @@ class SessionCoordinator:
             return registered_count
 
         except Exception as e:
-            self.logger.warning("Failed to re-register active/paused sessions: %s", e)
+            self.logger.warning(
+                "Failed to re-register active/paused sessions",
+                extra={"error": str(e)},
+            )
             return 0
 
     def start_agent_run(self, agent_run_id: str) -> bool:

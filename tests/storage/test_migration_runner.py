@@ -101,13 +101,14 @@ def test_postgres_pending_migration_logs_info(caplog: pytest.LogCaptureFixture) 
         runner.apply_pending()
 
     assert hub.applied == [295]
-    assert "Applying PostgreSQL migration 295_add_needed_column" in caplog.text
     record = next(
         record
         for record in caplog.records
-        if record.getMessage() == "Applying PostgreSQL migration 295_add_needed_column"
+        if record.getMessage() == "Applying PostgreSQL migration"
     )
     assert record.levelname == "INFO"
+    assert record.__dict__["migration_version"] == 295
+    assert record.__dict__["migration_name"] == "add_needed_column"
 
 
 class _ConcurrentMigrationTransaction:
@@ -208,7 +209,12 @@ def test_postgres_migration_discovery_reports_invalid_filenames(
         discovered = module.MigrationRunner(_PostgresMigrationHub())._discover_migrations()
 
     assert [(migration.version, migration.name) for migration in discovered] == [(321, "valid")]
-    assert "Ignoring invalid migration filename: invalid.sql" in caplog.text
+    record = next(
+        record
+        for record in caplog.records
+        if record.getMessage() == "Ignoring invalid migration filename"
+    )
+    assert record.__dict__["migration_filename"] == "invalid.sql"
     assert ".gitkeep" not in caplog.text
 
 

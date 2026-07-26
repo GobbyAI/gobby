@@ -347,6 +347,30 @@ class TestSessionLifecycleTransitions:
         assert count == 1
         assert mock_message_processor.register_session.call_count == 2
 
+    def test_reregister_logs_storage_failure_with_structured_context(
+        self,
+        caplog: pytest.LogCaptureFixture,
+    ) -> None:
+        mock_session_storage = MagicMock()
+        mock_session_storage.list.side_effect = RuntimeError("storage unavailable")
+        logger = logging.getLogger("test.session_coordinator.structured")
+        coordinator = SessionCoordinator(
+            session_storage=mock_session_storage,
+            message_processor=MagicMock(),
+            logger=logger,
+        )
+
+        with caplog.at_level("WARNING", logger=logger.name):
+            count = coordinator.reregister_active_sessions()
+
+        assert count == 0
+        record = next(
+            record
+            for record in caplog.records
+            if record.getMessage() == "Failed to re-register active/paused sessions"
+        )
+        assert record.__dict__["error"] == "storage unavailable"
+
     def test_reregister_does_not_reset_agent_context_flags(self) -> None:
         """Test re-registration only restores transcript processing."""
         mock_session_storage = MagicMock()

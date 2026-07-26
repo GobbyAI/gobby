@@ -1090,10 +1090,16 @@ class TestWorkflowsReloadEndpoint:
         assert data["status"] == "error"
         assert "Failed to reload cache" in data["message"]
 
-    def test_reload_workflows_manager_exception(self, client, mock_server) -> None:
+    def test_reload_workflows_manager_exception(
+        self,
+        client,
+        mock_server,
+        caplog: pytest.LogCaptureFixture,
+    ) -> None:
         mock_server._internal_manager.get_all_registries.side_effect = RuntimeError(
             "Manager unavailable"
         )
+        caplog.set_level("ERROR", logger="gobby.servers.routes.admin._lifecycle")
 
         response = client.post("/api/admin/workflows/reload")
         assert response.status_code == 500
@@ -1101,6 +1107,12 @@ class TestWorkflowsReloadEndpoint:
 
         assert data["status"] == "error"
         assert data["message"] == "Failed to reload workflows"
+        record = next(
+            record
+            for record in caplog.records
+            if record.getMessage() == "Error reloading workflows"
+        )
+        assert record.__dict__["error"] == "Manager unavailable"
 
 
 class TestTestEndpoints:
@@ -1256,8 +1268,17 @@ class TestTestEndpoints:
 
     # --- unregister-agent ---
 
+    @patch(
+        "gobby.agents.agent_cleanup.deliver_existing_terminal_run",
+        new_callable=AsyncMock,
+    )
     @patch("gobby.storage.agents.LocalAgentRunManager")
-    def test_unregister_agent_success(self, mock_arm_cls, client) -> None:
+    def test_unregister_agent_success(
+        self,
+        mock_arm_cls,
+        mock_deliver_terminal_run: AsyncMock,
+        client,
+    ) -> None:
         mock_arm = MagicMock()
         mock_arm.get.return_value = MagicMock()  # agent found
         mock_arm_cls.return_value = mock_arm
@@ -1269,6 +1290,7 @@ class TestTestEndpoints:
         assert data["status"] == "success"
         assert "run-1" in data["message"]
         mock_arm.fail.assert_called_once_with("run-1", error="Unregistered via test endpoint")
+        mock_deliver_terminal_run.assert_awaited_once()
 
     @patch("gobby.storage.agents.LocalAgentRunManager")
     def test_unregister_agent_not_found(self, mock_arm_cls, client) -> None:

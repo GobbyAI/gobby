@@ -292,6 +292,16 @@ def test_postgres_backend_requires_database_url(temp_dir: Path) -> None:
         load_bootstrap(str(bootstrap_file), resolve_database_url=True)
 
 
+def test_default_runtime_backend_requires_database_url(temp_dir: Path) -> None:
+    from gobby.config.bootstrap import BootstrapConfigError, load_bootstrap
+
+    bootstrap_file = temp_dir / "bootstrap.yaml"
+    _write_bootstrap(bootstrap_file, "daemon_port: 60887\n")
+
+    with pytest.raises(BootstrapConfigError, match="database_url"):
+        load_bootstrap(str(bootstrap_file), resolve_database_url=True)
+
+
 def test_runtime_bootstrap_rejects_external_postgres_url(temp_dir: Path) -> None:
     from gobby.config.bootstrap import BootstrapConfigError, load_bootstrap
 

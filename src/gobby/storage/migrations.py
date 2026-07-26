@@ -123,7 +123,11 @@ class MigrationRunner:
                     applied.add(migration.version)
                     continue
                 logger.info(
-                    "Applying PostgreSQL migration %s_%s", migration.version, migration.name
+                    "Applying PostgreSQL migration",
+                    extra={
+                        "migration_name": migration.name,
+                        "migration_version": migration.version,
+                    },
                 )
                 self._run_migration(txn, migration)
                 self._record_applied_version(txn, migration.version)
@@ -144,9 +148,11 @@ class MigrationRunner:
                 if row is not None:
                     return
                 logger.info(
-                    "Applying non-transactional PostgreSQL migration %s_%s",
-                    migration.version,
-                    migration.name,
+                    "Applying non-transactional PostgreSQL migration",
+                    extra={
+                        "migration_name": migration.name,
+                        "migration_version": migration.version,
+                    },
                 )
                 self._run_migration(connection, migration)
                 self._record_applied_version(connection, migration.version)
@@ -174,7 +180,10 @@ class MigrationRunner:
             match = _MIGRATION_FILE_RE.match(path.name)
             if match is None:
                 if not path.name.startswith("."):
-                    logger.warning("Ignoring invalid migration filename: %s", path.name)
+                    logger.warning(
+                        "Ignoring invalid migration filename",
+                        extra={"migration_filename": path.name},
+                    )
                 continue
 
             version = int(match.group("version"))

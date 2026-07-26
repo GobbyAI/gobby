@@ -19,6 +19,8 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
+GITHUB_CLI_TIMEOUT_SECONDS = 180
+
 
 class GitHubIssueImporter:
     """Import GitHub issues into task storage."""
@@ -277,7 +279,10 @@ class GitHubIssueImporter:
         """Fetch issues using gh CLI. Returns None if gh is not available."""
         try:
             subprocess.run(  # nosec B603 B607
-                ["gh", "--version"], capture_output=True, check=True, timeout=180
+                ["gh", "--version"],
+                capture_output=True,
+                check=True,
+                timeout=GITHUB_CLI_TIMEOUT_SECONDS,
             )
         except (subprocess.CalledProcessError, FileNotFoundError, subprocess.TimeoutExpired):
             return None
@@ -296,10 +301,15 @@ class GitHubIssueImporter:
         ]
         try:
             result = subprocess.run(  # nosec B603
-                cmd, capture_output=True, text=True, timeout=180
+                cmd,
+                capture_output=True,
+                text=True,
+                timeout=GITHUB_CLI_TIMEOUT_SECONDS,
             )
         except subprocess.TimeoutExpired as exc:
-            raise RuntimeError("gh issue list timed out after 180 seconds") from exc
+            raise RuntimeError(
+                f"gh issue list timed out after {GITHUB_CLI_TIMEOUT_SECONDS} seconds"
+            ) from exc
         if result.returncode != 0:
             raise RuntimeError(f"gh command failed: {result.stderr}")
         parsed: list[dict[str, Any]] = json.loads(result.stdout)

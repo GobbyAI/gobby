@@ -6,7 +6,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 
 from gobby.storage.hub.protocol import HubDatabase
-from gobby.sync.task_github_import import GitHubIssueImporter
+from gobby.sync.task_github_import import GITHUB_CLI_TIMEOUT_SECONDS, GitHubIssueImporter
 
 pytestmark = pytest.mark.unit
 
@@ -155,19 +155,28 @@ def test_github_cli_subprocess_timeouts_are_bounded(
 ) -> None:
     with patch(
         "subprocess.run",
-        side_effect=subprocess.TimeoutExpired(["gh", "--version"], timeout=180),
+        side_effect=subprocess.TimeoutExpired(
+            ["gh", "--version"],
+            timeout=GITHUB_CLI_TIMEOUT_SECONDS,
+        ),
     ) as mock_run:
         assert github_importer._fetch_github_issues_cli("owner", "repo", "url", 50) is None
-    assert mock_run.call_args.kwargs["timeout"] == 180
+    assert mock_run.call_args.kwargs["timeout"] == GITHUB_CLI_TIMEOUT_SECONDS
 
     with patch(
         "subprocess.run",
         side_effect=[
             MagicMock(returncode=0),
-            subprocess.TimeoutExpired(["gh", "issue", "list"], timeout=180),
+            subprocess.TimeoutExpired(
+                ["gh", "issue", "list"],
+                timeout=GITHUB_CLI_TIMEOUT_SECONDS,
+            ),
         ],
     ) as mock_run:
-        with pytest.raises(RuntimeError, match="timed out after 180 seconds"):
+        with pytest.raises(
+            RuntimeError,
+            match=f"timed out after {GITHUB_CLI_TIMEOUT_SECONDS} seconds",
+        ):
             github_importer._fetch_github_issues_cli("owner", "repo", "url", 50)
-    assert mock_run.call_args_list[0].kwargs["timeout"] == 180
-    assert mock_run.call_args_list[1].kwargs["timeout"] == 180
+    assert mock_run.call_args_list[0].kwargs["timeout"] == GITHUB_CLI_TIMEOUT_SECONDS
+    assert mock_run.call_args_list[1].kwargs["timeout"] == GITHUB_CLI_TIMEOUT_SECONDS

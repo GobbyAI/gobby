@@ -357,16 +357,41 @@ def pack(output: str | None, no_docker: bool, no_transcripts: bool, dry_run: boo
         if services_were_running:
             click.echo("  Stopped Docker services")
 
+    primary_error: BaseException | None = None
     try:
         _do_pack(output_path, items, docker_volumes_to_export, missing, include_postgres)
+    except BaseException as error:
+        primary_error = error
+        raise
     finally:
+        cleanup_errors: list[tuple[str, BaseException]] = []
+
         # Restart services that were running
         if services_were_running:
             click.echo("  Restarting Docker services...")
-            _start_docker_services()
+            try:
+                _start_docker_services()
+            except BaseException as error:
+                cleanup_errors.append(("restart Docker services", error))
         if daemon_was_running:
             click.echo("  Restarting daemon...")
-            _start_daemon()
+            try:
+                _start_daemon()
+            except BaseException as error:
+                cleanup_errors.append(("restart daemon", error))
+
+        if cleanup_errors:
+            if primary_error is None:
+                action, cleanup_error = cleanup_errors[0]
+                for later_action, later_error in cleanup_errors[1:]:
+                    cleanup_error.add_note(f"Also failed to {later_action}: {later_error}")
+                cleanup_error.add_note(f"Failed to {action} after packing")
+                raise cleanup_error
+            for action, cleanup_error in cleanup_errors:
+                click.echo(
+                    f"  Warning: Failed to {action}: {cleanup_error}",
+                    err=True,
+                )
 
 
 def _do_pack(
