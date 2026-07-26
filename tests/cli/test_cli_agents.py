@@ -13,6 +13,8 @@ Uses Click's CliRunner and mocks external dependencies.
 """
 
 import json
+from collections.abc import Iterator
+from contextlib import nullcontext
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -31,6 +33,21 @@ pytestmark = pytest.mark.unit
 def runner() -> CliRunner:
     """Create a CLI test runner."""
     return CliRunner()
+
+
+@pytest.fixture(autouse=True)
+def _runtime_database() -> Iterator[None]:
+    """Keep root CLI setup isolated from the operator's configured Hub."""
+    database = MagicMock()
+    config = MagicMock()
+    with (
+        patch(
+            "gobby.cli.runtime.runtime_hub_database",
+            return_value=nullcontext(database),
+        ),
+        patch("gobby.cli.load_full_config_from_db", return_value=config),
+    ):
+        yield
 
 
 @pytest.fixture
