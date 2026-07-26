@@ -8,8 +8,9 @@ version: "1.0"
 enabled: true
 priority: 20
 surfaces: [spawn, persona]
-provider: inherit
-reasoning_effort: high
+provider: codex
+model: gpt-5.6-sol
+reasoning_effort: xhigh
 reasoning_required: false
 isolation: none
 blocked_mcp_tools:

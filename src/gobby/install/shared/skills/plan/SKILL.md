@@ -78,9 +78,10 @@ which runs after approval and before the unchanged adversary gate.
       proceeds to the unchanged adversary gate in step 5.
 5. After the enhancement phase, call `prepare_plan_review_round` immediately
 before you spawn `plan-adversary-taskless` without `task_id` and with
-`isolation="none"`. Omit provider and model by default so the adversary inherits
-the invoking session provider and that provider's default model; concrete
-operator overrides remain valid. Pass the prepared snapshot/evidence, `artifact_path`,
+`isolation="none"`. Do not pass provider or model: the reviewer model is the
+agent definition's decision, not the coordinator's. Pass an override only when
+the user explicitly asks for a different reviewer provider or model. Pass the
+prepared snapshot/evidence, `artifact_path`,
 `round_number`, `max_review_rounds`, and the parent session id in the prompt or
 variables, together with the current requirements context. The adversary reads
 `changed_section_ids` and `review_complexity` from that evidence snapshot.

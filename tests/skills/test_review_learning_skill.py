@@ -233,10 +233,10 @@ def test_review_learning_skill_documents_record_skip_and_ladder_rules() -> None:
     assert "The task is not the guardrail" in body
 
 
-def test_plan_skill_documents_provider_neutral_parallel_review_contract() -> None:
+def test_plan_skill_documents_parallel_review_contract() -> None:
     body = _skill_body(PLAN_SKILL)
     for phrase in (
-        "Omit provider and model",
+        "Do not pass provider or model",
         "current requirements context",
         "changed_section_ids",
         "review_complexity",

@@ -30,18 +30,25 @@ def _evaluator(
     )
 
 
-def test_review_agents_are_provider_neutral_with_optional_high_reasoning() -> None:
-    for name in (
-        "plan-adversary",
-        "plan-adversary-taskless",
-        "plan-review-researcher-taskless",
-    ):
+def test_adversary_agents_pin_the_reviewer_model() -> None:
+    """The agent definition owns the reviewer model, not the coordinator skill."""
+    for name in ("plan-adversary", "plan-adversary-taskless"):
         agent = _agent(name)
-        assert agent["provider"] == "inherit"
-        assert "model" not in agent
-        assert agent["reasoning_effort"] == "high"
+        assert agent["provider"] == "codex"
+        assert agent["model"] == "gpt-5.6-sol"
+        assert agent["reasoning_effort"] == "xhigh"
         assert agent["reasoning_required"] is False
         assert agent["isolation"] == "none"
+
+
+def test_researcher_worker_inherits_the_adversary_model() -> None:
+    """Lane workers follow whichever model the adversary resolved to."""
+    worker = _agent("plan-review-researcher-taskless")
+    assert worker["provider"] == "inherit"
+    assert "model" not in worker
+    assert worker["reasoning_effort"] == "high"
+    assert worker["reasoning_required"] is False
+    assert worker["isolation"] == "none"
 
 
 def test_researcher_is_taskless_read_only_and_cannot_finalize_or_spawn() -> None:

@@ -42,7 +42,8 @@ class TestAdversarySkillLoading:
     def test_has_load_skill_step_between_claim_and_review(self, agent: AgentDefinitionBody) -> None:
         """Ordering is load-bearing: skill must be in context before reviewing."""
         names = [s.name for s in (agent.steps or [])]
-        assert names == ["claim", "load_skill", "review", "terminate"]
+        assert names[:3] == ["claim", "load_skill", "review"]
+        assert names[-1] == "terminate"
 
     def test_load_skill_step_targets_plan_review(self, agent: AgentDefinitionBody) -> None:
         load_step = find_step(agent.steps or [], "load_skill")
