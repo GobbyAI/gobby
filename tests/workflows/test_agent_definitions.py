@@ -89,6 +89,8 @@ def test_build_smoke_agent_runtime_mappings() -> None:
         "goal-taskmaster": ("codex", "gpt-5.6-sol", "xhigh"),
         "nightly-test-fixer": ("codex", "gpt-5.6-sol", "xhigh"),
         "epic-reviewer": ("codex", "gpt-5.6-sol", "xhigh"),
+        "plan-adversary": ("codex", "gpt-5.6-sol", "xhigh"),
+        "plan-adversary-taskless": ("codex", "gpt-5.6-sol", "xhigh"),
         "plan-enhancer": ("codex", "gpt-5.6-sol", "xhigh"),
         "plan-enhancer-taskless": ("codex", "gpt-5.6-sol", "xhigh"),
         "planner": ("claude", "fable", "xhigh"),
@@ -105,18 +107,6 @@ def test_build_smoke_agent_runtime_mappings() -> None:
         assert agent["provider"] == provider
         assert agent["model"] == model
         assert agent["reasoning_effort"] == reasoning_effort
-
-    for agent_name in (
-        "plan-adversary",
-        "plan-adversary-taskless",
-        "plan-review-researcher-taskless",
-    ):
-        agent = _agent(agent_name)
-        assert agent["enabled"] is True
-        assert agent["provider"] == "inherit"
-        assert agent.get("model") is None
-        assert agent["reasoning_effort"] == "high"
-        assert agent["reasoning_required"] is False
 
 
 def test_merge_worker_blocks_native_delegation_tools() -> None:

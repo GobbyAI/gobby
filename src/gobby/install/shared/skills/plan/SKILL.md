@@ -86,7 +86,9 @@ prepared snapshot/evidence, `artifact_path`,
 variables, together with the current requirements context. The adversary reads
 `changed_section_ids` and `review_complexity` from that evidence snapshot.
 The coordinator waits only for the parent adversary result; the adversary owns
-researcher results, timeouts, and sequential lane fallbacks. Immediately bind
+provider-native internal research results, timeouts, and sequential lane
+fallbacks. The adversary never uses Gobby-managed agents for lane research.
+Immediately bind
 the interactive run id returned by `spawn_agent`
 with `bind_evidence_run`. If spawn or bind fails, call
 `expire_plan_review_evidence`; the next attempt prepares fresh evidence.
@@ -207,8 +209,9 @@ Use this same policy for enhancer and adversary runs after completing the
 mandatory post-launch `gobby-sessions:compact_self` call:
 
 1. Keep doing useful independent work while the run is active.
-2. When workers are running and no actionable independent work remains,
-   subscribe once by calling `gobby-agents:wait_for_agent(run_id)`. If the run
+2. When the enhancer or parent adversary run is active and no actionable
+   independent work remains, subscribe once by calling
+   `gobby-agents:wait_for_agent(run_id)`. If the run
    remains active, end the turn and let the daemon wake resume the session.
 3. On the daemon wake, re-call `gobby-agents:wait_for_agent(run_id)` first to
    retrieve the terminal snapshot, then perform a full status and health sweep.

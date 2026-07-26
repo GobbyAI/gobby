@@ -19,6 +19,7 @@ blocked_tools:
   - "Edit"
   - "Write"
 blocked_mcp_tools:
+  - "gobby-agents:spawn_agent"
   - "gobby-agents:kill_agent"
 
 instructions: |

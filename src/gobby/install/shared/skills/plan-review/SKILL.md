@@ -308,14 +308,18 @@ snapshot:
 in parallel when the snapshot has at least 8 deliverables, 24 acceptance items,
 12 distinct target files, or 4 sections changed since the prior finalized round.
 Otherwise run the same lanes sequentially in the parent. Parallel fanout is
-limited to one worker per lane, using `plan-review-researcher-taskless` through
-`gobby-agents:spawn_agent`, with no task id, `isolation="none"`,
-`timeout=900` seconds (15 minutes), and inherited provider/default model. Check capacity
-before each spawn.
-Capacity shortage, timeout, worker failure, or malformed output moves that lane
-to sequential parent review.
+limited to one read-only provider-native internal subagent per lane, launched
+through the current CLI/runtime's internal collaboration facility. Run all
+three concurrently. Give each subagent only its lane scope, the immutable
+evidence snapshot, and the result schema below. Forbid file edits, task/service
+mutation, findings, manifests, evidence finalization, and verdicts. Never use
+`gobby-agents:spawn_agent` for lane research. When the native facility exposes
+a deadline, cap each lane at 15 minutes. Capacity shortage, timeout,
+unavailable internal collaboration, subagent failure, or malformed output
+moves only that lane to sequential parent review.
 
-Workers return candidates; the parent adversary owns findings and verdicts.
+Internal subagents return candidates; the parent adversary is the sole evidence,
+finding, manifest, coverage-attestation, and verdict owner.
 Each completed lane names every deliverable in `section_ids_checked`, supplies
 hashed repository-relative citations, and returns candidate issues with stable
 candidate id, affected section ids, violated invariant, suggested fix,

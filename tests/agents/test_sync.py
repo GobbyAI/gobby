@@ -574,6 +574,33 @@ class TestSyncBundledAgents:
         assert LocalWorkflowDefinitionManager(db).get_by_name("test-agent") is None
 
     @pytest.mark.unit
+    def test_sync_soft_deletes_removed_plan_review_researcher(self, temp_db: HubDatabase) -> None:
+        """The deleted bundled researcher slug is retired from installed state."""
+        mgr = LocalWorkflowDefinitionManager(temp_db)
+        removed = mgr.create(
+            name="plan-review-researcher-taskless",
+            definition_json=json.dumps(
+                {
+                    "name": "plan-review-researcher-taskless",
+                    "provider": "inherit",
+                    "mode": "interactive",
+                }
+            ),
+            workflow_type="agent",
+            source="installed",
+            enabled=True,
+            tags=["gobby"],
+        )
+
+        result = sync_bundled_agents(temp_db)
+
+        assert result["orphaned"] == 1
+        deleted = mgr.get(removed.id, include_deleted=True)
+        assert deleted is not None
+        assert deleted.deleted_at is not None
+        assert mgr.get_by_name("plan-review-researcher-taskless") is None
+
+    @pytest.mark.unit
     def test_sync_orphan_cleanup_preserves_non_sync_managed_agents(
         self,
         tmp_path: Path,

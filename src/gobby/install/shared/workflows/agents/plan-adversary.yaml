@@ -13,6 +13,7 @@ reasoning_effort: xhigh
 reasoning_required: false
 isolation: none
 blocked_mcp_tools:
+  - "gobby-agents:spawn_agent"
   - "gobby-agents:kill_agent"
 
 instructions: |
@@ -90,15 +91,33 @@ instructions: |
   Always complete requirements_traceability, repository_blast_radius, and
   runtime_invariants against `get_plan_review_snapshot(evidence_id)`. The lane
   scopes, candidate schema, parent verification/disposition rules, cross-lane
-  interaction pass, adjacent-variant closure, complexity thresholds, worker
-  fallback rules, and shadow-manifest gate are authoritative in `plan-review`.
-  In sequential mode, execute all three lanes yourself. In parallel mode, spawn at most one
-  `plan-review-researcher-taskless` per lane through Gobby tools only, without
-  task_id, with isolation="none", timeout=900, and no provider/model override.
-  Put exactly one `review_lane: <canonical-lane-id>` marker in each worker prompt.
-  Capacity shortage, timeout, worker failure, or malformed output sends that
-  lane back to sequential execution in this parent. You remain the sole verdict,
-  evidence, lesson, and manifest owner.
+  interaction pass, adjacent-variant closure, complexity thresholds, fallback
+  rules, and shadow-manifest gate are authoritative in `plan-review`.
+  Run lanes in parallel when the snapshot has at least 8 deliverables,
+  24 acceptance items, 12 distinct target files, or 4 sections changed since
+  the prior finalized round. Otherwise execute all three lanes sequentially in
+  this parent.
+
+  In parallel mode, launch one read-only provider-native internal subagent per
+  lane through the current CLI/runtime's internal collaboration facility. Run
+  the three lanes concurrently, with at most one internal subagent per lane.
+  Give each subagent only its lane scope, the immutable evidence snapshot, and
+  the result schema: `lane_id`, `status: completed`, every deliverable in
+  `section_ids_checked`, hashed `source_citations`, and `candidate_issues`.
+  Every candidate includes `candidate_id`, `section_ids`,
+  `violated_invariant`, repository-relative path/SHA-256/line citations,
+  `suggested_fix`, `adjacent_sites_checked`, and confidence from 0 through 1.
+  Verify and deduplicate every candidate, record exactly one
+  `emitted_finding` or `dismissed` disposition with a reason, run the
+  cross-lane interaction pass, and finish the class-wide adjacent-variant
+  sweep.
+  Forbid file edits, task/service mutation, findings, manifests, evidence
+  finalization, and verdicts. Never use `gobby-agents:spawn_agent` for lane
+  research. When the native facility exposes a deadline, cap each lane at
+  15 minutes. Capacity shortage, timeout, unavailable internal collaboration,
+  subagent failure, or malformed output sends only that lane back to sequential
+  execution in this parent. You remain the sole verdict, evidence, finding,
+  lesson, manifest, and coverage-attestation owner.
 
   Call `derive_plan_review_manifest` during every round. Call
   `validate_plan_review_coverage` before approve/reject and pass its
@@ -191,7 +210,8 @@ instructions: |
   - Do NOT call close_task. Stage automation closes approved stage tasks.
   - Do NOT call reopen_task or de_escalate_task.
   - Do NOT call submit_for_review.
-  - Do NOT spawn other agents.
+  - Do NOT call `gobby-agents:spawn_agent`; complexity-gated provider-native
+    internal lane research is the only allowed subagent use.
   - Do NOT terminate without calling `end_agent_run`.
   - Always use `uv run` for Python commands.
   - Use context-aware progressive discovery: call leased known tools directly; fetch schemas directly for known unleased tools; use list_tools only for unknown tool names and list_mcp_servers only for server or registry inspection.
@@ -215,8 +235,6 @@ step_variables:
   review_complete: false
   lesson_backfill_required: false
   lesson_backfill_failed: false
-  review_worker_run_ids: []
-  review_worker_lanes: []
 
 steps:
   - name: claim
@@ -306,6 +324,7 @@ steps:
       - "gobby-tasks-ops:submit_for_review"
       - "gobby-tasks:reopen_task"
       - "gobby-agents:end_agent_run"
+      - "gobby-agents:spawn_agent"
       - "gobby-agents:kill_agent"
     on_mcp_success:
       - server: gobby-tasks-ops
@@ -334,22 +353,6 @@ steps:
         action: set_variable
         variable: review_complete
         value: true
-      - server: gobby-agents
-        tool: spawn_agent
-        action: set_variable
-        variable: review_worker_run_ids
-        value: "(vars.get('review_worker_run_ids') or []) + [str((tool_output.get('result') or tool_output).get('run_id'))]"
-      - server: gobby-agents
-        tool: spawn_agent
-        action: set_variable
-        variable: review_worker_lanes
-        value: >-
-          (vars.get('review_worker_lanes') or []) +
-          [('requirements_traceability'
-            if 'review_lane: requirements_traceability' in str(tool_input.get('prompt') or '')
-            else 'repository_blast_radius'
-            if 'review_lane: repository_blast_radius' in str(tool_input.get('prompt') or '')
-            else 'runtime_invariants')]
     on_mcp_error:
       - server: gobby-tasks-ops
         tool: approve_review
@@ -369,54 +372,6 @@ steps:
         action: set_variable
         variable: review_complete
         value: true
-    on_mcp_before:
-      - server: gobby-agents
-        tool: spawn_agent
-        action: block
-        when: >-
-          tool_input.get('agent') != 'plan-review-researcher-taskless'
-          or bool(tool_input.get('task_id'))
-          or tool_input.get('isolation') not in [None, 'none']
-        reason: "Plan review fanout is limited to taskless, isolation-none review researchers."
-      - server: gobby-agents
-        tool: spawn_agent
-        action: block
-        when: >-
-          not (
-            'review_lane: requirements_traceability' in str(tool_input.get('prompt') or '')
-            or 'review_lane: repository_blast_radius' in str(tool_input.get('prompt') or '')
-            or 'review_lane: runtime_invariants' in str(tool_input.get('prompt') or '')
-          )
-          or (
-            'review_lane: requirements_traceability' in str(tool_input.get('prompt') or '')
-            and 'review_lane: repository_blast_radius' in str(tool_input.get('prompt') or '')
-          )
-          or (
-            'review_lane: requirements_traceability' in str(tool_input.get('prompt') or '')
-            and 'review_lane: runtime_invariants' in str(tool_input.get('prompt') or '')
-          )
-          or (
-            'review_lane: repository_blast_radius' in str(tool_input.get('prompt') or '')
-            and 'review_lane: runtime_invariants' in str(tool_input.get('prompt') or '')
-          )
-          or (
-            'review_lane: requirements_traceability' in str(tool_input.get('prompt') or '')
-            and 'requirements_traceability' in (vars.get('review_worker_lanes') or [])
-          )
-          or (
-            'review_lane: repository_blast_radius' in str(tool_input.get('prompt') or '')
-            and 'repository_blast_radius' in (vars.get('review_worker_lanes') or [])
-          )
-          or (
-            'review_lane: runtime_invariants' in str(tool_input.get('prompt') or '')
-            and 'runtime_invariants' in (vars.get('review_worker_lanes') or [])
-          )
-        reason: "Each review lane may launch exactly one researcher worker."
-      - server: gobby-agents
-        tool: spawn_agent
-        action: block
-        when: "len(vars.get('review_worker_run_ids') or []) >= 3"
-        reason: "Plan review fanout is capped at one worker per lane."
     transitions:
       - to: backfill_lessons
         when: "vars.lesson_backfill_required"

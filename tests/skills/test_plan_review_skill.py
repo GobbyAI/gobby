@@ -168,7 +168,10 @@ class TestPlanReviewContent:
             assert lane in body
         for threshold in ("8 deliverables", "24 acceptance", "12 distinct target", "4 sections"):
             assert threshold in body
-        assert "one worker per lane" in body.lower()
+        assert "one read-only provider-native internal subagent per lane" in body.lower()
+        assert "run all three concurrently" in " ".join(body.lower().split())
+        assert "plan-review-researcher-taskless" not in body
+        assert "`gobby-agents:spawn_agent` for lane research" in body
         assert "15 minutes" in body
 
     def test_parent_dispositions_and_adjacent_variant_closure(self, body: str) -> None:

@@ -240,7 +240,8 @@ def test_plan_skill_documents_parallel_review_contract() -> None:
         "current requirements context",
         "changed_section_ids",
         "review_complexity",
-        "researcher results, timeouts, and sequential lane fallbacks",
+        "provider-native internal research results, timeouts, and sequential lane",
+        "never uses Gobby-managed agents for lane research",
         "inconclusive/source_drift",
         "coverage_attestation",
     ):
