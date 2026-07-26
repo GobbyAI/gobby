@@ -441,6 +441,434 @@ class TestGenerateSessionSummaries:
         ]
 
     @pytest.mark.asyncio
+    async def test_concurrent_calls_share_generation_persistence_and_wiki(
+        self,
+        caplog: pytest.LogCaptureFixture,
+    ) -> None:
+        session = _make_session(
+            session_id="sess-single-flight",
+            digest_markdown=_digest_turns(1),
+        )
+        manager = _RevisionAwareSummaryManager(session)
+        generation_started = asyncio.Event()
+        release_generation = asyncio.Event()
+        all_callers_joined = asyncio.Event()
+        joined_count = 0
+        original_debug = logging.getLogger("gobby.sessions.summarize").debug
+
+        async def generate_summary(**_kwargs: object) -> tuple[str, None]:
+            generation_started.set()
+            await release_generation.wait()
+            return VALID_SUMMARY, None
+
+        def observe_debug(message: object, *args: object) -> None:
+            nonlocal joined_count
+            original_debug(message, *args)
+            if message == "Joining in-flight session summary generation for %s":
+                joined_count += 1
+                if joined_count == 19:
+                    all_callers_joined.set()
+
+        with (
+            patch("gobby.sessions.summarize._enrich_git_context", new_callable=AsyncMock),
+            patch(
+                "gobby.sessions.summarize._build_summary_prompt_context",
+                new_callable=AsyncMock,
+                return_value={},
+            ),
+            patch(
+                "gobby.sessions.summarize.load_summary_prompt_template",
+                return_value=_valid_summary_prompt("Summary"),
+            ),
+            patch(
+                "gobby.sessions.summarize._generate_full_summary",
+                new_callable=AsyncMock,
+                side_effect=generate_summary,
+            ) as mock_full,
+            patch(
+                "gobby.sessions.session_wiki_file.write_session_wiki_page",
+                return_value={"written": True},
+            ) as mock_wiki,
+            patch("gobby.sessions.summarize.logger.debug", side_effect=observe_debug),
+            caplog.at_level(logging.DEBUG, logger="gobby.sessions.summarize"),
+        ):
+            callers = [
+                asyncio.create_task(
+                    generate_session_summaries(
+                        session_id=session.id,
+                        session_manager=manager,
+                    )
+                )
+                for _ in range(20)
+            ]
+            await generation_started.wait()
+            await all_callers_joined.wait()
+            release_generation.set()
+            results = await asyncio.gather(*callers)
+
+        assert mock_full.await_count == 1
+        assert len(manager.persist_calls) == 1
+        assert mock_wiki.call_count == 1
+        assert all(result == results[0] for result in results)
+        assert all(result["success"] is True for result in results)
+        generated_logs = [
+            record
+            for record in caplog.records
+            if record.getMessage().startswith("Session summary generated for")
+        ]
+        assert len(generated_logs) == 1
+        assert joined_count == 19
+
+    @pytest.mark.asyncio
+    async def test_different_sessions_generate_in_parallel(self) -> None:
+        first_session = _make_session(
+            session_id="sess-parallel-1",
+            digest_markdown=_digest_turns(1),
+        )
+        second_session = _make_session(
+            session_id="sess-parallel-2",
+            digest_markdown=_digest_turns(1),
+        )
+        first_manager = _RevisionAwareSummaryManager(first_session)
+        second_manager = _RevisionAwareSummaryManager(second_session)
+        entered_sessions: set[str] = set()
+        both_entered = asyncio.Event()
+
+        async def generate_summary(*, session: MagicMock, **_kwargs: object) -> tuple[str, None]:
+            entered_sessions.add(session.id)
+            if len(entered_sessions) == 2:
+                both_entered.set()
+            await asyncio.wait_for(both_entered.wait(), timeout=1)
+            return VALID_SUMMARY, None
+
+        with (
+            patch("gobby.sessions.summarize._enrich_git_context", new_callable=AsyncMock),
+            patch(
+                "gobby.sessions.summarize._build_summary_prompt_context",
+                new_callable=AsyncMock,
+                return_value={},
+            ),
+            patch(
+                "gobby.sessions.summarize.load_summary_prompt_template",
+                return_value=_valid_summary_prompt("Summary"),
+            ),
+            patch(
+                "gobby.sessions.summarize._generate_full_summary",
+                new_callable=AsyncMock,
+                side_effect=generate_summary,
+            ) as mock_full,
+            patch(
+                "gobby.sessions.session_wiki_file.write_session_wiki_page",
+                return_value={"written": True},
+            ),
+        ):
+            results = await asyncio.gather(
+                generate_session_summaries(
+                    session_id=first_session.id,
+                    session_manager=first_manager,
+                ),
+                generate_session_summaries(
+                    session_id=second_session.id,
+                    session_manager=second_manager,
+                ),
+            )
+
+        assert entered_sessions == {"sess-parallel-1", "sess-parallel-2"}
+        assert mock_full.await_count == 2
+        assert all(result["success"] is True for result in results)
+        assert len(first_manager.persist_calls) == 1
+        assert len(second_manager.persist_calls) == 1
+
+    @pytest.mark.asyncio
+    async def test_request_after_completion_regenerates_when_digest_changes(self) -> None:
+        session = _make_session(
+            session_id="sess-later-refresh",
+            digest_markdown=_digest_turns(1),
+        )
+        manager = _RevisionAwareSummaryManager(session)
+
+        with (
+            patch("gobby.sessions.summarize._enrich_git_context", new_callable=AsyncMock),
+            patch(
+                "gobby.sessions.summarize._build_summary_prompt_context",
+                new_callable=AsyncMock,
+                return_value={},
+            ),
+            patch(
+                "gobby.sessions.summarize.load_summary_prompt_template",
+                return_value=_valid_summary_prompt("Summary"),
+            ),
+            patch(
+                "gobby.sessions.summarize._generate_full_summary",
+                new_callable=AsyncMock,
+                return_value=(VALID_SUMMARY, None),
+            ) as mock_full,
+            patch(
+                "gobby.sessions.summarize._generate_delta_summary",
+                new_callable=AsyncMock,
+                return_value=(VALID_SUMMARY, None),
+            ) as mock_delta,
+            patch(
+                "gobby.sessions.session_wiki_file.write_session_wiki_page",
+                return_value={"written": True},
+            ),
+        ):
+            first = await generate_session_summaries(
+                session_id=session.id,
+                session_manager=manager,
+            )
+            session.digest_markdown = _digest_turns(2)
+            second = await generate_session_summaries(
+                session_id=session.id,
+                session_manager=manager,
+            )
+
+        assert first["generation_mode"] == "full"
+        assert second["generation_mode"] == "delta"
+        assert mock_full.await_count == 1
+        assert mock_delta.await_count == 1
+        assert len(manager.persist_calls) == 2
+
+    @pytest.mark.asyncio
+    async def test_cancelled_waiter_does_not_cancel_shared_generation(self) -> None:
+        session = _make_session(
+            session_id="sess-cancelled-waiter",
+            digest_markdown=_digest_turns(1),
+        )
+        manager = _RevisionAwareSummaryManager(session)
+        generation_started = asyncio.Event()
+        release_generation = asyncio.Event()
+
+        async def generate_summary(**_kwargs: object) -> tuple[str, None]:
+            generation_started.set()
+            await release_generation.wait()
+            return VALID_SUMMARY, None
+
+        with (
+            patch("gobby.sessions.summarize._enrich_git_context", new_callable=AsyncMock),
+            patch(
+                "gobby.sessions.summarize._build_summary_prompt_context",
+                new_callable=AsyncMock,
+                return_value={},
+            ),
+            patch(
+                "gobby.sessions.summarize.load_summary_prompt_template",
+                return_value=_valid_summary_prompt("Summary"),
+            ),
+            patch(
+                "gobby.sessions.summarize._generate_full_summary",
+                new_callable=AsyncMock,
+                side_effect=generate_summary,
+            ) as mock_full,
+            patch(
+                "gobby.sessions.session_wiki_file.write_session_wiki_page",
+                return_value={"written": True},
+            ),
+        ):
+            cancelled_waiter = asyncio.create_task(
+                generate_session_summaries(
+                    session_id=session.id,
+                    session_manager=manager,
+                )
+            )
+            await generation_started.wait()
+            surviving_waiter = asyncio.create_task(
+                generate_session_summaries(
+                    session_id=session.id,
+                    session_manager=manager,
+                )
+            )
+            cancelled_waiter.cancel()
+            with pytest.raises(asyncio.CancelledError):
+                await cancelled_waiter
+            release_generation.set()
+            result = await surviving_waiter
+
+        assert result["success"] is True
+        assert mock_full.await_count == 1
+        assert len(manager.persist_calls) == 1
+
+    @pytest.mark.asyncio
+    async def test_core_failure_reaches_waiters_and_allows_retry(self) -> None:
+        session = _make_session(
+            session_id="sess-failure-retry",
+            digest_markdown=_digest_turns(1),
+        )
+        manager = _RevisionAwareSummaryManager(session)
+        generation_started = asyncio.Event()
+        release_failure = asyncio.Event()
+        second_waiter_joined = asyncio.Event()
+        attempts = 0
+
+        async def generate_summary(**_kwargs: object) -> tuple[str, None]:
+            nonlocal attempts
+            attempts += 1
+            if attempts == 1:
+                generation_started.set()
+                await release_failure.wait()
+                raise RuntimeError("summary generation failed")
+            return VALID_SUMMARY, None
+
+        def observe_debug(message: object, *_args: object) -> None:
+            if message == "Joining in-flight session summary generation for %s":
+                second_waiter_joined.set()
+
+        with (
+            patch("gobby.sessions.summarize._enrich_git_context", new_callable=AsyncMock),
+            patch(
+                "gobby.sessions.summarize._build_summary_prompt_context",
+                new_callable=AsyncMock,
+                return_value={},
+            ),
+            patch(
+                "gobby.sessions.summarize.load_summary_prompt_template",
+                return_value=_valid_summary_prompt("Summary"),
+            ),
+            patch(
+                "gobby.sessions.summarize._generate_full_summary",
+                new_callable=AsyncMock,
+                side_effect=generate_summary,
+            ),
+            patch(
+                "gobby.sessions.session_wiki_file.write_session_wiki_page",
+                return_value={"written": True},
+            ) as mock_wiki,
+            patch("gobby.sessions.summarize.logger.debug", side_effect=observe_debug),
+        ):
+            first_waiter = asyncio.create_task(
+                generate_session_summaries(
+                    session_id=session.id,
+                    session_manager=manager,
+                )
+            )
+            await generation_started.wait()
+            second_waiter = asyncio.create_task(
+                generate_session_summaries(
+                    session_id=session.id,
+                    session_manager=manager,
+                )
+            )
+            await second_waiter_joined.wait()
+            release_failure.set()
+            failures = await asyncio.gather(first_waiter, second_waiter, return_exceptions=True)
+            retry_result = await generate_session_summaries(
+                session_id=session.id,
+                session_manager=manager,
+            )
+
+        assert [str(failure) for failure in failures] == [
+            "summary generation failed",
+            "summary generation failed",
+        ]
+        assert all(isinstance(failure, RuntimeError) for failure in failures)
+        assert retry_result["success"] is True
+        assert attempts == 2
+        assert len(manager.persist_calls) == 1
+        assert mock_wiki.call_count == 1
+
+    @pytest.mark.asyncio
+    async def test_concurrent_callers_apply_their_own_post_effects(self) -> None:
+        session = _make_session(
+            session_id="sess-post-effects",
+            digest_markdown=_digest_turns(1),
+        )
+        manager = _RevisionAwareSummaryManager(session)
+        generation_started = asyncio.Event()
+        release_generation = asyncio.Event()
+        file_callers_joined = asyncio.Event()
+        joined_count = 0
+
+        async def generate_summary(**_kwargs: object) -> tuple[str, None]:
+            generation_started.set()
+            await release_generation.wait()
+            return VALID_SUMMARY, None
+
+        async def write_files(
+            *,
+            session_id: str,
+            write_file: bool,
+            output_path: str,
+            **_kwargs: object,
+        ) -> list[str]:
+            if not write_file:
+                return []
+            return [f"{output_path}/{session_id}-full.md"]
+
+        def observe_debug(message: object, *_args: object) -> None:
+            nonlocal joined_count
+            if message == "Joining in-flight session summary generation for %s":
+                joined_count += 1
+                if joined_count == 2:
+                    file_callers_joined.set()
+
+        with (
+            patch("gobby.sessions.summarize._enrich_git_context", new_callable=AsyncMock),
+            patch(
+                "gobby.sessions.summarize._build_summary_prompt_context",
+                new_callable=AsyncMock,
+                return_value={},
+            ),
+            patch(
+                "gobby.sessions.summarize.load_summary_prompt_template",
+                return_value=_valid_summary_prompt("Summary"),
+            ),
+            patch(
+                "gobby.sessions.summarize._generate_full_summary",
+                new_callable=AsyncMock,
+                side_effect=generate_summary,
+            ) as mock_full,
+            patch(
+                "gobby.sessions.summarize._write_files",
+                new_callable=AsyncMock,
+                side_effect=write_files,
+            ) as mock_write_files,
+            patch(
+                "gobby.sessions.session_wiki_file.write_session_wiki_page",
+                return_value={"written": True},
+            ) as mock_wiki,
+            patch("gobby.sessions.summarize.logger.debug", side_effect=observe_debug),
+        ):
+            status_only = asyncio.create_task(
+                generate_session_summaries(
+                    session_id=session.id,
+                    session_manager=manager,
+                    set_handoff_ready=True,
+                    write_file=False,
+                    output_path="unused",
+                )
+            )
+            await generation_started.wait()
+            first_file = asyncio.create_task(
+                generate_session_summaries(
+                    session_id=session.id,
+                    session_manager=manager,
+                    output_path="summaries/first",
+                    write_file=True,
+                )
+            )
+            second_file = asyncio.create_task(
+                generate_session_summaries(
+                    session_id=session.id,
+                    session_manager=manager,
+                    output_path="summaries/second",
+                    write_file=True,
+                )
+            )
+            await file_callers_joined.wait()
+            release_generation.set()
+            results = await asyncio.gather(status_only, first_file, second_file)
+
+        assert mock_full.await_count == 1
+        assert len(manager.persist_calls) == 1
+        assert mock_wiki.call_count == 1
+        assert manager.status_updates == [(session.id, "handoff_ready")]
+        assert results[0]["files_written"] == []
+        assert results[1]["files_written"] == ["summaries/first/sess-post-effects-full.md"]
+        assert results[2]["files_written"] == ["summaries/second/sess-post-effects-full.md"]
+        assert len({id(result) for result in results}) == 3
+        assert mock_write_files.await_count == 3
+
+    @pytest.mark.asyncio
     async def test_all_invalid_candidate_reasons_persist_with_digest_fallback(self) -> None:
         session = _make_session(
             session_id="sess-invalid-candidates",

@@ -12,6 +12,7 @@ from __future__ import annotations
 import asyncio
 import logging
 from collections.abc import Awaitable, Callable, Sequence
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Protocol
 
@@ -61,6 +62,26 @@ from gobby.sessions.workspace_context import (
 from gobby.storage.hub.protocol import HubDatabase
 
 logger = logging.getLogger(__name__)
+
+
+@dataclass(frozen=True, slots=True)
+class _SummaryCoreResult:
+    result: dict[str, Any]
+    full_markdown: str
+
+
+_summary_tasks: dict[str, asyncio.Task[_SummaryCoreResult]] = {}
+
+
+def _remove_summary_task(
+    session_id: str,
+    task: asyncio.Task[_SummaryCoreResult],
+) -> None:
+    if _summary_tasks.get(session_id) is task:
+        del _summary_tasks[session_id]
+    if not task.cancelled():
+        task.exception()
+
 
 __all__ = [
     "DIGEST_FALLBACK_MAX_CHARS",
@@ -190,52 +211,22 @@ def _resolve_run_db(
     return None
 
 
-async def generate_session_summaries(
+async def _generate_session_summary_core(
     session_id: str,
     session_manager: SessionManagerProtocol,
     llm_service: LLMServiceProtocol | None = None,
     session_summary_config: SessionSummaryConfigProtocol | None = None,
     db: HubDatabase | None = None,
-    write_file: bool = False,
-    output_path: str = ".gobby/session_summaries",
-    set_handoff_ready: bool = False,
-    compact_only: bool = False,
-    full_only: bool = False,
     run_db: Callable[..., Awaitable[Any]] | None = None,
-) -> dict[str, Any]:
-    """Generate summary_markdown for a session.
-
-    Reads the transcript, runs TranscriptAnalyzer for context,
-    uses LLM for archival summary, persists to DB, and optionally
-    writes files to session_summaries directory.
-
-    Args:
-        session_id: Platform session ID (UUID).
-        session_manager: SessionManager instance.
-        llm_service: LLM service for generating summaries.
-        session_summary_config: Feature config for summary generation.
-        db: Database for prompt template loading.
-        write_file: Write summary files to disk.
-        output_path: Directory for summary files.
-        set_handoff_ready: Update session status to handoff_ready. Only
-            synchronous, deliberate handoff paths may pass True; delayed or
-            background refreshes must leave lifecycle status to the
-            synchronous lifecycle handlers.
-        compact_only: Ignored (kept for API compatibility).
-        full_only: Ignored (kept for API compatibility).
-        run_db: Optional bounded executor bridge for hub database storage calls.
-
-    Returns:
-        Dict with success status, markdown lengths, and context summary.
-    """
-    if not session_manager:
-        return {"success": False, "error": "Session manager not available"}
-
+) -> _SummaryCoreResult:
     db_runner = _resolve_run_db(run_db, db=db, session_manager=session_manager)
 
     session = await _run_db(db_runner, session_manager.get, session_id)
     if not session:
-        return {"success": False, "error": "No session found", "session_id": session_id}
+        return _SummaryCoreResult(
+            result={"success": False, "error": "No session found", "session_id": session_id},
+            full_markdown="",
+        )
 
     digest_markdown = _digest_markdown_for_summary(session)
     transcript_path = getattr(session, "transcript_path", None)
@@ -245,17 +236,23 @@ async def generate_session_summaries(
 
     if not digest_markdown:
         if not transcript_path:
-            return {
-                "success": False,
-                "error": "No transcript path for session",
-                "session_id": session_id,
-            }
+            return _SummaryCoreResult(
+                result={
+                    "success": False,
+                    "error": "No transcript path for session",
+                    "session_id": session_id,
+                },
+                full_markdown="",
+            )
         if path is None or not path.exists():
-            return {
-                "success": False,
-                "error": "Transcript file not found",
-                "path": transcript_path,
-            }
+            return _SummaryCoreResult(
+                result={
+                    "success": False,
+                    "error": "Transcript file not found",
+                    "path": transcript_path,
+                },
+                full_markdown="",
+            )
 
         # Transcript summarization is the fallback for older sessions with no digest.
         turns = await _read_transcript(path, source=source)
@@ -376,19 +373,6 @@ async def generate_session_summaries(
             metadata=metadata,
         )
 
-    # Set handoff_ready status
-    if set_handoff_ready and summary_is_valid:
-        await _run_db(db_runner, session_manager.update_status, session_id, "handoff_ready")
-
-    # Write files if requested
-    files_written = await _write_files(
-        session_id=session_id,
-        full_markdown=full_markdown,
-        write_file=write_file,
-        output_path=output_path,
-        session_manager=session_manager,
-    )
-
     summary_length = len(full_markdown) if full_markdown else 0
     if decision.mode == "noop":
         logger.debug(
@@ -438,7 +422,6 @@ async def generate_session_summaries(
         "refresh_reason": decision.reason,
         "source_context_hash": source_hash,
         "source_digest_turn_count": current_digest_turn_count,
-        "files_written": files_written,
         "session_wiki_file": session_wiki_result,
         "context_summary": {
             "has_active_task": bool(handoff_ctx.active_gobby_task),
@@ -449,4 +432,80 @@ async def generate_session_summaries(
     }
     if not summary_is_valid:
         result["error"] = "Unable to generate a valid session summary"
+    return _SummaryCoreResult(result=result, full_markdown=final_summary)
+
+
+async def generate_session_summaries(
+    session_id: str,
+    session_manager: SessionManagerProtocol,
+    llm_service: LLMServiceProtocol | None = None,
+    session_summary_config: SessionSummaryConfigProtocol | None = None,
+    db: HubDatabase | None = None,
+    write_file: bool = False,
+    output_path: str = ".gobby/session_summaries",
+    set_handoff_ready: bool = False,
+    compact_only: bool = False,
+    full_only: bool = False,
+    run_db: Callable[..., Awaitable[Any]] | None = None,
+) -> dict[str, Any]:
+    """Generate summary_markdown for a session.
+
+    Concurrent requests for one session share load, generation, persistence, and
+    wiki output. Status transitions and optional file output remain caller-specific.
+
+    Args:
+        session_id: Platform session ID (UUID).
+        session_manager: SessionManager instance.
+        llm_service: LLM service for generating summaries.
+        session_summary_config: Feature config for summary generation.
+        db: Database for prompt template loading.
+        write_file: Write summary files to disk.
+        output_path: Directory for summary files.
+        set_handoff_ready: Update session status to handoff_ready. Only
+            synchronous, deliberate handoff paths may pass True; delayed or
+            background refreshes must leave lifecycle status to the
+            synchronous lifecycle handlers.
+        compact_only: Ignored (kept for API compatibility).
+        full_only: Ignored (kept for API compatibility).
+        run_db: Optional bounded executor bridge for hub database storage calls.
+
+    Returns:
+        Dict with success status, markdown lengths, and context summary.
+    """
+    if not session_manager:
+        return {"success": False, "error": "Session manager not available"}
+
+    db_runner = _resolve_run_db(run_db, db=db, session_manager=session_manager)
+    task = _summary_tasks.get(session_id)
+    if task is None:
+        task = asyncio.create_task(
+            _generate_session_summary_core(
+                session_id=session_id,
+                session_manager=session_manager,
+                llm_service=llm_service,
+                session_summary_config=session_summary_config,
+                db=db,
+                run_db=db_runner,
+            )
+        )
+        _summary_tasks[session_id] = task
+        task.add_done_callback(lambda completed: _remove_summary_task(session_id, completed))
+    else:
+        logger.debug("Joining in-flight session summary generation for %s", session_id)
+
+    core_result = await asyncio.shield(task)
+    summary_is_valid = bool(core_result.result.get("success"))
+
+    if set_handoff_ready and summary_is_valid:
+        await _run_db(db_runner, session_manager.update_status, session_id, "handoff_ready")
+
+    files_written = await _write_files(
+        session_id=session_id,
+        full_markdown=core_result.full_markdown,
+        write_file=write_file,
+        output_path=output_path,
+        session_manager=session_manager,
+    )
+    result = dict(core_result.result)
+    result["files_written"] = files_written
     return result
