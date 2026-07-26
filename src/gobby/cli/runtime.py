@@ -4,12 +4,15 @@ from __future__ import annotations
 
 from contextlib import ExitStack
 from dataclasses import dataclass, field
+from pathlib import Path
 
 import click
 
 from gobby.config.app import DaemonConfig
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.hub.runtime import runtime_hub_database
+from gobby.storage.projects import LocalProjectManager
+from gobby.utils.project_context import get_project_context
 
 
 @dataclass
@@ -53,3 +56,25 @@ def get_cli_runtime(ctx: click.Context | None = None) -> CliRuntime:
 def require_cli_database(ctx: click.Context | None = None) -> HubDatabase:
     """Borrow the shared database for the current CLI invocation."""
     return get_cli_runtime(ctx).require_database()
+
+
+def resolve_cli_project(
+    project_manager: LocalProjectManager,
+    project_ref: str | None = None,
+    *,
+    require_project: bool = True,
+) -> str:
+    """Resolve an explicit project ref or the current project for CLI commands."""
+    if project_ref:
+        project = project_manager.resolve_ref(project_ref)
+        if not project or project.deleted_at:
+            raise click.ClickException(f"Project not found: {project_ref}")
+        return project.id
+
+    if not require_project:
+        return ""
+
+    context = get_project_context(cwd=Path.cwd())
+    if not context or not context.get("id"):
+        raise click.ClickException("Not in a gobby project directory. Run 'gobby init' first.")
+    return str(context["id"])

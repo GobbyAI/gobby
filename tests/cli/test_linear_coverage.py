@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -89,6 +90,21 @@ class TestLinearStatus:
         result = runner.invoke(linear, ["status", "--json"], catch_exceptions=False)
         assert result.exit_code == 0
         assert "No API key" in result.output
+
+    @patch("gobby.cli.linear.get_linear_deps")
+    def test_status_json_returns_empty_list_when_project_is_absent(
+        self,
+        mock_deps: MagicMock,
+        runner: CliRunner,
+    ) -> None:
+        tm, mcp, pm, pid = _mock_linear_deps()
+        pm.get.return_value = None
+        mock_deps.return_value = (tm, mcp, pm, pid)
+
+        result = runner.invoke(linear, ["status", "--json"], catch_exceptions=False)
+
+        assert result.exit_code == 0
+        assert json.loads(result.output) == []
 
     @patch("gobby.cli.linear.get_linear_deps", side_effect=Exception("boom"))
     def test_status_exception(self, _deps: MagicMock, runner: CliRunner) -> None:
