@@ -79,7 +79,10 @@ def cli(ctx: click.Context, config: str | None) -> None:
     runtime = CliRuntime(config_file=config)
     ctx.obj = runtime
     ctx.call_on_close(runtime.close)
-    runtime.config = load_full_config_from_db(config)
+    runtime.config = load_full_config_from_db(
+        config,
+        database=runtime.require_database(),
+    )
 
 
 # Register commands

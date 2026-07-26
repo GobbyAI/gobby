@@ -363,6 +363,51 @@ class TestStatusCommand:
             "PID exists but /api/admin/status did not respond"
         )
 
+    @patch("gobby.utils.deps.check_config_mismatches", return_value=[])
+    @patch("gobby.utils.deps.collect_all_deps", side_effect=RuntimeError("database unavailable"))
+    @patch("gobby.cli.daemon.asyncio.run", return_value={})
+    @patch("gobby.cli.daemon.format_status_message", return_value="Running PID 123")
+    @patch("gobby.cli.daemon.format_uptime", return_value="1h 30m")
+    @patch("gobby.cli.daemon.psutil.Process")
+    @patch("gobby.cli.daemon.os.kill")
+    @patch("gobby.cli.daemon.get_gobby_home")
+    def test_status_degrades_dependency_probe_without_losing_daemon_health(
+        self,
+        mock_home: MagicMock,
+        mock_kill: MagicMock,
+        mock_process: MagicMock,
+        _uptime: MagicMock,
+        mock_format: MagicMock,
+        _async: MagicMock,
+        _deps: MagicMock,
+        _mismatches: MagicMock,
+        runner: CliRunner,
+        tmp_path: Path,
+    ) -> None:
+        mock_home.return_value = tmp_path
+        (tmp_path / "gobby.pid").write_text("12345")
+        mock_kill.return_value = None
+        mock_process.return_value.create_time.return_value = 0.0
+
+        config = MagicMock()
+        config.logging.dir = str(tmp_path)
+        config.daemon_port = 60888
+        config.websocket.port = 60889
+        config.ui.enabled = False
+
+        result = runner.invoke(status, [], obj=_cli_runtime(config), catch_exceptions=False)
+
+        assert result.exit_code == 0
+        assert "Running PID 123" in result.output
+        assert mock_format.call_args.kwargs["deps_info"] == {
+            "dependencies": {
+                "embeddings_provider": {
+                    "status": "degraded",
+                    "error": "RuntimeError",
+                }
+            }
+        }
+
     @patch("gobby.cli.daemon.format_status_message", return_value="Stale PID")
     @patch("gobby.cli.daemon.os.kill", side_effect=ProcessLookupError)
     @patch("gobby.cli.daemon.get_gobby_home")

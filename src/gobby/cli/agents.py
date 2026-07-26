@@ -24,6 +24,7 @@ from gobby.cli.runtime import require_cli_database
 from gobby.cli.utils import resolve_session_id
 from gobby.cli.utils_config import get_daemon_client, get_daemon_url
 from gobby.storage.agents import AgentRunStatus, LocalAgentRunManager
+from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.sql_dialect import older_than_now_expr
 from gobby.storage.workflow_definitions import LocalWorkflowDefinitionManager, WorkflowDefinitionRow
 from gobby.utils.json_helpers import json_dumps
@@ -33,7 +34,7 @@ from gobby.workflows.definitions import AgentDefinitionBody
 
 
 @contextmanager
-def _runtime_db_context() -> Iterator[Any]:
+def _runtime_db_context() -> Iterator[HubDatabase]:
     """Yield the database borrowed from the current CLI runtime."""
     yield require_cli_database()
 

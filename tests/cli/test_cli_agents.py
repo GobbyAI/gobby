@@ -1570,26 +1570,22 @@ class TestHelperFunctions:
     def test_get_agent_run_manager(
         self,
         mock_manager_cls: MagicMock,
-        mock_db_cls: MagicMock,
+        mock_require_database: MagicMock,
     ) -> None:
         """Test get_agent_run_manager creates manager correctly."""
         from gobby.cli.agents import get_agent_run_manager
 
         mock_db = MagicMock()
-        mock_db_cls.return_value = mock_db
+        mock_require_database.return_value = mock_db
 
         mock_manager = MagicMock()
         mock_manager_cls.return_value = mock_manager
 
         result = get_agent_run_manager()
 
-        mock_db_cls.assert_called_once_with()
-        assert mock_db_cls.call_count == 1
-        assert mock_db_cls.call_args is not None
-        mock_manager_cls.assert_called_once_with(mock_db)
-        assert mock_manager_cls.call_count == 1
-        assert mock_manager_cls.call_args is not None
-        assert result == mock_manager
+        assert mock_require_database.call_count == 1
+        assert mock_manager_cls.call_args.args == (mock_db,)
+        assert result is mock_manager
 
     def test_get_daemon_url(self, monkeypatch: pytest.MonkeyPatch) -> None:
         """Test get_daemon_url returns the resolved daemon URL."""

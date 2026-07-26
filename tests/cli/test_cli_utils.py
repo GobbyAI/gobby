@@ -771,9 +771,32 @@ class TestInitLocalStorage:
             result = init_local_storage()
 
         assert result is mock_db
+        assert mock_db.close.call_count == 0
         mock_open.assert_called_once_with(config.database_url, pool_config=config.postgres_pool)
         mock_db.apply_migrations.assert_called_once_with()
         ensure_personal.assert_called_once_with(mock_db)
+
+    def test_closes_database_when_initialization_is_interrupted(self) -> None:
+        mock_db = MagicMock()
+        mock_db.apply_migrations.side_effect = KeyboardInterrupt
+        config = MagicMock()
+        config.hub_backend = "postgres"
+        config.database_url = "postgresql://localhost/gobby"
+        deps = MagicMock()
+        deps.load_config.return_value = config
+
+        with (
+            patch("gobby.cli.utils_config.facade", return_value=deps),
+            patch(
+                "gobby.storage.hub.postgres.PostgresHubDatabase",
+                return_value=mock_db,
+            ),
+            pytest.raises(KeyboardInterrupt),
+        ):
+            init_local_storage()
+
+        assert mock_db.close.call_count == 1
+        mock_db.close.assert_called_once_with()
 
 
 # ==============================================================================

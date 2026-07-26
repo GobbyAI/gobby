@@ -62,6 +62,7 @@ def load_full_config_from_db(
         config_file: Optional path to a YAML config file. When provided, its
             contents layer between bootstrap defaults and DB overrides
             (DB still wins), matching the daemon's resolution order.
+        database: Optional borrowed Hub database. The caller retains ownership.
 
     Returns:
         Fully resolved DaemonConfig (DB > config file > bootstrap > defaults).
@@ -184,13 +185,15 @@ def init_local_storage() -> HubDatabase:
     if config.hub_backend != "postgres" or not config.database_url:
         raise RuntimeError("PostgreSQL hub database is not configured")
     hub_db = PostgresHubDatabase(config.database_url, pool_config=config.postgres_pool)
+    initialized = False
     try:
         hub_db.apply_migrations()
         ensure_personal_project(hub_db)
-    except Exception:
-        hub_db.close()
-        raise
-    logger.debug("Database: PostgreSQL hub")
+        logger.debug("Database: PostgreSQL hub")
+        initialized = True
+    finally:
+        if not initialized:
+            hub_db.close()
     return hub_db
 
 

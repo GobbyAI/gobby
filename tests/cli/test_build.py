@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from pathlib import Path
 from types import SimpleNamespace
-from unittest.mock import AsyncMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 from click.testing import CliRunner
@@ -16,10 +16,15 @@ pytestmark = pytest.mark.unit
 def _stub_cli_config_loader(monkeypatch: pytest.MonkeyPatch) -> None:
     import gobby.cli as cli_module
 
+    database = MagicMock()
+    monkeypatch.setattr(
+        "gobby.cli.runtime.CliRuntime.require_database",
+        lambda _runtime: database,
+    )
     monkeypatch.setattr(
         cli_module,
         "load_full_config_from_db",
-        lambda _config=None: SimpleNamespace(),
+        lambda _config=None, **_kwargs: SimpleNamespace(),
     )
 
 

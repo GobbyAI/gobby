@@ -747,7 +747,18 @@ def status(ctx: click.Context) -> None:
     # Collect dependency/CLI version info
     from gobby.utils.deps import check_config_mismatches, collect_all_deps
 
-    deps_info = collect_all_deps(require_cli_database(ctx))
+    try:
+        deps_info = collect_all_deps(require_cli_database(ctx))
+    except Exception as exc:
+        logger.debug("Failed to collect CLI dependency status", exc_info=True)
+        deps_info = {
+            "dependencies": {
+                "embeddings_provider": {
+                    "status": "degraded",
+                    "error": type(exc).__name__,
+                }
+            }
+        }
     config_issues = check_config_mismatches(config)
 
     # Build service info

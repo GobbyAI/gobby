@@ -20,6 +20,7 @@ from urllib.parse import urlparse
 import httpx
 
 from gobby.cli.utils import get_gobby_home
+from gobby.storage.hub.protocol import HubDatabase
 
 logger = logging.getLogger(__name__)
 
@@ -110,7 +111,7 @@ def _coerce_falkordb_port(value: Any | None) -> int | None:
         return None
 
 
-def _resolve_falkordb_config_password(db: Any, value: Any | None) -> str | None:
+def _resolve_falkordb_config_password(db: HubDatabase, value: Any | None) -> str | None:
     if value is None:
         return None
     if not isinstance(value, str):
@@ -123,7 +124,9 @@ def _resolve_falkordb_config_password(db: Any, value: Any | None) -> str | None:
     return SecretStore(db).get(value.removeprefix("$secret:"))
 
 
-def _read_falkordb_connection_config(db: Any) -> tuple[str | None, int | None, str | None]:
+def _read_falkordb_connection_config(
+    db: HubDatabase,
+) -> tuple[str | None, int | None, str | None]:
     from gobby.storage.config_store import ConfigStore
 
     store = ConfigStore(db)
@@ -137,7 +140,7 @@ def _read_falkordb_connection_config(db: Any) -> tuple[str | None, int | None, s
 
 def is_falkordb_installed(
     *,
-    db: Any,
+    db: HubDatabase,
 ) -> bool:
     """Check whether FalkorDB connection keys were recorded in config_store."""
     from gobby.storage.config_store import ConfigStore
@@ -185,7 +188,7 @@ async def is_falkordb_healthy(
 
 async def get_falkordb_status(
     *,
-    db: Any,
+    db: HubDatabase,
     host: str | None = None,
     port: int | None = None,
     password: str | None = None,

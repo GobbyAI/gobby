@@ -3,6 +3,8 @@
 import json
 import logging
 
+import psycopg
+
 from gobby.storage.hub.protocol import HubDatabase
 
 logger = logging.getLogger(__name__)
@@ -83,7 +85,7 @@ def get_claimed_task_owners(db: HubDatabase) -> dict[str, str]:
                 continue
 
         return claimed_owners
-    except (RuntimeError, json.JSONDecodeError, KeyError) as e:
+    except (RuntimeError, json.JSONDecodeError, KeyError, psycopg.Error) as e:
         logger.debug("Failed to get claimed task owners: %s", e, exc_info=True)
         return {}
 

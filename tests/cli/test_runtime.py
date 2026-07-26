@@ -112,8 +112,12 @@ def test_config_and_tasks_list_share_runtime_database(monkeypatch: pytest.Monkey
         finally:
             database.close()
 
-    def load_config(config_file: str | None = None) -> DaemonConfig:
-        seen.append(require_cli_database())
+    def load_config(
+        config_file: str | None = None,
+        *,
+        database: object | None = None,
+    ) -> DaemonConfig:
+        seen.append(database)
         return DaemonConfig()
 
     def task_manager(database_arg: object) -> MagicMock:
