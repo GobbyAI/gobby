@@ -901,7 +901,7 @@ fn vanished_session_source_is_reconciled_and_triggers_index() {
     )
     .expect("first sync");
     assert_eq!(first.accepted.len(), 2);
-    let record_id = first
+    let record = first
         .accepted
         .iter()
         .find(|archive| {
@@ -910,12 +910,10 @@ fn vanished_session_source_is_reconciled_and_triggers_index() {
         .expect("vanishing session accepted")
         .result
         .record
-        .id
         .clone();
-    let derived = vault
-        .join("knowledge")
-        .join("sources")
-        .join(format!("{record_id}.md"));
+    let record_id = record.id.clone();
+    let derived_relative = derived_markdown_path(&record).expect("derived path");
+    let derived = vault.join(&derived_relative);
     assert!(derived.exists());
     assert!(indexed_store_text(&store).contains("Will vanish later"));
     assert!(indexed_store_text(&store).contains("Stays present"));
@@ -963,9 +961,7 @@ fn vanished_session_source_is_reconciled_and_triggers_index() {
         format!("session:{survivor_id}")
     );
     assert!(
-        store
-            .deleted_paths
-            .contains(&PathBuf::from(format!("knowledge/sources/{record_id}.md"))),
+        store.deleted_paths.contains(&derived_relative),
         "index cascade deletes the vanished derived page"
     );
     assert!(!indexed_store_text(&store).contains("Will vanish later"));

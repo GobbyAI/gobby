@@ -14,13 +14,14 @@ pub mod url;
 pub mod video;
 pub mod wayback;
 
-use std::io::Write;
+use std::io::{ErrorKind, Write};
 use std::path::{Path, PathBuf};
 
 use serde::Serialize;
 
 use crate::WikiError;
 use crate::indexer;
+use crate::paths::{raw_source_path, safe_vault_relative_path};
 use crate::sources::SourceRecord;
 pub(crate) use crate::sources::atomic::sync_parent_dir;
 use crate::store::WikiIndexStore;
@@ -39,8 +40,8 @@ pub(crate) fn lowercase_extension(path: impl AsRef<Path>) -> Option<String> {
         .map(str::to_ascii_lowercase)
 }
 
-fn raw_markdown_relative_path(record: &SourceRecord) -> PathBuf {
-    PathBuf::from("raw").join(format!("{}.md", record.id))
+fn raw_markdown_relative_path(record: &SourceRecord) -> Result<PathBuf, WikiError> {
+    raw_source_path(&record.id)
 }
 
 /// Return the immutable raw markdown path for `record` when it already exists.
@@ -51,10 +52,19 @@ fn raw_markdown_relative_path(record: &SourceRecord) -> PathBuf {
 /// reproduced. Callers reuse the first capture instead of re-rendering and
 /// failing the immutable raw write (#17650).
 pub(crate) fn existing_raw_markdown(vault_root: &Path, record: &SourceRecord) -> Option<PathBuf> {
-    let raw_path = raw_markdown_relative_path(record);
+    let raw_path = raw_markdown_relative_path(record).ok()?;
+    let root = vault_root.canonicalize().ok()?;
+    let path = root.join(&raw_path);
+    let metadata = std::fs::symlink_metadata(&path).ok()?;
     // Only a regular file is a reusable capture; anything else blocking the
     // path must fall through to the raw write so it surfaces as an error.
-    vault_root.join(&raw_path).is_file().then_some(raw_path)
+    if !metadata.file_type().is_file() {
+        return None;
+    }
+    path.canonicalize()
+        .ok()?
+        .starts_with(root)
+        .then_some(raw_path)
 }
 
 pub(crate) fn write_raw_markdown(
@@ -62,9 +72,9 @@ pub(crate) fn write_raw_markdown(
     record: &SourceRecord,
     markdown: &str,
 ) -> Result<PathBuf, WikiError> {
-    let raw_path = raw_markdown_relative_path(record);
+    let raw_path = raw_markdown_relative_path(record)?;
     let normalized = crate::markdown::normalize(markdown);
-    let path = vault_root.join(&raw_path);
+    let path = prepare_immutable_path(vault_root, &raw_path)?;
     if path.exists() {
         match validate_existing_raw_bytes(&path, &raw_path, normalized.as_bytes()) {
             Ok(()) => return Ok(raw_path),
@@ -368,14 +378,7 @@ pub(crate) fn path_to_string(path: &Path) -> String {
 }
 
 fn write_immutable(vault_root: &Path, relative: &Path, bytes: &[u8]) -> Result<(), WikiError> {
-    let path = vault_root.join(relative);
-    if let Some(parent) = path.parent() {
-        std::fs::create_dir_all(parent).map_err(|error| WikiError::Io {
-            action: "create raw source directory",
-            path: Some(parent.to_path_buf()),
-            source: error,
-        })?;
-    }
+    let path = prepare_immutable_path(vault_root, relative)?;
 
     if path.exists() {
         return validate_existing_raw_bytes(&path, relative, bytes);
@@ -415,14 +418,7 @@ fn write_immutable_file(
     content_hash: &str,
 ) -> Result<(), WikiError> {
     let source_hash = validate_source_file_hash(source_path, content_hash)?;
-    let path = vault_root.join(relative);
-    if let Some(parent) = path.parent() {
-        std::fs::create_dir_all(parent).map_err(|error| WikiError::Io {
-            action: "create raw source directory",
-            path: Some(parent.to_path_buf()),
-            source: error,
-        })?;
-    }
+    let path = prepare_immutable_path(vault_root, relative)?;
 
     if path.exists() {
         return validate_existing_raw_file(&path, relative, &source_hash);
@@ -457,6 +453,108 @@ fn write_immutable_file(
             path: Some(path),
             source: error.error,
         }),
+    }
+}
+
+fn prepare_immutable_path(vault_root: &Path, relative: &Path) -> Result<PathBuf, WikiError> {
+    let relative = safe_vault_relative_path(relative)?;
+    let root = vault_root.canonicalize().map_err(|error| WikiError::Io {
+        action: "resolve vault root",
+        path: Some(vault_root.to_path_buf()),
+        source: error,
+    })?;
+    let candidate = root.join(&relative);
+    let parent = candidate
+        .parent()
+        .ok_or_else(|| raw_path_outside_vault(&relative))?;
+    let parent = canonicalize_existing_prefix(parent)?;
+    if !parent.starts_with(&root) {
+        return Err(raw_path_outside_vault(&relative));
+    }
+    std::fs::create_dir_all(&parent).map_err(|error| WikiError::Io {
+        action: "create raw source directory",
+        path: Some(parent.clone()),
+        source: error,
+    })?;
+    let parent = parent.canonicalize().map_err(|error| WikiError::Io {
+        action: "resolve raw source directory",
+        path: Some(parent),
+        source: error,
+    })?;
+    if !parent.starts_with(&root) {
+        return Err(raw_path_outside_vault(&relative));
+    }
+    let file_name = candidate
+        .file_name()
+        .ok_or_else(|| raw_path_outside_vault(&relative))?;
+    let path = parent.join(file_name);
+    match std::fs::symlink_metadata(&path) {
+        Ok(metadata) if metadata.file_type().is_symlink() => {
+            return Err(WikiError::InvalidInput {
+                field: "raw_path",
+                message: format!(
+                    "immutable raw source path {} must not be a symbolic link",
+                    relative.display()
+                ),
+            });
+        }
+        Ok(_) => {}
+        Err(error) if error.kind() == ErrorKind::NotFound => {}
+        Err(error) => {
+            return Err(WikiError::Io {
+                action: "inspect raw source path",
+                path: Some(path),
+                source: error,
+            });
+        }
+    }
+    Ok(path)
+}
+
+fn canonicalize_existing_prefix(path: &Path) -> Result<PathBuf, WikiError> {
+    let mut current = path;
+    let mut missing_suffix = Vec::new();
+    loop {
+        match std::fs::symlink_metadata(current) {
+            Ok(_) => break,
+            Err(error) if error.kind() == ErrorKind::NotFound => {
+                let Some(name) = current.file_name() else {
+                    break;
+                };
+                missing_suffix.push(name.to_os_string());
+                let Some(parent) = current.parent() else {
+                    break;
+                };
+                current = parent;
+            }
+            Err(error) => {
+                return Err(WikiError::Io {
+                    action: "inspect raw source directory",
+                    path: Some(current.to_path_buf()),
+                    source: error,
+                });
+            }
+        }
+    }
+
+    let mut resolved = current.canonicalize().map_err(|error| WikiError::Io {
+        action: "resolve raw source directory",
+        path: Some(current.to_path_buf()),
+        source: error,
+    })?;
+    for component in missing_suffix.iter().rev() {
+        resolved.push(component);
+    }
+    Ok(resolved)
+}
+
+fn raw_path_outside_vault(relative: &Path) -> WikiError {
+    WikiError::InvalidInput {
+        field: "raw_path",
+        message: format!(
+            "immutable raw source path {} must stay inside the vault",
+            relative.display()
+        ),
     }
 }
 
@@ -591,8 +689,8 @@ mod tests {
     use std::path::{Path, PathBuf};
 
     use super::{
-        MetadataValue, asset_path, markdown_metadata, markdown_metadata_values,
-        write_asset_from_path, write_raw_markdown,
+        MetadataValue, asset_path, existing_raw_markdown, markdown_metadata,
+        markdown_metadata_values, write_asset_from_path, write_raw_markdown,
     };
     use gobby_core::ai_context::AiContext;
     use gobby_core::config::EnvOnlySource;
@@ -725,6 +823,63 @@ mod tests {
         assert!(!raw.contains("```\n\n\nBody"));
         assert!(raw.contains("```text\none\n\n\ntwo\n```"));
         assert_eq!(raw, crate::markdown::normalize(&raw));
+    }
+
+    #[test]
+    fn raw_markdown_rejects_unsafe_source_id() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let mut record = test_source_record();
+        record.id = "../outside".to_string();
+
+        let error = write_raw_markdown(temp.path(), &record, "# Source\n")
+            .expect_err("unsafe source id must be rejected");
+
+        assert_eq!(error.code(), "invalid_input");
+        assert!(!temp.path().join("raw").exists());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn raw_markdown_rejects_symlink_destination() {
+        use std::os::unix::fs::symlink;
+
+        let temp = tempfile::tempdir().expect("tempdir");
+        let vault = temp.path().join("vault");
+        let outside = temp.path().join("outside.md");
+        std::fs::create_dir_all(vault.join("raw")).expect("raw dir");
+        std::fs::write(&outside, "# Source\n").expect("outside note");
+        let record = test_source_record();
+        symlink(&outside, vault.join("raw/source-1.md")).expect("source symlink");
+
+        assert_eq!(existing_raw_markdown(&vault, &record), None);
+        let error = write_raw_markdown(&vault, &record, "# Source\n")
+            .expect_err("source-note symlink must be rejected");
+
+        assert_eq!(error.code(), "invalid_input");
+        assert_eq!(
+            std::fs::read_to_string(&outside).expect("outside note remains"),
+            "# Source\n"
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn raw_markdown_rejects_parent_symlink_outside_vault() {
+        use std::os::unix::fs::symlink;
+
+        let temp = tempfile::tempdir().expect("tempdir");
+        let vault = temp.path().join("vault");
+        let outside = temp.path().join("outside");
+        std::fs::create_dir(&vault).expect("vault");
+        std::fs::create_dir(&outside).expect("outside");
+        symlink(&outside, vault.join("raw")).expect("raw symlink");
+        let record = test_source_record();
+
+        let error = write_raw_markdown(&vault, &record, "# Source\n")
+            .expect_err("vault-escaping parent symlink must be rejected");
+
+        assert_eq!(error.code(), "invalid_input");
+        assert!(!outside.join("source-1.md").exists());
     }
 
     #[test]

@@ -413,7 +413,7 @@ pub(crate) fn sync_session_transcript_archives(
             {
                 continue;
             }
-            let removed_path = PathBuf::from("knowledge/sources").join(format!("{}.md", entry.id));
+            let removed_path = derived_markdown_path(entry)?;
             store
                 .delete_derived_rows_and_record_ingestion(crate::store::WikiIngestion {
                     path: removed_path,

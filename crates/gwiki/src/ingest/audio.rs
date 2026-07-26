@@ -954,7 +954,8 @@ mod tests {
             content_hash,
         )
         .expect("pre-register source");
-        let raw_path = super::super::raw_markdown_relative_path(&record);
+        let raw_path =
+            super::super::raw_markdown_relative_path(&record).expect("valid raw source path");
         std::fs::create_dir_all(temp.path().join(&raw_path)).expect("raw path blocker");
         let expected_asset_path = PathBuf::from("raw/assets").join(format!("{}.wav", record.id));
         let mut store = MemoryWikiStore::default();

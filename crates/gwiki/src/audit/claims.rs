@@ -368,6 +368,7 @@ pub(super) fn claim_lines(page: &WikiPage, options: &AuditOptions) -> Vec<ClaimL
         // Conflict/gap sections stay in the stream so their claims classify
         // as ambiguous; other ignored sections carry metadata, not claims.
         if ignored_claim_line(trimmed)
+            || is_later_review_navigation(current_heading.as_deref(), trimmed)
             || (!is_conflict_gap_heading(current_heading.as_deref())
                 && ignored_claim_section(current_heading.as_deref(), options))
         {
@@ -420,6 +421,35 @@ fn heading_title(line: &str) -> Option<String> {
 
 fn ignored_claim_section(heading: Option<&str>, options: &AuditOptions) -> bool {
     heading.is_some_and(|heading| options.ignores_section(heading))
+}
+
+fn is_later_review_navigation(heading: Option<&str>, line: &str) -> bool {
+    if !heading.is_some_and(|heading| heading.eq_ignore_ascii_case("later review")) {
+        return false;
+    }
+    let Some(link) = line.strip_prefix("- Later review: [") else {
+        return false;
+    };
+    let Some((title, target)) = link.split_once("](") else {
+        return false;
+    };
+    let Some(target) = target.strip_suffix(')') else {
+        return false;
+    };
+    let Some(anchor) = target.strip_prefix("wiki-research-backlog.md#wiki-research-") else {
+        return false;
+    };
+    let Some((topic, finding)) = anchor.rsplit_once("--") else {
+        return false;
+    };
+    !title.trim().is_empty() && is_backlog_slug(topic) && is_backlog_slug(finding)
+}
+
+fn is_backlog_slug(value: &str) -> bool {
+    !value.is_empty()
+        && value
+            .bytes()
+            .all(|byte| byte.is_ascii_lowercase() || byte.is_ascii_digit() || byte == b'-')
 }
 
 /// Sections that record explicitly flagged uncertainty from the

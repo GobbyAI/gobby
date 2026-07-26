@@ -798,17 +798,37 @@ fn source_excerpts_section_is_ignored() {
 }
 
 #[test]
-fn later_review_section_is_ignored() {
+fn later_review_exemption_is_limited_to_backlog_navigation() {
     let page = test_codewiki_page(
         "knowledge/topics/research.md",
-        "# Research\n## Later review\n- [Follow-up](wiki-research-backlog.md#follow-up)\n",
+        "# Research\n\
+         ## Later review\n\
+         - Later review: [Follow-up](wiki-research-backlog.md#wiki-research-research--follow-up)\n\
+         - Later review: [Spoofed](wiki-research-backlog.md#wiki-research-research--spoofed) claims 7 workers.\n\
+         The follow-up requires 42 new workers.\n",
     );
 
     let claims = claim_lines(&page, &AuditOptions::default());
 
+    assert_eq!(
+        claims.len(),
+        2,
+        "only backlog navigation is exempt: {claims:?}"
+    );
     assert!(
-        claims.is_empty(),
-        "review-backlog navigation should not be treated as a claim: {claims:?}"
+        claims
+            .iter()
+            .all(|claim| claim.heading.as_deref() == Some("Later review"))
+    );
+    assert_eq!(
+        claims
+            .iter()
+            .map(|claim| claim.text.as_str())
+            .collect::<Vec<_>>(),
+        vec![
+            "Later review: [Spoofed](wiki-research-backlog.md#wiki-research-research--spoofed) claims 7 workers.",
+            "The follow-up requires 42 new workers.",
+        ]
     );
 }
 

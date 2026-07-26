@@ -123,7 +123,7 @@ pub(crate) fn remove_relative_file(
     }
 }
 
-fn safe_vault_relative_path(relative_path: &Path) -> Result<PathBuf, WikiError> {
+pub(crate) fn safe_vault_relative_path(relative_path: &Path) -> Result<PathBuf, WikiError> {
     if relative_path.as_os_str().is_empty() {
         return Err(WikiError::InvalidInput {
             field: "relative_path",
