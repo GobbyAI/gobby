@@ -6,6 +6,7 @@ and Linear via the official Linear MCP server.
 
 import logging
 import threading
+from collections.abc import Iterator
 from datetime import UTC, datetime
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -21,6 +22,7 @@ from gobby.sync import linear as linear_module
 from gobby.sync.linear import LinearSyncError, LinearSyncService
 from gobby.sync.linear_support import (
     _extract_records,
+    _linear_fetch_failure_limiter,
     is_transient_linear_fetch_error,
     linear_issue_title,
 )
@@ -55,10 +57,10 @@ def test_unknown_priorities_use_unprioritized_fallbacks() -> None:
 
 
 @pytest.fixture(autouse=True)
-def reset_linear_fetch_failure_limiter():
-    linear_module._linear_fetch_failure_limiter.reset()
+def reset_linear_fetch_failure_limiter() -> Iterator[None]:
+    _linear_fetch_failure_limiter.reset()
     yield
-    linear_module._linear_fetch_failure_limiter.reset()
+    _linear_fetch_failure_limiter.reset()
 
 
 def test_extract_records_recurses_into_nested_nodes_wrapper() -> None:
@@ -108,6 +110,11 @@ def _set_task_state(task: MagicMock, state: str) -> None:
     task.current_stage = {"state": state}
 
 
+def _replace_for_test(target: object, name: str, replacement: object) -> None:
+    """Replace a concrete service attribute with an explicit test double."""
+    object.__setattr__(target, name, replacement)
+
+
 def _cron_job() -> CronJob:
     return CronJob(
         id="cj-linear",
@@ -116,8 +123,8 @@ def _cron_job() -> CronJob:
         schedule_type="cron",
         action_type="handler",
         action_config={"handler": "linear.sync"},
-        created_at="2026-02-10T00:00:00+00:00",
-        updated_at="2026-02-10T00:00:00+00:00",
+        created_at=datetime(2026, 2, 10, tzinfo=UTC),
+        updated_at=datetime(2026, 2, 10, tzinfo=UTC),
     )
 
 
@@ -143,13 +150,13 @@ def _configure_graphql_pull_result(
 ) -> MagicMock:
     client = MagicMock()
     client.list_issues = AsyncMock(side_effect=side_effect)
-    sync_service._linear_mcp_has_tool = MagicMock(return_value=False)  # type: ignore[method-assign]
-    sync_service._get_graphql_client = AsyncMock(return_value=client)  # type: ignore[method-assign]
+    _replace_for_test(sync_service, "_linear_mcp_has_tool", MagicMock(return_value=False))
+    _replace_for_test(sync_service, "_get_graphql_client", AsyncMock(return_value=client))
     return client
 
 
 @pytest.fixture
-def mock_mcp_manager():
+def mock_mcp_manager() -> MagicMock:
     """Create a mock MCPClientManager."""
     manager = MagicMock()
     manager.has_server = MagicMock(return_value=True)
@@ -159,7 +166,7 @@ def mock_mcp_manager():
 
 
 @pytest.fixture
-def mock_task_manager():
+def mock_task_manager() -> MagicMock:
     """Create a mock LocalTaskManager."""
     manager = MagicMock()
     manager.create_task = MagicMock()
@@ -174,7 +181,10 @@ def mock_task_manager():
 
 
 @pytest.fixture
-def sync_service(mock_mcp_manager, mock_task_manager):
+def sync_service(
+    mock_mcp_manager: MagicMock,
+    mock_task_manager: MagicMock,
+) -> LinearSyncService:
     """Create a LinearSyncService with mock dependencies."""
     project = MagicMock()
     project.linear_project_id = "lin-proj"
@@ -193,18 +203,19 @@ def sync_service(mock_mcp_manager, mock_task_manager):
 
 @pytest.mark.asyncio
 async def test_linear_sync_handler_raises_on_partial_errors(
-    mock_mcp_manager,
-    mock_task_manager,
+    mock_mcp_manager: MagicMock,
+    mock_task_manager: MagicMock,
 ) -> None:
     """Nonzero pull/push error counts fail the cron handler."""
     service = MagicMock()
     service.is_available.return_value = True
-    service.sync_all = AsyncMock(
+    sync_all_mock = AsyncMock(
         return_value={
             "pull": {"updated": 0, "skipped": 0, "errors": 1, "deferred": 0},
             "push": {"pushed": 0, "errors": 2, "deferred": 0},
         }
     )
+    _replace_for_test(service, "sync_all", sync_all_mock)
     handler = linear_module.create_linear_sync_handler(
         mock_mcp_manager,
         mock_task_manager,
@@ -219,18 +230,19 @@ async def test_linear_sync_handler_raises_on_partial_errors(
 
 @pytest.mark.asyncio
 async def test_linear_sync_handler_succeeds_after_skipped_pull_conflict(
-    mock_mcp_manager,
-    mock_task_manager,
+    mock_mcp_manager: MagicMock,
+    mock_task_manager: MagicMock,
 ) -> None:
     """A skipped newer-local conflict proceeds through a successful cron sync."""
     service = MagicMock()
     service.is_available.return_value = True
-    service.sync_all = AsyncMock(
+    sync_all_mock = AsyncMock(
         return_value={
             "pull": {"updated": 0, "skipped": 1, "errors": 0, "deferred": 0},
             "push": {"pushed": 1, "skipped": 0, "errors": 0, "deferred": 0},
         }
     )
+    _replace_for_test(service, "sync_all", sync_all_mock)
     handler = linear_module.create_linear_sync_handler(
         mock_mcp_manager,
         mock_task_manager,
@@ -245,23 +257,24 @@ async def test_linear_sync_handler_succeeds_after_skipped_pull_conflict(
         "Linear sync complete: pulled 0 (skipped 1, errors 0, deferred 0), "
         "pushed 1 (errors 0, deferred 0)"
     )
-    service.sync_all.assert_awaited_once_with(team_id="team-123")
+    sync_all_mock.assert_awaited_once_with(team_id="team-123")
 
 
 @pytest.mark.asyncio
 async def test_linear_sync_handler_reports_deferred_without_raising(
-    mock_mcp_manager,
-    mock_task_manager,
+    mock_mcp_manager: MagicMock,
+    mock_task_manager: MagicMock,
 ) -> None:
     """Deferred-only sync results do not fail cron."""
     service = MagicMock()
     service.is_available.return_value = True
-    service.sync_all = AsyncMock(
+    sync_all_mock = AsyncMock(
         return_value={
             "pull": {"updated": 0, "skipped": 0, "errors": 0, "deferred": 83},
             "push": {"pushed": 0, "errors": 0, "deferred": 0},
         }
     )
+    _replace_for_test(service, "sync_all", sync_all_mock)
     handler = linear_module.create_linear_sync_handler(
         mock_mcp_manager,
         mock_task_manager,
@@ -278,13 +291,14 @@ async def test_linear_sync_handler_reports_deferred_without_raising(
 
 @pytest.mark.asyncio
 async def test_linear_sync_handler_reraises_sync_exceptions(
-    mock_mcp_manager,
-    mock_task_manager,
+    mock_mcp_manager: MagicMock,
+    mock_task_manager: MagicMock,
 ) -> None:
     """sync_all exceptions propagate so cron backoff engages."""
     service = MagicMock()
     service.is_available.return_value = True
-    service.sync_all = AsyncMock(side_effect=RuntimeError("linear unavailable"))
+    sync_all_mock = AsyncMock(side_effect=RuntimeError("linear unavailable"))
+    _replace_for_test(service, "sync_all", sync_all_mock)
     handler = linear_module.create_linear_sync_handler(
         mock_mcp_manager,
         mock_task_manager,
@@ -300,7 +314,9 @@ async def test_linear_sync_handler_reraises_sync_exceptions(
 class TestLinearSyncServiceInit:
     """Test LinearSyncService initialization."""
 
-    def test_init_with_dependencies(self, mock_mcp_manager, mock_task_manager) -> None:
+    def test_init_with_dependencies(
+        self, mock_mcp_manager: MagicMock, mock_task_manager: MagicMock
+    ) -> None:
         """LinearSyncService initializes with mcp_manager and task_manager."""
         service = LinearSyncService(
             mcp_manager=mock_mcp_manager,
@@ -311,7 +327,9 @@ class TestLinearSyncServiceInit:
         assert service.task_manager is mock_task_manager
         assert service.project_id == "test-project"
 
-    def test_init_creates_linear_integration(self, mock_mcp_manager, mock_task_manager) -> None:
+    def test_init_creates_linear_integration(
+        self, mock_mcp_manager: MagicMock, mock_task_manager: MagicMock
+    ) -> None:
         """LinearSyncService creates LinearIntegration for availability checks."""
         service = LinearSyncService(
             mcp_manager=mock_mcp_manager,
@@ -323,7 +341,9 @@ class TestLinearSyncServiceInit:
 
         assert isinstance(service.linear, LinearIntegration)
 
-    def test_init_default_team_id_is_none(self, mock_mcp_manager, mock_task_manager) -> None:
+    def test_init_default_team_id_is_none(
+        self, mock_mcp_manager: MagicMock, mock_task_manager: MagicMock
+    ) -> None:
         """Default linear_team_id is None if not specified."""
         service = LinearSyncService(
             mcp_manager=mock_mcp_manager,
@@ -332,7 +352,9 @@ class TestLinearSyncServiceInit:
         )
         assert service.linear_team_id is None
 
-    def test_init_with_team_id(self, mock_mcp_manager, mock_task_manager) -> None:
+    def test_init_with_team_id(
+        self, mock_mcp_manager: MagicMock, mock_task_manager: MagicMock
+    ) -> None:
         """LinearSyncService accepts linear_team_id parameter."""
         service = LinearSyncService(
             mcp_manager=mock_mcp_manager,
@@ -342,7 +364,9 @@ class TestLinearSyncServiceInit:
         )
         assert service.linear_team_id == "team-abc"
 
-    def test_init_with_project_id(self, mock_mcp_manager, mock_task_manager) -> None:
+    def test_init_with_project_id(
+        self, mock_mcp_manager: MagicMock, mock_task_manager: MagicMock
+    ) -> None:
         """LinearSyncService accepts linear_project_id parameter."""
         service = LinearSyncService(
             mcp_manager=mock_mcp_manager,
@@ -367,8 +391,8 @@ class TestLinearSyncServiceAvailability:
     )
     def test_is_available_accepts_mcp_or_graphql_configuration(
         self,
-        mock_mcp_manager,
-        mock_task_manager,
+        mock_mcp_manager: MagicMock,
+        mock_task_manager: MagicMock,
         mcp_available: bool,
         graphql_configured: bool,
         expected: bool,
@@ -390,7 +414,7 @@ class TestLinearSyncServiceAvailability:
             assert service.is_available() is expected
 
     def test_unavailable_reason_reports_missing_graphql_configuration(
-        self, mock_mcp_manager, mock_task_manager
+        self, mock_mcp_manager: MagicMock, mock_task_manager: MagicMock
     ) -> None:
         mock_mcp_manager.has_server.return_value = False
 
@@ -408,7 +432,7 @@ class TestLinearSyncServiceAvailability:
         assert "Linear GraphQL API key is not configured" in reason
 
     def test_invalid_graphql_configuration_is_unavailable(
-        self, mock_mcp_manager, mock_task_manager
+        self, mock_mcp_manager: MagicMock, mock_task_manager: MagicMock
     ) -> None:
         mock_mcp_manager.has_server.return_value = False
 
@@ -433,7 +457,9 @@ class TestLinearSyncServiceImport:
     """Test import_linear_issues method."""
 
     @pytest.mark.asyncio
-    async def test_import_issues_calls_linear_mcp(self, sync_service, mock_mcp_manager):
+    async def test_import_issues_calls_linear_mcp(
+        self, sync_service: LinearSyncService, mock_mcp_manager: MagicMock
+    ) -> None:
         """import_linear_issues calls Linear MCP list_issues tool."""
         mock_mcp_manager.call_tool.return_value = {"issues": []}
 
@@ -445,7 +471,7 @@ class TestLinearSyncServiceImport:
 
     @pytest.mark.asyncio
     async def test_import_issues_rejects_invalid_mcp_payload(
-        self, sync_service, mock_mcp_manager
+        self, sync_service: LinearSyncService, mock_mcp_manager: MagicMock
     ) -> None:
         """import_linear_issues rejects malformed list_issues payloads."""
         mock_mcp_manager.call_tool.return_value = {"issues": "not-a-list"}
@@ -455,8 +481,11 @@ class TestLinearSyncServiceImport:
 
     @pytest.mark.asyncio
     async def test_import_issues_creates_tasks(
-        self, sync_service, mock_mcp_manager, mock_task_manager
-    ):
+        self,
+        sync_service: LinearSyncService,
+        mock_mcp_manager: MagicMock,
+        mock_task_manager: MagicMock,
+    ) -> None:
         """import_linear_issues creates gobby tasks from Linear issues."""
         mock_mcp_manager.call_tool.return_value = CallToolResult(
             content=[],
@@ -478,8 +507,11 @@ class TestLinearSyncServiceImport:
 
     @pytest.mark.asyncio
     async def test_import_issues_links_linear_fields(
-        self, sync_service, mock_mcp_manager, mock_task_manager
-    ):
+        self,
+        sync_service: LinearSyncService,
+        mock_mcp_manager: MagicMock,
+        mock_task_manager: MagicMock,
+    ) -> None:
         """import_linear_issues sets linear_issue_id and linear_team_id on tasks."""
         mock_mcp_manager.call_tool.return_value = {
             "issues": [{"id": "lin-42", "title": "Test Issue", "description": "Test body"}]
@@ -501,7 +533,10 @@ class TestLinearSyncServiceImport:
 
     @pytest.mark.asyncio
     async def test_import_done_issue_creates_closed_task(
-        self, sync_service, mock_mcp_manager, mock_task_manager
+        self,
+        sync_service: LinearSyncService,
+        mock_mcp_manager: MagicMock,
+        mock_task_manager: MagicMock,
     ) -> None:
         mock_mcp_manager.call_tool.return_value = {
             "issues": [
@@ -536,7 +571,10 @@ class TestLinearSyncServiceImport:
 
     @pytest.mark.asyncio
     async def test_import_canceled_issue_reconciles_existing_task(
-        self, sync_service, mock_mcp_manager, mock_task_manager
+        self,
+        sync_service: LinearSyncService,
+        mock_mcp_manager: MagicMock,
+        mock_task_manager: MagicMock,
     ) -> None:
         mock_mcp_manager.call_tool.return_value = {
             "issues": [
@@ -571,7 +609,10 @@ class TestLinearSyncServiceImport:
 
     @pytest.mark.asyncio
     async def test_import_preserves_newer_local_fields(
-        self, sync_service, mock_mcp_manager, mock_task_manager
+        self,
+        sync_service: LinearSyncService,
+        mock_mcp_manager: MagicMock,
+        mock_task_manager: MagicMock,
     ) -> None:
         mock_mcp_manager.call_tool.return_value = {
             "issues": [
@@ -602,7 +643,10 @@ class TestLinearSyncServiceImport:
 
     @pytest.mark.asyncio
     async def test_import_applies_newer_remote_fields(
-        self, sync_service, mock_mcp_manager, mock_task_manager
+        self,
+        sync_service: LinearSyncService,
+        mock_mcp_manager: MagicMock,
+        mock_task_manager: MagicMock,
     ) -> None:
         mock_mcp_manager.call_tool.return_value = {
             "issues": [
@@ -634,8 +678,11 @@ class TestLinearSyncServiceImport:
 
     @pytest.mark.asyncio
     async def test_import_links_existing_task_by_gobby_ref_title(
-        self, sync_service, mock_mcp_manager, mock_task_manager
-    ):
+        self,
+        sync_service: LinearSyncService,
+        mock_mcp_manager: MagicMock,
+        mock_task_manager: MagicMock,
+    ) -> None:
         """import_linear_issues links #ref Linear titles to existing Gobby tasks."""
         mock_mcp_manager.call_tool.return_value = {
             "issues": [
@@ -687,7 +734,9 @@ class TestLinearSyncServiceImport:
         )
 
     @pytest.mark.asyncio
-    async def test_import_issues_raises_when_unavailable(self, mock_mcp_manager, mock_task_manager):
+    async def test_import_issues_raises_when_unavailable(
+        self, mock_mcp_manager: MagicMock, mock_task_manager: MagicMock
+    ) -> None:
         """import_linear_issues raises RuntimeError when Linear unavailable."""
         mock_mcp_manager.has_server.return_value = False
 
@@ -702,7 +751,9 @@ class TestLinearSyncServiceImport:
             await service.import_linear_issues()
 
     @pytest.mark.asyncio
-    async def test_import_issues_raises_when_no_team_id(self, mock_mcp_manager, mock_task_manager):
+    async def test_import_issues_raises_when_no_team_id(
+        self, mock_mcp_manager: MagicMock, mock_task_manager: MagicMock
+    ) -> None:
         """import_linear_issues raises ValueError when no team_id provided."""
         mock_mcp_manager.has_server.return_value = True
         mock_mcp_manager.health = {"linear": MagicMock(state="connected")}
@@ -719,8 +770,8 @@ class TestLinearSyncServiceImport:
 
     @pytest.mark.asyncio
     async def test_import_issues_scopes_to_linear_project(
-        self, mock_mcp_manager, mock_task_manager
-    ):
+        self, mock_mcp_manager: MagicMock, mock_task_manager: MagicMock
+    ) -> None:
         """import_linear_issues passes projectId when project binding exists."""
         mock_mcp_manager.call_tool.return_value = {"issues": []}
         service = LinearSyncService(
@@ -739,8 +790,8 @@ class TestLinearSyncServiceImport:
         assert call.kwargs["arguments"]["limit"] == 100
 
     async def test_import_issues_requires_linear_project_binding(
-        self, mock_mcp_manager, mock_task_manager
-    ):
+        self, mock_mcp_manager: MagicMock, mock_task_manager: MagicMock
+    ) -> None:
         service = LinearSyncService(
             mcp_manager=mock_mcp_manager,
             task_manager=mock_task_manager,
@@ -754,8 +805,8 @@ class TestLinearSyncServiceImport:
         mock_mcp_manager.call_tool.assert_not_called()
 
     async def test_import_issues_allows_explicit_team_wide_override(
-        self, mock_mcp_manager, mock_task_manager
-    ):
+        self, mock_mcp_manager: MagicMock, mock_task_manager: MagicMock
+    ) -> None:
         mock_mcp_manager.call_tool.return_value = {"issues": []}
         service = LinearSyncService(
             mcp_manager=mock_mcp_manager,
@@ -772,7 +823,7 @@ class TestLinearSyncServiceImport:
 
     @pytest.mark.asyncio
     async def test_linear_mcp_issue_listing_fetches_every_cursor_page(
-        self, sync_service: LinearSyncService, mock_mcp_manager
+        self, sync_service: LinearSyncService, mock_mcp_manager: MagicMock
     ) -> None:
         first_page = [{"id": f"issue-{index}"} for index in range(100)]
         second_page = [{"id": f"issue-{index}"} for index in range(100, 125)]
@@ -801,16 +852,19 @@ class TestLinearSyncServiceImport:
     async def test_sync_all_preserves_cursor_when_linked_issue_is_missing(
         self,
         sync_service: LinearSyncService,
-        mock_mcp_manager,
-        mock_task_manager,
+        mock_mcp_manager: MagicMock,
+        mock_task_manager: MagicMock,
     ) -> None:
         mock_task_manager.db.fetchall.return_value = [
             {"id": "task-1", "linear_issue_id": "missing-issue"}
         ]
         mock_mcp_manager.call_tool.return_value = {"issues": []}
-        sync_service._get_project_synced_at = MagicMock(return_value="old-cursor")
-        sync_service._update_synced_at = MagicMock()
-        sync_service.push_dirty_tasks = AsyncMock()
+        get_project_synced_at_mock = MagicMock(return_value="old-cursor")
+        _replace_for_test(sync_service, "_get_project_synced_at", get_project_synced_at_mock)
+        update_synced_at_mock = MagicMock()
+        _replace_for_test(sync_service, "_update_synced_at", update_synced_at_mock)
+        push_dirty_tasks_mock = AsyncMock()
+        _replace_for_test(sync_service, "push_dirty_tasks", push_dirty_tasks_mock)
 
         result = await sync_service.sync_all(team_id="team-123")
 
@@ -822,15 +876,17 @@ class TestLinearSyncServiceImport:
         }
         assert result["cursor_updated"] is False
         assert result["synced_at"] == "old-cursor"
-        sync_service.push_dirty_tasks.assert_not_awaited()
-        sync_service._update_synced_at.assert_not_called()
+        push_dirty_tasks_mock.assert_not_awaited()
+        update_synced_at_mock.assert_not_called()
 
 
 class TestLinearSyncServiceSync:
     """Test sync_task_to_linear method."""
 
     @pytest.mark.asyncio
-    async def test_sync_task_calls_linear_mcp(self, sync_service, mock_mcp_manager):
+    async def test_sync_task_calls_linear_mcp(
+        self, sync_service: LinearSyncService, mock_mcp_manager: MagicMock
+    ) -> None:
         """sync_task_to_linear calls Linear MCP to update issue."""
         mock_task = MagicMock()
         mock_task.linear_issue_id = "lin-42"
@@ -840,7 +896,7 @@ class TestLinearSyncServiceSync:
         _set_task_state(mock_task, "in_progress")
         mock_task.priority = 2
 
-        sync_service.task_manager.get_task.return_value = mock_task
+        _replace_for_test(sync_service.task_manager.get_task, "return_value", mock_task)
         mock_mcp_manager.call_tool.return_value = {"success": True}
 
         await sync_service.sync_task_to_linear(task_id="test-task-id")
@@ -851,7 +907,9 @@ class TestLinearSyncServiceSync:
         assert mock_mcp_manager.call_tool.call_args.kwargs["arguments"]["priority"] == 3
 
     @pytest.mark.asyncio
-    async def test_sync_task_graphql_resolves_linear_state_id(self, sync_service, mock_mcp_manager):
+    async def test_sync_task_graphql_resolves_linear_state_id(
+        self, sync_service: LinearSyncService, mock_mcp_manager: MagicMock
+    ) -> None:
         """GraphQL issue updates send Linear's workflow state id."""
         mock_task = MagicMock()
         mock_task.id = "test-task-id"
@@ -871,8 +929,9 @@ class TestLinearSyncServiceSync:
             ]
         )
         client.update_issue = AsyncMock(return_value={"id": "lin-42", "title": "#42: Updated"})
-        sync_service._get_graphql_client = AsyncMock(return_value=client)
-        sync_service.task_manager.get_task.return_value = mock_task
+        get_graphql_client_mock = AsyncMock(return_value=client)
+        _replace_for_test(sync_service, "_get_graphql_client", get_graphql_client_mock)
+        _replace_for_test(sync_service.task_manager.get_task, "return_value", mock_task)
 
         await sync_service.sync_task_to_linear(task_id="test-task-id")
 
@@ -893,7 +952,9 @@ class TestLinearSyncServiceSync:
         assert not mock_mcp_manager.call_tool.called
 
     @pytest.mark.asyncio
-    async def test_sync_task_raises_when_no_issue_id(self, sync_service, mock_task_manager):
+    async def test_sync_task_raises_when_no_issue_id(
+        self, sync_service: LinearSyncService, mock_task_manager: MagicMock
+    ) -> None:
         """sync_task_to_linear raises ValueError when task has no linear_issue_id."""
         mock_task = MagicMock()
         mock_task.linear_issue_id = None
@@ -904,7 +965,9 @@ class TestLinearSyncServiceSync:
             await sync_service.sync_task_to_linear(task_id="test-task-id")
 
     @pytest.mark.asyncio
-    async def test_pull_updates_scopes_to_linear_project(self, mock_mcp_manager, mock_task_manager):
+    async def test_pull_updates_scopes_to_linear_project(
+        self, mock_mcp_manager: MagicMock, mock_task_manager: MagicMock
+    ) -> None:
         """pull_linear_updates passes projectId when project binding exists."""
         mock_task_manager.db.fetchall.return_value = [
             {"id": "task-1", "linear_issue_id": "issue-1"}
@@ -926,14 +989,19 @@ class TestLinearSyncServiceSync:
 
     @pytest.mark.asyncio
     async def test_pull_updates_reconciles_closed_lifecycle_fields(
-        self, sync_service: LinearSyncService, mock_mcp_manager, mock_task_manager
+        self,
+        sync_service: LinearSyncService,
+        mock_mcp_manager: MagicMock,
+        mock_task_manager: MagicMock,
     ) -> None:
         """Closed Linear issues clear escalation fields and set explicit closure metadata."""
         mock_task_manager.db.fetchall.return_value = [
             {"id": "task-1", "linear_issue_id": "issue-1"}
         ]
-        sync_service._linear_mcp_has_tool = MagicMock(return_value=True)  # type: ignore[method-assign]
-        sync_service._get_project_synced_at = MagicMock(return_value=None)  # type: ignore[method-assign]
+        linear_mcp_has_tool_mock = MagicMock(return_value=True)
+        _replace_for_test(sync_service, "_linear_mcp_has_tool", linear_mcp_has_tool_mock)
+        get_project_synced_at_mock = MagicMock(return_value=None)
+        _replace_for_test(sync_service, "_get_project_synced_at", get_project_synced_at_mock)
         mock_mcp_manager.call_tool.return_value = {
             "issues": [
                 {
@@ -965,7 +1033,10 @@ class TestLinearSyncServiceSync:
 
     @pytest.mark.asyncio
     async def test_pull_updates_preserves_newer_local_changes(
-        self, sync_service: LinearSyncService, mock_mcp_manager, mock_task_manager
+        self,
+        sync_service: LinearSyncService,
+        mock_mcp_manager: MagicMock,
+        mock_task_manager: MagicMock,
     ) -> None:
         mock_task_manager.db.fetchall.return_value = [
             {
@@ -1003,7 +1074,10 @@ class TestLinearSyncServiceSync:
 
     @pytest.mark.asyncio
     async def test_pull_updates_skips_unchanged_task_without_touching_updated_at(
-        self, sync_service: LinearSyncService, mock_mcp_manager, mock_task_manager
+        self,
+        sync_service: LinearSyncService,
+        mock_mcp_manager: MagicMock,
+        mock_task_manager: MagicMock,
     ) -> None:
         mock_task_manager.db.fetchall.return_value = [
             {
@@ -1041,7 +1115,10 @@ class TestLinearSyncServiceSync:
 
     @pytest.mark.asyncio
     async def test_pull_updates_rate_limits_repeated_linear_fetch_failures(
-        self, sync_service: LinearSyncService, mock_task_manager, caplog
+        self,
+        sync_service: LinearSyncService,
+        mock_task_manager: MagicMock,
+        caplog: pytest.LogCaptureFixture,
     ) -> None:
         """Repeated identical fetch failures do not emit repeated error logs."""
         mock_task_manager.db.fetchall.return_value = [
@@ -1076,7 +1153,7 @@ class TestLinearSyncServiceSync:
 
     @pytest.mark.asyncio
     async def test_pull_updates_defers_transient_graphql_fetch_for_all_linked_tasks(
-        self, sync_service: LinearSyncService, mock_task_manager
+        self, sync_service: LinearSyncService, mock_task_manager: MagicMock
     ) -> None:
         """One transient list-fetch exhaustion defers all linked rows."""
         mock_task_manager.db.fetchall.return_value = [
@@ -1099,7 +1176,7 @@ class TestLinearSyncServiceSync:
 
     @pytest.mark.asyncio
     async def test_pull_updates_counts_permanent_graphql_failure_as_errors(
-        self, sync_service: LinearSyncService, mock_task_manager
+        self, sync_service: LinearSyncService, mock_task_manager: MagicMock
     ) -> None:
         """Permanent GraphQL failures still count against linked rows."""
         mock_task_manager.db.fetchall.return_value = [
@@ -1118,7 +1195,10 @@ class TestLinearSyncServiceSync:
 
     @pytest.mark.asyncio
     async def test_pull_updates_recovery_resets_linear_fetch_failure_limit(
-        self, sync_service: LinearSyncService, mock_task_manager, caplog
+        self,
+        sync_service: LinearSyncService,
+        mock_task_manager: MagicMock,
+        caplog: pytest.LogCaptureFixture,
     ) -> None:
         """Successful fetch logs recovery and lets the next failure surface again."""
         mock_task_manager.db.fetchall.return_value = [
@@ -1166,26 +1246,30 @@ class TestLinearSyncServiceSync:
         self, sync_service: LinearSyncService
     ) -> None:
         """sync_all preserves the cursor when Linear pull fails."""
-        sync_service.pull_linear_updates = AsyncMock(
+        pull_linear_updates_mock = AsyncMock(
             return_value={"updated": 0, "skipped": 0, "errors": 2, "deferred": 0}
         )
-        sync_service.push_dirty_tasks = AsyncMock()
-        sync_service._get_project_synced_at = MagicMock(return_value="old-cursor")
-        sync_service._update_synced_at = MagicMock()
+        _replace_for_test(sync_service, "pull_linear_updates", pull_linear_updates_mock)
+        push_dirty_tasks_mock = AsyncMock()
+        _replace_for_test(sync_service, "push_dirty_tasks", push_dirty_tasks_mock)
+        get_project_synced_at_mock = MagicMock(return_value="old-cursor")
+        _replace_for_test(sync_service, "_get_project_synced_at", get_project_synced_at_mock)
+        update_synced_at_mock = MagicMock()
+        _replace_for_test(sync_service, "_update_synced_at", update_synced_at_mock)
 
         result = await sync_service.sync_all(team_id="team-123")
 
         assert result["cursor_updated"] is False
         assert result["synced_at"] == "old-cursor"
         assert result["push"] == {"pushed": 0, "skipped": 0, "errors": 0, "deferred": 0}
-        sync_service.push_dirty_tasks.assert_not_called()
-        sync_service._update_synced_at.assert_not_called()
+        push_dirty_tasks_mock.assert_not_called()
+        update_synced_at_mock.assert_not_called()
 
     @pytest.mark.asyncio
     async def test_sync_all_preserves_cursor_after_incomplete_paginated_fetch(
         self,
         sync_service: LinearSyncService,
-        mock_task_manager,
+        mock_task_manager: MagicMock,
     ) -> None:
         """A failed later page cannot advance the project sync watermark."""
         mock_task_manager.db.fetchall.return_value = [
@@ -1195,9 +1279,12 @@ class TestLinearSyncServiceSync:
             sync_service,
             LinearGraphQLError("Linear pagination page 2 was incomplete."),
         )
-        sync_service._get_project_synced_at = MagicMock(return_value="old-cursor")
-        sync_service._update_synced_at = MagicMock()
-        sync_service.push_dirty_tasks = AsyncMock()
+        get_project_synced_at_mock = MagicMock(return_value="old-cursor")
+        _replace_for_test(sync_service, "_get_project_synced_at", get_project_synced_at_mock)
+        update_synced_at_mock = MagicMock()
+        _replace_for_test(sync_service, "_update_synced_at", update_synced_at_mock)
+        push_dirty_tasks_mock = AsyncMock()
+        _replace_for_test(sync_service, "push_dirty_tasks", push_dirty_tasks_mock)
 
         result = await sync_service.sync_all(team_id="team-123")
 
@@ -1209,62 +1296,74 @@ class TestLinearSyncServiceSync:
         }
         assert result["cursor_updated"] is False
         assert result["synced_at"] == "old-cursor"
-        sync_service.push_dirty_tasks.assert_not_awaited()
-        sync_service._update_synced_at.assert_not_called()
+        push_dirty_tasks_mock.assert_not_awaited()
+        update_synced_at_mock.assert_not_called()
 
     @pytest.mark.asyncio
     async def test_sync_all_does_not_update_cursor_or_push_when_pull_is_deferred(
         self, sync_service: LinearSyncService
     ) -> None:
         """sync_all preserves pull-first safety when Linear pull is deferred."""
-        sync_service.pull_linear_updates = AsyncMock(
+        pull_linear_updates_mock = AsyncMock(
             return_value={"updated": 0, "skipped": 0, "errors": 0, "deferred": 83}
         )
-        sync_service.push_dirty_tasks = AsyncMock()
-        sync_service._get_project_synced_at = MagicMock(return_value="old-cursor")
-        sync_service._update_synced_at = MagicMock()
+        _replace_for_test(sync_service, "pull_linear_updates", pull_linear_updates_mock)
+        push_dirty_tasks_mock = AsyncMock()
+        _replace_for_test(sync_service, "push_dirty_tasks", push_dirty_tasks_mock)
+        get_project_synced_at_mock = MagicMock(return_value="old-cursor")
+        _replace_for_test(sync_service, "_get_project_synced_at", get_project_synced_at_mock)
+        update_synced_at_mock = MagicMock()
+        _replace_for_test(sync_service, "_update_synced_at", update_synced_at_mock)
 
         result = await sync_service.sync_all(team_id="team-123")
 
         assert result["cursor_updated"] is False
         assert result["synced_at"] == "old-cursor"
         assert result["push"] == {"pushed": 0, "skipped": 0, "errors": 0, "deferred": 0}
-        sync_service.push_dirty_tasks.assert_not_called()
-        sync_service._update_synced_at.assert_not_called()
+        push_dirty_tasks_mock.assert_not_called()
+        update_synced_at_mock.assert_not_called()
 
     @pytest.mark.asyncio
     async def test_sync_all_does_not_update_cursor_when_push_has_errors(
         self, sync_service: LinearSyncService
     ) -> None:
         """sync_all preserves the cursor when Linear push fails."""
-        sync_service.pull_linear_updates = AsyncMock(
+        pull_linear_updates_mock = AsyncMock(
             return_value={"updated": 1, "skipped": 0, "errors": 0, "deferred": 0}
         )
-        sync_service.push_dirty_tasks = AsyncMock(
+        _replace_for_test(sync_service, "pull_linear_updates", pull_linear_updates_mock)
+        push_dirty_tasks_mock = AsyncMock(
             return_value={"pushed": 0, "skipped": 0, "errors": 1, "deferred": 0}
         )
-        sync_service._get_project_synced_at = MagicMock(return_value="old-cursor")
-        sync_service._update_synced_at = MagicMock()
+        _replace_for_test(sync_service, "push_dirty_tasks", push_dirty_tasks_mock)
+        get_project_synced_at_mock = MagicMock(return_value="old-cursor")
+        _replace_for_test(sync_service, "_get_project_synced_at", get_project_synced_at_mock)
+        update_synced_at_mock = MagicMock()
+        _replace_for_test(sync_service, "_update_synced_at", update_synced_at_mock)
 
         result = await sync_service.sync_all(team_id="team-123")
 
         assert result["cursor_updated"] is False
         assert result["synced_at"] == "old-cursor"
-        sync_service._update_synced_at.assert_not_called()
+        update_synced_at_mock.assert_not_called()
 
     @pytest.mark.asyncio
     async def test_sync_all_updates_cursor_when_pull_and_push_succeed(
         self, sync_service: LinearSyncService
     ) -> None:
         """sync_all pushes after a skipped pull conflict and advances the cursor."""
-        sync_service.pull_linear_updates = AsyncMock(
+        pull_linear_updates_mock = AsyncMock(
             return_value={"updated": 0, "skipped": 1, "errors": 0, "deferred": 0}
         )
-        sync_service.push_dirty_tasks = AsyncMock(
+        _replace_for_test(sync_service, "pull_linear_updates", pull_linear_updates_mock)
+        push_dirty_tasks_mock = AsyncMock(
             return_value={"pushed": 1, "skipped": 0, "errors": 0, "deferred": 0}
         )
-        sync_service._get_project_synced_at = MagicMock(return_value="old-cursor")
-        sync_service._update_synced_at = MagicMock()
+        _replace_for_test(sync_service, "push_dirty_tasks", push_dirty_tasks_mock)
+        get_project_synced_at_mock = MagicMock(return_value="old-cursor")
+        _replace_for_test(sync_service, "_get_project_synced_at", get_project_synced_at_mock)
+        update_synced_at_mock = MagicMock()
+        _replace_for_test(sync_service, "_update_synced_at", update_synced_at_mock)
 
         result = await sync_service.sync_all(team_id="team-123")
 
@@ -1272,8 +1371,8 @@ class TestLinearSyncServiceSync:
         assert result["push"] == {"pushed": 1, "skipped": 0, "errors": 0, "deferred": 0}
         assert result["cursor_updated"] is True
         assert isinstance(result["synced_at"], str)
-        sync_service.push_dirty_tasks.assert_awaited_once_with()
-        sync_service._update_synced_at.assert_called_once_with(result["synced_at"])
+        push_dirty_tasks_mock.assert_awaited_once_with()
+        update_synced_at_mock.assert_called_once_with(result["synced_at"])
 
     async def test_sync_all_next_run_sees_edit_created_during_sync(
         self, sync_service: LinearSyncService
@@ -1301,12 +1400,16 @@ class TestLinearSyncServiceSync:
                 state["edit"] = edit_created_at
             return {"pushed": 0, "skipped": 1, "errors": 0, "deferred": 0}
 
-        sync_service.pull_linear_updates = AsyncMock(side_effect=pull_updates)
-        sync_service.push_dirty_tasks = AsyncMock(side_effect=push_tasks)
-        sync_service._get_project_synced_at = MagicMock(side_effect=lambda: state["cursor"])
-        sync_service._update_synced_at = MagicMock(
+        pull_linear_updates_mock = AsyncMock(side_effect=pull_updates)
+        _replace_for_test(sync_service, "pull_linear_updates", pull_linear_updates_mock)
+        push_dirty_tasks_mock = AsyncMock(side_effect=push_tasks)
+        _replace_for_test(sync_service, "push_dirty_tasks", push_dirty_tasks_mock)
+        get_project_synced_at_mock = MagicMock(side_effect=lambda: state["cursor"])
+        _replace_for_test(sync_service, "_get_project_synced_at", get_project_synced_at_mock)
+        update_synced_at_mock = MagicMock(
             side_effect=lambda synced_at: state.update(cursor=synced_at)
         )
+        _replace_for_test(sync_service, "_update_synced_at", update_synced_at_mock)
 
         with patch("gobby.sync.linear_task_ops.datetime") as mock_datetime:
             mock_datetime.now.side_effect = lambda timezone: clock["now"]
@@ -1321,7 +1424,9 @@ class TestLinearSyncServiceCreate:
     """Test create_issue_for_task method."""
 
     @pytest.mark.asyncio
-    async def test_create_issue_calls_linear_mcp(self, sync_service, mock_mcp_manager):
+    async def test_create_issue_calls_linear_mcp(
+        self, sync_service: LinearSyncService, mock_mcp_manager: MagicMock
+    ) -> None:
         """create_issue_for_task calls Linear MCP create_issue."""
         mock_task = MagicMock()
         mock_task.title = "Feature: Add new thing"
@@ -1331,7 +1436,7 @@ class TestLinearSyncServiceCreate:
         mock_task.priority = 2
         mock_task.seq_num = 42
 
-        sync_service.task_manager.get_task.return_value = mock_task
+        _replace_for_test(sync_service.task_manager.get_task, "return_value", mock_task)
         mock_mcp_manager.call_tool.return_value = CallToolResult(
             content=[
                 TextContent(
@@ -1354,7 +1459,9 @@ class TestLinearSyncServiceCreate:
         assert result["linear_issue_id"] == "lin-123"
 
     @pytest.mark.asyncio
-    async def test_create_issue_includes_linear_project(self, mock_mcp_manager, mock_task_manager):
+    async def test_create_issue_includes_linear_project(
+        self, mock_mcp_manager: MagicMock, mock_task_manager: MagicMock
+    ) -> None:
         """create_issue_for_task includes team and project binding."""
         mock_task = MagicMock()
         mock_task.title = "Feature"
@@ -1385,8 +1492,8 @@ class TestLinearSyncServiceCreate:
 
     @pytest.mark.asyncio
     async def test_create_issue_creates_same_named_project_when_missing(
-        self, mock_mcp_manager, mock_task_manager
-    ):
+        self, mock_mcp_manager: MagicMock, mock_task_manager: MagicMock
+    ) -> None:
         """create_issue_for_task creates and stores a same-named Linear project."""
         mock_task = MagicMock()
         mock_task.title = "Feature"
@@ -1412,15 +1519,16 @@ class TestLinearSyncServiceCreate:
             linear_team_id="team-123",
             project_manager=project_manager,
         )
-        service.ensure_linear_project = AsyncMock(
+        ensure_linear_project_mock = AsyncMock(
             return_value=({"id": "lin-proj", "name": "gobby"}, True)
         )
+        _replace_for_test(service, "ensure_linear_project", ensure_linear_project_mock)
 
         await service.create_issue_for_task(task_id="test-task-id")
 
-        service.ensure_linear_project.assert_awaited_once_with("team-123", "gobby")
-        assert service.ensure_linear_project.await_count == 1
-        assert service.ensure_linear_project.await_args is not None
+        ensure_linear_project_mock.assert_awaited_once_with("team-123", "gobby")
+        assert ensure_linear_project_mock.await_count == 1
+        assert ensure_linear_project_mock.await_args is not None
         project_manager.update.assert_called_with(
             "test-project",
             linear_team_id="team-123",
@@ -1432,8 +1540,11 @@ class TestLinearSyncServiceCreate:
 
     @pytest.mark.asyncio
     async def test_create_issue_updates_task_linear_id(
-        self, sync_service, mock_mcp_manager, mock_task_manager
-    ):
+        self,
+        sync_service: LinearSyncService,
+        mock_mcp_manager: MagicMock,
+        mock_task_manager: MagicMock,
+    ) -> None:
         """create_issue_for_task updates task with linear_issue_id."""
         mock_task = MagicMock()
         mock_task.title = "Feature"
@@ -1453,7 +1564,10 @@ class TestLinearSyncServiceCreate:
 
     @pytest.mark.asyncio
     async def test_create_issue_reuses_existing_linear_issue_by_title(
-        self, sync_service, mock_mcp_manager, mock_task_manager
+        self,
+        sync_service: LinearSyncService,
+        mock_mcp_manager: MagicMock,
+        mock_task_manager: MagicMock,
     ) -> None:
         """create_issue_for_task links an exact existing Linear title before creating."""
         mock_task = MagicMock()
@@ -1482,7 +1596,10 @@ class TestLinearSyncServiceCreate:
 
     @pytest.mark.asyncio
     async def test_create_issue_rejects_invalid_mcp_response(
-        self, sync_service, mock_mcp_manager, mock_task_manager
+        self,
+        sync_service: LinearSyncService,
+        mock_mcp_manager: MagicMock,
+        mock_task_manager: MagicMock,
     ) -> None:
         """create_issue_for_task validates create_issue responses before reading fields."""
         mock_task = MagicMock()
@@ -1506,7 +1623,10 @@ class TestLinearSyncServiceCreate:
 
     @pytest.mark.asyncio
     async def test_create_issue_rejects_missing_mcp_issue_id(
-        self, sync_service, mock_mcp_manager, mock_task_manager
+        self,
+        sync_service: LinearSyncService,
+        mock_mcp_manager: MagicMock,
+        mock_task_manager: MagicMock,
     ) -> None:
         """create_issue_for_task rejects create_issue responses without an id."""
         mock_task = MagicMock()
@@ -1529,7 +1649,9 @@ class TestLinearSyncServiceCreate:
         mock_task_manager.update_task.assert_not_called()
 
     @pytest.mark.asyncio
-    async def test_create_issue_raises_when_no_team_id(self, mock_mcp_manager, mock_task_manager):
+    async def test_create_issue_raises_when_no_team_id(
+        self, mock_mcp_manager: MagicMock, mock_task_manager: MagicMock
+    ) -> None:
         """create_issue_for_task raises ValueError when no team_id available."""
         mock_mcp_manager.has_server.return_value = True
         mock_mcp_manager.health = {"linear": MagicMock(state="connected")}
@@ -1550,8 +1672,8 @@ class TestLinearSyncServiceCreate:
 
     @pytest.mark.asyncio
     async def test_create_missing_issues_filters_closed_tasks(
-        self, sync_service, mock_task_manager
-    ):
+        self, sync_service: LinearSyncService, mock_task_manager: MagicMock
+    ) -> None:
         """create_missing_issues only selects unlinked non-closed tasks."""
         mock_task_manager.db.fetchall.return_value = []
 
@@ -1561,60 +1683,98 @@ class TestLinearSyncServiceCreate:
         assert "linear_issue_id IS NULL" in sql
         assert "closed_at IS NULL" in sql
 
+    @pytest.mark.asyncio
     async def test_create_missing_issues_applies_ordered_batch_limit(
-        self, sync_service, mock_task_manager
-    ):
-        mock_task_manager.db.fetchall.return_value = []
+        self,
+        sync_service: LinearSyncService,
+        mock_task_manager: MagicMock,
+    ) -> None:
+        to_thread = AsyncMock(return_value=[])
 
-        await sync_service.create_missing_issues(limit=25)
+        with patch("gobby.sync.linear_task_ops.asyncio.to_thread", new=to_thread):
+            await sync_service.create_missing_issues(limit=25)
 
-        sql, params = mock_task_manager.db.fetchall.call_args.args
+        assert to_thread.await_args is not None
+        fetchall, sql, params = to_thread.await_args.args
+        assert fetchall is mock_task_manager.db.fetchall
         assert "ORDER BY seq_num NULLS LAST, created_at, id" in sql
         assert sql.endswith("LIMIT %s")
         assert params == (sync_service.project_id, 25)
 
     @pytest.mark.asyncio
+    @pytest.mark.parametrize("limit", [0, -1])
+    async def test_create_missing_issues_rejects_non_positive_limit(
+        self,
+        sync_service: LinearSyncService,
+        mock_task_manager: MagicMock,
+        limit: int,
+    ) -> None:
+        create_issue = AsyncMock()
+
+        with (
+            patch.object(sync_service, "create_issue_for_task", new=create_issue),
+            pytest.raises(ValueError, match="limit must be greater than zero"),
+        ):
+            await sync_service.create_missing_issues(limit=limit)
+
+        mock_task_manager.db.fetchall.assert_not_called()
+        create_issue.assert_not_awaited()
+
+    @pytest.mark.asyncio
     async def test_sync_active_forward_creates_missing_and_pushes_active(
-        self, sync_service, mock_task_manager
-    ):
+        self, sync_service: LinearSyncService, mock_task_manager: MagicMock
+    ) -> None:
         """sync_active_forward creates missing active issues and skips pull."""
-        sync_service.create_missing_issues = AsyncMock(return_value=[{"id": "lin-1"}])
-        sync_service.push_active_tasks = AsyncMock(
+        create_missing_issues_mock = AsyncMock(return_value=[{"id": "lin-1"}])
+        _replace_for_test(sync_service, "create_missing_issues", create_missing_issues_mock)
+        push_active_tasks_mock = AsyncMock(
             return_value={"pushed": 2, "skipped": 0, "errors": 0, "deferred": 0}
         )
-        sync_service.pull_linear_updates = AsyncMock()
-        sync_service._update_synced_at = MagicMock()
+        _replace_for_test(sync_service, "push_active_tasks", push_active_tasks_mock)
+        pull_linear_updates_mock = AsyncMock()
+        _replace_for_test(sync_service, "pull_linear_updates", pull_linear_updates_mock)
+        update_synced_at_mock = MagicMock()
+        _replace_for_test(sync_service, "_update_synced_at", update_synced_at_mock)
 
         result = await sync_service.sync_active_forward(team_id="team-123")
 
         assert result["mode"] == "forward_active"
         assert result["created_count"] == 1
         assert result["push"]["pushed"] == 2
-        sync_service.create_missing_issues.assert_awaited_once_with(team_id="team-123")
-        sync_service.push_active_tasks.assert_awaited_once_with()
-        sync_service.pull_linear_updates.assert_not_called()
-        sync_service._update_synced_at.assert_called_once()
+        create_missing_issues_mock.assert_awaited_once_with(team_id="team-123")
+        push_active_tasks_mock.assert_awaited_once_with()
+        pull_linear_updates_mock.assert_not_called()
+        update_synced_at_mock.assert_called_once()
 
     @pytest.mark.asyncio
-    async def test_sync_active_forward_keeps_cursor_when_push_has_errors(self, sync_service):
+    async def test_sync_active_forward_keeps_cursor_when_push_has_errors(
+        self, sync_service: LinearSyncService
+    ) -> None:
         """sync_active_forward leaves synced_at unchanged when active push fails."""
-        sync_service.create_missing_issues = AsyncMock(return_value=[])
-        sync_service.push_active_tasks = AsyncMock(
+        create_missing_issues_mock = AsyncMock(return_value=[])
+        _replace_for_test(sync_service, "create_missing_issues", create_missing_issues_mock)
+        push_active_tasks_mock = AsyncMock(
             return_value={"pushed": 1, "skipped": 0, "errors": 1, "deferred": 0}
         )
-        sync_service._update_synced_at = MagicMock()
+        _replace_for_test(sync_service, "push_active_tasks", push_active_tasks_mock)
+        update_synced_at_mock = MagicMock()
+        _replace_for_test(sync_service, "_update_synced_at", update_synced_at_mock)
 
         result = await sync_service.sync_active_forward(team_id="team-123")
 
         assert result["synced_at"] is None
-        sync_service._update_synced_at.assert_not_called()
+        update_synced_at_mock.assert_not_called()
 
     @pytest.mark.asyncio
-    async def test_push_active_tasks_filters_closed_tasks(self, sync_service, mock_task_manager):
+    async def test_push_active_tasks_filters_closed_tasks(
+        self, sync_service: LinearSyncService, mock_task_manager: MagicMock
+    ) -> None:
         """push_active_tasks only pushes linked non-closed tasks."""
         mock_task_manager.db.fetchall.return_value = [{"id": "task-1"}, {"id": "task-2"}]
-        sync_service._get_graphql_client = AsyncMock(return_value=None)
-        sync_service._sync_task_to_linear = AsyncMock()
+        get_graphql_client_mock = AsyncMock(return_value=None)
+        _replace_for_test(sync_service, "_get_graphql_client", get_graphql_client_mock)
+        sync_task_to_linear_mock = AsyncMock()
+        _replace_for_test(sync_service, "_sync_task_to_linear", sync_task_to_linear_mock)
 
         result = await sync_service.push_active_tasks()
 
@@ -1622,10 +1782,10 @@ class TestLinearSyncServiceCreate:
         assert "linear_issue_id IS NOT NULL" in sql
         assert "closed_at IS NULL" in sql
         assert result == {"pushed": 2, "skipped": 0, "errors": 0, "deferred": 0}
-        assert sync_service._sync_task_to_linear.await_count == 2
+        assert sync_task_to_linear_mock.await_count == 2
 
     async def test_push_active_tasks_reuses_graphql_client_and_team_states(
-        self, sync_service, mock_task_manager
+        self, sync_service: LinearSyncService, mock_task_manager: MagicMock
     ) -> None:
         """One push run shares GraphQL setup and state metadata across task updates."""
         loop_thread = threading.get_ident()
@@ -1644,11 +1804,11 @@ class TestLinearSyncServiceCreate:
             _set_task_state(task, state)
             tasks[task_id] = task
 
-        def fetch_rows(*_args):
+        def fetch_rows(*_args: object) -> list[dict[str, str]]:
             storage_threads.append(threading.get_ident())
             return [{"id": "task-1"}, {"id": "task-2"}]
 
-        def get_task(task_id):
+        def get_task(task_id: str) -> MagicMock:
             storage_threads.append(threading.get_ident())
             return tasks[task_id]
 
@@ -1663,12 +1823,13 @@ class TestLinearSyncServiceCreate:
             ]
         )
         client.update_issue = AsyncMock(side_effect=[{"id": "lin-task-1"}, {"id": "lin-task-2"}])
-        sync_service._get_graphql_client = AsyncMock(return_value=client)
+        get_graphql_client_mock = AsyncMock(return_value=client)
+        _replace_for_test(sync_service, "_get_graphql_client", get_graphql_client_mock)
 
         result = await sync_service.push_active_tasks()
 
         assert result == {"pushed": 2, "skipped": 0, "errors": 0, "deferred": 0}
-        sync_service._get_graphql_client.assert_awaited_once_with()
+        get_graphql_client_mock.assert_awaited_once_with()
         client.list_team_states.assert_awaited_once_with("team-123")
         assert [call.kwargs["state_id"] for call in client.update_issue.await_args_list] == [
             "state-todo",
@@ -1683,7 +1844,7 @@ class TestLinearProjectBinding:
 
     @pytest.mark.asyncio
     async def test_ensure_linear_project_rechecks_by_name_after_mcp_create_failure(
-        self, sync_service, mock_mcp_manager
+        self, sync_service: LinearSyncService, mock_mcp_manager: MagicMock
     ) -> None:
         """ensure_linear_project handles races where another actor creates the project."""
         mock_mcp_manager.call_tool.side_effect = [
@@ -1714,39 +1875,39 @@ class TestLinearProjectBinding:
 class TestStateMapping:
     """Test state mapping functions."""
 
-    def test_map_gobby_state_to_linear_ready(self, sync_service) -> None:
+    def test_map_gobby_state_to_linear_ready(self, sync_service: LinearSyncService) -> None:
         """map_gobby_state_to_linear converts ready to Todo."""
         assert sync_service.map_gobby_state_to_linear("ready") == "Todo"
 
-    def test_map_gobby_state_to_linear_in_progress(self, sync_service) -> None:
+    def test_map_gobby_state_to_linear_in_progress(self, sync_service: LinearSyncService) -> None:
         """map_gobby_state_to_linear converts in_progress to In Progress."""
         assert sync_service.map_gobby_state_to_linear("in_progress") == "In Progress"
 
-    def test_map_gobby_state_to_linear_closed(self, sync_service) -> None:
+    def test_map_gobby_state_to_linear_closed(self, sync_service: LinearSyncService) -> None:
         """map_gobby_state_to_linear converts closed to Done."""
         assert sync_service.map_gobby_state_to_linear("closed") == "Done"
 
-    def test_map_gobby_state_to_linear_unknown(self, sync_service) -> None:
+    def test_map_gobby_state_to_linear_unknown(self, sync_service: LinearSyncService) -> None:
         """map_gobby_state_to_linear defaults to Todo for unknown state."""
         assert sync_service.map_gobby_state_to_linear("unknown") == "Todo"
 
-    def test_map_linear_state_to_gobby_todo(self, sync_service) -> None:
+    def test_map_linear_state_to_gobby_todo(self, sync_service: LinearSyncService) -> None:
         """map_linear_state_to_gobby converts Todo to ready."""
         assert sync_service.map_linear_state_to_gobby("Todo") == "ready"
 
-    def test_map_linear_state_to_gobby_in_progress(self, sync_service) -> None:
+    def test_map_linear_state_to_gobby_in_progress(self, sync_service: LinearSyncService) -> None:
         """map_linear_state_to_gobby converts In Progress to in_progress."""
         assert sync_service.map_linear_state_to_gobby("In Progress") == "in_progress"
 
-    def test_map_linear_state_to_gobby_in_review(self, sync_service) -> None:
+    def test_map_linear_state_to_gobby_in_review(self, sync_service: LinearSyncService) -> None:
         """map_linear_state_to_gobby converts In Review to needs_review."""
         assert sync_service.map_linear_state_to_gobby("In Review") == "needs_review"
 
-    def test_map_linear_state_to_gobby_done(self, sync_service) -> None:
+    def test_map_linear_state_to_gobby_done(self, sync_service: LinearSyncService) -> None:
         """map_linear_state_to_gobby converts Done to closed."""
         assert sync_service.map_linear_state_to_gobby("Done") == "closed"
 
-    def test_map_linear_state_to_gobby_unknown(self, sync_service) -> None:
+    def test_map_linear_state_to_gobby_unknown(self, sync_service: LinearSyncService) -> None:
         """map_linear_state_to_gobby defaults to ready for unknown state."""
         assert sync_service.map_linear_state_to_gobby("Unknown State") == "ready"
 
@@ -1755,7 +1916,9 @@ class TestLinearSyncIntegration:
     """Integration tests for full LinearSyncService workflows."""
 
     @pytest.mark.asyncio
-    async def test_import_and_sync_workflow(self, mock_mcp_manager, mock_task_manager):
+    async def test_import_and_sync_workflow(
+        self, mock_mcp_manager: MagicMock, mock_task_manager: MagicMock
+    ) -> None:
         """Test full workflow: import issues, then sync back."""
         mock_mcp_manager.has_server.return_value = True
         mock_mcp_manager.health = {"linear": MagicMock(state="connected")}
@@ -1805,7 +1968,9 @@ class TestLinearSyncIntegration:
         assert "stateId" not in update_call.kwargs["arguments"]
 
     @pytest.mark.asyncio
-    async def test_handles_empty_issue_list(self, mock_mcp_manager, mock_task_manager):
+    async def test_handles_empty_issue_list(
+        self, mock_mcp_manager: MagicMock, mock_task_manager: MagicMock
+    ) -> None:
         """Test handling of team with no issues."""
         mock_mcp_manager.has_server.return_value = True
         mock_mcp_manager.health = {"linear": MagicMock(state="connected")}
@@ -1840,7 +2005,9 @@ class TestLinearSyncErrorHandling:
     """Test error handling in sync operations."""
 
     @pytest.mark.asyncio
-    async def test_sync_validates_response_structure(self, mock_mcp_manager, mock_task_manager):
+    async def test_sync_validates_response_structure(
+        self, mock_mcp_manager: MagicMock, mock_task_manager: MagicMock
+    ) -> None:
         """sync_task_to_linear validates response before processing."""
         from gobby.sync.linear import LinearSyncError
 
@@ -1867,7 +2034,9 @@ class TestLinearSyncErrorHandling:
             await service.sync_task_to_linear(task_id="test-task")
 
     @pytest.mark.asyncio
-    async def test_error_recovery_network_failure(self, mock_mcp_manager, mock_task_manager):
+    async def test_error_recovery_network_failure(
+        self, mock_mcp_manager: MagicMock, mock_task_manager: MagicMock
+    ) -> None:
         """Test error handling when network fails."""
         mock_mcp_manager.has_server.return_value = True
         mock_mcp_manager.health = {"linear": MagicMock(state="connected")}
