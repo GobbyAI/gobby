@@ -12,7 +12,7 @@ import logging
 import operator
 import re
 import tokenize
-from collections.abc import Callable, Iterator
+from collections.abc import Callable, Iterator, Mapping
 from typing import Any
 
 __all__ = [
@@ -636,6 +636,25 @@ def build_condition_helpers(
         loaded_skills = variables.get("loaded_skills", [])
         return isinstance(loaded_skills, list) and name in loaded_skills
 
+    def _has_open_tool_error(tool: str, arguments: Mapping[str, Any]) -> bool:
+        """Check normalized unresolved errors for one exact tool target."""
+        from gobby.hooks.tool_error_tracker import (
+            extract_target_key,
+            normalize_open_tool_error_records,
+        )
+
+        if not isinstance(tool, str) or not isinstance(arguments, Mapping):
+            return False
+        variables = _get_variables(ctx)
+        records = normalize_open_tool_error_records(variables.get("open_tool_errors"))
+        target_key = extract_target_key(
+            {"tool_name": tool.rpartition("/")[2] or tool},
+            arguments,
+        )
+        return any(
+            record["tool"] == tool and record["target_key"] == target_key for record in records
+        )
+
     def _first_unloaded_claimed_task_required_skill(
         tool_input: Any = None,
         event_data: dict[str, Any] | None = None,
@@ -692,6 +711,7 @@ def build_condition_helpers(
     funcs["mcp_result_has"] = _mcp_result_has
     funcs["tool_call_succeeded"] = _tool_call_succeeded
     funcs["skill_loaded"] = _skill_loaded
+    funcs["has_open_tool_error"] = _has_open_tool_error
     funcs["first_unloaded_claimed_task_required_skill"] = (
         _first_unloaded_claimed_task_required_skill
     )

@@ -15,8 +15,10 @@ import pytest
 
 from gobby.hooks.events import HookEvent, HookEventType, SessionSource
 from gobby.hooks.normalization import normalize_tool_fields
+from gobby.hooks.tool_error_tracker import extract_target_key, track_proxy_outcome
 from gobby.skills.formatting import skill_fetch_directive
 from gobby.storage.hub.protocol import HubDatabase
+from gobby.storage.sessions import SessionManager
 from gobby.storage.workflow_definitions import LocalWorkflowDefinitionManager
 from gobby.workflows.definitions import RuleDefinitionBody
 from gobby.workflows.engine.blocked_tool_recovery import _CODE_INDEX_REMEDIATION_RULES
@@ -26,6 +28,7 @@ from gobby.workflows.safe_evaluator import (
     SafeExpressionEvaluator,
     build_condition_helpers,
 )
+from gobby.workflows.state_manager import SessionVariableManager
 from gobby.workflows.sync_rules import sync_bundled_rules
 
 pytestmark = pytest.mark.unit
@@ -44,6 +47,19 @@ def db(temp_db: HubDatabase) -> HubDatabase:
 @pytest.fixture
 def manager(db: HubDatabase) -> LocalWorkflowDefinitionManager:
     return LocalWorkflowDefinitionManager(db)
+
+
+def _skill_tool_error_record(skill_name: str) -> dict[str, Any]:
+    arguments = {"name": skill_name}
+    timestamp = "2026-07-26T12:00:00+00:00"
+    return {
+        "tool": "gobby-skills/get_skill",
+        "target_key": extract_target_key({"tool_name": "get_skill"}, arguments),
+        "error": "Workflow evaluation timed out after 15s",
+        "first_at": timestamp,
+        "last_at": timestamp,
+        "count": 1,
+    }
 
 
 def _sync_bundled(db: HubDatabase) -> object:
@@ -3201,9 +3217,11 @@ class TestCodeIndexRuleCondition:
     CONDITION = (
         "variables.get('code_index_available') "
         "and not skill_loaded('code-index') "
+        'and not has_open_tool_error("gobby-skills/get_skill", {"name": "code-index"}) '
         "and not variables.get('code_index_preflight_warning') "
         "and not event.data.get('canonical_code_index_navigation') "
-        "and event.data.get('canonical_code_navigation_broad')"
+        "and event.data.get('canonical_code_navigation_broad') "
+        "and event.data.get('canonical_code_navigation_repo_scope') is not False"
     )
 
     def _eval(
@@ -3215,11 +3233,14 @@ class TestCodeIndexRuleCondition:
         loaded_skills: list[str] | None = None,
         injected_skills: list[str] | None = None,
         code_index_preflight_warning: bool = False,
+        open_tool_errors: Any = None,
     ) -> bool:
         variables = {
             "loaded_skills": loaded_skills or [],
             "code_index_available": code_index_available,
         }
+        if open_tool_errors is not None:
+            variables["open_tool_errors"] = open_tool_errors
         if code_index_preflight_warning:
             variables["code_index_preflight_warning"] = {
                 "preflight": "code_index",
@@ -3233,6 +3254,7 @@ class TestCodeIndexRuleCondition:
                 data={
                     "canonical_code_navigation_broad": canonical_code_navigation_broad,
                     "canonical_code_index_navigation": canonical_code_index_navigation,
+                    "canonical_code_navigation_repo_scope": True,
                 }
             ),
             "tool_input": {},
@@ -3255,6 +3277,12 @@ class TestCodeIndexRuleCondition:
 
     def test_skips_when_already_loaded(self) -> None:
         assert self._eval(loaded_skills=["code-index"]) is False
+
+    def test_skips_for_exact_code_index_skill_load_error(self) -> None:
+        assert self._eval(open_tool_errors=[_skill_tool_error_record("code-index")]) is False
+
+    def test_does_not_skip_for_unrelated_skill_load_error(self) -> None:
+        assert self._eval(open_tool_errors=[_skill_tool_error_record("brevity")]) is True
 
     def test_does_not_skip_when_legacy_injected(self) -> None:
         assert self._eval(injected_skills=["code-index"]) is True
@@ -3280,12 +3308,15 @@ class TestRequireCodeIndexSkillStructure:
         assert body.when is not None
         assert "variables.get('code_index_available')" in body.when
         assert "not skill_loaded('code-index')" in body.when
+        assert "not has_open_tool_error(" in body.when
+        assert '"gobby-skills/get_skill"' in body.when
+        assert '{"name": "code-index"}' in body.when
         assert "not variables.get('code_index_preflight_warning')" in body.when
         assert len(body.effects) == 1
         assert body.effects[0].type == "block"
         assert skill_fetch_directive("code-index") in body.effects[0].reason
-        assert 'get_skill(name="code-index")' in body.effects[0].reason
-        assert 'list_tools("gobby-skills")' in body.effects[0].reason
+        assert "If that call fails, retry the code search" in body.effects[0].reason
+        assert "list_tools" not in body.effects[0].reason
 
     def test_code_index_navigation_rules_sync(self, db, manager) -> None:
         _sync_bundled(db)
@@ -3378,7 +3409,101 @@ class TestCodeIndexNavigationRules:
         assert response.decision == "block"
         assert response.reason is not None
         assert skill_fetch_directive("code-index") in response.reason
-        assert 'get_skill(name="code-index")' in response.reason
+        assert "If that call fails, retry the code search" in response.reason
+
+    @pytest.mark.asyncio
+    async def test_code_index_skill_proxy_error_fails_open_until_matching_success(
+        self,
+        db,
+    ) -> None:
+        _sync_bundled(db)
+        project_id = "22222222-2222-4222-8222-222222222222"
+        db.execute(
+            "INSERT INTO projects (id, name) VALUES (%s, %s)",
+            (project_id, "code-index-fail-open"),
+        )
+        session_id = SessionManager(db).register_session(
+            external_id="code-index-fail-open-session",
+            machine_id="machine-1",
+            source="codex",
+            project_id=project_id,
+            project_path="/tmp/code-index-fail-open",
+        )
+        assert session_id
+        state_manager = SessionVariableManager(db)
+        code_index_identity = (
+            "gobby-skills",
+            "get_skill",
+            {"name": "code-index"},
+        )
+        track_proxy_outcome(
+            state_manager,
+            session_id,
+            code_index_identity,
+            code_index_identity,
+            {"success": False, "error": "Workflow evaluation timed out after 15s"},
+            "failed_pre_dispatch",
+        )
+        variables = self._variables(loaded=False)
+        variables["open_tool_errors"] = state_manager.get_variables(session_id)["open_tool_errors"]
+        engine = RuleEngine(db)
+
+        for command in (
+            "rg pattern src",
+            "grep -R pattern src",
+            'gcode grep "pattern" src || true',
+        ):
+            event = self._normalized_bash_event(command)
+            assert event.data["canonical_code_navigation_broad"] is True
+            if command.startswith("gcode"):
+                assert "canonical_code_index_navigation" not in event.data
+            response = await engine.evaluate(
+                event,
+                session_id=SESSION_ID,
+                variables=variables,
+            )
+            assert response.decision == "allow"
+
+        track_proxy_outcome(
+            state_manager,
+            session_id,
+            code_index_identity,
+            code_index_identity,
+            {"success": True, "skill": {"name": "code-index"}},
+            "executed",
+        )
+        variables["open_tool_errors"] = state_manager.get_variables(session_id)["open_tool_errors"]
+        assert variables["loaded_skills"] == []
+        assert variables["open_tool_errors"] == []
+
+        retry = await engine.evaluate(
+            self._normalized_bash_event("rg pattern src"),
+            session_id=SESSION_ID,
+            variables=variables,
+        )
+        assert retry.decision == "block"
+
+        unrelated_identity = (
+            "gobby-skills",
+            "get_skill",
+            {"name": "brevity"},
+        )
+        track_proxy_outcome(
+            state_manager,
+            session_id,
+            unrelated_identity,
+            unrelated_identity,
+            {"success": False, "error": "proxy unavailable"},
+            "failed_pre_dispatch",
+        )
+        variables["open_tool_errors"] = state_manager.get_variables(session_id)["open_tool_errors"]
+
+        unrelated = await engine.evaluate(
+            self._normalized_bash_event("rg pattern src"),
+            session_id=SESSION_ID,
+            variables=variables,
+        )
+        assert unrelated.decision == "block"
 
     @pytest.mark.asyncio
     async def test_loaded_code_index_blocks_rg_with_gcode_grep_guidance(self, db) -> None:
@@ -3403,8 +3528,8 @@ class TestCodeIndexNavigationRules:
         assert response.decision == "block"
         assert response.reason is not None
         assert (
-            'Use `gcode grep "pattern" [PATH...] -m 50` for exact text search, '
-            'or `gcode search-content "query" [PATH...]` for ranked content search.'
+            'Use `gcode grep "pattern" -m 50` or `gcode search-content` — '
+            "the code index has full access to this repo and returns ranked, token-cheap results."
         ) in response.reason
 
     @pytest.mark.asyncio
@@ -3650,8 +3775,8 @@ class TestCodeIndexNavigationRules:
         assert broad_response.decision == "block"
         assert broad_response.reason is not None
         assert (
-            "Use `gcode outline path/to/file` to inspect file structure or "
-            "`gcode symbol <id>` to retrieve a target symbol before broad source reads."
+            "Use `gcode outline <file>` then `gcode symbol <id>` — "
+            "ranged Read (offset/limit, ≤40 lines) is always available."
         ) in broad_response.reason
         assert narrow_response.decision == "allow"
 
@@ -3767,7 +3892,11 @@ class TestContext7RuleCondition:
     def test_matches_supported_write(self) -> None:
         assert self._eval("/project/src/main.ts") is True
 
-    def test_synced_rule_acknowledges_optional_nudge(self, db, manager) -> None:
+    def test_synced_rule_acknowledges_optional_nudge(
+        self,
+        db: HubDatabase,
+        manager: LocalWorkflowDefinitionManager,
+    ) -> None:
         _sync_bundled(db)
         row = manager.get_by_name("block-and-teach-context7")
         assert row is not None

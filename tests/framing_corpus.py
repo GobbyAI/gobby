@@ -50,6 +50,7 @@ REDIRECT_RULES = frozenset(
         "require-json-skill",
         "require-kotlin-skill",
         "require-lua-skill",
+        "require-memory-recall-before-tool",
         "require-memory-review-before-status",
         "require-objc-skill",
         "require-php-skill",

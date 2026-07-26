@@ -12,9 +12,9 @@ rules:
     effects:
       - type: block
         reason: >-
-          Retrieve the pending memories before continuing:
           call_tool("gobby-memory", "get_recall_memories",
-          {"recall_request_id":"{{ pending_memory_recall_request_id() }}"}).
+          {"recall_request_id":"{{ pending_memory_recall_request_id() }}"})
+          to retrieve the pending memories, then continue.
 
   require-memory-recall-before-turn-end:
     description: "Block turn completion until the oldest pending memory recall is retrieved"

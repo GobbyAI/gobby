@@ -8,6 +8,7 @@ from unittest.mock import MagicMock
 
 import pytest
 
+from gobby.hooks.tool_error_tracker import extract_target_key
 from gobby.workflows.safe_evaluator import (
     ASSISTANT_RESPONSE_CONTRASTIVE_PATTERNS,
     ASSISTANT_RESPONSE_SCAN_LIMIT,
@@ -381,17 +382,17 @@ class TestToolCallSucceeded:
             is False
         )
 
-    def test_rejects_nested_structured_error_result(self) -> None:
+    def test_direct_success_precedes_nested_structured_error_result(self) -> None:
         ev = self._eval({"tool_output": {"success": True, "result": {"isError": True}}})
 
-        assert ev.evaluate("tool_call_succeeded()") is False
+        assert ev.evaluate("tool_call_succeeded()") is True
 
-    def test_rejects_nested_mcp_success_false(self) -> None:
+    def test_direct_success_precedes_nested_mcp_failure(self) -> None:
         ev = self._eval(
             {"tool_output": {"success": True, "result": {"success": False, "error": "bad"}}}
         )
 
-        assert ev.evaluate("tool_call_succeeded()") is False
+        assert ev.evaluate("tool_call_succeeded()") is True
 
     def test_rejects_nested_nonzero_exit_code(self) -> None:
         ev = self._eval({"tool_output": {"result": {"exitCode": 2}}})
@@ -468,6 +469,67 @@ class TestSkillLoaded:
         ctx: dict[str, Any] = {"variables": {"loaded_skills": ["rust"]}}
         ev = _build_evaluator(ctx)
         assert ev.evaluate("skill_loaded('python')") is False
+
+
+# --- has_open_tool_error tests ---
+
+
+class TestHasOpenToolError:
+    @staticmethod
+    def _record(
+        tool: str = "gobby-skills/get_skill",
+        arguments: dict[str, Any] | None = None,
+    ) -> dict[str, Any]:
+        target_arguments = arguments or {"name": "code-index"}
+        timestamp = "2026-07-26T12:00:00+00:00"
+        return {
+            "tool": tool,
+            "target_key": extract_target_key(
+                {"tool_name": tool.rpartition("/")[2] or tool},
+                target_arguments,
+            ),
+            "error": "Workflow evaluation timed out after 15s",
+            "first_at": timestamp,
+            "last_at": timestamp,
+            "count": 1,
+        }
+
+    def test_matches_exact_tool_and_arguments_only(self) -> None:
+        context = {
+            "variables": {
+                "open_tool_errors": [
+                    "malformed",
+                    self._record(),
+                ]
+            }
+        }
+        evaluator = _build_evaluator(context)
+
+        assert evaluator.evaluate(
+            'has_open_tool_error("gobby-skills/get_skill", {"name": "code-index"})'
+        )
+        assert not evaluator.evaluate(
+            'has_open_tool_error("gobby-skills/get_skill", {"name": "brevity"})'
+        )
+        assert not evaluator.evaluate(
+            'has_open_tool_error("gobby-skills/search_skills", {"name": "code-index"})'
+        )
+
+    @pytest.mark.parametrize(
+        "stored_state",
+        [
+            None,
+            {},
+            ["malformed"],
+            [{"tool": "gobby-skills/get_skill"}],
+        ],
+    )
+    def test_tolerates_malformed_stored_state(self, stored_state: Any) -> None:
+        evaluator = _build_evaluator({"variables": {"open_tool_errors": stored_state}})
+
+        assert not evaluator.evaluate(
+            'has_open_tool_error("gobby-skills/get_skill", {"name": "code-index"})'
+        )
 
 
 # --- assistant_response_matches_any tests ---

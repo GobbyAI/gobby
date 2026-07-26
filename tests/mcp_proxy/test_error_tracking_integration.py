@@ -88,6 +88,9 @@ def _persisting_proxy(
     hook_manager._workflow_handler = workflow_handler
     hook_manager._session_manager = session_manager
     hook_manager._database = temp_db
+    hook_manager._message_processor.reconcile_codex_transcript = AsyncMock(
+        return_value=SimpleNamespace(flushed=True, error=None)
+    )
     proxy = ToolProxyService(
         mcp_manager=mcp_manager,
         internal_manager=internal_manager,
