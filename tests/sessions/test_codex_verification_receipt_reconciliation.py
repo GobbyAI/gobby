@@ -67,7 +67,7 @@ def _direct_call(call_id: str, command: str) -> str:
     )
 
 
-def _direct_output(call_id: str, exit_code: int) -> str:
+def _direct_output(call_id: str, exit_code: int, *, second: int = 1) -> str:
     return _response_item(
         {
             "type": "function_call_output",
@@ -80,7 +80,25 @@ def _direct_output(call_id: str, exit_code: int) -> str:
                 "focused verification output\n"
             ),
         },
-        second=1,
+        second=second,
+    )
+
+
+def _direct_running_output(call_id: str, session_id: int) -> str:
+    return _response_item(
+        {
+            "type": "function_call_output",
+            "call_id": call_id,
+            "output": (
+                "Chunk ID: sanitized\n"
+                "Wall time: 30.1234 seconds\n"
+                f"Process running with session ID {session_id}\n"
+                "Original token count: 5\n"
+                "Output:\n"
+                "still running\n"
+            ),
+        },
+        second=3,
     )
 
 
@@ -103,6 +121,7 @@ def _setup_processor(
         sample_project["id"],
         f"Codex receipt {external_suffix}",
         claimed_by_session_id=session.id,
+        validation_criteria="The Codex transcript produces the expected verification receipt.",
     )
     SessionVariableManager(temp_db).set_variable(session.id, "active_task_id", task.id)
     processor = SessionMessageProcessor(
@@ -159,25 +178,97 @@ async def test_direct_exec_command_persists_exact_terminal_receipt(
     assert receipts[0].normalized_outcome == normalized_outcome
 
 
+async def test_nested_exec_write_stdin_persists_exact_terminal_receipt(
+    temp_db: Any,
+    session_manager: Any,
+    sample_project: dict[str, Any],
+    tmp_path: Path,
+) -> None:
+    call_id = "call_nested_write_stdin"
+    running_poll_id = "poll_nested_write_stdin_running"
+    terminal_poll_id = "poll_nested_write_stdin_terminal"
+    command = "GOBBY_TEST_PROTECT=1 uv run pytest tests/sessions/ -q"
+    transcript_path = tmp_path / "rollout-nested-write-stdin.jsonl"
+    transcript_path.write_text(
+        "\n".join(
+            [
+                _call(
+                    call_id,
+                    f"const r = await tools.exec_command({{cmd:{json.dumps(command)}}}); text(r);",
+                ),
+                _output(
+                    call_id,
+                    json.dumps({"session_id": 93, "output": "still running"}),
+                ),
+                _response_item(
+                    {
+                        "type": "function_call",
+                        "call_id": running_poll_id,
+                        "name": "write_stdin",
+                        "arguments": json.dumps({"session_id": 93, "chars": ""}),
+                    },
+                    second=2,
+                ),
+                _direct_running_output(running_poll_id, 93),
+                _response_item(
+                    {
+                        "type": "function_call",
+                        "call_id": terminal_poll_id,
+                        "name": "write_stdin",
+                        "arguments": json.dumps({"session_id": 93, "chars": ""}),
+                    },
+                    second=4,
+                ),
+                _direct_output(terminal_poll_id, 0, second=5),
+            ]
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    processor, session, task = _setup_processor(
+        temp_db,
+        session_manager,
+        sample_project,
+        transcript_path,
+        external_suffix="nested-write-stdin",
+    )
+
+    await processor._process_session(session.id, str(transcript_path), at_eof=True)
+
+    receipts = VerificationReceiptStore(temp_db).list_for_task(
+        sample_project["id"],
+        task.id,
+    )
+    assert len(receipts) == 1
+    assert receipts[0].execution_id == f"{call_id}:0"
+    assert receipts[0].command == command
+    assert receipts[0].exit_code == 0
+    assert receipts[0].normalized_outcome == "success"
+
+
 @pytest.mark.parametrize(
-    "output",
+    ("output", "expects_unknown_receipt"),
     [
         (
-            "Chunk ID: sanitized\n"
-            "Wall time: 0.1234 seconds\n"
-            "Process running with session ID 123\n"
-            "Live output:\n"
+            (
+                "Chunk ID: sanitized\n"
+                "Wall time: 0.1234 seconds\n"
+                "Process running with session ID 123\n"
+                "Live output:\n"
+            ),
+            False,
         ),
-        '{"exit_code": 0, "output": "untrusted summary"}',
-        "human summary without a structured outcome",
+        ('{"exit_code": 0, "output": "untrusted summary"}', True),
+        ("human summary without a structured outcome", True),
     ],
 )
-async def test_direct_exec_command_rejects_nonterminal_or_malformed_output(
+async def test_direct_exec_command_catalogues_nonterminal_or_malformed_output_as_unknown(
     temp_db: Any,
     session_manager: Any,
     sample_project: dict[str, Any],
     tmp_path: Path,
     output: str,
+    expects_unknown_receipt: bool,
 ) -> None:
     call_id = "call_direct_unknown"
     transcript_path = tmp_path / "rollout-direct-unknown.jsonl"
@@ -208,13 +299,18 @@ async def test_direct_exec_command_rejects_nonterminal_or_malformed_output(
 
     await processor._process_session(session.id, str(transcript_path), at_eof=True)
 
-    assert (
-        VerificationReceiptStore(temp_db).list_for_task(
-            sample_project["id"],
-            task.id,
-        )
-        == []
+    receipts = VerificationReceiptStore(temp_db).list_for_task(
+        sample_project["id"],
+        task.id,
     )
+    if not expects_unknown_receipt:
+        assert receipts == []
+        return
+    assert len(receipts) == 1
+    assert receipts[0].execution_id == f"{call_id}:0"
+    assert receipts[0].command == "uv run ruff check src/"
+    assert receipts[0].exit_code is None
+    assert receipts[0].normalized_outcome == "unknown"
     assert processor._byte_offsets[session.id] == transcript_path.stat().st_size
 
 
@@ -438,7 +534,7 @@ async def test_partial_multi_result_failure_replays_after_restart_without_duplic
     assert "Derived Codex transcript verification outcomes" not in caplog.text
 
 
-async def test_malformed_nested_output_commits_progress_without_receipt(
+async def test_malformed_nested_output_commits_progress_with_unknown_receipt(
     temp_db: Any,
     session_manager: Any,
     sample_project: dict[str, Any],
@@ -468,11 +564,13 @@ async def test_malformed_nested_output_commits_progress_without_receipt(
 
     await processor._process_session(session.id, str(transcript_path), at_eof=True)
 
-    assert (
-        VerificationReceiptStore(temp_db).list_for_task(
-            sample_project["id"],
-            task.id,
-        )
-        == []
+    receipts = VerificationReceiptStore(temp_db).list_for_task(
+        sample_project["id"],
+        task.id,
     )
+    assert len(receipts) == 1
+    assert receipts[0].execution_id == "call_malformed:0"
+    assert receipts[0].command == "uv run ruff check src/"
+    assert receipts[0].exit_code is None
+    assert receipts[0].normalized_outcome == "unknown"
     assert processor._byte_offsets[session.id] == transcript_path.stat().st_size

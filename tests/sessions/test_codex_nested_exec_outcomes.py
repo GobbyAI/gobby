@@ -338,6 +338,62 @@ def test_direct_write_stdin_poll_preserves_original_execution_identity() -> None
     ]
 
 
+def test_nested_exec_write_stdin_accepts_native_terminal_envelope() -> None:
+    parser = CodexTranscriptParser()
+    outcomes = _outcomes(
+        parser,
+        [
+            _call(
+                "exec-nested-stdin",
+                "functions.exec",
+                'const r = await tools.exec_command({cmd:"pytest nested"}); text(r);',
+            ),
+            _output(
+                "exec-nested-stdin",
+                json.dumps({"session_id": 92, "output": "still running"}),
+            ),
+            _function_call(
+                "stdin-poll-running",
+                "write_stdin",
+                json.dumps({"session_id": 92, "chars": ""}),
+            ),
+            _raw_output(
+                "stdin-poll-running",
+                (
+                    "Chunk ID: still-running\n"
+                    "Wall time: 30.001 seconds\n"
+                    "Process running with session ID 92\n"
+                    "Original token count: 5\n"
+                    "Output:\n"
+                    "still running\n"
+                ),
+                payload_type="function_call_output",
+            ),
+            _function_call(
+                "stdin-poll-native",
+                "write_stdin",
+                json.dumps({"session_id": 92, "chars": ""}),
+            ),
+            _raw_output(
+                "stdin-poll-native",
+                (
+                    "Chunk ID: sanitized\n"
+                    "Wall time: 30.001 seconds\n"
+                    "Process exited with code 0\n"
+                    "Original token count: 3\n"
+                    "Final output:\n"
+                    "one passed\n"
+                ),
+                payload_type="function_call_output",
+            ),
+        ],
+    )
+
+    assert [(item.identity, item.command, item.result["exit_code"]) for item in outcomes] == [
+        ("exec-nested-stdin:0", "pytest nested", 0)
+    ]
+
+
 @pytest.mark.parametrize(
     ("tool_input", "result_texts"),
     [

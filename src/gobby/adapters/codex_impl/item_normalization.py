@@ -332,6 +332,7 @@ def build_tool_event_data(
                 item_data["_original_tool_name"] = dynamic_name
                 item_data["tool_name"] = "Bash"
                 item_data["tool_input"] = {"command": command}
+                item_data["_direct_exec_native_output"] = item_data.get("contentItems")
                 terminal_result = extract_direct_exec_terminal_result(item_data.get("contentItems"))
                 if terminal_result is not None:
                     item_data["tool_result"] = terminal_result

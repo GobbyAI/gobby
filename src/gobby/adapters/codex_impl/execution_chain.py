@@ -21,6 +21,11 @@ _DIRECT_EXEC_COMPLETION_RE = re.compile(
     r"Wall time: [^\r\n]+\r?\n"
     r"Process exited with code (?P<exit_code>-?\d+)\r?\n"
 )
+_DIRECT_EXEC_RUNNING_RE = re.compile(
+    r"\AChunk ID: [^\r\n]+\r?\n"
+    r"Wall time: [^\r\n]+\r?\n"
+    r"Process running with session ID (?P<session_id>\d+)\r?\n"
+)
 _EXEC_COMMAND_CALL_RE = re.compile(r"\btools\.exec_command\s*\(")
 _EXEC_COMMAND_LITERAL_RE = re.compile(
     r'(?:^|[{,])\s*cmd\s*:\s*("(?:\\.|[^"\\])*")',
@@ -243,6 +248,16 @@ def extract_direct_exec_terminal_result(value: Any) -> dict[str, Any] | None:
     return matches[0] if len(matches) == 1 else None
 
 
+def extract_direct_exec_running_session_id(value: Any) -> str | None:
+    """Read one exact pending session ID from Codex's native exec envelope."""
+    matches: list[str] = []
+    for text in _iter_output_text(value):
+        match = _DIRECT_EXEC_RUNNING_RE.match(text)
+        if match is not None:
+            matches.append(match.group("session_id"))
+    return matches[0] if len(matches) == 1 else None
+
+
 def extract_exec_session_id(data: Mapping[str, Any]) -> str | None:
     """Read one structured PTY session ID from a live wrapper result."""
     output = data.get("tool_output", data.get("tool_response"))
@@ -382,12 +397,19 @@ class ExecutionChainCorrelator:
             self._set_pending(self._cells, yielded_cell, pending)
             return ExecutionResolution("pending", execution=pending)
 
-        results = (
-            [direct]
-            if execution.direct
-            and (direct := extract_direct_exec_terminal_result(output)) is not None
-            else decoded_exec_results(output)
-        )
+        running_session = extract_direct_exec_running_session_id(output)
+        if running_session is not None:
+            pending = replace(execution, session_id=running_session)
+            self._set_pending(self._sessions, running_session, pending)
+            return ExecutionResolution("pending", execution=pending)
+
+        native_terminal = extract_direct_exec_terminal_result(output)
+        if native_terminal is not None:
+            results = [native_terminal]
+        elif execution.direct:
+            results = []
+        else:
+            results = decoded_exec_results(output)
         terminal_results = tuple(result for result in results if _has_structured_outcome(result))
         if terminal_results:
             self._clear_execution(execution)
@@ -433,7 +455,9 @@ class ExecutionChainCorrelator:
         )
         if not self.register_call(call_id, name, arguments):
             return data
-        output = data.get("tool_output", data.get("tool_response"))
+        output = data.pop("_direct_exec_native_output", None)
+        if output is None:
+            output = data.get("tool_output", data.get("tool_response"))
         resolution = self.resolve_output(call_id, output)
         execution = resolution.execution
         if execution is None:
