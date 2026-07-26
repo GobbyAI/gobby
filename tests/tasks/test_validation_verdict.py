@@ -5,12 +5,65 @@ from __future__ import annotations
 import pytest
 
 from gobby.tasks.validation_verdict import (
+    _validation_result_from_data,
     contradiction_rejection_message,
     demote_contradictory_valid,
     filter_failure_evidence,
     format_close_validation_message,
     is_contradictory_valid,
 )
+
+
+def test_single_paraphrased_criterion_is_canonicalized_to_exact_task_criterion() -> None:
+    criterion = "`pytest tests/tasks/test_validation_verdict.py -q` passes."
+    result = _validation_result_from_data(
+        {
+            "status": "valid",
+            "criterion_results": [
+                {
+                    "criterion": "The focused validation-verdict tests pass.",
+                    "status": "satisfied",
+                    "evidence_ids": ["receipt-1"],
+                    "explanation": "The exact focused command passed.",
+                }
+            ],
+        },
+        expected_criteria=[criterion],
+        admissible_evidence_ids=["receipt-1"],
+    )
+
+    assert result.status == "valid"
+    assert result.blocking_reasons == []
+    assert result.criterion_results[0].criterion == criterion
+    assert result.criterion_results[0].status == "satisfied"
+    assert result.criterion_results[0].evidence_ids == ["receipt-1"]
+
+
+def test_paraphrased_criterion_remains_a_gap_when_multiple_criteria_are_expected() -> None:
+    expected_criteria = ["Criterion one.", "Criterion two."]
+    result = _validation_result_from_data(
+        {
+            "status": "valid",
+            "criterion_results": [
+                {
+                    "criterion": "Both expected criteria are satisfied.",
+                    "status": "satisfied",
+                    "evidence_ids": ["receipt-1"],
+                    "explanation": "The evidence covers both requirements.",
+                }
+            ],
+        },
+        expected_criteria=expected_criteria,
+        admissible_evidence_ids=["receipt-1"],
+    )
+
+    assert result.status == "invalid"
+    assert [item.criterion for item in result.criterion_results] == expected_criteria
+    assert [item.status for item in result.criterion_results] == ["gap", "gap"]
+    assert any(
+        "criterion_results[0] does not cite an exact task criterion" in reason
+        for reason in result.blocking_reasons
+    )
 
 
 @pytest.mark.parametrize(

@@ -157,6 +157,7 @@ def _parse_criterion_results(
     by_criterion: dict[str, CriterionResult] = {}
     duplicate_criteria: set[str] = set()
     expected_set = set(expected_criteria)
+    sole_expected = expected_criteria[0] if len(expected_criteria) == 1 and len(raw) == 1 else None
     for index, item in enumerate(raw):
         if not isinstance(item, dict):
             errors.append(f"criterion_results[{index}] is not an object")
@@ -165,6 +166,13 @@ def _parse_criterion_results(
         status = item.get("status")
         explanation = item.get("explanation")
         evidence = item.get("evidence_ids")
+        if (
+            sole_expected is not None
+            and isinstance(criterion, str)
+            and criterion.strip()
+            and criterion not in expected_set
+        ):
+            criterion = sole_expected
         if not isinstance(criterion, str) or criterion not in expected_set:
             errors.append(f"criterion_results[{index}] does not cite an exact task criterion")
             continue
