@@ -345,15 +345,29 @@ pub fn list_collections(config: &QdrantConfig) -> anyhow::Result<Vec<String>> {
     }
 
     let data: Value = resp.json()?;
-    let mut collections = data
+    let collection_values = data
         .get("result")
         .and_then(|result| result.get("collections"))
         .and_then(Value::as_array)
-        .into_iter()
-        .flatten()
-        .filter_map(|collection| collection.get("name").and_then(Value::as_str))
-        .map(str::to_string)
-        .collect::<Vec<_>>();
+        .ok_or_else(|| {
+            anyhow::anyhow!(
+                "Qdrant collection listing response is missing the result.collections array"
+            )
+        })?;
+    let mut collections = collection_values
+        .iter()
+        .map(|collection| {
+            collection
+                .get("name")
+                .and_then(Value::as_str)
+                .map(str::to_string)
+                .ok_or_else(|| {
+                    anyhow::anyhow!(
+                        "Qdrant collection listing response contains an entry without a string name"
+                    )
+                })
+        })
+        .collect::<anyhow::Result<Vec<_>>>()?;
     collections.sort_unstable();
     collections.dedup();
     Ok(collections)

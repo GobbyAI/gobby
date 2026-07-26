@@ -88,29 +88,36 @@ fn execute_with_database_url(
     if let Some(database_url) = database_url()? {
         let mut conn = connect_postgres_index(&database_url, COMMAND)?;
         let search_scope = search_scope_for_resolved(&scope);
-        let result = {
-            let mut store = postgres_store_for_search(&mut conn, &search_scope);
-            session_archive::sync_session_transcript_archives(
-                scope.root(),
-                &mut store,
-                session_archive::SessionArchiveSyncRequest {
-                    archive_dir: &archive_dir,
-                    wiki_dir: &wiki_dir,
-                    limit: options.limit,
-                    raw_mode,
-                    enrich: options.enrich,
-                    fetched_at: &fetched_at,
-                },
-                &mut progress,
-            )?
-        };
+        let mut phase_context = (&mut conn, &search_scope, &mut progress);
+        let result = run_persistent_write_phases(
+            &mut phase_context,
+            |(conn, search_scope, progress)| {
+                let mut store = postgres_store_for_search(conn, search_scope);
+                session_archive::sync_session_transcript_archives(
+                    scope.root(),
+                    &mut store,
+                    session_archive::SessionArchiveSyncRequest {
+                        archive_dir: &archive_dir,
+                        wiki_dir: &wiki_dir,
+                        limit: options.limit,
+                        raw_mode,
+                        enrich: options.enrich,
+                        fetched_at: &fetched_at,
+                    },
+                    progress,
+                )
+            },
+            |result| result.has_changes(),
+            |(conn, search_scope, progress)| {
+                sync_qdrant_vectors(conn, search_scope, COMMAND, progress)?;
+                Ok(())
+            },
+            |(conn, search_scope, progress)| {
+                sync_falkor_graph(conn, search_scope, COMMAND, progress)?;
+                Ok(())
+            },
+        )?;
         let counts = indexed_counts_for_postgres(&mut conn, &search_scope, true)?;
-        // Reconciled deletions change the index just like accepted ingests, so
-        // gate Qdrant/Falkor sync on any change, not only newly accepted pages.
-        if result.has_changes() {
-            sync_qdrant_vectors(&mut conn, &search_scope, COMMAND, &mut progress)?;
-            sync_falkor_graph(&mut conn, &search_scope, COMMAND, &mut progress)?;
-        }
         crate::log::append_sources_ingested(
             scope.root(),
             &output_scope,
@@ -142,6 +149,23 @@ fn execute_with_database_url(
         result.accepted.iter().map(|accepted| &accepted.result),
     )?;
     Ok(render_sync_sessions(output_scope, &result, counts))
+}
+
+pub(super) fn run_persistent_write_phases<C, T>(
+    context: &mut C,
+    postgres_write: impl FnOnce(&mut C) -> Result<T, WikiError>,
+    has_changes: impl FnOnce(&T) -> bool,
+    qdrant_sync: impl FnOnce(&mut C) -> Result<(), WikiError>,
+    falkor_sync: impl FnOnce(&mut C) -> Result<(), WikiError>,
+) -> Result<T, WikiError> {
+    let result = postgres_write(context)?;
+    // Reconciled deletions change the index just like accepted ingests, so
+    // gate Qdrant/Falkor sync on any change, not only newly accepted pages.
+    if has_changes(&result) {
+        qdrant_sync(context)?;
+        falkor_sync(context)?;
+    }
+    Ok(result)
 }
 
 fn archive_dir_or_default(archive_dir: Option<PathBuf>) -> Result<PathBuf, WikiError> {

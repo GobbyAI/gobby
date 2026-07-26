@@ -3,6 +3,7 @@ use std::path::PathBuf;
 use std::rc::Rc;
 
 use super::*;
+use crate::commands::session_sync::run_persistent_write_phases;
 use crate::project_lock::{
     ProjectLockBackend, ProjectRowState, acquire_writer_lock_for_test, run_with_project_lock,
 };
@@ -81,12 +82,31 @@ fn project_sync_sessions_is_fenced_through_every_persistent_write_phase() {
     let backend = RecordingBackend::live();
     let unlocks = backend.unlocks();
     let guard = acquire_writer_lock_for_test(backend, PROJECT_ID).expect("writer admission");
+    let mut completed_phases = Vec::new();
 
     run_with_project_lock(Some(guard), || {
-        assert_eq!(unlocks.get(), 0, "PostgreSQL session write is fenced");
-        assert_eq!(unlocks.get(), 0, "Qdrant session sync is fenced");
-        assert_eq!(unlocks.get(), 0, "Falkor session sync is fenced");
+        run_persistent_write_phases(
+            &mut completed_phases,
+            |phases| {
+                assert_eq!(unlocks.get(), 0, "PostgreSQL session write is fenced");
+                phases.push("postgres");
+                Ok(true)
+            },
+            |has_changes| *has_changes,
+            |phases| {
+                assert_eq!(unlocks.get(), 0, "Qdrant session sync is fenced");
+                phases.push("qdrant");
+                Ok(())
+            },
+            |phases| {
+                assert_eq!(unlocks.get(), 0, "Falkor session sync is fenced");
+                phases.push("falkor");
+                Ok(())
+            },
+        )
+        .expect("persistent sync phases");
     });
+    assert_eq!(completed_phases, ["postgres", "qdrant", "falkor"]);
     assert_eq!(unlocks.get(), 1, "guard releases after all sync phases");
 }
 
