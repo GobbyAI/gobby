@@ -1,10 +1,14 @@
 from __future__ import annotations
 
 from datetime import timedelta
+from typing import Any
 
 import pytest
 
 from gobby.hooks.events import HookEvent, HookEventType, SessionSource
+from gobby.storage.hub.protocol import HubDatabase
+from gobby.storage.projects import LocalProjectManager
+from gobby.storage.session_models import Session
 from gobby.storage.sessions import SessionManager
 from gobby.storage.tasks import LocalTaskManager
 from gobby.storage.verification_receipts import VerificationReceiptStore
@@ -16,12 +20,19 @@ from gobby.workflows.verification_receipt_ingestion import (
 )
 
 
-def _session(session_manager: SessionManager, project_id: str):
+def _session(
+    session_manager: SessionManager,
+    project_id: str,
+    *,
+    suffix: str = "root",
+    parent_session_id: str | None = None,
+) -> Session:
     return session_manager.register(
-        external_id=f"receipt-ingestion-{project_id}",
+        external_id=f"receipt-ingestion-{project_id}-{suffix}",
         machine_id="machine-1",
         source="codex",
         project_id=project_id,
+        parent_session_id=parent_session_id,
     )
 
 
@@ -64,9 +75,9 @@ def _event(
     ],
 )
 def test_native_before_after_pair_is_one_terminal_receipt_for_each_provider(
-    temp_db,
-    session_manager,
-    sample_project,
+    temp_db: HubDatabase,
+    session_manager: SessionManager,
+    sample_project: dict[str, Any],
     source: SessionSource,
 ) -> None:
     session = _session(session_manager, sample_project["id"])
@@ -123,6 +134,106 @@ def test_native_before_after_pair_is_one_terminal_receipt_for_each_provider(
     assert projection["success"] is True
 
 
+def test_explicit_task_attribution_accepts_claim_owner_ancestor(
+    temp_db: HubDatabase,
+    session_manager: SessionManager,
+    sample_project: dict[str, Any],
+) -> None:
+    owner = _session(session_manager, sample_project["id"], suffix="owner")
+    child = _session(
+        session_manager,
+        sample_project["id"],
+        suffix="child",
+        parent_session_id=owner.id,
+    )
+    task = LocalTaskManager(temp_db).create_task(
+        sample_project["id"],
+        "Child receipt task",
+        claimed_by_session_id=owner.id,
+        validation_criteria="A child validation command is attributed to its owner's task.",
+    )
+    event = _event(
+        event_type=HookEventType.AFTER_TOOL,
+        execution_id="child-validation",
+        exit_code=0,
+    )
+    event.task_id = task.id
+
+    result = ingest_verification_receipt(event, child.id, db=temp_db)
+
+    assert result is not None
+    assert result.task_id == task.id
+    assert result.attribution_source == "explicit_task"
+    assert result.normalized_outcome == "success"
+    assert result.receipt.session_id == child.id
+    assert result.receipt.attribution_actor == child.id
+
+
+def test_explicit_task_attribution_rejects_unrelated_session(
+    temp_db: HubDatabase,
+    session_manager: SessionManager,
+    sample_project: dict[str, Any],
+) -> None:
+    owner = _session(session_manager, sample_project["id"], suffix="owner")
+    unrelated = _session(session_manager, sample_project["id"], suffix="unrelated")
+    task = LocalTaskManager(temp_db).create_task(
+        sample_project["id"],
+        "Unrelated receipt task",
+        claimed_by_session_id=owner.id,
+        validation_criteria="An unrelated session cannot attribute validation to this task.",
+    )
+    event = _event(
+        event_type=HookEventType.AFTER_TOOL,
+        execution_id="unrelated-validation",
+        exit_code=0,
+    )
+    event.task_id = task.id
+
+    result = ingest_verification_receipt(event, unrelated.id, db=temp_db)
+
+    assert result is not None
+    assert result.task_id is None
+    assert result.attribution_source == "unassigned"
+    assert result.normalized_outcome == "success"
+
+
+def test_explicit_task_attribution_rejects_cross_project_lineage(
+    temp_db: HubDatabase,
+    session_manager: SessionManager,
+    sample_project: dict[str, Any],
+) -> None:
+    owner = _session(session_manager, sample_project["id"], suffix="cross-project-owner")
+    executor_project = LocalProjectManager(temp_db).create(
+        name="receipt-executor-project",
+        repo_path="/tmp/receipt-executor-project",
+    )
+    child = _session(
+        session_manager,
+        executor_project.id,
+        suffix="cross-project-child",
+        parent_session_id=owner.id,
+    )
+    task = LocalTaskManager(temp_db).create_task(
+        executor_project.id,
+        "Cross-project receipt task",
+        claimed_by_session_id=owner.id,
+        validation_criteria="Cross-project lineage cannot authorize validation attribution.",
+    )
+    event = _event(
+        event_type=HookEventType.AFTER_TOOL,
+        execution_id="cross-project-validation",
+        exit_code=0,
+    )
+    event.task_id = task.id
+
+    result = ingest_verification_receipt(event, child.id, db=temp_db)
+
+    assert result is not None
+    assert result.task_id is None
+    assert result.attribution_source == "unassigned"
+    assert result.normalized_outcome == "success"
+
+
 def test_fallback_identity_is_repeatable_per_event_but_distinguishes_repeated_commands() -> None:
     first = _event(event_type=HookEventType.BEFORE_TOOL)
     second = _event(event_type=HookEventType.BEFORE_TOOL, timestamp_offset=1)
@@ -138,9 +249,9 @@ def test_fallback_identity_is_repeatable_per_event_but_distinguishes_repeated_co
 
 
 def test_terminal_receipt_without_machine_outcome_is_unknown(
-    temp_db,
-    session_manager,
-    sample_project,
+    temp_db: HubDatabase,
+    session_manager: SessionManager,
+    sample_project: dict[str, Any],
 ) -> None:
     session = _session(session_manager, sample_project["id"])
     event = _event(
