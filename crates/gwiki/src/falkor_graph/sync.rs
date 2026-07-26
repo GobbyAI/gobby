@@ -143,12 +143,13 @@ pub(crate) fn list_project_scopes(config: &FalkorConfig) -> Result<Vec<String>, 
 
 fn project_scope_query() -> &'static str {
     "MATCH (node) \
-     WHERE node.scope_kind = 'project' \
-     RETURN DISTINCT node.scope_id AS project_id \
-     UNION \
-     MATCH ()-[rel]->() \
-     WHERE rel.scope_kind = 'project' \
-     RETURN DISTINCT rel.scope_id AS project_id"
+       WHERE (node:WikiDoc OR node:WikiSource OR node:WikiTarget) \
+         AND node.scope_kind = 'project' \
+       RETURN DISTINCT node.scope_id AS project_id \
+       UNION \
+       MATCH ()-[rel:WIKI_LINKS_TO|MENTIONS_TARGET|SUPPORTS]->() \
+       WHERE rel.scope_kind = 'project' \
+       RETURN DISTINCT rel.scope_id AS project_id"
 }
 
 /// Latest-deleted document paths in the scope, mirroring the Qdrant stale-path
@@ -299,7 +300,13 @@ mod tests {
         let query = project_scope_query();
 
         assert!(query.contains("MATCH (node)"));
-        assert!(query.contains("MATCH ()-[rel]->()"));
+        for label in [WIKI_DOC_LABEL, WIKI_SOURCE_LABEL, WIKI_TARGET_LABEL] {
+            assert!(query.contains(&format!("node:{label}")));
+        }
+        for relationship in [WIKI_LINKS_TO_REL, MENTIONS_TARGET_REL, SUPPORTS_REL] {
+            assert!(query.contains(relationship));
+        }
+        assert!(!query.contains("MATCH ()-[rel]->()"));
         assert_eq!(query.matches("scope_kind = 'project'").count(), 2);
         assert!(query.contains("UNION"));
     }

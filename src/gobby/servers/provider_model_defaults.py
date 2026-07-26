@@ -158,7 +158,8 @@ AGY_MODELS: dict[str, dict[str, Any]] = {
 }
 AGY_MODELS = {model_id: _agy_model_entry(entry) for model_id, entry in AGY_MODELS.items()}
 
-# Mirrors `droid exec --help` from Factory Droid 0.106.0 and docs.factory.ai/cli.
+# Model metadata is captured from `droid exec --help`; GLM-5.2 was refreshed against
+# Factory Droid 0.180.0.
 DROID_MODEL_CATALOG: list[dict[str, Any]] = [
     {
         "value": "claude-fable-5",
@@ -300,6 +301,22 @@ DROID_MODEL_CATALOG: list[dict[str, Any]] = [
         "value": "kimi-k2.5",
         "label": "Droid Core (Kimi K2.5)",
         "reasoning": {"supported_efforts": ["off", "high"], "default_effort": "high"},
+    },
+    {
+        "value": "glm-5.2",
+        "label": "GLM-5.2 (Droid Core)",
+        "reasoning": {
+            "supported_efforts": ["off", "high", "max"],
+            "default_effort": "high",
+        },
+    },
+    {
+        "value": "glm-5.2-fast",
+        "label": "GLM-5.2 Fast (Droid Core)",
+        "reasoning": {
+            "supported_efforts": ["off", "high", "max"],
+            "default_effort": "high",
+        },
     },
     {"value": "glm-5.1", "label": "Droid Core (GLM-5.1)"},
     {"value": "glm-5", "label": "Droid Core (GLM-5)"},

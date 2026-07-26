@@ -554,6 +554,26 @@ fn collection_listing_is_sorted_and_deduplicated() {
     assert!(request.starts_with("GET /collections HTTP/1.1"));
 }
 
+#[test]
+fn collection_listing_rejects_missing_collections_field() {
+    let (base_url, request_handle) =
+        spawn_qdrant_response(200, json!({"result": {"status": "ok"}}));
+    let config = QdrantConfig {
+        url: Some(base_url),
+        api_key: None,
+    };
+
+    let error = list_collections(&config).expect_err("malformed collection listing");
+    let request = request_handle.join().expect("request thread").unwrap();
+
+    assert!(
+        error
+            .to_string()
+            .contains("missing the result.collections array")
+    );
+    assert!(request.starts_with("GET /collections HTTP/1.1"));
+}
+
 fn spawn_qdrant_response(status: u16, body: Value) -> (String, RequestHandle) {
     spawn_json_response_with_status(status, body.to_string()).expect("spawn qdrant test server")
 }

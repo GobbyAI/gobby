@@ -15,6 +15,8 @@ from gobby.sync.github_issue_sync import (
 )
 from gobby.tasks.import_criteria import external_issue_validation_criteria
 
+pytestmark = pytest.mark.unit
+
 GitHubSyncFixture = tuple[
     GitHubIssueSyncService,
     MagicMock,

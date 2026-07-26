@@ -19,6 +19,7 @@ from gobby.storage.hub.protocol import HubDatabase
 logger = logging.getLogger(__name__)
 
 DEFAULT_STALENESS_SECONDS = 30.0
+MAX_STALENESS_SECONDS = 30.0
 
 
 class DetectionManifestSyncResult(TypedDict):
@@ -150,8 +151,10 @@ class DetectionManifestRegistry:
         staleness_seconds: float = DEFAULT_STALENESS_SECONDS,
         clock: Callable[[], float] = time.monotonic,
     ) -> None:
-        if not 0.0 <= staleness_seconds <= DEFAULT_STALENESS_SECONDS:
-            raise ValueError("staleness_seconds must be between 0 and 30 seconds")
+        if not 0.0 <= staleness_seconds <= MAX_STALENESS_SECONDS:
+            raise ValueError(
+                f"staleness_seconds must be between 0 and {MAX_STALENESS_SECONDS:g} seconds"
+            )
         self._db = db
         self._staleness_seconds = staleness_seconds
         self._clock = clock
@@ -180,9 +183,7 @@ class DetectionManifestRegistry:
 
     def _refresh_at(self, now: float) -> None:
         rows = self._read_rows()
-        fingerprints = {
-            row.provider_id: sha256(row.content.encode("utf-8")).hexdigest() for row in rows
-        }
+        fingerprints = self._fingerprint_rows(rows)
         if fingerprints == self._fingerprints:
             self._last_check_at = now
             return
@@ -190,9 +191,7 @@ class DetectionManifestRegistry:
 
     def _reload_at(self, now: float) -> None:
         rows = self._read_rows()
-        fingerprints = {
-            row.provider_id: sha256(row.content.encode("utf-8")).hexdigest() for row in rows
-        }
+        fingerprints = self._fingerprint_rows(rows)
         self._install_rows(rows, fingerprints, now)
 
     def _read_rows(self) -> list[_ManifestRow]:
@@ -203,6 +202,10 @@ class DetectionManifestRegistry:
             _ManifestRow(provider_id=str(row["provider_id"]), content=str(row["content"]))
             for row in rows
         ]
+
+    @staticmethod
+    def _fingerprint_rows(rows: list[_ManifestRow]) -> dict[str, str]:
+        return {row.provider_id: sha256(row.content.encode("utf-8")).hexdigest() for row in rows}
 
     def _install_rows(
         self,

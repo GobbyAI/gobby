@@ -8,7 +8,9 @@ import os
 import re
 import shutil
 import subprocess
+from collections.abc import Callable
 from pathlib import Path
+from typing import cast
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -28,8 +30,9 @@ pytestmark = pytest.mark.unit
 class TestProviderModelCatalog:
     def test_constructor_rejects_legacy_config_argument(self, temp_dir: Path) -> None:
         """ProviderModelCatalog no longer accepts dead daemon config input."""
+        constructor = cast(Callable[..., ProviderModelCatalog], ProviderModelCatalog)
         with pytest.raises(TypeError, match="config"):
-            ProviderModelCatalog(config=None, cache_path=temp_dir / "provider-model-catalog.json")
+            constructor(config=None, cache_path=temp_dir / "provider-model-catalog.json")
 
     def test_factory_has_no_inert_daemon_config(self, temp_dir: Path) -> None:
         """Factory and catalog use the same config-free constructor contract."""
@@ -438,7 +441,7 @@ class TestProviderModelCatalog:
         assert status["claude"]["source"] == "failed"
         assert set(status) == {"claude", "codex", "droid", "grok", "qwen", "agy"}
         assert status["droid"]["source"] == "static"
-        assert status["droid"]["model_count"] == 26
+        assert status["droid"]["model_count"] == 28
         assert status["grok"]["source"] == "static"
         assert status["codex"]["source"] == "failed"
 
@@ -781,12 +784,14 @@ class TestProviderModelCatalog:
             "minimax-m2.5",
             "kimi-k2.6",
             "kimi-k2.5",
+            "glm-5.2",
+            "glm-5.2-fast",
             "glm-5.1",
             "glm-5",
             "glm-4.7",
             "gpt-5.1-codex-max",
         }
-        assert len(models) == 26
+        assert len(models) == 28
 
         by_id = {model["value"]: model for model in models}
         assert by_id["claude-fable-5"]["label"] == "Claude Fable 5"
@@ -814,6 +819,11 @@ class TestProviderModelCatalog:
             "kimi-k2.6": 262_144,
             "kimi-k2.5": 262_144,
         }
+        for model_id in ("glm-5.2", "glm-5.2-fast"):
+            assert by_id[model_id]["reasoning"] == {
+                "supported_efforts": ["off", "high", "max"],
+                "default_effort": "high",
+            }
         assert all(model.get("context_length") is not None for model in models)
         for model_id in ("glm-5.1", "glm-5", "glm-4.7"):
             assert by_id[model_id].get("reasoning", {}).get("supported_efforts", []) == []

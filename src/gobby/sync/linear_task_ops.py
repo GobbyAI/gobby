@@ -564,7 +564,7 @@ class LinearTaskOpsMixin(LinearProjectOpsMixin):
         if limit is not None:
             sql += " LIMIT %s"
             params += (limit,)
-        rows = self.task_manager.db.fetchall(sql, params)
+        rows = await asyncio.to_thread(self.task_manager.db.fetchall, sql, params)
 
         created: list[dict[str, Any]] = []
         for row in rows:
