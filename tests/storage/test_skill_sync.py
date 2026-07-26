@@ -206,11 +206,14 @@ class TestSyncBundledSkills:
         assert retained.deleted_at is None
 
     @pytest.mark.unit
-    def test_oserror_loading_one_skill_reports_error_and_continues(
+    @pytest.mark.parametrize("error_type", [OSError, ValueError])
+    def test_invalid_skill_load_reports_error_and_continues_with_valid_sibling(
         self,
         db: HubDatabase,
         tmp_path: Path,
         monkeypatch: pytest.MonkeyPatch,
+        caplog: pytest.LogCaptureFixture,
+        error_type: type[OSError] | type[ValueError],
     ) -> None:
         from gobby.skills.loader import SkillLoader
         from gobby.skills.parser import ParsedSkill
@@ -233,7 +236,7 @@ class TestSyncBundledSkills:
             validate: bool = True,
         ) -> ParsedSkill:
             if path.name == "broken-skill":
-                raise OSError("cannot read skill")
+                raise error_type("cannot load skill")
             return load_skill(loader_self, path, validate=validate)
 
         monkeypatch.setattr(SkillLoader, "load_skill", load_with_error)
@@ -244,6 +247,15 @@ class TestSyncBundledSkills:
         assert result["success"] is False
         assert result["synced"] == 1
         assert any("broken-skill" in error for error in result["errors"])
+        assert LocalSkillManager(db).get_by_name("good-skill") is not None
+        error_record = next(
+            record
+            for record in caplog.records
+            if record.getMessage() == "Failed to load bundled skill"
+        )
+        assert error_record.__dict__["skill_name"] == "broken-skill"
+        assert error_record.__dict__["path"] == str(broken_dir)
+        assert error_record.__dict__["error"] == "cannot load skill"
 
     def test_empty_bundled_skills_directory_does_not_orphan_existing_skills(
         self,
