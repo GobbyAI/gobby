@@ -1,6 +1,8 @@
 import json
+import logging
 import subprocess
 import uuid
+from datetime import UTC, datetime
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -21,6 +23,20 @@ RESOLUTION_PROJECT_ID = "aeaeaeae-0000-4000-8000-000000000002"
 @pytest.fixture
 def github_importer(hub_db: HubDatabase) -> GitHubIssueImporter:
     return GitHubIssueImporter(hub_db)
+
+
+@pytest.fixture
+def github_project_id(hub_db: HubDatabase) -> str:
+    hub_db.execute(
+        "INSERT INTO projects (id, repo_path, name, github_url) VALUES (%s, %s, %s, %s)",
+        (
+            PROJECT_ID,
+            "/tmp/github-import-normalization",
+            "GitHub Import Normalization",
+            "https://github.com/owner/repo",
+        ),
+    )
+    return PROJECT_ID
 
 
 @pytest.mark.integration
@@ -148,6 +164,106 @@ async def test_import_runs_database_upserts_in_worker_thread(
     assert mock_to_thread.await_count == 1
     assert mock_to_thread.await_args is not None
     assert mock_to_thread.await_args.args[0] == github_importer._upsert_issues
+
+
+@pytest.mark.integration
+@pytest.mark.asyncio
+async def test_import_skips_invalid_issue_numbers_with_warning_context(
+    github_importer: GitHubIssueImporter,
+    github_project_id: str,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    invalid_numbers: list[object] = [None, "7", True, 0, -1, 2**31]
+    issues = [
+        {"number": issue_number, "title": f"Invalid {index}"}
+        for index, issue_number in enumerate(invalid_numbers)
+    ]
+    issues.append({"number": 7, "title": "Valid issue"})
+
+    with (
+        caplog.at_level(logging.WARNING, logger="gobby.sync.task_github_import"),
+        patch.object(
+            github_importer,
+            "_fetch_github_issues_mcp",
+            new=AsyncMock(return_value=issues),
+        ),
+    ):
+        result = await github_importer.import_from_github_issues(
+            "https://github.com/owner/repo",
+            project_id=github_project_id,
+        )
+
+    assert result["success"] is True
+    assert result["count"] == 1
+    assert len(result["imported"]) == 1
+    skip_records = [
+        record
+        for record in caplog.records
+        if record.getMessage() == "Skipping GitHub issue with invalid number"
+    ]
+    assert [record.__dict__["github_issue_number"] for record in skip_records] == invalid_numbers
+    assert {record.__dict__["github_repo"] for record in skip_records} == {"owner/repo"}
+
+
+@pytest.mark.integration
+@pytest.mark.asyncio
+async def test_import_normalizes_malformed_labels_and_timestamps(
+    github_importer: GitHubIssueImporter,
+    github_project_id: str,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    issues = [
+        {
+            "number": 8,
+            "title": "Mixed labels",
+            "labels": [
+                {"name": " bug "},
+                "triage",
+                {"name": None},
+                {"color": "ffffff"},
+                42,
+                " ",
+            ],
+            "createdAt": "not-a-timestamp",
+        },
+        {
+            "number": 9,
+            "title": "Malformed fields",
+            "labels": None,
+            "created_at": {"unexpected": "object"},
+        },
+    ]
+    started_at = datetime.now(UTC)
+
+    with (
+        caplog.at_level(logging.WARNING, logger="gobby.sync.task_github_import"),
+        patch.object(
+            github_importer,
+            "_fetch_github_issues_mcp",
+            new=AsyncMock(return_value=issues),
+        ),
+    ):
+        result = await github_importer.import_from_github_issues(
+            "https://github.com/owner/repo",
+            project_id=github_project_id,
+        )
+    finished_at = datetime.now(UTC)
+
+    assert result["success"] is True
+    assert result["count"] == 2
+    imported_tasks = [
+        github_importer.task_manager.get_task(task_id) for task_id in result["imported"]
+    ]
+    assert [task.labels for task in imported_tasks] == [["bug", "triage"], []]
+    assert all(started_at <= task.created_at <= finished_at for task in imported_tasks)
+    timestamp_records = [
+        record
+        for record in caplog.records
+        if record.getMessage()
+        == "Using current time for GitHub issue with invalid creation timestamp"
+    ]
+    assert [record.__dict__["github_issue_number"] for record in timestamp_records] == [8, 9]
+    assert {record.__dict__["github_repo"] for record in timestamp_records} == {"owner/repo"}
 
 
 def test_github_cli_subprocess_timeouts_are_bounded(

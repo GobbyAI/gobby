@@ -8,10 +8,12 @@ import logging
 import re
 import subprocess  # nosec B404
 import uuid
+from collections.abc import Mapping
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any
 
 from gobby.storage.tasks import LocalTaskManager
+from gobby.sync.tasks import _parse_timestamp
 from gobby.tasks.import_criteria import external_issue_validation_criteria
 
 if TYPE_CHECKING:
@@ -20,6 +22,56 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 GITHUB_CLI_TIMEOUT_SECONDS = 180
+_MAX_GITHUB_ISSUE_NUMBER = 2_147_483_647
+
+
+def _normalize_labels(raw_labels: object) -> list[str]:
+    if not isinstance(raw_labels, list):
+        return []
+
+    labels: list[str] = []
+    for raw_label in raw_labels:
+        if isinstance(raw_label, str):
+            name = raw_label
+        elif isinstance(raw_label, Mapping):
+            raw_name = raw_label.get("name")
+            if not isinstance(raw_name, str):
+                continue
+            name = raw_name
+        else:
+            continue
+
+        normalized_name = name.strip()
+        if normalized_name:
+            labels.append(normalized_name)
+    return labels
+
+
+def _normalize_created_at(
+    raw_created_at: object,
+    *,
+    issue_num: int,
+    github_repo: str,
+) -> datetime:
+    if raw_created_at is None or raw_created_at == "":
+        return datetime.now(UTC)
+
+    try:
+        if isinstance(raw_created_at, str):
+            return _parse_timestamp(raw_created_at.strip())
+        if isinstance(raw_created_at, datetime):
+            return _parse_timestamp(raw_created_at)
+    except ValueError:
+        pass
+
+    logger.warning(
+        "Using current time for GitHub issue with invalid creation timestamp",
+        extra={
+            "github_issue_number": issue_num,
+            "github_repo": github_repo,
+        },
+    )
+    return datetime.now(UTC)
 
 
 class GitHubIssueImporter:
@@ -115,7 +167,6 @@ class GitHubIssueImporter:
             _ensure_task_sequence_metadata,
             _github_issue_uuid_seed,
             _legacy_github_issue_uuid_seed,
-            _parse_timestamp,
         )
 
         imported: list[str] = []
@@ -123,7 +174,18 @@ class GitHubIssueImporter:
         with self.db.transaction() as conn:
             for issue in issues:
                 issue_num = issue.get("number")
-                if type(issue_num) is not int:
+                if (
+                    type(issue_num) is not int
+                    or issue_num <= 0
+                    or issue_num > _MAX_GITHUB_ISSUE_NUMBER
+                ):
+                    logger.warning(
+                        "Skipping GitHub issue with invalid number",
+                        extra={
+                            "github_issue_number": issue_num,
+                            "github_repo": github_repo,
+                        },
+                    )
                     continue
                 task_id = str(
                     uuid.uuid5(
@@ -143,10 +205,12 @@ class GitHubIssueImporter:
                 title = issue.get("title", "Untitled Issue")
                 body = issue.get("body") or ""
                 desc = f"{body}\n\nSource: {repo_url}/issues/{issue_num}".strip()
-                labels = [lbl.get("name") for lbl in issue.get("labels", []) if lbl.get("name")]
+                labels = _normalize_labels(issue.get("labels"))
                 labels_json = json.dumps(labels) if labels else None
-                created_at = _parse_timestamp(
-                    issue.get("createdAt") or issue.get("created_at") or datetime.now(UTC)
+                created_at = _normalize_created_at(
+                    issue.get("createdAt") or issue.get("created_at"),
+                    issue_num=issue_num,
+                    github_repo=github_repo,
                 )
                 updated_at = datetime.now(UTC)
                 validation_criteria = external_issue_validation_criteria(
