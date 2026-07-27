@@ -34,6 +34,10 @@ _PROVIDER_AUTH_PATHS: dict[str, tuple[str, ...]] = {
     "grok": ("~/.grok",),
 }
 
+_PROVIDER_AUTH_READ_ONLY_PATHS: dict[str, tuple[str, ...]] = {
+    "claude": ("~/.claude.json", "~/Library/Keychains/login.keychain-db"),
+}
+
 _PROVIDER_CREDENTIAL_ENV: dict[str, tuple[str, ...]] = {
     "claude": ("ANTHROPIC_API_KEY", "ANTHROPIC_AUTH_TOKEN"),
     "codex": ("OPENAI_API_KEY",),
@@ -158,6 +162,7 @@ def provider_read_exceptions(
 ) -> list[str]:
     """Return exact auth/config and executable roots required by one provider."""
     paths = list(_PROVIDER_AUTH_PATHS.get(provider, ()))
+    paths.extend(_PROVIDER_AUTH_READ_ONLY_PATHS.get(provider, ()))
     paths.extend(("~/.gitconfig", "~/.config/git"))
 
     search_path = env.get("PATH")

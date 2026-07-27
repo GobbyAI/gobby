@@ -140,6 +140,33 @@ def test_provider_state_roots_are_writable(
         assert uv_root not in filesystem["allowWrite"]
 
 
+def test_claude_account_auth_files_are_read_only_sandbox_exceptions(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    home = tmp_path / "home"
+    workspace = tmp_path / "workspace"
+    home.mkdir()
+    workspace.mkdir()
+    monkeypatch.setenv("HOME", str(home))
+    monkeypatch.setenv("GOBBY_HOME", str(home / ".gobby"))
+
+    paths = compute_sandbox_paths(
+        SandboxConfig(enabled=True, backend="srt", allow_network=False),
+        str(workspace),
+        provider="claude",
+        env={"PATH": ""},
+    )
+    filesystem = render_srt_settings(paths)["filesystem"]
+    claude_config = str((home / ".claude.json").resolve())
+    login_keychain = str((home / "Library" / "Keychains" / "login.keychain-db").resolve())
+
+    assert claude_config in filesystem["allowRead"]
+    assert login_keychain in filesystem["allowRead"]
+    assert claude_config not in filesystem["allowWrite"]
+    assert login_keychain not in filesystem["allowWrite"]
+
+
 def test_compute_paths_masks_credentials_only_at_provider_api_hosts(tmp_path: Path) -> None:
     workspace = tmp_path / "workspace"
     workspace.mkdir()

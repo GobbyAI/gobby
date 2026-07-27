@@ -1082,7 +1082,7 @@ class TestSpawnAgentPreRegistration:
             patch(
                 "gobby.mcp_proxy.tools.spawn_agent._implementation._check_tmux_session_alive",
                 new_callable=AsyncMock,
-                return_value=True,
+                return_value=(True, None),
             ) as mock_health,
             patch(
                 "gobby.mcp_proxy.tools.spawn_agent._health.asyncio.create_task",
@@ -1158,7 +1158,7 @@ class TestSpawnAgentPreRegistration:
             patch(
                 "gobby.mcp_proxy.tools.spawn_agent._implementation._check_tmux_session_alive",
                 new_callable=AsyncMock,
-                return_value=True,
+                return_value=(True, None),
             ),
             patch(
                 "gobby.mcp_proxy.tools.spawn_agent._health.asyncio.create_task",

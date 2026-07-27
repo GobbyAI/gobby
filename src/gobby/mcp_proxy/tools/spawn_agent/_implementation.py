@@ -750,7 +750,7 @@ async def spawn_agent_impl(
     )
     runtime_persisted = False
     if tmux_spawn and tmux_session_name:
-        alive = await _check_tmux_session_alive(
+        alive, pane_output = await _check_tmux_session_alive(
             tmux_session_name,
             socket_name=tmux_socket_name,
             socket_path=tmux_socket_path,
@@ -759,6 +759,8 @@ async def spawn_agent_impl(
             spawn_result.success = False
             spawn_result.status = "failed"
             spawn_result.error = f"tmux session '{tmux_session_name}' failed live-pane verification"
+            if pane_output:
+                spawn_result.error = f"{spawn_result.error}\nPane output:\n{pane_output}"
             tmux_spawn = False
 
     if tmux_spawn and tmux_session_name:
