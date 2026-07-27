@@ -6,6 +6,76 @@ Unresolved original findings: **58**
 
 Original finding IDs: 221-224, 228, 231, 263-266, 288, 329, 372, 391-395, 397-401, 423-424, 452-457, 490, 554, 592-595, 600, 613-615, 684-695, 712-716
 
+## Disposition ledger
+
+Reviewed against implementation commit `919289a3e`. No findings were invalidated.
+Findings #264, #266, and #392 were already satisfied in the packet baseline and
+were explicitly verified; every other finding was resolved in the implementation
+commit. The focused validation evidence is the 497-test touched-Python run, the
+four-test attention reconciliation run plus frontend production build, Ruff, mypy,
+the generated-binding check, and the test-quality/test-types ratchets.
+
+| Finding | Disposition | Resolution evidence |
+| --- | --- | --- |
+| #221 | Resolved | Added the integration marker in `test_lifecycle_monitor_registry.py`. |
+| #222 | Resolved | Added the unit marker in `test_provider_rotation_registry.py`. |
+| #223 | Resolved | Renamed the provider-routing stub to `StaticRegistry`. |
+| #224 | Resolved | Added the unit marker in `test_provider_routing.py`. |
+| #228 | Resolved | Asserted the exact pane-monitor attention transition arguments. |
+| #231 | Resolved | Renamed the embedding-switch operation value to `run_id`. |
+| #263 | Resolved | Added cursor-ordered attention metadata clearing and invoked it from both resolution paths, with regression coverage. |
+| #264 | Already satisfied | `IdleCheckHandler` already received `WatchdogReaderRegistry`, resolved readers by provider, and used their pane probe and `read()` contract. |
+| #265 | Resolved | Added bounded per-transcript Codex resume state, incremental scans, and reset handling for truncation, replacement, and invalid guards. |
+| #266 | Already satisfied | The registry invariant already used an import-time conditional that raises `RuntimeError`, not `assert`. |
+| #288 | Resolved | Added periodic attention roster reconciliation so passive TTL expiry clears stale badges, with fake-timer UI coverage. |
+| #329 | Resolved | Bounded unknown-context warning deduplication and added a deterministic reset hook. |
+| #372 | Resolved | Covered non-primitive context-window values and fixed safe coercion without `UnboundLocalError`. |
+| #391 | Resolved | Promoted `find_transcript_on_disk` to the public API and migrated external callers. |
+| #392 | Already satisfied | Both reasoning-idle and diagnostic fallback reads already used `_resolve_transcript_path`; the call sites were verified unchanged. |
+| #393 | Resolved | Revalidated stored and cached transcript mtimes against session updates, rediscovered stale paths, and handled stat races. |
+| #394 | Resolved | Added and reused the shared `MISSING_TRANSCRIPT_PATH` sentinel. |
+| #395 | Resolved | Removed the unreachable Claude `user_input` assistant-payload mapping. |
+| #397 | Resolved | Kept Claude tool results diagnostic-only for turn starts and prevented later model output from leaving an older completion conclusive. |
+| #398 | Resolved | Marked Droid `session_end` as completed; documented that ordinary assistant records lack finality and remain diagnostic. |
+| #399 | Resolved | Documented both supported persisted `todo_state` shapes beside validation. |
+| #400 | Resolved | Preserved Qwen `tool_result` as the event type and registered that structural event type. |
+| #401 | Resolved | Narrowed the watchdog reader registry annotation to non-optional readers. |
+| #423 | Resolved | Added negative reasoning-interrupt coverage for Claude, Droid, Grok, and Qwen. |
+| #424 | Resolved | Rendered captured logger calls before asserting diagnostic content. |
+| #452 | Resolved | Added a dedicated executor fallback for asynchronous terminal-delivery offload with `Future` result/error propagation. |
+| #453 | Resolved | Preserved completion registry state when notification fails and cleaned it only after successful notification. |
+| #454 | Resolved | Passed explicit run IDs through capture storage delivery and handled closed admission explicitly. |
+| #455 | Resolved | Extracted shared completion-subscriber persistence while preserving strict and best-effort ordering. |
+| #456 | Resolved | Replaced broad completion/storage annotations with `CompletionEventRegistry` and `HubDatabase` contracts. |
+| #457 | Resolved | Copied and normalized completion payloads, always retained `run_id`, and omitted null errors. |
+| #490 | Resolved | Added an autouse terminal-delivery state/admission reset fixture. |
+| #554 | Resolved | Blocked all three coordinator-owned plan tools in the review step and asserted the YAML configuration. |
+| #592 | Resolved | Applied provider-specific endpoint base/token environment variables for Droid, Grok, and Qwen resumes. |
+| #593 | Resolved | Routed Responses tool-chat endpoint lookup through `resolve_generation_endpoint`. |
+| #594 | Resolved | Wrapped the complete serial endpoint activation probe chain in one total timeout. |
+| #595 | Resolved | Guarded Codex vision client shutdown with `is_connected`. |
+| #600 | Resolved | Replaced the preamble priority literal with `_PREAMBLE_PRIORITY`. |
+| #613 | Resolved | Asserted the obsolete verification-evidence tool is absent while preserving worktree verification coverage. |
+| #614 | Resolved | Added the required unit marker to the Responses resume test. |
+| #615 | Resolved | Replaced the obsolete vision `local` provider lookup with the generic `endpoint` key assertion. |
+| #684 | Resolved | Enforced the Codex turn cap for tool-free raw responses and scheduled the active-turn interrupt. |
+| #685 | Resolved | Preserved startup failures while guarding Codex handler and client teardown. |
+| #686 | Resolved | Reused the shared tool-result error predicate for Codex, including `{success:false}`. |
+| #687 | Resolved | Added `ToolChatRequest.effective_limits` and migrated duplicate fallbacks. |
+| #688 | Resolved | Returned JSON-RPC `-32601` for every unknown Droid server request. |
+| #689 | Resolved | Applied one Droid loop deadline to request futures and notification waits with pending cleanup. |
+| #690 | Resolved | Ensured Droid MCP server teardown runs even when client teardown fails. |
+| #691 | Resolved | Centralized typed, bracketed, and JSON tool-result error classification across adapters and MCP. |
+| #692 | Resolved | Closed the saved MCP socket in a `finally` path even when runner cleanup fails. |
+| #693 | Resolved | Exported and reused the shared limit stop-reason set. |
+| #694 | Resolved | Exported the Grok and Qwen spawn adapters alongside Codex and Droid. |
+| #695 | Resolved | Made Responses app-server `CODEX_HOME` endpoint-specific and updated activation/vision callers and tests. |
+| #712 | Resolved | Made generated and runtime `tool_timeout_seconds` float-compatible and removed test casts. |
+| #713 | Resolved | Replaced fixed readiness sleeps with deterministic event synchronization. |
+| #714 | Resolved | Compared equivalent `Path` values for tool-chat working-directory isolation. |
+| #715 | Resolved | Added an end-to-end multi-candidate test proving one shared request deadline. |
+| #716 | Resolved | Removed the stale truncation split assertion while retaining marker and UTF-8 byte-cap checks. |
+
 ## Finding #221
 
 In @tests/agents/test_lifecycle_monitor_registry.py around lines 1 - 13, Mark the tests in tests/agents/test_lifecycle_monitor_registry.py as integration tests by adding the project’s established pytest integration marker at module scope, alongside the imports or module docstring. Keep the existing test behavior and temp_db-backed setup unchanged.
