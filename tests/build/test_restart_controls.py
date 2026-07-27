@@ -14,7 +14,7 @@ def test_restart_manifest_replacement_rolls_back_when_reinitialize_fails(
     temp_db,
     sample_project: dict[str, object],
 ) -> None:
-    from gobby.build.controls import _reset_restart_stage_manifests_from_options
+    from gobby.build.restart_controls import _reset_restart_stage_manifests_from_options
     from gobby.build.service import BuildOptions
     from gobby.storage.tasks import LocalTaskManager
     from gobby.storage.tasks._stage_states import StageStatesManager

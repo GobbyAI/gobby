@@ -183,7 +183,7 @@ def test_no_task_flag_exposed() -> None:
 
 
 def test_resume_cleanup_preserves_expired_mutex_for_active_run(temp_db) -> None:
-    from gobby.build.controls import _clear_stale_dispatch_mutexes
+    from gobby.build.control_runtime import _clear_stale_dispatch_mutexes
     from gobby.storage.agents import LocalAgentRunManager
     from gobby.storage.projects import LocalProjectManager
     from gobby.storage.sessions import SYSTEM_SESSION_ID
@@ -305,18 +305,18 @@ class TestBuildStopWakesWaiter:
     ) -> None:
         from unittest.mock import AsyncMock
 
-        from gobby.build import controls as controls_module
+        from gobby.build import control_runtime as runtime_module
 
         harness = self._harness(ism_persisted=ism_persisted)
         removals = self._record_removals(monkeypatch)
         monkeypatch.setattr(
-            controls_module, "LocalAgentRunManager", lambda _db: harness.run_manager
+            runtime_module, "LocalAgentRunManager", lambda _db: harness.run_manager
         )
         monkeypatch.setattr(
-            controls_module, "kill_agent", AsyncMock(return_value={"success": True})
+            runtime_module, "kill_agent", AsyncMock(return_value={"success": True})
         )
 
-        await controls_module._cancel_active_agents(
+        await runtime_module._cancel_active_agents(
             harness.db, [harness.run], services=harness.services
         )
 
@@ -334,21 +334,21 @@ class TestBuildStopWakesWaiter:
     ) -> None:
         from unittest.mock import AsyncMock
 
-        from gobby.build import controls as controls_module
+        from gobby.build import control_runtime as runtime_module
 
         harness = self._harness(ism_persisted=True)
         removals = self._record_removals(monkeypatch)
         harness.run_manager.cancel.return_value = None
         monkeypatch.setattr(
-            controls_module, "LocalAgentRunManager", lambda _db: harness.run_manager
+            runtime_module, "LocalAgentRunManager", lambda _db: harness.run_manager
         )
         monkeypatch.setattr(
-            controls_module,
+            runtime_module,
             "kill_agent",
             AsyncMock(side_effect=RuntimeError("kill exploded after capture commit")),
         )
 
-        await controls_module._cancel_active_agents(
+        await runtime_module._cancel_active_agents(
             harness.db, [harness.run], services=harness.services
         )
 
@@ -362,19 +362,19 @@ class TestBuildStopWakesWaiter:
         from types import SimpleNamespace
         from unittest.mock import AsyncMock
 
-        from gobby.build import controls as controls_module
+        from gobby.build import control_runtime as runtime_module
 
         harness = self._harness(ism_persisted=True)
         removals = self._record_removals(monkeypatch)
         monkeypatch.setattr(
-            controls_module, "LocalAgentRunManager", lambda _db: harness.run_manager
+            runtime_module, "LocalAgentRunManager", lambda _db: harness.run_manager
         )
         monkeypatch.setattr(
-            controls_module, "kill_agent", AsyncMock(return_value={"success": True})
+            runtime_module, "kill_agent", AsyncMock(return_value={"success": True})
         )
         services = SimpleNamespace(agent_lifecycle_monitor=None, completion_registry=None)
 
-        await controls_module._cancel_active_agents(harness.db, [harness.run], services=services)
+        await runtime_module._cancel_active_agents(harness.db, [harness.run], services=services)
 
         assert harness.wake.calls == []
         assert removals == []

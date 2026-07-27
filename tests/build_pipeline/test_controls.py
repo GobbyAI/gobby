@@ -92,9 +92,12 @@ async def test_stop_disables_leaf_automation_preserves_unattended_and_cancels_ac
     run_manager.start(run.id)
 
     with (
-        patch("gobby.build.controls.kill_agent", new=AsyncMock(return_value={"success": True})),
         patch(
-            "gobby.build.controls._deliver_existing_terminal_run_unshielded",
+            "gobby.build.control_runtime.kill_agent",
+            new=AsyncMock(return_value={"success": True}),
+        ),
+        patch(
+            "gobby.build.control_runtime._deliver_existing_terminal_run_unshielded",
             new=AsyncMock(return_value=True),
         ) as deliver_terminal_run,
     ):
@@ -176,7 +179,10 @@ async def test_stop_clears_runtime_claim_and_resets_current_stage(
         run_id=run.id,
     )
 
-    with patch("gobby.build.controls.kill_agent", new=AsyncMock(return_value={"success": True})):
+    with patch(
+        "gobby.build.control_runtime.kill_agent",
+        new=AsyncMock(return_value={"success": True}),
+    ):
         result = await build_stop_target(
             f"#{task.seq_num}",
             db=temp_db,
@@ -640,7 +646,7 @@ def test_successful_merge_cleanup_deletes_inactive_worktree(
 def test_successful_merge_cleanup_preserves_explicit_reused_worktree(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    from gobby.build import controls
+    from gobby.build import control_artifacts, control_runtime, controls
     from gobby.build.control_artifacts import BuildArtifactSummary
 
     task = SimpleNamespace(id="task-1", project_id="project-1")
@@ -655,16 +661,16 @@ def test_successful_merge_cleanup_preserves_explicit_reused_worktree(
     deleted: list[BuildArtifactSummary] = []
 
     monkeypatch.setattr(controls, "LocalTaskManager", lambda _db: task_manager)
-    monkeypatch.setattr(controls, "_affected_tasks", lambda *_args: [task])
-    monkeypatch.setattr(controls, "collect_clean_artifacts", lambda *_args: [artifact])
-    monkeypatch.setattr(controls, "_active_agents", lambda *_args: [])
+    monkeypatch.setattr(control_runtime, "_affected_tasks", lambda *_args: [task])
+    monkeypatch.setattr(control_artifacts, "collect_clean_artifacts", lambda *_args: [artifact])
+    monkeypatch.setattr(control_runtime, "_active_agents", lambda *_args: [])
     monkeypatch.setattr(
-        controls,
+        control_artifacts,
         "classify_dirty_descendant_worktree_artifacts",
         lambda _db, artifacts, **_kwargs: artifacts,
     )
     monkeypatch.setattr(
-        controls,
+        control_artifacts,
         "delete_artifacts",
         lambda _db, _project_id, artifacts, **_kwargs: deleted.extend(artifacts),
     )
@@ -1117,7 +1123,10 @@ async def test_clean_force_resets_runtime_state_without_artifacts(
         run_id=run.id,
     )
 
-    with patch("gobby.build.controls.kill_agent", new=AsyncMock(return_value={"success": True})):
+    with patch(
+        "gobby.build.control_runtime.kill_agent",
+        new=AsyncMock(return_value={"success": True}),
+    ):
         result = await build_clean_target(
             f"#{task.seq_num}",
             db=temp_db,

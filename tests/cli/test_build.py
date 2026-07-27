@@ -716,7 +716,7 @@ def test_build_resume_cli_kicks_dispatcher() -> None:
 
 
 def test_build_stop_cli_accepts_task_ref() -> None:
-    from gobby.build.controls import BuildTargetControlResult, BuildTaskSummary
+    from gobby.build.results import BuildTargetControlResult, BuildTaskSummary
     from gobby.cli import cli
 
     control_result = BuildTargetControlResult(
@@ -944,7 +944,7 @@ def test_build_clean_cli_requires_task_ref() -> None:
 
 
 def test_build_clean_cli_forwards_dirty_worktree_override() -> None:
-    from gobby.build.controls import BuildTargetControlResult, BuildTaskSummary
+    from gobby.build.results import BuildTargetControlResult, BuildTaskSummary
     from gobby.cli import cli
 
     control_result = BuildTargetControlResult(
@@ -980,7 +980,7 @@ def test_build_clean_cli_forwards_dirty_worktree_override() -> None:
 
 
 def test_build_restart_cli_forwards_dry_run_force_and_confirmation() -> None:
-    from gobby.build.controls import BuildTargetControlResult, BuildTaskSummary
+    from gobby.build.results import BuildTargetControlResult, BuildTaskSummary
     from gobby.cli import cli
 
     control_result = BuildTargetControlResult(
@@ -1019,7 +1019,7 @@ def test_build_restart_cli_forwards_dry_run_force_and_confirmation() -> None:
 
 
 def test_build_restart_cli_forwards_build_shaping_options() -> None:
-    from gobby.build.controls import BuildTargetControlResult, BuildTaskSummary
+    from gobby.build.results import BuildTargetControlResult, BuildTaskSummary
     from gobby.cli import cli
 
     control_result = BuildTargetControlResult(

@@ -306,7 +306,7 @@ def test_post_api_build_resume_kicks_dispatcher() -> None:
 
 def test_post_api_build_resume_task_ref_returns_success_envelope() -> None:
     from gobby.build import DispatcherTickSummary
-    from gobby.build.controls import BuildTargetControlResult, BuildTaskSummary
+    from gobby.build.results import BuildTargetControlResult, BuildTaskSummary
 
     target_result = BuildTargetControlResult(
         action="resume",
@@ -344,7 +344,7 @@ def test_post_api_build_resume_task_ref_returns_success_envelope() -> None:
 
 def test_post_api_build_resume_task_ref_returns_no_op_envelope() -> None:
     from gobby.build import DispatcherTickSummary
-    from gobby.build.controls import BuildTargetControlResult, BuildTaskSummary
+    from gobby.build.results import BuildTargetControlResult, BuildTaskSummary
 
     target_result = BuildTargetControlResult(
         action="resume",
@@ -400,7 +400,7 @@ def test_post_api_build_resume_returns_error_envelope() -> None:
 
 
 def test_post_api_build_stop_accepts_task_ref() -> None:
-    from gobby.build.controls import BuildTargetControlResult, BuildTaskSummary
+    from gobby.build.results import BuildTargetControlResult, BuildTaskSummary
 
     target_result = BuildTargetControlResult(
         action="stop",
@@ -439,7 +439,7 @@ def test_post_api_build_clean_requires_ref() -> None:
 
 
 def test_post_api_build_clean_returns_success_envelope() -> None:
-    from gobby.build.controls import BuildTargetControlResult, BuildTaskSummary
+    from gobby.build.results import BuildTargetControlResult, BuildTaskSummary
 
     target_result = BuildTargetControlResult(
         action="clean",
@@ -467,7 +467,7 @@ def test_post_api_build_clean_returns_success_envelope() -> None:
 
 @pytest.mark.asyncio
 async def test_post_api_build_status_responds_while_clean_is_blocked() -> None:
-    from gobby.build.controls import BuildTargetControlResult, BuildTaskSummary
+    from gobby.build.results import BuildTargetControlResult, BuildTaskSummary
     from gobby.servers.routes.build import create_build_router
 
     clean_started = threading.Event()
@@ -551,7 +551,7 @@ async def test_blocking_build_call_delegates_to_thread(
 
 
 def test_post_api_build_restart_forwards_destructive_flags() -> None:
-    from gobby.build.controls import BuildTargetControlResult, BuildTaskSummary
+    from gobby.build.results import BuildTargetControlResult, BuildTaskSummary
 
     target_result = BuildTargetControlResult(
         action="restart",
@@ -613,7 +613,7 @@ def test_post_api_build_control_rejects_unknown_fields() -> None:
 
 
 def test_post_api_build_restart_omitted_options_do_not_create_opts() -> None:
-    from gobby.build.controls import BuildTargetControlResult, BuildTaskSummary
+    from gobby.build.results import BuildTargetControlResult, BuildTaskSummary
 
     target_result = BuildTargetControlResult(
         action="restart",
@@ -638,7 +638,7 @@ def test_post_api_build_restart_omitted_options_do_not_create_opts() -> None:
 
 
 def test_post_api_build_restart_explicit_default_options_create_opts() -> None:
-    from gobby.build.controls import BuildTargetControlResult, BuildTaskSummary
+    from gobby.build.results import BuildTargetControlResult, BuildTaskSummary
 
     target_result = BuildTargetControlResult(
         action="restart",
@@ -677,7 +677,7 @@ def test_post_api_build_restart_explicit_default_options_create_opts() -> None:
 
 
 def test_post_api_build_restart_empty_pr_creates_opts() -> None:
-    from gobby.build.controls import BuildTargetControlResult, BuildTaskSummary
+    from gobby.build.results import BuildTargetControlResult, BuildTaskSummary
 
     target_result = BuildTargetControlResult(
         action="restart",

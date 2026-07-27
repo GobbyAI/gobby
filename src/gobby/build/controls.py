@@ -3,107 +3,20 @@
 from __future__ import annotations
 
 import logging
-from dataclasses import asdict, dataclass, field, replace
-from datetime import UTC, datetime, timedelta
-from typing import Any, Literal, cast
 
-from gobby.agents.agent_cleanup import (
-    _deliver_existing_terminal_run_unshielded,
-    run_terminal_delivery_offload,
-    shielded_terminal_delivery,
-)
-from gobby.agents.kill import kill_agent
+import gobby.build.control_artifacts as control_artifacts
+import gobby.build.control_runtime as control_runtime
+import gobby.build.restart_controls as restart_controls
+import gobby.build.results as build_results
 from gobby.build.branch_cleanup import delete_orphan_build_branches
-from gobby.build.control_artifacts import (
-    BuildArtifactSummary,
-    classify_dirty_descendant_worktree_artifacts,
-    collect_clean_artifacts,
-    defer_active_agent_artifacts,
-    defer_preserved_worktree_artifacts,
-    delete_artifacts,
-    get_project_path,
-)
-from gobby.build.dispatch_tick import (
-    DispatcherTickSummary,
-)
-from gobby.build.dispatch_tick import (
-    kick_dispatcher_tick as _kick_dispatcher_tick,
-)
+from gobby.build.dispatch_tick import kick_dispatcher_tick as _kick_dispatcher_tick
 from gobby.build.options import BuildOptions
 from gobby.build.project_controls import build_resume as _resume_project_automation
 from gobby.build.project_state import is_project_automation_enabled
-from gobby.build.stage_manifest import (
-    InputKind,
-    _validate_skip_stages,
-    resolve_stage_manifest_specs,
-)
-from gobby.build.validation import _validate_no_merge, _validate_planning_seed, _validate_retry_caps
-from gobby.config.build import Isolation
-from gobby.storage.agents import ACTIVE_AGENT_RUN_STATUSES, AgentRun, LocalAgentRunManager
-from gobby.storage.build_history import best_effort_record_event, best_effort_record_run
-from gobby.storage.daemon_resume_keys import REAP_REQUESTED_AT_KEY
 from gobby.storage.hub.protocol import HubDatabase
-from gobby.storage.tasks import LocalTaskManager, Task
-from gobby.storage.tasks._dispatch_mutex import TaskDispatchMutexManager
-from gobby.storage.tasks._stage_manifest import derive_child_manifest_specs
-from gobby.storage.tasks._transitions import reset_current_non_ready_stage
-from gobby.utils.datetime import parse_stored_datetime
+from gobby.storage.tasks import LocalTaskManager
 
 logger = logging.getLogger(__name__)
-
-BuildTargetAction = Literal["stop", "resume", "clean", "restart"]
-ORPHAN_NO_RUN_MUTEX_GRACE_SECONDS = 30
-
-
-@dataclass(frozen=True)
-class BuildTaskSummary:
-    """Task touched by a task-scoped build control."""
-
-    task_id: str
-    ref: str
-    title: str
-    task_type: str
-
-
-@dataclass(frozen=True)
-class BuildAgentSummary:
-    """Active agent affected by a task-scoped build control."""
-
-    run_id: str
-    task_id: str | None
-    status: str
-    child_session_id: str | None
-    worktree_id: str | None
-    clone_id: str | None
-
-
-@dataclass
-class BuildTargetControlResult:
-    """Result returned by task-scoped build lifecycle controls."""
-
-    action: BuildTargetAction
-    project_id: str
-    root_task_id: str
-    affected_tasks: list[BuildTaskSummary]
-    agents: list[BuildAgentSummary] = field(default_factory=list)
-    artifacts: list[BuildArtifactSummary] = field(default_factory=list)
-    dry_run: bool = False
-    force: bool = False
-    automation_updated: int = 0
-    mutexes_cleared: int = 0
-    claims_released: int = 0
-    parked_runs_released: int = 0
-    stages_reset: int = 0
-    branches_deleted: int = 0
-    escalations_cleared: int = 0
-    dispatch_failures_reset: int = 0
-    dispatcher_tick: DispatcherTickSummary | None = None
-    manifest: list[dict[str, Any]] = field(default_factory=list)
-    blocked_reasons: list[str] = field(default_factory=list)
-
-    def to_dict(self) -> dict[str, Any]:
-        """Return a JSON-serializable representation."""
-        return asdict(self)
 
 
 async def build_stop_target(
@@ -112,39 +25,47 @@ async def build_stop_target(
     db: HubDatabase,
     project_id: str,
     services: object | None = None,
-) -> BuildTargetControlResult:
+) -> build_results.BuildTargetControlResult:
     """Stop automation for a single task or epic subtree."""
     task_manager = LocalTaskManager(db)
-    root = _resolve_task_ref(task_manager, input_ref, project_id)
-    tasks = _affected_tasks(task_manager, root)
+    root = control_runtime._resolve_task_ref(task_manager, input_ref, project_id)
+    tasks = control_runtime._affected_tasks(task_manager, root)
     task_ids = [task.id for task in tasks]
-    agents = _active_agents(db, task_ids)
-    parked = _parked_daemon_stop_runs(db, task_ids)
+    agents = control_runtime._active_agents(db, task_ids)
+    parked = control_runtime._parked_daemon_stop_runs(db, task_ids)
 
     updated = 0
     for task in tasks:
         task_manager.update_task(task.id, allow_automation=False)
         updated += 1
 
-    await _cancel_active_agents(db, agents, services=services)
-    parked_runs_released = await _give_up_parked_daemon_stop_runs(db, parked, services=services)
-    mutexes_cleared = _clear_dispatch_mutexes(db, task_ids)
-    claims_released = _release_stale_agent_claims(task_manager, db, tasks)
-    stages_reset = _reset_stoppable_stages(db, tasks, reason="build_stop")
+    await control_runtime._cancel_active_agents(db, agents, services=services)
+    parked_runs_released = await control_runtime._give_up_parked_daemon_stop_runs(
+        db,
+        parked,
+        services=services,
+    )
+    mutexes_cleared = control_runtime._clear_dispatch_mutexes(db, task_ids)
+    claims_released = control_runtime._release_stale_agent_claims(task_manager, db, tasks)
+    stages_reset = control_runtime._reset_stoppable_stages(
+        db,
+        tasks,
+        reason="build_stop",
+    )
 
-    result = BuildTargetControlResult(
+    result = build_results.BuildTargetControlResult(
         action="stop",
         project_id=project_id,
         root_task_id=root.id,
-        affected_tasks=_task_summaries(tasks),
-        agents=_agent_summaries(agents),
+        affected_tasks=control_runtime._task_summaries(tasks),
+        agents=control_runtime._agent_summaries(agents),
         automation_updated=updated,
         mutexes_cleared=mutexes_cleared,
         claims_released=claims_released,
         parked_runs_released=parked_runs_released,
         stages_reset=stages_reset,
     )
-    _record_target_history(db, result, input_ref=input_ref)
+    build_results._record_target_history(db, result, input_ref=input_ref)
     return result
 
 
@@ -154,11 +75,11 @@ async def build_resume_target(
     db: HubDatabase,
     project_id: str,
     services: object | None = None,
-) -> BuildTargetControlResult:
+) -> build_results.BuildTargetControlResult:
     """Resume automation for a single task or epic subtree."""
     task_manager = LocalTaskManager(db)
-    root = _resolve_task_ref(task_manager, input_ref, project_id)
-    tasks = _affected_tasks(task_manager, root)
+    root = control_runtime._resolve_task_ref(task_manager, input_ref, project_id)
+    tasks = control_runtime._affected_tasks(task_manager, root)
     task_ids = [task.id for task in tasks]
 
     updated = 0
@@ -166,23 +87,23 @@ async def build_resume_target(
         task_manager.update_task(task.id, allow_automation=True)
         updated += 1
 
-    mutexes_cleared = _clear_stale_dispatch_mutexes(db, task_ids)
-    claims_released = _release_stale_agent_claims(task_manager, db, tasks)
+    mutexes_cleared = control_runtime._clear_stale_dispatch_mutexes(db, task_ids)
+    claims_released = control_runtime._release_stale_agent_claims(task_manager, db, tasks)
     if not is_project_automation_enabled(db, project_id):
         _resume_project_automation(db=db, project_id=project_id)
     tick = await _kick_dispatcher_tick(db, project_id, services=services)
 
-    result = BuildTargetControlResult(
+    result = build_results.BuildTargetControlResult(
         action="resume",
         project_id=project_id,
         root_task_id=root.id,
-        affected_tasks=_task_summaries(tasks),
+        affected_tasks=control_runtime._task_summaries(tasks),
         automation_updated=updated,
         mutexes_cleared=mutexes_cleared,
         claims_released=claims_released,
         dispatcher_tick=tick,
     )
-    _record_target_history(db, result, input_ref=input_ref)
+    build_results._record_target_history(db, result, input_ref=input_ref)
     return result
 
 
@@ -196,51 +117,51 @@ async def build_clean_target(
     delete_dirty_worktrees: bool = False,
     yes: bool = False,
     services: object | None = None,
-) -> BuildTargetControlResult:
+) -> build_results.BuildTargetControlResult:
     """Delete failed build artifacts for a single task or epic subtree."""
     if not dry_run and not yes:
         raise ValueError("clean is destructive; pass yes=True to confirm")
 
     task_manager = LocalTaskManager(db)
-    root = _resolve_task_ref(task_manager, input_ref, project_id)
-    tasks = _affected_tasks(task_manager, root)
+    root = control_runtime._resolve_task_ref(task_manager, input_ref, project_id)
+    tasks = control_runtime._affected_tasks(task_manager, root)
     task_ids = [task.id for task in tasks]
-    agents = _active_agents(db, task_ids)
-    artifacts = collect_clean_artifacts(db, project_id, tasks)
-    blocked = _clean_blockers(tasks, agents, force=force)
+    agents = control_runtime._active_agents(db, task_ids)
+    artifacts = control_artifacts.collect_clean_artifacts(db, project_id, tasks)
+    blocked = control_runtime._clean_blockers(tasks, agents, force=force)
 
     if dry_run:
-        result = BuildTargetControlResult(
+        result = build_results.BuildTargetControlResult(
             action="clean",
             project_id=project_id,
             root_task_id=root.id,
-            affected_tasks=_task_summaries(tasks),
-            agents=_agent_summaries(agents),
+            affected_tasks=control_runtime._task_summaries(tasks),
+            agents=control_runtime._agent_summaries(agents),
             artifacts=artifacts,
             dry_run=True,
             force=force,
             blocked_reasons=blocked,
         )
-        _record_target_history(db, result, input_ref=input_ref)
+        build_results._record_target_history(db, result, input_ref=input_ref)
         return result
 
     if blocked:
         raise ValueError("; ".join(blocked))
 
     if force and agents:
-        await _cancel_active_agents(db, agents, services=services)
+        await control_runtime._cancel_active_agents(db, agents, services=services)
 
     if delete_dirty_worktrees:
         artifacts_to_delete = artifacts
     else:
-        artifacts_to_delete = classify_dirty_descendant_worktree_artifacts(
+        artifacts_to_delete = control_artifacts.classify_dirty_descendant_worktree_artifacts(
             db,
             artifacts,
             root=root,
             tasks=tasks,
-            project_path=get_project_path(db, project_id),
+            project_path=control_artifacts.get_project_path(db, project_id),
         )
-    delete_artifacts(db, project_id, artifacts_to_delete, force=force)
+    control_artifacts.delete_artifacts(db, project_id, artifacts_to_delete, force=force)
     delete_errors = [artifact.error for artifact in artifacts if artifact.error]
     if any(artifact.deferred for artifact in artifacts):
         branches_deleted = 0
@@ -255,16 +176,16 @@ async def build_clean_target(
     if cleanup_errors:
         raise ValueError("; ".join(cleanup_errors))
 
-    mutexes_cleared = _clear_dispatch_mutexes(db, task_ids)
-    claims_released = _release_stale_agent_claims(task_manager, db, tasks)
-    stages_reset = _reset_current_stages(db, tasks, reason="build_clean")
+    mutexes_cleared = control_runtime._clear_dispatch_mutexes(db, task_ids)
+    claims_released = control_runtime._release_stale_agent_claims(task_manager, db, tasks)
+    stages_reset = control_runtime._reset_current_stages(db, tasks, reason="build_clean")
 
-    result = BuildTargetControlResult(
+    result = build_results.BuildTargetControlResult(
         action="clean",
         project_id=project_id,
         root_task_id=root.id,
-        affected_tasks=_task_summaries(tasks),
-        agents=_agent_summaries(agents),
+        affected_tasks=control_runtime._task_summaries(tasks),
+        agents=control_runtime._agent_summaries(agents),
         artifacts=artifacts,
         force=force,
         mutexes_cleared=mutexes_cleared,
@@ -272,7 +193,7 @@ async def build_clean_target(
         stages_reset=stages_reset,
         branches_deleted=branches_deleted,
     )
-    _record_target_history(db, result, input_ref=input_ref)
+    build_results._record_target_history(db, result, input_ref=input_ref)
     return result
 
 
@@ -282,32 +203,35 @@ def cleanup_successful_merge_artifacts(
     *,
     project_id: str | None = None,
     preserve_worktree_ids: set[str] | None = None,
-) -> list[BuildArtifactSummary]:
+) -> list[control_artifacts.BuildArtifactSummary]:
     """Best-effort cleanup for build artifacts after a merge stage succeeds."""
     task_manager = LocalTaskManager(db)
     root = task_manager.get_task(task_id, project_id=project_id)
     cleanup_project_id = project_id or root.project_id
-    tasks = _affected_tasks(task_manager, root)
-    artifacts = collect_clean_artifacts(db, cleanup_project_id, tasks)
+    tasks = control_runtime._affected_tasks(task_manager, root)
+    artifacts = control_artifacts.collect_clean_artifacts(db, cleanup_project_id, tasks)
     if not artifacts:
         return []
 
-    active_agents = _active_agents(db, [task.id for task in tasks])
-    artifacts_to_delete = defer_active_agent_artifacts(artifacts, active_agents)
+    active_agents = control_runtime._active_agents(db, [task.id for task in tasks])
+    artifacts_to_delete = control_artifacts.defer_active_agent_artifacts(
+        artifacts,
+        active_agents,
+    )
     if preserve_worktree_ids:
-        artifacts_to_delete = defer_preserved_worktree_artifacts(
+        artifacts_to_delete = control_artifacts.defer_preserved_worktree_artifacts(
             artifacts_to_delete,
             preserve_worktree_ids,
         )
-    artifacts_to_delete = classify_dirty_descendant_worktree_artifacts(
+    artifacts_to_delete = control_artifacts.classify_dirty_descendant_worktree_artifacts(
         db,
         artifacts_to_delete,
         root=root,
         tasks=tasks,
-        project_path=get_project_path(db, cleanup_project_id),
+        project_path=control_artifacts.get_project_path(db, cleanup_project_id),
     )
 
-    delete_artifacts(
+    control_artifacts.delete_artifacts(
         db,
         cleanup_project_id,
         artifacts_to_delete,
@@ -358,7 +282,7 @@ async def build_restart_target(
     no_resume: bool = False,
     opts: BuildOptions | None = None,
     services: object | None = None,
-) -> BuildTargetControlResult:
+) -> build_results.BuildTargetControlResult:
     """Stop, clean, and resume automation for a task or epic subtree."""
     if not dry_run and not yes:
         raise ValueError("restart is destructive; pass yes=True to confirm")
@@ -374,7 +298,7 @@ async def build_restart_target(
             services=services,
         )
         preview.action = "restart"
-        _record_target_history(db, preview, input_ref=input_ref)
+        build_results._record_target_history(db, preview, input_ref=input_ref)
         return preview
 
     stop_result = await build_stop_target(
@@ -390,24 +314,37 @@ async def build_restart_target(
         services=services,
     )
     task_manager = LocalTaskManager(db)
-    root = _resolve_task_ref(task_manager, input_ref, project_id)
-    tasks = _affected_tasks(task_manager, root)
-    restart_opts = _effective_restart_options(root, opts)
+    root = control_runtime._resolve_task_ref(task_manager, input_ref, project_id)
+    tasks = control_runtime._affected_tasks(task_manager, root)
+    restart_opts = restart_controls._effective_restart_options(root, opts)
     if restart_opts is not None:
-        _validate_restart_options(restart_opts)
+        restart_controls._validate_restart_options(restart_opts)
     if opts is not None and restart_opts is not None:
-        _persist_restart_artifacts(task_manager, root, restart_opts)
-        _apply_restart_task_controls(
+        restart_controls._persist_restart_artifacts(task_manager, root, restart_opts)
+        restart_controls._apply_restart_task_controls(
             task_manager,
             root,
             tasks,
             restart_opts,
             allow_automation=not no_resume,
         )
-    dispatch_failures_reset = _reset_restart_dispatch_failures(task_manager, tasks)
-    escalations_cleared = _clear_restartable_escalations(task_manager, tasks)
-    restart_stage_resets = _reset_restart_stage_manifests(db, root, tasks, restart_opts)
-    restart_manifest = _root_manifest_payload(task_manager, root.id) if restart_opts else []
+    dispatch_failures_reset = restart_controls._reset_restart_dispatch_failures(
+        task_manager,
+        tasks,
+    )
+    escalations_cleared = restart_controls._clear_restartable_escalations(
+        task_manager,
+        tasks,
+    )
+    restart_stage_resets = restart_controls._reset_restart_stage_manifests(
+        db,
+        root,
+        tasks,
+        restart_opts,
+    )
+    restart_manifest = (
+        restart_controls._root_manifest_payload(task_manager, root.id) if restart_opts else []
+    )
     if no_resume:
         clean_result.action = "restart"
         clean_result.automation_updated = stop_result.automation_updated
@@ -419,7 +356,7 @@ async def build_restart_target(
         clean_result.dispatch_failures_reset = dispatch_failures_reset
         clean_result.dispatcher_tick = None
         clean_result.manifest = restart_manifest
-        _record_target_history(db, clean_result, input_ref=input_ref)
+        build_results._record_target_history(db, clean_result, input_ref=input_ref)
         return clean_result
     resume_result = await build_resume_target(
         input_ref,
@@ -437,595 +374,5 @@ async def build_restart_target(
     clean_result.dispatch_failures_reset = dispatch_failures_reset
     clean_result.dispatcher_tick = resume_result.dispatcher_tick
     clean_result.manifest = restart_manifest
-    _record_target_history(db, clean_result, input_ref=input_ref)
+    build_results._record_target_history(db, clean_result, input_ref=input_ref)
     return clean_result
-
-
-def _resolve_task_ref(
-    task_manager: LocalTaskManager,
-    input_ref: str,
-    project_id: str,
-) -> Task:
-    try:
-        resolved_id = task_manager.resolve_task_reference(input_ref, project_id)
-        return task_manager.get_task(resolved_id, project_id=project_id)
-    except ValueError:
-        raise
-    except Exception as exc:
-        raise ValueError(f"task ref not found: {input_ref}") from exc
-
-
-def _affected_tasks(task_manager: LocalTaskManager, root: Task) -> list[Task]:
-    if root.task_type != "epic":
-        return [root]
-
-    rows = task_manager.db.fetchall(
-        """
-        WITH RECURSIVE subtree(id, depth, path) AS (
-            SELECT id, 0, ARRAY[id]
-            FROM tasks
-            WHERE id = %s
-            UNION ALL
-            SELECT child.id, parent.depth + 1, parent.path || child.id
-            FROM tasks child
-            JOIN subtree parent ON child.parent_task_id = parent.id
-            WHERE parent.depth < 100
-              AND NOT child.id = ANY(parent.path)
-        )
-        SELECT id
-        FROM subtree
-        """,
-        (root.id,),
-    )
-    return [task_manager.get_task(row["id"]) for row in rows]
-
-
-def _task_summaries(tasks: list[Task]) -> list[BuildTaskSummary]:
-    return [
-        BuildTaskSummary(
-            task_id=task.id,
-            ref=f"#{task.seq_num}" if task.seq_num else task.id,
-            title=task.title,
-            task_type=task.task_type,
-        )
-        for task in tasks
-    ]
-
-
-def _active_agents(db: HubDatabase, task_ids: list[str]) -> list[AgentRun]:
-    return LocalAgentRunManager(db).list_active(task_ids=task_ids, limit=1000)
-
-
-def _agent_summaries(agents: list[AgentRun]) -> list[BuildAgentSummary]:
-    return [
-        BuildAgentSummary(
-            run_id=run.id,
-            task_id=run.task_id,
-            status=run.status,
-            child_session_id=run.child_session_id,
-            worktree_id=run.worktree_id,
-            clone_id=run.clone_id,
-        )
-        for run in agents
-    ]
-
-
-async def _cancel_active_agents(
-    db: HubDatabase,
-    agents: list[AgentRun],
-    *,
-    services: object | None,
-) -> None:
-    lifecycle_monitor = getattr(services, "agent_lifecycle_monitor", None)
-    completion_registry = getattr(services, "completion_registry", None)
-    run_manager = LocalAgentRunManager(db)
-
-    for run in agents:
-
-        async def cancel_and_deliver(run: AgentRun = run) -> None:
-            try:
-                try:
-                    result = await kill_agent(
-                        run,
-                        db,
-                        signal_name="TERM",
-                        timeout=5.0,
-                        close_terminal=True,
-                    )
-                    if not result.get("success"):
-                        logger.info(
-                            "agent_kill_noop",
-                            extra={"run_id": run.id, "result": result},
-                        )
-                except Exception as exc:
-                    logger.warning("Failed to kill active build agent %s: %s", run.id, exc)
-
-                if lifecycle_monitor is not None:
-                    transitioned = await lifecycle_monitor.terminalize_cancelled_run(
-                        run.id,
-                        terminal_reason="user_cancelled",
-                    )
-                else:
-                    transitioned = (
-                        await run_terminal_delivery_offload(
-                            run_manager.cancel,
-                            run.id,
-                            terminal_reason="user_cancelled",
-                        )
-                        is not None
-                    )
-                if not transitioned:
-                    logger.debug("Agent %s was already terminal while stopping build", run.id)
-            finally:
-                await _deliver_existing_terminal_run_unshielded(
-                    db=db,
-                    agent_run_manager=run_manager,
-                    completion_registry=completion_registry,
-                    run_id=run.id,
-                    run_db=run_terminal_delivery_offload,
-                )
-
-        await shielded_terminal_delivery(run.id, cancel_and_deliver)
-
-
-def _parked_daemon_stop_runs(db: HubDatabase, task_ids: list[str]) -> list[AgentRun]:
-    """List unconsumed parked daemon-stop originals for the given tasks."""
-    if not task_ids:
-        return []
-    return LocalAgentRunManager(db).list_daemon_stop_orphans(
-        max_age_hours=None,
-        task_ids=task_ids,
-        limit=1000,
-    )
-
-
-async def _give_up_parked_daemon_stop_runs(
-    db: HubDatabase,
-    parked: list[AgentRun],
-    *,
-    services: object | None,
-) -> int:
-    """Give up parked daemon-stop runs now instead of waiting out the 24h window.
-
-    Each run is flagged with a durable reap request so the lifecycle orphan
-    reaper selects it regardless of age, then the reaper itself performs the
-    give-up (fenced claim, task recovery, full cleanup, session expiry, and
-    exactly-once terminal delivery to waiting parents). When no lifecycle
-    monitor is available the flag persists and the daemon's next lifecycle
-    tick reaps the runs.
-    """
-    if not parked:
-        return 0
-    run_manager = LocalAgentRunManager(db)
-    requested_at = datetime.now(UTC).isoformat()
-    for run in parked:
-        run_manager.merge_resume_metadata(run.id, {REAP_REQUESTED_AT_KEY: requested_at})
-    lifecycle_monitor = getattr(services, "agent_lifecycle_monitor", None)
-    if lifecycle_monitor is None:
-        logger.info(
-            "No lifecycle monitor available; %d parked daemon-stop run(s) flagged "
-            "for reap on the next lifecycle tick",
-            len(parked),
-        )
-        return len(parked)
-    try:
-        await lifecycle_monitor.reap_daemon_stop_orphans()
-    except Exception as exc:
-        logger.warning(
-            "Immediate reap of parked daemon-stop runs failed; "
-            "the lifecycle reaper will retry flagged runs: %s",
-            exc,
-        )
-    return len(parked)
-
-
-def _clear_stale_dispatch_mutexes(
-    db: HubDatabase,
-    task_ids: list[str],
-    *,
-    now: datetime | None = None,
-) -> int:
-    mutexes = TaskDispatchMutexManager(db)
-    resolved_now = now or datetime.now(UTC)
-    cleared = 0
-    active_run_ids = {run.id for run in LocalAgentRunManager(db).list_active(limit=1000)}
-    for task_id in task_ids:
-        mutex = mutexes.get_mutex(task_id)
-        if mutex is None:
-            continue
-        if mutex.run_id:
-            if mutex.run_id not in active_run_ids and mutexes.force_release(task_id):
-                cleared += 1
-            continue
-        if _is_orphan_no_run_dispatch_mutex(mutex, now=resolved_now):
-            if mutexes.force_release(task_id):
-                cleared += 1
-    return cleared
-
-
-def _is_orphan_no_run_dispatch_mutex(mutex: Any, *, now: datetime) -> bool:
-    if getattr(mutex, "lease_holder", None) != "dispatcher":
-        return False
-    if getattr(mutex, "run_id", None):
-        return False
-
-    lease_until = _parse_mutex_timestamp(getattr(mutex, "lease_until", None))
-    if lease_until is not None:
-        return lease_until < now
-
-    updated_at = _parse_mutex_timestamp(getattr(mutex, "updated_at", None))
-    if updated_at is None:
-        return False
-    return now - updated_at >= timedelta(seconds=ORPHAN_NO_RUN_MUTEX_GRACE_SECONDS)
-
-
-def _parse_mutex_timestamp(value: datetime | str | None) -> datetime | None:
-    try:
-        return parse_stored_datetime(value)
-    except ValueError:
-        return None
-
-
-def _clear_dispatch_mutexes(db: HubDatabase, task_ids: list[str]) -> int:
-    mutexes = TaskDispatchMutexManager(db)
-    cleared = int(mutexes.sweep_expired())
-    for task_id in task_ids:
-        if mutexes.force_release(task_id):
-            cleared += 1
-    return cleared
-
-
-def _release_stale_agent_claims(
-    task_manager: LocalTaskManager,
-    db: HubDatabase,
-    tasks: list[Task],
-) -> int:
-    active_session_ids = {
-        session_id
-        for run in LocalAgentRunManager(db).list_active(limit=1000)
-        for session_id in (run.child_session_id, run.claimed_session_id, run.parent_session_id)
-        if session_id
-    }
-    released = 0
-    for task in tasks:
-        claim = task.claimed_by_session_id
-        if not claim or claim in active_session_ids:
-            continue
-        if not _has_terminal_agent_claim(db, task.id, claim):
-            continue
-        task_manager.release_task_claim(task.id)
-        released += 1
-    return released
-
-
-def _has_terminal_agent_claim(db: HubDatabase, task_id: str, session_id: str) -> bool:
-    rows = db.fetchall(
-        """
-        SELECT status
-        FROM agent_runs
-        WHERE task_id = %s
-          AND (
-            child_session_id = %s
-            OR claimed_session_id = %s
-            OR parent_session_id = %s
-          )
-        """,
-        (task_id, session_id, session_id, session_id),
-    )
-    return any(row["status"] not in ACTIVE_AGENT_RUN_STATUSES for row in rows)
-
-
-def _reset_current_stages(db: HubDatabase, tasks: list[Task], *, reason: str) -> int:
-    reset = 0
-    for task in tasks:
-        if reset_current_non_ready_stage(db, task.id, reason=reason, by_actor="build"):
-            reset += 1
-    return reset
-
-
-def _reset_stoppable_stages(db: HubDatabase, tasks: list[Task], *, reason: str) -> int:
-    reset = 0
-    task_manager = LocalTaskManager(db)
-    for task in tasks:
-        row = task_manager.stage_states.current_stage(task.id)
-        if row and row.state in {"in_progress", "needs_review"}:
-            if reset_current_non_ready_stage(db, task.id, reason=reason, by_actor="build"):
-                reset += 1
-    return reset
-
-
-def _clear_restartable_escalations(task_manager: LocalTaskManager, tasks: list[Task]) -> int:
-    cleared = 0
-    for task in tasks:
-        if task.closed_at is not None or not task.is_escalated:
-            continue
-        if not _is_build_owned_escalation(task.escalation_reason):
-            continue
-        task_manager.release_task_claim(
-            task.id,
-            escalated_at=None,
-            escalation_reason=None,
-            dispatch_failure_count=0,
-            validation_fail_count=0,
-        )
-        cleared += 1
-    return cleared
-
-
-def _reset_restart_dispatch_failures(task_manager: LocalTaskManager, tasks: list[Task]) -> int:
-    reset = 0
-    for task in tasks:
-        if task.closed_at is not None or int(task.dispatch_failure_count or 0) <= 0:
-            continue
-        task_manager.update_task(task.id, dispatch_failure_count=0)
-        reset += 1
-    return reset
-
-
-def _is_build_owned_escalation(reason: str | None) -> bool:
-    if not reason:
-        return False
-    if reason.endswith(
-        (
-            "_max_work_attempts",
-            "_max_review_rounds",
-            "_work_failed:max",
-            "_review_failed:max",
-        )
-    ):
-        return True
-    return reason.startswith(
-        (
-            "dispatch_spawn_max_attempts:",
-            "stage_pipeline_dispatch:",
-            "isolation_missing_target_branch",
-        )
-    )
-
-
-def _effective_restart_options(root: Task, opts: BuildOptions | None) -> BuildOptions | None:
-    if opts is None:
-        return BuildOptions(
-            isolation=_task_isolation(root),
-            isolation_explicit=False,
-            skip_stages=["pr"],
-            skip_stages_explicit=False,
-        )
-    if opts.isolation_explicit:
-        return opts
-    return replace(opts, isolation=_task_isolation(root))
-
-
-def _task_isolation(task: Task) -> Isolation:
-    isolation = getattr(task.isolation, "value", task.isolation)
-    if isolation in {"none", "worktree", "clone"}:
-        return cast(Isolation, isolation)
-    return "worktree"
-
-
-def _validate_restart_options(opts: BuildOptions) -> None:
-    _validate_no_merge(opts)
-    _validate_retry_caps(opts)
-    _validate_planning_seed(opts)
-
-
-def _persist_restart_artifacts(
-    task_manager: LocalTaskManager,
-    root: Task,
-    opts: BuildOptions,
-) -> None:
-    if opts.target_branch is None:
-        return
-    task_manager.artifacts.set_artifact(root.id, "target_branch", opts.target_branch)
-
-
-def _apply_restart_task_controls(
-    task_manager: LocalTaskManager,
-    root: Task,
-    tasks: list[Task],
-    opts: BuildOptions,
-    *,
-    allow_automation: bool,
-) -> None:
-    for task in tasks:
-        if task.closed_at is not None:
-            continue
-        if task.id == root.id and opts.assigned_agent is not None:
-            task_manager.update_task(
-                task.id,
-                allow_automation=allow_automation,
-                unattended=opts.unattended,
-                isolation=opts.isolation,
-                assigned_agent=opts.assigned_agent,
-            )
-        else:
-            task_manager.update_task(
-                task.id,
-                allow_automation=allow_automation,
-                unattended=opts.unattended,
-                isolation=opts.isolation,
-            )
-
-
-def _reset_restart_stage_manifests(
-    db: HubDatabase,
-    root: Task,
-    tasks: list[Task],
-    opts: BuildOptions | None,
-) -> int:
-    if opts is None:
-        return 0
-    return _reset_restart_stage_manifests_from_options(db, root, tasks, opts)
-
-
-def _reset_restart_stage_manifests_from_options(
-    db: HubDatabase,
-    root: Task,
-    tasks: list[Task],
-    opts: BuildOptions,
-) -> int:
-    task_manager = LocalTaskManager(db)
-    skip_stages = _validate_skip_stages(opts.skip_stages)
-    input_kind = _restart_root_input_kind(task_manager, root)
-    root_specs = resolve_stage_manifest_specs(task_manager, root, input_kind, opts, skip_stages)
-    reset = 0
-    for task in tasks:
-        if task.closed_at is not None:
-            continue
-        specs = (
-            root_specs
-            if task.id == root.id
-            else derive_child_manifest_specs(
-                root_specs,
-                include_epic_qa=task.task_type == "epic",
-                include_merge_stage=opts.isolation in {"worktree", "clone"} and not opts.no_merge,
-            )
-        )
-        if not specs:
-            continue
-        rows = task_manager.stage_states.list_for_task(task.id)
-        current_names = [row.stage_name for row in rows]
-        expected_existing_shape = [
-            (row.stage_name, row.position, row.max_work_attempts, row.max_review_rounds)
-            for row in rows
-        ]
-        replaced = task_manager.stage_states.replace_manifest(
-            task.id,
-            specs,
-            expected_existing_shape=expected_existing_shape,
-            from_state="manifest:" + ",".join(current_names),
-            reason="build_restart",
-            by_session_id=None,
-            by_actor="build",
-        )
-        if replaced is None:
-            raise RuntimeError(f"stage manifest changed while restarting task #{task.seq_num}")
-        reset += 1
-    if input_kind == "plan_file":
-        _seed_restart_plan_file_stage_state(task_manager, root.id, opts)
-    return reset
-
-
-def _root_manifest_payload(task_manager: LocalTaskManager, task_id: str) -> list[dict[str, Any]]:
-    return [
-        {
-            "stage_name": row.stage_name,
-            "position": row.position,
-            "max_work_attempts": row.max_work_attempts,
-            "max_review_rounds": row.max_review_rounds,
-        }
-        for row in task_manager.stage_states.list_for_task(task_id)
-    ]
-
-
-def _restart_root_input_kind(task_manager: LocalTaskManager, root: Task) -> InputKind:
-    artifacts = task_manager.artifacts.get_artifacts(root.id)
-    if artifacts.plan_file_path:
-        return "plan_file"
-    if root.task_type != "epic":
-        return "leaf"
-    if _has_children(task_manager.db, root.id):
-        return "expanded_epic"
-    return "epic"
-
-
-def _seed_restart_plan_file_stage_state(
-    task_manager: LocalTaskManager,
-    task_id: str,
-    opts: BuildOptions,
-) -> None:
-    if opts.planning_seed_state != "needs_review":
-        return
-    if not task_manager.stage_states.get(task_id, "planning"):
-        raise ValueError("planning_seed_state=needs_review requires a planning stage")
-    now = datetime.now(UTC).isoformat()
-    with task_manager.db.transaction() as conn:
-        conn.execute(
-            """
-            UPDATE task_stage_states
-               SET state = 'needs_review',
-                   review_round_count = %s,
-                   entered_at = COALESCE(entered_at, %s),
-                   updated_at = %s,
-                   notes = %s
-             WHERE task_id = %s
-               AND stage_name = 'planning'
-            """,
-            (
-                opts.completed_plan_review_rounds,
-                now,
-                now,
-                "Seeded plan review state from build restart input.",
-                task_id,
-            ),
-        )
-    task_manager.artifacts.set_artifacts_atomic(
-        task_id,
-        plan_enhancement_rounds=opts.plan_enhancement_rounds,
-    )
-
-
-def _has_children(db: HubDatabase, task_id: str) -> bool:
-    return bool(db.fetchone("SELECT 1 FROM tasks WHERE parent_task_id = %s LIMIT 1", (task_id,)))
-
-
-def _clean_blockers(
-    tasks: list[Task],
-    agents: list[AgentRun],
-    *,
-    force: bool,
-) -> list[str]:
-    blockers: list[str] = []
-    if not force:
-        active_refs = [f"#{task.seq_num}" for task in tasks if task.allow_automation]
-        if active_refs:
-            blockers.append(
-                "automation must be stopped before clean; active tasks: " + ", ".join(active_refs)
-            )
-        if agents:
-            blockers.append(
-                "live agents must be stopped before clean; active runs: "
-                + ", ".join(run.id for run in agents)
-            )
-    return blockers
-
-
-def _record_target_history(
-    db: HubDatabase,
-    result: BuildTargetControlResult,
-    *,
-    input_ref: str,
-) -> None:
-    summary = result.to_dict()
-    run = best_effort_record_run(
-        db,
-        project_id=result.project_id,
-        root_task_id=result.root_task_id,
-        input_ref=input_ref,
-        action=result.action,
-        status="completed",
-        actor="build",
-        summary=summary,
-    )
-    best_effort_record_event(
-        db,
-        run_id=run.id if run is not None else None,
-        project_id=result.project_id,
-        root_task_id=result.root_task_id,
-        event_type="task_build_control",
-        action=result.action,
-        message=f"gobby build {result.action}",
-        payload=summary,
-    )
-
-
-__all__ = [
-    "BuildAgentSummary",
-    "BuildArtifactSummary",
-    "BuildTargetControlResult",
-    "BuildTaskSummary",
-    "build_clean_target",
-    "build_restart_target",
-    "build_resume_target",
-    "build_stop_target",
-]

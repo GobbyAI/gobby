@@ -1,10 +1,7 @@
 """Build service package."""
 
+from gobby.build.control_artifacts import BuildArtifactSummary
 from gobby.build.controls import (
-    BuildAgentSummary,
-    BuildArtifactSummary,
-    BuildTargetControlResult,
-    BuildTaskSummary,
     build_clean_target,
     build_restart_target,
     build_resume_target,
@@ -12,6 +9,12 @@ from gobby.build.controls import (
 )
 from gobby.build.observability import explain_dispatch, get_build_status, list_build_history
 from gobby.build.options import BuildIsolationResolution, resolve_build_isolation
+from gobby.build.results import (
+    BuildAgentSummary,
+    BuildTargetAction,
+    BuildTargetControlResult,
+    BuildTaskSummary,
+)
 from gobby.build.service import (
     BuildControlResult,
     BuildLifecycleEvent,
@@ -32,6 +35,7 @@ __all__ = [
     "BuildLifecycleEvent",
     "BuildOptions",
     "BuildResult",
+    "BuildTargetAction",
     "BuildTargetControlResult",
     "BuildTaskSummary",
     "DispatcherTickSummary",
