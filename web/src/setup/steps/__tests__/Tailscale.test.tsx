@@ -50,7 +50,7 @@ describe("Tailscale", () => {
     mocks.spawnSync.mockReturnValue({ status: 0 });
   });
 
-  it("configures tailscale serve without changing the daemon bind host", () => {
+  it("serves the daemon HTTP port without changing the daemon bind host", () => {
     const state = {
       ports: { http: 60887, ws: 60888, ui: 60889 },
       completed_step_id: null,
@@ -66,7 +66,7 @@ describe("Tailscale", () => {
 
     expect(mocks.spawnSync).toHaveBeenCalledWith(
       "tailscale",
-      ["serve", "--bg", "60889"],
+      ["serve", "--bg", "60887"],
       { encoding: "utf-8", timeout: 30000 },
     );
     expect(mocks.setBindHost).not.toHaveBeenCalled();

@@ -34,7 +34,7 @@ export function Tailscale({ state, setState, onNext }: StepProps): React.ReactEl
     try {
       const r = spawnSync(
         "tailscale",
-        ["serve", "--bg", String(state.ports.ui)],
+        ["serve", "--bg", String(state.ports.http)],
         { encoding: "utf-8", timeout: 30000 },
       );
       if (r.status === 0) {
@@ -50,7 +50,7 @@ export function Tailscale({ state, setState, onNext }: StepProps): React.ReactEl
       setResult(`failed: ${error instanceof Error ? error.message : "command could not run"}`);
     }
     setPhase("done");
-  }, [finish, phase, state.ports.ui]);
+  }, [finish, phase, state.ports.http]);
 
   if (phase === "prompt") {
     return (
