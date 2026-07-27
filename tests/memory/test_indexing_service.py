@@ -14,6 +14,7 @@ from gobby.projects.fenced_vector_store import ProjectFencedVectorStore
 from gobby.projects.write_fence import ProjectWriteFence
 from gobby.storage.memories import Memory
 from gobby.storage.memories_scope import ALL_MEMORIES, MemoryScope, memory_matches_scope
+from tests.projects.fence_helpers import wait_for_exclusive_claim
 
 pytestmark = pytest.mark.unit
 
@@ -106,6 +107,25 @@ class _MemoryStorage:
         self.reindexed_content[memory_id] = content
         self.stale_ids.discard(memory_id)
         return True
+
+    def reconcile_vector_snapshot_page(
+        self,
+        snapshots: list[tuple[str, str, str, bool]],
+        reindex_ids: list[str],
+    ) -> set[str]:
+        cleared: set[str] = set()
+        for memory_id, content, project_id, is_global in snapshots:
+            if self.mark_vector_snapshot_reindexed(
+                memory_id,
+                content,
+                project_id,
+                is_global,
+            ):
+                cleared.add(memory_id)
+            else:
+                self.stale_ids.add(memory_id)
+        self.stale_ids.update(reindex_ids)
+        return cleared
 
 
 class _VectorStore:
@@ -759,8 +779,7 @@ async def test_project_reindex_holds_writer_admission_across_embedding_and_batch
             exclusive_entered.set()
 
     purge_task = asyncio.create_task(purge())
-    async with fence._condition:
-        await fence._condition.wait_for(lambda: "project-1" in fence._exclusive)
+    await wait_for_exclusive_claim(fence, "project-1")
     assert not exclusive_entered.is_set()
 
     release_embed.set()
@@ -796,8 +815,7 @@ async def test_reconcile_backfill_holds_global_admission_across_embedding_and_ba
             exclusive_entered.set()
 
     purge_task = asyncio.create_task(purge())
-    async with fence._condition:
-        await fence._condition.wait_for(lambda: "project-1" in fence._exclusive)
+    await wait_for_exclusive_claim(fence, "project-1")
     assert not exclusive_entered.is_set()
 
     release_embed.set()

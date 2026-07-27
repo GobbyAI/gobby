@@ -622,17 +622,14 @@ class CronJobStorage(CronRunStorageMixin):
             raise ValueError("project_id must not be empty")
         with self.db.transaction() as conn:
             rows = conn.execute(
-                "SELECT * FROM cron_jobs WHERE project_id = %s FOR UPDATE",
-                (project_id,),
-            ).fetchall()
-            conn.execute(
                 """
                 UPDATE cron_jobs
                    SET enabled = FALSE, next_run_at = NULL, updated_at = %s
                  WHERE project_id = %s
+                RETURNING *
                 """,
                 (utc_now(), project_id),
-            )
+            ).fetchall()
         return [CronJob.from_row(row) for row in rows]
 
     def delete_project_jobs(self, job_ids: list[str]) -> int:

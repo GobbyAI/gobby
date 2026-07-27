@@ -24,9 +24,10 @@ from gobby.memory.dream.models import (
 )
 from gobby.memory.dream.options import DreamRunOptions
 from gobby.memory.dream.plan import validate_dream_plan
-from gobby.memory.dream.planner import build_raw_plan
+from gobby.memory.dream.planner import _render_candidates_json, build_raw_plan
 from gobby.memory.dream.protocols import MemoryDreamManagerProtocol
 from gobby.memory.dream.service import (
+    MAX_ACTION_SAMPLE,
     MemoryDreamService,
     _completed_mutation_count,
     _decode_raw_plan_metadata,
@@ -317,7 +318,7 @@ async def test_batch_split_guard() -> None:
     candidates = [
         replace(_candidate(f"m{i}"), content=f"complete content {i} " * 20) for i in range(4)
     ]
-    single_item_size = len(json.dumps([candidates[0].to_prompt_dict()], indent=2, sort_keys=True))
+    single_item_size = len(_render_candidates_json([candidates[0]]))
     planner = AsyncMock(return_value={"actions": []})
 
     with patch("gobby.memory.dream.planner._call_llm_planner", planner):
@@ -367,7 +368,7 @@ async def test_single_item_oversize_dispatches_intact(
         content=candidate_content,
         related=(evidence,),
     )
-    rendered_size = len(json.dumps([candidate.to_prompt_dict()], indent=2, sort_keys=True))
+    rendered_size = len(_render_candidates_json([candidate]))
     planner = AsyncMock(return_value={"actions": []})
 
     with patch("gobby.memory.dream.planner._call_llm_planner", planner):
@@ -2015,6 +2016,7 @@ class _FakeSweepManager:
         redream_cutoff: str,
         scope: MemoryScope,
         memory_type: str | None = None,
+        limit: int | None = None,
     ) -> list[str]:
         rows = self.list_dream_candidates(
             limit=len(self.db.memories),
@@ -2022,7 +2024,8 @@ class _FakeSweepManager:
             scope=scope,
             memory_type=memory_type,
         )
-        return [str(row.id) for row in rows]
+        ids = [str(row.id) for row in rows]
+        return ids if limit is None else ids[:limit]
 
     def get_memories(self, memory_ids: list[str], scope: MemoryScope) -> list[Any]:
         rows: list[Any] = []
@@ -2082,6 +2085,7 @@ class _FakeSweepManager:
 def _sweep_config(
     *,
     page_size: int = 2,
+    dry_run_max_candidates: int = 1000,
     redream_after_hours: int = 20,
     related_evidence_enabled: bool = True,
 ) -> MemoryDreamConfig:
@@ -2093,6 +2097,7 @@ def _sweep_config(
         reconcile_after_apply=False,
         reconcile_after_revert=False,
         page_size=page_size,
+        dry_run_max_candidates=dry_run_max_candidates,
         redream_after_hours=redream_after_hours,
         include_global_memories=True,
         related_evidence_enabled=related_evidence_enabled,
@@ -2284,15 +2289,47 @@ async def test_dry_run_full_coverage_pagination() -> None:
     actions = run["plan"]["actions"]
     assert run["summary"]["candidates_reviewed"] == 55
     assert run["summary"]["pages"] == 6
-    assert len(actions) == 55
-    assert actions[50]["memory_id"] in db.memories
-    assert {action["memory_id"] for action in actions} == set(db.memories)
+    assert run["summary"]["planned_action_count"] == 55
+    assert len(actions) == MAX_ACTION_SAMPLE
+    assert run["summary"]["candidates_truncated"] is False
     assert all(row["last_dreamed_at"] is None for row in db.memories.values())
 
     with patch("gobby.cli.memory.dream._request", return_value={"success": True, "run": run}):
         output = CliRunner().invoke(memory_dream, ["status", run["id"]]).output
 
-    assert actions[50]["memory_id"] in output
+    assert actions[-1]["memory_id"] in output
+
+
+async def test_dry_run_candidate_limit_reports_truncation() -> None:
+    db = _FakeDreamDB()
+    db.memories = {f"m-{i:02d}": _row(f"m-{i:02d}", f"content {i}") for i in range(30)}
+    service = MemoryDreamService(
+        memory_manager=_as_dream_manager(_FakeSweepManager(db)),
+        dream_config=_sweep_config(
+            page_size=10,
+            dry_run_max_candidates=25,
+            related_evidence_enabled=False,
+        ),
+        llm_service=MagicMock(),
+    )
+
+    async def plan_page(**kwargs: Any) -> dict[str, Any]:
+        return {
+            "actions": [
+                {"action": "keep", "memory_id": candidate.id, "confidence": 1.0}
+                for candidate in kwargs["candidates"]
+            ],
+            "planner_errors": [],
+        }
+
+    with patch("gobby.memory.dream.service.build_raw_plan", side_effect=plan_page):
+        result = await service.run(DreamRunOptions(dry_run=True, project_id="proj-1"))
+
+    summary = result["run"]["summary"]
+    assert summary["candidates_reviewed"] == 25
+    assert summary["candidate_limit"] == 25
+    assert summary["candidates_truncated"] is True
+    assert summary["planned_action_count"] == 25
 
 
 async def test_dry_run_snapshot_interleaving() -> None:

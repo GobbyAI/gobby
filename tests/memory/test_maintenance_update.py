@@ -60,7 +60,10 @@ class TestGetStatsVectorCount:
 
         assert "vector_count" not in stats
 
-    async def test_vector_count_graceful_on_error(self) -> None:
+    async def test_vector_count_graceful_on_error(
+        self,
+        caplog: pytest.LogCaptureFixture,
+    ) -> None:
         """get_stats handles vector_store errors gracefully."""
         storage = _make_storage([_make_memory()])
         db = MagicMock()
@@ -70,6 +73,13 @@ class TestGetStatsVectorCount:
         stats = await get_stats(storage, db, project_id=None, vector_store=vector_store)
 
         assert stats["vector_count"] == -1
+        record = next(
+            record
+            for record in caplog.records
+            if record.message == "Failed to retrieve memory vector count"
+        )
+        assert record.exc_info is not None
+        assert record.__dict__["project_id"] is None
 
 
 class TestGetStatsBasicBehavior:

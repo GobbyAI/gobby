@@ -6,6 +6,7 @@ import asyncio
 import logging
 import re
 from collections.abc import Awaitable, Callable
+from contextlib import suppress
 from dataclasses import dataclass, replace
 from datetime import datetime
 from functools import partial
@@ -217,26 +218,31 @@ class RelatedEvidenceSession:
     ) -> _CallOutcome:
         if self.channel_tripped(channel):
             return _CallOutcome()
-        try:
-            async with asyncio.timeout(RELATED_EVIDENCE_CALL_TIMEOUT_SECONDS):
-                async with self._semaphore:
+        async with self._semaphore:
+            task: asyncio.Task[_T] | None = None
+            try:
+                async with asyncio.timeout(RELATED_EVIDENCE_CALL_TIMEOUT_SECONDS):
                     task = self.create_task(
                         operation(),
                         name=f"dream-related-{channel}-page-{page_index}",
                     )
                     return _CallOutcome(value=await task)
-        except TimeoutError:
-            return _CallOutcome(timed_out=True)
-        except VectorStoreUnavailableError:
-            return _CallOutcome(failed=True)
-        except Exception:
-            logger.debug(
-                "Related-memory %s channel failed on page %s",
-                channel,
-                page_index,
-                exc_info=True,
-            )
-            return _CallOutcome(failed=True)
+            except TimeoutError:
+                if task is not None:
+                    task.cancel()
+                    with suppress(asyncio.CancelledError):
+                        await task
+                return _CallOutcome(timed_out=True)
+            except VectorStoreUnavailableError:
+                return _CallOutcome(failed=True)
+            except Exception:
+                logger.debug(
+                    "Related-memory %s channel failed on page %s",
+                    channel,
+                    page_index,
+                    exc_info=True,
+                )
+                return _CallOutcome(failed=True)
 
     async def aclose(self) -> None:
         if self._closed:

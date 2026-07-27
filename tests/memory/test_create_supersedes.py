@@ -5,10 +5,12 @@ import uuid
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import replace
 from datetime import UTC, datetime
+from time import monotonic
 from typing import Any
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
+from psycopg.errors import RaiseException
 
 from gobby.config.persistence import MemoryConfig
 from gobby.memory.backends.null import NullBackend
@@ -26,6 +28,8 @@ from gobby.storage.memories_crud import MAX_SUPERSEDES_IDS
 from gobby.storage.memories_models import PERSONAL_PROJECT_ID
 from gobby.storage.memories_scope import MemoryScope
 from gobby.storage.projects import LocalProjectManager
+
+pytestmark = pytest.mark.integration
 
 
 async def _drain_background_tasks(manager: MemoryManager) -> None:
@@ -91,6 +95,7 @@ async def test_auto_mark_due(temp_db, monkeypatch) -> None:
     assert called is False
 
 
+@pytest.mark.slow
 @pytest.mark.asyncio
 async def test_mark_due_lost_wakeup_guard(temp_db) -> None:
     """A mark-due after selection fences the entire dream mutation."""
@@ -129,6 +134,7 @@ async def test_mark_due_lost_wakeup_guard(temp_db) -> None:
     assert store.list_snapshots(run_id) == []
 
 
+@pytest.mark.slow
 @pytest.mark.asyncio
 async def test_atomic_apply_listener_boundary(temp_db) -> None:
     """A fenced apply notifies once after commit and never on mismatch."""
@@ -587,6 +593,7 @@ async def test_mark_due_reactivation_anchor(temp_db, monkeypatch) -> None:
     assert manager.storage.get_memory(intervening.id).last_dreamed_at is None
 
 
+@pytest.mark.slow
 @pytest.mark.asyncio
 async def test_mark_due_burst_bounded(temp_db, monkeypatch) -> None:
     """Queued writes construct at most two related-evidence sessions at once."""
@@ -639,6 +646,7 @@ async def test_mark_due_burst_bounded(temp_db, monkeypatch) -> None:
     assert active == 0
 
 
+@pytest.mark.slow
 @pytest.mark.asyncio
 async def test_manager_close_drains_mark_due(temp_db, monkeypatch) -> None:
     """Manager close cancels active work while queued tasks build no sessions."""
@@ -791,12 +799,16 @@ def test_supersedes_rollback_on_failure(temp_db) -> None:
         """
     )
 
-    with pytest.raises(Exception, match="injected supersession failure"):
-        manager.create_memory(
-            "Rolled back replacement",
-            PERSONAL_PROJECT_ID,
-            supersedes=[first.id, second.id],
-        )
+    try:
+        with pytest.raises(RaiseException, match="injected supersession failure"):
+            manager.create_memory(
+                "Rolled back replacement",
+                PERSONAL_PROJECT_ID,
+                supersedes=[first.id, second.id],
+            )
+    finally:
+        temp_db.execute("DROP TRIGGER IF EXISTS fail_supersession_test_trigger ON memories")
+        temp_db.execute("DROP FUNCTION IF EXISTS fail_supersession_test()")
 
     assert manager.get_memory(first.id).deleted_at is None
     assert manager.get_memory(second.id).deleted_at is None
@@ -873,6 +885,7 @@ def test_supersedes_mixed_targets(temp_db) -> None:
         )
 
 
+@pytest.mark.slow
 def test_supersedes_inverse_role_concurrency(temp_db) -> None:
     manager = LocalMemoryManager(temp_db)
     memory_x = manager.create_memory("Concurrent X", PERSONAL_PROJECT_ID)
@@ -1009,6 +1022,7 @@ async def test_backend_protocol_supersedes(temp_db) -> None:
     assert null_result.memory.tags == [f"supersedes:{target.id}"]
 
 
+@pytest.mark.slow
 @pytest.mark.asyncio
 async def test_hidden_row_secondary_write_fence(temp_db) -> None:
     vector_store = MagicMock()
@@ -1109,6 +1123,7 @@ async def test_restore_after_supersede_rebuilds(temp_db) -> None:
     assert repaired.graph_status == "pending"
 
 
+@pytest.mark.slow
 @pytest.mark.asyncio
 async def test_supersedes_row_lock_fencing(temp_db) -> None:
     purge_started = asyncio.Event()
@@ -1137,16 +1152,42 @@ async def test_supersedes_row_lock_fencing(temp_db) -> None:
         )
     )
     await asyncio.wait_for(purge_started.wait(), timeout=2)
-    restoring = asyncio.create_task(asyncio.to_thread(manager.storage.restore_memory, old.id))
-    with pytest.raises(TimeoutError):
-        await asyncio.wait_for(asyncio.shield(restoring), timeout=0.05)
+    loop = asyncio.get_running_loop()
+    restore_started = asyncio.Event()
+
+    def restore() -> bool:
+        loop.call_soon_threadsafe(restore_started.set)
+        return manager.storage.restore_memory(old.id)
+
+    restoring = asyncio.create_task(asyncio.to_thread(restore))
+    await asyncio.wait_for(restore_started.wait(), timeout=2)
+
+    def wait_for_restore_lock() -> None:
+        deadline = monotonic() + 2
+        while monotonic() < deadline:
+            waiting = temp_db.fetchone(
+                """
+                SELECT 1
+                FROM pg_stat_activity
+                WHERE datname = current_database()
+                  AND wait_event_type = 'Lock'
+                  AND query LIKE 'SELECT vector_needs_reindex FROM memories%'
+                LIMIT 1
+                """,
+            )
+            if waiting is not None:
+                return
+        raise AssertionError("restore_memory did not enter a database lock wait")
+
+    await asyncio.to_thread(wait_for_restore_lock)
 
     allow_purge.set()
-    await asyncio.wait_for(replacing, timeout=2)
-    assert await asyncio.wait_for(restoring, timeout=2)
+    await asyncio.gather(replacing, restoring)
+    assert restoring.result()
     assert manager.storage.get_memory(old.id).deleted_at is None
 
 
+@pytest.mark.slow
 @pytest.mark.asyncio
 async def test_supersedes_cleanup_budget_releases_row_lock(temp_db, monkeypatch) -> None:
     monkeypatch.setattr(lifecycle_module, "SUPERSESSION_CLEANUP_BUDGET_SECONDS", 1.1)
@@ -1220,6 +1261,7 @@ async def test_crossref_counterpart_hidden_skip(temp_db) -> None:
     assert row is None
 
 
+@pytest.mark.slow
 @pytest.mark.asyncio
 async def test_hard_delete_recreate_race_converges(temp_db) -> None:
     delete_started = asyncio.Event()
@@ -1310,6 +1352,7 @@ async def test_rescope_replaces_scope_projections(temp_db) -> None:
     assert manager.storage.get_memory(memory.id).vector_needs_reindex is False
 
 
+@pytest.mark.slow
 @pytest.mark.asyncio
 async def test_create_reconciliation_fenced(temp_db) -> None:
     embed_started = asyncio.Event()
@@ -1365,6 +1408,7 @@ async def test_create_reconciliation_fenced(temp_db) -> None:
     vector_store.delete.assert_awaited_once_with(created.id)
 
 
+@pytest.mark.slow
 @pytest.mark.asyncio
 async def test_bulk_rebuilds_respect_fence(temp_db) -> None:
     vector_store = MagicMock()
@@ -1422,6 +1466,7 @@ async def test_hard_delete_cleanup_removes_artifacts(temp_db) -> None:
     )
 
 
+@pytest.mark.slow
 @pytest.mark.asyncio
 async def test_crossref_counterpart_rescope_race(temp_db) -> None:
     vector_store = MagicMock()

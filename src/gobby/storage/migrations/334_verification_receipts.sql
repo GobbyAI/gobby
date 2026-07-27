@@ -2,6 +2,7 @@ CREATE TABLE verification_receipts (
     id UUID PRIMARY KEY,
     project_id UUID NOT NULL REFERENCES projects(id) ON DELETE CASCADE
         DEFERRABLE INITIALLY IMMEDIATE,
+    -- Receipts outlive deleted sessions, so this intentionally has no foreign key.
     session_id UUID NOT NULL,
     task_id UUID REFERENCES tasks(id) ON DELETE CASCADE
         DEFERRABLE INITIALLY IMMEDIATE,

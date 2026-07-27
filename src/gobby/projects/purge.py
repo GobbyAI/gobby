@@ -12,6 +12,7 @@ from typing import Any, Literal, Protocol, TypedDict
 
 from gobby.scheduler.executor import CronHandler
 from gobby.storage.cron_models import CronJob
+from gobby.storage.projects import PERSONAL_PROJECT_ID
 
 PROJECT_PURGE_JOB_NAME = "gobby:project-purge"
 PROJECT_PURGE_HANDLER_NAME = "projects:purge-expired"
@@ -19,6 +20,7 @@ PROJECT_PURGE_INTERVAL_SECONDS = 24 * 60 * 60
 PROJECT_PURGE_RETENTION_DAYS = 30
 PROJECT_PURGE_DESCRIPTION = "Purge project state retained beyond the soft-delete window"
 PROJECT_PURGE_ID_LIMIT = 10
+PROJECT_PURGE_CONCURRENCY = 4
 
 
 class ProjectPurgeError(RuntimeError):
@@ -233,21 +235,31 @@ def create_project_purge_handler(service: ProjectPurgeService) -> CronHandler:
     async def _handler(_job: CronJob) -> PurgeBatchResult:
         cutoff = datetime.now(UTC) - timedelta(days=PROJECT_PURGE_RETENTION_DAYS)
         projects = await asyncio.to_thread(service.projects.list_purge_candidates, cutoff)
+        semaphore = asyncio.Semaphore(PROJECT_PURGE_CONCURRENCY)
+
+        async def purge_candidate(project_id: str) -> tuple[str, str]:
+            async with semaphore:
+                try:
+                    result = await service.purge_project(project_id)
+                except Exception:
+                    return "failed", project_id
+            if result.success:
+                return "purged", project_id
+            if result.status == "protected":
+                return "protected", project_id
+            return "failed", project_id
+
+        results = await asyncio.gather(*(purge_candidate(project.id) for project in projects))
         purged: list[str] = []
         failed: list[str] = []
         protected: list[str] = []
-        for project in projects:
-            try:
-                result = await service.purge_project(project.id)
-            except Exception:
-                failed.append(project.id)
-                continue
-            if result.success:
-                purged.append(project.id)
-            elif result.status == "protected":
-                protected.append(project.id)
+        for status, project_id in results:
+            if status == "purged":
+                purged.append(project_id)
+            elif status == "protected":
+                protected.append(project_id)
             else:
-                failed.append(project.id)
+                failed.append(project_id)
         success = not failed
         return {
             "success": success,
@@ -284,7 +296,7 @@ def register_project_purge_cron(
     existing = cron_storage.get_job_by_name(PROJECT_PURGE_JOB_NAME)
     if existing is None:
         cron_storage.create_job(
-            project_id=project_id or "system",
+            project_id=project_id or PERSONAL_PROJECT_ID,
             name=PROJECT_PURGE_JOB_NAME,
             description=PROJECT_PURGE_DESCRIPTION,
             schedule_type="interval",

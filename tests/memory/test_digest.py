@@ -662,10 +662,6 @@ class TestBuildTurnAndDigest:
             )
         )
 
-        async def scheduler_checkpoint() -> None:
-            return None
-
-        await asyncio.create_task(scheduler_checkpoint())
         assert llm_service.call_json_feature.await_count == 1
 
         release_first_call.set()

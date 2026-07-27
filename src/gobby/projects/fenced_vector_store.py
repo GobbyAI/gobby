@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import inspect
 from collections.abc import Callable
-from contextlib import AbstractAsyncContextManager, asynccontextmanager
+from contextlib import AbstractAsyncContextManager, AsyncExitStack, asynccontextmanager
 from typing import Any, Protocol, cast
 
 from gobby.memory.vectorstore import VectorStore
@@ -71,12 +71,12 @@ class ProjectFencedVectorStore:
             for _point_id, _embedding, payload in items
             if payload.get("project_id") is not None
         }
-        writer = (
-            self._fence.writer(next(iter(project_ids)))
-            if len(project_ids) == 1
-            else self._fence.global_writer()
-        )
-        async with writer:
+        async with AsyncExitStack() as stack:
+            if project_ids:
+                for project_id in sorted(project_ids):
+                    await stack.enter_async_context(self._fence.writer(project_id))
+            else:
+                await stack.enter_async_context(self._fence.global_writer())
             await self._inner.batch_upsert(items, collection_name)
 
     async def set_payload(

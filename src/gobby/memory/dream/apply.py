@@ -138,9 +138,7 @@ async def revert_dream_run(
                 store.revert_snapshot,
                 snapshot,
                 on_committed=(
-                    getattr(memory_manager, "notify_memory_changed", None)
-                    if memory_manager is not None
-                    else None
+                    memory_manager.notify_memory_changed if memory_manager is not None else None
                 ),
             )
             if outcome.status == "conflict":
@@ -402,6 +400,15 @@ async def _apply_action(
             candidate_map=candidate_map,
             stamp=stamp,
         )
+    if action.action == "refresh" and not action.content:
+        await _advance_cursor(
+            memory_manager,
+            store,
+            run_id,
+            candidate_map.get(action.memory_id or ""),
+            stamp,
+        )
+        return 0
     if action.action in {"keep", "review", "delete", "refresh", "promote"}:
         memory_id = _required_memory_id(action)
         candidate = candidate_map.get(memory_id)
@@ -421,7 +428,7 @@ async def _apply_action(
     if action.action == "supersede":
         _required_memory_id(action)
         return await _supersede(memory_manager, store, run_id, action, candidate_map)
-    # Defensive: any other shape (e.g. refresh with no content) advances the cursor.
+    # Defensive fallback for any future action shape that reaches this dispatcher.
     await _advance_cursor(
         memory_manager,
         store,
@@ -602,8 +609,6 @@ async def _apply_fenced_action(
         Literal["keep", "review", "delete", "refresh", "promote"],
         action.action,
     )
-    if action_name not in {"keep", "review", "delete", "refresh", "promote"}:
-        raise ValueError(f"Unsupported fenced dream action: {action_name}")
     result = await asyncio.to_thread(
         store.apply_candidate_action,
         run_id=run_id,
@@ -616,7 +621,7 @@ async def _apply_fenced_action(
         stamp=stamp,
         content=action.content,
         tags=action.tags,
-        on_committed=getattr(memory_manager, "notify_memory_changed", None),
+        on_committed=memory_manager.notify_memory_changed,
     )
     if result is None:
         return 0
@@ -663,7 +668,7 @@ async def _advance_cursor(
             selected_project_id=candidate.project_id,
             selected_is_global=candidate.is_global,
             stamp=stamp,
-            on_committed=getattr(memory_manager, "notify_memory_changed", None),
+            on_committed=memory_manager.notify_memory_changed,
         )
     except _EXPECTED_ACTION_ERRORS as exc:
         # Row vanished (e.g. concurrent delete); it drops out of the sweep naturally.

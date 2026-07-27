@@ -13,6 +13,7 @@ from gobby.code_index.maintenance_log import log_gcode_maintenance_event
 from gobby.scheduler.executor import CronHandler
 from gobby.storage.cron import CronJobStorage, compute_next_run
 from gobby.storage.cron_models import CronJob
+from gobby.storage.projects import PERSONAL_PROJECT_ID
 
 if TYPE_CHECKING:
     from gobby.code_index.context import CodeIndexContext
@@ -151,7 +152,7 @@ def register_code_index_nightly_reindex_cron(
     existing = cron_storage.get_job_by_name(CODE_INDEX_NIGHTLY_REINDEX_JOB_NAME)
     if existing is None:
         cron_storage.create_job(
-            project_id=project_id or "system",
+            project_id=project_id or PERSONAL_PROJECT_ID,
             name=CODE_INDEX_NIGHTLY_REINDEX_JOB_NAME,
             description=CODE_INDEX_NIGHTLY_REINDEX_DESCRIPTION,
             schedule_type="cron",

@@ -20,6 +20,7 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 REINDEX_PAGE_SIZE = 500
+REBUILD_SNAPSHOT_SWEEP_PAGE_SIZE = 200
 GLOBAL_REINDEX_DEDUPE_WINDOW_SECONDS = 60.0
 
 
@@ -64,6 +65,12 @@ class MemoryStorageProtocol(Protocol):
         project_id: str,
         is_global: bool,
     ) -> bool: ...
+
+    def reconcile_vector_snapshot_page(
+        self,
+        snapshots: list[tuple[str, str, str, bool]],
+        reindex_ids: list[str],
+    ) -> set[str]: ...
 
 
 class VectorStoreProtocol(Protocol):
@@ -583,23 +590,29 @@ class IndexingService:
         vector_store = cast(VectorStoreProtocol, self._vector_store)
         snapshot = {str(memory["id"]): memory for memory in memory_dicts}
         current = {memory.id: memory for memory in await self.fetch_all_memories()}
-        for memory_id, memory in current.items():
-            scheduled = snapshot.get(memory_id)
-            if (
-                scheduled is not None
-                and str(scheduled["content"]) == memory.content
-                and str(scheduled["project_id"]) == memory.project_id
-                and bool(scheduled["is_global"]) == memory.is_global
-            ):
-                await self._run_storage(
-                    self._storage.mark_vector_snapshot_reindexed,
-                    memory.id,
-                    memory.content,
-                    memory.project_id,
-                    memory.is_global,
-                )
-            else:
-                await self._run_storage(self._storage.mark_vector_reindex_needed, memory.id)
+        current_memories = list(current.values())
+        for start in range(0, len(current_memories), REBUILD_SNAPSHOT_SWEEP_PAGE_SIZE):
+            page = current_memories[start : start + REBUILD_SNAPSHOT_SWEEP_PAGE_SIZE]
+            snapshots: list[tuple[str, str, str, bool]] = []
+            reindex_ids: list[str] = []
+            for memory in page:
+                scheduled = snapshot.get(memory.id)
+                if (
+                    scheduled is not None
+                    and str(scheduled["content"]) == memory.content
+                    and str(scheduled["project_id"]) == memory.project_id
+                    and bool(scheduled["is_global"]) == memory.is_global
+                ):
+                    snapshots.append(
+                        (memory.id, memory.content, memory.project_id, memory.is_global)
+                    )
+                else:
+                    reindex_ids.append(memory.id)
+            await self._run_storage(
+                self._storage.reconcile_vector_snapshot_page,
+                snapshots,
+                reindex_ids,
+            )
         for memory_id in sorted(set(snapshot) - set(current)):
             if self._cleanup_rowless is not None:
                 await self._cleanup_rowless(memory_id)

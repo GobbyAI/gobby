@@ -29,7 +29,7 @@ from gobby.storage.memories import (
     MemoryType,
     validate_memory_type,
 )
-from gobby.storage.memories_base import MEMORY_PROJECTION_FENCE_LOCK_KEY
+from gobby.storage.memories_crud import _memory_lock_key
 
 if TYPE_CHECKING:
     from gobby.config.persistence import MemoryConfig
@@ -475,6 +475,10 @@ class MemoryLifecycleService:
             async def delete_hidden(connection: Any, _remaining: float) -> bool:
                 async with connection.cursor(row_factory=dict_row) as cursor:
                     await cursor.execute(
+                        "SELECT pg_advisory_xact_lock(%s)",
+                        (_memory_lock_key(memory_id),),
+                    )
+                    await cursor.execute(
                         """
                         SELECT project_id, is_global, deleted_at
                         FROM memories
@@ -525,7 +529,7 @@ class MemoryLifecycleService:
             async with connection.cursor(row_factory=dict_row) as cursor:
                 await cursor.execute(
                     "SELECT pg_advisory_xact_lock(%s)",
-                    (MEMORY_PROJECTION_FENCE_LOCK_KEY,),
+                    (_memory_lock_key(memory.id),),
                 )
                 await cursor.execute(
                     """
@@ -696,11 +700,14 @@ class MemoryLifecycleService:
         notify_changed: bool = True,
     ) -> bool:
         """Recreate secondary state through the active-row fence."""
-        stored = await self._run_storage(
-            self.storage.get_memory,
-            memory_id,
-            visibility="all",
-        )
+        try:
+            stored = await self._run_storage(
+                self.storage.get_memory,
+                memory_id,
+                visibility="all",
+            )
+        except ValueError:
+            return False
         if (
             stored.content != content
             or stored.project_id != project_id

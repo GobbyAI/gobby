@@ -11,6 +11,7 @@ from gobby.storage.verification_receipts import (
     VerificationOutcome,
     VerificationReceiptStore,
     VerificationReceiptWrite,
+    _bounded_output,
 )
 from gobby.utils.datetime import utc_now
 
@@ -69,6 +70,11 @@ def _session(session_manager: SessionManager, project_id: str, suffix: str):
         project_id=project_id,
         title=f"Receipt {suffix}",
     )
+
+
+@pytest.mark.parametrize("output", [None, ""])
+def test_bounded_output_omits_absent_output(output: str | None) -> None:
+    assert _bounded_output(output) == (None, None, None, None)
 
 
 def test_pending_terminal_upsert_and_distinct_identical_commands(

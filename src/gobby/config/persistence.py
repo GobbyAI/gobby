@@ -346,6 +346,10 @@ class MemoryDreamConfig(FeatureDefaultConfig):
         default=200,
         description="Active memories hydrated per page in the streaming dream sweep",
     )
+    dry_run_max_candidates: int = Field(
+        default=1000,
+        description="Maximum candidates evaluated by one dry-run preview",
+    )
     redream_after_hours: int = Field(
         default=20,
         description=(
@@ -403,6 +407,7 @@ class MemoryDreamConfig(FeatureDefaultConfig):
         "stale_age_days",
         "max_tokens",
         "page_size",
+        "dry_run_max_candidates",
         "redream_after_hours",
         "purge_delete_after_days",
         "purge_review_after_days",

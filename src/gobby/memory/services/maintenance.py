@@ -81,6 +81,11 @@ async def get_stats(
         try:
             stats["vector_count"] = await vector_store.count()
         except Exception:
+            logger.warning(
+                "Failed to retrieve memory vector count",
+                extra={"project_id": project_id},
+                exc_info=True,
+            )
             stats["vector_count"] = -1
 
     return stats

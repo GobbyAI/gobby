@@ -134,7 +134,10 @@ class EmbeddingBackend:
                 self._item_embeddings = item_embeddings
                 self._fitted = True
                 self._needs_refit = False
-            logger.debug("Embedding index built with %s items", len(items))
+            logger.debug(
+                "Embedding index built",
+                extra={"indexed_item_count": len(items)},
+            )
         except Exception as e:
             # Clear stale state to prevent inconsistent data
             with self._state_lock:

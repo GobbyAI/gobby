@@ -12,7 +12,7 @@ from qdrant_client.models import Filter
 
 from gobby.memory.vectorstore import memory_scope_filter
 from gobby.storage.memories import ALL_MEMORIES, LocalMemoryManager, Memory, MemoryScope
-from gobby.storage.memories_base import MEMORY_PROJECTION_FENCE_LOCK_KEY
+from gobby.storage.memories_crud import _memory_lock_key
 
 if TYPE_CHECKING:
     from gobby.config.persistence import MemoryConfig
@@ -137,11 +137,18 @@ class CrossrefService:
         candidate_ids = [other_id for other_id, _score in results if other_id != memory.id]
         lock_ids = sorted({memory.id, *candidate_ids})
         result_scores = dict(results)
+        current_scores = await self._current_stored_similarities(
+            memory,
+            candidate_ids,
+            result_scores,
+            max_links,
+        )
         async with connection.cursor(row_factory=dict_row) as cursor:
-            await cursor.execute(
-                "SELECT pg_advisory_xact_lock(%s)",
-                (MEMORY_PROJECTION_FENCE_LOCK_KEY,),
-            )
+            for lock_key in sorted({_memory_lock_key(memory_id) for memory_id in lock_ids}):
+                await cursor.execute(
+                    "SELECT pg_advisory_xact_lock(%s)",
+                    (lock_key,),
+                )
             await cursor.execute(
                 """
                 SELECT id, content, project_id, is_global, deleted_at,
@@ -167,9 +174,9 @@ class CrossrefService:
             await cursor.execute(
                 """
                 DELETE FROM memory_crossrefs
-                WHERE source_id = %s OR target_id = %s
+                WHERE source_id = %s
                 """,
-                (memory.id, memory.id),
+                (memory.id,),
             )
 
             count = 0
@@ -189,12 +196,7 @@ class CrossrefService:
                 elif not candidate_is_global and candidate_project_id != memory.project_id:
                     continue
 
-                score = await self._current_stored_similarity(
-                    memory,
-                    other_id,
-                    result_scores[other_id],
-                    max_links,
-                )
+                score = current_scores[other_id]
                 if score < threshold:
                     continue
                 await cursor.execute(
@@ -210,32 +212,39 @@ class CrossrefService:
                 count += 1
         return count
 
-    async def _current_stored_similarity(
+    async def _current_stored_similarities(
         self,
         memory: Memory,
-        candidate_id: str,
-        fallback: float,
+        candidate_ids: list[str],
+        fallbacks: dict[str, float],
         max_links: int,
-    ) -> float:
-        """Re-read a candidate's current stored vector score when supported."""
+    ) -> dict[str, float]:
+        """Re-read current stored vector scores in one batch when supported."""
         vector_store = self._vector_store
         if vector_store is None or not vector_store.supports_stored_vector_search:
-            return fallback
+            return {candidate_id: fallbacks[candidate_id] for candidate_id in candidate_ids}
         try:
             current = await vector_store.search_by_stored_vectors(
-                [candidate_id],
+                candidate_ids,
                 limit=max_links + 1,
                 query_filter=_crossref_scope_filter(memory.project_id, memory.is_global),
             )
         except Exception as exc:
             logger.debug("Stored-vector crossref revalidation failed: %s", exc)
-            return fallback
+            return {candidate_id: fallbacks[candidate_id] for candidate_id in candidate_ids}
         if not isinstance(current, dict):
-            return fallback
-        for other_id, score in current.get(candidate_id, []):
-            if other_id == memory.id:
-                return score
-        return 0.0
+            return {candidate_id: fallbacks[candidate_id] for candidate_id in candidate_ids}
+        return {
+            candidate_id: next(
+                (
+                    score
+                    for other_id, score in current.get(candidate_id, [])
+                    if other_id == memory.id
+                ),
+                0.0,
+            )
+            for candidate_id in candidate_ids
+        }
 
     def get_related(
         self,

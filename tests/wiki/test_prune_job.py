@@ -15,6 +15,8 @@ from gobby.wiki.prune_job import (
     register_wiki_prune_cron,
 )
 
+pytestmark = pytest.mark.unit
+
 
 def _result(
     *,

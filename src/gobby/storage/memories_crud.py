@@ -141,6 +141,72 @@ class MemoryCrudMixin(MemoryStoreBase):
             dict.fromkeys([*(tags or []), *(f"supersedes:{item}" for item in supersedes_ids)])
         )
 
+        resolved_duplicate: Any | None = None
+        if memory_id is None:
+            scope_predicate, scope_params = memory_scope_predicate(
+                _content_scope(project_id, is_global)
+            )
+            visible_duplicate_sql = (
+                f"SELECT * FROM memories WHERE content = %s AND {scope_predicate} "  # nosec
+                "AND deleted_at IS NULL "
+                "ORDER BY is_global ASC, created_at ASC, id ASC LIMIT 1"
+            )
+            visible_duplicate = self.db.fetchone(
+                visible_duplicate_sql,
+                (normalized_content, *scope_params),
+            )
+            if visible_duplicate is not None:
+                resolved_duplicate = visible_duplicate
+                final_memory_id = str(visible_duplicate["id"])
+
+        # source_id proximity dedup: if the same session created a very similar
+        # memory within the last 60 seconds, treat it as a duplicate.
+        if source_session_id and resolved_duplicate is None:
+            recent_cutoff_sql = newer_than_now_expr(self.db, "created_at", "%s", "second")
+            recent_sql = (
+                f"SELECT * FROM memories WHERE source_session_id = %s "  # nosec
+                "AND project_id = %s AND is_global = %s AND deleted_at IS NULL "
+                f"AND {recent_cutoff_sql} ORDER BY created_at DESC, id DESC LIMIT 1"
+            )
+            recent = self.db.fetchone(
+                recent_sql,
+                (source_session_id, project_id, is_global, 60),
+            )
+            if recent and normalized_content == str(recent["content"]).strip():
+                resolved_duplicate = recent
+                final_memory_id = str(recent["id"])
+
+        existing_row = self.db.fetchone(
+            "SELECT * FROM memories WHERE id = %s",
+            (final_memory_id,),
+        )
+        if (
+            memory_id is None
+            and resolved_duplicate is None
+            and existing_row is not None
+            and str(existing_row["content"]).strip() != normalized_content
+        ):
+            collision_seed = json.dumps(
+                {
+                    "content": normalized_content,
+                    "project_id": project_id,
+                    "is_global": is_global,
+                    "id_collision": final_memory_id,
+                },
+                sort_keys=True,
+                separators=(",", ":"),
+            )
+            final_memory_id = str(uuid.uuid5(MEMORY_UUID_NAMESPACE, collision_seed))
+            existing_row = self.db.fetchone(
+                "SELECT * FROM memories WHERE id = %s",
+                (final_memory_id,),
+            )
+            if (
+                existing_row is not None
+                and str(existing_row["content"]).strip() != normalized_content
+            ):
+                raise RuntimeError(f"Memory ID collision for content: {final_memory_id}")
+
         changed = False
         row: Any | None = None
         with self.db.transaction() as conn:
@@ -155,77 +221,9 @@ class MemoryCrudMixin(MemoryStoreBase):
             for lock_key in sorted(held_advisory_keys):
                 conn.execute("SELECT pg_advisory_xact_lock(%s)", (lock_key,))
 
-            resolved_duplicate: Any | None = None
-            if memory_id is None:
-                scope_predicate, scope_params = memory_scope_predicate(
-                    _content_scope(project_id, is_global)
-                )
-                visible_duplicate_sql = (
-                    f"SELECT * FROM memories WHERE content = %s AND {scope_predicate} "  # nosec
-                    "AND deleted_at IS NULL "
-                    "ORDER BY is_global ASC, created_at ASC, id ASC LIMIT 1"
-                )
-                visible_duplicate = conn.execute(
-                    visible_duplicate_sql,
-                    (normalized_content, *scope_params),
-                ).fetchone()
-                if visible_duplicate is not None:
-                    resolved_duplicate = visible_duplicate
-                    final_memory_id = str(visible_duplicate["id"])
-
-            # source_id proximity dedup: if the same session created a very similar
-            # memory within the last 60 seconds, treat it as a duplicate.
-            if source_session_id and resolved_duplicate is None:
-                recent_cutoff_sql = newer_than_now_expr(self.db, "created_at", "%s", "second")
-                recent_sql = (
-                    f"SELECT * FROM memories WHERE source_session_id = %s "  # nosec
-                    "AND project_id = %s AND is_global = %s AND deleted_at IS NULL "
-                    f"AND {recent_cutoff_sql} ORDER BY created_at DESC, id DESC LIMIT 1"
-                )
-                recent = conn.execute(
-                    recent_sql,
-                    (source_session_id, project_id, is_global, 60),
-                ).fetchone()
-                if recent and normalized_content == str(recent["content"]).strip():
-                    resolved_duplicate = recent
-                    final_memory_id = str(recent["id"])
-
-            existing_row = conn.execute(
-                "SELECT * FROM memories WHERE id = %s",
-                (final_memory_id,),
-            ).fetchone()
-            if (
-                memory_id is None
-                and resolved_duplicate is None
-                and existing_row is not None
-                and str(existing_row["content"]).strip() != normalized_content
-            ):
-                collision_seed = json.dumps(
-                    {
-                        "content": normalized_content,
-                        "project_id": project_id,
-                        "is_global": is_global,
-                        "id_collision": final_memory_id,
-                    },
-                    sort_keys=True,
-                    separators=(",", ":"),
-                )
-                final_memory_id = str(uuid.uuid5(MEMORY_UUID_NAMESPACE, collision_seed))
-                existing_row = conn.execute(
-                    "SELECT * FROM memories WHERE id = %s",
-                    (final_memory_id,),
-                ).fetchone()
-                if (
-                    existing_row is not None
-                    and str(existing_row["content"]).strip() != normalized_content
-                ):
-                    raise RuntimeError(f"Memory ID collision for content: {final_memory_id}")
-
-            resolved_key = _memory_lock_key(final_memory_id)
-            if resolved_key not in held_advisory_keys:
-                conn.execute("SELECT pg_advisory_xact_lock(%s)", (resolved_key,))
             locked_ids = sorted({final_memory_id, *supersedes_ids})
             placeholders = ", ".join(["%s"] * len(locked_ids))
+            # SQL text interpolates generated %s placeholders only; IDs stay bound parameters.
             locked_rows = conn.execute(
                 f"SELECT * FROM memories WHERE id IN ({placeholders}) ORDER BY id FOR UPDATE",  # nosec
                 tuple(locked_ids),
@@ -732,9 +730,63 @@ class MemoryCrudMixin(MemoryStoreBase):
                 """,
                 (memory_id, content, project_id, is_global),
             )
-        if cursor.rowcount:
+            updated = cursor.rowcount
+        if updated:
             self.notify_changed()
-        return bool(cursor.rowcount)
+        return bool(updated)
+
+    def reconcile_vector_snapshot_page(
+        self,
+        snapshots: list[tuple[str, str, str, bool]],
+        reindex_ids: list[str],
+    ) -> set[str]:
+        """CAS-clear one rebuild page and requeue changed identities atomically."""
+        cleared_ids: set[str] = set()
+        changed = False
+        with self.db.transaction() as conn:
+            if snapshots:
+                cursor = conn.execute(
+                    """
+                    UPDATE memories AS memory
+                    SET vector_needs_reindex = FALSE
+                    FROM UNNEST(
+                        %s::uuid[],
+                        %s::text[],
+                        %s::uuid[],
+                        %s::boolean[]
+                    ) AS snapshot(id, content, project_id, is_global)
+                    WHERE memory.id = snapshot.id
+                      AND memory.content = snapshot.content
+                      AND memory.project_id = snapshot.project_id
+                      AND memory.is_global = snapshot.is_global
+                      AND memory.deleted_at IS NULL
+                    RETURNING memory.id
+                    """,
+                    (
+                        [row[0] for row in snapshots],
+                        [row[1] for row in snapshots],
+                        [row[2] for row in snapshots],
+                        [row[3] for row in snapshots],
+                    ),
+                )
+                cleared_ids = {str(row["id"]) for row in cursor.fetchall()}
+                changed = bool(cleared_ids)
+
+            failed_snapshot_ids = {row[0] for row in snapshots} - cleared_ids
+            ids_to_reindex = sorted({*reindex_ids, *failed_snapshot_ids})
+            if ids_to_reindex:
+                cursor = conn.execute(
+                    """
+                    UPDATE memories
+                    SET vector_needs_reindex = TRUE
+                    WHERE id = ANY(%s::uuid[])
+                    """,
+                    (ids_to_reindex,),
+                )
+                changed = changed or bool(cursor.rowcount)
+        if changed:
+            self.notify_changed()
+        return cleared_ids
 
     def move_memory(self, memory_id: str, new_project_id: str) -> Memory:
         """Move memory ownership while preserving its visibility."""

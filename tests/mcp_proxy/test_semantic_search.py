@@ -21,6 +21,7 @@ from gobby.projects.fenced_vector_store import ProjectFencedVectorStore
 from gobby.projects.write_fence import ProjectWriteFence
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.mcp import LocalMCPManager
+from tests.projects.fence_helpers import wait_for_exclusive_claim
 
 
 class SampleTool(TypedDict):
@@ -955,8 +956,7 @@ async def test_tool_embedding_holds_project_admission_from_embedding_through_ups
             exclusive_entered.set()
 
     purge_task = asyncio.create_task(purge())
-    async with fence._condition:
-        await fence._condition.wait_for(lambda: "project-1" in fence._exclusive)
+    await wait_for_exclusive_claim(fence, "project-1")
     assert not exclusive_entered.is_set()
 
     release_upsert.set()

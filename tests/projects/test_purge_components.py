@@ -129,6 +129,10 @@ class FakeVectorStore:
     async def get_aliases(self) -> dict[str, str]:
         return {"memories": "memories@old"}
 
+    async def list_collection_names(self) -> list[str]:
+        response = FakeVectorClient().get_collections()
+        return [str(collection.name) for collection in response.collections]
+
     async def delete(self, *, filters: dict[str, str], collection_name: str) -> None:
         self.deletes.append((filters, collection_name))
 
@@ -210,19 +214,38 @@ async def test_shared_vector_writes_hold_project_or_global_fence() -> None:
         async def upsert(self, *_args: object) -> None:
             events.append("upsert")
 
+        async def batch_upsert(self, *_args: object) -> None:
+            events.append("batch-upsert")
+
         async def rebuild(self, *_args: object, **_kwargs: object) -> None:
             events.append("rebuild")
 
     store = ProjectFencedVectorStore(Inner(), Fence())  # type: ignore[arg-type]
     await store.upsert("point", [1.0], {"project_id": "project-1"})
+    await store.batch_upsert(
+        [
+            ("point-1", [1.0], {"project_id": "project-2"}),
+            ("point-2", [1.0], {"project_id": "project-1"}),
+        ]
+    )
+
+    def snapshot_supplier() -> list[dict[str, str]]:
+        events.append("snapshot")
+        return []
+
     await store.rebuild_from_supplier(
-        lambda: events.append("snapshot") or [],
+        snapshot_supplier,
         lambda _text: [1.0],
     )
 
     assert events == [
         "project:project-1:enter",
         "upsert",
+        "project:project-1:exit",
+        "project:project-1:enter",
+        "project:project-2:enter",
+        "batch-upsert",
+        "project:project-2:exit",
         "project:project-1:exit",
         "global:enter",
         "snapshot",

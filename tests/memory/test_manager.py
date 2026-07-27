@@ -1019,6 +1019,24 @@ class TestLifecycleService:
         assert row["graph_processed"] in (False, 0)
 
     @pytest.mark.asyncio
+    async def test_restore_memory_indices_returns_false_for_missing_row(
+        self,
+        db,
+        memory_config,
+    ) -> None:
+        manager = MemoryManager(db=db, config=memory_config)
+
+        restored = await manager.restore_memory_indices(
+            str(uuid.uuid4()),
+            "missing content",
+            PROJECT_ID,
+            False,
+            "fact",
+        )
+
+        assert restored is False
+
+    @pytest.mark.asyncio
     async def test_create_update_delete_updates_secondary_indices(
         self,
         db,
@@ -1075,11 +1093,23 @@ class TestLifecycleService:
 
         memory = await manager.create_memory(content="Lifecycle old", project_id=PROJECT_ID)
         other = await manager.create_memory(content="Lifecycle related", project_id=PROJECT_ID)
+        third = await manager.create_memory(content="Lifecycle third", project_id=PROJECT_ID)
         manager.storage.mark_graph_processed(memory.id)
         manager.storage.create_crossref(memory.id, other.id, 0.4)
         manager.storage.create_crossref(other.id, memory.id, 0.5)
         mock_vs.upsert.reset_mock()
-        mock_vs.search.return_value = [(memory.id, 1.0), (other.id, 0.95)]
+        mock_vs.search.return_value = [
+            (memory.id, 1.0),
+            (other.id, 0.95),
+            (third.id, 0.9),
+        ]
+        mock_vs.supports_stored_vector_search = True
+        mock_vs.search_by_stored_vectors = AsyncMock(
+            return_value={
+                other.id: [(memory.id, 0.95)],
+                third.id: [(memory.id, 0.9)],
+            }
+        )
         mock_embed.reset_mock()
 
         updated = await manager.update_memory(memory.id, content="Lifecycle new")
@@ -1099,8 +1129,19 @@ class TestLifecycleService:
         )
         graph_row = db.fetchone("SELECT graph_processed FROM memories WHERE id = %s", (memory.id,))
         assert graph_row["graph_processed"] is False
+        assert mock_vs.search_by_stored_vectors.await_count == 2
+        stored_vector_batches = [
+            set(call.args[0]) for call in mock_vs.search_by_stored_vectors.await_args_list
+        ]
+        assert {other.id, third.id} in stored_vector_batches
+        assert all(batch <= {other.id, third.id} for batch in stored_vector_batches)
         crossrefs = manager.storage.get_crossrefs(memory.id)
-        assert len(crossrefs) == 1
+        assert len(crossrefs) == 3
+        assert {(crossref.source_id, crossref.target_id) for crossref in crossrefs} == {
+            (memory.id, other.id),
+            (memory.id, third.id),
+            (other.id, memory.id),
+        }
         assert crossrefs[0].source_id == memory.id
         assert crossrefs[0].target_id == other.id
 
@@ -1597,7 +1638,11 @@ class TestCreateCrossrefs:
         assert result == 0
 
     @pytest.mark.asyncio
-    async def test_crossrefs_with_vectorstore(self, db, memory_config) -> None:
+    async def test_crossrefs_with_vectorstore(
+        self,
+        db: HubDatabase,
+        memory_config: MemoryConfig,
+    ) -> None:
         """_create_crossrefs creates cross-references from VectorStore results."""
         import asyncio
         from unittest.mock import AsyncMock

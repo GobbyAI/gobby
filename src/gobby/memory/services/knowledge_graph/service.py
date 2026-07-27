@@ -35,6 +35,7 @@ if TYPE_CHECKING:
     from gobby.llm.service import LLMService
     from gobby.memory.falkor_client import FalkorClient
     from gobby.memory.vectorstore import VectorStore
+    from gobby.projects.fenced_vector_store import VectorWriteFence
     from gobby.prompts.loader import PromptLoader
 
     from .reader import ActiveMemoryFilter
@@ -74,7 +75,7 @@ class KnowledgeGraphService:
         cooccur_alpha: float | None = None,
         cooccur_support_cap: int | None = None,
         active_memory_filter: ActiveMemoryFilter | None = None,
-        write_fence: Any | None = None,
+        write_fence: VectorWriteFence | None = None,
     ) -> None:
         self._falkor = falkor_client
         self._embed_fn = embed_fn

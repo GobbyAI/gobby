@@ -10,6 +10,7 @@ from gobby.gwiki_gateway import GwikiCommandResult, GwikiUnavailableError
 from gobby.scheduler.executor import CronHandler
 from gobby.storage.cron import CronJobStorage
 from gobby.storage.cron_models import CronJob
+from gobby.storage.projects import PERSONAL_PROJECT_ID
 
 WIKI_PRUNE_JOB_NAME = "gobby:wiki-prune"
 WIKI_PRUNE_HANDLER = "wiki:prune"
@@ -115,7 +116,7 @@ def register_wiki_prune_cron(
     existing = cron_storage.get_job_by_name(WIKI_PRUNE_JOB_NAME)
     if existing is None:
         cron_storage.create_job(
-            project_id=project_id or "system",
+            project_id=project_id or PERSONAL_PROJECT_ID,
             name=WIKI_PRUNE_JOB_NAME,
             description=WIKI_PRUNE_DESCRIPTION,
             schedule_type="interval",

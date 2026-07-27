@@ -509,6 +509,7 @@ class TestAddToGraph:
             == "memory.kg.select_outdated_relations"
         )
 
+    @pytest.mark.asyncio
     async def test_add_to_graph_maps_valid_duplicate_malformed_and_unknown_relation_ids(
         self,
         service: KnowledgeGraphService,
@@ -551,6 +552,7 @@ class TestAddToGraph:
         assert "Ignored 2 malformed relationship deletion ID selection(s)" in caplog.text
         assert "Ignored 1 unknown relationship deletion ID selection(s)" in caplog.text
 
+    @pytest.mark.asyncio
     async def test_delete_selector_deduplicates_canonical_triples_across_valid_ids(
         self,
         mock_llm: AsyncMock,
@@ -1453,6 +1455,20 @@ class TestRemoveOrphanedEntities:
             cypher = call.args[0]
             assert "NOT (e)-[:MENTIONED_IN]->(:Memory)" in cypher
             assert "NOT (e)-[:RELATES_TO_CODE]->(:CodeSymbol)" in cypher
+
+    @pytest.mark.asyncio
+    async def test_strict_project_clear_propagates_orphan_cleanup_failure(
+        self,
+        service: KnowledgeGraphService,
+        mock_falkor: AsyncMock,
+    ) -> None:
+        mock_falkor.query.side_effect = [
+            [{"deleted": 1}],
+            FalkorConnectionError("graph unavailable"),
+        ]
+
+        with pytest.raises(FalkorConnectionError, match="graph unavailable"):
+            await service.clear_project_graph_strict("project-1")
 
 
 class _FakeFalkorGraph:

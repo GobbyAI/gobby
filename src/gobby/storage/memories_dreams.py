@@ -114,9 +114,9 @@ class MemoryDreamMixin(MemoryStoreBase):
                 "AND last_dreamed_at IS NOT NULL",
                 (project_id,),
             )
-            affected = cursor.rowcount
+        affected = cursor.rowcount
         if affected:
-            self._notify_listeners()
+            self.notify_changed()
         return affected
 
     def mark_global_memories_due(self) -> int:
@@ -128,9 +128,9 @@ class MemoryDreamMixin(MemoryStoreBase):
                 "WHERE is_global IS TRUE AND deleted_at IS NULL "
                 "AND last_dreamed_at IS NOT NULL"
             )
-            affected = cursor.rowcount
+        affected = cursor.rowcount
         if affected:
-            self._notify_listeners()
+            self.notify_changed()
         return affected
 
     def restore_memory(self, memory_id: str, when: datetime | str | None = None) -> bool:
@@ -158,7 +158,8 @@ class MemoryDreamMixin(MemoryStoreBase):
             cursor = conn.execute(
                 "UPDATE memories SET deleted_at = NULL, dream_action = NULL, "
                 "last_dreamed_at = %s, vector_needs_reindex = TRUE, "
-                "graph_processed = FALSE, graph_status = 'pending' WHERE id = %s",
+                "graph_processed = FALSE, graph_attempts = 0, "
+                "graph_status = 'pending' WHERE id = %s",
                 (stamp, memory_id),
             )
             if cursor.rowcount == 0:
@@ -181,7 +182,7 @@ class MemoryDreamMixin(MemoryStoreBase):
             ).fetchall()
         ids = [row["id"] for row in rows]
         if ids:
-            self._notify_listeners()
+            self.notify_changed()
         return ids
 
     def _dream_candidate_filter(
@@ -251,6 +252,7 @@ class MemoryDreamMixin(MemoryStoreBase):
         redream_cutoff: datetime | str,
         scope: MemoryScope,
         memory_type: str | None = None,
+        limit: int | None = None,
     ) -> list[str]:
         """Materialize the stable ordered IDs eligible at sweep start."""
         where, params = self._dream_candidate_filter(
@@ -258,11 +260,16 @@ class MemoryDreamMixin(MemoryStoreBase):
             scope=scope,
             memory_type=memory_type,
         )
-        rows = self.db.fetchall(
+        sql = (
             f"SELECT id FROM memories WHERE {where} "  # nosec B608
-            "ORDER BY last_dreamed_at ASC NULLS FIRST, updated_at ASC, id ASC",
-            tuple(params),
+            "ORDER BY last_dreamed_at ASC NULLS FIRST, updated_at ASC, id ASC"
         )
+        if limit is not None:
+            if limit < 1:
+                raise ValueError("limit must be at least 1")
+            sql += " LIMIT %s"
+            params.append(limit)
+        rows = self.db.fetchall(sql, tuple(params))
         return [str(row["id"]) for row in rows]
 
     def list_dream_scopes(self, *, redream_cutoff: datetime | str) -> list[MemoryScope]:

@@ -316,12 +316,14 @@ class MemoryManagerFacadeMethods:
         redream_cutoff: str,
         scope: MemoryScope,
         memory_type: str | None = None,
+        limit: int | None = None,
     ) -> list[str]:
         """Delegate to storage for a stable dry-run candidate snapshot."""
         return self.storage.list_dream_candidate_ids(
             redream_cutoff=redream_cutoff,
             scope=scope,
             memory_type=memory_type,
+            limit=limit,
         )
 
     def get_memories(self, memory_ids: list[str], scope: MemoryScope) -> list[Memory]:

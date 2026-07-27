@@ -5,18 +5,21 @@ from __future__ import annotations
 import uuid
 from datetime import UTC, datetime
 
+import pytest
+
+from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.memories import LocalMemoryManager
 from gobby.storage.projects import PERSONAL_PROJECT_ID
 
 
-def _insert_project(db, project_id: str) -> None:
+def _insert_project(db: HubDatabase, project_id: str) -> None:
     db.execute(
         "INSERT INTO projects (id, name) VALUES (%s, %s)",
         (project_id, f"Project {project_id}"),
     )
 
 
-def _dream_state(db, memory_id: str) -> tuple[datetime | None, int]:
+def _dream_state(db: HubDatabase, memory_id: str) -> tuple[datetime | None, int]:
     row = db.fetchone(
         "SELECT last_dreamed_at, dream_due_version FROM memories WHERE id = %s",
         (memory_id,),
@@ -25,7 +28,8 @@ def _dream_state(db, memory_id: str) -> tuple[datetime | None, int]:
     return row["last_dreamed_at"], int(row["dream_due_version"])
 
 
-def test_mark_memories_due(temp_db) -> None:
+@pytest.mark.unit
+def test_mark_memories_due(temp_db: HubDatabase) -> None:
     """Only listed rows that still match the expected active scope become due."""
     manager = LocalMemoryManager(temp_db)
     project_a = str(uuid.uuid4())
