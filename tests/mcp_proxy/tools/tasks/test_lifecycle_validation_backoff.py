@@ -1,123 +1,137 @@
-"""Integration tests for validation infrastructure-failure backoff (Fix #4)."""
+"""Backoff contracts for the bounded close criteria review."""
 
 from __future__ import annotations
 
 from datetime import UTC, datetime, timedelta
 from types import SimpleNamespace
-from typing import Any
+from typing import Any, cast
+from unittest.mock import patch
 
 import pytest
 
 import gobby.mcp_proxy.tools.tasks._lifecycle_validation as lifecycle
-from gobby.failure_categories import FailureCategory
-from gobby.mcp_proxy.tools.tasks._lifecycle_validation import validate_leaf_task_with_llm
+from gobby.mcp_proxy.tools.tasks._context import RegistryContext
+from gobby.mcp_proxy.tools.tasks._lifecycle_validation import evaluate_criteria_review
 from gobby.storage.hub.protocol import HubDatabase
-from gobby.storage.tasks import LocalTaskManager
+from gobby.storage.tasks import LocalTaskManager, Task
 from gobby.storage.tasks._validation_backoff import (
     MAX_CONSECUTIVE_INFRA_FAILURES,
     TaskValidationBackoffStore,
 )
-from gobby.tasks.validation import ValidationResult as TaskValidationResult
+from gobby.tasks.close_verdict import (
+    CloseCriterionVerdict,
+    CloseVerdict,
+    CloseVerdictParseError,
+)
+from gobby.tasks.validation import TaskValidator
 from gobby.tasks.validation_history import ValidationHistoryManager
 
 pytestmark = pytest.mark.integration
 
 
-class _StubValidator:
-    """TaskValidator stub returning a scripted result and counting calls."""
-
-    def __init__(self, results: list[TaskValidationResult]) -> None:
-        self._results = results
+class _ScriptedValidator:
+    def __init__(self, outcomes: list[CloseVerdict | Exception]) -> None:
+        self.outcomes = outcomes
         self.calls = 0
 
-    async def validate_task(self, **_kwargs: Any) -> TaskValidationResult:
-        result = self._results[min(self.calls, len(self._results) - 1)]
+    async def validate_task(self, **_kwargs: object) -> CloseVerdict:
+        outcome = self.outcomes[min(self.calls, len(self.outcomes) - 1)]
         self.calls += 1
-        return result
+        if isinstance(outcome, Exception):
+            raise outcome
+        return outcome
 
 
 class _Clock:
-    """Controllable stand-in for the module's ``utc_now``."""
-
     current = datetime(2026, 1, 1, tzinfo=UTC)
 
 
-def _make_leaf_task(manager: LocalTaskManager, project_id: str) -> Any:
+def _make_leaf_task(manager: LocalTaskManager, project_id: str) -> Task:
     return manager.create_task(
         project_id=project_id,
         title="Backoff leaf",
         category="code",
-        validation_criteria="must pass",
+        validation_criteria="Focused tests pass.",
+    )
+
+
+def _ctx(manager: LocalTaskManager) -> RegistryContext:
+    return cast(RegistryContext, SimpleNamespace(task_manager=manager))
+
+
+def _valid_verdict() -> CloseVerdict:
+    return CloseVerdict(
+        status="valid",
+        criteria=(CloseCriterionVerdict(1, "Focused tests pass.", True, None),),
+        feedback="Criteria are satisfied.",
+    )
+
+
+async def _evaluate(
+    task: Task,
+    manager: LocalTaskManager,
+    validator: _ScriptedValidator,
+) -> lifecycle.ValidationResult:
+    return await evaluate_criteria_review(
+        task=task,
+        task_validator=cast(TaskValidator, validator),
+        ctx=_ctx(manager),
+        resolved_id=task.id,
+        changes_summary="Implemented the close checklist.",
+        diff_text="diff --git a/a.py b/a.py",
+        checklist_facts={"validation_commands": "clean"},
+        validation_config=None,
     )
 
 
 @pytest.mark.asyncio
-async def test_infra_failure_records_backoff_and_skips_while_active(
-    temp_db: HubDatabase,
-    sample_project: dict[str, Any],
-) -> None:
-    manager = LocalTaskManager(temp_db)
-    task = _make_leaf_task(manager, sample_project["id"])
-    ctx = SimpleNamespace(task_manager=manager)
-    validator = _StubValidator([TaskValidationResult(status="error", feedback="infra down")])
-
-    # First attempt: infra failure → records backoff, retryable result.
-    first = await validate_leaf_task_with_llm(task, validator, "context", ctx, task.id, None)
-    assert first.can_close is False
-    assert first.error_type == "validation_infrastructure_unavailable"
-    assert validator.calls == 1
-    assert manager.get_task(task.id).validation_fail_count == 0
-    store = TaskValidationBackoffStore(temp_db)
-    state = store.get(task.id)
-    assert state is not None and state.consecutive_failures == 1
-    history = ValidationHistoryManager(temp_db).get_iteration_history(task.id)
-    assert [(item.iteration, item.status) for item in history] == [(1, "error")]
-
-    # Second attempt while the backoff window is active: validation is skipped entirely.
-    second = await validate_leaf_task_with_llm(task, validator, "context", ctx, task.id, None)
-    assert second.can_close is False
-    assert second.error_type == "validation_infrastructure_unavailable"
-    assert validator.calls == 1  # LLM not called again
-    assert len(ValidationHistoryManager(temp_db).get_iteration_history(task.id)) == 1
-
-
-@pytest.mark.asyncio
-async def test_real_verdict_after_window_clears_backoff(
+async def test_infra_failure_records_backoff_and_skips_active_window(
     temp_db: HubDatabase,
     sample_project: dict[str, Any],
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     manager = LocalTaskManager(temp_db)
     task = _make_leaf_task(manager, sample_project["id"])
-    ctx = SimpleNamespace(task_manager=manager)
-    validator = _StubValidator(
-        [
-            TaskValidationResult(status="error", feedback="infra down"),
-            TaskValidationResult(status="valid", feedback="looks good"),
-        ]
-    )
-
+    validator = _ScriptedValidator([CloseVerdictParseError("invalid JSON")])
     _Clock.current = datetime(2026, 1, 1, tzinfo=UTC)
     monkeypatch.setattr(lifecycle, "utc_now", lambda: _Clock.current)
 
-    # Round 1: infra failure records backoff.
-    await validate_leaf_task_with_llm(task, validator, "context", ctx, task.id, None)
-    assert TaskValidationBackoffStore(temp_db).get(task.id) is not None
+    first = await _evaluate(task, manager, validator)
+    second = await _evaluate(task, manager, validator)
 
-    # Advance past the backoff window; round 2 produces a real verdict and resets backoff.
-    _Clock.current = _Clock.current + timedelta(hours=2)
-    final = await validate_leaf_task_with_llm(task, validator, "context", ctx, task.id, None)
-    assert final.can_close is True
+    assert first.error_type == "validation_infrastructure_unavailable"
+    assert first.extra["retry_after"] == 15
+    assert second.error_type == "validation_infrastructure_unavailable"
+    assert validator.calls == 1
+    refreshed = manager.get_task(task.id)
+    assert refreshed is not None and refreshed.validation_fail_count == 0
+    state = TaskValidationBackoffStore(temp_db).get(task.id)
+    assert state is not None and state.consecutive_failures == 1
+    history = ValidationHistoryManager(temp_db).get_iteration_history(task.id)
+    assert [(item.iteration, item.status) for item in history] == [(1, "error")]
+
+
+@pytest.mark.asyncio
+async def test_success_after_backoff_clears_state(
+    temp_db: HubDatabase,
+    sample_project: dict[str, Any],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    manager = LocalTaskManager(temp_db)
+    task = _make_leaf_task(manager, sample_project["id"])
+    validator = _ScriptedValidator([CloseVerdictParseError("invalid JSON"), _valid_verdict()])
+    _Clock.current = datetime(2026, 1, 1, tzinfo=UTC)
+    monkeypatch.setattr(lifecycle, "utc_now", lambda: _Clock.current)
+
+    await _evaluate(task, manager, validator)
+    _Clock.current += timedelta(seconds=16)
+    result = await _evaluate(task, manager, validator)
+
+    assert result.can_close is True
+    assert result.validation_status == "valid"
+    assert result.reset_reason == "llm_valid"
     assert validator.calls == 2
     assert TaskValidationBackoffStore(temp_db).get(task.id) is None
-
-    refreshed = manager.get_task(task.id)
-    assert refreshed is not None
-    # The valid verdict is persisted with the guarded close transition, which
-    # this helper-level test intentionally does not execute.
-    assert refreshed.validation_status == "error"
-    assert final.validation_status == "valid"
-    assert final.reset_reason == "llm_valid"
     history = ValidationHistoryManager(temp_db).get_iteration_history(task.id)
     assert [(item.iteration, item.status) for item in history] == [
         (1, "error"),
@@ -126,256 +140,31 @@ async def test_real_verdict_after_window_clears_backoff(
 
 
 @pytest.mark.asyncio
-async def test_environment_verdict_is_retryable_and_does_not_increment_fail_count(
-    temp_db: HubDatabase,
-    sample_project: dict[str, Any],
-) -> None:
-    manager = LocalTaskManager(temp_db)
-    task = _make_leaf_task(manager, sample_project["id"])
-    validator = _StubValidator(
-        [
-            TaskValidationResult(
-                status="invalid",
-                feedback="PostgreSQL connection refused",
-                blocking_reasons=["worktree database unavailable"],
-                failure_category=FailureCategory.ENVIRONMENT,
-            )
-        ]
-    )
-
-    result = await validate_leaf_task_with_llm(
-        task,
-        validator,
-        "context",
-        SimpleNamespace(task_manager=manager),
-        task.id,
-        None,
-    )
-
-    assert result.error_type == "validation_infrastructure_failure"
-    assert result.extra is not None
-    assert result.extra["retryable"] is True
-    assert result.extra["validation_status"] == "error"
-    assert result.extra["failure_category"] == "environment"
-    assert manager.get_task(task.id).validation_fail_count == 0
-    assert manager.get_task(task.id).validation_status == "error"
-    history = ValidationHistoryManager(temp_db).get_iteration_history(task.id)
-    assert history[-1].status == "error"
-    assert history[-1].failure_category is FailureCategory.ENVIRONMENT
-
-
-@pytest.mark.asyncio
-async def test_environment_verdict_escalates_at_infrastructure_failure_threshold(
+async def test_fifth_consecutive_infra_failure_escalates(
     temp_db: HubDatabase,
     sample_project: dict[str, Any],
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     manager = LocalTaskManager(temp_db)
     task = _make_leaf_task(manager, sample_project["id"])
-    validator = _StubValidator(
-        [
-            TaskValidationResult(
-                status="invalid",
-                feedback="PostgreSQL connection refused",
-                blocking_reasons=["worktree database unavailable"],
-                failure_category=FailureCategory.ENVIRONMENT,
-            )
-        ]
-    )
+    validator = _ScriptedValidator([CloseVerdictParseError("invalid JSON")])
     _Clock.current = datetime(2026, 1, 1, tzinfo=UTC)
     monkeypatch.setattr(lifecycle, "utc_now", lambda: _Clock.current)
 
-    prior_message: str | None = None
-    result = None
-    for attempt in range(MAX_CONSECUTIVE_INFRA_FAILURES):
-        result = await validate_leaf_task_with_llm(
-            task,
-            validator,
-            "context",
-            SimpleNamespace(task_manager=manager),
-            task.id,
-            None,
-        )
-        if attempt == MAX_CONSECUTIVE_INFRA_FAILURES - 2:
-            prior_message = result.message
-        _Clock.current += timedelta(hours=2)
+    result: lifecycle.ValidationResult | None = None
+    with patch.object(lifecycle, "coordinate_task_escalation", return_value="event-1") as notify:
+        for _attempt in range(MAX_CONSECUTIVE_INFRA_FAILURES):
+            current = manager.get_task(task.id)
+            assert current is not None
+            result = await _evaluate(current, manager, validator)
+            _Clock.current += timedelta(seconds=121)
 
     assert result is not None
-    assert result.error_type == "validation_infrastructure_failure"
-    assert result.message == prior_message
-    assert result.failure_category is FailureCategory.ENVIRONMENT
-    assert result.extra == {
-        "validation_status": "error",
-        "failure_category": "environment",
-        "retryable": False,
-        "escalated": True,
-        "consecutive_failures": MAX_CONSECUTIVE_INFRA_FAILURES,
-    }
+    assert result.extra["retryable"] is False
+    assert result.extra["consecutive_failures"] == MAX_CONSECUTIVE_INFRA_FAILURES
+    assert result.extra["escalated"] is True
+    notify.assert_called_once()
     refreshed = manager.get_task(task.id)
     assert refreshed is not None
-    assert refreshed.escalated_at is not None
     assert refreshed.is_escalated is True
     assert refreshed.validation_fail_count == 0
-    assert refreshed.escalation_reason == (
-        "validation generation unavailable after "
-        f"{MAX_CONSECUTIVE_INFRA_FAILURES} consecutive infrastructure failures"
-    )
-
-
-@pytest.mark.asyncio
-async def test_error_verdict_escalates_with_authoritative_task_transition(
-    temp_db: HubDatabase,
-    sample_project: dict[str, Any],
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    manager = LocalTaskManager(temp_db)
-    task = _make_leaf_task(manager, sample_project["id"])
-    validator = _StubValidator(
-        [TaskValidationResult(status="error", feedback="provider unavailable")]
-    )
-    _Clock.current = datetime(2026, 1, 1, tzinfo=UTC)
-    monkeypatch.setattr(lifecycle, "utc_now", lambda: _Clock.current)
-
-    result = None
-    for _attempt in range(MAX_CONSECUTIVE_INFRA_FAILURES):
-        result = await validate_leaf_task_with_llm(
-            task,
-            validator,
-            "context",
-            SimpleNamespace(task_manager=manager),
-            task.id,
-            None,
-        )
-        _Clock.current += timedelta(hours=2)
-
-    assert result is not None
-    assert result.error_type == "validation_infrastructure_unavailable"
-    assert result.failure_category is FailureCategory.PROVIDER
-    assert result.extra is not None
-    assert result.extra["retryable"] is False
-    assert result.extra["escalated"] is True
-    assert result.extra["consecutive_failures"] == MAX_CONSECUTIVE_INFRA_FAILURES
-    refreshed = manager.get_task(task.id)
-    assert refreshed is not None
-    assert refreshed.is_escalated is True
-
-
-@pytest.mark.parametrize(
-    ("status", "failure_category"),
-    [
-        ("invalid", FailureCategory.CODE),
-        ("pending", FailureCategory.TEST),
-    ],
-)
-async def test_semantic_verdicts_increment_live_failure_count_and_history(
-    temp_db: HubDatabase,
-    sample_project: dict[str, Any],
-    status: str,
-    failure_category: FailureCategory,
-) -> None:
-    manager = LocalTaskManager(temp_db)
-    task = _make_leaf_task(manager, sample_project["id"])
-    validator = _StubValidator(
-        [
-            TaskValidationResult(
-                status=status,
-                feedback="semantic validation failed",
-                failure_category=failure_category,
-            )
-        ]
-    )
-
-    result = await validate_leaf_task_with_llm(
-        task,
-        validator,
-        "context",
-        SimpleNamespace(task_manager=manager),
-        task.id,
-        None,
-    )
-
-    assert result.error_type == "validation_failed"
-    assert manager.get_task(task.id).validation_fail_count == 1
-    assert TaskValidationBackoffStore(temp_db).get(task.id) is None
-    history = ValidationHistoryManager(temp_db).get_iteration_history(task.id)
-    assert [(item.status, item.failure_category) for item in history] == [
-        (status, failure_category)
-    ]
-
-
-@pytest.mark.parametrize(
-    "failure_category",
-    [
-        FailureCategory.ENVIRONMENT,
-        FailureCategory.DEPENDENCY,
-        FailureCategory.PROVIDER,
-        FailureCategory.TIMEOUT,
-    ],
-)
-async def test_infrastructure_verdicts_use_backoff_without_incrementing_live_count(
-    temp_db: HubDatabase,
-    sample_project: dict[str, Any],
-    failure_category: FailureCategory,
-) -> None:
-    manager = LocalTaskManager(temp_db)
-    task = _make_leaf_task(manager, sample_project["id"])
-    validator = _StubValidator(
-        [
-            TaskValidationResult(
-                status="invalid",
-                feedback="validation infrastructure unavailable",
-                failure_category=failure_category,
-            )
-        ]
-    )
-
-    result = await validate_leaf_task_with_llm(
-        task,
-        validator,
-        "context",
-        SimpleNamespace(task_manager=manager),
-        task.id,
-        None,
-    )
-
-    assert result.error_type == "validation_infrastructure_failure"
-    assert manager.get_task(task.id).validation_fail_count == 0
-    backoff = TaskValidationBackoffStore(temp_db).get(task.id)
-    assert backoff is not None and backoff.consecutive_failures == 1
-    history = ValidationHistoryManager(temp_db).get_iteration_history(task.id)
-    assert [(item.status, item.failure_category) for item in history] == [
-        ("error", failure_category)
-    ]
-
-
-@pytest.mark.parametrize(
-    "validation_override_reason", [None, "audited override after three attempts"]
-)
-def test_successful_and_override_closes_reset_live_count_and_retain_history(
-    temp_db: HubDatabase,
-    sample_project: dict[str, Any],
-    validation_override_reason: str | None,
-) -> None:
-    manager = LocalTaskManager(temp_db)
-    task = _make_leaf_task(manager, sample_project["id"])
-    manager.update_task(task.id, validation_fail_count=2)
-    history_manager = ValidationHistoryManager(temp_db)
-    history_manager.record_iteration(
-        task_id=task.id,
-        iteration=1,
-        status="invalid",
-        feedback="captured before close",
-        failure_category=FailureCategory.CODE,
-    )
-
-    closed = manager.close_task(
-        task.id,
-        validation_override_reason=validation_override_reason,
-        reset_validation_fail_count=True,
-        validation_status="valid",
-        validation_feedback="accepted",
-    )
-
-    assert closed.validation_fail_count == 0
-    history = history_manager.get_iteration_history(task.id)
-    assert [(item.iteration, item.status) for item in history] == [(1, "invalid")]

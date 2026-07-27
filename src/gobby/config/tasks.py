@@ -193,39 +193,13 @@ class TaskValidationConfig(FeatureDefaultConfig):
         description="System prompt for generating validation criteria",
     )
 
-    # Validation loop control
-    max_retries: int = Field(
-        default=3,
-        description="Maximum validation failures before marking task as failed (validate_task path)",
-    )
     max_iterations: int = Field(
         default=10,
         description="Maximum validation attempts before escalation",
     )
-    max_consecutive_errors: int = Field(
-        default=3,
-        description="Max consecutive errors before stopping validation loop",
-    )
-    recurring_issue_threshold: int = Field(
-        default=3,
-        description="Number of times same issue can recur before escalation",
-    )
     close_validation_escalation_threshold: int = Field(
         default=5,
         description="Invalid or pending close verdicts before atomic task escalation.",
-    )
-    issue_similarity_threshold: float = Field(
-        default=0.8,
-        description="Similarity threshold (0-1) for detecting recurring issues",
-    )
-    # Build verification
-    run_build_first: bool = Field(
-        default=True,
-        description="Run build/test command before LLM validation",
-    )
-    build_command: str | None = Field(
-        default=None,
-        description="Custom build command (auto-detected if None: npm test, pytest, etc.)",
     )
     # Escalation settings
     escalation_enabled: bool = Field(
@@ -251,10 +225,7 @@ class TaskValidationConfig(FeatureDefaultConfig):
     )
 
     @field_validator(
-        "max_retries",
         "max_iterations",
-        "max_consecutive_errors",
-        "recurring_issue_threshold",
         "close_validation_escalation_threshold",
     )
     @classmethod
@@ -262,14 +233,6 @@ class TaskValidationConfig(FeatureDefaultConfig):
         """Validate value is positive."""
         if v <= 0:
             raise ValueError("Value must be positive")
-        return v
-
-    @field_validator("issue_similarity_threshold")
-    @classmethod
-    def validate_threshold(cls, v: float) -> float:
-        """Validate threshold is between 0 and 1."""
-        if not 0 <= v <= 1:
-            raise ValueError("issue_similarity_threshold must be between 0 and 1")
         return v
 
     @field_validator("escalation_webhook_url")

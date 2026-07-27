@@ -79,6 +79,94 @@ class ValidationEvidence:
     agent_summary_included: bool = False
 
 
+class ValidationEvidenceTooLarge(ValueError):
+    """The complete diff manifest cannot fit in the bounded close prompt."""
+
+
+@dataclass(frozen=True)
+class CloseDiffEvidence:
+    """Complete file manifest plus bounded criteria-prioritized diff excerpts."""
+
+    text: str
+    manifest_count: int
+    manifest_chars: int
+    excerpt_chars: int
+
+
+def build_close_diff_evidence(
+    diff: str | None,
+    *,
+    criteria: str,
+    max_chars: int = 5_500,
+    max_excerpt_chars: int = 4_000,
+) -> CloseDiffEvidence:
+    """Shape the linked diff for the bounded task-close criteria review."""
+    parsed_files = _parse_diff_files(diff or "")
+    by_path: dict[str, ChangedFileEvidence] = {}
+    for item in parsed_files:
+        previous = by_path.get(item.path)
+        if previous is None:
+            by_path[item.path] = item
+            continue
+        by_path[item.path] = ChangedFileEvidence(
+            path=item.path,
+            additions=previous.additions + item.additions,
+            deletions=previous.deletions + item.deletions,
+            category=item.category,
+            diff=f"{previous.diff}\n{item.diff}",
+        )
+    files = list(by_path.values())
+    if not files:
+        text = "Changed files: none.\nDiff excerpts: none."
+        return CloseDiffEvidence(text, 0, len(text), 0)
+
+    total_additions = sum(item.additions for item in files)
+    total_deletions = sum(item.deletions for item in files)
+    manifest_lines = [
+        f"Changed files ({len(files)} total, +{total_additions}/-{total_deletions}):",
+        *(f"- {item.path} (+{item.additions}/-{item.deletions})" for item in files),
+    ]
+    manifest = "\n".join(manifest_lines)
+    separator = "\n\nDiff excerpts:\n"
+    if len(manifest) + len(separator) > max_chars:
+        raise ValidationEvidenceTooLarge(
+            "The complete changed-file manifest exceeds the bounded criteria-review prompt. "
+            "Split the task into a smaller commit set before closing."
+        )
+
+    criteria_folded = criteria.casefold()
+    ordered = sorted(
+        files,
+        key=lambda item: (
+            0
+            if item.path.casefold() in criteria_folded
+            or PurePosixPath(item.path).name.casefold() in criteria_folded
+            else 1,
+            item.path,
+        ),
+    )
+    excerpt_budget = min(max_excerpt_chars, max_chars - len(manifest) - len(separator))
+    excerpt_parts: list[str] = []
+    excerpt_chars = 0
+    for item in ordered:
+        prefix = f"\n### {item.path}\n"
+        remaining = excerpt_budget - excerpt_chars
+        if remaining <= len(prefix):
+            break
+        part = prefix + item.diff[: remaining - len(prefix)]
+        excerpt_parts.append(part)
+        excerpt_chars += len(part)
+
+    excerpts = "".join(excerpt_parts).rstrip()
+    text = f"{manifest}{separator}{excerpts or 'none'}"
+    return CloseDiffEvidence(
+        text=text,
+        manifest_count=len(files),
+        manifest_chars=len(manifest),
+        excerpt_chars=len(excerpts),
+    )
+
+
 def build_diff_validation_evidence(
     diff: str | None,
     *,

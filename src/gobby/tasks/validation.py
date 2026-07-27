@@ -1,878 +1,121 @@
-"""
-Task validation module.
+"""Bounded LLM criteria review for the task-close checklist."""
 
-Handles validating task completion against acceptance criteria
-using LLM providers.
+from __future__ import annotations
 
-Multi-strategy context gathering:
-1. Current uncommitted changes (staged + unstaged)
-2. Multi-commit window (last N commits, configurable)
-3. File-based analysis (read files mentioned in criteria)
-4. Related test file analysis (read tests whose paths match task terms)
-"""
-
+import json
 import logging
-import re
-import subprocess  # nosec B404 # subprocess needed for validation commands
-from collections.abc import Sequence
-from pathlib import Path
+from collections.abc import Mapping
 
-from gobby.ai.text_generation import is_feature_generation_infrastructure_error
 from gobby.config.tasks import TaskValidationConfig
-from gobby.failure_categories import FailureCategory, classify_exception
 from gobby.llm import LLMService
 from gobby.prompts import PromptLoader
 from gobby.storage.hub.protocol import HubDatabase
+from gobby.tasks.close_verdict import CloseVerdict, parse_close_verdict
 from gobby.tasks.criteria_contract import split_validation_criteria
-from gobby.tasks.validation_evidence import (
-    build_diff_validation_evidence,
-    build_file_context_evidence,
-    build_summary_validation_evidence,
-)
-from gobby.tasks.validation_verdict import (
-    ValidationResult,
-    _validation_result_from_data,
-)
+from gobby.tasks.validation_evidence import ValidationEvidenceTooLarge, build_close_diff_evidence
 
 logger = logging.getLogger(__name__)
 
+VALIDATION_PROMPT_MAX_CHARS = 10_000
+CHANGES_SUMMARY_MAX_CHARS = 2_000
+CHECKLIST_FACTS_MAX_CHARS = 500
 
-# Default number of commits to look back when gathering context
-DEFAULT_COMMIT_WINDOW = 10
-DEFAULT_MAX_CHARS = 50000
-RELATED_TEST_MAX_FILES = 5
-# Target char budget for shaped validation evidence. The manifest is authoritative
-# and may exceed this target in pathological diffs; raw details and prose summaries
-# are excerpted with explicit named omissions instead of being blindly clipped.
-VALIDATION_PROMPT_BUDGET_CHARS = 32000
-VALIDATION_FILE_CONTEXT_BUDGET_CHARS = 3500
 
-
-def _bound_structured_evidence(text: str, *, max_chars: int) -> str:
-    """Bound a preassembled packet while retaining its manifest head and result tail."""
-    stripped = text.strip()
-    if len(stripped) <= max_chars:
-        return stripped
-    marker = (
-        "\n... [structured validation evidence shortened due to length; "
-        f"omitted {len(stripped) - max_chars} chars] ...\n"
-    )
-    if len(marker) >= max_chars:
-        return marker[:max_chars]
-    keep_chars = max_chars - len(marker)
-    head_chars = keep_chars * 2 // 3
-    tail_chars = keep_chars - head_chars
-    return stripped[:head_chars].rstrip() + marker + stripped[-tail_chars:].lstrip()
-
-
-VALIDATION_GATES = {
-    ("plan_review", "needs_review"): "plan_review",
-    ("in_development", "needs_review"): "qa",
-    ("epic_review", "needs_review"): "epic_review",
-    ("epic_review", "open"): "epic_review",
-    ("pr", "needs_review"): "pr",
-    ("merging", "open"): "merge_readiness",
-}
-
-
-_RELATED_TEST_STOPWORDS = frozenset(
-    {
-        "add",
-        "added",
-        "all",
-        "and",
-        "are",
-        "assert",
-        "can",
-        "check",
-        "code",
-        "criteria",
-        "description",
-        "ensure",
-        "file",
-        "files",
-        "fix",
-        "for",
-        "from",
-        "has",
-        "have",
-        "include",
-        "includes",
-        "into",
-        "must",
-        "new",
-        "not",
-        "pass",
-        "passes",
-        "read",
-        "related",
-        "should",
-        "src",
-        "that",
-        "task",
-        "the",
-        "this",
-        "test",
-        "tests",
-        "with",
-        "work",
-        "works",
-    }
-)
-
-
-def run_git_command(
-    cmd: list[str],
-    cwd: str | Path | None = None,
-    timeout: int = 10,
-) -> subprocess.CompletedProcess[str] | None:
-    """Run git command with standardized exception handling.
-
-    Returns CompletedProcess on success, None on exception (logs debug).
-    Caller is responsible for checking returncode and processing stdout.
-
-    Args:
-        cmd: Git command as list of strings (e.g., ["git", "diff"])
-        cwd: Working directory for the command
-        timeout: Command timeout in seconds (default: 10)
-
-    Returns:
-        CompletedProcess on success, None if exception occurred
-    """
-    try:
-        return subprocess.run(  # nosec B603 # cmd passed from internal callers with hardcoded git commands
-            cmd,
-            capture_output=True,
-            text=True,
-            timeout=timeout,
-            cwd=cwd,
-        )
-    except Exception as e:
-        logger.debug("Git command failed (%s): %s", " ".join(cmd), e)
-        return None
-
-
-def get_last_commit_diff(
-    max_chars: int = DEFAULT_MAX_CHARS,
-    cwd: str | Path | None = None,
-) -> str | None:
-    """Get diff from the most recent commit.
-
-    Args:
-        max_chars: Maximum characters to return (truncates if larger)
-        cwd: Working directory for git commands (project repo path)
-
-    Returns:
-        Diff string from HEAD~1..HEAD, or None if not available
-    """
-    result = run_git_command(["git", "diff", "HEAD~1..HEAD"], cwd=cwd)
-    if result is None or result.returncode != 0 or not result.stdout.strip():
-        return None
-
-    diff: str = result.stdout
-    if len(diff) > max_chars:
-        diff = diff[:max_chars] + "\n\n... [diff truncated] ..."
-
-    return diff
-
-
-def get_recent_commits(
-    n: int = DEFAULT_COMMIT_WINDOW,
-    cwd: str | Path | None = None,
-) -> list[dict[str, str]]:
-    """Get list of recent commits with SHA and subject.
-
-    Args:
-        n: Number of commits to retrieve
-        cwd: Working directory for git commands (project repo path)
-
-    Returns:
-        List of dicts with 'sha' and 'subject' keys
-    """
-    result = run_git_command(["git", "log", f"-{n}", "--pretty=format:%H|%s"], cwd=cwd)
-    if result is None or result.returncode != 0 or not result.stdout.strip():
-        return []
-
-    commits = []
-    for line in result.stdout.strip().split("\n"):
-        if "|" in line:
-            sha, subject = line.split("|", 1)
-            commits.append({"sha": sha, "subject": subject})
-
-    return commits
-
-
-def get_multi_commit_diff(
-    commit_count: int = DEFAULT_COMMIT_WINDOW,
-    max_chars: int = DEFAULT_MAX_CHARS,
-    cwd: str | Path | None = None,
-) -> str | None:
-    """Get combined diff from the last N commits.
-
-    Args:
-        commit_count: Number of commits to include in diff
-        max_chars: Maximum characters to return
-        cwd: Working directory for git commands (project repo path)
-
-    Returns:
-        Combined diff string, or None if not available
-    """
-    result = run_git_command(["git", "diff", f"HEAD~{commit_count}..HEAD"], cwd=cwd, timeout=30)
-    if result is None or result.returncode != 0 or not result.stdout.strip():
-        return None
-
-    diff: str = result.stdout
-    if len(diff) > max_chars:
-        diff = diff[:max_chars] + "\n\n... [diff truncated] ..."
-
-    return diff
-
-
-def get_commits_since(
-    since_sha: str,
-    max_chars: int = DEFAULT_MAX_CHARS,
-    cwd: str | Path | None = None,
-) -> str | None:
-    """Get diff from a specific commit SHA to HEAD.
-
-    Args:
-        since_sha: Starting commit SHA
-        max_chars: Maximum characters to return
-        cwd: Working directory for git commands (project repo path)
-
-    Returns:
-        Diff string, or None if not available
-    """
-    result = run_git_command(["git", "diff", f"{since_sha}..HEAD"], cwd=cwd, timeout=30)
-    if result is None or result.returncode != 0 or not result.stdout.strip():
-        return None
-
-    diff: str = result.stdout
-    if len(diff) > max_chars:
-        diff = diff[:max_chars] + "\n\n... [diff truncated] ..."
-
-    return diff
-
-
-def extract_file_patterns_from_text(text: str) -> list[str]:
-    """Extract file paths and patterns from text (criteria, description, title).
-
-    Looks for:
-    - Explicit file paths (src/foo/bar.py, tests/test_foo.py)
-    - Module references (gobby.tasks.validation -> src/gobby/tasks/validation.py)
-    - Test patterns (test_validation -> tests/**/test_validation*.py)
-
-    Args:
-        text: Text to search for file patterns
-
-    Returns:
-        List of file path patterns (may include globs)
-    """
-    patterns: set[str] = set()
-
-    # Match explicit file paths like src/foo/bar.py or ./tests/test_x.py
-    file_path_re = re.compile(r"[./]?[\w\-]+(?:/[\w\-]+)*\.\w+")
-    for match in file_path_re.findall(text):
-        # Skip URLs and common false positives
-        if not match.startswith("http") and not match.startswith("www."):
-            patterns.add(match.lstrip("./"))
-
-    # Match module references like gobby.tasks.validation
-    module_re = re.compile(r"\b(gobby(?:\.\w+)+)\b")
-    for match in module_re.findall(text):
-        # Convert module path to file path
-        file_path = "src/" + match.replace(".", "/") + ".py"
-        patterns.add(file_path)
-
-    # Extract test file hints from test_ prefixed words
-    test_re = re.compile(r"\btest_(\w+)\b")
-    for match in test_re.findall(text):
-        patterns.add(f"tests/**/test_{match}*.py")
-
-    # Extract class/function names and look for their definitions
-    class_re = re.compile(r"\b([A-Z][a-zA-Z0-9]+(?:Manager|Validator|Plugin|Handler|Service))\b")
-    for match in class_re.findall(text):
-        # These could be in any .py file, add as grep pattern hint
-        patterns.add(
-            f"**/{''.join(c if c.islower() else '_' + c.lower() for c in match).lstrip('_')}*.py"
-        )
-
-    return list(patterns)
-
-
-def find_matching_files(
-    patterns: list[str],
-    base_dir: str | Path = ".",
-    max_files: int = 10,
-) -> list[Path]:
-    """Find files matching the given patterns.
-
-    Args:
-        patterns: List of file path patterns (may include globs)
-        base_dir: Base directory to search from
-        max_files: Maximum number of files to return
-
-    Returns:
-        List of Path objects for matching files
-    """
-    base = Path(base_dir)
-    found: list[Path] = []
-
-    for pattern in patterns:
-        if len(found) >= max_files:
-            break
-
-        # Handle glob patterns
-        if "*" in pattern:
-            try:
-                matches = list(base.glob(pattern))
-                for match in matches[: max_files - len(found)]:
-                    if match.is_file() and match not in found:
-                        found.append(match)
-            except Exception as e:
-                logger.debug("Failed to glob pattern %s: %s", pattern, e)
-        else:
-            # Direct file path
-            path = base / pattern
-            if path.is_file() and path not in found:
-                found.append(path)
-
-    return found
-
-
-def _iter_search_terms(text: str) -> list[str]:
-    """Split free-form task text or paths into stable lowercase search terms."""
-    text = re.sub(r"([a-z0-9])([A-Z])", r"\1 \2", text)
-    terms: list[str] = []
-    for token in re.split(r"[^A-Za-z0-9]+", text):
-        term = token.strip().lower()
-        if len(term) < 3 or term.isdigit() or term in _RELATED_TEST_STOPWORDS:
-            continue
-        terms.append(term)
-    return terms
-
-
-def derive_related_test_terms(
-    task_title: str,
-    validation_criteria: str | None = None,
-    task_description: str | None = None,
-    *,
-    max_terms: int = 24,
-) -> list[str]:
-    """Derive bounded search terms for finding tests related to a task."""
-    search_text = f"{task_title} {validation_criteria or ''} {task_description or ''}"
-    candidates = _iter_search_terms(search_text)
-
-    for pattern in extract_file_patterns_from_text(search_text):
-        candidates.extend(_iter_search_terms(pattern))
-        candidates.extend(_iter_search_terms(Path(pattern).stem))
-
-    terms: list[str] = []
-    seen: set[str] = set()
-    for term in candidates:
-        if term in seen:
-            continue
-        seen.add(term)
-        terms.append(term)
-        if len(terms) >= max_terms:
-            break
-    return terms
-
-
-def find_related_test_files(
-    search_terms: list[str],
-    base_dir: str | Path = ".",
-    max_files: int = RELATED_TEST_MAX_FILES,
-) -> list[Path]:
-    """Find test files whose path names match derived task search terms."""
-    if not search_terms or max_files <= 0:
-        return []
-
-    base = Path(base_dir)
-    tests_dir = base / "tests"
-    if not tests_dir.is_dir():
-        return []
-
-    candidates: set[Path] = set()
-    try:
-        candidates.update(path for path in tests_dir.rglob("test_*.py") if path.is_file())
-        candidates.update(path for path in tests_dir.rglob("*_test.py") if path.is_file())
-    except Exception as e:
-        logger.debug("Failed to search related test files: %s", e)
-        return []
-
-    scored: list[tuple[int, str, Path]] = []
-    for path in sorted(candidates):
-        rel_path = path.relative_to(base).as_posix()
-        rel_text = rel_path.lower()
-        path_terms = set(_iter_search_terms(rel_text))
-        score = 0
-        for term in search_terms:
-            if term in path_terms:
-                score += 3
-            elif term in rel_text:
-                score += 1
-        if score > 0:
-            scored.append((score, rel_path, path))
-
-    scored.sort(key=lambda item: (-item[0], item[1]))
-    return [path for _score, _rel_path, path in scored[:max_files]]
-
-
-def read_files_content(
-    files: list[Path],
-    max_chars: int = DEFAULT_MAX_CHARS,
-) -> str:
-    """Read content from multiple files.
-
-    Args:
-        files: List of file paths to read
-        max_chars: Maximum total characters to return
-
-    Returns:
-        Concatenated file contents with headers
-    """
-    content_parts: list[str] = []
-    total_chars = 0
-
-    for file_path in files:
-        if total_chars >= max_chars:
-            content_parts.append("\n... [additional files truncated] ...")
-            break
-
-        try:
-            content = file_path.read_text(encoding="utf-8")
-            remaining = max_chars - total_chars
-
-            if len(content) > remaining:
-                content = content[:remaining] + "\n... [file truncated] ..."
-
-            content_parts.append(f"=== {file_path} ===\n{content}\n")
-            total_chars += len(content)
-
-        except Exception as e:
-            logger.debug("Failed to read %s: %s", file_path, e)
-            content_parts.append(f"=== {file_path} ===\n(Error reading file: {e})\n")
-
-    return "\n".join(content_parts)
-
-
-def get_validation_context_smart(
-    task_title: str,
-    validation_criteria: str | None = None,
-    task_description: str | None = None,
-    commit_window: int = DEFAULT_COMMIT_WINDOW,
-    max_chars: int = DEFAULT_MAX_CHARS,
-    cwd: str | Path | None = None,
-) -> str | None:
-    """Gather validation context using multiple strategies.
-
-    Multi-strategy context gathering:
-    1. Current uncommitted changes (staged + unstaged)
-    2. Multi-commit window (last N commits, configurable)
-    3. File-based analysis (read files mentioned in criteria)
-    4. Related test file analysis (read tests whose paths match task terms)
-
-    Args:
-        task_title: Task title for context
-        validation_criteria: Validation criteria text
-        task_description: Task description text
-        commit_window: Number of commits to look back
-        max_chars: Maximum characters to return
-        cwd: Working directory for git commands (project repo path)
-
-    Returns:
-        Validation context string, or None if nothing found
-    """
-    context_parts: list[str] = []
-    remaining_chars = max_chars
-    seen_files: set[Path] = set()
-
-    # Strategy 1: Current uncommitted changes
-    staged = run_git_command(["git", "diff", "--cached"], cwd=cwd)
-    if staged and staged.stdout.strip():
-        content = staged.stdout[: remaining_chars // 2]
-        context_parts.append(f"=== STAGED CHANGES ===\n{content}")
-        remaining_chars -= len(content)
-
-    unstaged = run_git_command(["git", "diff"], cwd=cwd)
-    if unstaged and unstaged.stdout.strip():
-        content = unstaged.stdout[: remaining_chars // 2]
-        context_parts.append(f"=== UNSTAGED CHANGES ===\n{content}")
-        remaining_chars -= len(content)
-
-    # Strategy 2: Multi-commit window
-    if remaining_chars > 5000:  # Only if we have room
-        multi_diff = get_multi_commit_diff(commit_window, remaining_chars // 2, cwd=cwd)
-        if multi_diff:
-            # Get commit list for context
-            commits = get_recent_commits(commit_window, cwd=cwd)
-            commit_summary = "\n".join(
-                f"  - {c['sha'][:8]}: {c['subject'][:60]}" for c in commits[:5]
-            )
-
-            context_parts.append(
-                f"=== RECENT COMMITS (last {commit_window}) ===\n"
-                f"{commit_summary}\n\n"
-                f"=== COMBINED DIFF ===\n{multi_diff}"
-            )
-            remaining_chars -= len(multi_diff) + len(commit_summary)
-
-    search_text = f"{task_title} {validation_criteria or ''} {task_description or ''}"
-
-    # Strategy 3: File-based analysis
-    if remaining_chars > 2000:
-        patterns = extract_file_patterns_from_text(search_text)
-
-        if patterns:
-            files = find_matching_files(patterns, base_dir=cwd or ".", max_files=5)
-            if files:
-                file_content = read_files_content(files, remaining_chars)
-                relevant_text = f"=== RELEVANT FILES ===\n{file_content}"
-                context_parts.append(relevant_text)
-                remaining_chars -= len(relevant_text)
-                seen_files.update(path.resolve() for path in files)
-
-    # Strategy 4: Related test files from task terms
-    if remaining_chars > 1000:
-        related_terms = derive_related_test_terms(
-            task_title,
-            validation_criteria=validation_criteria,
-            task_description=task_description,
-        )
-        if related_terms:
-            related_test_files = [
-                path
-                for path in find_related_test_files(
-                    related_terms,
-                    base_dir=cwd or ".",
-                    max_files=RELATED_TEST_MAX_FILES,
-                )
-                if path.resolve() not in seen_files
-            ]
-            if related_test_files:
-                test_content = read_files_content(related_test_files, remaining_chars)
-                related_text = (
-                    "=== RELATED TEST FILES ===\n"
-                    f"Search text: {search_text[:500]}\n"
-                    f"Search terms: {', '.join(related_terms)}\n\n"
-                    f"{test_content}"
-                )
-                context_parts.append(related_text)
-                remaining_chars -= len(related_text)
-
-    if not context_parts:
-        return None
-
-    combined = "\n\n".join(context_parts)
-    if len(combined) > max_chars:
-        combined = combined[:max_chars] + "\n\n... [context truncated] ..."
-
-    return combined
-
-
-def get_git_diff(
-    max_chars: int = 50000,
-    fallback_to_last_commit: bool = True,
-    cwd: str | Path | None = None,
-) -> str | None:
-    """Get changes from git for validation.
-
-    First checks for uncommitted changes (staged + unstaged).
-    If none found and fallback_to_last_commit is True, returns the last commit's diff.
-
-    Args:
-        max_chars: Maximum characters to return (truncates if larger)
-        fallback_to_last_commit: If True, fall back to last commit diff when no uncommitted changes
-        cwd: Working directory for git commands (project repo path)
-
-    Returns:
-        Combined diff string, or None if not in git repo or no changes
-    """
-    unstaged = run_git_command(["git", "diff"], cwd=cwd)
-    staged = run_git_command(["git", "diff", "--cached"], cwd=cwd)
-
-    # Check if both commands failed (not in git repo or git error)
-    unstaged_failed = unstaged is None or unstaged.returncode != 0
-    staged_failed = staged is None or staged.returncode != 0
-    if unstaged_failed and staged_failed:
-        return None
-
-    diff_parts = []
-    if staged and staged.stdout.strip():
-        diff_parts.append("=== STAGED CHANGES ===\n" + staged.stdout)
-    if unstaged and unstaged.stdout.strip():
-        diff_parts.append("=== UNSTAGED CHANGES ===\n" + unstaged.stdout)
-
-    # If no uncommitted changes, try last commit
-    if not diff_parts and fallback_to_last_commit:
-        last_commit_diff = get_last_commit_diff(max_chars, cwd=cwd)
-        if last_commit_diff:
-            return f"=== LAST COMMIT ===\n{last_commit_diff}"
-        return None
-
-    if not diff_parts:
-        return None
-
-    combined = "\n".join(diff_parts)
-    if len(combined) > max_chars:
-        combined = combined[:max_chars] + "\n\n... [diff truncated] ..."
-
-    return combined
+class ValidationPromptTooLarge(ValueError):
+    """The full criteria and complete manifest cannot fit in the prompt contract."""
 
 
 class TaskValidator:
-    """Validates task completion using LLM."""
+    """Run one bounded criteria-vs-work coherence review."""
 
     def __init__(
         self,
         config: TaskValidationConfig,
         llm_service: LLMService,
         db: HubDatabase,
-    ):
+    ) -> None:
         self.config = config
         self.llm_service = llm_service
         self._loader = PromptLoader(db=db)
 
-    async def gather_validation_context(self, file_paths: list[str]) -> str:
-        """
-        Gather context for validation from files.
-
-        Args:
-            file_paths: List of absolute file paths to read.
-
-        Returns:
-            Concatenated file contents.
-        """
-        context: list[str] = []
-        for path in file_paths:
-            try:
-                with open(path, encoding="utf-8") as f:
-                    content = f.read()
-                    context.append(f"--- {path} ---\n{content}\n")
-            except Exception as e:
-                logger.warning("Failed to read file %s for validation: %s", path, e)
-                context.append(f"--- {path} ---\n(Error reading file: {e})\n")
-        return "\n".join(context)
-
     async def validate_task(
         self,
+        *,
         task_id: str,
         title: str,
-        description: str | None,
         changes_summary: str,
-        validation_criteria: str | None = None,
-        context_files: list[str] | None = None,
-        category: str | None = None,
-        *,
-        file_context_text: str | None = None,
-        verification_receipt_text: str | None = None,
-        admissible_evidence_ids: Sequence[str] = (),
-        lessons_section: str = "",
-    ) -> ValidationResult:
-        """Validate one preassembled evidence packet with one JSON model request."""
-        return await self._validate_task_static(
-            task_id=task_id,
-            title=title,
-            description=description,
-            changes_summary=changes_summary,
-            validation_criteria=validation_criteria,
-            context_files=context_files,
-            category=category,
-            file_context_text=file_context_text,
-            verification_receipt_text=verification_receipt_text,
-            admissible_evidence_ids=admissible_evidence_ids,
-            lessons_section=lessons_section,
-        )
-
-    async def _validate_task_static(
-        self,
-        task_id: str,
-        title: str,
-        description: str | None,
-        changes_summary: str,
-        validation_criteria: str | None = None,
-        context_files: list[str] | None = None,
-        category: str | None = None,
-        *,
-        file_context_text: str | None = None,
-        verification_receipt_text: str | None = None,
-        admissible_evidence_ids: Sequence[str] = (),
-        lessons_section: str = "",
-    ) -> ValidationResult:
-        """
-        Validate task completion.
-
-        Args:
-            task_id: Task ID
-            title: Task title
-            description: Task description provided as contextual task intent
-            changes_summary: Summary of changes made (files, diffs, etc.)
-            validation_criteria: Observable criteria to validate against
-            context_files: List of files to read for context (optional)
-            category: Task domain category (e.g., 'manual', 'code', 'test')
-            file_context_text: Pre-gathered file context to include with any
-                context_files content.
-
-        Returns:
-            ValidationResult with status and feedback
-        """
+        validation_criteria: str,
+        diff_text: str | None,
+        checklist_facts: Mapping[str, object],
+    ) -> CloseVerdict:
+        """Review all criteria once against a bounded work summary and linked diff."""
         if not self.config.enabled:
-            return ValidationResult(status="pending", feedback="Validation disabled")
+            raise RuntimeError("Task-close criteria review is disabled.")
 
         criteria = split_validation_criteria(validation_criteria)
         if not criteria:
-            logger.warning("Cannot validate task %s: missing validation criteria", task_id)
-            return ValidationResult(
-                status="pending",
-                feedback="Missing validation criteria",
-                blocking_reasons=["Non-epic tasks require explicit validation criteria"],
-            )
-
-        logger.info("Validating task %s: %s", task_id, title)
-
-        # Gather context if provided
-        file_context_parts: list[str] = []
-        if file_context_text:
-            file_context_parts.append(file_context_text)
-        if context_files:
-            file_context_parts.append(await self.gather_validation_context(context_files))
-        file_context = "\n\n".join(part for part in file_context_parts if part)
-
-        # Build prompt
-        criteria_text = "Validation Criteria (use each exact string in criterion_results):\n" + (
-            "\n".join(f"{index}. {criterion}" for index, criterion in enumerate(criteria, 1))
-        )
-
-        raw_changes_chars = len(changes_summary)
-        raw_file_context_chars = len(file_context)
-        shaped_file_context = (
-            build_file_context_evidence(
-                file_context,
-                max_chars=VALIDATION_FILE_CONTEXT_BUDGET_CHARS,
-            )
-            if file_context
-            else ""
-        )
-        evidence_budget = VALIDATION_PROMPT_BUDGET_CHARS
-        if shaped_file_context:
-            evidence_budget -= VALIDATION_FILE_CONTEXT_BUDGET_CHARS
-
-        has_structured_manifest = "Changed File Manifest (authoritative):" in changes_summary
-        has_git_diff_blocks = "diff --git " in changes_summary
-        looks_like_git_diff = (
-            changes_summary.startswith("Git diff")
-            or changes_summary.lstrip().startswith("--- ")
-            or "@@" in changes_summary
-        )
-        if has_git_diff_blocks and not has_structured_manifest:
-            evidence = build_diff_validation_evidence(
-                changes_summary,
-                max_chars=evidence_budget,
-            )
-            changes_section = (
-                "Code Changes (git diff):\n"
-                "Analyze these ACTUAL code changes to verify the implementation.\n\n"
-                f"{evidence.text}\n\n"
-            )
-        elif has_structured_manifest:
-            structured_evidence = _bound_structured_evidence(
-                changes_summary,
-                max_chars=evidence_budget,
-            )
-            changes_section = (
-                "Code Changes (structured validation evidence):\n"
-                "Analyze this ACTUAL linked-commit evidence to verify the implementation.\n\n"
-                f"{structured_evidence}\n\n"
-            )
-        elif looks_like_git_diff:
-            summary = build_summary_validation_evidence(
-                changes_summary,
-                max_chars=evidence_budget,
-            )
-            changes_section = (
-                "Code Changes (git diff):\n"
-                "Analyze these ACTUAL code changes to verify the implementation.\n\n"
-                f"{summary}\n\n"
-            )
-        else:
-            summary = build_summary_validation_evidence(
-                changes_summary,
-                max_chars=evidence_budget,
-            )
-            changes_section = f"Changes Summary:\n{summary}\n\n"
-
-        if verification_receipt_text:
-            if len(verification_receipt_text) > VALIDATION_PROMPT_BUDGET_CHARS:
-                raise ValueError("verification receipt packet exceeds its 32,000-character budget")
-            changes_section += (
-                f"Server-computed verification receipt evidence:\n{verification_receipt_text}\n\n"
-            )
-
-        # Build test strategy section if provided
-        category_section = ""
-        if category:
-            category_section = f"Test Strategy: {category}\n\n"
-
-        # Build prompt using PromptLoader
-        prompt_path = self.config.prompt_path or "validation/validate"
-        template_context = {
-            "title": title,
-            "category_section": category_section,
-            "criteria_text": criteria_text,
-            "changes_section": changes_section,
-            "file_context": shaped_file_context,
-            "lessons_section": lessons_section,
-        }
-        prompt = self._loader.render(prompt_path, template_context)
-        logger.debug(
-            "Validation prompt assembled for task %s: raw_changes_chars=%d "
-            "raw_file_context_chars=%d shaped_changes_chars=%d shaped_file_context_chars=%d "
-            "verification_receipt_chars=%d final_prompt_chars=%d",
-            task_id,
-            raw_changes_chars,
-            raw_file_context_chars,
-            len(changes_section),
-            len(shaped_file_context),
-            len(verification_receipt_text or ""),
-            len(prompt),
-        )
+            raise ValueError("Task-close criteria review requires explicit validation criteria.")
 
         try:
-            result_data = await self.llm_service.call_json_feature(
-                self.config,
-                prompt,
-                system_prompt=self.config.system_prompt,
-                caller="tasks.validation",
+            diff_evidence = build_close_diff_evidence(
+                diff_text,
+                criteria=validation_criteria,
+            )
+        except ValidationEvidenceTooLarge as exc:
+            raise ValidationPromptTooLarge(str(exc)) from exc
+        criteria_text = "\n".join(
+            f"{index}. {criterion}" for index, criterion in enumerate(criteria, start=1)
+        )
+        facts_text = _bound_text(
+            json.dumps(checklist_facts, sort_keys=True, separators=(",", ":"), default=str),
+            CHECKLIST_FACTS_MAX_CHARS,
+        )
+        prompt = self._loader.render(
+            self.config.prompt_path or "validation/validate",
+            {
+                "title": title,
+                "criteria_text": criteria_text,
+                "changes_summary": _bound_text(
+                    changes_summary.strip(),
+                    CHANGES_SUMMARY_MAX_CHARS,
+                ),
+                "diff_evidence": diff_evidence.text,
+                "checklist_facts": facts_text,
+            },
+        )
+        if len(prompt) > VALIDATION_PROMPT_MAX_CHARS:
+            raise ValidationPromptTooLarge(
+                "The full validation criteria and complete changed-file manifest exceed the "
+                "10,000-character criteria-review prompt. Split the task or shorten its criteria."
             )
 
-            if not result_data:
-                logger.warning("Empty LLM response for task %s validation", task_id)
-                return ValidationResult(
-                    status="pending", feedback="Validation failed: Empty response from LLM"
-                )
+        logger.info(
+            "Running bounded close criteria review for task %s "
+            "(prompt_chars=%d manifest_files=%d excerpt_chars=%d)",
+            task_id,
+            len(prompt),
+            diff_evidence.manifest_count,
+            diff_evidence.excerpt_chars,
+        )
+        payload = await self.llm_service.call_json_feature(
+            self.config,
+            prompt,
+            system_prompt=self.config.system_prompt,
+            caller="tasks.close_checklist",
+        )
+        return parse_close_verdict(payload, criteria)
 
-            return _validation_result_from_data(
-                result_data,
-                expected_criteria=criteria,
-                admissible_evidence_ids=admissible_evidence_ids,
-            )
 
-        except Exception as e:
-            if is_feature_generation_infrastructure_error(e):
-                logger.error(
-                    "Validation generation unavailable for task %s (infrastructure failure): %s",
-                    task_id,
-                    e,
-                )
-                return ValidationResult(
-                    status="error",
-                    feedback=f"Validation generation unavailable (infrastructure): {e}",
-                    failure_category=classify_exception(e),
-                )
-            logger.error("Failed to validate task %s: %s", task_id, e)
-            return ValidationResult(
-                status="pending",
-                feedback=f"Validation failed: {str(e)}",
-                failure_category=FailureCategory.CODE,
-            )
+def _bound_text(value: str, max_chars: int) -> str:
+    if len(value) <= max_chars:
+        return value
+    return value[: max_chars - 3].rstrip() + "..."
+
+
+__all__ = [
+    "CHANGES_SUMMARY_MAX_CHARS",
+    "CHECKLIST_FACTS_MAX_CHARS",
+    "TaskValidator",
+    "VALIDATION_PROMPT_MAX_CHARS",
+    "ValidationPromptTooLarge",
+]

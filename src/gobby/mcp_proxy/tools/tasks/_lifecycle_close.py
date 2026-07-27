@@ -1,8 +1,6 @@
-"""Close task handler for task lifecycle.
+"""Checklist-based task closure with one evaluation and one commit phase."""
 
-Handles the close_task tool registration including validation,
-commit checks, session linking, and worktree status updates.
-"""
+from __future__ import annotations
 
 import asyncio
 import logging
@@ -14,675 +12,475 @@ from gobby.mcp_proxy.tools.task_repo_paths import (
     RepoPathValidationError,
     resolve_task_repo_path,
 )
+from gobby.mcp_proxy.tools.tasks._close_evaluation_support import (
+    claimed_session_window_start as _claimed_session_window_start,
+)
+from gobby.mcp_proxy.tools.tasks._close_evaluation_support import (
+    committable_task_paths as _committable_task_paths,
+)
+from gobby.mcp_proxy.tools.tasks._close_evaluation_support import (
+    derive_close_transcript_evidence as _derive_close_transcript_evidence,
+)
+from gobby.mcp_proxy.tools.tasks._close_evaluation_support import (
+    has_committable_edits as _has_committable_edits,
+)
 from gobby.mcp_proxy.tools.tasks._context import RegistryContext
-from gobby.mcp_proxy.tools.tasks._escalation_coordinator import coordinate_task_escalation
 from gobby.mcp_proxy.tools.tasks._lifecycle_close_preview import (
-    CloseEvaluationReport,
+    CloseEvaluation,
     link_close_commit_shas,
     resolve_close_commit_shas,
 )
 from gobby.mcp_proxy.tools.tasks._lifecycle_validation import (
+    active_validation_backoff,
     determine_close_outcome,
-    gather_validation_context,
+    evaluate_criteria_review,
+    record_validation_infrastructure_failure,
     validate_commit_requirements,
-    validate_leaf_task_with_llm,
     validate_parent_task,
 )
 from gobby.mcp_proxy.tools.tasks._notifications import notify_parent_on_task_state_change
 from gobby.mcp_proxy.tools.tasks._resolution import resolve_task_id_for_mcp
 from gobby.plans.bootstrap_ledger import BootstrapLedgerMismatchError
 from gobby.storage.tasks import TaskNotFoundError, TaskStaleStateError
-from gobby.storage.verification_receipts import VerificationReceiptStore
-from gobby.tasks.evidence_admission import admit_task_evidence
+from gobby.tasks.close_checklist import evaluate_validation_commands
+from gobby.tasks.commits import collect_commit_diff_text
 from gobby.tasks.state_semantics import get_claimed_session_id
-from gobby.tasks.task_state_evidence import build_linked_diff_evidence
-from gobby.tasks.verification_receipt_packet import build_verification_receipt_packet
+from gobby.tasks.transcript_evidence import (
+    TranscriptEvidence,
+    TranscriptEvidenceUnavailable,
+)
 
 logger = logging.getLogger(__name__)
 
 
-def _repo_path_unavailable_error() -> dict[str, Any]:
-    """Return the structured error used when close_task cannot safely run Git."""
-    return {
-        "success": False,
-        "error": "task_repo_path_unavailable",
-        "message": (
-            "close_task requires a resolvable task repository path for commit operations. "
-            "Configure the task project's repo_path or pass project_path."
-        ),
-    }
+async def _evaluate_close(
+    ctx: RegistryContext,
+    *,
+    task_id: str,
+    reason: str,
+    changes_summary: str | None,
+    commit_sha: str | None,
+    project_path: str | None,
+    response_detail: Literal["concise", "diagnostic"],
+) -> CloseEvaluation:
+    """Evaluate the checklist once without close or commit-link mutation."""
+    evaluation = CloseEvaluation(task_id, response_detail=response_detail)
+    try:
+        resolved_id = resolve_task_id_for_mcp(ctx.task_manager, task_id)
+    except (TaskNotFoundError, ValueError) as exc:
+        return evaluation.fail(1, "task_exists", "task_not_found", str(exc))
+    task = ctx.task_manager.get_task(resolved_id)
+    if task is None:
+        return evaluation.fail(1, "task_exists", "task_not_found", f"Task {task_id} not found.")
+    evaluation.task = task
+    evaluation.task_id = resolved_id
+    evaluation.pass_gate(1, "task_exists", "Task exists.")
+
+    from gobby.utils.session_context import get_current_session_id
+
+    session_ref = get_current_session_id() or get_claimed_session_id(task)
+    if not session_ref:
+        return evaluation.fail(
+            2,
+            "session_context",
+            "no_session_context",
+            "close_task requires an active session or a task claimed by a registered session.",
+            action="Claim the task from an active session, then retry close_task.",
+        )
+    try:
+        resolved_session_id = ctx.resolve_session_id(session_ref)
+    except ValueError as exc:
+        return evaluation.fail(
+            2,
+            "session_context",
+            "session_resolution_failed",
+            f"Cannot resolve close session {session_ref!r}: {exc}",
+        )
+    evaluation.resolved_session_id = resolved_session_id
+    evaluation.pass_gate(2, "session_context", "Close session resolved.")
+
+    try:
+        repo_path = resolve_task_repo_path(
+            task_manager=ctx.task_manager,
+            project_manager=ctx.project_manager,
+            task=task,
+            project_path=project_path,
+        )
+    except RepoPathValidationError as exc:
+        return evaluation.fail(3, "repository_path", "invalid_project_path", str(exc))
+    if repo_path is None:
+        return evaluation.fail(
+            3,
+            "repository_path",
+            "task_repo_path_unavailable",
+            "close_task requires a registered repository path.",
+        )
+    evaluation.repo_path = repo_path
+    evaluation.pass_gate(3, "repository_path", "Task repository resolved.")
+
+    has_children = bool(ctx.task_manager.list_tasks(parent_task_id=resolved_id, limit=1))
+    if has_children:
+        parent_result = validate_parent_task(ctx, resolved_id)
+        if not parent_result.can_close:
+            return evaluation.fail(
+                4,
+                "children_closed",
+                parent_result.error_type or "children_open",
+                parent_result.message or "Close every child task first.",
+                extra=parent_result.extra,
+            )
+    evaluation.is_epic = task.task_type == "epic"
+    evaluation.skip_leaf_checks = has_children or evaluation.is_epic
+    evaluation.pass_gate(4, "children_closed", "Every child task is closed.")
+    if evaluation.skip_leaf_checks:
+        for item, name in (
+            (5, "criteria_present"),
+            (6, "changes_summary_present"),
+            (7, "linked_commits"),
+            (8, "uncommitted_task_edits"),
+            (9, "validation_commands"),
+            (10, "criteria_review"),
+        ):
+            evaluation.pass_gate(
+                item,
+                name,
+                "Skipped for an epic or structural parent.",
+                skipped=True,
+            )
+        return evaluation
+
+    if not (task.validation_criteria or "").strip():
+        return evaluation.fail(
+            5,
+            "criteria_present",
+            "missing_validation_criteria",
+            "Leaf tasks require explicit validation criteria before closing.",
+        )
+    evaluation.pass_gate(5, "criteria_present", "Validation criteria are present.")
+    if not (changes_summary or "").strip():
+        return evaluation.fail(
+            6,
+            "changes_summary_present",
+            "missing_changes_summary",
+            "Leaf tasks require changes_summary describing what changed and why.",
+        )
+    evaluation.pass_gate(6, "changes_summary_present", "Changes summary is present.")
+
+    owner_session_id = get_claimed_session_id(task) or resolved_session_id
+    evaluation.edit_session_id = owner_session_id
+    try:
+        session_vars = ctx.session_var_manager.get_variables(owner_session_id)
+    except (KeyError, TypeError, ValueError) as exc:
+        return evaluation.fail(
+            2,
+            "session_context",
+            "session_variable_lookup_failed",
+            f"Cannot read task edit attribution from the owning session: {exc}",
+        )
+    from gobby.workflows.task_claim_state import target_task_has_edits, task_edited_file_set
+
+    attributed = target_task_has_edits(session_vars, resolved_id)
+    raw_paths = task_edited_file_set(session_vars, resolved_id)
+    if attributed and not raw_paths:
+        return evaluation.fail(
+            8,
+            "uncommitted_task_edits",
+            "task_edit_paths_unavailable",
+            "The task records edits but no attributed file paths. Restore task edit state and retry.",
+        )
+    evaluation.edited_paths = await asyncio.to_thread(
+        _committable_task_paths,
+        raw_paths,
+        repo_path,
+    )
+    evaluation.had_attributed_edits = attributed and bool(evaluation.edited_paths)
+    evaluation.claim_started_at = _claimed_session_window_start(
+        ctx,
+        task=task,
+        resolved_id=resolved_id,
+    )
+    commit_shas, commit_error = resolve_close_commit_shas(
+        ctx.task_manager,
+        task=task,
+        task_id=resolved_id,
+        claim_started_at=evaluation.claim_started_at,
+        commit_sha=commit_sha,
+        cwd=repo_path,
+        project_name=ctx.get_current_project_name(),
+    )
+    evaluation.commit_shas = commit_shas
+    if commit_error:
+        return evaluation.fail(
+            7,
+            "linked_commits",
+            str(commit_error["error"]),
+            str(commit_error["message"]),
+        )
+    evaluation_task = replace(task, commits=commit_shas or None)
+    if evaluation.had_attributed_edits:
+        commit_result = validate_commit_requirements(evaluation_task, reason, repo_path)
+        if not commit_result.can_close:
+            return evaluation.fail(
+                7,
+                "linked_commits",
+                commit_result.error_type or "commit_validation_failed",
+                commit_result.message or "Link a commit for the attributed task edits.",
+                extra=commit_result.extra,
+            )
+    evaluation.pass_gate(
+        7,
+        "linked_commits",
+        "Attributed edits have a linked commit."
+        if evaluation.had_attributed_edits
+        else "No attributed committable edits require a commit.",
+        skipped=not evaluation.had_attributed_edits,
+    )
+
+    has_dirty_edits = bool(evaluation.edited_paths) and await asyncio.to_thread(
+        _has_committable_edits, evaluation.edited_paths, repo_path
+    )
+    if has_dirty_edits:
+        return evaluation.fail(
+            8,
+            "uncommitted_task_edits",
+            "uncommitted_task_edits",
+            "Task-attributed files still have uncommitted changes. Commit them and retry.",
+        )
+    evaluation.pass_gate(8, "uncommitted_task_edits", "No task-attributed files are dirty.")
+
+    command_gate = evaluate_validation_commands(
+        task_category=task.category,
+        evidence=TranscriptEvidence(),
+        has_attributed_edits=evaluation.had_attributed_edits,
+    )
+    if command_gate.status != "skipped":
+        backoff = active_validation_backoff(task, ctx)
+        if backoff is not None:
+            return evaluation.fail(
+                9,
+                "validation_commands",
+                backoff.error_type or "validation_infrastructure_unavailable",
+                backoff.message or "Validation infrastructure is unavailable.",
+                extra=backoff.extra,
+            )
+        try:
+            transcript = await _derive_close_transcript_evidence(
+                ctx,
+                task_id=resolved_id,
+                owner_session_id=owner_session_id,
+                closing_session_id=resolved_session_id,
+                owner_window_start=evaluation.claim_started_at,
+                task_edited_files=evaluation.edited_paths,
+                repo_path=repo_path,
+            )
+        except TranscriptEvidenceUnavailable as exc:
+            infra = record_validation_infrastructure_failure(
+                task,
+                ctx,
+                resolved_id=resolved_id,
+                message=(
+                    f"Task-close transcript evidence is unavailable: {exc}. "
+                    f"Attempted paths: {', '.join(exc.attempted_paths) or 'none'}."
+                ),
+                error_type="validation_evidence_unavailable",
+            )
+            return evaluation.fail(
+                9,
+                "validation_commands",
+                infra.error_type or "validation_evidence_unavailable",
+                infra.message or str(exc),
+                extra=infra.extra,
+            )
+        evaluation.transcript_evidence = transcript.summary()
+        command_gate = evaluate_validation_commands(
+            task_category=task.category,
+            evidence=transcript,
+            has_attributed_edits=evaluation.had_attributed_edits,
+        )
+    evaluation.gates.append(command_gate)
+    if not command_gate.passed:
+        evaluation.error = "validation_command_required"
+        evaluation.message = command_gate.message
+        evaluation.action = command_gate.message
+        return evaluation
+
+    if ctx.task_validator is None:
+        infra = record_validation_infrastructure_failure(
+            task,
+            ctx,
+            resolved_id=resolved_id,
+            message="The bounded task-close criteria reviewer is not configured.",
+        )
+        return evaluation.fail(
+            10,
+            "criteria_review",
+            "validation_provider_unavailable",
+            infra.message or "The bounded task-close criteria reviewer is not configured.",
+            extra=infra.extra,
+        )
+    try:
+        diff_text = await asyncio.to_thread(
+            collect_commit_diff_text,
+            commit_shas,
+            cwd=repo_path,
+        )
+    except RuntimeError as exc:
+        infra = record_validation_infrastructure_failure(
+            task,
+            ctx,
+            resolved_id=resolved_id,
+            message=f"Validation diff is unavailable: {exc}",
+            error_type="validation_diff_unavailable",
+        )
+        return evaluation.fail(
+            10,
+            "criteria_review",
+            infra.error_type or "validation_diff_unavailable",
+            infra.message or str(exc),
+            extra=infra.extra,
+        )
+    llm_result = await evaluate_criteria_review(
+        task=evaluation_task,
+        task_validator=ctx.task_validator,
+        ctx=ctx,
+        resolved_id=resolved_id,
+        changes_summary=changes_summary or "",
+        diff_text=diff_text,
+        checklist_facts={
+            "commit_count": len(commit_shas),
+            "had_attributed_edits": evaluation.had_attributed_edits,
+            "validation_commands": command_gate.details,
+        },
+        validation_config=ctx.validation_config,
+    )
+    evaluation.validation_status = llm_result.validation_status
+    evaluation.validation_feedback = llm_result.validation_feedback
+    evaluation.validation_reset_reason = llm_result.reset_reason
+    evaluation.verdict = llm_result.extra.get("verdict")
+    if not llm_result.can_close:
+        reasons = llm_result.extra.get("blocking_reasons")
+        message = (
+            str(reasons[0])
+            if isinstance(reasons, list) and reasons
+            else llm_result.message or "Criteria review did not pass."
+        )
+        return evaluation.fail(
+            10,
+            "criteria_review",
+            llm_result.error_type or "validation_failed",
+            message,
+            extra=llm_result.extra,
+        )
+    evaluation.pass_gate(10, "criteria_review", "Bounded criteria review passed.")
+    evaluation.extra.update(llm_result.extra)
+    return evaluation
 
 
-def _has_committable_edits(paths: set[str], cwd: str) -> bool:
-    """Return True if any of the given repo-relative paths could ever be committed.
+async def _commit_close(
+    ctx: RegistryContext,
+    evaluation: CloseEvaluation,
+    *,
+    reason: str,
+    skip_validation: bool,
+    override_justification: str | None,
+    commit_sha: str | None,
+) -> dict[str, Any]:
+    """Apply close mutations after cheap concurrency-sensitive rechecks."""
+    task = evaluation.task
+    if task is None or evaluation.task_id is None:
+        return evaluation.response(preview=False)
+    fresh = ctx.task_manager.get_task(task.id)
+    if fresh is None or fresh.updated_at != task.updated_at:
+        return _stale_close_response(
+            evaluation, "Task state changed after evaluation; retry close_task."
+        )
+    commit_shas, error = resolve_close_commit_shas(
+        ctx.task_manager,
+        task=fresh,
+        task_id=task.id,
+        claim_started_at=evaluation.claim_started_at,
+        commit_sha=commit_sha,
+        cwd=evaluation.repo_path,
+        project_name=ctx.get_current_project_name(),
+    )
+    if error or commit_shas != evaluation.commit_shas:
+        return _stale_close_response(
+            evaluation,
+            "The prospective commit set changed after evaluation; retry close_task.",
+        )
+    has_dirty_edits = bool(evaluation.edited_paths and evaluation.repo_path) and (
+        await asyncio.to_thread(
+            _has_committable_edits,
+            evaluation.edited_paths,
+            evaluation.repo_path or "",
+        )
+    )
+    if has_dirty_edits:
+        return _stale_close_response(
+            evaluation,
+            "Task-attributed files changed after evaluation; commit them and retry close_task.",
+        )
+    linked, link_error = link_close_commit_shas(
+        ctx.task_manager,
+        task=fresh,
+        commit_shas=commit_shas,
+        cwd=evaluation.repo_path,
+    )
+    if link_error:
+        evaluation.error = str(link_error["error"])
+        evaluation.message = str(link_error["message"])
+        return evaluation.response(preview=False)
 
-    Paths matched by .gitignore (e.g. a gitignored `wiki/` vault) can never produce
-    a commit, so they must not trigger the commit-before-close requirement. A
-    `git check-ignore` miss or error is treated as committable so real tracked-file
-    edits never silently skip the requirement.
-    """
-    if not paths:
-        return False
+    _route, store_override = determine_close_outcome(
+        linked,
+        skip_validation and evaluation.skip_leaf_checks,
+        override_justification,
+    )
+    current_commit_sha = commit_shas[-1] if commit_shas else None
+    try:
+        ctx.task_manager.close_task(
+            task.id,
+            reason=reason,
+            closed_in_session_id=evaluation.resolved_session_id,
+            closed_commit_sha=current_commit_sha,
+            validation_override_reason=override_justification if store_override else None,
+            expected_updated_at=linked.updated_at,
+            reset_validation_fail_count=evaluation.validation_reset_reason is not None,
+            validation_status=(
+                evaluation.validation_status
+                or ("skipped" if evaluation.skip_leaf_checks else "valid")
+            ),
+            validation_feedback=evaluation.validation_feedback,
+        )
+    except BootstrapLedgerMismatchError as exc:
+        return exc.to_response()
+    except TaskStaleStateError as exc:
+        return _stale_close_response(evaluation, str(exc))
 
-    from gobby.utils.git import is_path_gitignored
+    if evaluation.is_epic and reason.casefold() in {"completed", "obsolete"}:
+        from gobby.hooks.event_handlers._plan import on_epic_terminal
 
-    return any(not is_path_gitignored(path, cwd) for path in sorted(paths))
+        on_epic_terminal(
+            {
+                "task_ref": f"#{task.seq_num}" if task.seq_num else task.id,
+                "project_id": task.project_id,
+                "status": "closed",
+                "closure_reason": reason.casefold(),
+            },
+            db=ctx.task_manager.db,
+        )
+    notify_parent_on_task_state_change(
+        ctx.task_manager.db,
+        task.id,
+        "closed",
+        task_ref=f"#{task.seq_num}" if task.seq_num else None,
+    )
+    _cleanup_closed_claim(ctx, evaluation, commit_shas)
+    return evaluation.response(preview=False, closed=True)
 
 
 def register_close_task(registry: InternalToolRegistry, ctx: RegistryContext) -> None:
-    """Register the close_task tool on the given registry."""
-
-    async def _close_task_once(
-        task_id: str,
-        reason: str = "completed",
-        changes_summary: str | None = None,
-        skip_validation: bool = False,
-        override_justification: str | None = None,
-        commit_sha: str | None = None,
-        project_path: str | None = None,
-        preview: bool = False,
-        response_detail: Literal["concise", "diagnostic"] = "concise",
-        evidence_receipt_ids: list[str] | None = None,
-    ) -> dict[str, Any]:
-        """Close a task with validation.
-
-        Structural parents close after all children have closed. Every non-epic leaf
-        is validated against its explicit criteria and admissible task evidence.
-
-        Args:
-            task_id: Task reference (#N, path, or UUID)
-            reason: Audited reason for closing.
-            changes_summary: Summary of changes made. Required for leaf/standalone tasks.
-                Optional for parent/epic tasks where all children are closed.
-                For completed tasks: describe what was changed and why.
-                For no-work closes (duplicate, wont_fix, obsolete): explain why no changes were needed.
-            skip_validation: Accepted only for organizational closes; leaf validation
-                cannot be bypassed.
-            override_justification: Optional audit context for organizational closes.
-            commit_sha: Git commit SHA to link before closing. Convenience for link + close in one call.
-            project_path: Repository path that contains the commit. Optional; defaults to the
-                task project's repository. Absolute paths are allowed when they resolve to an
-                accessible task/project/worktree/clone repository directory.
-            preview: Run the pass without mutating task or validation state.
-            response_detail: Preview response detail level.
-            evidence_receipt_ids: Receipt IDs to prioritize for detailed validation context.
-
-        Returns:
-            Closed task or error with validation feedback
-        """
-        from gobby.utils.session_context import get_current_session_id
-
-        session_id = get_current_session_id()
-        # Resolve task reference (supports #N, path, UUID formats)
-        try:
-            resolved_id = resolve_task_id_for_mcp(ctx.task_manager, task_id)
-        except TaskNotFoundError as e:
-            return {"error": str(e)}
-        except ValueError as e:
-            return {"error": str(e)}
-
-        task = ctx.task_manager.get_task(resolved_id)
-        if not task:
-            return {"error": f"Task {task_id} not found"}
-        report = CloseEvaluationReport(
-            task_id=resolved_id,
-            response_detail=response_detail,
-        )
-        report.pass_gate("task_exists")
-
-        def blocked(
-            error: str,
-            message: str,
-            *,
-            action: str | None = None,
-            extra: dict[str, Any] | None = None,
-        ) -> dict[str, Any]:
-            if preview:
-                return report.preview_response(
-                    can_close=False,
-                    error=error,
-                    blocking_reasons=[message],
-                    required_actions=[action or message],
-                    extra=extra,
-                )
-            response: dict[str, Any] = {
-                "success": False,
-                "error": error,
-                "message": message,
-            }
-            if extra:
-                response.update(extra)
-            return response
-
-        # close_task is the only task-lifecycle tool that persists a
-        # *_in_session_id audit column. When the ContextVar is empty, prefer
-        # the task's existing claimed_by_session_id over silently writing NULL.
-        if not session_id:
-            fallback_session_id = get_claimed_session_id(task)
-            if fallback_session_id:
-                logger.warning(
-                    "close_task: no session context; falling back to task.claimed_by_session_id=%s",
-                    fallback_session_id,
-                )
-                session_id = fallback_session_id
-            else:
-                return blocked(
-                    "no_session_context",
-                    "close_task requires an active session context or a previously-claimed task",
-                    action="Claim the task from an active session, then retry close_task.",
-                )
-        report.pass_gate("session_context")
-
-        # Get repo_path for git commands (needed before link_commit).
-        try:
-            repo_path = resolve_task_repo_path(
-                task_manager=ctx.task_manager,
-                project_manager=ctx.project_manager,
-                task=task,
-                project_path=project_path,
-            )
-        except RepoPathValidationError as e:
-            return blocked(
-                "invalid_project_path",
-                str(e),
-                action="Pass an accessible registered repository path as project_path.",
-            )
-        report.pass_gate("repository_path")
-
-        # Check if this is a parent task with all children closed
-        # Parent tasks (epics) are organizational containers -- no own commits needed
-        children_for_parent_check = ctx.task_manager.list_tasks(parent_task_id=resolved_id, limit=1)
-        is_parent_all_closed = False
-        if children_for_parent_check:
-            parent_result = validate_parent_task(ctx, resolved_id)
-            if not parent_result.can_close:
-                return blocked(
-                    parent_result.error_type or "parent_validation_failed",
-                    parent_result.message or "Parent task cannot close yet.",
-                    action="Close every unresolved child task, then retry close_task.",
-                    extra=parent_result.extra,
-                )
-            is_parent_all_closed = True
-            report.pass_gate("children_closed")
-
-        # Epics are organizational containers — they never require own commits,
-        # changes_summary, or session-edit checks, regardless of child count.
-        is_epic = task.task_type == "epic"
-        skip_leaf_checks = is_parent_all_closed or is_epic
-        if not skip_leaf_checks and not (task.validation_criteria or "").strip():
-            return blocked(
-                "missing_validation_criteria",
-                "Non-epic tasks require explicit validation_criteria before they can close.",
-                action="Update the task with observable validation criteria, then retry close_task.",
-            )
-
-        # Require changes_summary for non-parent closes (agents must explain what changed)
-        if not skip_leaf_checks and not changes_summary:
-            return blocked(
-                "missing_changes_summary",
-                "changes_summary is required when closing leaf/standalone tasks. "
-                "Describe what was changed and why.",
-                action="Pass changes_summary describing what changed and why.",
-            )
-        report.pass_gate("changes_summary")
-
-        # Resolve session_id to UUID early (needed for commit and validation checks)
-        resolved_session_id = session_id
-        if session_id:
-            try:
-                resolved_session_id = ctx.resolve_session_id(session_id)
-            except ValueError as e:
-                return blocked(
-                    "session_resolution_failed",
-                    f"Cannot resolve session '{session_id}': {e}",
-                    action="Retry from a registered project session.",
-                )
-        report.pass_gate("session_resolved")
-
-        # Resolve target-task edit attribution for commit checks below.
-        edit_session_id = get_claimed_session_id(task) or resolved_session_id
-        session_vars: dict[str, Any] = {}
-        if edit_session_id and not skip_leaf_checks:
-            try:
-                session_vars = ctx.session_var_manager.get_variables(edit_session_id)
-            except (KeyError, ValueError, TypeError) as e:
-                logger.warning(
-                    "close_task failed to load owner session variables for task %s "
-                    "from session %s: %s",
-                    resolved_id,
-                    edit_session_id,
-                    e,
-                )
-                return blocked(
-                    "session_variable_lookup_failed",
-                    "close_task could not verify task edit attribution from the owning "
-                    "session, so it cannot safely enforce commit requirements.",
-                    action="Restore owner-session variables, then retry close_task.",
-                )
-        from gobby.workflows.task_claim_state import (
-            target_task_has_edits,
-            task_edited_file_set,
-        )
-
-        target_task_had_edits = target_task_has_edits(session_vars, resolved_id)
-        if target_task_had_edits:
-            if repo_path is None:
-                repo_error = _repo_path_unavailable_error()
-                return blocked(
-                    str(repo_error["error"]),
-                    str(repo_error["message"]),
-                    action="Configure the task repository or pass project_path.",
-                )
-            edited_paths = task_edited_file_set(session_vars, resolved_id)
-            target_task_had_edits = await asyncio.to_thread(
-                _has_committable_edits,
-                edited_paths,
-                repo_path,
-            )
-
-        claim_started_at = _claimed_session_window_start(
-            ctx,
-            task=task,
-            resolved_id=resolved_id,
-            resolved_session_id=resolved_session_id,
-        )
-        commit_shas, commit_resolution_error = resolve_close_commit_shas(
-            ctx.task_manager,
-            task=task,
-            task_id=resolved_id,
-            claim_started_at=claim_started_at,
-            commit_sha=commit_sha,
-            cwd=repo_path,
-            project_name=ctx.get_current_project_name(),
-        )
-        report.commit_shas = commit_shas
-        if commit_resolution_error is not None:
-            return blocked(
-                str(commit_resolution_error["error"]),
-                str(commit_resolution_error["message"]),
-                action="Fix commit resolution, then retry close_task.",
-            )
-        report.pass_gate("commit_set_resolved")
-
-        if not preview:
-            task, commit_link_error = link_close_commit_shas(
-                ctx.task_manager,
-                task=task,
-                commit_shas=commit_shas,
-                cwd=repo_path,
-            )
-            if commit_link_error is not None:
-                return commit_link_error
-        evaluation_task = replace(task, commits=commit_shas or None)
-
-        # Check for linked commits only when this target task has attributed edits.
-        if not skip_leaf_checks and target_task_had_edits:
-            commit_result = validate_commit_requirements(evaluation_task, reason, repo_path)
-            if not commit_result.can_close:
-                return blocked(
-                    commit_result.error_type or "commit_validation_failed",
-                    commit_result.message or "Linked commits do not satisfy close requirements.",
-                    action="Commit all task edits and pass the resulting SHA to close_task.",
-                )
-        report.pass_gate("commit_requirements")
-
-        if skip_validation and not skip_leaf_checks:
-            return blocked(
-                "validation_contract_not_skippable",
-                "Non-epic task close cannot skip criterion-to-evidence validation.",
-                action="Provide admissible evidence for every validation criterion.",
-            )
-        report.pass_gate("override_policy")
-
-        should_skip = skip_leaf_checks
-        validation_status: str | None = None
-        validation_feedback: str | None = None
-        close_extra: dict[str, Any] = {}
-        validation_reset_reason = None
-
-        # Enforce commits if the target task had edits. Structural parents and epics
-        # do not represent direct implementation work.
-        if not skip_leaf_checks and resolved_session_id:
-            if target_task_had_edits and not commit_shas:
-                return blocked(
-                    "missing_commits_for_edits",
-                    "This task has attributed edits but no commits are linked to it.",
-                    action=(
-                        "Commit the task edits with a task-linked message and pass commit_sha "
-                        "to close_task."
-                    ),
-                )
-        report.pass_gate("edits_committed")
-
-        receipt_packet = None
-        admission = None
-        evidence = None
-        if not skip_leaf_checks:
-            assert resolved_session_id is not None
-            evidence = gather_validation_context(
-                evaluation_task,
-                changes_summary,
-                repo_path,
-                ctx.task_manager,
-            )
-            receipt_store = VerificationReceiptStore(ctx.task_manager.db)
-            verification_receipts = receipt_store.list_for_task(task.project_id, task.id)
-            linked_diff_evidence = build_linked_diff_evidence(
-                evaluation_task,
-                session_id=resolved_session_id,
-                validation_context=evidence.validation_context or "",
-            )
-            if linked_diff_evidence is not None:
-                linked_diff_receipt = (
-                    linked_diff_evidence.receipt
-                    if preview
-                    else receipt_store.upsert(linked_diff_evidence.write)
-                )
-                verification_receipts = [
-                    receipt
-                    for receipt in verification_receipts
-                    if receipt.id != linked_diff_receipt.id
-                ]
-                verification_receipts.append(linked_diff_receipt)
-            requested_receipt_ids = list(dict.fromkeys(evidence_receipt_ids or []))
-            available_receipt_ids = {receipt.id for receipt in verification_receipts}
-            missing_receipt_ids = [
-                receipt_id
-                for receipt_id in requested_receipt_ids
-                if receipt_id not in available_receipt_ids
-            ]
-            if missing_receipt_ids:
-                missing_text = ", ".join(missing_receipt_ids)
-                return blocked(
-                    "evidence_receipts_not_found",
-                    f"Requested evidence receipts are not assigned to this task: {missing_text}",
-                    action=(
-                        "Inspect task and unassigned receipts, assign the intended receipt IDs, "
-                        "then retry close_task."
-                    ),
-                )
-            admission = admit_task_evidence(
-                verification_receipts,
-                task_id=task.id,
-                validation_epoch=task.validation_epoch,
-                validation_criteria=task.validation_criteria or "",
-            )
-            inadmissible_requested_ids = [
-                receipt_id
-                for receipt_id in requested_receipt_ids
-                if receipt_id not in admission.evidence_ids
-            ]
-            if inadmissible_requested_ids:
-                inadmissible_text = ", ".join(inadmissible_requested_ids)
-                return blocked(
-                    "evidence_receipts_not_admissible",
-                    f"Requested receipts are stale, failed, pending, unknown, superseded, "
-                    f"or untrusted: {inadmissible_text}",
-                    action="Run or record fresh authoritative evidence, then retry close_task.",
-                    extra={"evidence_admission": admission.audit_summary()},
-                )
-            explicit_reference_text = "\n".join(
-                value
-                for value in (
-                    task.title,
-                    task.description,
-                    task.validation_criteria,
-                    changes_summary,
-                )
-                if value
-            )
-            implicit_receipt_ids = [
-                receipt.id
-                for receipt in verification_receipts
-                if receipt.id in explicit_reference_text
-            ]
-            unassigned_count = receipt_store.count_unassigned(
-                task.project_id,
-                resolved_session_id,
-            )
-            receipt_packet = build_verification_receipt_packet(
-                admission.receipts,
-                explicit_receipt_ids=list(
-                    dict.fromkeys([*requested_receipt_ids, *implicit_receipt_ids])
-                ),
-                unassigned_count=unassigned_count,
-            )
-            report.set_receipt_packet(receipt_packet, unassigned_count=unassigned_count)
-            if not should_skip:
-                close_extra.update(
-                    {
-                        "evidence_completeness": receipt_packet.disclosure.to_dict(),
-                        "evidence_admission": admission.audit_summary(),
-                        "selected_evidence": dict(report.selected_evidence),
-                    }
-                )
-            if receipt_packet.error:
-                return blocked(
-                    receipt_packet.error,
-                    "High-risk verification receipts exceed the semantic evidence budget.",
-                    action="Reduce pathological receipt command sizes, then retry close_task.",
-                    extra={"evidence_completeness": report.evidence_completeness},
-                )
-            report.pass_gate("evidence_packet")
-
-        if not should_skip and not skip_leaf_checks:
-            # Check if task has children (is a parent task)
-            parent_result = validate_parent_task(ctx, resolved_id)
-            if not parent_result.can_close:
-                return blocked(
-                    parent_result.error_type or "parent_validation_failed",
-                    parent_result.message or "Task dependencies prevent closure.",
-                    action="Resolve every blocking child or dependency, then retry close_task.",
-                    extra=parent_result.extra,
-                )
-
-            if ctx.task_validator is None:
-                return blocked(
-                    "validation_provider_unavailable",
-                    "Criterion-to-evidence validation is required, but no task validator "
-                    "is configured.",
-                    action="Configure the task validator, then retry close_task.",
-                )
-            assert receipt_packet is not None
-            assert admission is not None
-            assert evidence is not None
-            llm_result = await validate_leaf_task_with_llm(
-                task=evaluation_task,
-                task_validator=ctx.task_validator,
-                validation_context=evidence.validation_context or changes_summary or "",
-                ctx=ctx,
-                resolved_id=resolved_id,
-                validation_config=ctx.validation_config,
-                file_context_text=evidence.file_context_text,
-                verification_receipt_text=receipt_packet.text,
-                admissible_evidence_ids=list(admission.evidence_ids),
-                read_only=preview,
-            )
-            llm_result.extra = {
-                **(llm_result.extra or {}),
-                "evidence_completeness": report.evidence_completeness,
-                "evidence_admission": admission.audit_summary(),
-                "selected_evidence": dict(report.selected_evidence),
-            }
-            if not llm_result.can_close:
-                if preview:
-                    reasons = list((llm_result.extra or {}).get("blocking_reasons") or [])
-                    if not reasons and llm_result.message:
-                        reasons = [llm_result.message]
-                    return report.preview_response(
-                        can_close=False,
-                        error=llm_result.error_type or "validation_failed",
-                        blocking_reasons=reasons,
-                        required_actions=reasons,
-                        extra=llm_result.extra,
-                    )
-                response = {
-                    "success": False,
-                    "error": llm_result.error_type,
-                    "message": llm_result.message,
-                }
-                if llm_result.extra:
-                    response.update(llm_result.extra)
-                return response
-            validation_status = llm_result.validation_status
-            validation_feedback = llm_result.validation_feedback
-            validation_reset_reason = llm_result.reset_reason
-            if llm_result.extra:
-                close_extra.update(llm_result.extra)
-        report.validation_status = validation_status or ("skipped" if should_skip else "valid")
-        report.validation_feedback = validation_feedback
-        report.pass_gate("semantic_validation")
-        if preview:
-            return report.preview_response(can_close=True)
-
-        # Determine close outcome
-        route_to_escalation, store_override = determine_close_outcome(
-            task, skip_validation, override_justification
-        )
-
-        # Record the commit that actually closes the task. If the caller passed
-        # an explicit commit, prefer its normalized short SHA over current HEAD.
-        from gobby.utils.git import normalize_commit_sha, run_git_command
-
-        requires_closed_commit_sha = bool(
-            commit_shas or (not skip_leaf_checks and target_task_had_edits)
-        )
-        current_commit_sha: str | None = None
-        if requires_closed_commit_sha:
-            if repo_path is None:
-                return _repo_path_unavailable_error()
-            if commit_sha:
-                current_commit_sha = normalize_commit_sha(commit_sha, cwd=repo_path)
-            elif commit_shas:
-                linked_commit_sha = commit_shas[-1]
-                current_commit_sha = (
-                    normalize_commit_sha(linked_commit_sha, cwd=repo_path) or linked_commit_sha
-                )
-            else:
-                current_commit_sha = run_git_command(
-                    ["git", "rev-parse", "--short", "HEAD"],
-                    cwd=repo_path,
-                )
-            if current_commit_sha is None:
-                return {
-                    "success": False,
-                    "error": "Could not resolve commit SHA for close - git rev-parse failed",
-                }
-
-        if route_to_escalation:
-            escalation_reason = (
-                "Validation override requested; human review required"
-                if not override_justification
-                else f"Validation override requested: {override_justification}"
-            )
-            escalated = ctx.task_manager.escalate_task(
-                resolved_id,
-                reason=escalation_reason,
-                validation_override_reason=(override_justification if store_override else None),
-            )
-            coordinate_task_escalation(
-                ctx,
-                escalated,
-                prior_owner_session_id=get_claimed_session_id(task),
-                session_id=resolved_session_id,
-            )
-
-            return {
-                "routed_to_escalation": True,
-                "message": "Task escalated. Reason: validation was overridden and requires human review.",
-                "task_id": resolved_id,
-            }
-
-        # Named validation-failure reset branches:
-        # (a) a complete criterion-to-evidence verdict;
-        # (b) an organizational parent/epic close; and
-        # (c) manual de-escalation/reopen in storage.tasks._transitions.reopen_task.
-        try:
-            ctx.task_manager.close_task(
-                resolved_id,
-                reason=reason,
-                closed_in_session_id=resolved_session_id,
-                closed_commit_sha=current_commit_sha,
-                validation_override_reason=override_justification if store_override else None,
-                expected_updated_at=task.updated_at,
-                reset_validation_fail_count=validation_reset_reason is not None,
-                validation_status=validation_status,
-                validation_feedback=validation_feedback,
-            )
-        except BootstrapLedgerMismatchError as exc:
-            return exc.to_response()
-        except TaskStaleStateError as exc:
-            return {
-                "success": False,
-                "error": "stale_task_state",
-                "message": str(exc),
-                "stale_state": True,
-            }
-
-        if is_epic and reason.lower() in {"completed", "obsolete"}:
-            from gobby.hooks.event_handlers._plan import on_epic_terminal
-
-            on_epic_terminal(
-                {
-                    "task_ref": f"#{task.seq_num}" if task.seq_num else resolved_id,
-                    "project_id": task.project_id,
-                    "status": "closed",
-                    "closure_reason": reason.lower(),
-                },
-                db=ctx.task_manager.db,
-            )
-
-        notify_parent_on_task_state_change(
-            ctx.task_manager.db,
-            resolved_id,
-            "closed",
-            task_ref=f"#{task.seq_num}" if task.seq_num else None,
-        )
-
-        # Auto-link session if provided
-        if resolved_session_id:
-            try:
-                ctx.session_task_manager.link_task(resolved_session_id, resolved_id, "closed")
-            except Exception as e:
-                logger.debug("Best-effort session close linking failed: %s", e)
-
-        # Remove closed task from claimed_tasks dict. This is done here because
-        # Claude Code's post-tool-use hook does not include the tool result, so
-        # detection_helpers cannot verify close succeeded.
-        remaining_task_edit_state: dict[str, Any] | None = None
-        claim_state_merged = False
-        if edit_session_id:
-            try:
-                from gobby.workflows.task_claim_state import remove_claimed_task
-
-                fresh_session_vars = ctx.session_var_manager.get_variables(edit_session_id)
-                merge_dict = remove_claimed_task(fresh_session_vars, resolved_id)
-                remaining_task_edit_state = merge_dict.get("task_edited_files")
-                ctx.session_var_manager.merge_variables(edit_session_id, merge_dict)
-                claim_state_merged = True
-                logger.debug(
-                    "Removed task %s from claimed_tasks for session %s",
-                    resolved_id,
-                    edit_session_id,
-                )
-            except Exception as e:
-                logger.warning(
-                    "Failed to update claimed_tasks for session %s: %s", edit_session_id, e
-                )
-
-        # Reset had_edits after the last task-scoped edit set is accounted for.
-        if (
-            edit_session_id
-            and (bool(task.commits) or bool(commit_sha))
-            and claim_state_merged
-            and not remaining_task_edit_state
-        ):
-            try:
-                ctx.session_manager.clear_had_edits(edit_session_id)
-            except Exception as e:
-                logger.debug("Best-effort had_edits reset failed: %s", e)
-
-        return {"success": True, "closed": True, **close_extra}
+    """Register the checklist-based close_task tool."""
 
     async def close_task(
         task_id: str,
@@ -694,140 +492,60 @@ def register_close_task(registry: InternalToolRegistry, ctx: RegistryContext) ->
         project_path: str | None = None,
         preview: bool = False,
         response_detail: Literal["concise", "diagnostic"] = "concise",
-        evidence_receipt_ids: list[str] | None = None,
     ) -> dict[str, Any]:
-        """Evaluate close readiness and close ready tasks in one preview call."""
-
-        async def run_once(*, read_only: bool) -> dict[str, Any]:
-            return await _close_task_once(
-                task_id=task_id,
-                reason=reason,
-                changes_summary=changes_summary,
-                skip_validation=skip_validation,
-                override_justification=override_justification,
-                commit_sha=commit_sha,
-                project_path=project_path,
-                preview=read_only,
-                response_detail=response_detail,
-                evidence_receipt_ids=evidence_receipt_ids,
-            )
-
-        if not preview:
-            return await run_once(read_only=False)
-
-        preview_result = await run_once(read_only=True)
-        if preview_result.get("can_close") is not True:
-            return {
-                **preview_result,
-                "success": preview_result.get("success", True),
-                "preview": True,
-                "can_close": False,
-                "closed": False,
-            }
-
-        close_result = await run_once(read_only=False)
-        if close_result.get("closed") is not True:
-            return {
-                **preview_result,
-                **close_result,
-                "success": False,
-                "preview": True,
-                "can_close": False,
-                "closed": False,
-            }
-        return {
-            **preview_result,
-            **close_result,
-            "success": True,
-            "preview": True,
-            "can_close": True,
-            "closed": True,
-        }
+        evaluation = await _evaluate_close(
+            ctx,
+            task_id=task_id,
+            reason=reason,
+            changes_summary=changes_summary,
+            commit_sha=commit_sha,
+            project_path=project_path,
+            response_detail=response_detail,
+        )
+        if not evaluation.ready:
+            return evaluation.response(preview=preview)
+        result = await _commit_close(
+            ctx,
+            evaluation,
+            reason=reason,
+            skip_validation=skip_validation,
+            override_justification=override_justification,
+            commit_sha=commit_sha,
+        )
+        result.update({"preview": preview, "can_close": result.get("closed") is True})
+        return result
 
     registry.register(
         name="close_task",
         description=(
-            "Evaluate and conditionally close a task. Agent-driven leaf closes should call "
-            "preview=true; blocked evaluations return actionable reasons, while ready tasks "
-            "close in the same call. Pass commit_sha to link and close in one call: "
-            "close_task(task_id, commit_sha='abc123'). Or include "
-            "[<project_name>-#<task_number>] in commit message for auto-linking, "
-            "e.g. [gobby-#123]. Parent tasks require all children closed. "
-            "Every non-epic leaf requires explicit validation criteria, admissible current-epoch "
-            "evidence, and a criterion-by-criterion validator verdict. Close reasons and "
-            "skip_validation do not bypass that contract."
+            "Evaluate the ordered close checklist and close ready tasks in the same call. "
+            "Leaf tasks require criteria, a changes summary, commits for attributed edits, "
+            "a clean transcript-derived validation run, and one bounded criteria review. "
+            "preview=true returns diagnostics when blocked and still closes when ready."
         ),
         input_schema={
             "type": "object",
             "properties": {
-                "task_id": {
-                    "type": "string",
-                    "description": "Task reference: #N (e.g., #1, #47), path (e.g., 1.2.3), or UUID",
-                },
-                "reason": {
-                    "type": "string",
-                    "description": (
-                        "Audited reason for closing. The reason does not bypass the "
-                        "criterion-to-evidence contract for non-epic leaves."
-                    ),
-                    "default": "completed",
-                },
-                "changes_summary": {
-                    "type": "string",
-                    "description": "Summary of what was changed and why. Required for leaf tasks and standalone closes. Optional for parent/epic tasks where all children are closed. For tasks closed without changes (duplicate, wont_fix, etc.), describe why no changes were needed.",
-                },
+                "task_id": {"type": "string", "description": "Task reference (#N, path, or UUID)."},
+                "reason": {"type": "string", "default": "completed"},
+                "changes_summary": {"type": "string"},
                 "skip_validation": {
                     "type": "boolean",
-                    "description": (
-                        "Organizational-close compatibility flag. Non-epic leaf validation "
-                        "cannot be skipped and returns validation_contract_not_skippable."
-                    ),
                     "default": False,
+                    "description": "Organizational close audit flag; ignored for leaves.",
                 },
-                "override_justification": {
-                    "type": "string",
-                    "description": (
-                        "Optional audit context for an organizational close. It cannot "
-                        "override validation for a non-epic leaf."
-                    ),
-                    "default": None,
-                },
-                "commit_sha": {
-                    "type": "string",
-                    "description": "RECOMMENDED: Git commit SHA to link and close in one call. Use this instead of separate link_commit + close_task calls.",
-                    "default": None,
-                },
-                "project_path": {
-                    "type": "string",
-                    "description": "Accessible repository/workspace directory that contains the commit. Optional; defaults to the current task project repository. Absolute paths are allowed when they resolve to a registered task/project/worktree/clone repository directory.",
-                    "default": None,
-                },
+                "override_justification": {"type": "string"},
+                "commit_sha": {"type": "string"},
+                "project_path": {"type": "string"},
                 "preview": {
                     "type": "boolean",
-                    "description": (
-                        "Evaluate and close when ready. Blocked evaluations return a concise "
-                        "result with prospective commits and actionable failure details without "
-                        "task, claim, counter, backoff, or validation-history mutation."
-                    ),
                     "default": False,
+                    "description": "Close when ready; otherwise return first-failure diagnostics.",
                 },
                 "response_detail": {
                     "type": "string",
                     "enum": ["concise", "diagnostic"],
-                    "description": (
-                        "Preview response detail. 'concise' omits successful gates and evidence "
-                        "diagnostics; 'diagnostic' includes the full evaluation packet."
-                    ),
                     "default": "concise",
-                },
-                "evidence_receipt_ids": {
-                    "type": "array",
-                    "items": {"type": "string"},
-                    "description": (
-                        "Task-assigned verification receipt IDs to prioritize for detailed "
-                        "inspection. High-risk and completeness evidence remains mandatory."
-                    ),
-                    "default": None,
                 },
             },
             "required": ["task_id"],
@@ -836,37 +554,47 @@ def register_close_task(registry: InternalToolRegistry, ctx: RegistryContext) ->
     )
 
 
-def _claimed_session_window_start(
+def _stale_close_response(evaluation: CloseEvaluation, message: str) -> dict[str, Any]:
+    evaluation.error = "stale_task_state"
+    evaluation.message = message
+    evaluation.action = "Retry close_task; the existing evaluation will not be reused."
+    evaluation.extra["stale_state"] = True
+    return evaluation.response(preview=False)
+
+
+def _cleanup_closed_claim(
     ctx: RegistryContext,
-    task: Any,
-    resolved_id: str,
-    resolved_session_id: str | None,
-) -> str | None:
-    if not resolved_session_id or get_claimed_session_id(task) != resolved_session_id:
-        return None
-
+    evaluation: CloseEvaluation,
+    commit_shas: list[str],
+) -> None:
+    if evaluation.resolved_session_id and evaluation.task_id:
+        try:
+            ctx.session_task_manager.link_task(
+                evaluation.resolved_session_id,
+                evaluation.task_id,
+                "closed",
+            )
+        except Exception as exc:
+            logger.debug("Best-effort session close link failed: %s", exc)
+    if not evaluation.edit_session_id or not evaluation.task_id:
+        return
     try:
-        rows = ctx.session_task_manager.get_task_sessions(resolved_id)
+        from gobby.workflows.task_claim_state import remove_claimed_task
+
+        variables = ctx.session_var_manager.get_variables(evaluation.edit_session_id)
+        updates = remove_claimed_task(variables, evaluation.task_id)
+        remaining = updates.get("task_edited_files")
+        ctx.session_var_manager.merge_variables(evaluation.edit_session_id, updates)
+        if commit_shas and not remaining:
+            ctx.session_manager.clear_had_edits(evaluation.edit_session_id)
     except Exception as exc:
-        logger.debug("Failed to load task session links for claim-window autolink: %s", exc)
-        return None
-
-    for row in rows:
-        if not isinstance(row, dict):
-            continue
-        action = row.get("action") or row.get("session_action")
-        session_id = row.get("session_id")
-        if action != "claimed" or str(session_id) != resolved_session_id:
-            continue
-        return _format_git_since(row.get("created_at") or row.get("link_created_at"))
-
-    return None
+        logger.warning("Failed to clean closed-task claim state: %s", exc)
 
 
-def _format_git_since(value: Any) -> str | None:
-    if value is None:
-        return None
-    if hasattr(value, "isoformat"):
-        value = value.isoformat()
-    text = str(value).strip()
-    return text or None
+__all__ = [
+    "_claimed_session_window_start",
+    "_commit_close",
+    "_evaluate_close",
+    "_has_committable_edits",
+    "register_close_task",
+]

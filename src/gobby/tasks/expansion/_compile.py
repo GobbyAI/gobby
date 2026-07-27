@@ -30,7 +30,7 @@ from gobby.tasks.expansion._common import (
     list_agent_definitions,
 )
 from gobby.tasks.expansion._qa import run_expansion_qa
-from gobby.tasks.validation import derive_related_test_terms, find_related_test_files
+from gobby.tasks.related_tests import derive_related_test_terms, find_related_test_files
 from gobby.utils.project_context import get_project_context
 
 logger = logging.getLogger(__name__)

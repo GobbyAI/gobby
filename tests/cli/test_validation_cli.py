@@ -7,6 +7,7 @@ Task: gt-34841b
 """
 
 import json
+from collections.abc import Iterator
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -14,10 +15,25 @@ from click.testing import CliRunner
 
 from gobby.cli import cli
 from gobby.config import DaemonConfig
-from gobby.failure_categories import FailureCategory
-from gobby.tasks.validation_verdict import ValidationResult
+from gobby.tasks.close_verdict import CloseCriterionVerdict, CloseVerdict
 
 pytestmark = pytest.mark.unit
+
+
+@pytest.fixture(autouse=True)
+def _isolated_cli_runtime() -> Iterator[None]:
+    """Keep CLI unit tests independent from operator bootstrap state."""
+    with (
+        patch(
+            "gobby.cli.runtime.CliRuntime.require_database",
+            return_value=MagicMock(),
+        ),
+        patch(
+            "gobby.cli.load_full_config_from_db",
+            return_value=DaemonConfig(),
+        ),
+    ):
+        yield
 
 
 @pytest.mark.unit
@@ -43,22 +59,23 @@ class TestValidateCommandWithNewFlags:
         task.project_id = "proj-123"
         task.validation_criteria = "Tests pass"
         task.validation_fail_count = 0
+        task.commits = []
         return task
 
-    def test_validate_help_shows_max_iterations_flag(self, runner: CliRunner) -> None:
-        """Test that validate --help shows --max-iterations flag."""
+    def test_validate_help_omits_removed_retry_flags(self, runner: CliRunner) -> None:
         result = runner.invoke(cli, ["tasks", "validate", "--help"])
         assert result.exit_code == 0
-        assert "--max-iterations" in result.output
+        assert "--max-iterations" not in result.output
+        assert "--recurring" not in result.output
 
-    def test_validate_rejects_non_positive_max_iterations(self, runner: CliRunner) -> None:
+    def test_validate_rejects_removed_max_iterations_option(self, runner: CliRunner) -> None:
         result = runner.invoke(
             cli,
             ["tasks", "validate", "gt-test123", "--max-iterations", "0"],
         )
 
         assert result.exit_code == 2
-        assert "0 is not in the range x>=1" in result.output
+        assert "No such option '--max-iterations'" in result.output
 
     def test_validate_help_shows_history_flag(self, runner: CliRunner) -> None:
         """Test that validate --help shows --history flag."""
@@ -66,17 +83,16 @@ class TestValidateCommandWithNewFlags:
         assert result.exit_code == 0
         assert "--history" in result.output
 
-    def test_validate_help_shows_recurring_flag(self, runner: CliRunner) -> None:
-        """Test that validate --help shows --recurring flag."""
+    def test_validate_help_describes_bounded_review(self, runner: CliRunner) -> None:
         result = runner.invoke(cli, ["tasks", "validate", "--help"])
         assert result.exit_code == 0
-        assert "--recurring" in result.output
+        assert "bounded criteria review" in result.output
 
     @patch("gobby.cli.tasks.ai.get_task_manager")
     @patch("gobby.cli.tasks.ai.resolve_task_id")
     @patch("gobby.config.app.load_config")
     @patch("gobby.tasks.validation.TaskValidator")
-    def test_validate_with_max_iterations(
+    def test_validate_runs_one_read_only_criteria_review(
         self,
         mock_validator_cls: MagicMock,
         mock_load_config: MagicMock,
@@ -85,19 +101,20 @@ class TestValidateCommandWithNewFlags:
         runner: CliRunner,
         mock_task: MagicMock,
     ) -> None:
-        """Test validate with --max-iterations flag."""
-        mock_task.validation_fail_count = 1
         mock_resolve.return_value = mock_task
         mock_manager = MagicMock()
-        mock_manager.list_tasks.return_value = []  # No children
+        mock_manager.list_tasks.return_value = []
         mock_get_manager.return_value = mock_manager
         mock_load_config.return_value = DaemonConfig()
-        validation_result = MagicMock()
-        validation_result.status = "invalid"
-        validation_result.feedback = "Still broken"
+        verdict = CloseVerdict(
+            status="valid",
+            criteria=(CloseCriterionVerdict(1, "Tests pass", True, None),),
+            feedback="Criteria are satisfied.",
+        )
 
-        async def async_result(*args: object, **kwargs: object) -> MagicMock:
-            return validation_result
+        async def async_result(*args: object, **kwargs: object) -> CloseVerdict:
+            del args, kwargs
+            return verdict
 
         mock_validator_cls.return_value.validate_task.side_effect = async_result
 
@@ -112,30 +129,23 @@ class TestValidateCommandWithNewFlags:
                     "tasks",
                     "validate",
                     "gt-test123",
-                    "--max-iterations",
-                    "2",
                     "--summary",
                     "test changes",
                 ],
             )
 
         assert result.exit_code == 0, (result.output, result.exception)
-        assert "Exceeded max retries" in result.output
-        assert "Evidence error:" not in result.output
-        assert "Bounded inspection:" not in result.output
-        mock_manager.create_task.assert_not_called()
-        mock_manager.escalate_task.assert_called_once_with(
-            mock_task.id,
-            reason="exceeded_validation_retries (2)",
-        )
-        call_kwargs = mock_manager.update_task.call_args.kwargs
-        assert "Exceeded max retries (2)" in call_kwargs["validation_feedback"]
+        assert "Validation Status: VALID" in result.output
+        assert "full checklist" in result.output
+        mock_validator_cls.return_value.validate_task.assert_called_once()
+        mock_manager.update_task.assert_not_called()
+        mock_manager.escalate_task.assert_not_called()
 
     @patch("gobby.cli.tasks.ai.get_task_manager")
     @patch("gobby.cli.tasks.ai.resolve_task_id")
     @patch("gobby.config.app.load_config")
     @patch("gobby.tasks.validation.TaskValidator")
-    def test_invalid_override_uses_validation_blocked_formatter(
+    def test_invalid_verdict_prints_actionable_gap(
         self,
         mock_validator_cls: MagicMock,
         mock_load_config: MagicMock,
@@ -149,23 +159,22 @@ class TestValidateCommandWithNewFlags:
         mock_manager.list_tasks.return_value = []
         mock_get_manager.return_value = mock_manager
         mock_load_config.return_value = DaemonConfig()
-        mock_validator_cls.return_value.validate_task = MagicMock(
-            return_value=ValidationResult(
-                status="invalid",
-                feedback="The implementation otherwise satisfies the criteria.",
-                blocking_reasons=["pytest: 1 failed"],
-                verdict_override={
-                    "from": "valid",
-                    "to": "invalid",
-                    "reason": "current_failure_evidence",
-                    "evidence": ["pytest: 1 failed"],
-                },
-            )
+        verdict = CloseVerdict(
+            status="invalid",
+            criteria=(
+                CloseCriterionVerdict(
+                    1,
+                    "Tests pass",
+                    False,
+                    "Run the focused test suite.",
+                ),
+            ),
+            feedback="One criterion remains incomplete.",
         )
 
-        async def validate(*args: object, **kwargs: object) -> ValidationResult:
+        async def validate(*args: object, **kwargs: object) -> CloseVerdict:
             del args, kwargs
-            return mock_validator_cls.return_value.validate_task.return_value
+            return verdict
 
         mock_validator_cls.return_value.validate_task.side_effect = validate
         with (
@@ -179,16 +188,15 @@ class TestValidateCommandWithNewFlags:
             )
 
         assert result.exit_code == 0, (result.output, result.exception)
-        assert "Validation blocked: validation verdict 'invalid'" in result.output
-        assert "verdict overridden: validator attested current failures: pytest: 1 failed" in (
-            result.output
-        )
+        assert "Validation Status: INVALID" in result.output
+        assert "Criterion 1: Run the focused test suite." in result.output
+        mock_manager.update_task.assert_not_called()
 
     @patch("gobby.cli.tasks.ai.get_task_manager")
     @patch("gobby.cli.tasks.ai.resolve_task_id")
     @patch("gobby.config.app.load_config")
     @patch("gobby.tasks.validation.TaskValidator")
-    def test_infrastructure_verdict_does_not_increment_validation_fail_count(
+    def test_provider_error_is_reported_without_task_accounting(
         self,
         mock_validator_cls: MagicMock,
         mock_load_config: MagicMock,
@@ -204,13 +212,9 @@ class TestValidateCommandWithNewFlags:
         mock_get_manager.return_value = mock_manager
         mock_load_config.return_value = DaemonConfig()
 
-        async def validate(*args: object, **kwargs: object) -> ValidationResult:
+        async def validate(*args: object, **kwargs: object) -> CloseVerdict:
             del args, kwargs
-            return ValidationResult(
-                status="invalid",
-                feedback="PostgreSQL connection refused",
-                failure_category=FailureCategory.ENVIRONMENT,
-            )
+            raise RuntimeError("provider unavailable")
 
         mock_validator_cls.return_value.validate_task.side_effect = validate
         with (
@@ -223,11 +227,9 @@ class TestValidateCommandWithNewFlags:
                 ["tasks", "validate", mock_task.id, "--summary", "test changes"],
             )
 
-        assert result.exit_code == 0, (result.output, result.exception)
-        update_kwargs = mock_manager.update_task.call_args.kwargs
-        assert update_kwargs["validation_status"] == "error"
-        assert "validation_fail_count" not in update_kwargs
-        mock_manager.create_task.assert_not_called()
+        assert result.exit_code == 1
+        assert "Validation error: provider unavailable" in result.output
+        mock_manager.update_task.assert_not_called()
         mock_manager.escalate_task.assert_not_called()
 
     @patch("gobby.cli.tasks.ai.get_task_manager")
@@ -249,10 +251,11 @@ class TestValidateCommandWithNewFlags:
         mock_get_manager.return_value = mock_manager
         mock_load_config.return_value = DaemonConfig()
 
-        async def validate(*args: object, **kwargs: object) -> ValidationResult:
+        async def validate(*args: object, **kwargs: object) -> CloseVerdict:
             del args, kwargs
-            return ValidationResult(
+            return CloseVerdict(
                 status="valid",
+                criteria=(CloseCriterionVerdict(1, "Tests pass", True, None),),
                 feedback="All checks passed.",
             )
 
@@ -296,29 +299,14 @@ class TestValidateCommandWithNewFlags:
         # History output should contain iteration or history info
         assert "history" in result.output.lower() or "iteration" in result.output.lower()
 
-    @patch("gobby.cli.tasks.ai.get_task_manager")
-    @patch("gobby.cli.tasks.ai.resolve_task_id")
-    def test_validate_with_recurring_flag_shows_recurring_issues(
-        self,
-        mock_resolve: MagicMock,
-        mock_get_manager: MagicMock,
-        runner: CliRunner,
-        mock_task: MagicMock,
-    ) -> None:
-        """Test validate --recurring shows recurring issues."""
-        mock_resolve.return_value = mock_task
-        mock_manager = MagicMock()
-        mock_get_manager.return_value = mock_manager
-
+    def test_validate_rejects_removed_recurring_option(self, runner: CliRunner) -> None:
         result = runner.invoke(
             cli,
             ["tasks", "validate", "gt-test123", "--recurring"],
         )
 
-        assert result.exit_code == 0
-        assert result.exception is None
-        # Should show recurring issues info
-        assert "recurring" in result.output.lower() or "no recurring" in result.output.lower()
+        assert result.exit_code == 2
+        assert "No such option '--recurring'" in result.output
 
 
 class TestDeEscalateCommand:
@@ -805,31 +793,7 @@ class TestValidateFlagCombinations:
         # Should not ask for --summary when just viewing history
         assert "summary" not in result.output.lower() or result.exit_code != 2
 
-    @patch("gobby.cli.tasks.ai.get_task_manager")
-    @patch("gobby.cli.tasks.ai.resolve_task_id")
-    @patch("gobby.config.app.load_config")
-    def test_all_flags_together(
-        self,
-        mock_load_config: MagicMock,
-        mock_resolve: MagicMock,
-        mock_get_manager: MagicMock,
-        runner: CliRunner,
-    ) -> None:
-        """Test using multiple flags together."""
-        mock_task = MagicMock()
-        mock_task.id = "gt-test123"
-        mock_task.title = "Test"
-        mock_task.closed_at = None
-        mock_task.is_escalated = False
-        mock_task.stages = ({"stage_name": "development", "position": 0, "state": "in_progress"},)
-        mock_task.validation_fail_count = 0
-        mock_resolve.return_value = mock_task
-
-        mock_manager = MagicMock()
-        mock_manager.list_tasks.return_value = []
-        mock_get_manager.return_value = mock_manager
-        mock_load_config.return_value = MagicMock()
-
+    def test_removed_retry_flags_cannot_be_combined(self, runner: CliRunner) -> None:
         result = runner.invoke(
             cli,
             [
@@ -843,9 +807,8 @@ class TestValidateFlagCombinations:
             ],
         )
 
-        # All flags should be accepted without error
-        assert result.exit_code != 2  # 2 is Click's usage error
-        assert "No such option" not in result.output
+        assert result.exit_code == 2
+        assert "No such option '--max-iterations'" in result.output
 
 
 class TestValidateTaskNotFound:

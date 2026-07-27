@@ -12,12 +12,11 @@ from unittest.mock import ANY, AsyncMock, MagicMock, patch
 import psycopg
 import pytest
 
-from gobby.failure_categories import FailureCategory
 from gobby.mcp_proxy.tools.tasks import create_task_registry
 from gobby.mcp_proxy.tools.tasks._lifecycle import _is_uuid
 from gobby.storage.tasks import LocalTaskManager, Task
 from gobby.storage.tasks._stage_states import StageState
-from gobby.tasks.validation_verdict import ValidationResult as TaskValidationResult
+from gobby.tasks.close_verdict import CloseCriterionVerdict, CloseVerdict
 from gobby.utils.session_context import session_context_for_test
 
 pytestmark = pytest.mark.unit
@@ -144,8 +143,9 @@ def _create_registry(
     """Create registry with patches for context managers."""
     if task_validator is None:
         task_validator = AsyncMock()
-        task_validator.validate_task.return_value = TaskValidationResult(
+        task_validator.validate_task.return_value = CloseVerdict(
             status="valid",
+            criteria=(CloseCriterionVerdict(1, "Focused tests pass.", True, None),),
             feedback="Focused validation passed.",
         )
     with (
@@ -206,7 +206,8 @@ class TestCloseTask:
             {"task_id": "550e8400-e29b-41d4-a716-446655440000", "changes_summary": "done"},
         )
         assert "error" in result
-        assert "not found" in result["error"]
+        assert result["error"] == "task_not_found"
+        assert "not found" in result["message"]
 
     @pytest.mark.asyncio
     async def test_close_epic_all_children_closed_no_commit_needed(
@@ -442,15 +443,23 @@ class TestCloseTask:
         """Returns error when commit_sha cannot be resolved (nonexistent or non-commit)."""
         task = _make_task()
         mock_task_manager.get_task.return_value = task
-        mock_task_manager.link_commit.side_effect = ValueError(
-            "Invalid or unresolved commit SHA: deadbeef"
-        )
+        mock_task_manager.list_tasks.return_value = []
 
         registry = _create_registry(mock_task_manager)
-        result = await registry.call(
-            "close_task",
-            {"task_id": task.id, "changes_summary": "done", "commit_sha": "deadbeef"},
-        )
+        with patch(
+            "gobby.mcp_proxy.tools.tasks._lifecycle_close.resolve_close_commit_shas",
+            return_value=(
+                [],
+                {
+                    "error": "invalid_commit_sha",
+                    "message": "Commit SHA 'deadbeef' could not be resolved.",
+                },
+            ),
+        ):
+            result = await registry.call(
+                "close_task",
+                {"task_id": task.id, "changes_summary": "done", "commit_sha": "deadbeef"},
+            )
 
         assert "error" in result
         assert result["error"] == "invalid_commit_sha"
@@ -472,7 +481,7 @@ class TestCloseTask:
                 "gobby.mcp_proxy.tools.tasks._lifecycle_close.validate_commit_requirements"
             ) as mock_vcr,
             patch(
-                "gobby.mcp_proxy.tools.tasks._lifecycle_close.build_linked_diff_evidence",
+                "gobby.mcp_proxy.tools.tasks._lifecycle_close.collect_commit_diff_text",
                 return_value=None,
             ),
             patch("gobby.utils.git.normalize_commit_sha", return_value="abc1234"),
@@ -508,8 +517,16 @@ class TestCloseTask:
                 "gobby.mcp_proxy.tools.tasks._lifecycle_close.validate_commit_requirements"
             ) as mock_vcr,
             patch(
-                "gobby.mcp_proxy.tools.tasks._lifecycle_close.build_linked_diff_evidence",
+                "gobby.mcp_proxy.tools.tasks._lifecycle_close.collect_commit_diff_text",
                 return_value=None,
+            ),
+            patch(
+                "gobby.mcp_proxy.tools.tasks._lifecycle_close._has_committable_edits",
+                return_value=False,
+            ),
+            patch(
+                "gobby.mcp_proxy.tools.tasks._lifecycle_close.evaluate_validation_commands",
+                return_value=MagicMock(status="skipped", passed=True, details={}),
             ),
             patch(
                 "gobby.utils.git.normalize_commit_sha",
@@ -574,8 +591,16 @@ class TestCloseTask:
                 "gobby.mcp_proxy.tools.tasks._lifecycle_close.validate_commit_requirements"
             ) as mock_vcr,
             patch(
-                "gobby.mcp_proxy.tools.tasks._lifecycle_close.build_linked_diff_evidence",
+                "gobby.mcp_proxy.tools.tasks._lifecycle_close.collect_commit_diff_text",
                 return_value=None,
+            ),
+            patch(
+                "gobby.mcp_proxy.tools.tasks._lifecycle_close._has_committable_edits",
+                return_value=False,
+            ),
+            patch(
+                "gobby.mcp_proxy.tools.tasks._lifecycle_close.evaluate_validation_commands",
+                return_value=MagicMock(status="skipped", passed=True, details={}),
             ),
             patch(
                 "gobby.utils.git.normalize_commit_sha",
@@ -721,8 +746,16 @@ class TestCloseTask:
         mock_task_manager.list_tasks.return_value = []
         mock_task_manager.close_task.return_value = task
         task_validator = AsyncMock()
-        task_validator.validate_task.return_value = MagicMock(
+        task_validator.validate_task.return_value = CloseVerdict(
             status="valid",
+            criteria=(
+                CloseCriterionVerdict(
+                    1,
+                    "Strict mypy and focused tests are clean",
+                    True,
+                    None,
+                ),
+            ),
             feedback="All criteria satisfied. Strict mypy and focused tests are clean.",
         )
 
@@ -738,7 +771,6 @@ class TestCloseTask:
             )
 
         assert result["success"] is True
-        assert result["recurring_validation_candidates"] == []
         task_validator.validate_task.assert_awaited_once()
         validation_kwargs = task_validator.validate_task.await_args.kwargs
         assert validation_kwargs["task_id"] == task.id
@@ -762,8 +794,16 @@ class TestCloseTask:
         mock_task_manager.list_tasks.return_value = []
         mock_task_manager.close_task.return_value = task
         task_validator = AsyncMock()
-        task_validator.validate_task.return_value = TaskValidationResult(
+        task_validator.validate_task.return_value = CloseVerdict(
             status="valid",
+            criteria=(
+                CloseCriterionVerdict(
+                    1,
+                    "Focused tests and lint pass",
+                    True,
+                    None,
+                ),
+            ),
             feedback=(
                 "Verified all three validation criteria are satisfied: tests pass and lint passes."
             ),
@@ -804,11 +844,17 @@ class TestCloseTask:
             "All migration behavior passed. The only gap is the mypy criterion: "
             "typing errors prevented a clean mypy gate."
         )
-        task_validator.validate_task.return_value = TaskValidationResult(
+        task_validator.validate_task.return_value = CloseVerdict(
             status="invalid",
+            criteria=(
+                CloseCriterionVerdict(
+                    1,
+                    "Strict mypy on touched tests is clean",
+                    False,
+                    "Strict mypy criterion failed",
+                ),
+            ),
             feedback=feedback,
-            blocking_reasons=["Strict mypy criterion failed"],
-            failure_category=FailureCategory.TEST,
         )
 
         registry = _create_registry(mock_task_manager, task_validator)
@@ -830,19 +876,26 @@ class TestCloseTask:
         mock_task_manager.increment_validation_failure.assert_called_once()
         mock_task_manager.close_task.assert_not_called()
 
-    @pytest.mark.parametrize("status", ["invalid", "pending"])
     @pytest.mark.asyncio
-    async def test_close_task_invalid_and_pending_llm_results_remain_rejected(
-        self, mock_task_manager: MagicMock, status: str
+    async def test_close_task_invalid_llm_result_remains_rejected(
+        self, mock_task_manager: MagicMock
     ) -> None:
-        """Existing invalid and pending validator statuses still block close_task."""
+        """An invalid criteria verdict blocks close_task."""
         task = _make_task(validation_criteria="Focused tests pass")
         mock_task_manager.get_task.return_value = task
         mock_task_manager.list_tasks.return_value = []
         task_validator = AsyncMock()
-        task_validator.validate_task.return_value = MagicMock(
-            status=status,
-            feedback=f"{status} feedback",
+        task_validator.validate_task.return_value = CloseVerdict(
+            status="invalid",
+            criteria=(
+                CloseCriterionVerdict(
+                    1,
+                    "Focused tests pass",
+                    False,
+                    "Run focused tests clean.",
+                ),
+            ),
+            feedback="invalid feedback",
         )
 
         registry = _create_registry(mock_task_manager, task_validator)
@@ -858,7 +911,7 @@ class TestCloseTask:
 
         assert result["success"] is False
         assert result["error"] == "validation_failed"
-        assert result["validation_status"] == status
+        assert result["validation_status"] == "invalid"
         mock_task_manager.update_task.assert_not_called()
         mock_task_manager.increment_validation_failure.assert_called_once()
         mock_task_manager.close_task.assert_not_called()
@@ -1531,18 +1584,15 @@ class TestCloseTaskSessionContextGuard:
 
     @pytest.mark.asyncio
     async def test_close_task_without_session_context_falls_back_to_claimed_by_session_id(
-        self, mock_task_manager: MagicMock, caplog: pytest.LogCaptureFixture
+        self, mock_task_manager: MagicMock
     ) -> None:
         """No SessionContext → uses task.claimed_by_session_id for the audit write."""
-        import logging as _logging
-
         claimed_session = "claimed-session-uuid"
         task = _make_task(claimed_by_session_id=claimed_session, commits=None)
         mock_task_manager.get_task.return_value = task
         mock_task_manager.list_tasks.return_value = []
         mock_task_manager.close_task.return_value = task
 
-        caplog.set_level(_logging.WARNING, logger="gobby.mcp_proxy.tools.tasks._lifecycle_close")
         with patch(
             "gobby.mcp_proxy.tools.tasks._lifecycle_close.validate_commit_requirements"
         ) as mock_vcr:
@@ -1553,12 +1603,6 @@ class TestCloseTaskSessionContextGuard:
                 {"task_id": task.id, "changes_summary": "done"},
             )
 
-        # Warning fired with the fallback session id
-        assert any(
-            "no session context" in rec.message and claimed_session in rec.message
-            for rec in caplog.records
-        )
-        # Storage got the resolved platform UUID for audit, not NULL
         assert "error" not in result
         close_kwargs = mock_task_manager.close_task.call_args.kwargs
         assert close_kwargs.get("closed_in_session_id") == "resolved-session"
@@ -1578,7 +1622,7 @@ class TestCloseTaskSessionContextGuard:
         )
 
         assert result.get("error") == "no_session_context"
-        assert "active session context" in result.get("message", "")
+        assert "active session" in result.get("message", "")
         mock_task_manager.close_task.assert_not_called()
 
 
@@ -1622,22 +1666,20 @@ def test_close_task_git_helper_calls_follow_repo_path_resolution() -> None:
     """close_task must resolve project_path before commit/Git helper cwd use."""
     import gobby.mcp_proxy.tools.tasks._lifecycle_close as lifecycle_close
 
-    source = inspect.getsource(lifecycle_close.register_close_task)
-    tree = ast.parse(source)
-    close_pass = next(
-        node
-        for node in ast.walk(tree)
-        if isinstance(node, ast.AsyncFunctionDef) and node.name == "_close_task_once"
-    )
-    lines = _call_line_numbers(close_pass)
+    evaluation_source = inspect.getsource(lifecycle_close._evaluate_close)
+    evaluation = ast.parse(evaluation_source)
+    evaluation_lines = _call_line_numbers(evaluation)
 
-    resolver_line = lines["resolve_task_repo_path"]
-    assert resolver_line < lines["resolve_close_commit_shas"]
-    assert resolver_line < lines["link_close_commit_shas"]
-    assert resolver_line < lines["validate_commit_requirements"]
-    assert resolver_line < lines["gather_validation_context"]
-    assert resolver_line < lines["normalize_commit_sha"]
-    assert resolver_line < lines["run_git_command"]
+    resolver_line = evaluation_lines["resolve_task_repo_path"]
+    assert resolver_line < evaluation_lines["resolve_close_commit_shas"]
+    assert resolver_line < evaluation_lines["validate_commit_requirements"]
+    assert evaluation_source.index("resolve_task_repo_path(") < evaluation_source.index(
+        "collect_commit_diff_text,"
+    )
+
+    commit = ast.parse(inspect.getsource(lifecycle_close._commit_close))
+    commit_lines = _call_line_numbers(commit)
+    assert commit_lines["resolve_close_commit_shas"] < commit_lines["link_close_commit_shas"]
 
 
 def _call_line_numbers(function: ast.AST) -> dict[str, int]:

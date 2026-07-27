@@ -1,267 +1,140 @@
-"""Regression contracts for structured lifecycle validation verdicts."""
+"""Feedback and accounting contracts for bounded criteria review."""
 
 from __future__ import annotations
 
-import contextlib
-from collections.abc import Iterator
-from datetime import UTC, datetime
 from types import SimpleNamespace
-from unittest.mock import AsyncMock, MagicMock, patch
+from typing import Any, cast
 
 import pytest
 
-from gobby.mcp_proxy.tools.tasks._lifecycle_validation import validate_leaf_task_with_llm
-from gobby.tasks.validation_verdict import ValidationResult as TaskValidationResult
+from gobby.mcp_proxy.tools.tasks._context import RegistryContext
+from gobby.mcp_proxy.tools.tasks._lifecycle_validation import evaluate_criteria_review
+from gobby.storage.hub.protocol import HubDatabase
+from gobby.storage.tasks import LocalTaskManager, Task
+from gobby.tasks.close_verdict import CloseCriterionVerdict, CloseVerdict
+from gobby.tasks.validation import TaskValidator, ValidationPromptTooLarge
+from gobby.tasks.validation_history import ValidationHistoryManager
 
-pytestmark = pytest.mark.unit
-
-_TASK_UPDATED_AT = datetime(2026, 1, 1, tzinfo=UTC)
-
-_VALIDATION_FEEDBACK_17821 = (
-    "The manifest and diff show a concrete root-cause fix: ensure_personal_project "
-    "(src/gobby/storage/projects.py) now materializes .gobby/project.json with the canonical "
-    "PERSONAL_PROJECT_ID for the personal workspace (write-if-missing, preserve-valid, "
-    "repair-corrupt/wrong-id), which is exactly what daemon wiki routes need to avoid gwiki's "
-    "invalid_scope failure for an uninitialized personal dir. This is covered by new focused "
-    "tests in tests/storage/test_project_manager.py (identity materialization/preserve/repair) "
-    "and a new daemon-route-seam test test_personal_scope_routes_resolve_uninitialized_workspace "
-    "in tests/servers/routes/test_wiki_routes.py that provisions a bare gobby home and asserts "
-    "/api/wiki/status, /pages, /graph all return ok:true for the personal scope, with a "
-    "documented red-first failure against the pre-fix commit. A related second bug (vault-claim "
-    "omission causing fallback-dir poisoning across five gwiki commands) was also fixed with a "
-    "red-first Rust unit test in commands/health.rs described as covering the gwiki-side "
-    "scope-resolution seam, backed by reported clean cargo test/clippy/fmt runs (826 passed). No "
-    "frontend files changed per the manifest, consistent with the claim that the UI already "
-    "degrades/renders correctly based on backend state; UI verification (headless run, "
-    "screenshot, zero offline/degraded banner counts) supports criterion 3 without requiring "
-    "source changes. Full raw diff for the five Rust files was omitted for length, but the "
-    "manifest confirms the files/line-counts changed and the reported test evidence (specific "
-    "failing line, specific passing counts, live e2e checks) is detailed and consistent with the "
-    "narrative, so this omission isn't decision-blocking. All stated gates (mypy, ruff "
-    "check/format, pytest 51 passed, cargo test/clippy/fmt) are reported clean with no "
-    "contradicting or failing results."
-)
+pytestmark = pytest.mark.integration
 
 
-class _NoBackoffConn:
-    """Connection stub where validation backoff and history writes are inert."""
+class _Validator:
+    def __init__(self, outcome: CloseVerdict | Exception) -> None:
+        self.outcome = outcome
+        self.calls = 0
 
-    rowcount = 0
-
-    def execute(self, *_args: object, **_kwargs: object) -> _NoBackoffConn:
-        return self
-
-    def fetchone(self) -> None:
-        return None
-
-
-class _NoBackoffDB:
-    def fetchone(self, *_args: object, **_kwargs: object) -> None:
-        return None
-
-    def fetchall(self, *_args: object, **_kwargs: object) -> list[object]:
-        return []
-
-    @contextlib.contextmanager
-    def transaction(self) -> Iterator[_NoBackoffConn]:
-        yield _NoBackoffConn()
+    async def validate_task(self, **_kwargs: object) -> CloseVerdict:
+        self.calls += 1
+        if isinstance(self.outcome, Exception):
+            raise self.outcome
+        return self.outcome
 
 
-def _task() -> SimpleNamespace:
-    return SimpleNamespace(
-        id="task-1",
-        title="Task",
-        description="Description",
-        validation_criteria="Tests pass",
-        category="code",
-        updated_at=_TASK_UPDATED_AT,
+def _task(manager: LocalTaskManager, project_id: str) -> Task:
+    return manager.create_task(
+        project_id=project_id,
+        title="Feedback leaf",
+        category="docs",
+        validation_criteria="The guide documents the checklist.",
     )
 
 
-def _task_manager_mock() -> SimpleNamespace:
-    return SimpleNamespace(
-        update_task=MagicMock(),
-        increment_validation_failure=MagicMock(return_value=(1, False)),
-        db=_NoBackoffDB(),
+async def _evaluate(
+    task: Task,
+    manager: LocalTaskManager,
+    validator: _Validator,
+) -> Any:
+    ctx = cast(RegistryContext, SimpleNamespace(task_manager=manager))
+    return await evaluate_criteria_review(
+        task=task,
+        task_validator=cast(TaskValidator, validator),
+        ctx=ctx,
+        resolved_id=task.id,
+        changes_summary="Documented the checklist.",
+        diff_text="diff --git a/docs/guide.md b/docs/guide.md",
+        checklist_facts={"validation_commands": "skipped:category"},
+        validation_config=None,
     )
 
 
 @pytest.mark.asyncio
-async def test_documentation_uses_the_same_llm_validation_contract() -> None:
-    task = _task()
-    manager = _task_manager_mock()
-    validator = SimpleNamespace(
-        validate_task=AsyncMock(
-            return_value=TaskValidationResult(
-                status="valid",
-                feedback="Documentation criterion is satisfied.",
-                blocking_reasons=[],
-            )
+async def test_valid_verdict_preserves_feedback_without_mutating_task(
+    temp_db: HubDatabase,
+    sample_project: dict[str, Any],
+) -> None:
+    manager = LocalTaskManager(temp_db)
+    task = _task(manager, sample_project["id"])
+    validator = _Validator(
+        CloseVerdict(
+            status="valid",
+            criteria=(
+                CloseCriterionVerdict(
+                    1,
+                    "The guide documents the checklist.",
+                    True,
+                    None,
+                ),
+            ),
+            feedback="Documentation criterion is satisfied.",
         )
     )
 
-    result = await validate_leaf_task_with_llm(
-        task,
-        validator,
-        "docs context",
-        SimpleNamespace(task_manager=manager),
-        task.id,
-        None,
-    )
+    result = await _evaluate(task, manager, validator)
 
     assert result.can_close is True
-    assert result.validation_status == "valid"
+    assert result.validation_feedback == "Documentation criterion is satisfied."
     assert result.reset_reason == "llm_valid"
-    validator.validate_task.assert_awaited_once()
-    manager.update_task.assert_not_called()
-    manager.increment_validation_failure.assert_not_called()
-
-
-@pytest.mark.parametrize(
-    "narrative",
-    [
-        _VALIDATION_FEEDBACK_17821,
-        "The wrapper sets FAILED=1 on failure and exits cleanly when every check passes.",
-        "TDD red evidence recorded 3 failed tests before implementation; final green is clean.",
-        "The API persists status=failed for failed jobs; all focused validation passes.",
-        "Failure-bucket totals are rendered for each historical run; current checks are green.",
-    ],
-)
-@pytest.mark.asyncio
-async def test_valid_structured_verdict_ignores_failure_vocabulary(narrative: str) -> None:
-    task = _task()
-    manager = _task_manager_mock()
-    validator = SimpleNamespace(
-        validate_task=AsyncMock(
-            return_value=TaskValidationResult(
-                status="valid",
-                feedback=narrative,
-                blocking_reasons=[],
-            )
-        )
-    )
-
-    result = await validate_leaf_task_with_llm(
-        task,
-        validator,
-        "diff context",
-        SimpleNamespace(task_manager=manager),
-        task.id,
-        None,
-    )
-
-    assert result.can_close is True
-    assert result.validation_status == "valid"
-    assert result.validation_feedback == narrative
-    assert result.reset_reason == "llm_valid"
-    assert result.extra == {
-        "criterion_results": [],
-        "recurring_validation_candidates": [],
-    }
-    manager.update_task.assert_not_called()
-    manager.increment_validation_failure.assert_not_called()
+    assert validator.calls == 1
+    refreshed = manager.get_task(task.id)
+    assert refreshed is not None and refreshed.validation_status == task.validation_status
 
 
 @pytest.mark.asyncio
-async def test_invalid_structured_verdict_is_never_promoted_by_positive_narrative() -> None:
-    task = _task()
-    manager = _task_manager_mock()
-    validator = SimpleNamespace(
-        validate_task=AsyncMock(
-            return_value=TaskValidationResult(
-                status="invalid",
-                feedback="All validation criteria are satisfied.",
-                blocking_reasons=["Required integration evidence is missing."],
-            )
+async def test_invalid_verdict_returns_first_gap_and_increments_once(
+    temp_db: HubDatabase,
+    sample_project: dict[str, Any],
+) -> None:
+    manager = LocalTaskManager(temp_db)
+    task = _task(manager, sample_project["id"])
+    validator = _Validator(
+        CloseVerdict(
+            status="invalid",
+            criteria=(
+                CloseCriterionVerdict(
+                    1,
+                    "The guide documents the checklist.",
+                    False,
+                    "Add the category matrix to the guide.",
+                ),
+            ),
+            feedback="One criterion remains incomplete.",
         )
     )
 
-    result = await validate_leaf_task_with_llm(
-        task,
-        validator,
-        "diff context",
-        SimpleNamespace(task_manager=manager),
-        task.id,
-        None,
-    )
+    result = await _evaluate(task, manager, validator)
 
     assert result.can_close is False
-    assert result.extra["validation_status"] == "invalid"
-    assert "inspection_summary" not in result.extra
-    assert result.message.startswith("Close blocked: validation verdict 'invalid'")
+    assert result.extra["blocking_reasons"] == ["Add the category matrix to the guide."]
+    assert result.extra["validation_fail_count"] == 1
+    refreshed = manager.get_task(task.id)
+    assert refreshed is not None and refreshed.validation_fail_count == 1
+    history = ValidationHistoryManager(temp_db).get_iteration_history(task.id)
+    assert [(item.iteration, item.status) for item in history] == [(1, "invalid")]
 
 
 @pytest.mark.asyncio
-async def test_blocked_message_is_identical_across_response_and_persistence() -> None:
-    task = _task()
-    manager = _task_manager_mock()
-    validator = SimpleNamespace(
-        validate_task=AsyncMock(
-            return_value=TaskValidationResult(
-                status="invalid",
-                feedback="Validation did not pass.",
-                blocking_reasons=["pytest regression still fails", "lint gate failed"],
-            )
-        )
-    )
+async def test_prompt_too_large_is_actionable_without_failure_accounting(
+    temp_db: HubDatabase,
+    sample_project: dict[str, Any],
+) -> None:
+    manager = LocalTaskManager(temp_db)
+    task = _task(manager, sample_project["id"])
+    validator = _Validator(ValidationPromptTooLarge("Split the task."))
 
-    with patch(
-        "gobby.mcp_proxy.tools.tasks._lifecycle_validation._record_validation_iteration"
-    ) as record_iteration:
-        result = await validate_leaf_task_with_llm(
-            task,
-            validator,
-            "diff context",
-            SimpleNamespace(task_manager=manager),
-            task.id,
-            None,
-        )
+    result = await _evaluate(task, manager, validator)
 
-    persisted_feedback = manager.increment_validation_failure.call_args.kwargs[
-        "validation_feedback"
-    ]
-    history_feedback = record_iteration.call_args.kwargs["feedback"]
-    assert result.message == persisted_feedback == history_feedback
-    assert result.message.count("Close blocked:") == 1
-    assert result.message == (
-        "Close blocked: validation verdict 'invalid'\n"
-        "Blocking reasons: pytest regression still fails; lint gate failed\n\n"
-        "Validator feedback:\nValidation did not pass."
-    )
-
-
-@pytest.mark.asyncio
-async def test_override_provenance_is_rendered_and_returned_structurally() -> None:
-    task = _task()
-    manager = _task_manager_mock()
-    override: dict[str, object] = {
-        "from": "valid",
-        "to": "invalid",
-        "reason": "current_failure_evidence",
-        "evidence": ["pytest: 1 failed"],
-    }
-    validator = SimpleNamespace(
-        validate_task=AsyncMock(
-            return_value=TaskValidationResult(
-                status="invalid",
-                feedback="The implementation otherwise satisfies the criteria.",
-                blocking_reasons=["pytest: 1 failed"],
-                verdict_override=override,
-            )
-        )
-    )
-
-    result = await validate_leaf_task_with_llm(
-        task,
-        validator,
-        "diff context",
-        SimpleNamespace(task_manager=manager),
-        task.id,
-        None,
-    )
-
-    assert result.extra["verdict_override"] == override
-    assert result.message.startswith(
-        "Close blocked: validation verdict 'invalid' — verdict overridden: validator attested "
-        "current failures: pytest: 1 failed"
-    )
+    assert result.error_type == "validation_prompt_too_large"
+    assert result.message == "Split the task."
+    refreshed = manager.get_task(task.id)
+    assert refreshed is not None and refreshed.validation_fail_count == 0
+    assert ValidationHistoryManager(temp_db).get_iteration_history(task.id) == []

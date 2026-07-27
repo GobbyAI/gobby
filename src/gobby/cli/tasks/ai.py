@@ -3,15 +3,11 @@ AI-powered task commands (expand, validate, suggest, etc.)
 """
 
 import sys
-from typing import Any
+from pathlib import Path
 
 import click
 
 from gobby.cli.tasks._utils import get_task_manager, resolve_task_id
-from gobby.failure_categories import (
-    INFRASTRUCTURE_FAILURE_CATEGORIES,
-    persisted_validation_status,
-)
 from gobby.tasks.state_semantics import current_stage_state, is_task_closed
 from gobby.utils.json_helpers import json_dumps
 
@@ -28,50 +24,33 @@ from gobby.utils.json_helpers import json_dumps
     type=click.Path(exists=True),
     help="File containing changes summary",
 )
-@click.option(
-    "--max-iterations",
-    "-i",
-    type=click.IntRange(min=1),
-    default=1,
-    help="Max validation retry attempts",
-)
 @click.option("--history", is_flag=True, help="Show validation history instead of validating")
-@click.option("--recurring", is_flag=True, help="Show recurring issues instead of validating")
 def validate_task_cmd(
     task_id: str,
     summary: str | None,
     summary_file: str | None,
-    max_iterations: int,
     history: bool,
-    recurring: bool,
 ) -> None:
-    """Validate a task.
+    """Run the bounded criteria review used by the close checklist.
 
     TASK can be: #N (e.g., #1, #47), path (e.g., 1.2.3), or UUID.
 
-    For parent tasks (with children), validates that all children are closed.
-    For leaf tasks, uses LLM-based validation against criteria.
-
-    Use --history to view past validation iterations.
-    Use --recurring to see issues that keep appearing.
+    Parent tasks report child completion. Leaf tasks run one read-only criteria
+    review; close_task owns the full checklist and validation accounting.
     """
     import asyncio
 
     from gobby.cli.runtime import get_cli_runtime, require_cli_database
     from gobby.llm import LLMService
-    from gobby.storage.verification_receipts import VerificationReceiptStore
-    from gobby.tasks.evidence_admission import admit_task_evidence
+    from gobby.tasks.commits import collect_commit_diff_text
     from gobby.tasks.validation import TaskValidator
     from gobby.tasks.validation_history import ValidationHistoryManager
-    from gobby.tasks.validation_verdict import ValidationResult, format_close_validation_message
-    from gobby.tasks.verification_receipt_packet import build_verification_receipt_packet
 
     manager = get_task_manager()
     resolved = resolve_task_id(manager, task_id)
     if not resolved:
         raise SystemExit(1)
 
-    # Handle --history flag: show validation history
     if history:
         history_manager = ValidationHistoryManager(manager.db)
         iterations = history_manager.get_iteration_history(resolved.id)
@@ -87,68 +66,19 @@ def validate_task_cmd(
                 click.echo(f"    Issues: {len(it.issues)}")
         return
 
-    # Handle --recurring flag: show recurring issues
-    if recurring:
-        history_manager = ValidationHistoryManager(manager.db)
-        summary_data = history_manager.get_recurring_issue_summary(resolved.id)
-        has_recurring = history_manager.has_recurring_issues(resolved.id)
-        click.echo(f"Recurring issues for {resolved.id}:")
-        click.echo(f"  Has recurring issues: {has_recurring}")
-        click.echo(f"  Total iterations: {summary_data['total_iterations']}")
-        if summary_data["recurring_issues"]:
-            for issue in summary_data["recurring_issues"]:
-                click.echo(f"  - {issue['title']} (count: {issue['count']})")
-        else:
-            click.echo("  No recurring issues found.")
-        return
-
-    # Check if task has children (is a parent task)
     children = manager.list_tasks(parent_task_id=resolved.id, limit=1000)
-
     if children:
-        # Parent task: validate based on child completion
         open_children = [c for c in children if not is_task_closed(c)]
-        all_closed = len(open_children) == 0
-
-        if all_closed:
-            result = ValidationResult(
-                status="valid",
-                feedback=f"All {len(children)} child tasks are completed.",
-            )
-        else:
-            open_titles = [f"- {c.id}: {c.title}" for c in open_children[:5]]
-            remaining = len(open_children) - 5 if len(open_children) > 5 else 0
-            feedback = f"{len(open_children)} of {len(children)} child tasks still open:\n"
-            feedback += "\n".join(open_titles)
-            if remaining > 0:
-                feedback += f"\n... and {remaining} more"
-            result = ValidationResult(status="invalid", feedback=feedback)
-
-        click.echo(f"Validation Status: {result.status.upper()}")
-        if result.status == "valid" and result.feedback:
-            click.echo(f"Feedback:\n{result.feedback}")
-        elif result.status != "valid":
-            click.echo(
-                format_close_validation_message(
-                    result.status,
-                    result.feedback,
-                    result.blocking_reasons,
-                    result.verdict_override,
-                    lead="Validation blocked",
-                )
-            )
-        # Update validation status
-        updates: dict[str, Any] = {
-            "validation_status": result.status,
-            "validation_feedback": result.feedback,
-        }
-        if result.status == "valid":
-            manager.close_task(resolved.id, reason="All child tasks completed")
-            click.echo("Task closed.")
-        manager.update_task(resolved.id, **updates)
+        if not open_children:
+            click.echo(f"Validation Status: VALID\nAll {len(children)} child tasks are closed.")
+            return
+        click.echo(f"Validation Status: INVALID\n{len(open_children)} child tasks remain open:")
+        for child in open_children[:5]:
+            click.echo(f"- {child.id}: {child.title}")
+        if len(open_children) > 5:
+            click.echo(f"... and {len(open_children) - 5} more")
         return
 
-    # Leaf task: need changes summary
     changes_summary = ""
     if summary_file:
         try:
@@ -165,10 +95,10 @@ def validate_task_cmd(
 
     if not changes_summary.strip():
         raise click.ClickException("Changes summary is required for leaf tasks.")
+    if not (resolved.validation_criteria or "").strip():
+        raise click.ClickException("Validation criteria are required for leaf tasks.")
 
     click.echo(f"Validating task {resolved.id}...")
-
-    # Initialize validator
     try:
         config = get_cli_runtime().config
         llm_service = LLMService(config)
@@ -180,95 +110,32 @@ def validate_task_cmd(
     except Exception as e:
         raise click.ClickException(f"Error initializing validator: {e}") from e
 
-    receipt_store = VerificationReceiptStore(manager.db)
-    admission = admit_task_evidence(
-        receipt_store.list_for_task(resolved.project_id, resolved.id),
-        task_id=resolved.id,
-        validation_epoch=resolved.validation_epoch,
-        validation_criteria=resolved.validation_criteria or "",
-    )
-    receipt_packet = build_verification_receipt_packet(admission.receipts)
-
-    # Run validation
     try:
-        result = asyncio.run(
+        diff_text = collect_commit_diff_text(resolved.commits or [], cwd=str(Path.cwd()))
+        verdict = asyncio.run(
             validator.validate_task(
                 task_id=resolved.id,
                 title=resolved.title,
-                description=resolved.description,
                 changes_summary=changes_summary,
-                validation_criteria=resolved.validation_criteria,
-                category=resolved.category,
-                verification_receipt_text=receipt_packet.text,
-                admissible_evidence_ids=sorted(admission.evidence_ids),
+                validation_criteria=resolved.validation_criteria or "",
+                diff_text=diff_text,
+                checklist_facts={
+                    "source": "cli",
+                    "linked_commit_count": len(resolved.commits or []),
+                    "scope": "criteria_review_only",
+                },
             )
         )
-
-        click.echo(f"Validation Status: {result.status.upper()}")
-        if result.status == "valid" and result.feedback:
-            click.echo(f"Feedback:\n{result.feedback}")
-        elif result.status != "valid":
-            click.echo(
-                format_close_validation_message(
-                    result.status,
-                    result.feedback,
-                    result.blocking_reasons,
-                    result.verdict_override,
-                    lead="Validation blocked",
-                )
-            )
-        # Apply validation updates
-        persisted_status = persisted_validation_status(result.status, result.failure_category)
-        validation_updates: dict[str, Any] = {
-            "validation_status": persisted_status,
-            "validation_feedback": result.feedback,
-        }
-        escalation_reason: str | None = None
-
-        if result.status == "valid":
-            click.echo(
-                "Validation passed. Use the close_task MCP tool to gather final task-state "
-                "evidence and close atomically."
-            )
-        elif (
-            result.status == "invalid"
-            and result.failure_category not in INFRASTRUCTURE_FAILURE_CATEGORIES
-        ):
-            current_fail_count = resolved.validation_fail_count or 0
-            new_fail_count = current_fail_count + 1
-            validation_updates["validation_fail_count"] = new_fail_count
-
-            if new_fail_count < max_iterations:
-                fix_task = manager.create_task(
-                    project_id=resolved.project_id,
-                    title=f"Fix validation failures for {resolved.title}",
-                    description=f"Validation failed with feedback:\n{result.feedback}\n\nPlease fix the issues and re-validate.",
-                    parent_task_id=resolved.id,
-                    priority=1,
-                    task_type="bug",
-                    validation_criteria=(
-                        "Every reported validation gap is resolved and supported by fresh "
-                        "admissible evidence."
-                    ),
-                )
-                validation_updates["validation_feedback"] = (
-                    result.feedback or ""
-                ) + f"\n\nCreated fix task: {fix_task.id}"
-                click.echo(f"Created fix task: {fix_task.id}")
-            else:
-                escalation_reason = f"exceeded_validation_retries ({max_iterations})"
-                validation_updates["validation_feedback"] = (result.feedback or "") + (
-                    f"\n\nExceeded max retries ({max_iterations}). "
-                    "Escalated for human intervention."
-                )
-                click.echo("Exceeded max retries. Task ESCALATED for human intervention.")
-
-        manager.update_task(resolved.id, **validation_updates)
-        if escalation_reason is not None:
-            manager.escalate_task(resolved.id, reason=escalation_reason)
-
     except (RuntimeError, ValueError) as e:
         raise click.ClickException(f"Validation error: {e}") from e
+
+    click.echo(f"Validation Status: {verdict.status.upper()}")
+    if verdict.feedback:
+        click.echo(f"Feedback:\n{verdict.feedback}")
+    for criterion in verdict.criteria:
+        if not criterion.satisfied and criterion.gap:
+            click.echo(f"- Criterion {criterion.index}: {criterion.gap}")
+    click.echo("Use close_task to run the full checklist and apply validation accounting.")
 
 
 @click.command("suggest")

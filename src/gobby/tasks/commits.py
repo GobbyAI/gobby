@@ -74,6 +74,32 @@ def collect_task_diff_text(
     return b"".join(chunks).decode("utf-8", errors="replace"), first_page
 
 
+def collect_commit_diff_text(
+    commit_shas: list[str],
+    *,
+    cwd: str | Path,
+) -> str:
+    """Return the complete patch stream for a prospective close commit set."""
+    if not commit_shas:
+        return ""
+    result = run_git_command(
+        [
+            "git",
+            "show",
+            "--format=",
+            "--find-renames",
+            "--find-copies",
+            "--binary",
+            *commit_shas,
+        ],
+        cwd=cwd,
+        timeout=30,
+    )
+    if result is None:
+        raise RuntimeError("git show failed while assembling the close criteria-review diff")
+    return result
+
+
 # Doc file extensions that don't need LLM validation
 DOC_EXTENSIONS = {".md", ".txt", ".rst", ".adoc", ".markdown"}
 
