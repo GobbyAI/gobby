@@ -32,7 +32,16 @@ ENV_VAR_PATTERN = re.compile(r"\$\{([A-Za-z_][A-Za-z0-9_]*)(?::-([^}]*))?\}")
 _LEGACY_KEYS_TO_DROP = frozenset(
     {"_meta", "review", "task_description", "title_synthesis", "rules", "ui_settings"}
 )
-_REMOVED_CONFIG_STORE_KEYS = frozenset({"databases.falkordb.requirepass"})
+_REMOVED_CONFIG_STORE_KEYS = frozenset(
+    {
+        "databases.falkordb.requirepass",
+        "gobby_tasks.validation.issue_similarity_threshold",
+        "gobby_tasks.validation.max_consecutive_errors",
+        "gobby_tasks.validation.max_retries",
+        "gobby_tasks.validation.recurring_issue_threshold",
+        "gobby_tasks.validation.run_build_first",
+    }
+)
 _REMOVED_CONFIG_STORE_PREFIXES = ("local.",)
 _UI_MODE_CONFIG_KEY = "ui.mode"
 _CODE_INDEX_SYMBOL_SUMMARY_KEY_MIGRATIONS = {

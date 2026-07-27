@@ -1379,6 +1379,36 @@ class TestLoadConfig:
         assert not hasattr(config, "task_description")
         assert not hasattr(config.gobby_tasks, "enrichment")
 
+    def test_load_config_deletes_removed_validation_rows(self, temp_dir: Path) -> None:
+        """Removed validation settings cannot prevent the daemon from starting."""
+        removed_keys = {
+            "gobby_tasks.validation.issue_similarity_threshold",
+            "gobby_tasks.validation.max_consecutive_errors",
+            "gobby_tasks.validation.max_retries",
+            "gobby_tasks.validation.recurring_issue_threshold",
+            "gobby_tasks.validation.run_build_first",
+        }
+
+        class DummyConfigStore:
+            def __init__(self) -> None:
+                self.deleted: list[str] = []
+
+            def get_all(self) -> dict[str, object]:
+                return dict.fromkeys(removed_keys, 1)
+
+            def delete(self, key: str) -> bool:
+                self.deleted.append(key)
+                return True
+
+        store = DummyConfigStore()
+        config = load_config(
+            config_file=str(temp_dir / "bootstrap.yaml"),
+            config_store=store,
+        )
+
+        assert set(store.deleted) == removed_keys
+        assert config.gobby_tasks.validation.enabled is True
+
     def test_load_config_migrates_legacy_project_wiki_root(self, temp_dir: Path) -> None:
         """Legacy gobby-wiki project roots load from the sibling wiki vault."""
         legacy_root = temp_dir / "repo" / "gobby-wiki"
