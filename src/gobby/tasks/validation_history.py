@@ -22,7 +22,9 @@ def _safe_failure_category(value: object) -> FailureCategory | None:
     if value is None:
         return None
     if not isinstance(value, str):
-        logger.warning("Ignoring non-string validation failure category", extra={"value": repr(value)})
+        logger.warning(
+            "Ignoring non-string validation failure category", extra={"value": repr(value)}
+        )
         return None
     try:
         return FailureCategory(value)

@@ -697,6 +697,7 @@ def register_close_task(registry: InternalToolRegistry, ctx: RegistryContext) ->
         evidence_receipt_ids: list[str] | None = None,
     ) -> dict[str, Any]:
         """Evaluate close readiness and close ready tasks in one preview call."""
+
         async def run_once(*, read_only: bool) -> dict[str, Any]:
             return await _close_task_once(
                 task_id=task_id,
