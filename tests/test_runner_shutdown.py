@@ -13,6 +13,7 @@ if TYPE_CHECKING:
     import uvicorn
 
 from gobby import app_context, runner_lifecycle_shutdown
+from gobby.agents import agent_cleanup
 from gobby.hooks.event_handlers import EventHandlers
 from gobby.hooks.events import HookEventType
 from gobby.runner import GobbyRunner
@@ -1240,22 +1241,28 @@ class TestStopShutdownAgentPreservation:
         async def server_done() -> None:
             return None
 
-        with patch.object(
-            runner_lifecycle_shutdown,
-            "get_shutdown_marker_path",
-            return_value=tmp_path / "shutdown.json",
-        ):
-            await runner_lifecycle_shutdown.shutdown_daemon_services(
-                cast(GobbyRunner, runner),
-                cast("uvicorn.Server", server),
-                asyncio.create_task(server_done()),
-                1,
-                await_critical_stop_hook_grace_window=AsyncMock(),
-                shutdown_websocket_server=AsyncMock(),
-                reap_remaining_child_processes=reap,
-                shutdown_telemetry=MagicMock(),
-                cleanup_pid_file=MagicMock(),
-            )
+        try:
+            with patch.object(
+                runner_lifecycle_shutdown,
+                "get_shutdown_marker_path",
+                return_value=tmp_path / "shutdown.json",
+            ):
+                await runner_lifecycle_shutdown.shutdown_daemon_services(
+                    cast(GobbyRunner, runner),
+                    cast("uvicorn.Server", server),
+                    asyncio.create_task(server_done()),
+                    1,
+                    await_critical_stop_hook_grace_window=AsyncMock(),
+                    shutdown_websocket_server=AsyncMock(),
+                    reap_remaining_child_processes=reap,
+                    shutdown_telemetry=MagicMock(),
+                    cleanup_pid_file=MagicMock(),
+                )
+        finally:
+            # The real cleanup closed the process-global terminal-delivery
+            # admission gate; reopen it so later tests in this process can
+            # start shielded deliveries again.
+            agent_cleanup.reopen_terminal_delivery_admission()
 
         # The old shutdown-time cancellation helper is gone; run storage sees
         # only the preservation listing and no cancel/fail/terminalize writes.
