@@ -471,6 +471,46 @@ class TestCallToolInternal:
         assert result["success"] is False
         assert "not found" in result["error"]
 
+    @pytest.mark.asyncio
+    async def test_call_tool_internal_ignores_route_timeout(
+        self, mock_mcp_manager, mock_internal_manager
+    ):
+        """The HTTP route's timeout budget never bounds an internal registry call.
+
+        ``_execute_tool`` returns from the internal branch before the ``timeout``
+        kwarg is built, so ``_mcp_call_timeout`` only governs external MCP
+        servers. A long-running internal tool must therefore get its extended
+        budget from the stdio proxy's client-side policy
+        (``EXTENDED_TIMEOUT_TOOL_NAMES``), never by raising the route budget
+        for every external tool (#19095).
+        """
+        mock_internal_manager.is_internal.return_value = True
+        mock_registry = MagicMock()
+        mock_registry.call = AsyncMock(return_value={"success": True, "passed": True})
+        mock_internal_manager.get_registry.return_value = mock_registry
+        mock_mcp_manager.call_tool = AsyncMock()
+
+        proxy = ToolProxyService(
+            mcp_manager=mock_mcp_manager,
+            internal_manager=mock_internal_manager,
+            validate_arguments=False,
+        )
+
+        result = await proxy.call_tool(
+            "gobby-tasks-ops",
+            "run_expansion_qa_coverage",
+            {"run_id": "run-1"},
+            timeout=30.0,
+        )
+
+        assert result == {"passed": True}
+        mock_mcp_manager.call_tool.assert_not_awaited()
+        assert mock_registry.call.await_args.kwargs == {}
+        assert mock_registry.call.await_args.args == (
+            "run_expansion_qa_coverage",
+            {"run_id": "run-1"},
+        )
+
 
 class TestCallToolFallback:
     """Tests for call_tool exception handling with fallback (lines 188-220)."""
@@ -1351,7 +1391,9 @@ class TestResolvePlatformSessionId:
             hook_manager_resolver=lambda: hook_manager,
         )
 
-    def test_resolve_platform_session_id_raises_on_explicit_unresolvable_ref(self, caplog) -> None:
+    def test_resolve_platform_session_id_raises_on_explicit_unresolvable_ref(
+        self, caplog: pytest.LogCaptureFixture
+    ) -> None:
         """An explicit unresolved ref is logged and rejected for the caller to handle."""
         import logging as _logging
 
