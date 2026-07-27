@@ -9,6 +9,7 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
+from gobby.agents.attention_tracker import AgentAttentionTracker
 from gobby.agents.idle_check_handler import IdleCheckHandler
 from gobby.agents.prompt_detector import PromptDetector
 from gobby.agents.stall_classifier import StallClassifier
@@ -242,7 +243,7 @@ def test_stale_request_races(temp_db: HubDatabase) -> None:
 
 
 @pytest.mark.asyncio
-async def test_idle_handler_tracks_prompts_stalls_and_injection_clear(
+async def test_attention_tracker_tracks_prompts_stalls_and_injection_clear(
     temp_db: HubDatabase,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -255,24 +256,17 @@ async def test_idle_handler_tracks_prompts_stalls_and_injection_clear(
 
     config = MagicMock()
     config.auto_enter_approval_prompts = False
-    handler = IdleCheckHandler(
-        agent_run_manager=MagicMock(),
-        db=temp_db,
-        get_session_manager=lambda: None,
-        tmux=MagicMock(),
-        idle_detector=MagicMock(),
-        cleanup_handler=MagicMock(),
-        tmux_config=config,
+    tracker = AgentAttentionTracker(
         run_db=run_db,
-        attention_manager=manager,
         prompt_detector=prompt_detector,
         stall_classifier=stall_classifier,
-        watchdog_readers=WatchdogReaderRegistry(),
+        tmux_config=config,
+        attention_manager=manager,
     )
     run = _agent_run()
     approval = "Permission required: press Enter to approve this command"
 
-    await handler.sync_attention(run, approval)
+    await tracker.sync(run, approval)
     blocked = manager.get(f"run:{run.id}")
     assert blocked is not None
     assert blocked.state == "blocked"
@@ -280,10 +274,10 @@ async def test_idle_handler_tracks_prompts_stalls_and_injection_clear(
     assert blocked.payload["kind"] == "approval"
     assert blocked.payload["fingerprint"] == blocked.fingerprint
 
-    await handler.clear_attention_after_injection(run)
+    await tracker.clear_after_injection(run)
     assert manager.get(f"run:{run.id}").state is None
 
-    await handler.sync_attention(run, "Choose a response:\n1. Yes / 2. No\n")
+    await tracker.sync(run, "Choose a response:\n1. Yes / 2. No\n")
     question = manager.get(f"run:{run.id}")
     assert question is not None
     assert question.reason == "question"
@@ -291,11 +285,11 @@ async def test_idle_handler_tracks_prompts_stalls_and_injection_clear(
         {"option": 1, "label": "Yes"},
         {"option": 2, "label": "No"},
     ]
-    await handler.clear_attention_after_injection(run)
+    await tracker.clear_after_injection(run)
 
     monkeypatch.setattr("gobby.agents.stall_classifier._MIN_CHECK_INTERVAL_SECONDS", 0)
-    await handler.sync_attention(run, "503 service unavailable")
-    await handler.sync_attention(run, "503 service unavailable")
+    await tracker.sync(run, "503 service unavailable")
+    await tracker.sync(run, "503 service unavailable")
     stalled = manager.get(f"run:{run.id}")
     assert stalled is not None
     assert stalled.state == "blocked"
@@ -303,7 +297,7 @@ async def test_idle_handler_tracks_prompts_stalls_and_injection_clear(
     assert stalled.kind == "non_actionable"
     assert stalled.payload["kind"] == "stall"
 
-    await handler.clear_attention(run)
+    await tracker.clear(run)
     assert manager.get(f"run:{run.id}").state is None
 
 

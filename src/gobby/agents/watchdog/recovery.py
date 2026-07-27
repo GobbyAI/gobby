@@ -1,0 +1,550 @@
+from __future__ import annotations
+
+import asyncio
+import json
+import logging
+import re
+from collections.abc import Awaitable, Callable
+from typing import TYPE_CHECKING, Any, cast
+
+import psycopg
+import pydantic
+
+from gobby.agents.capture import terminate_managed_tmux_async
+from gobby.agents.idle_detector import IdleDetector
+from gobby.agents.watchdog.completed_turn_recovery import (
+    format_reprompt_message,
+    recover_completed_turn,
+)
+from gobby.agents.watchdog.models import CapacityRecoveryState, CompletedTurnRecoveryState
+from gobby.workflows.step_context import StepWorkflowContext, get_active_step_workflow_context
+
+if TYPE_CHECKING:
+    from gobby.agents.agent_cleanup import AgentCleanupHandler
+    from gobby.agents.tmux.session_manager import TmuxSessionManager
+    from gobby.agents.watchdog import TranscriptWatchdogReader, WatchdogReaderRegistry
+    from gobby.agents.watchdog.models import WatchdogTranscriptSnapshot
+    from gobby.agents.watchdog.transcript_resolver import WatchdogTranscriptResolver
+    from gobby.config.tmux import TmuxConfig
+    from gobby.storage.agents import AgentRun, LocalAgentRunManager, TerminalAction
+    from gobby.storage.hub.protocol import HubDatabase
+    from gobby.storage.session_models import Session
+    from gobby.storage.sessions import SessionManager
+    from gobby.storage.tasks import LocalTaskManager
+
+logger = logging.getLogger(__name__)
+WATCHDOG_ACTOR = "agent_idle_watchdog"
+_ANSI_ESCAPE_RE = re.compile(r"\x1b(?:[@-Z\\-_]|\[[0-?]*[ -/]*[@-~])")
+_TERMINAL_CONTROL_RE = re.compile(r"[\x00-\x08\x0b-\x1f\x7f]")
+REASONING_WATCHDOG_CONTINUATION = (
+    "Gobby watchdog interrupted a long idle reasoning turn with no workflow progress. "
+    "Continue from the current task context, avoid redoing completed analysis, finish the "
+    "required Gobby lifecycle MCP transition, then call end_agent_run."
+)
+
+
+class WatchdogRecoveryCoordinator:
+    """Coordinate watchdog recovery policies and terminal cleanup."""
+
+    def __init__(
+        self,
+        *,
+        agent_run_manager: LocalAgentRunManager,
+        db: HubDatabase,
+        get_session_manager: Callable[[], SessionManager | None],
+        tmux: TmuxSessionManager,
+        idle_detector: IdleDetector,
+        watchdog_readers: WatchdogReaderRegistry,
+        cleanup_handler: AgentCleanupHandler,
+        tmux_config: TmuxConfig,
+        transcript_resolver: WatchdogTranscriptResolver,
+        run_db: Callable[..., Awaitable[Any]],
+        task_manager: LocalTaskManager | None = None,
+    ) -> None:
+        self._agent_run_manager = agent_run_manager
+        self.db = db
+        self._get_session_manager = get_session_manager
+        self._tmux = tmux
+        self._idle_detector = idle_detector
+        self._watchdog_readers = watchdog_readers
+        self._cleanup_handler = cleanup_handler
+        self._tmux_config = tmux_config
+        self._transcript_resolver = transcript_resolver
+        self._run_db = run_db
+        self._task_manager = task_manager
+        self._capacity_recovery: dict[str, CapacityRecoveryState] = {}
+        self._completed_turn_recovery: dict[str, CompletedTurnRecoveryState] = {}
+
+    def clear(self) -> None:
+        self._capacity_recovery.clear()
+        self._completed_turn_recovery.clear()
+        self._transcript_resolver.clear()
+
+    def prune(self, active_run_ids: set[str]) -> None:
+        self._capacity_recovery = {
+            run_id: state
+            for run_id, state in self._capacity_recovery.items()
+            if run_id in active_run_ids
+        }
+        self._completed_turn_recovery = {
+            run_id: state
+            for run_id, state in self._completed_turn_recovery.items()
+            if run_id in active_run_ids
+        }
+        self._transcript_resolver.prune(active_run_ids)
+
+    def discard(self, run_id: str) -> None:
+        self._capacity_recovery.pop(run_id, None)
+        self._completed_turn_recovery.pop(run_id, None)
+        self._transcript_resolver.discard(run_id)
+
+    @staticmethod
+    def _pane_has_capacity_message(
+        pane_output: str,
+        reader: TranscriptWatchdogReader | None,
+    ) -> bool:
+        capacity_message = reader.capacity_pane_message if reader is not None else None
+        if capacity_message is None:
+            return False
+        visible = _ANSI_ESCAPE_RE.sub("", pane_output)
+        visible = _TERMINAL_CONTROL_RE.sub("", visible)
+        normalized = " ".join(visible.split())
+        return capacity_message in normalized
+
+    async def _recover_capacity_error(
+        self,
+        run: AgentRun,
+        *,
+        tmux_name: str,
+        session_id: str | None,
+        transcript_path: str,
+        snapshot: WatchdogTranscriptSnapshot,
+    ) -> int:
+        error_event = snapshot.provider_error_event
+        if error_event is None:
+            return 0
+
+        state = self._capacity_recovery.get(run.id)
+        if state is None or state.transcript_path != transcript_path:
+            state = CapacityRecoveryState(transcript_path=transcript_path)
+            self._capacity_recovery[run.id] = state
+
+        if state.last_error_line_num == error_event.line_num:
+            return 0
+
+        latest_model_output = snapshot.latest_model_output_line_num
+        if (
+            state.last_error_line_num is not None
+            and latest_model_output is not None
+            and latest_model_output > state.last_error_line_num
+        ):
+            state.successful_reprompts = 0
+
+        max_attempts = self._tmux_config.max_reprompt_attempts
+        if state.successful_reprompts >= max_attempts:
+            state.last_error_line_num = error_event.line_num
+            logger.info(
+                "Agent %s remained at provider capacity after %s reprompts — failing",
+                run.id,
+                max_attempts,
+            )
+            await self._log_transcript_snapshot(
+                run,
+                reason="failing after max provider-capacity reprompts",
+                snapshot=snapshot,
+            )
+            await self._fail_idle_agent(
+                run,
+                reason="provider capacity after max reprompt attempts",
+            )
+            return 1
+
+        attempt = state.successful_reprompts + 1
+        logger.info(
+            "Reprompting agent %s after provider-capacity error (%s/%s)",
+            run.id,
+            attempt,
+            max_attempts,
+        )
+        await self._log_transcript_snapshot(
+            run,
+            reason="recovering provider-capacity error",
+            snapshot=snapshot,
+        )
+        if not await self._send_idle_reprompt(run, tmux_name=tmux_name):
+            return 0
+
+        state.last_error_line_num = error_event.line_num
+        state.successful_reprompts = attempt
+        await self._record_watchdog_task_event(
+            run,
+            action="capacity_reprompt",
+            session_id=session_id,
+            detail=(
+                f"capacity_error={snapshot.provider_error_reason};attempt={attempt}/{max_attempts}"
+            ),
+        )
+        return 1
+
+    async def recover_completed_turn(
+        self,
+        run: AgentRun,
+        *,
+        tmux_name: str,
+        session_id: str | None,
+        transcript_path: str,
+        snapshot: WatchdogTranscriptSnapshot,
+    ) -> int:
+        return await recover_completed_turn(
+            self,
+            run,
+            tmux_name=tmux_name,
+            session_id=session_id,
+            transcript_path=transcript_path,
+            snapshot=snapshot,
+        )
+
+    async def _recover_failed_reprompt_clear(self, run: AgentRun, tmux_name: str) -> bool:
+        if not await self._tmux.has_session(tmux_name):
+            logger.warning(
+                "Cannot recover failed idle prompt clear for agent %s: tmux gone",
+                run.id,
+            )
+            return False
+        if not await self._tmux.send_keys(tmux_name, "C-c", literal=False):
+            logger.warning("Failed to interrupt queued prompt while recovering agent %s", run.id)
+            return False
+        if not await self._tmux.send_keys(tmux_name, "Enter", literal=False):
+            logger.warning("Failed to submit interrupt while recovering agent %s", run.id)
+            return False
+        if not await self._tmux.has_session(tmux_name):
+            logger.warning("Cannot reprompt agent %s after recovery: tmux gone", run.id)
+            return False
+        return True
+
+    async def _send_idle_reprompt(
+        self,
+        run: AgentRun,
+        *,
+        tmux_name: str,
+        reprompt_message: str | None = None,
+    ) -> bool:
+        if reprompt_message is None:
+            reprompt_message = await self._idle_reprompt_message(run)
+        cleared = await self._tmux.send_keys(tmux_name, "Escape", literal=False)
+        if not cleared:
+            logger.warning("Failed to clear queued prompt before reprompting agent %s", run.id)
+            if not await self._recover_failed_reprompt_clear(run, tmux_name):
+                return False
+        sent = await self._tmux.send_keys(tmux_name, reprompt_message)
+        if not sent:
+            logger.warning("Failed to send idle reprompt text to agent %s", run.id)
+            return False
+        submitted = await self._tmux.send_keys(tmux_name, "Enter", literal=False)
+        if not submitted:
+            logger.warning("Failed to submit idle reprompt for agent %s", run.id)
+            return False
+        self._idle_detector.for_provider(run.provider).record_reprompt(run.id)
+        return True
+
+    async def _load_step_workflow_context(
+        self,
+        run: AgentRun,
+    ) -> tuple[StepWorkflowContext | None, bool]:
+        try:
+            step_context = await self._run_db(
+                get_active_step_workflow_context,
+                self.db,
+                run.child_session_id,
+            )
+        except psycopg.DatabaseError:
+            logger.warning(
+                "Database error loading active step workflow context for idle reprompt on "
+                "run %s session %s",
+                run.id,
+                run.child_session_id,
+                exc_info=True,
+            )
+            return None, False
+        except (json.JSONDecodeError, pydantic.ValidationError, TypeError, ValueError):
+            logger.warning(
+                "Malformed active step workflow context for idle reprompt on run %s session %s",
+                run.id,
+                run.child_session_id,
+                exc_info=True,
+            )
+            return None, False
+        except Exception:
+            logger.exception(
+                "Unexpected error loading active step workflow context for idle reprompt "
+                "on run %s session %s",
+                run.id,
+                run.child_session_id,
+            )
+            return None, False
+        return step_context, True
+
+    async def _idle_reprompt_message(
+        self,
+        run: AgentRun,
+        *,
+        step_context: StepWorkflowContext | None = None,
+        context_resolved: bool = False,
+    ) -> str:
+        """Return an idle continuation prompt tuned to active step workflows."""
+        if not context_resolved:
+            step_context, _lookup_succeeded = await self._load_step_workflow_context(run)
+        return format_reprompt_message(
+            step_context,
+            fallback_message=IdleDetector.REPROMPT_MESSAGE,
+        )
+
+    async def _recover_reasoning_idle(
+        self,
+        run: AgentRun,
+        *,
+        tmux_name: str,
+        session: Session | None,
+        session_id: str | None,
+        reader: TranscriptWatchdogReader | None,
+        snapshot: WatchdogTranscriptSnapshot | None = None,
+    ) -> bool:
+        """Interrupt a stale reasoning turn and send a focused continuation."""
+        if not self._tmux_config.reasoning_watchdog_interrupt_enabled:
+            return False
+        if reader is None or not reader.supports_reasoning_interrupt:
+            return False
+
+        if snapshot is None:
+            if session is None:
+                return False
+            transcript_path = await self._transcript_resolver.resolve(session, run_id=run.id)
+            if transcript_path is None:
+                return False
+            try:
+                snapshot = await reader.read(transcript_path)
+            except OSError:
+                logger.warning(
+                    "Failed to read %s transcript for reasoning watchdog on run %s",
+                    reader.provider_id,
+                    run.id,
+                )
+                return False
+
+        if snapshot.latest_activity_kind != "reasoning":
+            return False
+
+        logger.warning(
+            "Reasoning watchdog interrupting %s run %s session %s: %s",
+            reader.provider_id,
+            run.id,
+            session_id,
+            json.dumps(snapshot.to_log_dict(), ensure_ascii=True),
+        )
+
+        interrupted = await self._tmux.send_keys(tmux_name, "C-c", literal=False)
+        if not interrupted:
+            return False
+
+        settle_seconds = self._tmux_config.reasoning_watchdog_settle_seconds
+        if settle_seconds:
+            await asyncio.sleep(settle_seconds)
+
+        sent = await self._tmux.send_keys(tmux_name, REASONING_WATCHDOG_CONTINUATION)
+        if not sent:
+            return False
+        submitted = await self._tmux.send_keys(tmux_name, "Enter", literal=False)
+        if not submitted:
+            return False
+
+        self._idle_detector.for_provider(run.provider).record_reprompt(run.id)
+        await self._record_watchdog_task_event(
+            run,
+            action="reasoning_interrupt",
+            session_id=session_id,
+            detail="latest_activity_kind=reasoning",
+        )
+        return True
+
+    async def _record_watchdog_task_event(
+        self,
+        run: AgentRun,
+        *,
+        action: str,
+        session_id: str | None,
+        detail: str,
+    ) -> None:
+        """Append a durable task-history event for watchdog recovery actions."""
+        if self._task_manager is None or not run.task_id:
+            return
+
+        try:
+            task = await self._run_db(self._task_manager.get_task, run.task_id)
+        except Exception:
+            logger.warning(
+                "Failed to load task %s for idle watchdog audit on run %s",
+                run.task_id,
+                run.id,
+                exc_info=True,
+            )
+            return
+        if task is None:
+            return
+
+        try:
+            from gobby.tasks.state_semantics import projected_task_state
+
+            state = projected_task_state(task)
+        except Exception:
+            state = "agent_watchdog"
+
+        reason = f"agent_idle_watchdog:{action} run_id={run.id}"
+        if session_id:
+            reason = f"{reason} session_id={session_id}"
+        reason = f"{reason} {detail}"
+
+        try:
+            await self._run_db(
+                self._task_manager.lifecycle_events.record_lifecycle_event,
+                run.task_id,
+                from_state=state,
+                to_state=state,
+                reason=reason,
+                by_actor=WATCHDOG_ACTOR,
+            )
+        except Exception:
+            logger.warning(
+                "Failed to record idle watchdog audit for run %s task %s",
+                run.id,
+                run.task_id,
+                exc_info=True,
+            )
+
+    async def _fail_idle_agent(self, run: AgentRun, reason: str) -> None:
+        """Fail an agent that is irrecoverably idle."""
+        if run.tmux_session_name:
+
+            async def terminalize(
+                _action: TerminalAction,
+                payload: str | None,
+            ) -> AgentRun | None:
+                await self._cleanup_handler.cleanup_agent(
+                    run,
+                    terminal_payload=payload or f"Agent idle: {reason}",
+                )
+                return cast(
+                    "AgentRun | None",
+                    await self._run_db(self._agent_run_manager.get, run.id),
+                )
+
+            result = await terminate_managed_tmux_async(
+                storage=self._agent_run_manager,
+                run=run,
+                tmux=self._tmux,
+                action="fail",
+                reason=f"Agent idle: {reason}",
+                terminalize=terminalize,
+            )
+            if not result.success:
+                logger.warning(
+                    "Idle-agent termination failed for run %s: %s (%s)",
+                    run.id,
+                    result.error,
+                    result.error_code,
+                )
+                return
+
+            self._idle_detector.clear_state(run.id)
+            self.discard(run.id)
+            return
+
+        self._idle_detector.clear_state(run.id)
+        await self._cleanup_handler.cleanup_agent(run, terminal_payload=f"Agent idle: {reason}")
+        self.discard(run.id)
+
+    async def _log_transcript_snapshot(
+        self,
+        run: AgentRun,
+        *,
+        reason: str,
+        snapshot: WatchdogTranscriptSnapshot | None = None,
+        level: int = logging.WARNING,
+    ) -> None:
+        session_id = run.child_session_id
+        if not session_id:
+            return
+
+        if snapshot is None:
+            session_manager = self._get_session_manager()
+            if session_manager is None:
+                return
+
+            try:
+                session = await self._run_db(session_manager.get, session_id)
+            except Exception:
+                logger.warning(
+                    "Failed to load session %s for watchdog idle diagnostics on run %s",
+                    session_id,
+                    run.id,
+                )
+                return
+
+            if session is None:
+                return
+
+            provider_id = session.source or run.provider
+            reader = self._watchdog_readers.for_provider(provider_id)
+            if reader is None:
+                return
+            transcript_path = await self._transcript_resolver.resolve(session, run_id=run.id)
+            if transcript_path is None:
+                logger.warning(
+                    "Watchdog idle diagnostic for %s run %s (%s): "
+                    "session %s has no readable transcript path",
+                    reader.provider_id,
+                    run.id,
+                    reason,
+                    session_id,
+                )
+                return
+
+            try:
+                snapshot = await reader.read(transcript_path)
+            except OSError:
+                logger.warning(
+                    "Failed to read %s transcript for idle diagnostic on run %s (%s)",
+                    reader.provider_id,
+                    run.id,
+                    reason,
+                )
+                return
+
+        if not snapshot.tail and snapshot.latest_turn_event is None:
+            logger.warning(
+                "Watchdog idle diagnostic for %s run %s (%s): "
+                "no transcript summaries for session %s",
+                snapshot.provider,
+                run.id,
+                reason,
+                session_id,
+            )
+            return
+
+        log_args = (
+            snapshot.provider,
+            run.id,
+            reason,
+            session_id,
+            json.dumps(snapshot.to_log_dict(), ensure_ascii=True),
+        )
+        if level == logging.WARNING:
+            logger.warning(
+                "Watchdog idle diagnostic for %s run %s (%s) session %s: %s",
+                *log_args,
+            )
+        else:
+            logger.log(
+                level,
+                "Watchdog idle diagnostic for %s run %s (%s) session %s: %s",
+                *log_args,
+            )

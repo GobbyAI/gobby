@@ -1,7 +1,7 @@
 """Bounded completed-turn recovery orchestration for the idle watchdog."""
 
 import logging
-from datetime import datetime
+from datetime import UTC, datetime
 from typing import Literal, Protocol
 
 from gobby.agents.watchdog.models import (
@@ -91,6 +91,21 @@ def evaluate_completed_turn(
     if state.successful_reprompts >= max_attempts:
         return "exhausted"
     return "recover"
+
+
+def completed_turn_recovery_due(
+    snapshot: WatchdogTranscriptSnapshot,
+    *,
+    idle_timeout_seconds: int,
+) -> bool | None:
+    if not snapshot.has_conclusive_turn_completed:
+        return None
+
+    event = snapshot.latest_turn_event
+    if event is None or event.timestamp is None:
+        return None
+    elapsed = (datetime.now(UTC) - event.timestamp).total_seconds()
+    return elapsed >= idle_timeout_seconds
 
 
 async def recover_completed_turn(

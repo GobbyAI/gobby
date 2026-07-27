@@ -21,6 +21,10 @@ def _idle_source() -> str:
     return source_text("src/gobby/agents/idle_check_handler.py")
 
 
+def _watchdog_recovery_source() -> str:
+    return source_text("src/gobby/agents/watchdog/recovery.py")
+
+
 def test_recover_stale_claims_uses_projected_stage_state() -> None:
     source = _recovery_source()
 
@@ -63,8 +67,11 @@ def test_unrecoverable_marks_canonical_escalation_fields_not_status_escalated() 
     assert "status='escalated'" not in source
 
 
-def test_idle_diagnostics_live_in_idle_check_handler() -> None:
-    source = _idle_source()
+def test_idle_diagnostics_live_in_watchdog_recovery_coordinator() -> None:
+    idle_source = _idle_source()
+    recovery_source = _watchdog_recovery_source()
 
-    assert "class IdleCheckHandler" in source
-    assert "Watchdog idle diagnostic" in source
+    assert "class IdleCheckHandler" in idle_source
+    assert "Watchdog idle diagnostic" not in idle_source
+    assert "class WatchdogRecoveryCoordinator" in recovery_source
+    assert "Watchdog idle diagnostic" in recovery_source

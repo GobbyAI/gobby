@@ -3,12 +3,15 @@ from __future__ import annotations
 import os
 from pathlib import Path
 from types import SimpleNamespace
+from typing import cast
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
 from gobby.agents.idle_check_handler import IdleCheckHandler
 from gobby.agents.watchdog import WatchdogReaderRegistry
+from gobby.agents.watchdog.transcript_resolver import WatchdogTranscriptResolver
+from gobby.storage.session_models import Session
 
 
 def _handler(
@@ -42,12 +45,15 @@ def _session(
     transcript_path: str | None,
     source: str = "codex",
     external_id: str = "external-1",
-) -> SimpleNamespace:
-    return SimpleNamespace(
-        transcript_path=transcript_path,
-        source=source,
-        external_id=external_id,
-        updated_at="2024-01-01T00:00:00+00:00",
+) -> Session:
+    return cast(
+        Session,
+        SimpleNamespace(
+            transcript_path=transcript_path,
+            source=source,
+            external_id=external_id,
+            updated_at="2024-01-01T00:00:00+00:00",
+        ),
     )
 
 
@@ -55,11 +61,13 @@ def _session(
 async def test_resolve_transcript_path_accepts_valid_stored_file(tmp_path: Path) -> None:
     transcript = tmp_path / "stored.jsonl"
     transcript.write_text("{}\n")
-    handler = _handler()
+    resolver = WatchdogTranscriptResolver()
     session = _session(transcript_path=str(transcript))
 
-    with patch("gobby.agents.idle_check_handler._find_transcript_on_disk") as mock_discover:
-        resolved = await handler._resolve_transcript_path(session, run_id="run-1")
+    with patch(
+        "gobby.agents.watchdog.transcript_resolver._find_transcript_on_disk"
+    ) as mock_discover:
+        resolved = await resolver.resolve(session, run_id="run-1")
 
     assert resolved == str(transcript)
     mock_discover.assert_not_called()
@@ -80,15 +88,15 @@ async def test_resolve_transcript_path_discovers_for_invalid_stored_path(
         "sentinel": "missing_transcript",
         "directory": str(directory),
     }
-    handler = _handler()
+    resolver = WatchdogTranscriptResolver()
     session = _session(transcript_path=stored_paths[stored_kind])
     updated_at = session.updated_at
 
     with patch(
-        "gobby.agents.idle_check_handler._find_transcript_on_disk",
+        "gobby.agents.watchdog.transcript_resolver._find_transcript_on_disk",
         return_value=str(discovered),
     ) as mock_discover:
-        resolved = await handler._resolve_transcript_path(session, run_id="run-1")
+        resolved = await resolver.resolve(session, run_id="run-1")
 
     assert resolved == str(discovered)
     assert session.transcript_path == stored_paths[stored_kind]
@@ -102,16 +110,16 @@ async def test_resolve_transcript_path_revalidates_cached_file(tmp_path: Path) -
     second = tmp_path / "second.jsonl"
     first.write_text("{}\n")
     second.write_text("{}\n")
-    handler = _handler()
+    resolver = WatchdogTranscriptResolver()
     session = _session(transcript_path=None)
 
     with patch(
-        "gobby.agents.idle_check_handler._find_transcript_on_disk",
+        "gobby.agents.watchdog.transcript_resolver._find_transcript_on_disk",
         side_effect=[str(first), str(second)],
     ) as mock_discover:
-        assert await handler._resolve_transcript_path(session, run_id="run-1") == str(first)
+        assert await resolver.resolve(session, run_id="run-1") == str(first)
         os.unlink(first)
-        assert await handler._resolve_transcript_path(session, run_id="run-1") == str(second)
+        assert await resolver.resolve(session, run_id="run-1") == str(second)
 
     assert mock_discover.call_count == 2
 
@@ -124,18 +132,18 @@ async def test_resolve_transcript_path_invalidates_cache_on_identity_change(
     second = tmp_path / "second.jsonl"
     first.write_text("{}\n")
     second.write_text("{}\n")
-    handler = _handler()
+    resolver = WatchdogTranscriptResolver()
     session = _session(transcript_path=None, external_id="external-1")
 
     with patch(
-        "gobby.agents.idle_check_handler._find_transcript_on_disk",
+        "gobby.agents.watchdog.transcript_resolver._find_transcript_on_disk",
         side_effect=[str(first), str(second)],
     ):
-        assert await handler._resolve_transcript_path(session, run_id="run-1") == str(first)
+        assert await resolver.resolve(session, run_id="run-1") == str(first)
         session.external_id = "external-2"
-        assert await handler._resolve_transcript_path(session, run_id="run-1") == str(second)
+        assert await resolver.resolve(session, run_id="run-1") == str(second)
 
-    assert handler._transcript_path_cache == {("run-1", "codex", "external-2"): str(second)}
+    assert resolver._path_cache == {("run-1", "codex", "external-2"): str(second)}
 
 
 @pytest.mark.asyncio
@@ -143,11 +151,11 @@ async def test_check_idle_agents_prunes_transcript_cache_with_capacity_state() -
     active_run = SimpleNamespace(id="run-active")
     run_db = AsyncMock(return_value=[active_run])
     handler = _handler(run_db=run_db)
-    handler._transcript_path_cache = {
+    handler._transcript_resolver._path_cache = {
         ("run-active", "codex", "external-1"): "/active.jsonl",
         ("run-stale", "codex", "external-2"): "/stale.jsonl",
     }
-    handler._capacity_recovery = {
+    handler._recovery._capacity_recovery = {
         "run-active": MagicMock(),
         "run-stale": MagicMock(),
     }
@@ -155,17 +163,21 @@ async def test_check_idle_agents_prunes_transcript_cache_with_capacity_state() -
     with patch.object(handler, "_handle_idle_check", new_callable=AsyncMock, return_value=0):
         await handler.check_idle_agents()
 
-    assert set(handler._transcript_path_cache) == {("run-active", "codex", "external-1")}
-    assert set(handler._capacity_recovery) == {"run-active"}
+    assert set(handler._transcript_resolver._path_cache) == {("run-active", "codex", "external-1")}
+    assert set(handler._recovery._capacity_recovery) == {"run-active"}
 
 
 @pytest.mark.asyncio
 async def test_disabled_idle_checks_clear_transcript_cache_with_capacity_state() -> None:
     handler = _handler(idle_check_enabled=False)
-    handler._transcript_path_cache = {("run-1", "codex", "external-1"): "/transcript.jsonl"}
-    handler._capacity_recovery = {"run-1": MagicMock()}
+    handler._transcript_resolver._path_cache = {
+        ("run-1", "codex", "external-1"): "/transcript.jsonl"
+    }
+    handler._recovery._capacity_recovery = {"run-1": MagicMock()}
+    handler._recovery._completed_turn_recovery = {"run-1": MagicMock()}
 
     assert await handler.check_idle_agents() == 0
 
-    assert handler._transcript_path_cache == {}
-    assert handler._capacity_recovery == {}
+    assert handler._transcript_resolver._path_cache == {}
+    assert handler._recovery._capacity_recovery == {}
+    assert handler._recovery._completed_turn_recovery == {}

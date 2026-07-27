@@ -10,8 +10,8 @@ from unittest.mock import AsyncMock, call, patch
 import pytest
 
 from gobby.agents.detection.registry import DetectionManifestRegistry
-from gobby.agents.idle_check_handler import REASONING_WATCHDOG_CONTINUATION
 from gobby.agents.lifecycle_monitor import AgentLifecycleMonitor
+from gobby.agents.watchdog.recovery import REASONING_WATCHDOG_CONTINUATION
 from gobby.config.tmux import TmuxConfig
 from gobby.storage.agents import AgentRun, LocalAgentRunManager
 from gobby.storage.hub.protocol import HubDatabase
@@ -175,7 +175,7 @@ async def test_idle_reprompt_logs_watchdog_snapshot(
     with (
         patch.object(monitor._tmux, "capture_pane", new_callable=AsyncMock, return_value="❯\n"),
         patch.object(monitor._tmux, "send_keys", new_callable=AsyncMock, return_value=True),
-        patch("gobby.agents.idle_check_handler.logger.warning") as mock_warning,
+        patch("gobby.agents.watchdog.recovery.logger.warning") as mock_warning,
     ):
         handled = await monitor.check_idle_agents()
 
@@ -262,7 +262,7 @@ async def test_idle_reasoning_watchdog_interrupts_supported_reader_and_records_t
         patch.object(
             monitor._tmux, "send_keys", new_callable=AsyncMock, return_value=True
         ) as mock_send,
-        patch("gobby.agents.idle_check_handler.logger.warning") as mock_warning,
+        patch("gobby.agents.watchdog.recovery.logger.warning") as mock_warning,
     ):
         handled = await monitor.check_idle_agents()
 
@@ -345,7 +345,7 @@ async def test_idle_failure_logs_watchdog_snapshot(
     with (
         patch.object(monitor._tmux, "capture_pane", new_callable=AsyncMock, return_value="❯\n"),
         patch.object(monitor._tmux, "kill_session", new_callable=AsyncMock, return_value=True),
-        patch("gobby.agents.idle_check_handler.logger.warning") as mock_warning,
+        patch("gobby.agents.watchdog.recovery.logger.warning") as mock_warning,
     ):
         handled = await monitor.check_idle_agents()
 

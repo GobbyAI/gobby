@@ -12,10 +12,9 @@ from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
 from gobby.agents.attention_metadata import AttentionMetadataStore
-from gobby.agents.idle_check_handler import IdleCheckHandler
+from gobby.agents.attention_tracker import AgentAttentionTracker
 from gobby.agents.prompt_detector import PromptDetector
 from gobby.agents.stall_classifier import StallClassifier
-from gobby.agents.watchdog import WatchdogReaderRegistry
 from gobby.hooks.event_handlers import EventHandlers
 from gobby.hooks.events import HookEvent, HookEventType, SessionSource
 from gobby.servers.routes.attention import create_attention_router
@@ -230,7 +229,7 @@ async def test_live_emit_and_validation() -> None:
 
 
 @pytest.mark.asyncio
-async def test_idle_handler_sets_stall_and_dismissal_metadata(
+async def test_attention_tracker_sets_stall_and_dismissal_metadata(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     registry = BundledDetectionRegistry()
@@ -241,16 +240,10 @@ async def test_idle_handler_sets_stall_and_dismissal_metadata(
     store = AttentionMetadataStore(AttentionOrderingCoordinator(epoch="epoch-idle"))
     config = MagicMock()
     config.auto_enter_approval_prompts = True
-    handler = IdleCheckHandler(
-        agent_run_manager=MagicMock(),
-        db=MagicMock(),
-        get_session_manager=lambda: None,
-        tmux=MagicMock(),
-        idle_detector=MagicMock(),
+    tracker = AgentAttentionTracker(
+        run_db=_run_db,
         prompt_detector=prompt_detector,
         stall_classifier=stall_classifier,
-        watchdog_readers=WatchdogReaderRegistry(),
-        cleanup_handler=MagicMock(),
         tmux_config=config,
         attention_manager=attention_manager,
         attention_metadata_store=store,
@@ -258,11 +251,11 @@ async def test_idle_handler_sets_stall_and_dismissal_metadata(
     run = _run()
 
     monkeypatch.setattr("gobby.agents.stall_classifier._MIN_CHECK_INTERVAL_SECONDS", 0)
-    await handler.sync_attention(run, "503 service unavailable")
-    await handler.sync_attention(run, "503 service unavailable")
+    await tracker.sync(run, "503 service unavailable")
+    await tracker.sync(run, "503 service unavailable")
     assert store.get("run:run-1")["text"] == "retrying provider"
 
     approval = "Permission required: press Enter to approve this command"
     prompt_detector.for_provider(run.provider).mark_approval_prompt_dismissed(run.id, approval)
-    await handler.sync_attention(run, approval)
+    await tracker.sync(run, approval)
     assert store.get("run:run-1")["text"] == "needs attention"

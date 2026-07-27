@@ -6,7 +6,7 @@ import time
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any, cast
-from unittest.mock import AsyncMock, call, patch
+from unittest.mock import AsyncMock, MagicMock, call, patch
 
 import psycopg
 import pytest
@@ -14,7 +14,7 @@ import pytest
 from gobby.agents.detection.registry import DetectionManifestRegistry
 from gobby.agents.idle_detector import IdleDetector
 from gobby.agents.lifecycle_monitor import AgentLifecycleMonitor
-from gobby.agents.watchdog.models import CompletedTurnRecoveryState
+from gobby.agents.watchdog.models import CapacityRecoveryState, CompletedTurnRecoveryState
 from gobby.config.tmux import TmuxConfig
 from gobby.storage.agents import AgentRun, LocalAgentRunManager
 from gobby.storage.hub.protocol import HubDatabase
@@ -410,13 +410,13 @@ async def test_completed_turn_reprompts_after_base_timeout_before_semantic_delay
             monitor._tmux, "send_keys", new_callable=AsyncMock, return_value=True
         ) as mock_send,
         patch.object(
-            monitor._idle_check_handler,
+            monitor._idle_check_handler._recovery,
             "_idle_reprompt_message",
             new_callable=AsyncMock,
             return_value="workflow-aware continuation",
         ) as mock_message,
         patch.object(
-            monitor._idle_check_handler,
+            monitor._idle_check_handler._recovery,
             "_record_watchdog_task_event",
             new_callable=AsyncMock,
         ) as mock_audit,
@@ -468,7 +468,7 @@ async def test_claude_turn_duration_reprompts_after_base_timeout(
             monitor._tmux, "send_keys", new_callable=AsyncMock, return_value=True
         ) as mock_send,
         patch.object(
-            monitor._idle_check_handler,
+            monitor._idle_check_handler._recovery,
             "_idle_reprompt_message",
             new_callable=AsyncMock,
             return_value="workflow-aware continuation",
@@ -512,13 +512,13 @@ async def test_grok_turn_completed_reprompts_and_records_watchdog_event(
             monitor._tmux, "send_keys", new_callable=AsyncMock, return_value=True
         ) as mock_send,
         patch.object(
-            monitor._idle_check_handler,
+            monitor._idle_check_handler._recovery,
             "_idle_reprompt_message",
             new_callable=AsyncMock,
             return_value="workflow-aware continuation",
         ) as mock_message,
         patch.object(
-            monitor._idle_check_handler,
+            monitor._idle_check_handler._recovery,
             "_record_watchdog_task_event",
             new_callable=AsyncMock,
         ) as mock_audit,
@@ -642,13 +642,13 @@ async def test_fresh_capacity_error_immediately_sends_workflow_aware_reprompt(
             monitor._tmux, "send_keys", new_callable=AsyncMock, return_value=True
         ) as mock_send,
         patch.object(
-            monitor._idle_check_handler,
+            monitor._idle_check_handler._recovery,
             "_idle_reprompt_message",
             new_callable=AsyncMock,
             return_value="workflow-aware continuation",
         ),
         patch.object(
-            monitor._idle_check_handler,
+            monitor._idle_check_handler._recovery,
             "_record_watchdog_task_event",
             new_callable=AsyncMock,
         ) as mock_audit,
@@ -657,7 +657,7 @@ async def test_fresh_capacity_error_immediately_sends_workflow_aware_reprompt(
 
     assert handled == 1
     assert monitor._idle_detector.get_state(run.id).reprompt_count == 1
-    state = monitor._idle_check_handler._capacity_recovery[run.id]
+    state = monitor._idle_check_handler._recovery._capacity_recovery[run.id]
     assert state.successful_reprompts == 1
     mock_send.assert_has_awaits(
         [
@@ -699,7 +699,7 @@ async def test_stale_session_discovers_transcript_without_updating_session_row(
 
     with (
         patch(
-            "gobby.agents.idle_check_handler._find_transcript_on_disk",
+            "gobby.agents.watchdog.transcript_resolver._find_transcript_on_disk",
             return_value=str(transcript_path),
         ) as mock_discover,
         patch.object(
@@ -707,13 +707,13 @@ async def test_stale_session_discovers_transcript_without_updating_session_row(
         ),
         patch.object(monitor._tmux, "send_keys", new_callable=AsyncMock, return_value=True),
         patch.object(
-            monitor._idle_check_handler,
+            monitor._idle_check_handler._recovery,
             "_idle_reprompt_message",
             new_callable=AsyncMock,
             return_value="workflow-aware continuation",
         ),
         patch.object(
-            monitor._idle_check_handler,
+            monitor._idle_check_handler._recovery,
             "_record_watchdog_task_event",
             new_callable=AsyncMock,
         ),
@@ -753,8 +753,8 @@ async def test_fresh_non_capacity_session_skips_transcript_resolution(
             return_value="active output\n",
         ),
         patch.object(
-            monitor._idle_check_handler,
-            "_resolve_transcript_path",
+            monitor._idle_check_handler._transcript_resolver,
+            "resolve",
             new_callable=AsyncMock,
         ) as mock_resolve,
     ):
@@ -829,13 +829,13 @@ async def test_capacity_reprompt_retries_failed_send_and_deduplicates_success(
             side_effect=[True, False, True, True, True],
         ) as mock_send,
         patch.object(
-            monitor._idle_check_handler,
+            monitor._idle_check_handler._recovery,
             "_idle_reprompt_message",
             new_callable=AsyncMock,
             return_value="continue",
         ),
         patch.object(
-            monitor._idle_check_handler,
+            monitor._idle_check_handler._recovery,
             "_record_watchdog_task_event",
             new_callable=AsyncMock,
         ) as mock_audit,
@@ -847,7 +847,7 @@ async def test_capacity_reprompt_retries_failed_send_and_deduplicates_success(
     assert (first, second, duplicate) == (0, 1, 0)
     assert mock_send.await_count == 5
     mock_audit.assert_awaited_once()
-    state = monitor._idle_check_handler._capacity_recovery[run.id]
+    state = monitor._idle_check_handler._recovery._capacity_recovery[run.id]
     assert state.successful_reprompts == 1
 
 
@@ -880,7 +880,7 @@ async def test_capacity_reprompts_are_bounded_across_user_only_retry_turns(
         ) as mock_send,
         patch.object(monitor._tmux, "kill_session", new_callable=AsyncMock, return_value=True),
         patch.object(
-            monitor._idle_check_handler,
+            monitor._idle_check_handler._recovery,
             "_record_watchdog_task_event",
             new_callable=AsyncMock,
         ) as mock_audit,
@@ -930,7 +930,7 @@ async def test_capacity_retry_budget_resets_after_model_output(
             monitor._tmux, "kill_session", new_callable=AsyncMock, return_value=True
         ) as mock_kill,
         patch.object(
-            monitor._idle_check_handler,
+            monitor._idle_check_handler._recovery,
             "_record_watchdog_task_event",
             new_callable=AsyncMock,
         ),
@@ -944,7 +944,7 @@ async def test_capacity_retry_budget_resets_after_model_output(
     assert recovered == 1
     assert mock_send.await_count == 9
     mock_kill.assert_not_awaited()
-    state = monitor._idle_check_handler._capacity_recovery[run.id]
+    state = monitor._idle_check_handler._recovery._capacity_recovery[run.id]
     assert state.successful_reprompts == 1
 
 
@@ -1025,7 +1025,7 @@ async def test_unreadable_transcript_uses_existing_delayed_idle_reprompt(
             monitor._tmux, "send_keys", new_callable=AsyncMock, return_value=True
         ) as mock_send,
         patch.object(
-            monitor._idle_check_handler,
+            monitor._idle_check_handler._recovery,
             "_idle_reprompt_message",
             new_callable=AsyncMock,
             return_value="delayed continuation",
@@ -1192,12 +1192,12 @@ async def test_idle_reprompt_falls_back_when_step_context_lookup_fails(
 
     with (
         patch(
-            "gobby.agents.idle_check_handler.get_active_step_workflow_context",
+            "gobby.agents.watchdog.recovery.get_active_step_workflow_context",
             side_effect=RuntimeError("context lookup failed"),
         ),
-        patch("gobby.agents.idle_check_handler.logger.exception") as mock_exception,
+        patch("gobby.agents.watchdog.recovery.logger.exception") as mock_exception,
     ):
-        message = await monitor._idle_check_handler._idle_reprompt_message(run)
+        message = await monitor._idle_check_handler._recovery._idle_reprompt_message(run)
 
     assert message == IdleDetector.REPROMPT_MESSAGE
     mock_exception.assert_called_once()
@@ -1234,7 +1234,7 @@ async def test_no_reader_provider_uses_shared_idle_path_without_transcript_read(
             monitor._tmux, "send_keys", new_callable=AsyncMock, return_value=True
         ) as mock_send,
         patch.object(
-            monitor._idle_check_handler,
+            monitor._idle_check_handler._recovery,
             "_idle_reprompt_message",
             new_callable=AsyncMock,
             return_value="shared continuation",
@@ -1291,7 +1291,7 @@ async def test_droid_diagnostics_only_reader_uses_shared_reprompt_and_redacted_l
             return_value=True,
         ) as mock_send,
         patch.object(
-            monitor._idle_check_handler,
+            monitor._idle_check_handler._recovery,
             "_idle_reprompt_message",
             new_callable=AsyncMock,
             return_value="shared continuation",
@@ -1351,7 +1351,7 @@ async def test_completed_turn_recovery_survives_activity_and_deduplicates_snapsh
         ) as mock_send,
     ):
         assert await monitor.check_idle_agents() == 1
-        state = handler._completed_turn_recovery[run.id]
+        state = handler._recovery._completed_turn_recovery[run.id]
         assert state.successful_reprompts == 1
 
         monitor._idle_detector.reset_idle(run.id)
@@ -1417,7 +1417,7 @@ async def test_completed_turn_recovery_allows_budget_then_fails_without_step_wor
             monitor._idle_detector.reset_idle(run.id)
             assert await monitor.check_idle_agents() == 1
 
-        state = handler._completed_turn_recovery[run.id]
+        state = handler._recovery._completed_turn_recovery[run.id]
         assert state.workflow_fingerprint == run.id
         assert state.successful_reprompts == 3
 
@@ -1429,7 +1429,7 @@ async def test_completed_turn_recovery_allows_budget_then_fails_without_step_wor
     updated_run = agent_run_manager.get(run.id)
     assert updated_run is not None
     assert updated_run.status == "error"
-    assert run.id not in handler._completed_turn_recovery
+    assert run.id not in handler._recovery._completed_turn_recovery
     assert any(
         record.levelno == logging.INFO
         and "Watchdog idle diagnostic" in record.getMessage()
@@ -1483,7 +1483,7 @@ async def test_completed_turn_recovery_budget_resets_when_workflow_step_advances
             monitor._tmux, "send_keys", new_callable=AsyncMock, return_value=True
         ) as mock_send,
         patch(
-            "gobby.agents.idle_check_handler.get_active_step_workflow_context",
+            "gobby.agents.watchdog.recovery.get_active_step_workflow_context",
             return_value=plan_context,
         ) as mock_context,
     ):
@@ -1495,7 +1495,7 @@ async def test_completed_turn_recovery_budget_resets_when_workflow_step_advances
             monitor._idle_detector.reset_idle(run.id)
             assert await monitor.check_idle_agents() == 1
 
-        state = monitor._idle_check_handler._completed_turn_recovery[run.id]
+        state = monitor._idle_check_handler._recovery._completed_turn_recovery[run.id]
         assert state.successful_reprompts == 2
         mock_context.return_value = build_context
         _write_codex_lifecycle_transcript(transcript_path, age_seconds=122)
@@ -1540,7 +1540,7 @@ async def test_failed_completed_turn_prompt_submission_does_not_consume_attempt(
         ),
     ):
         assert await monitor.check_idle_agents() == 0
-        state = handler._completed_turn_recovery[run.id]
+        state = handler._recovery._completed_turn_recovery[run.id]
         assert state.successful_reprompts == 0
         assert state.last_completion_identity is None
 
@@ -1584,12 +1584,12 @@ async def test_completed_turn_lookup_failure_preserves_existing_recovery_budget(
             monitor._tmux, "send_keys", new_callable=AsyncMock, return_value=True
         ) as mock_send,
         patch.object(
-            monitor._idle_check_handler,
+            monitor._idle_check_handler._recovery,
             "_fail_idle_agent",
             new_callable=AsyncMock,
         ) as mock_fail,
         patch(
-            "gobby.agents.idle_check_handler.get_active_step_workflow_context",
+            "gobby.agents.watchdog.recovery.get_active_step_workflow_context",
             side_effect=[plan_context, psycopg.DatabaseError("lookup failed")],
         ),
     ):
@@ -1598,11 +1598,98 @@ async def test_completed_turn_lookup_failure_preserves_existing_recovery_budget(
         monitor._idle_detector.reset_idle(run.id)
         assert await monitor.check_idle_agents() == 1
 
-    state = monitor._idle_check_handler._completed_turn_recovery[run.id]
+    state = monitor._idle_check_handler._recovery._completed_turn_recovery[run.id]
     assert state.workflow_fingerprint == "developer-steps:plan"
     assert state.successful_reprompts == 1
     assert mock_send.await_count == 3
     mock_fail.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_watchdog_task_audit_failure_is_best_effort(
+    temp_db: HubDatabase,
+    session_manager: SessionManager,
+    sample_project: dict[str, Any],
+    agent_run_manager: LocalAgentRunManager,
+) -> None:
+    task_manager = MagicMock()
+    task_manager.get_task.return_value = object()
+    task_manager.lifecycle_events.record_lifecycle_event.side_effect = RuntimeError(
+        "audit unavailable"
+    )
+    monitor, run = _make_idle_monitor_run(
+        temp_db=temp_db,
+        session_manager=session_manager,
+        sample_project=sample_project,
+        agent_run_manager=agent_run_manager,
+        run_id="dddddddd-dddd-4ddd-8ddd-dddddddd1027",
+        transcript_path=None,
+        task_manager=cast(LocalTaskManager, task_manager),
+    )
+    run.task_id = "task-1"
+
+    with patch("gobby.agents.watchdog.recovery.logger.warning") as mock_warning:
+        await monitor._idle_check_handler._recovery._record_watchdog_task_event(
+            run,
+            action="completed_turn_reprompt",
+            session_id=run.child_session_id,
+            detail="latest_turn_kind=completed",
+        )
+
+    assert any(
+        call_args.args
+        and call_args.args[0] == "Failed to record idle watchdog audit for run %s task %s"
+        for call_args in mock_warning.call_args_list
+    )
+
+
+@pytest.mark.asyncio
+async def test_tmux_cleanup_failure_preserves_watchdog_recovery_state(
+    temp_db: HubDatabase,
+    session_manager: SessionManager,
+    sample_project: dict[str, Any],
+    agent_run_manager: LocalAgentRunManager,
+) -> None:
+    monitor, run = _make_idle_monitor_run(
+        temp_db=temp_db,
+        session_manager=session_manager,
+        sample_project=sample_project,
+        agent_run_manager=agent_run_manager,
+        run_id="dddddddd-dddd-4ddd-8ddd-dddddddd1028",
+        transcript_path=None,
+    )
+    handler = monitor._idle_check_handler
+    handler._recovery._capacity_recovery[run.id] = CapacityRecoveryState(
+        transcript_path="/failed-cleanup.jsonl"
+    )
+    handler._recovery._completed_turn_recovery[run.id] = CompletedTurnRecoveryState()
+    handler._transcript_resolver._path_cache[(run.id, "codex", "failed-cleanup")] = (
+        "/failed-cleanup.jsonl"
+    )
+
+    with (
+        patch.object(monitor._tmux, "has_session", new_callable=AsyncMock, return_value=True),
+        patch.object(
+            monitor._tmux,
+            "capture_full_pane",
+            new_callable=AsyncMock,
+            return_value="stalled",
+        ),
+        patch.object(
+            monitor._tmux,
+            "kill_session",
+            new_callable=AsyncMock,
+            return_value=False,
+        ),
+    ):
+        await handler._recovery._fail_idle_agent(run, reason="test cleanup failure")
+
+    updated_run = agent_run_manager.get(run.id)
+    assert updated_run is not None
+    assert updated_run.status == "running"
+    assert run.id in handler._recovery._capacity_recovery
+    assert run.id in handler._recovery._completed_turn_recovery
+    assert any(key[0] == run.id for key in handler._transcript_resolver._path_cache)
 
 
 @pytest.mark.asyncio
@@ -1621,14 +1708,22 @@ async def test_terminal_and_unmonitored_runs_clear_completed_turn_recovery_state
         transcript_path=None,
     )
     handler = monitor._idle_check_handler
-    handler._completed_turn_recovery[inactive_run.id] = CompletedTurnRecoveryState()
+    handler._recovery._capacity_recovery[inactive_run.id] = CapacityRecoveryState(
+        transcript_path="/inactive.jsonl"
+    )
+    handler._recovery._completed_turn_recovery[inactive_run.id] = CompletedTurnRecoveryState()
+    handler._transcript_resolver._path_cache[(inactive_run.id, "codex", "inactive")] = (
+        "/inactive.jsonl"
+    )
     assert inactive_run.tmux_session_name is not None
     assert agent_run_manager.clear_tmux_session_name(
         inactive_run.id,
         inactive_run.tmux_session_name,
     )
     assert await monitor.check_idle_agents() == 0
-    assert inactive_run.id not in handler._completed_turn_recovery
+    assert inactive_run.id not in handler._recovery._capacity_recovery
+    assert inactive_run.id not in handler._recovery._completed_turn_recovery
+    assert not any(key[0] == inactive_run.id for key in handler._transcript_resolver._path_cache)
 
     _, terminal_run = _make_idle_monitor_run(
         temp_db=temp_db,
@@ -1638,7 +1733,15 @@ async def test_terminal_and_unmonitored_runs_clear_completed_turn_recovery_state
         run_id="dddddddd-dddd-4ddd-8ddd-dddddddd1026",
         transcript_path=None,
     )
-    handler._completed_turn_recovery[terminal_run.id] = CompletedTurnRecoveryState()
+    handler._recovery._capacity_recovery[terminal_run.id] = CapacityRecoveryState(
+        transcript_path="/terminal.jsonl"
+    )
+    handler._recovery._completed_turn_recovery[terminal_run.id] = CompletedTurnRecoveryState()
+    handler._transcript_resolver._path_cache[(terminal_run.id, "codex", "terminal")] = (
+        "/terminal.jsonl"
+    )
     assert agent_run_manager.complete(terminal_run.id) is not None
     assert await handler._handle_idle_check(terminal_run) == 0
-    assert terminal_run.id not in handler._completed_turn_recovery
+    assert terminal_run.id not in handler._recovery._capacity_recovery
+    assert terminal_run.id not in handler._recovery._completed_turn_recovery
+    assert not any(key[0] == terminal_run.id for key in handler._transcript_resolver._path_cache)
