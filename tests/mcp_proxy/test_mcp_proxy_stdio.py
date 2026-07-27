@@ -46,6 +46,7 @@ def test_extended_timeout_tools_excludes_stale_apply_tdd() -> None:
         "wiki_ask",
         "wiki_compile",
         "spawn_agent",
+        "run_expansion_qa_coverage",
     )
 
 
@@ -1257,6 +1258,58 @@ class TestDaemonProxy:
                     "/api/mcp/gobby-memory/tools/rebuild_knowledge_graph",
                     json={"limit": 1},
                     timeout=300.0,
+                    preflight=True,
+                )
+
+    @pytest.mark.asyncio
+    async def test_call_tool_uses_extended_timeout_for_run_expansion_qa_coverage(self) -> None:
+        """Plan-coverage QA blocks for longer than 30s on real expanded trees."""
+        from gobby.mcp_proxy.stdio import DaemonProxy
+
+        proxy = DaemonProxy(60887)
+        with patch("gobby.mcp_proxy.stdio.load_config") as mock_config:
+            mock_config.return_value = MagicMock(mcp_client_proxy=MagicMock(tool_timeouts={}))
+            with patch.object(proxy, "_request", new_callable=AsyncMock) as mock_request:
+                mock_request.return_value = {"success": True, "passed": True}
+
+                result = await proxy.call_tool(
+                    "gobby-tasks-ops",
+                    "run_expansion_qa_coverage",
+                    {"run_id": "run-1"},
+                )
+
+                assert result == {"success": True, "passed": True}
+                mock_request.assert_called_once_with(
+                    "POST",
+                    "/api/mcp/gobby-tasks-ops/tools/run_expansion_qa_coverage",
+                    json={"run_id": "run-1"},
+                    timeout=300.0,
+                    preflight=True,
+                )
+
+    @pytest.mark.asyncio
+    async def test_call_tool_keeps_default_timeout_for_unlisted_tasks_ops_tool(self) -> None:
+        """Only the enumerated tools get the extended budget; the default is untouched."""
+        from gobby.mcp_proxy.stdio import DaemonProxy
+
+        proxy = DaemonProxy(60887)
+        with patch("gobby.mcp_proxy.stdio.load_config") as mock_config:
+            mock_config.return_value = MagicMock(mcp_client_proxy=MagicMock(tool_timeouts={}))
+            with patch.object(proxy, "_request", new_callable=AsyncMock) as mock_request:
+                mock_request.return_value = {"success": True}
+
+                result = await proxy.call_tool(
+                    "gobby-tasks-ops",
+                    "get_expansion_run",
+                    {"run_id": "run-1"},
+                )
+
+                assert result == {"success": True}
+                mock_request.assert_called_once_with(
+                    "POST",
+                    "/api/mcp/gobby-tasks-ops/tools/get_expansion_run",
+                    json={"run_id": "run-1"},
+                    timeout=30.0,
                     preflight=True,
                 )
 

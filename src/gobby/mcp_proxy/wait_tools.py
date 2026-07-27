@@ -42,6 +42,12 @@ EXTENDED_TIMEOUT_TOOL_NAMES = (
     # daemon side exceeds 30s while still succeeding, so keep the caller alive
     # for the authoritative run record instead of losing the result envelope.
     "spawn_agent",
+    # Plan-coverage QA is deliberately synchronous blocking work whose duration
+    # scales with the expanded task tree, so it exceeds 30s on real trees while
+    # completing server-side and persisting its manifest. Keep the caller alive
+    # for the authoritative QA verdict instead of a REQUEST_TIMEOUT that hides a
+    # successful run (#19095).
+    "run_expansion_qa_coverage",
 )
 
 
