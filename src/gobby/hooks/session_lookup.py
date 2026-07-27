@@ -124,9 +124,24 @@ class SessionLookupService:
             self._backfill_terminal_context(platform_session_id, event)
             self._enrich_task_context(platform_session_id, event)
 
-        # Store platform session_id in event metadata for handlers
-        event.metadata["_platform_session_id"] = platform_session_id
+        # Store platform session_id in event metadata for handlers. Never
+        # store a null id: downstream consumers treat key presence as a
+        # validated canonical session id.
+        if platform_session_id:
+            event.metadata["_platform_session_id"] = platform_session_id
+        else:
+            event.metadata.pop("_platform_session_id", None)
 
+        return platform_session_id
+
+    def validate_platform_session_metadata(self, event: HookEvent) -> str | None:
+        """Validate caller-supplied _platform_session_id without side effects.
+
+        Pops the key when it does not name a known session. Used on the
+        SESSION_START path, which skips full resolve() so the handler can bind
+        the real session without a premature auto-registration.
+        """
+        platform_session_id, _session = self._resolve_metadata_platform_session(event)
         return platform_session_id
 
     def _revive_expired_terminal_session(
@@ -292,9 +307,9 @@ class SessionLookupService:
                         # Not in cache, composite DB lookup, or cross-source
                         # recovery. Delegate to register_session, which re-looks-up
                         # under a registration lock and reuses the existing row if
-                        # one exists (preserving its parent linkage via COALESCE),
-                        # otherwise creates a new session. Logged at INFO since this
-                        # path is idempotent and self-healing, not an error.
+                        # one exists (parent linkage preserved by the UNSET
+                        # default), otherwise creates a new session. Logged at
+                        # INFO since this path is idempotent and self-healing.
                         self._logger.info(
                             "Session not found via cache/DB lookup for external_id=%s "
                             "(machine_id=%s, project_id=%s, source=%s); delegating to "
@@ -308,7 +323,6 @@ class SessionLookupService:
                             external_id=external_id,
                             machine_id=machine_id,
                             project_id=project_id,
-                            parent_session_id=None,
                             transcript_path=event.data.get("transcript_path"),
                             source=event.source.value,
                             project_path=cwd,

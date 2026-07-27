@@ -1113,26 +1113,19 @@ Targets: `src/gobby/hooks/session_activation.py`,
   web-chat → `paused` retain their state. The port must carry that gate across
   unchanged — dropping it reintroduces a per-compaction rewind, and the audit
   in 7.2 cannot see a missing conditional.
-- **The compact handoff transfer is raw SQL over the legacy table and must be
-  ported here.** `storage/session_lifecycle.py::transfer_compact_handoff_state`
-  runs one `db.transaction()` that locks both sessions `FOR UPDATE`, rejects a
-  child that already owns workflow state, then
-  `UPDATE workflow_instances SET session_id = <child> WHERE session_id =
-  <parent>`, moves `sessions.agent_run_id`, updates `agent_runs.child_session_id`,
-  and expires the parent. Retarget that statement at `agent_step_instances`.
-  The `UNIQUE(session_id)` key is *stricter* than the legacy table's, so the
-  existing "child already owns workflow state" precondition becomes the thing
-  that keeps the move from violating it — keep the check ahead of the UPDATE,
-  and keep the whole move inside the one transaction, since
-  `_session_start/flow.py:524-560` blocks child activation and expires the
-  child when it raises. `expire_orphaned_handoff_sessions`
-  (`session_lifecycle.py:202+`) deletes `workflow_instances` for orphaned
-  sessions in the same CTE that flips their status; retarget that DELETE too.
-  `storage/sessions/_lifecycle_delegate.py` exposes the manager-level
-  `transfer_compact_handoff_state` and changes only if the signature does.
+- **Compact handoff is in-place (#18994); there is no transfer to port.**
+  `transfer_compact_handoff_state` was deleted: a compact restart reactivates
+  the same session row, so `workflow_instances.session_id` never moves during
+  compaction and the `UNIQUE(session_id)` key on `agent_step_instances` is
+  satisfied trivially. What must carry over instead: the sweeps.
+  `expire_orphaned_handoff_sessions` (`session_lifecycle.py`) only flips
+  status now (workflow state is kept for revival), and
+  `prune_stale_compact_workflow_instances` deletes instances for sessions
+  expired >24h that still carry the unconsumed `handoff_source` marker —
+  retarget that DELETE at `agent_step_instances`.
 - **The suites #18973 added assert against the legacy table** and move with it:
-  `tests/storage/sessions/test_lifecycle.py` (transfer preconditions, rollback,
-  and orphan-expiry deletion), `tests/storage/sessions/test_pruning.py`,
+  `tests/storage/sessions/test_lifecycle.py` (expire-only orphan sweep and
+  marker-gated retention pruning), `tests/storage/sessions/test_pruning.py`,
   `tests/hooks/test_session_end_handlers.py` (the terminal-outcome gate),
   `tests/hooks/test_session_start_handlers.py`, and
   `tests/hooks/test_session_handoff_handlers.py`.
@@ -1177,9 +1170,9 @@ Targets: `src/gobby/hooks/session_activation.py`,
 - 3.3.8 - The MCP tool registrations and generic runtime-variable routes use the typed manager before WorkflowInstanceManager is deleted, so the tree imports at that commit. file: `src/gobby/servers/routes/workflows.py`. file: `src/gobby/mcp_proxy/tools/workflows/__init__.py`.
 - 3.3.9 - The agent runtime-cleanup log no longer names workflow_instances. file: `src/gobby/agents/agent_cleanup.py`.
 - 3.3.10 - Session-end cleanup keeps the terminal-outcome gate, so a COMPACT or IDLE web-chat end retains the typed instance and only an expired end deletes it. file: `src/gobby/hooks/event_handlers/_session_end.py`. test: `tests/hooks/test_session_end_handlers.py`.
-- 3.3.12 - The compact handoff transfer moves the typed instance from parent to child inside its existing single transaction, keeps the precondition that rejects a child already owning step state, and still blocks child activation on failure. symbol: `transfer_compact_handoff_state`. file: `src/gobby/storage/session_lifecycle.py`. file: `src/gobby/hooks/event_handlers/_session_start/flow.py`.
-- 3.3.13 - Orphan handoff expiry deletes typed instances for expiring sessions in the same statement that flips their status, with no legacy table named. symbol: `expire_orphaned_handoff_sessions`. file: `src/gobby/storage/session_lifecycle.py`.
-- 3.3.14 - A compacted mid-workflow agent resumes on its successor child at the same nonzero step with the same variables after the port, and a transfer failure leaves the parent intact with the child unactivated. test: `tests/storage/sessions/test_lifecycle.py`. test: `tests/workflows/test_step_snapshot_semantics.py`.
+- 3.3.12 - In-place compact reactivation (#18994) leaves the typed instance keyed to the same session across a compact restart, with no ownership move and no legacy table named. file: `src/gobby/storage/session_lifecycle.py`. file: `src/gobby/hooks/event_handlers/_session_start/flow.py`.
+- 3.3.13 - Orphan handoff expiry only flips status; the marker-gated retention sweep deletes typed instances for sessions expired past the revival horizon, with no legacy table named. symbol: `expire_orphaned_handoff_sessions`. symbol: `prune_stale_compact_workflow_instances`. file: `src/gobby/storage/session_lifecycle.py`.
+- 3.3.14 - A compacted mid-workflow agent resumes on its same session at the same nonzero step with the same variables after the port. test: `tests/storage/sessions/test_lifecycle.py`. test: `tests/workflows/test_step_snapshot_semantics.py`.
 - 3.3.11 - The spawn initial-variables suite queries the typed instance instead of importing the deleted WorkflowInstanceManager, dropping its `<agent>-steps` name arguments. test: `tests/mcp_proxy/tools/spawn_agent/test_initial_variables.py`.
 
 ### 3.4 Snapshot behavior regression suite [category: test] (depends: 3.3)
@@ -1218,11 +1211,10 @@ instance row exists — a fresh snapshot is created rather than a silent no-op,
 and a persistence fault on that branch fails the activation; (l) persona failure
 on the web-chat caller — the runtime is stopped, the chat session is not
 registered, and the caller reports failure rather than a started session with no
-snapshot; (m) compaction continuity — a COMPACT end retains the instance, the
-compact handoff transfer moves it to the successor child before activation, and
-the agent resumes at the same nonzero step with the same variables, while an
-expired end still deletes it and a failed transfer blocks activation with the
-parent intact.
+snapshot; (m) compaction continuity — a COMPACT end retains the instance, the in-place
+compact reactivation (#18994) keeps it keyed to the same session, and the
+agent resumes at the same nonzero step with the same variables, while an
+expired end still deletes it.
 
 **Acceptance:**
 
@@ -2349,6 +2341,17 @@ pass; the P7 audit test is the standing regression gate.
 - #18974 (daemon-stop resume) is claimed and still open at this point, so 3.2's
   resume exclusion stands unchanged and will be re-baselined the same way when
   it lands.
+
+**Re-baseline after #18994** `kind: verification`
+- Task #18994 replaced the parent→child compact transfer with in-place
+  reactivation of the same session row, deleting
+  `transfer_compact_handoff_state` and its delegate. The port obligations the
+  #18973 re-baseline added are superseded: there is no transfer statement to
+  port. What remains raw SQL naming `workflow_instances` (and thus a P7 port
+  obligation): the expire-only `expire_orphaned_handoff_sessions` and the new
+  marker-gated `prune_stale_compact_workflow_instances`. 3.3.12–3.3.14 and 3.4
+  behavior (m) were rewritten accordingly; the `UNIQUE(session_id)` concern is
+  moot because instance ownership never moves during compaction.
 
 ## Task Mapping
 `kind: framing`

@@ -34,6 +34,7 @@ from gobby.servers.routes.sessions.statusline_activity import (
     should_emit_statusline_gap_warning,
 )
 from gobby.sessions.acp_lifecycle import attach_acp_block
+from gobby.storage.sessions._update_sentinel import UNSET
 from gobby.storage.token_events import TokenEventStore, build_session_usage_payload
 from gobby.telemetry.instruments import inc_counter
 
@@ -314,7 +315,11 @@ def register_core_routes(
                     else None
                 ),
                 git_branch=git_branch,
-                parent_session_id=request_data.parent_session_id,
+                parent_session_id=(
+                    request_data.parent_session_id
+                    if request_data.parent_session_id is not None
+                    else UNSET
+                ),
                 sandbox_enabled=request_data.sandbox_enabled,
             )
 
@@ -686,5 +691,5 @@ def register_core_routes(
             logger.exception("Error listing sessions: %s", e)
             raise HTTPException(status_code=500, detail="Internal server error") from e
 
-    # Remaining routes (bulk-move, get, find_current, find_parent,
+    # Remaining routes (bulk-move, get, find_current,
     # update_status, expire, rename) are in lifecycle.py

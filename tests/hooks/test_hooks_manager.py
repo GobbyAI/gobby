@@ -1428,7 +1428,9 @@ class TestHookManagerSessionLookup:
             platform_session_id = manager._session_lookup.resolve(event)
 
         assert platform_session_id is None
-        assert event.metadata["_platform_session_id"] is None
+        # Unresolvable sessions leave the key absent — a stored None would
+        # read as a validated canonical id downstream.
+        assert "_platform_session_id" not in event.metadata
         mock_register.assert_not_called()
         row = manager._session_manager.db.fetchone(
             "SELECT COUNT(*) AS count FROM sessions WHERE external_id = %s",
@@ -2232,8 +2234,10 @@ class TestHookManagerContextMerging:
         # Mock workflow handler to return context
         workflow_response = HookResponse(decision="allow", context="Workflow context")
 
-        # Mock event handler to return response with context
+        # Mock event handler to return response with context. The handler must
+        # bind the canonical session id or rule evaluation is skipped entirely.
         def handler_with_context(event: Any) -> Any:
+            event.metadata["_platform_session_id"] = "platform-session-1"
             return HookResponse(decision="allow", context="Handler context")
 
         with (

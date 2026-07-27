@@ -43,10 +43,12 @@ stateDiagram-v2
     paused --> active: next turn
     active --> handoff_ready: compact or handoff
     paused --> handoff_ready: handoff
+    handoff_ready --> active: compact restart (same row)
     active --> completed: web chat cleared
     active --> expired: session end or stale
     paused --> expired: stale
     handoff_ready --> expired: orphaned or stale
+    expired --> active: compact revival
 ```
 
 | Status | Meaning |
@@ -331,6 +333,23 @@ marked `handoff_ready`, and a successor reads `summary_markdown` through
 `get_handoff_context`. If `link_child_session_id` is provided, Gobby records the
 parent-child relationship.
 
+### Compaction Is In-Place
+
+CLI context compaction is not a parent/child handoff. The provider preserves
+its external session ID across a compact, so the compact restart reactivates
+the **same** session row: `handoff_ready` flips back to `active`, and the
+stored `summary_markdown` is injected into the continuing session. Identity,
+session variables, workflow instances, claimed tasks, parent linkage, and
+agent-run ownership all carry through unchanged because no transfer happens.
+
+A one-shot compact marker (the `handoff_source` session variable, set by the
+pre-compact rule) classifies the restart. It is consumed on successful
+reactivation, so a later normal restart of the same session is never
+misclassified as a compact. If the row expired while compacting (for example a
+laptop slept mid-compact), the restart revives the same row; if the row is
+missing entirely, the start degrades to a normal `startup` registration with a
+structured warning in the daemon log.
+
 ### Handoff Boundaries
 
 The successor model receives the generated or agent-authored `summary_markdown`
@@ -380,10 +399,11 @@ stop or turn-end event does not release the agent run.
 
 ### Handoff Is Empty
 
-1. Confirm the parent has `summary_markdown`.
+1. Confirm the session has `summary_markdown`.
 2. Create or update handoff context with `gobby sessions create-handoff` or
    `set_handoff_context`.
-3. Confirm the parent status is `handoff_ready`.
+3. Confirm the target status is `handoff_ready`. A session may always read its
+   own summary regardless of status (post-compact self-reads).
 4. Pass `session_id` to `get_handoff_context` when multiple handoff-ready
    sessions exist.
 

@@ -71,107 +71,6 @@ def restore_agent_run_binding(
     return bool(cursor.rowcount)
 
 
-def transfer_compact_handoff_state(
-    db: HubDatabase,
-    parent_session_id: str,
-    child_session_id: str,
-) -> int:
-    """Atomically move compact-resume workflow and agent-run ownership to a child."""
-    if parent_session_id == child_session_id:
-        raise ValueError("Compact handoff parent and child must be distinct sessions")
-
-    with db.transaction() as conn:
-        session_rows = conn.execute(
-            """
-            SELECT id, parent_session_id, status, agent_run_id
-            FROM sessions
-            WHERE id IN (%s, %s)
-            ORDER BY id
-            FOR UPDATE
-            """,
-            (parent_session_id, child_session_id),
-        ).fetchall()
-        sessions_by_id = {str(row["id"]): row for row in session_rows}
-        parent = sessions_by_id.get(parent_session_id)
-        child = sessions_by_id.get(child_session_id)
-        if parent is None or child is None:
-            raise ValueError("Compact handoff requires existing parent and child sessions")
-        if parent["status"] != "handoff_ready":
-            raise ValueError("Compact handoff parent must be handoff_ready")
-        if str(child["parent_session_id"]) != parent_session_id:
-            raise ValueError("Compact handoff child does not reference the parent session")
-        if child["agent_run_id"] is not None:
-            raise ValueError("Compact handoff child already owns an agent run")
-
-        workflow_rows = conn.execute(
-            """
-            SELECT id, session_id
-            FROM workflow_instances
-            WHERE session_id IN (%s, %s)
-            ORDER BY session_id, id
-            FOR UPDATE
-            """,
-            (parent_session_id, child_session_id),
-        ).fetchall()
-        if any(str(row["session_id"]) == child_session_id for row in workflow_rows):
-            raise ValueError("Compact handoff child already owns workflow state")
-
-        agent_run_id = parent["agent_run_id"]
-        if agent_run_id is not None:
-            run_row = conn.execute(
-                """
-                SELECT id, child_session_id
-                FROM agent_runs
-                WHERE id = %s
-                FOR UPDATE
-                """,
-                (agent_run_id,),
-            ).fetchone()
-            if run_row is None:
-                raise ValueError("Compact handoff parent references a missing agent run")
-            run_child_session_id = run_row["child_session_id"]
-            if run_child_session_id is not None and str(run_child_session_id) != parent_session_id:
-                raise ValueError("Compact handoff agent run belongs to another child session")
-
-        moved_cursor = conn.execute(
-            """
-            UPDATE workflow_instances
-            SET session_id = %s, updated_at = CURRENT_TIMESTAMP
-            WHERE session_id = %s
-            """,
-            (child_session_id, parent_session_id),
-        )
-        conn.execute(
-            """
-            UPDATE sessions
-            SET agent_run_id = %s, updated_at = CURRENT_TIMESTAMP
-            WHERE id = %s
-            """,
-            (agent_run_id, child_session_id),
-        )
-        if agent_run_id is not None:
-            conn.execute(
-                """
-                UPDATE agent_runs
-                SET child_session_id = %s, updated_at = CURRENT_TIMESTAMP
-                WHERE id = %s
-                """,
-                (child_session_id, agent_run_id),
-            )
-        conn.execute(
-            """
-            UPDATE sessions
-            SET status = 'expired',
-                agent_run_id = NULL,
-                updated_at = CURRENT_TIMESTAMP
-            WHERE id = %s
-            """,
-            (parent_session_id,),
-        )
-
-    return moved_cursor.rowcount or 0
-
-
 def _build_empty_session_prune_reference_guards(db: HubDatabase) -> tuple[str, ...]:
     """Return guard clauses for retained session references present in this schema."""
     guards: list[str] = []
@@ -234,11 +133,12 @@ def expire_stale_sessions(db: HubDatabase, timeout_hours: int = 24) -> int:
 
 def expire_orphaned_handoff_sessions(db: HubDatabase, timeout_minutes: int = 30) -> int:
     """
-    Expire handoff_ready sessions that were never picked up by a child session.
+    Expire handoff_ready sessions whose compact restart never arrived.
 
-    Legitimate handoffs complete within seconds. Any handoff_ready session
-    older than timeout_minutes is orphaned and should be expired directly,
-    rather than waiting for the 24-hour stale session sweep.
+    Compaction is an in-place handoff: the handoff_ready row IS the live
+    session, so this sweep only flips status. Workflow instances are kept for
+    revival; prune_stale_compact_workflow_instances reclaims them once the
+    revival horizon has passed.
 
     Args:
         db: Database connection.
@@ -248,31 +148,59 @@ def expire_orphaned_handoff_sessions(db: HubDatabase, timeout_minutes: int = 30)
         Number of sessions expired.
     """
     updated_stale_sql = older_than_now_expr(db, "updated_at", "%s", "minute")
-    with db.transaction() as conn:
-        cursor = conn.execute(
-            f"""
-            WITH orphaned AS (
-                SELECT id
-                FROM sessions
-                WHERE status = 'handoff_ready'
-                  AND id != %s
-                  AND {updated_stale_sql}
-                FOR UPDATE
-            ),
-            deleted_instances AS (
-                DELETE FROM workflow_instances
-                WHERE session_id IN (SELECT id FROM orphaned)
-                RETURNING id
-            )
-            UPDATE sessions
-            SET status = 'expired', updated_at = CURRENT_TIMESTAMP
-            WHERE id IN (SELECT id FROM orphaned)
-            """,  # nosec B608 # cutoff expression is selected by storage dialect.
-            (SYSTEM_SESSION_ID, timeout_minutes),
-        )
+    cursor = db.execute(
+        f"""
+        UPDATE sessions
+        SET status = 'expired', updated_at = CURRENT_TIMESTAMP
+        WHERE status = 'handoff_ready'
+          AND id != %s
+          AND {updated_stale_sql}
+        """,  # nosec B608 # cutoff expression is selected by storage dialect.
+        (SYSTEM_SESSION_ID, timeout_minutes),
+    )
     count = cursor.rowcount or 0
     if count > 0:
         logger.info("Expired %s orphaned handoff_ready sessions (>%sm)", count, timeout_minutes)
+    return count
+
+
+def prune_stale_compact_workflow_instances(db: HubDatabase, retention_hours: int = 24) -> int:
+    """
+    Delete workflow instances for compact handoffs that never resumed.
+
+    Targets only sessions expired beyond the revival horizon that still carry
+    an unconsumed compact marker (the handoff_source session variable, cleared
+    on successful in-place reactivation). Expired daemon-resume and ordinary
+    sessions are untouched.
+
+    Args:
+        db: Database connection.
+        retention_hours: Hours a session must be expired before reclamation.
+
+    Returns:
+        Number of workflow instances deleted.
+    """
+    updated_stale_sql = older_than_now_expr(db, "s.updated_at", "%s", "hour")
+    cursor = db.execute(
+        f"""
+        DELETE FROM workflow_instances wi
+        USING sessions s, session_variables sv
+        WHERE wi.session_id = s.id
+          AND sv.session_id = s.id
+          AND s.status = 'expired'
+          AND s.id != %s
+          AND sv.variables ? 'handoff_source'
+          AND {updated_stale_sql}
+        """,  # nosec B608 # cutoff expression is selected by storage dialect.
+        (SYSTEM_SESSION_ID, retention_hours),
+    )
+    count = cursor.rowcount or 0
+    if count > 0:
+        logger.info(
+            "Pruned %s workflow instances from unresumed compact sessions (>%sh expired)",
+            count,
+            retention_hours,
+        )
     return count
 
 

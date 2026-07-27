@@ -276,57 +276,6 @@ def register_lifecycle_routes(
             logger.exception("Find current session error: %s", e)
             raise HTTPException(status_code=500, detail="Internal server error") from e
 
-    @router.post("/find_parent")
-    async def find_parent_session(request: Request) -> dict[str, Any]:
-        """
-        Find parent session for handoff.
-
-        Looks for most recent session in same project with handoff_ready status.
-        Accepts either project_id directly or cwd (which is resolved to project_id).
-        """
-        try:
-            if server.session_manager is None:
-                raise HTTPException(status_code=503, detail="Session manager not available")
-
-            body = await request.json()
-            machine_id = body.get("machine_id")
-            source = body.get("source")
-            project_id = body.get("project_id")
-            cwd = body.get("cwd")
-
-            if not source:
-                raise HTTPException(status_code=400, detail="Required field: source")
-
-            machine_id = machine_id.strip() if isinstance(machine_id, str) else None
-            if not machine_id:
-                raise HTTPException(status_code=400, detail="Required field: machine_id")
-
-            # Resolve project_id from cwd if not provided
-            if not project_id:
-                if not cwd:
-                    raise HTTPException(
-                        status_code=400,
-                        detail="Required field: project_id or cwd",
-                    )
-                project_id = await server.run_db(server.resolve_project_id, None, cwd)
-
-            session = await server.run_db(
-                server.session_manager.find_parent,
-                machine_id=machine_id,
-                source=source,
-                project_id=project_id,
-            )
-
-            if session is None:
-                return {"session": None}
-
-            return {"session": session.to_dict()}
-
-        except HTTPException:
-            raise
-        except Exception as e:
-            logger.exception("Find parent session error: %s", e)
-            raise HTTPException(status_code=500, detail="Internal server error") from e
 
     @router.post("/find_by_terminal_context")
     async def find_session_by_terminal_context(request: Request) -> dict[str, Any]:

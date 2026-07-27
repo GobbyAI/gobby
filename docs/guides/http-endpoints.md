@@ -174,7 +174,6 @@ Returns a JSON object with daemon health and runtime details:
 | `POST` | `/api/sessions/register` | Register CLI/session metadata. |
 | `POST` | `/api/sessions/web-chat` | Create a durable web-chat session row. |
 | `POST` | `/api/sessions/find_current` | Find a session by `external_id`, `machine_id`, `source`, and project. |
-| `POST` | `/api/sessions/find_parent` | Find the most recent parent session for a handoff. |
 | `POST` | `/api/sessions/update_status` | Update a session status. |
 | `POST` | `/api/sessions/update_summary` | Update a session summary path. |
 | `POST` | `/api/sessions/statusline` | Record statusline activity for a CLI session. |

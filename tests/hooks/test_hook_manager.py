@@ -4,6 +4,7 @@ import asyncio
 import threading
 from collections.abc import Callable
 from datetime import UTC, datetime
+from typing import Any, cast
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -239,6 +240,7 @@ class TestHandleSessionStart:
 
         def mock_handler(event: HookEvent) -> HookResponse:
             call_order.append("handler")
+            event.metadata["_platform_session_id"] = "platform-session-1"
             return HookResponse(decision="allow")
 
         def mock_workflow_handle(event: HookEvent) -> HookResponse:
@@ -248,12 +250,74 @@ class TestHandleSessionStart:
         manager._event_handlers.get_handler.return_value = mock_handler
         manager._workflow_handler.handle = mock_workflow_handle
         manager._session_lookup.resolve.return_value = None
+        manager._session_lookup.validate_platform_session_metadata.return_value = None
         manager._enricher.enrich = MagicMock()
 
         event = make_event(event_type=HookEventType.SESSION_START)
         manager._handle_internal(event)
 
         assert call_order == ["handler", "rules"]
+
+    def test_session_start_blocked_handler_short_circuits_rules_and_webhooks(
+        self,
+        manager_with_mocks: HookManager,
+        make_event: Callable,
+    ) -> None:
+        """A blocking handler response skips rules, activity, and all webhooks."""
+        manager = manager_with_mocks
+        call_order: list[str] = []
+
+        def mock_handler(event: HookEvent) -> HookResponse:
+            call_order.append("handler")
+            return HookResponse(decision="block", reason="identity conflict")
+
+        def mock_workflow_handle(event: HookEvent) -> HookResponse:
+            call_order.append("rules")
+            return HookResponse(decision="allow")
+
+        manager._event_handlers.get_handler.return_value = mock_handler
+        manager._workflow_handler.handle = mock_workflow_handle
+        manager._session_lookup.validate_platform_session_metadata.return_value = None
+        manager._enricher.enrich = MagicMock()
+        manager._dispatch_webhooks_async = MagicMock()
+
+        event = make_event(event_type=HookEventType.SESSION_START)
+        response = manager._handle_internal(event)
+
+        assert call_order == ["handler"]
+        assert response.decision == "block"
+        assert response.reason == "identity conflict"
+        manager._dispatch_webhooks_async.assert_not_called()
+
+    def test_session_start_without_platform_session_short_circuits_rules(
+        self,
+        manager_with_mocks: HookManager,
+        make_event: Callable,
+    ) -> None:
+        """A sessionless allow never reaches rule evaluation or webhooks."""
+        manager = manager_with_mocks
+        call_order: list[str] = []
+
+        def mock_handler(event: HookEvent) -> HookResponse:
+            call_order.append("handler")
+            return HookResponse(decision="allow")
+
+        def mock_workflow_handle(event: HookEvent) -> HookResponse:
+            call_order.append("rules")
+            return HookResponse(decision="allow")
+
+        manager._event_handlers.get_handler.return_value = mock_handler
+        manager._workflow_handler.handle = mock_workflow_handle
+        manager._session_lookup.validate_platform_session_metadata.return_value = None
+        manager._enricher.enrich = MagicMock()
+        manager._dispatch_webhooks_async = MagicMock()
+
+        event = make_event(event_type=HookEventType.SESSION_START)
+        response = manager._handle_internal(event)
+
+        assert call_order == ["handler"]
+        assert response.decision == "allow"
+        manager._dispatch_webhooks_async.assert_not_called()
 
     def test_session_start_skips_pre_handler_session_lookup(
         self,
@@ -1184,8 +1248,9 @@ class TestShutdown:
                 closed.set()
 
             manager._loop = loop
-            manager._webhook_dispatcher.close = AsyncMock()
-            manager._webhook_dispatcher.close.side_effect = close_dispatcher
+            dispatcher = cast(Any, manager._webhook_dispatcher)
+            dispatcher.close = AsyncMock()
+            dispatcher.close.side_effect = close_dispatcher
             manager.logger = MagicMock()
 
             with patch("gobby.hooks.hook_manager.asyncio.get_running_loop", return_value=loop):
@@ -1193,7 +1258,7 @@ class TestShutdown:
             await asyncio.wait_for(closed.wait(), timeout=1)
 
             assert closed.is_set()
-            manager._webhook_dispatcher.close.assert_awaited_once()
+            dispatcher.close.assert_awaited_once()
             manager.logger.warning.assert_not_called()
 
         asyncio.run(run_shutdown())
@@ -1208,7 +1273,7 @@ class TestShutdown:
         async def failing_close() -> None:
             raise RuntimeError("Close failed")
 
-        manager._webhook_dispatcher.close = failing_close
+        cast(Any, manager._webhook_dispatcher).close = failing_close
         manager._loop = None
         manager.logger = MagicMock()
 
@@ -1616,15 +1681,16 @@ class TestRecordSessionActivityPulse:
         manager = manager_with_mocks
         statusline_activity.reset_for_tests()
 
-        def resolve(event: HookEvent) -> None:
+        def resolve(event: HookEvent, *, apply_session_mutations: bool = True) -> None:
             event.metadata["_platform_session_id"] = "platform-abc"
 
-        manager._session_lookup.resolve.side_effect = resolve
-        manager._event_handlers.get_handler.return_value = MagicMock(
+        mocks = cast(Any, manager)
+        mocks._session_lookup.resolve.side_effect = resolve
+        mocks._event_handlers.get_handler.return_value = MagicMock(
             return_value=HookResponse(decision="allow")
         )
-        manager._workflow_handler.handle.return_value = HookResponse(decision="allow")
-        manager._enricher.enrich = MagicMock()
+        mocks._workflow_handler.handle.return_value = HookResponse(decision="allow")
+        mocks._enricher.enrich = MagicMock()
 
         event = make_event(event_type=HookEventType.BEFORE_AGENT)
         manager._handle_internal(event)
@@ -1634,7 +1700,7 @@ class TestRecordSessionActivityPulse:
     def test_session_start_records_activity_after_handler(
         self,
         manager_with_mocks: HookManager,
-        make_event: Callable,
+        make_event: Callable[..., HookEvent],
     ) -> None:
         from gobby.servers.routes.sessions import statusline_activity
 
@@ -1645,10 +1711,11 @@ class TestRecordSessionActivityPulse:
             event.metadata["_platform_session_id"] = "platform-xyz"
             return HookResponse(decision="allow")
 
-        manager._event_handlers.get_handler.return_value = handler
-        manager._workflow_handler.handle.return_value = HookResponse(decision="allow")
-        manager._enricher.enrich = MagicMock()
-        manager._resolve_project_id = MagicMock(return_value=PERSONAL_PROJECT_ID)
+        mocks = cast(Any, manager)
+        mocks._event_handlers.get_handler.return_value = handler
+        mocks._workflow_handler.handle.return_value = HookResponse(decision="allow")
+        mocks._enricher.enrich = MagicMock()
+        mocks._resolve_project_id = MagicMock(return_value=PERSONAL_PROJECT_ID)
 
         event = make_event(event_type=HookEventType.SESSION_START, data={"cwd": "/tmp/p"})
         manager._handle_internal(event)
@@ -1658,19 +1725,20 @@ class TestRecordSessionActivityPulse:
     def test_no_activity_recorded_when_platform_id_missing(
         self,
         manager_with_mocks: HookManager,
-        make_event: Callable,
+        make_event: Callable[..., HookEvent],
     ) -> None:
         from gobby.servers.routes.sessions import statusline_activity
 
         manager = manager_with_mocks
         statusline_activity.reset_for_tests()
 
-        manager._session_lookup.resolve.return_value = None
-        manager._event_handlers.get_handler.return_value = MagicMock(
+        mocks = cast(Any, manager)
+        mocks._session_lookup.resolve.return_value = None
+        mocks._event_handlers.get_handler.return_value = MagicMock(
             return_value=HookResponse(decision="allow")
         )
-        manager._workflow_handler.handle.return_value = HookResponse(decision="allow")
-        manager._enricher.enrich = MagicMock()
+        mocks._workflow_handler.handle.return_value = HookResponse(decision="allow")
+        mocks._enricher.enrich = MagicMock()
 
         event = make_event(event_type=HookEventType.BEFORE_AGENT)
         manager._handle_internal(event)

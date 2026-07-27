@@ -10,6 +10,7 @@ import pytest
 
 from gobby.mcp_proxy.tools.internal import InternalToolRegistry
 from gobby.mcp_proxy.tools.sessions import create_session_messages_registry
+from gobby.storage.sessions._update_sentinel import UNSET
 
 pytestmark = pytest.mark.unit
 
@@ -77,7 +78,7 @@ class TestRegisterSession:
             title=None,
             title_source=None,
             git_branch=None,
-            parent_session_id=None,
+            parent_session_id=UNSET,
             agent_depth=0,
             sandbox_enabled=None,
         )
@@ -148,7 +149,7 @@ class TestRegisterSession:
             title=None,
             title_source=None,
             git_branch=None,
-            parent_session_id=None,
+            parent_session_id=UNSET,
             agent_depth=0,
             sandbox_enabled=None,
         )

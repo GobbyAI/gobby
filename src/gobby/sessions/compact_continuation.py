@@ -23,6 +23,7 @@ _COMPACT_SELF_CONTINUATION_TASKS: set[asyncio.Task[Any]] = set()
 
 COMPACT_SELF_CONTINUE_VARIABLE = "compact_self_continue_pending"
 COMPACT_RESUME_REQUIRED_SKILLS_VARIABLE = "compact_resume_required_skills"
+COMPACT_HANDOFF_MARKER_VARIABLE = "handoff_source"
 _COMPACT_SELF_CONTINUE_INTRO = (
     "Continue where you last left off. If the previous turn shows a rejected or "
     "cancelled compact_self tool-use message immediately followed by /compact or "
@@ -111,6 +112,17 @@ def build_compact_self_continue_prompt(
         "Before continuing the task, reload these required skills directly in order:\n\n"
         f"{directives}"
     )
+
+
+def consume_compact_handoff_marker(db: HubDatabase, session_id: str) -> bool:
+    """Consume the one-shot compact marker after successful in-place reactivation.
+
+    The marker (session variable ``handoff_source``) is written by the
+    pre-compact rule and read by session-start classification; consuming it
+    here keeps ordinary later restarts from classifying as compact and lets
+    the stale-compact retention sweep skip resumed sessions.
+    """
+    return _pop_session_variable(db, session_id, COMPACT_HANDOFF_MARKER_VARIABLE) is not None
 
 
 def clear_compact_self_continuation_pending(db: HubDatabase, session_id: str) -> bool:
@@ -221,23 +233,19 @@ def consume_and_schedule_compact_self_continuation(
     *,
     pending_session_id: str | None,
     target_session: Any,
-    fallback_pending_session_id: str | None = None,
     loop: Any | None = None,
 ) -> bool:
-    """Consume a fresh marker from one session and schedule the prompt on another."""
-    pending: tuple[str, dict[str, Any]] | None = None
-    source_session_id: str | None = None
-    if pending_session_id:
-        pending = _take_compact_self_continuation_pending(db, pending_session_id)
-        if pending is not None:
-            source_session_id = pending_session_id
-    if pending is None and fallback_pending_session_id != pending_session_id:
-        if fallback_pending_session_id:
-            pending = _take_compact_self_continuation_pending(db, fallback_pending_session_id)
-            if pending is not None:
-                source_session_id = fallback_pending_session_id
-    if pending is None or source_session_id is None:
+    """Consume a fresh marker from a session and schedule its continuation prompt.
+
+    Compaction is an in-place handoff, so the pending marker always lives on
+    the same session row that restarts.
+    """
+    if not pending_session_id:
         return False
+    pending = _take_compact_self_continuation_pending(db, pending_session_id)
+    if pending is None:
+        return False
+    source_session_id = pending_session_id
     prompt, payload = pending
     if schedule_compact_self_continuation(target_session, prompt, loop=loop):
         return True

@@ -7,7 +7,7 @@ import pytest
 
 from gobby.storage.sessions import SessionManager
 from gobby.workflows.definitions import WorkflowInstance
-from gobby.workflows.state_manager import WorkflowInstanceManager
+from gobby.workflows.state_manager import SessionVariableManager, WorkflowInstanceManager
 
 pytestmark = pytest.mark.unit
 
@@ -15,13 +15,14 @@ pytestmark = pytest.mark.unit
 class TestSessionManagerPruning:
     """Tests split from the SessionManager storage monolith."""
 
-    def test_expire_orphaned_handoff_deletes_retained_workflow_instances(
+    def test_expire_orphaned_handoff_preserves_workflow_instances(
         self,
         session_manager: SessionManager,
         sample_project: dict[str, str],
     ) -> None:
+        """Orphan sweep only expires: the handoff_ready row is the live session."""
         session = session_manager.register(
-            external_id="orphaned-compact-parent",
+            external_id="orphaned-compact-session",
             machine_id="machine",
             source="claude",
             project_id=sample_project["id"],
@@ -47,7 +48,91 @@ class TestSessionManagerPruning:
         updated = session_manager.get(session.id)
         assert updated is not None
         assert updated.status == "expired"
+        instances = workflow_manager.get_active_instances(session.id)
+        assert [instance.workflow_name for instance in instances] == ["developer"]
+
+    def test_prune_stale_compact_workflow_instances_reclaims_marked_sessions(
+        self,
+        session_manager: SessionManager,
+        sample_project: dict[str, str],
+    ) -> None:
+        """Only long-expired sessions with an unconsumed compact marker are reclaimed."""
+        session = session_manager.register(
+            external_id="unresumed-compact-session",
+            machine_id="machine",
+            source="claude",
+            project_id=sample_project["id"],
+        )
+        workflow_manager = WorkflowInstanceManager(session_manager.db)
+        workflow_manager.save_instance(
+            WorkflowInstance(
+                id=str(uuid4()),
+                session_id=session.id,
+                workflow_name="developer",
+                current_step="implement",
+            )
+        )
+        SessionVariableManager(session_manager.db).merge_variables(
+            session.id, {"handoff_source": "compact"}
+        )
+        session_manager.db.execute(
+            "UPDATE sessions SET status = 'expired', "
+            "updated_at = NOW() - INTERVAL '25 hours' WHERE id = %s",
+            (session.id,),
+        )
+
+        pruned = session_manager.prune_stale_compact_workflow_instances(retention_hours=24)
+
+        assert pruned == 1
         assert workflow_manager.get_active_instances(session.id) == []
+
+    def test_prune_stale_compact_workflow_instances_skips_unmarked_and_fresh(
+        self,
+        session_manager: SessionManager,
+        sample_project: dict[str, str],
+    ) -> None:
+        """Expired daemon-resume sessions (no marker) and fresh markers are untouched."""
+        workflow_manager = WorkflowInstanceManager(session_manager.db)
+        sv_manager = SessionVariableManager(session_manager.db)
+
+        unmarked = session_manager.register(
+            external_id="expired-daemon-resume-session",
+            machine_id="machine",
+            source="claude",
+            project_id=sample_project["id"],
+        )
+        fresh = session_manager.register(
+            external_id="freshly-expired-compact-session",
+            machine_id="machine",
+            source="claude",
+            project_id=sample_project["id"],
+        )
+        for session_id in (unmarked.id, fresh.id):
+            workflow_manager.save_instance(
+                WorkflowInstance(
+                    id=str(uuid4()),
+                    session_id=session_id,
+                    workflow_name="developer",
+                    current_step="implement",
+                )
+            )
+        sv_manager.merge_variables(fresh.id, {"handoff_source": "compact"})
+        session_manager.db.execute(
+            "UPDATE sessions SET status = 'expired', "
+            "updated_at = NOW() - INTERVAL '25 hours' WHERE id = %s",
+            (unmarked.id,),
+        )
+        session_manager.db.execute(
+            "UPDATE sessions SET status = 'expired', "
+            "updated_at = NOW() - INTERVAL '1 hour' WHERE id = %s",
+            (fresh.id,),
+        )
+
+        pruned = session_manager.prune_stale_compact_workflow_instances(retention_hours=24)
+
+        assert pruned == 0
+        assert len(workflow_manager.get_active_instances(unmarked.id)) == 1
+        assert len(workflow_manager.get_active_instances(fresh.id)) == 1
 
     def test_expire_stale_sessions(
         self,

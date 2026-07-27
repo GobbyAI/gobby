@@ -332,16 +332,6 @@ class TestSessionEndpoints:
         )
         assert response.status_code == 503
 
-    def test_find_parent_missing_source(self, client: TestClient) -> None:
-        """Test find_parent with missing source field."""
-        response = client.post(
-            "/api/sessions/find_parent",
-            json={"machine_id": "test-machine"},
-        )
-
-        assert response.status_code == 400
-        assert "source" in response.json()["detail"]
-
     def test_find_by_terminal_context_resolves_by_project_and_parent_pid(
         self,
         client: TestClient,
@@ -585,21 +575,6 @@ class TestSessionEndpoints:
         data = response.json()
         assert "detail" in data
 
-    def test_find_parent_malformed_json(self, client: TestClient) -> None:
-        """Test find_parent with malformed JSON returns 500 error.
-
-        The route's exception handler catches JSONDecodeError and raises
-        HTTPException with status 500 before the global handler runs.
-        """
-        response = client.post(
-            "/api/sessions/find_parent",
-            content="not valid json {",
-            headers={"Content-Type": "application/json"},
-        )
-        assert response.status_code == 500
-        data = response.json()
-        assert "detail" in data
-
     def test_update_status_malformed_json(self, client: TestClient) -> None:
         """Test update_status with malformed JSON returns 500 error.
 
@@ -694,6 +669,7 @@ class FakeHookManager:
 
     def __init__(self) -> None:
         self._stop_registry = FakeStopRegistry()
+        self.event_handlers = MagicMock()
 
     def shutdown(self) -> None:
         pass

@@ -11,6 +11,7 @@ import pytest
 
 from gobby.hooks.event_handlers._session import SessionEventHandlerMixin
 from gobby.hooks.events import HookEvent, HookEventType, HookResponse, SessionSource
+from gobby.storage.sessions._update_sentinel import UNSET
 from gobby.tasks.state_semantics import ACTIVE_STAGE_STATES
 
 from ._event_handler_helpers import empty_database_mock
@@ -684,7 +685,7 @@ class TestSessionMoreCoverage:
             assert update_kwargs.get("external_id") == codex_native_id
             mock_pre.assert_called_once()
 
-    def test_handle_session_start_parent_handoff(self) -> None:
+    def test_handle_session_start_compact_in_place(self) -> None:
         handler = _TestHandler()
         event = _make_event(
             event_type=HookEventType.SESSION_START,
@@ -696,45 +697,39 @@ class TestSessionMoreCoverage:
             },
         )
 
-        mock_parent = MagicMock()
-        mock_parent.id = "parent-1"
-        mock_parent.summary_markdown = "Parent summary"
-        mock_parent.seq_num = 1
-        mock_parent.terminal_context = {"tmux_pane": "%12", "tmux_socket_path": "/tmp/tmux"}
+        row = MagicMock()
+        row.id = "sess-1"
+        row.status = "handoff_ready"
+        row.summary_markdown = "Pre-compaction summary"
+        row.seq_num = 1
+        row.parent_session_id = None
+        row.terminal_context = {"tmux_pane": "%12", "tmux_socket_path": "/tmp/tmux"}
 
-        # storage.get(external) -> None
-        handler._session_manager.get.side_effect = lambda sid: (
-            mock_parent if sid == "parent-1" else None
-        )
-        handler._session_manager.find_parent.return_value = mock_parent
+        handler._session_manager.get.side_effect = lambda sid: (row if sid == "sess-1" else None)
+        handler._session_manager.find_by_external_id.return_value = row
 
         with (
             patch.object(handler, "_derive_transcript_path", return_value=None),
             patch.object(handler, "_activate_default_agent", return_value=None),
             patch(
                 "gobby.workflows.state_manager.SessionVariableManager.get_variables",
-                return_value={
-                    "handoff_source": "compact",
-                    "task_claimed": True,
-                    "claimed_tasks": {"task-1": "#1"},
-                },
+                return_value={"handoff_source": "compact"},
             ),
             patch("gobby.workflows.state_manager.SessionVariableManager.merge_variables"),
+            patch(
+                "gobby.hooks.event_handlers._session_start.handoff.consume_compact_handoff_marker"
+            ),
         ):
-            handler._session_manager.register_session.return_value = "new-sess-1"
-            handler._task_manager.get_task.return_value = MagicMock(
-                status="needs_review",
-                claimed_by_session_id="parent-1",
-            )
+            handler._session_manager.register_session.return_value = "sess-1"
 
             handler.handle_session_start(event)
 
-            # Should read handoff source and create the compact session with a parent
+            # The compact restart reactivates the same row via registration
             handler._session_manager.register_session.assert_called_with(
                 external_id="ext-3",
                 machine_id=handler._get_machine_id(),
                 project_id=handler._resolve_project_id(),
-                parent_session_id="parent-1",
+                parent_session_id=UNSET,
                 transcript_path=None,
                 source="claude",
                 project_path=None,
@@ -743,23 +738,13 @@ class TestSessionMoreCoverage:
                 agent_depth=2,
                 sandbox_enabled=None,
             )
-            assert handler._session_manager.register_session.call_count >= 1
-            assert handler._session_manager.register_session.call_args is not None
-            # Should mark parent expired
-            handler._session_manager.mark_session_expired.assert_called_with("parent-1")
-            assert handler._session_manager.mark_session_expired.call_count >= 1
-            assert handler._session_manager.mark_session_expired.call_args is not None
+            assert event.metadata["_platform_session_id"] == "sess-1"
+            # In-place handoff: nothing expires and claims never change owner
+            handler._session_manager.mark_session_expired.assert_not_called()
+            handler._task_manager.claim_task.assert_not_called()
 
-            # Should have handed off task
-            handler._task_manager.claim_task.assert_called_with(
-                "task-1",
-                session_id="new-sess-1",
-                force=True,
-            )
-            assert handler._task_manager.claim_task.call_count >= 1
-            assert handler._task_manager.claim_task.call_args is not None
-
-    def test_empty_parent_backoff(self) -> None:
+    def test_compact_start_without_row_degrades_without_backoff(self) -> None:
+        """A compact start with no persisted row degrades to startup with no polling."""
         handler = _TestHandler()
         event = _make_event(
             event_type=HookEventType.SESSION_START,
@@ -767,24 +752,23 @@ class TestSessionMoreCoverage:
             data={"source": "compact"},
         )
         handler._session_manager.get.return_value = None
-
-        # find_parent fails once, succeeds on retry
-        mock_parent = MagicMock()
-        mock_parent.id = "parent-1"
-        handler._session_manager.find_parent.side_effect = [None, mock_parent, mock_parent]
+        handler._session_manager.find_by_external_id.return_value = None
+        handler._session_manager.find_by_external_id_any_project.return_value = None
 
         with (
             patch.object(handler, "_derive_transcript_path", return_value=None),
             patch.object(handler, "_activate_default_agent", return_value=None),
             patch("time.sleep") as mock_sleep,
-            patch("time.monotonic", side_effect=list(range(30))),
             patch("gobby.workflows.state_manager.SessionVariableManager") as mock_svm_cls,
         ):
             mock_svm_cls.return_value.get_variables.return_value = {}
+            handler._session_manager.register_session.return_value = "new-sess-1"
+
             handler.handle_session_start(event)
-            mock_sleep.assert_called()
-            assert mock_sleep.call_count >= 1
-            assert mock_sleep.call_args is not None
+
+            mock_sleep.assert_not_called()
+            assert event.data["source"] == "startup"
+            handler._session_manager.register_session.assert_called_once()
 
 
 # ---------------------------------------------------------------------------

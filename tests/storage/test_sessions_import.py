@@ -46,8 +46,7 @@ EXPECTED_PUBLIC_METHOD_SIGNATURES = {
     "expire_if_active": "(self, session_id: 'str') -> 'Session | None'",
     "expire_orphaned_handoff_sessions": "(self, timeout_minutes: 'int' = 30) -> 'int'",
     "expire_stale_sessions": "(self, timeout_hours: 'int' = 24) -> 'int'",
-    "transfer_compact_handoff_state": "(self, parent_session_id: 'str', "
-    "child_session_id: 'str') -> 'int'",
+    "prune_stale_compact_workflow_instances": "(self, retention_hours: 'int' = 24) -> 'int'",
     "fetch_task_refs_by_session": "(self, session_ids: 'Sequence[str]') -> "
     "'dict[str, _TaskRefsByRole]'",
     "find_active_by_external_id": "(self, external_id: 'str', source: 'str') -> 'Session | None'",
@@ -65,8 +64,6 @@ EXPECTED_PUBLIC_METHOD_SIGNATURES = {
     "source: 'str | None' = None, status: 'str' = 'handoff_ready', "
     "max_age_minutes: 'int' = 10, terminal_context: 'dict[str, Any] | str | None' = None, "
     "candidate_limit: 'int' = 1) -> 'Session | None'",
-    "find_parent_session": "(self, machine_id: 'str', source: 'str', "
-    "project_id: 'str', max_attempts: 'int' = 30) -> 'tuple[str, str | None] | None'",
     "get": "(self, session_id: 'str') -> 'Session | None'",
     "get_pending_transcript_sessions": "(self, limit: 'int' = 10) -> 'list[Session]'",
     "get_summary_revision": "(self, revision_id: 'str') -> 'dict[str, Any] | None'",
@@ -120,7 +117,7 @@ EXPECTED_PUBLIC_METHOD_SIGNATURES = {
     "sandbox_policy_hash: 'str | None' = None, "
     "title_source: 'str | None | UnsetType' = UNSET) -> 'Session'",
     "register_session": "(self, external_id: 'str', machine_id: 'str', source: 'str', "
-    "project_id: 'str | None', parent_session_id: 'str | None' = None, "
+    "project_id: 'str | None', parent_session_id: 'str | None | UnsetType' = UNSET, "
     "transcript_path: 'str | None' = None, title: 'str | None' = None, "
     "git_branch: 'str | None' = None, project_path: 'str | None' = None, "
     "terminal_context: 'dict[str, Any] | None' = None, "

@@ -619,6 +619,7 @@ class TestVariablePersistence:
             source=SessionSource.CLAUDE,
             timestamp=datetime.now(),
             data={},
+            metadata={"_platform_session_id": session_id},
         )
 
     def _make_after_agent_event(
@@ -632,6 +633,7 @@ class TestVariablePersistence:
             source=source,
             timestamp=datetime.now(),
             data={},
+            metadata={"_platform_session_id": session_id},
         )
 
     @pytest.mark.asyncio
@@ -1403,6 +1405,7 @@ class TestStopFailsClosedOnVariableLoadError:
             source=SessionSource.CLAUDE,
             timestamp=datetime.now(),
             data={},
+            metadata={"_platform_session_id": session_id},
         )
 
     def _make_tool_event(self, session_id: str = SESSION_ID) -> HookEvent:

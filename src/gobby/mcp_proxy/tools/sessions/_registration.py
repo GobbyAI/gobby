@@ -8,6 +8,8 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, Any
 
+from gobby.storage.sessions._update_sentinel import UNSET
+
 if TYPE_CHECKING:
     from gobby.mcp_proxy.tools.internal import InternalToolRegistry
     from gobby.storage.sessions import SessionManager
@@ -95,7 +97,7 @@ machine_id and project_id are auto-resolved from the local environment if omitte
                 title=title,
                 title_source="manual" if isinstance(title, str) and title.strip() else None,
                 git_branch=git_branch,
-                parent_session_id=parent_session_id,
+                parent_session_id=parent_session_id if parent_session_id is not None else UNSET,
                 agent_depth=agent_depth,
                 sandbox_enabled=sandbox_enabled,
             )

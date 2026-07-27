@@ -522,6 +522,10 @@ call_tool("gobby-sessions", "set_handoff_context", {
 call_tool("gobby-sessions", "get_handoff_context", {})
 ```
 
+CLI context compaction does not create a successor: the compact restart
+reactivates the same session row in place, and the caller may read its own
+summary through `get_handoff_context` regardless of status.
+
 ---
 
 ## Memory (`gobby-memory`)

@@ -18,10 +18,11 @@ from gobby.hooks.terminal_context import (
     is_gobby_acp_child,
 )
 from gobby.sessions.handoff_identity import terminal_contexts_match
+from gobby.storage.sessions._update_sentinel import UNSET
 
 from .agents import _seed_memory_recall_vars, _seed_wiki_overview_var
 from .context import classify_session_start_context, mark_startup_context_injected
-from .handoff import find_parent_session, populate_handoff_session_variables
+from .handoff import prepare_compact_continuation_variables, resolve_session_start_identity
 from .profile import seed_user_profile_content
 
 SLOW_SESSION_START_THRESHOLD_MS = 1000
@@ -101,7 +102,6 @@ def _consume_pending_compact_self_continuation(
     *,
     pending_session_id: str | None,
     target_session: Any,
-    fallback_pending_session_id: str | None = None,
 ) -> bool:
     """Consume compact_self markers for providers that do not tag compact restarts."""
     if not handler._session_manager:
@@ -110,7 +110,6 @@ def _consume_pending_compact_self_continuation(
         _compat_module().consume_and_schedule_compact_self_continuation(
             handler._session_manager.db,
             pending_session_id=pending_session_id,
-            fallback_pending_session_id=fallback_pending_session_id,
             target_session=target_session,
             loop=getattr(handler._session_coordinator, "_event_loop", None),
         )
@@ -485,14 +484,19 @@ def handle_session_start(handler: Any, event: HookEvent) -> HookResponse:
     _t_parent = time.monotonic()
     workflow_name = input_data.get("workflow_name")
     agent_depth = input_data.get("agent_depth")
-    parent_session_id, session_source = find_parent_session(
+    resolution = resolve_session_start_identity(
         handler,
         input_data,
         session_source,
-        machine_id,
-        project_id,
-        cli_source,
+        external_id=external_id,
+        machine_id=machine_id,
+        project_id=project_id,
+        cli_source=cli_source,
     )
+    if resolution.blocked_reason:
+        return HookResponse(decision="block", reason=resolution.blocked_reason)
+    session_source = resolution.session_source
+    parent_session_id = input_data.get("parent_session_id")
 
     _t_register = time.monotonic()
     agent_depth_val = 0
@@ -510,7 +514,7 @@ def handle_session_start(handler: Any, event: HookEvent) -> HookResponse:
             external_id=external_id,
             machine_id=machine_id,
             project_id=project_id,
-            parent_session_id=parent_session_id,
+            parent_session_id=parent_session_id if parent_session_id else UNSET,
             transcript_path=transcript_path,
             source=cli_source,
             project_path=cwd,
@@ -520,44 +524,21 @@ def handle_session_start(handler: Any, event: HookEvent) -> HookResponse:
             sandbox_enabled=sandbox_enabled_val,
         )
 
-    if parent_session_id and handler._session_manager:
-        if session_source == "compact":
-            if session_id is None:
-                return HookResponse(
-                    decision="block",
-                    reason="Compact handoff child registration did not return a session ID.",
-                )
-            try:
-                moved_count = handler._session_manager.transfer_compact_handoff_state(
-                    parent_session_id,
-                    session_id,
-                )
-                handler.logger.debug(
-                    "Transferred %s workflow instances from compact parent %s to child %s",
-                    moved_count,
-                    parent_session_id,
-                    session_id,
-                )
-            except Exception as e:
-                try:
-                    handler._session_manager.mark_session_expired(session_id)
-                except Exception as expiry_error:
-                    handler.logger.warning(
-                        "Failed to expire unactivated compact child %s: %s",
-                        session_id,
-                        expiry_error,
-                    )
-                handler.logger.exception(
-                    "Failed to transfer compact handoff state from %s to %s: %s",
-                    parent_session_id,
-                    session_id,
-                    e,
-                )
-                return HookResponse(
-                    decision="block",
-                    reason="Failed to preserve compact handoff state; child activation was blocked.",
-                )
-        else:
+    if handler._session_manager and session_source == "compact":
+        if not session_id:
+            return HookResponse(
+                decision="block",
+                reason="Compact reactivation did not return a session ID.",
+            )
+        if resolution.session is not None and session_id != resolution.session.id:
+            handler.logger.warning(
+                "Compact restart reactivated session %s but identity resolution "
+                "matched %s; continuing with the registered session",
+                session_id,
+                resolution.session.id,
+            )
+    elif parent_session_id and session_id and handler._session_manager:
+        if parent_session_id != session_id:
             try:
                 handler._session_manager.mark_session_expired(parent_session_id)
                 handler.logger.debug("Marked parent session %s as expired", parent_session_id)
@@ -626,10 +607,13 @@ def handle_session_start(handler: Any, event: HookEvent) -> HookResponse:
         except Exception as e:
             handler.logger.exception("Failed to setup session tracking: %s", e)
 
+    effective_parent_session_id = parent_session_id or getattr(
+        session_obj, "parent_session_id", None
+    )
     if session_id:
         event.metadata["_platform_session_id"] = session_id
-    if parent_session_id:
-        event.metadata["_parent_session_id"] = parent_session_id
+    if effective_parent_session_id:
+        event.metadata["_parent_session_id"] = effective_parent_session_id
 
     _t_msg_proc = time.monotonic()
     if handler._message_processor and transcript_path and session_id:
@@ -648,9 +632,9 @@ def handle_session_start(handler: Any, event: HookEvent) -> HookResponse:
         _reset_agent_context_injection(handler, session_id)
 
     try:
-        populate_handoff_session_variables(handler, session_id, parent_session_id, session_source)
+        prepare_compact_continuation_variables(handler, session_id, session_source)
     except (KeyError, json.JSONDecodeError, psycopg.Error) as e:
-        handler.logger.warning("Failed to populate handoff session vars: %s", e)
+        handler.logger.warning("Failed to prepare compact continuation vars: %s", e)
 
     if session_id and project_id and not event.task_id:
         claimed_ctx = handler._build_claimed_task_context(
@@ -683,7 +667,6 @@ def handle_session_start(handler: Any, event: HookEvent) -> HookResponse:
         _consume_pending_compact_self_continuation(
             handler,
             pending_session_id=session_id,
-            fallback_pending_session_id=parent_session_id if session_source == "compact" else None,
             target_session=session_obj,
         )
 
@@ -697,7 +680,7 @@ def handle_session_start(handler: Any, event: HookEvent) -> HookResponse:
         session_source=session_source,
         cli_source=cli_source,
         project_id=project_id,
-        parent_session_id=parent_session_id,
+        parent_session_id=effective_parent_session_id,
     )
     _log_session_start_timing(
         handler,
@@ -722,7 +705,7 @@ def handle_session_start(handler: Any, event: HookEvent) -> HookResponse:
             session=session_obj,
             session_id=session_id,
             external_id=external_id,
-            parent_session_id=parent_session_id,
+            parent_session_id=effective_parent_session_id,
             machine_id=machine_id,
             project_id=project_id,
             task_id=event.task_id,

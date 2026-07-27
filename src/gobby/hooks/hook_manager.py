@@ -320,6 +320,10 @@ class HookManager:
         # generic lookup here can auto-register a stray duplicate before the
         # handler gets a chance to bind the real session.
         if event.event_type == HookEventType.SESSION_START:
+            # Caller-supplied _platform_session_id (e.g. the X-Gobby-Session-Id
+            # header) must be validated against storage before anything reads
+            # it; unknown ids are popped so the handler binds the real session.
+            self._session_lookup.validate_platform_session_metadata(event)
             project_resolution = resolve_hook_project_context(
                 event,
                 session_manager=self._session_manager,
@@ -413,6 +417,20 @@ class HookManager:
                     self.logger.exception("Event handler %s failed: %s", event.event_type, e)
                     return HookResponse(decision="allow", reason=f"Handler error: {e}")
 
+            # Blocked or sessionless starts never reach session-scoped work:
+            # without a canonical _platform_session_id, rule evaluation would
+            # fall back to a session id that has no sessions row.
+            if response.decision in ("block", "deny") or not event.metadata.get(
+                "_platform_session_id"
+            ):
+                return self._complete_response(
+                    event,
+                    response,
+                    None,
+                    preserve_original=True,
+                    suppress_webhooks=True,
+                )
+
             self._record_session_activity_pulse(event)
             reconcile_session_activation(event, self._event_handlers, logger=self.logger)
 
@@ -466,6 +484,7 @@ class HookManager:
         workflow_context: str | None,
         *,
         preserve_original: bool = False,
+        suppress_webhooks: bool = False,
     ) -> HookResponse:
         """Enrich and notify observers, preserving terminal block responses."""
         observer_response = copy.deepcopy(response) if preserve_original else response
@@ -499,10 +518,11 @@ class HookManager:
         schedule_hook_broadcast(self.broadcaster, event, observer_response, self._loop, self.logger)
 
         # Dispatch non-blocking webhooks (fire-and-forget)
-        try:
-            self._dispatch_webhooks_async(event, observer_response)
-        except Exception as e:
-            self.logger.warning("Non-blocking webhook dispatch failed: %s", e)
+        if not suppress_webhooks:
+            try:
+                self._dispatch_webhooks_async(event, observer_response)
+            except Exception as e:
+                self.logger.warning("Non-blocking webhook dispatch failed: %s", e)
 
         return response if preserve_original else observer_response
 

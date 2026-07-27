@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from typing import Any
+from typing import Any, cast
 from unittest.mock import MagicMock
 
 import pytest
@@ -59,6 +59,18 @@ class TestReturnValues:
             "gobby.workflows.state_manager.SessionVariableManager",
             MagicMock(return_value=manager),
         )
+        session_obj = MagicMock()
+        session_obj.parent_session_id = None
+        session_obj.status = "active"
+
+        def get_session(session_id: str) -> MagicMock | None:
+            return session_obj if session_id == "sess-1" else None
+
+        session_manager = cast(Any, event_handlers._session_manager)
+        session_manager.get.side_effect = get_session
+        session_manager.find_by_external_id.return_value = None
+        session_manager.find_by_external_id_any_project.return_value = None
+        session_manager.register_session.return_value = "sess-1"
         event = make_event(HookEventType.SESSION_START)
         response = event_handlers.handle_session_start(event)
         assert response.context is None
@@ -215,6 +227,7 @@ class TestApplyDebugEcho:
 
         handlers._apply_debug_echo(response)
 
+        assert response.system_message is not None
         assert response.system_message.startswith("Existing message")
         assert "[DEBUG additionalContext]" in response.system_message
         assert "new context" in response.system_message

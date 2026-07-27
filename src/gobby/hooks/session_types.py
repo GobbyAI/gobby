@@ -10,6 +10,7 @@ from __future__ import annotations
 from typing import TYPE_CHECKING, Any, Protocol
 
 from gobby.storage.session_models import Session
+from gobby.storage.sessions._update_sentinel import UNSET, UnsetType
 
 if TYPE_CHECKING:
     from gobby.storage.context_usage_snapshot import ContextUsageSnapshot
@@ -60,7 +61,7 @@ class HookSessionManager(Protocol):
         machine_id: str,
         source: str,
         project_id: str | None,
-        parent_session_id: str | None = None,
+        parent_session_id: str | None | UnsetType = UNSET,
         transcript_path: str | None = None,
         title: str | None = None,
         git_branch: str | None = None,

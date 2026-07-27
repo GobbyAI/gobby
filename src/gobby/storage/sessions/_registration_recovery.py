@@ -1,9 +1,8 @@
-"""Parent lookup and cross-source recovery for session registration."""
+"""Cross-source recovery for session registration."""
 
 from __future__ import annotations
 
 import logging
-import time
 from datetime import datetime
 from typing import Protocol
 
@@ -37,15 +36,6 @@ class _RegistrationRecoveryHost(Protocol):
         session_type: str | None = None,
     ) -> list[Session]: ...
 
-    def find_parent(
-        self,
-        machine_id: str,
-        project_id: str,
-        source: str | None = None,
-        status: str = "handoff_ready",
-        max_age_minutes: int = 10,
-    ) -> Session | None: ...
-
     def cache_session_mapping(
         self,
         external_id: str,
@@ -57,58 +47,6 @@ class _RegistrationRecoveryHost(Protocol):
 
 
 class _RegistrationRecoveryMixin:
-    def find_parent_session(
-        self: _RegistrationRecoveryHost,
-        machine_id: str,
-        source: str,
-        project_id: str,
-        max_attempts: int = 30,
-    ) -> tuple[str, str | None] | None:
-        """Poll for a handoff-ready parent session on this machine and project."""
-        attempt = 0
-
-        while attempt < max_attempts:
-            try:
-                session = self.find_parent(
-                    machine_id=machine_id,
-                    source=source,
-                    project_id=project_id,
-                )
-
-                if session:
-                    self.logger.debug(
-                        "Found parent session %s (attempt %s/%s)",
-                        session.id,
-                        attempt + 1,
-                        max_attempts,
-                    )
-                    return (session.id, session.summary_markdown)
-
-                attempt += 1
-                if attempt < max_attempts:
-                    self.logger.debug(
-                        "No handoff_ready session yet, retrying in 1s (attempt %s/%s)",
-                        attempt,
-                        max_attempts,
-                    )
-                    time.sleep(1)
-
-            except Exception as error:
-                self.logger.warning(
-                    "Error polling for parent session (attempt %s): %s",
-                    attempt + 1,
-                    error,
-                )
-                attempt += 1
-                if attempt < max_attempts:
-                    time.sleep(1)
-                else:
-                    self.logger.error("Exhausted retries finding parent session: %s", error)
-                    return None
-
-        self.logger.debug("No handoff_ready session found after %s attempts", max_attempts)
-        return None
-
     def recover_session(
         self: _RegistrationRecoveryHost,
         external_id: str,

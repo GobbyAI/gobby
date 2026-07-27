@@ -11,6 +11,7 @@ from typing import TYPE_CHECKING, Any
 from gobby.mcp_proxy.wait_tools import clamp_wait_tool_timeout
 from gobby.utils.injected_context import strip_injected_context
 from gobby.utils.project_context import get_project_context
+from gobby.utils.session_context import get_current_session_id
 
 if TYPE_CHECKING:
     from gobby.config.sessions import SessionSummaryConfig
@@ -282,7 +283,15 @@ def register_handoff_tools(
                 },
             }
 
-        if getattr(parent_session, "status", None) != "handoff_ready":
+        # In-place compaction reactivates the same row, so a session may read
+        # its own pre-compaction summary after it is active again. Every other
+        # target still requires handoff_ready — an open status exception would
+        # expose summaries from any active same-project peer.
+        caller_session_id = get_current_session_id()
+        is_self_read = isinstance(caller_session_id, str) and caller_session_id == getattr(
+            parent_session, "id", None
+        )
+        if getattr(parent_session, "status", None) != "handoff_ready" and not is_self_read:
             return {
                 "success": False,
                 "found": False,

@@ -428,6 +428,7 @@ class TestNudgeCompactOnContextPressure:
             timestamp=datetime.now(UTC),
             data={"prompt": "continue"},
             cwd=".",
+            metadata={"_platform_session_id": SESSION_ID},
         )
 
         response = await handler._evaluate_rules(event)

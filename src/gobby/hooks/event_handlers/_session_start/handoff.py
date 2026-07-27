@@ -1,8 +1,8 @@
-"""Parent-session handoff helpers for session-start handling."""
+"""In-place compact identity resolution for session-start handling."""
 
 from __future__ import annotations
 
-import time
+from dataclasses import dataclass
 from typing import Any
 
 from gobby.llm.sdk_utils import (
@@ -11,12 +11,12 @@ from gobby.llm.sdk_utils import (
     head_with_breadcrumb,
     split_markdown_sections,
 )
-from gobby.sessions.handoff_identity import terminal_context_matches_session
-from gobby.tasks.state_semantics import (
-    ACTIVE_STAGE_STATES,
-    get_claimed_session_id,
-    is_task_actionable,
+from gobby.sessions.compact_continuation import (
+    COMPACT_HANDOFF_MARKER_VARIABLE,
+    consume_compact_handoff_marker,
 )
+from gobby.sessions.handoff_identity import terminal_contexts_match
+from gobby.sessions.tmux_context import parse_terminal_context_value
 from gobby.utils.injected_context import strip_injected_context
 
 _SECTION_PRIORITIES = {
@@ -31,6 +31,12 @@ _SECTION_PRIORITIES = {
 }
 _OMISSION_TITLE_LIMIT = 10
 _OMISSION_TITLE_CHARS = 40
+_HANDOFF_SUMMARY_VARIABLES = (
+    "session_summary",
+    "full_session_summary",
+    "handoff_summary_injectable",
+)
+_TERMINAL_IDENTITY_FIELDS = ("tmux_pane", "tmux_session", "tty", "parent_pid")
 
 
 def _format_omission_titles(titles: tuple[str, ...]) -> str:
@@ -47,144 +53,220 @@ def _omission_line(titles: tuple[str, ...]) -> str:
     )
 
 
-def find_parent_session(
+@dataclass(frozen=True)
+class SessionStartResolution:
+    """Outcome of resolving a session start against its persisted identity."""
+
+    session: Any | None
+    session_source: str
+    blocked_reason: str | None = None
+
+    @property
+    def is_compact(self) -> bool:
+        return self.blocked_reason is None and self.session_source == "compact"
+
+
+def resolve_session_start_identity(
     handler: Any,
     input_data: dict[str, Any],
     session_source: str,
+    *,
+    external_id: str,
     machine_id: str,
     project_id: str,
     cli_source: str,
-) -> tuple[str | None, str]:
-    """Find a compact parent session and normalize its handoff source marker."""
-    parent_session_id = input_data.get("parent_session_id")
+) -> SessionStartResolution:
+    """Resolve a terminal session start against its persisted session row.
 
-    if session_source == "clear":
-        return None, session_source
+    Compaction is an in-place handoff: the same
+    (external_id, machine_id, project_id, source) row is reactivated by
+    registration. Compact classification is one-shot: an explicit compact
+    source, a handoff_ready row, or an expired row with an unconsumed compact
+    marker. A missing row degrades to a normal startup with a diagnostic
+    warning; only a contradicting terminal identity blocks.
+    """
+    if session_source == "clear" or not handler._session_manager:
+        return SessionStartResolution(session=None, session_source=session_source)
 
-    if parent_session_id or not handler._session_manager or session_source != "compact":
-        return parent_session_id, session_source
-
-    child_terminal_context = input_data.get("terminal_context")
+    session = None
+    drifted_project = False
     try:
-        parent = handler._session_manager.find_parent(
-            machine_id=machine_id,
-            project_id=project_id,
-            source=cli_source,
-            status="handoff_ready",
-            terminal_context=child_terminal_context,
-            candidate_limit=8,
+        session = handler._session_manager.find_by_external_id(
+            external_id,
+            machine_id,
+            project_id,
+            cli_source,
+            session_type="terminal",
+        )
+        if session is None:
+            session = handler._session_manager.find_by_external_id_any_project(
+                external_id,
+                machine_id,
+                cli_source,
+                session_type="terminal",
+            )
+            drifted_project = session is not None
+    except Exception as e:
+        handler.logger.warning("Session identity lookup failed for %s: %s", external_id, e)
+        return SessionStartResolution(session=None, session_source=session_source)
+
+    if drifted_project and session is not None:
+        handler.logger.warning(
+            "Session %s for external_id=%s found under project %s instead of %s; "
+            "registration will rebind it (cwd/project drift)",
+            session.id,
+            external_id,
+            getattr(session, "project_id", None),
+            project_id,
         )
 
-        if not parent:
-            deadline = time.monotonic() + 5
-            while time.monotonic() < deadline:
-                time.sleep(0.3)
-                parent = handler._session_manager.find_parent(
-                    machine_id=machine_id,
-                    project_id=project_id,
-                    source=cli_source,
-                    status="handoff_ready",
-                    terminal_context=child_terminal_context,
-                    candidate_limit=8,
-                )
-                if parent:
-                    handler.logger.debug("Found handoff_ready parent after backoff: %s", parent.id)
-                    break
-            if not parent:
-                handler.logger.info("No handoff_ready parent found for /%s", session_source)
-                input_data["source"] = "startup"
-                return None, "startup"
-
-        if parent:
-            if child_terminal_context and not terminal_context_matches_session(
-                parent, child_terminal_context
-            ):
-                handler.logger.warning(
-                    "Ignoring %s handoff parent %s; terminal context does not match child",
-                    session_source,
-                    parent.id,
-                )
-                input_data["source"] = "startup"
-                return None, "startup"
-
-            parent_session_id = parent.id
-            handler.logger.debug("Found parent session: %s", parent_session_id)
-
+    marker_present = False
+    if session is not None:
+        try:
             from gobby.workflows.state_manager import SessionVariableManager
 
-            parent_vars = SessionVariableManager(handler._session_manager.db).get_variables(
-                parent.id
-            )
-            handoff_source = parent_vars.get("handoff_source")
-            if handoff_source == "compact":
-                session_source = handoff_source
-                input_data["source"] = session_source
-    except Exception as e:
-        handler.logger.warning("Error finding parent session: %s", e)
+            row_vars = SessionVariableManager(handler._session_manager.db).get_variables(session.id)
+            marker_present = row_vars.get(COMPACT_HANDOFF_MARKER_VARIABLE) == "compact"
+        except Exception as e:
+            handler.logger.debug("Could not read compact marker for %s: %s", session.id, e)
 
-    return parent_session_id, session_source
+    status = getattr(session, "status", None)
+    is_compact = session_source == "compact" or (
+        session is not None
+        and (status == "handoff_ready" or (status == "expired" and marker_present))
+    )
+    if not is_compact:
+        return SessionStartResolution(session=session, session_source=session_source)
+
+    if session is None:
+        _log_missing_compact_row(
+            handler,
+            external_id=external_id,
+            machine_id=machine_id,
+            project_id=project_id,
+            cli_source=cli_source,
+        )
+        input_data["source"] = "startup"
+        return SessionStartResolution(session=None, session_source="startup")
+
+    identity = _classify_terminal_identity(session, input_data.get("terminal_context"))
+    if identity == "conflict":
+        handler.logger.warning(
+            "Blocking compact restart for session %s (external_id=%s): terminal "
+            "identity contradicts the persisted session",
+            session.id,
+            external_id,
+        )
+        return SessionStartResolution(
+            session=session,
+            session_source=session_source,
+            blocked_reason=(
+                "Compact restart terminal identity does not match the persisted session."
+            ),
+        )
+
+    input_data["source"] = "compact"
+    return SessionStartResolution(session=session, session_source="compact")
 
 
-def populate_handoff_session_variables(
+def _classify_terminal_identity(
+    session: Any,
+    child_context: Any,
+) -> str:
+    """Classify terminal identity as ``match``, ``conflict``, or ``unknown``.
+
+    Insufficient identity on either side is ``unknown``, never a conflict —
+    only comparable, non-empty identity fields that contradict each other
+    prove the start belongs to a different terminal.
+    """
+    child = parse_terminal_context_value(child_context)
+    if not child:
+        return "unknown"
+    session_id = getattr(session, "id", None)
+    if isinstance(session_id, str) and child.get("gobby_session_id") == session_id:
+        return "match"
+    stored = parse_terminal_context_value(getattr(session, "terminal_context", None))
+    if not stored:
+        return "unknown"
+
+    def _has(context: dict[str, Any], field: str) -> bool:
+        return bool(str(context.get(field) or "").strip())
+
+    comparable = [
+        field for field in _TERMINAL_IDENTITY_FIELDS if _has(child, field) and _has(stored, field)
+    ]
+    if not comparable:
+        return "unknown"
+    return "match" if terminal_contexts_match(stored, child) else "conflict"
+
+
+def _log_missing_compact_row(
+    handler: Any,
+    *,
+    external_id: str,
+    machine_id: str,
+    project_id: str,
+    cli_source: str,
+) -> None:
+    """Warn loudly when a compact restart has no persisted row to reactivate."""
+    handler.logger.warning(
+        "Compact restart found no persisted session for external_id=%s "
+        "machine_id=%s project_id=%s source=%s; degrading to startup "
+        "registration without compact context",
+        external_id,
+        machine_id,
+        project_id,
+        cli_source,
+    )
+
+
+def prepare_compact_continuation_variables(
     handler: Any,
     session_id: str | None,
-    parent_session_id: str | None,
     session_source: str,
 ) -> None:
-    """Populate compact summary and task handoff variables for a new child session."""
-    if (
-        session_source != "compact"
-        or not parent_session_id
-        or not session_id
-        or not handler._session_manager
-    ):
+    """Refresh same-row summary and skill variables for an in-place compact restart.
+
+    Replaces the bounded summary variables from the row's current summary,
+    clears stale injection values when no usable summary exists (or injection
+    is disabled), normalizes the required-skill reload list, and consumes the
+    one-shot compact marker.
+    """
+    if session_source != "compact" or not session_id or not handler._session_manager:
         return
 
     from gobby.workflows.state_manager import SessionVariableManager
 
-    sv_mgr = SessionVariableManager(handler._session_manager.db)
+    db = handler._session_manager.db
+    sv_mgr = SessionVariableManager(db)
     current_vars = sv_mgr.get_variables(session_id)
-    if not current_vars.get("auto_inject_handoff", True):
-        return
+    auto_inject = current_vars.get("auto_inject_handoff", True)
 
-    parent = _get_parent_summary_for_handoff(handler, parent_session_id)
+    session = handler._session_manager.get(session_id)
+    summary_markdown = ""
+    if session is not None and session.summary_markdown:
+        summary_markdown = strip_injected_context(session.summary_markdown)
 
-    handoff_vars: dict[str, Any] = {}
-    if parent and parent.summary_markdown:
-        child = handler._session_manager.get(session_id)
-        child_project_id = getattr(child, "project_id", None)
-        parent_project_id = getattr(parent, "project_id", None)
-        if (
-            child_project_id is None
-            or parent_project_id is None
-            or (
-                isinstance(child_project_id, str)
-                and isinstance(parent_project_id, str)
-                and child_project_id != parent_project_id
-            )
-        ):
-            handler.logger.warning(
-                "Skipping handoff summary injection from parent %s to child %s; projects differ",
-                parent_session_id,
-                session_id,
-            )
-        else:
-            summary_markdown = strip_injected_context(parent.summary_markdown)
-            handoff_vars["session_summary"] = summary_markdown
-            handoff_vars["full_session_summary"] = summary_markdown
-            handoff_vars["handoff_summary_injectable"] = _bound_handoff_summary(
-                summary_markdown, parent
-            )
-    if handoff_vars:
-        sv_mgr.merge_variables(session_id, handoff_vars)
+    if auto_inject and summary_markdown:
+        sv_mgr.merge_variables(
+            session_id,
+            {
+                "session_summary": summary_markdown,
+                "full_session_summary": summary_markdown,
+                "handoff_summary_injectable": _bound_handoff_summary(summary_markdown, session),
+            },
+        )
+    else:
+        stale = {name: "" for name in _HANDOFF_SUMMARY_VARIABLES if current_vars.get(name)}
+        if stale:
+            sv_mgr.merge_variables(session_id, stale)
 
-    parent_vars = sv_mgr.get_variables(parent_session_id)
-    _preserve_compact_resume_required_skills(sv_mgr, session_id, parent_vars)
-    _preserve_task_claim_state(handler, sv_mgr, session_id, parent_session_id, parent_vars)
+    _normalize_compact_resume_required_skills(sv_mgr, session_id, current_vars)
+    consume_compact_handoff_marker(db, session_id)
 
 
-def _bound_handoff_summary(summary: str, parent: Any) -> str:
-    """Bound a parent summary for inline injection, with a retrieval breadcrumb.
+def _bound_handoff_summary(summary: str, session: Any) -> str:
+    """Bound a pre-compaction summary for inline injection, with a retrieval breadcrumb.
 
     The full summary stays available via the get_handoff_context MCP tool; this
     only caps the copy injected into provider context. Returns the summary
@@ -193,14 +275,14 @@ def _bound_handoff_summary(summary: str, parent: Any) -> str:
     if len(summary) <= HANDOFF_SUMMARY_INJECT_BUDGET:
         return summary
 
-    seq_num = getattr(parent, "seq_num", None)
-    ref = f"#{seq_num}" if seq_num else (getattr(parent, "id", "") or "")
-    ref_clause = f' with session ref "{ref}"' if ref else ""
+    seq_num = getattr(session, "seq_num", None)
+    ref = f"#{seq_num}" if seq_num else (getattr(session, "id", "") or "")
+    ref_clause = f' with your own session ref "{ref}"' if ref else ""
     breadcrumb = (
-        "> ⚠️ This is a truncated head of the previous session's summary "
+        "> ⚠️ This is a truncated head of this session's pre-compaction summary "
         f"({len(summary)} chars total), shortened to fit the inline handoff "
         "budget. Call get_handoff_context (gobby-sessions)"
-        f"{ref_clause} or with no arguments to load the full summary."
+        f"{ref_clause} to load the full summary."
     )
     sections = split_markdown_sections(summary)
     real_sections = [section for section in sections if section.heading]
@@ -228,12 +310,12 @@ def _bound_handoff_summary(summary: str, parent: Any) -> str:
     return f"{allocation.text.rstrip()}{suffix}"
 
 
-def _preserve_compact_resume_required_skills(
+def _normalize_compact_resume_required_skills(
     sv_mgr: Any,
     session_id: str,
-    parent_vars: dict[str, Any],
+    current_vars: dict[str, Any],
 ) -> None:
-    raw_skills = parent_vars.get("compact_resume_required_skills")
+    raw_skills = current_vars.get("compact_resume_required_skills")
     if not isinstance(raw_skills, list):
         return
 
@@ -248,108 +330,5 @@ def _preserve_compact_resume_required_skills(
         seen.add(skill)
         skills.append(skill)
 
-    if skills:
+    if skills and skills != raw_skills:
         sv_mgr.merge_variables(session_id, {"compact_resume_required_skills": skills})
-
-
-def _get_parent_summary_for_handoff(handler: Any, parent_session_id: str) -> Any | None:
-    """Return the current parent session snapshot without blocking SessionStart."""
-    return handler._session_manager.get(parent_session_id)
-
-
-def _preserve_task_claim_state(
-    handler: Any,
-    sv_mgr: Any,
-    session_id: str,
-    parent_session_id: str,
-    parent_vars: dict[str, Any],
-) -> None:
-    task_claim_keys = ("task_claimed", "claimed_tasks", "session_had_task")
-    task_handoff = {k: parent_vars[k] for k in task_claim_keys if parent_vars.get(k)}
-    if not task_handoff:
-        return
-
-    claimed_tasks = task_handoff.get("claimed_tasks") or {}
-    merged_claims: dict[str, Any] = {}
-    if task_handoff.get("session_had_task"):
-        merged_claims["session_had_task"] = True
-
-    filtered_claims: dict[str, str] = {}
-    if task_handoff.get("task_claimed") and claimed_tasks:
-        filtered_claims = _filter_and_reassign_claimed_tasks(
-            handler,
-            session_id,
-            parent_session_id,
-            claimed_tasks,
-        )
-
-    if filtered_claims:
-        merged_claims["task_claimed"] = True
-        merged_claims["claimed_tasks"] = filtered_claims
-    if merged_claims:
-        sv_mgr.merge_variables(session_id, merged_claims)
-
-
-def _filter_and_reassign_claimed_tasks(
-    handler: Any,
-    session_id: str,
-    parent_session_id: str,
-    claimed_tasks: dict[str, str],
-) -> dict[str, str]:
-    filtered_claims: dict[str, str] = {}
-    for claimed_id, claimed_ref in claimed_tasks.items():
-        task_obj = None
-        if handler._task_manager:
-            try:
-                task_obj = handler._task_manager.get_task(claimed_id)
-            except Exception as e:
-                handler.logger.debug(
-                    "Best-effort task lookup failed for session=%s task=%s: %s",
-                    session_id,
-                    claimed_id,
-                    e,
-                )
-                continue
-
-        if task_obj is not None:
-            legacy_status = getattr(task_obj, "status", None)
-            if not is_task_actionable(task_obj) and legacy_status not in ACTIVE_STAGE_STATES:
-                continue
-            current_owner = get_claimed_session_id(task_obj)
-            if current_owner not in (None, parent_session_id):
-                handler.logger.debug(
-                    "Skipping task handoff for session=%s task=%s; already assigned to %s",
-                    session_id,
-                    claimed_id,
-                    current_owner,
-                )
-                continue
-            if handler._task_manager is None:
-                continue
-            try:
-                handler._task_manager.claim_task(
-                    claimed_id,
-                    session_id=session_id,
-                    force=current_owner == parent_session_id,
-                )
-            except Exception as e:
-                handler.logger.debug(
-                    "Best-effort task re-assignment failed for session=%s task=%s: %s",
-                    session_id,
-                    claimed_id,
-                    e,
-                )
-                continue
-
-        filtered_claims[claimed_id] = claimed_ref
-        if handler._session_task_manager:
-            try:
-                handler._session_task_manager.link_task(session_id, claimed_id, "claimed")
-            except Exception as e:
-                handler.logger.debug(
-                    "Best-effort session-task link failed for session=%s task=%s: %s",
-                    session_id,
-                    claimed_id,
-                    e,
-                )
-    return filtered_claims

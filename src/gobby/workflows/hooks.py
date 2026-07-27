@@ -621,7 +621,10 @@ class WorkflowHookHandler:
             return HookResponse(decision="allow")
 
         try:
-            session_id = event.metadata.get("_platform_session_id") or event.session_id or ""
+            # Canonical internal session id only. event.session_id is the
+            # provider external id and must never key session-scoped
+            # persistence; "" disables every session-scoped write below.
+            session_id = event.metadata.get("_platform_session_id") or ""
             eval_lock_state = self._reserve_eval_lock(session_id) if session_id else None
             eval_lock_acquired = False
 
@@ -920,7 +923,7 @@ class WorkflowHookHandler:
         try:
             return await asyncio.wait_for(self._evaluate_rules(event), timeout=self.timeout)
         except TimeoutError as exc:
-            session_id = event.metadata.get("_platform_session_id") or event.session_id or ""
+            session_id = event.metadata.get("_platform_session_id") or ""
             raise WorkflowEvaluationTimeout(
                 event_type=event.event_type,
                 session_id=session_id,

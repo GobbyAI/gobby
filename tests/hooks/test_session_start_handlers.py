@@ -22,6 +22,7 @@ from gobby.hooks.events import HookEventType
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.projects import LocalProjectManager
 from gobby.storage.sessions import SessionManager
+from gobby.storage.sessions._update_sentinel import UNSET
 from gobby.workflows.state_manager import SessionVariableManager
 
 from ._event_handler_helpers import make_event
@@ -877,7 +878,7 @@ class TestSessionStartNewSession:
         assert "_parent_session_id" not in event.metadata
         mock_dependencies["session_storage"].find_parent.assert_not_called()
         register_kwargs = mock_dependencies["session_manager"].register_session.call_args.kwargs
-        assert register_kwargs["parent_session_id"] is None
+        assert register_kwargs["parent_session_id"] is UNSET
         mock_dependencies["session_manager"].mark_session_expired.assert_not_called()
         mock_dependencies["task_manager"].claim_task.assert_not_called()
         copied_keys = {
@@ -914,12 +915,10 @@ class TestSessionStartNewSession:
         assert response.decision == "allow"
         # find_parent should NOT be called for startup sessions
         mock_dependencies["session_storage"].find_parent.assert_not_called()
-        # Parent should not be linked
+        # Stored parent linkage is preserved by the UNSET default, never adopted
         mock_dependencies["session_manager"].register_session.assert_called_once()
         call_kwargs = mock_dependencies["session_manager"].register_session.call_args
-        assert call_kwargs.kwargs.get("parent_session_id") is None or (
-            call_kwargs[1].get("parent_session_id") is None if call_kwargs[1] else True
-        )
+        assert call_kwargs.kwargs.get("parent_session_id") is UNSET
 
     def test_nested_grok_session_in_droid_pane_is_not_registered(
         self, mock_dependencies: dict[str, Any]
@@ -1015,7 +1014,7 @@ class TestSessionStartNewSession:
         with (
             patch("gobby.hooks.event_handlers._session_start.flow.seed_user_profile_content"),
             patch(
-                "gobby.hooks.event_handlers._session_start.flow.populate_handoff_session_variables",
+                "gobby.hooks.event_handlers._session_start.flow.prepare_compact_continuation_variables",
                 side_effect=psycopg.OperationalError("handoff vars unavailable"),
             ),
         ):
@@ -1089,22 +1088,20 @@ class TestSessionStartNewSession:
         assert response.decision == "allow"
 
     @patch("gobby.workflows.state_manager.SessionVariableManager")
-    def test_compact_state_transfer_error_expires_child_and_blocks_activation(
+    def test_compact_registration_failure_blocks_without_expiry(
         self, mock_sv_mgr_cls: MagicMock, mock_dependencies: dict[str, Any]
     ) -> None:
-        """A failed compact transfer preserves the parent and blocks child activation."""
+        """A compact start whose registration returns no session id blocks cleanly."""
         mock_sv_mgr_cls.return_value = MagicMock(get_variables=MagicMock(return_value={}))
 
-        mock_parent = MagicMock()
-        mock_parent.id = "parent-sess-123"
-        mock_parent.terminal_context = {"tmux_pane": "%12", "tmux_socket_path": "/tmp/tmux"}
+        row = MagicMock()
+        row.id = "sess-123"
+        row.status = "handoff_ready"
+        row.terminal_context = {"tmux_pane": "%12", "tmux_socket_path": "/tmp/tmux"}
 
         mock_dependencies["session_storage"].get.return_value = None
-        mock_dependencies["session_storage"].find_parent.return_value = mock_parent
-        mock_dependencies["session_manager"].register_session.return_value = "new-sess-456"
-        mock_dependencies["session_manager"].transfer_compact_handoff_state.side_effect = Exception(
-            "Failed to transfer"
-        )
+        mock_dependencies["session_storage"].find_by_external_id.return_value = row
+        mock_dependencies["session_manager"].register_session.return_value = ""
 
         handlers = EventHandlers(**mock_dependencies)
         event = make_event(
@@ -1120,10 +1117,43 @@ class TestSessionStartNewSession:
             response = handlers.handle_session_start(event)
 
         assert response.decision == "block"
-        assert "child activation was blocked" in (response.reason or "")
-        mock_dependencies["session_manager"].mark_session_expired.assert_called_once_with(
-            "new-sess-456"
+        assert "did not return a session ID" in (response.reason or "")
+        assert "_platform_session_id" not in event.metadata
+        mock_dependencies["session_manager"].mark_session_expired.assert_not_called()
+        activate_agent.assert_not_called()
+
+    @patch("gobby.workflows.state_manager.SessionVariableManager")
+    def test_compact_terminal_identity_conflict_blocks_before_registration(
+        self, mock_sv_mgr_cls: MagicMock, mock_dependencies: dict[str, Any]
+    ) -> None:
+        """A contradicting terminal identity blocks with no session writes."""
+        mock_sv_mgr_cls.return_value = MagicMock(get_variables=MagicMock(return_value={}))
+
+        row = MagicMock()
+        row.id = "sess-123"
+        row.status = "handoff_ready"
+        row.terminal_context = {"tmux_pane": "%12", "tmux_socket_path": "/tmp/tmux"}
+
+        mock_dependencies["session_storage"].get.return_value = None
+        mock_dependencies["session_storage"].find_by_external_id.return_value = row
+
+        handlers = EventHandlers(**mock_dependencies)
+        event = make_event(
+            HookEventType.SESSION_START,
+            session_id="ext-123",
+            data={
+                "source": "compact",
+                "terminal_context": {"tmux_pane": "%99", "tmux_socket_path": "/tmp/tmux"},
+            },
         )
+
+        with patch.object(handlers, "_activate_default_agent") as activate_agent:
+            response = handlers.handle_session_start(event)
+
+        assert response.decision == "block"
+        assert "_platform_session_id" not in event.metadata
+        mock_dependencies["session_manager"].register_session.assert_not_called()
+        mock_dependencies["session_manager"].mark_session_expired.assert_not_called()
         activate_agent.assert_not_called()
 
     def test_new_session_coordinator_registration_error(

@@ -25,6 +25,7 @@ from ._renumber import _RenumberMixin
 from ._terminal import _TerminalMixin
 from ._title_defaults import DIGEST_TITLE_SOURCE, MANUAL_TITLE_SOURCE, PROVISIONAL_TITLE_SOURCE
 from ._transcript import _TranscriptMixin
+from ._update_sentinel import UNSET, UnsetType
 from ._usage import _UsageMixin
 
 if TYPE_CHECKING:
@@ -150,7 +151,7 @@ class SessionManager(
         machine_id: str,
         source: str,
         project_id: str | None,
-        parent_session_id: str | None,
+        parent_session_id: str | None | UnsetType,
         transcript_path: str | None,
         title: str | None,
         git_branch: str | None,
@@ -204,7 +205,7 @@ class SessionManager(
         machine_id: str,
         source: str,
         project_id: str | None,
-        parent_session_id: str | None = None,
+        parent_session_id: str | None | UnsetType = UNSET,
         transcript_path: str | None = None,
         title: str | None = None,
         git_branch: str | None = None,
