@@ -131,7 +131,11 @@ def derive_child_manifest_specs(
         stage_names.append("epic_qa")
     if "pr" in by_name:
         stage_names.append("pr")
-    if "merge" in by_name or include_merge_stage:
+    # ``merge`` is terminal furniture for a lifecycle that has work to merge. A
+    # parent manifest carrying no work stage (an expansion-only build) must not
+    # produce a merge-only child, which the dispatcher would read as a ready
+    # first stage and immediately dispatch a merge orchestrator against.
+    if stage_names and ("merge" in by_name or include_merge_stage):
         stage_names.append("merge")
 
     specs: list[StageManifestSpec] = []

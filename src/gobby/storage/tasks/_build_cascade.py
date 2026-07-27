@@ -124,9 +124,12 @@ def cascade_build_state_to_subtree(
                     include_epic_qa=cast(str, row["task_type"]) == "epic",
                     include_merge_stage=include_merge_stage,
                 )
-                if not specs:
-                    raise ValueError("no child manifest stages were derived")
-                stage_states.initialize_manifest(task_id, specs, by_session_id=None)
+                # A parent manifest with no work stage (an expansion-only build)
+                # derives nothing for its children. That is a build with no
+                # per-child lifecycle, not a failure: propagate build state and
+                # leave the child manifestless.
+                if specs:
+                    stage_states.initialize_manifest(task_id, specs, by_session_id=None)
             except DispatchMutexUnavailableError as exc:
                 failures.append(
                     CascadeBuildFailure(

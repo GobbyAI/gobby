@@ -295,6 +295,48 @@ def test_cascade_can_force_merge_into_legacy_child_manifest_scope(
     assert [row.stage_name for row in child_rows] == ["development", "merge"]
 
 
+def test_cascade_never_forces_merge_onto_an_expansion_only_parent(
+    temp_db,
+    sample_project,
+) -> None:
+    task_manager = LocalTaskManager(temp_db)
+    epic = task_manager.create_task(
+        project_id=sample_project["id"],
+        title="Expansion-only parent scope",
+        task_type="epic",
+        category="planning",
+        validation_criteria="Test task completion is observable.",
+    )
+    child = task_manager.create_task(
+        project_id=sample_project["id"],
+        title="Child has nothing to merge yet",
+        parent_task_id=epic.id,
+        task_type="task",
+        category="docs",
+        validation_criteria="Test task completion is observable.",
+    )
+    task_manager.initialize_task_manifest(epic.id, stage_names=["expansion"])
+
+    result = cascade_build_state_to_subtree(
+        temp_db,
+        epic.id,
+        isolation=Isolation.worktree,
+        unattended=False,
+        allow_automation=True,
+        include_merge_stage=True,
+    )
+
+    child_rows = task_manager.stage_states.list_for_task(child.id)
+    assert [row.stage_name for row in child_rows] == []
+    # An empty derivation is a build with no per-child lifecycle, not a failure:
+    # the child still receives build state.
+    assert result.failures == ()
+    assert result.updated_count == 2
+    refreshed = task_manager.get_task(child.id)
+    assert refreshed is not None
+    assert refreshed.allow_automation is True
+
+
 def test_cascade_no_legacy_label_writes() -> None:
     source = source_text("src/gobby/storage/tasks/_build_cascade.py")
 
