@@ -263,7 +263,13 @@ def prepare_terminal_resume(
         if not rebound:
             raise ValueError("Daemon resume session ownership changed concurrently")
 
-    with session_manager._storage.db.transaction():
+    from gobby.storage.hub.protocol import SessionVariableMutation
+
+    # Immediate + session-variable lock so the nested merge_variables (which
+    # opens transaction_immediate itself) reuses this ambient transaction.
+    with session_manager._storage.db.transaction_immediate(
+        SessionVariableMutation(session_id=child_session.id)
+    ):
         if initial_variables:
             from gobby.workflows.state_manager import SessionVariableManager
 
