@@ -6,12 +6,12 @@ import logging
 from datetime import UTC, datetime, timedelta
 from typing import Any
 
-from gobby.agents.agent_cleanup import (
-    _deliver_existing_terminal_run_unshielded,
+from gobby.agents.kill import kill_agent
+from gobby.agents.terminal_delivery import (
+    deliver_existing_terminal_run_unshielded,
     run_terminal_delivery_offload,
     shielded_terminal_delivery,
 )
-from gobby.agents.kill import kill_agent
 from gobby.build.results import BuildAgentSummary, BuildTaskSummary
 from gobby.storage.agents import ACTIVE_AGENT_RUN_STATUSES, AgentRun, LocalAgentRunManager
 from gobby.storage.daemon_resume_keys import REAP_REQUESTED_AT_KEY
@@ -142,7 +142,7 @@ async def _cancel_active_agents(
                 if not transitioned:
                     logger.debug("Agent %s was already terminal while stopping build", run.id)
             finally:
-                await _deliver_existing_terminal_run_unshielded(
+                await deliver_existing_terminal_run_unshielded(
                     db=db,
                     agent_run_manager=run_manager,
                     completion_registry=completion_registry,

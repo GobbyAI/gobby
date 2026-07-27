@@ -34,7 +34,7 @@ async def cleanup_failed_spawn(
     run_storage = getattr(runner, "run_storage", None)
     if run_storage is not None:
         child_session_id = _fail_run(run_storage, run_id, error, child_session_id)
-        from gobby.agents.agent_cleanup import (
+        from gobby.agents.terminal_delivery import (
             deliver_existing_terminal_run,
             run_terminal_delivery_offload,
         )

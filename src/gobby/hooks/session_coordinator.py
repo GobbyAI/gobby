@@ -361,7 +361,7 @@ class SessionCoordinator:
         turns_used: int,
     ) -> Any | None:
         """Run the terminal storage chain on the managed executor."""
-        from gobby.agents.agent_cleanup import submit_terminal_delivery_offload
+        from gobby.agents.terminal_delivery import submit_terminal_delivery_offload
 
         try:
             future = submit_terminal_delivery_offload(
@@ -794,7 +794,7 @@ class SessionCoordinator:
         if not self._completion_registry:
             return
         try:
-            from gobby.agents.agent_cleanup import (
+            from gobby.agents.terminal_delivery import (
                 deliver_and_cleanup_terminal_run,
                 run_terminal_delivery_offload,
             )

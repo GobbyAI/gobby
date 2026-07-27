@@ -735,11 +735,11 @@ def create_agents_router(server: "HTTPServer") -> APIRouter:
     async def cancel_agent_run(run_id: str) -> dict[str, Any]:
         """Cancel a running agent."""
         try:
-            from gobby.agents.agent_cleanup import (
-                _deliver_existing_terminal_run_unshielded,
+            from gobby.agents.kill import kill_agent
+            from gobby.agents.terminal_delivery import (
+                deliver_existing_terminal_run_unshielded,
                 shielded_terminal_delivery,
             )
-            from gobby.agents.kill import kill_agent
             from gobby.storage.agents import LocalAgentRunManager
 
             db = server.services.database
@@ -764,7 +764,7 @@ def create_agents_router(server: "HTTPServer") -> APIRouter:
                             run_id,
                         )
                     finally:
-                        await _deliver_existing_terminal_run_unshielded(
+                        await deliver_existing_terminal_run_unshielded(
                             db=db,
                             agent_run_manager=manager,
                             completion_registry=server.services.completion_registry,

@@ -2,13 +2,11 @@ from __future__ import annotations
 
 import asyncio
 import logging
-import os
-from collections.abc import Awaitable, Callable, Coroutine
-from concurrent.futures import Future
-from typing import TYPE_CHECKING, Any, Protocol, cast
+from collections.abc import Awaitable, Callable
+from typing import TYPE_CHECKING, Any, cast
 
-from gobby.storage.agents import TERMINAL_AGENT_RUN_STATUSES
-from gobby.storage.attention import run_attention_entry_id
+from gobby.agents import terminal_delivery
+from gobby.agents.terminal_cleanup import TerminalResourceCleaner
 
 if TYPE_CHECKING:
     from gobby.agents.loop_tracker import LoopTracker
@@ -33,284 +31,8 @@ logger = logging.getLogger(__name__)
 SESSION_STATS_LOOKUP_TIMEOUT_SECONDS = 2.0
 
 
-class _TerminalRunStorage(Protocol):
-    db: Any
-
-    def get(self, run_id: str) -> Any | None: ...
-
-
-_terminal_delivery_admission_open = True
-_in_flight_terminal_deliveries: dict[asyncio.Task[Any], str] = {}
-
-
-async def _default_terminal_delivery_offload[T](
-    callback: Callable[..., T],
-    *args: object,
-    **kwargs: object,
-) -> T:
-    return await asyncio.to_thread(callback, *args, **kwargs)
-
-
-_terminal_delivery_offload: Callable[..., Awaitable[Any]] = _default_terminal_delivery_offload
-_terminal_delivery_submit: Callable[..., Future[Any]] | None = None
-
-
-def configure_terminal_delivery_offload(
-    *,
-    async_offload: Callable[..., Awaitable[Any]],
-    sync_submit: Callable[..., Future[Any]] | None = None,
-) -> None:
-    """Route terminal storage work through the owned daemon executor."""
-    global _terminal_delivery_offload, _terminal_delivery_submit
-    _terminal_delivery_offload = async_offload
-    _terminal_delivery_submit = sync_submit
-
-
-def reset_terminal_delivery_offload() -> None:
-    """Restore default executor seams for tests and pre-daemon callers."""
-    global _terminal_delivery_offload, _terminal_delivery_submit
-    _terminal_delivery_offload = _default_terminal_delivery_offload
-    _terminal_delivery_submit = None
-
-
-async def run_terminal_delivery_offload[T](
-    callback: Callable[..., T],
-    *args: object,
-    **kwargs: object,
-) -> T:
-    """Run blocking terminal storage work through the configured async seam."""
-    return cast(T, await _terminal_delivery_offload(callback, *args, **kwargs))
-
-
-def submit_terminal_delivery_offload[T](
-    callback: Callable[..., T],
-    *args: object,
-    **kwargs: object,
-) -> Future[T]:
-    """Submit terminal storage work from a synchronous hook thread."""
-    if _terminal_delivery_submit is not None:
-        return cast(Future[T], _terminal_delivery_submit(callback, *args, **kwargs))
-    future: Future[T] = Future()
-    try:
-        future.set_result(callback(*args, **kwargs))
-    except BaseException as exc:
-        future.set_exception(exc)
-    return future
-
-
-def close_terminal_delivery_admission() -> None:
-    """Prevent new terminal transition-and-delivery scopes from starting."""
-    global _terminal_delivery_admission_open
-    _terminal_delivery_admission_open = False
-
-
-def reopen_terminal_delivery_admission() -> None:
-    """Open terminal delivery admission for a newly-owned daemon lifecycle."""
-    if _in_flight_terminal_deliveries:
-        raise RuntimeError("Cannot reopen terminal delivery admission with work in flight")
-    global _terminal_delivery_admission_open
-    _terminal_delivery_admission_open = True
-
-
-async def shielded_terminal_delivery[T](
-    run_id: str,
-    operation: Callable[[], Coroutine[Any, Any, T]],
-) -> T | None:
-    """Settle one owned terminal transition-and-delivery operation under cancellation."""
-    if not _terminal_delivery_admission_open:
-        logger.info("Terminal delivery admission is closed for agent %s", run_id)
-        return None
-
-    owned: asyncio.Task[T] = asyncio.create_task(
-        operation(),
-        name=f"terminal-delivery:{run_id}",
-    )
-    _in_flight_terminal_deliveries[owned] = run_id
-    owned.add_done_callback(lambda task: _in_flight_terminal_deliveries.pop(task, None))
-
-    cancellation: asyncio.CancelledError | None = None
-    while not owned.done():
-        try:
-            await asyncio.shield(owned)
-        except asyncio.CancelledError as exc:
-            if cancellation is None:
-                cancellation = exc
-
-    if cancellation is not None:
-        try:
-            owned.result()
-        except BaseException:
-            logger.warning(
-                "Terminal delivery failed while caller cancellation settled for agent %s",
-                run_id,
-                exc_info=True,
-            )
-        raise cancellation
-    return owned.result()
-
-
-async def drain_shielded_terminal_deliveries() -> None:
-    """Await tracked terminal delivery scopes until the set is stably empty."""
-    while _in_flight_terminal_deliveries:
-        snapshot = tuple(_in_flight_terminal_deliveries)
-        await asyncio.gather(
-            *(asyncio.shield(task) for task in snapshot),
-            return_exceptions=True,
-        )
-
-
-def detach_shielded_terminal_deliveries() -> list[str]:
-    """Cancel overdue delivery work and retain durable rows for next-boot recovery."""
-    detached = list(_in_flight_terminal_deliveries.values())
-    for task in tuple(_in_flight_terminal_deliveries):
-        task.cancel()
-        _in_flight_terminal_deliveries.pop(task, None)
-    return detached
-
-
-async def deliver_and_cleanup_terminal_run(
-    *,
-    db: HubDatabase,
-    completion_registry: CompletionEventRegistry | None,
-    run_id: str,
-    result: dict[str, Any] | None,
-    message: str,
-    run_db: Callable[..., Awaitable[Any]],
-) -> dict[str, bool] | None:
-    """Deliver a terminal result, remove acknowledged rows, then evict registry state."""
-    if completion_registry is None:
-        return None
-
-    delivery: dict[str, bool] | None = None
-    if result is not None:
-        payload = result if "run_id" in result else {**result, "run_id": run_id}
-        try:
-            delivery = await completion_registry.notify(run_id, result=payload, message=message)
-        except Exception:
-            logger.warning("Failed to notify completion for %s", run_id, exc_info=True)
-
-    delivered_session_ids = (
-        [session_id for session_id, delivered in delivery.items() if delivered]
-        if isinstance(delivery, dict)
-        else []
-    )
-    try:
-        if delivered_session_ids:
-            from gobby.agents.completion_subscribers import (
-                remove_agent_completion_subscribers,
-            )
-
-            def remove_delivered_subscribers() -> None:
-                with db.bounded_transaction():
-                    remove_agent_completion_subscribers(
-                        db=db,
-                        run_id=run_id,
-                        session_ids=delivered_session_ids,
-                    )
-
-            await run_db(remove_delivered_subscribers)
-    except Exception:
-        logger.warning(
-            "Failed to remove delivered completion subscribers for agent %s",
-            run_id,
-            exc_info=True,
-        )
-    finally:
-        completion_registry.cleanup(run_id)
-    return delivery
-
-
-async def _deliver_existing_terminal_run_unshielded(
-    *,
-    db: HubDatabase,
-    agent_run_manager: _TerminalRunStorage,
-    completion_registry: CompletionEventRegistry | None,
-    run_id: str,
-    run_db: Callable[..., Awaitable[Any]],
-    message: str | None = None,
-) -> bool:
-    """Re-read one terminal run under bounds and deliver it without opening a scope."""
-
-    def read_terminal_run() -> AgentRun | None:
-        with db.bounded_transaction():
-            return agent_run_manager.get(run_id)
-
-    db_run = await run_db(read_terminal_run)
-    if db_run is None or db_run.status not in TERMINAL_AGENT_RUN_STATUSES:
-        return False
-    result = {
-        "status": db_run.status,
-        "run_id": db_run.id,
-        "error": db_run.error,
-    }
-    await deliver_and_cleanup_terminal_run(
-        db=db,
-        completion_registry=completion_registry,
-        run_id=run_id,
-        result=result,
-        message=message or f"Agent {run_id} {db_run.status}",
-        run_db=run_db,
-    )
-    return True
-
-
-async def deliver_existing_terminal_run(
-    *,
-    db: HubDatabase,
-    agent_run_manager: _TerminalRunStorage,
-    completion_registry: CompletionEventRegistry | None,
-    run_id: str,
-    run_db: Callable[..., Awaitable[Any]],
-    message: str | None = None,
-) -> bool:
-    """Shield a terminal re-read and acknowledged delivery from caller cancellation."""
-
-    async def operation() -> bool:
-        return await _deliver_existing_terminal_run_unshielded(
-            db=db,
-            agent_run_manager=agent_run_manager,
-            completion_registry=completion_registry,
-            run_id=run_id,
-            run_db=run_db,
-            message=message,
-        )
-
-    return bool(await shielded_terminal_delivery(run_id, operation))
-
-
-def cleanup_merged_task_artifacts_after_agent_exit(
-    db: HubDatabase,
-    task_id: str,
-    *,
-    preserve_worktree_id: str | None = None,
-) -> list[Any]:
-    """Retry merge artifact cleanup once the owning agent is no longer active."""
-    from gobby.build.controls import cleanup_successful_merge_artifacts
-    from gobby.storage.tasks import LocalTaskManager
-
-    task_manager = LocalTaskManager(db)
-
-    def cleanup() -> list[Any]:
-        if preserve_worktree_id:
-            return cleanup_successful_merge_artifacts(
-                db,
-                task_id,
-                preserve_worktree_ids={preserve_worktree_id},
-            )
-        return cleanup_successful_merge_artifacts(db, task_id)
-
-    merge_stage = task_manager.stage_states.get(task_id, "merge")
-    if merge_stage is not None and merge_stage.state == "done":
-        return cleanup()
-
-    task = task_manager.get_task(task_id)
-    if task is None or task.closed_at is None or task.closed_reason != "already_implemented":
-        return []
-    return cleanup()
-
-
 class AgentCleanupHandler:
-    """Handles terminal state transitions and cleanup for agent runs."""
+    """Coordinate terminal state transitions for agent runs."""
 
     def __init__(
         self,
@@ -333,18 +55,24 @@ class AgentCleanupHandler:
         self._agent_run_manager = agent_run_manager
         self._db = db
         self._get_session_manager = get_session_manager
-        self._get_session_coordinator = get_session_coordinator
-        self._clone_storage = clone_storage
         self._completion_registry = completion_registry
         self._task_recovery = task_recovery
-        self._prompt_detector = prompt_detector
-        self._terminal_prompt_monitor = terminal_prompt_monitor
-        self._stall_classifier = stall_classifier
-        self._loop_tracker = loop_tracker
-        self._master_fds = master_fds
-        self._kill_tmux_session = kill_tmux_session
         self._run_db_callback = run_db
-        self._attention_manager = attention_manager
+        self._resource_cleaner = TerminalResourceCleaner(
+            agent_run_manager=agent_run_manager,
+            db=db,
+            get_session_coordinator=get_session_coordinator,
+            clone_storage=clone_storage,
+            completion_registry=completion_registry,
+            prompt_detector=prompt_detector,
+            terminal_prompt_monitor=terminal_prompt_monitor,
+            stall_classifier=stall_classifier,
+            loop_tracker=loop_tracker,
+            master_fds=master_fds,
+            kill_tmux_session=kill_tmux_session,
+            run_db=self._run_db,
+            attention_manager=attention_manager,
+        )
 
     async def _run_db(self, func: Callable[..., Any], *args: Any, **kwargs: Any) -> Any:
         if self._run_db_callback is None:
@@ -359,7 +87,7 @@ class AgentCleanupHandler:
         message: str,
     ) -> None:
         """Notify waiters about a terminal run transition."""
-        await deliver_and_cleanup_terminal_run(
+        await terminal_delivery.deliver_and_cleanup_terminal_run(
             db=self._db,
             completion_registry=self._completion_registry,
             run_id=run_id,
@@ -379,163 +107,18 @@ class AgentCleanupHandler:
         force_full_cleanup: bool = False,
     ) -> None:
         """Release in-memory and isolation state for a terminal agent run."""
-        from gobby.agents.runtime_cleanup import cleanup_agent_runtime_state
-
-        parking = run.terminal_reason == "daemon_stop" and not force_full_cleanup
-        session_id = cleanup_session_id
-        if session_id is None:
-            session_id = run.child_session_id
-        if session_id is None and allow_parent_session_fallback:
-            session_id = run.parent_session_id
-        session_coordinator = self._get_session_coordinator()
-
-        if not parking:
-            await deliver_and_cleanup_terminal_run(
-                db=self._db,
-                completion_registry=self._completion_registry,
-                run_id=run.id,
-                result=notification_result,
-                message=notification_message,
-                run_db=self._run_db,
-            )
-
-        if self._attention_manager is not None:
-            try:
-                await self._attention_manager.transition_async(
-                    self._run_db,
-                    run_attention_entry_id(run.id),
-                    state=None,
-                )
-            except Exception:
-                logger.warning(
-                    "Failed to clear attention for terminal agent %s",
-                    run.id,
-                    exc_info=True,
-                )
-
-        fd = self._master_fds.pop(run.id, None)
-        if fd is not None:
-            try:
-                os.close(fd)
-            except OSError:
-                pass
-        await self._close_tmux_session(run)
-
-        self._prompt_detector.clear(run.id)
-        self._terminal_prompt_monitor.clear(run.id)
-        self._stall_classifier.clear(run.id)
-        self._loop_tracker.clear(run.id)
-
-        if not parking and session_coordinator and session_id:
-            try:
-                session_coordinator.release_session_worktrees(session_id)
-            except Exception as e:
-                logger.warning("Failed to release worktrees for agent %s: %s", run.id, e)
-
-        if not parking and self._clone_storage and run.clone_id:
-            try:
-                await self._run_db(self._clone_storage.release, run.clone_id)
-            except Exception as e:
-                logger.warning("Failed to release clone for agent %s: %s", run.id, e)
-
-        cleanup = await self._run_db(
-            cleanup_agent_runtime_state,
-            self._db,
-            run_id=run.id,
-            child_session_id=run.child_session_id,
-            terminal_reason=run.terminal_reason if parking else None,
+        await self._resource_cleaner.post_terminal_cleanup(
+            run,
+            cleanup_session_id=cleanup_session_id,
+            allow_parent_session_fallback=allow_parent_session_fallback,
+            notification_result=notification_result,
+            notification_message=notification_message,
+            force_full_cleanup=force_full_cleanup,
         )
-        if cleanup.dispatch_mutex_rows or cleanup.workflow_instance_rows:
-            logger.debug(
-                "Cleaned runtime state for agent %s: dispatch_mutex=%s workflow_instances=%s",
-                run.id,
-                cleanup.dispatch_mutex_rows,
-                cleanup.workflow_instance_rows,
-            )
-        if run.task_id and not parking:
-            try:
-                initial_variables = (run.resume_metadata_json or {}).get("initial_variables")
-                reused_worktree = (
-                    isinstance(initial_variables, dict)
-                    and initial_variables.get("reused_worktree") is True
-                )
-                cleanup_kwargs = (
-                    {"preserve_worktree_id": run.worktree_id}
-                    if reused_worktree and run.worktree_id
-                    else {}
-                )
-                artifacts = await self._run_db(
-                    cleanup_merged_task_artifacts_after_agent_exit,
-                    self._db,
-                    run.task_id,
-                    **cleanup_kwargs,
-                )
-                deleted_count = len([artifact for artifact in artifacts if artifact.deleted])
-                deferred_count = len([artifact for artifact in artifacts if artifact.deferred])
-                if deleted_count or deferred_count:
-                    logger.info(
-                        "Post-agent merge artifact cleanup for %s: deleted=%s deferred=%s",
-                        run.id,
-                        deleted_count,
-                        deferred_count,
-                    )
-            except Exception:
-                logger.warning(
-                    "Post-agent merge artifact cleanup failed for run %s task %s",
-                    run.id,
-                    run.task_id,
-                    exc_info=True,
-                )
-
-    async def _close_tmux_session(self, run: AgentRun) -> bool:
-        tmux_session_name = run.tmux_session_name
-        if not tmux_session_name or self._kill_tmux_session is None:
-            return False
-
-        latest = await self._run_db(self._agent_run_manager.get, run.id)
-        if latest is None or latest.tmux_session_name != tmux_session_name:
-            return False
-
-        try:
-            killed = await self._kill_tmux_session(tmux_session_name)
-        except Exception:
-            logger.warning(
-                "Failed to close lingering tmux session %s for terminal agent %s",
-                tmux_session_name,
-                run.id,
-                exc_info=True,
-            )
-            return False
-
-        if not killed:
-            logger.warning(
-                "Tmux session %s for terminal agent %s was not closed",
-                tmux_session_name,
-                run.id,
-            )
-            return False
-
-        cleared = await self._run_db(
-            self._agent_run_manager.clear_tmux_session_name,
-            run.id,
-            tmux_session_name,
-        )
-        if cleared:
-            logger.info(
-                "Closed lingering tmux session %s for terminal agent %s",
-                tmux_session_name,
-                run.id,
-            )
-        return cast(bool, cleared)
 
     async def cleanup_terminal_tmux_sessions(self) -> int:
         """Close tmux sessions left behind for already-terminal agent runs."""
-        runs = await self._run_db(self._agent_run_manager.list_terminal_with_tmux)
-        closed = 0
-        for run in runs:
-            if await self._close_tmux_session(run):
-                closed += 1
-        return closed
+        return await self._resource_cleaner.cleanup_terminal_tmux_sessions()
 
     async def _completion_stats_for_run(self, run: AgentRun) -> tuple[int, int]:
         tool_calls_count = run.tool_calls_count or 0
@@ -644,7 +227,7 @@ class AgentCleanupHandler:
                 completion_result=completion_result,
             )
 
-        return bool(await shielded_terminal_delivery(run_id, operation))
+        return bool(await terminal_delivery.shielded_terminal_delivery(run_id, operation))
 
     async def _terminalize_successful_run_unshielded(
         self,
@@ -740,7 +323,7 @@ class AgentCleanupHandler:
                 terminal_reason=terminal_reason,
             )
 
-        return bool(await shielded_terminal_delivery(run_id, operation))
+        return bool(await terminal_delivery.shielded_terminal_delivery(run_id, operation))
 
     async def _terminalize_cancelled_run_unshielded(
         self,
@@ -869,7 +452,7 @@ class AgentCleanupHandler:
 
             run_ids = list(dict.fromkeys(transitioned))
             for run_id in run_ids:
-                delivered = await _deliver_existing_terminal_run_unshielded(
+                delivered = await terminal_delivery.deliver_existing_terminal_run_unshielded(
                     db=self._db,
                     agent_run_manager=self._agent_run_manager,
                     completion_registry=self._completion_registry,
@@ -884,7 +467,7 @@ class AgentCleanupHandler:
             return run_ids
 
         return list(
-            await shielded_terminal_delivery("stale-sweeps", operation) or [],
+            await terminal_delivery.shielded_terminal_delivery("stale-sweeps", operation) or [],
         )
 
     async def cleanup_agent(

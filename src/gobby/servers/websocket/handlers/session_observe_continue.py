@@ -9,11 +9,11 @@ from typing import TYPE_CHECKING, Any
 from uuid import uuid4
 
 from gobby.agents import kill as agent_kill
-from gobby.agents.agent_cleanup import (
-    _deliver_existing_terminal_run_unshielded,
+from gobby.agents.sandbox import web_chat_sandbox_config, web_chat_sandbox_policy_hash
+from gobby.agents.terminal_delivery import (
+    deliver_existing_terminal_run_unshielded,
     shielded_terminal_delivery,
 )
-from gobby.agents.sandbox import web_chat_sandbox_config, web_chat_sandbox_policy_hash
 from gobby.servers.websocket.db import run_db
 from gobby.servers.websocket.handlers.session_observe_support import (
     _as_str,
@@ -67,7 +67,7 @@ async def _release_source_session(
                             terminal_reason="user_cancelled",
                         )
                     finally:
-                        await _deliver_existing_terminal_run_unshielded(
+                        await deliver_existing_terminal_run_unshielded(
                             db=session_manager.db,
                             agent_run_manager=arm,
                             completion_registry=mixin.completion_registry,

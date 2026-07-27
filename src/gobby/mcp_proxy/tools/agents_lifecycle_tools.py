@@ -241,8 +241,8 @@ def register_agent_lifecycle_tools(
                 ),
             )
 
-        from gobby.agents.agent_cleanup import (
-            _deliver_existing_terminal_run_unshielded,
+        from gobby.agents.terminal_delivery import (
+            deliver_existing_terminal_run_unshielded,
             run_terminal_delivery_offload,
             shielded_terminal_delivery,
         )
@@ -290,7 +290,7 @@ def register_agent_lifecycle_tools(
                 )
                 return result
             finally:
-                await _deliver_existing_terminal_run_unshielded(
+                await deliver_existing_terminal_run_unshielded(
                     db=kill_db,
                     agent_run_manager=ctx.agent_run_manager,
                     completion_registry=ctx.completion_registry,

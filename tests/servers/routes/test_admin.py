@@ -1269,7 +1269,7 @@ class TestTestEndpoints:
     # --- unregister-agent ---
 
     @patch(
-        "gobby.agents.agent_cleanup.deliver_existing_terminal_run",
+        "gobby.agents.terminal_delivery.deliver_existing_terminal_run",
         new_callable=AsyncMock,
     )
     @patch("gobby.storage.agents.LocalAgentRunManager")

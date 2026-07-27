@@ -64,7 +64,7 @@ async def terminalize_cancelled_agent_run(
     message: str | None = None,
 ) -> bool:
     """Cancel an agent run and recover its task claim even without lifecycle monitor wiring."""
-    from gobby.agents.agent_cleanup import (
+    from gobby.agents.terminal_delivery import (
         deliver_existing_terminal_run,
         run_terminal_delivery_offload,
     )
@@ -108,7 +108,7 @@ async def terminalize_killed_agent_run(
     task_manager: Any | None,
 ) -> dict[str, Any]:
     """Apply workflow terminal state after an explicit parent-side kill."""
-    from gobby.agents.agent_cleanup import (
+    from gobby.agents.terminal_delivery import (
         deliver_existing_terminal_run,
         run_terminal_delivery_offload,
     )
@@ -178,8 +178,8 @@ async def stop_agent_run(
     cleanup_terminal_artifacts: Any,
 ) -> dict[str, Any]:
     """Stop one agent run through the shared cancellation lifecycle."""
-    from gobby.agents.agent_cleanup import (
-        _deliver_existing_terminal_run_unshielded,
+    from gobby.agents.terminal_delivery import (
+        deliver_existing_terminal_run_unshielded,
         run_terminal_delivery_offload,
         shielded_terminal_delivery,
     )
@@ -241,7 +241,7 @@ async def stop_agent_run(
                 "terminal_reason": "user_cancelled",
             }
         finally:
-            await _deliver_existing_terminal_run_unshielded(
+            await deliver_existing_terminal_run_unshielded(
                 db=kill_db,
                 agent_run_manager=agent_run_manager,
                 completion_registry=completion_registry,

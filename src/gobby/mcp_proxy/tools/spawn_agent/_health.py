@@ -128,7 +128,7 @@ async def _deferred_tmux_health_check(
                     error=error,
                 )
                 if failed is not None:
-                    from gobby.agents.agent_cleanup import (
+                    from gobby.agents.terminal_delivery import (
                         deliver_existing_terminal_run,
                         run_terminal_delivery_offload,
                     )

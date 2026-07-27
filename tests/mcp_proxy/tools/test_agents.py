@@ -702,7 +702,7 @@ class TestStopAgent:
                 ),
             ) as cleanup,
             patch(
-                "gobby.agents.agent_cleanup._deliver_existing_terminal_run_unshielded",
+                "gobby.agents.terminal_delivery.deliver_existing_terminal_run_unshielded",
                 new_callable=AsyncMock,
                 return_value=True,
             ),

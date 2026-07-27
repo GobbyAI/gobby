@@ -5374,7 +5374,7 @@ async def test_unattached_spawn_cleanup_delivers_terminal_run(
     )
     monkeypatch.setattr(
         spawn_actions,
-        "_deliver_existing_terminal_run_unshielded",
+        "deliver_existing_terminal_run_unshielded",
         deliver_terminal_run,
     )
 

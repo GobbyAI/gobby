@@ -67,7 +67,7 @@ def _settle_async_close(awaitable: Coroutine[Any, Any, Any]) -> None:
 
 def rollback_runner_resources(runner: Any) -> None:
     """Release every known daemon-owned side effect installed during construction."""
-    from gobby.agents.agent_cleanup import reset_terminal_delivery_offload
+    from gobby.agents.terminal_delivery import reset_terminal_delivery_offload
     from gobby.agents.tmux import reset_tmux_globals
     from gobby.app_context import clear_app_context
     from gobby.runner_broadcasting import reset_agent_event_broadcasting

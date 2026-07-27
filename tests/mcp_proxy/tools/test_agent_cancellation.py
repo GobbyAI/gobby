@@ -443,7 +443,7 @@ async def test_terminalize_killed_error_shape_delivers_when_fail_reports_none() 
     runner.get_run.return_value = SimpleNamespace(status="cancelled")
 
     with patch(
-        "gobby.agents.agent_cleanup.deliver_existing_terminal_run",
+        "gobby.agents.terminal_delivery.deliver_existing_terminal_run",
         new_callable=AsyncMock,
     ) as deliver:
         result = await terminalize_killed_agent_run(

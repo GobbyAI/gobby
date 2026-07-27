@@ -185,7 +185,7 @@ async def run_daemon(
                     raise
                 raise SystemExit(1) from gate_error
 
-        from gobby.agents.agent_cleanup import (
+        from gobby.agents.terminal_delivery import (
             configure_terminal_delivery_offload,
             reopen_terminal_delivery_admission,
         )

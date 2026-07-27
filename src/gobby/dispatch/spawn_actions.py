@@ -8,8 +8,8 @@ import logging
 from collections.abc import Awaitable, Callable, Sequence
 from typing import Any, cast
 
-from gobby.agents.agent_cleanup import (
-    _deliver_existing_terminal_run_unshielded,
+from gobby.agents.terminal_delivery import (
+    deliver_existing_terminal_run_unshielded,
     run_terminal_delivery_offload,
     shielded_terminal_delivery,
 )
@@ -243,7 +243,7 @@ async def cleanup_unattached_spawned_run(
                 )
             return True
         finally:
-            await _deliver_existing_terminal_run_unshielded(
+            await deliver_existing_terminal_run_unshielded(
                 db=db,
                 agent_run_manager=run_storage,
                 completion_registry=completion_registry,

@@ -13,7 +13,7 @@ if TYPE_CHECKING:
     import uvicorn
 
 from gobby import app_context, runner_lifecycle_processes, runner_lifecycle_shutdown
-from gobby.agents import agent_cleanup
+from gobby.agents import terminal_delivery
 from gobby.hooks.event_handlers import EventHandlers
 from gobby.hooks.events import HookEventType
 from gobby.runner import GobbyRunner
@@ -1262,7 +1262,7 @@ class TestStopShutdownAgentPreservation:
             # The real cleanup closed the process-global terminal-delivery
             # admission gate; reopen it so later tests in this process can
             # start shielded deliveries again.
-            agent_cleanup.reopen_terminal_delivery_admission()
+            terminal_delivery.reopen_terminal_delivery_admission()
 
         # The old shutdown-time cancellation helper is gone; run storage sees
         # only the preservation listing and no cancel/fail/terminalize writes.

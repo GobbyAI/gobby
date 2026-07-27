@@ -341,7 +341,7 @@ async def _async_storage_call[ResultT](
     *args: object,
     **kwargs: object,
 ) -> ResultT:
-    from gobby.agents.agent_cleanup import (
+    from gobby.agents.terminal_delivery import (
         run_terminal_delivery_offload,
         shielded_terminal_delivery,
     )

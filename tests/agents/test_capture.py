@@ -14,7 +14,7 @@ from gobby.agents.capture import (
     capture_then_kill_async,
     capture_then_kill_sync,
 )
-from gobby.storage.agents import AgentRun
+from gobby.storage.agents import AgentRun, AgentRunStatus
 
 
 def _run(run_id: str, *, result: str | None = None) -> AgentRun:
@@ -100,7 +100,7 @@ class FakeCaptureStorage:
         self.runs[run_id] = updated
         return updated
 
-    def _terminal(self, run_id: str, status: str) -> AgentRun | None:
+    def _terminal(self, run_id: str, status: AgentRunStatus) -> AgentRun | None:
         run = self.runs[run_id]
         if run.status not in ("pending", "running"):
             return None

@@ -4,15 +4,15 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, Any
 
-from gobby.agents.agent_cleanup import (
+from gobby.agents.terminal_delivery import (
     configure_terminal_delivery_offload as configure_terminal_delivery_offload,
 )
-from gobby.agents.agent_cleanup import (
+from gobby.agents.terminal_delivery import (
     deliver_and_cleanup_terminal_run,
     run_terminal_delivery_offload,
     shielded_terminal_delivery,
 )
-from gobby.agents.agent_cleanup import (
+from gobby.agents.terminal_delivery import (
     reset_terminal_delivery_offload as reset_terminal_delivery_offload,
 )
 

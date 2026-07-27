@@ -1225,7 +1225,7 @@ class TestTerminalizeCancelledRun:
         )
 
         with patch(
-            "gobby.agents.agent_cleanup.cleanup_merged_task_artifacts_after_agent_exit",
+            "gobby.agents.terminal_cleanup.cleanup_merged_task_artifacts_after_agent_exit",
             return_value=[],
         ):
             transitioned = await monitor.terminalize_cancelled_run(

@@ -130,7 +130,7 @@ def register_testing_routes(router: APIRouter, server: "HTTPServer") -> None:
         Returns:
             Registration confirmation
         """
-        from gobby.agents.agent_cleanup import deliver_existing_terminal_run
+        from gobby.agents.terminal_delivery import deliver_existing_terminal_run
         from gobby.storage.agents import LocalAgentRunManager
 
         # Guard: Only available in test mode
@@ -209,7 +209,7 @@ def register_testing_routes(router: APIRouter, server: "HTTPServer") -> None:
         Returns:
             Unregistration confirmation
         """
-        from gobby.agents.agent_cleanup import deliver_existing_terminal_run
+        from gobby.agents.terminal_delivery import deliver_existing_terminal_run
         from gobby.storage.agents import LocalAgentRunManager
 
         # Guard: Only available in test mode

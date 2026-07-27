@@ -618,7 +618,7 @@ def register_agent_query_tools(
         description="Mark an active agent run as cancelled/unregistered (internal use).",
     )
     async def unregister_agent(run_id: str) -> dict[str, Any]:
-        from gobby.agents.agent_cleanup import (
+        from gobby.agents.terminal_delivery import (
             deliver_existing_terminal_run,
             run_terminal_delivery_offload,
         )

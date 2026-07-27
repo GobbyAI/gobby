@@ -9,7 +9,7 @@ from collections.abc import Awaitable, Callable
 from typing import TYPE_CHECKING, Any, Protocol
 
 from gobby import runner_lifecycle_processes
-from gobby.agents.agent_cleanup import (
+from gobby.agents.terminal_delivery import (
     close_terminal_delivery_admission,
     detach_shielded_terminal_deliveries,
     drain_shielded_terminal_deliveries,
