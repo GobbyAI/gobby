@@ -7,10 +7,12 @@ from datetime import UTC, datetime
 
 import pytest
 
+from gobby.agents import agent_cleanup
 from gobby.agents.capture import (
     CaptureTerminationResult,
     KillOutcome,
     TerminationErrorCode,
+    _async_storage_call,
     capture_then_kill_async,
     capture_then_kill_sync,
 )
@@ -30,6 +32,28 @@ def _run(run_id: str, *, result: str | None = None) -> AgentRun:
         result=result,
         tmux_session_name="shared-session",
     )
+
+
+@pytest.mark.asyncio
+async def test_async_storage_call_rejects_closed_admission_with_explicit_run_id() -> None:
+    invoked = False
+
+    def storage_callback() -> str:
+        nonlocal invoked
+        invoked = True
+        return "unexpected"
+
+    agent_cleanup.close_terminal_delivery_admission()
+    try:
+        with pytest.raises(
+            agent_cleanup.TerminalDeliveryAdmissionClosedError,
+            match="explicit-run-id",
+        ):
+            await _async_storage_call("explicit-run-id", storage_callback)
+    finally:
+        agent_cleanup.reopen_terminal_delivery_admission()
+
+    assert invoked is False
 
 
 class FakeCaptureStorage:

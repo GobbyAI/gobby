@@ -47,11 +47,14 @@ async def complete_and_notify_agent_run(
         if current is None or current.status not in {"success", "error", "timeout", "cancelled"}:
             return completed
 
-        result = notify_result or {
-            "status": current.status,
-            "run_id": run_id,
-            "error": getattr(current, "error", None),
-        }
+        result = dict(notify_result) if notify_result is not None else {"status": current.status}
+        result["run_id"] = run_id
+        if notify_result is None:
+            error = getattr(current, "error", None)
+            if error is not None:
+                result["error"] = error
+        elif result.get("error") is None:
+            result.pop("error", None)
         await deliver_and_cleanup_terminal_run(
             db=runner.run_storage.db,
             completion_registry=completion_registry,

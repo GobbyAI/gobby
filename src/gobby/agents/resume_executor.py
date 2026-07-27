@@ -72,7 +72,7 @@ async def resume_agent_run(
     runner: _ResumeRunner,
     session_manager: _SessionLookup,
     daemon_config: Any | None = None,
-    completion_registry: Any | None = None,
+    completion_registry: CompletionEventRegistry | None = None,
 ) -> ResumeAgentResult:
     """Start a provider-native resume process for a daemon-stop run.
 
@@ -212,9 +212,9 @@ async def resume_agent_run(
     env.update(spawn_context.env_vars)
     env.update(endpoint_env)
     if endpoint_api_base:
-        env["OPENAI_BASE_URL"] = endpoint_api_base
+        env[_RESUME_API_BASE_ENV_KEYS[provider]] = endpoint_api_base
     if endpoint_api_token:
-        env["OPENAI_API_KEY"] = endpoint_api_token
+        env[_RESUME_API_TOKEN_ENV_KEYS[provider]] = endpoint_api_token
     env["GOBBY_MACHINE_ID"] = _metadata_str(resume_metadata, "machine_id") or "unknown"
     sandbox_config = coerce_sandbox_config(resume_metadata.get("sandbox_config"))
     launch = SandboxLaunch(backend="provider-native", enforced=False)
@@ -539,7 +539,7 @@ async def _park_unlaunched_successor(
     original_run: AgentRun,
     successor_run_id: str,
     child_session_id: str,
-    completion_registry: Any | None,
+    completion_registry: CompletionEventRegistry | None,
 ) -> None:
     from gobby.agents.resume_finalization import finalize_resume_handoff
     from gobby.agents.runtime_cleanup import cleanup_agent_runtime_state
@@ -612,14 +612,24 @@ def _str_list(value: Any) -> list[str]:
     return [item for item in value if isinstance(item, str)]
 
 
+_RESUME_API_BASE_ENV_KEYS = {
+    "claude": "ANTHROPIC_BASE_URL",
+    "codex": "OPENAI_BASE_URL",
+    "droid": "FACTORY_API_BASE_URL",
+    "grok": "GROK_API_BASE",
+    "qwen": "QWEN_API_BASE",
+}
+_RESUME_API_TOKEN_ENV_KEYS = {
+    "claude": "ANTHROPIC_AUTH_TOKEN",
+    "codex": "OPENAI_API_KEY",
+    "droid": "FACTORY_API_KEY",
+    "grok": "XAI_API_KEY",
+    "qwen": "QWEN_API_KEY",
+}
+
+
 def _resume_api_base(provider: str, env: dict[str, str]) -> str | None:
-    key = {
-        "claude": "ANTHROPIC_BASE_URL",
-        "codex": "OPENAI_BASE_URL",
-        "droid": "FACTORY_API_BASE_URL",
-        "grok": "GROK_API_BASE",
-        "qwen": "QWEN_API_BASE",
-    }.get(provider)
+    key = _RESUME_API_BASE_ENV_KEYS.get(provider)
     return env.get(key) if key else None
 
 
@@ -629,4 +639,5 @@ def _sandbox_enabled(metadata: dict[str, Any]) -> bool:
 
 
 if TYPE_CHECKING:
+    from gobby.events.completion_registry import CompletionEventRegistry
     from gobby.storage.agents import LocalAgentRunManager

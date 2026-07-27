@@ -141,3 +141,15 @@ class TestCoordinatorOwnedWrites:
         instructions = agent.instructions or ""
         assert "coordinator" in instructions
         assert "apply_plan_review_manifest" in instructions
+
+    def test_review_step_blocks_coordinator_owned_plan_writes(
+        self,
+        agent: AgentDefinitionBody,
+    ) -> None:
+        review = find_step(agent.steps or [], "review")
+        assert review is not None
+        assert {
+            "gobby-plans:apply_plan_review_manifest",
+            "gobby-plans:finalize_plan_review_evidence",
+            "gobby-plans:checkpoint_plan_review_lesson_mint",
+        } <= set(review.blocked_mcp_tools or [])

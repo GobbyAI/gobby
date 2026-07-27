@@ -9,7 +9,7 @@ import os
 import platform
 import tempfile
 import uuid
-from collections.abc import Callable, Mapping
+from collections.abc import Awaitable, Callable, Mapping
 from pathlib import Path
 from typing import Any, Protocol
 
@@ -19,9 +19,10 @@ from gobby.ai._text_generation_adapters import (
     _seed_droid_factory_state,
 )
 from gobby.ai._tool_chat_contracts import (
+    LIMIT_STOP_REASONS,
+    TIMEOUT_STOP_REASON,
     ToolChatRequest,
     ToolChatResult,
-    ToolLoopLimits,
 )
 from gobby.ai._tool_chat_mcp_server import ToolLoopController, ToolRuntimeMCPServer
 from gobby.ai._tool_chat_tools import ToolRuntime, validate_policy
@@ -254,6 +255,20 @@ class DroidRpcClient:
                     }
                 )
                 return
+            await self._write(
+                {
+                    "jsonrpc": "2.0",
+                    "factoryApiVersion": _FACTORY_API_VERSION,
+                    "factoryProtocolVersion": _FACTORY_PROTOCOL_VERSION,
+                    "type": "response",
+                    "id": request_id,
+                    "error": {
+                        "code": -32601,
+                        "message": f"Method not found: {method}",
+                    },
+                }
+            )
+            return
         if message.get("method") == _SESSION_NOTIFICATION:
             if self._notification_observer is not None:
                 self._notification_observer(message)
@@ -359,7 +374,7 @@ class DroidSpawnToolChatAdapter:
         binding: CapabilityBinding,
     ) -> ToolChatResult:
         validate_policy(request.tool_policy)
-        limits = request.limits or ToolLoopLimits()
+        limits = request.effective_limits
         runtime = ToolRuntime(
             request.tool_policy,
             project_path=request.project_path,
@@ -395,14 +410,20 @@ class DroidSpawnToolChatAdapter:
 
             client.set_notification_observer(observe_turn)
             server = ToolRuntimeMCPServer(runtime, controller)
+            deadline = asyncio.get_running_loop().time() + limits.loop_timeout_seconds
+
+            async def within_deadline[T](operation: Awaitable[T]) -> T:
+                async with asyncio.timeout_at(deadline):
+                    return await operation
+
             try:
-                await server.start()
+                await within_deadline(server.start())
                 if server.url is None:
                     raise RuntimeError("Droid tool runtime MCP server did not start")
-                await client.start()
+                await within_deadline(client.start())
 
                 async def interrupt() -> None:
-                    await client.request("droid.interrupt_session", {})
+                    await within_deadline(client.request("droid.interrupt_session", {}))
 
                 controller.set_interrupt(interrupt)
                 init_params: dict[str, object] = {
@@ -427,22 +448,26 @@ class DroidSpawnToolChatAdapter:
                     init_params["modelId"] = model
                 if request.reasoning_effort is not None:
                     init_params["reasoningEffort"] = request.reasoning_effort
-                await client.request("droid.initialize_session", init_params)
+                await within_deadline(client.request("droid.initialize_session", init_params))
 
-                catalog = await client.request("droid.list_tools", {})
+                catalog = await within_deadline(client.request("droid.list_tools", {}))
                 native_ids = _native_tool_ids(catalog)
-                await client.request(
-                    "droid.update_session_settings",
-                    {"enabledToolIds": [], "disabledToolIds": native_ids},
+                await within_deadline(
+                    client.request(
+                        "droid.update_session_settings",
+                        {"enabledToolIds": [], "disabledToolIds": native_ids},
+                    )
                 )
-                _assert_native_tools_disabled(await client.request("droid.list_tools", {}))
+                _assert_native_tools_disabled(
+                    await within_deadline(client.request("droid.list_tools", {}))
+                )
 
                 prompt = request.prompt
                 if request.system_prompt:
                     prompt = f"{request.system_prompt}\n\n{request.prompt}"
-                await client.request("droid.add_user_message", {"text": prompt})
+                await within_deadline(client.request("droid.add_user_message", {"text": prompt}))
                 while True:
-                    event = await client.next_notification()
+                    event = await within_deadline(client.next_notification())
                     protocol_error = event.get("_protocol_error")
                     if isinstance(protocol_error, Exception):
                         raise protocol_error
@@ -466,11 +491,15 @@ class DroidSpawnToolChatAdapter:
                             saw_work = True
                     elif event_type == "error":
                         raise RuntimeError(f"Droid tool_chat error: {notification.get('message')}")
+            except TimeoutError:
+                controller.stop_reason = TIMEOUT_STOP_REASON
             except DroidProtocolError as exc:
                 raise _capability_error(binding, model, str(exc)) from exc
             finally:
-                await client.stop()
-                await server.stop()
+                try:
+                    await client.stop()
+                finally:
+                    await server.stop()
 
         stop_reason = controller.stop_reason or "completed"
         if stop_reason == "completed" and not text:
@@ -493,6 +522,6 @@ class DroidSpawnToolChatAdapter:
             stop_reason=stop_reason,
             trace=tuple(runtime.invocation_log),
             calls_used=runtime.calls_used,
-            budget_exhausted=stop_reason in {"max_turns", "max_tool_calls"},
+            budget_exhausted=stop_reason in LIMIT_STOP_REASONS,
             trace_available=True,
         )

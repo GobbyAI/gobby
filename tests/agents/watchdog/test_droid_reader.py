@@ -88,7 +88,7 @@ async def test_droid_assistant_activity_kind(
 
 
 @pytest.mark.asyncio
-async def test_droid_error_shaped_tool_result_and_session_end_stay_diagnostic_only(
+async def test_droid_session_end_marks_completed_turn_without_provider_error(
     tmp_path: Path,
 ) -> None:
     path = tmp_path / "diagnostic.jsonl"
@@ -112,10 +112,11 @@ async def test_droid_error_shaped_tool_result_and_session_end_stay_diagnostic_on
 
     snapshot = await DroidTranscriptWatchdogReader().read(str(path))
 
-    assert snapshot.latest_turn_event is None
+    assert snapshot.latest_turn_event == snapshot.tail[-1]
+    assert snapshot.latest_turn_kind == "completed"
     assert snapshot.provider_error_event is None
     assert snapshot.provider_error_kind is None
-    assert snapshot.has_conclusive_turn_completed is False
+    assert snapshot.has_conclusive_turn_completed is True
     assert snapshot.has_conclusive_capacity_error is False
     assert snapshot.tail[0].payload_type == "session_start"
     assert snapshot.tail[-1].payload_type == "session_end"

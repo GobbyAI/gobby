@@ -101,6 +101,24 @@ class AttentionMetadataStore:
                 wall_now=self._wall_clock(),
             )
 
+    def clear(self, entry_id: str) -> bool:
+        """Remove one chip and publish its cursor-ordered deletion."""
+        if not isinstance(entry_id, str) or not entry_id:
+            raise ValueError("entry_id is required")
+
+        with self.ordering.synchronized():
+            if self._entries.pop(entry_id, None) is None:
+                return False
+            self._publish(
+                {
+                    "entry_id": entry_id,
+                    "epoch": self.ordering.epoch,
+                    "seq": self.ordering.next_seq(),
+                    "metadata": None,
+                }
+            )
+            return True
+
     def snapshot(self) -> Mapping[str, Mapping[str, object]]:
         """Return an immutable-by-copy view of all unexpired metadata."""
         with self.ordering.synchronized():

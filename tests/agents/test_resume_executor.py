@@ -10,17 +10,18 @@ from uuid import UUID
 import pytest
 
 from gobby.agents import resume_executor
+from gobby.config.app import DaemonConfig
 from gobby.storage.agents import AgentRun
 
 _SUCCESSOR_ID = UUID("8d3579d5-f8ac-4db8-8ea6-b29027e8514f")
 
 
-def _original_run() -> AgentRun:
+def _original_run(*, provider: str = "codex") -> AgentRun:
     return AgentRun(
         id="e87bc595-eb81-4cd2-9745-06fc59dcd13d",
         parent_session_id="7d307ae2-5834-43d0-8d59-c385ab37885f",
         child_session_id="0bd17b43-4097-4efe-b16c-4c739ea4787d",
-        provider="codex",
+        provider=provider,
         prompt="Original prompt",
         status="cancelled",
         created_at=datetime(2026, 5, 30, tzinfo=UTC),
@@ -233,3 +234,129 @@ async def test_resume_rejects_relative_cwd_before_preparing_successor(
     assert result.success is False
     assert result.error == "resume_cwd_not_absolute"
     prepare.assert_not_called()
+
+
+@pytest.mark.unit
+@pytest.mark.asyncio
+async def test_resume_responses_endpoint_rebuilds_child_scoped_codex_config(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    provider_override = 'model_provider="gobby_endpoint_openrouter"'
+    metadata = _resume_metadata()
+    metadata["model"] = "endpoint:openrouter/moonshotai/kimi-k3"
+    metadata["config_overrides"] = [provider_override]
+    storage = MagicMock()
+    runner = _runner(storage=storage)
+    spawner = MagicMock()
+    spawner.spawn.return_value = _spawn_result()
+    finalize = MagicMock()
+    prepare = _patch_common(monkeypatch, spawner=spawner, finalize=finalize)
+    build_cli = MagicMock(return_value=(["codex", "resume"], {}))
+    monkeypatch.setattr(resume_executor, "build_cli_command", build_cli)
+
+    result = await resume_executor.resume_agent_run(
+        _original_run(),
+        resume_metadata=metadata,
+        runner=runner,
+        session_manager=MagicMock(),
+        daemon_config=DaemonConfig(
+            ai={
+                "generation": {
+                    "endpoints": {
+                        "openrouter": {
+                            "protocol": "openai-compatible",
+                            "wire_api": "responses",
+                            "api_base": "https://openrouter.ai/api/v1",
+                            "api_key": "sk-openrouter-test",
+                            "model": "moonshotai/kimi-k3",
+                        }
+                    }
+                }
+            }
+        ),
+    )
+
+    assert result.success is True
+    build_kwargs = build_cli.call_args.kwargs
+    assert build_kwargs["cli"] == "codex"
+    assert build_kwargs["model"] == "moonshotai/kimi-k3"
+    assert build_kwargs["resume_session_id"] == "native-123"
+    overrides = build_kwargs["config_overrides"]
+    assert overrides.count(provider_override) == 1
+    assert 'model="moonshotai/kimi-k3"' in overrides
+    assert (
+        'model_providers.gobby_endpoint_openrouter.base_url="https://openrouter.ai/api/v1"'
+        in overrides
+    )
+    spawn_env = spawner.spawn.call_args.kwargs["env"]
+    assert spawn_env["GOBBY_CODEX_ENDPOINT_API_KEY"] == "sk-openrouter-test"
+    assert "sk-openrouter-test" not in repr(build_kwargs)
+    assert "sk-openrouter-test" not in repr(prepare.call_args.kwargs)
+    merge_calls = storage.merge_resume_metadata.call_args_list
+    assert merge_calls
+    assert all("sk-openrouter-test" not in repr(call) for call in merge_calls)
+    launch_updates = merge_calls[0].args[1]
+    assert launch_updates["config_overrides"].count(provider_override) == 1
+    assert 'model="moonshotai/kimi-k3"' in launch_updates["config_overrides"]
+
+
+@pytest.mark.unit
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("provider", "base_env", "token_env"),
+    [
+        ("droid", "FACTORY_API_BASE_URL", "FACTORY_API_KEY"),
+        ("grok", "GROK_API_BASE", "XAI_API_KEY"),
+        ("qwen", "QWEN_API_BASE", "QWEN_API_KEY"),
+    ],
+)
+async def test_resume_non_codex_endpoint_uses_provider_specific_environment(
+    provider: str,
+    base_env: str,
+    token_env: str,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    metadata = _resume_metadata()
+    metadata["provider"] = provider
+    metadata["model"] = "endpoint:resume-test/provider-model"
+    storage = MagicMock()
+    runner = _runner(storage=storage)
+    spawner = MagicMock()
+    spawner.spawn.return_value = _spawn_result()
+    _patch_common(monkeypatch, spawner=spawner, finalize=MagicMock())
+    monkeypatch.setattr(
+        "gobby.agents.resume_executor.shutil.which",
+        lambda _command: "/usr/bin/provider",
+    )
+    monkeypatch.setattr(
+        resume_executor,
+        "build_cli_command",
+        MagicMock(return_value=([provider, "resume"], {})),
+    )
+
+    result = await resume_executor.resume_agent_run(
+        _original_run(provider=provider),
+        resume_metadata=metadata,
+        runner=runner,
+        session_manager=MagicMock(),
+        daemon_config=DaemonConfig(
+            ai={
+                "generation": {
+                    "endpoints": {
+                        "resume-test": {
+                            "protocol": "openai-compatible",
+                            "wire_api": "chat-completions",
+                            "api_base": "https://resume.example/v1",
+                            "api_key": "resume-secret",
+                            "model": "provider-model",
+                        }
+                    }
+                }
+            }
+        ),
+    )
+
+    assert result.success is True
+    spawn_env = spawner.spawn.call_args.kwargs["env"]
+    assert spawn_env[base_env] == "https://resume.example/v1"
+    assert spawn_env[token_env] == "resume-secret"

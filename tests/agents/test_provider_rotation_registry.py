@@ -4,11 +4,15 @@ from __future__ import annotations
 
 from unittest.mock import Mock
 
+import pytest
+
 from gobby.agents.detection.registry import DetectionManifestRegistry
 from gobby.agents.provider_rotation import get_failed_providers_for_task
 from gobby.agents.stall_classifier import StallClassifier
 from gobby.storage.hub.protocol import HubDatabase
 from tests.agents.detection_test_support import replace_detection_manifest
+
+pytestmark = pytest.mark.unit
 
 
 def test_rotation_classifier_sees_content_edit(temp_db: HubDatabase) -> None:

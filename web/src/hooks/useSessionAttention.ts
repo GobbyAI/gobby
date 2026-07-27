@@ -26,6 +26,8 @@ interface BlockedAttentionEntry {
   reason: string;
 }
 
+const ATTENTION_ROSTER_REFRESH_MS = 5_000;
+
 function parseAttentionEvent(
   data: Record<string, unknown>,
 ): AttentionEvent | null {
@@ -233,6 +235,12 @@ export function useSessionAttention() {
 
   useEffect(() => {
     void fetchAttentionRoster();
+    const refreshTimer = window.setInterval(() => {
+      void fetchAttentionRoster();
+    }, ATTENTION_ROSTER_REFRESH_MS);
+    return () => {
+      clearInterval(refreshTimer);
+    };
   }, [fetchAttentionRoster]);
 
   useEffect(() => {

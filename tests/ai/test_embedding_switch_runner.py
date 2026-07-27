@@ -161,8 +161,8 @@ async def test_flip_records_old_targets_before_config_write(
     assert journal.phase == PHASE_ACTIVE
     assert store.operations[0][0] == "set"
     assert store.operations[1][0] == "owner_set"
-    config_entries = store.operations[1][1]
-    assert config_entries == journal.run_id
+    run_id = store.operations[1][1]
+    assert run_id == journal.run_id
     assert store.operations[1][2][AI_EMBEDDING_API_BASE_KEY] is None
     assert journal.old_physical_names["memories"] == "memories@old"
     assert ("alias", "memories@4096-run", "memories") in vector_store.operations

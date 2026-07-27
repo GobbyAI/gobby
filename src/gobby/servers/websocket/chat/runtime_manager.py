@@ -77,7 +77,7 @@ class WebChatRuntimeManager:
                         endpoint_name,
                         endpoint,
                     ),
-                    env_overrides=codex_endpoint_app_server_env(endpoint),
+                    env_overrides=codex_endpoint_app_server_env(endpoint_name, endpoint),
                 )
             else:
                 try:

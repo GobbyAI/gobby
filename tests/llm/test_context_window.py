@@ -18,10 +18,12 @@ from unittest.mock import MagicMock, patch
 import psycopg
 import pytest
 
+import gobby.llm.context_windows as context_windows
 from gobby.llm.context_windows import (
     coerce_context_length,
     provider_catalog_context_length_for_model,
     reconcile_model_context,
+    reset_unknown_context_window_warnings,
     resolve_context_window,
     resolve_context_window_with_source,
 )
@@ -140,6 +142,47 @@ def test_coerce_context_length_requires_whole_positive_floats(
     expected: int | None,
 ) -> None:
     assert coerce_context_length(value) == expected
+
+
+@pytest.mark.parametrize("value", [{"unexpected": "shape"}, ["unexpected"]])
+def test_nonprimitive_provider_reported_context_window_is_safe(value: object) -> None:
+    assert coerce_context_length(value) is None
+
+    with patch("gobby.llm.model_registry.lookup_context_window", return_value=None):
+        result = resolve_context_window_with_source(
+            "codex/nonprimitive-context-window",
+            provider="codex",
+            provider_reported_context_window=value,
+            catalog=None,
+        )
+
+    assert result is not None
+    assert result.value is None
+    assert result.source == "unknown"
+
+
+def test_unknown_context_window_warning_dedup_is_bounded(
+    caplog: pytest.LogCaptureFixture,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    reset_unknown_context_window_warnings()
+    monkeypatch.setattr(context_windows, "_UNKNOWN_CONTEXT_WINDOW_WARNING_LIMIT", 2)
+    models = ["codex/future-a", "codex/future-b", "codex/future-c", "codex/future-a"]
+
+    try:
+        with (
+            caplog.at_level("WARNING", logger="gobby.llm.context_windows"),
+            patch("gobby.llm.model_registry.lookup_context_window", return_value=None),
+        ):
+            for model in models:
+                resolve_context_window_with_source(model, provider="codex", catalog=None)
+    finally:
+        reset_unknown_context_window_warnings()
+
+    warnings = [record.getMessage() for record in caplog.records]
+    assert sum("codex/future-a" in message for message in warnings) == 2
+    assert sum("codex/future-b" in message for message in warnings) == 1
+    assert sum("codex/future-c" in message for message in warnings) == 1
 
 
 class _FakeCatalog:

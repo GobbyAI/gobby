@@ -132,7 +132,7 @@ def _read_qwen_snapshot(path: str) -> WatchdogTranscriptSnapshot:
             TranscriptEventSummary(
                 line_num=line_num,
                 timestamp=timestamp,
-                event_type=record_type if record_type != "tool_result" else "message",
+                event_type=record_type,
                 payload_type=_payload_type(record_type, part_types),
             )
         )

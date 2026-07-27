@@ -337,6 +337,7 @@ async def _settle_acquisition_worker(
 
 
 async def _async_storage_call[ResultT](
+    explicit_run_id: str,
     callback: Callable[..., ResultT],
     *args: object,
     **kwargs: object,
@@ -346,12 +347,14 @@ async def _async_storage_call[ResultT](
         shielded_terminal_delivery,
     )
 
-    run_id = next((value for value in args if isinstance(value, str)), "capture")
-
     async def operation() -> ResultT:
         return await run_terminal_delivery_offload(callback, *args, **kwargs)
 
-    return cast(ResultT, await shielded_terminal_delivery(run_id, operation))
+    return await shielded_terminal_delivery(
+        explicit_run_id,
+        operation,
+        raise_if_closed=True,
+    )
 
 
 async def capture_then_kill_async(
@@ -394,6 +397,7 @@ async def capture_then_kill_async(
     try:
         try:
             run = await _async_storage_call(
+                run_id,
                 storage.record_termination_intent,
                 run_id,
                 action=action,
@@ -424,6 +428,7 @@ async def capture_then_kill_async(
             if not (capture_failed and not alive and run.capture_id is not None):
                 try:
                     persisted = await _async_storage_call(
+                        run_id,
                         _persist_capture_sync,
                         storage,
                         run,
@@ -474,6 +479,7 @@ async def capture_then_kill_async(
                 transitioned = await terminalize(action, payload)
             else:
                 transitioned = await _async_storage_call(
+                    run_id,
                     _default_terminalize,
                     storage,
                     run_id,
@@ -483,7 +489,7 @@ async def capture_then_kill_async(
         except Exception as exc:
             return _failure(TerminationErrorCode.TERMINAL_TRANSITION_FAILED, str(exc), run)
         if transitioned is None:
-            latest = await _async_storage_call(storage.get, run_id)
+            latest = await _async_storage_call(run_id, storage.get, run_id)
             if latest is None or latest.status in ("pending", "running"):
                 return _failure(
                     TerminationErrorCode.TERMINAL_TRANSITION_FAILED,

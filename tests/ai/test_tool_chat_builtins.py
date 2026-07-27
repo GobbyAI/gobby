@@ -9,7 +9,7 @@ import sys
 import threading
 import time
 from collections.abc import Callable, Coroutine
-from typing import Any, cast
+from typing import Any
 
 import pytest
 
@@ -262,7 +262,7 @@ def test_result_cap_rejects_one_below_minimum_and_accepts_minimum() -> None:
 @pytest.mark.parametrize("timeout", [0, -1.0])
 def test_nonpositive_outer_timeout_is_rejected(timeout: float) -> None:
     with pytest.raises(ToolLoopConfigurationError, match="must be positive"):
-        ToolLoopLimits(tool_timeout_seconds=cast(int, timeout))
+        ToolLoopLimits(tool_timeout_seconds=timeout)
 
 
 @pytest.mark.asyncio
@@ -338,7 +338,7 @@ async def test_layered_deadline_reaps_child_and_worker_before_return(
     runtime = ToolRuntime(
         _policy(),
         project_path="/repo",
-        limits=ToolLoopLimits(tool_timeout_seconds=cast(int, timeout)),
+        limits=ToolLoopLimits(tool_timeout_seconds=timeout),
         builtins=(_spec(handler),),
     )
 
@@ -377,7 +377,7 @@ async def test_outer_timeout_awaits_child_cleanup_and_worker_completion() -> Non
     runtime = ToolRuntime(
         _policy(),
         project_path="/repo",
-        limits=ToolLoopLimits(tool_timeout_seconds=cast(int, 0.1)),
+        limits=ToolLoopLimits(tool_timeout_seconds=0.1),
         builtins=(_spec(handler),),
     )
     asyncio.get_running_loop().call_later(0.15, release_worker.set)

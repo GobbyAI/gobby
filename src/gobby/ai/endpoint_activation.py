@@ -46,7 +46,7 @@ class EndpointActivationResult:
 def _client(endpoint_name: str, endpoint: GenerationEndpointConfig) -> CodexAppServerClient:
     return CodexAppServerClient(
         config_overrides=codex_endpoint_config_overrides(endpoint_name, endpoint),
-        env_overrides=codex_endpoint_app_server_env(endpoint),
+        env_overrides=codex_endpoint_app_server_env(endpoint_name, endpoint),
     )
 
 
@@ -242,17 +242,28 @@ async def probe_responses_endpoint(
     if endpoint.wire_api != "responses":
         raise ValueError("Activation probing is only required for Responses endpoints")
     api_key = next(iter(codex_endpoint_env(endpoint).values()))
-    try:
-        await _retry_activation(lambda: _probe_text(endpoint_name, endpoint))
-        await _retry_activation(lambda: _probe_tool_context_and_resume(endpoint_name, endpoint))
-    except Exception as exc:
-        raise _sanitized_activation_error(exc, api_key) from exc
 
-    if not endpoint.vision_extract:
-        return EndpointActivationResult(endpoint=endpoint, vision_enabled=False)
+    async def probe_chain() -> EndpointActivationResult:
+        try:
+            await _retry_activation(lambda: _probe_text(endpoint_name, endpoint))
+            await _retry_activation(lambda: _probe_tool_context_and_resume(endpoint_name, endpoint))
+        except Exception as exc:
+            raise _sanitized_activation_error(exc, api_key) from exc
+
+        if not endpoint.vision_extract:
+            return EndpointActivationResult(endpoint=endpoint, vision_enabled=False)
+        try:
+            await _retry_activation(lambda: _probe_vision(endpoint_name, endpoint, daemon_config))
+        except Exception:
+            text_only = endpoint.model_copy(update={"vision_extract": False})
+            return EndpointActivationResult(endpoint=text_only, vision_enabled=False)
+        return EndpointActivationResult(endpoint=endpoint, vision_enabled=True)
+
+    timeout_seconds = daemon_config.ai.generation.timeout_seconds
     try:
-        await _retry_activation(lambda: _probe_vision(endpoint_name, endpoint, daemon_config))
-    except Exception:
-        text_only = endpoint.model_copy(update={"vision_extract": False})
-        return EndpointActivationResult(endpoint=text_only, vision_enabled=False)
-    return EndpointActivationResult(endpoint=endpoint, vision_enabled=True)
+        async with asyncio.timeout(timeout_seconds):
+            return await probe_chain()
+    except TimeoutError as exc:
+        raise EndpointActivationError(
+            f"Responses endpoint activation timed out after {timeout_seconds:g} seconds"
+        ) from exc

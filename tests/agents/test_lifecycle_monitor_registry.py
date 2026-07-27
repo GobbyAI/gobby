@@ -2,12 +2,16 @@
 
 from __future__ import annotations
 
+import pytest
+
 from gobby.agents.detection.registry import DetectionManifestRegistry
 from gobby.agents.lifecycle_monitor import AgentLifecycleMonitor
 from gobby.config.tmux import TmuxConfig
 from gobby.storage.agents import LocalAgentRunManager
 from gobby.storage.hub.protocol import HubDatabase
 from tests.agents.detection_test_support import replace_detection_manifest
+
+pytestmark = pytest.mark.integration
 
 
 def test_warm_monitor_sees_content_edit(temp_db: HubDatabase) -> None:

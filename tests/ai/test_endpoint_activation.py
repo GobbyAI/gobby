@@ -82,6 +82,38 @@ async def test_vision_only_failure_activates_text_only(
 
 
 @pytest.mark.asyncio
+async def test_activation_timeout_covers_complete_serial_probe_chain(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    calls: list[str] = []
+
+    async def slow_text(*_args: object) -> None:
+        calls.append("text")
+        await asyncio.sleep(0.03)
+
+    async def slow_tool(*_args: object) -> None:
+        calls.append("tool")
+        await asyncio.sleep(0.03)
+
+    async def slow_vision(*_args: object) -> None:
+        calls.append("vision")
+        await asyncio.sleep(0.03)
+
+    monkeypatch.setattr(endpoint_activation, "_probe_text", slow_text)
+    monkeypatch.setattr(endpoint_activation, "_probe_tool_context_and_resume", slow_tool)
+    monkeypatch.setattr(endpoint_activation, "_probe_vision", slow_vision)
+
+    with pytest.raises(EndpointActivationError, match="timed out after 0.05 seconds"):
+        await probe_responses_endpoint(
+            "openrouter",
+            _endpoint(),
+            DaemonConfig(ai={"generation": {"timeout_seconds": 0.05}}),
+        )
+
+    assert calls == ["text", "tool"]
+
+
+@pytest.mark.asyncio
 async def test_activation_retries_transient_errors_three_times_and_honors_retry_after(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

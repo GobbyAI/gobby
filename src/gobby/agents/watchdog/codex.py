@@ -1,10 +1,15 @@
 """Codex rollout reader for provider-neutral watchdog signals."""
 
 import asyncio
-from collections import deque
+import json
+from collections import OrderedDict, deque
+from dataclasses import dataclass, field
 from datetime import datetime
+from pathlib import Path
+from threading import Lock
+from typing import cast
 
-from gobby.agents.watchdog._scan import ScanVerdict, scan_jsonl
+from gobby.agents.watchdog._scan import ScanVerdict
 from gobby.agents.watchdog.models import (
     WATCHDOG_TAIL_LIMIT,
     ActivityKind,
@@ -15,6 +20,29 @@ from gobby.agents.watchdog.models import (
 from gobby.utils.datetime import parse_stored_datetime
 
 CODEX_MODEL_CAPACITY_MESSAGE = "Selected model is at capacity. Please try a different model."
+_CODEX_SCAN_STATE_LIMIT = 128
+_CODEX_RESUME_GUARD_BYTES = 256
+
+
+@dataclass
+class _CodexScanState:
+    device: int
+    inode: int
+    offset: int = 0
+    line_num: int = 0
+    guard_start: int = 0
+    resume_guard: bytes = b""
+    tail: deque[TranscriptEventSummary] = field(
+        default_factory=lambda: deque(maxlen=WATCHDOG_TAIL_LIMIT)
+    )
+    turn_started_event: TranscriptEventSummary | None = None
+    latest_turn_event: TranscriptEventSummary | None = None
+    latest_turn_kind: TurnEventKind | None = None
+    provider_error_event: TranscriptEventSummary | None = None
+    provider_error_reason: str | None = None
+    latest_activity_kind: ActivityKind | None = None
+    latest_model_output_line_num: int | None = None
+    last_malformed_line_num: int | None = None
 
 
 def _parse_timestamp(value: object) -> datetime | None:
@@ -42,25 +70,30 @@ def _response_activity_kind(payload_type: str, payload: dict[str, object]) -> Ac
     return "other"
 
 
-def _read_codex_snapshot(path: str) -> WatchdogTranscriptSnapshot:
-    tail: deque[TranscriptEventSummary] = deque(maxlen=WATCHDOG_TAIL_LIMIT)
-    turn_started_event: TranscriptEventSummary | None = None
-    latest_turn_event: TranscriptEventSummary | None = None
-    latest_turn_kind: TurnEventKind | None = None
-    provider_error_event: TranscriptEventSummary | None = None
-    provider_error_reason: str | None = None
-    latest_activity_kind: ActivityKind | None = None
-    latest_model_output_line_num: int | None = None
+def _read_codex_snapshot(
+    path: str,
+    states: OrderedDict[str, _CodexScanState] | None = None,
+) -> WatchdogTranscriptSnapshot:
+    transcript_path = Path(path)
+    stat = transcript_path.stat()
+    state = states.get(path) if states is not None else None
+    guard_matches = True
+    if state is not None and state.resume_guard:
+        with transcript_path.open("rb") as guard_handle:
+            guard_handle.seek(state.guard_start)
+            guard_matches = guard_handle.read(len(state.resume_guard)) == state.resume_guard
+    if (
+        state is None
+        or state.device != stat.st_dev
+        or state.inode != stat.st_ino
+        or state.offset > stat.st_size
+        or not guard_matches
+    ):
+        state = _CodexScanState(device=stat.st_dev, inode=stat.st_ino)
+        if states is not None:
+            states[path] = state
 
     def classify(line_num: int, data: dict[str, object]) -> ScanVerdict:
-        nonlocal turn_started_event
-        nonlocal latest_turn_event
-        nonlocal latest_turn_kind
-        nonlocal provider_error_event
-        nonlocal provider_error_reason
-        nonlocal latest_activity_kind
-        nonlocal latest_model_output_line_num
-
         event_type = data.get("type")
         if not isinstance(event_type, str):
             return ScanVerdict.MALFORMED
@@ -83,46 +116,77 @@ def _read_codex_snapshot(path: str) -> WatchdogTranscriptSnapshot:
             payload_type=payload_type,
         )
         if event_type == "response_item":
-            tail.append(summary)
-            latest_activity_kind = _response_activity_kind(payload_type, payload)
+            state.tail.append(summary)
+            state.latest_activity_kind = _response_activity_kind(payload_type, payload)
             if payload_type != "message" or payload.get("role") != "user":
-                latest_model_output_line_num = line_num
+                state.latest_model_output_line_num = line_num
             return ScanVerdict.VALID
 
         if payload_type in {"agent_message", "agent_reasoning"}:
-            latest_model_output_line_num = line_num
+            state.latest_model_output_line_num = line_num
         if payload_type == "task_started":
-            turn_started_event = summary
-            latest_turn_event = summary
-            latest_turn_kind = "started"
+            state.turn_started_event = summary
+            state.latest_turn_event = summary
+            state.latest_turn_kind = "started"
         elif payload_type == "task_complete":
-            latest_turn_event = summary
-            latest_turn_kind = "completed"
+            state.latest_turn_event = summary
+            state.latest_turn_kind = "completed"
         elif payload_type == "turn_aborted":
-            latest_turn_event = summary
-            latest_turn_kind = "aborted"
+            state.latest_turn_event = summary
+            state.latest_turn_kind = "aborted"
         if (
             payload_type == "error"
             and payload.get("message") == CODEX_MODEL_CAPACITY_MESSAGE
             and payload.get("codex_error_info") == "server_overloaded"
         ):
-            provider_error_event = summary
-            provider_error_reason = "server_overloaded"
+            state.provider_error_event = summary
+            state.provider_error_reason = "server_overloaded"
         return ScanVerdict.VALID
 
-    result = scan_jsonl(path, classify)
+    with transcript_path.open("rb") as handle:
+        handle.seek(state.offset)
+        while True:
+            record_offset = handle.tell()
+            raw_line = handle.readline()
+            if not raw_line:
+                break
+            if not raw_line.strip():
+                state.line_num += 1
+                continue
+            try:
+                value = json.loads(raw_line.decode("utf-8"))
+            except (UnicodeDecodeError, json.JSONDecodeError):
+                if not raw_line.endswith(b"\n"):
+                    handle.seek(record_offset)
+                    break
+                state.line_num += 1
+                state.last_malformed_line_num = state.line_num
+                continue
+
+            state.line_num += 1
+            if not isinstance(value, dict):
+                state.last_malformed_line_num = state.line_num
+                continue
+            verdict = classify(state.line_num, cast(dict[str, object], value))
+            if verdict is ScanVerdict.MALFORMED:
+                state.last_malformed_line_num = state.line_num
+        state.offset = handle.tell()
+        state.guard_start = max(0, state.offset - _CODEX_RESUME_GUARD_BYTES)
+        handle.seek(state.guard_start)
+        state.resume_guard = handle.read(state.offset - state.guard_start)
+
     return WatchdogTranscriptSnapshot(
         provider="codex",
-        tail=tuple(tail),
-        turn_started_event=turn_started_event,
-        latest_turn_event=latest_turn_event,
-        latest_turn_kind=latest_turn_kind,
-        provider_error_event=provider_error_event,
-        provider_error_kind="capacity" if provider_error_event is not None else None,
-        provider_error_reason=provider_error_reason,
-        latest_activity_kind=latest_activity_kind,
-        latest_model_output_line_num=latest_model_output_line_num,
-        last_malformed_line_num=result.last_malformed_line_num,
+        tail=tuple(state.tail),
+        turn_started_event=state.turn_started_event,
+        latest_turn_event=state.latest_turn_event,
+        latest_turn_kind=state.latest_turn_kind,
+        provider_error_event=state.provider_error_event,
+        provider_error_kind="capacity" if state.provider_error_event is not None else None,
+        provider_error_reason=state.provider_error_reason,
+        latest_activity_kind=state.latest_activity_kind,
+        latest_model_output_line_num=state.latest_model_output_line_num,
+        last_malformed_line_num=state.last_malformed_line_num,
     )
 
 
@@ -131,8 +195,20 @@ class CodexTranscriptWatchdogReader:
     capacity_pane_message: str | None = CODEX_MODEL_CAPACITY_MESSAGE
     supports_reasoning_interrupt: bool = True
 
+    def __init__(self) -> None:
+        self._states: OrderedDict[str, _CodexScanState] = OrderedDict()
+        self._state_lock = Lock()
+
+    def _read_snapshot(self, transcript_path: str) -> WatchdogTranscriptSnapshot:
+        with self._state_lock:
+            snapshot = _read_codex_snapshot(transcript_path, self._states)
+            self._states.move_to_end(transcript_path)
+            while len(self._states) > _CODEX_SCAN_STATE_LIMIT:
+                self._states.popitem(last=False)
+            return snapshot
+
     async def read(self, transcript_path: str) -> WatchdogTranscriptSnapshot:
-        return await asyncio.to_thread(_read_codex_snapshot, transcript_path)
+        return await asyncio.to_thread(self._read_snapshot, transcript_path)
 
 
 CODEX_WATCHDOG_READER = CodexTranscriptWatchdogReader()

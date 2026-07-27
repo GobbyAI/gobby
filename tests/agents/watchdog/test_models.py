@@ -169,3 +169,11 @@ def test_snapshot_conclusive_properties_require_valid_order_and_timestamp() -> N
     assert snapshot.has_conclusive_turn_completed is True
     assert snapshot.has_conclusive_capacity_error is True
     assert json.dumps(snapshot.to_log_dict())
+
+    active_after_completion = WatchdogTranscriptSnapshot(
+        provider="claude",
+        latest_turn_event=completed,
+        latest_turn_kind="completed",
+        latest_model_output_line_num=4,
+    )
+    assert active_after_completion.has_conclusive_turn_completed is False

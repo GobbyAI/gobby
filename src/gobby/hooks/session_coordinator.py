@@ -24,6 +24,7 @@ from weakref import WeakValueDictionary
 
 from gobby.agents.capture import capture_then_kill_sync
 from gobby.hooks.session_types import HookSessionManager
+from gobby.sessions.transcript_paths import MISSING_TRANSCRIPT_PATH
 from gobby.storage.agents import TerminalAction
 
 if TYPE_CHECKING:
@@ -275,7 +276,7 @@ class SessionCoordinator:
 
             for session in all_sessions:
                 transcript_path = getattr(session, "transcript_path", None)
-                if not transcript_path or transcript_path == "missing_transcript":
+                if not transcript_path or transcript_path == MISSING_TRANSCRIPT_PATH:
                     continue
 
                 try:

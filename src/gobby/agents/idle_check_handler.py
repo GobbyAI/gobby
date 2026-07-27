@@ -27,7 +27,7 @@ from gobby.agents.watchdog.models import (
     WatchdogTranscriptSnapshot,
 )
 from gobby.servers.routes.sessions.statusline_activity import last_session_activity
-from gobby.sessions.transcript_paths import _find_transcript_on_disk
+from gobby.sessions.transcript_paths import MISSING_TRANSCRIPT_PATH, find_transcript_on_disk
 from gobby.storage.attention import run_attention_entry_id
 from gobby.utils.datetime import parse_stored_datetime
 from gobby.workflows.step_context import StepWorkflowContext, get_active_step_workflow_context
@@ -172,16 +172,22 @@ class IdleCheckHandler:
 
     async def clear_attention_after_injection(self, run: AgentRun) -> None:
         """Clear the exact attention episode resolved by successful injection."""
-        await self._clear_attention_if_current(run_attention_entry_id(run.id))
+        entry_id = run_attention_entry_id(run.id)
+        await self._clear_attention_if_current(entry_id)
+        if self._attention_metadata_store is not None:
+            self._attention_metadata_store.clear(entry_id)
 
     async def clear_attention(self, run: AgentRun) -> None:
         """Authoritatively clear attention when a run becomes terminal."""
+        entry_id = run_attention_entry_id(run.id)
         if self._attention_manager is not None:
             await self._attention_manager.transition_async(
                 self._run_db,
-                run_attention_entry_id(run.id),
+                entry_id,
                 state=None,
             )
+        if self._attention_metadata_store is not None:
+            self._attention_metadata_store.clear(entry_id)
         self._stall_classifier.clear(run.id)
 
     async def _clear_attention_if_current(self, entry_id: str) -> None:
@@ -271,19 +277,31 @@ class IdleCheckHandler:
         for key in stale_keys:
             del self._transcript_path_cache[key]
 
+        session_updated_at = parse_stored_datetime(session.updated_at)
+
+        def is_current_file(path: str) -> bool:
+            try:
+                if not os.path.isfile(path):
+                    return False
+                return session_updated_at is None or os.path.getmtime(path) >= (
+                    session_updated_at.timestamp()
+                )
+            except OSError:
+                return False
+
         stored_path = session.transcript_path
-        if stored_path and stored_path != "missing_transcript" and os.path.isfile(stored_path):
+        if stored_path and stored_path != MISSING_TRANSCRIPT_PATH and is_current_file(stored_path):
             return stored_path
 
         cached_path = self._transcript_path_cache.get(cache_key)
-        if cached_path and os.path.isfile(cached_path):
+        if cached_path and is_current_file(cached_path):
             return cached_path
         self._transcript_path_cache.pop(cache_key, None)
 
         if not source or not external_id:
             return None
         discovered_path = await asyncio.to_thread(
-            _find_transcript_on_disk,
+            find_transcript_on_disk,
             source,
             external_id,
         )

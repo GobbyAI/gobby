@@ -1,5 +1,6 @@
 import json
 from pathlib import Path
+from unittest.mock import patch
 
 import pytest
 
@@ -71,6 +72,66 @@ async def test_codex_reader_tracks_latest_turn_marker(tmp_path: Path) -> None:
     assert snapshot.latest_turn_event.line_num == 3
     assert snapshot.latest_turn_kind == "started"
     assert snapshot.has_conclusive_turn_completed is False
+
+
+@pytest.mark.asyncio
+async def test_codex_reader_scans_only_appended_records(tmp_path: Path) -> None:
+    path = tmp_path / "incremental.jsonl"
+    _write(path, [_record("event_msg", "task_started")])
+    reader = CodexTranscriptWatchdogReader()
+    first = await reader.read(str(path))
+    assert first.latest_turn_kind == "started"
+
+    with path.open("a", encoding="utf-8") as handle:
+        handle.write(json.dumps(_record("event_msg", "task_complete")) + "\n")
+    with patch("gobby.agents.watchdog.codex.json.loads", wraps=json.loads) as loads:
+        second = await reader.read(str(path))
+
+    assert loads.call_count == 1
+    assert second.latest_turn_event is not None
+    assert second.latest_turn_event.line_num == 2
+    assert second.latest_turn_kind == "completed"
+
+
+@pytest.mark.asyncio
+async def test_codex_reader_resets_incremental_state_after_truncation(tmp_path: Path) -> None:
+    path = tmp_path / "truncated.jsonl"
+    _write(
+        path,
+        [
+            _record("event_msg", "task_started"),
+            _record("event_msg", "task_complete"),
+        ],
+    )
+    reader = CodexTranscriptWatchdogReader()
+    assert (await reader.read(str(path))).latest_turn_kind == "completed"
+
+    _write(path, [_record("event_msg", "task_started")])
+    snapshot = await reader.read(str(path))
+
+    assert snapshot.latest_turn_event is not None
+    assert snapshot.latest_turn_event.line_num == 1
+    assert snapshot.latest_turn_kind == "started"
+    assert snapshot.has_conclusive_turn_completed is False
+
+
+@pytest.mark.asyncio
+async def test_codex_reader_resets_incremental_state_after_file_replacement(
+    tmp_path: Path,
+) -> None:
+    path = tmp_path / "replaced.jsonl"
+    replacement = tmp_path / "replacement.jsonl"
+    _write(path, [_record("event_msg", "task_complete")])
+    reader = CodexTranscriptWatchdogReader()
+    assert (await reader.read(str(path))).latest_turn_kind == "completed"
+
+    _write(replacement, [_record("event_msg", "task_started")])
+    replacement.replace(path)
+    snapshot = await reader.read(str(path))
+
+    assert snapshot.latest_turn_event is not None
+    assert snapshot.latest_turn_event.line_num == 1
+    assert snapshot.latest_turn_kind == "started"
 
 
 @pytest.mark.asyncio

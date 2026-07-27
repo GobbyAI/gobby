@@ -699,7 +699,7 @@ async def test_stale_session_discovers_transcript_without_updating_session_row(
 
     with (
         patch(
-            "gobby.agents.idle_check_handler._find_transcript_on_disk",
+            "gobby.agents.idle_check_handler.find_transcript_on_disk",
             return_value=str(transcript_path),
         ) as mock_discover,
         patch.object(

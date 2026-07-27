@@ -27,6 +27,7 @@ KNOWN_EVENT_TYPES = frozenset(
         "session_start",
         "session_update",
         "system",
+        "tool_result",
         "user",
     }
 )
@@ -229,6 +230,10 @@ class WatchdogTranscriptSnapshot:
             self.latest_turn_kind == "completed"
             and event is not None
             and event.timestamp is not None
+            and (
+                self.latest_model_output_line_num is None
+                or self.latest_model_output_line_num <= event.line_num
+            )
             and self.last_malformed_line_num is None
         )
 

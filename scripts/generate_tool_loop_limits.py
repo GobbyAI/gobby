@@ -41,7 +41,7 @@ class ToolLoopLimitsDict(TypedDict):
     max_turns: int | None
     max_tool_calls: int
     max_bytes_per_tool_result: int
-    tool_timeout_seconds: int
+    tool_timeout_seconds: float
     loop_timeout_seconds: int
 '''
 

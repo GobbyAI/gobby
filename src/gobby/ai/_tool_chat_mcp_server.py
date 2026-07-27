@@ -8,8 +8,12 @@ from collections.abc import Awaitable, Callable
 
 from aiohttp import web
 
-from gobby.ai._tool_chat_contracts import ToolLoopLimits
-from gobby.ai._tool_chat_tools import ToolPolicyError, ToolRuntime
+from gobby.ai._tool_chat_contracts import (
+    MAX_TOOL_CALLS_STOP_REASON,
+    MAX_TURNS_STOP_REASON,
+    ToolLoopLimits,
+)
+from gobby.ai._tool_chat_tools import ToolPolicyError, ToolRuntime, tool_result_is_error
 
 _MCP_PROTOCOL_VERSION = "2025-06-18"
 _SERVER_NAME = "gobby-tool-loop"
@@ -36,9 +40,9 @@ class ToolLoopController:
     async def before_tool(self, runtime: ToolRuntime) -> str | None:
         reason: str | None = None
         if self.limits.max_turns is not None and self.turns >= self.limits.max_turns:
-            reason = "max_turns"
+            reason = MAX_TURNS_STOP_REASON
         elif runtime.budget_exhausted:
-            reason = "max_tool_calls"
+            reason = MAX_TOOL_CALLS_STOP_REASON
         if reason is None:
             return None
         if self.stop_reason is None:
@@ -92,12 +96,17 @@ class ToolRuntimeMCPServer:
 
     async def stop(self) -> None:
         runner = self._runner
+        server_socket = self._socket
         self._runner = None
         self._site = None
         self._socket = None
         self.url = None
-        if runner is not None:
-            await runner.cleanup()
+        try:
+            if runner is not None:
+                await runner.cleanup()
+        finally:
+            if server_socket is not None:
+                server_socket.close()
 
     async def __aenter__(self) -> ToolRuntimeMCPServer:
         await self.start()
@@ -191,7 +200,7 @@ class ToolRuntimeMCPServer:
             request_id,
             {
                 "content": [{"type": "text", "text": text}],
-                "isError": text.startswith("[error:"),
+                "isError": tool_result_is_error(text),
             },
         )
 

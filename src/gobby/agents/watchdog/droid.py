@@ -11,6 +11,7 @@ from gobby.agents.watchdog.models import (
     WATCHDOG_TAIL_LIMIT,
     ActivityKind,
     TranscriptEventSummary,
+    TurnEventKind,
     WatchdogTranscriptSnapshot,
 )
 from gobby.utils.datetime import parse_stored_datetime
@@ -72,10 +73,14 @@ def _assistant_activity_kind(block_types: tuple[str, ...]) -> ActivityKind:
 
 def _read_droid_snapshot(path: str) -> WatchdogTranscriptSnapshot:
     tail: deque[TranscriptEventSummary] = deque(maxlen=WATCHDOG_TAIL_LIMIT)
+    latest_turn_event: TranscriptEventSummary | None = None
+    latest_turn_kind: TurnEventKind | None = None
     latest_activity_kind: ActivityKind | None = None
     latest_model_output_line_num: int | None = None
 
     def classify(line_num: int, data: dict[str, object]) -> ScanVerdict:
+        nonlocal latest_turn_event
+        nonlocal latest_turn_kind
         nonlocal latest_activity_kind
         nonlocal latest_model_output_line_num
 
@@ -97,17 +102,19 @@ def _read_droid_snapshot(path: str) -> WatchdogTranscriptSnapshot:
             )
             return ScanVerdict.VALID
         if record_type == "session_end":
-            tail.append(
-                TranscriptEventSummary(
-                    line_num=line_num,
-                    timestamp=timestamp,
-                    event_type="session_end",
-                    payload_type="session_end",
-                )
+            summary = TranscriptEventSummary(
+                line_num=line_num,
+                timestamp=timestamp,
+                event_type="session_end",
+                payload_type="session_end",
             )
+            tail.append(summary)
+            latest_turn_event = summary
+            latest_turn_kind = "completed"
             return ScanVerdict.VALID
         if record_type == "todo_state":
             todos = data.get("todos")
+            # Persisted Droid records use both native lists and wrapped string payloads.
             valid_todos = isinstance(todos, list) or (
                 isinstance(todos, dict) and isinstance(todos.get("todos"), str)
             )
@@ -138,6 +145,8 @@ def _read_droid_snapshot(path: str) -> WatchdogTranscriptSnapshot:
         if role == "assistant":
             latest_activity_kind = _assistant_activity_kind(block_types)
             latest_model_output_line_num = line_num
+            # Droid message records do not identify final assistant output, so only
+            # the explicit session_end record is a conclusive completion boundary.
         else:
             latest_activity_kind = "user_input"
         return ScanVerdict.VALID
@@ -146,6 +155,8 @@ def _read_droid_snapshot(path: str) -> WatchdogTranscriptSnapshot:
     return WatchdogTranscriptSnapshot(
         provider="droid",
         tail=tuple(tail),
+        latest_turn_event=latest_turn_event,
+        latest_turn_kind=latest_turn_kind,
         latest_activity_kind=latest_activity_kind,
         latest_model_output_line_num=latest_model_output_line_num,
         last_malformed_line_num=result.last_malformed_line_num,

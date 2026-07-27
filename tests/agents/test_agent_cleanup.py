@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import asyncio
+import threading
+from collections.abc import AsyncIterator
 from contextlib import nullcontext
 from dataclasses import replace
 from types import SimpleNamespace
@@ -18,6 +20,18 @@ from gobby.storage.agents import AgentRun
 from tests.agents.test_capture import FakeCaptureStorage
 
 pytestmark = pytest.mark.unit
+
+
+@pytest.fixture(autouse=True)
+async def reset_terminal_delivery_state() -> AsyncIterator[None]:
+    agent_cleanup.reset_terminal_delivery_offload()
+    agent_cleanup.reopen_terminal_delivery_admission()
+    try:
+        yield
+    finally:
+        agent_cleanup.reopen_terminal_delivery_admission()
+        await agent_cleanup.drain_shielded_terminal_deliveries()
+        agent_cleanup.reset_terminal_delivery_offload()
 
 
 async def test_shielded_terminal_delivery_settles_before_cancellation_propagates() -> None:
@@ -65,6 +79,37 @@ async def test_terminal_delivery_admission_close_blocks_new_scope() -> None:
     assert invoked is False
 
 
+def test_terminal_delivery_fallback_runs_off_calling_thread() -> None:
+    caller_thread = threading.get_ident()
+
+    future = agent_cleanup.submit_terminal_delivery_offload(threading.get_ident)
+
+    assert future.result(timeout=1) != caller_thread
+
+
+@pytest.mark.asyncio
+async def test_terminal_delivery_closed_admission_can_raise_explicit_error() -> None:
+    invoked = False
+
+    async def operation() -> str:
+        nonlocal invoked
+        invoked = True
+        return "unexpected"
+
+    agent_cleanup.close_terminal_delivery_admission()
+    with pytest.raises(
+        agent_cleanup.TerminalDeliveryAdmissionClosedError,
+        match="run-closed-strict",
+    ):
+        await agent_cleanup.shielded_terminal_delivery(
+            "run-closed-strict",
+            operation,
+            raise_if_closed=True,
+        )
+
+    assert invoked is False
+
+
 class RecordingDb:
     def __init__(self) -> None:
         self.executed: list[tuple[str, tuple[object, ...]]] = []
@@ -107,6 +152,17 @@ class AcknowledgingCompletionRegistry(RecordingCompletionRegistry):
         if self.events is not None:
             self.events.append("cleanup")
         super().cleanup(completion_id)
+
+
+class FailingCompletionRegistry(RecordingCompletionRegistry):
+    async def notify(
+        self,
+        completion_id: str,
+        *,
+        result: dict[str, object] | None = None,
+        message: str = "",
+    ) -> dict[str, bool]:
+        raise RuntimeError(f"notify failed for {completion_id}: {result!r} {message}")
 
 
 def _run(
@@ -345,7 +401,7 @@ async def test_post_terminal_cleanup_skips_merge_artifact_cleanup_without_task(
 
 
 @pytest.mark.asyncio
-async def test_post_terminal_cleanup_clears_completion_registry_and_subscribers(
+async def test_post_terminal_cleanup_preserves_registry_without_notification(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     db = RecordingDb()
@@ -359,7 +415,7 @@ async def test_post_terminal_cleanup_clears_completion_registry_and_subscribers(
         _run(task_id=None), allow_parent_session_fallback=False
     )
 
-    assert registry.cleaned == ["run-1"]
+    assert registry.cleaned == []
     assert db.executed == []
 
 
@@ -413,6 +469,23 @@ async def test_terminal_delivery_without_map_retains_rows_and_cleans_registry() 
 
     assert db.executed == []
     assert registry.cleaned == ["run-1"]
+
+
+@pytest.mark.asyncio
+async def test_terminal_delivery_notify_failure_preserves_registry_state() -> None:
+    registry = FailingCompletionRegistry()
+
+    delivery = await agent_cleanup.deliver_and_cleanup_terminal_run(
+        db=cast(Any, RecordingDb()),
+        completion_registry=cast(Any, registry),
+        run_id="run-1",
+        result={"status": "completed"},
+        message="Agent completed",
+        run_db=AsyncMock(),
+    )
+
+    assert delivery is None
+    assert registry.cleaned == []
 
 
 @pytest.mark.asyncio

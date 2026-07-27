@@ -85,10 +85,11 @@ def codex_endpoint_env(endpoint: GenerationEndpointConfig) -> Mapping[str, str]:
 
 
 def codex_endpoint_app_server_env(
+    endpoint_name: str,
     endpoint: GenerationEndpointConfig,
 ) -> Mapping[str, str]:
     """Return an isolated child environment for a Responses app-server."""
-    codex_home = get_gobby_home() / _CODEX_ENDPOINT_HOME_DIR
+    codex_home = get_gobby_home() / _CODEX_ENDPOINT_HOME_DIR / endpoint_name
     codex_home.mkdir(parents=True, exist_ok=True)
     return {
         **codex_endpoint_env(endpoint),

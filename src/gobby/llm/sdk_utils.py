@@ -82,6 +82,7 @@ _SECTION_HEADING_RE = re.compile(r"^##(?:[ \t]+(?P<title>.*?)[ \t]*|[ \t]*)\r?\n
 _FENCE_RE = re.compile(r"^[ \t]*(```|~~~)")
 _MANDATORY_SECTION_TITLES = ("next steps", "current state")
 _SECTION_TRIM_MARKER = "\n\n[section trimmed]\n"
+_PREAMBLE_PRIORITY = 25
 
 
 def split_markdown_sections(text: str) -> list[MarkdownSection]:
@@ -262,7 +263,7 @@ def _section_priority(
     unknown_priority: int,
 ) -> int:
     if section.title == "":
-        return 25
+        return _PREAMBLE_PRIORITY
     if section.title in _MANDATORY_SECTION_TITLES and section.order not in mandatory_owner_orders:
         return unknown_priority
     return priorities.get(section.title, unknown_priority)

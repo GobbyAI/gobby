@@ -65,6 +65,7 @@ describe("useSessionAttention reconciliation", () => {
   });
 
   afterEach(() => {
+    vi.useRealTimers();
     vi.restoreAllMocks();
     vi.unstubAllGlobals();
   });
@@ -247,5 +248,49 @@ describe("useSessionAttention reconciliation", () => {
     await new Promise((resolve) => window.setTimeout(resolve, 100));
     expect(rosterRequests).toBe(2);
     expect(result.current.attentionBySession.size).toBe(0);
+  });
+
+  it("polls the roster so passive TTL expiry removes stale attention", async () => {
+    vi.useFakeTimers();
+    let rosterRequests = 0;
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(() => {
+        rosterRequests += 1;
+        return Promise.resolve(
+          jsonResponse({
+            epoch: "epoch-a",
+            seq: rosterRequests,
+            entries:
+              rosterRequests === 1
+                ? [
+                    {
+                      entry_id: "run:run-1",
+                      session_id: "session-1",
+                      attention: {
+                        state: "blocked",
+                        reason: "Approval required",
+                      },
+                    },
+                  ]
+                : [],
+          }),
+        );
+      }),
+    );
+
+    const { result } = renderHook(() => useSessionAttention());
+    await act(async () => {
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+    expect(result.current.attentionBySession.get("session-1")?.count).toBe(1);
+
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(5_000);
+    });
+
+    expect(rosterRequests).toBe(2);
+    expect(result.current.attentionBySession.has("session-1")).toBe(false);
   });
 });

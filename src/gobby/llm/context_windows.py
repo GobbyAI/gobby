@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import logging
 import re
+from collections import deque
 from collections.abc import Mapping
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, Literal, cast
@@ -79,7 +80,27 @@ _AUTHORITATIVE_CATALOG_SOURCES: frozenset[str] = frozenset(
     {"provider_reported", "provider_catalog"}
 )
 logger = logging.getLogger(__name__)
+_UNKNOWN_CONTEXT_WINDOW_WARNING_LIMIT = 256
 _UNKNOWN_CONTEXT_WINDOW_WARNED_MODELS: set[str] = set()
+_UNKNOWN_CONTEXT_WINDOW_WARNING_ORDER: deque[str] = deque()
+
+
+def reset_unknown_context_window_warnings() -> None:
+    """Clear warning-dedup state for isolated tests and service resets."""
+    _UNKNOWN_CONTEXT_WINDOW_WARNED_MODELS.clear()
+    _UNKNOWN_CONTEXT_WINDOW_WARNING_ORDER.clear()
+
+
+def _remember_unknown_context_window(warning_key: str) -> bool:
+    if warning_key in _UNKNOWN_CONTEXT_WINDOW_WARNED_MODELS:
+        return False
+    if len(_UNKNOWN_CONTEXT_WINDOW_WARNING_ORDER) >= _UNKNOWN_CONTEXT_WINDOW_WARNING_LIMIT:
+        evicted = _UNKNOWN_CONTEXT_WINDOW_WARNING_ORDER.popleft()
+        _UNKNOWN_CONTEXT_WINDOW_WARNED_MODELS.remove(evicted)
+    _UNKNOWN_CONTEXT_WINDOW_WARNING_ORDER.append(warning_key)
+    _UNKNOWN_CONTEXT_WINDOW_WARNED_MODELS.add(warning_key)
+    return True
+
 
 # Droid publishes its own model catalog and limits can differ from OpenRouter or
 # Codex defaults for the same visible IDs.
@@ -164,7 +185,8 @@ def coerce_context_length(value: Any) -> int | None:
             parsed = int(value.replace("_", ""))
         except ValueError:
             return None
-    return parsed if parsed > 0 else None
+        return parsed if parsed > 0 else None
+    return None
 
 
 def valid_context_length_source(value: Any) -> ContextLengthSource | None:
@@ -394,8 +416,7 @@ def resolve_context_window_with_source(
         return _apply_context_window_marker_floor(catalog_fallback, has_one_million_marker)
 
     warning_key = normalize_model_lookup_id(model)
-    if warning_key not in _UNKNOWN_CONTEXT_WINDOW_WARNED_MODELS:
-        _UNKNOWN_CONTEXT_WINDOW_WARNED_MODELS.add(warning_key)
+    if _remember_unknown_context_window(warning_key):
         logger.warning("Context window is unknown for model %s", model)
     return ResolvedContextWindow(None, "unknown")
 

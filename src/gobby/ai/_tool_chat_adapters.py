@@ -19,11 +19,12 @@ from collections.abc import Awaitable, Callable
 from typing import Any
 
 from gobby.ai._tool_chat_contracts import (
+    MAX_TOOL_CALLS_STOP_REASON,
+    MAX_TURNS_STOP_REASON,
     ToolChatRequest,
     ToolChatResult,
-    ToolLoopLimits,
 )
-from gobby.ai._tool_chat_tools import ToolPolicyError, ToolRuntime
+from gobby.ai._tool_chat_tools import ToolPolicyError, ToolRuntime, tool_result_is_error
 from gobby.ai.registry import CapabilityBinding
 from gobby.llm.claude_errors import ClaudeSDKMaxTurns
 
@@ -48,7 +49,7 @@ class OpenAICompatibleToolChatAdapter:
         self._client_factory = client_factory
 
     async def chat(self, request: ToolChatRequest, binding: CapabilityBinding) -> ToolChatResult:
-        limits = request.limits or ToolLoopLimits()
+        limits = request.effective_limits
         runtime = ToolRuntime(
             request.tool_policy,
             project_path=request.project_path,
@@ -72,7 +73,7 @@ class OpenAICompatibleToolChatAdapter:
         tool_breakdown: dict[str, int] = {}
         turns = 0
         content = ""
-        stop_reason = "max_turns"
+        stop_reason = MAX_TURNS_STOP_REASON
 
         while limits.max_turns is None or turns < limits.max_turns:
             turns += 1
@@ -89,7 +90,7 @@ class OpenAICompatibleToolChatAdapter:
                 break
 
             if limits.max_turns is not None and turns >= limits.max_turns:
-                stop_reason = "max_turns"
+                stop_reason = MAX_TURNS_STOP_REASON
                 break
 
             messages.append(_assistant_message(message, tool_calls))
@@ -109,7 +110,7 @@ class OpenAICompatibleToolChatAdapter:
                     }
                 )
             if hit_call_cap:
-                stop_reason = "max_tool_calls"
+                stop_reason = MAX_TOOL_CALLS_STOP_REASON
                 break
 
         return ToolChatResult(
@@ -213,14 +214,6 @@ def _mcp_tool_name(tool_name: str) -> str:
     return f"mcp__{_REPO_MCP_SERVER_NAME}__{tool_name}"
 
 
-def _tool_result_is_error(text: str) -> bool:
-    try:
-        payload = json.loads(text)
-    except (json.JSONDecodeError, TypeError):
-        return False
-    return isinstance(payload, dict) and payload.get("success") is False
-
-
 def _make_tool_handler(
     runtime: ToolRuntime, tool_name: str
 ) -> Callable[[dict[str, Any]], Awaitable[dict[str, Any]]]:
@@ -228,7 +221,7 @@ def _make_tool_handler(
         try:
             text = await runtime.execute(tool_name, args)
             response: dict[str, Any] = {"content": [{"type": "text", "text": text}]}
-            if _tool_result_is_error(text):
+            if tool_result_is_error(text):
                 response["is_error"] = True
             return response
         except ToolPolicyError as exc:
@@ -276,7 +269,7 @@ class ClaudeToolChatAdapter:
         self._provider_factory = provider_factory
 
     async def chat(self, request: ToolChatRequest, binding: CapabilityBinding) -> ToolChatResult:
-        limits = request.limits or ToolLoopLimits()
+        limits = request.effective_limits
         runtime = ToolRuntime(
             request.tool_policy,
             project_path=request.project_path,
@@ -307,7 +300,7 @@ class ClaudeToolChatAdapter:
                 model=model,
                 tool_use_count=runtime.calls_used,
                 turns=max_turns,
-                stop_reason="max_turns",
+                stop_reason=MAX_TURNS_STOP_REASON,
                 trace=tuple(runtime.invocation_log),
                 calls_used=runtime.calls_used,
                 budget_exhausted=True,
@@ -322,7 +315,7 @@ class ClaudeToolChatAdapter:
             tools=dict(getattr(result, "tools", {}) or {}),
             usage=getattr(result, "usage", None),
             applied_reasoning_effort=getattr(result, "applied_reasoning_effort", None),
-            stop_reason="max_tool_calls" if runtime.budget_exhausted else "completed",
+            stop_reason=MAX_TOOL_CALLS_STOP_REASON if runtime.budget_exhausted else "completed",
             trace=tuple(runtime.invocation_log),
             calls_used=runtime.calls_used,
             budget_exhausted=runtime.budget_exhausted,
