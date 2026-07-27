@@ -415,16 +415,36 @@ P4, so a gate that can precede it proves nothing.
 
 Target: `src/gobby/code_index/summarizer.py`,
 `src/gobby/code_index/_storage/summaries.py`,
+`src/gobby/code_index/maintenance.py`,
+`src/gobby/runner_lifecycle_subsystems.py`,
 `src/gobby/storage/migrations/`,
 `src/gobby/storage/postgres_baseline_schema.sql`
 
 Extend the summarizer subsystem (`SymbolSummarizer` at `summarizer.py:40`,
 storage mixin `src/gobby/code_index/_storage/summaries.py`) to guarantee a
-one-sentence summary per indexed source file, keyed `(path, content_hash)` so
-refresh invalidates stale rows. Add a backfill job for existing indexes and
+one-sentence summary per indexed source file, keyed
+`(project_id, path, content_hash)` so refresh invalidates stale rows. The project
+component is load-bearing rather than decorative: `code_indexed_files` is already
+project-scoped, and a hub serving two repositories that both contain
+`src/__init__.py` with identical bytes would otherwise share one summary row, so
+a path-and-hash key lets coverage counters, failure state, and summary text leak
+or overwrite across projects. Add a backfill job for existing indexes and
 refresh-on-reindex wiring in the index sync path. Summaries follow the 180-char
 single-line contract (UA one-sentence node model). Focused pytest under
 `GOBBY_TEST_PROTECT=1` with an isolated test daemon where needed.
+
+Storage without a producer is the failure mode this deliverable is most likely to
+ship, so the production lifecycle is named here rather than assumed. Today
+maintenance requests only unsummarized *symbols* (`maintenance.py:259`), and that
+whole subsystem is constructed only when the optional
+`code_index.symbol_summary.enabled` flag is true
+(`runner_lifecycle_subsystems.py:483`). File summaries cannot inherit that gate:
+2.5 makes coverage a freshness precondition and 5.1 makes it a cutover gate, so a
+mandatory input would sit behind an optional switch and a disabled-by-default
+deployment would never build a single summary. File-summary production is
+therefore its own always-on maintenance pass with its own batch config,
+registered at startup independently of symbol summaries, and driven by the same
+reindex and sync-completion seams that already mark files dirty.
 
 Scope boundary: this deliverable owns the Python storage and production of
 summaries only. Their Rust consumers — `gcode outline` rendering and
@@ -452,10 +472,12 @@ the failure row are schema, not application convention.
 
 **Acceptance:**
 
-- 2.4.1 - File-summary storage keyed by path+content_hash with backfill and the four coverage counters. file: `src/gobby/code_index/_storage/summaries.py`.
+- 2.4.1 - File-summary storage keyed by project+path+content_hash with backfill and the four coverage counters. file: `src/gobby/code_index/_storage/summaries.py`.
 - 2.4.2 - Summarizer produces/refreshes one-sentence file summaries on reindex and records failures rather than skipping. test: `tests/code_index/test_file_summaries.py`.
 - 2.4.3 - Stale and deleted-file rows never surface to consumers; every current file does. test: `tests/code_index/test_file_summaries.py::stale_rows_never_surface`.
-- 2.4.4 - A numbered migration creates the summary and failure storage with its current-hash constraint, mirrored in the baseline schema, applying cleanly and idempotently on an existing hub. test: `tests/storage/test_file_summary_migration.py`.
+- 2.4.4 - A numbered migration creates the summary and failure storage with its project-scoped current-hash constraint, mirrored in the baseline schema, applying cleanly and idempotently on an existing hub. test: `tests/storage/test_file_summary_migration.py`.
+- 2.4.5 - Two projects holding the same path with identical bytes keep independent summary text, staleness, failure state, and coverage counters. test: `tests/code_index/test_file_summaries.py::summaries_are_project_scoped`.
+- 2.4.6 - File-summary production is registered and runs at daemon startup with `code_index.symbol_summary.enabled` false, backfilling an existing index and refreshing on reindex without the symbol-summary subsystem being constructed. test: `tests/code_index/test_file_summaries.py::backfill_runs_without_symbol_summaries`.
 
 ### 2.5 Index auto-freshness audit and staleness surfacing [category: code] (depends: 2.4)
 `kind: deliverable`
@@ -618,12 +640,13 @@ region.
 - 3.3.4 - Summary cells obey the 180-char single-line contract. symbol: `gobby_wiki::code_wiki::render::normalize_summary_cell`.
 - 3.3.5 - Scaffolds carry `facts_digest` and `scaffold_hash`, stable across re-render of the same bundle. file: `crates/gwiki/src/code_wiki/render/module.rs`.
 
-### 3.4 Validation gate: gwiki code validate [category: code] (depends: 3.2, 3.3, 3.7)
+### 3.4 Validation gate: gwiki code validate [category: code] (depends: 3.2, 3.3, 3.7, 3.8)
 `kind: deliverable`
 
 Target: `crates/gwiki/src/commands/code_validate.rs`,
 `crates/gcore/src/codewiki_contract.rs`,
-`crates/gwiki/src/code_facts_source.rs`, `crates/gwiki/src/audit/claims.rs`
+`crates/gwiki/src/code_facts_source.rs`, `crates/gwiki/src/audit/claims.rs`,
+`crates/gwiki/src/audit/tests.rs`
 
 `gwiki code validate <page>... | --all` running: strict markdown shape
 (ported `strict_markdown.rs`), mermaid validity (gcore gate), frontmatter
@@ -639,15 +662,24 @@ not two.
 
 An earlier draft kept the legacy value live and introduced a second constant
 beside it, on the reasoning that flipping would break the sites pinning the old
-string. Those sites are exactly four — `codewiki/publication.rs:559`,
-`codewiki/tests/architecture.rs:76`, `codewiki/tests/contract.rs:103`, and the
-gcore golden at `codewiki_contract.rs:49` — and all four are edited here. The
-~15 further `gcode-codewiki` occurrences under `crates/gwiki` are literal fixture
-strings exercising the frontmatter parser; they keep parsing and are untouched. A
-dual marker buys exactly one thing, a legacy generator whose output is still
-recognized, and 3.8 retires that generator. So the second family is never created
-— along with its golden, its audit-path recognition, its prune restriction in
-4.3, and its quarantine-selection rule in 5.3.
+string. A dual marker buys exactly one thing, a legacy generator whose output is
+still recognized, and 3.8 has already retired that generator. So the second
+family is never created — along with its golden, its audit-path recognition, its
+prune restriction in 4.3, and its quarantine-selection rule in 5.3.
+
+Depending on 3.8 also shrinks the flip itself. The three legacy sites that pinned
+the old value all live inside the subtree whose module declaration 3.8 dropped,
+so they are no longer compiled and no longer break; what remains in the workspace
+is the gcore golden, edited here, and the `gcode-codewiki` occurrences under
+`crates/gwiki`. Those are **not** uniformly inert fixtures, and treating them as
+such was wrong: `audit/claims.rs:197` grounds a page by exact equality with the
+constant, and the audit fixtures at `crates/gwiki/src/audit/tests.rs:419,469,511,549,601`
+assert that template, degraded, and generated pages are grounded or exempt. Flip
+the constant without touching them and those assertions invert and the crate
+tests fail. The sweep is therefore by *role*, not by count: fixtures whose
+assertion depends on marker equality move to the shared constant, fixtures that
+exist to exercise the frontmatter parser keep the bare literal, and one negative
+test pins that a page carrying the legacy literal is not treated as generated.
 
 One consequence is deliberate and worth stating rather than discovering. The
 ~2,900 legacy pages already on disk carry the literal `gcode-codewiki`, stop
@@ -695,11 +727,11 @@ than making retention wait on every concurrent reader.
 **Acceptance:**
 
 - 3.4.1 - Validate runs all seven check families and reports machine-readable errors with stable rule codes. file: `crates/gwiki/src/commands/code_validate.rs`.
-- 3.4.2 - gcore contract carries the freshness object, template_version, and `GENERATED_BY_CODEWIKI` flipped to `gwiki-code` behind a single golden; the four sites pinning the old value are updated and the crates build. file: `crates/gcore/src/codewiki_contract.rs`.
+- 3.4.2 - gcore contract carries the freshness object, template_version, and `GENERATED_BY_CODEWIKI` flipped to `gwiki-code` behind a single golden; the golden is updated and all three crates build with the legacy subtree already uncompiled. file: `crates/gcore/src/codewiki_contract.rs`.
 - 3.4.3 - A page missing a required template section fails validation. test: `crates/gwiki/src/commands/code_validate/tests.rs::missing_section_fails`.
 - 3.4.4 - Fixtures mutating a file row, citation, freshness field, or deterministic edge are rejected as `CW_DETERMINISTIC_REGION_MUTATED`. test: `crates/gwiki/src/commands/code_validate/tests.rs::deterministic_region_mutation_rejected`.
 - 3.4.5 - One table-driven case per check family invokes `gwiki code validate` and asserts the page, location, and stable rule code for all seven: `CW_STRICT_MARKDOWN`, `CW_MERMAID_INVALID`, `CW_FRONTMATTER_INVALID`, `CW_CITATION_UNRESOLVED`, `CW_MISSING_SECTION`, `CW_PARTITION_INCOMPLETE`, `CW_DETERMINISTIC_REGION_MUTATED`. test: `crates/gwiki/src/commands/code_validate/tests.rs::every_check_family_reports_its_code`.
-- 3.4.6 - After the flip no site anywhere in the workspace asserts the value `gcode-codewiki` against the constant, and the gwiki frontmatter fixtures carrying it as a literal still parse. test: `crates/gwiki/src/frontmatter.rs`.
+- 3.4.6 - After the flip no compiled site asserts the value `gcode-codewiki` against the constant: every audit, librarian, indexer, and lint fixture whose assertion depends on marker equality resolves through the shared constant and its suite passes, while the frontmatter parser fixtures keep the bare literal and still parse. test: `crates/gwiki/src/audit/tests.rs`.
 - 3.4.7 - A validation paused between page read and bundle lookup, with the page replaced and its old bundle pruned, re-reads and validates the new digest; an unchanged page whose bundle is missing fails as `CW_FACTS_BUNDLE_MISSING`. test: `crates/gwiki/src/commands/code_validate/tests.rs::bundle_prune_race_is_benign`.
 - 3.4.8 - The facts source resolves a page's recorded `facts_digest` to bundle bytes, rejects a digest mismatch and an over-bound decompression as typed errors, and satisfies validation from injected fixtures with no hub connection. test: `crates/gwiki/src/code_facts_source/tests.rs::resolves_verifies_and_bounds`.
 - 3.4.9 - The audit claim path grounds pages carrying the flipped constant, and a legacy page carrying the bare `gcode-codewiki` literal is reported ungrounded rather than crashing or being treated as generated. test: `crates/gwiki/src/audit/tests.rs::legacy_literal_is_not_generated`.
@@ -747,6 +779,18 @@ unrepresentable. Both are rechecked under the same page lock immediately before
 the rename, so a delayed orphan holding `--expected-absent` for a page that has
 since been created lands nothing, exactly as a stale hash does.
 
+Generated **delete** takes the same two flags with a deliberately narrower
+contract, because the symmetry is only apparent. `--expected-hash` is the removal
+authority: it names the exact bytes the caller intends to destroy and is
+rechecked under the page lock immediately before the unlink, so 4.3's finalizer
+cannot prune a page a newer generation has already replaced — today's delete path
+checks existence and removes with no precondition at all (`page.rs:137`).
+`--expected-absent` carries no removal authority; it asserts the page is already
+gone and yields an idempotent success, which is what makes a replayed prune safe.
+Deleting an existing page therefore requires the hash, and a delete arriving with
+`--expected-absent` against a page that exists is a precondition failure rather
+than a removal.
+
 **Acceptance:**
 
 - 3.5.1 - `code/**` writes require --generated + template and pass validation before commit. file: `crates/gwiki/src/commands/page.rs`.
@@ -755,6 +799,7 @@ since been created lands nothing, exactly as a stale hash does.
 - 3.5.4 - Generated writes land by staged-temp-plus-rename within the confined root; a write interrupted before rename leaves the previous page intact and complete. test: `crates/gwiki/src/commands/page/tests.rs::generated_write_is_atomic`.
 - 3.5.5 - A generated write requires exactly one of `--expected-hash` or `--expected-absent`; supplying both, or neither, is a typed input error, and each precondition is rechecked under the page lock immediately before rename so a delayed write whose expected state is stale lands nothing. test: `crates/gwiki/src/commands/page/tests.rs::stale_generation_write_is_refused`.
 - 3.5.6 - `--expected-absent` creates a page that does not exist and is refused once the page exists; two concurrent creators of one path yield exactly one landed page and one precondition failure. test: `crates/gwiki/src/commands/page/tests.rs::expected_absent_creates_once`.
+- 3.5.7 - Generated delete of an existing page requires `--expected-hash` and is refused when the hash is stale or `--expected-absent` is supplied; `--expected-absent` against an already-absent page succeeds idempotently; a delete racing a replacement write removes nothing. test: `crates/gwiki/src/commands/page/tests.rs::generated_delete_requires_expected_hash`.
 
 ### 3.6 gwiki contract and daemon gateway surface [category: code] (depends: 3.4, 3.5)
 `kind: deliverable`
@@ -808,19 +853,32 @@ alone (:301) — neither can express the `--generated --template <id>@<ver>`
 authorization 3.5 now requires for `code/**`, so a literal implementation would
 leave every generated write and every prune rejected by the binary they call.
 Both methods gain generated/template parameters that reach argv, carrying exactly
-one of the two 3.5 preconditions — `--expected-hash` for a replacement or
-`--expected-absent` for a creation — and existing knowledge-vault callers keep
-today's non-generated behavior by default. Reinstall the gwiki binary.
+one of the two 3.5 preconditions, and existing knowledge-vault callers keep
+today's non-generated behavior by default. The two methods do not carry the same
+precondition domain, because 3.5's delete contract is narrower than its write
+contract: `write_page` forwards `--expected-hash` for a replacement or
+`--expected-absent` for a creation, while `delete_page` forwards
+`--expected-hash` to remove an existing page and may forward `--expected-absent`
+only to assert an already-completed removal. A gateway that let a prune delete
+under `--expected-absent` would hand the finalizer exactly the unconditional
+removal 3.5 refuses at the binary. Reinstall the gwiki binary.
+
+This deliverable carries the P3 exit gate. It is the phase's terminal leaf — it
+depends on 3.4 and 3.5, which reach 3.8, 3.7, 3.3, 3.2, and 3.1 transitively — so
+the gate cannot run before the validator, the write path, the contract surface,
+or the retirement it certifies. That role moved here from 3.8 when retirement was
+ordered ahead of the marker flip; a gate hanging off the first step of the phase
+would certify nothing.
 
 **Acceptance:**
 
 - 3.6.1 - New commands pinned; both binaries' drift tests pass. file: `crates/gwiki/contract/gwiki.contract.json`.
 - 3.6.2 - The relocated feature-catalog handler map covers the new gwiki commands and stays exactly equal to the pinned contract set. test: `crates/gwiki/src/code_wiki/features/tests.rs`.
 - 3.6.3 - GwikiGateway exposes the code_* wrappers. file: `src/gobby/gwiki_gateway.py`.
-- 3.6.6 - `write_page` and `delete_page` forward generated/template authorization to argv along with exactly one of `--expected-hash` or `--expected-absent`, while existing knowledge callers still emit today's non-generated argv. test: `tests/wiki/test_gwiki_gateway.py::generated_flags_reach_argv`.
+- 3.6.6 - `write_page` and `delete_page` forward generated/template authorization to argv along with exactly one of `--expected-hash` or `--expected-absent`; `delete_page` cannot emit a removal of an existing page under `--expected-absent`; existing knowledge callers still emit today's non-generated argv. test: `tests/wiki/test_gwiki_gateway.py::generated_flags_reach_argv`.
 - 3.6.7 - Every exhaustive consumer of the gwiki `Command` enum classifies the three new `code` commands, including `commands/project_admission.rs`, and the crate compiles with no non-exhaustive-match error. test: `crates/gwiki/src/commands/project_admission/tests.rs::code_commands_are_classified`.
 - 3.6.4 - Each `code` subcommand parses, maps, dispatches, and returns a nonzero exit with a machine-readable error for a bad page argument. test: `crates/gwiki/src/cli/tests.rs`.
-- 3.6.5 - `~/.gobby/bin/{gcode,gwiki}` are rebuilt and reinstalled and `wiki_search`/`wiki_ask`/`wiki_read` answer against the live daemon. test: `tests/wiki/test_phase_exit_smoke.py`.
+- 3.6.5 - P3 exit gate: all three crates build, `~/.gobby/bin/{gcode,gwiki,ghook}` are rebuilt and reinstalled, and the daemon answers `wiki_search`, `wiki_ask`, and `wiki_read` against the existing vault with no codewiki generator compiled or installed. test: `tests/wiki/test_phase_exit_smoke.py`.
 
 ### 3.7 Page-type manifest and required-section contract [category: config]
 `kind: deliverable`
@@ -852,14 +910,20 @@ must not silently invalidate every landed page, and a section rename that
 - 3.7.2 - Manifest parses into the section spec `gwiki code validate` consumes, and an unknown page type is a typed error. test: `tests/wiki/test_codewiki_manifest.py`.
 - 3.7.3 - Manifest declares ordered, unique `tour_audiences` and `seed_concepts`; both parse into the planner input 4.3 step 0 consumes, and a duplicate entry in either is a typed error. test: `tests/wiki/test_codewiki_manifest.py::planner_inputs_are_declared`.
 
-### 3.8 Retire the gcode codewiki command [category: code] (depends: 3.1, 3.2, 3.3, 3.4, 3.5, 3.6, 3.7)
+### 3.8 Retire the gcode codewiki command [category: code] (depends: 3.1, 3.2)
 `kind: deliverable`
 
 Target: `crates/gcode/src/cli.rs`, `crates/gcode/src/dispatch.rs`,
 `crates/gcode/src/contract.rs`, `crates/gcode/contract/gcode.contract.json`,
 `crates/gcode/src/cli/tests/codewiki.rs`,
+`crates/gcode/src/commands/mod.rs`,
 `src/gobby/code_index/gcode_gateway.py`,
+`src/gobby/code_index/codewiki_refresh.py`,
+`src/gobby/code_index/codewiki_trigger.py`,
 `src/gobby/code_index/codewiki_nightly.py`,
+`src/gobby/runner_init/orchestration.py`,
+`src/gobby/servers/_app_lifecycle.py`, `src/gobby/app_context.py`,
+`src/gobby/servers/routes/code_index.py`,
 `src/gobby/cli/installers/git_hooks.py`
 
 By this point the subtree has given up everything the new pipeline needs: 2.2
@@ -870,6 +934,17 @@ users, and keeping it *invocable* is what forces the dual-marker window, the
 freeze carve-out, and the fallback clauses this plan previously carried. Retire
 the entry points now; 5.2 deletes the code.
 
+Retirement runs **before** 3.4's marker flip, which is why 3.4 depends on this
+section rather than the reverse. `GENERATED_BY_CODEWIKI` is one shared constant
+and the legacy generator stamps its pages from that same constant, so flipping it
+while `gcode codewiki` is still invocable — by hand, by the installed git hook,
+or by the nightly cron — would have the retired pipeline emit old-shape pages
+carrying the *new* marker. That marker is exactly the identity 4.3's prune and
+5.3's quarantine use to tell the two page families apart, so a single run in that
+window would poison both. Ordering the shutdown first makes the interleaving
+unreachable rather than merely unlikely, which is why nothing downstream has to
+detect it.
+
 Remove the reachable surface: `Command::Codewiki` and the AI arg enums
 (`cli.rs:383-513`) with their `From` impls (:75-128, the only inbound reference to
 the subtree from outside it), the dispatch arms
@@ -878,32 +953,48 @@ the subtree from outside it), the dispatch arms
 test, `crates/gcode/src/cli/tests/codewiki.rs`, and the `codewiki` arm of
 `resolve_gcode_handler` in the relocated catalog — that map must equal the pinned
 contract set exactly, so dropping the contract entry without the arm fails 3.1's
-coverage test. Python: delete `GcodeGateway.codewiki()`
-(`gcode_gateway.py:480-502`), stop registering the nightly cron
-(`codewiki_nightly.py`), and drop the legacy `POST /api/code-index/codewiki/refresh`
-body from the installed git hook (`git_hooks.py:57-69`). The
-`crates/gcode/src/commands/codewiki/` subtree itself stays on disk, unreachable
-and unreferenced, until 5.2.
+coverage test.
+
+"Present but unreachable" is a property of the module graph, not of the CLI. The
+crate's public `commands` module declares the subtree
+(`crates/gcode/src/commands/mod.rs:1`) and the subtree re-exports its generation,
+repair, purge, and citation entry points, so removing only the command leaves a
+compiled, publicly callable generator behind. Drop that module declaration here
+as well: the files stay on disk as the written record 5.2 deletes, but they are
+no longer compiled, no longer exported, and their ~10K subtree tests no longer
+run.
+
+The Python side is a call graph rather than a single method, and every node of it
+exists only to reach the command being removed. `GcodeGateway.codewiki()`
+(`gcode_gateway.py:480-502`) is invoked by the refresh service
+(`codewiki_refresh.py:89`), driven by the debounce trigger
+(`codewiki_trigger.py`), constructed at application startup
+(`_app_lifecycle.py:77`) into a service-container field (`app_context.py:103`),
+and reached through `POST /api/code-index/codewiki/refresh` and
+`GET /api/code-index/codewiki/status` (`servers/routes/code_index.py:457,508`);
+separately, runner initialization registers the nightly cron
+(`runner_init/orchestration.py:544`, handler in `codewiki_nightly.py`) and the
+installed git hook posts to that same legacy route (`git_hooks.py:57-69`). All of
+it goes here. 4.2 previously promised to retire those route internals; that
+promise moves into this section, because the routes have no implementation left
+once the trigger is gone, and 4.2 builds its own debounce into the new service
+rather than adopting an orphan.
 
 This opens a deliberate window: from here until 4.2 wires the new endpoint, no
 codewiki automation runs at all. That is the point rather than a cost — the
 generated pages are already stale, nobody queries them, and a nightly job
 rebuilding content the epic is replacing burns tokens against a vault scheduled
 for deletion. The vault stays on disk and stays queryable throughout; only the
-writer stops.
-
-This deliverable carries the P3 exit gate, which is why it depends on every P3
-sibling rather than only on the ones it edits. A gate that can run before its
-phase finishes would certify a build whose validator, write path, or contract
-surface is still missing.
+writer stops. The wiki tab's codewiki freshness strip and its refresh action call
+the routes removed here, so for the length of the window they render their empty
+state; 4.2 repoints them at the new endpoints.
 
 **Acceptance:**
 
 - 3.8.1 - No `codewiki` command, arg enum, dispatch arm, or contract entry remains in gcode; drift and phase7 contract tests pass. file: `crates/gcode/contract/gcode.contract.json`.
 - 3.8.2 - The relocated catalog's command set still equals every pinned contract exactly after the gcode entry is dropped. test: `crates/gwiki/src/code_wiki/features/tests.rs::catalog_command_set_equals_each_pinned_contract_exactly`.
-- 3.8.3 - The daemon has no `gcode codewiki` call path, registers no codewiki nightly cron, and installs a git hook that posts to no legacy codewiki route. file: `src/gobby/code_index/gcode_gateway.py`.
-- 3.8.4 - `gcode` builds and its index, search, symbol, graph, and outline commands are unaffected, with the subtree present but unreachable. test: `tests/code_index/test_gcode_phase7_contract.py`.
-- 3.8.5 - P3 exit gate: all three crates build, `~/.gobby/bin/{gcode,gwiki,ghook}` are rebuilt and reinstalled, and the daemon answers `wiki_search`, `wiki_ask`, and `wiki_read` against the existing vault with no codewiki generator installed. test: `tests/wiki/test_phase_exit_smoke.py`.
+- 3.8.3 - The daemon retains no `gcode codewiki` call path at any depth: the gateway method, the refresh service, the debounce trigger, its startup construction and service-container field, both legacy routes, and the nightly cron registration are all gone, and the installed git hook posts to no codewiki route. file: `src/gobby/code_index/codewiki_refresh.py`.
+- 3.8.4 - The subtree's module declaration is gone, `gcode` builds with the subtree uncompiled and its tests no longer collected, and its index, search, symbol, graph, and outline commands are unaffected. test: `tests/code_index/test_gcode_phase7_contract.py`.
 
 ## P4: Daemon Orchestration and Templates
 `kind: framing`
@@ -965,8 +1056,8 @@ threshold edit cannot silently reclassify.
 
 Target: `src/gobby/wiki/codewiki/service.py`,
 `src/gobby/servers/routes/wiki.py`, `src/gobby/cli/installers/git_hooks.py`,
-`src/gobby/servers/routes/code_index.py`,
-`src/gobby/code_index/codewiki_trigger.py`
+`src/gobby/app_context.py`, `src/gobby/servers/_app_lifecycle.py`,
+`web/src/components/activity/wiki/WikiTabData.ts`
 
 Service + FastAPI routes on the wiki router (`servers/routes/wiki.py`,
 registered via `servers/_app_routes.py`):
@@ -978,10 +1069,22 @@ registered via `servers/_app_routes.py`):
 Repoint the git post-commit hook body
 (`src/gobby/cli/installers/git_hooks.py`) to POST the **changed-file list**
 (already computed as `CHANGED_FILES` for `gcode index --files`, today dropped
-for codewiki) plus before/after SHAs to the new endpoint; retire the
-`servers/routes/code_index.py:457,508` codewiki route internals (paths may 307
-or be removed — no compat requirement). `codewiki_trigger.py` debounce is
-retained but forwards changed_files.
+for codewiki) plus before/after SHAs to the new endpoint. The legacy routes and
+the debounce trigger that backed them were removed in 3.8, so nothing is retired
+here and nothing is adopted: the service carries its own debounce, which is a
+handful of lines against a queue that already coalesces by fingerprint, and is
+cheaper than reviving an orphaned component built around a gateway call that no
+longer exists.
+
+A service nobody constructs admits nothing, so this deliverable also owns the
+wiring 3.8 vacated. The generation service is built at application startup
+(`_app_lifecycle.py`) into the service container (`app_context.py`) in the slot
+the retired trigger used to occupy, and shut down with the rest of the
+application; 4.3 hangs the executor and watchdog tasks off the same owner. The
+wiki tab's freshness strip and refresh action, dark since 3.8, are repointed from
+the removed `code-index` paths to `GET /api/wiki/codewiki/status` and
+`POST /api/wiki/codewiki/generate` (`WikiTabData.ts:705,744`), together with the
+route mocks in their component tests.
 
 Commit hooks, nightly cron, and manual calls all land here and can overlap, so
 admission is where that is resolved. Each accepted run pins `(index_commit,
@@ -997,6 +1100,15 @@ in-flight run coalesces into it and returns that run id; a request at a newer
 commit writes the single queued-successor row instead of mutating the in-flight
 one, and 4.7's schema — not an application check — enforces both that one run per
 project executes at a time and that a successor can still wait behind it.
+
+Mode is not the only requested state that has to survive that coalescing. A
+`scope` request names pages explicitly, and it is accepted independently of the
+classifier's band, so a run's work set is a function of `(mode, scope)` rather
+than mode alone. Admission therefore records the canonical requested scope
+alongside the requested mode on both the executing and the queued row, and 4.7
+carries the merge rule; dropping it would let `scope A` followed by any later
+trigger silently discard the pages A asked for, with no diff able to recover them
+because they were never a change set in the first place.
 
 `concept_catalog_digest` is in that tuple because the FactsBundle does not
 describe the vault. 4.3 plans concept items from the union of the manifest seed
@@ -1035,12 +1147,17 @@ prunes bundles that nothing references once its run reaches a terminal state.
 - 4.2.5 - Admission stores the canonical bundle bytes; a run resumed after restart re-reads them, verifies the digest, and hard-fails on mismatch. test: `tests/wiki/test_codewiki_executor.py::run_resumes_from_stored_bundle`.
 - 4.2.6 - A bundle referenced by any current page or resumable run survives pruning; an unreferenced terminal-run bundle is pruned, and `validate --all` still passes across pages left by an earlier PARTIAL run. test: `tests/wiki/test_codewiki_executor.py::bundle_retained_while_referenced`.
 - 4.2.7 - Two concurrent admissions with one fingerprint produce exactly one executing run and both callers receive its id; an admission at a newer commit during that run queues a successor that later executes at the newer commit rather than being absorbed. test: `tests/servers/routes/test_wiki_codewiki_routes.py::concurrent_admission_single_winner`.
+- 4.2.8 - The generation service is constructed at application startup into the service container and torn down on shutdown; a daemon started with no codewiki state serves generate/status/runs, and an admitted run is drained rather than left resident in the queue. test: `tests/servers/routes/test_wiki_codewiki_routes.py::service_is_constructed_at_startup`.
+- 4.2.9 - The wiki tab's freshness strip and refresh action call the new `/api/wiki/codewiki` paths and no `code-index` codewiki path remains in the frontend or its route mocks. test: `web/src/components/activity/wiki/__tests__/WikiCodeMode.test.tsx`.
 
 ### 4.3 Run executor: queue, fan-out, landing, librarian unification [category: code] (depends: 4.2, 4.5, 4.7)
 `kind: deliverable`
 
 Target: `src/gobby/wiki/codewiki/executor.py`, `wiki/code/_meta/build.json`,
-`src/gobby/install/shared/templates/codewiki/query_corpus.yaml`
+`wiki/code/_meta/truth_digest.json`,
+`src/gobby/install/shared/templates/codewiki/query_corpus.yaml`,
+`src/gobby/install/bundled_content_manifest.json`,
+`src/gobby/runner_lifecycle_subsystems.py`
 
 Hub-DB queue tables (`codewiki_runs`, `codewiki_page_items`, schema from 4.7)
 written by the service; the executor drains a run:
@@ -1078,6 +1195,19 @@ written by the service; the executor drains a run:
    item, incomplete summary coverage). An inventory is a claim about what *should*
    exist; stamping fresh before it does would let one PARTIAL run over an empty
    vault declare a sixty-page wiki current.
+
+   That refusal is a detector, and a detector with no repair path is a livelock.
+   Pages can disappear without any run's participation — an operator deletes one,
+   a partial restore misses one, a failed landing never produced one — and a
+   subsequent COSMETIC, PARTIAL, ARCHITECTURE, or scoped run selects its work
+   from the change set, which will not mention a page nothing changed. Freshness
+   would then be withheld forever while every automatic run declines to fix the
+   reason. So the work set is the union of the mode-selected items and
+   `desired_inventory` minus what is actually materialized on disk: missing
+   deterministic pages are re-rendered in step 1, missing semantic pages are
+   enqueued as mandatory items, and the run that detects the gap is the run that
+   closes it. The union is bounded by the inventory, so a healthy vault adds no
+   work and a FULL run is unaffected.
 1. Deterministic renders inline via `GwikiGateway.code_render` (no agents).
 2. LLM page items fan out via `spawn_agent_impl`
    (`src/gobby/mcp_proxy/tools/spawn_agent/`) called directly with
@@ -1097,10 +1227,22 @@ written by the service; the executor drains a run:
    machine-readable errors in the prompt; second failure → file a task
    (category docs, label `codewiki-escalation`) and continue.
 4. Finalizer: update `wiki/code/_meta/build.json` (run report incl.
-   DiagramStats) with the run's desired inventory, prune generated pages absent
+   DiagramStats) with the run's desired inventory, rewrite
+   `wiki/code/_meta/truth_digest.json`, prune generated pages absent
    from **that inventory**, re-render `_index.md`, refresh the `wiki_overview`
    session variable source, trigger reindex via `WikiUpdateCoordinator` — in that
    order, so reindex never sees an orphan.
+   The truth digest is in that list because it is a live cross-subsystem
+   dependency, not a codewiki artifact. Memory dream resolves each project's
+   repo path and reads exactly `_meta/truth_digest.json` to decide whether stored
+   memories must be re-judged, and a missing or unparseable file returns an empty
+   digest **silently** — no error, no cooldown invalidation, just memories that
+   quietly stop being re-judged. Its only producer today is the legacy generator
+   3.8 retires, so without a replacement this epic disables a working feature with
+   no failing test anywhere to notice. The new finalizer emits the same path in
+   the same shape, derived from the run's pinned bundle, which costs one writer
+   against data the run already holds and keeps the consumer and its fixtures
+   untouched.
    Pruning is not optional bookkeeping: module ids are content-addressed over
    sorted member paths (2.2), so splitting a module, merging two, or deleting a
    file *renames* pages. Without a prune the previous generation stays on disk
@@ -1124,6 +1266,28 @@ Librarian unification: the executor also claims open `wiki-librarian:*` tasks
 through the same agent fan-out — #18905/#18906/#18907 are the first live cargo.
 DB transaction boundaries per hub conventions (`with self.db.transaction()`,
 `%s` placeholders).
+
+The executor is a long-lived task, and a durable queue whose drainer nobody
+starts is worse than no queue: 4.2 would accept requests, 4.7 would persist rows,
+and the run would sit in `queued` forever while `/status` reported a healthy
+service. So this deliverable registers the executor, the startup recovery pass,
+and the 4.7 heartbeat watchdog as lifecycle subsystems alongside the daemon's
+existing ones (`runner_lifecycle_subsystems.py`), constructed from the 4.2
+service, started after the hub is reachable, cancelled and awaited on shutdown,
+and reported as degraded rather than silently absent when construction fails.
+Startup recovery runs before the first drain, so a daemon restarted mid-run
+terminalizes or resumes the abandoned row and promotes its successor before any
+new admission is considered.
+
+This deliverable is also the last one to add a file under
+`src/gobby/install/shared/` — 3.7's page-type manifest, 4.4's templates and
+golden examples, 4.5's agent definitions, and this section's query corpus all
+land there, and 4.3 depends transitively on every one of them. The packaged
+bundled-content manifest is content-addressed over that whole tree and a
+committed test asserts it matches exactly, so shipping any of those files without
+regenerating `bundled_content_manifest.json` fails an existing repository test
+and leaves packaged installs unable to verify the new assets. Regeneration lands
+here, once, rather than being re-done and re-conflicted in four sections.
 
 Write ownership is partitioned by path, and that partition is the whole reason
 the two wiki loops can share one orchestration without a rewrite. A codewiki run
@@ -1231,6 +1395,10 @@ proves nothing about aggregate-page quality drifting over months.
 - 4.3.12 - A PARTIAL run touching one module leaves every untouched page and its referenced bundle intact, and a vault still holding pages with the pre-flip `gcode-codewiki` literal loses none of them to any run. test: `tests/wiki/test_codewiki_executor.py::partial_run_prunes_nothing_untouched`.
 - 4.3.13 - Planning records a complete desired inventory on the run row and in `build.json` for every mode, derived from the pinned bundle and catalog snapshot, and FULL and PARTIAL runs over one pinned pair produce the same inventory. test: `tests/wiki/test_codewiki_executor.py::desired_inventory_is_mode_independent`.
 - 4.3.14 - A project with no prior successful build classifies as FULL regardless of change-set size, and a run whose desired inventory is not fully materialized on disk withholds the fresh stamp and the commit baseline. test: `tests/wiki/test_codewiki_executor.py::unmaterialized_inventory_is_not_fresh`.
+- 4.3.15 - With one page of each family deleted out from under the vault, a COSMETIC, a PARTIAL, an ARCHITECTURE, and a scoped run each re-render or re-enqueue exactly the missing pages on top of their mode-selected work and regain the fresh stamp; over a complete vault the same runs plan no extra work. test: `tests/wiki/test_codewiki_executor.py::missing_inventory_pages_are_repaired`.
+- 4.3.16 - The finalizer writes `_meta/truth_digest.json` in the shape memory dream consumes, and a dream sweep after a codewiki run detects the truth change and invalidates its cooldown exactly as it did against the legacy artifact. test: `tests/memory/test_dream.py::truth_digest_from_codewiki_run`.
+- 4.3.17 - Executor, startup recovery, and watchdog are registered lifecycle subsystems: a daemon restarted with an admitted, undrained run recovers it, promotes any successor, and drains to a terminal state without operator action, and shutdown cancels and awaits them. test: `tests/wiki/test_codewiki_executor.py::executor_lifecycle_is_owned`.
+- 4.3.18 - `bundled_content_manifest.json` is regenerated over every shared file this epic adds and the committed manifest matches the shared tree exactly. test: `tests/test_build_backend.py::test_committed_bundled_content_manifest_matches_shared_tree`.
 - 4.3.11 - Planning reads the pinned concept-catalog snapshot: a concept page added to the vault after admission does not change the planned item set. test: `tests/wiki/test_codewiki_executor.py::planning_uses_pinned_catalog`.
 - 4.3.4 - Stale-fence results are rejected, failed items retain the last valid page, and crash injection at dispatch/write/ack/finalize leaves the vault consistent. test: `tests/wiki/test_codewiki_executor.py::crash_injection_consistency`.
 - 4.3.5 - ARCHITECTURE/FULL runs record verification probes and withhold the fresh stamp on regression. file: `src/gobby/install/shared/templates/codewiki/query_corpus.yaml`.
@@ -1344,7 +1512,8 @@ the executor gets a repository, not inline SQL.
 `index_commit`/`facts_digest`/`template_version`/`concept_catalog_digest`,
 compressed `facts_bundle` and concept-catalog snapshot bytes (4.2), the
 canonical `desired_inventory` page-path list 4.3 step 0 derives and step 4
-reconciles against, the `owner`/`heartbeat_at` pair below, state
+reconciles against, the merged `requested_mode`/`requested_scope` pair, the
+`owner`/`heartbeat_at`/`lease_expires_at` triple below, state
 including `degraded`, timestamps. `codewiki_page_items`: run id, `page_path`,
 page type, `state`, `attempts`, `lease_expires_at`, `fence`, last error.
 Constraints carry the invariants the executor depends on rather than leaving
@@ -1386,18 +1555,51 @@ changed files — so the queued row also keeps the maximum requested mode across
 every trigger it absorbed, and a pending FULL is never demoted by a later
 narrower request.
 
+Requested scope is the second such field and needs the same treatment for the
+same reason. A `scope` request names pages directly rather than describing a
+change, so no diff from any baseline can reconstruct it: if trigger B queues
+`scope M1` and trigger C at a newer commit replaces the row with `scope M2`, M1
+is simply lost, and it is lost identically if C is a plain `auto`. The queued row
+therefore carries a canonical requested-scope field merged monotonically — a
+requested FULL dominates and clears it, since a full build subsumes every scope,
+and any two scopes merge to their union. Union is the right merge rather than
+newest-wins because scope is an additive claim about what must be rebuilt, and
+because the union is bounded by the desired inventory it can never grow without
+limit. Both fields survive a restart because they live on the row, not in the
+request that set them.
+
 An executing run that never terminalizes is worse than a lost trigger, because
 the executing partial index makes the wedge permanent: a daemon killed mid-run, a
 worker exception, or an unrecoverable bundle-digest mismatch leaves the row in
 `running` or `landing`, every later admission coalesces into a run that will
 never finish, and the project can never build again. Page-item leases do not
 help — they release items, not the run. The run row therefore carries the same
-lease shape its items already do: an `owner` identifying the daemon instance and
-a `heartbeat_at` the executor refreshes while it drains. Daemon startup and a
-periodic watchdog scan for executing runs whose heartbeat has expired and, in one
-transaction, either resume a row this instance can still own or terminalize it
-with a stable error and promote the queued successor. Recovery is bounded by the
-heartbeat interval rather than by an operator noticing.
+lease shape its items already do: an `owner` identifying the daemon instance, a
+`heartbeat_at` the executor refreshes while it drains, and an explicit
+`lease_expires_at`. Daemon startup and a periodic watchdog scan for executing
+runs whose lease has expired and, in one transaction, either resume a row this
+instance can still own or terminalize it with a stable error and promote the
+queued successor. Recovery is bounded by the lease interval rather than by an
+operator noticing.
+
+`lease_expires_at` is a stored column rather than a heartbeat comparison done in
+Python because takeover has to be a single guarded write. A restart produces a
+new process with a new owner identity, so no recovering instance can ever match
+the dead owner literally; the transition is an `UPDATE ... WHERE id = %s AND
+state IN ('running','landing') AND lease_expires_at < now()` that claims the row
+or affects zero rows, following the expiry-plus-guarded-mutation shape the
+daemon's dispatch lease cleanup already uses. Two watchdogs racing the same
+abandoned row therefore produce one winner and one no-op, with no read-then-write
+window between them.
+
+What the run lease deliberately does *not* get is an incarnation counter fenced
+through every later mutation. A revived old owner cannot corrupt anything it
+would reach: the executing partial unique index admits one executing run per
+project, page landings re-read their item row `FOR UPDATE` and abort on a
+superseded `fence` before touching the vault, and 3.5's generated write rechecks
+its expected-state precondition under the page lock immediately before the
+rename. Three independent guards already stand between a stale owner and a byte
+on disk, so a fourth would be mechanism guarding a state that cannot be reached.
 
 Ordered before 4.3 in the graph despite its number: 4.3 cannot drain a queue
 that has no tables.
@@ -1410,7 +1612,8 @@ that has no tables.
 - 4.7.4 - Two real connections inserting executing runs for one project at the same time yield one success and one unique violation; a terminal run does not block the next admission. test: `tests/wiki/test_codewiki_queue_storage.py::single_active_run_per_project`.
 - 4.7.5 - A queued successor is admitted alongside an executing run, a newer trigger replaces the queued row rather than being rejected, and terminalizing the executing run promotes the queued row in the same transaction. test: `tests/wiki/test_codewiki_queue_storage.py::successor_queues_and_promotes`.
 - 4.7.6 - Successor replacement is monotone: a trigger touching `x` followed by a newer trigger touching `y` promotes to a run whose recomputed change set covers both, and a pending `full` request is not demoted by a later narrower trigger. test: `tests/wiki/test_codewiki_queue_storage.py::successor_replacement_is_monotone`.
-- 4.7.7 - An executing run whose heartbeat has expired is terminalized with a stable error by startup recovery and by the watchdog, its queued successor is promoted in the same transaction, and a fresh admission for that project succeeds afterwards. test: `tests/wiki/test_codewiki_queue_storage.py::abandoned_run_is_recovered`.
+- 4.7.7 - An executing run whose lease has expired is terminalized with a stable error by startup recovery and by the watchdog, its queued successor is promoted in the same transaction, and a fresh admission for that project succeeds afterwards; two watchdogs racing one abandoned row yield exactly one takeover and one no-op, and an unexpired row is never taken over. test: `tests/wiki/test_codewiki_queue_storage.py::abandoned_run_is_recovered`.
+- 4.7.8 - Requested scope merges monotonically across coalescing: `scope A` then `scope B` promotes to a run covering both, `scope A` then `auto` still covers A, a requested `full` dominates and clears the scope, and every merge survives a restart because it is stored on the row. test: `tests/wiki/test_codewiki_queue_storage.py::requested_scope_merges_monotonically`.
 
 ## P5: Cutover and Deletion
 `kind: framing`
@@ -1495,25 +1698,42 @@ deliberately.
 ### 5.3 Vault migration [category: test] (depends: 5.1)
 `kind: deliverable`
 
-Target: `wiki/code/files`
+Target: `src/gobby/wiki/codewiki/vault_migration.py`, `wiki/code/files`
 
 Publish-then-quarantine-then-delete within one supervised run: after 5.1's new
 pages land and reindex completes, the legacy content — `wiki/code/files/**`
 (~2,923 pages), orphaned old module pages, the narrative handbook (absorbed by
 tours), `repo.md` (absorbed by `_index.md`), and the legacy
 `_meta/codewiki.json` (14.6MB → `build.json` + `layers.json`, <100KB) — is
-**renamed into `wiki/.code-legacy-<run_id>/`, not deleted**. Selection is by the
-marker, which after 3.4's flip is unambiguous: a page whose `generated_by` does
-not equal the current constant is legacy, and a page whose does is not. The
-manifest is those pages plus the explicitly enumerated legacy artifacts above.
-The shared deterministic names (`features.md`, `changes.md`, `hotspots.md`,
-`infrastructure.md`, `ownership.md`, `deprecations.md`) are written by both the
-old and new pipelines, and 5.1 replaced their occupants already; because those
-replacements carry the current marker, they fall out of the manifest by the same
-rule rather than needing a recorded exclusion list. Then run the
+**renamed into `wiki/.code-legacy-<run_id>/`, not deleted**. Then run the
 link-rewrite pass, the `gwiki lint` dead-link check, the reindex, and the
 `wiki_search`/`wiki_ask` module- and file-level parity checks. Only once all of
 those pass is the quarantine directory removed.
+
+Selection is by **positive** legacy identity, never by inequality with the
+current marker. `generated_by` is an optional frontmatter field, so "does not
+equal the current constant" is true of every page that carries no marker at all —
+operator-authored notes dropped under `code/**`, artifacts from any other tool,
+and anything with a marker this epic has never heard of. A negative predicate
+therefore hands a destructive rename authority over files it knows nothing about.
+The manifest instead selects pages whose `generated_by` equals the exact legacy
+literal `gcode-codewiki`, plus the enumerated legacy artifacts named above, and
+nothing else. Missing, unknown, and foreign markers are protected: they stay in
+place and are reported in the run record, so an unexpected occupant is a thing
+the operator reads about rather than a thing the migration silently moved. The
+shared deterministic names (`features.md`, `changes.md`, `hotspots.md`,
+`infrastructure.md`, `ownership.md`, `deprecations.md`) are written by both
+pipelines and 5.1 replaced their occupants already; because those replacements
+carry the current marker rather than the legacy literal, they fall outside a
+positive selection just as cleanly, with no recorded exclusion list.
+
+This is a supervised, crash-recoverable, destructive procedure, and naming only
+its data targets and its tests would leave nothing to expand into work. It is
+owned by `src/gobby/wiki/codewiki/vault_migration.py`, invoked by the 4.3
+finalizer at cutover and exposed as an operator entry point on the generation
+service: the module owns manifest construction and persistence, each rename, the
+link rewrite, resume and restore, the lint/reindex/parity probes, and the final
+quarantine deletion. The tests below point at it.
 
 "Rollback is don't delete" is not a rollback — it is a precondition, and it only
 covers failures noticed *before* the destructive step. Every check in this
@@ -1534,14 +1754,27 @@ completed ones. Without the manifest a crash mid-quarantine leaves a split vault
 with no record of which half moved, which is the one state this section exists to
 prevent.
 
+The renames are not the only mutation the checks run after, so the manifest has
+to cover the other one too. The link-rewrite pass edits **surviving** pages, and
+restoring the quarantined directory does not un-edit them: a failure at lint,
+reindex, or parity would restore the old pages beside rewritten links that now
+point at the new ones, which is a third state that is neither before nor after.
+The same manifest therefore records each rewritten page with its pre-rewrite
+content hash and its recoverable prior bytes, exactly as it records each move, so
+rollback restores both families and then reindexes before declaring the vault
+recovered — an unreindexed restore leaves queries answering from the wrong
+generation. This is one more list in a journal the section already writes, not a
+second mechanism.
+
 **Acceptance:**
 
 - 5.3.1 - Legacy per-file/narrative pages and 14.6MB meta are gone; new meta <100KB. behavior: "post-purge vault inventory" in `wiki/code/_meta/build.json`.
 - 5.3.2 - Dead-link lint is clean and wiki_ask answers file+module questions post-purge. test: `tests/wiki/test_codewiki_e2e.py::post_purge_query_parity`.
 - 5.3.3 - Legacy content is quarantined by rename before any check runs, and the quarantine is removed only after all of them pass. test: `tests/wiki/test_codewiki_e2e.py::purge_quarantines_before_delete`.
-- 5.3.4 - A failure injected at link-rewrite, lint, reindex, and query-parity each restores the quarantined content and leaves the vault queryable. test: `tests/wiki/test_codewiki_e2e.py::purge_restores_on_failure`.
-- 5.3.5 - The move manifest is written before the first rename; a crash injected between any two moves resumes or restores to a whole vault from that prefix. test: `tests/wiki/test_codewiki_e2e.py::quarantine_recovers_from_any_prefix`.
-- 5.3.6 - Over a vault holding both pre-flip legacy pages and current-marker pages, the manifest selects every legacy page and enumerated artifact, selects no current-marker page including the shared deterministic names, and the post-quarantine vault still passes `gwiki code validate --all`. test: `tests/wiki/test_codewiki_e2e.py::quarantine_selects_only_legacy`.
+- 5.3.4 - A failure injected at link-rewrite, lint, reindex, and query-parity each restores both the quarantined content and every rewritten surviving page to its pre-migration bytes, reindexes, and leaves the vault queryable and byte-identical to its pre-migration state. test: `tests/wiki/test_codewiki_e2e.py::purge_restores_on_failure`.
+- 5.3.5 - The move manifest is written before the first rename and each rewritten page is journaled with its prior hash and bytes before being edited; a crash injected between any two moves, and between any two rewrites, resumes or restores to a whole vault from that prefix. test: `tests/wiki/test_codewiki_e2e.py::quarantine_recovers_from_any_prefix`.
+- 5.3.6 - Over a vault holding pre-flip legacy pages, current-marker pages, an unmarked operator-authored page, and a page carrying a foreign marker, the manifest selects every legacy page and enumerated artifact and nothing else; the unmarked and foreign pages remain in place and are reported; and the post-quarantine vault still passes `gwiki code validate --all`. test: `tests/wiki/test_codewiki_e2e.py::quarantine_selects_only_legacy`.
+- 5.3.7 - The migration module owns manifest, renames, rewrite, restore, probes, and quarantine deletion, and is reachable from the cutover finalizer and the operator entry point. file: `src/gobby/wiki/codewiki/vault_migration.py`.
 
 ## V1 Plan Changelog
 `kind: verification`
@@ -1880,6 +2113,96 @@ orchestration, standalone removal first. No review rounds yet.
   This revision invalidates the round-4 convergence on 3.4, 3.6, 4.3, 5.1, and
   5.3. Round 5 must re-review them against the new shape.
 
+
+**Round 5** `kind: verification`
+
+- reviewer_run: d70d5aff-2591-4834-b554-5541a2ac5875
+- reviewer_session: f5399ee8-c968-439d-b4f7-d4d933a570ca
+- verdict: needs_review
+- findings:
+- R5-retirement-marker-order / blocking / 3.8 depended on 3.4, so the shared marker flipped while every legacy entry point was still live
+- R5-retirement-public-export / blocking / the subtree stays publicly declared and compiled, so removing only the CLI command left a callable generator
+- R5-retirement-call-graph / blocking / 3.8's teardown named three sites out of a call graph that reaches the refresh service, trigger, startup construction, two routes, the cron, and the UI
+- R5-audit-marker-fixtures / blocking / the gwiki occurrences of the old literal are not uniformly parser fixtures; the audit suite asserts grounding through marker equality
+- R5-successor-scope-intent / blocking / the monotone successor kept commit and mode but dropped requested scope, which no diff can reconstruct
+- R5-inventory-missing-page-repair / blocking / the inventory freshness check detects a missing page that no non-FULL run is ever guaranteed to enqueue
+- R5-run-lease-takeover / blocking / owner plus heartbeat cannot express takeover across a restart, where no new process can match the dead owner
+- R5-negative-marker-quarantine / blocking / quarantine selected by inequality with the current marker, and `generated_by` is optional, so unmarked pages were in scope for a destructive rename
+- R5-generated-delete-cas / blocking / `--expected-absent` carries no authority to delete an existing page, so a stale prune could remove a replacement
+- R5-file-summary-project-key / blocking / a `(path, content_hash)` summary key collides across two projects holding the same file
+- R5-file-summary-lifecycle / blocking / mandatory file summaries were left behind the optional `symbol_summary.enabled` gate, so nothing would produce them
+- R5-bundled-content-manifest / blocking / four sections add files under `install/shared/` and none regenerates the content-addressed manifest a committed test pins
+- R5-orchestrator-lifecycle / blocking / nothing constructs, starts, recovers, or cancels the executor and watchdog, so admitted rows would never drain
+- R5-truth-digest-cutover / blocking / memory dream reads `_meta/truth_digest.json`, whose only producer is the generator being retired, and a missing file degrades silently
+- R5-vault-migration-owner / blocking / 5.3 described a supervised crash-recoverable procedure with no implementation target to expand into
+- R5-quarantine-rollback / blocking / restoring quarantined files does not un-edit the surviving pages the link rewrite already changed
+- resolution_notes: >
+  Sixteen findings over 27 candidates, against a plan whose two most recent
+  change sets — the round-4 repairs and the P3 retirement restructure — had never
+  been reviewed. Every one was accepted; two were accepted in reduced form. All
+  sixteen citations were ground-checked against live code before judgment, and
+  each one held.
+  The largest single defect is a sequencing error this coordinator introduced
+  when it wrote 3.8: retirement was made to depend on the marker flip rather than
+  the reverse, so for the length of P3 the legacy generator would have stamped
+  old-shape pages with the new marker — the exact identity 4.3's prune and 5.3's
+  quarantine use to tell the families apart. The fix is a dependency inversion
+  and nothing else: 3.8 now depends only on 3.1 and 3.2, 3.4 depends on 3.8, and
+  the P3 exit gate moves to 3.6, which is the phase's terminal leaf. The
+  reviewer also asked for a race test proving no legacy writer can run during the
+  flip; that was declined, because the ordering makes the interleaving
+  unreachable rather than unlikely and a test for an impossible schedule is
+  mechanism guarding nothing. The inversion pays for itself twice: the three
+  legacy sites that pinned the old marker sit inside the subtree whose module
+  declaration 3.8 now drops, so they are no longer compiled and the flip shrinks
+  to the gcore golden plus the gwiki fixtures.
+  Retirement grew in the two directions the reviewer proved it had to. "Present
+  but unreachable" is a module-graph property, not a CLI property, so 3.8 drops
+  the subtree's `pub mod` declaration and the files sit on disk uncompiled until
+  5.2. And the Python side is a call graph rather than a method: gateway,
+  refresh service, debounce trigger, startup construction, service-container
+  field, both legacy routes, the nightly cron, and the git-hook body all go
+  together, because each exists only to reach the command being removed. Route
+  retirement moved out of 4.2 into 3.8 for the same reason — the routes have no
+  implementation left once the trigger is gone — and 4.2 correspondingly picks up
+  the service construction 3.8 vacated plus the two-URL frontend repoint. The
+  wiki tab renders its empty state for the length of the window, which is stated
+  rather than discovered.
+  The remaining accepted findings each reuse mechanism the plan already had. The
+  queued successor gains a canonical requested scope merged by union with FULL
+  dominance, alongside the maximum-mode field round 4 added, because scope is an
+  additive claim no diff can rebuild. Planning unions its mode-selected work with
+  the inventory it cannot otherwise repair, so the run that detects a missing page
+  is the run that closes it and the detector stops being a livelock. The run lease
+  gets an explicit `lease_expires_at` and a single guarded takeover UPDATE
+  following the daemon's existing dispatch-lease shape. Generated delete separates
+  from generated write: `--expected-hash` is the removal authority and
+  `--expected-absent` is an idempotent no-op. File summaries key on project as
+  well as path and hash, and get an always-on production pass independent of the
+  optional symbol-summary switch. Quarantine selects by positive legacy identity
+  and protects missing, unknown, and foreign markers. 4.3 picks up the executor
+  and watchdog lifecycle registration, the one-time bundled-manifest regeneration
+  as the terminal shared-assets leaf, and a `_meta/truth_digest.json` writer so
+  retiring the legacy generator does not silently disable memory dream's
+  re-judging. 5.3 names `vault_migration.py` as the owner of its supervised
+  procedure.
+  Declined in part: the incarnation counter and per-mutation fence
+  R5-run-lease-takeover proposed on top of the lease. Three guards already stand
+  between a revived owner and a byte on disk — the executing partial unique index,
+  the item-row `FOR UPDATE` fence checked before the write, and 3.5's
+  expected-state precondition rechecked under the page lock — so a fourth would
+  guard a state that cannot be reached. Also reduced: R5-quarantine-rollback's
+  staged-write subsystem became one more list in the move manifest 5.3 already
+  writes, recording each rewritten page's prior hash and bytes, with rollback
+  restoring both families and reindexing.
+  No new section, phase, or subsystem was created; the plan remains at 29
+  sections, acyclic, with both validation modes passing. Findings per round are
+  now 17, 12, 7, 7, 16 — the jump is a coverage artifact of two unreviewed change
+  sets, not a regression in convergence, and round 6 reviews the repairs above.
+
+```json plan-review-round
+{"evidence_id":"4df0c982-b062-45a4-91ce-ce08e5a88984","plan_hash":"685394f4ee83985b055b81e166a8d9d8830a2bc87d8fdb10f3ed8a4fc7bb0a17","round_number":5,"round_result":{"candidates_examined":27,"coverage_attestation":{"adjacent_variant_complete":true,"attestation_digest":"4f2e8b0b55922b6d108f886179367e9e226c7554cb2ae639a53fb1f2cf9705bc","cross_lane_interaction_complete":true,"disposition_counts":{"dismissed":11,"emitted_findings":16,"total":27},"evidence_id":"4df0c982-b062-45a4-91ce-ce08e5a88984","lanes":[{"candidate_count":9,"lane_id":"requirements_traceability","status":"completed"},{"candidate_count":10,"lane_id":"repository_blast_radius","status":"completed"},{"candidate_count":8,"lane_id":"runtime_invariants","status":"completed"}],"shadow_manifest_status":{"entry_count":29,"manifest_digest":"ba9420952cd5c14362afc13a367e23bacc18ea4f468b7eb8fb2a8f9f88dc04c9","status":"valid"},"source_digest":"33a511f2775957311d9367c0c86bf15f9a62cbc500ea2b964e1a4a3451d99cc1","version":1},"evidence_id":"4df0c982-b062-45a4-91ce-ce08e5a88984","findings":[{"category":"bad-sequencing","check_key":"retirement-before-shared-marker-flip","description":"The plan flips the single shared marker in 3.4 (`.gobby/plans/wiki-codewiki-restructure.md:621-705`) but 3.8 depends on 3.4 and performs retirement only afterward (`.gobby/plans/wiki-codewiki-restructure.md:855-906`). The legacy generator reads that shared constant (`crates/gcode/src/commands/codewiki/text/frontmatter.rs:261`), while installed hooks can still invoke its route (`src/gobby/cli/installers/git_hooks.py:51`). A run in that interval emits old-format pages stamped `gwiki-code`, making them indistinguishable from new output to pruning and quarantine.","finding_id":"R5-retirement-marker-order","location":"3.4 marker flip / 3.8 retirement and P3 exit gate","prevention":"For a shared discriminator, order producer shutdown before changing the discriminator and put the phase gate on a later leaf.","principle":"An old producer must be unreachable before a shared ownership marker is reassigned to its replacement.","root_cause":"Section 3.8 is a terminal P3 fan-in that depends on 3.4, so the shared marker flips while every legacy entry point is still live.","section_id":"3.8","severity":"blocking","suggested_fix":"Use the existing leaves: make 3.8 depend only on the copy/reimplementation prerequisites, make 3.4 depend on 3.8, and move the P3 fan-in smoke gate to the terminal 3.6 leaf. Add a race test proving no legacy writer can run when the marker flips."},{"category":"missing-requirement","check_key":"retired-command-public-library-export","description":"`gobby-code` publicly exports `commands` (`crates/gcode/src/lib.rs:1`), `commands` publicly declares `codewiki` (`crates/gcode/src/commands/mod.rs:1`), and that subtree reexports runnable generation, repair, purge, and citation functions (`crates/gcode/src/commands/codewiki/mod.rs:247`). Removing only `Command::Codewiki` and its dispatch arm therefore violates 3.8.4's 'subtree present but unreachable' premise.","finding_id":"R5-retirement-public-export","location":"3.8 Retire gcode codewiki / crates/gcode module exports","prevention":"When retiring a Rust command, sweep CLI, dispatch, module declarations, public reexports, tests, contracts, assets, and CI selectors separately from physical file deletion.","principle":"A retired command subtree kept as source reference must be unreferenced by every compiled public API.","root_cause":"3.8 removes CLI and dispatch wiring but leaves `commands::codewiki` publicly compiled until physical deletion in 5.2.","section_id":"3.8","severity":"blocking","suggested_fix":"Move removal of the `pub mod codewiki` declaration and codewiki-only CLI/dispatch tests and CI selectors into 3.8. Keep the physical subtree files on disk, unreferenced, until 5.2 deletes them."},{"category":"missing-requirement","check_key":"legacy-entrypoint-call-graph-sweep","description":"The live refresh service calls `GcodeGateway.codewiki` (`src/gobby/code_index/codewiki_refresh.py:89`), the old HTTP route schedules that trigger (`src/gobby/servers/routes/code_index.py:457`), app startup constructs it (`src/gobby/servers/_app_lifecycle.py:74`), runner initialization registers its nightly cron (`src/gobby/runner_init/orchestration.py:497`), and the Wiki UI still calls the old status/refresh endpoints (`web/src/components/activity/wiki/WikiTabData.ts:705`, `:740`). As written, 3.8 leaves callable or broken legacy paths and a broken UI.","finding_id":"R5-retirement-call-graph","location":"3.8 daemon teardown / 4.2 replacement routes","prevention":"Trace command retirement from every external trigger through construction, service protocol, route, client, and lifecycle owner.","principle":"Deleting a gateway method requires every dynamic caller, route, lifecycle registration, UI caller, and test double to be retired or replaced in the same ordered change.","root_cause":"3.8 names the obvious gateway, nightly, and hook surfaces but omits live Python and web consumers that do not fail at compile time.","section_id":"3.8","severity":"blocking","suggested_fix":"Expand 3.8's teardown inventory to the refresh service/protocol and fakes, trigger construction, old routes, service-container field, runner/nightly registration, UI API calls, and focused tests. Reintroduce only the new admission/status surface in 4.2 and 4.6."},{"category":"weak-testability","causal_finding_id":"R4-marker-authority-incomplete","causal_section_ids":["3.4"],"check_key":"semantic-fixture-reclassification","description":"Audit generation authority is exact equality with the shared marker (`crates/gwiki/src/audit/claims.rs:197`). Existing tests carrying literal `gcode-codewiki` assert that template, degraded, and generated pages are grounded or exempt (`crates/gwiki/src/audit/tests.rs:408-537`). After 3.4 flips the constant while leaving those literals untouched, those assertions reverse and the crate tests fail; they are not mere parser fixtures.","finding_id":"R5-audit-marker-fixtures","introduced_in_round":4,"location":"3.4 marker fixture sweep / crates/gwiki audit tests","prevention":"For every old-marker literal, classify it as parser fixture, semantic fixture, golden, or production comparison before deciding whether it remains unchanged.","principle":"A marker flip must update semantic fixtures whose assertions depend on marker equality; parser-only literals may remain old.","root_cause":"The repair classifies all remaining gwiki legacy literals as inert fixture data, but existing audit fixtures use the literal to activate generated-page grounding behavior.","section_id":"3.4","severity":"blocking","suggested_fix":"Update the semantic audit fixtures to the new marker (or the shared constant), keep only true parser fixtures on the legacy literal, and retain one explicit legacy-literal negative test."},{"category":"unhandled-edge","causal_finding_id":"R4-successor-intent-loss","causal_section_ids":["4.2","4.7"],"check_key":"successor-scope-monotonicity","description":"Scope is explicit request state (`src/gobby/code_index/codewiki_refresh.py:37`) and is forwarded independently of mode (`src/gobby/code_index/codewiki_refresh.py:89`). The plan's replacement row retains the newest commit, recomputed diff, and maximum mode but lists no canonical scope state. `scope X` followed by auto/Y or `scope Y` can therefore silently lose requested pages, including on restart before planning.","finding_id":"R5-successor-scope-intent","introduced_in_round":4,"location":"4.2 admission payload / 4.7 successor replacement","prevention":"Enumerate every admission payload field and define its durable representation and join operation before declaring coalescing monotone.","principle":"A coalescing successor must monotonically retain every request field that affects work identity.","root_cause":"The newest-target/diff/max-mode repair covers changed files and scalar mode, but the public `scope` path set is not persisted or merged.","section_id":"4.7","severity":"blocking","suggested_fix":"Persist canonical requested-scope state on active and queued rows; define FULL dominance and otherwise monotone union (or promote incompatible scopes to FULL). Test scope-X→auto-Y, scope-X→scope-Y, FULL→scope, and stronger same-commit requests across restart."},{"category":"unhandled-edge","causal_finding_id":"R4-desired-inventory-contract","causal_section_ids":["4.2","4.3","4.7"],"check_key":"desired-inventory-detection-without-repair","description":"A page can disappear independently through the existing delete path (`crates/gwiki/src/commands/page.rs:137`; gateway `src/gobby/gwiki_gateway.py:301`). After a successful baseline, a COSMETIC, PARTIAL, ARCHITECTURE, or manual-scope run can omit an unaffected missing module/concept/tour/overview page. The new inventory check then repeatedly withholds freshness, but no automatic run is guaranteed to enqueue that page, producing a stable livelock.","finding_id":"R5-inventory-missing-page-repair","introduced_in_round":4,"location":"4.3 desired inventory planning/finalization","prevention":"For every finalizer refusal, identify the earlier planner transition that makes the refused state recoverable.","principle":"A freshness invariant that detects a missing desired artifact must schedule a transition that can recreate it.","root_cause":"The repair withholds freshness when inventory is incomplete but does not add missing inventory members to mode-selected work.","section_id":"4.3","severity":"blocking","suggested_fix":"At planning, union mode-selected work with `desired_inventory - valid_materialized_inventory`; render missing deterministic pages and enqueue missing semantic pages as mandatory work. Add one missing-page recovery case for every page family under non-FULL modes."},{"category":"unhandled-edge","causal_finding_id":"R4-stale-executing-run","causal_section_ids":["4.2","4.3","4.7"],"check_key":"run-owner-restart-fencing","description":"A daemon restart creates a new process (`src/gobby/servers/routes/admin/_lifecycle.py:237`), so literal owner equality cannot resume a row; permissive reassignment lets a paused old owner act after takeover. The repository's existing lease precedent uses explicit expiry plus one guarded mutation (`src/gobby/dispatch/lease_cleanup.py:41`), but the plan names only `owner` and `heartbeat_at`. The promised restart resumption/terminalization is therefore ambiguous and race-prone.","finding_id":"R5-run-lease-takeover","introduced_in_round":4,"location":"4.2 restart semantics / 4.7 owner and heartbeat","prevention":"Specify the complete lease state machine: identity, expiry, guarded takeover, fencing, heartbeat, terminalization, and old-owner rejection.","principle":"Recovering a unique active row across process restart requires explicit expiry, atomic ownership transfer, and a fence on every later mutation.","root_cause":"The owner/heartbeat repair terminalizes expired rows but does not define owner incarnation, lease expiry, takeover CAS, or an ownership fence for resumption.","section_id":"4.7","severity":"blocking","suggested_fix":"Within 4.7, define owner incarnation, `lease_expires_at`, conditional takeover that increments a monotonic fence, and require owner+fence on heartbeats and state transitions. Test concurrent watchdogs and a paused old owner."},{"category":"unhandled-edge","causal_finding_id":"R4-marker-authority-incomplete","causal_section_ids":["3.4","5.3"],"check_key":"destructive-negative-ownership-predicate","description":"`generated_by` is optional in live frontmatter (`crates/gwiki/src/frontmatter.rs:62`), while current generated recognition uses positive equality (`crates/gwiki/src/audit/claims.rs:197`). The plan's negative quarantine predicate therefore selects unmarked operator-authored pages and output from unrelated tools, causing data loss.","finding_id":"R5-negative-marker-quarantine","introduced_in_round":4,"location":"3.4 marker policy / 5.3 quarantine inventory","prevention":"Test destructive selectors against current, exact legacy, missing, malformed, and third-party marker cases.","principle":"Destructive migration authority must be proven by a positive known identity, never by inequality with the current identity.","root_cause":"The repair selects `generated_by != current-marker` as legacy, conflating every absent, malformed, manual, and foreign marker with the retired generator.","section_id":"5.3","severity":"blocking","suggested_fix":"Build the manifest from the exact `gcode-codewiki` literal plus an explicit allowlist of known markerless legacy artifacts. Protect missing/unknown/foreign markers and add mixed-marker dry-run tests."},{"category":"unhandled-edge","causal_finding_id":"R4-generated-create-precondition","causal_section_ids":["3.5","3.6"],"check_key":"delete-existing-state-cas","description":"The live delete path checks existence then removes without a hash precondition (`crates/gwiki/src/commands/page.rs:137`), and the gateway accepts only a path (`src/gobby/gwiki_gateway.py:301`). Section 3.6.6 says generated delete forwards exactly one of expected-hash or expected-absent, but expected-absent provides no authority to delete an existing file. A stale finalizer can therefore delete a replacement unless the existing hash is rechecked under the page lock.","finding_id":"R5-generated-delete-cas","introduced_in_round":4,"location":"3.5 mutation contract / 3.6 gateway / 4.3 prune","prevention":"Specify create, replace, delete, absent-delete replay, mismatch, and concurrent-replacement CAS branches separately.","principle":"Generated deletion of an existing page needs an expected-existing state checked under the same lock immediately before removal.","root_cause":"The create repair threads `expected-absent` into both write and delete plumbing even though absence cannot authorize deletion of an existing page.","section_id":"3.6","severity":"blocking","suggested_fix":"Define generated delete separately: an existing page requires `--expected-hash`; `--expected-absent` may only yield an idempotent absent no-op. Thread this through CLI/API/gateway and race a stale prune against a replacement write."},{"category":"missing-requirement","check_key":"multitenant-summary-identity","description":"The live `code_indexed_files` relation carries `project_id` and a project index (`src/gobby/storage/postgres_baseline_schema.sql:1568-1584`). A summary key of only path plus content hash collides for two projects containing the same path and bytes, allowing coverage/failure state to leak or overwrite across projects.","finding_id":"R5-file-summary-project-key","location":"2.2 FactsBundle summaries / 2.4 storage / 2.5 coverage counters","prevention":"Trace all proposed keys back to the tenant key of their source table and add cross-project collision fixtures.","principle":"Durable derived data keyed by repository path must include the owning project scope.","root_cause":"The plan repeatedly specifies `(path, content_hash)` while the indexed-file source of truth is project-scoped.","section_id":"2.4","severity":"blocking","suggested_fix":"Define summary identity as `(project_id, path, content_hash)` or project-scoped indexed-file ID plus hash. Add a two-project fixture with identical paths/hashes and independent stale, failure, summary, and counter behavior."},{"category":"missing-requirement","check_key":"mandatory-summary-production-wiring","description":"Production maintenance currently requests only unsummarized symbols (`src/gobby/code_index/maintenance.py:259`), and summary production is constructed only when optional `symbol_summary.enabled` is true (`src/gobby/runner_lifecycle_subsystems.py:477`). A FULL run's mandatory file-summary coverage cannot rely on that optional gate, so the plan can ship storage and tests without a worker that ever fills it.","finding_id":"R5-file-summary-lifecycle","location":"2.4 per-file summaries / daemon maintenance lifecycle","prevention":"Trace every mandatory producer from configuration through construction, scheduling, reindex invalidation, retries, and shutdown.","principle":"A mandatory freshness prerequisite must have an always-on production lifecycle independent of an optional adjacent feature.","root_cause":"The plan adds summary storage and backfill logic but omits the live maintenance scheduler and lifecycle construction seam.","section_id":"2.4","severity":"blocking","suggested_fix":"Add `maintenance.py`, `runner_lifecycle_subsystems.py`, config, and reindex/sync completion seams to 2.4. Define mandatory file-summary backfill independent of optional symbol summaries and test startup, invalidation, failure recording, and disabled-symbol-summary configurations."},{"category":"traceability","check_key":"shared-assets-bundle-manifest-fanin","description":"The installer recursively hashes every eligible shared file (`src/gobby/install/manifest.py:61`), and `tests/test_build_backend.py:508` requires the committed `bundled_content_manifest.json` to match exactly. The planned shared files therefore make an existing repository test fail and leave packaged integrity unaware of them.","finding_id":"R5-bundled-content-manifest","location":"3.7 and 4.3-4.5 shared assets","prevention":"For generated inventories, place regeneration after all producing leaves and name the exact drift test.","principle":"Every installed shared-content change must update the committed content-addressed manifest before its phase gate.","root_cause":"The plan adds a manifest, query corpus, four templates, and two agent files under `install/shared` but assigns no owner for the generated bundle manifest.","section_id":"4.5","severity":"blocking","suggested_fix":"Use an existing terminal shared-assets leaf (4.5 is sufficient after its dependencies) to regenerate `src/gobby/install/bundled_content_manifest.json` and run `test_committed_bundled_content_manifest_matches_shared_tree`; include the earlier 3.7 asset in its fan-in."},{"category":"missing-requirement","check_key":"long-lived-service-lifecycle-owner","description":"The current service container owns the legacy trigger but no generation service/executor/watchdog (`src/gobby/app_context.py:101`); application lifecycle constructs only the legacy trigger (`src/gobby/servers/_app_lifecycle.py:74`), and the lifecycle subsystem registry has no new executor (`src/gobby/runner_lifecycle_subsystems.py:799`). Admissions can therefore create durable rows that no process drains, and startup recovery has no caller.","finding_id":"R5-orchestrator-lifecycle","location":"4.2 service / 4.3 executor / 4.7 watchdog","prevention":"For every daemon subsystem, trace dependency construction, container field, startup task, recovery pass, watchdog, stop ordering, and health reporting.","principle":"A durable queue executor and watchdog need an explicit daemon construction, startup, recovery, cancellation, and shutdown owner.","root_cause":"The plan specifies service internals and routes but omits the current app-context and lifecycle registry targets that make a long-lived subsystem run.","section_id":"4.3","severity":"blocking","suggested_fix":"Assign the existing app-context and lifecycle files to 4.2/4.3: construct dependencies, start executor/recovery/watchdog tasks, cancel and await them on shutdown, and expose degraded status. Add a daemon restart test from admitted-undrained row through recovery and successor promotion."},{"category":"missing-requirement","check_key":"retired-producer-downstream-consumer","description":"Memory dream reads exactly `_meta/truth_digest.json` (`src/gobby/memory/dream/truth_digest.py:28`), returns no project truth when it is missing (`:169`), and skips cooldown invalidation (`src/gobby/memory/dream/service.py:326`). The only current producer is the legacy generator (`crates/gcode/src/commands/codewiki/truth_digest.rs:84`). Deleting the subtree silently disables a live downstream feature.","finding_id":"R5-truth-digest-cutover","location":"4.3 finalizer / 5.2 legacy deletion / memory dream","prevention":"Trace every artifact emitted by a retired subtree to all non-subtree readers and tests.","principle":"Before deleting a producer, every live downstream artifact consumer must have a replacement producer or a coordinated migration.","root_cause":"The legacy subtree is the only producer of `_meta/truth_digest.json`, but the new finalizer specifies other metadata and no memory-dream migration.","section_id":"5.2","severity":"blocking","suggested_fix":"Before 5.2, either make the new finalizer emit a compatible bounded truth digest from the pinned bundle/run or migrate memory-dream consumers and fixtures to a declared `build.json` field. Add cutover acceptance for truth-change detection and cooldown reset."},{"category":"missing-requirement","check_key":"destructive-migration-production-owner","description":"The only live purge implementation directly removes files and metadata (`crates/gcode/src/commands/codewiki/purge.rs:68`); current `gwiki page delete` is likewise a single-file removal (`crates/gwiki/src/commands/page.rs:137`). Neither is the durable supervised protocol 5.3 describes, and no new implementation target owns that protocol, so the deliverable cannot be expanded into executable work as written.","finding_id":"R5-vault-migration-owner","location":"5.3 Vault migration","prevention":"For every operational migration, name the production module/command and point all fault-injection acceptance at that surface.","principle":"A crash-recoverable destructive procedure needs a named production implementation and invocation surface, not only data targets and tests.","root_cause":"5.3 targets the vault path while specifying journaling, rename recovery, link rewriting, lint, reindex, probes, restore/resume, and deletion without assigning executable code.","section_id":"5.3","severity":"blocking","suggested_fix":"Within 5.3, name and target one production migration module and supervised CLI/service invocation that owns manifest persistence, each rename, resume/restore, link rewrites, lint/reindex/probes, and final quarantine deletion. Point the existing 5.3 tests at it; no new phase or subsystem is needed."},{"category":"unhandled-edge","check_key":"rollback-restores-all-mutated-state","description":"Restoring quarantined files after a partial link rewrite does not restore the rewritten surviving pages, and restoring after reindex/query failure also leaves the restored vault needing another reindex. The repository already has a durable atomic staged-write pattern (`crates/gwiki/src/sources/atomic.rs:7`), but 5.3 does not journal or stage the rewrite targets. Its promised restore is therefore not a return to the pre-migration state.","finding_id":"R5-quarantine-rollback","location":"5.3 quarantine, link rewrite, validation, and restore","prevention":"Draw the migration transaction boundary and inject failure after every mutation family, not only every file move.","principle":"Rollback must restore every mutation made after the recovery point and rebuild derived state before declaring the old state recovered.","root_cause":"The move manifest covers quarantined legacy files, but later link rewrites mutate surviving pages and reindex mutates derived state outside that journal.","section_id":"5.3","severity":"blocking","suggested_fix":"Extend the same migration journal to rewritten pages with before-hashes and recoverable staged bytes, or stage all rewrites and commit only after complete validation. On rollback restore both file families and reindex before success; inject failure after each rewritten page and each later check."}],"plan_hash":"685394f4ee83985b055b81e166a8d9d8830a2bc87d8fdb10f3ed8a4fc7bb0a17","reviewer_session":"f5399ee8-c968-439d-b4f7-d4d933a570ca","round":5,"round_number":5,"verdict":"needs_review"},"session_id":"4007d890-c17e-494e-86e4-56df0567ab02"}
+```
 
 ## Task Mapping
 `kind: framing`
